@@ -1,85 +1,274 @@
 # SOLARUPGRADE_CODEX.md
 
+## EVERGREEN CODEX AGENT FILE
+
+You are Codex GPT-5.5 Medium working inside the PowerOn Hub / V15r app.
+
 Branch:
 solarupgrade
 
-Agent:
-Codex GPT-5.5 Medium
+This file is not a one-phase prompt. It is a permanent operating file for Codex phases in the Solar Upgrade cascade.
 
-Purpose:
-Codex-specific handoff file for Solar Training / Solar Estimate upgrade phases.
+The source of truth is:
+`solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
 
-Rules:
-- Read `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md` before edits.
-- Keep each phase scoped.
-- Preserve existing Solar Training subtabs and existing NEM 3.0 behavior.
-- Do not add external requests, Supabase changes, persistence, or estimate math unless the active phase explicitly allows it.
-- Run `npm.cmd run typecheck`.
-- Update this file and the shared context before committing.
+Before editing code, you must:
+1. Confirm the current branch is `solarupgrade`.
+2. Confirm the working tree is clean before starting, unless the user explicitly tells you to continue from existing uncommitted work.
+3. Read `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`.
+4. Read this file.
+5. Locate `ACTIVE PHASE CONTROL` in the shared context.
+6. Confirm the active phase is assigned to Codex GPT-5.5 Medium.
+7. Find the matching phase scope in the shared roadmap.
+8. Execute only that active phase.
+9. Keep changes scoped.
+10. Run `npm.cmd run typecheck`.
+11. Commit only scoped files.
+12. Update the shared context file.
+13. Append a completion log to this file.
+14. Update `ACTIVE PHASE CONTROL` in the shared context to the next phase if the next phase is safe.
+15. If the next phase is not safe, set `PHASE STATUS: PAUSE REQUIRED` and explain why.
 
 ---
 
-# PHASE 2 COMPLETION LOG
+## GLOBAL RULES
 
-Status:
-Complete
+Keep the work scoped and avoid broad refactors.
+
+The visual language should match the existing premium PowerOn design:
+
+- dark navy panels
+- subtle teal/cyan/green/yellow solar accents
+- soft borders
+- restrained glow
+- clean spacing
+- no aggressive glare
+- no bulky typography
+- no reload loops
+
+Do NOT touch unless explicitly required by the active phase:
+
+- NEM 3.0 formulas
+- bill calculations
+- savings formulas
+- Supabase sync
+- persistence/localStorage
+- unrelated tabs
+- unrelated components
+- sidebar/topbar
+- floating action buttons
+- route architecture
+- package dependencies
+- Google Maps live implementation
+- live address autocomplete
+- final estimate calculations
+- product catalog or solar item catalog
+
+Do NOT proceed if:
+
+- the active phase is assigned to Claude
+- the branch is not `solarupgrade`
+- typecheck is already failing before your changes and the active phase does not cover fixing it
+- required files are missing in a way that changes the phase scope
+- completing the phase requires broad refactors
+- completing the phase requires package installs or API keys not already present
+
+If blocked, update the context files with the blocker and report:
+
+`NEXT PHASE READY: NO`
+
+---
+
+## CODEX PHASE RESPONSIBILITIES
+
+Codex is generally responsible for:
+
+- building scoped UI shells
+- adding form screens
+- implementing presentational flow
+- applying UI structure from the architecture
+- wiring existing local state into UI
+- keeping user-facing screens polished and responsive
+
+Claude is generally responsible for:
+
+- audits
+- architecture
+- safety checks
+- state/data modeling
+- integration review
+- stabilization
+- final polish/review phases
+
+If the active phase is assigned to Claude, do not edit code. Instead, report:
+
+`Active phase is assigned to Claude. No Codex action taken.`
+
+---
+
+## REQUIRED PHASE EXECUTION FORMAT
+
+When running an active Codex phase, follow the user’s standard task structure from the shared context.
+
+TASK TITLE:
+Use the active task title from `ACTIVE PHASE CONTROL`.
+
+MODEL / TOOL:
+Use Codex GPT-5.5 Medium for this task.
+
+CONTEXT:
+This is the PowerOn Hub / V15r app.
+Use the shared roadmap and latest completion logs.
+Keep work scoped and avoid broad refactors.
+
+TARGET FILES:
+Use the expected files listed under the active phase.
+Inspect first.
+Do not assume.
+
+REFERENCE FILES / DESIGN REFERENCES:
+Use the references listed in the active phase and existing PowerOn/NEM 3.0 UI.
+
+SCOPE:
+Only complete the active phase scope.
+
+Do NOT touch:
+Respect all global restrictions and phase-specific restrictions.
+
+CURRENT ISSUE:
+Use the active phase issue from the shared roadmap.
+
+DESIRED RESULT:
+Use the active phase desired result from the shared roadmap.
+
+REQUIREMENTS:
+Use active phase requirements from the shared roadmap.
+
+VISUAL REQUIREMENTS:
+Preserve the PowerOn premium dark style.
+
+DATA / LOGIC REQUIREMENTS:
+Do not change formulas, persistence, Supabase, or external API behavior unless explicitly scoped.
+
+RESPONSIVE REQUIREMENTS:
+No horizontal overflow.
+No overlap with floating buttons.
+Wrap cleanly.
+
+ACCEPTANCE CRITERIA:
+Use active phase acceptance criteria from the shared roadmap.
+
+QA:
+Run:
+
+`npm.cmd run typecheck`
+
+If PowerShell blocks npm, use:
+
+`npm.cmd run typecheck`
+
+COMMIT:
+Commit only scoped files.
+
+---
+
+## ACTIVE PHASE WORKFLOW
+
+For every Codex phase:
+
+1. Read the active phase from `ACTIVE PHASE CONTROL`.
+2. Confirm it is assigned to Codex.
+3. Read the matching phase section in `FULL SOLARUPGRADE PHASE ROADMAP`.
+4. Read the latest completion logs.
+5. Inspect target files before editing.
+6. Make the smallest safe implementation.
+7. Avoid changing already-working features.
+8. Run typecheck.
+9. Update `SOLARUPGRADE_SHARED_CONTEXT.md`.
+10. Append a log to this file.
+11. Commit scoped files.
+12. Report back to the user.
+
+The shared context must always be updated before commit so the next agent can continue cleanly.
+
+---
+
+## REQUIRED END-OF-PHASE ACTIONS
+
+At the end of every Codex phase:
+
+1. Update `SOLARUPGRADE_SHARED_CONTEXT.md`:
+   - mark the completed phase complete
+   - add commit hash
+   - add files changed
+   - add what changed
+   - add what was learned
+   - add learned skills / reusable patterns
+   - add bugs / risks
+   - add next phase adjustments
+   - update `ACTIVE PHASE CONTROL` to the next phase if ready
+   - set `PHASE STATUS: PAUSE REQUIRED` if the next phase is unsafe
+
+2. Update this file:
+   - append the completion log below
+
+3. Run:
+
+   `npm.cmd run typecheck`
+
+4. Commit scoped files only.
+
+5. Report back to user with:
+   - branch name
+   - commit hash
+   - files changed
+   - active phase completed
+   - what changed
+   - what was learned
+   - learned skills / reusable patterns
+   - bugs / risks
+   - typecheck result
+   - shared context updated YES/NO
+   - Codex file updated YES/NO
+   - next active phase
+   - whether next phase is ready
+
+---
+
+## REQUIRED COMPLETION LOG TEMPLATE
+
+Append this template at the end of this file after every Codex phase.
+
+```text
+## PHASE X COMPLETION LOG
 
 AGENT:
 Codex GPT-5.5 Medium
 
 COMMIT HASH:
-Pending at log-write time; see final Codex report for the actual commit hash.
 
 FILES CHANGED:
-- `src/views/SolarTrainingView.tsx`
-- `src/components/solarTraining/SolarEstimateTab.tsx`
-- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
-- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
 
-TAB ID ADDED:
-`estimate`
-
-SHELL COMPONENT PATH:
-`src/components/solarTraining/SolarEstimateTab.tsx`
+ACTIVE PHASE COMPLETED:
 
 WHAT CHANGED:
-- Added Solar Estimate as the new subtab after Retention.
-- Created a shell-only `SolarEstimateTab` component.
-- Rendered the shell when the `estimate` tab is active.
-- Listed only the planned wizard steps: Address, Home Details, Energy Use, System Config, Estimate Summary.
-- Kept the shell presentational with no Google Maps, autocomplete, estimate math, provider/rate logic, persistence, Supabase changes, NEM 3.0 changes, or broad refactors.
 
 WHAT WAS LEARNED:
-- Solar Training tab integration is still centralized in `SolarTrainingView.tsx`.
-- The legacy Retention id remains `progress`; the new Solar Estimate id is `estimate`.
-- `SolarTrainingView.tsx` has `@ts-nocheck`, but the new shell component is typed normally.
 
 LEARNED SKILLS / REUSABLE PATTERNS:
-- For future Solar Training tabs, update the `SolarTab` union, `TABS` array, and active render block together.
-- Use typed component-local step metadata for simple shells.
-- Keep shell phases free of state and calculations so architecture phases can add them cleanly.
 
 BUGS / RISKS:
-- No Phase 2 bugs found.
-- The new tab currently inherits the `int1` reduced-opacity tab treatment.
-- Phase 3 should confirm final grouping/treatment and add the state model.
 
 TYPECHECK RESULT:
-PASS — `npm.cmd run typecheck`
 
 SHARED CONTEXT UPDATED:
-YES
 
-AGENT FILE UPDATED:
-YES
+CODEX FILE UPDATED:
+
+NEXT ACTIVE PHASE:
 
 NEXT PHASE ADJUSTMENTS:
-- Phase 3 should review the shell and add typed local interview state, safe defaults, placeholder handlers, and step navigation.
-- Phase 3 should document existing provider/rate sources and whether Maps/autocomplete support exists in the repo.
-- Do not add live Google requests, estimate math, persistence, Supabase writes, product catalog, or proposal engine in Phase 3.
 
 NEXT PHASE READY:
-YES
 
 COMPACT HANDOFF FOR NEXT CHAT:
-Phase 2 added `estimate` after Retention and created `src/components/solarTraining/SolarEstimateTab.tsx`. The shell displays only Address, Home Details, Energy Use, System Config, and Estimate Summary in the PowerOn dark style. It is intentionally presentational and has no external integrations, persistence, rates, or math. Typecheck passed. Phase 3 is ready.

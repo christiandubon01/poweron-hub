@@ -1,41 +1,42 @@
 # SOLARUPGRADE_CLAUDE.md
 
-## AGENT ROLE
+## EVERGREEN CLAUDE AGENT FILE
 
 You are Claude Code working inside the PowerOn Hub / V15r app.
 
 Branch:
 solarupgrade
 
-Primary job:
-Audit and stabilize the existing Solar Training tab before any new Solar Estimate build work begins.
+This file is not a one-phase prompt. It is a permanent operating file for Claude phases in the Solar Upgrade cascade.
 
-You must keep work scoped, avoid broad refactors, and update this file at the end of the phase.
+The source of truth is:
+`solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+
+Before editing code, you must:
+1. Confirm the current branch is `solarupgrade`.
+2. Confirm the working tree is clean before starting, unless the user explicitly tells you to continue from existing uncommitted work.
+3. Read `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`.
+4. Read this file.
+5. Locate `ACTIVE PHASE CONTROL` in the shared context.
+6. Confirm the active phase is assigned to Claude Code.
+7. Find the matching phase scope in the shared roadmap.
+8. Execute only that active phase.
+9. Keep changes scoped.
+10. Run `npm.cmd run typecheck`.
+11. Commit only scoped files.
+12. Update the shared context file.
+13. Append a completion log to this file.
+14. Update `ACTIVE PHASE CONTROL` in the shared context to the next phase if the next phase is safe.
+15. If the next phase is not safe, set `PHASE STATUS: PAUSE REQUIRED` and explain why.
 
 ---
 
-TASK TITLE:
-Audit Solar Training System and fix Retention crash
+## GLOBAL RULES
 
-MODEL / TOOL:
-Use Claude Code in VS Code for this task.
+Keep the work scoped and avoid broad refactors.
 
-CONTEXT:
-This is the PowerOn Hub / V15r app.
-Current branch must be `solarupgrade`.
+The visual language should match the existing premium PowerOn design:
 
-The Solar Training tab already includes these subtabs:
-- Certifications
-- Training Modes
-- Scores
-- Rules Library
-- Quick Quiz
-- NEM 3.0
-- Retention
-
-The user wants to keep all existing subtabs and later add a new subtab called `Solar Estimate` immediately after `Retention`.
-
-The visual language must match the existing premium PowerOn design:
 - dark navy panels
 - subtle teal/cyan/green/yellow solar accents
 - soft borders
@@ -45,195 +46,291 @@ The visual language must match the existing premium PowerOn design:
 - no bulky typography
 - no reload loops
 
-TARGET FILES:
-First inspect and identify the actual Solar Training files.
-Likely areas:
-- src/components
-- src/pages
-- src/features
-- any V15r/SolarTraining/NEM/Retention related files
+Do NOT touch unless explicitly required by the active phase:
 
-Do not assume file paths. Search the repo first.
-
-REFERENCE FILES / DESIGN REFERENCES:
-Use the existing NEM 3.0 Savings Visualizer as the best internal reference.
-Use existing Solar Training subtab implementation patterns.
-Use existing PowerOn premium card/panel style.
-
-External visual references provided by user:
-- Enphase-style address intake flow
-- residential information interview
-- energy consumption interview
-- system configuration interview
-- estimate summary page with:
-  - top metric cards
-  - bill savings card
-  - consumption profile graph
-  - disclaimer section
-  - bottom adjustable solar size / battery size controls
-
-Do not build the new Solar Estimate feature in this phase. Only audit and stabilize.
-
-SCOPE:
-Only do:
-1. Deep audit of the existing Solar Training tab and all its subtab components.
-2. Map component structure, state flow, data flow, tab switching, persistence/local storage/Supabase touchpoints if present.
-3. Find why the Retention subtab crashes with:
-   `Cannot read properties of undefined (reading 'length')`
-4. Fix the Retention crash with the smallest safe change.
-5. Add defensive defaults/guards only where needed.
-6. Create/update:
-   - solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
-   - solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
-7. Report what files were inspected and changed.
-
-Do NOT touch:
 - NEM 3.0 formulas
 - bill calculations
 - savings formulas
-- Supabase behavior
-- persistence behavior unless required to prevent the Retention crash
-- unrelated app chrome
-- unrelated tabs outside Solar Training
+- Supabase sync
+- persistence/localStorage
+- unrelated tabs
+- unrelated components
 - sidebar/topbar
 - floating action buttons
-- broad component refactors
 - route architecture
-- package dependencies unless absolutely required
+- package dependencies
+- Google Maps live implementation
+- live address autocomplete
+- final estimate calculations
+- product catalog or solar item catalog
+
+Do NOT proceed if:
+
+- the active phase is assigned to Codex
+- the branch is not `solarupgrade`
+- typecheck is already failing before your changes and the active phase does not cover fixing it
+- required files are missing in a way that changes the phase scope
+- completing the phase requires broad refactors
+- completing the phase requires package installs or API keys not already present
+
+If blocked, update the context files with the blocker and report:
+
+`NEXT PHASE READY: NO`
+
+---
+
+## CLAUDE PHASE RESPONSIBILITIES
+
+Claude is generally responsible for:
+
+- audits
+- architecture
+- safety checks
+- state/data modeling
+- integration review
+- stabilization
+- final polish/review phases
+
+Codex is generally responsible for:
+
+- building scoped UI shells
+- adding form screens
+- implementing presentational flow
+- applying UI structure from the architecture
+
+If the active phase is assigned to Codex, do not edit code. Instead, report:
+
+`Active phase is assigned to Codex. No Claude action taken.`
+
+---
+
+## REQUIRED PHASE EXECUTION FORMAT
+
+When running an active Claude phase, follow the user’s standard task structure from the shared context.
+
+TASK TITLE:
+Use the active task title from `ACTIVE PHASE CONTROL`.
+
+MODEL / TOOL:
+Use Claude Code in VS Code for this task.
+
+CONTEXT:
+This is the PowerOn Hub / V15r app.
+Use the shared roadmap and latest completion logs.
+Keep work scoped and avoid broad refactors.
+
+TARGET FILES:
+Use the expected files listed under the active phase.
+Inspect first.
+Do not assume.
+
+REFERENCE FILES / DESIGN REFERENCES:
+Use the references listed in the active phase and existing PowerOn/NEM 3.0 UI.
+
+SCOPE:
+Only complete the active phase scope.
+
+Do NOT touch:
+Respect all global restrictions and phase-specific restrictions.
 
 CURRENT ISSUE:
-The Retention subtab breaks the app and throws:
-`Cannot read properties of undefined (reading 'length')`
-
-The existing Solar Training tab also needs a full code audit before adding the Solar Estimate subtab.
+Use the active phase issue from the shared roadmap.
 
 DESIRED RESULT:
-The Solar Training tab should be fully understood and documented.
-The Retention tab should no longer crash, even if its source data is undefined, empty, missing, or partially migrated.
-All existing Solar Training subtabs should still render.
-No unrelated behavior should change.
+Use the active phase desired result from the shared roadmap.
 
 REQUIREMENTS:
-1. Search the repo for Solar Training, NEM 3.0, Retention, rules, quiz, certifications, and scores components.
-2. Identify the main Solar Training parent component.
-3. Identify how subtabs are defined and rendered.
-4. Identify all Retention data inputs.
-5. Fix the undefined `.length` crash safely.
-6. Prefer default empty arrays, nullish coalescing, optional chaining, or local normalized variables.
-7. Do not hide real errors with broad try/catch unless there is no better option.
-8. Add no fake production data.
-9. Do not add the Solar Estimate tab yet.
-10. Update the shared context markdown with useful findings for the next agent.
+Use active phase requirements from the shared roadmap.
 
 VISUAL REQUIREMENTS:
-- Preserve existing layout and styling.
-- Do not redesign the tab in this phase.
-- If Retention needs an empty state, keep it premium, compact, and consistent with the existing PowerOn dark style.
+Preserve the PowerOn premium dark style.
 
 DATA / LOGIC REQUIREMENTS:
-- Keep existing formulas exactly the same.
-- Keep existing values exactly the same.
-- Do not change reducers/scanners/helpers unless required for the Retention crash.
-- Do not change persistence unless required for the Retention crash.
-- Do not change Supabase behavior unless required for the Retention crash.
-- Do not introduce new estimate calculations.
+Do not change formulas, persistence, Supabase, or external API behavior unless explicitly scoped.
 
 RESPONSIVE REQUIREMENTS:
-- Existing Solar Training pages must still work on wide desktop.
-- No new horizontal overflow.
-- No overlap with floating buttons.
-- Retention empty state should wrap cleanly.
+No horizontal overflow.
+No overlap with floating buttons.
+Wrap cleanly.
 
 ACCEPTANCE CRITERIA:
-- Retention subtab no longer crashes.
-- Solar Training parent tab still loads.
-- Certifications still renders.
-- Training Modes still renders.
-- Scores still renders.
-- Rules Library still renders.
-- Quick Quiz still renders.
-- NEM 3.0 still renders.
-- Existing NEM 3.0 numbers remain unchanged.
-- No unrelated area changed.
-- Typecheck passes.
-- App does not reload endlessly.
-- Context markdown files are updated with audit findings and next-step notes.
+Use active phase acceptance criteria from the shared roadmap.
 
 QA:
 Run:
-npm.cmd run typecheck
+
+`npm.cmd run typecheck`
 
 If PowerShell blocks npm, use:
-npm.cmd run typecheck
 
-Also run any existing lint/test command only if already obvious from package scripts. Do not spend time inventing new test setup.
+`npm.cmd run typecheck`
 
 COMMIT:
-After typecheck passes, commit only the scoped files.
+Commit only scoped files.
 
-Commit message:
-Fix Solar Training retention crash and add solarupgrade audit context
+---
 
-END OF PHASE REPORT REQUIRED:
-After committing, report:
-- branch name
-- commit hash
-- files changed
-- Retention crash root cause
-- exact fix made
-- typecheck result
-- whether SOLARUPGRADE_SHARED_CONTEXT.md was updated
-- compact context for next chat
-- whether next session is ready
+## ACTIVE PHASE WORKFLOW
 
-APPEND THIS SECTION AT THE END OF THIS FILE AFTER COMPLETION:
+For every Claude phase:
 
-## PHASE 1 COMPLETION LOG
+1. Read the active phase from `ACTIVE PHASE CONTROL`.
+2. Confirm it is assigned to Claude.
+3. Read the matching phase section in `FULL SOLARUPGRADE PHASE ROADMAP`.
+4. Read the latest completion logs.
+5. Inspect target files before editing.
+6. Make the smallest safe implementation.
+7. Avoid changing already-working features.
+8. Run typecheck.
+9. Update `SOLARUPGRADE_SHARED_CONTEXT.md`.
+10. Append a log to this file.
+11. Commit scoped files.
+12. Report back to the user.
 
-COMMIT HASH: 72193d5
+The shared context must always be updated before commit so the next agent can continue cleanly.
+
+---
+
+## REQUIRED END-OF-PHASE ACTIONS
+
+At the end of every Claude phase:
+
+1. Update `SOLARUPGRADE_SHARED_CONTEXT.md`:
+   - mark the completed phase complete
+   - add commit hash
+   - add files changed
+   - add what changed
+   - add what was learned
+   - add learned skills / reusable patterns
+   - add bugs / risks
+   - add next phase adjustments
+   - update `ACTIVE PHASE CONTROL` to the next phase if ready
+   - set `PHASE STATUS: PAUSE REQUIRED` if the next phase is unsafe
+
+2. Update this file:
+   - append the completion log below
+
+3. Run:
+
+   `npm.cmd run typecheck`
+
+4. Commit scoped files only.
+
+5. Report back to user with:
+   - branch name
+   - commit hash
+   - files changed
+   - active phase completed
+   - what changed
+   - what was learned
+   - learned skills / reusable patterns
+   - bugs / risks
+   - typecheck result
+   - shared context updated YES/NO
+   - Claude file updated YES/NO
+   - next active phase
+   - whether next phase is ready
+
+---
+
+## REQUIRED COMPLETION LOG TEMPLATE
+
+Append this template at the end of this file after every Claude phase.
+
+```text
+## PHASE X COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+
 FILES CHANGED:
-  - src/components/solarTraining/SolarRetentionHeatmap.tsx
-  - solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
-  - solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+
+ACTIVE PHASE COMPLETED:
 
 WHAT CHANGED:
-  SolarRetentionHeatmap.tsx: made props optional in interface; replaced 3 raw
-  `data` references with `safeData` in the Summary Stats and CTA sections.
-  Both context files updated with full audit findings.
-
-RETENTION CRASH ROOT CAUSE:
-  <SolarRetentionHeatmap /> is called in SolarTrainingView.tsx with zero props.
-  The component had null guards that built safeTopics/safePeriods/safeData from
-  the props, but three locations in the render still referenced the raw `data`
-  prop directly:
-    - data.length (Summary Stats visibility gate, line ~253)
-    - data.flat() (allMetrics calculation, line ~260)
-    - data.every(...) (empty-state CTA gate, line ~333)
-  When data is undefined, any of these throws:
-    "Cannot read properties of undefined (reading 'length')"
 
 WHAT WAS LEARNED:
-  - SolarTrainingView.tsx has // @ts-nocheck so TypeScript never caught the
-    missing required props at the call site.
-  - The "Retention" tab uses id `progress` (legacy name) — important for Phase 2
-    when ordering the new Solar Estimate tab.
-  - The heatmap currently renders an empty/CTA state because no data is wired
-    from Supabase or localStorage to its props. The Supabase sync in
-    SolarRetentionTracker is a stub (not yet wired). This is acceptable for now.
-  - All other subtabs (Certifications, Training Modes, Scores, Rules, Quiz, NEM3)
-    manage their own Supabase queries and have their own error handling.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
 
 BUGS / RISKS:
-  - SolarRetentionHeatmap receives no live data — heatmap will always show the
-    empty/CTA state until a caller wires topics/periods/data props. Not a crash,
-    but the heatmap is functionally inert.
-  - SolarRetentionTracker Supabase sync is a stub (TODO comment in code).
-  - SolarTrainingView.tsx @ts-nocheck suppresses all type errors in that file.
 
-TYPECHECK RESULT: PASS (0 errors, 0 warnings)
+TYPECHECK RESULT:
 
-SHARED CONTEXT UPDATED: YES — full audit findings, file map, tab IDs, data flow,
-crash root cause, fix summary, and Phase 2 instructions added to
-SOLARUPGRADE_SHARED_CONTEXT.md.
+SHARED CONTEXT UPDATED:
 
-NEXT PHASE READY: YES — Phase 2 (Codex: add Solar Estimate shell)
+CLAUDE FILE UPDATED:
+
+NEXT ACTIVE PHASE:
+
+NEXT PHASE ADJUSTMENTS:
+
+NEXT PHASE READY:
+
+COMPACT HANDOFF FOR NEXT CHAT:
+```
+
+---
+
+## PHASE 3 COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+(set after commit)
+
+FILES CHANGED:
+- `src/services/solarTraining/SolarEstimateTypes.ts` (NEW)
+- `src/components/solarTraining/SolarEstimateTab.tsx` (UPDATED)
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md` (UPDATED)
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md` (UPDATED)
+
+ACTIVE PHASE COMPLETED:
+Phase 3 — Estimate Architecture + State Model
+
+WHAT CHANGED:
+- Created `SolarEstimateTypes.ts` with `SolarEstimateData` interface, `DEFAULT_ESTIMATE_DATA`, `ESTIMATE_STEPS`, and all option arrays (providers, rate plans, shading, ownership, property types, consumption methods, system modes).
+- Rewrote `SolarEstimateTab.tsx` from static Phase 2 shell to stateful component with `useState`, step navigation (`goNext`, `goBack`, `goToStep`), generic `updateField`, interactive step cards, progress bar, and active step placeholder with live state readout.
+- Documented Google Maps/Places and rate/provider findings in shared context.
+- Set active phase to Phase 4 — Codex.
+
+WHAT WAS LEARNED:
+- Google Maps (@react-google-maps/api + places library + VITE_GOOGLE_MAPS_BROWSER_KEY) is already in the app. Phase 4 can wire autocomplete using MileageProjectAddress.tsx as the exact pattern reference.
+- SolarNEM3Calculator.ts already has SCE + IID rate schedules. SolarEstimateTypes uses matching RatePlan IDs for Phase 5 integration.
+- tsconfig has noUnusedLocals: false — safe to add handlers before all inputs are wired.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Generic field updater pattern: `<K extends keyof T>(key: K, value: T[K]) => setData(d => ({...d, [key]: value}))` — type-safe, single handler for all fields.
+- Co-locate option arrays in the types file so form phases can import and map without redefining data.
+- Step navigation by index: `ESTIMATE_STEPS.indexOf(data.currentStep)` keeps step order as single source of truth.
+
+BUGS / RISKS:
+- MileageProjectAddress.tsx uses @ts-nocheck for Google Maps types. Phase 4 may need same if strict typing causes issues with Places API.
+- No Phase 3 runtime bugs found.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+Phase 4 — Codex — Solar Estimate Interview Flow UI
+
+NEXT PHASE ADJUSTMENTS:
+- Phase 4 imports all option arrays from `@/services/solarTraining/SolarEstimateTypes`.
+- `updateField`, `goNext`, `goBack`, `goToStep` are in component scope — Phase 4 wires them to form inputs.
+- Address step: use `useV15rGoogleMapsLoader()` + key check before attempting Maps; safe text fallback if key absent.
+- Energy Use step: filter rate plans by `RATE_PLANS_BY_UTILITY[data.utilityProvider]`.
+
+NEXT PHASE READY:
+YES
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Phase 3 added `src/services/solarTraining/SolarEstimateTypes.ts` (types + option arrays + defaults) and upgraded `SolarEstimateTab.tsx` to a stateful interview component with step navigation and a generic updateField handler. Google Maps/Places already in app — same pattern as MileageProjectAddress.tsx. Rate data in SolarNEM3Calculator.ts with matching IDs. Typecheck passes clean. Phase 4 Codex builds form UI per step using the exported option arrays.
