@@ -146,6 +146,78 @@ function formatNumber(value: number, maximumFractionDigits = 0): string {
   return value.toLocaleString('en-US', { maximumFractionDigits })
 }
 
+// ============================================================================
+// CHART MODULE TYPES AND HELPERS
+// ============================================================================
+
+type ChartTab =
+  | 'monthly_bill'
+  | 'energy_flow_24h'
+  | 'yr25_savings'
+  | 'cost_electricity'
+  | 'cumulative_savings'
+  | 'payment_comparison'
+
+const CHART_TABS: Array<{ id: ChartTab; label: string }> = [
+  { id: 'monthly_bill', label: 'Monthly Bill' },
+  { id: 'energy_flow_24h', label: '24H Flow' },
+  { id: 'yr25_savings', label: '25 Yr Savings' },
+  { id: 'cost_electricity', label: 'Elec. Cost' },
+  { id: 'cumulative_savings', label: 'Cumulative' },
+  { id: 'payment_comparison', label: 'Payments' },
+]
+
+type SavedEstimateSnapshot = {
+  savedAt: Date
+  solarSizeKw: number
+  batterySizeKwh: number
+  systemCost: number
+  avgMonthlyBefore: number
+  avgMonthlyAfter: number
+  utility: string
+  ratePlan: string | null
+  address: string
+}
+
+const ESCALATION_RATE = 0.04
+
+function generate25YearData(
+  annualBefore: number,
+  annualAfter: number,
+): Array<{ year: number; withoutSolar: number; withSolar: number; savings: number; cumulative: number }> {
+  let cumulative = 0
+  return Array.from({ length: 25 }, (_, i) => {
+    const year = i + 1
+    const withoutSolar = annualBefore * Math.pow(1 + ESCALATION_RATE, i)
+    const withSolar = annualAfter * Math.pow(1 + ESCALATION_RATE * 0.35, i)
+    const savings = Math.max(0, withoutSolar - withSolar)
+    cumulative += savings
+    return { year, withoutSolar, withSolar, savings, cumulative }
+  })
+}
+
+function generate24hProfile(
+  monthlyKwh: number,
+  solarSizeKw: number,
+): Array<{ hour: number; load: number; solar: number; netExport: number; netImport: number }> {
+  const hourlyAvg = (monthlyKwh / 30) / 24
+  return Array.from({ length: 24 }, (_, h) => {
+    const lf = h < 6 ? 0.62 : h < 9 ? 1.05 : h < 14 ? 0.88 : h < 20 ? 1.18 : h < 23 ? 0.90 : 0.65
+    const load = hourlyAvg * lf
+    const solar =
+      h >= 6 && h <= 19
+        ? solarSizeKw * Math.max(0, Math.exp(-Math.pow((h - 12.5) / 3.3, 2))) * 0.85
+        : 0
+    return { hour: h, load, solar, netExport: Math.max(0, solar - load), netImport: Math.max(0, load - solar) }
+  })
+}
+
+function getMonthlyLoanPayment(principal: number, termYears = 25, annualRate = 0.0699): number {
+  const r = annualRate / 12
+  const n = termYears * 12
+  return (principal * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1)
+}
+
 function getAverageImportRate(ratePlan: SolarEstimateRatePlan | null): number {
   if (!ratePlan) return 0.28
   const schedule = TOU_RATE_SCHEDULES[ratePlan as RatePlan]
@@ -950,6 +1022,524 @@ function ConsumptionProfileChart({
   )
 }
 
+// ============================================================================
+// SUMMARY CHART MODULE — 6 subtabs
+// ============================================================================
+
+function ChartNote({ children }: { children: React.ReactNode }) {
+  return <p className="mt-2 text-[10px] leading-4 text-slate-600">{children}</p>
+}
+
+function EnergyFlow24hChart({
+  monthlyKwh,
+  solarSizeKw,
+  hasBattery,
+}: {
+  monthlyKwh: number
+  solarSizeKw: number
+  hasBattery: boolean
+}) {
+  const hours = generate24hProfile(monthlyKwh, solarSizeKw)
+  const rawMax = Math.max(1, ...hours.map(h => Math.max(h.load, h.solar)))
+  const maxVal = rawMax * 1.15
+
+  const W = 540; const H = 170; const pL = 36; const pR = 10; const pT = 12; const pB = 30
+  const cW = W - pL - pR; const cH = H - pT - pB
+  const xOf = (h: number) => pL + (h / 23) * cW
+  const yOf = (v: number) => pT + cH - (v / maxVal) * cH
+  const baseY = pT + cH
+
+  const solarFill = [
+    `M${xOf(0)},${baseY}`,
+    ...hours.map(h => `L${xOf(h.hour).toFixed(1)},${yOf(h.solar).toFixed(1)}`),
+    `L${xOf(23)},${baseY}`,
+    'Z',
+  ].join(' ')
+
+  const loadPath = hours
+    .map((h, i) => `${i === 0 ? 'M' : 'L'}${xOf(h.hour).toFixed(1)},${yOf(h.load).toFixed(1)}`)
+    .join(' ')
+
+  const hourLabels = [0, 6, 12, 18, 23]
+  const hourText = (h: number) =>
+    h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`
+
+  const peakSolar = Math.max(...hours.map(h => h.solar))
+  const peakLoad = Math.max(...hours.map(h => h.load))
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-slate-100">24-Hour Energy Flow</p>
+          <p className="text-xs text-slate-500">Solar production vs. modeled load profile</p>
+        </div>
+        <div className="flex flex-wrap gap-3 text-xs text-slate-400">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2 w-6 rounded-sm" style={{ background: 'rgba(251,191,36,0.45)' }} />
+            Solar
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-0.5 w-5 bg-blue-400/80" />
+            Load
+          </span>
+          {hasBattery && (
+            <span className="flex items-center gap-1 text-xs text-emerald-400/70">
+              <BatteryCharging className="h-3 w-3" /> Battery mode
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 300, maxHeight: 185 }}>
+          {[0.25, 0.5, 0.75, 1].map(p => (
+            <line
+              key={p}
+              x1={pL} y1={yOf(maxVal * p)}
+              x2={W - pR} y2={yOf(maxVal * p)}
+              stroke="rgba(255,255,255,0.05)"
+              strokeWidth={0.5}
+            />
+          ))}
+          <line x1={xOf(12)} y1={pT} x2={xOf(12)} y2={baseY} stroke="rgba(251,191,36,0.10)" strokeWidth={1} strokeDasharray="2,4" />
+          <path d={solarFill} fill="rgba(251,191,36,0.30)" />
+          <path d={loadPath} fill="none" stroke="rgba(96,165,250,0.85)" strokeWidth={1.5} strokeLinejoin="round" />
+          {hourLabels.map(h => (
+            <text key={h} x={xOf(h)} y={H - 5} textAnchor="middle" fontSize={7.5} fill="#475569">
+              {hourText(h)}
+            </text>
+          ))}
+          <text x={pL - 4} y={yOf(maxVal * 0.75) + 3} textAnchor="end" fontSize={6.5} fill="#475569">kWh</text>
+          {peakSolar > 0 && (
+            <text x={xOf(14)} y={yOf(peakSolar * 0.55)} textAnchor="start" fontSize={6.5} fill="rgba(52,211,153,0.65)">↑ export</text>
+          )}
+          {peakLoad > 0 && (
+            <text x={xOf(6)} y={yOf(peakLoad * 0.4)} textAnchor="start" fontSize={6.5} fill="rgba(248,113,113,0.65)">↓ import</text>
+          )}
+        </svg>
+      </div>
+      <ChartNote>
+        Modeled estimates. Daily load shape based on typical CA residential pattern. Solar uses simplified Gaussian production curve.
+        {hasBattery ? ' Battery shifts self-consumption; dispatch not modeled here.' : ''}
+      </ChartNote>
+    </div>
+  )
+}
+
+function TwentyFiveYearSavingsChart({
+  annualBillBefore,
+  annualBillAfter,
+}: {
+  annualBillBefore: number
+  annualBillAfter: number
+}) {
+  const yearData = generate25YearData(annualBillBefore, annualBillAfter)
+  const maxBill = Math.max(1, ...yearData.map(d => d.withoutSolar))
+
+  const W = 560; const H = 170; const pL = 48; const pR = 10; const pT = 10; const pB = 28
+  const cW = W - pL - pR; const cH = H - pT - pB
+  const colW = cW / 25
+  const barW = Math.max(3, Math.floor(colW * 0.35))
+  const yOf = (v: number) => pT + cH - (v / maxBill) * cH
+  const baseY = pT + cH
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-slate-100">25-Year Bill Savings</p>
+          <p className="text-xs text-slate-500">Annual electric bill without solar vs. with solar</p>
+        </div>
+        <div className="flex gap-3 text-xs text-slate-400">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(100,116,139,0.70)' }} />
+            Without solar
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(52,211,153,0.78)' }} />
+            With solar
+          </span>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 320, maxHeight: 185 }}>
+          {[0.25, 0.5, 0.75, 1].map(p => {
+            const y = yOf(maxBill * p)
+            return (
+              <g key={p}>
+                <line x1={pL} y1={y} x2={W - pR} y2={y} stroke="rgba(255,255,255,0.05)" strokeWidth={0.5} />
+                <text x={pL - 4} y={y + 3.5} textAnchor="end" fontSize={7} fill="#475569">
+                  ${Math.round(maxBill * p / 1000)}k
+                </text>
+              </g>
+            )
+          })}
+          {yearData.map((d, i) => {
+            const xBase = pL + i * colW + colW * 0.07
+            const beforeH = Math.max(1, baseY - yOf(d.withoutSolar))
+            const afterH = Math.max(1, baseY - yOf(d.withSolar))
+            return (
+              <g key={d.year}>
+                <rect x={xBase} y={baseY - beforeH} width={barW} height={beforeH} fill="rgba(100,116,139,0.62)" rx={1} />
+                <rect x={xBase + barW + 1} y={baseY - afterH} width={barW} height={afterH} fill="rgba(52,211,153,0.75)" rx={1} />
+                {d.year % 5 === 0 && (
+                  <text x={xBase + barW} y={H - 5} textAnchor="middle" fontSize={7} fill="#475569">
+                    Yr{d.year}
+                  </text>
+                )}
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+      <ChartNote>
+        Assumes {ESCALATION_RATE * 100}%/yr utility escalation; solar remainder escalates ~35% as fast (minimal fixed charges). Modeled estimate — not a financial projection.
+      </ChartNote>
+    </div>
+  )
+}
+
+function CostOfElectricityChart({
+  baseImportRate,
+  systemCost,
+  solarSizeKw,
+  utility,
+}: {
+  baseImportRate: number
+  systemCost: number
+  solarSizeKw: number
+  utility: Utility
+}) {
+  const peakSunHours = utility === 'IID' ? 6.2 : 5.5
+  const annualProductionKwh = solarSizeKw * peakSunHours * 365 * 0.78
+  const lcoe =
+    systemCost > 0 && annualProductionKwh > 0
+      ? systemCost / (annualProductionKwh * 25)
+      : baseImportRate * 0.45
+
+  const years = Array.from({ length: 20 }, (_, i) => ({
+    year: i + 1,
+    utilityRate: baseImportRate * Math.pow(1 + ESCALATION_RATE, i),
+    solarRate: lcoe,
+  }))
+
+  const maxRate = Math.max(0.01, ...years.map(y => y.utilityRate)) * 1.15
+
+  const W = 540; const H = 160; const pL = 46; const pR = 10; const pT = 12; const pB = 28
+  const cW = W - pL - pR; const cH = H - pT - pB
+  const xOf = (year: number) => pL + ((year - 1) / 19) * cW
+  const yOf = (v: number) => pT + cH - (v / maxRate) * cH
+
+  const utilityPath = years
+    .map((y, i) => `${i === 0 ? 'M' : 'L'}${xOf(y.year).toFixed(1)},${yOf(y.utilityRate).toFixed(1)}`)
+    .join(' ')
+  const solarY = yOf(lcoe)
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-slate-100">Cost of Electricity — 20 Year View</p>
+          <p className="text-xs text-slate-500">{utility} rate path vs. modeled solar LCOE</p>
+        </div>
+        <div className="flex gap-3 text-xs text-slate-400">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-0.5 w-5 bg-slate-500/80" />
+            Utility rate
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-0.5 w-5" style={{ background: 'rgba(251,191,36,0.85)' }} />
+            Solar LCOE
+          </span>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 300, maxHeight: 175 }}>
+          {[0.25, 0.5, 0.75, 1].map(p => {
+            const y = yOf(maxRate * p)
+            return (
+              <g key={p}>
+                <line x1={pL} y1={y} x2={W - pR} y2={y} stroke="rgba(255,255,255,0.05)" strokeWidth={0.5} />
+                <text x={pL - 4} y={y + 3.5} textAnchor="end" fontSize={7} fill="#475569">
+                  ${(maxRate * p).toFixed(2)}
+                </text>
+              </g>
+            )
+          })}
+          <line
+            x1={pL} y1={solarY}
+            x2={W - pR} y2={solarY}
+            stroke="rgba(251,191,36,0.72)"
+            strokeWidth={1.5}
+            strokeDasharray="5,3"
+          />
+          <text x={W - pR - 2} y={solarY - 4} textAnchor="end" fontSize={7} fill="rgba(251,191,36,0.85)">
+            ~${lcoe.toFixed(3)}/kWh
+          </text>
+          <path d={utilityPath} fill="none" stroke="rgba(100,116,139,0.80)" strokeWidth={1.5} strokeLinejoin="round" />
+          {[1, 5, 10, 15, 20].map(y => (
+            <text key={y} x={xOf(y)} y={H - 5} textAnchor="middle" fontSize={7} fill="#475569">
+              Yr{y}
+            </text>
+          ))}
+        </svg>
+      </div>
+      <ChartNote>
+        LCOE = system cost ÷ (25-yr production in kWh). {utility} rate escalation: {ESCALATION_RATE * 100}%/yr modeled. Assumes flat module degradation of ~0.5%/yr.
+      </ChartNote>
+    </div>
+  )
+}
+
+function CumulativeSavingsChart({
+  annualBillBefore,
+  annualBillAfter,
+  systemCost,
+}: {
+  annualBillBefore: number
+  annualBillAfter: number
+  systemCost: number
+}) {
+  const yearData = generate25YearData(annualBillBefore, annualBillAfter)
+  const maxCumulative = Math.max(1, yearData[24].cumulative) * 1.12
+  const paybackIdx = yearData.findIndex(d => d.cumulative >= systemCost)
+  const paybackYear = paybackIdx >= 0 ? yearData[paybackIdx].year : null
+
+  const W = 540; const H = 160; const pL = 48; const pR = 10; const pT = 12; const pB = 28
+  const cW = W - pL - pR; const cH = H - pT - pB
+  const xOf = (year: number) => pL + ((year - 1) / 24) * cW
+  const yOf = (v: number) => pT + cH - (v / maxCumulative) * cH
+  const baseY = pT + cH
+
+  const cumulativePath = yearData
+    .map((d, i) => `${i === 0 ? 'M' : 'L'}${xOf(d.year).toFixed(1)},${yOf(d.cumulative).toFixed(1)}`)
+    .join(' ')
+  const cumulativeFill = [
+    `M${xOf(1)},${baseY}`,
+    ...yearData.map(d => `L${xOf(d.year).toFixed(1)},${yOf(d.cumulative).toFixed(1)}`),
+    `L${xOf(25)},${baseY}`,
+    'Z',
+  ].join(' ')
+
+  const costY = systemCost > 0 && systemCost < maxCumulative ? yOf(systemCost) : null
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-slate-100">Cumulative Savings — 25 Years</p>
+          <p className="text-xs text-slate-500">Total modeled bill savings accumulated year by year</p>
+        </div>
+        {paybackYear !== null && (
+          <div className="rounded-md border border-cyan-700/40 bg-cyan-950/20 px-2.5 py-1 text-xs font-semibold text-cyan-200">
+            ~Yr {paybackYear} modeled payback
+          </div>
+        )}
+      </div>
+      <div className="overflow-x-auto">
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 300, maxHeight: 175 }}>
+          {[0.25, 0.5, 0.75, 1].map(p => {
+            const y = yOf(maxCumulative * p)
+            return (
+              <g key={p}>
+                <line x1={pL} y1={y} x2={W - pR} y2={y} stroke="rgba(255,255,255,0.05)" strokeWidth={0.5} />
+                <text x={pL - 4} y={y + 3.5} textAnchor="end" fontSize={7} fill="#475569">
+                  ${Math.round(maxCumulative * p / 1000)}k
+                </text>
+              </g>
+            )
+          })}
+          {costY !== null && (
+            <>
+              <line x1={pL} y1={costY} x2={W - pR} y2={costY} stroke="rgba(248,113,113,0.45)" strokeWidth={1} strokeDasharray="3,3" />
+              <text x={W - pR - 2} y={costY - 3} textAnchor="end" fontSize={6.5} fill="rgba(248,113,113,0.70)">
+                System cost
+              </text>
+            </>
+          )}
+          <path d={cumulativeFill} fill="rgba(52,211,153,0.10)" />
+          <path d={cumulativePath} fill="none" stroke="rgba(52,211,153,0.82)" strokeWidth={1.5} strokeLinejoin="round" />
+          {paybackYear !== null && costY !== null && (
+            <circle cx={xOf(paybackYear)} cy={costY} r={3} fill="rgba(52,211,153,0.85)" />
+          )}
+          {[1, 5, 10, 15, 20, 25].map(y => (
+            <text key={y} x={xOf(y)} y={H - 5} textAnchor="middle" fontSize={7} fill="#475569">
+              Yr{y}
+            </text>
+          ))}
+        </svg>
+      </div>
+      <ChartNote>
+        Cumulative bill savings vs. no-solar baseline. System cost line shown as rough payback reference. Not a financial guarantee or projection.
+      </ChartNote>
+    </div>
+  )
+}
+
+function PaymentComparisonChart({
+  avgBeforeBill,
+  avgAfterBill,
+  systemCost,
+  hasBattery,
+}: {
+  avgBeforeBill: number
+  avgAfterBill: number
+  systemCost: number
+  hasBattery: boolean
+}) {
+  const loanPayment = getMonthlyLoanPayment(systemCost)
+  const netMonthly = avgAfterBill + loanPayment
+  const maxVal = Math.max(1, avgBeforeBill, netMonthly) * 1.15
+
+  const bars: Array<{ label: string; sublabel: string; value: number; color: string; textColor: string }> = [
+    {
+      label: 'No Solar',
+      sublabel: 'Current avg monthly bill',
+      value: avgBeforeBill,
+      color: 'rgba(100,116,139,0.75)',
+      textColor: 'text-slate-400',
+    },
+    {
+      label: 'New Electric Bill',
+      sublabel: 'After solar applied',
+      value: avgAfterBill,
+      color: hasBattery ? 'rgba(52,211,153,0.80)' : 'rgba(251,191,36,0.80)',
+      textColor: hasBattery ? 'text-emerald-300' : 'text-amber-300',
+    },
+    {
+      label: 'Loan Payment',
+      sublabel: '25 yr @ 6.99% APR',
+      value: loanPayment,
+      color: 'rgba(96,165,250,0.75)',
+      textColor: 'text-blue-300',
+    },
+    {
+      label: 'Total w/ Solar',
+      sublabel: 'Electric bill + loan',
+      value: netMonthly,
+      color: 'rgba(167,139,250,0.75)',
+      textColor: 'text-violet-300',
+    },
+  ]
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+      <div className="mb-4">
+        <p className="text-sm font-semibold text-slate-100">Payment Comparison</p>
+        <p className="text-xs text-slate-500">Modeled monthly cost breakdown — not a financing offer</p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {bars.map(bar => {
+          const pct = Math.min(100, (bar.value / maxVal) * 100)
+          return (
+            <div key={bar.label} className="rounded-lg border border-slate-800 bg-slate-900/50 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                {bar.label}
+              </p>
+              <p className="mt-3 text-xl font-semibold text-white">
+                {formatMoney(bar.value)}
+                <span className="text-xs font-normal text-slate-500">/mo</span>
+              </p>
+              <div className="mt-2 h-1.5 rounded-full bg-slate-800">
+                <div
+                  className="h-1.5 rounded-full transition-all"
+                  style={{ width: `${pct}%`, background: bar.color }}
+                />
+              </div>
+              <p className={`mt-2 text-xs ${bar.textColor}`}>{bar.sublabel}</p>
+            </div>
+          )
+        })}
+      </div>
+      <p className="mt-3 text-[10px] leading-4 text-slate-600">
+        Loan modeled at 25-year term, 6.99% APR, full financed system cost. Actual financing terms, rates, and down payment will vary. This is not a financing offer or disclosure.
+      </p>
+    </div>
+  )
+}
+
+function SummaryChartModule({
+  nemResult,
+  hasBattery,
+  monthlyKwh,
+  solarSizeKw,
+  avgBeforeBill,
+  avgAfterBill,
+  systemCost,
+  utility,
+  ratePlan,
+}: {
+  nemResult: ReturnType<typeof calculateNEM3Savings>
+  hasBattery: boolean
+  monthlyKwh: number
+  solarSizeKw: number
+  avgBeforeBill: number
+  avgAfterBill: number
+  systemCost: number
+  utility: Utility
+  ratePlan: RatePlan
+}) {
+  const [activeChart, setActiveChart] = useState<ChartTab>('monthly_bill')
+
+  return (
+    <div className="mb-4 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/60">
+      <div className="flex flex-wrap border-b border-slate-800 bg-slate-900/40">
+        {CHART_TABS.map(tab => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveChart(tab.id)}
+            className={`whitespace-nowrap px-3.5 py-2.5 text-xs font-semibold transition-colors ${
+              activeChart === tab.id
+                ? 'border-b-2 border-cyan-400 bg-slate-950/70 text-cyan-300'
+                : 'text-slate-500 hover:bg-slate-900/60 hover:text-slate-300'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <div className="p-4">
+        {activeChart === 'monthly_bill' && (
+          <BillComparisonChart monthlyBreakdown={nemResult.monthly_breakdown} hasBattery={hasBattery} />
+        )}
+        {activeChart === 'energy_flow_24h' && (
+          <EnergyFlow24hChart monthlyKwh={monthlyKwh} solarSizeKw={solarSizeKw} hasBattery={hasBattery} />
+        )}
+        {activeChart === 'yr25_savings' && (
+          <TwentyFiveYearSavingsChart
+            annualBillBefore={avgBeforeBill * 12}
+            annualBillAfter={avgAfterBill * 12}
+          />
+        )}
+        {activeChart === 'cost_electricity' && (
+          <CostOfElectricityChart
+            baseImportRate={getAverageImportRate(ratePlan)}
+            systemCost={systemCost}
+            solarSizeKw={solarSizeKw}
+            utility={utility}
+          />
+        )}
+        {activeChart === 'cumulative_savings' && (
+          <CumulativeSavingsChart
+            annualBillBefore={avgBeforeBill * 12}
+            annualBillAfter={avgAfterBill * 12}
+            systemCost={systemCost}
+          />
+        )}
+        {activeChart === 'payment_comparison' && (
+          <PaymentComparisonChart
+            avgBeforeBill={avgBeforeBill}
+            avgAfterBill={avgAfterBill}
+            systemCost={systemCost}
+            hasBattery={hasBattery}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
 function EstimateSummaryStep({
   data,
   updateField,
@@ -1007,12 +1597,49 @@ function EstimateSummaryStep({
       ? 'Not entered'
       : `${data.homeSizeSqft.toLocaleString()} sq ft`
 
+  const [savedSnapshot, setSavedSnapshot] = useState<SavedEstimateSnapshot | null>(null)
+
+  const handleSave = useCallback(() => {
+    setSavedSnapshot({
+      savedAt: new Date(),
+      solarSizeKw,
+      batterySizeKwh,
+      systemCost,
+      avgMonthlyBefore: avgBeforeBill,
+      avgMonthlyAfter: avgAfterBill,
+      utility: data.utilityProvider ?? 'SCE',
+      ratePlan: data.ratePlan,
+      address: data.selectedAddressLabel || data.addressText || 'Not entered',
+    })
+  }, [solarSizeKw, batterySizeKwh, systemCost, avgBeforeBill, avgAfterBill, data])
+
   return (
     <div>
       <SectionIntro icon={BarChart3} eyebrow="Step 05" title="Estimate summary">
         This is a conservative planning estimate from the interview inputs. It is not a final quote,
         interconnection study, financing disclosure, or guaranteed utility bill outcome.
       </SectionIntro>
+
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        {savedSnapshot ? (
+          <div className="flex items-center gap-2 rounded-md border border-emerald-700/50 bg-emerald-950/20 px-3 py-2">
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+            <span className="text-xs font-medium text-emerald-300">
+              Estimate saved in this session —{' '}
+              {savedSnapshot.savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </div>
+        ) : (
+          <div />
+        )}
+        <button
+          type="button"
+          onClick={handleSave}
+          className="rounded-md border border-cyan-700/50 bg-cyan-900/20 px-3 py-2 text-xs font-semibold text-cyan-200 transition-colors hover:border-cyan-600 hover:bg-cyan-900/40"
+        >
+          {savedSnapshot ? 'Update saved estimate' : 'Save project estimate'}
+        </button>
+      </div>
 
       <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
@@ -1057,13 +1684,17 @@ function EstimateSummaryStep({
         </div>
       </div>
 
-      <div className="mb-4 grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(300px,0.75fr)]">
-        <BillComparisonChart monthlyBreakdown={nemResult.monthly_breakdown} hasBattery={hasBattery} />
-        <ConsumptionProfileChart
-          monthlyKwh={monthlyKwh}
-          annualProductionKwh={nemResult.system_info.annual_production_kwh}
-        />
-      </div>
+      <SummaryChartModule
+        nemResult={nemResult}
+        hasBattery={hasBattery}
+        monthlyKwh={monthlyKwh}
+        solarSizeKw={solarSizeKw}
+        avgBeforeBill={avgBeforeBill}
+        avgAfterBill={avgAfterBill}
+        systemCost={systemCost}
+        utility={utility}
+        ratePlan={ratePlan}
+      />
 
       <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
         <ClipboardList className="h-3.5 w-3.5" />

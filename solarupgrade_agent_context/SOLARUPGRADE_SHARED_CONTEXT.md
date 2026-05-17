@@ -757,7 +757,7 @@ Agents should not assume approval to continue beyond their active phase.
 # LATEST PHASE STATUS
 
 Latest completed phase:
-Visual Polish Pass 2 — Summary chart, map preview, summary hierarchy
+Summary Chart Tabs + Local Save — 6-subtab chart module and Save project estimate button
 
 Latest completed commits:
 - Phase 1: `72193d5`, `ed7bf01`
@@ -767,15 +767,16 @@ Latest completed commits:
 - Phase 5: see Phase 5 completion log below
 - Polish pass (post Phase 5): `ce2be20`
 - Visual Polish Pass 2: `0cbfe7c`
+- Summary Chart Tabs + Local Save: see completion log below
 
 Current ready phase:
-No active build phase. Ready for final screenshot QA.
+No active build phase. Ready for screenshot QA on the 6-tab chart module and Save button.
 
 Current risk level:
-Low. Visual polish only — no formula, persistence, Supabase, or structural changes. Typecheck passes clean.
+Low. New SVG chart components added inside SolarEstimateTab.tsx only. No formula, persistence, Supabase, or structural changes. Typecheck passes clean.
 
 Recommended action:
-Run final screenshot QA on the Solar Estimate tab: check the Summary chart renders visible bars, the Address step shows the premium fallback card when Maps is unavailable, and the Summary hierarchy feels readable. Do not proceed into a new build phase without user review.
+Screenshot QA on the Solar Estimate Summary step: verify all 6 chart tabs switch cleanly, charts render visible data when estimate inputs exist, and "Save project estimate" button shows the saved confirmation badge on click. Do not proceed into a new build phase without user review.
 
 ---
 
@@ -1161,3 +1162,61 @@ NO active build phase. Ready for final screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Visual Polish Pass 2 on `src/components/solarTraining/SolarEstimateTab.tsx`. Fixed: BillComparisonChart now renders an SVG chart with grid lines, y-axis dollar labels, and clearly visible before/after bars matching NEM 3.0 style; AddressMapPreview fallback card now shows address + lat/lng + "Map preview unavailable" when Maps is unavailable; !center state shows typed address with "Awaiting pin" prompt; EstimateSummaryStep has "Interview inputs" section header above review rows and tighter chart spacing. No formulas, types, persistence, Supabase, or structural changes. Typecheck passes. Branch ready for final screenshot QA.
+
+---
+
+# SUMMARY CHART TABS + LOCAL SAVE COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+Pending — see report
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+WHAT CHANGED:
+- Replaced the 2-chart grid in EstimateSummaryStep (BillComparisonChart + ConsumptionProfileChart side-by-side) with a 6-tab SummaryChartModule.
+- Chart tabs: Monthly Bill | 24H Flow | 25 Yr Savings | Elec. Cost | Cumulative | Payments.
+- Tab 1 (Monthly Bill): reuses existing SVG BillComparisonChart — before/after bars by month.
+- Tab 2 (24H Flow): new SVG chart — Gaussian solar curve (yellow fill) + load line (blue), hourly modeled from monthlyKwh and solarSizeKw.
+- Tab 3 (25 Yr Savings): new SVG grouped bar chart — annual bill without solar vs. with solar over 25 years, 4% utility escalation assumed.
+- Tab 4 (Elec. Cost): new SVG line chart — utility rate escalation path vs. flat solar LCOE line over 20 years.
+- Tab 5 (Cumulative): new SVG area/line chart — cumulative modeled savings 1–25 yr, with system cost payback reference line and dot.
+- Tab 6 (Payments): card-based comparison — No Solar / New Electric Bill / Loan Payment (25yr @6.99% APR) / Total w/ Solar + loan.
+- Added Save project estimate button in EstimateSummaryStep header row; on click shows "Estimate saved in this session — HH:MM" with emerald badge. Button becomes "Update saved estimate" after first save. Snapshot stored in local useState — no Supabase, no localStorage, no persistence outside the tab session.
+- Added ChartTab type, CHART_TABS constant, SavedEstimateSnapshot type, ESCALATION_RATE constant, generate25YearData, generate24hProfile, getMonthlyLoanPayment helper functions.
+
+WHAT WAS LEARNED:
+- SVG viewBox chart pattern scales cleanly across all 6 chart types without new packages.
+- All chart data derives entirely from existing nemResult, monthlyKwh, solarSizeKw, avgBeforeBill, avgAfterBill, systemCost already computed in EstimateSummaryStep — no new data sources.
+- SummaryChartModule useState for activeChart is self-contained; the 6 chart components are lazy (only the active tab renders).
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Subtab chart module pattern: wrapper div with flex tab bar (border-b) + chart content div. border-b-2 border-cyan-400 active state. Reuse for any future multi-chart panel.
+- generate25YearData / generate24hProfile: reusable local helpers for solar planning visuals. ESCALATION_RATE=0.04 is the single source of truth for all 25-year projections.
+- SavedEstimateSnapshot type: minimal session-only save pattern — useState, no persistence, clear UI feedback. Reuse for other "save in session" patterns.
+
+BUGS / RISKS:
+- All chart values are modeled estimates; label copy clearly says "modeled estimate — not a financial projection."
+- Loan payment assumptions (25yr, 6.99% APR, no down payment) are rough — actual financing will differ.
+- 24H Energy Flow battery dispatch is not modeled; only noted as "Battery mode" label when hasBattery is true.
+- ConsumptionProfileChart is still defined in the file but no longer called (BillComparisonChart is now inside SummaryChartModule tab 1). noUnusedLocals: false so typecheck passes.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE READY:
+NO — no next build phase defined. Ready for screenshot QA on the 6-tab chart module.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Summary Chart Tabs + Local Save added to `src/components/solarTraining/SolarEstimateTab.tsx`. EstimateSummaryStep now has a 6-tab SummaryChartModule replacing the old 2-chart grid: Monthly Bill (SVG bars), 24H Flow (SVG solar+load curves), 25 Yr Savings (SVG grouped bars), Elec. Cost (SVG LCOE vs rate lines), Cumulative (SVG area+line with payback dot), Payments (card grid). Save project estimate button in summary header stores a local session snapshot with emerald confirmation badge. All chart data derived from existing computed values — no new data sources, no Supabase, no localStorage. Typecheck passes.

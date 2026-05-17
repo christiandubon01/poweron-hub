@@ -512,3 +512,65 @@ NO — no active build phase defined. Branch ready for final screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Visual Polish Pass 2 on `src/components/solarTraining/SolarEstimateTab.tsx`. BillComparisonChart is now an SVG chart with grid lines, y-axis dollar labels, and clearly visible bars. AddressMapPreview fallback card shows address + lat/lng + "Map preview unavailable" when Maps is unavailable; !center shows typed address with "Awaiting pin" prompt. EstimateSummaryStep has "Interview inputs" label above review rows. No formulas, types, persistence, Supabase, or structural changes. Typecheck passes. Commit: 0cbfe7c.
+
+---
+
+## SUMMARY CHART TABS + LOCAL SAVE COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+Pending — see report
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Summary Chart Tabs + Local Save
+
+WHAT CHANGED:
+- Added 6-tab SummaryChartModule replacing the 2-chart grid in EstimateSummaryStep.
+- Added Save project estimate button with local session-only snapshot and emerald confirmation badge.
+- Added ChartTab type, CHART_TABS, SavedEstimateSnapshot type, ESCALATION_RATE constant.
+- Added generate25YearData, generate24hProfile, getMonthlyLoanPayment helpers.
+- Added chart components: EnergyFlow24hChart, TwentyFiveYearSavingsChart, CostOfElectricityChart, CumulativeSavingsChart, PaymentComparisonChart, SummaryChartModule.
+
+WHAT WAS LEARNED:
+- All 6 chart datasets derive from values already computed in EstimateSummaryStep — no new API, data source, or external dependency needed.
+- SVG viewBox pattern (established in Polish Pass 2) scales to all chart types cleanly.
+- SummaryChartModule activeChart useState is self-contained — only the visible tab's chart renders.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Multi-tab SVG chart module pattern: div wrapper with flex tab bar + chart area. Active tab uses border-b-2 border-cyan-400. Compact and reusable.
+- generate25YearData reusable for any future 25-year solar projection chart.
+- Session-only save pattern: useState<SnapshotType | null>, button toggles label, emerald badge on saved state.
+
+BUGS / RISKS:
+- Loan rate assumption (6.99% APR) is a rough planning figure only. Clearly labeled.
+- 24H battery dispatch not modeled — noted as Battery mode label.
+- ConsumptionProfileChart still defined but unused; noUnusedLocals: false prevents typecheck failure.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+None. Ready for screenshot QA.
+
+NEXT PHASE ADJUSTMENTS:
+- If chart tab labels need shortening for mobile, target CHART_TABS label strings in SolarEstimateTab.tsx only.
+- If Payment tab loan assumptions need updating, target getMonthlyLoanPayment and the PaymentComparisonChart sublabel strings.
+
+NEXT PHASE READY:
+NO — no next build phase defined.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Summary Chart Tabs + Local Save added to `src/components/solarTraining/SolarEstimateTab.tsx`. EstimateSummaryStep now has a 6-tab SummaryChartModule replacing the old 2-chart grid. Save project estimate button stores a local session snapshot. All chart data from existing computed values. No new packages, Supabase, localStorage, or formula changes. Typecheck passes clean.
