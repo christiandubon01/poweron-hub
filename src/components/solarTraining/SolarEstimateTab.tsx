@@ -202,9 +202,9 @@ const CONSUMPTION_SEASONAL_WEIGHTS: Record<ClimateProfile, readonly number[]> = 
 
 const SOLAR_PRODUCTION_SEASONAL_WEIGHTS = [0.72, 0.80, 0.95, 1.08, 1.18, 1.24, 1.23, 1.14, 1.02, 0.90, 0.74, 0.70] as const
 
-const CLIMATE_PROFILE_LABEL: Record<ClimateProfile, string> = {
-  hotDesert: 'Hot desert seasonal profile applied from project address. Summer AC load is weighted higher.',
-  defaultSouthernCalifornia: 'Default Southern California seasonal profile applied.',
+const CLIMATE_PROFILE_SHORT_LABEL: Record<ClimateProfile, string> = {
+  hotDesert: 'Hot desert',
+  defaultSouthernCalifornia: 'Southern California',
 }
 
 type SavedEstimateSnapshot = {
@@ -610,20 +610,6 @@ function estimateSystemCost(systemSizeKw: number, batterySizeKwh: number, hasBat
   return Math.round((solarCost + batteryCost) / 500) * 500
 }
 
-function getRateRecommendation(data: SolarEstimateData): string {
-  if (data.utilityProvider === 'SCE') {
-    return data.systemMode === 'solar_plus_battery'
-      ? 'SCE TOU-D-PRIME is the preferred estimate path because the battery can shift midday solar into 4-9 PM peak hours.'
-      : 'SCE TOU-D-PRIME is modeled conservatively; add a battery option when the customer wants stronger NEM 3.0 self-consumption.'
-  }
-
-  if (data.utilityProvider === 'IID') {
-    return 'IID rates are generally lower than SCE, so this summary keeps savings expectations conservative and focuses on bill reduction.'
-  }
-
-  return 'Select a utility and rate plan to tighten the recommendation. This draft uses conservative Southern California assumptions.'
-}
-
 function findLabel<T extends string>(options: Array<{ id: T; label: string }>, id: T | null): string {
   if (!id) return 'Not selected'
   return options.find(option => option.id === id)?.label ?? id
@@ -691,7 +677,7 @@ function SectionIntro({
   icon: React.ComponentType<{ className?: string }>
   eyebrow: string
   title: string
-  children: React.ReactNode
+  children?: React.ReactNode
 }) {
   return (
     <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -701,7 +687,7 @@ function SectionIntro({
           {eyebrow}
         </div>
         <h3 className="text-lg font-semibold text-white">{title}</h3>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">{children}</p>
+        {children && <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">{children}</p>}
       </div>
     </div>
   )
@@ -1959,6 +1945,7 @@ function SeasonalBillChart({
   batterySizeKwh,
   climateProfile,
   anchorMonthLabel,
+  ratePlanLabel,
 }: {
   monthlyKwhByMonth: number[]
   solarSizeKw: number
@@ -1967,6 +1954,7 @@ function SeasonalBillChart({
   batterySizeKwh: number
   climateProfile: ClimateProfile
   anchorMonthLabel: string
+  ratePlanLabel: string
 }) {
   const [tooltip, setTooltip] = useState<ChartTooltip | null>(null)
   const months = getSeasonalBillData(monthlyKwhByMonth, solarSizeKw, utility, climateProfile, batterySizeKwh)
@@ -1984,40 +1972,39 @@ function SeasonalBillChart({
 
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
-      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <div>
+      <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
           <p className="text-xl font-semibold text-slate-100">Monthly bill comparison</p>
-          <p className="text-lg text-slate-400">Before solar vs modeled post-solar</p>
-          <p className="mt-1 text-xs text-slate-500">
-            {hasBattery
-              ? 'Solar Only and Solar Plus Battery projections are shown together so battery impact can be compared month by month.'
-              : 'Solar Only projection shown against current monthly bill.'}
-          </p>
-          <p className="mt-0.5 text-xs text-slate-600">
-            {climateProfile === 'hotDesert'
-              ? `Hot desert profile · anchored to ${anchorMonthLabel}`
-              : `Southern California profile · anchored to ${anchorMonthLabel}`}
-          </p>
-          <p className="mt-1 text-xs leading-5 text-slate-500">
-            Projected bills use conservative NEM 3.0 import/export modeling. Solar Only savings are limited by daytime
-            self-consumption; battery savings are modeled as shifted export energy.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-400">
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(100,116,139,0.75)' }} />
-            Current bill
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(251,191,36,0.90)' }} />
-            Solar only
-          </span>
-          {hasBattery && (
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(52,211,153,0.90)' }} />
-              Solar + battery
+          <p className="text-lg text-slate-400">Before vs modeled post-solar</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <span className="rounded-full border border-slate-700/70 bg-slate-900/70 px-2.5 py-1 text-[11px] font-medium text-slate-300">
+              Anchored Month: {anchorMonthLabel}
             </span>
-          )}
+            <span className="rounded-full border border-slate-700/70 bg-slate-900/70 px-2.5 py-1 text-[11px] font-medium text-slate-300">
+              Profile: {CLIMATE_PROFILE_SHORT_LABEL[climateProfile]}
+            </span>
+          </div>
+        </div>
+        <div className="flex min-w-0 flex-col items-start gap-2 lg:items-end">
+          <span className="max-w-full rounded-full border border-cyan-500/30 bg-cyan-950/30 px-3 py-1.5 text-right text-[11px] font-semibold text-cyan-100">
+            {ratePlanLabel}
+          </span>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-400 lg:justify-end">
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(100,116,139,0.75)' }} />
+              Current bill
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(251,191,36,0.90)' }} />
+              Solar only
+            </span>
+            {hasBattery && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(52,211,153,0.90)' }} />
+                Solar + battery
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -2107,7 +2094,6 @@ function SeasonalBillChart({
         </svg>
       </div>
       <ChartHoverCard tooltip={tooltip} />
-      <ChartNote>{CLIMATE_PROFILE_LABEL[climateProfile]}</ChartNote>
     </div>
   )
 }
@@ -2915,6 +2901,7 @@ function SummaryChartModule({
   ratePlan,
   climateProfile,
   anchorMonthLabel,
+  ratePlanLabel,
 }: {
   nemResult: ReturnType<typeof calculateNEM3Savings>
   hasBattery: boolean
@@ -2929,6 +2916,7 @@ function SummaryChartModule({
   ratePlan: RatePlan
   climateProfile: ClimateProfile
   anchorMonthLabel: string
+  ratePlanLabel: string
 }) {
   const [activeChart, setActiveChart] = useState<ChartTab>('monthly_bill')
 
@@ -2960,6 +2948,7 @@ function SummaryChartModule({
             batterySizeKwh={batterySizeKwh}
             climateProfile={climateProfile}
             anchorMonthLabel={anchorMonthLabel}
+            ratePlanLabel={ratePlanLabel}
           />
         )}
         {activeChart === 'energy_flow_24h' && (
@@ -3220,10 +3209,7 @@ function EstimateSummaryStep({
 
   return (
     <div>
-      <SectionIntro icon={BarChart3} eyebrow="Step 05" title="Estimate summary">
-        This is a conservative planning estimate from the interview inputs. It is not a final quote,
-        interconnection study, financing disclosure, or guaranteed utility bill outcome.
-      </SectionIntro>
+      <SectionIntro icon={BarChart3} eyebrow="Step 05" title="Estimate summary" />
 
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         {saveStatus === 'saved' ? (
@@ -3275,19 +3261,6 @@ function EstimateSummaryStep({
         />
       </div>
 
-      {/* B. Rate recommendation */}
-      <div className="mb-5 rounded-lg border border-cyan-700/40 bg-cyan-950/20 p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold text-cyan-100">Rate recommendation</p>
-            <p className="mt-1 text-sm leading-6 text-slate-400">{getRateRecommendation(data)}</p>
-          </div>
-          <div className="shrink-0 rounded-md border border-cyan-500/30 bg-slate-950/50 px-3 py-2 text-xs font-semibold text-cyan-200">
-            {ratePlanLabel}
-          </div>
-        </div>
-      </div>
-
       {/* C. Chart rendering */}
       <SummaryChartModule
         nemResult={nemResult}
@@ -3303,6 +3276,7 @@ function EstimateSummaryStep({
         ratePlan={ratePlan}
         climateProfile={climateProfile}
         anchorMonthLabel={anchorMonthLabel}
+        ratePlanLabel={ratePlanLabel}
       />
 
       {/* D. Editable System Controls */}
