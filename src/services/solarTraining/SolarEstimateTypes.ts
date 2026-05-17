@@ -139,8 +139,8 @@ export const DEFAULT_ESTIMATE_DATA: SolarEstimateData = {
 
 export const ESTIMATE_STEPS: EstimateStep[] = [
   'address',
-  'home_details',
   'energy_use',
+  'home_details',
   'system_config',
   'estimate_summary',
 ];

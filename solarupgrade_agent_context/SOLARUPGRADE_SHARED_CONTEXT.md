@@ -1870,3 +1870,55 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Scoped Step 2 Home Details appliance selector fix complete. `selectedAppliances` is now typed as `{ id: SolarEstimateAppliance; amps?: number }[]`, with normalization for older string-array saved estimates/drafts. Step 2 shows all ten appliance options in an inline scrollable panel, uses icons and selected states, and reveals a numeric `Amps` input only for selected appliances. Step 5 interview inputs show appliance load summaries like `EV charger — 50A`. Typecheck passes. No Step 1 Address/map, summary charts, estimate math, NEM formulas, Supabase, packages, or unrelated tabs changed.
+
+---
+
+# SOLAR ESTIMATE ENERGY-FIRST STEP ORDER COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `src/services/solarTraining/SolarEstimateTypes.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Reordered the Solar Estimate interview flow to Address, Energy Use, Home Details, System Config, Summary.
+- Updated `ESTIMATE_STEPS` so Next from Address goes to Energy Use, Next from Energy Use goes to Home Details, and Back from Home Details returns to Energy Use.
+- Reordered `STEP_META` so the step cards display Energy Use before Home Details.
+- Changed Energy Use section eyebrow to `Step 02` and Home Details eyebrow to `Step 03`.
+
+WHAT WAS LEARNED:
+- Step navigation is driven by the semantic `ESTIMATE_STEPS` array, while the step cards are driven by `STEP_META`.
+- Saved estimates store semantic step IDs and full interview data, so reordering the array preserves existing data fields and does not require persistence migration.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Keep navigation order and card order in sync when the app has separate step-order and display-metadata arrays.
+- Use semantic step IDs for saved workflow state so UI order can change without losing saved estimate data.
+
+BUGS / RISKS:
+- Screenshot QA should verify the card order and Address/Energy/Home Back/Next flow in the browser.
+- No Energy Use, Home Details, System Config, Summary chart, estimate math, saved estimate storage, or Step 1 map content was redesigned.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Screenshot QA should confirm the step cards read Address, Energy Use, Home Details, System Config, Summary and that the active/completed indicators align with the new order.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Scoped Solar Estimate step order polish complete. `ESTIMATE_STEPS` now orders the flow as `address`, `energy_use`, `home_details`, `system_config`, `estimate_summary`, and `STEP_META` matches that card order. Energy Use displays `Step 02`; Home Details displays `Step 03`. Navigation now moves Address -> Energy Use -> Home Details -> System Config -> Summary, with Back following the reverse order. Saved estimate compatibility is preserved because existing data uses semantic step IDs and no fields were removed or renamed. Typecheck passes.

@@ -143,6 +143,39 @@ YES
 
 ---
 
+## ENERGY-FIRST STEP ORDER COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `src/services/solarTraining/SolarEstimateTypes.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Reordered the Solar Estimate step flow to Address, Energy Use, Home Details, System Config, Summary.
+- Updated `ESTIMATE_STEPS` and `STEP_META` to keep navigation, progress, and cards aligned.
+- Changed Energy Use to display `Step 02` and Home Details to display `Step 03`.
+
+SAVED ESTIMATE COMPATIBILITY:
+- Preserved. Saved estimates use semantic step IDs and full interview data, and no data fields were removed or renamed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+RISKS:
+- Screenshot QA should verify the new card order and Back/Next flow in-browser.
+
+READY FOR SCREENSHOT QA:
+YES
+
+---
+
 ## APPLIANCE LOAD SELECTOR COMPLETION LOG
 
 AGENT:

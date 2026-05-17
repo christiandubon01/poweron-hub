@@ -78,16 +78,16 @@ const STEP_META: StepMeta[] = [
     Icon: MapPin,
   },
   {
-    id: 'home_details',
-    label: 'Home Details',
-    description: 'Roof shade, ownership status, and property type.',
-    Icon: Home,
-  },
-  {
     id: 'energy_use',
     label: 'Energy Use',
     description: 'Utility provider, rate plan, and consumption input.',
     Icon: PlugZap,
+  },
+  {
+    id: 'home_details',
+    label: 'Home Details',
+    description: 'Roof shade, ownership status, and property type.',
+    Icon: Home,
   },
   {
     id: 'system_config',
@@ -846,7 +846,7 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 items-start">
       <div className="min-w-0 space-y-5">
-        <SectionIntro icon={Home} eyebrow="Step 02" title="Qualify the home details">
+        <SectionIntro icon={Home} eyebrow="Step 03" title="Qualify the home details">
           Capture the roof and property basics that will shape assumptions in the later estimate phase.
         </SectionIntro>
 
@@ -1052,7 +1052,7 @@ function EnergyUseStep({ data, updateField }: { data: SolarEstimateData; updateF
 
   return (
     <div>
-      <SectionIntro icon={PlugZap} eyebrow="Step 03" title="Capture energy use">
+      <SectionIntro icon={PlugZap} eyebrow="Step 02" title="Capture energy use">
         Select the utility, rate plan, and consumption method. The estimate summary will use these
         inputs to model monthly usage and bill comparisons.
       </SectionIntro>
