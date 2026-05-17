@@ -2041,3 +2041,58 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Solar Estimate admin cost settings are now local-only in `poweron.solarTraining.solarEstimateSettings`. Settings Hub has a Solar Estimate Settings card below HUNTER Home Base. `SolarEstimateSettings.ts` owns defaults, storage, normalization, and cost calculation. Step 4 no longer has a manual Install Cost slider; it shows a modeled settings-driven cost preview. Summary uses the settings-driven total as system cost and shows an internal breakdown. Typecheck passes.
+
+---
+
+# SOLAR ESTIMATE SETTINGS PLACEMENT AND COLLAPSE POLISH COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Committed; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/v15r/V15rSettingsPanel.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Moved Solar Estimate Settings below the full HUNTER Command Center block, after both HUNTER Home Base and Cron Run Status.
+- Added collapsible behavior for the HUNTER Command Center section with local persistence key `poweron.settings.hunterCommandCenter.collapsed`.
+- Added collapsible behavior for Solar Estimate Settings with local persistence key `poweron.settings.solarEstimateSettings.collapsed`.
+- Removed the Combined labor pill from the Solar Estimate Settings header.
+- Moved the combined crew labor rate into the Labor box under Installer 1, Installer 2, and Crew lead hourly rates.
+- Split Labor into two clear subdivisions: Hourly crew labor rates and Panel labor rate.
+- Kept the actual Solar Estimate settings values localStorage key unchanged: `poweron.solarTraining.solarEstimateSettings`.
+
+WHAT WAS LEARNED:
+- The previous placement split Home Base and Cron Run Status because Solar Estimate Settings was inside the HUNTER Command Center content stack.
+- The cleanest hierarchy is to keep HUNTER Command Center as one collapsible card body, then render Solar Estimate Settings as a sibling directly below it within HUNTER Operations.
+- The combined crew labor total is a UI-only subtotal and does not require changes to the Solar Estimate cost calculator.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Use separate localStorage keys for UI collapsed state so feature settings persistence remains isolated.
+- Keep collapsible content state near the section that owns the visual region, while sharing tiny load/save helpers.
+
+BUGS / RISKS:
+- Screenshot QA is still recommended for expanded/collapsed HUNTER Operations and Solar Estimate Settings states.
+- No Solar Estimate calculation logic, Solar Estimate tab UI, HUNTER geocoding logic, or Cron logic was changed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Screenshot QA should verify the Settings Hub order, collapsed headers, persisted collapse state after reload, and Labor box hierarchy.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Settings Hub polish complete. Solar Estimate Settings now renders below the full HUNTER Command Center section, after Cron Run Status. HUNTER Command Center collapses via `poweron.settings.hunterCommandCenter.collapsed`; Solar Estimate Settings collapses via `poweron.settings.solarEstimateSettings.collapsed`. Combined crew labor rate moved inside Labor under the three hourly role fields, and Cost per panel installed is visually separated as Panel labor rate. Typecheck passes.

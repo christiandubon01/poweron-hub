@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
-import { Settings, Download, Upload, RotateCcw, Save, Trash2, AlertCircle, Sparkles, FileText, Check, X, Loader2, Moon, Sun, Image, Copy, RefreshCw, Eye, EyeOff, Shield, Lock, TrendingUp, TrendingDown, Minus, BarChart2, Target, Zap, BookOpen, LogOut, UserPlus, Play, Square, Volume2 } from 'lucide-react'
+import { Settings, Download, Upload, RotateCcw, Save, Trash2, AlertCircle, Sparkles, FileText, Check, X, Loader2, Moon, Sun, Image, Copy, RefreshCw, Eye, EyeOff, Shield, Lock, TrendingUp, TrendingDown, Minus, BarChart2, Target, Zap, BookOpen, LogOut, UserPlus, Play, Square, Volume2, ChevronDown, ChevronRight } from 'lucide-react'
 import DemoInvite from '@/components/admin/DemoInvite'
 import { getLocalSkillMap, getLocalSkillSignals, getLocalDevelopmentLog, calculateDevelopmentRate, IDEAL_PROFILE, SKILL_DOMAINS } from '@/services/skillSignalExtractor'
 import type { SkillDomain, StoredSkillSignal } from '@/services/skillSignalExtractor'
@@ -62,6 +62,8 @@ import {
 
 // ── Settings Hub visibility persistence (Phase R1) ──────────────────────────
 const SETTINGS_HUB_VISIBILITY_KEY = 'poweron_settings_hub_visibility_v1'
+const HUNTER_COMMAND_CENTER_COLLAPSED_KEY = 'poweron.settings.hunterCommandCenter.collapsed'
+const SOLAR_ESTIMATE_SETTINGS_COLLAPSED_KEY = 'poweron.settings.solarEstimateSettings.collapsed'
 
 type SettingsHubVisibility = {
   showBusinessSetup: boolean
@@ -185,6 +187,24 @@ function loadSettingsHubVisibility(): SettingsHubVisibility {
   }
 }
 
+function loadCollapsedState(key: string, fallback = false): boolean {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null
+    if (raw == null) return fallback
+    return raw === 'true'
+  } catch {
+    return fallback
+  }
+}
+
+function saveCollapsedState(key: string, value: boolean): void {
+  try {
+    localStorage.setItem(key, String(value))
+  } catch {
+    /* localStorage may be unavailable; ignore */
+  }
+}
+
 // ── Synchronized diagonal glare (Phase R1) ──────────────────────────────────
 // Cards whose section is open share a single animation phase. We achieve this
 // with a negative animation-delay equal to (Date.now() % GLARE_ANIMATION_MS),
@@ -234,7 +254,12 @@ function SettingCard({ title, children }: { title: string; children: React.React
 function SolarEstimateSettingsPanel() {
   const [settings, setSettings] = useState<SolarEstimateSettings>(() => loadSolarEstimateSettings())
   const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle')
+  const [isCollapsed, setIsCollapsed] = useState(() => loadCollapsedState(SOLAR_ESTIMATE_SETTINGS_COLLAPSED_KEY))
   const combinedHourlyRate = getCombinedHourlyLaborRate(settings)
+
+  useEffect(() => {
+    saveCollapsedState(SOLAR_ESTIMATE_SETTINGS_COLLAPSED_KEY, isCollapsed)
+  }, [isCollapsed])
 
   const updateSetting = (key: keyof SolarEstimateSettings, value: number) => {
     const next = saveSolarEstimateSettings({ ...settings, [key]: Number.isFinite(value) && value >= 0 ? value : 0 })
@@ -290,17 +315,24 @@ function SolarEstimateSettingsPanel() {
 
   return (
     <div className="rounded-2xl border border-emerald-400/15 bg-gradient-to-br from-slate-950/95 via-emerald-950/20 to-slate-950/90 p-4 shadow-inner shadow-emerald-950/20">
-      <div className="flex flex-col gap-3 border-b border-emerald-400/10 pb-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className={`flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between ${isCollapsed ? '' : 'border-b border-emerald-400/10 pb-4'}`}>
         <div>
-          <h4 className="text-sm font-bold text-emerald-50">Solar Estimate Settings</h4>
+          <button
+            type="button"
+            onClick={() => setIsCollapsed(value => !value)}
+            className="group flex min-w-0 items-center gap-2 text-left"
+            aria-expanded={!isCollapsed}
+          >
+            <span className="rounded-lg border border-emerald-400/15 bg-emerald-400/10 p-1 text-emerald-200 transition-colors group-hover:border-emerald-400/35">
+              {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+            </span>
+            <h4 className="text-sm font-bold text-emerald-50">Solar Estimate Settings</h4>
+          </button>
           <p className="mt-1 text-xs leading-5 text-slate-400">
             Local admin defaults for modeled/internal Solar Estimate install cost. Customer quote pricing remains separate.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold text-emerald-200">
-            Combined labor {combinedHourlyRate.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}/hr
-          </span>
           <button
             type="button"
             onClick={resetDefaults}
@@ -311,14 +343,32 @@ function SolarEstimateSettingsPanel() {
         </div>
       </div>
 
+      {!isCollapsed && (
+      <>
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
         <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Labor</p>
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            {field('installer1HourlyRate', 'Installer 1 hourly rate')}
-            {field('installer2HourlyRate', 'Installer 2 hourly rate')}
-            {field('crewLeadHourlyRate', 'Crew lead hourly rate')}
-            {field('panelInstallLaborCost', 'Cost per panel installed', 'labor only')}
+          <div className="mt-3 rounded-lg border border-cyan-400/10 bg-slate-950/45 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Hourly crew labor rates</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              {field('installer1HourlyRate', 'Installer 1 hourly rate')}
+              {field('installer2HourlyRate', 'Installer 2 hourly rate')}
+              {field('crewLeadHourlyRate', 'Crew lead hourly rate')}
+            </div>
+            <div className="mt-3 rounded-lg border border-emerald-400/15 bg-emerald-950/15 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-200/75">Combined crew labor rate</p>
+              <p className="mt-1 text-xl font-semibold text-emerald-100">
+                {combinedHourlyRate.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}/hr
+              </p>
+              <p className="mt-1 text-[11px] leading-4 text-slate-500">Installer 1 + Installer 2 + Crew Lead hourly rates.</p>
+            </div>
+          </div>
+          <div className="mt-3 rounded-lg border border-amber-400/10 bg-slate-950/45 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-200/75">Panel labor rate</p>
+            <p className="mt-1 text-[11px] leading-4 text-slate-500">Separate from the hourly crew total; used as panel count times labor-only panel cost.</p>
+            <div className="mt-3">
+              {field('panelInstallLaborCost', 'Cost per panel installed', 'labor only')}
+            </div>
           </div>
         </div>
 
@@ -362,6 +412,8 @@ function SolarEstimateSettingsPanel() {
           {saveState === 'saved' ? 'Saved locally' : 'Local only'}
         </span>
       </div>
+      </>
+      )}
     </div>
   )
 }
@@ -853,6 +905,9 @@ export default function V15rSettingsPanel() {
     setSettingsHubVisibility,
   ] = useState<SettingsHubVisibility>(() => loadSettingsHubVisibility())
   const [glareSyncKey, setGlareSyncKey] = useState(0)
+  const [hunterCommandCenterCollapsed, setHunterCommandCenterCollapsed] = useState(() =>
+    loadCollapsedState(HUNTER_COMMAND_CENTER_COLLAPSED_KEY)
+  )
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -881,6 +936,9 @@ export default function V15rSettingsPanel() {
     showProjectsConfiguration,
     showAIDevelopment,
   ])
+  useEffect(() => {
+    saveCollapsedState(HUNTER_COMMAND_CENTER_COLLAPSED_KEY, hunterCommandCenterCollapsed)
+  }, [hunterCommandCenterCollapsed])
   useEffect(() => {
     setScoutScanHistory(loadScoutScanHistory(authProfile?.org_id))
     setScoutScanHistoryVisible(SCOUT_SCAN_HISTORY_PAGE_SIZE)
@@ -1647,9 +1705,19 @@ const persist = useCallback((mutatedData?: BackupData) => {
           {isAdminOwner && showAdminTools && (
           <SettingCard title="HUNTER Operations">
             <div className="rounded-2xl border border-cyan-400/15 bg-gradient-to-br from-slate-950/95 via-blue-950/30 to-slate-950/90 p-5 shadow-2xl shadow-cyan-950/20">
-              <div className="mb-5 flex flex-col gap-3 border-b border-cyan-400/10 pb-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className={`flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between ${hunterCommandCenterCollapsed ? '' : 'mb-5 border-b border-cyan-400/10 pb-4'}`}>
                 <div>
-                  <h3 className="text-lg font-bold text-cyan-50">HUNTER Command Center</h3>
+                  <button
+                    type="button"
+                    onClick={() => setHunterCommandCenterCollapsed(value => !value)}
+                    className="group flex min-w-0 items-center gap-2 text-left"
+                    aria-expanded={!hunterCommandCenterCollapsed}
+                  >
+                    <span className="rounded-lg border border-cyan-400/15 bg-cyan-400/10 p-1 text-cyan-200 transition-colors group-hover:border-cyan-400/35">
+                      {hunterCommandCenterCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    </span>
+                    <h3 className="text-lg font-bold text-cyan-50">HUNTER Command Center</h3>
+                  </button>
                   <p className="mt-1 text-sm text-slate-400">Home base, lead radius, and scheduled source runs.</p>
                 </div>
                 <span className="w-fit rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-cyan-200">
@@ -1657,6 +1725,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                 </span>
               </div>
 
+              {!hunterCommandCenterCollapsed && (
               <div className="flex flex-col gap-4">
                 <div className="rounded-2xl border border-cyan-400/10 bg-slate-950/70 p-4 shadow-inner shadow-blue-950/30">
                   <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-cyan-200/80">
@@ -1664,8 +1733,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   </h4>
                   <HomeBaseSettings />
                 </div>
-
-                <SolarEstimateSettingsPanel />
 
                 <div className="rounded-2xl border border-cyan-400/10 bg-slate-950/70 p-4 shadow-inner shadow-blue-950/30">
                   <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-cyan-200/80">
@@ -1676,6 +1743,11 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   </div>
                 </div>
               </div>
+              )}
+            </div>
+
+            <div className="mt-4">
+              <SolarEstimateSettingsPanel />
             </div>
           </SettingCard>
           )}
