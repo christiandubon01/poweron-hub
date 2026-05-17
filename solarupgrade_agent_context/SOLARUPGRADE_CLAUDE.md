@@ -1042,3 +1042,46 @@ NO â€” ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 EV load vs install separated in `src/components/solarTraining/SolarEstimateTab.tsx`. Appliance EV charger = existing load only. "Add EV Charger" toggle in Step 3 controls install cost. Step 4 and Summary show both concepts separately. Typecheck passes.
+
+---
+
+## MOVE EV CHARGER AMPERAGE TO ADDITION TOGGLE COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+(pending)
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Move EV charger amperage options to EV Charger Addition toggle
+
+WHAT CHANGED:
+- Step 3 toggle renamed "Add EV Charger" → "EV Charger Addition".
+- EV Charger Addition card in Step 3 now shows 30/40/50/60/100A buttons when ON; defaults to 50A on first turn-ON.
+- Appliance EV charger card now renders like all other appliances (free-form amps input, no fixed grid).
+- Step 4 toggle: same 50A default-on-turn-ON, removed stale "selected in Home Details" text.
+- Step 4 right panel "Existing EV load" reads `selectedAppliances[ev_charger].amps`.
+- Summary "Existing EV charger amperage" reads `selectedAppliances[ev_charger].amps`.
+- Summary "Add EV charger install" label → "EV Charger Addition".
+- `evChargerAmperage` is now exclusively the install amperage field.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+None. Ready for screenshot QA.
+
+NEXT PHASE READY:
+NO — ready for screenshot QA.

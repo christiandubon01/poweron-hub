@@ -1067,24 +1067,48 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
           <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
-                <FieldLabel>Add EV Charger</FieldLabel>
+                <FieldLabel>EV Charger Addition</FieldLabel>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
                   Select when the estimate should include installing a new EV charger.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => updateField('evChargerAddition', !data.evChargerAddition)}
+                onClick={() => {
+                  const next = !data.evChargerAddition
+                  updateField('evChargerAddition', next)
+                  if (next && data.evChargerAmperage == null) {
+                    updateField('evChargerAmperage', 50)
+                  }
+                }}
                 aria-pressed={data.evChargerAddition}
                 className={toggleClass(data.evChargerAddition)}
               >
                 <span className={knobClass(data.evChargerAddition)} />
               </button>
             </div>
-            {data.evChargerAddition && data.evChargerAmperage == null && (
-              <p className="mt-2 text-xs leading-5 text-amber-400/70">
-                No amperage selected — install cost will default to 50A rate.
-              </p>
+            {data.evChargerAddition && (
+              <div className="mt-3">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                  Charger amperage
+                </span>
+                <div className="mt-1.5 grid grid-cols-5 gap-1.5">
+                  {EV_AMPERAGE_OPTIONS.map(amp => (
+                    <button
+                      key={amp}
+                      type="button"
+                      onClick={() => updateField('evChargerAmperage', amp)}
+                      className={`rounded-md border px-1.5 py-1.5 text-xs font-semibold transition-colors ${
+                        data.evChargerAmperage === amp
+                          ? 'border-cyan-400/70 bg-cyan-950/55 text-cyan-100 ring-1 ring-cyan-400/20'
+                          : 'border-slate-700 bg-slate-900/60 text-slate-400 hover:border-cyan-700/60 hover:text-slate-100'
+                      }`}
+                    >
+                      {amp}A
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
 
@@ -1175,30 +1199,7 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
                           {isSelected && <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan-300" />}
                         </button>
 
-                        {isSelected && option.id === 'ev_charger' && (
-                          <div className="mt-3">
-                            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                              Amperage
-                            </span>
-                            <div className="mt-1.5 grid grid-cols-5 gap-1.5">
-                              {EV_AMPERAGE_OPTIONS.map(amp => (
-                                <button
-                                  key={amp}
-                                  type="button"
-                                  onClick={() => updateField('evChargerAmperage', amp)}
-                                  className={`rounded-md border px-1.5 py-1.5 text-xs font-semibold transition-colors ${
-                                    data.evChargerAmperage === amp
-                                      ? 'border-cyan-400/70 bg-cyan-950/55 text-cyan-100 ring-1 ring-cyan-400/20'
-                                      : 'border-slate-700 bg-slate-900/60 text-slate-400 hover:border-cyan-700/60 hover:text-slate-100'
-                                  }`}
-                                >
-                                  {amp}A
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {isSelected && option.id !== 'ev_charger' && (
+                        {isSelected && (
                           <label className="mt-3 block">
                             <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
                               Amps
@@ -1522,25 +1523,26 @@ function SystemConfigStep({
                 <FieldLabel>EV Charger Addition</FieldLabel>
                 <p className="mt-2 text-sm leading-6 text-slate-500">
                   Adds EV charger electrical upgrade cost to the modeled estimate.
-                  {data.evChargerAmperage != null && (
-                    <> <span className="text-cyan-300">{data.evChargerAmperage}A selected in Home Details.</span></>
+                  {data.evChargerAddition && data.evChargerAmperage != null && (
+                    <> <span className="text-cyan-300">{data.evChargerAmperage}A selected.</span></>
                   )}
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => updateField('evChargerAddition', !data.evChargerAddition)}
+                onClick={() => {
+                  const next = !data.evChargerAddition
+                  updateField('evChargerAddition', next)
+                  if (next && data.evChargerAmperage == null) {
+                    updateField('evChargerAmperage', 50)
+                  }
+                }}
                 aria-pressed={data.evChargerAddition}
                 className={toggleClass(data.evChargerAddition)}
               >
                 <span className={knobClass(data.evChargerAddition)} />
               </button>
             </div>
-            {data.evChargerAddition && data.evChargerAmperage == null && (
-              <p className="mt-2 text-xs leading-5 text-amber-400/70">
-                No amperage selected in Home Details — cost will default to 50A rate.
-              </p>
-            )}
           </div>
         </div>
 
@@ -1581,9 +1583,11 @@ function SystemConfigStep({
             />
             <ReviewRow
               label="Existing EV load"
-              value={data.selectedAppliances.some(a => a.id === 'ev_charger')
-                ? `Yes — ${data.evChargerAmperage != null ? `${data.evChargerAmperage}A` : 'amperage not set'}`
-                : 'No'}
+              value={(() => {
+                const ev = data.selectedAppliances.find(a => a.id === 'ev_charger')
+                if (!ev) return 'No'
+                return ev.amps != null ? `Yes — ${ev.amps}A` : 'Yes'
+              })()}
             />
             <ReviewRow
               label="EV Charger Addition"
@@ -3058,11 +3062,13 @@ function EstimateSummaryStep({
         />
         <ReviewRow
           label="Existing EV charger amperage"
-          value={data.selectedAppliances.some(a => a.id === 'ev_charger')
-            ? (data.evChargerAmperage != null ? `${data.evChargerAmperage}A` : 'Not selected')
-            : 'N/A'}
+          value={(() => {
+            const ev = data.selectedAppliances.find(a => a.id === 'ev_charger')
+            if (!ev) return 'N/A'
+            return ev.amps != null ? `${ev.amps}A` : 'Not entered'
+          })()}
         />
-        <ReviewRow label="Add EV charger install" value={data.evChargerAddition ? 'Yes' : 'No'} />
+        <ReviewRow label="EV Charger Addition" value={data.evChargerAddition ? 'Yes' : 'No'} />
         <ReviewRow
           label="EV charger install amperage"
           value={data.evChargerAddition

@@ -2498,3 +2498,59 @@ NO â€” no active build phase defined. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 EV load vs install separated. `toggleAppliance` no longer auto-sets `evChargerAddition`. New "Add EV Charger" toggle in Step 3 Home Configuration (below Panel Upgrade) controls install cost. Appliance helper text added. Step 4 right panel shows two rows: existing EV load + EV Charger Addition. Summary shows four rows: existing load Y/N, existing amperage, add install Y/N, install amperage. `evChargerAmperage` is shared for both concepts. Typecheck passes.
+
+---
+
+## MOVE EV CHARGER AMPERAGE TO ADDITION TOGGLE COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+(pending)
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+WHAT CHANGED:
+- Step 3 "Add EV Charger" toggle renamed to "EV Charger Addition" to match Step 4 label.
+- EV Charger Addition toggle (Step 3) now shows 30A/40A/50A/60A/100A amperage buttons inline when ON. Defaults to 50A on turn-ON if no amperage is set.
+- Step 4 EV Charger Addition toggle: same 50A default-on-turn-ON behavior. Removed stale "Xamperage selected in Home Details" inline text.
+- Appliance card for `ev_charger`: removed special fixed-button amperage grid. Now renders identically to all other appliances (free-form amps input when selected).
+- Step 4 right-panel "Existing EV load" ReviewRow: reads per-appliance `selectedAppliances[ev_charger].amps` instead of `evChargerAmperage`.
+- Summary "Existing EV charger amperage" ReviewRow: reads per-appliance `amps` field, not `evChargerAmperage`.
+- Summary "Add EV charger install" label renamed to "EV Charger Addition".
+- `evChargerAmperage` field is now exclusively the EV Charger Addition install amperage.
+
+WHAT WAS LEARNED:
+- `selectedAppliances[].amps` (per-appliance free-form field) is the correct data path for appliance-level load amps. `evChargerAmperage` should be dedicated to the install cost concept only.
+- The 50A auto-default on toggle-ON can be done with a two-call pattern inside the onClick handler since `updateField` is a generic single-field updater.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Two-field onClick: `updateField('boolField', next); if (next && otherField == null) updateField('otherField', defaultVal)` — clean pattern for conditional default setting on toggle.
+- Reading per-appliance amps: `data.selectedAppliances.find(a => a.id === 'X')?.amps` — always prefer this over a separate top-level field for appliance-level data.
+
+BUGS / RISKS:
+- None introduced. Existing estimates in localStorage that have `evChargerAmperage` set will still load correctly since `normalizeEstimateData` preserves the field.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Screenshot QA: turn on EV Charger Addition in Step 3 → verify 50A is auto-selected, amperage buttons appear, Step 4 shows matching value.
+- Screenshot QA: select EV charger in appliances → verify it looks like other appliance cards (free-form amps input, no fixed buttons).
+- Screenshot QA: verify Summary rows show correct separation.
+
+NEXT PHASE READY:
+NO — no active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+EV charger amperage moved to EV Charger Addition toggle. Step 3 "EV Charger Addition" card (renamed from "Add EV Charger") shows 30/40/50/60/100A buttons when ON and defaults to 50A on turn-ON. Appliance EV charger card now looks like other appliances (free-form amps input). `evChargerAmperage` is now exclusively the install amperage. Step 4 right panel reads `selectedAppliances[ev_charger].amps` for existing load display. Summary separates four rows with correct data sources. Typecheck passes.
