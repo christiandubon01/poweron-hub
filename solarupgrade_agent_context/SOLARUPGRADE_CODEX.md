@@ -746,3 +746,60 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Address layout polish complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Step 1 now uses a desktop two-column grid: left address/input/suggestions/place metadata, right existing satellite roof preview. Smaller widths stack cleanly. Existing autocomplete, selected address data, map behavior, marker, zoom quality logic, and fallback cards are unchanged. Typecheck passes.
+
+---
+
+## SOLAR ESTIMATE STEP 1 LAYOUT CORRECTION COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Committed; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ACTIVE PHASE COMPLETED:
+Scoped Solar Estimate Step 1 layout correction
+
+WHAT CHANGED:
+- Moved the Step 1 intro/header into the left column with the address input, suggestions, place ID, latitude, and longitude.
+- Kept the Satellite Roof Preview map in the right column as a sibling of that complete left Step 1 address column.
+- Updated the parent responsive grid to `xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)]` and kept `min-w-0` on both grid children.
+- Preserved stacked layout on smaller widths with address first and map second.
+
+WHAT WAS LEARNED:
+- The prior layout still felt full-width because the Step 1 intro was outside the split grid.
+- The correct fix was to make the full Step 1 address content and map preview siblings in one grid row.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Keep the full form/intro column and preview column together inside one grid when the visual requirement is a true horizontal split.
+- Use explicit `xl` column minimums for wide desktop preview layouts while preserving stacked behavior below that breakpoint.
+
+BUGS / RISKS:
+- Screenshot QA remains recommended at `xl` and wider desktop widths.
+- No map API logic, autocomplete logic, selected address data, saved estimates, estimate math, summary charts, unrelated steps, or unrelated tabs were changed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+CODEX FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+No active build phase defined
+
+NEXT PHASE ADJUSTMENTS:
+- Run screenshot QA below the five step cards on desktop to confirm left Step 1 content and right Satellite Roof Preview share the same row.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Step 1 layout correction complete in `src/components/solarTraining/SolarEstimateTab.tsx`. The Step 1 intro/header plus address form and metadata now occupy the left column; Satellite Roof Preview is the right-column sibling on `xl` desktop widths. Smaller screens stack address then map. Typecheck passes.

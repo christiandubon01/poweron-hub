@@ -662,14 +662,14 @@ function AddressStep({ data, updateField }: { data: SolarEstimateData; updateFie
   const mapsReady = Boolean(GOOGLE_MAPS_BROWSER_KEY && isLoaded && autocompleteServiceRef.current)
 
   return (
-    <div>
-      <SectionIntro icon={MapPin} eyebrow="Step 01" title="Start with the project address">
-        Enter the homeowner address. If the existing Google Places loader is configured, suggestions
-        can capture a place ID and coordinates for a local map preview.
-      </SectionIntro>
+    <div className="grid gap-4 xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)] xl:items-start">
+      <div className="min-w-0">
+        <SectionIntro icon={MapPin} eyebrow="Step 01" title="Start with the project address">
+          Enter the homeowner address. If the existing Google Places loader is configured, suggestions
+          can capture a place ID and coordinates for a local map preview.
+        </SectionIntro>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(480px,1.35fr)] lg:items-start">
-        <div className="min-w-0 rounded-lg border border-slate-800 bg-slate-950/45 p-4">
+        <div className="rounded-lg border border-slate-800 bg-slate-950/45 p-4">
           <FieldLabel hint={mapsReady ? 'Suggestions enabled' : 'Plain text available'}>
             Homeowner address
           </FieldLabel>
@@ -724,10 +724,10 @@ function AddressStep({ data, updateField }: { data: SolarEstimateData; updateFie
             </div>
           </div>
         </div>
+      </div>
 
-        <div className="min-w-0">
-          <AddressMapPreview data={data} />
-        </div>
+      <div className="min-w-0">
+        <AddressMapPreview data={data} />
       </div>
     </div>
   )

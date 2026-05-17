@@ -1655,3 +1655,54 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Scoped Step 1 Address layout polish complete in `src/components/solarTraining/SolarEstimateTab.tsx`. The address input/suggestions/place metadata now occupy a compact left column on desktop, while the existing satellite roof preview sits on the right. Smaller widths stack address then map. Autocomplete, selected address data, Google hybrid/satellite map behavior, marker, MaxZoomService zoom handling, and fallback cards are unchanged. Typecheck passes.
+
+---
+
+# SOLAR ESTIMATE STEP 1 LAYOUT CORRECTION COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Committed; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Corrected Step 1 Address so the Step 1 intro/header, address input, suggestions, place ID, latitude, and longitude are all in the left grid column.
+- Moved the satellite roof preview into the right grid column as a sibling of the complete left Step 1 address column.
+- Changed the responsive split to `xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)]` with `min-w-0` on both grid children.
+- Preserved smaller-screen stacking order: address column first, map second.
+
+WHAT WAS LEARNED:
+- The previous pass split the address form/card and map, but left the Step 1 intro outside the grid, which made Step 1 still begin as a full-width address section.
+- The needed correction was structural layout only; the map component and autocomplete behavior did not need changes.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- For split-step layouts, put the whole step content column and the preview column inside the same parent grid row.
+- Keep wide preview minimums on the map column while using `min-w-0` on both columns to avoid overflow.
+
+BUGS / RISKS:
+- Screenshot QA is recommended on wide desktop to confirm the left column and satellite map sit side-by-side below the five step cards.
+- No map API logic, autocomplete logic, saved estimates, summary charts, estimate math, unrelated steps, or unrelated tabs were changed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Screenshot QA Step 1 Address at `xl` and wider desktop widths, plus smaller widths for clean stacking.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Scoped Step 1 Address layout correction complete in `src/components/solarTraining/SolarEstimateTab.tsx`. The entire Step 1 address column, including intro/header, input/suggestions, place ID, latitude, and longitude, now sits left of the Satellite Roof Preview on `xl` desktop widths. Map is a sibling in the right column, not below the full address section. Smaller screens stack address then map. Typecheck passes.
