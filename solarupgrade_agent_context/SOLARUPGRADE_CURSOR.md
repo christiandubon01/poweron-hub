@@ -143,6 +143,53 @@ YES
 
 ---
 
+## SYSTEM CONFIG SIZING CONTROLS COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `src/services/solarTraining/SolarEstimateTypes.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Added Step 4 monthly usage, system size, panel wattage, battery toggle, battery size, and install cost controls.
+- Stored system sizing values in typed Solar Estimate data so Summary, drafts, and saved estimates restore the same values.
+- Replaced the two-card system mode chooser with a Solar Plus Battery toggle backed by `systemMode`.
+- Updated Summary and review rows to reflect the selected system size, battery state/size, panel wattage, monthly usage, and install cost.
+
+FIELDS ADDED:
+- `monthlyUsageKwh`
+- `systemSizeKw`
+- `panelWattage`
+- `batterySizeKwh`
+- `installCost`
+
+BATTERY TOGGLE:
+- OFF stores `systemMode: 'solar_only'`.
+- ON stores `systemMode: 'solar_plus_battery'`.
+- Battery size only appears and affects Summary when ON.
+
+INSTALL COST:
+- Step 4 slider stores `installCost`.
+- Summary estimated cost and NEM summary input now use `data.installCost`.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+RISKS:
+- Screenshot QA should verify Step 4 slider spacing, toggle behavior, and narrow-width layout.
+
+READY FOR SCREENSHOT QA:
+YES
+
+---
+
 ## ENERGY-FIRST STEP ORDER COMPLETION LOG
 
 AGENT:

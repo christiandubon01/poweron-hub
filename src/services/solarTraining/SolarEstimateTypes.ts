@@ -102,6 +102,11 @@ export interface SolarEstimateData {
   systemMode: SystemMode;
   /** Target solar offset as a percentage (0–100). Default 100 = full offset. */
   targetOffset: number;
+  monthlyUsageKwh: number;
+  systemSizeKw: number;
+  panelWattage: number;
+  batterySizeKwh: number;
+  installCost: number;
 
   // Navigation
   currentStep: EstimateStep;
@@ -130,6 +135,11 @@ export const DEFAULT_ESTIMATE_DATA: SolarEstimateData = {
   estimatedMonthlyKwh: null,
   systemMode: 'solar_only',
   targetOffset: 100,
+  monthlyUsageKwh: 900,
+  systemSizeKw: 8,
+  panelWattage: 420,
+  batterySizeKwh: 13.5,
+  installCost: 28000,
   currentStep: 'address',
 };
 

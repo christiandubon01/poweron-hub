@@ -212,6 +212,17 @@ type ActiveDraft = {
   batterySizeKwh: number
 }
 
+type SystemConfigFallbacks = {
+  solarSizeKw?: number
+  batterySizeKwh?: number
+}
+
+const PANEL_WATTAGE_OPTIONS = [400, 420, 450, 480]
+
+function validNumber(value: unknown, fallback: number, min: number, max: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? clamp(value, min, max) : fallback
+}
+
 function normalizeSelectedAppliances(value: unknown): SolarEstimateSelectedAppliance[] {
   if (!Array.isArray(value)) return []
 
@@ -239,13 +250,33 @@ function normalizeSelectedAppliances(value: unknown): SolarEstimateSelectedAppli
     .filter((appliance): appliance is SolarEstimateSelectedAppliance => Boolean(appliance))
 }
 
-function normalizeEstimateData(data: Partial<SolarEstimateData> | null | undefined): SolarEstimateData {
+function normalizeEstimateData(
+  data: Partial<SolarEstimateData> | null | undefined,
+  fallbacks: SystemConfigFallbacks = {}
+): SolarEstimateData {
   const raw = data ?? {}
+  const baseData = { ...DEFAULT_ESTIMATE_DATA, ...raw } as SolarEstimateData
+  const systemMode = raw.systemMode ?? DEFAULT_ESTIMATE_DATA.systemMode
+  const fallbackSystemSize = fallbacks.solarSizeKw ?? DEFAULT_ESTIMATE_DATA.systemSizeKw
+  const fallbackBatterySize = fallbacks.batterySizeKwh ?? DEFAULT_ESTIMATE_DATA.batterySizeKwh
+  const fallbackInstallCost = estimateSystemCost(
+    fallbackSystemSize,
+    fallbackBatterySize,
+    systemMode === 'solar_plus_battery'
+  )
   return {
     ...DEFAULT_ESTIMATE_DATA,
     ...raw,
     mainBreakerSize: raw.mainBreakerSize ?? DEFAULT_ESTIMATE_DATA.mainBreakerSize,
     selectedAppliances: normalizeSelectedAppliances(raw.selectedAppliances),
+    systemMode,
+    monthlyUsageKwh: validNumber(raw.monthlyUsageKwh, estimateEnergyUseMonthlyKwh(baseData), 300, 2500),
+    systemSizeKw: validNumber(raw.systemSizeKw, fallbackSystemSize, 2, 20),
+    panelWattage: PANEL_WATTAGE_OPTIONS.includes(Number(raw.panelWattage))
+      ? Number(raw.panelWattage)
+      : DEFAULT_ESTIMATE_DATA.panelWattage,
+    batterySizeKwh: validNumber(raw.batterySizeKwh, fallbackBatterySize, 5, 40),
+    installCost: validNumber(raw.installCost, fallbackInstallCost, 10000, 100000),
   }
 }
 
@@ -256,7 +287,10 @@ function loadEstimates(): LocalSolarEstimate[] {
     const estimates = JSON.parse(raw) as LocalSolarEstimate[]
     return estimates.map(estimate => ({
       ...estimate,
-      interviewData: normalizeEstimateData(estimate.interviewData),
+      interviewData: normalizeEstimateData(estimate.interviewData, {
+        solarSizeKw: estimate.solarSizeKw,
+        batterySizeKwh: estimate.batterySizeKwh,
+      }),
     }))
   } catch {
     return []
@@ -276,7 +310,10 @@ function loadActiveDraft(): ActiveDraft | null {
     const draft = JSON.parse(raw) as ActiveDraft
     return {
       ...draft,
-      data: normalizeEstimateData(draft.data),
+      data: normalizeEstimateData(draft.data, {
+        solarSizeKw: draft.solarSizeKw,
+        batterySizeKwh: draft.batterySizeKwh,
+      }),
     }
   } catch {
     return null
@@ -337,7 +374,7 @@ function getAverageImportRate(ratePlan: SolarEstimateRatePlan | null): number {
   return Math.max(0.12, hourlyAverage)
 }
 
-function estimateMonthlyKwh(data: SolarEstimateData): number {
+function estimateEnergyUseMonthlyKwh(data: SolarEstimateData): number {
   if (data.estimatedMonthlyKwh && data.estimatedMonthlyKwh > 0) {
     return data.estimatedMonthlyKwh
   }
@@ -354,6 +391,10 @@ function estimateMonthlyKwh(data: SolarEstimateData): number {
   }
 
   return 900
+}
+
+function estimateMonthlyKwh(data: SolarEstimateData): number {
+  return validNumber(data.monthlyUsageKwh, estimateEnergyUseMonthlyKwh(data), 300, 2500)
 }
 
 function estimateSuggestedSystemSize(data: SolarEstimateData): number {
@@ -1153,53 +1194,172 @@ function EnergyUseStep({ data, updateField }: { data: SolarEstimateData; updateF
 }
 
 function SystemConfigStep({ data, updateField }: { data: SolarEstimateData; updateField: UpdateField }) {
+  const hasBattery = data.systemMode === 'solar_plus_battery'
+  const panelCount = Math.ceil((data.systemSizeKw * 1000) / data.panelWattage)
+  const setBatteryEnabled = (enabled: boolean) => {
+    updateField('systemMode', enabled ? 'solar_plus_battery' : 'solar_only')
+  }
+
   return (
     <div>
       <SectionIntro icon={BatteryCharging} eyebrow="Step 04" title="Choose the system direction">
-        Select solar-only or solar plus battery, then set a target offset. The estimate summary will
-        model bill impact and system size from these inputs.
+        Tune the usage, system size, equipment assumptions, and battery path that the summary will model.
       </SectionIntro>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {SYSTEM_MODES.map(option => (
-          <button
-            key={option.id}
-            type="button"
-            onClick={() => updateField('systemMode', option.id as SystemMode)}
-            className={optionCardClass(data.systemMode === option.id)}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-base font-semibold text-slate-100">{option.label}</p>
-                <p className="mt-2 text-sm leading-6 text-slate-500">{option.detail}</p>
-              </div>
-              {data.systemMode === option.id && <CheckCircle2 className="h-5 w-5 shrink-0 text-cyan-300" />}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+        <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/45 p-4 shadow-[0_18px_60px_rgba(8,47,73,0.12)]">
+          <div>
+            <FieldLabel>Monthly usage</FieldLabel>
+            <div className="mt-2 flex items-end justify-between gap-3">
+              <p className="text-2xl font-semibold text-yellow-200">{formatNumber(data.monthlyUsageKwh)} kWh</p>
+              <p className="text-xs text-slate-500">300-2,500 kWh</p>
             </div>
-          </button>
-        ))}
-      </div>
+            <input
+              type="range"
+              min="300"
+              max="2500"
+              step="50"
+              value={data.monthlyUsageKwh}
+              onChange={(event) => updateField('monthlyUsageKwh', Number(event.target.value))}
+              className="mt-3 h-2 w-full accent-yellow-300"
+            />
+          </div>
 
-      <div className="mt-5 rounded-lg border border-slate-800 bg-slate-950/45 p-4">
-        <FieldLabel hint="Carried into the estimate summary">Target solar offset</FieldLabel>
-        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <input
-            type="range"
-            min="50"
-            max="125"
-            step="5"
-            value={data.targetOffset}
-            onChange={(event) => updateField('targetOffset', Number(event.target.value))}
-            className="h-2 flex-1 accent-cyan-400"
-          />
-          <input
-            type="number"
-            min="0"
-            max="200"
-            value={data.targetOffset}
-            onChange={(event) => updateField('targetOffset', parsePositiveNumber(event.target.value) ?? 0)}
-            className="w-24 rounded-md border border-slate-700/80 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-500/70"
-          />
-          <span className="text-sm font-semibold text-cyan-200">%</span>
+          <div>
+            <FieldLabel>System size</FieldLabel>
+            <div className="mt-2 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <p className="text-2xl font-semibold text-cyan-100">{data.systemSizeKw.toFixed(1)} kW</p>
+              <p className="text-xs text-slate-500">
+                About {panelCount} panels at {data.panelWattage}W
+              </p>
+            </div>
+            <input
+              type="range"
+              min="2"
+              max="20"
+              step="0.5"
+              value={data.systemSizeKw}
+              onChange={(event) => updateField('systemSizeKw', Number(event.target.value))}
+              className="mt-3 h-2 w-full accent-cyan-400"
+            />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <FieldLabel>Panel wattage</FieldLabel>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {PANEL_WATTAGE_OPTIONS.map(watts => (
+                  <button
+                    key={watts}
+                    type="button"
+                    onClick={() => updateField('panelWattage', watts)}
+                    className={`rounded-md border px-3 py-2 text-sm font-semibold transition-colors ${
+                      data.panelWattage === watts
+                        ? 'border-cyan-400/70 bg-cyan-950/55 text-cyan-100 ring-1 ring-cyan-400/20'
+                        : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:border-cyan-700/60 hover:text-slate-100'
+                    }`}
+                  >
+                    {watts}W
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <FieldLabel>Install cost</FieldLabel>
+              <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                <p className="text-2xl font-semibold text-emerald-200">{formatMoney(data.installCost)}</p>
+                <input
+                  type="range"
+                  min="10000"
+                  max="100000"
+                  step="1000"
+                  value={data.installCost}
+                  onChange={(event) => updateField('installCost', Number(event.target.value))}
+                  className="mt-3 h-2 w-full accent-emerald-400"
+                />
+                <div className="mt-1 flex justify-between text-[11px] text-slate-600">
+                  <span>$10k</span>
+                  <span>$100k</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/45 p-4 shadow-[0_18px_60px_rgba(8,47,73,0.12)]">
+          <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+            <div>
+              <FieldLabel>Solar plus battery</FieldLabel>
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                Toggle on to model storage for NEM 3.0 self-consumption and backup planning.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setBatteryEnabled(!hasBattery)}
+              aria-pressed={hasBattery}
+              className={`relative h-7 w-14 shrink-0 rounded-full border transition-colors ${
+                hasBattery
+                  ? 'border-emerald-400/60 bg-emerald-500/70'
+                  : 'border-slate-700 bg-slate-800'
+              }`}
+            >
+              <span
+                className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                  hasBattery ? 'translate-x-7' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {hasBattery && (
+            <div>
+              <FieldLabel>Battery size</FieldLabel>
+              <div className="mt-2 flex items-end justify-between gap-3">
+                <p className="text-2xl font-semibold text-emerald-200">{data.batterySizeKwh.toFixed(1)} kWh</p>
+                <p className="text-xs text-slate-500">5-40 kWh</p>
+              </div>
+              <input
+                type="range"
+                min="5"
+                max="40"
+                step="0.5"
+                value={data.batterySizeKwh}
+                onChange={(event) => updateField('batterySizeKwh', Number(event.target.value))}
+                className="mt-3 h-2 w-full accent-emerald-400"
+              />
+            </div>
+          )}
+
+          <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+            <FieldLabel hint="Used for suggested sizing">Target solar offset</FieldLabel>
+            <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <input
+                type="range"
+                min="50"
+                max="125"
+                step="5"
+                value={data.targetOffset}
+                onChange={(event) => updateField('targetOffset', Number(event.target.value))}
+                className="h-2 flex-1 accent-cyan-400"
+              />
+              <input
+                type="number"
+                min="0"
+                max="200"
+                value={data.targetOffset}
+                onChange={(event) => updateField('targetOffset', parsePositiveNumber(event.target.value) ?? 0)}
+                className="w-24 rounded-md border border-slate-700/80 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-500/70"
+              />
+              <span className="text-sm font-semibold text-cyan-200">%</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <ReviewRow label="Mode" value={hasBattery ? 'Solar Plus Battery' : 'Solar Only'} />
+            <ReviewRow label="Panels" value={`${panelCount} @ ${data.panelWattage}W`} />
+          </div>
         </div>
       </div>
     </div>
@@ -2263,10 +2423,6 @@ function EstimateSummaryStep({
   data,
   updateField,
   goToStep,
-  solarSizeKw,
-  batterySizeKwh,
-  setSolarSizeKw,
-  setBatterySizeKwh,
   onSave,
   activeEstimateId,
   saveStatus,
@@ -2274,10 +2430,6 @@ function EstimateSummaryStep({
   data: SolarEstimateData
   updateField: UpdateField
   goToStep: (step: EstimateStep) => void
-  solarSizeKw: number
-  batterySizeKwh: number
-  setSolarSizeKw: React.Dispatch<React.SetStateAction<number>>
-  setBatterySizeKwh: React.Dispatch<React.SetStateAction<number>>
   onSave: () => void
   activeEstimateId: string | null
   saveStatus: 'idle' | 'saved'
@@ -2288,15 +2440,18 @@ function EstimateSummaryStep({
   const utility = (data.utilityProvider ?? 'SCE') as Utility
   const ratePlan = (data.ratePlan ?? (utility === 'IID' ? 'IID_STANDARD' : 'SCE_TOU_D_PRIME')) as RatePlan
   const hasBattery = data.systemMode === 'solar_plus_battery'
-  const monthlyKwh = estimateMonthlyKwh(data)
-  const systemCost = estimateSystemCost(solarSizeKw, batterySizeKwh, hasBattery)
+  const monthlyKwh = data.monthlyUsageKwh
+  const solarSizeKw = data.systemSizeKw
+  const batterySizeKwh = data.batterySizeKwh
+  const panelWattage = data.panelWattage
+  const systemCost = data.installCost
   const nemResult = calculateNEM3Savings({
     monthly_kwh: monthlyKwh,
     utility,
     rate_plan: ratePlan,
     system_size_kw: solarSizeKw,
     battery_kwh: hasBattery ? batterySizeKwh : 0,
-    panel_wattage: 420,
+    panel_wattage: panelWattage,
     monthly_bill: data.averageMonthlyBill ?? undefined,
     system_cost: systemCost,
   })
@@ -2355,7 +2510,7 @@ function EstimateSummaryStep({
         <MetricCard
           label="System size"
           value={`${solarSizeKw.toFixed(1)} kW`}
-          detail={`420 W panels, about ${nemResult.system_info.panel_count} modules`}
+          detail={`${panelWattage} W panels, about ${nemResult.system_info.panel_count} modules`}
           Icon={SunMedium}
           tone="amber"
         />
@@ -2433,7 +2588,10 @@ function EstimateSummaryStep({
         />
         <ReviewRow label="Estimated usage" value={`${formatNumber(monthlyKwh)} kWh / month`} />
         <ReviewRow label="Target offset" value={`${data.targetOffset}%`} />
-        <ReviewRow label="Suggested size" value={`${estimateSuggestedSystemSize(data).toFixed(1)} kW`} />
+        <ReviewRow label="System size" value={`${solarSizeKw.toFixed(1)} kW`} />
+        <ReviewRow label="Panel wattage" value={`${panelWattage}W`} />
+        <ReviewRow label="Battery size" value={hasBattery ? `${batterySizeKwh.toFixed(1)} kWh` : 'Not included'} />
+        <ReviewRow label="Install cost" value={formatMoney(systemCost)} />
       </div>
 
       {hasBattery && (
@@ -2475,7 +2633,7 @@ function EstimateSummaryStep({
                 max="18"
                 step="0.5"
                 value={solarSizeKw}
-                onChange={(event) => setSolarSizeKw(Number(event.target.value))}
+                onChange={(event) => updateField('systemSizeKw', Number(event.target.value))}
                 className="h-2 flex-1 accent-yellow-300"
               />
               <input
@@ -2483,7 +2641,7 @@ function EstimateSummaryStep({
                 min="0"
                 step="0.1"
                 value={solarSizeKw}
-                onChange={(event) => setSolarSizeKw(clamp(Number(event.target.value) || 0, 0, 30))}
+                onChange={(event) => updateField('systemSizeKw', clamp(Number(event.target.value) || 0, 2, 20))}
                 className="w-28 rounded-md border border-slate-700/80 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-500/70"
               />
               <span className="text-sm font-semibold text-yellow-200">kW</span>
@@ -2499,7 +2657,7 @@ function EstimateSummaryStep({
                 max="40"
                 step="1"
                 value={hasBattery ? batterySizeKwh : 0}
-                onChange={(event) => setBatterySizeKwh(Number(event.target.value))}
+                onChange={(event) => updateField('batterySizeKwh', Number(event.target.value))}
                 disabled={!hasBattery}
                 className="h-2 flex-1 accent-emerald-400 disabled:opacity-30"
               />
@@ -2508,7 +2666,7 @@ function EstimateSummaryStep({
                 min="0"
                 step="0.5"
                 value={hasBattery ? batterySizeKwh : 0}
-                onChange={(event) => setBatterySizeKwh(clamp(Number(event.target.value) || 0, 0, 60))}
+                onChange={(event) => updateField('batterySizeKwh', clamp(Number(event.target.value) || 0, 5, 40))}
                 disabled={!hasBattery}
                 className="w-28 rounded-md border border-slate-700/80 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-500/70 disabled:opacity-30"
               />
@@ -2537,7 +2695,7 @@ function EstimateSummaryStep({
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => setSolarSizeKw(estimateSuggestedSystemSize(data))}
+            onClick={() => updateField('systemSizeKw', estimateSuggestedSystemSize(data))}
             className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-300 transition-colors hover:border-cyan-700 hover:text-cyan-200"
           >
             Reset to suggested size
@@ -2574,10 +2732,6 @@ function ActiveStepPanel({
   data,
   updateField,
   goToStep,
-  solarSizeKw,
-  batterySizeKwh,
-  setSolarSizeKw,
-  setBatterySizeKwh,
   onSave,
   activeEstimateId,
   saveStatus,
@@ -2585,10 +2739,6 @@ function ActiveStepPanel({
   data: SolarEstimateData
   updateField: UpdateField
   goToStep: (step: EstimateStep) => void
-  solarSizeKw: number
-  batterySizeKwh: number
-  setSolarSizeKw: React.Dispatch<React.SetStateAction<number>>
-  setBatterySizeKwh: React.Dispatch<React.SetStateAction<number>>
   onSave: () => void
   activeEstimateId: string | null
   saveStatus: 'idle' | 'saved'
@@ -2608,10 +2758,6 @@ function ActiveStepPanel({
           data={data}
           updateField={updateField}
           goToStep={goToStep}
-          solarSizeKw={solarSizeKw}
-          batterySizeKwh={batterySizeKwh}
-          setSolarSizeKw={setSolarSizeKw}
-          setBatterySizeKwh={setBatterySizeKwh}
           onSave={onSave}
           activeEstimateId={activeEstimateId}
           saveStatus={saveStatus}
@@ -2631,15 +2777,6 @@ export default function SolarEstimateTab() {
     const draft = loadActiveDraft()
     return draft?.data ?? DEFAULT_ESTIMATE_DATA
   })
-  const suggestedSystemSize = useMemo(() => estimateSuggestedSystemSize(data), [data])
-  const [solarSizeKw, setSolarSizeKw] = useState<number>(() => {
-    const draft = loadActiveDraft()
-    return draft?.solarSizeKw ?? estimateSuggestedSystemSize(DEFAULT_ESTIMATE_DATA)
-  })
-  const [batterySizeKwh, setBatterySizeKwh] = useState<number>(() => {
-    const draft = loadActiveDraft()
-    return draft?.batterySizeKwh ?? 13.5
-  })
   const [savedEstimates, setSavedEstimates] = useState<LocalSolarEstimate[]>(() => loadEstimates())
   const [activeEstimateId, setActiveEstimateId] = useState<string | null>(() => {
     const draft = loadActiveDraft()
@@ -2652,20 +2789,35 @@ export default function SolarEstimateTab() {
   const currentStepIndex = ESTIMATE_STEPS.indexOf(data.currentStep)
 
   useEffect(() => {
-    if (data.currentStep !== 'estimate_summary') {
-      setSolarSizeKw(suggestedSystemSize)
-    }
-  }, [data.currentStep, suggestedSystemSize])
+    if (data.currentStep !== 'system_config') return
+    setData(d => {
+      const derivedUsage = estimateEnergyUseMonthlyKwh(d)
+      const nextMonthlyUsage =
+        d.monthlyUsageKwh === DEFAULT_ESTIMATE_DATA.monthlyUsageKwh ? derivedUsage : d.monthlyUsageKwh
+      const nextSystemSize =
+        d.systemSizeKw === DEFAULT_ESTIMATE_DATA.systemSizeKw ? estimateSuggestedSystemSize({ ...d, monthlyUsageKwh: nextMonthlyUsage }) : d.systemSizeKw
+      return {
+        ...d,
+        monthlyUsageKwh: nextMonthlyUsage,
+        systemSizeKw: nextSystemSize,
+      }
+    })
+  }, [data.currentStep])
 
   useEffect(() => {
     if (draftSaveTimer.current) window.clearTimeout(draftSaveTimer.current)
     draftSaveTimer.current = window.setTimeout(() => {
-      saveActiveDraft({ estimateId: activeEstimateId, data, solarSizeKw, batterySizeKwh })
+      saveActiveDraft({
+        estimateId: activeEstimateId,
+        data,
+        solarSizeKw: data.systemSizeKw,
+        batterySizeKwh: data.batterySizeKwh,
+      })
     }, 500)
     return () => {
       if (draftSaveTimer.current) window.clearTimeout(draftSaveTimer.current)
     }
-  }, [data, solarSizeKw, batterySizeKwh, activeEstimateId])
+  }, [data, activeEstimateId])
 
   const updateField = useCallback(
     <K extends keyof SolarEstimateData>(key: K, value: SolarEstimateData[K]) => {
@@ -2690,8 +2842,6 @@ export default function SolarEstimateTab() {
 
   const resetEstimate = useCallback(() => {
     setData(DEFAULT_ESTIMATE_DATA)
-    setSolarSizeKw(estimateSuggestedSystemSize(DEFAULT_ESTIMATE_DATA))
-    setBatterySizeKwh(13.5)
     setActiveEstimateId(null)
     setSaveStatus('idle')
   }, [])
@@ -2703,7 +2853,14 @@ export default function SolarEstimateTab() {
       setSavedEstimates(prev => {
         const updated = prev.map(e =>
           e.id === activeEstimateId
-            ? { ...e, updatedAt: now, addressLabel, interviewData: data, solarSizeKw, batterySizeKwh }
+            ? {
+                ...e,
+                updatedAt: now,
+                addressLabel,
+                interviewData: data,
+                solarSizeKw: data.systemSizeKw,
+                batterySizeKwh: data.batterySizeKwh,
+              }
             : e
         )
         saveEstimates(updated)
@@ -2721,8 +2878,8 @@ export default function SolarEstimateTab() {
         name,
         addressLabel,
         interviewData: data,
-        solarSizeKw,
-        batterySizeKwh,
+        solarSizeKw: data.systemSizeKw,
+        batterySizeKwh: data.batterySizeKwh,
       }
       setSavedEstimates(prev => {
         const updated = [...prev, newEstimate]
@@ -2733,12 +2890,10 @@ export default function SolarEstimateTab() {
     }
     setSaveStatus('saved')
     window.setTimeout(() => setSaveStatus('idle'), 3000)
-  }, [data, solarSizeKw, batterySizeKwh, activeEstimateId])
+  }, [data, activeEstimateId])
 
   const handleOpenEstimate = useCallback((estimate: LocalSolarEstimate) => {
     setData({ ...estimate.interviewData, currentStep: 'estimate_summary' })
-    setSolarSizeKw(estimate.solarSizeKw)
-    setBatterySizeKwh(estimate.batterySizeKwh)
     setActiveEstimateId(estimate.id)
     setShowLibrary(false)
     setSaveStatus('idle')
@@ -2886,10 +3041,6 @@ export default function SolarEstimateTab() {
                 data={data}
                 updateField={updateField}
                 goToStep={goToStep}
-                solarSizeKw={solarSizeKw}
-                batterySizeKwh={batterySizeKwh}
-                setSolarSizeKw={setSolarSizeKw}
-                setBatterySizeKwh={setBatterySizeKwh}
                 onSave={handleSave}
                 activeEstimateId={activeEstimateId}
                 saveStatus={saveStatus}

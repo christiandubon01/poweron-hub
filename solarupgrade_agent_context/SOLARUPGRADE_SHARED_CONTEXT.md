@@ -1922,3 +1922,61 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Scoped Solar Estimate step order polish complete. `ESTIMATE_STEPS` now orders the flow as `address`, `energy_use`, `home_details`, `system_config`, `estimate_summary`, and `STEP_META` matches that card order. Energy Use displays `Step 02`; Home Details displays `Step 03`. Navigation now moves Address -> Energy Use -> Home Details -> System Config -> Summary, with Back following the reverse order. Saved estimate compatibility is preserved because existing data uses semantic step IDs and no fields were removed or renamed. Typecheck passes.
+
+---
+
+# SOLAR ESTIMATE SYSTEM CONFIG SIZING CONTROLS COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `src/services/solarTraining/SolarEstimateTypes.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Upgraded Step 4 System Config into a NEM 3.0-style sizing panel with compact PowerOn dark controls.
+- Added monthly usage slider from 300 to 2,500 kWh and initialized missing values from the Energy Use estimate when Step 4 opens or saved estimates are normalized.
+- Added system size slider from 2 to 20 kW with approximate panel count using selected panel wattage.
+- Added panel wattage choices: 400W, 420W, 450W, and 480W.
+- Replaced the Solar Only / Solar Plus Battery cards with a battery toggle that keeps `systemMode` compatible with existing summary logic.
+- Added battery size slider from 5 to 40 kWh, visible only when Solar Plus Battery is enabled.
+- Added install cost slider from $10,000 to $100,000 and wired Summary estimated cost/NEM input to this selected value.
+- Moved system sizing values into typed `SolarEstimateData` so Step 4, Summary, active drafts, and saved estimates share the same source of truth.
+- Updated Summary/review to show selected monthly usage, system size, panel wattage, battery size/state, and install cost.
+
+WHAT WAS LEARNED:
+- Solar Estimate previously kept solar size and battery size as component-local saved snapshot state, while Summary recalculated install cost. Moving these into `SolarEstimateData` makes Step 4 controls restore naturally with saved estimates.
+- The existing NEM summary calculator already accepts monthly kWh, system size, battery kWh, panel wattage, and system cost, so no NEM formulas needed to change.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Preserve older saved estimate compatibility by normalizing new typed fields from older top-level saved snapshot values.
+- Keep `systemMode` as the compatibility bridge for battery state instead of adding a second boolean that could drift out of sync.
+
+BUGS / RISKS:
+- Screenshot QA should verify Step 4 at desktop and narrow widths, especially the two-column control layout, battery toggle visibility, and slider readability.
+- Summary editable controls still exist and now update the same typed system sizing fields; future polish may choose whether to keep or simplify them.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Browser QA should confirm saved estimate reopen restores monthly usage, system size, panel wattage, battery mode, battery size, and install cost.
+- Screenshot QA should confirm Summary estimated cost changes when the Step 4 install cost slider changes.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Scoped Step 4 System Config upgrade complete. `SolarEstimateData` now includes `monthlyUsageKwh`, `systemSizeKw`, `panelWattage`, `batterySizeKwh`, and `installCost`, while battery on/off remains compatible through `systemMode`. Step 4 now has NEM 3.0-style sliders for monthly usage, system size, battery size, and install cost; panel wattage buttons; and a Solar Plus Battery toggle. Summary uses these selected values for monthly kWh, system size, panel wattage, battery kWh, and install cost, and review rows show them. Saved estimates/drafts normalize older snapshots and restore the new fields. Typecheck passes.
