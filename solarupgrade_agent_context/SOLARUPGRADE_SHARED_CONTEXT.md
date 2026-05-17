@@ -757,7 +757,7 @@ Agents should not assume approval to continue beyond their active phase.
 # LATEST PHASE STATUS
 
 Latest completed phase:
-Polish / Stabilization Pass (post Phase 5)
+Visual Polish Pass 2 — Summary chart, map preview, summary hierarchy
 
 Latest completed commits:
 - Phase 1: `72193d5`, `ed7bf01`
@@ -765,16 +765,17 @@ Latest completed commits:
 - Phase 3: `6ad11a7`, `91cf6d2`
 - Phase 4: see Phase 4 completion log below
 - Phase 5: see Phase 5 completion log below
-- Polish pass: see Polish completion log below
+- Polish pass (post Phase 5): `ce2be20`
+- Visual Polish Pass 2: `0cbfe7c`
 
 Current ready phase:
-No active build phase. Ready for manual browser QA.
+No active build phase. Ready for final screenshot QA.
 
 Current risk level:
-Low. Polish pass fixed copy/UX issues only — no formula, persistence, Supabase, or structural changes. Typecheck passes clean.
+Low. Visual polish only — no formula, persistence, Supabase, or structural changes. Typecheck passes clean.
 
 Recommended action:
-Run manual browser QA on the Solar Estimate tab: walk the full interview flow, review the summary cards and charts on desktop and mobile, and test the reset button. Do not proceed into a new build phase without user review.
+Run final screenshot QA on the Solar Estimate tab: check the Summary chart renders visible bars, the Address step shows the premium fallback card when Maps is unavailable, and the Summary hierarchy feels readable. Do not proceed into a new build phase without user review.
 
 ---
 
@@ -1116,3 +1117,47 @@ NO active build phase. Ready for browser QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Polish pass on `src/components/solarTraining/SolarEstimateTab.tsx` complete. Fixed: duplicate ReviewRow (now shows Suggested Size), stale phase-build copy in 3 SectionIntro/FieldLabel locations, internal phase badge replaced with "Start new estimate" reset button, step card grid now has 2-col mobile / 3-col sm / 5-col md responsive layout, BillComparisonChart wrapped with overflow-x-auto for mobile, battery disabled hint added. No formulas, types, persistence, Supabase, or unrelated tabs touched. Typecheck passes. Branch is ready for manual browser QA.
+
+---
+
+# VISUAL POLISH PASS 2 COMPLETION LOG (QA items 2, 3, 4)
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+0cbfe7c
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+WHAT CHANGED:
+- BillComparisonChart: replaced div/flex percentage-height bars with a proper SVG chart. Added horizontal grid lines at 25/50/75/100% with y-axis dollar labels. Before bars now use rgba(100,116,139,0.72) (slate-500 equivalent, clearly visible on dark bg). After bars use amber or emerald at 0.82 opacity. Layout matches NEM 3.0 chart visual language: dark panel, subtle grid, compact labels, readable legend.
+- AddressMapPreview: merged `!GOOGLE_MAPS_BROWSER_KEY` and `loadError` branches into a single premium fallback card. Card shows MapPin icon, "Map preview unavailable" label, address text if entered, and a 2-col lat/lng grid (shows captured values or "Pending"). Updated `!center` branch to show "Awaiting pin" header plus typed address text with guidance to select a suggestion.
+- EstimateSummaryStep: added "Interview inputs" section label (ClipboardList icon) above the 12-item review rows grid. Tightened chart grid from mb-5/gap-5 to mb-4/gap-4.
+
+WHAT WAS LEARNED:
+- The original div/flex percentage-height bars were near-invisible because `bg-slate-500/55` on `bg-slate-950/45` has very low contrast. SVG with explicit rgba fills solves this cleanly.
+- SVG viewBox approach (W=480, H=150) with per-pixel bar positioning gives precise control and matches NEM 3.0 chart language without new packages.
+- Combining `!GOOGLE_MAPS_BROWSER_KEY` and `loadError` into one branch avoids duplicated fallback JSX and simplifies the state machine.
+
+BUGS / RISKS:
+- Estimates remain conservative planning figures; browser QA still recommended.
+- Floating button overlap was intentionally excluded from this pass per task scope.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT PHASE READY:
+NO active build phase. Ready for final screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Visual Polish Pass 2 on `src/components/solarTraining/SolarEstimateTab.tsx`. Fixed: BillComparisonChart now renders an SVG chart with grid lines, y-axis dollar labels, and clearly visible before/after bars matching NEM 3.0 style; AddressMapPreview fallback card now shows address + lat/lng + "Map preview unavailable" when Maps is unavailable; !center state shows typed address with "Awaiting pin" prompt; EstimateSummaryStep has "Interview inputs" section header above review rows and tighter chart spacing. No formulas, types, persistence, Supabase, or structural changes. Typecheck passes. Branch ready for final screenshot QA.

@@ -456,3 +456,59 @@ NO — no next build phase is defined. Branch is ready for browser QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Polish pass complete on `src/components/solarTraining/SolarEstimateTab.tsx`. Fixed duplicate ReviewRow, stale phase copy in 3 locations, internal badge replaced with functional reset button, mobile grid breakpoints added to step cards, BillComparisonChart overflow-x-auto, battery disabled hint. No formulas, types, persistence, Supabase, or unrelated tabs touched. Typecheck passes clean. Branch solarupgrade is ready for manual browser QA.
+
+---
+
+## VISUAL POLISH PASS 2 COMPLETION LOG (QA items 2, 3, 4)
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+0cbfe7c
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Visual Polish Pass 2 — scoped QA items 2, 3, 4 only
+
+WHAT CHANGED:
+- BillComparisonChart: replaced div/flex bar chart with SVG chart. Grid lines at 25/50/75/100% with y-axis dollar labels. Before bars rgba(100,116,139,0.72), after bars amber/emerald at 0.82 opacity. Dark panel background. Matches NEM 3.0 chart visual language.
+- AddressMapPreview: merged !GOOGLE_MAPS_BROWSER_KEY and loadError into one premium fallback card showing MapPin icon, "Map preview unavailable" label, address text if entered, 2-col lat/lng grid (captured values or "Pending"). Updated !center to show "Awaiting pin" with typed address and guidance.
+- EstimateSummaryStep: added "Interview inputs" ClipboardList label above review rows. Tightened chart grid spacing (mb-5/gap-5 → mb-4/gap-4).
+
+WHAT WAS LEARNED:
+- div/flex percentage-height bar charts with low-opacity fills are nearly invisible on dark backgrounds. SVG with explicit rgba fills and grid lines is the correct approach and requires no new packages.
+- Combining branches that share identical fallback UI (GOOGLE_MAPS_BROWSER_KEY missing vs load error) keeps the component cleaner.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- SVG chart pattern (W=480, H=150, padL=40, padR=8, padT=8, padB=22): gives reliable bar positioning and grid lines without external chart packages. Reuse this for any future Solar Estimate charts.
+- Premium "unavailable" fallback card pattern: icon + label + conditional content block. Reuse for any future map or external-dependency fallback states.
+
+BUGS / RISKS:
+- Floating button overlap was intentionally excluded from this pass.
+- Estimates remain conservative planning figures.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+None. Ready for final screenshot QA.
+
+NEXT PHASE ADJUSTMENTS:
+- If floating button overlap is fixed next, target the outer wrapper/padding in SolarEstimateTab or SolarTrainingView — do not touch formula or chart logic.
+
+NEXT PHASE READY:
+NO — no active build phase defined. Branch ready for final screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Visual Polish Pass 2 on `src/components/solarTraining/SolarEstimateTab.tsx`. BillComparisonChart is now an SVG chart with grid lines, y-axis dollar labels, and clearly visible bars. AddressMapPreview fallback card shows address + lat/lng + "Map preview unavailable" when Maps is unavailable; !center shows typed address with "Awaiting pin" prompt. EstimateSummaryStep has "Interview inputs" label above review rows. No formulas, types, persistence, Supabase, or structural changes. Typecheck passes. Commit: 0cbfe7c.
