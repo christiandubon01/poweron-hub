@@ -844,35 +844,35 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
   }
 
   return (
-    <div>
-      <SectionIntro icon={Home} eyebrow="Step 02" title="Qualify the home details">
-        Capture the roof and property basics that will shape assumptions in the later estimate phase.
-      </SectionIntro>
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 items-start">
+      <div className="min-w-0 space-y-5">
+        <SectionIntro icon={Home} eyebrow="Step 02" title="Qualify the home details">
+          Capture the roof and property basics that will shape assumptions in the later estimate phase.
+        </SectionIntro>
 
-      <div className="space-y-5">
-        <div>
-          <FieldLabel>Roof shading</FieldLabel>
-          <div className="mt-2 grid gap-3 md:grid-cols-3">
-            {SHADING_OPTIONS.map(option => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => updateField('shading', option.id as ShadingLevel)}
-                className={optionCardClass(data.shading === option.id)}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-100">{option.label}</p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">{option.detail}</p>
+        <div className="space-y-5">
+          <div>
+            <FieldLabel>Roof shading</FieldLabel>
+            <div className="mt-2 grid gap-3 xl:grid-cols-3">
+              {SHADING_OPTIONS.map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => updateField('shading', option.id as ShadingLevel)}
+                  className={optionCardClass(data.shading === option.id)}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-100">{option.label}</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">{option.detail}</p>
+                    </div>
+                    {data.shading === option.id && <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan-300" />}
                   </div>
-                  {data.shading === option.id && <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan-300" />}
-                </div>
-              </button>
-            ))}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
 
-        <div className="grid gap-5 lg:grid-cols-2">
           <div>
             <FieldLabel>Ownership</FieldLabel>
             <div className="mt-2 grid gap-3 sm:grid-cols-2">
@@ -905,7 +905,9 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
             </div>
           </div>
         </div>
+      </div>
 
+      <div className="min-w-0">
         <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-4 shadow-[0_18px_60px_rgba(8,47,73,0.12)]">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
