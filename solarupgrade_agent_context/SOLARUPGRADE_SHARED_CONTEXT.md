@@ -1335,3 +1335,55 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Chart height polish pass complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Summary chart subtabs Monthly Bill, 24H Flow, 25 Yr Savings, Elec. Cost, Cumulative, and Payments now render about 2.25x taller vertically. SVG chart data and formulas are unchanged; only chart dimensions and the payment panel height changed. Typecheck passes. Ready for screenshot QA.
+
+---
+
+# SOLAR ESTIMATE CHART RENDER CONSISTENCY COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Used the custom Monthly Bill Comparison chart presentation as the render baseline: 575px SVG width, 170px SVG height, compact plot padding, full month labels, larger chart title/subtitle text, and readable legend styling.
+- Aligned 24H Flow, 25 Yr Savings, Elec. Cost, and Cumulative chart canvases to the same compact 575x170 render feel.
+- Kept the NEM 3.0 dark chart language: dark panels, subtle grid lines, restrained cyan/teal/yellow/emerald accents, and no aggressive glow.
+- Increased chart subtab button click targets, font size, and padding for Monthly Bill, 24H Flow, 25 Yr Savings, Elec. Cost, Cumulative, and Payments while keeping the cyan/teal active state restrained.
+- Kept Payments visually consistent with the larger title/subtitle treatment without changing payment assumptions or values.
+
+WHAT WAS LEARNED:
+- The prior post-height-polish charts were visually inconsistent because some charts used tall viewBoxes while Monthly Bill had already been tuned to a compact 575x170 canvas.
+- The chart module can be normalized by presentation constants and typography only; no modeled data or estimate math needs to change.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Reuse a known-good chart canvas and padding profile across related SVG charts to preserve a consistent panel rhythm.
+- Keep long axis labels readable by allowing small per-chart side-padding adjustments while preserving the shared viewBox size.
+
+BUGS / RISKS:
+- Screenshot QA is still recommended on desktop and narrow viewports to confirm the compact 575x170 charts and larger tab buttons feel right in the summary card.
+- No formulas, values, NEM assumptions, persistence, Supabase behavior, or unrelated tabs were changed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Run screenshot QA on all six Solar Estimate summary chart subtabs, especially narrow widths, to confirm no horizontal overflow and that legends/axis labels remain readable.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Scoped chart render consistency pass complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Monthly Bill remains the visual baseline at W=575, H=170, compact padding, full month labels, larger title/subtitle, and readable legend. 24H Flow, 25 Yr Savings, Elec. Cost, and Cumulative now use matching 575x170 proportions and larger header/legend treatments. Summary chart tab buttons are larger across all six tabs with restrained cyan active state. Typecheck passes. No math, formulas, modeled values, persistence, Supabase, or unrelated tabs changed. Ready for screenshot QA.

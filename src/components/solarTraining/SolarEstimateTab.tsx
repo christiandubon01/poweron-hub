@@ -955,18 +955,18 @@ function BillComparisonChart({
   hasBattery: boolean
 }) {
   const maxBill = Math.max(1, ...monthlyBreakdown.map(m => m.bill_before_solar))
-  const shortLabels = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D']
+  const shortLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-  const W = 480
-  const H = 338
-  const padL = 40
-  const padR = 8
-  const padT = 14
-  const padB = 34
+  const W = 575
+  const H = 170
+  const padL = 30
+  const padR = 20
+  const padT = 7
+  const padB = 16
   const chartW = W - padL - padR
   const chartH = H - padT - padB
   const monthW = chartW / 12
-  const barW = Math.floor(monthW * 0.37)
+  const barW = Math.floor(monthW * 0.32)
   const afterFill = hasBattery ? 'rgba(52,211,153,0.82)' : 'rgba(251,191,36,0.82)'
   const afterSwatch = hasBattery ? 'rgba(52,211,153,0.90)' : 'rgba(251,191,36,0.90)'
 
@@ -977,10 +977,10 @@ function BillComparisonChart({
     <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
       <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm font-semibold text-slate-100">Monthly bill comparison</p>
-          <p className="text-xs text-slate-500">Before solar vs modeled post-solar</p>
+          <p className="text-xl font-semibold text-slate-100">Monthly bill comparison</p>
+          <p className="text-lg text-slate-400">Before solar vs modeled post-solar</p>
         </div>
-        <div className="flex gap-4 text-xs text-slate-400">
+        <div className="flex gap-4 text-sm text-slate-400">
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(100,116,139,0.75)' }} />
             Before
@@ -1101,7 +1101,7 @@ function EnergyFlow24hChart({
   const rawMax = Math.max(1, ...hours.map(h => Math.max(h.load, h.solar)))
   const maxVal = rawMax * 1.15
 
-  const W = 540; const H = 383; const pL = 36; const pR = 10; const pT = 18; const pB = 40
+  const W = 575; const H = 170; const pL = 42; const pR = 32; const pT = 7; const pB = 16
   const cW = W - pL - pR; const cH = H - pT - pB
   const xOf = (h: number) => pL + (h / 23) * cW
   const yOf = (v: number) => pT + cH - (v / maxVal) * cH
@@ -1120,7 +1120,7 @@ function EnergyFlow24hChart({
 
   const hourLabels = [0, 6, 12, 18, 23]
   const hourText = (h: number) =>
-    h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`
+    h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`
 
   const peakSolar = Math.max(...hours.map(h => h.solar))
   const peakLoad = Math.max(...hours.map(h => h.load))
@@ -1129,20 +1129,20 @@ function EnergyFlow24hChart({
     <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
         <div>
-          <p className="text-sm font-semibold text-slate-100">24-Hour Energy Flow</p>
-          <p className="text-xs text-slate-500">Solar production vs. modeled load profile</p>
+          <p className="text-xl font-semibold text-slate-100">24-Hour Energy Flow</p>
+          <p className="text-lg text-slate-400">Solar production vs. modeled load profile</p>
         </div>
-        <div className="flex flex-wrap gap-3 text-xs text-slate-400">
+        <div className="flex flex-wrap gap-4 text-sm text-slate-400">
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2 w-6 rounded-sm" style={{ background: 'rgba(251,191,36,0.45)' }} />
+            <span className="inline-block h-2.5 w-7 rounded-sm" style={{ background: 'rgba(251,191,36,0.45)' }} />
             Solar
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-0.5 w-5 bg-blue-400/80" />
+            <span className="inline-block h-1 w-6 rounded-full bg-blue-400/80" />
             Load
           </span>
           {hasBattery && (
-            <span className="flex items-center gap-1 text-xs text-emerald-400/70">
+            <span className="flex items-center gap-1 text-sm text-emerald-400/70">
               <BatteryCharging className="h-3 w-3" /> Battery mode
             </span>
           )}
@@ -1194,7 +1194,7 @@ function TwentyFiveYearSavingsChart({
   const yearData = generate25YearData(annualBillBefore, annualBillAfter)
   const maxBill = Math.max(1, ...yearData.map(d => d.withoutSolar))
 
-  const W = 560; const H = 383; const pL = 48; const pR = 10; const pT = 18; const pB = 38
+  const W = 575; const H = 170; const pL = 40; const pR = 20; const pT = 7; const pB = 16
   const cW = W - pL - pR; const cH = H - pT - pB
   const colW = cW / 25
   const barW = Math.max(3, Math.floor(colW * 0.35))
@@ -1205,10 +1205,10 @@ function TwentyFiveYearSavingsChart({
     <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
         <div>
-          <p className="text-sm font-semibold text-slate-100">25-Year Bill Savings</p>
-          <p className="text-xs text-slate-500">Annual electric bill without solar vs. with solar</p>
+          <p className="text-xl font-semibold text-slate-100">25-Year Bill Savings</p>
+          <p className="text-lg text-slate-400">Annual electric bill without solar vs. with solar</p>
         </div>
-        <div className="flex gap-3 text-xs text-slate-400">
+        <div className="flex gap-4 text-sm text-slate-400">
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(100,116,139,0.70)' }} />
             Without solar
@@ -1283,7 +1283,7 @@ function CostOfElectricityChart({
 
   const maxRate = Math.max(0.01, ...years.map(y => y.utilityRate)) * 1.15
 
-  const W = 540; const H = 360; const pL = 46; const pR = 10; const pT = 18; const pB = 38
+  const W = 575; const H = 170; const pL = 40; const pR = 20; const pT = 7; const pB = 16
   const cW = W - pL - pR; const cH = H - pT - pB
   const xOf = (year: number) => pL + ((year - 1) / 19) * cW
   const yOf = (v: number) => pT + cH - (v / maxRate) * cH
@@ -1297,16 +1297,16 @@ function CostOfElectricityChart({
     <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
         <div>
-          <p className="text-sm font-semibold text-slate-100">Cost of Electricity — 20 Year View</p>
-          <p className="text-xs text-slate-500">{utility} rate path vs. modeled solar LCOE</p>
+          <p className="text-xl font-semibold text-slate-100">Cost of Electricity — 20 Year View</p>
+          <p className="text-lg text-slate-400">{utility} rate path vs. modeled solar LCOE</p>
         </div>
-        <div className="flex gap-3 text-xs text-slate-400">
+        <div className="flex gap-4 text-sm text-slate-400">
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-0.5 w-5 bg-slate-500/80" />
+            <span className="inline-block h-1 w-6 rounded-full bg-slate-500/80" />
             Utility rate
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-0.5 w-5" style={{ background: 'rgba(251,191,36,0.85)' }} />
+            <span className="inline-block h-1 w-6 rounded-full" style={{ background: 'rgba(251,191,36,0.85)' }} />
             Solar LCOE
           </span>
         </div>
@@ -1363,7 +1363,7 @@ function CumulativeSavingsChart({
   const paybackIdx = yearData.findIndex(d => d.cumulative >= systemCost)
   const paybackYear = paybackIdx >= 0 ? yearData[paybackIdx].year : null
 
-  const W = 540; const H = 360; const pL = 48; const pR = 10; const pT = 18; const pB = 38
+  const W = 575; const H = 170; const pL = 40; const pR = 20; const pT = 7; const pB = 16
   const cW = W - pL - pR; const cH = H - pT - pB
   const xOf = (year: number) => pL + ((year - 1) / 24) * cW
   const yOf = (v: number) => pT + cH - (v / maxCumulative) * cH
@@ -1385,11 +1385,11 @@ function CumulativeSavingsChart({
     <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
         <div>
-          <p className="text-sm font-semibold text-slate-100">Cumulative Savings — 25 Years</p>
-          <p className="text-xs text-slate-500">Total modeled bill savings accumulated year by year</p>
+          <p className="text-xl font-semibold text-slate-100">Cumulative Savings — 25 Years</p>
+          <p className="text-lg text-slate-400">Total modeled bill savings accumulated year by year</p>
         </div>
         {paybackYear !== null && (
-          <div className="rounded-md border border-cyan-700/40 bg-cyan-950/20 px-2.5 py-1 text-xs font-semibold text-cyan-200">
+          <div className="rounded-md border border-cyan-700/40 bg-cyan-950/20 px-3 py-1.5 text-sm font-semibold text-cyan-200">
             ~Yr {paybackYear} modeled payback
           </div>
         )}
@@ -1481,10 +1481,10 @@ function PaymentComparisonChart({
   ]
 
   return (
-    <div className="min-h-[360px] rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+    <div className="min-h-[240px] rounded-lg border border-slate-800 bg-slate-950/60 p-4">
       <div className="mb-4">
-        <p className="text-sm font-semibold text-slate-100">Payment Comparison</p>
-        <p className="text-xs text-slate-500">Modeled monthly cost breakdown — not a financing offer</p>
+        <p className="text-xl font-semibold text-slate-100">Payment Comparison</p>
+        <p className="text-lg text-slate-400">Modeled monthly cost breakdown — not a financing offer</p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {bars.map(bar => {
@@ -1547,9 +1547,9 @@ function SummaryChartModule({
             key={tab.id}
             type="button"
             onClick={() => setActiveChart(tab.id)}
-            className={`whitespace-nowrap px-3.5 py-2.5 text-xs font-semibold transition-colors ${
+            className={`whitespace-nowrap px-5 py-3 text-sm font-semibold transition-colors ${
               activeChart === tab.id
-                ? 'border-b-2 border-cyan-400 bg-slate-950/70 text-cyan-300'
+                ? 'border-b-2 border-cyan-400 bg-cyan-950/20 text-cyan-200'
                 : 'text-slate-500 hover:bg-slate-900/60 hover:text-slate-300'
             }`}
           >
