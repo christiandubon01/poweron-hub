@@ -405,7 +405,7 @@ AGENT:
 Claude Code
 
 COMMIT HASH:
-[to be filled after commit]
+ce2be20
 
 FILES CHANGED:
 - `src/components/solarTraining/SolarEstimateTab.tsx`
