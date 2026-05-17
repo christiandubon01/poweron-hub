@@ -813,3 +813,66 @@ NO — no active build phase defined.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Labor Hours per System added. `laborHoursSmall/Medium/Large` fields in `SolarEstimateSettings` with defaults 16/32/48, persisted in existing localStorage key. `calculateSolarEstimateInstallCost` branches on `laborFormulaMode`: hourlyCrew = combinedRate × laborHours[tier], panelRate = panelCount × panelInstallLaborCost. Settings Hub "Labor Hours per System" card below Permit Cost by Size with hrs-suffixed inputs. No SolarEstimateTab.tsx changes needed. Typecheck passes. Commit: bcdbc91.
+
+---
+
+## HARDWARE INDEX COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+9e65fc1
+
+FILES CHANGED:
+- `src/services/solarTraining/SolarEstimateSettings.ts`
+- `src/components/v15r/V15rSettingsPanel.tsx`
+
+ACTIVE PHASE COMPLETED:
+Add Hardware Index to Solar Estimate Settings
+
+WHAT CHANGED:
+- Added `HardwareEntry`, `HardwareIndexData`, `DEFAULT_HARDWARE_INDEX` to `SolarEstimateSettings.ts`.
+- Added `hardwareIndex: HardwareIndexData` to `SolarEstimateSettings` type and defaults.
+- Added `safeHardwareEntry`, `safeEntries`, `safeHardwareIndex` normalizers; wired to `normalizeSolarEstimateSettings`.
+- Added `makeHardwareId`, `makeHardwareEntry`, `EntrySection`, `HardwareIndexPanel` components to `V15rSettingsPanel.tsx`.
+- Added `SOLAR_ESTIMATE_HARDWARE_INDEX_COLLAPSED_KEY` constant and `updateHardwareIndex` handler in `SolarEstimateSettingsPanel`.
+- `HardwareIndexPanel` placed below the 2-col settings grid and above the "Stored locally" message.
+- Collapse state persisted at `poweron.settings.solarEstimateHardwareIndex.collapsed` (default: collapsed).
+- Hardware data persisted inside existing `poweron.solarTraining.solarEstimateSettings` localStorage key.
+- Added `Plus` to lucide-react imports.
+
+WHAT WAS LEARNED:
+- Hardware Index data can cleanly nest inside the existing settings object — no separate localStorage key needed.
+- Inline grid layout (5-col: title, supplier, wattage/spec, price, remove) is compact and readable at small font sizes.
+- `loadCollapsedState(key, true)` defaults to collapsed for new panels without touching existing state.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- `EntrySection` pattern: label + "Add item" button + inline 5-col grid with remove — reusable for any CRUD list in settings.
+- `safeHardwareIndex` nested normalizer pattern: safe-cast each level before accessing children.
+
+BUGS / RISKS:
+- Hardware Index does not affect cost math (by design). Reference only.
+- No Supabase, no new packages, no formula changes.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES (see SOLARUPGRADE_SHARED_CONTEXT.md)
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+None. Ready for screenshot QA.
+
+NEXT PHASE ADJUSTMENTS:
+- If Hardware Index entries need to feed into product catalog or proposals, add a separate integration phase.
+- If subdivisions need their own collapse state, add per-subdivision keys using the same loadCollapsedState pattern.
+
+NEXT PHASE READY:
+NO — no active build phase defined. Branch ready for browser QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Hardware Index added to Solar Estimate Settings. `HardwareEntry` + `HardwareIndexData` types in `SolarEstimateSettings.ts`. Persisted in existing `poweron.solarTraining.solarEstimateSettings` key. UI: `HardwareIndexPanel` with `EntrySection` CRUD (title, supplier, wattage/spec, price, remove). Three sections: Solar Modules, Hardware (5 subdivisions), Electrical Equipment (3 subdivisions). Placed below Blueprint Cost by Size, above Stored locally message. Independently collapsible. Does not affect cost math. Typecheck passes. Commit: 9e65fc1.

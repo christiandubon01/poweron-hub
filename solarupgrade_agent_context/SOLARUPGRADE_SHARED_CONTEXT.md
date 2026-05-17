@@ -757,7 +757,7 @@ Agents should not assume approval to continue beyond their active phase.
 # LATEST PHASE STATUS
 
 Latest completed phase:
-Home Details electrical configuration and appliance selector
+Hardware Index added to Solar Estimate Settings
 
 Latest completed commits:
 - Phase 1: `72193d5`, `ed7bf01`
@@ -770,15 +770,16 @@ Latest completed commits:
 - Summary Chart Tabs + Local Save: `5982e03`
 - Local Saved Estimates: see Local Saved Estimates completion log below
 - Home Details electrical configuration and appliance selector: see completion log below
+- Hardware Index to Solar Estimate Settings: `9e65fc1`
 
 Current ready phase:
-No active build phase. Ready for screenshot QA on Step 2 Home Details electrical configuration.
+No active build phase. Ready for screenshot QA.
 
 Current risk level:
-Low. Changes are scoped to Solar Estimate Step 2, the typed estimate data model, and context docs. No Step 1 Address layout/map, summary chart logic, estimate math, NEM formulas, Supabase, packages, or unrelated tabs changed. Typecheck passes clean.
+Low. Hardware Index is additive only — new types, new normalizers, new UI. No cost math, NEM formulas, estimate steps, Supabase, or unrelated tabs changed. Typecheck passes clean.
 
 Recommended action:
-Screenshot QA: open Solar Estimate Step 2 Home Details, select a breaker size, open "Select appliances / heavy loads", choose multiple appliances, confirm active states and selected summary, continue to Step 5, save the estimate, and reopen it from Solar Estimates to confirm breaker and appliance values restore.
+Screenshot QA: open Settings Hub > Solar Estimate Settings, expand the Hardware Index panel, add entries to Solar Modules / Hardware subdivisions / Electrical Equipment subdivisions, reload and confirm entries persist.
 
 ---
 
