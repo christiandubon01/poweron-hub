@@ -302,3 +302,51 @@ NEXT RECOMMENDED ACTION:
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Step 5 Summary header spacing compacted. `Estimate summary` and the save/update button now share one responsive row; metric cards sit closer under the header. Saved badge remains inline when present. Scope was limited to Summary header layout and context logs. Typecheck passed. Commit pending at log-write time.
+
+---
+
+## CONSERVATIVE SUMMARY CHART MODELING COMPLETION LOG
+
+AGENT:
+Cursor GPT-5.5
+
+TASK COMPLETED:
+Apply conservative NEM modeling to 24H Flow and 25 Yr Savings charts
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Added reusable conservative NEM constants and helpers for anchor-month solar production, 24-hour flow, and 25-year annual projections.
+- Updated Summary > 24H Flow to render solar curve/area, load line, grid import bars, solar export bars, conditional battery discharge bars, 4-9 PM peak shading, TOU import strip, legend, tooltip, and NEM 3.0 callout.
+- Updated Summary > 25 Yr Savings to annualize the same conservative monthly model used by Monthly Bill instead of using target-offset-style savings.
+- Added Solar Only yellow bars and conditional Solar Plus Battery green bars against grey no-solar spending.
+
+WHAT WAS LEARNED:
+- `getSeasonalBillData` already contains the right conservative monthly current / solar-only / battery cost outputs for the 25-year chart.
+- A believable 24H view needs normalized hourly shapes so daily totals match the anchor month instead of arbitrary curve height.
+- Battery savings should only come from otherwise-exported solar and should be limited by battery size and 4-9 PM import demand.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Normalize hourly profile weights to preserve daily kWh totals.
+- Use shared monthly NEM outputs as the source for annual projections to keep Summary tabs consistent.
+- Keep chart tooltips data-rich while preserving compact SVG dimensions and PowerOn dark styling.
+
+BUGS / RISKS:
+- 24H Flow is a representative planning visual, not a detailed interval-data simulation.
+- Screenshot QA should check hover tooltips and narrow widths because the 24H legend now has more series.
+- Other tabs were intentionally not changed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+NEXT RECOMMENDED ACTION:
+- Screenshot QA 24H Flow and 25 Yr Savings in Solar Only and Solar Plus Battery states, especially 4-9 PM battery discharge behavior.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+24H Flow and 25 Yr Savings now share conservative NEM 3.0 assumptions with Monthly Bill. 24H Flow uses anchor-month usage/production, normalized hourly load/solar, import/export bars, constrained battery discharge, peak shading, TOU strip, tooltip, and callout. 25 Yr Savings uses annualized modeled monthly costs with 3% escalation and shows Solar Only plus conditional Battery. Typecheck passed. Commit pending at log-write time.

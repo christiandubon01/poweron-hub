@@ -2763,3 +2763,52 @@ NEXT RECOMMENDED ACTION:
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Step 5 Summary header spacing compacted. The title and save/update button now share one responsive header row, and metric cards sit closer below it. Saved badge remains inline only when `saveStatus === 'saved'`. Scope stayed limited to Summary header layout plus context updates. Typecheck passed. Commit pending at log-write time.
+
+---
+
+## CONSERVATIVE SUMMARY CHART MODELING COMPLETION LOG
+
+AGENT:
+Cursor GPT-5.5
+
+TASK COMPLETED:
+Apply conservative NEM modeling to 24H Flow and 25 Yr Savings charts
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Added shared conservative NEM constants for export credit, fixed monthly floor, solar-only self-consumption, and 3% escalation.
+- Reused the Monthly Bill conservative seasonal model for 25-year annual current, solar-only, and solar-plus-battery projected costs.
+- Rebuilt Summary > 24H Flow around an anchor-month representative day using monthly usage, monthly solar production, climate profile, utility/rate plan, system size, and battery state.
+- Added 24H visual layers for solar production area/curve, home load line, grid import bars, solar export bars, conditional battery discharge bars, 4-9 PM peak shading, TOU strip, legend, tooltip, and NEM 3.0 callout.
+- Updated 25 Yr Savings to show current electric spending, Solar Only projected cost/savings, and Solar Plus Battery projected cost/savings when battery is enabled.
+
+WHAT WAS LEARNED:
+- The Monthly Bill conservative logic is centralized enough to reuse for annual projections through `getSeasonalBillData`.
+- 24H Flow needed a representative intra-day model, not direct target-offset savings; normalizing hourly load and solar shapes preserves anchor-month kWh and production.
+- Battery display should be constrained by exported solar, battery capacity, and peak-hour import demand to avoid fake unlimited savings.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Anchor-day pattern: anchor-month kWh / days in month plus normalized hourly load shape yields a representative daily load profile.
+- Conservative battery dispatch pattern: `storedSolar = min(exportedSolar, batterySizeKwh, peakImport / efficiency)`, then discharge across 4-9 PM in proportion to peak import.
+- Annual projection pattern: sum modeled monthly costs for Year 1, then escalate both current and projected post-solar costs by a conservative annual rate.
+
+BUGS / RISKS:
+- The 24H model is representative, not a full battery dispatch simulator; screenshot QA should verify it communicates directionally believable import/export behavior.
+- The TOU strip uses the selected rate schedule for labels/rates, while the red peak zone intentionally highlights the 4-9 PM battery-value window.
+- Other chart tabs were intentionally left unchanged.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+NEXT RECOMMENDED ACTION:
+- Screenshot QA 24H Flow and 25 Yr Savings with Solar Only and Solar Plus Battery, checking that battery ON shows green discharge and lower 4-9 PM imports.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+24H Flow and 25 Yr Savings now use conservative NEM 3.0 assumptions aligned with Monthly Bill. 24H Flow builds an anchor-month representative day with normalized load/solar, import/export bars, battery discharge constrained by export/capacity/peak imports, peak shading, TOU strip, tooltip, and callout. 25 Yr Savings sums modeled monthly current/solar-only/battery costs for Year 1 and escalates at 3%. Typecheck passed. Commit pending at log-write time.

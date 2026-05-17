@@ -385,6 +385,33 @@ function saveActiveDraft(draft: ActiveDraft): void {
 }
 
 const ESCALATION_RATE = 0.04
+const CONSERVATIVE_NEM_EXPORT_RATE = 0.06
+const CONSERVATIVE_NEM_FIXED_MONTHLY_CHARGE = 15
+const CONSERVATIVE_SOLAR_ONLY_SELF_CONSUMPTION_RATIO = 0.55
+const CONSERVATIVE_NEM_ESCALATION_RATE = 0.03
+
+type TwentyFiveYearSavingsPoint = {
+  year: number
+  withoutSolar: number
+  solarOnly: number
+  solarOnlySavings: number
+  battery: number
+  batterySavings: number
+  extraBatterySavings: number
+  cumulativeSolarOnly: number
+  cumulativeBattery: number
+}
+
+type EnergyFlowHour = {
+  hour: number
+  load: number
+  solar: number
+  gridImport: number
+  solarExport: number
+  batteryDischarge: number
+  touPeriod: string
+  importRate: number
+}
 
 function generate25YearData(
   annualBefore: number,
@@ -401,19 +428,143 @@ function generate25YearData(
   })
 }
 
-function generate24hProfile(
-  monthlyKwh: number,
+function getNormalizedSolarWeights(): number[] {
+  const solarWeightAvg = SOLAR_PRODUCTION_SEASONAL_WEIGHTS.reduce((s, w) => s + w, 0) / 12
+  return SOLAR_PRODUCTION_SEASONAL_WEIGHTS.map(w => w / solarWeightAvg)
+}
+
+function getMonthlySolarProductionKwh(
   solarSizeKw: number,
-): Array<{ hour: number; load: number; solar: number; netExport: number; netImport: number }> {
-  const hourlyAvg = (monthlyKwh / 30) / 24
-  return Array.from({ length: 24 }, (_, h) => {
-    const lf = h < 6 ? 0.62 : h < 9 ? 1.05 : h < 14 ? 0.88 : h < 20 ? 1.18 : h < 23 ? 0.90 : 0.65
-    const load = hourlyAvg * lf
-    const solar =
-      h >= 6 && h <= 19
-        ? solarSizeKw * Math.max(0, Math.exp(-Math.pow((h - 12.5) / 3.3, 2))) * 0.85
-        : 0
-    return { hour: h, load, solar, netExport: Math.max(0, solar - load), netImport: Math.max(0, load - solar) }
+  climateProfile: ClimateProfile,
+  monthIndex: number,
+): number {
+  const annualProductionKwh = solarSizeKw * (climateProfile === 'hotDesert' ? 1650 : 1500)
+  return (annualProductionKwh / 12) * getNormalizedSolarWeights()[monthIndex]
+}
+
+function getDaysInModeledMonth(monthIndex: number): number {
+  return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][monthIndex] ?? 30
+}
+
+function generateConservative25YearData(months: SeasonalBillMonth[]): TwentyFiveYearSavingsPoint[] {
+  const annualBefore = months.reduce((total, month) => total + month.beforeCost, 0)
+  const annualSolarOnly = months.reduce((total, month) => total + month.afterCostNoBattery, 0)
+  const annualBattery = months.reduce((total, month) => total + month.afterCostWithBattery, 0)
+  let cumulativeSolarOnly = 0
+  let cumulativeBattery = 0
+
+  return Array.from({ length: 25 }, (_, i) => {
+    const year = i + 1
+    const escalation = Math.pow(1 + CONSERVATIVE_NEM_ESCALATION_RATE, i)
+    const withoutSolar = annualBefore * escalation
+    const solarOnly = annualSolarOnly * escalation
+    const battery = annualBattery * escalation
+    const solarOnlySavings = Math.max(0, withoutSolar - solarOnly)
+    const batterySavings = Math.max(0, withoutSolar - battery)
+    cumulativeSolarOnly += solarOnlySavings
+    cumulativeBattery += batterySavings
+
+    return {
+      year,
+      withoutSolar,
+      solarOnly,
+      solarOnlySavings,
+      battery,
+      batterySavings,
+      extraBatterySavings: Math.max(0, solarOnly - battery),
+      cumulativeSolarOnly,
+      cumulativeBattery,
+    }
+  })
+}
+
+function generateConservative24hFlow({
+  monthlyKwhByMonth,
+  solarSizeKw,
+  hasBattery,
+  batterySizeKwh,
+  utility,
+  ratePlan,
+  climateProfile,
+  anchorMonthIndex,
+}: {
+  monthlyKwhByMonth: number[]
+  solarSizeKw: number
+  hasBattery: boolean
+  batterySizeKwh: number
+  utility: Utility
+  ratePlan: RatePlan
+  climateProfile: ClimateProfile
+  anchorMonthIndex: number
+}): EnergyFlowHour[] {
+  const days = getDaysInModeledMonth(anchorMonthIndex)
+  const dailyUsageKwh = (monthlyKwhByMonth[anchorMonthIndex] ?? 0) / days
+  const dailyProductionKwh = getMonthlySolarProductionKwh(solarSizeKw, climateProfile, anchorMonthIndex) / days
+  const schedule = TOU_RATE_SCHEDULES[ratePlan]
+  const retailRate = getMonthlyBillRetailRate(utility)
+
+  const loadShape = Array.from({ length: 24 }, (_, h) => {
+    if (h < 5) return 0.52
+    if (h < 8) return 1.08
+    if (h < 15) return 0.74
+    if (h < 16) return 0.95
+    if (h < 21) return 1.55
+    if (h < 23) return 1.02
+    return 0.66
+  })
+  const solarShape = Array.from({ length: 24 }, (_, h) =>
+    h >= 6 && h <= 18 ? Math.max(0, Math.exp(-Math.pow((h - 12) / 3.25, 2))) : 0
+  )
+  const loadShapeTotal = loadShape.reduce((total, value) => total + value, 0)
+  const solarShapeTotal = solarShape.reduce((total, value) => total + value, 0) || 1
+
+  const base = Array.from({ length: 24 }, (_, hour) => {
+    const load = dailyUsageKwh * (loadShape[hour] / loadShapeTotal)
+    const solar = dailyProductionKwh * (solarShape[hour] / solarShapeTotal)
+    return { hour, load, solar, directSolar: Math.min(load, solar) }
+  })
+
+  const naturalDirectSolar = base.reduce((total, hour) => total + hour.directSolar, 0)
+  const targetDirectSolar = Math.min(dailyUsageKwh, dailyProductionKwh * CONSERVATIVE_SOLAR_ONLY_SELF_CONSUMPTION_RATIO)
+  const directSolarScale = naturalDirectSolar > targetDirectSolar && naturalDirectSolar > 0
+    ? targetDirectSolar / naturalDirectSolar
+    : 1
+
+  const solarOnly = base.map(hour => {
+    const directSolar = hour.directSolar * directSolarScale
+    return {
+      ...hour,
+      gridImportBeforeBattery: Math.max(0, hour.load - directSolar),
+      solarExportBeforeBattery: Math.max(0, hour.solar - directSolar),
+    }
+  })
+
+  const exportedSolar = solarOnly.reduce((total, hour) => total + hour.solarExportBeforeBattery, 0)
+  const peakImport = solarOnly
+    .filter(hour => hour.hour >= 16 && hour.hour <= 20)
+    .reduce((total, hour) => total + hour.gridImportBeforeBattery, 0)
+  const storedSolarKwh = hasBattery
+    ? Math.min(exportedSolar, Math.max(0, batterySizeKwh), peakImport / 0.9)
+    : 0
+  const dischargeAvailable = storedSolarKwh * 0.9
+  const exportChargeScale = exportedSolar > 0 ? storedSolarKwh / exportedSolar : 0
+
+  return solarOnly.map(hour => {
+    const peakWeight = hour.hour >= 16 && hour.hour <= 20 && peakImport > 0
+      ? hour.gridImportBeforeBattery / peakImport
+      : 0
+    const batteryDischarge = Math.min(hour.gridImportBeforeBattery, dischargeAvailable * peakWeight)
+    const touBlock = schedule?.hours[hour.hour]
+    return {
+      hour: hour.hour,
+      load: hour.load,
+      solar: hour.solar,
+      gridImport: Math.max(0, hour.gridImportBeforeBattery - batteryDischarge),
+      solarExport: Math.max(0, hour.solarExportBeforeBattery * (1 - exportChargeScale)),
+      batteryDischarge,
+      touPeriod: touBlock?.period ?? (hour.hour >= 16 && hour.hour <= 20 ? 'peak' : 'off_peak'),
+      importRate: touBlock?.import_rate ?? retailRate,
+    }
   })
 }
 
@@ -458,32 +609,26 @@ function getSeasonalBillData(
   batterySizeKwh: number,
 ): SeasonalBillMonth[] {
   const retailRate = getMonthlyBillRetailRate(utility)
-  const nemExportRate = 0.06
-  const fixedMonthlyCharge = 15
-  const annualProductionKwh = solarSizeKw * (climateProfile === 'hotDesert' ? 1650 : 1500)
-  const solarWeightAvg = SOLAR_PRODUCTION_SEASONAL_WEIGHTS.reduce((s, w) => s + w, 0) / 12
-  const normalizedSolarWeights = SOLAR_PRODUCTION_SEASONAL_WEIGHTS.map(w => w / solarWeightAvg)
-  const solarOnlySelfConsumptionRatio = 0.55
   const batteryShiftCapacityMonthlyKwh = Math.max(0, batterySizeKwh) * 26
 
   return MONTH_FULL_LABELS.map((fullLabel, i) => {
     const kwh = monthlyKwhByMonth[i] ?? 0
-    const solarProduction = (annualProductionKwh / 12) * normalizedSolarWeights[i]
-    const selfConsumedKwh = Math.min(kwh, solarProduction * solarOnlySelfConsumptionRatio)
+    const solarProduction = getMonthlySolarProductionKwh(solarSizeKw, climateProfile, i)
+    const selfConsumedKwh = Math.min(kwh, solarProduction * CONSERVATIVE_SOLAR_ONLY_SELF_CONSUMPTION_RATIO)
     const exportedKwh = Math.max(0, solarProduction - selfConsumedKwh)
     const importedKwh = Math.max(0, kwh - selfConsumedKwh)
     const beforeCost = kwh * retailRate
     const rawSolarOnlyCost =
-      fixedMonthlyCharge +
+      CONSERVATIVE_NEM_FIXED_MONTHLY_CHARGE +
       importedKwh * retailRate -
-      exportedKwh * nemExportRate
+      exportedKwh * CONSERVATIVE_NEM_EXPORT_RATE
     const afterCostNoBattery = Math.max(
       rawSolarOnlyCost,
       beforeCost * 0.45,
-      fixedMonthlyCharge,
+      CONSERVATIVE_NEM_FIXED_MONTHLY_CHARGE,
     )
     const extraShiftedKwh = Math.min(exportedKwh, batteryShiftCapacityMonthlyKwh)
-    const extraBatterySavings = extraShiftedKwh * Math.max(0, retailRate - nemExportRate)
+    const extraBatterySavings = extraShiftedKwh * Math.max(0, retailRate - CONSERVATIVE_NEM_EXPORT_RATE)
     const rawBatteryCost = afterCostNoBattery - extraBatterySavings
     const afterCostWithBattery = Math.max(
       0,
@@ -491,7 +636,7 @@ function getSeasonalBillData(
         Math.max(
           rawBatteryCost,
           beforeCost * 0.30,
-          fixedMonthlyCharge,
+          CONSERVATIVE_NEM_FIXED_MONTHLY_CHARGE,
         ),
         afterCostNoBattery,
       ),
@@ -2328,27 +2473,47 @@ function ChartHoverCard({ tooltip }: { tooltip: ChartTooltip | null }) {
 }
 
 function EnergyFlow24hChart({
-  monthlyKwh,
+  monthlyKwhByMonth,
   solarSizeKw,
   hasBattery,
+  batterySizeKwh,
+  utility,
   ratePlan,
+  climateProfile,
+  anchorMonthIndex,
+  anchorMonthLabel,
 }: {
-  monthlyKwh: number
+  monthlyKwhByMonth: number[]
   solarSizeKw: number
   hasBattery: boolean
+  batterySizeKwh: number
+  utility: Utility
   ratePlan: RatePlan
+  climateProfile: ClimateProfile
+  anchorMonthIndex: number
+  anchorMonthLabel: string
 }) {
   const [tooltip, setTooltip] = useState<ChartTooltip | null>(null)
-  const hours = generate24hProfile(monthlyKwh, solarSizeKw)
-  const touSchedule = TOU_RATE_SCHEDULES[ratePlan]
-  const rawMax = Math.max(1, ...hours.map(h => Math.max(h.load, h.solar)))
+  const hours = generateConservative24hFlow({
+    monthlyKwhByMonth,
+    solarSizeKw,
+    hasBattery,
+    batterySizeKwh,
+    utility,
+    ratePlan,
+    climateProfile,
+    anchorMonthIndex,
+  })
+  const rawMax = Math.max(1, ...hours.map(h => Math.max(h.load, h.solar, h.gridImport, h.solarExport, h.batteryDischarge)))
   const maxVal = rawMax * 1.15
 
-  const W = 575; const H = 170; const pL = 42; const pR = 32; const pT = 7; const pB = 16
+  const W = 575; const H = 170; const pL = 42; const pR = 32; const pT = 7; const pB = 24
   const cW = W - pL - pR; const cH = H - pT - pB
   const xOf = (h: number) => pL + (h / 23) * cW
   const yOf = (v: number) => pT + cH - (v / maxVal) * cH
   const baseY = pT + cH
+  const barSlotW = cW / 24
+  const barW = Math.max(2.5, barSlotW * 0.18)
 
   const solarFill = [
     `M${xOf(0)},${baseY}`,
@@ -2365,16 +2530,15 @@ function EnergyFlow24hChart({
   const hourText = (h: number) =>
     h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`
   const periodText = (period: string) => period.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase())
-
-  const peakSolar = Math.max(...hours.map(h => h.solar))
-  const peakLoad = Math.max(...hours.map(h => h.load))
+  const rateColor = (period: string) =>
+    period === 'peak' ? 'rgba(248,113,113,0.55)' : period === 'super_off_peak' ? 'rgba(34,211,238,0.32)' : 'rgba(59,130,246,0.30)'
 
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
         <div>
           <p className="text-xl font-semibold text-slate-100">24-Hour Energy Flow</p>
-          <p className="text-lg text-slate-400">Solar production vs. modeled load profile</p>
+          <p className="text-lg text-slate-400">{anchorMonthLabel} representative day with NEM 3.0 import/export</p>
         </div>
         <div className="flex flex-wrap gap-4 text-sm text-slate-400">
           <span className="flex items-center gap-1.5">
@@ -2385,15 +2549,21 @@ function EnergyFlow24hChart({
             <span className="inline-block h-1 w-6 rounded-full bg-blue-400/80" />
             Load
           </span>
-          {hasBattery && (
-            <span className="flex items-center gap-1 text-sm text-emerald-400/70">
-              <BatteryCharging className="h-3 w-3" /> Battery mode
-            </span>
-          )}
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-sky-400/75" />
+            Grid import
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-amber-400/80" />
+            Export
+          </span>
+          {hasBattery && <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400/80" /> Battery</span>}
         </div>
       </div>
       <div className="overflow-x-auto">
         <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 300 }}>
+          <rect x={xOf(16)} y={pT} width={xOf(21) - xOf(16)} height={cH} fill="rgba(244,63,94,0.10)" />
+          <text x={(xOf(16) + xOf(21)) / 2} y={pT + 9} textAnchor="middle" fontSize={7} fill="rgba(251,113,133,0.72)">4-9 PM peak</text>
           {[0.25, 0.5, 0.75, 1].map(p => (
             <line
               key={p}
@@ -2405,27 +2575,42 @@ function EnergyFlow24hChart({
           ))}
           <line x1={xOf(12)} y1={pT} x2={xOf(12)} y2={baseY} stroke="rgba(251,191,36,0.10)" strokeWidth={1} strokeDasharray="2,4" />
           <path d={solarFill} fill="rgba(251,191,36,0.30)" />
+          <path d={solarFill} fill="none" stroke="rgba(251,191,36,0.88)" strokeWidth={1.2} strokeLinejoin="round" />
+          {hours.map(hour => {
+            const x = xOf(hour.hour) - barSlotW * 0.32
+            const importH = Math.max(0, baseY - yOf(hour.gridImport))
+            const exportH = Math.max(0, baseY - yOf(hour.solarExport))
+            const batteryH = Math.max(0, baseY - yOf(hour.batteryDischarge))
+            return (
+              <g key={`bars-${hour.hour}`}>
+                <rect x={x} y={baseY - importH} width={barW} height={importH} fill="rgba(56,189,248,0.68)" rx={1} />
+                <rect x={x + barW + 1} y={baseY - exportH} width={barW} height={exportH} fill="rgba(251,191,36,0.72)" rx={1} />
+                {hasBattery && (
+                  <rect x={x + (barW + 1) * 2} y={baseY - batteryH} width={barW} height={batteryH} fill="rgba(52,211,153,0.76)" rx={1} />
+                )}
+              </g>
+            )
+          })}
           <path d={loadPath} fill="none" stroke="rgba(96,165,250,0.85)" strokeWidth={1.5} strokeLinejoin="round" />
+          {hours.map(hour => (
+            <rect
+              key={`rate-${hour.hour}`}
+              x={pL + hour.hour * barSlotW}
+              y={baseY + 5}
+              width={barSlotW + 0.5}
+              height={5}
+              fill={rateColor(hour.touPeriod)}
+            />
+          ))}
           {hourLabels.map(h => (
             <text key={h} x={xOf(h)} y={H - 5} textAnchor="middle" fontSize={7.5} fill="#475569">
               {hourText(h)}
             </text>
           ))}
           <text x={pL - 4} y={yOf(maxVal * 0.75) + 3} textAnchor="end" fontSize={6.5} fill="#475569">kWh</text>
-          {peakSolar > 0 && (
-            <text x={xOf(14)} y={yOf(peakSolar * 0.55)} textAnchor="start" fontSize={6.5} fill="rgba(52,211,153,0.65)">↑ export</text>
-          )}
-          {peakLoad > 0 && (
-            <text x={xOf(6)} y={yOf(peakLoad * 0.4)} textAnchor="start" fontSize={6.5} fill="rgba(248,113,113,0.65)">↓ import</text>
-          )}
           {hours.map(hour => {
-            const touBlock = touSchedule?.hours[hour.hour]
             const showTooltip = (event: React.MouseEvent) => {
               const position = getTooltipPosition(event)
-              const netLabel =
-                hour.netExport > 0
-                  ? `Export ${hour.netExport.toFixed(2)} kWh`
-                  : `Import ${hour.netImport.toFixed(2)} kWh`
               setTooltip({
                 ...position,
                 eyebrow: '24H flow',
@@ -2433,13 +2618,11 @@ function EnergyFlow24hChart({
                 rows: [
                   { label: 'Home load', value: `${hour.load.toFixed(2)} kWh` },
                   { label: 'Solar production', value: `${hour.solar.toFixed(2)} kWh`, tone: 'amber' },
-                  { label: hasBattery ? 'Grid / battery context' : 'Grid import/export', value: hasBattery ? `${netLabel}; battery enabled` : netLabel, tone: hour.netExport > 0 ? 'emerald' : 'cyan' },
-                  ...(touBlock
-                    ? [
-                        { label: 'TOU period', value: periodText(touBlock.period) },
-                        { label: 'Import rate', value: `$${touBlock.import_rate.toFixed(2)}/kWh` },
-                      ]
-                    : []),
+                  { label: 'Grid import', value: `${hour.gridImport.toFixed(2)} kWh`, tone: 'cyan' },
+                  { label: 'Solar export', value: `${hour.solarExport.toFixed(2)} kWh`, tone: 'amber' },
+                  ...(hasBattery ? [{ label: 'Battery discharge', value: `${hour.batteryDischarge.toFixed(2)} kWh`, tone: 'emerald' as const }] : []),
+                  { label: 'TOU period', value: `${periodText(hour.touPeriod)}${hour.hour >= 16 && hour.hour <= 20 ? ' peak' : ''}` },
+                  { label: 'Import rate', value: `$${hour.importRate.toFixed(2)}/kWh` },
                 ],
               })
             }
@@ -2460,29 +2643,40 @@ function EnergyFlow24hChart({
         </svg>
       </div>
       <ChartHoverCard tooltip={tooltip} />
+      <div className="mt-3 rounded-md border border-amber-700/25 bg-amber-950/10 px-3 py-2 text-[11px] leading-4 text-slate-400">
+        NEM 3.0 values midday exports at about ${CONSERVATIVE_NEM_EXPORT_RATE.toFixed(2)}/kWh. Batteries use otherwise-exported solar to reduce 4-9 PM peak imports.
+      </div>
       <ChartNote>
-        Modeled estimates. Daily load shape based on typical CA residential pattern. Solar uses simplified Gaussian production curve.
-        {hasBattery ? ' Battery shifts self-consumption; dispatch not modeled here.' : ''}
+        Import/export flow uses the selected estimate month, climate profile, system size, and conservative self-consumption assumptions.
       </ChartNote>
     </div>
   )
 }
 
 function TwentyFiveYearSavingsChart({
-  annualBillBefore,
-  annualBillAfter,
+  monthlyKwhByMonth,
+  solarSizeKw,
+  utility,
+  hasBattery,
+  batterySizeKwh,
+  climateProfile,
 }: {
-  annualBillBefore: number
-  annualBillAfter: number
+  monthlyKwhByMonth: number[]
+  solarSizeKw: number
+  utility: Utility
+  hasBattery: boolean
+  batterySizeKwh: number
+  climateProfile: ClimateProfile
 }) {
   const [tooltip, setTooltip] = useState<ChartTooltip | null>(null)
-  const yearData = generate25YearData(annualBillBefore, annualBillAfter)
+  const conservativeMonths = getSeasonalBillData(monthlyKwhByMonth, solarSizeKw, utility, climateProfile, batterySizeKwh)
+  const yearData = generateConservative25YearData(conservativeMonths)
   const maxBill = Math.max(1, ...yearData.map(d => d.withoutSolar))
 
   const W = 575; const H = 170; const pL = 40; const pR = 20; const pT = 7; const pB = 16
   const cW = W - pL - pR; const cH = H - pT - pB
   const colW = cW / 25
-  const barW = Math.max(3, Math.floor(colW * 0.35))
+  const barW = Math.max(3, Math.floor(colW * (hasBattery ? 0.24 : 0.32)))
   const yOf = (v: number) => pT + cH - (v / maxBill) * cH
   const baseY = pT + cH
 
@@ -2491,19 +2685,28 @@ function TwentyFiveYearSavingsChart({
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
         <div>
           <p className="text-xl font-semibold text-slate-100">25-Year Bill Savings</p>
-          <p className="text-lg text-slate-400">Annual electric bill without solar vs. with solar</p>
+          <p className="text-lg text-slate-400">Conservative NEM 3.0 annual utility costs</p>
         </div>
-        <div className="flex gap-4 text-sm text-slate-400">
+        <div className="flex flex-wrap gap-4 text-sm text-slate-400">
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(100,116,139,0.70)' }} />
             Without solar
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(52,211,153,0.78)' }} />
-            With solar
+            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(251,191,36,0.82)' }} />
+            Solar only
           </span>
+          {hasBattery && (
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(52,211,153,0.78)' }} />
+              Solar + battery
+            </span>
+          )}
         </div>
       </div>
+      <p className="mb-3 text-xs text-slate-500">
+        25-year savings use conservative NEM 3.0 import/export modeling and 3% annual utility escalation.
+      </p>
       <div className="overflow-x-auto">
         <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 320 }}>
           {[0.25, 0.5, 0.75, 1].map(p => {
@@ -2520,7 +2723,8 @@ function TwentyFiveYearSavingsChart({
           {yearData.map((d, i) => {
             const xBase = pL + i * colW + colW * 0.07
             const beforeH = Math.max(1, baseY - yOf(d.withoutSolar))
-            const afterH = Math.max(1, baseY - yOf(d.withSolar))
+            const solarOnlyH = Math.max(1, baseY - yOf(d.solarOnly))
+            const batteryH = Math.max(1, baseY - yOf(d.battery))
             const showTooltip = (event: React.MouseEvent) => {
               const position = getTooltipPosition(event)
               setTooltip({
@@ -2528,17 +2732,26 @@ function TwentyFiveYearSavingsChart({
                 eyebrow: '25 year savings',
                 title: `Year ${d.year}`,
                 rows: [
-                  { label: 'Current projected cost', value: formatMoney(d.withoutSolar) },
-                  { label: 'New projected cost', value: formatMoney(d.withSolar), tone: 'emerald' },
-                  { label: 'Annual savings', value: formatMoney(d.savings), tone: 'cyan' },
-                  { label: 'Cumulative savings', value: formatMoney(d.cumulative), tone: 'emerald' },
+                  { label: 'Current electric spending', value: formatMoney(d.withoutSolar) },
+                  { label: 'Solar only projected', value: formatMoney(d.solarOnly), tone: 'amber' },
+                  { label: 'Solar only savings', value: formatMoney(d.solarOnlySavings), tone: 'cyan' },
+                  ...(hasBattery
+                    ? [
+                        { label: 'Solar + battery projected', value: formatMoney(d.battery), tone: 'emerald' as const },
+                        { label: 'Extra battery savings', value: formatMoney(d.extraBatterySavings), tone: 'emerald' as const },
+                        { label: 'Battery cumulative savings', value: formatMoney(d.cumulativeBattery), tone: 'emerald' as const },
+                      ]
+                    : [{ label: 'Cumulative savings', value: formatMoney(d.cumulativeSolarOnly), tone: 'emerald' as const }]),
                 ],
               })
             }
             return (
               <g key={d.year}>
                 <rect x={xBase} y={baseY - beforeH} width={barW} height={beforeH} fill="rgba(100,116,139,0.62)" rx={1} />
-                <rect x={xBase + barW + 1} y={baseY - afterH} width={barW} height={afterH} fill="rgba(52,211,153,0.75)" rx={1} />
+                <rect x={xBase + barW + 1} y={baseY - solarOnlyH} width={barW} height={solarOnlyH} fill="rgba(251,191,36,0.75)" rx={1} />
+                {hasBattery && (
+                  <rect x={xBase + (barW + 1) * 2} y={baseY - batteryH} width={barW} height={batteryH} fill="rgba(52,211,153,0.75)" rx={1} />
+                )}
                 <rect
                   x={pL + i * colW}
                   y={pT}
@@ -2561,7 +2774,7 @@ function TwentyFiveYearSavingsChart({
       </div>
       <ChartHoverCard tooltip={tooltip} />
       <ChartNote>
-        Assumes {ESCALATION_RATE * 100}%/yr utility escalation; solar remainder escalates ~35% as fast (minimal fixed charges). Modeled estimate — not a financial projection.
+        Year 1 starts from modeled monthly current bills, solar-only bills, and solar-plus-battery bills using fixed charges, ${CONSERVATIVE_NEM_EXPORT_RATE.toFixed(2)}/kWh export credit, and conservative self-consumption.
       </ChartNote>
     </div>
   )
@@ -2888,9 +3101,7 @@ function PaymentComparisonChart({
 }
 
 function SummaryChartModule({
-  nemResult,
   hasBattery,
-  monthlyKwh,
   monthlyKwhByMonth,
   solarSizeKw,
   batterySizeKwh,
@@ -2900,12 +3111,11 @@ function SummaryChartModule({
   utility,
   ratePlan,
   climateProfile,
+  anchorMonthIndex,
   anchorMonthLabel,
   ratePlanLabel,
 }: {
-  nemResult: ReturnType<typeof calculateNEM3Savings>
   hasBattery: boolean
-  monthlyKwh: number
   monthlyKwhByMonth: number[]
   solarSizeKw: number
   batterySizeKwh: number
@@ -2915,6 +3125,7 @@ function SummaryChartModule({
   utility: Utility
   ratePlan: RatePlan
   climateProfile: ClimateProfile
+  anchorMonthIndex: number
   anchorMonthLabel: string
   ratePlanLabel: string
 }) {
@@ -2952,12 +3163,26 @@ function SummaryChartModule({
           />
         )}
         {activeChart === 'energy_flow_24h' && (
-          <EnergyFlow24hChart monthlyKwh={monthlyKwh} solarSizeKw={solarSizeKw} hasBattery={hasBattery} ratePlan={ratePlan} />
+          <EnergyFlow24hChart
+            monthlyKwhByMonth={monthlyKwhByMonth}
+            solarSizeKw={solarSizeKw}
+            hasBattery={hasBattery}
+            batterySizeKwh={batterySizeKwh}
+            utility={utility}
+            ratePlan={ratePlan}
+            climateProfile={climateProfile}
+            anchorMonthIndex={anchorMonthIndex}
+            anchorMonthLabel={anchorMonthLabel}
+          />
         )}
         {activeChart === 'yr25_savings' && (
           <TwentyFiveYearSavingsChart
-            annualBillBefore={avgBeforeBill * 12}
-            annualBillAfter={avgAfterBill * 12}
+            monthlyKwhByMonth={monthlyKwhByMonth}
+            solarSizeKw={solarSizeKw}
+            utility={utility}
+            hasBattery={hasBattery}
+            batterySizeKwh={batterySizeKwh}
+            climateProfile={climateProfile}
           />
         )}
         {activeChart === 'cost_electricity' && (
@@ -3268,9 +3493,7 @@ function EstimateSummaryStep({
 
       {/* C. Chart rendering */}
       <SummaryChartModule
-        nemResult={nemResult}
         hasBattery={hasBattery}
-        monthlyKwh={monthlyKwh}
         monthlyKwhByMonth={monthlyKwhByMonth}
         solarSizeKw={solarSizeKw}
         batterySizeKwh={batterySizeKwh}
@@ -3280,6 +3503,7 @@ function EstimateSummaryStep({
         utility={utility}
         ratePlan={ratePlan}
         climateProfile={climateProfile}
+        anchorMonthIndex={anchorMonthIndex}
         anchorMonthLabel={anchorMonthLabel}
         ratePlanLabel={ratePlanLabel}
       />
