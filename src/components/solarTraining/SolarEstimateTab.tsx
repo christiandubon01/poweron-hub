@@ -2494,6 +2494,7 @@ function EnergyFlow24hChart({
   anchorMonthLabel: string
 }) {
   const [tooltip, setTooltip] = useState<ChartTooltip | null>(null)
+  const touSchedule = TOU_RATE_SCHEDULES[ratePlan]
   const hours = generateConservative24hFlow({
     monthlyKwhByMonth,
     solarSizeKw,
@@ -2505,20 +2506,20 @@ function EnergyFlow24hChart({
     anchorMonthIndex,
   })
   const rawMax = Math.max(1, ...hours.map(h => Math.max(h.load, h.solar, h.gridImport, h.solarExport, h.batteryDischarge)))
-  const maxVal = rawMax * 1.15
+  const maxVal = rawMax * 1.18
 
-  const W = 575; const H = 170; const pL = 42; const pR = 32; const pT = 7; const pB = 24
+  const W = 575; const H = 150; const pL = 48; const pR = 26; const pT = 12; const pB = 20
   const cW = W - pL - pR; const cH = H - pT - pB
-  const xOf = (h: number) => pL + (h / 23) * cW
+  const barSlotW = cW / 24
+  const xOf = (h: number) => pL + (h + 0.5) * barSlotW
   const yOf = (v: number) => pT + cH - (v / maxVal) * cH
   const baseY = pT + cH
-  const barSlotW = cW / 24
-  const barW = Math.max(2.5, barSlotW * 0.18)
+  const barW = Math.max(2.25, barSlotW * 0.14)
 
   const solarFill = [
-    `M${xOf(0)},${baseY}`,
+    `M${pL},${baseY}`,
     ...hours.map(h => `L${xOf(h.hour).toFixed(1)},${yOf(h.solar).toFixed(1)}`),
-    `L${xOf(23)},${baseY}`,
+    `L${W - pR},${baseY}`,
     'Z',
   ].join(' ')
 
@@ -2529,85 +2530,75 @@ function EnergyFlow24hChart({
   const hourLabels = [0, 6, 12, 18, 23]
   const hourText = (h: number) =>
     h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`
+  const stripHourText = (h: number) =>
+    h === 0 ? '12am' : h < 12 ? `${h}am` : h === 12 ? '12pm' : h === 23 ? '11pm' : `${h - 12}pm`
   const periodText = (period: string) => period.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase())
   const rateColor = (period: string) =>
-    period === 'peak' ? 'rgba(248,113,113,0.55)' : period === 'super_off_peak' ? 'rgba(34,211,238,0.32)' : 'rgba(59,130,246,0.30)'
+    period === 'peak' ? 'rgba(248,113,113,0.60)' : period === 'super_off_peak' ? 'rgba(251,191,36,0.36)' : 'rgba(59,130,246,0.34)'
+  const peakLabel = touSchedule?.peak_hours_label ?? '4 PM-9 PM daily'
+  const planLabel = touSchedule?.plan_label ?? ratePlan.replace(/_/g, ' ')
 
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xl font-semibold text-slate-100">24-Hour Energy Flow</p>
           <p className="text-lg text-slate-400">{anchorMonthLabel} representative day with NEM 3.0 import/export</p>
         </div>
-        <div className="flex flex-wrap gap-4 text-sm text-slate-400">
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-7 rounded-sm" style={{ background: 'rgba(251,191,36,0.45)' }} />
-            Solar
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-1 w-6 rounded-full bg-blue-400/80" />
-            Load
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-sky-400/75" />
-            Grid import
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-amber-400/80" />
-            Export
-          </span>
-          {hasBattery && <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400/80" /> Battery</span>}
+        <div className="rounded-full border border-rose-500/25 bg-rose-950/20 px-3 py-1.5 text-xs font-semibold text-rose-100">
+          {planLabel} · Peak: {peakLabel}
         </div>
       </div>
-      <div className="overflow-x-auto">
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 300 }}>
-          <rect x={xOf(16)} y={pT} width={xOf(21) - xOf(16)} height={cH} fill="rgba(244,63,94,0.10)" />
-          <text x={(xOf(16) + xOf(21)) / 2} y={pT + 9} textAnchor="middle" fontSize={7} fill="rgba(251,113,133,0.72)">4-9 PM peak</text>
-          {[0.25, 0.5, 0.75, 1].map(p => (
-            <line
-              key={p}
-              x1={pL} y1={yOf(maxVal * p)}
-              x2={W - pR} y2={yOf(maxVal * p)}
-              stroke="rgba(255,255,255,0.05)"
-              strokeWidth={0.5}
-            />
-          ))}
-          <line x1={xOf(12)} y1={pT} x2={xOf(12)} y2={baseY} stroke="rgba(251,191,36,0.10)" strokeWidth={1} strokeDasharray="2,4" />
-          <path d={solarFill} fill="rgba(251,191,36,0.30)" />
-          <path d={solarFill} fill="none" stroke="rgba(251,191,36,0.88)" strokeWidth={1.2} strokeLinejoin="round" />
+      <div className="overflow-x-auto rounded-lg border border-slate-800/70 bg-slate-950/45 p-2">
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 320 }} aria-label="24-hour solar energy flow chart">
+          <rect x={pL + 16 * barSlotW} y={pT} width={5 * barSlotW} height={cH} fill="rgba(244,63,94,0.11)" />
+          <text x={pL + 18.5 * barSlotW} y={pT + 10} textAnchor="middle" fontSize={7} fill="rgba(251,113,133,0.76)">4-9 PM peak</text>
+          {[0, 0.25, 0.5, 0.75, 1].map(p => {
+            const y = yOf(maxVal * p)
+            return (
+              <g key={p}>
+                <line
+                  x1={pL} y1={y}
+                  x2={W - pR} y2={y}
+                  stroke="rgba(255,255,255,0.06)"
+                  strokeWidth={0.5}
+                />
+                <text x={pL - 5} y={y + 3} textAnchor="end" fontSize={7} fill="#64748b">
+                  {p === 0 ? '0' : (maxVal * p).toFixed(1)}
+                </text>
+              </g>
+            )
+          })}
+          <text
+            x={11} y={pT + cH / 2}
+            textAnchor="middle" fontSize={7} fill="#64748b"
+            transform={`rotate(-90, 11, ${pT + cH / 2})`}
+          >
+            kWh
+          </text>
+          <path d={solarFill} fill="rgba(251,191,36,0.22)" />
           {hours.map(hour => {
-            const x = xOf(hour.hour) - barSlotW * 0.32
+            const x = pL + hour.hour * barSlotW + barSlotW * 0.18
             const importH = Math.max(0, baseY - yOf(hour.gridImport))
             const exportH = Math.max(0, baseY - yOf(hour.solarExport))
             const batteryH = Math.max(0, baseY - yOf(hour.batteryDischarge))
             return (
               <g key={`bars-${hour.hour}`}>
-                <rect x={x} y={baseY - importH} width={barW} height={importH} fill="rgba(56,189,248,0.68)" rx={1} />
-                <rect x={x + barW + 1} y={baseY - exportH} width={barW} height={exportH} fill="rgba(251,191,36,0.72)" rx={1} />
+                <rect x={x} y={baseY - importH} width={barW} height={importH} fill="rgba(59,130,246,0.62)" rx={1} />
+                <rect x={x + barW + 1.5} y={baseY - exportH} width={barW} height={exportH} fill="rgba(251,191,36,0.58)" rx={1} />
                 {hasBattery && (
-                  <rect x={x + (barW + 1) * 2} y={baseY - batteryH} width={barW} height={batteryH} fill="rgba(52,211,153,0.76)" rx={1} />
+                  <rect x={x + (barW + 1.5) * 2} y={baseY - batteryH} width={barW} height={batteryH} fill="rgba(34,197,94,0.68)" rx={1} />
                 )}
               </g>
             )
           })}
-          <path d={loadPath} fill="none" stroke="rgba(96,165,250,0.85)" strokeWidth={1.5} strokeLinejoin="round" />
-          {hours.map(hour => (
-            <rect
-              key={`rate-${hour.hour}`}
-              x={pL + hour.hour * barSlotW}
-              y={baseY + 5}
-              width={barSlotW + 0.5}
-              height={5}
-              fill={rateColor(hour.touPeriod)}
-            />
-          ))}
+          <path d={solarFill} fill="none" stroke="#facc15" strokeWidth={1.9} strokeLinejoin="round" />
+          <path d={loadPath} fill="none" stroke="#93c5fd" strokeWidth={1.45} strokeDasharray="4,3" strokeLinejoin="round" />
           {hourLabels.map(h => (
-            <text key={h} x={xOf(h)} y={H - 5} textAnchor="middle" fontSize={7.5} fill="#475569">
-              {hourText(h)}
+            <text key={h} x={xOf(h)} y={H - 5} textAnchor="middle" fontSize={7.5} fill="#64748b">
+              {stripHourText(h)}
             </text>
           ))}
-          <text x={pL - 4} y={yOf(maxVal * 0.75) + 3} textAnchor="end" fontSize={6.5} fill="#475569">kWh</text>
           {hours.map(hour => {
             const showTooltip = (event: React.MouseEvent) => {
               const position = getTooltipPosition(event)
@@ -2629,9 +2620,9 @@ function EnergyFlow24hChart({
             return (
               <rect
                 key={hour.hour}
-                x={xOf(hour.hour) - cW / 48}
+                x={pL + hour.hour * barSlotW}
                 y={pT}
-                width={cW / 24}
+                width={barSlotW}
                 height={cH}
                 fill="transparent"
                 onMouseEnter={showTooltip}
@@ -2642,9 +2633,61 @@ function EnergyFlow24hChart({
           })}
         </svg>
       </div>
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 px-1 text-xs text-slate-400">
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-1 w-7 rounded-full bg-yellow-300" />
+          Solar production
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-px w-7 border-t border-dashed border-blue-300" />
+          Home load
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-3 w-4 rounded-sm bg-blue-500/65" />
+          Grid import
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-3 w-4 rounded-sm bg-amber-400/60" />
+          Solar export
+        </span>
+        {hasBattery && (
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-3 w-4 rounded-sm bg-emerald-400/70" />
+            Battery discharge
+          </span>
+        )}
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-3 w-4 rounded-sm bg-rose-500/20" />
+          TOU peak zone
+        </span>
+      </div>
+      <div className="mt-4">
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <p className="text-xs font-medium text-slate-500">TOU Import Rate by Hour</p>
+          <p className="text-[10px] text-slate-600">Blue off-peak · Amber low-cost solar hours · Red peak</p>
+        </div>
+        <div className="flex gap-px">
+          {hours.map(hour => (
+            <div
+              key={`strip-${hour.hour}`}
+              className="h-5 flex-1 rounded-sm"
+              style={{ background: rateColor(hour.touPeriod) }}
+              title={`${stripHourText(hour.hour)}: $${hour.importRate.toFixed(2)}/kWh (${periodText(hour.touPeriod)})`}
+            />
+          ))}
+        </div>
+        <div className="mt-1 flex justify-between text-[10px] text-slate-600">
+          <span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>11pm</span>
+        </div>
+      </div>
       <ChartHoverCard tooltip={tooltip} />
-      <div className="mt-3 rounded-md border border-amber-700/25 bg-amber-950/10 px-3 py-2 text-[11px] leading-4 text-slate-400">
-        NEM 3.0 values midday exports at about ${CONSERVATIVE_NEM_EXPORT_RATE.toFixed(2)}/kWh. Batteries use otherwise-exported solar to reduce 4-9 PM peak imports.
+      <div className="mt-4 rounded-xl border border-amber-700/35 bg-gradient-to-r from-amber-950/25 via-slate-950/40 to-emerald-950/20 px-3 py-2.5">
+        <p className="text-xs font-semibold text-amber-300">Why NEM 3.0 Changes the Math</p>
+        <p className="mt-1 text-xs leading-5 text-slate-300">
+          Solar panels produce peak power from 9am-3pm, when grid electricity is cheapest and exported solar earns a low ACC credit.
+          Your home often needs more power from 4pm-9pm, when TOU rates are highest. Battery storage can shift midday solar into
+          peak hours instead of exporting it cheaply.
+        </p>
       </div>
       <ChartNote>
         Import/export flow uses the selected estimate month, climate profile, system size, and conservative self-consumption assumptions.

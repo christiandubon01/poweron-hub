@@ -2812,3 +2812,52 @@ NEXT RECOMMENDED ACTION:
 
 COMPACT HANDOFF FOR NEXT CHAT:
 24H Flow and 25 Yr Savings now use conservative NEM 3.0 assumptions aligned with Monthly Bill. 24H Flow builds an anchor-month representative day with normalized load/solar, import/export bars, battery discharge constrained by export/capacity/peak imports, peak shading, TOU strip, tooltip, and callout. 25 Yr Savings sums modeled monthly current/solar-only/battery costs for Year 1 and escalates at 3%. Typecheck passed. Commit pending at log-write time.
+
+---
+
+## 24H FLOW VISUALIZER LAYOUT POLISH COMPLETION LOG
+
+AGENT:
+Cursor GPT-5.5
+
+TASK COMPLETED:
+Polish 24H Flow chart layout to match NEM 3.0 visualizer organization
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Reorganized Summary > 24H Flow into a visualizer-style card: top title/subtitle with compact rate/peak pill, main plot, separate legend, separate TOU strip, tooltip, and bottom NEM callout.
+- Kept the existing conservative 24H import/export/battery modeling unchanged and only adjusted layout/rendering scale/spacing.
+- Improved main plot readability with more plot padding, y-axis value labels, vertical kWh label, subtle gridlines, smaller anchored bars, smoother prominent solar curve, dashed home-load line, and translucent 4-9 PM peak band.
+- Moved the TOU import-rate strip out of the SVG plot into a dedicated row with label, hourly segments, and 12am/6am/12pm/6pm/11pm labels.
+- Replaced the one-line callout with a polished `Why NEM 3.0 Changes the Math` explanation box.
+
+WHAT WAS LEARNED:
+- The existing `NEM3Visualizer.tsx` organizes readability by keeping the plot, legend, TOU strip, and explanation as separate visual sections.
+- The Summary chart can borrow that organization without increasing the chart's modeling scope or touching other tabs.
+- Narrower bars and a dashed load line reduce competition with the solar area and peak-zone band.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Separate dense chart metadata into stacked visual sections instead of putting every series and rate strip inside the plot.
+- Keep hover hit rectangles in the main SVG after visual refactors so tooltip behavior survives layout changes.
+- Use a compact rate/peak pill in the header for context that does not need to live in the plot area.
+
+BUGS / RISKS:
+- Screenshot QA should verify legend wrapping at small widths and hover behavior across all hours.
+- Battery-off state should be checked to confirm green battery bars and legend item stay hidden.
+- No Monthly Bill, 25 Yr Savings, chart math, saved estimates, or other steps were changed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+NEXT RECOMMENDED ACTION:
+- Screenshot QA Summary > 24H Flow in Solar Only and Solar Plus Battery states, comparing against the NEM 3.0 Savings Visualizer organization.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Summary 24H Flow layout polished to match the NEM visualizer organization. The main SVG is cleaner with y-axis labels, smaller import/export/battery bars, prominent solar curve, dashed load line, and 4-9 PM peak band. Legend and TOU Import Rate by Hour strip are now separate rows below the plot. Callout is now a polished `Why NEM 3.0 Changes the Math` box. Typecheck passed. Commit pending at log-write time.

@@ -350,3 +350,52 @@ NEXT RECOMMENDED ACTION:
 
 COMPACT HANDOFF FOR NEXT CHAT:
 24H Flow and 25 Yr Savings now share conservative NEM 3.0 assumptions with Monthly Bill. 24H Flow uses anchor-month usage/production, normalized hourly load/solar, import/export bars, constrained battery discharge, peak shading, TOU strip, tooltip, and callout. 25 Yr Savings uses annualized modeled monthly costs with 3% escalation and shows Solar Only plus conditional Battery. Typecheck passed. Commit pending at log-write time.
+
+---
+
+## 24H FLOW VISUALIZER LAYOUT POLISH COMPLETION LOG
+
+AGENT:
+Cursor GPT-5.5
+
+TASK COMPLETED:
+Polish 24H Flow chart layout to match NEM 3.0 visualizer organization
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Reorganized the Summary 24H Flow card to mirror the NEM visualizer: compact header context, main graph, separate legend, separate TOU rate strip, tooltip, and NEM callout.
+- Added a right-side compact rate/peak pill in the chart header.
+- Moved the TOU strip out of the SVG into its own labeled row with segmented hourly blocks and hour labels.
+- Cleaned the graph with more padding, y-axis labels, subtle gridlines, smaller bars, yellow solar line/area, dashed blue load line, and a translucent 4-9 PM peak band.
+- Replaced the compact one-line note with a styled `Why NEM 3.0 Changes the Math` callout.
+
+WHAT WAS LEARNED:
+- `NEM3Visualizer.tsx` keeps the rate strip and insight box outside the main SVG, which prevents the plotted data from feeling crowded.
+- The Summary chart needed organization and scale changes only; the conservative import/export/battery model stayed intact.
+- The legend reads better below the plot because it no longer competes with the title row.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Use separate rows for legend and rate strips in compact SVG chart cards.
+- Keep line series visually distinct with a solid solar curve and dashed load curve.
+- Use header pills for rate-plan context instead of plot annotations when space is tight.
+
+BUGS / RISKS:
+- Screenshot QA should verify the larger legend still wraps cleanly on small widths.
+- Battery OFF should hide battery discharge bars and legend; Battery ON should show both.
+- No Monthly Bill, 25 Yr Savings, math helpers, other steps, saved estimates, or packages were changed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+NEXT RECOMMENDED ACTION:
+- Screenshot QA the 24H Flow tab at desktop and narrow widths with battery off/on.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak pill, clean main graph, separate legend, separate TOU Import Rate by Hour strip, and polished NEM callout. Tooltip data remains unchanged. This was a layout/rendering polish only; conservative 24H math stayed intact. Typecheck passed. Commit pending at log-write time.
