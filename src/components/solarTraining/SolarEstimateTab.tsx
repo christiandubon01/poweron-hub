@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   SunMedium,
+  X,
   Zap,
 } from 'lucide-react'
 import { GOOGLE_MAPS_BROWSER_KEY, useV15rGoogleMapsLoader } from '@/utils/googleMapsLoader'
@@ -177,6 +178,63 @@ type SavedEstimateSnapshot = {
   utility: string
   ratePlan: string | null
   address: string
+}
+
+// ============================================================================
+// SAVED ESTIMATES — localStorage persistence
+// ============================================================================
+
+const STORAGE_KEY_ESTIMATES = 'poweron.solarTraining.solarEstimates'
+const STORAGE_KEY_DRAFT = 'poweron.solarTraining.activeDraft'
+
+type LocalSolarEstimate = {
+  id: string
+  createdAt: string
+  updatedAt: string
+  name: string
+  addressLabel: string
+  interviewData: SolarEstimateData
+  solarSizeKw: number
+  batterySizeKwh: number
+}
+
+type ActiveDraft = {
+  estimateId: string | null
+  data: SolarEstimateData
+  solarSizeKw: number
+  batterySizeKwh: number
+}
+
+function loadEstimates(): LocalSolarEstimate[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_ESTIMATES)
+    if (!raw) return []
+    return JSON.parse(raw) as LocalSolarEstimate[]
+  } catch {
+    return []
+  }
+}
+
+function saveEstimates(list: LocalSolarEstimate[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_ESTIMATES, JSON.stringify(list))
+  } catch {}
+}
+
+function loadActiveDraft(): ActiveDraft | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_DRAFT)
+    if (!raw) return null
+    return JSON.parse(raw) as ActiveDraft
+  } catch {
+    return null
+  }
+}
+
+function saveActiveDraft(draft: ActiveDraft): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_DRAFT, JSON.stringify(draft))
+  } catch {}
 }
 
 const ESCALATION_RATE = 0.04
@@ -1540,6 +1598,147 @@ function SummaryChartModule({
   )
 }
 
+function SolarEstimatesLibrary({
+  estimates,
+  activeEstimateId,
+  onOpen,
+  onDelete,
+  onRename,
+  onClose,
+}: {
+  estimates: LocalSolarEstimate[]
+  activeEstimateId: string | null
+  onOpen: (estimate: LocalSolarEstimate) => void
+  onDelete: (id: string) => void
+  onRename: (id: string, name: string) => void
+  onClose: () => void
+}) {
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+
+  const startRename = (estimate: LocalSolarEstimate) => {
+    setRenamingId(estimate.id)
+    setRenameValue(estimate.name)
+  }
+
+  const commitRename = (id: string) => {
+    const trimmed = renameValue.trim()
+    if (trimmed) onRename(id, trimmed)
+    setRenamingId(null)
+  }
+
+  const sorted = [...estimates].reverse()
+
+  return (
+    <div className="mt-5 rounded-lg border border-cyan-800/50 bg-slate-900/80 p-4">
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-300">
+          <ClipboardList className="h-3.5 w-3.5" />
+          Solar Estimates
+          {estimates.length > 0 && (
+            <span className="rounded-full bg-cyan-900/60 px-2 py-0.5 text-[10px] text-cyan-400">
+              {estimates.length}
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
+        >
+          <X className="h-3 w-3" />
+          Close
+        </button>
+      </div>
+
+      {sorted.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-slate-700/60 bg-slate-950/40 py-8 text-center">
+          <p className="text-sm text-slate-500">No saved estimates yet.</p>
+          <p className="mt-1 text-xs text-slate-600">
+            Complete the interview and click &ldquo;Save project estimate&rdquo; to save here.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {sorted.map(estimate => {
+            const isActive = estimate.id === activeEstimateId
+            const updatedDate = new Date(estimate.updatedAt).toLocaleDateString(undefined, {
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric',
+            })
+            return (
+              <div
+                key={estimate.id}
+                className={`flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between ${
+                  isActive
+                    ? 'border-cyan-700/50 bg-cyan-950/20'
+                    : 'border-slate-800 bg-slate-950/40'
+                }`}
+              >
+                <div className="min-w-0 flex-1">
+                  {renamingId === estimate.id ? (
+                    <input
+                      type="text"
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onBlur={() => commitRename(estimate.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitRename(estimate.id)
+                        if (e.key === 'Escape') setRenamingId(null)
+                      }}
+                      autoFocus
+                      className={`${FIELD_CLASS} text-sm`}
+                    />
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2">
+                        {isActive && (
+                          <span className="shrink-0 rounded-full bg-cyan-900/60 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-cyan-400">
+                            Open
+                          </span>
+                        )}
+                        <p className="truncate text-sm font-semibold text-slate-100">{estimate.name}</p>
+                      </div>
+                      {estimate.addressLabel && (
+                        <p className="mt-0.5 truncate text-xs text-slate-500">{estimate.addressLabel}</p>
+                      )}
+                      <p className="mt-0.5 text-[10px] text-slate-600">Updated {updatedDate}</p>
+                    </>
+                  )}
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onOpen(estimate)}
+                    className="rounded-md border border-cyan-700/50 bg-cyan-900/20 px-2.5 py-1.5 text-xs font-semibold text-cyan-200 transition-colors hover:border-cyan-600 hover:bg-cyan-900/40"
+                  >
+                    Open
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => startRename(estimate)}
+                    className="rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDelete(estimate.id)}
+                    className="rounded-md border border-red-800/40 bg-red-950/20 px-2.5 py-1.5 text-xs font-semibold text-red-400 transition-colors hover:border-red-700/60 hover:bg-red-950/40"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function EstimateSummaryStep({
   data,
   updateField,
@@ -1548,6 +1747,9 @@ function EstimateSummaryStep({
   batterySizeKwh,
   setSolarSizeKw,
   setBatterySizeKwh,
+  onSave,
+  activeEstimateId,
+  saveStatus,
 }: {
   data: SolarEstimateData
   updateField: UpdateField
@@ -1556,6 +1758,9 @@ function EstimateSummaryStep({
   batterySizeKwh: number
   setSolarSizeKw: React.Dispatch<React.SetStateAction<number>>
   setBatterySizeKwh: React.Dispatch<React.SetStateAction<number>>
+  onSave: () => void
+  activeEstimateId: string | null
+  saveStatus: 'idle' | 'saved'
 }) {
   const ratePlanLabel = data.utilityProvider
     ? findLabel(RATE_PLANS_BY_UTILITY[data.utilityProvider], data.ratePlan)
@@ -1597,22 +1802,6 @@ function EstimateSummaryStep({
       ? 'Not entered'
       : `${data.homeSizeSqft.toLocaleString()} sq ft`
 
-  const [savedSnapshot, setSavedSnapshot] = useState<SavedEstimateSnapshot | null>(null)
-
-  const handleSave = useCallback(() => {
-    setSavedSnapshot({
-      savedAt: new Date(),
-      solarSizeKw,
-      batterySizeKwh,
-      systemCost,
-      avgMonthlyBefore: avgBeforeBill,
-      avgMonthlyAfter: avgAfterBill,
-      utility: data.utilityProvider ?? 'SCE',
-      ratePlan: data.ratePlan,
-      address: data.selectedAddressLabel || data.addressText || 'Not entered',
-    })
-  }, [solarSizeKw, batterySizeKwh, systemCost, avgBeforeBill, avgAfterBill, data])
-
   return (
     <div>
       <SectionIntro icon={BarChart3} eyebrow="Step 05" title="Estimate summary">
@@ -1621,23 +1810,20 @@ function EstimateSummaryStep({
       </SectionIntro>
 
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        {savedSnapshot ? (
+        {saveStatus === 'saved' ? (
           <div className="flex items-center gap-2 rounded-md border border-emerald-700/50 bg-emerald-950/20 px-3 py-2">
             <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-            <span className="text-xs font-medium text-emerald-300">
-              Estimate saved in this session —{' '}
-              {savedSnapshot.savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </span>
+            <span className="text-xs font-medium text-emerald-300">Saved in Solar Estimates</span>
           </div>
         ) : (
           <div />
         )}
         <button
           type="button"
-          onClick={handleSave}
+          onClick={onSave}
           className="rounded-md border border-cyan-700/50 bg-cyan-900/20 px-3 py-2 text-xs font-semibold text-cyan-200 transition-colors hover:border-cyan-600 hover:bg-cyan-900/40"
         >
-          {savedSnapshot ? 'Update saved estimate' : 'Save project estimate'}
+          {activeEstimateId ? 'Update estimate' : 'Save project estimate'}
         </button>
       </div>
 
@@ -1866,6 +2052,9 @@ function ActiveStepPanel({
   batterySizeKwh,
   setSolarSizeKw,
   setBatterySizeKwh,
+  onSave,
+  activeEstimateId,
+  saveStatus,
 }: {
   data: SolarEstimateData
   updateField: UpdateField
@@ -1874,6 +2063,9 @@ function ActiveStepPanel({
   batterySizeKwh: number
   setSolarSizeKw: React.Dispatch<React.SetStateAction<number>>
   setBatterySizeKwh: React.Dispatch<React.SetStateAction<number>>
+  onSave: () => void
+  activeEstimateId: string | null
+  saveStatus: 'idle' | 'saved'
 }) {
   switch (data.currentStep) {
     case 'address':
@@ -1894,6 +2086,9 @@ function ActiveStepPanel({
           batterySizeKwh={batterySizeKwh}
           setSolarSizeKw={setSolarSizeKw}
           setBatterySizeKwh={setBatterySizeKwh}
+          onSave={onSave}
+          activeEstimateId={activeEstimateId}
+          saveStatus={saveStatus}
         />
       )
     default:
@@ -1906,10 +2101,27 @@ function ActiveStepPanel({
 // ============================================================================
 
 export default function SolarEstimateTab() {
-  const [data, setData] = useState<SolarEstimateData>(DEFAULT_ESTIMATE_DATA)
+  const [data, setData] = useState<SolarEstimateData>(() => {
+    const draft = loadActiveDraft()
+    return draft?.data ?? DEFAULT_ESTIMATE_DATA
+  })
   const suggestedSystemSize = useMemo(() => estimateSuggestedSystemSize(data), [data])
-  const [solarSizeKw, setSolarSizeKw] = useState<number>(suggestedSystemSize)
-  const [batterySizeKwh, setBatterySizeKwh] = useState<number>(13.5)
+  const [solarSizeKw, setSolarSizeKw] = useState<number>(() => {
+    const draft = loadActiveDraft()
+    return draft?.solarSizeKw ?? estimateSuggestedSystemSize(DEFAULT_ESTIMATE_DATA)
+  })
+  const [batterySizeKwh, setBatterySizeKwh] = useState<number>(() => {
+    const draft = loadActiveDraft()
+    return draft?.batterySizeKwh ?? 13.5
+  })
+  const [savedEstimates, setSavedEstimates] = useState<LocalSolarEstimate[]>(() => loadEstimates())
+  const [activeEstimateId, setActiveEstimateId] = useState<string | null>(() => {
+    const draft = loadActiveDraft()
+    return draft?.estimateId ?? null
+  })
+  const [showLibrary, setShowLibrary] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle')
+  const draftSaveTimer = useRef<number | null>(null)
 
   const currentStepIndex = ESTIMATE_STEPS.indexOf(data.currentStep)
 
@@ -1918,6 +2130,16 @@ export default function SolarEstimateTab() {
       setSolarSizeKw(suggestedSystemSize)
     }
   }, [data.currentStep, suggestedSystemSize])
+
+  useEffect(() => {
+    if (draftSaveTimer.current) window.clearTimeout(draftSaveTimer.current)
+    draftSaveTimer.current = window.setTimeout(() => {
+      saveActiveDraft({ estimateId: activeEstimateId, data, solarSizeKw, batterySizeKwh })
+    }, 500)
+    return () => {
+      if (draftSaveTimer.current) window.clearTimeout(draftSaveTimer.current)
+    }
+  }, [data, solarSizeKw, batterySizeKwh, activeEstimateId])
 
   const updateField = useCallback(
     <K extends keyof SolarEstimateData>(key: K, value: SolarEstimateData[K]) => {
@@ -1944,6 +2166,75 @@ export default function SolarEstimateTab() {
     setData(DEFAULT_ESTIMATE_DATA)
     setSolarSizeKw(estimateSuggestedSystemSize(DEFAULT_ESTIMATE_DATA))
     setBatterySizeKwh(13.5)
+    setActiveEstimateId(null)
+    setSaveStatus('idle')
+  }, [])
+
+  const handleSave = useCallback(() => {
+    const now = new Date().toISOString()
+    const addressLabel = data.selectedAddressLabel || data.addressText || ''
+    if (activeEstimateId) {
+      setSavedEstimates(prev => {
+        const updated = prev.map(e =>
+          e.id === activeEstimateId
+            ? { ...e, updatedAt: now, addressLabel, interviewData: data, solarSizeKw, batterySizeKwh }
+            : e
+        )
+        saveEstimates(updated)
+        return updated
+      })
+    } else {
+      const name = addressLabel
+        ? addressLabel.split(',')[0].trim() || 'Solar Estimate'
+        : `Solar Estimate ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+      const newId = `se_${Date.now()}`
+      const newEstimate: LocalSolarEstimate = {
+        id: newId,
+        createdAt: now,
+        updatedAt: now,
+        name,
+        addressLabel,
+        interviewData: data,
+        solarSizeKw,
+        batterySizeKwh,
+      }
+      setSavedEstimates(prev => {
+        const updated = [...prev, newEstimate]
+        saveEstimates(updated)
+        return updated
+      })
+      setActiveEstimateId(newId)
+    }
+    setSaveStatus('saved')
+    window.setTimeout(() => setSaveStatus('idle'), 3000)
+  }, [data, solarSizeKw, batterySizeKwh, activeEstimateId])
+
+  const handleOpenEstimate = useCallback((estimate: LocalSolarEstimate) => {
+    setData({ ...estimate.interviewData, currentStep: 'estimate_summary' })
+    setSolarSizeKw(estimate.solarSizeKw)
+    setBatterySizeKwh(estimate.batterySizeKwh)
+    setActiveEstimateId(estimate.id)
+    setShowLibrary(false)
+    setSaveStatus('idle')
+  }, [])
+
+  const handleDeleteEstimate = useCallback((id: string) => {
+    setSavedEstimates(prev => {
+      const updated = prev.filter(e => e.id !== id)
+      saveEstimates(updated)
+      return updated
+    })
+    if (activeEstimateId === id) setActiveEstimateId(null)
+  }, [activeEstimateId])
+
+  const handleRenameEstimate = useCallback((id: string, name: string) => {
+    setSavedEstimates(prev => {
+      const updated = prev.map(e =>
+        e.id === id ? { ...e, name, updatedAt: new Date().toISOString() } : e
+      )
+      saveEstimates(updated)
+      return updated
+    })
   }, [])
 
   const isFirst = currentStepIndex === 0
@@ -1968,113 +2259,142 @@ export default function SolarEstimateTab() {
               estimate summary with editable system controls.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={resetEstimate}
-            className="shrink-0 rounded-md border border-slate-700 bg-slate-900/50 px-3 py-2 text-xs font-semibold text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
-          >
-            Start new estimate
-          </button>
-        </div>
-
-        <div className="mt-5 flex items-center gap-1.5">
-          {ESTIMATE_STEPS.map((step, i) => (
-            <div
-              key={step}
-              className={`h-1 flex-1 rounded-full transition-colors duration-300 ${
-                i < currentStepIndex
-                  ? 'bg-emerald-500'
-                  : i === currentStepIndex
-                  ? 'bg-cyan-400'
-                  : 'bg-slate-800'
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowLibrary(v => !v)}
+              className={`rounded-md border px-3 py-2 text-xs font-semibold transition-colors ${
+                showLibrary
+                  ? 'border-cyan-600 bg-cyan-900/40 text-cyan-200'
+                  : 'border-cyan-700/50 bg-cyan-900/20 text-cyan-300 hover:border-cyan-600 hover:bg-cyan-900/40'
               }`}
-            />
-          ))}
+            >
+              Solar Estimates{savedEstimates.length > 0 ? ` (${savedEstimates.length})` : ''}
+            </button>
+            <button
+              type="button"
+              onClick={resetEstimate}
+              className="rounded-md border border-slate-700 bg-slate-900/50 px-3 py-2 text-xs font-semibold text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
+            >
+              Start new estimate
+            </button>
+          </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
-          {STEP_META.map((step, index) => {
-            const isActive = step.id === data.currentStep
-            const isCompleted = index < currentStepIndex
-            return (
-              <button
-                key={step.id}
-                type="button"
-                onClick={() => goToStep(step.id)}
-                className={`rounded-lg border p-4 text-left transition-colors ${
-                  isActive
-                    ? 'border-cyan-500/60 bg-cyan-950/60 ring-1 ring-cyan-500/30'
-                    : isCompleted
-                    ? 'border-emerald-800/40 bg-emerald-950/20 hover:border-emerald-700/60'
-                    : 'border-slate-800 bg-slate-900/70 hover:border-cyan-700/50 hover:bg-slate-900'
-                }`}
-              >
-                <div className="mb-4 flex items-center justify-between gap-2">
-                  <div
-                    className={`flex h-8 w-8 items-center justify-center rounded-md border ${
+        {showLibrary ? (
+          <SolarEstimatesLibrary
+            estimates={savedEstimates}
+            activeEstimateId={activeEstimateId}
+            onOpen={handleOpenEstimate}
+            onDelete={handleDeleteEstimate}
+            onRename={handleRenameEstimate}
+            onClose={() => setShowLibrary(false)}
+          />
+        ) : (
+          <>
+            <div className="mt-5 flex items-center gap-1.5">
+              {ESTIMATE_STEPS.map((step, i) => (
+                <div
+                  key={step}
+                  className={`h-1 flex-1 rounded-full transition-colors duration-300 ${
+                    i < currentStepIndex
+                      ? 'bg-emerald-500'
+                      : i === currentStepIndex
+                      ? 'bg-cyan-400'
+                      : 'bg-slate-800'
+                  }`}
+                />
+              ))}
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
+              {STEP_META.map((step, index) => {
+                const isActive = step.id === data.currentStep
+                const isCompleted = index < currentStepIndex
+                return (
+                  <button
+                    key={step.id}
+                    type="button"
+                    onClick={() => goToStep(step.id)}
+                    className={`rounded-lg border p-4 text-left transition-colors ${
                       isActive
-                        ? 'border-cyan-400/50 bg-cyan-500/20'
+                        ? 'border-cyan-500/60 bg-cyan-950/60 ring-1 ring-cyan-500/30'
                         : isCompleted
-                        ? 'border-emerald-600/40 bg-emerald-900/30'
-                        : 'border-cyan-500/30 bg-cyan-500/10'
+                        ? 'border-emerald-800/40 bg-emerald-950/20 hover:border-emerald-700/60'
+                        : 'border-slate-800 bg-slate-900/70 hover:border-cyan-700/50 hover:bg-slate-900'
                     }`}
                   >
-                    <step.Icon
-                      className={`h-4 w-4 ${
-                        isActive
-                          ? 'text-cyan-300'
-                          : isCompleted
-                          ? 'text-emerald-400'
-                          : 'text-cyan-200'
-                      }`}
-                    />
-                  </div>
-                  <span className="text-xs font-semibold text-slate-600">
-                    {String(index + 1).padStart(2, '0')}
-                  </span>
-                </div>
-                <h3 className="text-sm font-semibold text-slate-100">{step.label}</h3>
-                <p className="mt-1.5 text-xs leading-5 text-slate-500">{step.description}</p>
+                    <div className="mb-4 flex items-center justify-between gap-2">
+                      <div
+                        className={`flex h-8 w-8 items-center justify-center rounded-md border ${
+                          isActive
+                            ? 'border-cyan-400/50 bg-cyan-500/20'
+                            : isCompleted
+                            ? 'border-emerald-600/40 bg-emerald-900/30'
+                            : 'border-cyan-500/30 bg-cyan-500/10'
+                        }`}
+                      >
+                        <step.Icon
+                          className={`h-4 w-4 ${
+                            isActive
+                              ? 'text-cyan-300'
+                              : isCompleted
+                              ? 'text-emerald-400'
+                              : 'text-cyan-200'
+                          }`}
+                        />
+                      </div>
+                      <span className="text-xs font-semibold text-slate-600">
+                        {String(index + 1).padStart(2, '0')}
+                      </span>
+                    </div>
+                    <h3 className="text-sm font-semibold text-slate-100">{step.label}</h3>
+                    <p className="mt-1.5 text-xs leading-5 text-slate-500">{step.description}</p>
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="mt-5 rounded-lg border border-slate-700/50 bg-slate-900/50 p-5">
+              <ActiveStepPanel
+                data={data}
+                updateField={updateField}
+                goToStep={goToStep}
+                solarSizeKw={solarSizeKw}
+                batterySizeKwh={batterySizeKwh}
+                setSolarSizeKw={setSolarSizeKw}
+                setBatterySizeKwh={setBatterySizeKwh}
+                onSave={handleSave}
+                activeEstimateId={activeEstimateId}
+                saveStatus={saveStatus}
+              />
+            </div>
+
+            <div className="mt-4 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={goBack}
+                disabled={isFirst}
+                className="flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-300 transition-colors hover:border-slate-600 hover:text-white disabled:pointer-events-none disabled:opacity-30"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Back
               </button>
-            )
-          })}
-        </div>
-
-        <div className="mt-5 rounded-lg border border-slate-700/50 bg-slate-900/50 p-5">
-          <ActiveStepPanel
-            data={data}
-            updateField={updateField}
-            goToStep={goToStep}
-            solarSizeKw={solarSizeKw}
-            batterySizeKwh={batterySizeKwh}
-            setSolarSizeKw={setSolarSizeKw}
-            setBatterySizeKwh={setBatterySizeKwh}
-          />
-        </div>
-
-        <div className="mt-4 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={goBack}
-            disabled={isFirst}
-            className="flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-300 transition-colors hover:border-slate-600 hover:text-white disabled:pointer-events-none disabled:opacity-30"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            Back
-          </button>
-          <span className="text-xs text-slate-600">
-            {currentStepIndex + 1} / {ESTIMATE_STEPS.length}
-          </span>
-          <button
-            type="button"
-            onClick={goNext}
-            disabled={isLast}
-            className="flex items-center gap-1.5 rounded-md border border-cyan-700/50 bg-cyan-900/30 px-4 py-2 text-sm font-medium text-cyan-200 transition-colors hover:border-cyan-600 hover:bg-cyan-900/50 disabled:pointer-events-none disabled:opacity-30"
-          >
-            Next
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
+              <span className="text-xs text-slate-600">
+                {currentStepIndex + 1} / {ESTIMATE_STEPS.length}
+              </span>
+              <button
+                type="button"
+                onClick={goNext}
+                disabled={isLast}
+                className="flex items-center gap-1.5 rounded-md border border-cyan-700/50 bg-cyan-900/30 px-4 py-2 text-sm font-medium text-cyan-200 transition-colors hover:border-cyan-600 hover:bg-cyan-900/50 disabled:pointer-events-none disabled:opacity-30"
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </section>
   )

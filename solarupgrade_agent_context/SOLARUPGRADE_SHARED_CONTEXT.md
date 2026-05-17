@@ -757,7 +757,7 @@ Agents should not assume approval to continue beyond their active phase.
 # LATEST PHASE STATUS
 
 Latest completed phase:
-Summary Chart Tabs + Local Save — 6-subtab chart module and Save project estimate button
+Local Saved Estimates — localStorage persistence, Solar Estimates library, draft auto-save, open/rename/delete
 
 Latest completed commits:
 - Phase 1: `72193d5`, `ed7bf01`
@@ -768,15 +768,16 @@ Latest completed commits:
 - Polish pass (post Phase 5): `ce2be20`
 - Visual Polish Pass 2: `0cbfe7c`
 - Summary Chart Tabs + Local Save: `5982e03`
+- Local Saved Estimates: see Local Saved Estimates completion log below
 
 Current ready phase:
-No active build phase. Ready for screenshot QA on the 6-tab chart module and Save button.
+No active build phase. Ready for screenshot QA on saved estimates feature.
 
 Current risk level:
-Low. New SVG chart components added inside SolarEstimateTab.tsx only. No formula, persistence, Supabase, or structural changes. Typecheck passes clean.
+Low. All changes are inside SolarEstimateTab.tsx only. No formula, Supabase, or unrelated tab changes. Typecheck passes clean.
 
 Recommended action:
-Screenshot QA on the Solar Estimate Summary step: verify all 6 chart tabs switch cleanly, charts render visible data when estimate inputs exist, and "Save project estimate" button shows the saved confirmation badge on click. Do not proceed into a new build phase without user review.
+Screenshot QA: create an estimate, fill all 5 steps, save it, start a new estimate, then reopen the saved estimate from the Solar Estimates library. Verify all fields restore and the address, bill, system config, and summary controls are correct. Verify app reload restores the active draft. Do not proceed into a new build phase without user review.
 
 ---
 
@@ -1220,3 +1221,66 @@ NO — no next build phase defined. Ready for screenshot QA on the 6-tab chart m
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Summary Chart Tabs + Local Save added to `src/components/solarTraining/SolarEstimateTab.tsx`. EstimateSummaryStep now has a 6-tab SummaryChartModule replacing the old 2-chart grid: Monthly Bill (SVG bars), 24H Flow (SVG solar+load curves), 25 Yr Savings (SVG grouped bars), Elec. Cost (SVG LCOE vs rate lines), Cumulative (SVG area+line with payback dot), Payments (card grid). Save project estimate button in summary header stores a local session snapshot with emerald confirmation badge. All chart data derived from existing computed values — no new data sources, no Supabase, no localStorage. Typecheck passes.
+
+---
+
+# LOCAL SAVED ESTIMATES COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+(backfill after commit)
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+WHAT CHANGED:
+- Added `LocalSolarEstimate` type and `ActiveDraft` type for full persistent saved estimate shape.
+- Added `STORAGE_KEY_ESTIMATES = 'poweron.solarTraining.solarEstimates'` and `STORAGE_KEY_DRAFT = 'poweron.solarTraining.activeDraft'` constants.
+- Added `loadEstimates`, `saveEstimates`, `loadActiveDraft`, `saveActiveDraft` localStorage helpers (all try/catch safe).
+- Added `SolarEstimatesLibrary` component: list of saved estimates (most recent first), Open/Rename/Delete actions, inline rename via input, "Open" pill badge on the active estimate, empty state.
+- Moved save action to `SolarEstimateTab` parent as `handleSave` callback. Save creates a new estimate (auto-names from address) or updates the existing one (preserves user rename). Shows "Saved in Solar Estimates" emerald badge for 3 seconds after save. Button label changes to "Update estimate" when an estimate is open.
+- Added "Solar Estimates" button beside "Start new estimate" in the header. Active/inactive visual state. Shows count when estimates exist.
+- When library is open the step wizard is hidden (replaced by `SolarEstimatesLibrary`). Close button returns to wizard.
+- `SolarEstimateTab` now uses lazy `useState` initializers that call `loadActiveDraft()` on mount — restoring `data`, `solarSizeKw`, `batterySizeKwh`, and `activeEstimateId` from the last session.
+- Added debounced auto-save `useEffect` (500ms) that writes `ActiveDraft` to `STORAGE_KEY_DRAFT` whenever `data`, `solarSizeKw`, `batterySizeKwh`, or `activeEstimateId` changes.
+- `handleOpenEstimate` loads interview data + system controls from a saved estimate, forces `currentStep = 'estimate_summary'` so the user lands on the summary, and closes the library.
+- `resetEstimate` now also clears `activeEstimateId` and `saveStatus`.
+- `EstimateSummaryStep` props extended: removed internal `savedSnapshot` state + `handleSave`; added `onSave`, `activeEstimateId`, `saveStatus` props.
+- `ActiveStepPanel` props extended to thread `onSave`, `activeEstimateId`, `saveStatus` down to `EstimateSummaryStep`.
+- Added `X` to lucide-react imports for the library close button.
+
+WHAT WAS LEARNED:
+- Lazy useState initializers are the correct pattern for reading localStorage on mount without a separate useEffect or double-render.
+- The existing solarSizeKw sync useEffect (resets to suggestedSystemSize when step is not estimate_summary) is safe with the restored draft because `handleOpenEstimate` always sets `currentStep = 'estimate_summary'`, which keeps the condition false.
+- Debounced localStorage write prevents thrashing on every keystroke while the user edits interview fields.
+- Preserving the estimate name on update (not auto-generating from address again) avoids overwriting user renames.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- `useState(() => { const draft = load(); return draft?.field ?? default })` pattern: single-read lazy init for localStorage draft restoration without useEffect.
+- `try { localStorage.setItem(...) } catch {}` pattern: safe localStorage write, silent on QuotaExceededError.
+- `setSavedEstimates(prev => { const updated = ...; saveEstimates(updated); return updated })` pattern: atomic in-memory + localStorage sync inside a state updater.
+- Debounced useEffect with `useRef<number | null>` timer and cleanup: correct pattern for debounced side effects in React.
+
+BUGS / RISKS:
+- localStorage is not encrypted. Do not store sensitive customer PII (SSN, full financial data). Addresses and bill amounts are acceptable for a local planning tool.
+- If the user opens the app in two tabs simultaneously, the last write wins. This is acceptable for a single-user local tool.
+- ConsumptionProfileChart remains defined but unused (noUnusedLocals: false, typecheck still passes).
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE READY:
+NO — no next build phase defined. Ready for screenshot QA on saved estimates feature.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Local Saved Estimates added to `src/components/solarTraining/SolarEstimateTab.tsx`. localStorage keys: `poweron.solarTraining.solarEstimates` (estimate list) and `poweron.solarTraining.activeDraft` (current open estimate + step + system controls). `SolarEstimatesLibrary` component shows saved estimates with Open/Rename/Delete. "Solar Estimates" button in header opens/closes the library. Save creates or updates (no duplicates). Active draft auto-saves on every change (500ms debounce). App reload restores current draft via lazy useState initializers. No Supabase, no new packages, no formula or unrelated tab changes. Typecheck passes.

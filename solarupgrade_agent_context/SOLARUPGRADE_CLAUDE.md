@@ -574,3 +574,71 @@ NO — no next build phase defined.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Summary Chart Tabs + Local Save added to `src/components/solarTraining/SolarEstimateTab.tsx`. EstimateSummaryStep now has a 6-tab SummaryChartModule replacing the old 2-chart grid. Save project estimate button stores a local session snapshot. All chart data from existing computed values. No new packages, Supabase, localStorage, or formula changes. Typecheck passes clean.
+
+---
+
+## LOCAL SAVED ESTIMATES COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+(backfill after commit)
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Local Saved Estimates — localStorage persistence, Solar Estimates library, draft auto-save
+
+WHAT CHANGED:
+- Added `LocalSolarEstimate` and `ActiveDraft` types; `STORAGE_KEY_ESTIMATES` and `STORAGE_KEY_DRAFT` constants.
+- Added `loadEstimates`, `saveEstimates`, `loadActiveDraft`, `saveActiveDraft` localStorage helpers.
+- Added `SolarEstimatesLibrary` component with Open/Rename/Delete actions, inline rename, active indicator, empty state.
+- Lifted save to `handleSave` in `SolarEstimateTab`: creates new estimate (auto-names from address) or updates existing (preserves user rename). No duplicates.
+- Added "Solar Estimates" button in header (with count badge) that toggles the library panel.
+- Added lazy `useState` initializers restoring `data`, `solarSizeKw`, `batterySizeKwh`, `activeEstimateId` from `loadActiveDraft()` on mount.
+- Added debounced auto-save `useEffect` (500ms) writing `ActiveDraft` to `STORAGE_KEY_DRAFT`.
+- `handleOpenEstimate` restores all fields and forces `currentStep = 'estimate_summary'`.
+- `resetEstimate` clears `activeEstimateId` and `saveStatus`.
+- `EstimateSummaryStep`: removed internal `savedSnapshot` + `handleSave`; added `onSave`, `activeEstimateId`, `saveStatus` props; save badge shows "Saved in Solar Estimates" for 3 sec.
+- `ActiveStepPanel` threads new props to `EstimateSummaryStep`.
+- Added `X` to lucide-react imports.
+
+WHAT WAS LEARNED:
+- Lazy useState initializers avoid useEffect-based hydration flash and are the correct pattern for localStorage on mount.
+- The existing solarSizeKw sync effect is safe with open-from-library because `handleOpenEstimate` sets `currentStep = 'estimate_summary'`, keeping the effect condition false.
+- Preserving estimate name on update avoids clobbering user renames.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- `useState(() => { const d = load(); return d?.field ?? default })` — lazy localStorage hydration pattern.
+- `setSavedEstimates(prev => { const u = ...; saveEstimates(u); return u })` — atomic in-memory + localStorage sync.
+- Debounced useEffect with `useRef<number | null>` timer — correct debounce pattern in React.
+
+BUGS / RISKS:
+- localStorage not encrypted; no sensitive PII should be stored.
+- Two-tab race: last write wins. Acceptable for single-user local tool.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+None. Ready for screenshot QA on saved estimates.
+
+NEXT PHASE ADJUSTMENTS:
+- If Supabase sync for saved estimates is added later, use `LocalSolarEstimate` as the canonical shape and sync from it rather than restructuring.
+- If the estimate list grows large, add pagination or a search filter inside `SolarEstimatesLibrary`.
+
+NEXT PHASE READY:
+NO — no next build phase defined.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Local Saved Estimates added to `src/components/solarTraining/SolarEstimateTab.tsx`. localStorage keys: `poweron.solarTraining.solarEstimates` (estimate list) and `poweron.solarTraining.activeDraft` (current open estimate). `SolarEstimatesLibrary` component with Open/Rename/Delete. "Solar Estimates" button in header. Save creates or updates — no duplicates. App reload restores current draft. No Supabase, no new packages, no formula or unrelated tab changes. Typecheck passes.
