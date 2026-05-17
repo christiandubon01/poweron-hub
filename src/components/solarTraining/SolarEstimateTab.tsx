@@ -440,11 +440,10 @@ type SeasonalBillMonth = {
 }
 
 function getSeasonalBillData(
-  monthlyKwh: number,
+  monthlyKwhByMonth: number[],
   solarSizeKw: number,
   ratePlan: RatePlan,
   utility: Utility,
-  climateProfile: ClimateProfile,
   nemResult: ReturnType<typeof calculateNEM3Savings>,
 ): SeasonalBillMonth[] {
   const importRate = getAverageImportRate(ratePlan)
@@ -454,14 +453,9 @@ function getSeasonalBillData(
   const derate = utility === 'IID' ? 0.77 : 0.8
   const annualProductionKwh = solarSizeKw * peakSunHours * 365 * derate
 
-  const rawConsWeights = CONSUMPTION_SEASONAL_WEIGHTS[climateProfile]
-  const consWeightAvg = rawConsWeights.reduce((s, w) => s + w, 0) / 12
-  const normalizedConsWeights = rawConsWeights.map(w => w / consWeightAvg)
-
   const solarWeightAvg = SOLAR_PRODUCTION_SEASONAL_WEIGHTS.reduce((s, w) => s + w, 0) / 12
   const normalizedSolarWeights = SOLAR_PRODUCTION_SEASONAL_WEIGHTS.map(w => w / solarWeightAvg)
 
-  // Derive battery benefit ratio from flat nemResult (consistent with NEM3 calculation)
   const flatMonth = nemResult.monthly_breakdown[0]
   const batteryRatio =
     flatMonth && flatMonth.bill_after_solar_no_battery > 0
@@ -471,16 +465,18 @@ function getSeasonalBillData(
   const NEM3_EXPORT_RATE = importRate * 0.25
 
   return MONTH_FULL_LABELS.map((fullLabel, i) => {
-    const kwh = monthlyKwh * normalizedConsWeights[i]
+    const kwh = monthlyKwhByMonth[i] ?? 0
     const solarProduction = (annualProductionKwh / 12) * normalizedSolarWeights[i]
     const gridImport = Math.max(0, kwh - solarProduction)
     const gridExport = Math.max(0, solarProduction - kwh)
     const beforeCost = kwh * importRate + fixedCharge
-    const afterCostNoBattery = Math.max(
+    const rawAfterNoBattery = Math.max(
       fixedCharge,
       gridImport * importRate - gridExport * NEM3_EXPORT_RATE + fixedCharge,
     )
-    const afterCostWithBattery = afterCostNoBattery * batteryRatio
+    // Conservative planning floors: solar-only ≥ 25%, solar+battery ≥ 15% of current bill
+    const afterCostNoBattery = Math.max(rawAfterNoBattery, beforeCost * 0.25)
+    const afterCostWithBattery = Math.max(rawAfterNoBattery * batteryRatio, beforeCost * 0.15)
     return {
       fullLabel,
       shortLabel: MONTH_SHORT_LABELS[i],
@@ -501,6 +497,32 @@ function getAverageImportRate(ratePlan: SolarEstimateRatePlan | null): number {
   const hourlyAverage =
     schedule.hours.reduce((total, block) => total + block.import_rate, 0) / schedule.hours.length
   return Math.max(0.12, hourlyAverage)
+}
+
+function getAnchorBlendedRate(utility: Utility, ratePlan: RatePlan | null): number {
+  if (ratePlan) return getAverageImportRate(ratePlan)
+  if (utility === 'IID') return 0.22
+  if (utility === 'SCE') return 0.36
+  return 0.32
+}
+
+function computeAnchoredMonthlyKwhByMonth(
+  averageBill: number,
+  blendedRate: number,
+  climateProfile: ClimateProfile,
+  anchorMonthIndex: number,
+): number[] {
+  const weights = CONSUMPTION_SEASONAL_WEIGHTS[climateProfile]
+  const anchorMonthKwh = averageBill / blendedRate
+  const currentMonthWeight = weights[anchorMonthIndex]
+  const baselineMonthlyKwh = anchorMonthKwh / currentMonthWeight
+  return Array.from({ length: 12 }, (_, i) => baselineMonthlyKwh * weights[i])
+}
+
+function computeNormalizedMonthlyKwhByMonth(averageMonthlyKwh: number, climateProfile: ClimateProfile): number[] {
+  const weights = CONSUMPTION_SEASONAL_WEIGHTS[climateProfile]
+  const weightAvg = weights.reduce((s, w) => s + w, 0) / 12
+  return Array.from({ length: 12 }, (_, i) => averageMonthlyKwh * (weights[i] / weightAvg))
 }
 
 function estimateEnergyUseMonthlyKwh(data: SolarEstimateData): number {
@@ -1844,24 +1866,26 @@ function CostBreakdownCard({ breakdown }: { breakdown: SolarEstimateCostBreakdow
 }
 
 function SeasonalBillChart({
-  monthlyKwh,
+  monthlyKwhByMonth,
   solarSizeKw,
   ratePlan,
   utility,
   hasBattery,
   nemResult,
   climateProfile,
+  anchorMonthLabel,
 }: {
-  monthlyKwh: number
+  monthlyKwhByMonth: number[]
   solarSizeKw: number
   ratePlan: RatePlan
   utility: Utility
   hasBattery: boolean
   nemResult: ReturnType<typeof calculateNEM3Savings>
   climateProfile: ClimateProfile
+  anchorMonthLabel: string
 }) {
   const [tooltip, setTooltip] = useState<ChartTooltip | null>(null)
-  const months = getSeasonalBillData(monthlyKwh, solarSizeKw, ratePlan, utility, climateProfile, nemResult)
+  const months = getSeasonalBillData(monthlyKwhByMonth, solarSizeKw, ratePlan, utility, nemResult)
   const maxBill = Math.max(1, ...months.map(m => m.beforeCost))
   const afterFill = hasBattery ? 'rgba(52,211,153,0.82)' : 'rgba(251,191,36,0.82)'
   const afterSwatch = hasBattery ? 'rgba(52,211,153,0.90)' : 'rgba(251,191,36,0.90)'
@@ -1879,6 +1903,11 @@ function SeasonalBillChart({
         <div>
           <p className="text-xl font-semibold text-slate-100">Monthly bill comparison</p>
           <p className="text-lg text-slate-400">Before solar vs modeled post-solar</p>
+          <p className="mt-1 text-xs text-slate-500">
+            {climateProfile === 'hotDesert'
+              ? `Hot desert profile applied. Bill input is anchored to ${anchorMonthLabel}, so summer AC load is projected from that season.`
+              : `Southern California profile applied. Bill input is anchored to ${anchorMonthLabel}.`}
+          </p>
         </div>
         <div className="flex gap-4 text-sm text-slate-400">
           <span className="flex items-center gap-1.5">
@@ -1925,6 +1954,7 @@ function SeasonalBillChart({
                 eyebrow: 'Monthly bill',
                 title: month.fullLabel,
                 rows: [
+                  { label: 'Anchor month', value: anchorMonthLabel },
                   { label: 'Climate profile', value: climateProfile === 'hotDesert' ? 'Hot desert' : 'Default SoCal' },
                   { label: 'Modeled usage', value: `${formatNumber(month.kwh)} kWh` },
                   { label: 'Current monthly cost', value: formatMoney(month.beforeCost) },
@@ -2751,6 +2781,7 @@ function SummaryChartModule({
   nemResult,
   hasBattery,
   monthlyKwh,
+  monthlyKwhByMonth,
   solarSizeKw,
   avgBeforeBill,
   avgAfterBill,
@@ -2758,10 +2789,12 @@ function SummaryChartModule({
   utility,
   ratePlan,
   climateProfile,
+  anchorMonthLabel,
 }: {
   nemResult: ReturnType<typeof calculateNEM3Savings>
   hasBattery: boolean
   monthlyKwh: number
+  monthlyKwhByMonth: number[]
   solarSizeKw: number
   avgBeforeBill: number
   avgAfterBill: number
@@ -2769,6 +2802,7 @@ function SummaryChartModule({
   utility: Utility
   ratePlan: RatePlan
   climateProfile: ClimateProfile
+  anchorMonthLabel: string
 }) {
   const [activeChart, setActiveChart] = useState<ChartTab>('monthly_bill')
 
@@ -2793,13 +2827,14 @@ function SummaryChartModule({
       <div className="p-4">
         {activeChart === 'monthly_bill' && (
           <SeasonalBillChart
-            monthlyKwh={monthlyKwh}
+            monthlyKwhByMonth={monthlyKwhByMonth}
             solarSizeKw={solarSizeKw}
             ratePlan={ratePlan}
             utility={utility}
             hasBattery={hasBattery}
             nemResult={nemResult}
             climateProfile={climateProfile}
+            anchorMonthLabel={anchorMonthLabel}
           />
         )}
         {activeChart === 'energy_flow_24h' && (
@@ -2988,6 +3023,7 @@ function EstimateSummaryStep({
   activeEstimateId,
   saveStatus,
   estimateSettings,
+  anchorMonthIndex,
 }: {
   data: SolarEstimateData
   updateField: UpdateField
@@ -2996,6 +3032,7 @@ function EstimateSummaryStep({
   activeEstimateId: string | null
   saveStatus: 'idle' | 'saved'
   estimateSettings: SolarEstimateSettings
+  anchorMonthIndex: number
 }) {
   const ratePlanLabel = data.utilityProvider
     ? findLabel(RATE_PLANS_BY_UTILITY[data.utilityProvider], data.ratePlan)
@@ -3032,6 +3069,12 @@ function EstimateSummaryStep({
   const monthlySavings = Math.max(0, avgBeforeBill - avgAfterBill)
   const independence = Math.round(clamp(savings.self_consumption_ratio * 100, 0, 100))
   const climateProfile = detectClimateProfile(`${data.selectedAddressLabel} ${data.addressText}`)
+  const anchorMonthLabel = MONTH_FULL_LABELS[anchorMonthIndex]
+  const blendedRate = getAnchorBlendedRate(utility, ratePlan)
+  const monthlyKwhByMonth =
+    data.consumptionMethod === 'average_bill' && data.averageMonthlyBill && data.averageMonthlyBill > 0
+      ? computeAnchoredMonthlyKwhByMonth(data.averageMonthlyBill, blendedRate, climateProfile, anchorMonthIndex)
+      : computeNormalizedMonthlyKwhByMonth(monthlyKwh, climateProfile)
   const breakerSizeLabel = findLabel(MAIN_BREAKER_SIZE_OPTIONS, data.mainBreakerSize)
   const selectedApplianceLabels = getSelectedApplianceSummaries(data.selectedAppliances)
   const applianceSummary =
@@ -3121,6 +3164,7 @@ function EstimateSummaryStep({
         nemResult={nemResult}
         hasBattery={hasBattery}
         monthlyKwh={monthlyKwh}
+        monthlyKwhByMonth={monthlyKwhByMonth}
         solarSizeKw={solarSizeKw}
         avgBeforeBill={avgBeforeBill}
         avgAfterBill={avgAfterBill}
@@ -3128,6 +3172,7 @@ function EstimateSummaryStep({
         utility={utility}
         ratePlan={ratePlan}
         climateProfile={climateProfile}
+        anchorMonthLabel={anchorMonthLabel}
       />
 
       {/* D. Editable System Controls */}
@@ -3339,6 +3384,7 @@ function ActiveStepPanel({
   activeEstimateId,
   saveStatus,
   estimateSettings,
+  anchorMonthIndex,
 }: {
   data: SolarEstimateData
   updateField: UpdateField
@@ -3347,6 +3393,7 @@ function ActiveStepPanel({
   activeEstimateId: string | null
   saveStatus: 'idle' | 'saved'
   estimateSettings: SolarEstimateSettings
+  anchorMonthIndex: number
 }) {
   switch (data.currentStep) {
     case 'address':
@@ -3367,6 +3414,7 @@ function ActiveStepPanel({
           activeEstimateId={activeEstimateId}
           saveStatus={saveStatus}
           estimateSettings={estimateSettings}
+          anchorMonthIndex={anchorMonthIndex}
         />
       )
     default:
@@ -3394,6 +3442,14 @@ export default function SolarEstimateTab() {
   const draftSaveTimer = useRef<number | null>(null)
 
   const currentStepIndex = ESTIMATE_STEPS.indexOf(data.currentStep)
+
+  const anchorMonthIndex = useMemo(() => {
+    if (activeEstimateId) {
+      const est = savedEstimates.find(e => e.id === activeEstimateId)
+      if (est?.createdAt) return new Date(est.createdAt).getMonth()
+    }
+    return new Date().getMonth()
+  }, [activeEstimateId, savedEstimates])
 
   useEffect(() => {
     if (data.currentStep !== 'system_config') return
@@ -3672,6 +3728,7 @@ export default function SolarEstimateTab() {
                 activeEstimateId={activeEstimateId}
                 saveStatus={saveStatus}
                 estimateSettings={estimateSettings}
+                anchorMonthIndex={anchorMonthIndex}
               />
             </div>
 
