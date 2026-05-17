@@ -983,3 +983,62 @@ NO — no active build phase defined. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Full formula cost calculation wired. `calculateSolarEstimateInstallCost` now includes hardware cost by tier in total. `SolarEstimateCostBreakdown` exposes `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, `hardwareCost`. `CostBreakdownCard` redesigned as stacked formula rows with a `CostBreakdownRow` helper. Labor shows formula line (hourly: hrs×rate, panel: panels×rate). Order: Labor, optional additions, Permit, Blueprint, Mobility, Delivery, Hardware, Estimated total. Typecheck passes.
+
+---
+
+## SEPARATE EV LOAD FROM CHARGER INSTALL COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+(pending)
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Separate existing EV load from new EV charger installation cost
+
+WHAT CHANGED:
+- Removed auto-link between EV charger appliance toggle and `evChargerAddition` field.
+- Added "Add EV Charger" toggle in Step 3 Home Configuration below Panel Upgrade.
+- Added appliance helper text: "These are existing appliances/heavy loads and only affect consumption assumptions."
+- Step 4 right panel: two separate ReviewRows (existing load / EV Charger Addition).
+- Summary: four separate ReviewRows (existing load Y/N, existing amperage, add install Y/N, install amperage).
+
+WHAT WAS LEARNED:
+- One `if` block in `toggleAppliance` was the entire source of the bug.
+- `evChargerAmperage` can safely serve both purposes: existing load display and install cost formula.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Keep install-cost toggles independent of appliance-load toggles.
+- Use `.some(a => a.id === 'X')` for appliance presence checks inline in JSX.
+
+BUGS / RISKS:
+- None introduced.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+None. Ready for screenshot QA.
+
+NEXT PHASE ADJUSTMENTS:
+- QA: EV charger appliance toggle does NOT set evChargerAddition.
+- QA: "Add EV Charger" toggle in Step 3 reflects in Step 4 and Summary.
+- QA: Cost breakdown includes EV charger only when Add EV Charger is ON.
+
+NEXT PHASE READY:
+NO — ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+EV load vs install separated in `src/components/solarTraining/SolarEstimateTab.tsx`. Appliance EV charger = existing load only. "Add EV Charger" toggle in Step 3 controls install cost. Step 4 and Summary show both concepts separately. Typecheck passes.

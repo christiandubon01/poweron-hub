@@ -929,16 +929,6 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
       : [...data.selectedAppliances, { id: appliance }]
 
     updateField('selectedAppliances', nextAppliances)
-
-    if (appliance === 'ev_charger') {
-      if (isSelected) {
-        updateField('evChargerAddition', false)
-        updateField('evChargerAmperage', null)
-      } else {
-        updateField('evChargerAddition', true)
-        updateField('evChargerAmperage', data.evChargerAmperage ?? 50)
-      }
-    }
   }
 
   const updateApplianceAmps = (appliance: SolarEstimateAppliance, value: string) => {
@@ -1074,6 +1064,30 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
             )}
           </div>
 
+          <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <FieldLabel>Add EV Charger</FieldLabel>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Select when the estimate should include installing a new EV charger.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateField('evChargerAddition', !data.evChargerAddition)}
+                aria-pressed={data.evChargerAddition}
+                className={toggleClass(data.evChargerAddition)}
+              >
+                <span className={knobClass(data.evChargerAddition)} />
+              </button>
+            </div>
+            {data.evChargerAddition && data.evChargerAmperage == null && (
+              <p className="mt-2 text-xs leading-5 text-amber-400/70">
+                No amperage selected — install cost will default to 50A rate.
+              </p>
+            )}
+          </div>
+
           <div>
             <FieldLabel>Current main breaker size</FieldLabel>
             <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -1123,9 +1137,14 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
 
             {showApplianceSelector && (
               <div className="mt-3 max-h-[520px] overflow-y-auto overflow-x-hidden rounded-xl border border-cyan-500/25 bg-slate-950/95 p-4 shadow-[0_24px_80px_rgba(8,47,73,0.28)] backdrop-blur">
-                <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-sm font-semibold text-slate-100">Appliances and heavy loads</p>
-                  <p className="text-xs text-slate-500">Select all that apply, then add estimated amps.</p>
+                <div className="mb-3 flex flex-col gap-2">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm font-semibold text-slate-100">Appliances and heavy loads</p>
+                    <p className="text-xs text-slate-500">Select all that apply, then add estimated amps.</p>
+                  </div>
+                  <p className="text-xs leading-5 text-slate-600">
+                    These are existing appliances/heavy loads and only affect consumption assumptions.
+                  </p>
                 </div>
                 <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   {APPLIANCE_OPTIONS.map(option => {
@@ -1561,7 +1580,13 @@ function SystemConfigStep({
                 : 'No'}
             />
             <ReviewRow
-              label="EV charger"
+              label="Existing EV load"
+              value={data.selectedAppliances.some(a => a.id === 'ev_charger')
+                ? `Yes — ${data.evChargerAmperage != null ? `${data.evChargerAmperage}A` : 'amperage not set'}`
+                : 'No'}
+            />
+            <ReviewRow
+              label="EV Charger Addition"
               value={data.evChargerAddition
                 ? `Yes — ${data.evChargerAmperage ?? 50}A`
                 : 'No'}
@@ -3027,10 +3052,22 @@ function EstimateSummaryStep({
             ? `${data.mainPanelUpgradeTarget}A`
             : 'Not included'}
         />
-        <ReviewRow label="EV charger addition" value={data.evChargerAddition ? 'Yes' : 'No'} />
         <ReviewRow
-          label="EV charger amperage"
-          value={data.evChargerAmperage != null ? `${data.evChargerAmperage}A` : 'Not included'}
+          label="Existing EV charger load"
+          value={data.selectedAppliances.some(a => a.id === 'ev_charger') ? 'Yes' : 'No'}
+        />
+        <ReviewRow
+          label="Existing EV charger amperage"
+          value={data.selectedAppliances.some(a => a.id === 'ev_charger')
+            ? (data.evChargerAmperage != null ? `${data.evChargerAmperage}A` : 'Not selected')
+            : 'N/A'}
+        />
+        <ReviewRow label="Add EV charger install" value={data.evChargerAddition ? 'Yes' : 'No'} />
+        <ReviewRow
+          label="EV charger install amperage"
+          value={data.evChargerAddition
+            ? (data.evChargerAmperage != null ? `${data.evChargerAmperage}A` : '50A (default)')
+            : 'Not included'}
         />
         <ReviewRow label="Total estimated install cost" value={formatMoney(systemCost)} />
       </div>

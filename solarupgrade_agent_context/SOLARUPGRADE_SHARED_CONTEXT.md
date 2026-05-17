@@ -2444,3 +2444,57 @@ NO — no active build phase defined. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Full formula cost calculation now wired. `calculateSolarEstimateInstallCost` includes hardware cost (by tier) in the total — prior versions excluded it. `SolarEstimateCostBreakdown` now exposes `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, and `hardwareCost` for display. `CostBreakdownCard` redesigned as stacked formula rows: Labor with formula line (hourly: hrs×rate, panel: panels×rate), optional additions (main panel, EV charger), Permit, Blueprint, Mobility, Delivery, Hardware, Estimated total. Typecheck passes. Commit: see report.
+
+---
+
+## SEPARATE EV LOAD FROM CHARGER INSTALL COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+(pending — see below)
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+WHAT CHANGED:
+- `toggleAppliance` in `HomeDetailsStep`: removed the `ev_charger` special case that was auto-setting `evChargerAddition` and `evChargerAmperage` when the EV charger appliance was toggled. Selecting EV charger in appliances now only stores it as a load in `selectedAppliances`.
+- Added a new "Add EV Charger" toggle card in Step 3 Home Configuration (directly below the Panel Upgrade card). Default OFF. Controls `evChargerAddition`. Shows amber hint when ON but no amperage selected.
+- Added helper text inside the appliance selector dropdown: "These are existing appliances/heavy loads and only affect consumption assumptions."
+- Step 4 right-panel review grid: replaced single "EV charger" ReviewRow with two rows: "Existing EV load" (from selectedAppliances) and "EV Charger Addition" (from evChargerAddition).
+- EstimateSummaryStep interview inputs: replaced two EV charger rows with four: "Existing EV charger load" (Yes/No from selectedAppliances), "Existing EV charger amperage" (selected amp or N/A), "Add EV charger install" (Yes/No from evChargerAddition), "EV charger install amperage" (selected amp or "50A (default)").
+
+WHAT WAS LEARNED:
+- The bug was a single `if (appliance === 'ev_charger')` block in `toggleAppliance` that coupled appliance selection directly to install-cost state. Removing it was the complete fix.
+- `evChargerAmperage` is safely shared: it captures the amperage from the appliance selector and is reused by the install cost formula (defaulting to 50A when null). No new field was needed.
+- `data.selectedAppliances.some(a => a.id === 'ev_charger')` is the correct predicate for "existing EV charger load" in all display contexts.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Separate install-cost toggles from appliance-load toggles — never let appliance selection silently add cost items.
+- Use `.some(a => a.id === 'X')` inline in ReviewRow value prop for boolean appliance presence checks.
+
+BUGS / RISKS:
+- None introduced. `evChargerAmperage` remains shared — both the existing load display and the install cost formula read from it. This is intentional and documented above.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Screenshot QA: toggle EV charger in appliances → verify it does NOT turn on "Add EV Charger" toggle or add cost.
+- Screenshot QA: toggle "Add EV Charger" in Step 3 → verify Step 4 EV Charger Addition reflects it.
+- Screenshot QA: verify Summary separates the four EV charger rows correctly.
+
+NEXT PHASE READY:
+NO — no active build phase defined. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+EV load vs install separated. `toggleAppliance` no longer auto-sets `evChargerAddition`. New "Add EV Charger" toggle in Step 3 Home Configuration (below Panel Upgrade) controls install cost. Appliance helper text added. Step 4 right panel shows two rows: existing EV load + EV Charger Addition. Summary shows four rows: existing load Y/N, existing amperage, add install Y/N, install amperage. `evChargerAmperage` is shared for both concepts. Typecheck passes.
