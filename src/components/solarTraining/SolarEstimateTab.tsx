@@ -2514,7 +2514,7 @@ function EnergyFlow24hChart({
   const xOf = (h: number) => pL + (h + 0.5) * barSlotW
   const yOf = (v: number) => pT + cH - (v / maxVal) * cH
   const baseY = pT + cH
-  const barW = Math.max(2.25, barSlotW * 0.14)
+  const barW = Math.max(4.5, barSlotW * 0.24)
 
   const solarFill = [
     `M${pL},${baseY}`,
@@ -2576,9 +2576,9 @@ function EnergyFlow24hChart({
           >
             kWh
           </text>
-          <path d={solarFill} fill="rgba(251,191,36,0.22)" />
+          <path d={solarFill} fill="rgba(34,197,94,0.18)" />
           {hours.map(hour => {
-            const x = pL + hour.hour * barSlotW + barSlotW * 0.18
+            const x = pL + hour.hour * barSlotW + barSlotW * 0.08
             const importH = Math.max(0, baseY - yOf(hour.gridImport))
             const exportH = Math.max(0, baseY - yOf(hour.solarExport))
             const batteryH = Math.max(0, baseY - yOf(hour.batteryDischarge))
@@ -2592,8 +2592,8 @@ function EnergyFlow24hChart({
               </g>
             )
           })}
-          <path d={solarFill} fill="none" stroke="#facc15" strokeWidth={1.9} strokeLinejoin="round" />
-          <path d={loadPath} fill="none" stroke="#93c5fd" strokeWidth={1.45} strokeDasharray="4,3" strokeLinejoin="round" />
+          <path d={solarFill} fill="none" stroke="#22c55e" strokeWidth={2.1} strokeLinejoin="round" />
+          <path d={loadPath} fill="none" stroke="#dbeafe" strokeWidth={1.65} strokeDasharray="4,3" strokeLinejoin="round" />
           {hourLabels.map(h => (
             <text key={h} x={xOf(h)} y={H - 5} textAnchor="middle" fontSize={7.5} fill="#64748b">
               {stripHourText(h)}
@@ -2608,7 +2608,7 @@ function EnergyFlow24hChart({
                 title: hourText(hour.hour),
                 rows: [
                   { label: 'Home load', value: `${hour.load.toFixed(2)} kWh` },
-                  { label: 'Solar production', value: `${hour.solar.toFixed(2)} kWh`, tone: 'amber' },
+                  { label: 'Solar production', value: `${hour.solar.toFixed(2)} kWh`, tone: 'emerald' },
                   { label: 'Grid import', value: `${hour.gridImport.toFixed(2)} kWh`, tone: 'cyan' },
                   { label: 'Solar export', value: `${hour.solarExport.toFixed(2)} kWh`, tone: 'amber' },
                   ...(hasBattery ? [{ label: 'Battery discharge', value: `${hour.batteryDischarge.toFixed(2)} kWh`, tone: 'emerald' as const }] : []),
@@ -2635,11 +2635,11 @@ function EnergyFlow24hChart({
       </div>
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 px-1 text-xs text-slate-400">
         <span className="flex items-center gap-1.5">
-          <span className="inline-block h-1 w-7 rounded-full bg-yellow-300" />
+          <span className="inline-block h-1 w-7 rounded-full bg-emerald-400" />
           Solar production
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block h-px w-7 border-t border-dashed border-blue-300" />
+          <span className="inline-block h-px w-7 border-t border-dashed border-blue-100" />
           Home load
         </span>
         <span className="flex items-center gap-1.5">
@@ -4002,8 +4002,7 @@ export default function SolarEstimateTab() {
             </div>
             <h2 className="text-xl font-semibold text-white">Homeowner Estimate Interview</h2>
             <p className="mt-2 text-sm leading-6 text-slate-400">
-              Walk through each step to collect the local interview inputs, then review a conservative
-              estimate summary with editable system controls.
+              Walk-through process to acquire needed project data for max savings.
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
