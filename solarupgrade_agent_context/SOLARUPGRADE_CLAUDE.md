@@ -651,7 +651,7 @@ AGENT:
 Claude Code
 
 COMMIT HASH:
-TBD
+fe5c82c
 
 FILES CHANGED:
 - `src/components/solarTraining/SolarEstimateTab.tsx`
