@@ -767,7 +767,7 @@ Latest completed commits:
 - Phase 5: see Phase 5 completion log below
 - Polish pass (post Phase 5): `ce2be20`
 - Visual Polish Pass 2: `0cbfe7c`
-- Summary Chart Tabs + Local Save: see completion log below
+- Summary Chart Tabs + Local Save: `5982e03`
 
 Current ready phase:
 No active build phase. Ready for screenshot QA on the 6-tab chart module and Save button.
@@ -1171,7 +1171,7 @@ AGENT:
 Claude Code
 
 COMMIT HASH:
-Pending — see report
+5982e03
 
 FILES CHANGED:
 - `src/components/solarTraining/SolarEstimateTab.tsx`

@@ -521,7 +521,7 @@ AGENT:
 Claude Code
 
 COMMIT HASH:
-Pending — see report
+5982e03
 
 FILES CHANGED:
 - `src/components/solarTraining/SolarEstimateTab.tsx`
