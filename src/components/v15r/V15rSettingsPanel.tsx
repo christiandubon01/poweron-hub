@@ -338,7 +338,24 @@ function EntrySection({ label, entries, onChange }: { label: string; entries: Ha
   )
 }
 
-function HardwareIndexPanel({ index, onChange }: { index: HardwareIndexData; onChange: (idx: HardwareIndexData) => void }) {
+const hwCostInputClass =
+  'mt-2 w-full rounded-lg border border-cyan-400/15 bg-slate-950/75 px-3 py-2 pl-7 text-sm text-cyan-50 outline-none transition-colors placeholder:text-slate-600 focus:border-cyan-400/50 focus:ring-1 focus:ring-cyan-400/20'
+
+function HardwareIndexPanel({
+  index,
+  onChange,
+  hardwareCostSmall,
+  hardwareCostMedium,
+  hardwareCostLarge,
+  onUpdateCost,
+}: {
+  index: HardwareIndexData
+  onChange: (idx: HardwareIndexData) => void
+  hardwareCostSmall: number
+  hardwareCostMedium: number
+  hardwareCostLarge: number
+  onUpdateCost: (key: keyof SolarEstimateSettings, value: number) => void
+}) {
   const [isCollapsed, setIsCollapsed] = useState(() => loadCollapsedState(SOLAR_ESTIMATE_HARDWARE_INDEX_COLLAPSED_KEY, true))
 
   useEffect(() => {
@@ -419,7 +436,34 @@ function HardwareIndexPanel({ index, onChange }: { index: HardwareIndexData; onC
             </div>
           </div>
 
-          <p className="text-[11px] text-slate-600">Hardware Index does not affect cost math. For reference and planning only.</p>
+          {/* Hardware Cost by System Size */}
+          <div className="rounded-lg border border-cyan-400/10 bg-slate-950/40 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Hardware Cost by System Size</p>
+            <p className="mt-1 text-[11px] text-slate-400">Total hardware cost assumption per system-size tier. Does not affect estimate math yet.</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              {([
+                ['hardwareCostSmall', 'Small System', '3–7 kW', hardwareCostSmall],
+                ['hardwareCostMedium', 'Medium System', '7–15 kW', hardwareCostMedium],
+                ['hardwareCostLarge', 'Large System', '15–30 kW', hardwareCostLarge],
+              ] as const).map(([key, label, hint, value]) => (
+                <label key={key} className="block min-w-0">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-cyan-200/75">{label}</span>
+                  <span className="ml-2 text-[10px] text-slate-500">{hint}</span>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-[17px] text-xs text-slate-500">$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={value}
+                      onChange={ev => onUpdateCost(key, Number(ev.target.value))}
+                      className={hwCostInputClass}
+                    />
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -647,6 +691,10 @@ function SolarEstimateSettingsPanel() {
       <HardwareIndexPanel
         index={settings.hardwareIndex}
         onChange={updateHardwareIndex}
+        hardwareCostSmall={settings.hardwareCostSmall}
+        hardwareCostMedium={settings.hardwareCostMedium}
+        hardwareCostLarge={settings.hardwareCostLarge}
+        onUpdateCost={updateSetting}
       />
 
       <div className="mt-4 flex flex-col gap-2 rounded-xl border border-emerald-400/10 bg-emerald-950/10 p-3 sm:flex-row sm:items-center sm:justify-between">

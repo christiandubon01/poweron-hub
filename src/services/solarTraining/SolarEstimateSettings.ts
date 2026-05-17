@@ -67,6 +67,9 @@ export type SolarEstimateSettings = {
   laborHoursSmall: number
   laborHoursMedium: number
   laborHoursLarge: number
+  hardwareCostSmall: number
+  hardwareCostMedium: number
+  hardwareCostLarge: number
   hardwareIndex: HardwareIndexData
 }
 
@@ -109,6 +112,9 @@ export const DEFAULT_SOLAR_ESTIMATE_SETTINGS: SolarEstimateSettings = {
   laborHoursSmall: 16,
   laborHoursMedium: 32,
   laborHoursLarge: 48,
+  hardwareCostSmall: 2500,
+  hardwareCostMedium: 4500,
+  hardwareCostLarge: 7500,
   hardwareIndex: DEFAULT_HARDWARE_INDEX,
 }
 
@@ -190,6 +196,9 @@ export function normalizeSolarEstimateSettings(value: Partial<SolarEstimateSetti
     laborHoursSmall: safeNumber(raw.laborHoursSmall, DEFAULT_SOLAR_ESTIMATE_SETTINGS.laborHoursSmall),
     laborHoursMedium: safeNumber(raw.laborHoursMedium, DEFAULT_SOLAR_ESTIMATE_SETTINGS.laborHoursMedium),
     laborHoursLarge: safeNumber(raw.laborHoursLarge, DEFAULT_SOLAR_ESTIMATE_SETTINGS.laborHoursLarge),
+    hardwareCostSmall: safeNumber(raw.hardwareCostSmall, DEFAULT_SOLAR_ESTIMATE_SETTINGS.hardwareCostSmall),
+    hardwareCostMedium: safeNumber(raw.hardwareCostMedium, DEFAULT_SOLAR_ESTIMATE_SETTINGS.hardwareCostMedium),
+    hardwareCostLarge: safeNumber(raw.hardwareCostLarge, DEFAULT_SOLAR_ESTIMATE_SETTINGS.hardwareCostLarge),
     hardwareIndex: safeHardwareIndex(raw.hardwareIndex),
   }
 }
