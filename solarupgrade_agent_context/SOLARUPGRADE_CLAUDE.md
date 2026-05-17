@@ -699,3 +699,65 @@ NO — no active build phase defined.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Step 1 layout fix: changed `xl:items-start` to `items-start` in `src/components/solarTraining/SolarEstimateTab.tsx`. AddressStep two-column grid confirmed structurally correct — SectionIntro + form in left column, AddressMapPreview in right column. `xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)] items-start` is the final class string. Two-column layout activates at ≥1280px viewport. Single-column stacking below that is expected. Typecheck passes clean.
+
+---
+
+## EV CHARGER UPGRADE + LABOR FORMULA SELECTOR COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+d57277e
+
+FILES CHANGED:
+- `src/services/solarTraining/SolarEstimateTypes.ts`
+- `src/services/solarTraining/SolarEstimateSettings.ts`
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `src/components/v15r/V15rSettingsPanel.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Add EV charger addition toggle and labor formula selector
+
+WHAT CHANGED:
+- `SolarEstimateTypes.ts`: `evChargerAddition: boolean` added to `SolarEstimateData` and defaults.
+- `SolarEstimateSettings.ts`: `LaborFormulaMode` type, `evChargerAdditionCost` (1500), `laborFormulaMode` ('panelRate'), `evChargerAdditionCost` in breakdown type. `safeLaborFormulaMode` normalizer. `calculateSolarEstimateInstallCost` Pick extended with `evChargerAddition`.
+- `SolarEstimateTab.tsx`: EV Charger Addition toggle in SystemConfigStep, EV charger ReviewRows in Step 4 right panel and EstimateSummaryStep, CostBreakdownCard EV charger row.
+- `V15rSettingsPanel.tsx`: Labor formula selector button group in Labor box header, disabled field states, hourly mode note, EV Charger Addition Cost field in Electrical Upgrades.
+
+WHAT WAS LEARNED:
+- String-enum settings fields need their own safe normalizer — safeNumber only works for numbers.
+- Pick type in calculateSolarEstimateInstallCost must be explicitly extended for new data fields used in cost logic.
+- Hourly mode note should be amber/warning color to make it visible but not alarming.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- `safeLaborFormulaMode` pattern for string-enum settings normalization.
+- Labor formula selector: compact button group in box header, no separate modal or page.
+- Disabled field: `opacity-50` on label + `disabled` on input + `disabledInputClass` (no focus ring, muted text).
+
+BUGS / RISKS:
+- Hourly crew mode does not yet affect cost math. Note is displayed to communicate this.
+- EV charger $1,500 default is a reasonable placeholder.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+None. Ready for screenshot QA.
+
+NEXT PHASE ADJUSTMENTS:
+- If hourly labor math is added: extend calculateSolarEstimateInstallCost with laborHours parameter and branch on laborFormulaMode.
+
+NEXT PHASE READY:
+NO — no active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+EV Charger Addition + Labor formula selector phase complete. evChargerAddition in SolarEstimateData, evChargerAdditionCost ($1,500) and laborFormulaMode ('panelRate') in SolarEstimateSettings. Step 4 toggle below Main Panel Upgrade. Cost breakdown includes EV charger row when ON. Settings Hub Electrical Upgrades is now 2-col with both costs. Labor box has Hourly crew / Panel rate selector with disabled fields and future-modeling note. Typecheck passes. Commit: d57277e.

@@ -2259,3 +2259,74 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Scoped System Config layout and main panel cost setting complete. Step 4 left side now holds the design controls including Solar Plus Battery, conditional Battery Size, and Main Panel Upgrade; the right side only holds Target Solar Offset and four summary boxes. Solar Estimate Settings now includes `mainPanelUpgradeCost` defaulting to `$2,500` under Electrical Upgrades. Summary install cost includes that amount only when `mainPanelUpgradeNeeded` is ON, and the cost breakdown shows a Main panel upgrade row only when active. Typecheck passes.
+
+---
+
+## EV CHARGER UPGRADE + LABOR FORMULA SELECTOR COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+d57277e
+
+FILES CHANGED:
+- `src/services/solarTraining/SolarEstimateTypes.ts`
+- `src/services/solarTraining/SolarEstimateSettings.ts`
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `src/components/v15r/V15rSettingsPanel.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+WHAT CHANGED:
+- Added `evChargerAddition: boolean` to `SolarEstimateData` and `DEFAULT_ESTIMATE_DATA` (false by default).
+- Added `LaborFormulaMode` type, `evChargerAdditionCost: number` (default 1500), and `laborFormulaMode: 'hourlyCrew' | 'panelRate'` (default 'panelRate') to `SolarEstimateSettings`.
+- Added `evChargerAdditionCost` to `SolarEstimateCostBreakdown`.
+- Updated `normalizeSolarEstimateSettings` to normalize both new fields.
+- Updated `calculateSolarEstimateInstallCost` to accept `evChargerAddition` in Pick and include `evChargerAdditionCost` in total.
+- Added EV Charger Addition toggle in Step 4 System Config below Main Panel Upgrade.
+- Added EV charger addition ReviewRow in Step 4 right-panel summary grid.
+- Added EV charger addition row in CostBreakdownCard (only shown when cost > 0).
+- Added EV Charger Addition ReviewRow in EstimateSummaryStep interview inputs.
+- Added EV Charger Addition Cost input in Settings Hub Electrical Upgrades box (below Main Panel Upgrade Cost, 2-col grid).
+- Added labor formula selector (Hourly crew labor / Panel labor rate) as compact button group in top-right of Labor box header.
+- Hourly/panel inputs dim (opacity-50 + disabled) when the opposing mode is selected.
+- Added amber note when hourlyCrew mode is active: "Hourly crew mode is saved for future labor-hour modeling."
+- Hourly mode does not affect cost math yet — panel rate still used in calculations.
+- `normalizeEstimateData` in SolarEstimateTab.tsx explicitly normalizes `evChargerAddition` as boolean.
+
+WHAT WAS LEARNED:
+- Adding a new `LaborFormulaMode` string type requires a separate safe normalizer (`safeLaborFormulaMode`) because `safeNumber` only handles numbers.
+- The Pick type in `calculateSolarEstimateInstallCost` must be extended when new `SolarEstimateData` fields feed into the cost calculation.
+- V15rSettingsPanel.tsx uses `// @ts-nocheck` but new imports and functions still need to be correct at runtime.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- `safeLaborFormulaMode(value: unknown)` pattern: check exact string values, fall back to default — use for any future string-enum settings fields.
+- Labor formula selector button group: `flex items-center gap-0.5 rounded-lg border border-slate-700/80 bg-slate-900/70 p-0.5` with active button using `bg-cyan-700/60 text-cyan-100`.
+- Disabled-field pattern: pass `disabled?: boolean` to field helper, apply `opacity-50` on label and swap to `disabledInputClass` on input.
+
+BUGS / RISKS:
+- Hourly crew mode is saved but not yet wired to cost math. If future phases add labor-hour modeling, `calculateSolarEstimateInstallCost` must add a `laborHours` parameter and branch on `laborFormulaMode`.
+- EV charger addition cost defaults to $1,500 — update if actual labor/permit cost changes.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Screenshot QA: verify EV Charger Addition toggle in Step 4 below Main Panel Upgrade.
+- Screenshot QA: verify Settings Hub Electrical Upgrades shows both cost inputs side by side.
+- Screenshot QA: verify Labor formula selector in top-right of Labor box.
+- Screenshot QA: verify Summary cost breakdown includes EV charger addition row when toggled ON.
+- If hourly labor-hour modeling is added later, branch on `laborFormulaMode` in `calculateSolarEstimateInstallCost` and add a `laborHours` parameter.
+
+NEXT PHASE READY:
+NO — no active build phase defined. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+EV Charger Addition toggle added to Step 4 System Config below Main Panel Upgrade. Default OFF, persists in saved estimates. Settings Hub Electrical Upgrades box now shows both Main Panel Upgrade Cost and EV Charger Addition Cost ($1,500 default) in a 2-col grid. Summary cost includes EV charger cost only when toggled ON; breakdown row appears only when active. Labor formula selector (Hourly crew / Panel rate) added as compact button group in Labor box header. Hourly inputs dim when Panel rate mode is selected; panel labor input dims when Hourly crew mode is selected. Hourly mode persists but does not affect cost math yet — amber note shown. Typecheck passes clean. Commit: d57277e.
