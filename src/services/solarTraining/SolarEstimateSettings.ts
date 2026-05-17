@@ -24,6 +24,9 @@ export type SolarEstimateSettings = {
   mainPanelUpgradeCost: number
   evChargerAdditionCost: number
   laborFormulaMode: LaborFormulaMode
+  laborHoursSmall: number
+  laborHoursMedium: number
+  laborHoursLarge: number
 }
 
 export type SolarEstimateCostBreakdown = {
@@ -62,6 +65,9 @@ export const DEFAULT_SOLAR_ESTIMATE_SETTINGS: SolarEstimateSettings = {
   mainPanelUpgradeCost: 2500,
   evChargerAdditionCost: 1500,
   laborFormulaMode: 'panelRate',
+  laborHoursSmall: 16,
+  laborHoursMedium: 32,
+  laborHoursLarge: 48,
 }
 
 export function getCombinedHourlyLaborRate(settings: SolarEstimateSettings): number {
@@ -103,6 +109,9 @@ export function normalizeSolarEstimateSettings(value: Partial<SolarEstimateSetti
     mainPanelUpgradeCost: safeNumber(raw.mainPanelUpgradeCost, DEFAULT_SOLAR_ESTIMATE_SETTINGS.mainPanelUpgradeCost),
     evChargerAdditionCost: safeNumber(raw.evChargerAdditionCost, DEFAULT_SOLAR_ESTIMATE_SETTINGS.evChargerAdditionCost),
     laborFormulaMode: safeLaborFormulaMode(raw.laborFormulaMode),
+    laborHoursSmall: safeNumber(raw.laborHoursSmall, DEFAULT_SOLAR_ESTIMATE_SETTINGS.laborHoursSmall),
+    laborHoursMedium: safeNumber(raw.laborHoursMedium, DEFAULT_SOLAR_ESTIMATE_SETTINGS.laborHoursMedium),
+    laborHoursLarge: safeNumber(raw.laborHoursLarge, DEFAULT_SOLAR_ESTIMATE_SETTINGS.laborHoursLarge),
   }
 }
 
@@ -144,7 +153,12 @@ export function calculateSolarEstimateInstallCost(
       : tier === 'medium'
       ? settings.mediumBlueprintCost
       : settings.largeBlueprintCost
-  const panelLaborCost = panelCount * settings.panelInstallLaborCost
+  const laborHours =
+    tier === 'small' ? settings.laborHoursSmall : tier === 'medium' ? settings.laborHoursMedium : settings.laborHoursLarge
+  const panelLaborCost =
+    settings.laborFormulaMode === 'hourlyCrew'
+      ? getCombinedHourlyLaborRate(settings) * laborHours
+      : panelCount * settings.panelInstallLaborCost
   const mobilityCost = settings.baseMobilityCost + mileageCost
   const deliveryCost = settings.flatDeliveryCost + deliveryMileageCost
   const mainPanelUpgradeCost = data.mainPanelUpgradeNeeded ? settings.mainPanelUpgradeCost : 0

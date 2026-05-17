@@ -443,6 +443,16 @@ function SolarEstimateSettingsPanel() {
         </div>
 
         <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Labor Hours per System</p>
+          <p className="mt-1 text-[11px] text-slate-400">Used when Hourly crew labor is selected. Matches the same system-size tiers.</p>
+          <div className="mt-3 grid gap-3 md:grid-cols-3">
+            {numberField('laborHoursSmall', 'Small System', 'hrs', '3–7 kW')}
+            {numberField('laborHoursMedium', 'Medium System', 'hrs', '7–15 kW')}
+            {numberField('laborHoursLarge', 'Large System', 'hrs', '15–30 kW')}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Blueprint Cost by Size</p>
           <p className="mt-1 text-[11px] text-slate-400">Uses the same small, medium, and large system-size ranges.</p>
           <div className="mt-3 grid gap-3 md:grid-cols-3">
