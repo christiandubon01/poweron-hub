@@ -293,8 +293,17 @@ function normalizeEstimateData(
       typeof raw.mainPanelUpgradeNeeded === 'boolean'
         ? raw.mainPanelUpgradeNeeded
         : shouldDefaultMainPanelUpgrade(raw.mainBreakerSize ?? DEFAULT_ESTIMATE_DATA.mainBreakerSize),
+    mainPanelUpgradeTarget:
+      raw.mainPanelUpgradeTarget === 200 || raw.mainPanelUpgradeTarget === 400
+        ? raw.mainPanelUpgradeTarget
+        : null,
     evChargerAddition:
       typeof raw.evChargerAddition === 'boolean' ? raw.evChargerAddition : false,
+    evChargerAmperage:
+      raw.evChargerAmperage === 30 || raw.evChargerAmperage === 40 || raw.evChargerAmperage === 50 ||
+      raw.evChargerAmperage === 60 || raw.evChargerAmperage === 100
+        ? raw.evChargerAmperage
+        : null,
   }
 }
 
@@ -483,6 +492,16 @@ function optionCardClass(isSelected: boolean): string {
       ? 'border-cyan-400/70 bg-cyan-950/55 ring-1 ring-cyan-400/20'
       : 'border-slate-800 bg-slate-950/45 hover:border-cyan-700/60 hover:bg-slate-900/75'
   }`
+}
+
+function toggleClass(enabled: boolean): string {
+  return `relative h-7 w-14 shrink-0 rounded-full border p-0.5 transition-colors ${
+    enabled ? 'border-emerald-400/60 bg-emerald-500/70' : 'border-slate-700 bg-slate-800'
+  }`
+}
+
+function knobClass(enabled: boolean): string {
+  return `block h-5 w-5 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-7' : 'translate-x-0'}`
 }
 
 function FieldLabel({ children, hint }: { children: React.ReactNode; hint?: string }) {
@@ -876,6 +895,8 @@ function AddressStep({ data, updateField }: { data: SolarEstimateData; updateFie
   )
 }
 
+const EV_AMPERAGE_OPTIONS = [30, 40, 50, 60, 100] as const
+
 function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updateField: UpdateField }) {
   const [showApplianceSelector, setShowApplianceSelector] = useState(false)
   const selectedApplianceSummaries = getSelectedApplianceSummaries(data.selectedAppliances)
@@ -884,12 +905,40 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
       ? selectedApplianceSummaries.join(', ')
       : 'No heavy-load appliances selected'
 
+  const selectBreakerSize = (size: MainBreakerSize) => {
+    updateField('mainBreakerSize', size)
+    const isSubPanel = shouldDefaultMainPanelUpgrade(size)
+    updateField('mainPanelUpgradeNeeded', isSubPanel)
+    if (isSubPanel && !data.mainPanelUpgradeTarget) {
+      updateField('mainPanelUpgradeTarget', 200)
+    }
+  }
+
+  const togglePanelUpgrade = () => {
+    const next = !data.mainPanelUpgradeNeeded
+    updateField('mainPanelUpgradeNeeded', next)
+    if (next && !data.mainPanelUpgradeTarget) {
+      updateField('mainPanelUpgradeTarget', 200)
+    }
+  }
+
   const toggleAppliance = (appliance: SolarEstimateAppliance) => {
-    const nextAppliances = data.selectedAppliances.some(item => item.id === appliance)
+    const isSelected = data.selectedAppliances.some(item => item.id === appliance)
+    const nextAppliances = isSelected
       ? data.selectedAppliances.filter(item => item.id !== appliance)
       : [...data.selectedAppliances, { id: appliance }]
 
     updateField('selectedAppliances', nextAppliances)
+
+    if (appliance === 'ev_charger') {
+      if (isSelected) {
+        updateField('evChargerAddition', false)
+        updateField('evChargerAmperage', null)
+      } else {
+        updateField('evChargerAddition', true)
+        updateField('evChargerAmperage', data.evChargerAmperage ?? 50)
+      }
+    }
   }
 
   const updateApplianceAmps = (appliance: SolarEstimateAppliance, value: string) => {
@@ -980,6 +1029,51 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
             </div>
           </div>
 
+          <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <FieldLabel>Panel Upgrade</FieldLabel>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Select when the estimate includes upgrading the main electrical panel.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={togglePanelUpgrade}
+                aria-pressed={data.mainPanelUpgradeNeeded}
+                className={toggleClass(data.mainPanelUpgradeNeeded)}
+              >
+                <span className={knobClass(data.mainPanelUpgradeNeeded)} />
+              </button>
+            </div>
+            {data.mainPanelUpgradeNeeded && (
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => updateField('mainPanelUpgradeTarget', 200)}
+                  className={`rounded-md border px-3 py-2 text-sm font-semibold transition-colors ${
+                    data.mainPanelUpgradeTarget === 200
+                      ? 'border-cyan-400/70 bg-cyan-950/55 text-cyan-100 ring-1 ring-cyan-400/20'
+                      : 'border-slate-700 bg-slate-900/60 text-slate-400 hover:border-cyan-700/60 hover:text-slate-100'
+                  }`}
+                >
+                  Upgrade to 200A
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateField('mainPanelUpgradeTarget', 400)}
+                  className={`rounded-md border px-3 py-2 text-sm font-semibold transition-colors ${
+                    data.mainPanelUpgradeTarget === 400
+                      ? 'border-cyan-400/70 bg-cyan-950/55 text-cyan-100 ring-1 ring-cyan-400/20'
+                      : 'border-slate-700 bg-slate-900/60 text-slate-400 hover:border-cyan-700/60 hover:text-slate-100'
+                  }`}
+                >
+                  Upgrade to 400A
+                </button>
+              </div>
+            )}
+          </div>
+
           <div>
             <FieldLabel>Current main breaker size</FieldLabel>
             <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -987,7 +1081,7 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
                 <button
                   key={option.id}
                   type="button"
-                  onClick={() => updateField('mainBreakerSize', option.id as MainBreakerSize)}
+                  onClick={() => selectBreakerSize(option.id as MainBreakerSize)}
                   className={optionCardClass(data.mainBreakerSize === option.id)}
                 >
                   <div className="flex items-center justify-between gap-3">
@@ -1062,7 +1156,30 @@ function HomeDetailsStep({ data, updateField }: { data: SolarEstimateData; updat
                           {isSelected && <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan-300" />}
                         </button>
 
-                        {isSelected && (
+                        {isSelected && option.id === 'ev_charger' && (
+                          <div className="mt-3">
+                            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                              Amperage
+                            </span>
+                            <div className="mt-1.5 grid grid-cols-5 gap-1.5">
+                              {EV_AMPERAGE_OPTIONS.map(amp => (
+                                <button
+                                  key={amp}
+                                  type="button"
+                                  onClick={() => updateField('evChargerAmperage', amp)}
+                                  className={`rounded-md border px-1.5 py-1.5 text-xs font-semibold transition-colors ${
+                                    data.evChargerAmperage === amp
+                                      ? 'border-cyan-400/70 bg-cyan-950/55 text-cyan-100 ring-1 ring-cyan-400/20'
+                                      : 'border-slate-700 bg-slate-900/60 text-slate-400 hover:border-cyan-700/60 hover:text-slate-100'
+                                  }`}
+                                >
+                                  {amp}A
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {isSelected && option.id !== 'ev_charger' && (
                           <label className="mt-3 block">
                             <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
                               Amps
@@ -1223,12 +1340,6 @@ function SystemConfigStep({
   const setBatteryEnabled = (enabled: boolean) => {
     updateField('systemMode', enabled ? 'solar_plus_battery' : 'solar_only')
   }
-  const toggleClass = (enabled: boolean) =>
-    `relative h-7 w-14 shrink-0 rounded-full border p-0.5 transition-colors ${
-      enabled ? 'border-emerald-400/60 bg-emerald-500/70' : 'border-slate-700 bg-slate-800'
-    }`
-  const knobClass = (enabled: boolean) =>
-    `block h-5 w-5 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-7' : 'translate-x-0'}`
 
   return (
     <div>
@@ -1342,7 +1453,13 @@ function SystemConfigStep({
               </div>
               <button
                 type="button"
-                onClick={() => updateField('mainPanelUpgradeNeeded', !data.mainPanelUpgradeNeeded)}
+                onClick={() => {
+                  const next = !data.mainPanelUpgradeNeeded
+                  updateField('mainPanelUpgradeNeeded', next)
+                  if (next && !data.mainPanelUpgradeTarget) {
+                    updateField('mainPanelUpgradeTarget', 200)
+                  }
+                }}
                 aria-pressed={data.mainPanelUpgradeNeeded}
                 className={toggleClass(data.mainPanelUpgradeNeeded)}
               >
@@ -1352,6 +1469,32 @@ function SystemConfigStep({
             <p className="mt-3 text-xs leading-5 text-slate-600">
               Current main breaker: {findLabel(MAIN_BREAKER_SIZE_OPTIONS, data.mainBreakerSize)}
             </p>
+            {data.mainPanelUpgradeNeeded && (
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => updateField('mainPanelUpgradeTarget', 200)}
+                  className={`rounded-md border px-3 py-2 text-sm font-semibold transition-colors ${
+                    data.mainPanelUpgradeTarget === 200
+                      ? 'border-cyan-400/70 bg-cyan-950/55 text-cyan-100 ring-1 ring-cyan-400/20'
+                      : 'border-slate-700 bg-slate-900/60 text-slate-400 hover:border-cyan-700/60 hover:text-slate-100'
+                  }`}
+                >
+                  Target: 200A
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateField('mainPanelUpgradeTarget', 400)}
+                  className={`rounded-md border px-3 py-2 text-sm font-semibold transition-colors ${
+                    data.mainPanelUpgradeTarget === 400
+                      ? 'border-cyan-400/70 bg-cyan-950/55 text-cyan-100 ring-1 ring-cyan-400/20'
+                      : 'border-slate-700 bg-slate-900/60 text-slate-400 hover:border-cyan-700/60 hover:text-slate-100'
+                  }`}
+                >
+                  Target: 400A
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
@@ -1360,6 +1503,9 @@ function SystemConfigStep({
                 <FieldLabel>EV Charger Addition</FieldLabel>
                 <p className="mt-2 text-sm leading-6 text-slate-500">
                   Adds EV charger electrical upgrade cost to the modeled estimate.
+                  {data.evChargerAmperage != null && (
+                    <> <span className="text-cyan-300">{data.evChargerAmperage}A selected in Home Details.</span></>
+                  )}
                 </p>
               </div>
               <button
@@ -1371,6 +1517,11 @@ function SystemConfigStep({
                 <span className={knobClass(data.evChargerAddition)} />
               </button>
             </div>
+            {data.evChargerAddition && data.evChargerAmperage == null && (
+              <p className="mt-2 text-xs leading-5 text-amber-400/70">
+                No amperage selected in Home Details — cost will default to 50A rate.
+              </p>
+            )}
           </div>
         </div>
 
@@ -1403,8 +1554,18 @@ function SystemConfigStep({
             <ReviewRow label="Mode" value={hasBattery ? 'Solar Plus Battery' : 'Solar Only'} />
             <ReviewRow label="Panels" value={`${panelCount} @ ${data.panelWattage}W`} />
             <ReviewRow label="Target offset" value={`${data.targetOffset}%`} />
-            <ReviewRow label="Main panel upgrade" value={data.mainPanelUpgradeNeeded ? 'Yes' : 'No'} />
-            <ReviewRow label="EV charger addition" value={data.evChargerAddition ? 'Yes' : 'No'} />
+            <ReviewRow
+              label="Main panel upgrade"
+              value={data.mainPanelUpgradeNeeded
+                ? `Yes — ${data.mainPanelUpgradeTarget ?? 200}A target`
+                : 'No'}
+            />
+            <ReviewRow
+              label="EV charger"
+              value={data.evChargerAddition
+                ? `Yes — ${data.evChargerAmperage ?? 50}A`
+                : 'No'}
+            />
           </div>
         </div>
       </div>
@@ -1530,10 +1691,10 @@ function CostBreakdownCard({ breakdown }: { breakdown: SolarEstimateCostBreakdow
           <CostBreakdownRow label="Labor" formula={laborFormula} value={breakdown.panelLaborCost} />
 
           {breakdown.mainPanelUpgradeCost > 0 && (
-            <CostBreakdownRow label="Main panel upgrade" value={breakdown.mainPanelUpgradeCost} />
+            <CostBreakdownRow label="Main panel upgrade" value={breakdown.mainPanelUpgradeCost} detail={breakdown.panelUpgradeLabel} />
           )}
           {breakdown.evChargerAdditionCost > 0 && (
-            <CostBreakdownRow label="EV charger addition" value={breakdown.evChargerAdditionCost} />
+            <CostBreakdownRow label="EV charger addition" value={breakdown.evChargerAdditionCost} detail={breakdown.evChargerLabel} />
           )}
 
           {breakdown.profitCost > 0 && (
@@ -2860,7 +3021,17 @@ function EstimateSummaryStep({
         <ReviewRow label="Panel wattage" value={`${panelWattage}W`} />
         <ReviewRow label="Battery size" value={hasBattery ? `${batterySizeKwh.toFixed(1)} kWh` : 'Not included'} />
         <ReviewRow label="Main panel upgrade" value={data.mainPanelUpgradeNeeded ? 'Yes' : 'No'} />
+        <ReviewRow
+          label="Panel upgrade target"
+          value={data.mainPanelUpgradeNeeded && data.mainPanelUpgradeTarget
+            ? `${data.mainPanelUpgradeTarget}A`
+            : 'Not included'}
+        />
         <ReviewRow label="EV charger addition" value={data.evChargerAddition ? 'Yes' : 'No'} />
+        <ReviewRow
+          label="EV charger amperage"
+          value={data.evChargerAmperage != null ? `${data.evChargerAmperage}A` : 'Not included'}
+        />
         <ReviewRow label="Total estimated install cost" value={formatMoney(systemCost)} />
       </div>
 

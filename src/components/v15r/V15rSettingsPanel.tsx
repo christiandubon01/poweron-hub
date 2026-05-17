@@ -642,9 +642,25 @@ function SolarEstimateSettingsPanel() {
           <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
             <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Electrical Upgrades</p>
             <p className="mt-1 text-[11px] text-slate-400">Applied in Summary only when the corresponding toggle is enabled in System Config.</p>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              {field('mainPanelUpgradeCost', 'Main panel upgrade cost')}
-              {field('evChargerAdditionCost', 'EV Charger Addition Cost')}
+
+            <div className="mt-3 space-y-4">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-2">Main panel upgrade</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {field('mainPanelUpgradeCost200A', 'Upgrade to 200A')}
+                  {field('mainPanelUpgradeCost400A', 'Upgrade to 400A')}
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-2">EV charger addition</p>
+                <div className="grid gap-3 grid-cols-3 xl:grid-cols-5">
+                  {field('evChargerCost30A', '30A')}
+                  {field('evChargerCost40A', '40A')}
+                  {field('evChargerCost50A', '50A')}
+                  {field('evChargerCost60A', '60A')}
+                  {field('evChargerCost100A', '100A')}
+                </div>
+              </div>
             </div>
           </div>
 

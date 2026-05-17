@@ -62,7 +62,14 @@ export type SolarEstimateSettings = {
   flatDeliveryCost: number
   deliveryCostPerMile: number
   mainPanelUpgradeCost: number
+  mainPanelUpgradeCost200A: number
+  mainPanelUpgradeCost400A: number
   evChargerAdditionCost: number
+  evChargerCost30A: number
+  evChargerCost40A: number
+  evChargerCost50A: number
+  evChargerCost60A: number
+  evChargerCost100A: number
   laborFormulaMode: LaborFormulaMode
   laborHoursSmall: number
   laborHoursMedium: number
@@ -88,7 +95,9 @@ export type SolarEstimateCostBreakdown = {
   mobilityCost: number
   deliveryCost: number
   mainPanelUpgradeCost: number
+  panelUpgradeLabel: string
   evChargerAdditionCost: number
+  evChargerLabel: string
   hardwareCost: number
   profitCost: number
   totalEstimatedInstallCost: number
@@ -115,7 +124,14 @@ export const DEFAULT_SOLAR_ESTIMATE_SETTINGS: SolarEstimateSettings = {
   flatDeliveryCost: 300,
   deliveryCostPerMile: 0,
   mainPanelUpgradeCost: 2500,
+  mainPanelUpgradeCost200A: 4500,
+  mainPanelUpgradeCost400A: 7500,
   evChargerAdditionCost: 1500,
+  evChargerCost30A: 1200,
+  evChargerCost40A: 1500,
+  evChargerCost50A: 1800,
+  evChargerCost60A: 2200,
+  evChargerCost100A: 3500,
   laborFormulaMode: 'panelRate',
   laborHoursSmall: 16,
   laborHoursMedium: 32,
@@ -203,7 +219,17 @@ export function normalizeSolarEstimateSettings(value: Partial<SolarEstimateSetti
     flatDeliveryCost: safeNumber(raw.flatDeliveryCost, DEFAULT_SOLAR_ESTIMATE_SETTINGS.flatDeliveryCost),
     deliveryCostPerMile: safeNumber(raw.deliveryCostPerMile, DEFAULT_SOLAR_ESTIMATE_SETTINGS.deliveryCostPerMile),
     mainPanelUpgradeCost: safeNumber(raw.mainPanelUpgradeCost, DEFAULT_SOLAR_ESTIMATE_SETTINGS.mainPanelUpgradeCost),
+    mainPanelUpgradeCost200A: safeNumber(
+      raw.mainPanelUpgradeCost200A,
+      safeNumber(raw.mainPanelUpgradeCost, DEFAULT_SOLAR_ESTIMATE_SETTINGS.mainPanelUpgradeCost200A)
+    ),
+    mainPanelUpgradeCost400A: safeNumber(raw.mainPanelUpgradeCost400A, DEFAULT_SOLAR_ESTIMATE_SETTINGS.mainPanelUpgradeCost400A),
     evChargerAdditionCost: safeNumber(raw.evChargerAdditionCost, DEFAULT_SOLAR_ESTIMATE_SETTINGS.evChargerAdditionCost),
+    evChargerCost30A: safeNumber(raw.evChargerCost30A, DEFAULT_SOLAR_ESTIMATE_SETTINGS.evChargerCost30A),
+    evChargerCost40A: safeNumber(raw.evChargerCost40A, DEFAULT_SOLAR_ESTIMATE_SETTINGS.evChargerCost40A),
+    evChargerCost50A: safeNumber(raw.evChargerCost50A, DEFAULT_SOLAR_ESTIMATE_SETTINGS.evChargerCost50A),
+    evChargerCost60A: safeNumber(raw.evChargerCost60A, DEFAULT_SOLAR_ESTIMATE_SETTINGS.evChargerCost60A),
+    evChargerCost100A: safeNumber(raw.evChargerCost100A, DEFAULT_SOLAR_ESTIMATE_SETTINGS.evChargerCost100A),
     laborFormulaMode: safeLaborFormulaMode(raw.laborFormulaMode),
     laborHoursSmall: safeNumber(raw.laborHoursSmall, DEFAULT_SOLAR_ESTIMATE_SETTINGS.laborHoursSmall),
     laborHoursMedium: safeNumber(raw.laborHoursMedium, DEFAULT_SOLAR_ESTIMATE_SETTINGS.laborHoursMedium),
@@ -237,7 +263,7 @@ export function saveSolarEstimateSettings(settings: SolarEstimateSettings): Sola
 }
 
 export function calculateSolarEstimateInstallCost(
-  data: Pick<SolarEstimateData, 'systemSizeKw' | 'panelWattage' | 'mainPanelUpgradeNeeded' | 'evChargerAddition'>,
+  data: Pick<SolarEstimateData, 'systemSizeKw' | 'panelWattage' | 'mainPanelUpgradeNeeded' | 'evChargerAddition' | 'evChargerAmperage' | 'mainPanelUpgradeTarget'>,
   settings: SolarEstimateSettings,
   distanceMiles: number | null = null
 ): SolarEstimateCostBreakdown {
@@ -264,8 +290,23 @@ export function calculateSolarEstimateInstallCost(
       : panelCount * settings.panelInstallLaborCost
   const mobilityCost = settings.baseMobilityCost + mileageCost
   const deliveryCost = settings.flatDeliveryCost + deliveryMileageCost
-  const mainPanelUpgradeCost = data.mainPanelUpgradeNeeded ? settings.mainPanelUpgradeCost : 0
-  const evChargerAdditionCost = data.evChargerAddition ? settings.evChargerAdditionCost : 0
+  const upgradeTarget = data.mainPanelUpgradeTarget ?? 200
+  const mainPanelUpgradeCost = data.mainPanelUpgradeNeeded
+    ? (upgradeTarget === 400 ? settings.mainPanelUpgradeCost400A : settings.mainPanelUpgradeCost200A)
+    : 0
+  const panelUpgradeLabel = `Upgrade to ${upgradeTarget}A`
+  const evAmperage = data.evChargerAmperage ?? 50
+  const evChargerCostMap: Record<number, number> = {
+    30: settings.evChargerCost30A,
+    40: settings.evChargerCost40A,
+    50: settings.evChargerCost50A,
+    60: settings.evChargerCost60A,
+    100: settings.evChargerCost100A,
+  }
+  const evChargerAdditionCost = data.evChargerAddition
+    ? (evChargerCostMap[evAmperage] ?? settings.evChargerCost50A)
+    : 0
+  const evChargerLabel = `${evAmperage}A charger`
   const hardwareCost =
     tier === 'small'
       ? settings.hardwareCostSmall
@@ -294,7 +335,9 @@ export function calculateSolarEstimateInstallCost(
     mobilityCost,
     deliveryCost,
     mainPanelUpgradeCost,
+    panelUpgradeLabel,
     evChargerAdditionCost,
+    evChargerLabel,
     hardwareCost,
     profitCost,
     totalEstimatedInstallCost,
