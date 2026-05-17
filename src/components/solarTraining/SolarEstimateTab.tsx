@@ -6,6 +6,7 @@ import {
   BatteryCharging,
   Car,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
@@ -1480,6 +1481,8 @@ function CostBreakdownRow({
 }
 
 function CostBreakdownCard({ breakdown }: { breakdown: SolarEstimateCostBreakdown }) {
+  const [isCollapsed, setIsCollapsed] = useState(false)
+
   const laborFormula =
     breakdown.laborFormulaMode === 'hourlyCrew'
       ? `${breakdown.laborHours} hrs × ${formatMoney(breakdown.combinedHourlyLaborRate)}/hr`
@@ -1494,45 +1497,56 @@ function CostBreakdownCard({ breakdown }: { breakdown: SolarEstimateCostBreakdow
 
   return (
     <div className="mb-5 rounded-lg border border-emerald-700/35 bg-emerald-950/10 p-4">
-      <div className="flex flex-col gap-2 border-b border-emerald-700/20 pb-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-sm font-semibold text-emerald-100">Modeled internal cost breakdown</p>
-          <p className="mt-1 text-xs leading-5 text-slate-500">
-            Internal estimate only, based on Solar Estimate Settings. Not a final customer quote.
-          </p>
+      <button
+        type="button"
+        onClick={() => setIsCollapsed(v => !v)}
+        className="flex w-full flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+      >
+        <div className="flex items-start gap-2 text-left">
+          <ChevronDown
+            className={`mt-0.5 h-4 w-4 shrink-0 text-emerald-400 transition-transform ${isCollapsed ? '-rotate-90' : ''}`}
+          />
+          <div>
+            <p className="text-sm font-semibold text-emerald-100">Modeled internal cost breakdown</p>
+            {!isCollapsed && (
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                Internal estimate only, based on Solar Estimate Settings. Not a final customer quote.
+              </p>
+            )}
+          </div>
         </div>
-        <span className="rounded-md border border-emerald-500/25 bg-slate-950/55 px-3 py-2 text-sm font-semibold text-emerald-200">
+        <span className="shrink-0 rounded-md border border-emerald-500/25 bg-slate-950/55 px-3 py-2 text-sm font-semibold text-emerald-200">
           {formatMoney(breakdown.totalEstimatedInstallCost)}
         </span>
-      </div>
+      </button>
 
-      <div className="mt-1">
-        <CostBreakdownRow label="Labor" formula={laborFormula} value={breakdown.panelLaborCost} />
+      {!isCollapsed && (
+        <div className="mt-3 border-t border-emerald-700/20 pt-1">
+          <CostBreakdownRow label="Blueprint" value={breakdown.blueprintCost} detail={tierLabel} />
+          <CostBreakdownRow label="Permit" value={breakdown.permitCost} detail={tierLabel} />
+          <CostBreakdownRow label="Hardware" value={breakdown.hardwareCost} detail={tierLabel} />
+          <CostBreakdownRow label="Delivery" value={breakdown.deliveryCost} detail={breakdown.deliveryLabel} />
+          <CostBreakdownRow label="Mobility" value={breakdown.mobilityCost} detail={breakdown.mobilityLabel} />
+          <CostBreakdownRow label="Labor" formula={laborFormula} value={breakdown.panelLaborCost} />
 
-        {breakdown.mainPanelUpgradeCost > 0 && (
-          <CostBreakdownRow label="Main panel upgrade" value={breakdown.mainPanelUpgradeCost} />
-        )}
-        {breakdown.evChargerAdditionCost > 0 && (
-          <CostBreakdownRow label="EV charger addition" value={breakdown.evChargerAdditionCost} />
-        )}
+          {breakdown.mainPanelUpgradeCost > 0 && (
+            <CostBreakdownRow label="Main panel upgrade" value={breakdown.mainPanelUpgradeCost} />
+          )}
+          {breakdown.evChargerAdditionCost > 0 && (
+            <CostBreakdownRow label="EV charger addition" value={breakdown.evChargerAdditionCost} />
+          )}
 
-        <CostBreakdownRow label="Permit" value={breakdown.permitCost} detail={tierLabel} />
-        <CostBreakdownRow label="Blueprint" value={breakdown.blueprintCost} detail={tierLabel} />
-        <CostBreakdownRow label="Mobility" value={breakdown.mobilityCost} detail={breakdown.mobilityLabel} />
-        <CostBreakdownRow label="Delivery" value={breakdown.deliveryCost} detail={breakdown.deliveryLabel} />
+          {breakdown.profitCost > 0 && (
+            <CostBreakdownRow label="Profit" value={breakdown.profitCost} detail={tierLabel} />
+          )}
 
-        <CostBreakdownRow label="Hardware" value={breakdown.hardwareCost} detail={tierLabel} />
-
-        {breakdown.profitCost > 0 && (
-          <CostBreakdownRow label="Profit" value={breakdown.profitCost} detail={tierLabel} />
-        )}
-
-        <CostBreakdownRow
-          label="Estimated total"
-          value={breakdown.totalEstimatedInstallCost}
-          accent
-        />
-      </div>
+          <CostBreakdownRow
+            label="Estimated total"
+            value={breakdown.totalEstimatedInstallCost}
+            accent
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -2639,6 +2653,7 @@ function EstimateSummaryStep({
         </button>
       </div>
 
+      {/* A. Metric cards */}
       <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label="System size"
@@ -2670,8 +2685,7 @@ function EstimateSummaryStep({
         />
       </div>
 
-      <CostBreakdownCard breakdown={costBreakdown} />
-
+      {/* B. Rate recommendation */}
       <div className="mb-5 rounded-lg border border-cyan-700/40 bg-cyan-950/20 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -2684,6 +2698,7 @@ function EstimateSummaryStep({
         </div>
       </div>
 
+      {/* C. Chart rendering */}
       <SummaryChartModule
         nemResult={nemResult}
         hasBattery={hasBattery}
@@ -2696,65 +2711,7 @@ function EstimateSummaryStep({
         ratePlan={ratePlan}
       />
 
-      <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
-        <ClipboardList className="h-3.5 w-3.5" />
-        Interview inputs
-      </div>
-      <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <ReviewRow label="Address" value={data.selectedAddressLabel || data.addressText || 'Not entered'} />
-        <ReviewRow label="Roof shading" value={findLabel(SHADING_OPTIONS, data.shading)} />
-        <ReviewRow label="Ownership" value={findLabel(OWNERSHIP_OPTIONS, data.ownership)} />
-        <ReviewRow label="Property type" value={findLabel(PROPERTY_TYPES, data.propertyType)} />
-        <ReviewRow label="Main breaker size" value={breakerSizeLabel} />
-        <ReviewRow label="Appliances / heavy loads" value={applianceSummary} />
-        <ReviewRow
-          label="Utility"
-          value={findLabel(UTILITY_PROVIDERS, data.utilityProvider)}
-        />
-        <ReviewRow label="Rate plan" value={ratePlanLabel} />
-        <ReviewRow
-          label="Consumption method"
-          value={findLabel(CONSUMPTION_METHODS, data.consumptionMethod)}
-        />
-        <ReviewRow label="Consumption input" value={consumptionValue} />
-        <ReviewRow
-          label="System configuration"
-          value={findLabel(SYSTEM_MODES, data.systemMode)}
-        />
-        <ReviewRow label="Estimated usage" value={`${formatNumber(monthlyKwh)} kWh / month`} />
-        <ReviewRow label="Target offset" value={`${data.targetOffset}%`} />
-        <ReviewRow label="System size" value={`${solarSizeKw.toFixed(1)} kW`} />
-        <ReviewRow label="Panel wattage" value={`${panelWattage}W`} />
-        <ReviewRow label="Battery size" value={hasBattery ? `${batterySizeKwh.toFixed(1)} kWh` : 'Not included'} />
-        <ReviewRow label="Main panel upgrade" value={data.mainPanelUpgradeNeeded ? 'Yes' : 'No'} />
-        <ReviewRow label="EV charger addition" value={data.evChargerAddition ? 'Yes' : 'No'} />
-        <ReviewRow label="Total estimated install cost" value={formatMoney(systemCost)} />
-      </div>
-
-      {hasBattery && (
-        <div className="mb-5 rounded-lg border border-emerald-700/40 bg-emerald-950/15 p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-300">
-                <BatteryCharging className="h-4 w-4" />
-                Battery backup estimate
-              </div>
-              <p className="text-sm leading-6 text-slate-300">
-                {batterySizeKwh.toFixed(1)} kWh modeled storage, about{' '}
-                {formatNumber(batterySizeKwh * 0.8, 1)} kWh usable after reserve and efficiency assumptions.
-              </p>
-              <p className="mt-1 text-xs leading-5 text-slate-500">
-                Backup duration depends on selected circuits, HVAC use, weather, battery reserve settings, and
-                final equipment design.
-              </p>
-            </div>
-            <div className="rounded-md border border-emerald-500/30 bg-slate-950/50 px-3 py-2 text-sm font-semibold text-emerald-200">
-              {formatMoney(nemResult.with_battery.tou_arbitrage_savings)} / yr TOU benefit
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* D. Editable System Controls */}
       <div className="mb-5 rounded-lg border border-slate-800 bg-slate-950/45 p-4">
         <div className="mb-4 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
           <SlidersHorizontal className="h-4 w-4 text-cyan-300" />
@@ -2847,16 +2804,82 @@ function EstimateSummaryStep({
         </div>
       </div>
 
+      {hasBattery && (
+        <div className="mb-5 rounded-lg border border-emerald-700/40 bg-emerald-950/15 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-300">
+                <BatteryCharging className="h-4 w-4" />
+                Battery backup estimate
+              </div>
+              <p className="text-sm leading-6 text-slate-300">
+                {batterySizeKwh.toFixed(1)} kWh modeled storage, about{' '}
+                {formatNumber(batterySizeKwh * 0.8, 1)} kWh usable after reserve and efficiency assumptions.
+              </p>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                Backup duration depends on selected circuits, HVAC use, weather, battery reserve settings, and
+                final equipment design.
+              </p>
+            </div>
+            <div className="rounded-md border border-emerald-500/30 bg-slate-950/50 px-3 py-2 text-sm font-semibold text-emerald-200">
+              {formatMoney(nemResult.with_battery.tou_arbitrage_savings)} / yr TOU benefit
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* E. Interview Inputs */}
+      <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
+        <ClipboardList className="h-3.5 w-3.5" />
+        Interview inputs
+      </div>
+      <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <ReviewRow label="Address" value={data.selectedAddressLabel || data.addressText || 'Not entered'} />
+        <ReviewRow label="Roof shading" value={findLabel(SHADING_OPTIONS, data.shading)} />
+        <ReviewRow label="Ownership" value={findLabel(OWNERSHIP_OPTIONS, data.ownership)} />
+        <ReviewRow label="Property type" value={findLabel(PROPERTY_TYPES, data.propertyType)} />
+        <ReviewRow label="Main breaker size" value={breakerSizeLabel} />
+        <ReviewRow label="Appliances / heavy loads" value={applianceSummary} />
+        <ReviewRow
+          label="Utility"
+          value={findLabel(UTILITY_PROVIDERS, data.utilityProvider)}
+        />
+        <ReviewRow label="Rate plan" value={ratePlanLabel} />
+        <ReviewRow
+          label="Consumption method"
+          value={findLabel(CONSUMPTION_METHODS, data.consumptionMethod)}
+        />
+        <ReviewRow label="Consumption input" value={consumptionValue} />
+        <ReviewRow
+          label="System configuration"
+          value={findLabel(SYSTEM_MODES, data.systemMode)}
+        />
+        <ReviewRow label="Estimated usage" value={`${formatNumber(monthlyKwh)} kWh / month`} />
+        <ReviewRow label="Target offset" value={`${data.targetOffset}%`} />
+        <ReviewRow label="System size" value={`${solarSizeKw.toFixed(1)} kW`} />
+        <ReviewRow label="Panel wattage" value={`${panelWattage}W`} />
+        <ReviewRow label="Battery size" value={hasBattery ? `${batterySizeKwh.toFixed(1)} kWh` : 'Not included'} />
+        <ReviewRow label="Main panel upgrade" value={data.mainPanelUpgradeNeeded ? 'Yes' : 'No'} />
+        <ReviewRow label="EV charger addition" value={data.evChargerAddition ? 'Yes' : 'No'} />
+        <ReviewRow label="Total estimated install cost" value={formatMoney(systemCost)} />
+      </div>
+
+      {/* F. Collapsible Modeled Internal Cost Breakdown */}
+      <CostBreakdownCard breakdown={costBreakdown} />
+
+      {/* G. Assumptions and disclaimer */}
       <div className="rounded-lg border border-amber-700/40 bg-amber-950/10 p-4">
         <div className="flex items-start gap-3">
           <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" />
           <div>
             <p className="text-sm font-semibold text-amber-100">Assumptions and disclaimer</p>
             <p className="mt-1 text-sm leading-6 text-slate-400">
-              Estimates use local interview inputs, the existing NEM 3.0 training calculator, 420 W panel
-              assumptions, admin Solar Estimate cost settings, average usage conversion, and simplified production
-              modeling. Final design requires utility bill review, roof measurements, shade analysis,
-              equipment selection, permitting, interconnection review, and finance terms.
+              This estimate is an internal planning model based on the homeowner interview, selected
+              utility/rate plan, NEM 3.0 calculator assumptions, selected system configuration, and admin
+              Solar Estimate Settings. Internal cost includes configured blueprint, permit, hardware,
+              delivery, mobility, labor, profit, and enabled electrical upgrade assumptions. Final customer
+              pricing, site design, financing terms, permitting, interconnection approval, roof measurements,
+              equipment selection, and utility bill outcomes must be verified before proposal delivery.
             </p>
           </div>
         </div>
