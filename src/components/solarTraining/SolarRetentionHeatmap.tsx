@@ -16,9 +16,9 @@ import React, { useState } from 'react';
 import { RetentionMetrics } from '../../services/solarTraining/SolarQuizEngine';
 
 export interface SolarRetentionHeatmapProps {
-  topics: string[];
-  periods: Array<{ label: string; daysAgo: number }>;
-  data: Array<Array<RetentionMetrics | null>>;
+  topics?: string[];
+  periods?: Array<{ label: string; daysAgo: number }>;
+  data?: Array<Array<RetentionMetrics | null>>;
   onCellTap?: (topic: string, periodDaysAgo: number) => void;
 }
 
@@ -250,14 +250,14 @@ export const SolarRetentionHeatmap: React.FC<SolarRetentionHeatmapProps> = ({
       </div>
 
       {/* Summary Stats */}
-      {data.length > 0 && (
+      {safeData.length > 0 && (
         <div className="mt-6 p-4 bg-slate-50 dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700">
           <h3 className="font-semibold text-slate-900 dark:text-white mb-3">
             Overall Metrics
           </h3>
-          
+
           {(() => {
-            const allMetrics = data.flat().filter((m) => m !== null);
+            const allMetrics = safeData.flat().filter((m) => m !== null);
             if (allMetrics.length === 0) {
               return (
                 <p className="text-sm text-slate-600 dark:text-slate-400">
@@ -330,7 +330,7 @@ export const SolarRetentionHeatmap: React.FC<SolarRetentionHeatmapProps> = ({
       )}
 
       {/* Call to Action */}
-      {data.every(row => row.every(cell => cell === null)) && (
+      {safeData.every(row => row.every(cell => cell === null)) && (
         <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400 rounded">
           <p className="text-sm text-blue-900 dark:text-blue-100">
             💡 <strong>Get Started:</strong> Take your first solar training quiz to populate this heatmap and start tracking your learning journey.

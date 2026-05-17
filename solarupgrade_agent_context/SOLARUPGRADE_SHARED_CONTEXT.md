@@ -75,4 +75,46 @@ Phase order:
 5. Claude/Codex: summary page, edit controls, polish, final integration.
 
 Latest phase status:
-Not started.
+Phase 1 complete. Retention crash fixed. Solar Training audit complete. Ready for Phase 2 (Codex: add Solar Estimate shell).
+
+## Phase 1 Audit Findings
+
+### File Map
+- **Main parent:** `src/views/SolarTrainingView.tsx` — has `// @ts-nocheck`; 7 subtabs rendered via `activeTab` state; all subtab panels are self-contained sub-components in the same file except NEM3Visualizer, SolarRetentionHeatmap, SolarQuizCard
+- **Retention tab component:** `src/components/solarTraining/SolarRetentionHeatmap.tsx` — expects `topics`, `periods`, `data` props; renders a heatmap grid; fixed crash here
+- **Quiz engine:** `src/services/solarTraining/SolarQuizEngine.ts`
+- **Curriculum sequencer:** `src/services/solarTraining/SolarCurriculumSequencer.ts`
+- **Retention tracker:** `src/services/solarTraining/SolarRetentionTracker.ts` — localStorage-first, Supabase sync stub not yet wired
+- **NEM3 calculator:** `src/services/solarTraining/SolarNEM3Calculator.ts` — do not touch formulas
+- **Daily scheduler:** `src/services/solarTraining/SolarDailyScheduler.ts`
+- **Nexus integration:** `src/services/solarTraining/SolarNexusIntegration.ts`
+- **NEM3 visualizer:** `src/components/solarTraining/NEM3Visualizer.tsx`
+- **Quiz card:** `src/components/solarTraining/SolarQuizCard.tsx`
+
+### Tab IDs (SolarTab type)
+`certifications` | `training` | `scores` | `rules` | `quiz` | `nem3` | `progress`
+
+The tab with label "Retention" uses id `progress` (legacy name).
+
+### State / Data Flow
+- `SolarTrainingView` holds only `activeTab` state; each panel manages its own state
+- Supabase tables: `solar_certifications`, `solar_scenarios`, `solar_training_sessions`, `solar_rules`, `solar_study_queue`, `solar_debriefs`
+- Retention heatmap receives NO data from Supabase in current implementation — called with zero props; shows empty/CTA state after fix
+- No localStorage or persistence touches in the view itself (persistence is in SolarRetentionTracker service, not wired to the heatmap)
+
+### Retention Crash Root Cause
+`<SolarRetentionHeatmap />` was called with no props (line 1061 of SolarTrainingView.tsx). The component already had `safeTopics/safePeriods/safeData` guards at lines 123–125, but lines 253, 260, and 333 still referenced the raw `data` prop directly — `data.length`, `data.flat()`, `data.every()` — crashing on `undefined.length`.
+
+### Fix Applied
+`src/components/solarTraining/SolarRetentionHeatmap.tsx`:
+1. Made `topics`, `periods`, `data` optional (`?`) in `SolarRetentionHeatmapProps`
+2. Replaced `data.length` → `safeData.length` (line ~253)
+3. Replaced `data.flat()` → `safeData.flat()` (line ~260)
+4. Replaced `data.every(...)` → `safeData.every(...)` (line ~333)
+
+### For Phase 2 (Solar Estimate Shell)
+- Add new tab id `estimate` with label `Solar Estimate` and emoji `☀️` to the `TABS` array in `SolarTrainingView.tsx` after the `progress` entry (line ~1015)
+- Render it in the panel content section after `progress` tab (line ~1061)
+- Create `src/components/solarTraining/SolarEstimateTab.tsx` as the shell component
+- The parent file has `// @ts-nocheck` so TypeScript errors in new JSX won't block typecheck, but new service/component files should be properly typed
+- Keep existing tab order intact; Solar Estimate goes last (position 8)

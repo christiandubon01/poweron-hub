@@ -190,12 +190,50 @@ APPEND THIS SECTION AT THE END OF THIS FILE AFTER COMPLETION:
 
 ## PHASE 1 COMPLETION LOG
 
-COMMIT HASH:
+COMMIT HASH: (see below — filled after commit)
 FILES CHANGED:
+  - src/components/solarTraining/SolarRetentionHeatmap.tsx
+  - solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+  - solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+
 WHAT CHANGED:
+  SolarRetentionHeatmap.tsx: made props optional in interface; replaced 3 raw
+  `data` references with `safeData` in the Summary Stats and CTA sections.
+  Both context files updated with full audit findings.
+
 RETENTION CRASH ROOT CAUSE:
+  <SolarRetentionHeatmap /> is called in SolarTrainingView.tsx with zero props.
+  The component had null guards that built safeTopics/safePeriods/safeData from
+  the props, but three locations in the render still referenced the raw `data`
+  prop directly:
+    - data.length (Summary Stats visibility gate, line ~253)
+    - data.flat() (allMetrics calculation, line ~260)
+    - data.every(...) (empty-state CTA gate, line ~333)
+  When data is undefined, any of these throws:
+    "Cannot read properties of undefined (reading 'length')"
+
 WHAT WAS LEARNED:
+  - SolarTrainingView.tsx has // @ts-nocheck so TypeScript never caught the
+    missing required props at the call site.
+  - The "Retention" tab uses id `progress` (legacy name) — important for Phase 2
+    when ordering the new Solar Estimate tab.
+  - The heatmap currently renders an empty/CTA state because no data is wired
+    from Supabase or localStorage to its props. The Supabase sync in
+    SolarRetentionTracker is a stub (not yet wired). This is acceptable for now.
+  - All other subtabs (Certifications, Training Modes, Scores, Rules, Quiz, NEM3)
+    manage their own Supabase queries and have their own error handling.
+
 BUGS / RISKS:
-TYPECHECK RESULT:
-SHARED CONTEXT UPDATED:
-NEXT PHASE READY:
+  - SolarRetentionHeatmap receives no live data — heatmap will always show the
+    empty/CTA state until a caller wires topics/periods/data props. Not a crash,
+    but the heatmap is functionally inert.
+  - SolarRetentionTracker Supabase sync is a stub (TODO comment in code).
+  - SolarTrainingView.tsx @ts-nocheck suppresses all type errors in that file.
+
+TYPECHECK RESULT: PASS (0 errors, 0 warnings)
+
+SHARED CONTEXT UPDATED: YES — full audit findings, file map, tab IDs, data flow,
+crash root cause, fix summary, and Phase 2 instructions added to
+SOLARUPGRADE_SHARED_CONTEXT.md.
+
+NEXT PHASE READY: YES — Phase 2 (Codex: add Solar Estimate shell)
