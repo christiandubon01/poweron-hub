@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { Sparkles, Plus, ArrowRight, Check, Trash2, X } from 'lucide-react'
 import { getBackupData, saveBackupData, saveBackupDataAndSync, num, fmt, fmtK, pct, getPhaseWeights, resolveProjectBucket, getProjectFinancials, isActiveProject, isActiveServiceCall } from '@/services/backupDataService'
 import { nonCriticalWrite } from '@/services/writeDebounce'
@@ -26,6 +26,8 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
 
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
+  const newLaborRowIdRef = useRef<string | null>(null)
+  const laborTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
   const [subtab, setSubtab] = useState<'project' | 'service'>('project')
   const [aiOpen, setAiOpen] = useState(false)
 
@@ -187,28 +189,40 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       else if (field === 'desc') row.desc = String(value)
       else if (field === 'empId') row.empId = String(value)
     }
-    saveBackupData(backup)
+    saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
   }
 
   const addLaborRow = () => {
-    pushState()
-    p.laborRows = p.laborRows || []
-    p.laborRows.push({
-      id: 'lr' + Date.now(),
-      desc: 'New task',
-      empId: 'me',
-      hrs: 0,
-      rate: num(backup.settings?.billRate || 65),
-    })
-    saveBackupData(backup)
-    forceUpdate()
-  }
+  pushState()
+  p.laborRows = p.laborRows || []
+
+  const id =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? `lr${crypto.randomUUID()}`
+      : `lr${Date.now()}${Math.random().toString(36).slice(2, 8)}`
+
+  p.laborRows.push({
+    id,
+    desc: '',
+    empId: 'me',
+    hrs: 0,
+    rate: num(backup.settings?.billRate || 65),
+  })
+
+  newLaborRowIdRef.current = id
+  saveBackupDataAndSync(backup, 'projects')
+  forceUpdate()
+
+  requestAnimationFrame(() => {
+    laborTextareaRefs.current[id]?.focus()
+  })
+}
 
   const delLaborRow = (rowId) => {
     pushState()
     p.laborRows = (p.laborRows || []).filter(r => r.id !== rowId)
-    saveBackupData(backup)
+    saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
   }
 
@@ -220,7 +234,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       else if (field === 'rate') row.rate = num(value)
       else if (field === 'desc') row.desc = String(value)
     }
-    saveBackupData(backup)
+    saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
   }
 
@@ -233,14 +247,14 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       hrs: 0,
       rate: num(backup.settings?.defaultOHRate || 55),
     })
-    saveBackupData(backup)
+    saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
   }
 
   const delOHRow = (rowId) => {
     pushState()
     p.ohRows = (p.ohRows || []).filter(r => r.id !== rowId)
-    saveBackupData(backup)
+    saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
   }
 
@@ -248,7 +262,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     pushState()
     if (field === 'mileRT') p.mileRT = num(value)
     else if (field === 'miDays') p.miDays = num(value)
-    saveBackupData(backup)
+    saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
   }
 
@@ -1577,8 +1591,18 @@ Return ONLY valid JSON, no other text.`
                     <tr key={r.id} style={{ borderBottom: '1px solid var(--bdr2)' }}>
                       <td style={{ padding: '8px' }}>
                         <textarea
+                          ref={el => {
+                            laborTextareaRefs.current[r.id] = el
+                          }}
                           value={r.desc || ''}
                           onChange={e => editLaborRow(r.id, 'desc', e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault()
+                              e.currentTarget.blur()
+                              saveBackupDataAndSync(backup, 'projects')
+                            }
+                          }}
                           rows={1}
                           onInput={e => {
                             const el = e.currentTarget
@@ -1593,10 +1617,9 @@ Return ONLY valid JSON, no other text.`
                             fontSize: '13px',
                             resize: 'none',
                             overflow: 'hidden',
-                            lineHeight: '1.4',
-                            padding: '0',
                             fontFamily: 'inherit',
                             display: 'block',
+                            outline: 'none',
                           }}
                         />
                       </td>
