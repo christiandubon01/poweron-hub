@@ -56,7 +56,7 @@ export interface SolarEstimateSelectedAppliance {
   amps?: number;
 }
 
-export type ConsumptionMethod = 'average_bill' | 'home_size';
+export type ConsumptionMethod = 'average_bill' | 'home_size' | 'monthly_kwh';
 
 export type SystemMode = 'solar_only' | 'solar_plus_battery';
 
@@ -95,6 +95,10 @@ export interface SolarEstimateData {
   averageMonthlyBill: number | null;
   /** Home size in sq ft — used when consumptionMethod is 'home_size'. */
   homeSizeSqft: number | null;
+  /** Number of residents in the home — used with home_size to improve estimate. */
+  residentCount: number;
+  /** Monthly kWh entry — used when consumptionMethod is 'monthly_kwh'. */
+  monthlyKwh: number | null;
   /** Derived monthly kWh — filled after user enters bill or home size. */
   estimatedMonthlyKwh: number | null;
 
@@ -136,6 +140,8 @@ export const DEFAULT_ESTIMATE_DATA: SolarEstimateData = {
   consumptionMethod: 'average_bill',
   averageMonthlyBill: null,
   homeSizeSqft: null,
+  residentCount: 2,
+  monthlyKwh: null,
   estimatedMonthlyKwh: null,
   systemMode: 'solar_only',
   targetOffset: 100,
@@ -239,7 +245,8 @@ export const CONSUMPTION_METHODS: Array<{
   detail: string;
 }> = [
   { id: 'average_bill', label: 'Average electric bill', detail: 'Enter a typical monthly bill amount' },
-  { id: 'home_size', label: 'Home size', detail: 'Enter square footage — we estimate usage from it' },
+  { id: 'home_size', label: 'Home size', detail: 'Enter square footage and residents — we estimate usage' },
+  { id: 'monthly_kwh', label: 'Monthly kWh', detail: 'Enter your typical monthly kWh usage directly' },
 ];
 
 export const SYSTEM_MODES: Array<{ id: SystemMode; label: string; detail: string }> = [

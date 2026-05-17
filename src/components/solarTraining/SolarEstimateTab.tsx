@@ -291,6 +291,8 @@ function normalizeEstimateData(
   fallbacks: SystemConfigFallbacks = {}
 ): SolarEstimateData {
   const raw = data ?? {}
+  const legacyRaw = raw as Partial<SolarEstimateData> & { directMonthlyKwh?: unknown }
+  const rawMonthlyKwh = raw.monthlyKwh ?? legacyRaw.directMonthlyKwh
   const baseData = { ...DEFAULT_ESTIMATE_DATA, ...raw } as SolarEstimateData
   const systemMode = raw.systemMode ?? DEFAULT_ESTIMATE_DATA.systemMode
   const fallbackSystemSize = fallbacks.solarSizeKw ?? DEFAULT_ESTIMATE_DATA.systemSizeKw
@@ -327,6 +329,11 @@ function normalizeEstimateData(
       raw.evChargerAmperage === 30 || raw.evChargerAmperage === 40 || raw.evChargerAmperage === 50 ||
       raw.evChargerAmperage === 60 || raw.evChargerAmperage === 100
         ? raw.evChargerAmperage
+        : null,
+    residentCount: Math.round(validNumber(raw.residentCount, 2, 1, 10)),
+    monthlyKwh:
+      typeof rawMonthlyKwh === 'number' && rawMonthlyKwh > 0
+        ? validNumber(rawMonthlyKwh, 850, 100, 2000)
         : null,
   }
 }
@@ -525,6 +532,16 @@ function computeNormalizedMonthlyKwhByMonth(averageMonthlyKwh: number, climatePr
   return Array.from({ length: 12 }, (_, i) => averageMonthlyKwh * (weights[i] / weightAvg))
 }
 
+function computeAnchoredKwhByMonth(
+  anchorMonthKwh: number,
+  climateProfile: ClimateProfile,
+  anchorMonthIndex: number,
+): number[] {
+  const weights = CONSUMPTION_SEASONAL_WEIGHTS[climateProfile]
+  const baselineMonthlyKwh = anchorMonthKwh / weights[anchorMonthIndex]
+  return Array.from({ length: 12 }, (_, i) => baselineMonthlyKwh * weights[i])
+}
+
 function estimateEnergyUseMonthlyKwh(data: SolarEstimateData): number {
   if (data.estimatedMonthlyKwh && data.estimatedMonthlyKwh > 0) {
     return data.estimatedMonthlyKwh
@@ -536,9 +553,15 @@ function estimateEnergyUseMonthlyKwh(data: SolarEstimateData): number {
     return clamp(Math.round(((data.averageMonthlyBill - fixedCharge) / rate) * 0.9), 250, 2500)
   }
 
+  if (data.consumptionMethod === 'monthly_kwh') {
+    return clamp(data.monthlyKwh ?? 850, 100, 2000)
+  }
+
   if (data.consumptionMethod === 'home_size' && data.homeSizeSqft && data.homeSizeSqft > 0) {
     const propertyFactor = data.propertyType === 'commercial' ? 0.75 : 0.42
-    return clamp(Math.round(data.homeSizeSqft * propertyFactor), 250, 3000)
+    const sqftKwh = Math.round(data.homeSizeSqft * propertyFactor)
+    const residentBonus = ((data.residentCount ?? 2) - 2) * 75
+    return clamp(sqftKwh + residentBonus, 250, 3000)
   }
 
   return 900
@@ -1368,6 +1391,9 @@ function EnergyUseStep({ data, updateField }: { data: SolarEstimateData; updateF
   const selectConsumptionMethod = (method: ConsumptionMethod) => {
     updateField('consumptionMethod', method)
     updateField('estimatedMonthlyKwh', null)
+    if (method === 'monthly_kwh' && data.monthlyKwh == null) {
+      updateField('monthlyKwh', 850)
+    }
   }
 
   return (
@@ -1419,7 +1445,7 @@ function EnergyUseStep({ data, updateField }: { data: SolarEstimateData; updateF
 
       <div className="mt-5 rounded-lg border border-slate-800 bg-slate-950/45 p-4">
         <FieldLabel>Consumption method</FieldLabel>
-        <div className="mt-2 grid gap-3 md:grid-cols-2">
+        <div className="mt-2 grid gap-3 sm:grid-cols-3">
           {CONSUMPTION_METHODS.map(option => (
             <button
               key={option.id}
@@ -1452,6 +1478,25 @@ function EnergyUseStep({ data, updateField }: { data: SolarEstimateData; updateF
                 />
               </div>
             </>
+          ) : data.consumptionMethod === 'monthly_kwh' ? (
+            <>
+              <FieldLabel hint="kWh per month">Monthly kWh</FieldLabel>
+              <div className="mt-2 flex items-end justify-between gap-3">
+                <p className="text-2xl font-semibold text-yellow-200">
+                  {(data.monthlyKwh ?? 850).toLocaleString()} kWh/month
+                </p>
+                <p className="text-xs text-slate-500">100–2,000 kWh</p>
+              </div>
+              <input
+                type="range"
+                min="100"
+                max="2000"
+                step="50"
+                value={data.monthlyKwh ?? 850}
+                onChange={(event) => updateField('monthlyKwh', Number(event.target.value))}
+                className="mt-3 h-2 w-full accent-yellow-300"
+              />
+            </>
           ) : (
             <>
               <FieldLabel hint="Square feet">Home size</FieldLabel>
@@ -1464,6 +1509,25 @@ function EnergyUseStep({ data, updateField }: { data: SolarEstimateData; updateF
                 placeholder="2200"
                 className={`${FIELD_CLASS} mt-2`}
               />
+              <div className="mt-4">
+                <FieldLabel>Residents</FieldLabel>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {Array.from({ length: 10 }, (_, i) => i + 1).map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => updateField('residentCount', n)}
+                      className={`h-9 w-9 rounded-lg border text-sm font-semibold transition-colors ${
+                        (data.residentCount ?? 2) === n
+                          ? 'border-cyan-500 bg-cyan-950/40 text-cyan-200'
+                          : 'border-slate-700 bg-slate-900/40 text-slate-400 hover:border-slate-600 hover:text-slate-200'
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </>
           )}
         </div>
@@ -3072,7 +3136,7 @@ function EstimateSummaryStep({
   const utility = (data.utilityProvider ?? 'SCE') as Utility
   const ratePlan = (data.ratePlan ?? (utility === 'IID' ? 'IID_STANDARD' : 'SCE_TOU_D_PRIME')) as RatePlan
   const hasBattery = data.systemMode === 'solar_plus_battery'
-  const monthlyKwh = data.monthlyUsageKwh
+  const monthlyKwh = estimateEnergyUseMonthlyKwh(data)
   const solarSizeKw = data.systemSizeKw
   const batterySizeKwh = data.batterySizeKwh
   const panelWattage = data.panelWattage
@@ -3106,20 +3170,24 @@ function EstimateSummaryStep({
   const monthlyKwhByMonth =
     data.consumptionMethod === 'average_bill' && data.averageMonthlyBill && data.averageMonthlyBill > 0
       ? computeAnchoredMonthlyKwhByMonth(data.averageMonthlyBill, blendedRate, climateProfile, anchorMonthIndex)
+      : data.consumptionMethod === 'monthly_kwh'
+      ? computeAnchoredKwhByMonth(data.monthlyKwh ?? 850, climateProfile, anchorMonthIndex)
       : computeNormalizedMonthlyKwhByMonth(monthlyKwh, climateProfile)
   const breakerSizeLabel = findLabel(MAIN_BREAKER_SIZE_OPTIONS, data.mainBreakerSize)
   const selectedApplianceLabels = getSelectedApplianceSummaries(data.selectedAppliances)
   const applianceSummary =
     selectedApplianceLabels.length > 0 ? selectedApplianceLabels.join(', ') : 'None selected'
 
-  const consumptionValue =
+  const consumptionInputValue =
     data.consumptionMethod === 'average_bill'
       ? data.averageMonthlyBill == null
         ? 'Not entered'
         : `$${data.averageMonthlyBill.toLocaleString()} / month`
-      : data.homeSizeSqft == null
-      ? 'Not entered'
-      : `${data.homeSizeSqft.toLocaleString()} sq ft`
+      : data.consumptionMethod === 'monthly_kwh'
+      ? `${(data.monthlyKwh ?? 850).toLocaleString()} kWh / month`
+      : null
+  const homeSizeValue =
+    data.homeSizeSqft == null ? 'Not entered' : `${data.homeSizeSqft.toLocaleString()} sq ft`
 
   return (
     <div>
@@ -3345,7 +3413,14 @@ function EstimateSummaryStep({
           label="Consumption method"
           value={findLabel(CONSUMPTION_METHODS, data.consumptionMethod)}
         />
-        <ReviewRow label="Consumption input" value={consumptionValue} />
+        {consumptionInputValue ? (
+          <ReviewRow label="Consumption input" value={consumptionInputValue} />
+        ) : (
+          <>
+            <ReviewRow label="Home size" value={homeSizeValue} />
+            <ReviewRow label="Residents" value={`${data.residentCount ?? 2}`} />
+          </>
+        )}
         <ReviewRow
           label="System configuration"
           value={findLabel(SYSTEM_MODES, data.systemMode)}
