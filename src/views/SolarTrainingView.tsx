@@ -32,6 +32,7 @@ import { callNexus } from '@/services/claudeProxy'
 // ── Legacy INT-1 components (kept for backward compat) ───────────────────────
 import NEM3Visualizer from '@/components/solarTraining/NEM3Visualizer'
 import { SolarRetentionHeatmap } from '@/components/solarTraining/SolarRetentionHeatmap'
+import SolarEstimateTab from '@/components/solarTraining/SolarEstimateTab'
 import { getSolarQuizEngine } from '@/services/solarTraining/SolarQuizEngine'
 import { SolarQuizCard } from '@/components/solarTraining/SolarQuizCard'
 
@@ -1003,7 +1004,7 @@ function LegacyQuizSection() {
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
-type SolarTab = 'certifications' | 'training' | 'scores' | 'rules' | 'quiz' | 'nem3' | 'progress'
+type SolarTab = 'certifications' | 'training' | 'scores' | 'rules' | 'quiz' | 'nem3' | 'progress' | 'estimate'
 
 const TABS: { id: SolarTab; label: string; emoji: string; group: 'sol1' | 'int1' }[] = [
   { id: 'certifications', label: 'Certifications', emoji: '🏅', group: 'sol1' },
@@ -1013,6 +1014,7 @@ const TABS: { id: SolarTab; label: string; emoji: string; group: 'sol1' | 'int1'
   { id: 'quiz',           label: 'Quick Quiz',      emoji: '⚡', group: 'int1' },
   { id: 'nem3',           label: 'NEM 3.0',         emoji: '☀️', group: 'int1' },
   { id: 'progress',       label: 'Retention',       emoji: '📈', group: 'int1' },
+  { id: 'estimate',       label: 'Solar Estimate',  emoji: '☀️', group: 'int1' },
 ]
 
 // ── Root View ─────────────────────────────────────────────────────────────────
@@ -1059,6 +1061,7 @@ export default function SolarTrainingView() {
         {activeTab === 'quiz'           && <LegacyQuizSection />}
         {activeTab === 'nem3'           && <NEM3Visualizer />}
         {activeTab === 'progress'       && <SolarRetentionHeatmap />}
+        {activeTab === 'estimate'       && <SolarEstimateTab />}
       </div>
     </div>
   )

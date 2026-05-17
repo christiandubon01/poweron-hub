@@ -3,10 +3,207 @@
 Branch:
 solarupgrade
 
-Goal:
+Master purpose:
+This is the source-of-truth cascade file for the Solar Training / Solar Estimate upgrade.
+
+Every Claude Code and Codex session must read this file before editing code. Each phase must update this file with what changed, what was learned, what risks remain, and what the next phase must consider.
+
+The user is acting as the executive builder. The agents should complete only the active phase, update this file, update their own agent file, commit scoped files, and report back. The user will decide whether to continue, pause, or run an in-between polish/stabilization session.
+
+---
+
+# SOLARUPGRADE MASTER CASCADE RULES
+
+Every agent must:
+
+1. Confirm current branch is `solarupgrade`.
+2. Read this file before editing code.
+3. Read its own agent file before editing code:
+   - Claude reads `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+   - Codex reads `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+4. Work only on the active phase unless the user explicitly changes scope.
+5. Keep changes scoped.
+6. Avoid broad refactors.
+7. Preserve all existing Solar Training subtabs.
+8. Preserve NEM 3.0 formulas and calculations.
+9. Preserve Supabase behavior unless explicitly scoped.
+10. Preserve existing persistence behavior unless explicitly scoped.
+11. Do not touch unrelated app chrome, sidebar, topbar, floating buttons, or unrelated tabs.
+12. Run `npm.cmd run typecheck`.
+13. Commit only scoped files.
+14. Update this file before committing.
+15. Update the agent-specific file before committing.
+16. Add a completion log after every phase.
+17. Update next-phase notes based on what was actually learned in code.
+18. Report back with commit hash, changed files, typecheck result, and whether the next phase is ready.
+
+If the next phase becomes unsafe because of code structure, dependency issues, missing API keys, broken typecheck, unclear data flow, overlapping files, or unexpected side effects, the agent must pause and mark:
+
+NEXT PHASE READY: NO
+RECOMMENDED PAUSE REASON:
+RECOMMENDED POLISH / STABILIZATION SESSION:
+
+Do not proceed into another phase automatically.
+
+---
+
+# REQUIRED END-OF-PHASE FILE UPDATE FORMAT
+
+At the end of every phase, the active agent must append or update a completion section with:
+
+## PHASE X COMPLETION LOG
+
+AGENT:
+COMMIT HASH:
+FILES CHANGED:
+WHAT CHANGED:
+WHAT WAS LEARNED:
+LEARNED SKILLS / REUSABLE PATTERNS:
+BUGS / RISKS:
+TYPECHECK RESULT:
+SHARED CONTEXT UPDATED:
+AGENT FILE UPDATED:
+NEXT PHASE ADJUSTMENTS:
+NEXT PHASE READY:
+COMPACT HANDOFF FOR NEXT CHAT:
+
+The agent must also update the appropriate phase status below.
+
+---
+
+# REQUIRED AGENT REPORT FORMAT TO USER
+
+After committing, the agent must report:
+
+- branch name
+- commit hash
+- files changed
+- active phase completed
+- what changed
+- what was learned
+- learned skills / reusable patterns
+- bugs or risks
+- typecheck result
+- whether this shared file was updated
+- whether the agent file was updated
+- compact context for next chat
+- whether next phase is ready
+
+---
+
+# USER STANDARD PHASE PROMPT TEMPLATE
+
+Every phase prompt inside the agent files must follow this structure:
+
+TASK TITLE:
+[Short direct title]
+
+MODEL / TOOL:
+Use [Codex GPT-5.5 Medium / Claude Code] for this task.
+
+CONTEXT:
+This is the PowerOn Hub / V15r app.
+Keep the work scoped and avoid broad refactors.
+The visual language should match the existing premium PowerOn design:
+- dark navy panels
+- subtle teal/cyan/green/yellow solar accents
+- soft borders
+- restrained glow
+- clean spacing
+- no aggressive glare
+- no bulky typography
+- no reload loops
+
+TARGET FILES:
+[Exact files or expected files. Inspect first if uncertain.]
+
+REFERENCE FILES / DESIGN REFERENCES:
+[Existing files/components/UI references to follow.]
+
+SCOPE:
+Only change:
+[Very specific thing to change.]
+
+Do NOT touch:
+- calculations unless explicitly scoped
+- formulas unless explicitly scoped
+- Supabase sync unless explicitly scoped
+- data model unless explicitly scoped
+- handlers unless explicitly required
+- unrelated tabs
+- unrelated components
+- unrelated app chrome
+- filters unless explicitly requested
+- calendar unless explicitly requested
+- service log unless explicitly requested
+- Home tab unless explicitly requested
+- broad refactors
+
+CURRENT ISSUE:
+[Describe what is wrong right now.]
+
+DESIRED RESULT:
+[Describe desired visual/functionality result.]
+
+REQUIREMENTS:
+1. [Requirement]
+2. [Requirement]
+3. [Requirement]
+
+VISUAL REQUIREMENTS:
+- Keep the premium PowerOn dark style.
+- Use subtle gradients only.
+- Keep text readable.
+- Do not make fonts too fat.
+- Preserve existing color meanings.
+- Keep spacing clean and symmetrical.
+- Avoid oversized cards unless requested.
+
+DATA / LOGIC REQUIREMENTS:
+- Keep all existing formulas exactly the same unless the phase explicitly introduces new estimate calculations.
+- Keep existing values exactly the same.
+- Do not change reducers/scanners/helpers unless required.
+- Do not change persistence unless requested.
+- Do not change Supabase behavior unless requested.
+
+RESPONSIVE REQUIREMENTS:
+- Works on wide desktop.
+- No horizontal overflow.
+- No overlap with floating buttons.
+- Wrap cleanly on smaller widths if needed.
+
+ACCEPTANCE CRITERIA:
+- [Specific visual result]
+- [Specific behavior result]
+- [No unrelated area changed]
+- Existing numbers remain accurate.
+- Typecheck passes.
+- App does not reload endlessly.
+
+QA:
+Run:
+npm.cmd run typecheck
+
+If PowerShell blocks npm, use:
+npm.cmd run typecheck
+
+COMMIT:
+After typecheck passes, commit only the scoped files.
+
+Commit message:
+[commit message]
+
+END OF PHASE REPORT REQUIRED:
+[Use required report format.]
+
+---
+
+# PROJECT GOAL
+
 Upgrade the Solar Training area in phases while keeping the existing subtabs and adding a new `Solar Estimate` subtab after `Retention`.
 
 Existing subtabs to preserve:
+
 1. Certifications
 2. Training Modes
 3. Scores
@@ -15,24 +212,44 @@ Existing subtabs to preserve:
 6. NEM 3.0
 7. Retention
 
-New subtab to add later:
+New subtab to add:
+
 8. Solar Estimate
 
-User requirements:
+---
+
+# USER REQUIREMENTS
+
 - Keep work scoped.
 - Avoid broad refactors.
 - Match premium PowerOn dark visual language.
 - Preserve existing calculations and behavior unless explicitly scoped.
 - Fix Retention crash first.
 - Build Solar Estimate in multiple phases.
+- Keep existing Solar Training subtabs.
+- Add `Solar Estimate` immediately after `Retention`.
 - Each agent must update its context file and this shared context after each phase.
 - Each agent must commit scoped files only.
+- Each agent must report what it changed and what the next phase must consider.
 - Each phase prompt must follow the user’s standard template.
+- The system should support clean handoff between chat sessions without relying on hidden memory.
 
-Solar Estimate long-term target:
+---
+
+# SOLAR ESTIMATE LONG-TERM TARGET
+
+The final Solar Estimate tool should support a data interview flow for generating homeowner-facing solar estimates.
+
+Required long-term capabilities:
+
+## Address Intake
 - Add address input.
-- Use Google address suggestions/autocomplete.
-- After address save, render map with location pin.
+- Use Google address suggestions/autocomplete if existing app dependencies/API support it.
+- If Google autocomplete is not already available, create a safe interface/placeholder and document what is needed.
+- After address save, render a map with a location pin if existing app dependencies/API support it.
+- Do not send private/customer data to external services except through approved app integration.
+
+## Home Details
 - Add shading selection:
   - No shade on my roof
   - A little shade on my roof
@@ -43,7 +260,9 @@ Solar Estimate long-term target:
   - Condo/apartment
   - Mobile home
   - Commercial
-- Add energy consumption interview:
+
+## Energy Consumption
+- Add energy consumption method:
   - Average electric bill
   - Home size
 - Keep providers:
@@ -51,70 +270,579 @@ Solar Estimate long-term target:
   - Imperial Irrigation District
 - Use appropriate rates depending on location/provider.
 - Use existing app rate data first if present.
-- SCE rate option reference includes names such as `TOU-D-PRIME-NEM3`.
-- Add system configuration:
+- SCE rate option reference includes names such as:
+  - Domestic (D)
+  - Domestic - CARE (D-CARE)
+  - Domestic - Time of Use - PRIME (TOU-D-PRIME)
+  - Residential - Domestic - Time of Use, PRIME, NEM 3.0 (TOU-D-PRIME-NEM3)
+  - Other SCE residential options if already present in local app data
+
+## System Configuration
+- Add system configuration selection:
   - Solar Only
   - Solar Plus Battery
-- No solar item/catalog build in early phases.
-- Generate estimate summary page later with:
-  - system size
-  - cost
-  - savings breakdown
-  - NEM 3.0-style graph/bill comparison
-  - editable system configuration from summary page
-  - bottom adjustable solar size and battery size controls inspired by Enphase reference
+- Do not add solar item/catalog build in early phases.
+- Do not create a full product inventory system.
+- The purpose is the estimate interview input process, not a full proposal catalog.
 
-Privacy / external request requirement:
-If inspecting public websites or docs for implementation details, do it anonymously and do not send customer/private app data. Prefer existing local code and existing local data over external requests.
+## Estimate Summary
+Generate a summary page inspired by the user’s Enphase-style reference screenshots while matching PowerOn dark premium style.
 
-Phase order:
-1. Claude: audit Solar Training and fix Retention crash.
-2. Codex: add Solar Estimate subtab shell only.
-3. Claude: review shell, tighten integration, document component map.
-4. Codex: build Solar Estimate interview flow.
-5. Claude/Codex: summary page, edit controls, polish, final integration.
+Summary should eventually include:
+- system size
+- estimated cost
+- savings breakdown
+- bill savings
+- energy independence
+- backup estimate if battery is selected
+- rate recommendation strip
+- NEM 3.0-style bill comparison graph
+- consumption profile graph
+- disclaimer section
+- bottom adjustable system controls:
+  - solar size
+  - battery size if battery selected
+- ability to edit/adjust the system configuration directly from the summary page after the generated estimate is shown
 
-Latest phase status:
-Phase 1 complete. Retention crash fixed. Solar Training audit complete. Ready for Phase 2 (Codex: add Solar Estimate shell).
+---
 
-## Phase 1 Audit Findings
+# PRIVACY / EXTERNAL REQUEST RULE
 
-### File Map
-- **Main parent:** `src/views/SolarTrainingView.tsx` — has `// @ts-nocheck`; 7 subtabs rendered via `activeTab` state; all subtab panels are self-contained sub-components in the same file except NEM3Visualizer, SolarRetentionHeatmap, SolarQuizCard
-- **Retention tab component:** `src/components/solarTraining/SolarRetentionHeatmap.tsx` — expects `topics`, `periods`, `data` props; renders a heatmap grid; fixed crash here
-- **Quiz engine:** `src/services/solarTraining/SolarQuizEngine.ts`
-- **Curriculum sequencer:** `src/services/solarTraining/SolarCurriculumSequencer.ts`
-- **Retention tracker:** `src/services/solarTraining/SolarRetentionTracker.ts` — localStorage-first, Supabase sync stub not yet wired
-- **NEM3 calculator:** `src/services/solarTraining/SolarNEM3Calculator.ts` — do not touch formulas
-- **Daily scheduler:** `src/services/solarTraining/SolarDailyScheduler.ts`
-- **Nexus integration:** `src/services/solarTraining/SolarNexusIntegration.ts`
-- **NEM3 visualizer:** `src/components/solarTraining/NEM3Visualizer.tsx`
-- **Quiz card:** `src/components/solarTraining/SolarQuizCard.tsx`
+If inspecting public websites or docs for implementation details:
+- Do it anonymously.
+- Do not send customer/private app data.
+- Prefer existing local code and existing local data over external requests.
+- Do not add new external dependencies unless explicitly scoped.
+- Do not wire live Google requests unless the app already has approved keys/dependencies and the phase explicitly allows it.
+- If required keys or dependencies are missing, create a safe adapter/placeholder and document the missing integration.
 
-### Tab IDs (SolarTab type)
-`certifications` | `training` | `scores` | `rules` | `quiz` | `nem3` | `progress`
+---
 
-The tab with label "Retention" uses id `progress` (legacy name).
+# FULL SOLARUPGRADE PHASE ROADMAP
 
-### State / Data Flow
-- `SolarTrainingView` holds only `activeTab` state; each panel manages its own state
-- Supabase tables: `solar_certifications`, `solar_scenarios`, `solar_training_sessions`, `solar_rules`, `solar_study_queue`, `solar_debriefs`
-- Retention heatmap receives NO data from Supabase in current implementation — called with zero props; shows empty/CTA state after fix
-- No localStorage or persistence touches in the view itself (persistence is in SolarRetentionTracker service, not wired to the heatmap)
+## Phase 1 — Claude — Audit + Retention Crash Fix
+Status:
+COMPLETE
 
-### Retention Crash Root Cause
-`<SolarRetentionHeatmap />` was called with no props (line 1061 of SolarTrainingView.tsx). The component already had `safeTopics/safePeriods/safeData` guards at lines 123–125, but lines 253, 260, and 333 still referenced the raw `data` prop directly — `data.length`, `data.flat()`, `data.every()` — crashing on `undefined.length`.
+Goal:
+Audit the existing Solar Training tab and fix the Retention crash.
 
-### Fix Applied
-`src/components/solarTraining/SolarRetentionHeatmap.tsx`:
-1. Made `topics`, `periods`, `data` optional (`?`) in `SolarRetentionHeatmapProps`
-2. Replaced `data.length` → `safeData.length` (line ~253)
-3. Replaced `data.flat()` → `safeData.flat()` (line ~260)
-4. Replaced `data.every(...)` → `safeData.every(...)` (line ~333)
+Completed:
+- Solar Training parent identified as `src/views/SolarTrainingView.tsx`.
+- Existing tabs identified:
+  - `certifications`
+  - `training`
+  - `scores`
+  - `rules`
+  - `quiz`
+  - `nem3`
+  - `progress` = Retention
+- Retention crash fixed in `src/components/solarTraining/SolarRetentionHeatmap.tsx`.
+- Root cause: component was called with no props while render still used raw `data.length`, `data.flat()`, and `data.every(...)`.
+- Fix: made props optional and changed render references to `safeData`.
+- Shared context updated with audit findings.
 
-### For Phase 2 (Solar Estimate Shell)
-- Add new tab id `estimate` with label `Solar Estimate` and emoji `☀️` to the `TABS` array in `SolarTrainingView.tsx` after the `progress` entry (line ~1015)
-- Render it in the panel content section after `progress` tab (line ~1061)
-- Create `src/components/solarTraining/SolarEstimateTab.tsx` as the shell component
-- The parent file has `// @ts-nocheck` so TypeScript errors in new JSX won't block typecheck, but new service/component files should be properly typed
-- Keep existing tab order intact; Solar Estimate goes last (position 8)
+Commits:
+- `72193d5` — Fix Solar Training retention crash and add solarupgrade audit context
+- `ed7bf01` — chore: backfill commit hash in phase 1 completion log
+
+Next phase:
+Phase 2 may add Solar Estimate tab shell after Retention.
+
+---
+
+## Phase 2 — Codex — Solar Estimate Tab Shell
+Status:
+COMPLETE
+
+Goal:
+Add the new `Solar Estimate` subtab after Retention with a polished shell only.
+
+Allowed:
+- Add tab definition.
+- Add render condition.
+- Add `SolarEstimateTab.tsx`.
+- Show planned wizard steps:
+  - Address
+  - Home Details
+  - Energy Use
+  - System Config
+  - Estimate Summary
+- Update context docs.
+
+Not allowed:
+- No Google Maps implementation.
+- No address autocomplete implementation.
+- No estimate formulas.
+- No rate calculations.
+- No persistence.
+- No Supabase.
+- No NEM 3.0 edits.
+- No broad refactor.
+
+Expected completion:
+- New `Solar Estimate` tab appears after Retention.
+- Shell renders cleanly.
+- Existing tabs still work.
+- Retention still does not crash.
+- Typecheck passes.
+- Context files updated with actual file paths and tab id.
+
+Expected files:
+- `src/views/SolarTrainingView.tsx`
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+Phase 2 completion:
+Complete.
+
+---
+
+## Phase 3 — Claude — Estimate Architecture + State Model
+Status:
+READY
+
+Goal:
+Review Phase 2 shell and add clean architecture for the Solar Estimate interview.
+
+Allowed:
+- Review the shell created in Phase 2.
+- Tighten integration if needed.
+- Create types/interfaces for estimate interview data.
+- Add local state model.
+- Add step navigation.
+- Add safe defaults.
+- Add placeholder handlers.
+- Add utility/rate option constants if no existing better source exists.
+- Document provider/rate findings.
+- Document whether Google Maps/autocomplete support already exists in the repo.
+- Prepare the data model so Phase 4 can build UI without guessing.
+
+Suggested data fields:
+- addressText
+- selectedAddressLabel
+- placeId
+- latitude
+- longitude
+- utilityProvider
+- ratePlan
+- shading
+- ownership
+- propertyType
+- consumptionMethod
+- averageMonthlyBill
+- homeSizeSqft
+- estimatedMonthlyKwh
+- systemMode
+- targetOffset
+- batteryPreference
+- currentStep
+
+Not allowed:
+- No final estimate math.
+- No real external requests unless existing app already has approved helpers and the phase explicitly allows it.
+- No Supabase persistence.
+- No broad refactor.
+- No product catalog.
+- No quote/proposal engine.
+
+Expected completion:
+- Solar Estimate shell has a clean internal data model.
+- Step state exists safely.
+- Next UI phase can build form screens without guessing structure.
+- Shared context includes actual architecture notes.
+
+Expected files:
+- Phase 2 files, plus any new local type/helper file if needed.
+- Agent must choose the smallest clean structure after inspecting code.
+
+Phase 3 completion:
+Pending.
+
+---
+
+## Phase 4 — Codex — Solar Estimate Interview Flow UI
+Status:
+WAITING FOR PHASE 3
+
+Goal:
+Build the Solar Estimate interview screens using the architecture from Phase 3.
+
+Screens:
+1. Address
+2. Home Details
+3. Energy Use
+4. System Config
+5. Review handoff / pre-summary
+
+Required fields:
+- Address text
+- Address suggestion selection UI
+- Coordinates/pin placeholder or real map only if existing app support exists
+- Shading:
+  - No shade on my roof
+  - A little shade on my roof
+  - A lot of shade on my roof
+- Rent or own
+- Property type:
+  - Single family home
+  - Condo/apartment
+  - Mobile home
+  - Commercial
+- Energy consumption method:
+  - Average electric bill
+  - Home size
+- Utility provider:
+  - Southern California Edison Co
+  - Imperial Irrigation District
+- Rate plan
+- System configuration:
+  - Solar Only
+  - Solar Plus Battery
+
+Visual direction:
+- Match PowerOn dark style.
+- Do not copy Enphase white UI directly.
+- Use Enphase reference for flow and summary logic only.
+- Keep cards compact and premium.
+- Use subtle accent states.
+- Keep labels readable.
+- No aggressive glow.
+
+Not allowed:
+- No final quote math.
+- No real customer data persistence.
+- No unrelated Solar Training edits.
+- No hidden external requests.
+- No broad refactor.
+- No final summary calculations beyond safe placeholders if required for UI continuity.
+
+Expected completion:
+- User can walk through the interview.
+- State is retained while staying on the tab.
+- Required values can be selected/input.
+- Summary phase has all required input data.
+- Shared context includes actual UI/file notes.
+
+Phase 4 completion:
+Pending.
+
+---
+
+## Phase 5 — Claude/Codex — Estimate Summary + Editable System Controls
+Status:
+WAITING FOR PHASE 4
+
+Goal:
+Create the final estimate summary experience inspired by the Enphase summary reference while matching PowerOn dark style.
+
+Required summary areas:
+- Top metric cards
+- Estimated system size
+- Estimated cost
+- Bill savings
+- Energy independence
+- Backup estimate if battery selected
+- Rate recommendation strip
+- Bill comparison chart inspired by NEM 3.0
+- Consumption profile chart
+- Disclaimer
+- Bottom adjustable controls:
+  - solar size
+  - battery size if battery selected
+- Ability to edit system configuration after generated summary
+
+Important design reference:
+The user wants a summary page that breaks down details like the Enphase reference:
+- overview cards at top
+- clear savings/bill breakdown
+- consumption graph
+- recommendation strip
+- assumptions/disclaimer
+- adjustable system-size and battery controls near the bottom
+
+Data/logic approach:
+- Prefer existing NEM 3.0 calculator patterns and local utility/rate data.
+- Use conservative placeholder assumptions only if formulas are not yet verified.
+- Do not make false precision claims.
+- Clearly label estimates and assumptions.
+- Preserve all existing NEM 3.0 formulas unless intentionally reusing them without changing them.
+
+Not allowed:
+- No false precision.
+- No unverified financial claims.
+- No hidden external requests with customer data.
+- No broad app refactor.
+- No unrelated app changes.
+
+Expected completion:
+- Summary page renders from interview data.
+- Controls can adjust displayed system configuration.
+- User can return/edit system configuration after summary is generated.
+- Typecheck passes.
+- Final context is updated.
+- Agent recommends whether further polish is needed.
+
+Phase 5 completion:
+Pending.
+
+---
+
+# PHASE 1 AUDIT FINDINGS
+
+## File Map
+
+- Main parent:
+  - `src/views/SolarTrainingView.tsx`
+  - Has `// @ts-nocheck`
+  - 7 subtabs rendered via `activeTab` state
+  - All subtab panels are self-contained sub-components in the same file except NEM3Visualizer, SolarRetentionHeatmap, SolarQuizCard
+
+- Retention tab component:
+  - `src/components/solarTraining/SolarRetentionHeatmap.tsx`
+  - Expects `topics`, `periods`, `data` props
+  - Fixed crash here
+
+- Quiz engine:
+  - `src/services/solarTraining/SolarQuizEngine.ts`
+
+- Curriculum sequencer:
+  - `src/services/solarTraining/SolarCurriculumSequencer.ts`
+
+- Retention tracker:
+  - `src/services/solarTraining/SolarRetentionTracker.ts`
+  - localStorage-first
+  - Supabase sync stub not yet wired
+
+- NEM3 calculator:
+  - `src/services/solarTraining/SolarNEM3Calculator.ts`
+  - Do not touch formulas unless a later phase explicitly scopes it
+
+- Daily scheduler:
+  - `src/services/solarTraining/SolarDailyScheduler.ts`
+
+- Nexus integration:
+  - `src/services/solarTraining/SolarNexusIntegration.ts`
+
+- NEM3 visualizer:
+  - `src/components/solarTraining/NEM3Visualizer.tsx`
+
+- Quiz card:
+  - `src/components/solarTraining/SolarQuizCard.tsx`
+
+## Tab IDs
+
+SolarTab type currently includes:
+
+- `certifications`
+- `training`
+- `scores`
+- `rules`
+- `quiz`
+- `nem3`
+- `progress`
+
+The tab with label `Retention` uses id `progress` because of legacy naming.
+
+Phase 2 should add a new tab id:
+- recommended: `estimate`
+
+## State / Data Flow
+
+- `SolarTrainingView` holds only `activeTab` state.
+- Each panel manages its own state.
+- Supabase tables discovered:
+  - `solar_certifications`
+  - `solar_scenarios`
+  - `solar_training_sessions`
+  - `solar_rules`
+  - `solar_study_queue`
+  - `solar_debriefs`
+- Retention heatmap receives no data from Supabase in current implementation.
+- Retention heatmap is called with zero props.
+- After Phase 1 fix, it shows an empty/CTA state safely.
+- No localStorage or persistence touches in the view itself.
+- Persistence is in `SolarRetentionTracker` service, not wired to the heatmap.
+
+## Retention Crash Root Cause
+
+`<SolarRetentionHeatmap />` was called with no props at approximately line 1061 of `SolarTrainingView.tsx`.
+
+The component already had `safeTopics`, `safePeriods`, and `safeData` guards, but three render locations still referenced the raw `data` prop directly:
+
+- `data.length`
+- `data.flat()`
+- `data.every(...)`
+
+When `data` was undefined, the app threw:
+
+`Cannot read properties of undefined (reading 'length')`
+
+## Retention Fix Applied
+
+In `src/components/solarTraining/SolarRetentionHeatmap.tsx`:
+
+1. Made `topics`, `periods`, and `data` optional in `SolarRetentionHeatmapProps`.
+2. Replaced `data.length` with `safeData.length`.
+3. Replaced `data.flat()` with `safeData.flat()`.
+4. Replaced `data.every(...)` with `safeData.every(...)`.
+
+## Phase 1 Learned Skills / Reusable Patterns
+
+- When a component is rendered without props but has fallback arrays, all render-time references must use normalized safe variables, not the raw prop.
+- Optional props should be reflected in the TypeScript interface when the parent intentionally renders the component with no props.
+- Retention currently behaves as a placeholder/empty state, not a fully wired data dashboard.
+- `SolarTrainingView.tsx` is large and uses `@ts-nocheck`; future new files should be typed carefully to avoid expanding unchecked code.
+- Solar Training tab integration should be done through the existing `TABS` array and active-tab render section.
+
+---
+
+# NEXT PHASE ACTIVE INSTRUCTIONS
+
+Current active phase:
+Phase 2 — Codex — Solar Estimate Tab Shell
+
+Agent:
+Codex GPT-5.5 Medium
+
+Required starting point:
+- Branch: `solarupgrade`
+- Latest known commit before Phase 2 work: `ed7bf01`
+- Working tree should be clean before starting.
+
+Phase 2 must:
+1. Read this shared context file.
+2. Read `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`.
+3. Inspect `src/views/SolarTrainingView.tsx`.
+4. Add `Solar Estimate` after Retention in the tab list.
+5. Create `src/components/solarTraining/SolarEstimateTab.tsx`.
+6. Render the new shell component when the new tab is active.
+7. Keep shell presentational only.
+8. Show planned wizard steps:
+   - Address
+   - Home Details
+   - Energy Use
+   - System Config
+   - Estimate Summary
+9. Run `npm.cmd run typecheck`.
+10. Update this file with Phase 2 completion log.
+11. Update `SOLARUPGRADE_CODEX.md` with Phase 2 completion log.
+12. Commit only scoped files.
+
+Phase 2 must not:
+- Add Google Maps.
+- Add autocomplete.
+- Add estimate formulas.
+- Add rate calculations.
+- Add persistence.
+- Touch Supabase.
+- Modify NEM 3.0 formulas.
+- Redesign existing subtabs.
+- Broadly refactor `SolarTrainingView.tsx`.
+
+---
+
+# EXECUTIVE BUILDER CONTROL LOG
+
+The user will paste each agent report back into chat.
+
+After each report, the executive builder will decide:
+
+- Continue to next phase
+- Pause for polish/stabilization
+- Rewrite/adjust next phase scope
+- Split a phase into smaller phases
+- Stop and review manually
+
+Agents should not assume approval to continue beyond their active phase.
+
+---
+
+# LATEST PHASE STATUS
+
+Latest completed phase:
+Phase 2
+
+Latest completed commits:
+- `72193d5`
+- `ed7bf01`
+- Phase 2 commit hash is in the final Codex report.
+
+Current ready phase:
+Phase 3 — Claude — Estimate Architecture + State Model
+
+Current risk level:
+Low, because Phase 2 only added a presentational shell and Phase 3 is scoped to local architecture/state review.
+
+Recommended action:
+Run Claude Phase 3 using the Phase 3 scope in this shared context.
+
+---
+
+# PHASE 2 COMPLETION LOG
+
+Status:
+Complete
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/views/SolarTrainingView.tsx`
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+TAB ID ADDED:
+`estimate`
+
+SHELL COMPONENT PATH:
+`src/components/solarTraining/SolarEstimateTab.tsx`
+
+WHAT CHANGED:
+- Added the `estimate` Solar Training subtab after legacy `progress` / Retention.
+- Imported and rendered `SolarEstimateTab` when the new tab is active.
+- Created a shell-only Solar Estimate component in the premium PowerOn dark style.
+- Displayed only the planned wizard steps: Address, Home Details, Energy Use, System Config, Estimate Summary.
+- Did not add maps, autocomplete, estimate math, provider/rate logic, persistence, Supabase changes, NEM 3.0 changes, or broad refactors.
+
+WHAT WAS LEARNED:
+- `src/views/SolarTrainingView.tsx` still owns the subtab registry through the `SolarTab` union and `TABS` array.
+- The active-tab render list is the narrow integration point for adding this shell.
+- New components can be typed normally even though the parent view remains `@ts-nocheck`.
+- The existing tab bar marks `int1` tabs with reduced opacity, so the new Solar Estimate tab inherits that treatment.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Add Solar Training subtabs by updating the `SolarTab` union, `TABS` array, and active-tab render block together.
+- Keep new Solar Training UI presentational when later phases are expected to define state/data architecture.
+- Use small typed component-local arrays for ordered shell steps.
+
+BUGS / RISKS:
+- No Phase 2 runtime issues found.
+- Phase 3 should decide whether Solar Estimate belongs in `int1` visual grouping or needs a new group/treatment.
+- The shared context file had pending edits before this phase began; Codex preserved and completed them rather than reverting.
+
+TYPECHECK RESULT:
+PASS — `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Phase 3 should review `SolarEstimateTab.tsx` before introducing local state and types.
+- Recommended tab id is now actual: `estimate`.
+- Shell is intentionally presentational; Phase 3 can add interview state without untangling any placeholder logic.
+- Phase 3 should inspect whether Google Maps/autocomplete support exists elsewhere in the repo, but should not wire live requests unless explicitly scoped.
+
+NEXT PHASE READY:
+YES
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Phase 2 added the `estimate` tab after Retention in `src/views/SolarTrainingView.tsx` and created `src/components/solarTraining/SolarEstimateTab.tsx`. The shell shows only the five planned steps: Address, Home Details, Energy Use, System Config, Estimate Summary. No estimate math, rates, persistence, Supabase, Google Maps/autocomplete, NEM 3.0, or broad refactors were added. Typecheck passed. Phase 3 is ready to add typed local interview architecture/state and document provider/rate plus Maps/autocomplete findings.
