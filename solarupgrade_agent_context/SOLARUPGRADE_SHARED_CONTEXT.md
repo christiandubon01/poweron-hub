@@ -757,22 +757,24 @@ Agents should not assume approval to continue beyond their active phase.
 # LATEST PHASE STATUS
 
 Latest completed phase:
-Phase 5
+Polish / Stabilization Pass (post Phase 5)
 
 Latest completed commits:
 - Phase 1: `72193d5`, `ed7bf01`
 - Phase 2: `ecb0b5b`
 - Phase 3: `6ad11a7`, `91cf6d2`
 - Phase 4: see Phase 4 completion log below
+- Phase 5: see Phase 5 completion log below
+- Polish pass: see Polish completion log below
 
 Current ready phase:
-Optional final polish/stabilization review
+No active build phase. Ready for manual browser QA.
 
 Current risk level:
-Medium. Phase 5 adds a full local estimate summary and editable controls using conservative assumptions plus the existing NEM 3.0 training calculator. No NEM 3.0 formulas, Supabase, persistence, product catalog, proposal engine, or unrelated tabs were changed. Browser visual QA was attempted, but the in-app browser security policy rejected `http://127.0.0.1:5173`; typecheck passed.
+Low. Polish pass fixed copy/UX issues only — no formula, persistence, Supabase, or structural changes. Typecheck passes clean.
 
 Recommended action:
-Run a short final polish/stabilization pass to visually review the summary on desktop/mobile, tune spacing/copy, and decide whether a later phase should split summary subcomponents or add more formal validation. Do not proceed into a new build phase automatically.
+Run manual browser QA on the Solar Estimate tab: walk the full interview flow, review the summary cards and charts on desktop and mobile, and test the reset button. Do not proceed into a new build phase without user review.
 
 ---
 
@@ -1065,3 +1067,52 @@ NO — no next build phase is defined. Optional polish/stabilization is recommen
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Phase 5 completed the Solar Estimate summary in `src/components/solarTraining/SolarEstimateTab.tsx`. The final step now shows conservative estimate cards, cost, modeled savings, energy independence, rate recommendation, monthly bill chart, consumption profile visual, battery-only backup card, assumptions/disclaimer, and editable solar/battery controls. It reuses `calculateNEM3Savings()` and local TOU schedules without modifying NEM formulas. No type changes, persistence, Supabase, product catalog, proposal engine, or unrelated tabs were added. Typecheck passes. Browser visual QA was attempted but blocked by in-app browser security policy for `http://127.0.0.1:5173`, so final polish is recommended.
+
+---
+
+# POLISH / STABILIZATION COMPLETION LOG (post Phase 5)
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+[to be filled after commit]
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+WHAT CHANGED:
+- Fixed duplicate `ReviewRow label="Consumption input"` in the summary grid — replaced second occurrence with `label="Suggested size"` showing the derived kW figure.
+- Replaced stale "Phase 5 - Estimate Summary" internal badge in the header with a functional "Start new estimate" reset button that clears all state back to safe defaults.
+- Added `resetEstimate` callback in `SolarEstimateTab` that resets `data`, `solarSizeKw`, and `batterySizeKwh` to initial defaults.
+- Fixed stale build-phase language in EnergyUseStep SectionIntro ("Phase 5 can translate...") and SystemConfigStep SectionIntro ("No product catalog or estimate math is attached in this phase.") — updated to describe actual current behavior.
+- Fixed stale FieldLabel hint for Target offset ("Phase 5 can use this as a summary control") → "Carried into the estimate summary".
+- Updated `STEP_META` entry for `estimate_summary`: label changed from "Review" to "Summary"; description updated from stale Phase 5 text to "Conservative planning estimate with editable system controls."
+- Added `overflow-x-auto` wrapper with `min-w-[360px]` inner div on `BillComparisonChart` to prevent bar squishing on narrow/mobile viewports.
+- Added responsive step card grid breakpoints: `grid-cols-2 sm:grid-cols-3 md:grid-cols-5` (was `md:grid-cols-5` only, showing 1 col on mobile).
+- Added "Select Solar Plus Battery above to enable battery sizing." hint text under the disabled battery slider.
+
+WHAT WAS LEARNED:
+- Phase 5 completion logs had pending "see Codex report" commit hash placeholders; the polish pass preserved them accurately.
+- No formula, type, persistence, or structural changes were needed. All issues were UI copy, responsive layout, and a duplicate row bug.
+
+BUGS / RISKS:
+- All remaining estimates are conservative planning figures, not quotes or proposals.
+- Browser visual QA is still the recommended next step; no in-browser testing was done in this session.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE READY:
+NO active build phase. Ready for browser QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Polish pass on `src/components/solarTraining/SolarEstimateTab.tsx` complete. Fixed: duplicate ReviewRow (now shows Suggested Size), stale phase-build copy in 3 SectionIntro/FieldLabel locations, internal phase badge replaced with "Start new estimate" reset button, step card grid now has 2-col mobile / 3-col sm / 5-col md responsive layout, BillComparisonChart wrapped with overflow-x-auto for mobile, battery disabled hint added. No formulas, types, persistence, Supabase, or unrelated tabs touched. Typecheck passes. Branch is ready for manual browser QA.

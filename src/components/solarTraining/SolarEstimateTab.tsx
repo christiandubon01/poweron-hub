@@ -83,8 +83,8 @@ const STEP_META: StepMeta[] = [
   },
   {
     id: 'estimate_summary',
-    label: 'Review',
-    description: 'Confirm inputs before Phase 5 estimate output.',
+    label: 'Summary',
+    description: 'Conservative planning estimate with editable system controls.',
     Icon: ClipboardList,
   },
 ]
@@ -583,8 +583,8 @@ function EnergyUseStep({ data, updateField }: { data: SolarEstimateData; updateF
   return (
     <div>
       <SectionIntro icon={PlugZap} eyebrow="Step 03" title="Capture energy use">
-        Select the utility and rate plan, then choose the simplest intake method for usage. Phase 5
-        can translate these inputs into estimate assumptions.
+        Select the utility, rate plan, and consumption method. The estimate summary will use these
+        inputs to model monthly usage and bill comparisons.
       </SectionIntro>
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -686,8 +686,8 @@ function SystemConfigStep({ data, updateField }: { data: SolarEstimateData; upda
   return (
     <div>
       <SectionIntro icon={BatteryCharging} eyebrow="Step 04" title="Choose the system direction">
-        Select the estimate track and target offset. No product catalog or estimate math is attached in
-        this phase.
+        Select solar-only or solar plus battery, then set a target offset. The estimate summary will
+        model bill impact and system size from these inputs.
       </SectionIntro>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -710,7 +710,7 @@ function SystemConfigStep({ data, updateField }: { data: SolarEstimateData; upda
       </div>
 
       <div className="mt-5 rounded-lg border border-slate-800 bg-slate-950/45 p-4">
-        <FieldLabel hint="Phase 5 can use this as a summary control">Target solar offset</FieldLabel>
+        <FieldLabel hint="Carried into the estimate summary">Target solar offset</FieldLabel>
         <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
           <input
             type="range"
@@ -806,7 +806,8 @@ function BillComparisonChart({
         </div>
       </div>
 
-      <div className="flex h-36 items-end gap-1.5">
+      <div className="overflow-x-auto">
+      <div className="flex h-36 min-w-[360px] items-end gap-1.5">
         {monthlyBreakdown.map((month, index) => {
           const afterBill = hasBattery
             ? month.bill_after_solar_with_battery
@@ -834,6 +835,7 @@ function BillComparisonChart({
             </div>
           )
         })}
+      </div>
       </div>
     </div>
   )
@@ -1022,7 +1024,7 @@ function EstimateSummaryStep({
         />
         <ReviewRow label="Estimated usage" value={`${formatNumber(monthlyKwh)} kWh / month`} />
         <ReviewRow label="Target offset" value={`${data.targetOffset}%`} />
-        <ReviewRow label="Consumption input" value={consumptionValue} />
+        <ReviewRow label="Suggested size" value={`${estimateSuggestedSystemSize(data).toFixed(1)} kW`} />
       </div>
 
       {hasBattery && (
@@ -1103,6 +1105,9 @@ function EstimateSummaryStep({
               />
               <span className="text-sm font-semibold text-emerald-200">kWh</span>
             </div>
+            {!hasBattery && (
+              <p className="mt-2 text-xs text-slate-600">Select Solar Plus Battery above to enable battery sizing.</p>
+            )}
           </div>
         </div>
 
@@ -1238,6 +1243,12 @@ export default function SolarEstimateTab() {
     if (prevStep) setData(d => ({ ...d, currentStep: prevStep }))
   }, [currentStepIndex])
 
+  const resetEstimate = useCallback(() => {
+    setData(DEFAULT_ESTIMATE_DATA)
+    setSolarSizeKw(estimateSuggestedSystemSize(DEFAULT_ESTIMATE_DATA))
+    setBatterySizeKwh(13.5)
+  }, [])
+
   const isFirst = currentStepIndex === 0
   const isLast = currentStepIndex === ESTIMATE_STEPS.length - 1
 
@@ -1260,9 +1271,13 @@ export default function SolarEstimateTab() {
               estimate summary with editable system controls.
             </p>
           </div>
-          <div className="shrink-0 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-200">
-            Phase 5 - Estimate Summary
-          </div>
+          <button
+            type="button"
+            onClick={resetEstimate}
+            className="shrink-0 rounded-md border border-slate-700 bg-slate-900/50 px-3 py-2 text-xs font-semibold text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
+          >
+            Start new estimate
+          </button>
         </div>
 
         <div className="mt-5 flex items-center gap-1.5">
@@ -1280,7 +1295,7 @@ export default function SolarEstimateTab() {
           ))}
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-5">
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
           {STEP_META.map((step, index) => {
             const isActive = step.id === data.currentStep
             const isCompleted = index < currentStepIndex
