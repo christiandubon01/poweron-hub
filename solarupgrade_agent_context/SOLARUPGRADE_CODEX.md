@@ -688,3 +688,61 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Map quality polish complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Step 1 roof preview now targets zoom `20`, falls back to `19`, and uses `MaxZoomService` to cap zoom to the selected coordinate's native satellite max. It remains hybrid, top-down, manually zoomable, centered on the selected marker, and keeps existing fallback behavior. Typecheck passes.
+
+---
+
+## SOLAR ESTIMATE ADDRESS LAYOUT POLISH COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Committed; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ACTIVE PHASE COMPLETED:
+Scoped Solar Estimate Address layout polish pass
+
+WHAT CHANGED:
+- Changed Step 1 Address from a single vertical column to a responsive two-column layout on wide screens.
+- Address input, suggestions, place ID, latitude, and longitude now sit in the left column.
+- The existing satellite roof map preview now sits in the right column.
+- Smaller widths still stack address first and map second.
+- Added `min-w-0` guards to the layout columns and made the metadata cards compact inside the left rail.
+
+WHAT WAS LEARNED:
+- The desired compact layout did not require changes to autocomplete state, selected address data, map behavior, markers, zoom logic, or fallback rendering.
+- The existing `AddressMapPreview` component can be repositioned safely when its wrapper preserves full width and a non-shrinking column.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Use `lg:grid-cols-[minmax(0,0.9fr)_minmax(480px,1.35fr)]` for a compact form rail plus inspectable map panel.
+- Let metadata chips switch from row to column inside a narrow desktop rail to preserve readability.
+
+BUGS / RISKS:
+- Screenshot QA is still recommended near the `lg` breakpoint and on wide desktop with a real selected address.
+- No map API logic, autocomplete logic, estimate math, saved estimates, summary charts, unrelated steps, or unrelated tabs were changed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+CODEX FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+No active build phase defined
+
+NEXT PHASE ADJUSTMENTS:
+- Screenshot QA Step 1 Address across mobile, tablet, `lg`, and wide desktop widths, with missing-map fallback and live map states.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Address layout polish complete in `src/components/solarTraining/SolarEstimateTab.tsx`. Step 1 now uses a desktop two-column grid: left address/input/suggestions/place metadata, right existing satellite roof preview. Smaller widths stack cleanly. Existing autocomplete, selected address data, map behavior, marker, zoom quality logic, and fallback cards are unchanged. Typecheck passes.

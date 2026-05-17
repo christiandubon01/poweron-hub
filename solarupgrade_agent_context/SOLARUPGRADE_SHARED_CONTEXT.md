@@ -1603,3 +1603,55 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Scoped Solar Estimate map quality polish complete in `src/components/solarTraining/SolarEstimateTab.tsx`. The Step 1 roof preview now targets zoom `20`, falls back to `19`, and uses Google Maps `MaxZoomService` to cap the applied zoom to native satellite imagery availability for selected coordinates. Map remains hybrid, top-down (`tilt: 0`, `heading: 0`), manually zoomable, centered on the selected address marker, and retains existing fallback states. Typecheck passes.
+
+---
+
+# SOLAR ESTIMATE ADDRESS LAYOUT POLISH COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Committed; see final Codex report for the actual commit hash.
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Changed Step 1 Address from a vertical input-then-map stack on desktop to a compact responsive grid.
+- On `lg` and wider screens, the address input/details card sits in the left column and the satellite roof preview sits in the right column.
+- On smaller screens, the layout still stacks cleanly with address first and map second.
+- Added `min-w-0` wrappers to the address card and map column to protect against horizontal overflow.
+- Adjusted the place ID / latitude / longitude metadata grid so it stays compact in the narrower left column while preserving the same selected address data.
+
+WHAT WAS LEARNED:
+- The Address step could be made substantially more compact by changing only the layout wrapper around existing address and map surfaces.
+- The existing map preview component already had the right sizing and fallback behavior; no map API, marker, zoom, or autocomplete logic needed to change.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Use a two-column grid with a flexible left rail and a minimum useful map width for roof-preview workflows.
+- Collapse metadata chips inside narrower side rails to avoid cramped text and horizontal overflow.
+
+BUGS / RISKS:
+- Screenshot QA is recommended at desktop widths near the `lg` breakpoint to confirm the 480px map column feels right with the surrounding app chrome.
+- No autocomplete, Google Maps API logic, estimate math, saved estimates, summary charts, or unrelated tabs were changed.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Run screenshot QA for Step 1 Address at mobile, tablet, `lg`, and wide desktop widths with and without a selected address/map preview.
+
+NEXT PHASE READY:
+NO active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Scoped Step 1 Address layout polish complete in `src/components/solarTraining/SolarEstimateTab.tsx`. The address input/suggestions/place metadata now occupy a compact left column on desktop, while the existing satellite roof preview sits on the right. Smaller widths stack address then map. Autocomplete, selected address data, Google hybrid/satellite map behavior, marker, MaxZoomService zoom handling, and fallback cards are unchanged. Typecheck passes.

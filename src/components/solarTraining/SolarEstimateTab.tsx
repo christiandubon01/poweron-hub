@@ -668,8 +668,8 @@ function AddressStep({ data, updateField }: { data: SolarEstimateData; updateFie
         can capture a place ID and coordinates for a local map preview.
       </SectionIntro>
 
-      <div className="space-y-5">
-        <div className="rounded-lg border border-slate-800 bg-slate-950/45 p-4">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(480px,1.35fr)] lg:items-start">
+        <div className="min-w-0 rounded-lg border border-slate-800 bg-slate-950/45 p-4">
           <FieldLabel hint={mapsReady ? 'Suggestions enabled' : 'Plain text available'}>
             Homeowner address
           </FieldLabel>
@@ -703,7 +703,7 @@ function AddressStep({ data, updateField }: { data: SolarEstimateData; updateFie
             )}
           </div>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
             <div className="rounded-md border border-slate-800 bg-slate-900/45 p-3">
               <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
                 Place ID
@@ -725,7 +725,9 @@ function AddressStep({ data, updateField }: { data: SolarEstimateData; updateFie
           </div>
         </div>
 
-        <AddressMapPreview data={data} />
+        <div className="min-w-0">
+          <AddressMapPreview data={data} />
+        </div>
       </div>
     </div>
   )
