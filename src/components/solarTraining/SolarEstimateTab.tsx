@@ -292,6 +292,8 @@ function normalizeEstimateData(
       typeof raw.mainPanelUpgradeNeeded === 'boolean'
         ? raw.mainPanelUpgradeNeeded
         : shouldDefaultMainPanelUpgrade(raw.mainBreakerSize ?? DEFAULT_ESTIMATE_DATA.mainBreakerSize),
+    evChargerAddition:
+      typeof raw.evChargerAddition === 'boolean' ? raw.evChargerAddition : false,
   }
 }
 
@@ -1350,6 +1352,25 @@ function SystemConfigStep({
               Current main breaker: {findLabel(MAIN_BREAKER_SIZE_OPTIONS, data.mainBreakerSize)}
             </p>
           </div>
+
+          <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <FieldLabel>EV Charger Addition</FieldLabel>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  Adds EV charger electrical upgrade cost to the modeled estimate.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateField('evChargerAddition', !data.evChargerAddition)}
+                aria-pressed={data.evChargerAddition}
+                className={toggleClass(data.evChargerAddition)}
+              >
+                <span className={knobClass(data.evChargerAddition)} />
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/45 p-4 shadow-[0_18px_60px_rgba(8,47,73,0.12)]">
@@ -1382,6 +1403,7 @@ function SystemConfigStep({
             <ReviewRow label="Panels" value={`${panelCount} @ ${data.panelWattage}W`} />
             <ReviewRow label="Target offset" value={`${data.targetOffset}%`} />
             <ReviewRow label="Main panel upgrade" value={data.mainPanelUpgradeNeeded ? 'Yes' : 'No'} />
+            <ReviewRow label="EV charger addition" value={data.evChargerAddition ? 'Yes' : 'No'} />
           </div>
         </div>
       </div>
@@ -1439,6 +1461,9 @@ function CostBreakdownCard({ breakdown }: { breakdown: SolarEstimateCostBreakdow
     { label: 'Delivery', value: breakdown.deliveryCost, detail: breakdown.deliveryLabel },
     ...(breakdown.mainPanelUpgradeCost > 0
       ? [{ label: 'Main panel upgrade', value: breakdown.mainPanelUpgradeCost }]
+      : []),
+    ...(breakdown.evChargerAdditionCost > 0
+      ? [{ label: 'EV charger addition', value: breakdown.evChargerAdditionCost }]
       : []),
   ]
 
@@ -2658,6 +2683,7 @@ function EstimateSummaryStep({
         <ReviewRow label="Panel wattage" value={`${panelWattage}W`} />
         <ReviewRow label="Battery size" value={hasBattery ? `${batterySizeKwh.toFixed(1)} kWh` : 'Not included'} />
         <ReviewRow label="Main panel upgrade" value={data.mainPanelUpgradeNeeded ? 'Yes' : 'No'} />
+        <ReviewRow label="EV charger addition" value={data.evChargerAddition ? 'Yes' : 'No'} />
         <ReviewRow label="Total estimated install cost" value={formatMoney(systemCost)} />
       </div>
 

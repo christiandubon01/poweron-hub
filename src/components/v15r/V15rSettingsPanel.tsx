@@ -57,6 +57,7 @@ import {
   getCombinedHourlyLaborRate,
   loadSolarEstimateSettings,
   saveSolarEstimateSettings,
+  type LaborFormulaMode,
   type SolarEstimateSettings,
 } from '@/services/solarTraining/SolarEstimateSettings'
 
@@ -256,6 +257,7 @@ function SolarEstimateSettingsPanel() {
   const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle')
   const [isCollapsed, setIsCollapsed] = useState(() => loadCollapsedState(SOLAR_ESTIMATE_SETTINGS_COLLAPSED_KEY))
   const combinedHourlyRate = getCombinedHourlyLaborRate(settings)
+  const laborFormulaMode: LaborFormulaMode = settings.laborFormulaMode ?? 'panelRate'
 
   useEffect(() => {
     saveCollapsedState(SOLAR_ESTIMATE_SETTINGS_COLLAPSED_KEY, isCollapsed)
@@ -263,6 +265,13 @@ function SolarEstimateSettingsPanel() {
 
   const updateSetting = (key: keyof SolarEstimateSettings, value: number) => {
     const next = saveSolarEstimateSettings({ ...settings, [key]: Number.isFinite(value) && value >= 0 ? value : 0 })
+    setSettings(next)
+    setSaveState('saved')
+    window.setTimeout(() => setSaveState('idle'), 1800)
+  }
+
+  const updateLaborMode = (mode: LaborFormulaMode) => {
+    const next = saveSolarEstimateSettings({ ...settings, laborFormulaMode: mode })
     setSettings(next)
     setSaveState('saved')
     window.setTimeout(() => setSaveState('idle'), 1800)
@@ -277,8 +286,11 @@ function SolarEstimateSettingsPanel() {
 
   const inputClass =
     'mt-2 w-full rounded-lg border border-cyan-400/15 bg-slate-950/75 px-3 py-2 text-sm text-cyan-50 outline-none transition-colors placeholder:text-slate-600 focus:border-cyan-400/50 focus:ring-1 focus:ring-cyan-400/20'
-  const field = (key: keyof SolarEstimateSettings, label: string, hint?: string) => (
-    <label className="block min-w-0">
+  const disabledInputClass =
+    'mt-2 w-full rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-sm text-slate-600 outline-none cursor-not-allowed'
+
+  const field = (key: keyof SolarEstimateSettings, label: string, hint?: string, disabled?: boolean) => (
+    <label className={`block min-w-0 ${disabled ? 'opacity-50' : ''}`}>
       <span className="text-[11px] font-semibold uppercase tracking-wider text-cyan-200/75">{label}</span>
       {hint && <span className="ml-2 text-[10px] text-slate-500">{hint}</span>}
       <div className="relative">
@@ -287,16 +299,17 @@ function SolarEstimateSettingsPanel() {
           type="number"
           min="0"
           step="1"
+          disabled={disabled}
           value={settings[key]}
           onChange={event => updateSetting(key, Number(event.target.value))}
-          className={`${inputClass} pl-7`}
+          className={`${disabled ? disabledInputClass : inputClass} pl-7`}
         />
       </div>
     </label>
   )
 
-  const numberField = (key: keyof SolarEstimateSettings, label: string, suffix: string, hint?: string) => (
-    <label className="block min-w-0">
+  const numberField = (key: keyof SolarEstimateSettings, label: string, suffix: string, hint?: string, disabled?: boolean) => (
+    <label className={`block min-w-0 ${disabled ? 'opacity-50' : ''}`}>
       <span className="text-[11px] font-semibold uppercase tracking-wider text-cyan-200/75">{label}</span>
       {hint && <span className="ml-2 text-[10px] text-slate-500">{hint}</span>}
       <div className="relative">
@@ -304,13 +317,29 @@ function SolarEstimateSettingsPanel() {
           type="number"
           min="0"
           step="1"
+          disabled={disabled}
           value={settings[key]}
           onChange={event => updateSetting(key, Number(event.target.value))}
-          className={`${inputClass} pr-14`}
+          className={`${disabled ? disabledInputClass : inputClass} pr-14`}
         />
         <span className="pointer-events-none absolute right-3 top-[17px] text-xs text-slate-500">{suffix}</span>
       </div>
     </label>
+  )
+
+  const formulaModeBtn = (mode: LaborFormulaMode, label: string) => (
+    <button
+      key={mode}
+      type="button"
+      onClick={() => updateLaborMode(mode)}
+      className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+        laborFormulaMode === mode
+          ? 'bg-cyan-700/60 text-cyan-100 shadow-sm'
+          : 'text-slate-400 hover:text-slate-200'
+      }`}
+    >
+      {label}
+    </button>
   )
 
   return (
@@ -347,27 +376,38 @@ function SolarEstimateSettingsPanel() {
       <>
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
         <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Labor</p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Labor</p>
+            <div className="flex items-center gap-0.5 rounded-lg border border-slate-700/80 bg-slate-900/70 p-0.5">
+              {formulaModeBtn('hourlyCrew', 'Hourly crew labor')}
+              {formulaModeBtn('panelRate', 'Panel labor rate')}
+            </div>
+          </div>
           <div className="mt-3 rounded-lg border border-cyan-400/10 bg-slate-950/45 p-3">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Hourly crew labor rates</p>
             <div className="mt-3 grid gap-3 md:grid-cols-3">
-              {field('installer1HourlyRate', 'Installer 1 hourly rate')}
-              {field('installer2HourlyRate', 'Installer 2 hourly rate')}
-              {field('crewLeadHourlyRate', 'Crew lead hourly rate')}
+              {field('installer1HourlyRate', 'Installer 1 hourly rate', undefined, laborFormulaMode === 'panelRate')}
+              {field('installer2HourlyRate', 'Installer 2 hourly rate', undefined, laborFormulaMode === 'panelRate')}
+              {field('crewLeadHourlyRate', 'Crew lead hourly rate', undefined, laborFormulaMode === 'panelRate')}
             </div>
-            <div className="mt-3 rounded-lg border border-emerald-400/15 bg-emerald-950/15 p-3">
+            <div className={`mt-3 rounded-lg border border-emerald-400/15 bg-emerald-950/15 p-3 ${laborFormulaMode === 'panelRate' ? 'opacity-50' : ''}`}>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-200/75">Combined crew labor rate</p>
               <p className="mt-1 text-xl font-semibold text-emerald-100">
                 {combinedHourlyRate.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}/hr
               </p>
               <p className="mt-1 text-[11px] leading-4 text-slate-500">Installer 1 + Installer 2 + Crew Lead hourly rates.</p>
             </div>
+            {laborFormulaMode === 'hourlyCrew' && (
+              <p className="mt-2 text-[11px] leading-4 text-amber-400/70">
+                Hourly crew mode is saved for future labor-hour modeling. Panel rate is used in cost math until labor hours are defined.
+              </p>
+            )}
           </div>
           <div className="mt-3 rounded-lg border border-amber-400/10 bg-slate-950/45 p-3">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-200/75">Panel labor rate</p>
             <p className="mt-1 text-[11px] leading-4 text-slate-500">Separate from the hourly crew total; used as panel count times labor-only panel cost.</p>
             <div className="mt-3">
-              {field('panelInstallLaborCost', 'Cost per panel installed', 'labor only')}
+              {field('panelInstallLaborCost', 'Cost per panel installed', 'labor only', laborFormulaMode === 'hourlyCrew')}
             </div>
           </div>
         </div>
@@ -385,29 +425,30 @@ function SolarEstimateSettingsPanel() {
 
         <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Electrical Upgrades</p>
-          <p className="mt-1 text-[11px] text-slate-400">Applied in Summary only when Main panel upgrade is enabled in System Config.</p>
-          <div className="mt-3">
+          <p className="mt-1 text-[11px] text-slate-400">Applied in Summary only when the corresponding toggle is enabled in System Config.</p>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
             {field('mainPanelUpgradeCost', 'Main panel upgrade cost')}
+            {field('evChargerAdditionCost', 'EV Charger Addition Cost')}
           </div>
         </div>
 
         <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Permit Cost by Size</p>
-          <p className="mt-1 text-[11px] text-slate-500">Small, medium, and large system-size ranges for permit cost defaults.</p>
+          <p className="mt-1 text-[11px] text-slate-400">Small, medium, and large system-size ranges for permit cost defaults.</p>
           <div className="mt-3 grid gap-3 md:grid-cols-3">
-            {field('smallPermitCost', 'Small system', '5–15 kW')}
-            {field('mediumPermitCost', 'Medium system', '15–30 kW')}
-            {field('largePermitCost', 'Large system', '30–50 kW')}
+            {field('smallPermitCost', 'Small system', '3–7 kW')}
+            {field('mediumPermitCost', 'Medium system', '7–15 kW')}
+            {field('largePermitCost', 'Large system', '15–30 kW')}
           </div>
         </div>
 
         <div className="rounded-xl border border-cyan-400/10 bg-slate-950/60 p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200/80">Blueprint Cost by Size</p>
-          <p className="mt-1 text-[11px] text-slate-500">Uses the same small, medium, and large system-size ranges.</p>
+          <p className="mt-1 text-[11px] text-slate-400">Uses the same small, medium, and large system-size ranges.</p>
           <div className="mt-3 grid gap-3 md:grid-cols-3">
-            {field('smallBlueprintCost', 'Small system', '5–15 kW')}
-            {field('mediumBlueprintCost', 'Medium system', '15–30 kW')}
-            {field('largeBlueprintCost', 'Large system', '30–50 kW')}
+            {field('smallBlueprintCost', 'Small system', '3–7 kW')}
+            {field('mediumBlueprintCost', 'Medium system', '7–15 kW')}
+            {field('largeBlueprintCost', 'Large system', '15-30 kW')}
           </div>
         </div>
       </div>

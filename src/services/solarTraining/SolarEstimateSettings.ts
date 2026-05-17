@@ -3,6 +3,8 @@ import type { SolarEstimateData } from './SolarEstimateTypes'
 export const SOLAR_ESTIMATE_SETTINGS_STORAGE_KEY = 'poweron.solarTraining.solarEstimateSettings'
 export const SOLAR_ESTIMATE_SETTINGS_CHANGED_EVENT = 'poweron:solarEstimateSettingsChanged'
 
+export type LaborFormulaMode = 'hourlyCrew' | 'panelRate'
+
 export type SolarEstimateSettings = {
   installer1HourlyRate: number
   installer2HourlyRate: number
@@ -20,6 +22,8 @@ export type SolarEstimateSettings = {
   flatDeliveryCost: number
   deliveryCostPerMile: number
   mainPanelUpgradeCost: number
+  evChargerAdditionCost: number
+  laborFormulaMode: LaborFormulaMode
 }
 
 export type SolarEstimateCostBreakdown = {
@@ -31,6 +35,7 @@ export type SolarEstimateCostBreakdown = {
   mobilityCost: number
   deliveryCost: number
   mainPanelUpgradeCost: number
+  evChargerAdditionCost: number
   totalEstimatedInstallCost: number
   combinedHourlyLaborRate: number
   distanceMiles: number | null
@@ -55,6 +60,8 @@ export const DEFAULT_SOLAR_ESTIMATE_SETTINGS: SolarEstimateSettings = {
   flatDeliveryCost: 300,
   deliveryCostPerMile: 0,
   mainPanelUpgradeCost: 2500,
+  evChargerAdditionCost: 1500,
+  laborFormulaMode: 'panelRate',
 }
 
 export function getCombinedHourlyLaborRate(settings: SolarEstimateSettings): number {
@@ -69,6 +76,10 @@ export function getSolarSystemSizeTier(systemSizeKw: number): SolarEstimateCostB
 
 function safeNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
+function safeLaborFormulaMode(value: unknown): LaborFormulaMode {
+  return value === 'hourlyCrew' || value === 'panelRate' ? value : DEFAULT_SOLAR_ESTIMATE_SETTINGS.laborFormulaMode
 }
 
 export function normalizeSolarEstimateSettings(value: Partial<SolarEstimateSettings> | null | undefined): SolarEstimateSettings {
@@ -90,6 +101,8 @@ export function normalizeSolarEstimateSettings(value: Partial<SolarEstimateSetti
     flatDeliveryCost: safeNumber(raw.flatDeliveryCost, DEFAULT_SOLAR_ESTIMATE_SETTINGS.flatDeliveryCost),
     deliveryCostPerMile: safeNumber(raw.deliveryCostPerMile, DEFAULT_SOLAR_ESTIMATE_SETTINGS.deliveryCostPerMile),
     mainPanelUpgradeCost: safeNumber(raw.mainPanelUpgradeCost, DEFAULT_SOLAR_ESTIMATE_SETTINGS.mainPanelUpgradeCost),
+    evChargerAdditionCost: safeNumber(raw.evChargerAdditionCost, DEFAULT_SOLAR_ESTIMATE_SETTINGS.evChargerAdditionCost),
+    laborFormulaMode: safeLaborFormulaMode(raw.laborFormulaMode),
   }
 }
 
@@ -112,7 +125,7 @@ export function saveSolarEstimateSettings(settings: SolarEstimateSettings): Sola
 }
 
 export function calculateSolarEstimateInstallCost(
-  data: Pick<SolarEstimateData, 'systemSizeKw' | 'panelWattage' | 'mainPanelUpgradeNeeded'>,
+  data: Pick<SolarEstimateData, 'systemSizeKw' | 'panelWattage' | 'mainPanelUpgradeNeeded' | 'evChargerAddition'>,
   settings: SolarEstimateSettings,
   distanceMiles: number | null = null
 ): SolarEstimateCostBreakdown {
@@ -135,8 +148,9 @@ export function calculateSolarEstimateInstallCost(
   const mobilityCost = settings.baseMobilityCost + mileageCost
   const deliveryCost = settings.flatDeliveryCost + deliveryMileageCost
   const mainPanelUpgradeCost = data.mainPanelUpgradeNeeded ? settings.mainPanelUpgradeCost : 0
+  const evChargerAdditionCost = data.evChargerAddition ? settings.evChargerAdditionCost : 0
   const totalEstimatedInstallCost = Math.round(
-    panelLaborCost + permitCost + blueprintCost + mobilityCost + deliveryCost + mainPanelUpgradeCost
+    panelLaborCost + permitCost + blueprintCost + mobilityCost + deliveryCost + mainPanelUpgradeCost + evChargerAdditionCost
   )
 
   return {
@@ -148,6 +162,7 @@ export function calculateSolarEstimateInstallCost(
     mobilityCost,
     deliveryCost,
     mainPanelUpgradeCost,
+    evChargerAdditionCost,
     totalEstimatedInstallCost,
     combinedHourlyLaborRate: getCombinedHourlyLaborRate(settings),
     distanceMiles,

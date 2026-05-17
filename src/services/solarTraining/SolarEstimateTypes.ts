@@ -108,6 +108,7 @@ export interface SolarEstimateData {
   batterySizeKwh: number;
   installCost: number;
   mainPanelUpgradeNeeded: boolean;
+  evChargerAddition: boolean;
 
   // Navigation
   currentStep: EstimateStep;
@@ -142,6 +143,7 @@ export const DEFAULT_ESTIMATE_DATA: SolarEstimateData = {
   batterySizeKwh: 13.5,
   installCost: 28000,
   mainPanelUpgradeNeeded: false,
+  evChargerAddition: false,
   currentStep: 'address',
 };
 
