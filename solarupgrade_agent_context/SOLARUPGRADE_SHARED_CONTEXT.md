@@ -2554,3 +2554,76 @@ NO — no active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 EV charger amperage moved to EV Charger Addition toggle. Step 3 "EV Charger Addition" card (renamed from "Add EV Charger") shows 30/40/50/60/100A buttons when ON and defaults to 50A on turn-ON. Appliance EV charger card now looks like other appliances (free-form amps input). `evChargerAmperage` is now exclusively the install amperage. Step 4 right panel reads `selectedAppliances[ev_charger].amps` for existing load display. Summary separates four rows with correct data sources. Typecheck passes.
+
+---
+
+## SEASONAL MONTHLY BILL CHART COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+(pending)
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+WHAT CHANGED:
+- Added `ClimateProfile` type (`hotDesert` | `defaultSouthernCalifornia`).
+- Added `HOT_DESERT_TERMS` keyword list for Coachella Valley / desert area detection.
+- Added `CONSUMPTION_SEASONAL_WEIGHTS` table for both profiles (12 months each).
+- Added `SOLAR_PRODUCTION_SEASONAL_WEIGHTS` (12-month solar production shape).
+- Added `CLIMATE_PROFILE_LABEL` map for chart subtitle text.
+- Added `detectClimateProfile(addressText)` — pure string match, no external API.
+- Added `SeasonalBillMonth` type and `getSeasonalBillData()` function.
+  - Normalizes consumption weights so annual kWh = monthlyKwh * 12.
+  - Normalizes solar weights so annual production is consistent with solarSizeKw formula.
+  - Derives battery benefit ratio from flat nemResult (consistent with NEM3 math).
+  - Returns per-month: kwh, beforeCost, afterCostNoBattery, afterCostWithBattery, savings.
+- Added `SeasonalBillChart` component. Replaces `BillComparisonChart` in the `monthly_bill` tab.
+  - Same SVG layout as prior BillComparisonChart.
+  - Tooltip includes: climate profile, modeled usage kWh, current cost, projected cost, monthly savings.
+  - `ChartNote` shows profile label at bottom.
+- Updated `SummaryChartModule` to accept `climateProfile: ClimateProfile` prop.
+- Monthly bill tab now renders `SeasonalBillChart` instead of flat `BillComparisonChart`.
+- `EstimateSummaryStep` computes `climateProfile` from `data.selectedAddressLabel + data.addressText` and passes to `SummaryChartModule`.
+- Old `BillComparisonChart` is still defined but unused (noUnusedLocals: false prevents error).
+
+WHAT WAS LEARNED:
+- Normalization: divide each weight by the 12-weight average so the sum of all monthly kWh = monthlyKwh * 12 exactly.
+- Battery ratio: `flatMonth.bill_after_solar_with_battery / flatMonth.bill_after_solar_no_battery` from nemResult captures the NEM3 battery benefit without running separate calculations.
+- `ChartNote` component (already existed) is the right pattern for the profile label below the chart.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Seasonal weight normalization: `rawWeights.map(w => w / (sum / 12))` — ensures annual total is preserved regardless of weight shape.
+- Battery ratio from nemResult: use the flat monthly_breakdown[0] ratio to apply NEM3-consistent battery savings to seasonal data.
+- `detectClimateProfile` pattern: pure `toLowerCase().includes()` keyword match — zero cost, no API, deterministic.
+
+BUGS / RISKS:
+- `BillComparisonChart` is now dead code. Can be cleaned up in a future polish pass if desired.
+- NEM 3.0 export rate approximation (importRate * 0.25) is conservative. Actual NEM 3.0 export rates vary by TOU period and utility. Fine for a planning estimate.
+- Hot desert keyword "desert" is broad — any address containing "desert" will match. Acceptable for planning purposes; no false negatives for Coachella Valley addresses.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Screenshot QA: enter Desert Hot Springs address → Monthly Bill chart should show summer months significantly taller than winter.
+- Screenshot QA: enter non-desert address → chart should be more uniform with mild summer lean.
+- Screenshot QA: hover a bar → tooltip shows profile, usage kWh, costs, savings.
+- Screenshot QA: chart note below shows correct profile label.
+- If `BillComparisonChart` dead code cleanup is desired, remove it in a dedicated polish commit.
+
+NEXT PHASE READY:
+NO — no active build phase. Ready for screenshot QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Seasonal Monthly Bill chart added. `SeasonalBillChart` replaces `BillComparisonChart` in the monthly_bill tab. Climate profile detected from address text via `detectClimateProfile`. Two profiles: `hotDesert` (Coachella Valley keywords) and `defaultSouthernCalifornia`. Seasonal consumption and solar production weights normalize so annual totals are preserved. Battery benefit derived from flat nemResult ratio. Tooltip shows profile, usage kWh, costs, savings. Chart note shows profile label. All other chart tabs untouched. Typecheck passes.

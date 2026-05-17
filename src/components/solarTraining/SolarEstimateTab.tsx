@@ -183,6 +183,30 @@ const CHART_TABS: Array<{ id: ChartTab; label: string }> = [
   { id: 'payment_comparison', label: 'Payments' },
 ]
 
+// ============================================================================
+// CLIMATE PROFILE — local deterministic seasonal weighting (no external API)
+// ============================================================================
+
+type ClimateProfile = 'hotDesert' | 'defaultSouthernCalifornia'
+
+const HOT_DESERT_TERMS = [
+  'desert hot springs', 'palm springs', 'cathedral city', 'rancho mirage',
+  'palm desert', 'indio', 'coachella', 'la quinta', 'thousand palms',
+  'bermuda dunes', 'thermal', 'mecca', 'north palm springs', 'desert',
+]
+
+const CONSUMPTION_SEASONAL_WEIGHTS: Record<ClimateProfile, readonly number[]> = {
+  hotDesert:                [0.78, 0.76, 0.82, 0.92, 1.08, 1.32, 1.52, 1.50, 1.34, 1.04, 0.84, 0.78],
+  defaultSouthernCalifornia:[0.88, 0.84, 0.86, 0.92, 1.00, 1.10, 1.20, 1.22, 1.14, 1.02, 0.92, 0.90],
+}
+
+const SOLAR_PRODUCTION_SEASONAL_WEIGHTS = [0.72, 0.80, 0.95, 1.08, 1.18, 1.24, 1.23, 1.14, 1.02, 0.90, 0.74, 0.70] as const
+
+const CLIMATE_PROFILE_LABEL: Record<ClimateProfile, string> = {
+  hotDesert: 'Hot desert seasonal profile applied from project address. Summer AC load is weighted higher.',
+  defaultSouthernCalifornia: 'Default Southern California seasonal profile applied.',
+}
+
 type SavedEstimateSnapshot = {
   savedAt: Date
   solarSizeKw: number
@@ -390,6 +414,84 @@ function getMonthlyLoanPayment(principal: number, termYears = 25, annualRate = 0
   const r = annualRate / 12
   const n = termYears * 12
   return (principal * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1)
+}
+
+function detectClimateProfile(addressText: string): ClimateProfile {
+  const lower = (addressText || '').toLowerCase()
+  if (HOT_DESERT_TERMS.some(term => lower.includes(term))) return 'hotDesert'
+  return 'defaultSouthernCalifornia'
+}
+
+const MONTH_FULL_LABELS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+] as const
+const MONTH_SHORT_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const
+
+type SeasonalBillMonth = {
+  fullLabel: string
+  shortLabel: string
+  kwh: number
+  beforeCost: number
+  afterCostNoBattery: number
+  afterCostWithBattery: number
+  savingsNoBattery: number
+  savingsWithBattery: number
+}
+
+function getSeasonalBillData(
+  monthlyKwh: number,
+  solarSizeKw: number,
+  ratePlan: RatePlan,
+  utility: Utility,
+  climateProfile: ClimateProfile,
+  nemResult: ReturnType<typeof calculateNEM3Savings>,
+): SeasonalBillMonth[] {
+  const importRate = getAverageImportRate(ratePlan)
+  const schedule = TOU_RATE_SCHEDULES[ratePlan]
+  const fixedCharge = schedule?.monthly_fixed_charge ?? 10
+  const peakSunHours = utility === 'IID' ? 6.2 : 5.5
+  const derate = utility === 'IID' ? 0.77 : 0.8
+  const annualProductionKwh = solarSizeKw * peakSunHours * 365 * derate
+
+  const rawConsWeights = CONSUMPTION_SEASONAL_WEIGHTS[climateProfile]
+  const consWeightAvg = rawConsWeights.reduce((s, w) => s + w, 0) / 12
+  const normalizedConsWeights = rawConsWeights.map(w => w / consWeightAvg)
+
+  const solarWeightAvg = SOLAR_PRODUCTION_SEASONAL_WEIGHTS.reduce((s, w) => s + w, 0) / 12
+  const normalizedSolarWeights = SOLAR_PRODUCTION_SEASONAL_WEIGHTS.map(w => w / solarWeightAvg)
+
+  // Derive battery benefit ratio from flat nemResult (consistent with NEM3 calculation)
+  const flatMonth = nemResult.monthly_breakdown[0]
+  const batteryRatio =
+    flatMonth && flatMonth.bill_after_solar_no_battery > 0
+      ? Math.min(1, flatMonth.bill_after_solar_with_battery / flatMonth.bill_after_solar_no_battery)
+      : 0.82
+
+  const NEM3_EXPORT_RATE = importRate * 0.25
+
+  return MONTH_FULL_LABELS.map((fullLabel, i) => {
+    const kwh = monthlyKwh * normalizedConsWeights[i]
+    const solarProduction = (annualProductionKwh / 12) * normalizedSolarWeights[i]
+    const gridImport = Math.max(0, kwh - solarProduction)
+    const gridExport = Math.max(0, solarProduction - kwh)
+    const beforeCost = kwh * importRate + fixedCharge
+    const afterCostNoBattery = Math.max(
+      fixedCharge,
+      gridImport * importRate - gridExport * NEM3_EXPORT_RATE + fixedCharge,
+    )
+    const afterCostWithBattery = afterCostNoBattery * batteryRatio
+    return {
+      fullLabel,
+      shortLabel: MONTH_SHORT_LABELS[i],
+      kwh: Math.round(kwh),
+      beforeCost,
+      afterCostNoBattery,
+      afterCostWithBattery,
+      savingsNoBattery: Math.max(0, beforeCost - afterCostNoBattery),
+      savingsWithBattery: Math.max(0, beforeCost - afterCostWithBattery),
+    }
+  })
 }
 
 function getAverageImportRate(ratePlan: SolarEstimateRatePlan | null): number {
@@ -1741,6 +1843,121 @@ function CostBreakdownCard({ breakdown }: { breakdown: SolarEstimateCostBreakdow
   )
 }
 
+function SeasonalBillChart({
+  monthlyKwh,
+  solarSizeKw,
+  ratePlan,
+  utility,
+  hasBattery,
+  nemResult,
+  climateProfile,
+}: {
+  monthlyKwh: number
+  solarSizeKw: number
+  ratePlan: RatePlan
+  utility: Utility
+  hasBattery: boolean
+  nemResult: ReturnType<typeof calculateNEM3Savings>
+  climateProfile: ClimateProfile
+}) {
+  const [tooltip, setTooltip] = useState<ChartTooltip | null>(null)
+  const months = getSeasonalBillData(monthlyKwh, solarSizeKw, ratePlan, utility, climateProfile, nemResult)
+  const maxBill = Math.max(1, ...months.map(m => m.beforeCost))
+  const afterFill = hasBattery ? 'rgba(52,211,153,0.82)' : 'rgba(251,191,36,0.82)'
+  const afterSwatch = hasBattery ? 'rgba(52,211,153,0.90)' : 'rgba(251,191,36,0.90)'
+
+  const W = 575; const H = 170; const padL = 30; const padR = 20; const padT = 7; const padB = 16
+  const chartW = W - padL - padR; const chartH = H - padT - padB
+  const monthW = chartW / 12; const barW = Math.floor(monthW * 0.32)
+
+  const yScale = (v: number) => padT + chartH - (v / maxBill) * chartH
+  const baseY = yScale(0)
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xl font-semibold text-slate-100">Monthly bill comparison</p>
+          <p className="text-lg text-slate-400">Before solar vs modeled post-solar</p>
+        </div>
+        <div className="flex gap-4 text-sm text-slate-400">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: 'rgba(100,116,139,0.75)' }} />
+            Before
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: afterSwatch }} />
+            After solar
+          </span>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className="w-full"
+          style={{ minWidth: 320 }}
+          aria-label="Seasonal monthly bill comparison chart"
+        >
+          {[0.25, 0.5, 0.75, 1].map(pct => {
+            const y = yScale(maxBill * pct)
+            return (
+              <g key={pct}>
+                <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="rgba(255,255,255,0.06)" strokeWidth={0.5} />
+                <text x={padL - 4} y={y + 3.5} textAnchor="end" fontSize={7} fill="#475569">
+                  ${Math.round(maxBill * pct)}
+                </text>
+              </g>
+            )
+          })}
+          <line x1={padL} y1={baseY} x2={W - padR} y2={baseY} stroke="rgba(255,255,255,0.09)" strokeWidth={0.5} />
+
+          {months.map((month, i) => {
+            const afterCost = hasBattery ? month.afterCostWithBattery : month.afterCostNoBattery
+            const savings = hasBattery ? month.savingsWithBattery : month.savingsNoBattery
+            const xBase = padL + i * monthW + monthW * 0.08
+            const beforeH = Math.max(1, baseY - yScale(month.beforeCost))
+            const afterH = Math.max(1, baseY - yScale(afterCost))
+            const showTooltip = (event: React.MouseEvent) => {
+              const position = getTooltipPosition(event)
+              setTooltip({
+                ...position,
+                eyebrow: 'Monthly bill',
+                title: month.fullLabel,
+                rows: [
+                  { label: 'Climate profile', value: climateProfile === 'hotDesert' ? 'Hot desert' : 'Default SoCal' },
+                  { label: 'Modeled usage', value: `${formatNumber(month.kwh)} kWh` },
+                  { label: 'Current monthly cost', value: formatMoney(month.beforeCost) },
+                  { label: 'New projected cost', value: formatMoney(afterCost), tone: hasBattery ? 'emerald' : 'amber' },
+                  { label: 'Monthly savings', value: formatMoney(savings), tone: 'cyan' },
+                ],
+              })
+            }
+            return (
+              <g key={month.shortLabel}>
+                <rect x={xBase} y={baseY - beforeH} width={barW} height={beforeH} fill="rgba(100,116,139,0.72)" rx={1} />
+                <rect x={xBase + barW + 1} y={baseY - afterH} width={barW} height={afterH} fill={afterFill} rx={1} />
+                <rect
+                  x={xBase - 3} y={padT} width={barW * 2 + 7} height={chartH}
+                  fill="transparent"
+                  onMouseEnter={showTooltip}
+                  onMouseMove={showTooltip}
+                  onMouseLeave={() => setTooltip(null)}
+                />
+                <text x={xBase + barW} y={H - 5} textAnchor="middle" fontSize={7.5} fill="#475569">
+                  {month.shortLabel}
+                </text>
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+      <ChartHoverCard tooltip={tooltip} />
+      <ChartNote>{CLIMATE_PROFILE_LABEL[climateProfile]}</ChartNote>
+    </div>
+  )
+}
+
 function BillComparisonChart({
   monthlyBreakdown,
   hasBattery,
@@ -2540,6 +2757,7 @@ function SummaryChartModule({
   systemCost,
   utility,
   ratePlan,
+  climateProfile,
 }: {
   nemResult: ReturnType<typeof calculateNEM3Savings>
   hasBattery: boolean
@@ -2550,6 +2768,7 @@ function SummaryChartModule({
   systemCost: number
   utility: Utility
   ratePlan: RatePlan
+  climateProfile: ClimateProfile
 }) {
   const [activeChart, setActiveChart] = useState<ChartTab>('monthly_bill')
 
@@ -2573,7 +2792,15 @@ function SummaryChartModule({
       </div>
       <div className="p-4">
         {activeChart === 'monthly_bill' && (
-          <BillComparisonChart monthlyBreakdown={nemResult.monthly_breakdown} hasBattery={hasBattery} />
+          <SeasonalBillChart
+            monthlyKwh={monthlyKwh}
+            solarSizeKw={solarSizeKw}
+            ratePlan={ratePlan}
+            utility={utility}
+            hasBattery={hasBattery}
+            nemResult={nemResult}
+            climateProfile={climateProfile}
+          />
         )}
         {activeChart === 'energy_flow_24h' && (
           <EnergyFlow24hChart monthlyKwh={monthlyKwh} solarSizeKw={solarSizeKw} hasBattery={hasBattery} ratePlan={ratePlan} />
@@ -2804,6 +3031,7 @@ function EstimateSummaryStep({
     ) / nemResult.monthly_breakdown.length
   const monthlySavings = Math.max(0, avgBeforeBill - avgAfterBill)
   const independence = Math.round(clamp(savings.self_consumption_ratio * 100, 0, 100))
+  const climateProfile = detectClimateProfile(`${data.selectedAddressLabel} ${data.addressText}`)
   const breakerSizeLabel = findLabel(MAIN_BREAKER_SIZE_OPTIONS, data.mainBreakerSize)
   const selectedApplianceLabels = getSelectedApplianceSummaries(data.selectedAppliances)
   const applianceSummary =
@@ -2899,6 +3127,7 @@ function EstimateSummaryStep({
         systemCost={systemCost}
         utility={utility}
         ratePlan={ratePlan}
+        climateProfile={climateProfile}
       />
 
       {/* D. Editable System Controls */}

@@ -1085,3 +1085,44 @@ None. Ready for screenshot QA.
 
 NEXT PHASE READY:
 NO — ready for screenshot QA.
+
+---
+
+## SEASONAL MONTHLY BILL CHART COMPLETION LOG
+
+AGENT:
+Claude Code
+
+COMMIT HASH:
+(pending)
+
+FILES CHANGED:
+- `src/components/solarTraining/SolarEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Make Monthly Bill chart use local seasonal consumption profile
+
+WHAT CHANGED:
+- ClimateProfile type + HOT_DESERT_TERMS + CONSUMPTION_SEASONAL_WEIGHTS + SOLAR_PRODUCTION_SEASONAL_WEIGHTS constants added.
+- detectClimateProfile() — pure keyword match from address text, no API.
+- getSeasonalBillData() — normalizes weights, derives battery ratio from nemResult, produces 12-month data.
+- SeasonalBillChart — new SVG chart component with seasonal data and tooltip (profile, kWh, costs, savings).
+- SummaryChartModule: added climateProfile prop; monthly_bill tab now uses SeasonalBillChart.
+- EstimateSummaryStep: computes climateProfile and passes to SummaryChartModule.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+None. Ready for screenshot QA.
+
+NEXT PHASE READY:
+NO — ready for screenshot QA.
