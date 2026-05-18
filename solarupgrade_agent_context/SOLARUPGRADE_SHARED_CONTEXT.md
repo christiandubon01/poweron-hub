@@ -3848,3 +3848,72 @@ EVR controls aligned with the 8-week timeline pattern. `V15rDashboard.tsx` now u
 **Risks:** None — all removed code was self-contained with no external consumers.
 
 **Next:** No pending MTO polish tasks.
+
+---
+
+## GRAPH DASHBOARD EVR + 8-WEEK TOP-RIGHT CONTROL ALIGNMENT COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final response.
+
+FILES CHANGED:
+- `src/components/v15r/V15rDashboard.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Moved EVR controls into the same row as the EVR chart title, aligned to the top-right of the card.
+- Moved 8-Week Cash Flow Projection controls into the same row as that chart title, aligned to the top-right of the card.
+- Kept each chart's subtitle/helper text below the title/control row so it no longer affects the top-row alignment.
+
+WHAT WAS LEARNED:
+- Both card headers used the same local structure, but the subtitle was bundled inside the left flex item, making the controls visually sit beneath the title block.
+- The fix only needed header structure changes in `V15rDashboard.tsx`; no chart logic, modal wiring, or date-window computation changed.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Use a two-part chart-card header for dense dashboard cards: title/actions row first, helper subtitle row below.
+- Preserve existing action groups and handlers while adjusting only their layout container.
+
+BUGS / RISKS:
+- No data logic or unrelated dashboard UI was intentionally changed.
+- Manual localhost QA should confirm the two button groups remain top-right aligned across the user's actual viewport width.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Manually inspect Graph Dashboard and confirm EVR and 8-week controls are top-right aligned with their titles, subtitles remain readable, and all buttons still work.
+
+NEXT PHASE READY:
+Ready for manual Graph Dashboard QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+EVR and 8-week chart control layout polish complete. In `V15rDashboard.tsx`, both cards now use a title/actions row with the button group on the top-right, followed by the subtitle/helper text below. Existing button handlers, timeline modals, chart data, and date-window logic were unchanged. Typecheck passes.
+
+---
+
+## MTO Polish — Restore In-Bucket Drag Reorder (2026-05-18)
+
+**Commit:** 5e2e17f  fix(material-takeoff): restore in-bucket drag reorder
+
+**Root cause:** The 6-dot handle had cursor:grab styling but zero drag event handlers and no `draggable` attribute. Drag-and-drop was never implemented — only implied by the visual.
+
+**What changed in V15rMTOTab.tsx:**
+- Added `dragRowIdRef` (useRef) to track the currently-dragged row ID
+- Added `dragOverRowId` (useState) for drop-target visual indicator
+- Added `reorderMTORow(dragId, dropId)` — splices dragged row out and inserts at drop position, then calls saveBackupDataAndSync + forceUpdate (order persists)
+- Handle td: added `draggable`, `onDragStart` (sets dragRowIdRef + dataTransfer), `onDragEnd` (clears state)
+- Row tr: added `onDragOver` (preventDefault + setDragOverRowId), `onDrop` (calls reorderMTORow), `onDragLeave` (clears indicator when leaving row bounds); added `borderTop` drop indicator (blue line)
+
+**Typecheck:** clean
+
+**Next:** No pending MTO polish tasks.

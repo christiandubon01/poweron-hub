@@ -1498,3 +1498,22 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
 - Manual QA performed: Static scoped diff review and `npm.cmd run typecheck`; browser click-through remains for the shared localhost app.
 - Next recommended action: On localhost Graph Dashboard, confirm EVR has no header date pickers, Previous Week/Next Week shift the EVR window, Timeline opens the EVR modal, and chart values still reflect the selected project/log window.
 - Compact handoff for next agent/chat: EVR control alignment complete in `V15rDashboard.tsx`. EVR now uses Previous Week, Next Week, and Timeline controls styled like the 8-week chart. The controls update the existing `evrDateStart`/`evrDateEnd` state, and `EVRChart` still receives those props for filtering. Typecheck passes.
+
+---
+
+## Codex Report — Graph Dashboard Polish — move EVR and 8-Week chart controls to top-right aligned with titles
+
+- Task completed: Moved the EVR and 8-Week Cash Flow Projection control groups to the top-right of their chart cards, aligned with the chart titles.
+- Files changed:
+  - `src/components/v15r/V15rDashboard.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final Codex report.
+- Typecheck result: PASS - `npm.cmd run typecheck`
+- What changed: Reworked both card headers into a title/action row plus a separate subtitle row. The existing EVR and 8-week `Previous Week`, `Next Week`, and `Timeline` button groups now sit on the top-right of the title row, while helper text stays below.
+- What was learned: The controls felt low because the subtitle lived inside the left flex block, making the header row align against the full title/subtitle stack instead of the title itself.
+- Learned skills / reusable patterns: Use a dedicated title/actions row for graph cards, then render helper copy underneath to keep controls aligned without risking subtitle collision.
+- Bugs / risks: No behavior, modal wiring, date-window computation, or chart data logic was intentionally changed. Manual localhost QA remains needed for visual alignment at the user's viewport.
+- Manual QA performed: Static scoped diff review and `npm.cmd run typecheck`; browser click-through remains for the shared localhost app.
+- Next recommended action: On localhost Graph Dashboard, confirm EVR and 8-week controls are top-right aligned with their titles, subtitles remain clean, and all buttons still work.
+- Compact handoff for next agent/chat: Header layout polish complete in `V15rDashboard.tsx`. EVR and 8-week cards now have top title/action rows with controls right-aligned and subtitles below. Existing handlers and chart data paths were preserved. Typecheck passes.

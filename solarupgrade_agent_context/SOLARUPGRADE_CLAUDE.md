@@ -1402,3 +1402,25 @@ NO — ready for screenshot QA.
 6. Click-to-select vs drag separation
 7. Restore native drag (revert setPointerCapture anti-pattern)
 8. Remove bulk selector — drag-only handle (this session)
+
+---
+
+## Claude Report — Material Takeoff polish — restore real in-bucket drag reorder for entries
+
+- **Task completed:** Yes
+- **Files changed:** src/components/v15r/V15rMTOTab.tsx
+- **Commit hash:** 5e2e17f
+- **Typecheck result:** Clean (0 errors)
+- **Root cause:** The 6-dot handle `<td>` had `cursor: grab` styling but no `draggable` attribute and no drag event handlers (`onDragStart`, `onDragOver`, `onDrop`). HTML5 drag-and-drop requires `draggable={true}` and explicit event wiring — without it, the browser never initiates a drag gesture. The handle was purely decorative.
+- **What changed:**
+  - Added `dragRowIdRef = useRef<string|null>(null)` to track in-flight drag row ID (no re-render on change)
+  - Added `dragOverRowId` useState for visual drop-target indicator
+  - Added `reorderMTORow(dragId, dropId)`: finds both rows in p.mtoRows by ID, splices dragged row out, inserts at drop index, calls saveBackupDataAndSync + forceUpdate — order persists to localStorage immediately
+  - Handle `<td>`: added `draggable`, `onDragStart` (records dragRowIdRef + sets dataTransfer), `onDragEnd` (clears both state)
+  - Row `<tr>`: added `onDragOver` (preventDefault to allow drop + updates dragOverRowId), `onDrop` (calls reorderMTORow + clears state), `onDragLeave` (clears indicator only when leaving row bounds, not child elements); visual: `borderTop: 2px solid #3b82f6` when row is drop target
+- **What was learned:** HTML5 DnD requires `draggable` attribute on the drag source and explicit `preventDefault` in `onDragOver` to enable drop. Using `e.currentTarget.contains(e.relatedTarget)` prevents flickery `onDragLeave` when the pointer moves over child elements.
+- **Learned skills / reusable patterns:** `dragRowIdRef` (ref not state) = no re-render thrash during drag. `onDragLeave` with `contains` check = stable drop-target indicator. `p.mtoRows` array splice pattern = in-place reorder with single save call.
+- **Bugs / risks:** Cross-phase drag not blocked — if two phases show simultaneously and a row is dragged across phases, reorderMTORow would splice within p.mtoRows (changing position but not phase). Low risk: phases are distinct collapsed sections. If needed, add a phase-match guard in reorderMTORow.
+- **Manual QA performed:** Typecheck verified clean. Visual inspection of code confirms draggable attribute, drop handlers, and persist path are all wired. Runtime QA (localhost drag test) to be confirmed by user.
+- **Next recommended action:** User to manually QA drag reorder in one phase bucket, then add a new row and drag it into position.
+- **Compact handoff for next agent/chat:** Drag reorder is now live in V15rMTOTab.tsx (commit 5e2e17f). Handle td is `draggable`, dragstart sets dragRowIdRef, drop splices p.mtoRows and saves. Drop indicator is a blue borderTop on the target row. Row editing/actions untouched. No open MTO polish tasks remain.
