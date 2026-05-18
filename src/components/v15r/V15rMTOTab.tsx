@@ -254,7 +254,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
       <tr style={{ borderBottom: '1px solid var(--bdr2)' }}>
         <th style={{ width: '20px' }}></th>
         <th style={{ textAlign: 'left', padding: '8px', fontWeight: '600' }}>Item Title</th>
-        <th style={{ textAlign: 'left', padding: '8px', fontWeight: '600', width: '100px' }}>Supplier</th>
+        <th style={{ textAlign: 'left', padding: '8px', fontWeight: '600', width: '150px' }}>Supplier</th>
         <th style={{ textAlign: 'left', padding: '8px', fontWeight: '600', width: '110px' }}>Family</th>
         <th style={{ textAlign: 'right', padding: '8px', fontWeight: '600', width: '60px' }}>Qty</th>
         <th style={{ textAlign: 'left', padding: '8px', fontWeight: '600', width: '60px' }}>Unit</th>
@@ -356,22 +356,9 @@ React.useEffect(() => { forceUpdate() }, [projectId])
         </td>
         {/* Item Title + inline placement/note fields */}
         <td style={{ padding: '8px' }}>
-          {/* Name input + optional Google search button — inline flex row */}
+          {/* Name input with Search and Price Book anchored to the left */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <input
-              type="text"
-              value={r.name || ''}
-              onChange={e => editMTORow(r.id, 'name', e.target.value)}
-              onMouseDown={e => e.stopPropagation()}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--t1)',
-                flex: 1,
-                minWidth: 0,
-                fontSize: '12px',
-              }}
-            />
+            {/* Search — left side, always visible when item has name text and no PB match */}
             {showSearchBtn && (
               <button
                 title="Search this item online"
@@ -402,30 +389,43 @@ React.useEffect(() => { forceUpdate() }, [projectId])
                 Search
               </button>
             )}
-            {/* + Price Book button — visible on hover */}
-            {isRowHovered && (
-              <button
-                title="Add to Price Book"
-                onClick={e => { e.stopPropagation(); openPbModal(r) }}
-                onMouseDown={e => e.stopPropagation()}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '3px',
-                  padding: '2px 6px',
-                  background: 'rgba(16,185,129,0.15)',
-                  border: '1px solid rgba(16,185,129,0.3)',
-                  borderRadius: '3px',
-                  color: '#10b981',
-                  cursor: 'pointer',
-                  fontSize: '10px',
-                  flexShrink: 0,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                + Price Book
-              </button>
-            )}
+            {/* + Price Book — left side, always visible (dimmed when not hovering) */}
+            <button
+              title="Add to Price Book"
+              onClick={e => { e.stopPropagation(); openPbModal(r) }}
+              onMouseDown={e => e.stopPropagation()}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '3px',
+                padding: '2px 6px',
+                background: isRowHovered ? 'rgba(16,185,129,0.15)' : 'transparent',
+                border: isRowHovered ? '1px solid rgba(16,185,129,0.3)' : '1px solid transparent',
+                borderRadius: '3px',
+                color: isRowHovered ? '#10b981' : 'rgba(16,185,129,0.25)',
+                cursor: 'pointer',
+                fontSize: '10px',
+                flexShrink: 0,
+                transition: 'color 0.15s, background 0.15s, border-color 0.15s',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              + Price Book
+            </button>
+            <input
+              type="text"
+              value={r.name || ''}
+              onChange={e => editMTORow(r.id, 'name', e.target.value)}
+              onMouseDown={e => e.stopPropagation()}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--t1)',
+                flex: 1,
+                minWidth: 0,
+                fontSize: '12px',
+              }}
+            />
           </div>
 
           {/* Placement chip / input */}
@@ -625,6 +625,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
                 backgroundColor: 'rgba(6,182,212,0.15)', color: '#22d3ee',
                 border: '1px solid rgba(6,182,212,0.3)', fontSize: '10px',
                 fontWeight: '500', cursor: 'pointer', lineHeight: '1.5',
+                maxWidth: '160px', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
               }}
             >
               {localSupplierNoteVal}
@@ -664,7 +665,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
                 background: 'rgba(255,255,255,0.06)',
                 border: '1px solid rgba(6,182,212,0.35)',
                 borderRadius: '9999px', color: '#22d3ee',
-                fontSize: '10px', padding: '2px 8px', width: '90px', outline: 'none',
+                fontSize: '10px', padding: '2px 8px', width: '130px', outline: 'none',
               }}
             />
           ) : pbSupplierSrc ? (
