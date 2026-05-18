@@ -24,14 +24,6 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
     setCollapsedPhases(loadInnerProjectViewPrefs(projectId).mto?.collapsedPhases || {})
   }, [projectId])
 
-  // ── Multi-select state ──────────────────────────────────────────────
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-
-  // ── Bulk assign state ───────────────────────────────────────────────
-  const [bulkPlacement, setBulkPlacement] = useState('')
-  const [showConfirm, setShowConfirm] = useState(false)
-  const [pendingBulkPlacement, setPendingBulkPlacement] = useState('')
-
   // ── Placement local state (Bugs 1+2+3) ─────────────────────────────
   // localPlacements holds per-row typed value before onBlur / Enter commit.
   // onChange updates ONLY this local state — no data write, no grouping re-trigger.
@@ -47,11 +39,6 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   // ── Auto-focus refs for new row quick-entry ───────────────────────
   const newMTORowIdRef = useRef<string | null>(null)
   const mtoNameInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
-
-  // ── Drag-vs-click state for handle ────────────────────────────────
-  // Pointer must move more than this to be treated as a drag (not a click).
-  const DRAG_THRESHOLD_PX = 6
-  const dragState = useRef<{ rowId: string; startX: number; startY: number; dragged: boolean } | null>(null)
 
   // ── Inline edit state for chip-to-input transform ─────────────────
   const [editingPlacementId, setEditingPlacementId] = useState<string | null>(null)
@@ -127,7 +114,6 @@ React.useEffect(() => { forceUpdate() }, [projectId])
   const delMTORow = (rowId: string) => {
     pushState()
     p.mtoRows = (p.mtoRows || []).filter(r => r.id !== rowId)
-    setSelectedIds(prev => { const n = new Set(prev); n.delete(rowId); return n })
     // Clean up local state for the deleted row
     setLocalPlacements(prev => { const n = { ...prev }; delete n[rowId]; return n })
     setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[rowId]; return n })
@@ -207,8 +193,6 @@ React.useEffect(() => { forceUpdate() }, [projectId])
 
   // ── Derived flags ───────────────────────────────────────────────────
   const hasAnyRows = allRows.length > 0
-  // existingPlacements used only for bulk-assign datalist — placement is informational, not a grouping key
-  const existingPlacements: string[] = [...new Set(allRows.map(r => r.placement).filter(Boolean))]
 
   const togglePhaseBucket = (phase: string) => {
     setCollapsedPhases(prev => {
@@ -221,56 +205,6 @@ React.useEffect(() => { forceUpdate() }, [projectId])
   }
 
   const formatItemCount = (count: number) => `${count} ${count === 1 ? 'item' : 'items'}`
-
-  // ── Selection helpers (mouse click-vs-drag separation) ─────────────
-  // mousedown: record start position. mouseup: toggle selection only when
-  // mouse did not move past the drag threshold. Uses mouse events (not pointer
-  // events) so native browser drag is never captured or blocked.
-  const handleHandleMouseDown = (e: React.MouseEvent, rowId: string) => {
-    if (e.button !== 0) return
-    e.stopPropagation()
-    dragState.current = { rowId, startX: e.clientX, startY: e.clientY, dragged: false }
-  }
-
-  const handleHandleMouseUp = (e: React.MouseEvent, rowId: string) => {
-    if (!dragState.current || dragState.current.rowId !== rowId) return
-    const ds = dragState.current
-    dragState.current = null
-    const dx = e.clientX - ds.startX
-    const dy = e.clientY - ds.startY
-    if (Math.abs(dx) <= DRAG_THRESHOLD_PX && Math.abs(dy) <= DRAG_THRESHOLD_PX) {
-      // Clean click — toggle selection
-      setSelectedIds(prev => {
-        const n = new Set(prev)
-        if (n.has(rowId)) n.delete(rowId)
-        else n.add(rowId)
-        return n
-      })
-    }
-    // If moved beyond threshold: was a drag — no selection toggle
-  }
-
-  // ── Bulk assign ─────────────────────────────────────────────────────
-  const applyBulkAssign = () => {
-    if (selectedIds.size >= 2) {
-      setPendingBulkPlacement(bulkPlacement)
-      setShowConfirm(true)
-    } else {
-      doApplyBulk(bulkPlacement)
-    }
-  }
-
-  const doApplyBulk = (placement: string) => {
-    pushState()
-    ;(p.mtoRows || []).forEach(r => {
-      if (selectedIds.has(r.id)) r.placement = placement
-    })
-    saveBackupDataAndSync(backup, 'projects')
-    setSelectedIds(new Set())
-    setBulkPlacement('')
-    setShowConfirm(false)
-    forceUpdate()
-  }
 
   // ── Sub-renderers ───────────────────────────────────────────────────
   const renderTableHead = () => (
@@ -300,7 +234,6 @@ React.useEffect(() => { forceUpdate() }, [projectId])
     const markupPct = num(backup.settings?.markup || 0) / 100
     const sellPrice = cu * (1 + markupPct)
     const lt = num(r.qty || 0) * sellPrice * (1 + waste)
-    const isSelected = selectedIds.has(r.id)
     // Project-only supplier note (inline editable, project-scoped only)
     const localSupplierNoteVal = localSupplierNotes[r.id] !== undefined
       ? localSupplierNotes[r.id]
@@ -355,17 +288,12 @@ React.useEffect(() => { forceUpdate() }, [projectId])
         style={{
           borderBottom: '1px solid var(--bdr2)',
           userSelect: 'none',
-          backgroundColor: isSelected ? 'rgba(59,130,246,0.08)' : 'transparent',
-          borderLeft: isSelected ? '3px solid #3b82f6' : '3px solid transparent',
           cursor: 'default',
-          transition: 'background-color 0.1s, border-left-color 0.1s',
         }}
       >
-        {/* Handle — mousedown records start; mouseup toggles selection on clean click */}
+        {/* Handle — drag to reorder */}
         <td
-          onMouseDown={e => handleHandleMouseDown(e, r.id)}
-          onMouseUp={e => handleHandleMouseUp(e, r.id)}
-          title="Click to select; hold and drag to move"
+          title="Drag to move"
           style={{
             padding: '8px 4px',
             width: '20px',
@@ -1078,157 +1006,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
           </div>
         )}
 
-        {/* FLOATING ACTION BAR — visible when ≥1 row selected */}
-        {selectedIds.size > 0 && (
-          <div
-            style={{
-              position: 'sticky',
-              top: '0',
-              zIndex: 20,
-              backgroundColor: '#2d3148',
-              border: '1px solid rgba(99,102,241,0.5)',
-              borderRadius: '8px',
-              padding: '10px 14px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              flexWrap: 'wrap',
-              marginBottom: '12px',
-              boxShadow: '0 4px 14px rgba(0,0,0,0.45)',
-            }}
-          >
-            <span style={{ color: '#a5b4fc', fontSize: '12px', fontWeight: '600', whiteSpace: 'nowrap' }}>
-              {selectedIds.size} {selectedIds.size === 1 ? 'item' : 'items'} selected
-            </span>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, flexWrap: 'wrap' }}>
-              <span style={{ color: 'var(--t3)', fontSize: '11px', whiteSpace: 'nowrap' }}>
-                Assign to placement:
-              </span>
-              <input
-                list="mto-placement-options"
-                value={bulkPlacement}
-                onChange={e => setBulkPlacement(e.target.value)}
-                placeholder="Type or select…"
-                style={{
-                  background: 'rgba(255,255,255,0.08)',
-                  border: '1px solid rgba(255,255,255,0.15)',
-                  borderRadius: '4px',
-                  color: 'var(--t1)',
-                  fontSize: '12px',
-                  padding: '4px 8px',
-                  minWidth: '140px',
-                }}
-              />
-              <datalist id="mto-placement-options">
-                {existingPlacements.map(pl => (
-                  <option key={pl} value={pl} />
-                ))}
-              </datalist>
-              {/* UX Fix: renamed from "Apply" to "Move to Placement →" for clarity */}
-              <button
-                onClick={applyBulkAssign}
-                style={{
-                  padding: '4px 12px',
-                  backgroundColor: 'rgba(99,102,241,0.3)',
-                  color: '#a5b4fc',
-                  border: '1px solid rgba(99,102,241,0.4)',
-                  borderRadius: '4px',
-                  fontSize: '12px',
-                  fontWeight: '600',
-                  cursor: 'pointer',
-                }}
-              >
-                Move to Placement →
-              </button>
-            </div>
-
-            <button
-              onClick={() => { setSelectedIds(new Set()); setBulkPlacement('') }}
-              style={{
-                padding: '4px 10px',
-                background: 'none',
-                border: '1px solid rgba(255,255,255,0.15)',
-                color: 'var(--t3)',
-                borderRadius: '4px',
-                fontSize: '11px',
-                cursor: 'pointer',
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        )}
-
-        {/* CONFIRMATION DIALOG — 2+ items bulk assign */}
-        {showConfirm && (
-          <div
-            style={{
-              position: 'fixed',
-              top: 0, left: 0, right: 0, bottom: 0,
-              backgroundColor: 'rgba(0,0,0,0.65)',
-              zIndex: 50,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-            onClick={e => { if (e.target === e.currentTarget) { setShowConfirm(false); setPendingBulkPlacement('') } }}
-          >
-            <div
-              style={{
-                backgroundColor: '#2d3148',
-                borderRadius: '10px',
-                padding: '24px',
-                maxWidth: '360px',
-                width: '90%',
-                border: '1px solid rgba(255,255,255,0.1)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.55)',
-              }}
-            >
-              <p style={{ color: 'var(--t1)', fontSize: '14px', margin: '0 0 20px 0', lineHeight: '1.5' }}>
-                You're moving{' '}
-                <strong style={{ color: '#a5b4fc' }}>{selectedIds.size} items</strong> to{' '}
-                <strong style={{ color: '#86efac' }}>
-                  {pendingBulkPlacement || '(unassigned)'}
-                </strong>
-                . Are you sure?
-              </p>
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                <button
-                  onClick={() => { setShowConfirm(false); setPendingBulkPlacement('') }}
-                  style={{
-                    padding: '8px 16px',
-                    background: 'none',
-                    border: '1px solid rgba(255,255,255,0.2)',
-                    color: 'var(--t2)',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '13px',
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => doApplyBulk(pendingBulkPlacement)}
-                  style={{
-                    padding: '8px 16px',
-                    backgroundColor: 'rgba(99,102,241,0.3)',
-                    color: '#a5b4fc',
-                    border: '1px solid rgba(99,102,241,0.4)',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '13px',
-                    fontWeight: '600',
-                  }}
-                >
-                  Confirm
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-                {/* MAIN CONTENT — always phase view; placement is informational only */}
+        {/* MAIN CONTENT — always phase view; placement is informational only */}
         {renderPhaseGroups()}
 
         {/* EXPORT BUTTONS ROW */}
