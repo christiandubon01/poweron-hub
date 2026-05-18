@@ -1296,3 +1296,29 @@ NO — ready for screenshot QA.
 - Manual QA performed: Typecheck only (no browser access in this session).
 - Next recommended action: Open MTO in browser - confirm Search and Price Book appear on left of item names, confirm Price Book visible on all rows at rest (dimmed), confirm supplier chip stays horizontal for typical supplier names.
 - Compact handoff for next agent/chat: MTO row action layout fixed. Search and Price Book now left of item name. Price Book always visible (dimmed at rest, bright on hover). Supplier column 150px, input 130px, chip ellipsis at 160px. Typecheck passes. Commit: d5cb488.
+
+---
+
+## Claude Report - Material Takeoff polish - right-side always-visible row actions + estimate-style inline entry editing
+
+- Task completed: YES
+- Files changed: src/components/v15r/V15rMTOTab.tsx, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+- Commit hash: 9577bd6
+- Typecheck result: PASS - zero errors
+- Root cause:
+  - Actions on wrong side: Previous session moved Search/PriceBook into the Item Title cell on the left. This task moves them out to a dedicated right-side actions column.
+  - No auto-focus: addMTORow did not store the new row id or attempt to focus it. The labor-row pattern uses newLaborRowIdRef + laborTextareaRefs + requestAnimationFrame.
+  - Delete was a standalone narrow column; replaced with a combined 3-button actions td.
+- What changed:
+  - newMTORowIdRef + mtoNameInputRefs refs added.
+  - addMTORow: name starts empty, id stored in ref, requestAnimationFrame focuses name input.
+  - Name input: ref attached, Enter blurs to confirm, placeholder on newest row.
+  - Search and Price Book removed from Item Title cell.
+  - Delete td replaced with right-side actions td: [+PB] [Search] [Delete], always visible.
+  - Actions column header widened 40px to 110px.
+- What was learned: The labor-row pattern (newRowIdRef + inputRefs + requestAnimationFrame) is the correct reusable focus pattern. requestAnimationFrame is needed because the DOM renders after forceUpdate.
+- Learned skills / reusable patterns: requestAnimationFrame focus pattern: store new id in ref, call forceUpdate, then rAF to focus via inputRefs map. Directly reusable for any add-row quick-entry flow.
+- Bugs / risks: newMTORowIdRef is only set on addMTORow, so the placeholder only shows for the most recently added row. This is intentional. The ref is never cleared so after reload all rows show no placeholder (acceptable).
+- Manual QA performed: Typecheck only (no browser access in this session).
+- Next recommended action: Open MTO, click Add Item, confirm cursor lands in empty name field, type a name, press Enter. Confirm Price Book / Search / Delete visible on right side of every row without hover.
+- Compact handoff for next agent/chat: MTO row actions right-side always-visible. Item Title cell is clean name input only. addMTORow auto-focuses new row. Enter to confirm. Actions column: [+PB | Search-icon | x], always visible. Matches Estimate labor-row pattern. Typecheck passes. Commit: 9577bd6.

@@ -3566,3 +3566,41 @@ Ready for manual Graph Dashboard QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Graph Dashboard EVR/timeline polish complete. EVR now uses project introduction date metadata (`created` first, then date fallbacks), sorts displayed points by that date, shows date labels on the x-axis, and includes the date in tooltip detail. The 8-week chart has a timeline modal; changing the anchor date calls `query8WeekCashFlow(anchorDate)` and rebuckets project payments/logs plus active service/service-log records. Service actuals still use Field Log Total Billable. Typecheck passes.
+
+---
+
+## MTO RIGHT-SIDE ACTIONS + QUICK-ENTRY INLINE EDIT COMPLETION LOG
+
+AGENT:
+Claude Code Sonnet 4.5 Medium
+
+COMMIT HASH:
+9577bd6
+
+FILES CHANGED:
+- src/components/v15r/V15rMTOTab.tsx
+- solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+- solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+
+WHAT CHANGED:
+- Added newMTORowIdRef and mtoNameInputRefs refs for auto-focus.
+- addMTORow: empty name, stores id in ref, requestAnimationFrame focuses the new row name input.
+- Name input: ref attached, Enter key blurs to confirm, placeholder shows "Item name..." only for the newest row.
+- Removed Search and Price Book buttons from the Item Title cell flex row.
+- Replaced single Delete td with a combined right-side actions td: [+PB] [Search icon] [x Delete], always visible.
+- Actions column header widened from 40px to 110px.
+- Pattern matches Estimate labor-row: add row -> immediate focus -> type -> Enter confirms.
+
+ROOT CAUSE:
+- Search/PriceBook were previously moved to the left of the item name in the item title cell. This task moves them to the right-side actions column.
+- No auto-focus existed on addMTORow; new rows defaulted to name "New item" with no focus.
+- Delete was a single icon in a narrow column; now replaced with 3 always-visible action buttons.
+
+TYPECHECK RESULT:
+PASS - zero errors
+
+NEXT PHASE READY:
+Ready for manual MTO QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+MTO row actions are now on the right side in a combined td: [+PB | Search | Delete], all always visible. Item Title cell contains only the name input. addMTORow focuses the new row name input via requestAnimationFrame. Enter on name input blurs to confirm. Matches Estimate labor-row quick-entry pattern. Typecheck passes. Commit: 9577bd6.
