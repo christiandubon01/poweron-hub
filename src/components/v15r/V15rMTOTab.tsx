@@ -40,6 +40,10 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const newMTORowIdRef = useRef<string | null>(null)
   const mtoNameInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
+  // ── Drag-reorder state ────────────────────────────────────────────
+  const dragRowIdRef = useRef<string | null>(null)
+  const [dragOverRowId, setDragOverRowId] = useState<string | null>(null)
+
   // ── Inline edit state for chip-to-input transform ─────────────────
   const [editingPlacementId, setEditingPlacementId] = useState<string | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
@@ -117,6 +121,20 @@ React.useEffect(() => { forceUpdate() }, [projectId])
     // Clean up local state for the deleted row
     setLocalPlacements(prev => { const n = { ...prev }; delete n[rowId]; return n })
     setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[rowId]; return n })
+    saveBackupDataAndSync(backup, 'projects')
+    forceUpdate()
+  }
+
+  const reorderMTORow = (dragId: string, dropId: string) => {
+    if (dragId === dropId) return
+    pushState()
+    const rows: any[] = p.mtoRows || []
+    const dragIdx = rows.findIndex((r: any) => r.id === dragId)
+    const dropIdx = rows.findIndex((r: any) => r.id === dropId)
+    if (dragIdx === -1 || dropIdx === -1) return
+    const [dragged] = rows.splice(dragIdx, 1)
+    rows.splice(dropIdx, 0, dragged)
+    p.mtoRows = rows
     saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
   }
@@ -285,15 +303,37 @@ React.useEffect(() => { forceUpdate() }, [projectId])
         key={r.id}
         onMouseEnter={() => setHoveredRowId(r.id)}
         onMouseLeave={() => setHoveredRowId(null)}
+        onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverRowId(r.id) }}
+        onDrop={e => {
+          e.preventDefault()
+          const fromId = dragRowIdRef.current
+          if (fromId && fromId !== r.id) reorderMTORow(fromId, r.id)
+          setDragOverRowId(null)
+        }}
+        onDragLeave={e => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverRowId(null)
+        }}
         style={{
           borderBottom: '1px solid var(--bdr2)',
           userSelect: 'none',
           cursor: 'default',
+          borderTop: dragOverRowId === r.id ? '2px solid #3b82f6' : '2px solid transparent',
+          transition: 'border-top-color 0.08s',
         }}
       >
-        {/* Handle — drag to reorder */}
+        {/* Handle — draggable; drag-and-drop to reorder within phase */}
         <td
-          title="Drag to move"
+          draggable
+          onDragStart={e => {
+            dragRowIdRef.current = r.id
+            e.dataTransfer.effectAllowed = 'move'
+            e.dataTransfer.setData('text/plain', r.id)
+          }}
+          onDragEnd={() => {
+            dragRowIdRef.current = null
+            setDragOverRowId(null)
+          }}
+          title="Drag to reorder"
           style={{
             padding: '8px 4px',
             width: '20px',
