@@ -1460,3 +1460,22 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
 - Manual QA performed: Static render-path verification, local HTTP response check for `localhost:5173`, and `npm.cmd run typecheck`.
 - Next recommended action: In localhost Graph Dashboard, confirm `Previous Week`, `Next Week`, and `Timeline` sit together, visually match EVR controls, shift the 8-week chart by one week, and keep the modal opening correctly.
 - Compact handoff for next agent/chat: 8-week controls polished. `V15rDashboard.tsx` now has `Previous Week`, `Next Week`, and `Timeline` in the 8-week header using EVR's control classes. Prev/Next shift `cashFlowAnchorDate` by one week, preserving the existing rebucketing through `query8WeekCashFlow(anchorDate)`. Typecheck passes; manual localhost QA remains.
+
+---
+
+## Codex Report — Graph Dashboard Polish — refine 8-Week Cash Flow Projection controls and fix blue helper text
+
+- Task completed: Polished the 8-Week Cash Flow Projection header controls and cleaned up the misplaced blue helper text.
+- Files changed:
+  - `src/components/v15r/V15rDashboard.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final Codex report.
+- Typecheck result: PASS - `npm.cmd run typecheck`
+- What changed: Grouped `Previous Week`, `Next Week`, and `Timeline` into a compact equal-width control set, merged the active window label into the normal gray chart subtitle, and moved the baseline projection helper from an absolute blue overlay inside the chart to a muted caption below the plot.
+- What was learned: The visual unevenness came from loose sibling buttons with small default padding, while the blue helper was presentation-only and could be repositioned without touching chart data logic.
+- Learned skills / reusable patterns: Use a grouped control wrapper for related chart actions, and keep helper/caption text outside chart plot areas when it can overlap axis labels.
+- Bugs / risks: No chart data/query/window behavior was intentionally changed. Manual localhost QA remains needed for final visual judgment.
+- Manual QA performed: Static scoped diff review and `npm.cmd run typecheck`; browser click-through remains for the shared localhost app.
+- Next recommended action: Open Graph Dashboard on localhost and verify the controls look balanced, prev/next still shift by one week, Timeline still opens the modal, and the helper caption no longer overlaps chart labels.
+- Compact handoff for next agent/chat: 8-week cash-flow UI polish complete in `V15rDashboard.tsx`. The header actions are now equal-width grouped controls, the selected window is part of the gray subtitle, and the baseline helper is a subdued below-chart caption. No data logic changed. Typecheck passes.

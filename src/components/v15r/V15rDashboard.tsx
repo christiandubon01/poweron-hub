@@ -1229,33 +1229,36 @@ function V15rDashboardInner() {
 
           {/* 8-Week Cash Flow Projection */}
           <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
-            <div className="mb-4 flex items-start justify-between gap-3 flex-wrap">
-              <div>
+            <div className="mb-4 flex items-start justify-between gap-4 flex-wrap">
+              <div className="min-w-[240px]">
                 <h3 className="text-lg font-bold text-gray-100">8-Week Cash Flow Projection</h3>
-                <p className="text-[10px] text-blue-300/80 mt-1">Window: {cashFlowWindowLabel}</p>
-              <p className="text-xs text-gray-400 italic mt-0.5">Projected payments (outline) vs collected (filled) · Coral dot = overlap window</p>
-            </div>
-              <button
-                type="button"
-                onClick={() => shiftCashFlowAnchor(-7)}
-                className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
-              >
-                Previous Week
-              </button>
-              <button
-                type="button"
-                onClick={() => shiftCashFlowAnchor(7)}
-                className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
-              >
-                Next Week
-              </button>
-              <button
-                type="button"
-                onClick={() => setCashFlowTimelineOpen(true)}
-                className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
-              >
-                Timeline
-              </button>
+                <p className="mt-1 text-xs text-gray-400 italic">
+                  {cashFlowWindowLabel} / Projected payments (outline) vs collected (filled) / Coral dot = overlap window
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-1.5 rounded-md border border-gray-700 bg-[var(--bg-input)] p-1">
+                <button
+                  type="button"
+                  onClick={() => shiftCashFlowAnchor(-7)}
+                  className="h-7 min-w-[96px] rounded border border-gray-600 px-3 text-xs font-semibold text-[var(--text-primary)] outline-none transition-colors hover:border-blue-500/70 hover:bg-gray-800/70 focus:border-blue-500"
+                >
+                  Previous Week
+                </button>
+                <button
+                  type="button"
+                  onClick={() => shiftCashFlowAnchor(7)}
+                  className="h-7 min-w-[96px] rounded border border-gray-600 px-3 text-xs font-semibold text-[var(--text-primary)] outline-none transition-colors hover:border-blue-500/70 hover:bg-gray-800/70 focus:border-blue-500"
+                >
+                  Next Week
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCashFlowTimelineOpen(true)}
+                  className="h-7 min-w-[96px] rounded border border-gray-600 px-3 text-xs font-semibold text-[var(--text-primary)] outline-none transition-colors hover:border-blue-500/70 hover:bg-gray-800/70 focus:border-blue-500"
+                >
+                  Timeline
+                </button>
+              </div>
             </div>
             {(() => {
               // FIX 3: Always show 8-week chart — if projected is all-zero, inject baseline from avg weekly collection
@@ -1301,14 +1304,16 @@ function V15rDashboardInner() {
                 )
               }
               return (
-                <div className="relative w-full" style={{ height: '300px' }}>
-                  <CashFlowProjectionChart weekBuckets={augmented} overlapWindows={overlapWindows} />
+                <>
+                  <div className="relative w-full" style={{ height: '300px' }}>
+                    <CashFlowProjectionChart weekBuckets={augmented} overlapWindows={overlapWindows} />
+                  </div>
                   {avgWeeklyRate > 0 && !weekBuckets.some((b: any) => (b.projected || 0) > 0) && (
-                    <div className="absolute bottom-6 left-0 right-0 text-center text-[10px] text-blue-400">
-                      Dashed bars = baseline projection from avg ${Math.round(avgWeeklyRate).toLocaleString()}/week (last 4 weeks)
-                    </div>
+                    <p className="mt-2 text-center text-[10px] text-gray-500">
+                      Baseline projection uses avg ${Math.round(avgWeeklyRate).toLocaleString()}/week from the last 4 visible weeks.
+                    </p>
                   )}
-                </div>
+                </>
               )
             })()}
           </div>

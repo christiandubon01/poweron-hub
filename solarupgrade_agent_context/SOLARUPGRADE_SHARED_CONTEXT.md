@@ -3690,3 +3690,53 @@ Ready for manual MTO QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 MTO drag handle now uses pointer events. Click-and-release selects. Click-hold-drag does not toggle selection. DRAG_THRESHOLD_PX = 6. dragState ref tracks start position and dragged flag per press. setPointerCapture keeps events routed to the handle during drag. Multi-select still works. Typecheck passes. Commit: cd94433.
+
+---
+
+## GRAPH DASHBOARD 8-WEEK CONTROLS LAYOUT POLISH COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final response.
+
+FILES CHANGED:
+- `src/components/v15r/V15rDashboard.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Refined the 8-Week Cash Flow Projection header so `Previous Week`, `Next Week`, and `Timeline` sit in a compact, equal-width control group.
+- Folded the selected 8-week window into the normal gray subtitle line instead of a separate blue helper line.
+- Moved the baseline projection helper out of the chart overlay and into a subdued caption below the plot area so it no longer crowds the lower labels.
+
+WHAT WAS LEARNED:
+- The uneven header was caused by three free-standing buttons beside the title block.
+- The blue helper text was presentation-only, not data logic; the chart behavior and existing anchor/window computation did not need changes.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Keep dashboard chart controls visually balanced by grouping related actions in a shared control wrapper with consistent button heights and widths.
+- Keep chart helper captions outside the SVG plot area when they risk overlapping labels.
+
+BUGS / RISKS:
+- No chart data logic was intentionally changed.
+- Manual browser QA is still needed in the shared localhost app to judge the final visual spacing.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Manually inspect Graph Dashboard on localhost and confirm the 8-week controls are balanced, the timeline button still opens the modal, prev/next still shift the window, and the baseline caption no longer overlaps chart labels.
+
+NEXT PHASE READY:
+Ready for manual Graph Dashboard QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+8-week cash-flow layout polish complete. `V15rDashboard.tsx` only changed presentation for the 8-week chart: grouped equal-width Previous/Next/Timeline controls, merged the window label into the gray subtitle, and moved the baseline projection note below the chart as muted caption text. No data/query/window logic changed. Typecheck passes.
