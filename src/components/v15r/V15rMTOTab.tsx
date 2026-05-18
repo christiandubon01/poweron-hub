@@ -222,30 +222,23 @@ React.useEffect(() => { forceUpdate() }, [projectId])
 
   const formatItemCount = (count: number) => `${count} ${count === 1 ? 'item' : 'items'}`
 
-  // ── Selection helpers (pointer-based click-vs-drag separation) ─────
-  // pointerdown: record start; pointermove: flag drag if threshold crossed;
-  // pointerup: toggle selection only if the pointer never crossed the threshold.
-  const handleHandlePointerDown = (e: React.PointerEvent, rowId: string) => {
+  // ── Selection helpers (mouse click-vs-drag separation) ─────────────
+  // mousedown: record start position. mouseup: toggle selection only when
+  // mouse did not move past the drag threshold. Uses mouse events (not pointer
+  // events) so native browser drag is never captured or blocked.
+  const handleHandleMouseDown = (e: React.MouseEvent, rowId: string) => {
     if (e.button !== 0) return
     e.stopPropagation()
     dragState.current = { rowId, startX: e.clientX, startY: e.clientY, dragged: false }
-    ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
   }
 
-  const handleHandlePointerMove = (e: React.PointerEvent) => {
-    if (!dragState.current || dragState.current.dragged) return
-    const dx = e.clientX - dragState.current.startX
-    const dy = e.clientY - dragState.current.startY
-    if (Math.abs(dx) > DRAG_THRESHOLD_PX || Math.abs(dy) > DRAG_THRESHOLD_PX) {
-      dragState.current.dragged = true
-    }
-  }
-
-  const handleHandlePointerUp = (e: React.PointerEvent) => {
-    if (!dragState.current) return
-    const { rowId, dragged } = dragState.current
+  const handleHandleMouseUp = (e: React.MouseEvent, rowId: string) => {
+    if (!dragState.current || dragState.current.rowId !== rowId) return
+    const ds = dragState.current
     dragState.current = null
-    if (!dragged) {
+    const dx = e.clientX - ds.startX
+    const dy = e.clientY - ds.startY
+    if (Math.abs(dx) <= DRAG_THRESHOLD_PX && Math.abs(dy) <= DRAG_THRESHOLD_PX) {
       // Clean click — toggle selection
       setSelectedIds(prev => {
         const n = new Set(prev)
@@ -254,11 +247,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
         return n
       })
     }
-    // If dragged: pointer moved before release — no selection toggle
-  }
-
-  const handleHandlePointerCancel = () => {
-    dragState.current = null
+    // If moved beyond threshold: was a drag — no selection toggle
   }
 
   // ── Bulk assign ─────────────────────────────────────────────────────
@@ -372,12 +361,10 @@ React.useEffect(() => { forceUpdate() }, [projectId])
           transition: 'background-color 0.1s, border-left-color 0.1s',
         }}
       >
-        {/* Handle — click to select, click-hold-drag for drag intent */}
+        {/* Handle — mousedown records start; mouseup toggles selection on clean click */}
         <td
-          onPointerDown={e => handleHandlePointerDown(e, r.id)}
-          onPointerMove={handleHandlePointerMove}
-          onPointerUp={handleHandlePointerUp}
-          onPointerCancel={handleHandlePointerCancel}
+          onMouseDown={e => handleHandleMouseDown(e, r.id)}
+          onMouseUp={e => handleHandleMouseUp(e, r.id)}
           title="Click to select; hold and drag to move"
           style={{
             padding: '8px 4px',
@@ -388,7 +375,6 @@ React.useEffect(() => { forceUpdate() }, [projectId])
             fontSize: '14px',
             lineHeight: '1',
             userSelect: 'none',
-            touchAction: 'none',
           }}
         >
           ⋮⋮
