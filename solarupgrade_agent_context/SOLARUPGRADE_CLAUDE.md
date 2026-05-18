@@ -1271,3 +1271,28 @@ NO — ready for screenshot QA.
 - Manual QA performed: Typecheck only (no browser access in this session).
 - Next recommended action: Open MTO in browser - add a placement chip to an item, confirm no new bucket/section appears, confirm phase groups remain, confirm placement chip still renders on the item.
 - Compact handoff for next agent/chat: Placement is now informational only in V15rMTOTab.tsx. hasAnyPlacement removed; renderPhaseGroups() always used. Placement chips still show on items. renderPlacementGroups() is dead code (still in file). existingPlacements kept for bulk-assign datalist. Typecheck passes. Commit: 935bf94.
+
+---
+
+## Claude Report - Material Takeoff polish - move search/price book left, fix price book visibility, widen supplier labels
+
+- Task completed: YES
+- Files changed: src/components/v15r/V15rMTOTab.tsx, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+- Commit hash: d5cb488
+- Typecheck result: PASS - zero errors
+- Root cause:
+  - Search/Price Book position: Both buttons were JSX children AFTER the name input in the flex row, placing them on the right. Reordering the JSX children to appear before the input moves them to the left.
+  - Price Book inconsistency: The Price Book button was wrapped in {isRowHovered && ...}, hiding it entirely unless the mouse was over that exact row. Changed to always render with opacity/color controlled by isRowHovered.
+  - Narrow supplier labels: Supplier column header was 100px; chip input was 90px. Both too narrow for 20-char names.
+- What changed:
+  - Search and Price Book moved before name input in flex row.
+  - Price Book render gate removed; hover state now controls opacity/color only.
+  - Supplier column header width 100px to 150px.
+  - Supplier chip input width 90px to 130px.
+  - Supplier chip span gets maxWidth 160px + overflow:hidden + text-overflow:ellipsis.
+- What was learned: JSX child order in a flex row directly controls left/right visual position. Conditional render vs conditional style is the difference between always-accessible and hover-only controls.
+- Learned skills / reusable patterns: Use conditional style (color/background/border) rather than conditional render for actions that should always be accessible but visually de-emphasized at rest.
+- Bugs / risks: None introduced. Price Book modal behavior unchanged.
+- Manual QA performed: Typecheck only (no browser access in this session).
+- Next recommended action: Open MTO in browser - confirm Search and Price Book appear on left of item names, confirm Price Book visible on all rows at rest (dimmed), confirm supplier chip stays horizontal for typical supplier names.
+- Compact handoff for next agent/chat: MTO row action layout fixed. Search and Price Book now left of item name. Price Book always visible (dimmed at rest, bright on hover). Supplier column 150px, input 130px, chip ellipsis at 160px. Typecheck passes. Commit: d5cb488.

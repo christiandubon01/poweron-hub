@@ -3474,3 +3474,39 @@ Ready for manual Graph Dashboard QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 8-week service-call actuals fixed. Root cause: `get8WeekCashFlow()` used service `paymentsCollected || collected` for actual buckets, while Field Log Service Log displays Total Billable as `quoted + income adjustments`. Fix: added a helper mirroring Field Log's billable calculation and used it for service actual buckets only; project actuals unchanged. Hover copy now says service-log Total Billable. Typecheck passes. Manual localhost browser QA remains.
+
+---
+
+## MTO ROW ACTIONS + SUPPLIER LABEL POLISH COMPLETION LOG
+
+AGENT:
+Claude Code Sonnet 4.5 Medium
+
+COMMIT HASH:
+d5cb488
+
+FILES CHANGED:
+- src/components/v15r/V15rMTOTab.tsx
+- solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+- solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+
+WHAT CHANGED:
+- Moved Search and Price Book buttons to the LEFT side of the item name input.
+- Price Book button is now always visible for all rows (dimmed/transparent when not hovering, bright/bordered on hover). Removed the isRowHovered gate that hid it entirely.
+- Supplier column header width increased from 100px to 150px.
+- Supplier chip input width increased from 90px to 130px.
+- Supplier chip span gets maxWidth: 160px with overflow hidden and text-overflow ellipsis so long names clip cleanly.
+
+ROOT CAUSE:
+- Search and Price Book were appended after the input in the flex row (right side). Moved before the input (left side) by reordering JSX.
+- Price Book was gated on isRowHovered so it only appeared on mouseover; changed to always render with fade-in hover transition.
+- Supplier column was 100px wide, too narrow for 20-char names; widened to 150px.
+
+TYPECHECK RESULT:
+PASS - zero errors
+
+NEXT PHASE READY:
+Ready for manual MTO QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+MTO row actions and supplier label polish done. Search and Price Book now on left of item name. Price Book visible on all rows (dimmed when not hovered). Supplier column 150px, chip input 130px, chip span ellipsis at 160px. No save/formula changes. Typecheck passes. Commit: d5cb488.
