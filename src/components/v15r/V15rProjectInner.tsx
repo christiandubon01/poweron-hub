@@ -12,6 +12,7 @@ import V15rRFITab from './V15rRFITab'
 import V15rCoordinationTab from './V15rCoordinationTab'
 import V15rBlueprintsTab from './V15rBlueprintsTab'
 import V15rPhaseTimelineTab from './V15rPhaseTimelineTab'
+import V15rProjectLogsTab from './V15rProjectLogsTab'
 import ProjectSummaryBoxes from '@/components/v15r/ProjectSummaryBoxes'
 
 interface V15rProjectInnerProps {
@@ -27,6 +28,7 @@ function mapExternalToInternalTab(externalTab?: string): string {
     'estimate': 'estimate',
     'material-takeoff': 'mto',
     'progress': 'progress',
+    'project-logs': 'project-logs',
     'framework': 'framework',
     'rfi-tracker': 'rfi',
     'coordination': 'coord',
@@ -68,6 +70,7 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
     { id: 'estimate', label: 'Estimate', component: V15rEstimateTab },
     { id: 'mto', label: 'Material Takeoff', component: V15rMTOTab },
     { id: 'progress', label: 'Progress', component: V15rProgressTab },
+    { id: 'project-logs', label: 'Project Logs', component: V15rProjectLogsTab },
     { id: 'framework', label: 'Framework', component: V15rFrameworkTab },
     { id: 'rfi', label: 'RFI Tracker', component: V15rRFITab },
     { id: 'coord', label: 'Coordination', component: V15rCoordinationTab },
@@ -85,6 +88,7 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
         'estimate': 'estimate',
         'mto': 'material-takeoff',
         'progress': 'progress',
+        'project-logs': 'project-logs',
         'framework': 'framework',
         'rfi': 'rfi-tracker',
         'coord': 'coordination',
