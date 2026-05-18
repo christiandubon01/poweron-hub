@@ -3510,3 +3510,59 @@ Ready for manual MTO QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 MTO row actions and supplier label polish done. Search and Price Book now on left of item name. Price Book visible on all rows (dimmed when not hovered). Supplier column 150px, chip input 130px, chip span ellipsis at 160px. No save/formula changes. Typecheck passes. Commit: d5cb488.
+
+---
+
+## GRAPH DASHBOARD EVR TIMESTAMPS + 8-WEEK TIMELINE PICKER COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final response.
+
+FILES CHANGED:
+- `src/components/v15r/V15rDashboard.tsx`
+- `src/components/v15r/charts/EVRChart.tsx`
+- `src/services/revenueTimelineQueries.ts`
+- `src/services/revenueTimelineService.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- EVR now orders plotted projects by pipeline/introduction date and exposes that date on the x-axis labels and tooltip.
+- EVR uses `created` first as the project introduction source, then falls back through existing created/planned/start date fields when needed.
+- 8-Week Cash Flow Projection now has a timeline modal with anchor date, back/forward week controls, and reset-to-today.
+- The selected anchor date is passed into `query8WeekCashFlow()` and `get8WeekCashFlow()`, so project payment schedules, project logs, active service records, and service-log entries are rebucketed for the selected 8-week window.
+- Existing service-call actual source remains Field Log Service Log Total Billable (`quoted + income adjustments`).
+
+WHAT WAS LEARNED:
+- EVR previously sorted by contract value, which made project sequence/timing invisible.
+- Project-like records in the app commonly use `created`; demo leads/projects also populate `created`, while project job timing fields such as `plannedStart` are later fallbacks.
+- The 8-week chart window was hard-anchored to the current week inside `get8WeekCashFlow()`.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Add optional anchor parameters to pure chart services so UI timeline controls drive real recomputation.
+- Keep project-introduction labels as chart metadata and tooltip content instead of changing unrelated project financial formulas.
+
+BUGS / RISKS:
+- Browser navigation remains blocked by in-app browser policy for localhost in this environment; shell confirmed `http://localhost:5173` responds.
+- Manual QA should confirm the modal interaction and EVR label readability in the shared localhost app.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Manually verify EVR project-entry dates against known project records and confirm the 8-week chart values change when moving the anchor date backward/forward.
+
+NEXT PHASE READY:
+Ready for manual Graph Dashboard QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Graph Dashboard EVR/timeline polish complete. EVR now uses project introduction date metadata (`created` first, then date fallbacks), sorts displayed points by that date, shows date labels on the x-axis, and includes the date in tooltip detail. The 8-week chart has a timeline modal; changing the anchor date calls `query8WeekCashFlow(anchorDate)` and rebuckets project payments/logs plus active service/service-log records. Service actuals still use Field Log Total Billable. Typecheck passes.

@@ -106,10 +106,10 @@ function getActiveServiceRecords(backup: any): any[] {
 }
 
 /** Get 8-week cash flow buckets from current local state */
-export function query8WeekCashFlow(): WeekBucket[] {
+export function query8WeekCashFlow(anchorDate?: string | Date | null): WeekBucket[] {
   const backup = getBackupData()
   if (!backup) return []
-  return get8WeekCashFlow(getActiveProjects(backup), backup.logs || [], getActiveServiceRecords(backup))
+  return get8WeekCashFlow(getActiveProjects(backup), backup.logs || [], getActiveServiceRecords(backup), anchorDate)
 }
 
 /** Get monthly revenue comparison from current local state */

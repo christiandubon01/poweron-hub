@@ -665,6 +665,11 @@ function V15rDashboardInner() {
   const { isDemoMode, hasHydrated } = useDemoMode()
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
   const [nexusOpen, setNexusOpen] = useState(false)
+  const toIsoDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const todayIso = toIsoDate(new Date())
+  const [cashFlowAnchorDate, setCashFlowAnchorDate] = useState<string>(todayIso)
+  const [cashFlowTimelineOpen, setCashFlowTimelineOpen] = useState(false)
 
   if (!backup) {
     return (
@@ -676,6 +681,30 @@ function V15rDashboardInner() {
 
   const projects = (backup.projects || []).filter(isActiveProject)
   const weeklyData = backup.weeklyData || []
+  const cashFlowAnchor = (() => {
+    const d = new Date((cashFlowAnchorDate || todayIso) + 'T00:00:00')
+    if (isNaN(d.getTime())) return new Date(todayIso + 'T00:00:00')
+    d.setHours(0, 0, 0, 0)
+    return d
+  })()
+  const cashFlowWindowStart = (() => {
+    const d = new Date(cashFlowAnchor)
+    const day = d.getDay()
+    d.setDate(d.getDate() - day + (day === 0 ? -6 : 1) - 21)
+    d.setHours(0, 0, 0, 0)
+    return d
+  })()
+  const cashFlowWindowEnd = (() => {
+    const d = new Date(cashFlowWindowStart)
+    d.setDate(d.getDate() + 55)
+    return d
+  })()
+  const cashFlowWindowLabel = `${cashFlowWindowStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${cashFlowWindowEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+  const shiftCashFlowAnchor = (days: number) => {
+    const d = new Date(cashFlowAnchor)
+    d.setDate(d.getDate() + days)
+    setCashFlowAnchorDate(toIsoDate(d))
+  }
 
   // ── CFOT: Cash Flow Over Time ──
   // Historical event-sourced exposure (DASHBOARD-EXPOSURE-EVENTS-APR21-2026-1).
@@ -993,7 +1022,7 @@ function V15rDashboardInner() {
   // ── Monthly Revenue offset state (for scrolling history) ──
   const [monthlyOffset, setMonthlyOffset] = useState<number>(0)
   // ── Revenue Timeline data (inlined from RevenuTimelineDashboard) ──
-  const weekBuckets = useMemo(() => query8WeekCashFlow(), [backup])
+  const weekBuckets = useMemo(() => query8WeekCashFlow(cashFlowAnchorDate), [backup, cashFlowAnchorDate])
   const monthBuckets = useMemo(() => queryMonthlyRevenue(6, monthlyOffset), [backup, monthlyOffset])
   const overlapWindows = useMemo(() => queryOverlapWindows(), [backup])
   const ganttRows = useMemo(() => queryGanttData(), [backup])
@@ -1056,6 +1085,65 @@ function V15rDashboardInner() {
       )}
 
       {/* ══ FAMILY 1 — CASH FLOW ══ */}
+      {cashFlowTimelineOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="8-Week Cash Flow timeline picker"
+          onClick={() => setCashFlowTimelineOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border border-gray-700 bg-[var(--bg-card)] p-5 shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-gray-100">8-Week Timeline</h3>
+                <p className="mt-1 text-xs text-gray-400">Choose the anchor week. The chart recomputes project payments, project logs, active service calls, and service-log entries around this date.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCashFlowTimelineOpen(false)}
+                className="rounded-md border border-gray-600 px-2 py-1 text-xs text-gray-300 hover:bg-gray-800"
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-gray-500">Anchor date</label>
+                <input
+                  type="date"
+                  value={cashFlowAnchorDate}
+                  onChange={e => setCashFlowAnchorDate(e.target.value || todayIso)}
+                  className="w-full rounded-md border border-gray-600 bg-[var(--bg-input)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="rounded-md border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-100">
+                Showing {cashFlowWindowLabel}
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <button type="button" onClick={() => shiftCashFlowAnchor(-7)} className="rounded-md border border-gray-600 px-3 py-2 text-xs font-semibold text-gray-200 hover:bg-gray-800">Back 1 wk</button>
+                <button type="button" onClick={() => setCashFlowAnchorDate(todayIso)} className="rounded-md border border-gray-600 px-3 py-2 text-xs font-semibold text-gray-200 hover:bg-gray-800">Today</button>
+                <button type="button" onClick={() => shiftCashFlowAnchor(7)} className="rounded-md border border-gray-600 px-3 py-2 text-xs font-semibold text-gray-200 hover:bg-gray-800">Next 1 wk</button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => shiftCashFlowAnchor(-28)} className="rounded-md border border-gray-700 px-3 py-2 text-xs text-gray-300 hover:bg-gray-800">Back 4 weeks</button>
+                <button type="button" onClick={() => shiftCashFlowAnchor(28)} className="rounded-md border border-gray-700 px-3 py-2 text-xs text-gray-300 hover:bg-gray-800">Forward 4 weeks</button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCashFlowTimelineOpen(false)}
+                className="w-full rounded-md bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-500"
+              >
+                Apply window
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ChartFamily
         id="cash-flow"
         name="CASH FLOW"
@@ -1141,13 +1229,23 @@ function V15rDashboardInner() {
 
           {/* 8-Week Cash Flow Projection */}
           <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
-            <div className="mb-4">
-              <h3 className="text-lg font-bold text-gray-100">8-Week Cash Flow Projection</h3>
+            <div className="mb-4 flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <h3 className="text-lg font-bold text-gray-100">8-Week Cash Flow Projection</h3>
+                <p className="text-[10px] text-blue-300/80 mt-1">Window: {cashFlowWindowLabel}</p>
               <p className="text-xs text-gray-400 italic mt-0.5">Projected payments (outline) vs collected (filled) · Coral dot = overlap window</p>
+            </div>
+              <button
+                type="button"
+                onClick={() => setCashFlowTimelineOpen(true)}
+                className="rounded-md border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-200 hover:bg-blue-500/20"
+              >
+                Timeline
+              </button>
             </div>
             {(() => {
               // FIX 3: Always show 8-week chart — if projected is all-zero, inject baseline from avg weekly collection
-              const now = new Date(); now.setHours(0,0,0,0)
+              const now = new Date(cashFlowAnchor); now.setHours(0,0,0,0)
               const recentCollected = (weekBuckets || [])
                 .filter((b: any) => {
                   const ws = b.weekStart instanceof Date ? b.weekStart : new Date(b.weekStart)

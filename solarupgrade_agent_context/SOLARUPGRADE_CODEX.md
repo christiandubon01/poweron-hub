@@ -1417,3 +1417,26 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
 - Manual QA performed: Static source-path verification, local HTTP response check for `localhost:5173`, and `npm.cmd run typecheck`. Browser click-through for Eric Hanson remains pending.
 - Next recommended action: On localhost, open Field Log > Service Log, confirm Eric Hanson's Total Billable is `$207.35`, then open Graph Dashboard > 8-Week Cash Flow Projection and verify the matching hover source line contributes `$207.35` with service-log Total Billable copy.
 - Compact handoff for next agent/chat: Service-call actual source fixed for 8-week cash flow. Only service actual amount sourcing changed from `paymentsCollected || collected` to Field Log's `quoted + income adjustments`; project actuals and unrelated graphs were not touched. Hover copy now reflects service-log Total Billable. Typecheck passes; manual localhost QA remains.
+
+---
+
+## Codex Report — Graph Dashboard Polish — add EVR project timeline labels and timeline-picker modal for 8-Week Cash Flow Projection
+
+- Task completed: Added EVR project introduction/timeline labels and an 8-week cash-flow timeline picker that drives real chart recomputation.
+- Files changed:
+  - `src/components/v15r/V15rDashboard.tsx`
+  - `src/components/v15r/charts/EVRChart.tsx`
+  - `src/services/revenueTimelineQueries.ts`
+  - `src/services/revenueTimelineService.ts`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final Codex report.
+- Typecheck result: PASS - `npm.cmd run typecheck`
+- Root cause: EVR sorted projects by contract value and did not expose project introduction timing, so the project sequence was invisible. The 8-week cash-flow service was hard-anchored to the current week, so there was no UI path to inspect other historical/future 8-week windows.
+- What changed: EVR now derives a project introduction date from `created` first, with fallbacks through existing created/planned/start/date fields, sorts displayed projects by that date, shows compact date labels on the x-axis, and includes the full project/date in the tooltip. The dashboard now has an 8-week timeline modal with anchor date, back/forward controls, and reset-to-today. The anchor date is passed through `query8WeekCashFlow(anchorDate)` into `get8WeekCashFlow(..., anchorDate)`, so the chart rebuckets project payment schedules, project logs, active service calls, and service-log entries for the selected window.
+- What was learned: The EVR render path is `V15rDashboard.tsx` -> `EVRChart.tsx`. The 8-week render path remains `V15rDashboard.tsx` -> `query8WeekCashFlow()` -> `get8WeekCashFlow()` -> `CashFlowProjectionChart`. Project/date fields are not perfectly uniform, but `created` is the strongest project-introduction candidate present in app data and demo data; `plannedStart` is a later job-timing fallback.
+- Learned skills / reusable patterns: Add optional date anchors to pure chart transforms for timeline navigation; keep service-call actual source-of-truth helpers intact while changing only the bucket window.
+- Bugs / risks: Localhost browser navigation was blocked by in-app browser policy, though `http://localhost:5173` returned 200 from shell. Manual click-through remains needed for EVR readability and timeline modal behavior.
+- Manual QA performed: Static source-path verification, local HTTP response check for `localhost:5173`, and `npm.cmd run typecheck`.
+- Next recommended action: In the running localhost app, open Graph Dashboard, verify EVR x-axis/tooltip project-entry dates, then open the 8-week timeline modal and move backward/forward to confirm chart values change and service actuals still match Field Log Total Billable.
+- Compact handoff for next agent/chat: EVR/timeline polish complete. EVR labels now expose pipeline entry dates (`created` first, then existing fallbacks) and sort points by that timeline. The 8-week chart now has a modal anchor date that passes into the pure query/service computation, rebucketing all project/service sources for the selected window while preserving service-log Total Billable actuals. Typecheck passes; manual localhost QA remains.

@@ -322,9 +322,12 @@ export function getPhasePaymentSchedule(
 export function get8WeekCashFlow(
   allProjects: any[],
   logs: any[],               // backup.logs — field log entries with paymentsCollected
-  serviceRecords: any[] = []
+  serviceRecords: any[] = [],
+  anchorDate?: string | Date | null
 ): WeekBucket[] {
-  const now = new Date()
+  const now = anchorDate instanceof Date
+    ? new Date(anchorDate)
+    : (anchorDate ? parseDate(anchorDate) || new Date() : new Date())
   now.setHours(0, 0, 0, 0)
   const weekStart = startOfWeek(now)
 
