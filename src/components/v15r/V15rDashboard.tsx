@@ -332,10 +332,11 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
 var PULSE_CACHE_KEY = 'pulse_trend_analysis_cache'
 var PULSE_CACHE_TTL = 60 * 60 * 1000 // 1 hour
 
-function PulseTrendAnalyzer({ backup, cfotSummary, projects }: {
+function PulseTrendAnalyzer({ backup, cfotSummary, projects, onOpenNexus }: {
   backup: BackupData
   cfotSummary: { exposure: number; unbilled: number; pending: number; svcTotal: number; projTotal: number; accumTotal: number }
   projects: any[]
+  onOpenNexus?: () => void
 }) {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<string | null>(null)
@@ -418,13 +419,24 @@ function PulseTrendAnalyzer({ backup, cfotSummary, projects }: {
             <p className="text-xs text-gray-500">Last 30 days · CFOT + Revenue · 1-hour cache</p>
           </div>
         </div>
-        <button
-          onClick={runAnalysis}
-          disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors min-h-[44px] px-4"
-        >
-          {loading ? '⏳ Analyzing...' : '🔍 Analyze trends'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={runAnalysis}
+            disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors min-h-[44px]"
+          >
+            {loading ? '⏳ Analyzing...' : '🔍 Analyze trends'}
+          </button>
+          {onOpenNexus && (
+            <button
+              type="button"
+              onClick={onOpenNexus}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-700 hover:bg-purple-600 text-white text-sm font-semibold rounded-lg transition-colors min-h-[44px]"
+            >
+              NEXUS analysis
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -652,6 +664,7 @@ function StartDateWarningPill({ projects }: { projects: any[] }) {
 function V15rDashboardInner() {
   const { isDemoMode, hasHydrated } = useDemoMode()
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
+  const [nexusOpen, setNexusOpen] = useState(false)
 
   if (!backup) {
     return (
@@ -1016,9 +1029,31 @@ function V15rDashboardInner() {
 
       {/* AI ANALYSIS TOOLS — outside families */}
       <div className="space-y-4 mb-10">
-        <PulseTrendAnalyzer backup={backup} cfotSummary={cfotSummary} projects={projects} />
-        <NEXUSDashboardAnalyzer backup={backup} cfotSummary={cfotSummary} projects={projects} />
+        <PulseTrendAnalyzer backup={backup} cfotSummary={cfotSummary} projects={projects} onOpenNexus={() => setNexusOpen(true)} />
       </div>
+
+      {nexusOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="NEXUS Dashboard Analysis"
+          onClick={() => setNexusOpen(false)}
+        >
+          <div className="w-full max-w-5xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="mb-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setNexusOpen(false)}
+                className="rounded-md border border-gray-600 bg-[var(--bg-card)] px-3 py-1.5 text-xs font-semibold text-gray-200 hover:bg-gray-800"
+              >
+                Close
+              </button>
+            </div>
+            <NEXUSDashboardAnalyzer backup={backup} cfotSummary={cfotSummary} projects={projects} />
+          </div>
+        </div>
+      )}
 
       {/* ══ FAMILY 1 — CASH FLOW ══ */}
       <ChartFamily

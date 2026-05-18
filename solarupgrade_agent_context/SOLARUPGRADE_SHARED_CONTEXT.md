@@ -3129,3 +3129,87 @@ Ready for user manual Graph Dashboard audit.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Graph Dashboard fix pass complete. Narrow patch only: `PvAChart`/`RCAChart` support `projId || projectId`; revenue timeline query project inputs and `SixMonthForecastChart` use `isActiveProject` to exclude archived projects. Typecheck passes. No CFOT/SCP/business-formula rewrites.
+
+---
+
+## GRAPH DASHBOARD NEXUS MODAL POLISH COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final response.
+
+FILES CHANGED:
+- `src/components/v15r/V15rDashboard.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Added a `NEXUS analysis` button beside `Analyze trends` in the PULSE section.
+- Removed the always-visible inline `NEXUSDashboardAnalyzer` render from the Graph Dashboard body.
+- Added a modal that mounts and shows the existing Nexus Dashboard Analysis content only when opened.
+
+WHAT WAS LEARNED:
+- Nexus analysis was already encapsulated in `NEXUSDashboardAnalyzer`.
+- Keeping the component unmounted by default prevents its initial analysis effect from running on page load.
+
+TYPECHECK RESULT:
+PASS — `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+BUGS / RISKS:
+- No chart data logic or PULSE analysis behavior was intentionally changed.
+- User should verify modal open/close behavior in the shared localhost UI.
+
+NEXT PHASE READY:
+Ready for user manual Graph Dashboard inspection.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Graph Dashboard Nexus modal polish complete. `NEXUSDashboardAnalyzer` is hidden/unmounted by default and opens only in a modal from the new `NEXUS analysis` button next to `Analyze trends`. Typecheck passes. Scoped to `V15rDashboard.tsx` plus context files.
+
+---
+
+## GRAPH DASHBOARD NEXUS MODAL HOTFIX COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final response.
+
+FILES CHANGED:
+- `src/components/v15r/V15rDashboard.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Fixed the Nexus modal button callback wiring in `PulseTrendAnalyzer`.
+- `onOpenNexus` is now destructured from props before the button checks/calls it.
+
+ROOT CAUSE:
+- `onOpenNexus` was added to the prop type and passed from `V15rDashboardInner`, but it was omitted from the `PulseTrendAnalyzer` destructured props, causing a runtime undefined-reference error.
+
+TYPECHECK RESULT:
+PASS — `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+BUGS / RISKS:
+- Localhost click-through was not available from this sandbox; user should verify the shared running app manually.
+- Unrelated `src/components/v15r/V15rMTOTab.tsx` edits are present in the worktree and were intentionally left untouched.
+
+NEXT PHASE READY:
+Ready for manual Graph Dashboard QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Nexus modal hotfix complete. Root cause was missing `onOpenNexus` destructuring in `PulseTrendAnalyzer`; fixed by adding it to the destructured props. Nexus remains hidden inline by default and opens from the modal button. Typecheck passes.

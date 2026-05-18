@@ -1315,3 +1315,40 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
 - Manual QA performed: Static data-path verification plus `npm.cmd run typecheck`; user will audit manually.
 - Next recommended action: User manual audit of Graph Dashboard charts on localhost, then approve any broader business-logic changes separately.
 - Compact handoff for next agent/chat: Graph Dashboard fix pass complete. Branch `codex-graph-dashboard-fix-pass`. Narrow patch only: `PvAChart`/`RCAChart` support `projId || projectId`; revenue timeline query project inputs and `SixMonthForecastChart` use `isActiveProject` so archived projects are excluded. Typecheck passes. No CFOT/SCP/business-formula rewrites.
+
+---
+
+## Codex Report — Graph Dashboard Polish — make Nexus Dashboard Analysis load only on demand in modal
+
+- Task completed: Moved Nexus Dashboard Analysis out of the inline Graph Dashboard body and into an on-demand modal opened from the PULSE action row.
+- Files changed:
+  - `src/components/v15r/V15rDashboard.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final response.
+- Typecheck result: PASS — `npm.cmd run typecheck`
+- What changed: `PulseTrendAnalyzer` accepts an optional Nexus-open callback, shows a `NEXUS analysis` button beside `Analyze trends`, and `V15rDashboardInner` mounts `NEXUSDashboardAnalyzer` only inside a modal when requested.
+- What was learned: The Nexus analysis content was already encapsulated in `NEXUSDashboardAnalyzer`, so the narrowest safe patch was wiring/placement only; unmounting it by default also prevents its analysis effect from running on initial dashboard load.
+- Learned skills / reusable patterns: Keep expensive analysis components unmounted until explicitly opened; reuse existing component content inside a modal instead of duplicating or rewriting analysis UI.
+- Bugs / risks: No chart data, PULSE analysis logic, CFOT/RCA/PvA/forecast logic, or unrelated dashboard behavior was intentionally changed. Browser click-through QA remains for the user on shared localhost.
+- Manual QA performed: Static render-path verification and `npm.cmd run typecheck`; user will inspect localhost manually.
+- Next recommended action: Open Graph Dashboard on shared localhost and confirm Nexus is hidden by default, opens from the new button, and closes cleanly.
+- Compact handoff for next agent/chat: Graph Dashboard Nexus polish complete. `NEXUSDashboardAnalyzer` is no longer rendered inline by default; it mounts only in a modal opened by the new `NEXUS analysis` button next to `Analyze trends` in PULSE. Typecheck passes. Scope was `V15rDashboard.tsx` plus context files only.
+
+---
+
+## Codex Report — Graph Dashboard Hotfix — fix broken Nexus modal wiring
+
+- Task completed: Fixed the `onOpenNexus is not defined` runtime wiring bug in the Graph Dashboard PULSE/Nexus modal path.
+- Files changed:
+  - `src/components/v15r/V15rDashboard.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final response.
+- Typecheck result: PASS — `npm.cmd run typecheck`
+- What changed: `PulseTrendAnalyzer` now destructures `onOpenNexus` from its props before checking/calling it from the new Nexus button.
+- Root cause: The previous modal polish added `onOpenNexus` to the prop type and passed it from `V15rDashboardInner`, but the `PulseTrendAnalyzer` parameter destructuring omitted it, leaving the JSX reference out of scope at runtime.
+- Bugs / risks: Localhost was not reachable from this sandbox for click-through verification; user should verify on the shared running app. Unrelated `src/components/v15r/V15rMTOTab.tsx` changes were present and left untouched.
+- Manual QA performed: Static reference/path check for every `onOpenNexus` usage and `npm.cmd run typecheck`.
+- Next recommended action: Open Graph Dashboard on localhost, confirm no crash, open Nexus analysis modal, and close it.
+- Compact handoff for next agent/chat: Nexus modal hotfix complete. Root cause was missing `onOpenNexus` destructuring in `PulseTrendAnalyzer`; fixed by adding it to the destructured props. Nexus remains unmounted inline by default and opens only from the modal button. Typecheck passes.
