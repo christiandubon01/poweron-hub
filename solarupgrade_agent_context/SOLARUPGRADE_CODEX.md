@@ -1374,3 +1374,25 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
 - Manual QA performed: Static data-path verification and `npm.cmd run typecheck`; browser QA left for shared localhost.
 - Next recommended action: On localhost, compare 8-week projected/actual bars against active project logs, active service calls, and service logs for the current/past weeks.
 - Compact handoff for next agent/chat: 8-week projection audit/fix complete. `query8WeekCashFlow` now passes active service records; `get8WeekCashFlow` filters actual project logs by active project IDs, includes service-call balances in projected, includes service collected amounts in actual, and dashboard fallback baseline uses corrected bucket actuals. Typecheck passes.
+
+---
+
+## Codex Report — Graph Dashboard Polish — improve 8-Week Cash Flow hover detail and overlap window timeline tooltip
+
+- Task completed: Improved 8-Week Cash Flow Projection hover detail and added overlap-window-specific hover information.
+- Files changed:
+  - `src/components/v15r/V15rDashboard.tsx`
+  - `src/components/v15r/charts/SVGCharts.tsx`
+  - `src/services/revenueTimelineService.ts`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Final amended commit hash reported in chat.
+- Typecheck result: PASS — `npm.cmd run typecheck`
+- Root cause: The chart tooltip only displayed projected/actual totals and delta, while the 8-week buckets did not carry per-source metadata. Overlap windows were reduced to a passive per-week dot with no dedicated tooltip or timeline explanation.
+- What changed: `WeekBucket` now carries projected and actual source arrays for active project payments, active service balances, project collections, and service collections. The 8-week tooltip now shows totals plus those derivation lines. Baseline projections created in `V15rDashboard` now add a baseline source. The overlap marker now has its own hover card showing covered dates, closing/opening projects, final payment, and deposit context.
+- What was learned: The rendered chart is `CashFlowProjectionChart` in `SVGCharts.tsx`; it receives buckets from `query8WeekCashFlow()`/`get8WeekCashFlow()` and overlap metadata from `queryOverlapWindows()`.
+- Learned skills / reusable patterns: Carry small source metadata alongside aggregate chart buckets so hover UI can explain totals without recalculating or diverging from the chart logic.
+- Bugs / risks: Tooltip content is built with `innerHTML` like the existing SVG chart pattern; values are escaped before insertion. Manual QA should confirm the overlap dot is easy to hover at the rendered size.
+- Manual QA performed: Static chart/data-path verification and `npm.cmd run typecheck`; localhost was not clicked through from this session.
+- Next recommended action: On shared localhost, hover each 8-week bar and overlap dot to confirm the detail cards are readable and match expected source records.
+- Compact handoff for next agent/chat: 8-week hover polish complete. Buckets now expose source breakdown metadata; tooltip explains projected active project payments, active service balances, baseline if present, actual project collections, and actual service collections. Overlap dot now opens a dedicated timeline card with overlap dates and payment/deposit context. Typecheck passes.

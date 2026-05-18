@@ -40,6 +40,14 @@ export interface WeekBucket {
   weekStart: Date
   projected: number
   actual: number
+  projectedSources?: {
+    projectPayments: Array<{ label: string; amount: number; detail: string }>
+    serviceBalances: Array<{ label: string; amount: number; detail: string }>
+  }
+  actualSources?: {
+    projectCollections: Array<{ label: string; amount: number; detail: string }>
+    serviceCollections: Array<{ label: string; amount: number; detail: string }>
+  }
 }
 
 export interface MonthBucket {
@@ -323,6 +331,8 @@ export function get8WeekCashFlow(
       weekStart: ws,
       projected: 0,
       actual: 0,
+      projectedSources: { projectPayments: [], serviceBalances: [] },
+      actualSources: { projectCollections: [], serviceCollections: [] },
     })
   }
 
@@ -338,6 +348,11 @@ export function get8WeekCashFlow(
         const we = addDays(bucket.weekStart, 6)
         if (event.date >= bucket.weekStart && event.date <= we) {
           bucket.projected += event.amount
+          bucket.projectedSources?.projectPayments.push({
+            label: project.name || project.title || 'Project',
+            amount: event.amount,
+            detail: `${event.type || 'payment'}${event.estimated ? ' estimated' : ''}`,
+          })
           break
         }
       }
@@ -359,6 +374,11 @@ export function get8WeekCashFlow(
       const we = addDays(bucket.weekStart, 6)
       if (svcDate >= bucket.weekStart && svcDate <= we) {
         bucket.projected += balance
+        bucket.projectedSources?.serviceBalances.push({
+          label: svc.customer || svc.name || svc.jtype || 'Service call',
+          amount: balance,
+          detail: `${svc.jtype || svc.jobType || 'service'} balance`,
+        })
         break
       }
     }
@@ -376,6 +396,11 @@ export function get8WeekCashFlow(
       const we = addDays(bucket.weekStart, 6)
       if (logDate >= bucket.weekStart && logDate <= we) {
         bucket.actual += collected
+        bucket.actualSources?.projectCollections.push({
+          label: log.projName || log.projectName || projectId || 'Project log',
+          amount: collected,
+          detail: log.date || log.logDate || 'field log',
+        })
         break
       }
     }
@@ -391,6 +416,11 @@ export function get8WeekCashFlow(
       const we = addDays(bucket.weekStart, 6)
       if (svcDate >= bucket.weekStart && svcDate <= we) {
         bucket.actual += collected
+        bucket.actualSources?.serviceCollections.push({
+          label: svc.customer || svc.name || svc.jtype || 'Service call',
+          amount: collected,
+          detail: svc.date || svc.logDate || 'service log',
+        })
         break
       }
     }

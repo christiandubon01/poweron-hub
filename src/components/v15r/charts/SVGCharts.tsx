@@ -399,14 +399,70 @@ function CashFlowProjectionChart({ weekBuckets, overlapWindows }) {
   var groupW = cW / weekBuckets.length
   var barW = groupW * 0.35
 
+  function escapeHtml(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function(ch) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]
+    })
+  }
+
+  function listLines(items, emptyText) {
+    if (!items || !items.length) return '<div style="color:#6b7280;font-size:10px">' + emptyText + '</div>'
+    return items.slice(0, 5).map(function(item) {
+      return '<div style="display:flex;justify-content:space-between;gap:12px;color:#d1d5db">' +
+        '<span>' + escapeHtml(item.label || 'Source') + '<span style="color:#6b7280"> · ' + escapeHtml(item.detail || '') + '</span></span>' +
+        '<b style="color:#fff">' + fmtDollar(item.amount || 0) + '</b>' +
+      '</div>'
+    }).join('') + (items.length > 5 ? '<div style="color:#6b7280;font-size:10px">+' + (items.length - 5) + ' more</div>' : '')
+  }
+
+  function sumItems(items) {
+    return (items || []).reduce(function(s, item) { return s + (item.amount || 0) }, 0)
+  }
+
+  function formatDate(v) {
+    var d = v instanceof Date ? v : new Date(v)
+    if (isNaN(d.getTime())) return 'Unknown'
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  }
+
   function showTip(i) {
     var el = tooltipRef.current; if (!el) return
     var d = weekBuckets[i]
     var delta = (d.projected || 0) - (d.actual || 0)
+    var ps = d.projectedSources || {}
+    var as = d.actualSources || {}
+    var projectPayments = ps.projectPayments || []
+    var serviceBalances = ps.serviceBalances || []
+    var baseline = ps.baseline || []
+    var projectCollections = as.projectCollections || []
+    var serviceCollections = as.serviceCollections || []
     el.innerHTML = '<b style="color:#fff">' + (d.weekLabel || '') + '</b>' +
-      '<div style="color:#f59e0b">Projected: ' + fmtDollar(d.projected || 0) + '</div>' +
-      '<div style="color:#10b981">Actual: ' + fmtDollar(d.actual || 0) + '</div>' +
-      '<div style="color:' + (delta < 0 ? '#10b981' : '#9ca3af') + '">Delta: ' + (delta >= 0 ? '+' : '') + fmtDollar(delta) + '</div>'
+      '<div style="margin-top:6px;color:#f59e0b;font-weight:700">Projected: ' + fmtDollar(d.projected || 0) + '</div>' +
+      '<div style="color:#9ca3af;font-size:10px">Active project payments ' + fmtDollar(sumItems(projectPayments)) + ' + active service balances ' + fmtDollar(sumItems(serviceBalances)) + (baseline.length ? ' + baseline ' + fmtDollar(sumItems(baseline)) : '') + '</div>' +
+      '<div style="margin-top:4px">' + listLines(projectPayments, 'No active project payment events in this week') + '</div>' +
+      '<div style="margin-top:3px">' + listLines(serviceBalances, 'No active service balance due in this week') + '</div>' +
+      (baseline.length ? '<div style="margin-top:3px">' + listLines(baseline, '') + '</div>' : '') +
+      '<div style="margin-top:8px;color:#10b981;font-weight:700">Actual: ' + fmtDollar(d.actual || 0) + '</div>' +
+      '<div style="color:#9ca3af;font-size:10px">Collected project logs ' + fmtDollar(sumItems(projectCollections)) + ' + collected service logs ' + fmtDollar(sumItems(serviceCollections)) + '</div>' +
+      '<div style="margin-top:4px">' + listLines(projectCollections, 'No active project collections in this week') + '</div>' +
+      '<div style="margin-top:3px">' + listLines(serviceCollections, 'No active service collections in this week') + '</div>' +
+      '<div style="margin-top:8px;color:' + (delta < 0 ? '#10b981' : '#9ca3af') + '">Delta: ' + (delta >= 0 ? '+' : '') + fmtDollar(delta) + '</div>'
+    el.style.display = 'block'
+  }
+
+  function showOverlapTip(overlapsForWeek, weekLabel) {
+    var el = tooltipRef.current; if (!el) return
+    el.innerHTML = '<b style="color:#fff">Overlap window · ' + escapeHtml(weekLabel || '') + '</b>' +
+      '<div style="margin-top:6px;color:#f87171;font-weight:700">Timeline pressure window</div>' +
+      '<div style="color:#9ca3af;font-size:10px">A closing project final payment window overlaps an opening project deposit/start window.</div>' +
+      overlapsForWeek.slice(0, 4).map(function(o) {
+        return '<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08)">' +
+          '<div style="color:#d1d5db">' + escapeHtml(o.closingProject || 'Closing project') + ' → ' + escapeHtml(o.openingProject || 'Opening project') + '</div>' +
+          '<div style="color:#9ca3af;font-size:10px">' + formatDate(o.overlapStart) + ' to ' + formatDate(o.overlapEnd) + '</div>' +
+          '<div style="color:#9ca3af;font-size:10px">Final payment ' + fmtDollar(o.finalPaymentAmount || 0) + ' vs deposit ' + fmtDollar(o.depositAmount || 0) + '</div>' +
+        '</div>'
+      }).join('') +
+      (overlapsForWeek.length > 4 ? '<div style="color:#6b7280;font-size:10px">+' + (overlapsForWeek.length - 4) + ' more overlap windows</div>' : '')
     el.style.display = 'block'
   }
   function hideTip() { if (tooltipRef.current) tooltipRef.current.style.display = 'none' }
@@ -429,13 +485,14 @@ function CashFlowProjectionChart({ weekBuckets, overlapWindows }) {
           var projH = ((d.projected || 0) / maxVal) * cH
           var actH = ((d.actual || 0) / maxVal) * cH
           // Check if this week has an overlap
-          var hasOverlap = overlaps.some(function(o) {
+          var overlapsForWeek = overlaps.filter(function(o) {
             var os = o.overlapStart instanceof Date ? o.overlapStart : new Date(o.overlapStart)
             var oe = o.overlapEnd instanceof Date ? o.overlapEnd : new Date(o.overlapEnd)
             var ws = d.weekStart instanceof Date ? d.weekStart : new Date(d.weekStart)
             var we = new Date(ws.getTime() + 6 * 86400000)
             return os <= we && oe >= ws
           })
+          var hasOverlap = overlapsForWeek.length > 0
           return (
             <g key={i} onMouseEnter={function() { showTip(i) }} onMouseLeave={hideTip}>
               {/* Projected bar — amber outline */}
@@ -446,7 +503,17 @@ function CashFlowProjectionChart({ weekBuckets, overlapWindows }) {
                 fill="#10b981" opacity={0.85} />
               {/* Overlap dot */}
               {hasOverlap && (
-                <circle cx={gx + barW} cy={pad.t + cH - Math.max(projH, actH) - 10} r={5} fill="#f87171" opacity={0.9} />
+                <circle
+                  cx={gx + barW}
+                  cy={Math.max(pad.t + 8, pad.t + cH - Math.max(projH, actH) - 10)}
+                  r={6}
+                  fill="#f87171"
+                  stroke="#fecaca"
+                  strokeWidth="1"
+                  opacity={0.95}
+                  onMouseEnter={function(e) { e.stopPropagation(); showOverlapTip(overlapsForWeek, d.weekLabel) }}
+                  onMouseLeave={hideTip}
+                />
               )}
               {/* X label */}
               <text x={gx + barW} y={H - 8} textAnchor="middle" fill="#9ca3af" fontSize="9">

@@ -1162,10 +1162,21 @@ function V15rDashboardInner() {
                 const ws = b.weekStart instanceof Date ? b.weekStart : new Date(b.weekStart)
                 const isFuture = ws > now
                 const hasProjected = (b.projected || 0) > 0
+                const useBaseline = !hasProjected && isFuture && avgWeeklyRate > 0
                 return {
                   ...b,
-                  projected: hasProjected ? b.projected : (isFuture && avgWeeklyRate > 0 ? avgWeeklyRate : b.projected || 0),
-                  _isBaseline: !hasProjected && isFuture && avgWeeklyRate > 0,
+                  projected: hasProjected ? b.projected : (useBaseline ? avgWeeklyRate : b.projected || 0),
+                  projectedSources: useBaseline
+                    ? {
+                        ...(b.projectedSources || {}),
+                        baseline: [{
+                          label: 'Collection baseline',
+                          amount: avgWeeklyRate,
+                          detail: 'Average weekly actual from the last four visible weeks',
+                        }],
+                      }
+                    : b.projectedSources,
+                  _isBaseline: useBaseline,
                 }
               })
 

@@ -3310,6 +3310,54 @@ COMPACT HANDOFF FOR NEXT CHAT:
 
 ---
 
+## GRAPH DASHBOARD 8-WEEK CASH FLOW HOVER/OVERLAP POLISH COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Final amended commit hash reported in chat.
+
+FILES CHANGED:
+- `src/components/v15r/V15rDashboard.tsx`
+- `src/components/v15r/charts/SVGCharts.tsx`
+- `src/services/revenueTimelineService.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+ROOT CAUSE:
+- 8-week bucket data only carried aggregate `projected` and `actual` numbers, so the hover card could not explain derivation.
+- Overlap windows were rendered as passive dots based on `some(overlaps)` with no overlap-specific hover payload.
+
+WHAT CHANGED:
+- Added projected/actual source metadata to `WeekBucket`.
+- Captured active project payment events and active service balances under projected sources.
+- Captured project log collections and service collected amounts under actual sources.
+- Added baseline projection metadata when the dashboard injects fallback future projection.
+- Expanded the 8-week tooltip to show source totals and line items.
+- Added a dedicated overlap-dot hover card with date range, closing/opening project names, final payment, and deposit context.
+
+TYPECHECK RESULT:
+PASS — `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+BUGS / RISKS:
+- Tooltip uses the existing `innerHTML` pattern from `SVGCharts`; dynamic values are escaped before insertion.
+- Manual QA should confirm the overlap dot hover target feels usable.
+
+NEXT PHASE READY:
+Ready for manual Graph Dashboard QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+8-week hover/overlap polish complete. `get8WeekCashFlow()` now attaches source breakdown metadata to weekly buckets, `V15rDashboard` annotates baseline projections, and `CashFlowProjectionChart` shows detailed projected/actual derivation plus a dedicated overlap-window timeline tooltip. Typecheck passes.
+
+---
+
 ## MTO DUPLICATE SUPPLIER CHIP REMOVAL COMPLETION LOG
 
 AGENT:
