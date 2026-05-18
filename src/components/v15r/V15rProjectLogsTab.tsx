@@ -20,6 +20,7 @@ import {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const PHASES = ['Rough-in', 'Trim', 'Demo', 'Underground', 'Finish', 'Material Run', 'Planning', 'Inspection']
+const INNER_PROJ_LOGS_HIDE_GAPS_KEY = 'poweron:v15r:innerProjLogsHideGaps'
 
 function today() {
   return new Date().toISOString().slice(0, 10)
@@ -109,7 +110,9 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
 
   const [showProjForm, setShowProjForm] = useState(false)
   const [editLogId, setEditLogId] = useState<string | null>(null)
-  const [showGaps, setShowGaps] = useState(true)
+  const [showGaps, setShowGaps] = useState(() => {
+    try { return localStorage.getItem(INNER_PROJ_LOGS_HIDE_GAPS_KEY) !== 'true' } catch { return true }
+  })
 
   // Form state
   const [flPhase, setFlPhase] = useState(PHASES[0])
@@ -235,7 +238,11 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setShowGaps(v => !v)}
+            onClick={() => {
+              const next = !showGaps
+              setShowGaps(next)
+              try { localStorage.setItem(INNER_PROJ_LOGS_HIDE_GAPS_KEY, String(!next)) } catch {}
+            }}
             className={`px-2 py-1 rounded text-xs font-semibold transition-all ${
               showGaps
                 ? 'bg-amber-600/20 text-amber-400 border border-amber-600/30'
@@ -345,16 +352,18 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
                     <label className={projectLogLabelClass}>Miles RT</label>
                     <input key={`flMiles-${editLogId || 'new'}`} type="number" defaultValue={flMiles} onBlur={e => setFlMiles(e.target.value)} className={projectLogInputClass} placeholder="0" />
                   </div>
-                  <VoiceMaterialCapture
-                    className="!col-span-1 sm:!col-span-1 lg:!col-span-1 [&>label]:mb-1.5 [&>label]:block [&>label]:text-[10px] [&>label]:font-bold [&>label]:uppercase [&>label]:tracking-[0.16em] [&>label]:text-cyan-100/55 [&_input]:!h-10 [&_input]:!rounded-lg [&_input]:!border-cyan-400/15 [&_input]:!bg-slate-950/55 [&_input]:!px-3 [&_input]:!text-slate-100 [&_input]:outline-none [&_input]:transition-all [&_input:focus]:!border-cyan-300/70 [&_input:focus]:!ring-2 [&_input:focus]:!ring-cyan-400/20 [&_button]:!h-10 [&_button]:!w-10 [&_button]:!rounded-lg"
-                    value={flMat}
-                    onChange={setFlMat}
-                    priceBook={Array.isArray(backup.priceBook) ? backup.priceBook : (backup.priceBook && typeof backup.priceBook === 'object' ? Object.values(backup.priceBook) : [])}
-                    onConfirm={(total, note) => {
-                      setFlMat(total > 0 ? total.toFixed(2) : flMat)
-                      setFlNotes(prev => prev ? `${prev}\n${note}` : note)
-                    }}
-                  />
+                  <div>
+                    <VoiceMaterialCapture
+                      className="[&>label]:mb-1.5 [&>label]:block [&>label]:text-[10px] [&>label]:font-bold [&>label]:uppercase [&>label]:tracking-[0.16em] [&>label]:text-cyan-100/55 [&_input]:!h-10 [&_input]:!rounded-lg [&_input]:!border-cyan-400/15 [&_input]:!bg-slate-950/55 [&_input]:!px-3 [&_input]:!text-slate-100 [&_input]:outline-none [&_input]:transition-all [&_input:focus]:!border-cyan-300/70 [&_input:focus]:!ring-2 [&_input:focus]:!ring-cyan-400/20 [&_button]:!h-10 [&_button]:!w-10 [&_button]:!rounded-lg"
+                      value={flMat}
+                      onChange={setFlMat}
+                      priceBook={Array.isArray(backup.priceBook) ? backup.priceBook : (backup.priceBook && typeof backup.priceBook === 'object' ? Object.values(backup.priceBook) : [])}
+                      onConfirm={(total, note) => {
+                        setFlMat(total > 0 ? total.toFixed(2) : flMat)
+                        setFlNotes(prev => prev ? `${prev}\n${note}` : note)
+                      }}
+                    />
+                  </div>
                   <div>
                     <label className={projectLogLabelClass}>Collected $</label>
                     <input key={`flCollected-${editLogId || 'new'}`} type="number" step="0.01" defaultValue={flCollected} onBlur={e => setFlCollected(e.target.value)} className={projectLogInputClass} placeholder="0.00" />
