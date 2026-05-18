@@ -1254,3 +1254,20 @@ NO — ready for screenshot QA.
 - Manual QA performed: Typecheck only (no browser access in this session).
 - Next recommended action: Open MTO in browser - confirm no supplier chip below item titles, confirm supplier still shows in Supplier column, confirm placement and note chips still work.
 - Compact handoff for next agent/chat: Duplicate supplier chip removed from V15rMTOTab.tsx Item Title area. Supplier renders only in the Supplier column via r.supplierNote. All other chips (placement, note) unchanged. Typecheck passes. Commit: d371267.
+
+---
+
+## Claude Report - Material Takeoff polish - placement labels must not create buckets
+
+- Task completed: YES
+- Files changed: src/components/v15r/V15rMTOTab.tsx, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+- Commit hash: 935bf94
+- Typecheck result: PASS - zero errors
+- Root cause: hasAnyPlacement (allRows.some(r => r.placement...)) was used as a view-switch condition. When any row got a placement value, the entire MTO view switched from renderPhaseGroups() to renderPlacementGroups(), creating placement-based bucket sections. This was the original "placement view" feature but the user wants placement to be informational only.
+- What changed: Removed hasAnyPlacement flag. Changed main render from conditional to always renderPhaseGroups(). existingPlacements kept for bulk-assign datalist autocomplete. Placement chips still render on items.
+- What was learned: The MTO had a full alternative placement-grouped view built in. That view was triggered automatically by any placement value on any row. Removing the trigger (hasAnyPlacement condition) was the entire fix.
+- Learned skills / reusable patterns: When a view-mode switch is driven by a derived boolean flag, the safest way to disable the mode is to remove the flag and hardcode the default view rather than touching the alternative renderer.
+- Bugs / risks: renderPlacementGroups() is now dead code in the file. Can be removed in a future cleanup pass. No functional risk.
+- Manual QA performed: Typecheck only (no browser access in this session).
+- Next recommended action: Open MTO in browser - add a placement chip to an item, confirm no new bucket/section appears, confirm phase groups remain, confirm placement chip still renders on the item.
+- Compact handoff for next agent/chat: Placement is now informational only in V15rMTOTab.tsx. hasAnyPlacement removed; renderPhaseGroups() always used. Placement chips still show on items. renderPlacementGroups() is dead code (still in file). existingPlacements kept for bulk-assign datalist. Typecheck passes. Commit: 935bf94.

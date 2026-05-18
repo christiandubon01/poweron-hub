@@ -3340,3 +3340,37 @@ Ready for manual MTO QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Duplicate supplier chip removed from Item Title area in V15rMTOTab.tsx. Supplier renders only in the Supplier column. All other chips (placement, note) unchanged. Typecheck passes. Commit: d371267.
+
+---
+
+## MTO PLACEMENT LABELS INFORMATIONAL-ONLY COMPLETION LOG
+
+AGENT:
+Claude Code Sonnet 4.5 Medium
+
+COMMIT HASH:
+935bf94
+
+FILES CHANGED:
+- src/components/v15r/V15rMTOTab.tsx
+- solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+- solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+
+WHAT CHANGED:
+- Removed hasAnyPlacement derived flag (was: allRows.some(r => r.placement && r.placement.trim())).
+- Changed main content render from hasAnyPlacement ? renderPlacementGroups() : renderPhaseGroups() to always render renderPhaseGroups().
+- existingPlacements kept for bulk-assign datalist (still useful for autocomplete suggestions).
+- Placement chips still render on individual items as informational labels.
+- renderPlacementGroups() function left in file but is now dead code (narrow fix).
+
+ROOT CAUSE:
+The hasAnyPlacement flag caused the entire view to switch from phase-grouped buckets to placement-grouped buckets the moment any row received a placement value. Adding a single placement chip triggered a full view restructure into placement-based sections. This was the pre-existing "placement view" feature that the user no longer wants.
+
+TYPECHECK RESULT:
+PASS - zero errors
+
+NEXT PHASE READY:
+Ready for manual MTO QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Placement labels are now informational only in V15rMTOTab.tsx. The hasAnyPlacement view-switch was removed; renderPhaseGroups() is always used. Placement chips still appear under item titles. existingPlacements kept for bulk-assign datalist. renderPlacementGroups() is dead code but still in file. Typecheck passes. Commit: 935bf94.
