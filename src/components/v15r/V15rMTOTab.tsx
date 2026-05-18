@@ -44,6 +44,10 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const [focusedRowId, setFocusedRowId] = useState<string | null>(null)
   const [hoveredRowId, setHoveredRowId] = useState<string | null>(null)
 
+  // ── Auto-focus refs for new row quick-entry ───────────────────────
+  const newMTORowIdRef = useRef<string | null>(null)
+  const mtoNameInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+
   // ── Inline edit state for chip-to-input transform ─────────────────
   const [editingPlacementId, setEditingPlacementId] = useState<string | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
@@ -95,19 +99,24 @@ React.useEffect(() => { forceUpdate() }, [projectId])
   const addMTORow = (phase: string) => {
     pushState()
     p.mtoRows = p.mtoRows || []
+    const newId = 'mto' + Date.now()
     p.mtoRows.push({
-      id: 'mto' + Date.now(),
+      id: newId,
       phase,
       matId: '',
-      name: 'New item',
+      name: '',
       qty: 1,
       detailNote: '',
       supplierNote: '',
       placement: '',
       note: '',
     })
+    newMTORowIdRef.current = newId
     saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
+    requestAnimationFrame(() => {
+      mtoNameInputRefs.current[newId]?.focus()
+    })
   }
 
   const delMTORow = (rowId: string) => {
@@ -261,7 +270,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
         <th style={{ textAlign: 'right', padding: '8px', fontWeight: '600', width: '80px' }}>Unit Cost</th>
         <th style={{ textAlign: 'right', padding: '8px', fontWeight: '600', width: '80px' }}>Sell Price</th>
         <th style={{ textAlign: 'right', padding: '8px', fontWeight: '600', width: '90px' }}>Total</th>
-        <th style={{ textAlign: 'center', padding: '8px', fontWeight: '600', width: '40px' }}></th>
+        <th style={{ textAlign: 'center', padding: '8px', fontWeight: '600', width: '110px' }}></th>
       </tr>
     </thead>
   )
@@ -356,67 +365,21 @@ React.useEffect(() => { forceUpdate() }, [projectId])
         </td>
         {/* Item Title + inline placement/note fields */}
         <td style={{ padding: '8px' }}>
-          {/* Name input with Search and Price Book anchored to the left */}
+          {/* Name input — actions are in the right-side actions column */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            {/* Search — left side, always visible when item has name text and no PB match */}
-            {showSearchBtn && (
-              <button
-                title="Search this item online"
-                onClick={() => {
-                  window.open(
-                    'https://www.google.com/search?q=' + encodeURIComponent(r.name.trim()),
-                    '_blank'
-                  )
-                }}
-                onMouseDown={e => e.stopPropagation()}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '3px',
-                  padding: '2px 6px',
-                  background: 'none',
-                  border: 'none',
-                  borderRadius: '3px',
-                  color: isRowHovered ? 'rgba(148,163,184,0.85)' : 'rgba(148,163,184,0.3)',
-                  cursor: 'pointer',
-                  fontSize: '10px',
-                  flexShrink: 0,
-                  transition: 'color 0.15s',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                <Search size={10} />
-                Search
-              </button>
-            )}
-            {/* + Price Book — left side, always visible (dimmed when not hovering) */}
-            <button
-              title="Add to Price Book"
-              onClick={e => { e.stopPropagation(); openPbModal(r) }}
-              onMouseDown={e => e.stopPropagation()}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '3px',
-                padding: '2px 6px',
-                background: isRowHovered ? 'rgba(16,185,129,0.15)' : 'transparent',
-                border: isRowHovered ? '1px solid rgba(16,185,129,0.3)' : '1px solid transparent',
-                borderRadius: '3px',
-                color: isRowHovered ? '#10b981' : 'rgba(16,185,129,0.25)',
-                cursor: 'pointer',
-                fontSize: '10px',
-                flexShrink: 0,
-                transition: 'color 0.15s, background 0.15s, border-color 0.15s',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              + Price Book
-            </button>
             <input
+              ref={el => { mtoNameInputRefs.current[r.id] = el }}
               type="text"
               value={r.name || ''}
               onChange={e => editMTORow(r.id, 'name', e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  ;(e.target as HTMLInputElement).blur()
+                }
+              }}
               onMouseDown={e => e.stopPropagation()}
+              placeholder={newMTORowIdRef.current === r.id ? 'Item name…' : ''}
               style={{
                 background: 'transparent',
                 border: 'none',
@@ -769,21 +732,70 @@ React.useEffect(() => { forceUpdate() }, [projectId])
         <td style={{ padding: '8px', textAlign: 'right', fontWeight: '600', color: '#10b981', fontFamily: 'monospace' }}>
           {cu > 0 ? fmt(lt) : '—'}
         </td>
-        <td style={{ padding: '8px', textAlign: 'center' }}>
-          <button
-            onClick={() => delMTORow(r.id)}
-            onMouseDown={e => e.stopPropagation()}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#ef4444',
-              cursor: 'pointer',
-              fontSize: '16px',
-              padding: '0',
-            }}
-          >
-            ×
-          </button>
+        {/* Right-side actions: Price Book → Search → Delete — always visible */}
+        <td style={{ padding: '4px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            {/* Price Book */}
+            <button
+              title="Add to Price Book"
+              onClick={e => { e.stopPropagation(); openPbModal(r) }}
+              onMouseDown={e => e.stopPropagation()}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '2px',
+                padding: '2px 5px',
+                background: 'rgba(16,185,129,0.12)',
+                border: '1px solid rgba(16,185,129,0.25)',
+                borderRadius: '3px',
+                color: '#10b981',
+                cursor: 'pointer',
+                fontSize: '10px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              + PB
+            </button>
+            {/* Search */}
+            <button
+              title="Search this item online"
+              onClick={() => {
+                if (r.name && r.name.trim()) {
+                  window.open('https://www.google.com/search?q=' + encodeURIComponent(r.name.trim()), '_blank')
+                }
+              }}
+              onMouseDown={e => e.stopPropagation()}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '2px',
+                padding: '2px 5px',
+                background: 'none',
+                border: '1px solid rgba(148,163,184,0.2)',
+                borderRadius: '3px',
+                color: r.name && r.name.trim() ? 'rgba(148,163,184,0.75)' : 'rgba(148,163,184,0.25)',
+                cursor: r.name && r.name.trim() ? 'pointer' : 'default',
+                fontSize: '10px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <Search size={9} />
+            </button>
+            {/* Delete */}
+            <button
+              onClick={() => delMTORow(r.id)}
+              onMouseDown={e => e.stopPropagation()}
+              title="Delete row"
+              style={{
+                background: 'none',
+                border: '1px solid rgba(239,68,68,0.2)',
+                borderRadius: '3px',
+                color: '#ef4444',
+                cursor: 'pointer',
+                fontSize: '13px',
+                padding: '1px 5px',
+                lineHeight: '1',
+              }}
+            >
+              ×
+            </button>
+          </div>
         </td>
       </tr>
     )
