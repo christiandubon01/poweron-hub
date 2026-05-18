@@ -1369,3 +1369,36 @@ NO — ready for screenshot QA.
 - Manual QA performed: Typecheck only (no browser access in this session).
 - Next recommended action: In browser: click handle to select (should select on release). Click-hold-drag handle and confirm row visual drag works. Select multiple rows and confirm bulk-assign still works.
 - Compact handoff for next agent/chat: MTO handle uses onMouseDown/onMouseUp with 6px threshold. No setPointerCapture. Native browser drag unblocked. Selection on clean click (mouseup, no movement). dragState ref still exists. DRAG_THRESHOLD_PX=6. touchAction removed. Typecheck passes. Commit: ff28f6d.
+
+---
+
+## Session 8 Completion Report — MTO Bulk Selector Removal (2026-05-18)
+
+**Commit:** d8a84f1  fix(material-takeoff): remove bulk selector and keep drag
+
+**Task:** Remove the MTO multi-entry selector / bulk placement move flow entirely. Keep drag-based row movement from the 6-dot handle.
+
+**What was removed from V15rMTOTab.tsx:**
+- State: selectedIds (Set), bulkPlacement, showConfirm, pendingBulkPlacement
+- Refs/constants: DRAG_THRESHOLD_PX, dragState
+- Functions: handleHandleMouseDown, handleHandleMouseUp, applyBulkAssign, doApplyBulk
+- Derived: existingPlacements (only used for bulk-assign datalist)
+- In delMTORow: setSelectedIds cleanup line
+- In renderRow: isSelected variable; selection backgroundColor/borderLeft styles on tr; onMouseDown/onMouseUp on handle td
+- JSX: FLOATING ACTION BAR block (~80 lines); CONFIRMATION DIALOG block (~70 lines)
+
+**What was preserved:**
+- Handle td visual: cursor:grab, 6-dot icon (drag to move remains)
+- All other row state, actions, and mutation handlers
+
+**Net diff:** 225 lines deleted, 3 added. Typecheck: clean. No regressions.
+
+**Sessions completed in MTO polish series:**
+1. Unit cost display + project-only supplier column
+2. Remove duplicate supplier chip
+3. Fix placement-label bucket creation
+4. Move search/PB button left, widen supplier labels
+5. Right-side always-visible actions + quick-entry auto-focus
+6. Click-to-select vs drag separation
+7. Restore native drag (revert setPointerCapture anti-pattern)
+8. Remove bulk selector — drag-only handle (this session)

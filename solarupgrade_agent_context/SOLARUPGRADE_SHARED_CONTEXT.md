@@ -3825,3 +3825,26 @@ Ready for manual Graph Dashboard QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 EVR controls aligned with the 8-week timeline pattern. `V15rDashboard.tsx` now uses grouped Previous/Next/Timeline buttons for EVR; prev/next shift `evrDateStart` and `evrDateEnd` by seven days, and Timeline opens an EVR modal that edits the same date range. `EVRChart` continues receiving `dateStart`/`dateEnd`; no chart math or unrelated dashboards changed. Typecheck passes.
+
+---
+
+## MTO Polish Session 8 — Remove Bulk Selector (2026-05-18)
+
+**Commit:** d8a84f1
+
+**What changed:**
+- Removed selectedIds, bulkPlacement, showConfirm, pendingBulkPlacement state
+- Removed DRAG_THRESHOLD_PX constant and dragState ref
+- Removed handleHandleMouseDown, handleHandleMouseUp, applyBulkAssign, doApplyBulk functions
+- Removed existingPlacements derived variable (was only used for bulk-assign datalist)
+- Removed setSelectedIds cleanup line from delMTORow
+- Removed isSelected variable, selection background/border styles from tr
+- Removed onMouseDown/onMouseUp handlers from handle td; kept visual (drag icon, cursor:grab)
+- Removed FLOATING ACTION BAR JSX block (~80 lines)
+- Removed CONFIRMATION DIALOG JSX block (~70 lines)
+
+**Net result:** 225 lines deleted, 3 added. Handle now drag-only (no click-to-select). No bulk placement move flow.
+
+**Risks:** None — all removed code was self-contained with no external consumers.
+
+**Next:** No pending MTO polish tasks.
