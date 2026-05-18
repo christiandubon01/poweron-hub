@@ -1223,3 +1223,22 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEstimateTab.tsx`. Average Bill now creates a current-bill dollar series from the entered bill and seasonal weights, so the anchor month's tooltip/current bar equals the user input exactly. The existing kWh series and other summary charts remain unchanged. Typecheck passes.
+
+---
+
+## Codex Report — Leads Scanner Polish — exclude archived projects from scanner counts
+
+- Task completed: Excluded archived projects from the Leads relationship cleanup scanner/count source.
+- Files changed:
+  - `src/components/v15r/V15rLeadsPanel.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final Codex report.
+- Typecheck result: PASS — `npm.cmd run typecheck`
+- What changed: `cleanupRows` now builds scanner project records from `(backup.projects || []).filter(isActiveProject)` and reports that filtered project count in the scanner debug count.
+- What was learned: The normal Leads account aggregation path already used `isActiveProject`, so archived projects were excluded from account totals, timelines, map project points, and active job totals. The leak was isolated to the relationship cleanup scanner, which scanned raw `backup.projects`.
+- Learned skills / reusable patterns: Reuse `backupDataService.isActiveProject` as the app source of truth for active project filtering; it already excludes archived records through `archived`, `isArchived`, and `archivedAt`, plus archived/deleted/lost/cancelled statuses.
+- Bugs / risks: The patch intentionally does not change service log/service estimate scanner filtering outside the archived-project scope.
+- Manual QA performed: Code-path verification confirmed Projects archive/restore logic was untouched, account aggregation already filtered active projects, and the scanner now filters projects before counting/mapping cleanup rows. User confirmed manual QA quality was achieved and requested no further QA.
+- Next recommended action: Ready for deploy/manual QA as desired.
+- Compact handoff for next agent/chat: Leads scanner polish complete. Root cause was `V15rLeadsPanel.cleanupRows` scanning raw `backup.projects`; fix reuses `isActiveProject` to build scanner `projectRecords`, so archived projects no longer feed cleanup counts. No project archive/restore UI or unrelated Leads behavior changed. Typecheck passes. User verified quality and requested no further QA.

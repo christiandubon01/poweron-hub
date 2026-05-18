@@ -2973,3 +2973,54 @@ NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Monthly Bill anchor current-bill fix complete. `SeasonalBillChart` can now receive `monthlyCurrentBillByMonth`; for `average_bill`, `EstimateSummaryStep` builds it as `anchorBill * weight[month] / weight[anchorMonth]`. The anchor month's current bill therefore equals the user input exactly. Existing kWh modeling and other chart callers are unchanged. Typecheck passes.
+
+---
+
+## LEADS SCANNER ARCHIVE FILTER COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report.
+
+FILES CHANGED:
+- `src/components/v15r/V15rLeadsPanel.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Updated the Leads relationship cleanup scanner so its project input is `(backup.projects || []).filter(isActiveProject)`.
+- Updated the scanner debug count to report the same filtered project count.
+- Left Projects archive/restore behavior, project cards, service record scanning, and unrelated Leads logic unchanged.
+
+WHAT WAS LEARNED:
+- The normal Leads account aggregation/count path already used `isActiveProject`, which excludes archived projects.
+- The archived-project count leak was isolated to `cleanupRows`, where relationship cleanup scanned raw `backup.projects`.
+- Projects already uses the shared `backupDataService.isActiveProject` source of truth for active project filtering.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Reuse `isActiveProject` for active project scanner inputs so archive semantics stay aligned with the rest of the V15r app.
+- Keep scanner fixes at the aggregation source instead of patching rendered counts later.
+
+BUGS / RISKS:
+- User confirmed manual QA quality was achieved; no further browser QA was run in this session.
+- The patch intentionally does not change service log/service estimate scanner filtering outside the archived-project scope.
+
+TYPECHECK RESULT:
+PASS — `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- If future Leads scanner work includes service records, audit service archive semantics separately; this patch was intentionally project-only.
+
+NEXT PHASE READY:
+NO active build phase. Ready for deploy/manual QA as desired.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Leads scanner archive filter complete. Root cause: `V15rLeadsPanel.cleanupRows` scanned raw `backup.projects`, so archived projects could contribute to relationship cleanup scanner counts. Fix: build `projectRecords` with `isActiveProject` and feed/count that filtered list. Typecheck passes. User verified quality and requested no further QA.

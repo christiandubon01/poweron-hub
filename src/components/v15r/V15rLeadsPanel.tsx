@@ -1320,14 +1320,15 @@ export default function V15rLeadsPanel() {
       if (id) accountById.set(id, a)
     })
     const toRows = (list: any[], kind: string) => list.map((r: any) => ({ ...r, _kind: kind }))
+    const projectRecords = (backup.projects || []).filter(isActiveProject)
     const estimateRecords = (backup.serviceEstimates || []).filter((r: any) => isActiveServiceCall(r) && isRelevantEstimateStatus(r?.status))
     const records = [
-      ...toRows(backup.projects || [], 'project'),
+      ...toRows(projectRecords, 'project'),
       ...toRows(backup.serviceLogs || [], 'service_log'),
       ...toRows(estimateRecords, 'service_estimate'),
     ]
     console.info('[RelationshipCleanup] scan counts', {
-      projects: (backup.projects || []).length,
+      projects: projectRecords.length,
       serviceLogs: (backup.serviceLogs || []).length,
       serviceEstimates: estimateRecords.length,
       activeServiceCallsSkipped: (backup.activeServiceCalls || []).length,
