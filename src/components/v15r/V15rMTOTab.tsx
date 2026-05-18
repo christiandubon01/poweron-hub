@@ -38,6 +38,7 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   // onBlur and onEnter commit the value to the actual row data.
   const [localPlacements, setLocalPlacements] = useState<Record<string, string>>({})
   const [localUnitCosts, setLocalUnitCosts] = useState<Record<string, string>>({})
+  const [localSupplierNotes, setLocalSupplierNotes] = useState<Record<string, string>>({})
 
   // ── Row focus / hover tracking (Bug 4) ─────────────────────────────
   const [focusedRowId, setFocusedRowId] = useState<string | null>(null)
@@ -46,6 +47,7 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   // ── Inline edit state for chip-to-input transform ─────────────────
   const [editingPlacementId, setEditingPlacementId] = useState<string | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
+  const [editingSupplierNoteId, setEditingSupplierNoteId] = useState<string | null>(null)
 
   // ── Add to Price Book modal state ──────────────────────────────────
   const [pbModalRowId, setPbModalRowId] = useState<string | null>(null)
@@ -84,6 +86,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
         // Empty string = clear override (fall back to priceBook suggestion)
         row.unitCost = value === '' || value === null || value === undefined ? undefined : num(value)
       }
+      else if (field === 'supplierNote') row.supplierNote = String(value)
     }
     saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
@@ -111,8 +114,9 @@ React.useEffect(() => { forceUpdate() }, [projectId])
     pushState()
     p.mtoRows = (p.mtoRows || []).filter(r => r.id !== rowId)
     setSelectedIds(prev => { const n = new Set(prev); n.delete(rowId); return n })
-    // Clean up local placement state for the deleted row
+    // Clean up local state for the deleted row
     setLocalPlacements(prev => { const n = { ...prev }; delete n[rowId]; return n })
+    setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[rowId]; return n })
     saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
   }
@@ -274,9 +278,15 @@ React.useEffect(() => { forceUpdate() }, [projectId])
     const sellPrice = cu * (1 + markupPct)
     const lt = num(r.qty || 0) * sellPrice * (1 + waste)
     const isSelected = selectedIds.has(r.id)
-    // Normalize supplier display: empty or legacy "PDF Import" → N/A
-    const supplierDisplay = (!pbItem?.src || pbItem.src === 'PDF Import' || pbItem.src === 'PDF Imported')
-      ? 'N/A'
+    // Project-only supplier note (inline editable, project-scoped only)
+    const localSupplierNoteVal = localSupplierNotes[r.id] !== undefined
+      ? localSupplierNotes[r.id]
+      : (r.supplierNote || '')
+    const isEditingSupplierNote = editingSupplierNoteId === r.id
+    const hasSupplierNoteVal = !!(localSupplierNoteVal.trim())
+    // PB supplier — valid only if not a legacy import placeholder
+    const pbSupplierSrc = (!pbItem?.src || pbItem.src === 'PDF Import' || pbItem.src === 'PDF Imported')
+      ? null
       : pbItem.src
     const familyDisplay = (!pbItem?.cat || pbItem.cat === 'PDF Imported')
       ? '—'
@@ -624,8 +634,75 @@ React.useEffect(() => { forceUpdate() }, [projectId])
           </div>
         </td>
 
-        <td style={{ padding: '8px', fontSize: '11px', color: supplierDisplay === 'N/A' ? 'var(--t3)' : 'var(--t2)' }}>
-          {supplierDisplay}
+        {/* Supplier — project-only inline edit; PB supplier shown read-only when present */}
+        <td style={{ padding: '8px', fontSize: '11px' }}>
+          {hasSupplierNoteVal && !isEditingSupplierNote ? (
+            <span
+              onClick={() => setEditingSupplierNoteId(r.id)}
+              onMouseDown={e => e.stopPropagation()}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                padding: '2px 8px', borderRadius: '9999px',
+                backgroundColor: 'rgba(6,182,212,0.15)', color: '#22d3ee',
+                border: '1px solid rgba(6,182,212,0.3)', fontSize: '10px',
+                fontWeight: '500', cursor: 'pointer', lineHeight: '1.5',
+              }}
+            >
+              {localSupplierNoteVal}
+              <span
+                onClick={e => {
+                  e.stopPropagation()
+                  editMTORow(r.id, 'supplierNote', '')
+                  setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[r.id]; return n })
+                  setEditingSupplierNoteId(null)
+                }}
+                onMouseDown={e => e.stopPropagation()}
+                style={{ cursor: 'pointer', color: 'rgba(34,211,238,0.5)', fontSize: '12px', lineHeight: '1', marginLeft: '2px' }}
+                title="Clear project supplier"
+              >x</span>
+            </span>
+          ) : isEditingSupplierNote ? (
+            <input
+              autoFocus
+              type="text"
+              value={localSupplierNoteVal}
+              onChange={e => setLocalSupplierNotes(prev => ({ ...prev, [r.id]: e.target.value }))}
+              onBlur={e => {
+                editMTORow(r.id, 'supplierNote', e.target.value)
+                setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[r.id]; return n })
+                setEditingSupplierNoteId(null)
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                if (e.key === 'Escape') {
+                  setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[r.id]; return n })
+                  setEditingSupplierNoteId(null)
+                }
+              }}
+              onMouseDown={e => e.stopPropagation()}
+              placeholder="Supplier"
+              style={{
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(6,182,212,0.35)',
+                borderRadius: '9999px', color: '#22d3ee',
+                fontSize: '10px', padding: '2px 8px', width: '90px', outline: 'none',
+              }}
+            />
+          ) : pbSupplierSrc ? (
+            <span style={{ color: 'var(--t2)' }}>{pbSupplierSrc}</span>
+          ) : isRowHovered ? (
+            <span
+              onClick={() => setEditingSupplierNoteId(r.id)}
+              onMouseDown={e => e.stopPropagation()}
+              style={{
+                display: 'inline-block', padding: '2px 8px', borderRadius: '9999px',
+                backgroundColor: 'transparent', border: '1px dashed rgba(255,255,255,0.1)',
+                color: 'rgba(255,255,255,0.18)', fontSize: '10px', cursor: 'pointer', lineHeight: '1.5',
+              }}
+            >+ supplier</span>
+          ) : (
+            <span style={{ color: 'var(--t3)' }}>N/A</span>
+          )}
         </td>
         <td style={{ padding: '8px', fontSize: '11px', color: 'var(--t3)' }}>
           {familyDisplay}
@@ -661,47 +738,50 @@ React.useEffect(() => { forceUpdate() }, [projectId])
           {pbItem?.unit || 'EA'}
         </td>
         <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'monospace', fontSize: '12px' }}>
-          <input
-            type="number"
-            value={localCostVal}
-            placeholder="—"
-            step="0.01"
-            onMouseDown={e => e.stopPropagation()}
-            onChange={e => {
-              // Local only — smooth typing, no save until blur/Enter
-              setLocalUnitCosts(prev => ({ ...prev, [r.id]: e.target.value }))
-            }}
-            onBlur={e => {
-              const v = e.target.value
-              editMTORow(r.id, 'unitCost', v)
-              setLocalUnitCosts(prev => {
-                const n = { ...prev }
-                delete n[r.id]
-                return n
-              })
-            }}
-            onKeyDown={e => {
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-              if (e.key === 'Escape') {
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '2px' }}>
+            <span style={{ color: 'var(--t3)', fontSize: '11px', flexShrink: 0 }}>$</span>
+            <input
+              type="number"
+              value={localCostVal}
+              placeholder="—"
+              step="0.01"
+              onMouseDown={e => e.stopPropagation()}
+              onChange={e => {
+                // Local only — smooth typing, no save until blur/Enter
+                setLocalUnitCosts(prev => ({ ...prev, [r.id]: e.target.value }))
+              }}
+              onBlur={e => {
+                const v = e.target.value
+                editMTORow(r.id, 'unitCost', v)
                 setLocalUnitCosts(prev => {
                   const n = { ...prev }
                   delete n[r.id]
                   return n
                 })
-                ;(e.target as HTMLInputElement).blur()
-              }
-            }}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: r.unitCost !== undefined ? '#fbbf24' : 'var(--t1)', // yellow = overridden
-              width: '100%',
-              textAlign: 'right',
-              fontFamily: 'monospace',
-              fontSize: '12px',
-            }}
-            title={r.unitCost !== undefined ? 'Overridden — clear field to revert to Price Book suggestion' : 'Price Book suggestion — edit to override for this row'}
-          />
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                if (e.key === 'Escape') {
+                  setLocalUnitCosts(prev => {
+                    const n = { ...prev }
+                    delete n[r.id]
+                    return n
+                  })
+                  ;(e.target as HTMLInputElement).blur()
+                }
+              }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: r.unitCost !== undefined ? '#fbbf24' : 'var(--t1)', // yellow = overridden
+                width: '100%',
+                textAlign: 'right',
+                fontFamily: 'monospace',
+                fontSize: '12px',
+              }}
+              title={r.unitCost !== undefined ? 'Overridden — clear field to revert to Price Book suggestion' : 'Price Book suggestion — edit to override for this row'}
+            />
+          </div>
         </td>
         <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#60a5fa' }}>
           {cu > 0 ? fmt(sellPrice) : '—'}

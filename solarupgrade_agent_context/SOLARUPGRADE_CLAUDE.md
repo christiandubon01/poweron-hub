@@ -1212,3 +1212,28 @@ None. Ready for screenshot QA.
 
 NEXT PHASE READY:
 NO — ready for screenshot QA.
+
+---
+
+## Claude Report — Material Takeoff polish — unit cost currency display + project-only manual supplier
+
+- Task completed: YES
+- Files changed: `src/components/v15r/V15rMTOTab.tsx`, `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`, `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+- Commit hash: (see git log)
+- Typecheck result: PASS — zero errors
+- Root cause:
+  - Unit Cost dollar-sign: bare number input with no currency prefix. Fix: flex wrapper with dollar-sign span before input.
+  - Project supplier: Supplier column only read from pbItem.src (Price Book). r.supplierNote already existed on row data but was only shown as a chip in the Item Title area. No inline edit path in the Supplier column.
+- What changed:
+  - Dollar-sign flex wrapper added to Unit Cost td.
+  - localSupplierNotes state + editingSupplierNoteId state added.
+  - editMTORow extended to handle supplierNote field.
+  - delMTORow cleans up localSupplierNotes on row delete.
+  - Supplier td replaced with chip/input inline edit: cyan chip (clear-X) when r.supplierNote set, input on click, PB supplier read-only when linked, plus-supplier hover prompt, N/A fallback.
+  - Old supplierDisplay variable removed; replaced with pbSupplierSrc.
+- What was learned: r.supplierNote already existed on MTO row data model — no schema change needed. chip/input edit pattern cleanly reusable for inline-edit columns.
+- Learned skills / reusable patterns: Inline editable column pattern (local state map + editing ID state + chip/input/hover conditional JSX). Currency prefix for number inputs: flex wrapper + span.
+- Bugs / risks: None introduced. Existing Price Book path and supplierNote chip in Item Title unchanged.
+- Manual QA performed: Typecheck only (no browser access in this session).
+- Next recommended action: Open MTO in browser — confirm dollar-sign on Unit Cost, enter project supplier, verify it saves without touching Price Book.
+- Compact handoff for next agent/chat: MTO polish done on src/components/v15r/V15rMTOTab.tsx. Unit Cost shows dollar-sign. Supplier column inline-editable via r.supplierNote (project-scoped). Cyan chip when set, clears with X. PB supplier read-only when linked. Plus Price Book global path unchanged. Typecheck passes.

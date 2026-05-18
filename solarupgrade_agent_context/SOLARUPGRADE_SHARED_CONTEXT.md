@@ -3213,3 +3213,46 @@ Ready for manual Graph Dashboard QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Nexus modal hotfix complete. Root cause was missing `onOpenNexus` destructuring in `PulseTrendAnalyzer`; fixed by adding it to the destructured props. Nexus remains hidden inline by default and opens from the modal button. Typecheck passes.
+
+---
+
+## MATERIAL TAKEOFF POLISH — UNIT COST $ + PROJECT-ONLY SUPPLIER COMPLETION LOG
+
+AGENT:
+Claude Code Sonnet 4.5 Medium
+
+COMMIT HASH:
+(see below)
+
+FILES CHANGED:
+- `src/components/v15r/V15rMTOTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+WHAT CHANGED:
+- Added `$` prefix indicator to Unit Cost column in Material Takeoff row display (flex wrapper with `$` span before the number input).
+- Added `localSupplierNotes` state (Record<string, string>) and `editingSupplierNoteId` state for inline supplier editing.
+- Extended `editMTORow` to handle `supplierNote` field.
+- Updated `delMTORow` to clean up `localSupplierNotes` on row delete.
+- Replaced the read-only Supplier `<td>` with a full chip/input inline edit pattern: cyan chip with clear-X when set, input field when editing, PB supplier read-only when linked, `+ supplier` hover prompt when empty, `N/A` fallback. Saves to `r.supplierNote` (project-scoped only).
+- Removed stale `supplierDisplay` variable; replaced with `pbSupplierSrc` (null when not a valid PB supplier).
+- Existing `+ Price Book` button and global save behavior unchanged.
+
+ROOT CAUSE:
+- Unit Cost `$`: The `<td>` used a bare `number` input with no currency prefix. Fix wraps it in a `display:flex` div with a `$` span.
+- Project supplier: The Supplier column only read from `pbItem?.src`. The `r.supplierNote` field already existed on MTO row data but was only displayed as a chip in the Item Title column. Making it editable directly in the Supplier column satisfies the project-only requirement.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE READY:
+Ready for manual MTO QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+MTO polish done. `src/components/v15r/V15rMTOTab.tsx` now shows a `$` prefix on Unit Cost (flex wrapper + span). Supplier column is inline-editable: cyan chip when `r.supplierNote` is set, editable input on click, PB supplier read-only when linked, hover prompt otherwise. Saves to `r.supplierNote` (project-scoped). `+ Price Book` global save path unchanged. Typecheck passes.
