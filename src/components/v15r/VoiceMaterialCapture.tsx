@@ -367,11 +367,11 @@ export default function VoiceMaterialCapture({
   const isError       = status === 'error'
 
   return (
-    <div className={`col-span-2 md:col-span-3 ${className}`}>
+    <div className={`w-full min-w-0 ${className}`}>
       {/* ── Materials $ label + input + mic button ── */}
       <label className="text-[9px] text-gray-500 uppercase font-bold">Materials $</label>
       <div
-        className="flex gap-1 mt-0.5"
+        className="mt-0.5 flex w-full min-w-0 items-center gap-1"
         style={isRecording ? {
           outline: '2px solid rgba(239,68,68,0.7)',
           borderRadius: '6px',
@@ -383,7 +383,7 @@ export default function VoiceMaterialCapture({
           step="0.01"
           value={value}
           onChange={e => onChange(e.target.value)}
-          className="flex-1 bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200"
+          className="min-w-0 flex-1 bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200"
           placeholder="0.00"
         />
 
@@ -394,8 +394,8 @@ export default function VoiceMaterialCapture({
           disabled={isProcessing || isReviewing}
           title={isRecording ? 'Tap to stop recording' : 'Tap to record materials'}
           style={{
-            width: '32px',
-            height: '32px',
+            width: '28x',
+            height: '28px',
             borderRadius: '6px',
             border: '1.5px solid',
             display: 'flex',
