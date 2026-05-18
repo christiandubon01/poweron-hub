@@ -1322,3 +1322,28 @@ NO — ready for screenshot QA.
 - Manual QA performed: Typecheck only (no browser access in this session).
 - Next recommended action: Open MTO, click Add Item, confirm cursor lands in empty name field, type a name, press Enter. Confirm Price Book / Search / Delete visible on right side of every row without hover.
 - Compact handoff for next agent/chat: MTO row actions right-side always-visible. Item Title cell is clean name input only. addMTORow auto-focuses new row. Enter to confirm. Actions column: [+PB | Search-icon | x], always visible. Matches Estimate labor-row pattern. Typecheck passes. Commit: 9577bd6.
+
+---
+
+## Claude Report - Material Takeoff polish - clean click-to-select vs click-hold-to-drag behavior
+
+- Task completed: YES
+- Files changed: src/components/v15r/V15rMTOTab.tsx, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+- Commit hash: cd94433
+- Typecheck result: PASS - zero errors
+- Root cause: handleRowMouseDown was bound to the mousedown event on the drag handle td. Mousedown fires at the start of any press, before the user has a chance to drag. So every drag attempt immediately toggled selection. The fix defers toggle to pointer release and suppresses it if pointer movement exceeded a threshold.
+- What changed:
+  - Added DRAG_THRESHOLD_PX = 6 and dragState useRef.
+  - handleRowMouseDown and no-op handleRowMouseEnter removed.
+  - handleHandlePointerDown: records startX/startY, calls setPointerCapture.
+  - handleHandlePointerMove: sets dragged=true if movement exceeds threshold.
+  - handleHandlePointerUp: toggles selection only on clean click (dragged=false).
+  - handleHandlePointerCancel: cleans up drag state.
+  - Drag handle td switched from onMouseDown to onPointerDown/Move/Up/Cancel.
+  - touchAction: none added to prevent touch-scroll interference.
+- What was learned: setPointerCapture is the correct way to keep pointer events routed to the handle element during a drag, even if the pointer moves outside it. Pointer events unify mouse, touch, and stylus under one model.
+- Learned skills / reusable patterns: Pointer-event threshold pattern for click-vs-drag: record startX/Y on pointerdown, set dragged=true in pointermove when abs(dx)>threshold || abs(dy)>threshold, act on pointerup only if !dragged. Reusable for any drag handle that also needs click-select behavior.
+- Bugs / risks: Row drag-to-reorder is still not implemented (no sortable/DnD library). The handle now correctly separates click-select from drag-intent, but drag does not actually reorder rows. If drag reordering is needed in the future, it would be a separate phase.
+- Manual QA performed: Typecheck only (no browser access in this session).
+- Next recommended action: In browser: click handle to select (should select without dragging). Click-hold-drag handle (should not toggle selection). Select 2+ rows and bulk-assign placement.
+- Compact handoff for next agent/chat: MTO drag handle uses pointer-event threshold. Click-release = select. Click-hold-move = drag (no selection toggle). DRAG_THRESHOLD_PX=6. dragState ref. setPointerCapture used. Multi-select preserved. Row reorder-by-drag not yet implemented. Typecheck passes. Commit: cd94433.

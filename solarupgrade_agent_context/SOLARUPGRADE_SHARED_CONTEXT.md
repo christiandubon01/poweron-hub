@@ -3654,3 +3654,39 @@ Ready for manual Graph Dashboard QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 8-week cash-flow controls polished. `V15rDashboard.tsx` now shows `Previous Week`, `Next Week`, and `Timeline` together in the 8-week header using the same control classes as EVR's date inputs. Prev/Next shift the existing cash-flow anchor by +/-7 days, so the existing `query8WeekCashFlow(anchorDate)` recomputation path remains intact. Typecheck passes.
+
+---
+
+## MTO CLICK-TO-SELECT VS DRAG SEPARATION COMPLETION LOG
+
+AGENT:
+Claude Code Sonnet 4.5 Medium
+
+COMMIT HASH:
+cd94433
+
+FILES CHANGED:
+- src/components/v15r/V15rMTOTab.tsx
+- solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+- solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+
+WHAT CHANGED:
+- Replaced handleRowMouseDown (toggled selection immediately on mousedown) and no-op handleRowMouseEnter with three pointer-event handlers on the drag handle td.
+- handleHandlePointerDown: records start position, calls setPointerCapture.
+- handleHandlePointerMove: sets dragged=true when pointer moves more than 6px in any direction.
+- handleHandlePointerUp: toggles selection only when dragged=false (clean click). Silent on actual drag.
+- handleHandlePointerCancel: cleans up dragState ref.
+- Added DRAG_THRESHOLD_PX = 6 constant and dragState useRef.
+- Added touchAction: none to handle td to suppress default touch scroll interference.
+
+ROOT CAUSE:
+handleRowMouseDown fired selection toggle immediately on mousedown (before mouseup), so any press — including the start of a drag — would toggle selection. Pointer events with a movement threshold correctly defer the toggle until pointer release and suppress it if the pointer moved.
+
+TYPECHECK RESULT:
+PASS - zero errors
+
+NEXT PHASE READY:
+Ready for manual MTO QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+MTO drag handle now uses pointer events. Click-and-release selects. Click-hold-drag does not toggle selection. DRAG_THRESHOLD_PX = 6. dragState ref tracks start position and dragged flag per press. setPointerCapture keeps events routed to the handle during drag. Multi-select still works. Typecheck passes. Commit: cd94433.
