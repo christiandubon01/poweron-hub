@@ -3422,3 +3422,55 @@ Ready for manual MTO QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Placement labels are now informational only in V15rMTOTab.tsx. The hasAnyPlacement view-switch was removed; renderPhaseGroups() is always used. Placement chips still appear under item titles. existingPlacements kept for bulk-assign datalist. renderPlacementGroups() is dead code but still in file. Typecheck passes. Commit: 935bf94.
+
+---
+
+## GRAPH DASHBOARD SERVICE TOTAL BILLABLE ACTUALS COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final response.
+
+FILES CHANGED:
+- `src/services/revenueTimelineService.ts`
+- `src/components/v15r/charts/SVGCharts.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Updated 8-Week Cash Flow Projection service-call actuals to use the same service-log Total Billable calculation rendered in Field Log > Service Log.
+- Kept project actual collection logic unchanged.
+- Updated the 8-week hover detail text so service-call actuals are described as service-log Total Billable rather than collected service logs.
+
+WHAT WAS LEARNED:
+- Field Log Service Log renders `Total Billable` from `quoted + income adjustments` via `getServiceRollup()`.
+- The 8-week chart was already receiving active service records, but service actual buckets used `paymentsCollected || collected`.
+- The Eric Hanson symptom fits that mismatch: the chart could show a collected/derived value such as `$265` instead of the Field Log Total Billable value `$207.35`.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- For service-call revenue actuals in dashboard charts, mirror Field Log's canonical `quoted + income adjustments` source instead of recomputing from labor/material/mileage or using collected amount.
+- Keep tooltip source labels tied to the same field used by the aggregate bucket.
+
+BUGS / RISKS:
+- Browser QA in the Codex in-app browser was blocked by policy for `localhost:5173`; shell confirmed that `localhost:5173` responds.
+- Manual QA should confirm the Eric Hanson service entry and chart hover in the already-running localhost window.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Manually verify Field Log > Service Log Total Billable for Eric Hanson is `$207.35`, then hover the matching 8-week actual bucket and confirm the service source line contributes `$207.35`.
+
+NEXT PHASE READY:
+Ready for manual Graph Dashboard QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+8-week service-call actuals fixed. Root cause: `get8WeekCashFlow()` used service `paymentsCollected || collected` for actual buckets, while Field Log Service Log displays Total Billable as `quoted + income adjustments`. Fix: added a helper mirroring Field Log's billable calculation and used it for service actual buckets only; project actuals unchanged. Hover copy now says service-log Total Billable. Typecheck passes. Manual localhost browser QA remains.

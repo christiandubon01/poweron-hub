@@ -443,9 +443,9 @@ function CashFlowProjectionChart({ weekBuckets, overlapWindows }) {
       '<div style="margin-top:3px">' + listLines(serviceBalances, 'No active service balance due in this week') + '</div>' +
       (baseline.length ? '<div style="margin-top:3px">' + listLines(baseline, '') + '</div>' : '') +
       '<div style="margin-top:8px;color:#10b981;font-weight:700">Actual: ' + fmtDollar(d.actual || 0) + '</div>' +
-      '<div style="color:#9ca3af;font-size:10px">Collected project logs ' + fmtDollar(sumItems(projectCollections)) + ' + collected service logs ' + fmtDollar(sumItems(serviceCollections)) + '</div>' +
+      '<div style="color:#9ca3af;font-size:10px">Collected project logs ' + fmtDollar(sumItems(projectCollections)) + ' + service-log Total Billable ' + fmtDollar(sumItems(serviceCollections)) + '</div>' +
       '<div style="margin-top:4px">' + listLines(projectCollections, 'No active project collections in this week') + '</div>' +
-      '<div style="margin-top:3px">' + listLines(serviceCollections, 'No active service collections in this week') + '</div>' +
+      '<div style="margin-top:3px">' + listLines(serviceCollections, 'No service-log Total Billable entries in this week') + '</div>' +
       '<div style="margin-top:8px;color:' + (delta < 0 ? '#10b981' : '#9ca3af') + '">Delta: ' + (delta >= 0 ? '+' : '') + fmtDollar(delta) + '</div>'
     el.style.display = 'block'
   }

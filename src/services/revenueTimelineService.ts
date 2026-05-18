@@ -109,6 +109,14 @@ function monthKey(d: Date): string {
   return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
 }
 
+function getServiceLogTotalBillable(svc: any): number {
+  const adjustments = Array.isArray(svc?.adjustments) ? svc.adjustments : []
+  const addIncome = adjustments
+    .filter((a: any) => a && a.type === 'income')
+    .reduce((s: number, a: any) => s + n(a.amount), 0)
+  return n(svc?.quoted) + addIncome
+}
+
 function datesOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
   return aStart <= bEnd && bStart <= aEnd
 }
@@ -363,11 +371,7 @@ export function get8WeekCashFlow(
   for (const svc of serviceRecords) {
     const svcDate = parseDate(svc.date || svc.scheduledDate || svc.dueDate)
     if (!svcDate) continue
-    const adjustments = Array.isArray(svc.adjustments) ? svc.adjustments : []
-    const addIncome = adjustments
-      .filter((a: any) => a && a.type === 'income')
-      .reduce((s: number, a: any) => s + n(a.amount), 0)
-    const billable = n(svc.quoted) + addIncome
+    const billable = getServiceLogTotalBillable(svc)
     const balance = Math.max(0, billable - n(svc.collected))
     if (balance === 0) continue
     for (const bucket of buckets) {
@@ -406,20 +410,20 @@ export function get8WeekCashFlow(
     }
   }
 
-  // Actual: from active service-call/log collections
+  // Actual: from the same service-log Total Billable value rendered in Field Log > Service Log.
   for (const svc of serviceRecords) {
     const svcDate = parseDate(svc.date || svc.logDate)
     if (!svcDate) continue
-    const collected = n(svc.paymentsCollected || svc.collected)
-    if (collected === 0) continue
+    const totalBillable = getServiceLogTotalBillable(svc)
+    if (totalBillable === 0) continue
     for (const bucket of buckets) {
       const we = addDays(bucket.weekStart, 6)
       if (svcDate >= bucket.weekStart && svcDate <= we) {
-        bucket.actual += collected
+        bucket.actual += totalBillable
         bucket.actualSources?.serviceCollections.push({
           label: svc.customer || svc.name || svc.jtype || 'Service call',
-          amount: collected,
-          detail: svc.date || svc.logDate || 'service log',
+          amount: totalBillable,
+          detail: `Total Billable - ${svc.date || svc.logDate || 'service log'}`,
         })
         break
       }

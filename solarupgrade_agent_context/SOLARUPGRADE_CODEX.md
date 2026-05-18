@@ -1396,3 +1396,24 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
 - Manual QA performed: Static chart/data-path verification and `npm.cmd run typecheck`; localhost was not clicked through from this session.
 - Next recommended action: On shared localhost, hover each 8-week bar and overlap dot to confirm the detail cards are readable and match expected source records.
 - Compact handoff for next agent/chat: 8-week hover polish complete. Buckets now expose source breakdown metadata; tooltip explains projected active project payments, active service balances, baseline if present, actual project collections, and actual service collections. Overlap dot now opens a dedicated timeline card with overlap dates and payment/deposit context. Typecheck passes.
+
+---
+
+## Codex Report — Graph Dashboard Fix — use Field Log service-call total billable for 8-Week Cash Flow actuals
+
+- Task completed: Corrected service-call actual value sourcing for the 8-Week Cash Flow Projection.
+- Files changed:
+  - `src/services/revenueTimelineService.ts`
+  - `src/components/v15r/charts/SVGCharts.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final Codex report.
+- Typecheck result: PASS - `npm.cmd run typecheck`
+- Root cause: Field Log Service Log displays Total Billable as `quoted + income adjustments`, but the 8-week chart's service actual bucket used `paymentsCollected || collected`, so service-call actuals could show a different value such as `$265` instead of Eric Hanson's Field Log Total Billable `$207.35`.
+- What changed: Added a `getServiceLogTotalBillable()` helper in the revenue timeline service that mirrors Field Log's Total Billable source, reused it for service projected balances, and switched service-call actual buckets to that Total Billable value. Project actual collection logic was left unchanged. The chart hover source label now says service-log Total Billable.
+- What was learned: The rendered path is `V15rDashboard.tsx` -> `query8WeekCashFlow()` -> `get8WeekCashFlow()` -> `CashFlowProjectionChart`. Field Log's source of truth lives in `V15rFieldLogPanel.tsx` `getServiceRollup()`: `baseQuoted = num(l.quoted)`, `addIncome = income adjustments`, `totalBillable = baseQuoted + addIncome`.
+- Learned skills / reusable patterns: When a chart needs service-call actual revenue, reuse the Field Log billable source (`quoted + income adjustments`) and keep hover details named after that source so aggregate totals and source rows stay aligned.
+- Bugs / risks: Browser navigation to `localhost:5173` was blocked by in-app browser policy; shell confirmed `localhost:5173` responds. Manual QA should be done in the already-running localhost app.
+- Manual QA performed: Static source-path verification, local HTTP response check for `localhost:5173`, and `npm.cmd run typecheck`. Browser click-through for Eric Hanson remains pending.
+- Next recommended action: On localhost, open Field Log > Service Log, confirm Eric Hanson's Total Billable is `$207.35`, then open Graph Dashboard > 8-Week Cash Flow Projection and verify the matching hover source line contributes `$207.35` with service-log Total Billable copy.
+- Compact handoff for next agent/chat: Service-call actual source fixed for 8-week cash flow. Only service actual amount sourcing changed from `paymentsCollected || collected` to Field Log's `quoted + income adjustments`; project actuals and unrelated graphs were not touched. Hover copy now reflects service-log Total Billable. Typecheck passes; manual localhost QA remains.
