@@ -9,7 +9,7 @@
  * DO NOT put React hooks here. These are plain data-fetch functions.
  */
 
-import { getBackupData, saveBackupData } from '@/services/backupDataService'
+import { getBackupData, isActiveProject, saveBackupData } from '@/services/backupDataService'
 import { getProjectPhaseNames, normalizePhaseName } from '@/utils/v15rProjectPhases'
 import {
   getPhasePaymentSchedule,
@@ -94,40 +94,45 @@ export function getBackup(): any {
   return getBackupData()
 }
 
+function getActiveProjects(backup: any): any[] {
+  return (backup?.projects || []).filter(isActiveProject)
+}
+
 /** Get 8-week cash flow buckets from current local state */
 export function query8WeekCashFlow(): WeekBucket[] {
   const backup = getBackupData()
   if (!backup) return []
-  return get8WeekCashFlow(backup.projects || [], backup.logs || [])
+  return get8WeekCashFlow(getActiveProjects(backup), backup.logs || [])
 }
 
 /** Get monthly revenue comparison from current local state */
 export function queryMonthlyRevenue(months: number = 6, startMonthOffset: number = 0): MonthBucket[] {
   const backup = getBackupData()
   if (!backup) return []
-  return getMonthlyRevenueComparison(backup.projects || [], backup.logs || [], months, startMonthOffset)
+  return getMonthlyRevenueComparison(getActiveProjects(backup), backup.logs || [], months, startMonthOffset)
 }
 
 /** Get overlap windows from current local state */
 export function queryOverlapWindows(): OverlapWindow[] {
   const backup = getBackupData()
   if (!backup) return []
-  return getOverlapWindows(backup.projects || [])
+  return getOverlapWindows(getActiveProjects(backup))
 }
 
 /** Get Gantt data for all active/coming projects */
 export function queryGanttData(): GanttProjectRow[] {
   const backup = getBackupData()
   if (!backup) return []
-  const overlaps = getOverlapWindows(backup.projects || [])
-  return getProjectGanttData(backup.projects || [], overlaps)
+  const projects = getActiveProjects(backup)
+  const overlaps = getOverlapWindows(projects)
+  return getProjectGanttData(projects, overlaps)
 }
 
 /** Get quote vs actual variance for a specific project */
 export function queryQuoteVsActual(projectId: string): PhaseVariance[] {
   const backup = getBackupData()
   if (!backup) return []
-  const project = (backup.projects || []).find((p: any) => p.id === projectId)
+  const project = getActiveProjects(backup).find((p: any) => p.id === projectId)
   if (!project) return []
   return getQuoteVsActual(project, backup.logs || [])
 }
@@ -136,16 +141,17 @@ export function queryQuoteVsActual(projectId: string): PhaseVariance[] {
 export function queryPaymentSchedule(projectId: string): PaymentEvent[] {
   const backup = getBackupData()
   if (!backup) return []
-  const project = (backup.projects || []).find((p: any) => p.id === projectId)
+  const projects = getActiveProjects(backup)
+  const project = projects.find((p: any) => p.id === projectId)
   if (!project) return []
-  return getPhasePaymentSchedule(project, backup.projects || [])
+  return getPhasePaymentSchedule(project, projects)
 }
 
 /** Get quote vs actual for ALL projects that have relevant data */
 export function queryAllQuoteVsActual(): Array<{ projectId: string; projectName: string; variances: PhaseVariance[] }> {
   const backup = getBackupData()
   if (!backup) return []
-  const projects = backup.projects || []
+  const projects = getActiveProjects(backup)
   const logs = backup.logs || []
 
   return projects

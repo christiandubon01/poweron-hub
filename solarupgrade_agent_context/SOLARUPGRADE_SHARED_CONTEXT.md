@@ -3024,3 +3024,108 @@ NO active build phase. Ready for deploy/manual QA as desired.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Leads scanner archive filter complete. Root cause: `V15rLeadsPanel.cleanupRows` scanned raw `backup.projects`, so archived projects could contribute to relationship cleanup scanner counts. Fix: build `projectRecords` with `isActiveProject` and feed/count that filtered list. Typecheck passes. User verified quality and requested no further QA.
+
+---
+
+## GRAPH DASHBOARD AUDIT COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+no commit
+
+FILES CHANGED:
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Audit-only pass of every graph rendered by Graph Dashboard.
+- No application code changed because branch creation was declined.
+- Context files updated with graph list, findings, risks, and next recommended fixes.
+
+WHAT WAS LEARNED:
+- `graph-dashboard` routes to `src/components/v15r/V15rDashboard.tsx`.
+- Direct dashboard graph inputs mostly start from `getBackupData()` and apply `isActiveProject` / `isActiveServiceCall`.
+- Revenue timeline query helpers call `getBackupData()` independently and pass raw `backup.projects` into services that filter only by status.
+- `EVRChart` has the correct `projId || projectId` log matching guard, but `PvAChart` and `RCAChart` still use `projectId` only.
+- CFOT chart data is event-sourced by week, while CFOT summary boxes are current snapshot calculations, so they can disagree.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Put archive/status filters at graph query boundaries, not after chart series are built.
+- Normalize project log IDs once with `(log.projId || log.projectId)` before date grouping or cumulative series building.
+- For dashboard graphs, keep summary cards and plotted series on the same aggregate when users are expected to compare them directly.
+
+BUGS / RISKS:
+- High: `PvAChart` actual series likely misses real field logs because it matches `log.projectId` only while backup logs use `projId`.
+- High: `RCAChart` likely underreports costs/revenue for the same reason in both single-project and multi-project modes.
+- High: Revenue timeline helpers can include archived projects in projections, overlaps, Gantt rows, and quote-vs-actual if archived projects still have `active`/`coming` status.
+- Medium: `SixMonthForecastChart` reads raw `backup.projects` and filters by status only, so archived active/coming projects can leak into the forecast.
+- Medium: `SCPChart` "Net Profit" subtracts material and mileage only; it does not subtract labor/op cost and may not read the canonical service-log material/mileage fields.
+- Medium: RCA date ranges mix filtered costs with all-time `fin.paid` in multi-project mode.
+- Low/Medium: Labor/team hours charts include all logs; confirm whether archived/inactive historical labor should remain included.
+
+TYPECHECK RESULT:
+PASS — `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Recommended scoped fix branch: patch `PvAChart` and `RCAChart` to match `(log.projId || log.projectId)`, filter revenue timeline query project inputs through `isActiveProject`, filter `SixMonthForecastChart` through `isActiveProject`, and re-run manual graph QA.
+- Consider a follow-up CFOT consistency pass to decide whether summary boxes should be snapshot KPIs or match the current plotted event-sourced right edge.
+
+NEXT PHASE READY:
+NO active build phase. Ready for a narrow Graph Dashboard fix pass.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Graph Dashboard audit complete, no commit. All 14 graph widgets in `V15rDashboard` were audited. Typecheck passes. No app code changed because branch creation was declined. Main findings: `PvAChart` and `RCAChart` use `log.projectId` only while real logs use `projId`; revenue timeline helpers and `SixMonthForecastChart` filter raw project statuses instead of using `isActiveProject`, allowing archived active/coming projects to leak; CFOT summary cards and plotted event-sourced lines can disagree; `SCPChart` likely overstates Net Profit by omitting labor/op cost.
+
+---
+
+## GRAPH DASHBOARD FIX PASS COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final response.
+
+FILES CHANGED:
+- `src/components/v15r/charts/PvAChart.tsx`
+- `src/components/v15r/charts/RCAChart.tsx`
+- `src/components/v15r/charts/SixMonthForecastChart.tsx`
+- `src/services/revenueTimelineQueries.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- `PvAChart` and `RCAChart` now match field logs using `(log.projId || log.projectId)`.
+- Revenue timeline read queries now filter projects through shared `isActiveProject` before graph transforms.
+- `SixMonthForecastChart` now filters projects through shared `isActiveProject` before active/coming pipeline totals.
+
+WHAT WAS LEARNED:
+- Current field logs are keyed by `projId`; `projectId` is only a compatibility/fallback field in some paths.
+- `isActiveProject` is the shared archive/status/outcome filter and should be reused at graph query boundaries.
+
+TYPECHECK RESULT:
+PASS — `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+BUGS / RISKS:
+- Broader CFOT/SCP/RCA business-logic questions remain intentionally untouched.
+- Localhost browser QA was not completed because sandboxed Vite startup could not read config and the escalated run was declined; user will audit manually.
+
+NEXT PHASE READY:
+Ready for user manual Graph Dashboard audit.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Graph Dashboard fix pass complete. Narrow patch only: `PvAChart`/`RCAChart` support `projId || projectId`; revenue timeline query project inputs and `SixMonthForecastChart` use `isActiveProject` to exclude archived projects. Typecheck passes. No CFOT/SCP/business-formula rewrites.

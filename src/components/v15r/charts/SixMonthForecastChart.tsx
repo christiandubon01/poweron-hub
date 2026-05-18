@@ -9,7 +9,7 @@ import {
   ResponsiveContainer, ComposedChart, Bar, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine
 } from 'recharts'
-import { num, getProjectFinancials, type BackupData } from '@/services/backupDataService'
+import { num, getProjectFinancials, isActiveProject, type BackupData } from '@/services/backupDataService'
 
 function startOfMonth(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), 1)
@@ -24,7 +24,7 @@ function monthLabel(d: Date): string {
 }
 
 export default function SixMonthForecastChart({ backup }: { backup: BackupData }) {
-  const projects = backup.projects || []
+  const projects = (backup.projects || []).filter(isActiveProject)
   const logs = backup.logs || []
   const opCost = num(backup.settings?.opCost || 42.45)
   const mileRate = num(backup.settings?.mileRate || 0.66)
