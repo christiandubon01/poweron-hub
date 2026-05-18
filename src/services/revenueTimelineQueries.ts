@@ -9,7 +9,7 @@
  * DO NOT put React hooks here. These are plain data-fetch functions.
  */
 
-import { getBackupData, isActiveProject, saveBackupData } from '@/services/backupDataService'
+import { getBackupData, isActiveProject, isActiveServiceCall, saveBackupData } from '@/services/backupDataService'
 import { getProjectPhaseNames, normalizePhaseName } from '@/utils/v15rProjectPhases'
 import {
   getPhasePaymentSchedule,
@@ -98,11 +98,18 @@ function getActiveProjects(backup: any): any[] {
   return (backup?.projects || []).filter(isActiveProject)
 }
 
+function getActiveServiceRecords(backup: any): any[] {
+  return [
+    ...(backup?.serviceLogs || []),
+    ...(backup?.activeServiceCalls || []),
+  ].filter(isActiveServiceCall)
+}
+
 /** Get 8-week cash flow buckets from current local state */
 export function query8WeekCashFlow(): WeekBucket[] {
   const backup = getBackupData()
   if (!backup) return []
-  return get8WeekCashFlow(getActiveProjects(backup), backup.logs || [])
+  return get8WeekCashFlow(getActiveProjects(backup), backup.logs || [], getActiveServiceRecords(backup))
 }
 
 /** Get monthly revenue comparison from current local state */

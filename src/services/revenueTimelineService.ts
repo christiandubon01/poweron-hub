@@ -305,7 +305,8 @@ export function getPhasePaymentSchedule(
  */
 export function get8WeekCashFlow(
   allProjects: any[],
-  logs: any[]                // backup.logs — field log entries with paymentsCollected
+  logs: any[],               // backup.logs — field log entries with paymentsCollected
+  serviceRecords: any[] = []
 ): WeekBucket[] {
   const now = new Date()
   now.setHours(0, 0, 0, 0)
@@ -326,6 +327,7 @@ export function get8WeekCashFlow(
   }
 
   const activeProjects = allProjects.filter(p => p.status === 'active')
+  const activeProjectIds = new Set(activeProjects.map(p => String(p.id || '')).filter(Boolean))
 
   // Projected: from payment schedule
   for (const project of activeProjects) {
@@ -342,8 +344,30 @@ export function get8WeekCashFlow(
     }
   }
 
-  // Actual: from field log paymentsCollected entries in each week
+  // Projected: active service-call/log balances due on their scheduled/log date
+  for (const svc of serviceRecords) {
+    const svcDate = parseDate(svc.date || svc.scheduledDate || svc.dueDate)
+    if (!svcDate) continue
+    const adjustments = Array.isArray(svc.adjustments) ? svc.adjustments : []
+    const addIncome = adjustments
+      .filter((a: any) => a && a.type === 'income')
+      .reduce((s: number, a: any) => s + n(a.amount), 0)
+    const billable = n(svc.quoted) + addIncome
+    const balance = Math.max(0, billable - n(svc.collected))
+    if (balance === 0) continue
+    for (const bucket of buckets) {
+      const we = addDays(bucket.weekStart, 6)
+      if (svcDate >= bucket.weekStart && svcDate <= we) {
+        bucket.projected += balance
+        break
+      }
+    }
+  }
+
+  // Actual: from active project field-log payments
   for (const log of logs) {
+    const projectId = String(log.projId || log.projectId || '')
+    if (!activeProjectIds.has(projectId)) continue
     const logDate = parseDate(log.date || log.logDate)
     if (!logDate) continue
     const collected = n(log.paymentsCollected || log.collected)
@@ -351,6 +375,21 @@ export function get8WeekCashFlow(
     for (const bucket of buckets) {
       const we = addDays(bucket.weekStart, 6)
       if (logDate >= bucket.weekStart && logDate <= we) {
+        bucket.actual += collected
+        break
+      }
+    }
+  }
+
+  // Actual: from active service-call/log collections
+  for (const svc of serviceRecords) {
+    const svcDate = parseDate(svc.date || svc.logDate)
+    if (!svcDate) continue
+    const collected = n(svc.paymentsCollected || svc.collected)
+    if (collected === 0) continue
+    for (const bucket of buckets) {
+      const we = addDays(bucket.weekStart, 6)
+      if (svcDate >= bucket.weekStart && svcDate <= we) {
         bucket.actual += collected
         break
       }

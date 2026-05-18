@@ -3256,3 +3256,54 @@ Ready for manual MTO QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 MTO polish done. `src/components/v15r/V15rMTOTab.tsx` now shows a `$` prefix on Unit Cost (flex wrapper + span). Supplier column is inline-editable: cyan chip when `r.supplierNote` is set, editable input on click, PB supplier read-only when linked, hover prompt otherwise. Saves to `r.supplierNote` (project-scoped). `+ Price Book` global save path unchanged. Typecheck passes.
+
+---
+
+## GRAPH DASHBOARD 8-WEEK CASH FLOW PROJECTION AUDIT/FIX COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final response.
+
+FILES CHANGED:
+- `src/components/v15r/V15rDashboard.tsx`
+- `src/services/revenueTimelineQueries.ts`
+- `src/services/revenueTimelineService.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+AUDIT FINDINGS:
+- Rendered component: `V15rDashboard.tsx` renders `CashFlowProjectionChart` from `charts/SVGCharts.tsx`.
+- Source path: `query8WeekCashFlow()` in `revenueTimelineQueries.ts` calls `get8WeekCashFlow()` in `revenueTimelineService.ts`.
+- Project filter: query uses `isActiveProject`; service helper further scopes projections to `status === 'active'`.
+- Service-call filter before fix: no service-call records were passed to the 8-week helper.
+- Collected-log sources before fix: project logs from `backup.logs` were included without active-project ID matching; service-call collections were missing.
+- ID/date notes: project logs use `projId || projectId` and `date || logDate`; service logs use `date` and `collected`.
+
+WHAT CHANGED:
+- `query8WeekCashFlow()` now passes active service records from both `backup.serviceLogs` and `backup.activeServiceCalls` through `isActiveServiceCall`.
+- `get8WeekCashFlow()` now buckets project actuals only when the log project ID matches an active project ID.
+- Service-call balances now contribute to projected cash flow.
+- Service-call collected amounts now contribute to actual cash flow.
+- The dashboard's fallback baseline now uses corrected `weekBuckets.actual` instead of raw project logs.
+
+TYPECHECK RESULT:
+PASS — `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+BUGS / RISKS:
+- Service projections use `date || scheduledDate || dueDate`; manual QA should confirm that date assumption matches owner expectations.
+- No unrelated Graph Dashboard charts were intentionally changed.
+
+NEXT PHASE READY:
+Ready for manual Graph Dashboard QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+8-week cash flow projection audit/fix complete. The chart path now uses active projects plus active service records, filters project log actuals by `projId || projectId` against active project IDs, includes service collected amounts in actuals, includes service balances in projected, and bases fallback projection on corrected bucket actuals. Typecheck passes.

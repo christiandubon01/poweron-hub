@@ -1352,3 +1352,25 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
 - Manual QA performed: Static reference/path check for every `onOpenNexus` usage and `npm.cmd run typecheck`.
 - Next recommended action: Open Graph Dashboard on localhost, confirm no crash, open Nexus analysis modal, and close it.
 - Compact handoff for next agent/chat: Nexus modal hotfix complete. Root cause was missing `onOpenNexus` destructuring in `PulseTrendAnalyzer`; fixed by adding it to the destructured props. Nexus remains unmounted inline by default and opens only from the modal button. Typecheck passes.
+
+---
+
+## Codex Report — Graph Dashboard Audit + Fix — deep audit and correction of 8-Week Cash Flow Projection
+
+- Task completed: Audited and corrected the 8-Week Cash Flow Projection data path.
+- Files changed:
+  - `src/components/v15r/V15rDashboard.tsx`
+  - `src/services/revenueTimelineQueries.ts`
+  - `src/services/revenueTimelineService.ts`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final response.
+- Typecheck result: PASS — `npm.cmd run typecheck`
+- Root cause: `query8WeekCashFlow()` passed active projects but no service-call data, and `get8WeekCashFlow()` bucketed all project logs without matching them to active project IDs. The dashboard fallback baseline also used raw project logs instead of the corrected 8-week buckets.
+- What changed: The query now passes active service records from `serviceLogs` and `activeServiceCalls` using `isActiveServiceCall`; the service buckets project actuals only when `projId || projectId` matches an active project; service record balances feed projected values; service record collected amounts feed actual values; the dashboard baseline now derives from `weekBuckets.actual`.
+- What was learned: Render path is `V15rDashboard.tsx` -> `query8WeekCashFlow()` -> `get8WeekCashFlow()` -> `CashFlowProjectionChart` in `SVGCharts.tsx`. Project actuals use `backup.logs` with `projId || projectId`; service actuals live on `backup.serviceLogs[].collected`; active call projections live in `backup.activeServiceCalls`.
+- Learned skills / reusable patterns: Put active-record filtering at the query boundary, then enforce ID matching inside the aggregation helper before bucketing logs.
+- Bugs / risks: Service projections use service record `date || scheduledDate || dueDate` and remaining `quoted + income adjustments - collected`; confirm this due-date assumption during manual QA. No unrelated dashboard graph formulas were changed.
+- Manual QA performed: Static data-path verification and `npm.cmd run typecheck`; browser QA left for shared localhost.
+- Next recommended action: On localhost, compare 8-week projected/actual bars against active project logs, active service calls, and service logs for the current/past weeks.
+- Compact handoff for next agent/chat: 8-week projection audit/fix complete. `query8WeekCashFlow` now passes active service records; `get8WeekCashFlow` filters actual project logs by active project IDs, includes service-call balances in projected, includes service collected amounts in actual, and dashboard fallback baseline uses corrected bucket actuals. Typecheck passes.

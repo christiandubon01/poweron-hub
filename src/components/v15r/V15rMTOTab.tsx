@@ -611,26 +611,6 @@ React.useEffect(() => { forceUpdate() }, [projectId])
               </span>
             ) : null}
 
-            {/* -- Supplier Note chip -- */}
-            {r.supplierNote && r.supplierNote.trim() ? (
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  padding: '2px 8px',
-                  borderRadius: '9999px',
-                  backgroundColor: 'rgba(6,182,212,0.15)',
-                  color: '#22d3ee',
-                  border: '1px solid rgba(6,182,212,0.3)',
-                  fontSize: '10px',
-                  fontWeight: '500',
-                  lineHeight: '1.5',
-                }}
-              >
-                📋 {r.supplierNote.trim()}
-              </span>
-            ) : null}
           </div>
         </td>
 

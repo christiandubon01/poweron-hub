@@ -1148,13 +1148,13 @@ function V15rDashboardInner() {
             {(() => {
               // FIX 3: Always show 8-week chart — if projected is all-zero, inject baseline from avg weekly collection
               const now = new Date(); now.setHours(0,0,0,0)
-              const allLogs = backup.logs || []
-              // Last 4 weeks of actual collection
-              const fourWeeksAgo = new Date(now.getTime() - 28 * 86400000)
-              const recentCollected = allLogs.reduce((s: number, l: any) => {
-                const d = l.date ? new Date(l.date + 'T00:00:00') : null
-                return d && d >= fourWeeksAgo && d <= now ? s + num(l.collected) : s
-              }, 0)
+              const recentCollected = (weekBuckets || [])
+                .filter((b: any) => {
+                  const ws = b.weekStart instanceof Date ? b.weekStart : new Date(b.weekStart)
+                  return ws <= now
+                })
+                .slice(-4)
+                .reduce((s: number, b: any) => s + num(b.actual), 0)
               const avgWeeklyRate = recentCollected / 4
 
               // Augment weekBuckets: if projected=0 on future weeks, use avgWeeklyRate as baseline
