@@ -969,6 +969,18 @@ function V15rDashboardInner() {
   // ── EVR: Exposure vs Revenue — skip unnamed/ghost projects ──
   const [evrDateStart, setEvrDateStart] = useState<string>(rcaDefaultStart)
   const [evrDateEnd, setEvrDateEnd] = useState<string>(rcaDefaultEnd)
+  const [evrTimelineOpen, setEvrTimelineOpen] = useState(false)
+  const evrWindowLabel = `${new Date((evrDateStart || rcaDefaultStart) + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date((evrDateEnd || rcaDefaultEnd) + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+  const shiftEvrWindow = (days: number) => {
+    const shiftDate = (value: string, fallback: string) => {
+      const d = new Date((value || fallback) + 'T00:00:00')
+      if (isNaN(d.getTime())) return fallback
+      d.setDate(d.getDate() + days)
+      return toIsoDate(d)
+    }
+    setEvrDateStart(prev => shiftDate(prev, rcaDefaultStart))
+    setEvrDateEnd(prev => shiftDate(prev, rcaDefaultEnd))
+  }
   const evrProjects = projects
     .filter(p => p.contract > 0 && p.name && p.name.trim())
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
@@ -1085,6 +1097,76 @@ function V15rDashboardInner() {
       )}
 
       {/* ══ FAMILY 1 — CASH FLOW ══ */}
+      {evrTimelineOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="EVR timeline picker"
+          onClick={() => setEvrTimelineOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border border-gray-700 bg-[var(--bg-card)] p-5 shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-gray-100">EVR Timeline</h3>
+                <p className="mt-1 text-xs text-gray-400">Choose the EVR revenue-log window. The chart keeps the same project set and recalculates income for this range.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEvrTimelineOpen(false)}
+                className="rounded-md border border-gray-600 px-2 py-1 text-xs text-gray-300 hover:bg-gray-800"
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-gray-500">From</label>
+                  <input
+                    type="date"
+                    value={evrDateStart}
+                    onChange={e => setEvrDateStart(e.target.value || rcaDefaultStart)}
+                    className="w-full bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-gray-500">To</label>
+                  <input
+                    type="date"
+                    value={evrDateEnd}
+                    onChange={e => setEvrDateEnd(e.target.value || rcaDefaultEnd)}
+                    className="w-full bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
+                  />
+                </div>
+              </div>
+              <div className="rounded-md border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-100">
+                Showing {evrWindowLabel}
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <button type="button" onClick={() => shiftEvrWindow(-7)} className="rounded-md border border-gray-600 px-3 py-2 text-xs font-semibold text-gray-200 hover:bg-gray-800">Back 1 wk</button>
+                <button type="button" onClick={() => { setEvrDateStart(rcaDefaultStart); setEvrDateEnd(rcaDefaultEnd) }} className="rounded-md border border-gray-600 px-3 py-2 text-xs font-semibold text-gray-200 hover:bg-gray-800">Today</button>
+                <button type="button" onClick={() => shiftEvrWindow(7)} className="rounded-md border border-gray-600 px-3 py-2 text-xs font-semibold text-gray-200 hover:bg-gray-800">Next 1 wk</button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => shiftEvrWindow(-28)} className="rounded-md border border-gray-700 px-3 py-2 text-xs text-gray-300 hover:bg-gray-800">Back 4 weeks</button>
+                <button type="button" onClick={() => shiftEvrWindow(28)} className="rounded-md border border-gray-700 px-3 py-2 text-xs text-gray-300 hover:bg-gray-800">Forward 4 weeks</button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEvrTimelineOpen(false)}
+                className="w-full rounded-md bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-500"
+              >
+                Apply window
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {cashFlowTimelineOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
@@ -1203,17 +1285,35 @@ function V15rDashboardInner() {
 
           {/* EVR: Exposure vs Revenue */}
           <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
-            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-              <h2 className="text-lg font-bold text-gray-100">EVR: Exposure vs Revenue</h2>
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                  <span>From:</span>
-                  <input type="date" value={evrDateStart} onChange={e => setEvrDateStart(e.target.value)} className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none" />
-                </div>
-                <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                  <span>To:</span>
-                  <input type="date" value={evrDateEnd} onChange={e => setEvrDateEnd(e.target.value)} className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none" />
-                </div>
+            <div className="mb-4 flex items-start justify-between gap-4 flex-wrap">
+              <div className="min-w-[240px]">
+                <h2 className="text-lg font-bold text-gray-100">EVR: Exposure vs Revenue</h2>
+                <p className="mt-1 text-xs text-gray-400 italic">
+                  {evrWindowLabel} / Project sequence by pipeline entry / Income recalculates by selected window
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-1.5 rounded-md border border-gray-700 bg-[var(--bg-input)] p-1">
+                <button
+                  type="button"
+                  onClick={() => shiftEvrWindow(-7)}
+                  className="h-7 min-w-[96px] rounded border border-gray-600 px-3 text-xs font-semibold text-[var(--text-primary)] outline-none transition-colors hover:border-blue-500/70 hover:bg-gray-800/70 focus:border-blue-500"
+                >
+                  Previous Week
+                </button>
+                <button
+                  type="button"
+                  onClick={() => shiftEvrWindow(7)}
+                  className="h-7 min-w-[96px] rounded border border-gray-600 px-3 text-xs font-semibold text-[var(--text-primary)] outline-none transition-colors hover:border-blue-500/70 hover:bg-gray-800/70 focus:border-blue-500"
+                >
+                  Next Week
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEvrTimelineOpen(true)}
+                  className="h-7 min-w-[96px] rounded border border-gray-600 px-3 text-xs font-semibold text-[var(--text-primary)] outline-none transition-colors hover:border-blue-500/70 hover:bg-gray-800/70 focus:border-blue-500"
+                >
+                  Timeline
+                </button>
               </div>
             </div>
             {evrProjects.length > 0 ? (

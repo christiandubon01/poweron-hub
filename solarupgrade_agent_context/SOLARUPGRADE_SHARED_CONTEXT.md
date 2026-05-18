@@ -3774,3 +3774,54 @@ Ready for manual MTO QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 MTO handle uses mouse events: mousedown records start, mouseup toggles selection if movement < 6px. No pointer capture. Native browser drag unblocked. dragState ref still used. touchAction removed. Typecheck passes. Commit: ff28f6d.
+
+---
+
+## GRAPH DASHBOARD EVR PREV/NEXT/TIMELINE CONTROLS COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final response.
+
+FILES CHANGED:
+- `src/components/v15r/V15rDashboard.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Removed the EVR header `From` and `To` date picker controls.
+- Added `Previous Week`, `Next Week`, and `Timeline` controls to EVR using the same grouped style pattern as the 8-Week Cash Flow Projection controls.
+- Wired EVR previous/next controls to shift the existing EVR date range by seven days.
+- Added an EVR timeline modal that updates the same `evrDateStart` and `evrDateEnd` values already passed into `EVRChart`.
+
+WHAT WAS LEARNED:
+- EVR already filters income through `dateStart` and `dateEnd` props in `EVRChart`, so the narrow fix was to replace the control surface without changing chart data logic.
+- The 8-week control style is local JSX/class usage in `V15rDashboard.tsx`, not a shared component.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Reuse the existing chart date state when swapping date-picker UI for timeline controls.
+- Keep header controls and modal controls aligned by driving both from one date-window state pair.
+
+BUGS / RISKS:
+- No unrelated graph behavior or EVR chart math was intentionally changed.
+- Manual localhost QA should confirm the EVR modal and shifted ranges feel correct visually and behaviorally.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Manually open Graph Dashboard, confirm EVR no longer shows header date pickers, use Previous Week/Next Week/Timeline, and verify the chart updates using the selected range.
+
+NEXT PHASE READY:
+Ready for manual Graph Dashboard QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+EVR controls aligned with the 8-week timeline pattern. `V15rDashboard.tsx` now uses grouped Previous/Next/Timeline buttons for EVR; prev/next shift `evrDateStart` and `evrDateEnd` by seven days, and Timeline opens an EVR modal that edits the same date range. `EVRChart` continues receiving `dateStart`/`dateEnd`; no chart math or unrelated dashboards changed. Typecheck passes.

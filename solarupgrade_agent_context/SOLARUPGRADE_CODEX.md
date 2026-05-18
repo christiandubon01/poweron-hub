@@ -1479,3 +1479,22 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
 - Manual QA performed: Static scoped diff review and `npm.cmd run typecheck`; browser click-through remains for the shared localhost app.
 - Next recommended action: Open Graph Dashboard on localhost and verify the controls look balanced, prev/next still shift by one week, Timeline still opens the modal, and the helper caption no longer overlaps chart labels.
 - Compact handoff for next agent/chat: 8-week cash-flow UI polish complete in `V15rDashboard.tsx`. The header actions are now equal-width grouped controls, the selected window is part of the gray subtitle, and the baseline helper is a subdued below-chart caption. No data logic changed. Typecheck passes.
+
+---
+
+## Codex Report — Graph Dashboard Polish — replace EVR date pickers with Previous Week / Next Week / Timeline controls
+
+- Task completed: Replaced EVR header date pickers with the same Previous Week / Next Week / Timeline control pattern used by the 8-Week Cash Flow Projection.
+- Files changed:
+  - `src/components/v15r/V15rDashboard.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final Codex report.
+- Typecheck result: PASS - `npm.cmd run typecheck`
+- What changed: Removed EVR's visible header `From`/`To` date inputs, added grouped equal-style EVR controls, wired previous/next to shift the existing EVR date window by one week, and added an EVR timeline modal that edits the same `evrDateStart`/`evrDateEnd` state already passed into `EVRChart`.
+- What was learned: EVR already had a working date-window data path through `dateStart` and `dateEnd`; the needed change was control/UI wiring, not chart math or query logic.
+- Learned skills / reusable patterns: Match dashboard chart controls by reusing the local grouped button style and keep all navigation paths bound to one source-of-truth date range.
+- Bugs / risks: No unrelated dashboard graph behavior or EVR financial logic was intentionally changed. Manual localhost QA remains needed for interaction and visual verification.
+- Manual QA performed: Static scoped diff review and `npm.cmd run typecheck`; browser click-through remains for the shared localhost app.
+- Next recommended action: On localhost Graph Dashboard, confirm EVR has no header date pickers, Previous Week/Next Week shift the EVR window, Timeline opens the EVR modal, and chart values still reflect the selected project/log window.
+- Compact handoff for next agent/chat: EVR control alignment complete in `V15rDashboard.tsx`. EVR now uses Previous Week, Next Week, and Timeline controls styled like the 8-week chart. The controls update the existing `evrDateStart`/`evrDateEnd` state, and `EVRChart` still receives those props for filtering. Typecheck passes.
