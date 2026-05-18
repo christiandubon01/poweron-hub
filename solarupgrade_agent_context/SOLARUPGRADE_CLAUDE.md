@@ -1347,3 +1347,25 @@ NO — ready for screenshot QA.
 - Manual QA performed: Typecheck only (no browser access in this session).
 - Next recommended action: In browser: click handle to select (should select without dragging). Click-hold-drag handle (should not toggle selection). Select 2+ rows and bulk-assign placement.
 - Compact handoff for next agent/chat: MTO drag handle uses pointer-event threshold. Click-release = select. Click-hold-move = drag (no selection toggle). DRAG_THRESHOLD_PX=6. dragState ref. setPointerCapture used. Multi-select preserved. Row reorder-by-drag not yet implemented. Typecheck passes. Commit: cd94433.
+
+---
+
+## Claude Report - Material Takeoff polish - restore real drag behavior while preserving click-to-select
+
+- Task completed: YES
+- Files changed: src/components/v15r/V15rMTOTab.tsx, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+- Commit hash: ff28f6d
+- Typecheck result: PASS - zero errors
+- Root cause: cd94433 called setPointerCapture on the drag handle. setPointerCapture routes all pointer events to the capturing element for the duration of the press. This prevents the browser from recognizing the gesture as a native drag (the browser treats the pointer as captured, not free to begin a drag operation). Switching to mouse events (onMouseDown/onMouseUp) avoids pointer capture entirely and native drag is never blocked.
+- What changed:
+  - handleHandlePointerDown/Move/Up/Cancel replaced with handleHandleMouseDown + handleHandleMouseUp.
+  - setPointerCapture removed.
+  - touchAction: none removed from handle td (was only needed for pointer capture flow).
+  - Selection threshold preserved: mousedown records startX/Y, mouseup compares, toggles selection when movement <= DRAG_THRESHOLD_PX (6px).
+  - dragState.dragged flag removed (no longer needed; mouseup calculates delta directly).
+- What was learned: setPointerCapture is useful for keeping pointer events on an element during a drag (e.g. custom sliders), but it prevents the browser from initiating a native drag. For a drag handle that must coexist with native drag, use mouse events instead. Never use setPointerCapture on a drag handle.
+- Learned skills / reusable patterns: Mouse-event click-vs-drag pattern: onMouseDown records startX/Y; onMouseUp computes delta and acts only on clean click. No capture, no preventDefault needed. Works alongside native browser drag.
+- Bugs / risks: onMouseUp on the handle element only fires if the mouse is released over the handle. If the user starts a drag and releases elsewhere, no selection toggle occurs (correct behavior). Edge case: if user presses down on handle, moves < 6px, but the mouseup fires on a different element (e.g. scrolled away by keyboard), selection might not toggle. Acceptable for this UX.
+- Manual QA performed: Typecheck only (no browser access in this session).
+- Next recommended action: In browser: click handle to select (should select on release). Click-hold-drag handle and confirm row visual drag works. Select multiple rows and confirm bulk-assign still works.
+- Compact handoff for next agent/chat: MTO handle uses onMouseDown/onMouseUp with 6px threshold. No setPointerCapture. Native browser drag unblocked. Selection on clean click (mouseup, no movement). dragState ref still exists. DRAG_THRESHOLD_PX=6. touchAction removed. Typecheck passes. Commit: ff28f6d.

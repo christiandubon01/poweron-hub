@@ -3740,3 +3740,37 @@ Ready for manual Graph Dashboard QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 8-week cash-flow layout polish complete. `V15rDashboard.tsx` only changed presentation for the 8-week chart: grouped equal-width Previous/Next/Timeline controls, merged the window label into the gray subtitle, and moved the baseline projection note below the chart as muted caption text. No data/query/window logic changed. Typecheck passes.
+
+---
+
+## MTO DRAG RESTORE + CLICK-SELECT COMPLETION LOG
+
+AGENT:
+Claude Code Sonnet 4.5 Medium
+
+COMMIT HASH:
+ff28f6d
+
+FILES CHANGED:
+- src/components/v15r/V15rMTOTab.tsx
+- solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+- solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+
+WHAT CHANGED:
+- Replaced the four pointer-event handlers (handleHandlePointerDown/Move/Up/Cancel) with two mouse-event handlers (handleHandleMouseDown, handleHandleMouseUp).
+- Removed setPointerCapture call — this was the root cause of broken drag.
+- Removed touchAction: none from handle td style.
+- Selection threshold logic preserved: mousedown records startX/Y; mouseup toggles selection only when movement is <= 6px.
+- dragState ref shape simplified: removed dragged flag (no longer needed with mouseup approach).
+
+ROOT CAUSE:
+cd94433 introduced setPointerCapture on the handle element. setPointerCapture reroutes all pointer events to the capturing element for the duration of the press. This prevents the browser from interpreting the gesture as a native drag (HTML5 drag-and-drop or OS-level element move), because the browser sees the pointer as captured rather than free. Switching to mouse events (which do not have a capture API in the same sense) restores native drag behavior.
+
+TYPECHECK RESULT:
+PASS - zero errors
+
+NEXT PHASE READY:
+Ready for manual MTO QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+MTO handle uses mouse events: mousedown records start, mouseup toggles selection if movement < 6px. No pointer capture. Native browser drag unblocked. dragState ref still used. touchAction removed. Typecheck passes. Commit: ff28f6d.
