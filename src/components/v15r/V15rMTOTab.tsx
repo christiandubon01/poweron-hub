@@ -48,6 +48,11 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const newMTORowIdRef = useRef<string | null>(null)
   const mtoNameInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
+  // ── Drag-vs-click state for handle ────────────────────────────────
+  // Pointer must move more than this to be treated as a drag (not a click).
+  const DRAG_THRESHOLD_PX = 6
+  const dragState = useRef<{ rowId: string; startX: number; startY: number; dragged: boolean } | null>(null)
+
   // ── Inline edit state for chip-to-input transform ─────────────────
   const [editingPlacementId, setEditingPlacementId] = useState<string | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
@@ -217,22 +222,43 @@ React.useEffect(() => { forceUpdate() }, [projectId])
 
   const formatItemCount = (count: number) => `${count} ${count === 1 ? 'item' : 'items'}`
 
-  // ── Selection helpers ───────────────────────────────────────────────
-  // Click handle = toggle that one row. No drag-range, no hover expansion.
-  const handleRowMouseDown = (e: React.MouseEvent, rowId: string) => {
+  // ── Selection helpers (pointer-based click-vs-drag separation) ─────
+  // pointerdown: record start; pointermove: flag drag if threshold crossed;
+  // pointerup: toggle selection only if the pointer never crossed the threshold.
+  const handleHandlePointerDown = (e: React.PointerEvent, rowId: string) => {
     if (e.button !== 0) return
     e.stopPropagation()
-    setSelectedIds(prev => {
-      const n = new Set(prev)
-      if (n.has(rowId)) n.delete(rowId)
-      else n.add(rowId)
-      return n
-    })
+    dragState.current = { rowId, startX: e.clientX, startY: e.clientY, dragged: false }
+    ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
   }
 
-  // No-op kept for signature compatibility (tr still calls it)
-  const handleRowMouseEnter = (_rowId: string) => {
-    // Drag-range-select disabled — handles only toggle individual rows on click
+  const handleHandlePointerMove = (e: React.PointerEvent) => {
+    if (!dragState.current || dragState.current.dragged) return
+    const dx = e.clientX - dragState.current.startX
+    const dy = e.clientY - dragState.current.startY
+    if (Math.abs(dx) > DRAG_THRESHOLD_PX || Math.abs(dy) > DRAG_THRESHOLD_PX) {
+      dragState.current.dragged = true
+    }
+  }
+
+  const handleHandlePointerUp = (e: React.PointerEvent) => {
+    if (!dragState.current) return
+    const { rowId, dragged } = dragState.current
+    dragState.current = null
+    if (!dragged) {
+      // Clean click — toggle selection
+      setSelectedIds(prev => {
+        const n = new Set(prev)
+        if (n.has(rowId)) n.delete(rowId)
+        else n.add(rowId)
+        return n
+      })
+    }
+    // If dragged: pointer moved before release — no selection toggle
+  }
+
+  const handleHandlePointerCancel = () => {
+    dragState.current = null
   }
 
   // ── Bulk assign ─────────────────────────────────────────────────────
@@ -346,10 +372,13 @@ React.useEffect(() => { forceUpdate() }, [projectId])
           transition: 'background-color 0.1s, border-left-color 0.1s',
         }}
       >
-        {/* Drag handle — only this cell initiates selection */}
+        {/* Handle — click to select, click-hold-drag for drag intent */}
         <td
-          onMouseDown={e => handleRowMouseDown(e, r.id)}
-          title="Drag to select range, Ctrl+click for multi-select"
+          onPointerDown={e => handleHandlePointerDown(e, r.id)}
+          onPointerMove={handleHandlePointerMove}
+          onPointerUp={handleHandlePointerUp}
+          onPointerCancel={handleHandlePointerCancel}
+          title="Click to select; hold and drag to move"
           style={{
             padding: '8px 4px',
             width: '20px',
@@ -359,6 +388,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
             fontSize: '14px',
             lineHeight: '1',
             userSelect: 'none',
+            touchAction: 'none',
           }}
         >
           ⋮⋮
