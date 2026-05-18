@@ -193,8 +193,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
 
   // ── Derived flags ───────────────────────────────────────────────────
   const hasAnyRows = allRows.length > 0
-  // IMPORTANT: grouping reads ONLY from committed row data, never from localPlacements
-  const hasAnyPlacement = allRows.some(r => r.placement && r.placement.trim())
+  // existingPlacements used only for bulk-assign datalist — placement is informational, not a grouping key
   const existingPlacements: string[] = [...new Set(allRows.map(r => r.placement).filter(Boolean))]
 
   const togglePhaseBucket = (phase: string) => {
@@ -1200,8 +1199,8 @@ React.useEffect(() => { forceUpdate() }, [projectId])
           </div>
         )}
 
-                {/* MAIN CONTENT — phase view or placement view */}
-        {hasAnyPlacement ? renderPlacementGroups() : renderPhaseGroups()}
+                {/* MAIN CONTENT — always phase view; placement is informational only */}
+        {renderPhaseGroups()}
 
         {/* EXPORT BUTTONS ROW */}
         <div style={{ display: 'flex', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
