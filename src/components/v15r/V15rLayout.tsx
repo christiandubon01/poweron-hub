@@ -782,6 +782,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     { label: 'Estimate', view: 'estimate' },
     { label: 'Material Takeoff', view: 'material-takeoff' },
     { label: 'Progress', view: 'progress' },
+    { label: 'Project Logs', view: 'project-logs' },
     { label: 'Project Framework', view: 'framework' },
     { label: 'RFI Tracker', view: 'rfi-tracker' },
     { label: 'Coordination', view: 'coordination' },
