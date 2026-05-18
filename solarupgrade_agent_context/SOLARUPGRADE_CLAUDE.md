@@ -1237,3 +1237,20 @@ NO — ready for screenshot QA.
 - Manual QA performed: Typecheck only (no browser access in this session).
 - Next recommended action: Open MTO in browser — confirm dollar-sign on Unit Cost, enter project supplier, verify it saves without touching Price Book.
 - Compact handoff for next agent/chat: MTO polish done on src/components/v15r/V15rMTOTab.tsx. Unit Cost shows dollar-sign. Supplier column inline-editable via r.supplierNote (project-scoped). Cyan chip when set, clears with X. PB supplier read-only when linked. Plus Price Book global path unchanged. Typecheck passes.
+
+---
+
+## Claude Report - Material Takeoff polish - remove per-item supplier label chips outside supplier column
+
+- Task completed: YES
+- Files changed: src/components/v15r/V15rMTOTab.tsx, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+- Commit hash: d371267
+- Typecheck result: PASS - zero errors
+- Root cause: The supplierNote chip (rendering r.supplierNote with a clipboard emoji below the item title) was a pre-existing display block added before the Supplier column was made inline-editable. The prior session wired the Supplier column to r.supplierNote but did not remove the old chip, leaving both visible simultaneously.
+- What changed: Removed the Supplier Note chip block (~20 lines) from the Item Title area in renderRow. Supplier now renders only in the dedicated Supplier column.
+- What was learned: When adding a new canonical display location for a data field, always check whether prior display locations for that same field still exist and remove them.
+- Learned skills / reusable patterns: When promoting a chip to a full column, grep for all prior render sites of that field and clean them up in the same session.
+- Bugs / risks: None. No save behavior, Price Book logic, or other chip rendering changed.
+- Manual QA performed: Typecheck only (no browser access in this session).
+- Next recommended action: Open MTO in browser - confirm no supplier chip below item titles, confirm supplier still shows in Supplier column, confirm placement and note chips still work.
+- Compact handoff for next agent/chat: Duplicate supplier chip removed from V15rMTOTab.tsx Item Title area. Supplier renders only in the Supplier column via r.supplierNote. All other chips (placement, note) unchanged. Typecheck passes. Commit: d371267.

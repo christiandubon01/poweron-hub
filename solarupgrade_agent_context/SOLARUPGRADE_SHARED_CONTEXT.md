@@ -3307,3 +3307,36 @@ Ready for manual Graph Dashboard QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 8-week cash flow projection audit/fix complete. The chart path now uses active projects plus active service records, filters project log actuals by `projId || projectId` against active project IDs, includes service collected amounts in actuals, includes service balances in projected, and bases fallback projection on corrected bucket actuals. Typecheck passes.
+
+---
+
+## MTO DUPLICATE SUPPLIER CHIP REMOVAL COMPLETION LOG
+
+AGENT:
+Claude Code Sonnet 4.5 Medium
+
+COMMIT HASH:
+d371267
+
+FILES CHANGED:
+- src/components/v15r/V15rMTOTab.tsx
+- solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+- solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+
+WHAT CHANGED:
+- Removed the Supplier Note chip block from the Item Title area in renderRow.
+- The supplierNote chip was rendering r.supplierNote a second time below the item name/placement/note chips, duplicating the value already shown in the Supplier column.
+- Supplier now appears only in the dedicated Supplier column.
+- No save behavior, Price Book logic, or other chip rendering changed.
+
+ROOT CAUSE:
+- The supplierNote chip was a pre-existing display chip added before the Supplier column was made editable. When the Supplier column was wired to r.supplierNote in the prior session, the old chip was left in place creating duplicate rendering.
+
+TYPECHECK RESULT:
+PASS - zero errors
+
+NEXT PHASE READY:
+Ready for manual MTO QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Duplicate supplier chip removed from Item Title area in V15rMTOTab.tsx. Supplier renders only in the Supplier column. All other chips (placement, note) unchanged. Typecheck passes. Commit: d371267.
