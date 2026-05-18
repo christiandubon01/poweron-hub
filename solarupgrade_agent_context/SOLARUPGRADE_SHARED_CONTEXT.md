@@ -3604,3 +3604,53 @@ Ready for manual MTO QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 MTO row actions are now on the right side in a combined td: [+PB | Search | Delete], all always visible. Item Title cell contains only the name input. addMTORow focuses the new row name input via requestAnimationFrame. Enter on name input blurs to confirm. Matches Estimate labor-row quick-entry pattern. Typecheck passes. Commit: 9577bd6.
+
+---
+
+## GRAPH DASHBOARD 8-WEEK PREV/NEXT CONTROLS COMPLETION LOG
+
+AGENT:
+Codex GPT-5.5 Medium
+
+COMMIT HASH:
+Pending at log-write time; see final response.
+
+FILES CHANGED:
+- `src/components/v15r/V15rDashboard.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Added `Previous Week` and `Next Week` buttons beside `Timeline` in the 8-Week Cash Flow Projection header.
+- Wired `Previous Week` to `shiftCashFlowAnchor(-7)` and `Next Week` to `shiftCashFlowAnchor(7)`, preserving the existing anchored recomputation path.
+- Restyled the 8-week header controls and the timeline modal date input with the same Tailwind class pattern used by the EVR date inputs.
+
+WHAT WAS LEARNED:
+- EVR's date-picker style is not a shared component; it is inline class usage in `V15rDashboard.tsx`.
+- The 8-week chart already had the correct anchor state and query path from the prior pass, so this task only needed UI controls wired to the existing one-week shift helper.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Reuse local control class strings exactly when no shared component exists.
+- Keep timeline-navigation buttons attached to the existing anchor state so chart data continues to rebucket through `query8WeekCashFlow(anchorDate)`.
+
+BUGS / RISKS:
+- Browser click-through remains blocked in this environment; shell confirmed `http://localhost:5173` responds.
+- Manual QA should verify button placement and visual match against EVR in the running localhost app.
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+SHARED CONTEXT UPDATED:
+YES
+
+AGENT FILE UPDATED:
+YES
+
+NEXT PHASE ADJUSTMENTS:
+- Manually click Previous Week, Next Week, and Timeline in Graph Dashboard and confirm the 8-week window/date label and chart data update as expected.
+
+NEXT PHASE READY:
+Ready for manual Graph Dashboard QA.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+8-week cash-flow controls polished. `V15rDashboard.tsx` now shows `Previous Week`, `Next Week`, and `Timeline` together in the 8-week header using the same control classes as EVR's date inputs. Prev/Next shift the existing cash-flow anchor by +/-7 days, so the existing `query8WeekCashFlow(anchorDate)` recomputation path remains intact. Typecheck passes.

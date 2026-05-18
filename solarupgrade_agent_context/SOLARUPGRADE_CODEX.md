@@ -1440,3 +1440,23 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
 - Manual QA performed: Static source-path verification, local HTTP response check for `localhost:5173`, and `npm.cmd run typecheck`.
 - Next recommended action: In the running localhost app, open Graph Dashboard, verify EVR x-axis/tooltip project-entry dates, then open the 8-week timeline modal and move backward/forward to confirm chart values change and service actuals still match Field Log Total Billable.
 - Compact handoff for next agent/chat: EVR/timeline polish complete. EVR labels now expose pipeline entry dates (`created` first, then existing fallbacks) and sort points by that timeline. The 8-week chart now has a modal anchor date that passes into the pure query/service computation, rebucketing all project/service sources for the selected window while preserving service-log Total Billable actuals. Typecheck passes; manual localhost QA remains.
+
+---
+
+## Codex Report — Graph Dashboard Polish — add previous/next week buttons to 8-Week Cash Flow and match EVR date-picker style
+
+- Task completed: Added previous/next week controls to 8-Week Cash Flow Projection and matched the controls to EVR's date-picker style pattern.
+- Files changed:
+  - `src/components/v15r/V15rDashboard.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final Codex report.
+- Typecheck result: PASS - `npm.cmd run typecheck`
+- Root cause: The prior 8-week timeline picker provided modal navigation, but the chart header only exposed `Timeline`; quick one-week navigation was not available directly in the chart header, and the `Timeline` button used a different blue button style from the EVR date controls.
+- What changed: Added `Previous Week` and `Next Week` buttons next to `Timeline`, wired them to the existing cash-flow anchor shift helper with `-7` and `+7` days, and changed the header buttons plus the modal date input to use the same class pattern as EVR's date inputs.
+- What was learned: EVR's control style is inline in `V15rDashboard.tsx`, not a shared component. The 8-week chart was already correctly wired through `cashFlowAnchorDate` -> `query8WeekCashFlow(anchorDate)`, so no service/query changes were needed.
+- Learned skills / reusable patterns: For dashboard-local polish, copy the established local class pattern when no reusable control exists; keep quick navigation bound to the same anchor state as the modal to avoid divergent time-window behavior.
+- Bugs / risks: Browser click-through remains unavailable due in-app browser policy; shell confirmed `http://localhost:5173` responds.
+- Manual QA performed: Static render-path verification, local HTTP response check for `localhost:5173`, and `npm.cmd run typecheck`.
+- Next recommended action: In localhost Graph Dashboard, confirm `Previous Week`, `Next Week`, and `Timeline` sit together, visually match EVR controls, shift the 8-week chart by one week, and keep the modal opening correctly.
+- Compact handoff for next agent/chat: 8-week controls polished. `V15rDashboard.tsx` now has `Previous Week`, `Next Week`, and `Timeline` in the 8-week header using EVR's control classes. Prev/Next shift `cashFlowAnchorDate` by one week, preserving the existing rebucketing through `query8WeekCashFlow(anchorDate)`. Typecheck passes; manual localhost QA remains.

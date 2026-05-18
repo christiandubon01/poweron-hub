@@ -1117,7 +1117,7 @@ function V15rDashboardInner() {
                   type="date"
                   value={cashFlowAnchorDate}
                   onChange={e => setCashFlowAnchorDate(e.target.value || todayIso)}
-                  className="w-full rounded-md border border-gray-600 bg-[var(--bg-input)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-blue-500"
+                  className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
                 />
               </div>
               <div className="rounded-md border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-100">
@@ -1237,8 +1237,22 @@ function V15rDashboardInner() {
             </div>
               <button
                 type="button"
+                onClick={() => shiftCashFlowAnchor(-7)}
+                className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
+              >
+                Previous Week
+              </button>
+              <button
+                type="button"
+                onClick={() => shiftCashFlowAnchor(7)}
+                className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
+              >
+                Next Week
+              </button>
+              <button
+                type="button"
                 onClick={() => setCashFlowTimelineOpen(true)}
-                className="rounded-md border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-200 hover:bg-blue-500/20"
+                className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
               >
                 Timeline
               </button>
