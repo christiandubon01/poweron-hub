@@ -1,0 +1,243 @@
+{
+  "version": "1.0.0",
+  "name": "PowerOn Hub App Brain Global Rules",
+  "description": "Clean Rules v1 seed foundation - global behavioral rules for the AI operations platform",
+  "lastUpdated": "2026-06-04",
+  "source": "appbrain-w01-a2-rules-schema",
+  "philosophy": "low-friction by default: silent or warn",
+  
+  "globalRules": [
+    {
+      "id": "GLOBAL_001",
+      "name": "Protect Package Files",
+      "description": "Never modify package.json or package-lock.json unless explicitly approved",
+      "scope": ["package.json", "package-lock.json"],
+      "friction": "block",
+      "action": "prevent_modification",
+      "rationale": "Dependency integrity is critical to build stability"
+    },
+    {
+      "id": "GLOBAL_002",
+      "name": "Protect Settings",
+      "description": "Never modify .claude/settings.local.json",
+      "scope": [".claude/settings.local.json"],
+      "friction": "block",
+      "action": "prevent_modification",
+      "rationale": "Agent-specific settings must not be altered"
+    },
+    {
+      "id": "GLOBAL_003",
+      "name": "Protect Master Context Files",
+      "description": "Never modify SOLARUPGRADE_SHARED_CONTEXT.md, SOLARUPGRADE_CLAUDE.md, SOLARUPGRADE_CODEX.md, or SOLARUPGRADE_CURSOR.md in parallel waves",
+      "scope": [
+        "solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md",
+        "solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md",
+        "solarupgrade_agent_context/SOLARUPGRADE_CODEX.md",
+        "solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md"
+      ],
+      "friction": "block",
+      "action": "prevent_modification",
+      "rationale": "Shared context updates happen in sequential merge sessions only"
+    },
+    {
+      "id": "GLOBAL_004",
+      "name": "Protect Build Config",
+      "description": "Never modify vite.config.ts, netlify.toml, or tsconfig.json unless explicitly approved",
+      "scope": ["vite.config.ts", "netlify.toml", "tsconfig.json"],
+      "friction": "block",
+      "action": "prevent_modification",
+      "rationale": "Build and deployment configs are system-critical"
+    },
+    {
+      "id": "GLOBAL_005",
+      "name": "Type Safety Check",
+      "description": "All TypeScript changes must pass npm run typecheck with zero errors",
+      "scope": ["**/*.ts", "**/*.tsx"],
+      "friction": "block",
+      "action": "require_validation",
+      "validation": "npm run typecheck",
+      "rationale": "Type safety is foundational to code quality"
+    },
+    {
+      "id": "GLOBAL_006",
+      "name": "Git Stage Discipline",
+      "description": "Stage only exact scoped files changed by this session. Do not use git add . or git add src/",
+      "scope": ["git"],
+      "friction": "warn",
+      "action": "require_explicit_staging",
+      "rationale": "Prevents accidental staging of unrelated changes"
+    },
+    {
+      "id": "GLOBAL_007",
+      "name": "No Package Installs",
+      "description": "Do not install new packages unless explicitly approved in session",
+      "scope": ["package.json", "package-lock.json"],
+      "friction": "block",
+      "action": "prevent_npm_install",
+      "rationale": "Dependency changes must be controlled and tested"
+    },
+    {
+      "id": "GLOBAL_008",
+      "name": "Branch Discipline",
+      "description": "Do not merge into main. Do not touch main branch",
+      "scope": ["main"],
+      "friction": "block",
+      "action": "prevent_main_modification",
+      "rationale": "Main branch is protected for production integrity"
+    },
+    {
+      "id": "GLOBAL_009",
+      "name": "Low Friction Default",
+      "description": "Apply silent or warn friction for non-critical issues unless overridden",
+      "scope": ["*"],
+      "friction": "silent",
+      "action": "log_and_continue",
+      "rationale": "Minimize workflow disruption for recoverable issues"
+    },
+    {
+      "id": "GLOBAL_010",
+      "name": "Report Generation",
+      "description": "Create isolated session reports in solarupgrade_agent_context/app_brain_session_reports/",
+      "scope": ["solarupgrade_agent_context/app_brain_session_reports/"],
+      "friction": "silent",
+      "action": "require_report",
+      "rationale": "Maintain clear audit trail of parallel session execution"
+    }
+  ],
+
+  "domainRules": [
+    {
+      "id": "DOMAIN_001",
+      "domain": "app-brain",
+      "description": "App Brain / Admin architecture control tower",
+      "friction": "warn",
+      "allowedScope": [
+        "src/components/v15r/app-brain/**",
+        "solarupgrade_agent_context/APP_BRAIN_*.json"
+      ],
+      "blockedScope": [
+        "src/store/",
+        "src/services/backupDataService.ts",
+        "netlify.toml",
+        "vite.config.ts"
+      ],
+      "rationale": "Architecture control is isolated to prevent operational impact"
+    },
+    {
+      "id": "DOMAIN_002",
+      "domain": "business-operations",
+      "description": "Financial tracking, estimating, project management",
+      "friction": "block",
+      "blockedScope": [
+        "operational business financial values",
+        "price book management data",
+        "project financial tracking"
+      ],
+      "rationale": "Business operations data requires separate governance"
+    },
+    {
+      "id": "DOMAIN_003",
+      "domain": "electrical-skills",
+      "description": "Electrical code, trade expertise, field operations",
+      "friction": "silent",
+      "allowedScope": [
+        "src/components/v15r/V15rFieldLogPanel.tsx",
+        "src/components/v15r/V15rFieldLogs.tsx"
+      ],
+      "rationale": "Field operations can be modified for user experience"
+    },
+    {
+      "id": "DOMAIN_004",
+      "domain": "shared-ui",
+      "description": "Shared UI components and integration points",
+      "friction": "warn",
+      "allowedScope": [
+        "src/components/v15r/"
+      ],
+      "blockedScope": [
+        "CommandHUD.tsx",
+        "NeuralWorldView.tsx",
+        "WorldLayers.tsx",
+        "SettingsPanel.tsx"
+      ],
+      "rationale": "Shared integration points are merged separately"
+    }
+  ],
+
+  "fileTypeRules": [
+    {
+      "id": "FTYPE_001",
+      "fileType": ".json",
+      "description": "JSON configuration and rule files",
+      "friction": "silent",
+      "validation": "json-syntax",
+      "rationale": "JSON must be valid syntax"
+    },
+    {
+      "id": "FTYPE_002",
+      "fileType": ".ts",
+      "description": "TypeScript source files",
+      "friction": "block",
+      "validation": "typescript-compile",
+      "rationale": "All TypeScript must compile without errors"
+    },
+    {
+      "id": "FTYPE_003",
+      "fileType": ".tsx",
+      "description": "TypeScript React component files",
+      "friction": "block",
+      "validation": "typescript-compile",
+      "rationale": "All TSX must compile without errors"
+    },
+    {
+      "id": "FTYPE_004",
+      "fileType": ".md",
+      "description": "Markdown documentation",
+      "friction": "silent",
+      "validation": "markdown-syntax",
+      "rationale": "Documentation is informational, not critical"
+    }
+  ],
+
+  "sessionTypeRules": [
+    {
+      "id": "SESSION_001",
+      "sessionType": "parallel-wave",
+      "description": "One Haiku agent for one isolated parallel task",
+      "friction": "block",
+      "rules": [
+        "Do not edit files assigned to other agents in this wave",
+        "Do not modify shared integration points until sequential merge",
+        "Stage only files within your allowed scope",
+        "Create isolated session report"
+      ],
+      "rationale": "Parallel execution requires strict isolation to prevent conflicts"
+    },
+    {
+      "id": "SESSION_002",
+      "sessionType": "sequential-merge",
+      "description": "Merge session combining parallel wave outputs",
+      "friction": "warn",
+      "rules": [
+        "May update SOLARUPGRADE_SHARED_CONTEXT.md",
+        "May integrate shared UI components",
+        "Must pass full typecheck before committing",
+        "May merge into main only after validation"
+      ],
+      "rationale": "Sequential sessions coordinate cross-agent changes"
+    },
+    {
+      "id": "SESSION_003",
+      "sessionType": "bug-fix",
+      "description": "Emergency bug fix session",
+      "friction": "warn",
+      "rules": [
+        "Scope fix to affected domain only",
+        "Pass full typecheck",
+        "Create fix report",
+        "Push and notify immediately"
+      ],
+      "rationale": "Bug fixes require minimal friction but clear documentation"
+    }
+  ]
+}
