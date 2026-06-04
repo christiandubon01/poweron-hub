@@ -3938,3 +3938,27 @@ EVR and 8-week chart control layout polish complete. In `V15rDashboard.tsx`, bot
 **Typecheck:** Clean (0 errors)
 
 **Next:** Manual QA — reload app, confirm active doc and page survive hard reload; draw arch-line shape; add textHighlight annotation and reload to verify it persists.
+
+---
+
+## PDF Blueprint Phase 2 — Can-Light Tools + TextHighlight Polish (2026-06-03)
+
+**Commit:** bd38574  feat(blueprint): add can light tools and polish text highlight
+
+**Files changed:**
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` only
+
+**What changed:**
+1. `ShapeKind` type extended: `'can-light-4' | 'can-light-6'` added.
+2. Shape picker dropdown: "Can Light 4"" and "Can Light 6"" entries added after Pentagon.
+3. Can-light SVG renderer: outer trim ring + crosshair + aperture circle (r=20 for 4", r=26 for 6") + size label — uses `preserveAspectRatio="xMidYMid meet"` to keep circles non-distorted.
+4. Draft preview: can-lights get circular border-radius (like `circle` kind), excluded from hatch fill during drag.
+5. `textHighlight` renderer: inner highlight band changed from `h-full` to `top: 14%, bottom: 14%` absolute positioning — 72% of bounding-box height, centered, to look like a text marker pen rather than a full rectangle.
+
+**Calibration note:** Can-lights use existing shape annotation flow (type: `shape`, shapeKind: `can-light-*`). User sizes the marker to scale using the blueprint's calibration/measurement context. No auto-sizing was added — the symbol remains accurate regardless of calibration state.
+
+**Sanitizer:** No changes needed — `type: 'shape'` already in allowlist.
+
+**Typecheck:** Clean (0 errors)
+
+**Next:** Manual QA — place 4" and 6" can-lights; confirm visual distinction; reload and confirm persistence; use textHighlight and confirm band look.

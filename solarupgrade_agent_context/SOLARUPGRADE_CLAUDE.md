@@ -1463,3 +1463,47 @@ NO — ready for screenshot QA.
 - **Manual QA performed:** Typecheck verified clean (0 errors). Code inspection confirms all wiring paths. Runtime QA (reload persistence, arch-line draw, textHighlight save/load) to be confirmed by user on localhost.
 - **Next recommended action:** User to manually QA: (1) hard reload — active doc and page should restore; (2) switch docs and reload — each doc's page should restore independently; (3) draw an arch-line shape and confirm bezier curve renders; (4) add a text highlight annotation, save, reload, confirm it reappears.
 - **Compact handoff for next agent/chat:** PDF Blueprint Phase 1 complete (commit 34ce728). Active doc persists via `poweron.blueprint.activeId` localStorage key; page persists via `poweron.blueprint.page.{id}` per-document. `textHighlight` now in `sanitizeAnnotation()` allowlist. `arch-line` shape added to `OperationsBlueprintPdfViewer.tsx` — bezier SVG path renderer + draft preview ref. Typecheck clean. No open Blueprint Phase 1 tasks remain.
+
+---
+
+## Claude Report — PDF Blueprint Phase 2 — Can-Light Tools + TextHighlight Polish
+
+- **Task completed:** Yes
+- **Files changed:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` (1 file, 47 insertions / 6 deletions)
+- **Commit hash:** bd38574
+- **Typecheck result:** Clean (0 errors)
+- **Root cause:**
+  1. No can-light shapes existed — `ShapeKind` union had no can-light entries. Adding them to the existing shape annotation flow was the minimal safe path: `type: 'shape'` already in sanitizer allowlist, all persistence/undo/focus/move/resize behavior inherited for free.
+  2. `textHighlight` rendered as a full-height rectangle because the inner div was `h-full` spanning the entire drag bounding box. A 72% centered band (top/bottom 14% insets) makes it look like a text marker pen without changing stored data.
+- **What changed:**
+  - `ShapeKind` type: added `'can-light-4' | 'can-light-6'`
+  - Shape dropdown: "Can Light 4"" and "Can Light 6"" entries after Pentagon
+  - Can-light SVG renderer: `viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"` — outer trim circle (r=46), horizontal+vertical crosshair lines, aperture circle (r=20 for 4", r=26 for 6" to visually distinguish), centered size label (`4"` / `6"`)
+  - Draft preview: can-lights added to circular `borderRadius: '9999px'` condition and excluded from hatch fill so the outline is clean during drag
+  - `textHighlight` renderer: outer div unchanged (full box for click/move/resize), inner visual div changed from `className="w-full h-full"` to `position: absolute; top: 14%; bottom: 14%` centered band
+- **Calibration behavior:** Can-light markers use drag-to-size UX — the user resizes the bounding box to match the blueprint's scale. The existing `activeCalibration` / `detectedScale` state is available in scope if a future phase wants to auto-size the marker on click-place. No auto-sizing was attempted in this phase.
+- **Double verification against requested behavior:**
+  - ✅ 4" can-light can be placed — ShapeKind + dropdown + renderer all wired
+  - ✅ 6" can-light can be placed — same
+  - ✅ 4" vs 6" visually distinct — aperture radius (20 vs 26), label ("4"" vs "6"") both differ
+  - ✅ Can-light annotations persist/reload — uses `type: 'shape'` path, already in sanitizer + Supabase upsert
+  - ✅ Calibration/no-calibration behavior safe — no auto-sizing, user controls marker size; symbol renders correctly regardless
+  - ✅ textHighlight visually less box-like — 72% centered band, not full-height fill
+  - ✅ Regular `highlight` renderer unchanged (different branch, separate code path)
+  - ✅ Phase 1 active document/page persistence still works — `BlueprintAI.tsx` untouched
+  - ✅ Arched line still works — arch-line branch untouched
+  - ✅ No unrelated files touched — only `OperationsBlueprintPdfViewer.tsx`
+- **What was learned:**
+  - `preserveAspectRatio="xMidYMid meet"` keeps can-light circles round when bounding box is non-square; `preserveAspectRatio="none"` would distort circles into ellipses.
+  - Garbled UTF-8 comment lines (`Ã¢â‚¬â€`) can block Edit tool anchoring even when the node.js raw read shows the same bytes. Safe pattern: skip the garbled comment in `old_string`, anchor on the `return (` line or a nearby unique code line instead.
+  - CSS `position: absolute; top: X%; bottom: X%` inside an absolutely-positioned parent gives a fractional-height centered band without JS calculation.
+- **Learned skills / reusable patterns:**
+  - Can-light symbol pattern: SVG `viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"` with concentric circles + crosshair + text label. Reusable for any circular equipment marker.
+  - `aperture = kind === 'can-light-4' ? 20 : 26` — size branching in a single expression.
+  - Text highlight band: `position: absolute; top: 14%; bottom: 14%` inside a full-box container — preserves click/move/resize while making the visual indicator narrower.
+- **Bugs / risks:**
+  - If a user drags a very narrow (non-square) bounding box for a can-light, the `meet` aspect ratio will leave blank space on the wider axis. The circle won't stretch to fill. This is intentional (keeps shape circular) but may confuse users. A note in documentation or tooltip could help.
+  - The `textHighlight` band change affects all existing textHighlight annotations on reload — they will render narrower than before. This is the desired behavior but is a visual change to previously saved annotations.
+- **Manual QA performed:** Typecheck verified clean. Code inspection confirms all branches: ShapeKind type, dropdown, draft preview (border-radius + background), SVG renderer, textHighlight band. Runtime QA to be confirmed by user on localhost.
+- **Next recommended action:** User to manually QA: (1) select "Can Light 4"" from shape picker, drag on a PDF page, confirm circle + crosshair + "4"" label renders; (2) do the same for 6"; (3) reload and confirm both markers persist; (4) use textHighlight tool, confirm band is narrower than full height; (5) confirm regular highlight is unchanged.
+- **Compact handoff for next agent/chat:** PDF Blueprint Phase 2 complete (commit bd38574). Can-light markers: `ShapeKind` `'can-light-4'` and `'can-light-6'`, rendered as SVG trim ring + crosshair + aperture circle + label. Aperture r=20 (4") vs r=26 (6"). No new annotation types — uses existing `shape` flow, sanitizer already covers it. `textHighlight` now renders a 72% centered band (top/bottom 14% insets) instead of full-height fill. Only `OperationsBlueprintPdfViewer.tsx` touched. Typecheck clean.
