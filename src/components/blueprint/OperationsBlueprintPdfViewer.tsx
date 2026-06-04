@@ -151,7 +151,7 @@ type ToolMode =
   | 'measure-area'
   | 'measure-perimeter'
 
-type ShapeKind = 'square' | 'circle' | 'line' | 'arrow' | 'star' | 'cross' | 'diamond' | 'pentagon'
+type ShapeKind = 'square' | 'circle' | 'line' | 'arrow' | 'arch-line' | 'star' | 'cross' | 'diamond' | 'pentagon'
 type BorderStyle = 'solid' | 'dashed' | 'dotted'
 type HatchPattern = 'none' | 'diagonal' | 'cross' | 'dots'
 type GenerateQuestionType = 'coordination' | 'rfi'
@@ -522,6 +522,7 @@ export default function OperationsBlueprintPdfViewer({
   // visual feedback (bypasses React re-renders entirely during active drag).
   const draftRectDomRef = useRef<HTMLDivElement>(null)
   const draftLineDomRef = useRef<SVGLineElement>(null)
+  const draftArchPathDomRef = useRef<SVGPathElement>(null)
   const pendingScrollResetRef = useRef(false)
   const relativeZoomRef = useRef(1)
   // True when viewport width is phone/tablet-sized (< 1024px).
@@ -2485,7 +2486,7 @@ export default function OperationsBlueprintPdfViewer({
       domEl.style.width = `${w}px`
       domEl.style.height = `${h}px`
     }
-    // For line/arrow shapes and callout/generate: also update the SVG line preview.
+    // For line/arrow shapes: update the SVG line preview element directly.
     const lineEl = draftLineDomRef.current
     if (lineEl) {
       const isLineKind = effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow')
@@ -2497,6 +2498,18 @@ export default function OperationsBlueprintPdfViewer({
         lineEl.style.display = ''
       } else {
         lineEl.style.display = 'none'
+      }
+    }
+    // For arch-line: update the SVG path preview element directly.
+    const archEl = draftArchPathDomRef.current
+    if (archEl) {
+      const isArchKind = effectiveTool === 'shape' && shapeKind === 'arch-line'
+      if (isArchKind) {
+        // Quadratic bezier: start → control (x2, y1) → end. Control at end-x, start-y arches upward.
+        archEl.setAttribute('d', `M ${activeDragStart.x} ${activeDragStart.y} Q ${x} ${activeDragStart.y} ${x} ${y}`)
+        archEl.style.display = ''
+      } else {
+        archEl.style.display = 'none'
       }
     }
     // Keep dragStartRef in sync but do NOT call setDraftRect here Ã¢â‚¬â€
@@ -3032,6 +3045,7 @@ export default function OperationsBlueprintPdfViewer({
                 { label: 'Circle', value: 'circle' },
                 { label: 'Line', value: 'line' },
                 { label: 'Arrow', value: 'arrow' },
+                { label: 'Arch Line', value: 'arch-line' },
                 { label: 'Diamond', value: 'diamond' },
                 { label: 'Star', value: 'star' },
                 { label: 'Cross', value: 'cross' },
@@ -4130,6 +4144,19 @@ export default function OperationsBlueprintPdfViewer({
                               </div>
                             )
                           }
+                          if (kind === 'arch-line') {
+                            // Quadratic bezier: start (0,0) → control (100,0) → end (100,100) in a 0-100 viewBox.
+                            // This arches through the top-right corner, producing a smooth convex curve.
+                            return (
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height, opacity: fillOpacity }} onClick={selectAnnotation}>
+                                <svg className="absolute inset-0 overflow-visible" viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none">
+                                  <path d="M 0 0 Q 100 0 100 100" fill="none" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} strokeLinecap="round" />
+                                </svg>
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
+                              </div>
+                            )
+                          }
                           return (
                             <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
                               <div
@@ -4411,7 +4438,7 @@ export default function OperationsBlueprintPdfViewer({
                             ? hexWithAlpha(toolColors.highlight || '#facc15', highlightOpacity / 100)
                             : effectiveTool === 'textHighlight'
                               ? hexWithAlpha(toolColors.textHighlight || '#facc15', 0.4)
-                              : effectiveTool === 'shape' && shapeKind !== 'line' && shapeKind !== 'arrow'
+                              : effectiveTool === 'shape' && shapeKind !== 'line' && shapeKind !== 'arrow' && shapeKind !== 'arch-line'
                                 ? getHatchBackground(shapeOptions.hatchPattern, shapeOptions.borderColor, shapeOptions.fillColor, shapeOptions.fillOpacity)
                                 : 'transparent',
                           borderBottom: effectiveTool === 'underline' ? `${underlineThickness}px solid ${toolColors.underline || '#facc15'}` : undefined,
@@ -4422,7 +4449,7 @@ export default function OperationsBlueprintPdfViewer({
                         className="absolute inset-0 pointer-events-none overflow-visible"
                         width={displaySize.w}
                         height={displaySize.h}
-                        style={{ display: effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow') ? '' : 'none' }}
+                        style={{ display: effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow' || shapeKind === 'arch-line') ? '' : 'none' }}
                       >
                         <defs>
                           <marker id="draft-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
@@ -4436,6 +4463,16 @@ export default function OperationsBlueprintPdfViewer({
                           strokeWidth={shapeOptions.borderThickness}
                           strokeDasharray={shapeOptions.borderStyle === 'dashed' ? '8,4' : shapeOptions.borderStyle === 'dotted' ? '2,4' : undefined}
                           markerEnd={shapeKind === 'arrow' ? 'url(#draft-arrow)' : undefined}
+                          style={{ display: 'none' }}
+                        />
+                        <path
+                          ref={draftArchPathDomRef}
+                          d="M 0 0 Q 0 0 0 0"
+                          fill="none"
+                          stroke={shapeOptions.borderColor}
+                          strokeWidth={shapeOptions.borderThickness}
+                          strokeDasharray={shapeOptions.borderStyle === 'dashed' ? '8,4' : shapeOptions.borderStyle === 'dotted' ? '2,4' : undefined}
+                          strokeLinecap="round"
                           style={{ display: 'none' }}
                         />
                       </svg>

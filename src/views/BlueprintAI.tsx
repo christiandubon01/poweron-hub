@@ -39,6 +39,34 @@ import type { BlueprintVRSourceSet } from '@/features/blueprint-vr/blueprintPlan
 const BLUEPRINT_TYPES: BlueprintLibraryType[] = ['Full Set', 'Electrical Only', 'Plumbing Only', 'Mechanical Only', 'Reference Sheet', 'Other']
 const DISCIPLINES = ['General', 'Architectural', 'Electrical', 'Plumbing', 'Mechanical', 'Fire Alarm', 'Structural', 'Civil', 'Other'] as const
 
+// ── Blueprint viewer preference persistence ───────────────────────────────────
+const BP_ACTIVE_ID_KEY = 'poweron.blueprint.activeId'
+const BP_PAGE_PREFIX = 'poweron.blueprint.page.'
+
+function loadBlueprintActiveId(library: BlueprintLibraryItem[]): string {
+  try {
+    const saved = localStorage.getItem(BP_ACTIVE_ID_KEY)
+    if (saved && library.some(x => x.id === saved)) return saved
+  } catch { /* storage unavailable */ }
+  return library[0]?.id || ''
+}
+
+function saveBlueprintActiveId(id: string): void {
+  try { localStorage.setItem(BP_ACTIVE_ID_KEY, id) } catch { /* ignore */ }
+}
+
+function loadBlueprintPage(blueprintId: string): number {
+  try {
+    const raw = localStorage.getItem(BP_PAGE_PREFIX + blueprintId)
+    const n = raw ? parseInt(raw, 10) : NaN
+    return Number.isFinite(n) && n >= 1 ? n : 1
+  } catch { return 1 }
+}
+
+function saveBlueprintPage(blueprintId: string, page: number): void {
+  try { localStorage.setItem(BP_PAGE_PREFIX + blueprintId, String(page)) } catch { /* ignore */ }
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -57,7 +85,7 @@ export default function BlueprintAI() {
   const orgId = backup?.settings?.orgId || 'local'
 
   const [library, setLibrary] = useState<BlueprintLibraryItem[]>(() => getOperationsBlueprintLibrary(backup))
-  const [selectedId, setSelectedId] = useState<string>(() => getOperationsBlueprintLibrary(backup)[0]?.id || '')
+  const [selectedId, setSelectedId] = useState<string>(() => loadBlueprintActiveId(getOperationsBlueprintLibrary(backup)))
   const [selectedProjectId, setSelectedProjectId] = useState<string>(projects[0]?.id || '')
   const [title, setTitle] = useState('')
   const [bpType, setBpType] = useState<BlueprintLibraryType>('Electrical Only')
@@ -70,7 +98,10 @@ export default function BlueprintAI() {
   const [derivedTitle, setDerivedTitle] = useState('')
   const [derivedType, setDerivedType] = useState<BlueprintLibraryType>('Electrical Only')
   const [creatingDerived, setCreatingDerived] = useState(false)
-  const [currentViewerPage, setCurrentViewerPage] = useState(1)
+  const [currentViewerPage, setCurrentViewerPage] = useState(() => {
+    const initId = loadBlueprintActiveId(getOperationsBlueprintLibrary(getBackupData() || { projects: [], settings: {}, blueprintSummaries: {} }))
+    return initId ? loadBlueprintPage(initId) : 1
+  })
   const [viewerJumpPage, setViewerJumpPage] = useState<number | null>(null)
   const [sheetSearch, setSheetSearch] = useState('')
   const [sheetEditorOpen, setSheetEditorOpen] = useState(false)
@@ -233,6 +264,27 @@ export default function BlueprintAI() {
     setDetectionProgress(null)
     setSheetSearch('')
   }, [selectedId])
+
+  // Persist active blueprint ID to localStorage whenever it changes.
+  useEffect(() => {
+    if (selectedId) saveBlueprintActiveId(selectedId)
+  }, [selectedId])
+
+  // Persist current page per-blueprint whenever it changes.
+  useEffect(() => {
+    if (selectedId && currentViewerPage >= 1) saveBlueprintPage(selectedId, currentViewerPage)
+  }, [selectedId, currentViewerPage])
+
+  // On initial mount: if a page > 1 was restored, trigger the viewer jump.
+  // The viewer handles numPages clamping internally and re-fires when numPages loads.
+  const didMountJumpRef = useRef(false)
+  useEffect(() => {
+    if (didMountJumpRef.current) return
+    didMountJumpRef.current = true
+    if (currentViewerPage > 1) {
+      window.requestAnimationFrame(() => setViewerJumpPage(currentViewerPage))
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function persist(next: BlueprintLibraryItem[]) {
     await saveOperationsBlueprintLibrary(backup, next)
@@ -663,8 +715,15 @@ export default function BlueprintAI() {
 
   function openLibraryItem(item: BlueprintLibraryItem) {
     setSelectedId(item.id)
-    setCurrentViewerPage(1)
+    const savedPage = loadBlueprintPage(item.id)
+    setCurrentViewerPage(savedPage)
+    // Trigger viewer jump to the saved page. rAF ensures the viewer re-receives
+    // the value even when switching between two documents with the same page number.
+    setViewerJumpPage(null)
     setLibraryModalOpen(false)
+    window.requestAnimationFrame(() => {
+      setViewerJumpPage(savedPage)
+    })
   }
 
   function jumpToSheetPage(pageNumber: number) {

@@ -443,7 +443,7 @@ function sanitizeAnnotation(raw: any): BlueprintAnnotation | null {
   const type = String(raw.type || '') as BlueprintAnnotation['type']
   const color = String(raw.color || '#facc15')
   if (!id || !blueprintSetId || !projectId || !Number.isFinite(pageNumber) || pageNumber < 1) return null
-  if (!['note', 'highlight', 'freehand', 'arrow', 'cloud', 'textBox', 'callout', 'generate', 'pen', 'marker', 'underline', 'shape'].includes(type)) return null
+  if (!['note', 'highlight', 'textHighlight', 'freehand', 'arrow', 'cloud', 'textBox', 'callout', 'generate', 'pen', 'marker', 'underline', 'shape'].includes(type)) return null
   const rect = normalizeRect(raw.rect)
   const path = Array.isArray(raw.path)
     ? raw.path
