@@ -541,3 +541,38 @@ Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak 
 * Manual QA performed: Generator run and code/diff inspection only. Browser QA was not performed in this session.
 * Next recommended action: Run `npm.cmd run typecheck` locally, then manually QA App Brain as admin owner and verify the Generated Manifest panel, existing filters, 3D scene, resize, and navigate-away/back behavior.
 * Compact handoff for next agent/chat: App Brain Phase 4 adds the first generated manifest pipeline. Run `npm run app-brain:generate` or `node scripts/generate-app-brain-manifest.mjs` to scan scoped source folders and regenerate `generatedAppBrainManifest.ts`. The App Brain UI now shows manifest stats alongside the curated map, but does not replace curated nodes or claim live git updates. Typecheck was attempted but blocked by no-exit-status shell behavior.
+
+---
+
+## Cursor Report — Admin App Brain — Phase 5A manifest refresh workflow and stale-state visibility
+
+* Task completed: Admin App Brain Phase 5A manifest refresh workflow and stale-state visibility.
+* Files changed:
+  * `scripts/generate-app-brain-manifest.mjs`
+  * `src/components/v15r/generatedAppBrainManifest.ts`
+  * `src/components/v15r/V15rAppBrainTab.tsx`
+  * `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  * `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+* Commit hash: Pending at log-write time; see final Cursor report for the actual commit hash.
+* Typecheck result: BLOCKED - attempted `npm.cmd run typecheck` and required fallback `cmd /c npm.cmd run typecheck`; both returned no exit status from the shell harness, so success/failure could not be determined.
+* Generator result: PASS - `npm run app-brain:generate` regenerated `src/components/v15r/generatedAppBrainManifest.ts` with 355 files, 1490 imports, and 598 detected local edges.
+* What changed:
+  * Added manifest metadata: `schemaVersion`, `generatedBy`, `refreshCommand`, `scannedRoots`, `skippedPatterns`, and `repoRelative`.
+  * Updated generated-file header to say it is generated, should not be hand edited, and should be refreshed with `npm run app-brain:generate`.
+  * Reduced generated-file bloat by removing raw per-file import arrays while preserving totals, area summaries, file summary records, local edges, high-touch files, shared-system candidates, admin candidates, and route/view candidates.
+  * Added visible refresh workflow UI in the Generated Manifest panel with generatedAt, stale/recent badge, manual refresh command, and the note to run after major file changes or before committing App Brain updates.
+* What was learned:
+  * The manifest can stay useful without storing every raw import string per file.
+  * Browser-side stale visibility only needs `Date.parse(manifest.generatedAt)` and a 24-hour threshold.
+  * Manual refresh copy is safer than git hook automation until hook timing and agent overlap behavior are explicitly scoped.
+* Learned skills / reusable patterns:
+  * Put refresh command and scanner provenance in the generated manifest so UI and docs read from the same source.
+  * Keep generated output reviewable by storing compact summaries and deterministic sorted collections.
+  * Make stale-state language explicit: recent/stale based on timestamp only, not live git watching.
+* Bugs / risks:
+  * Typecheck could not be completed due to the shell harness no-exit-status blocker for non-git commands.
+  * `generatedAt` remains the expected changing field on each refresh.
+  * The stale badge is time-based only and does not know whether source files changed.
+* Manual QA performed: Generator run and code/diff inspection only. Browser QA was not performed in this session.
+* Next recommended action: Run `npm.cmd run typecheck` locally, then manually QA App Brain as admin owner and verify the Generated Manifest panel shows generatedAt, refresh command, stale/recent badge, and existing scene/filter behavior still works.
+* Compact handoff for next agent/chat: App Brain Phase 5A keeps refresh manual. `npm run app-brain:generate` refreshes the compact manifest, which now includes schema/provenance/scanned-root/skipped-pattern metadata. The UI surfaces generatedAt, a 24-hour stale/recent badge, refresh command, and manual-refresh note. No hooks were added, package-lock is untouched, and curated nodes still drive the 3D map.

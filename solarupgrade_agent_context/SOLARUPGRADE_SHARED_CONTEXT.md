@@ -4269,3 +4269,51 @@ Run `npm.cmd run typecheck` locally, then manually verify App Brain opens, the 3
 
 COMPACT HANDOFF FOR NEXT CHAT:
 App Brain Phase 4 adds a generated manifest MVP. Use `npm run app-brain:generate` or `node scripts/generate-app-brain-manifest.mjs` to refresh `generatedAppBrainManifest.ts`. The UI reads the generated manifest in a new panel while the curated static map remains the source for 3D nodes and inspector. Package-lock remains untouched. Typecheck attempted but blocked by no-exit-status shell behavior.
+
+---
+
+## Shared Update - Admin App Brain Phase 5A Manifest Refresh Workflow
+
+AGENT:
+Cursor GPT-5.5
+
+BRANCH:
+main
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report.
+
+FILES CHANGED:
+- `scripts/generate-app-brain-manifest.mjs`
+- `src/components/v15r/generatedAppBrainManifest.ts`
+- `src/components/v15r/V15rAppBrainTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+GENERATOR RESULT:
+PASS - `npm run app-brain:generate` regenerated the manifest with 355 files, 1490 imports, and 598 detected local edges.
+
+TYPECHECK RESULT:
+BLOCKED - attempted `npm.cmd run typecheck` and fallback `cmd /c npm.cmd run typecheck`; both returned no exit status from the shell harness.
+
+WHAT CHANGED:
+- Added manifest metadata: schema version, generatedBy, refreshCommand, scannedRoots, skippedPatterns, and repoRelative.
+- Updated generated-file header with `npm run app-brain:generate`.
+- Reduced generated-file bloat by removing raw per-file import arrays while preserving compact file summaries, local edges, top lists, and route/view candidates.
+- Updated App Brain Generated Manifest panel with generatedAt, manual refresh command, 24-hour stale/recent badge, and manual refresh note.
+
+WHAT WAS LEARNED:
+- Manifest stale-state can stay intentionally simple and timestamp-based before git watching exists.
+- Manual refresh copy is the right intermediate step before git hooks or commit detection.
+- Compact manifest output is much easier to review while preserving useful summary intelligence.
+
+BUGS / RISKS:
+- Typecheck must be rerun outside the current shell harness blocker.
+- Stale/recent status does not watch git or filesystem changes; it only evaluates generatedAt age.
+- `generatedAt` remains expected churn each time the generator runs.
+
+NEXT RECOMMENDED ACTION:
+Run `npm.cmd run typecheck` locally, then manually QA App Brain as admin owner and verify Generated Manifest panel refresh info, stale/recent badge, and existing 3D/filter behavior.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+App Brain Phase 5A keeps manifest refresh manual. Run `npm run app-brain:generate` after major source changes or before App Brain commits. The manifest now includes scanner metadata and compact output; the UI shows generatedAt, refresh command, stale/recent state, and manual-refresh guidance. No hooks added. Package-lock untouched.

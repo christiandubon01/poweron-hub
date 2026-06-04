@@ -274,7 +274,13 @@ function GeneratedManifestPanel() {
   const highTouch = manifest.highTouchFiles.slice(0, 6)
   const sharedCandidates = manifest.sharedSystemCandidates.slice(0, 6)
   const adminCandidates = manifest.adminCandidates.slice(0, 5)
-  const generatedDate = new Date(manifest.generatedAt).toLocaleString()
+  const generatedAtMs = Date.parse(manifest.generatedAt)
+  const generatedAtValid = Number.isFinite(generatedAtMs)
+  const ageHours = generatedAtValid ? (Date.now() - generatedAtMs) / (1000 * 60 * 60) : Number.POSITIVE_INFINITY
+  const isStale = ageHours > 24
+  const generatedDate = generatedAtValid ? new Date(manifest.generatedAt).toLocaleString() : 'Unknown'
+  const staleLabel = isStale ? 'Manifest may be stale' : 'Manifest recently generated'
+  const staleColor = isStale ? '#facc15' : '#34d399'
 
   return (
     <section
@@ -295,12 +301,45 @@ function GeneratedManifestPanel() {
             Scanner MVP from known source folders. This complements the curated map; it does not replace it yet.
           </p>
         </div>
-        <span
-          className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg"
-          style={{ color: '#94a3b8', background: 'rgba(148,163,184,0.08)', border: '1px solid rgba(148,163,184,0.18)' }}
-        >
-          Generated {generatedDate}
-        </span>
+        <div className="flex flex-col sm:items-end gap-2">
+          <span
+            className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg"
+            style={{ color: staleColor, background: `${staleColor}12`, border: `1px solid ${staleColor}33` }}
+          >
+            {staleLabel}
+          </span>
+          <span
+            className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg"
+            style={{ color: '#94a3b8', background: 'rgba(148,163,184,0.08)', border: '1px solid rgba(148,163,184,0.18)' }}
+          >
+            Generated {generatedDate}
+          </span>
+        </div>
+      </div>
+
+      <div
+        className="rounded-xl p-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3"
+        style={{ background: 'rgba(3,7,18,0.58)', border: '1px solid rgba(34,211,238,0.16)' }}
+      >
+        <div>
+          <p className="text-[10px] uppercase tracking-widest text-gray-500">Manual refresh command</p>
+          <p className="text-sm font-mono text-cyan-100 mt-1">{manifest.refreshCommand}</p>
+          <p className="text-[11px] text-gray-500 mt-1">Run after major file changes or before committing App Brain updates.</p>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
+          <span className="rounded-lg px-2 py-1 text-gray-400" style={{ background: 'rgba(15,23,42,0.7)' }}>
+            {manifest.schemaVersion}
+          </span>
+          <span className="rounded-lg px-2 py-1 text-gray-400" style={{ background: 'rgba(15,23,42,0.7)' }}>
+            repo relative: {manifest.repoRelative ? 'yes' : 'no'}
+          </span>
+          <span className="rounded-lg px-2 py-1 text-gray-400" style={{ background: 'rgba(15,23,42,0.7)' }}>
+            roots: {manifest.scannedRoots.length}
+          </span>
+          <span className="rounded-lg px-2 py-1 text-gray-400" style={{ background: 'rgba(15,23,42,0.7)' }}>
+            skips: {manifest.skippedPatterns.length}
+          </span>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -369,6 +408,18 @@ function GeneratedManifestPanel() {
             {area.name}: {area.fileCount} files
           </span>
         ))}
+      </div>
+
+      <div className="rounded-xl p-3" style={{ background: 'rgba(15,23,42,0.48)', border: '1px solid rgba(148,163,184,0.12)' }}>
+        <p className="text-[10px] uppercase tracking-widest text-gray-500 mb-2">Scanner metadata</p>
+        <div className="flex flex-wrap gap-2">
+          <span className="text-[10px] rounded-full px-2 py-1 text-gray-400" style={{ background: 'rgba(3,7,18,0.7)' }}>
+            generatedBy: {manifest.generatedBy}
+          </span>
+          <span className="text-[10px] rounded-full px-2 py-1 text-gray-400" style={{ background: 'rgba(3,7,18,0.7)' }}>
+            generatedAt: {manifest.generatedAt}
+          </span>
+        </div>
       </div>
     </section>
   )
