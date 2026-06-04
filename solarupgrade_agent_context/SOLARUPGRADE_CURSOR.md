@@ -399,3 +399,37 @@ NEXT RECOMMENDED ACTION:
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak pill, clean main graph, separate legend, separate TOU Import Rate by Hour strip, and polished NEM callout. Tooltip data remains unchanged. This was a layout/rendering polish only; conservative 24H math stayed intact. Typecheck passed. Commit pending at log-write time.
+
+---
+
+## Cursor Report — Admin App Brain — Phase 1 admin-only premium tab foundation
+
+- Task completed: Admin App Brain Phase 1 admin-only premium tab foundation.
+- Files changed:
+  - `src/components/layout/AppShell.tsx`
+  - `src/components/v15r/V15rLayout.tsx`
+  - `src/components/v15r/V15rAppBrainTab.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+- Commit hash: Pending at log-write time; see final Cursor report for the actual commit hash.
+- Typecheck result: BLOCKED - attempted `npm.cmd run typecheck`, `cmd /c npm.cmd run typecheck`, and direct `node_modules\.bin\tsc.cmd --noEmit -p tsconfig.json`; the shell harness returned no exit status for each non-git command. Basic `cmd /c echo shell-ok` also returned no exit status, while git commands continued to work.
+- What changed:
+  - Added an admin-only `App brain` nav item to the existing V15r admin Visualization bucket.
+  - Added lazy App Brain route rendering in `AppShell` using the same view-switch pattern as Admin Tools.
+  - Added `V15rAppBrainTab`, a Phase 1 premium dark command-center shell with status cards, a 3D neural app map visual placeholder, Brain Inspector placeholder, and roadmap preview.
+  - Kept Phase 1 free of customer/project data, mutations, fake live metrics, package changes, and new dependencies.
+- What was learned:
+  - Existing admin-only nav gating is `isAdmin && !isPreviewMode && b32Role === 'owner'` in `V15rLayout`.
+  - Existing Admin Tools rendering is a lazy-loaded `AppShell` view case keyed by `admin-tools`; App Brain follows that route/view pattern.
+  - The visual systems are data-heavy and immersive; App Brain should keep its own architecture-brain direction rather than copying their canvases or Three.js implementations.
+- Learned skills / reusable patterns:
+  - Register admin-only tabs by adding to the existing admin bucket under the owner/email gate.
+  - Use a standalone v15r component for admin foundation screens and lazy-load it through `AppShell`.
+  - For Phase 1 visual foundations, label planned/live areas clearly so placeholders do not imply live data.
+- Bugs / risks:
+  - Typecheck could not be completed because non-git shell commands did not return an exit status in this session.
+  - Direct navigation to `app-brain` uses the same AppShell view-switch pattern as Admin Tools; visibility is gated through the existing admin nav section.
+  - Manual browser QA is still needed on localhost.
+- Manual QA performed: Code-path inspection only. Browser QA not performed because the session could not run non-git shell commands reliably.
+- Next recommended action: Run `npm.cmd run typecheck` locally, then manually open the app as the admin owner and confirm the App brain tab appears under Visualization, renders the premium shell, and no unrelated tabs changed.
+- Compact handoff for next agent/chat: App Brain Phase 1 foundation is added on `main`: admin Visualization nav item, AppShell lazy route, and `V15rAppBrainTab` premium placeholder shell. No package files or dependencies changed. No customer/project data, mutations, or fake live metrics. Typecheck was attempted but blocked by shell exit-status failures for non-git commands; rerun locally before further work.

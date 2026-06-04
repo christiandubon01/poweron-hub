@@ -148,6 +148,8 @@ const SolarTrainingView = lazy(() => chunkRetry(() => import('@/views/SolarTrain
 const NexusAdminView = lazy(() => chunkRetry(() => import('@/views/NexusAdminView')))
 // AdminToolsView — Agent Intelligence panel (route: admin-tools, owner only)
 const AdminToolsView = lazy(() => chunkRetry(() => import('@/views/AdminToolsView')))
+// App Brain - admin-only architecture brain foundation (route: app-brain)
+const V15rAppBrainTab = lazy(() => chunkRetry(() => import('@/components/v15r/V15rAppBrainTab')))
 // AbsoluteDashboardView — all key metrics in one place (route: absolute-dashboard, sub-tab of business-overview)
 const AbsoluteDashboardView = lazy(() => chunkRetry(() => import('@/views/AbsoluteDashboardView')))
 // AgentSystemMapView — agent pyramid (route: agent-system-map, embedded in AbsoluteDashboard)
@@ -1013,6 +1015,10 @@ export function AppShell({ children }: AppShellProps) {
       // NAV1 — Admin Tools (Agent Intelligence panel, owner only)
       case 'admin-tools':
         return <Suspense fallback={<PanelLoading />}><AdminToolsView /></Suspense>
+
+      // App Brain - admin-only architecture brain foundation (Phase 1 shell)
+      case 'app-brain':
+        return <Suspense fallback={<PanelLoading />}><V15rAppBrainTab /></Suspense>
 
       // NAV1 — Absolute Dashboard (aggregates all key metrics + agent system map)
       case 'absolute-dashboard':

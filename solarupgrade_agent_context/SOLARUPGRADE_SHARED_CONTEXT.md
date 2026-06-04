@@ -4045,3 +4045,95 @@ EVR and 8-week chart control layout polish complete. In `V15rDashboard.tsx`, bot
 * Next agent should know:
   - Line/arrow annotations have endpoint handles when layoutEditId === a.id. No new annotation fields needed — lineX1/Y1/X2/Y2 already in the meta schema.
   - barDragOffset and barDragRef are component-level state/ref — not persisted to storage.
+
+---
+
+## Shared Update — Admin App Brain Phase 1 Foundation
+
+AGENT:
+Cursor GPT-5.5
+
+BRANCH:
+main
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report.
+
+FILES CHANGED:
+- `src/components/layout/AppShell.tsx`
+- `src/components/v15r/V15rLayout.tsx`
+- `src/components/v15r/V15rAppBrainTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Added the `App brain` admin tab foundation in the existing V15r admin Visualization bucket.
+- Added an AppShell lazy route/view case for `app-brain`.
+- Added a standalone premium dark App Brain shell with title, subtitle, status cards, `3D neural app map` hero placeholder, `Brain Inspector` placeholder, and roadmap preview for 3D neural render, architecture manifest, git/commit live updates, and agent overlap detection.
+- Kept Phase 1 free of customer/project data, mutations, fake live metrics, package changes, and dependency installs.
+
+WHAT WAS LEARNED:
+- Admin-only visibility follows the existing `isAdmin && !isPreviewMode && b32Role === 'owner'` gate in `V15rLayout`.
+- Admin Tools renders through a lazy-loaded `AppShell` view case; App Brain follows that same registration/render pattern.
+- Existing visual systems (`AdminVisualizationLab`, `CommandCenterNeuralMap`, `CombinedNeuralMap`, `neural-world`, and `AIVisualSuite`) are useful for repo conventions, but App Brain should remain a distinct architecture-brain surface rather than a copy.
+
+TYPECHECK RESULT:
+BLOCKED - attempted `npm.cmd run typecheck`, `cmd /c npm.cmd run typecheck`, and direct `node_modules\.bin\tsc.cmd --noEmit -p tsconfig.json`; the shell harness returned no exit status for each non-git command. Basic `cmd /c echo shell-ok` also returned no exit status, while git commands continued to work.
+
+BUGS / RISKS:
+- Manual localhost QA is still needed.
+- Typecheck should be rerun outside this shell issue before the next phase.
+- Direct view rendering follows the existing Admin Tools AppShell pattern; tab visibility is gated by the admin owner nav section.
+
+NEXT RECOMMENDED ACTION:
+Run `npm.cmd run typecheck` locally, then manually verify the App brain tab appears only for the existing admin owner access path, renders the premium foundation shell, and leaves unrelated tabs unchanged.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+App Brain Phase 1 foundation is added on `main`: admin Visualization nav item, AppShell lazy route, and `V15rAppBrainTab` premium placeholder shell. No package files or dependencies changed. No customer/project data, mutations, or fake live metrics. Typecheck was attempted but blocked by non-git shell exit-status failures; rerun locally before continuing.
+
+---
+
+## Shared Update - Field Logs Triggers Target and Rules Flow
+
+AGENT:
+Codex GPT-5.5 Medium
+
+BRANCH:
+main
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report.
+
+FILES CHANGED:
+- `src/components/v15r/V15rFieldLogPanel.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+TYPECHECK RESULT:
+PASS - `npm.cmd run typecheck`
+
+ROOT CAUSE:
+Field Logs > Triggers built its selectable dataset from active projects only, filtered projects again by `status === 'active'`, exposed only recent service logs, and did not use the selected job to render a concrete rule-study result. Trigger rules also only had active/inactive toggles in this tab, with no add/edit/remove controls.
+
+WHAT CHANGED:
+- Triggers now has a target study flow for either a selected project or selected service call/service log.
+- The Triggers project selector reads `backup.projects` directly inside this tab only, so archived projects appear here without changing the global `projects` active-filter used by other Field Log subtabs and dashboards.
+- Service targets now include active service logs and active service estimates/calls for study.
+- Selected targets are normalized into the existing trigger evaluation fields and show metric cards plus fired-rule chips.
+- Added inline trigger rule add, edit, remove, and active-toggle controls, all saved through the existing Field Log backup sync path.
+- AI analysis now includes the selected target metrics and triggered rule names when a target is selected.
+
+BUGS / RISKS:
+- Browser control was not callable in this session, so full click-through QA is still needed in the already-running localhost app.
+- The old local `jobOptions` const remains inert due a legacy encoded service-label line; the UI reads the clean `triggerJobOptions` dataset.
+
+MANUAL QA PERFORMED:
+- `npm.cmd run typecheck` passed.
+- `git diff --check` passed, aside from an unrelated pre-existing CRLF warning in `.claude/settings.local.json`.
+- `http://localhost:5173` returned HTTP 200 from PowerShell.
+
+NEXT RECOMMENDED ACTION:
+Open localhost, go to Field Logs > Triggers, select Projects and Service Calls, confirm archived projects appear only in this tab, then add/edit/remove a trigger rule and confirm the visible rule-study result updates.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Field Logs > Triggers repair is complete on `main`. `V15rFieldLogPanel.tsx` now scopes archived-project inclusion to the Triggers selector/study path, supports service-log/service-call target study, renders selected-target rule hits, and provides inline trigger rule add/edit/remove controls through existing backup sync. Typecheck passes; browser manual QA remains.

@@ -43,6 +43,7 @@ import {
   Pin,
   Building2,
   Globe,
+  Cpu,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, createEmptyBackup, type BackupData } from '@/services/backupDataService'
@@ -853,6 +854,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   // BUCKET 3 — VISUALIZATION (default collapsed, teal border)
   // NAV1-FIX-VS2: restored Neural World + ORB LAB as separate nav tabs
   const adminBucket3 = [
+    { label: 'App brain',       icon: Cpu,    view: 'app-brain',       badge: 'NEW',     subtitle: 'Architecture neural map / Phase 1' },
     { label: 'Visual Suite',    icon: Layers, view: 'visual-suite',    badge: null,      subtitle: 'Electrical · Ecosystem Neural Map' },
     { label: 'Neural World',    icon: Layers, view: 'neural-world',    badge: null,      subtitle: '3D Business Visualization' },
     { label: 'ORB LAB',        icon: Layers, view: 'orb-lab',         badge: 'LAB',     subtitle: 'ORB · Neural Maps · World' },
