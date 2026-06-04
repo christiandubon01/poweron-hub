@@ -1,130 +1,213 @@
 /**
- * V15rAppBrainTab.tsx - Admin App Brain | Phase 1 foundation
+ * V15rAppBrainTab.tsx - Admin App Brain | Phase 2 Three.js MVP
  *
- * Premium command-center shell for the future 3D neural architecture map.
  * Admin-only via V15rLayout nav (isAdmin + owner) + AppShell route.
- * No customer data, mutations, or live metrics in Phase 1.
+ * Static architecture map only: no customer data, mutations, or live git claims.
  */
 
-import { Cpu, GitBranch, Layers, ShieldAlert, Sparkles } from 'lucide-react'
-
-const STATUS_CARDS = [
-  { label: 'Components', hint: 'Repo modules & views', accent: '#22d3ee' },
-  { label: 'Connections', hint: 'Imports & data flow', accent: '#34d399' },
-  { label: 'Shared systems', hint: 'Services & stores', accent: '#a78bfa' },
-  { label: 'Risk zones', hint: 'Overlap & coupling', accent: '#fbbf24' },
-] as const
+import { useMemo, useState } from 'react'
+import { Cpu, GitBranch, Layers, Network, ShieldAlert, Sparkles } from 'lucide-react'
+import V15rAppBrainScene from './V15rAppBrainScene'
+import {
+  APP_BRAIN_CATEGORY_META,
+  APP_BRAIN_EDGES,
+  APP_BRAIN_NODES,
+  APP_BRAIN_RISK_META,
+  getAppBrainNode,
+  type AppBrainNode,
+  type AppBrainNodeCategory,
+  type AppBrainRiskLevel,
+} from './appBrainMap'
 
 const ROADMAP = [
-  { phase: 'Phase 2', title: '3D neural render', detail: 'Rotational app graph with glowing nodes' },
-  { phase: 'Phase 3', title: 'Architecture manifest', detail: 'Generated repo structure & clusters' },
-  { phase: 'Phase 4', title: 'Git / commit live updates', detail: 'Changed files & activity overlay' },
+  { phase: 'Phase 2', title: '3D neural render', detail: 'Static architecture MVP with interactive nodes' },
+  { phase: 'Phase 3', title: 'Architecture manifest', detail: 'Generated repo structure and clusters' },
+  { phase: 'Phase 4', title: 'Git / commit live updates', detail: 'Changed files and activity overlay' },
   { phase: 'Phase 5', title: 'Agent overlap detection', detail: 'Safe work zones for concurrent agents' },
 ] as const
 
-function NeuralMapPlaceholder() {
-  const nodes = [
-    { x: 22, y: 28, r: 5, delay: 0 },
-    { x: 48, y: 18, r: 6, delay: 0.4 },
-    { x: 72, y: 32, r: 5, delay: 0.8 },
-    { x: 35, y: 55, r: 4, delay: 1.2 },
-    { x: 58, y: 48, r: 7, delay: 0.6 },
-    { x: 78, y: 62, r: 5, delay: 1.0 },
-    { x: 18, y: 68, r: 4, delay: 1.4 },
-    { x: 50, y: 72, r: 6, delay: 0.2 },
+const CATEGORY_ORDER: AppBrainNodeCategory[] = [
+  'shell',
+  'core',
+  'admin',
+  'project',
+  'field',
+  'blueprint',
+  'materials',
+  'ai',
+  'shared',
+  'data',
+]
+
+function riskCount(riskLevel: AppBrainRiskLevel): number {
+  return APP_BRAIN_NODES.filter((node) => node.riskLevel === riskLevel).length
+}
+
+function StatusCards() {
+  const statusCards = [
+    { label: 'Components', value: String(APP_BRAIN_NODES.length), hint: 'Static architecture nodes', accent: '#22d3ee' },
+    { label: 'Connections', value: String(APP_BRAIN_EDGES.length), hint: 'Mapped dependency links', accent: '#34d399' },
+    { label: 'Shared systems', value: String(APP_BRAIN_NODES.filter((node) => node.category === 'shared' || node.category === 'data').length), hint: 'Services, stores, persistence', accent: '#a78bfa' },
+    { label: 'Risk zones', value: String(riskCount('high')), hint: 'Manual risk markers', accent: '#fbbf24' },
   ]
 
   return (
-    <div
-      className="relative w-full h-full min-h-[280px] rounded-xl overflow-hidden"
-      style={{
-        background: 'radial-gradient(ellipse 80% 60% at 50% 45%, rgba(34,211,238,0.08) 0%, transparent 70%), linear-gradient(180deg, #0c1222 0%, #070b14 100%)',
-        border: '1px solid rgba(34,211,238,0.15)',
-        boxShadow: 'inset 0 0 60px rgba(34,211,238,0.04), 0 0 40px rgba(34,211,238,0.06)',
-      }}
-    >
-      <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="appBrainLineGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.5" />
-            <stop offset="100%" stopColor="#a78bfa" stopOpacity="0.35" />
-          </linearGradient>
-        </defs>
-        {[
-          [22, 28, 48, 18],
-          [48, 18, 72, 32],
-          [48, 18, 58, 48],
-          [35, 55, 58, 48],
-          [58, 48, 78, 62],
-          [18, 68, 35, 55],
-          [50, 72, 58, 48],
-          [72, 32, 78, 62],
-        ].map(([x1, y1, x2, y2], i) => (
-          <line
-            key={i}
-            x1={x1}
-            y1={y1}
-            x2={x2}
-            y2={y2}
-            stroke="url(#appBrainLineGrad)"
-            strokeWidth="0.35"
-            strokeDasharray="2 1.5"
-            opacity={0.7}
-            className="app-brain-pulse-line"
-            style={{ animationDelay: `${i * 0.15}s` }}
-          />
-        ))}
-        {nodes.map((n, i) => (
-          <g key={i}>
-            <circle cx={n.x} cy={n.y} r={n.r * 1.8} fill="rgba(34,211,238,0.12)" className="app-brain-node-glow" style={{ animationDelay: `${n.delay}s` }} />
-            <circle cx={n.x} cy={n.y} r={n.r * 0.55} fill="#22d3ee" opacity={0.9} className="app-brain-node-core" style={{ animationDelay: `${n.delay}s` }} />
-          </g>
-        ))}
-      </svg>
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          backgroundImage: 'linear-gradient(rgba(34,211,238,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,0.04) 1px, transparent 1px)',
-          backgroundSize: '24px 24px',
-        }}
-      />
-      <div className="absolute bottom-3 left-0 right-0 flex justify-center">
-        <span
-          className="text-[10px] font-mono uppercase tracking-widest px-3 py-1 rounded-full"
-          style={{ color: '#67e8f9', backgroundColor: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.25)' }}
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {statusCards.map((card) => (
+        <div
+          key={card.label}
+          className="rounded-xl p-4"
+          style={{
+            background: 'linear-gradient(145deg, rgba(15,23,42,0.82), rgba(3,7,18,0.72))',
+            border: `1px solid ${card.accent}24`,
+            boxShadow: `0 0 28px ${card.accent}0d`,
+          }}
         >
-          Phase 1 - visual foundation
-        </span>
-      </div>
-      <style>{`
-        @keyframes appBrainPulseLine {
-          0%, 100% { stroke-opacity: 0.35; }
-          50% { stroke-opacity: 0.85; }
-        }
-        @keyframes appBrainNodeGlow {
-          0%, 100% { opacity: 0.5; transform-origin: center; }
-          50% { opacity: 1; }
-        }
-        @keyframes appBrainNodeCore {
-          0%, 100% { opacity: 0.7; }
-          50% { opacity: 1; }
-        }
-        .app-brain-pulse-line { animation: appBrainPulseLine 3s ease-in-out infinite; }
-        .app-brain-node-glow { animation: appBrainNodeGlow 2.5s ease-in-out infinite; }
-        .app-brain-node-core { animation: appBrainNodeCore 2s ease-in-out infinite; }
-      `}</style>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">{card.label}</p>
+          <p className="text-2xl font-bold font-mono" style={{ color: card.accent }}>{card.value}</p>
+          <p className="text-[11px] text-gray-500 mt-2">{card.hint}</p>
+        </div>
+      ))}
     </div>
   )
 }
 
+function CategoryLegend() {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+      {CATEGORY_ORDER.map((category) => {
+        const meta = APP_BRAIN_CATEGORY_META[category]
+        return (
+          <div
+            key={category}
+            className="flex items-center gap-2 rounded-lg px-2.5 py-2"
+            style={{
+              background: 'rgba(3,7,18,0.46)',
+              border: `1px solid ${meta.color}24`,
+            }}
+          >
+            <span
+              className="h-2.5 w-2.5 rounded-full shrink-0"
+              style={{ backgroundColor: meta.color, boxShadow: `0 0 12px ${meta.color}` }}
+            />
+            <span className="text-[10px] text-gray-400 truncate">{meta.label}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function Inspector({ node }: { node: AppBrainNode | null }) {
+  const categoryMeta = node ? APP_BRAIN_CATEGORY_META[node.category] : null
+  const riskMeta = node ? APP_BRAIN_RISK_META[node.riskLevel] : null
+
+  return (
+    <aside
+      className="rounded-2xl p-4 flex flex-col gap-4"
+      style={{
+        background: 'linear-gradient(180deg, rgba(12,18,34,0.9), rgba(3,7,18,0.86))',
+        border: '1px solid rgba(167,139,250,0.15)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
+      }}
+    >
+      <h2 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
+        <Layers size={16} style={{ color: '#a78bfa' }} />
+        Brain Inspector
+      </h2>
+
+      {node && categoryMeta && riskMeta ? (
+        <div className="space-y-4">
+          <div
+            className="rounded-xl p-4"
+            style={{
+              background: `linear-gradient(145deg, ${categoryMeta.glow}, rgba(3,7,18,0.72))`,
+              border: `1px solid ${categoryMeta.color}33`,
+            }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: categoryMeta.color }}>
+                  {categoryMeta.label}
+                </p>
+                <h3 className="text-xl font-bold text-gray-50 mt-1">{node.label}</h3>
+              </div>
+              <span
+                className="text-[10px] uppercase tracking-wider font-mono px-2 py-1 rounded-full"
+                style={{
+                  color: riskMeta.color,
+                  backgroundColor: `${riskMeta.color}14`,
+                  border: `1px solid ${riskMeta.color}33`,
+                }}
+              >
+                {riskMeta.label} risk
+              </span>
+            </div>
+            <p className="text-xs text-gray-300 leading-relaxed mt-3">{node.description}</p>
+          </div>
+
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-gray-500 mb-2">Related files</p>
+            <div className="space-y-1.5">
+              {node.relatedFiles.map((file) => (
+                <div
+                  key={file}
+                  className="text-[11px] font-mono rounded-lg px-2 py-1.5 text-gray-300"
+                  style={{ background: 'rgba(15,23,42,0.7)', border: '1px solid rgba(148,163,184,0.12)' }}
+                >
+                  {file}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-gray-500 mb-2">Connections</p>
+            <div className="flex flex-wrap gap-1.5">
+              {node.connections.map((connectionId) => {
+                const connectedNode = getAppBrainNode(connectionId)
+                return (
+                  <span
+                    key={connectionId}
+                    className="text-[10px] rounded-full px-2 py-1"
+                    style={{ color: '#cbd5e1', background: 'rgba(30,41,59,0.72)', border: '1px solid rgba(148,163,184,0.14)' }}
+                  >
+                    {connectedNode?.label ?? connectionId}
+                  </span>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div
+          className="flex-1 min-h-[280px] rounded-xl flex flex-col items-center justify-center text-center px-4 py-8"
+          style={{ background: 'rgba(7,11,20,0.8)', border: '1px dashed rgba(167,139,250,0.25)' }}
+        >
+          <ShieldAlert size={28} className="mb-3 opacity-40" style={{ color: '#a78bfa' }} />
+          <p className="text-xs text-gray-400">Click a glowing node to inspect architecture details, related files, risk, and connections.</p>
+          <p className="text-[10px] text-gray-600 mt-2 font-mono">Hover previews / click locks selection</p>
+        </div>
+      )}
+    </aside>
+  )
+}
+
 export default function V15rAppBrainTab() {
+  const [selectedNodeId, setSelectedNodeId] = useState<string>('app-brain')
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
+  const activeNode = useMemo(
+    () => getAppBrainNode(hoveredNodeId) ?? getAppBrainNode(selectedNodeId),
+    [hoveredNodeId, selectedNodeId],
+  )
+
   return (
     <div
       className="w-full min-h-full overflow-auto"
-      style={{ background: 'linear-gradient(165deg, #060a12 0%, #0a1020 45%, #070b14 100%)', color: '#e5e7eb' }}
+      style={{ background: 'linear-gradient(165deg, #050814 0%, #0a1020 45%, #05070d 100%)', color: '#e5e7eb' }}
     >
-      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-6 space-y-6">
-        <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+      <div className="max-w-[1480px] mx-auto px-4 sm:px-6 py-6 space-y-6">
+        <header className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <Cpu size={20} style={{ color: '#22d3ee' }} />
@@ -135,88 +218,85 @@ export default function V15rAppBrainTab() {
             <h1 className="text-2xl font-bold text-gray-50 tracking-tight">App Brain</h1>
             <p className="text-sm text-gray-400 mt-1">Live architecture brain for Power On Hub</p>
           </div>
-          <span
-            className="self-start sm:self-auto text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg"
-            style={{ color: '#94a3b8', backgroundColor: 'rgba(148,163,184,0.08)', border: '1px solid rgba(148,163,184,0.2)' }}
-          >
-            Foundation / no live data yet
-          </span>
+          <div className="flex flex-wrap gap-2">
+            <span
+              className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg"
+              style={{ color: '#67e8f9', backgroundColor: 'rgba(34,211,238,0.08)', border: '1px solid rgba(34,211,238,0.22)' }}
+            >
+              Phase 2 / static architecture MVP
+            </span>
+            <span
+              className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg"
+              style={{ color: '#94a3b8', backgroundColor: 'rgba(148,163,184,0.08)', border: '1px solid rgba(148,163,184,0.2)' }}
+            >
+              Generated manifests and git overlays later
+            </span>
+          </div>
         </header>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {STATUS_CARDS.map((card) => (
-            <div
-              key={card.label}
-              className="rounded-xl p-4"
-              style={{
-                background: 'rgba(15,23,42,0.7)',
-                border: `1px solid ${card.accent}22`,
-                boxShadow: `0 0 24px ${card.accent}08`,
-              }}
-            >
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 mb-1">{card.label}</p>
-              <p className="text-lg font-bold font-mono" style={{ color: card.accent }}>Planned</p>
-              <p className="text-[11px] text-gray-500 mt-2">{card.hint}</p>
-            </div>
-          ))}
-        </div>
+        <StatusCards />
 
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-4">
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4">
           <section
             className="rounded-2xl p-4 sm:p-5 flex flex-col gap-4"
             style={{
-              background: 'rgba(12,18,34,0.85)',
-              border: '1px solid rgba(34,211,238,0.12)',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
+              background: 'linear-gradient(180deg, rgba(12,18,34,0.9), rgba(3,7,18,0.82))',
+              border: '1px solid rgba(34,211,238,0.14)',
+              boxShadow: '0 8px 36px rgba(0,0,0,0.42)',
             }}
           >
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <h2 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
                 <Sparkles size={16} style={{ color: '#22d3ee' }} />
                 3D neural app map
               </h2>
-              <span className="text-[10px] text-gray-500 font-mono">Coming in Phase 2</span>
+              <span className="text-[10px] text-gray-500 font-mono">Static map / no live repo scan yet</span>
             </div>
-            <NeuralMapPlaceholder />
+
+            <div
+              className="rounded-xl overflow-hidden min-h-[420px]"
+              style={{
+                background:
+                  'radial-gradient(circle at 50% 44%, rgba(34,211,238,0.1), transparent 48%), linear-gradient(180deg, #070b14 0%, #030712 100%)',
+                border: '1px solid rgba(34,211,238,0.16)',
+                boxShadow: 'inset 0 0 80px rgba(34,211,238,0.05), 0 0 40px rgba(34,211,238,0.08)',
+              }}
+            >
+              <V15rAppBrainScene
+                selectedNodeId={selectedNodeId}
+                hoveredNodeId={hoveredNodeId}
+                onSelectNode={setSelectedNodeId}
+                onHoverNode={setHoveredNodeId}
+              />
+            </div>
+
+            <CategoryLegend />
+
             <p className="text-xs text-gray-500 leading-relaxed">
-              Premium rotational neural map of app areas, components, and connections. Phase 1 establishes the command shell only - no Three.js graph or repo ingestion yet.
+              This is a static architecture MVP built with the existing Three.js dependency. Nodes, connections, and risk markers are typed map data for Phase 2; generated repo manifests, changed-file activity, and live git overlays are intentionally deferred.
             </p>
           </section>
 
-          <aside
-            className="rounded-2xl p-4 flex flex-col gap-4"
-            style={{
-              background: 'rgba(12,18,34,0.85)',
-              border: '1px solid rgba(167,139,250,0.15)',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
-            }}
-          >
-            <h2 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
-              <Layers size={16} style={{ color: '#a78bfa' }} />
-              Brain Inspector
-            </h2>
-            <div
-              className="flex-1 min-h-[200px] rounded-xl flex flex-col items-center justify-center text-center px-4 py-8"
-              style={{ background: 'rgba(7,11,20,0.8)', border: '1px dashed rgba(167,139,250,0.25)' }}
-            >
-              <ShieldAlert size={28} className="mb-3 opacity-40" style={{ color: '#a78bfa' }} />
-              <p className="text-xs text-gray-400">Select a node on the map to inspect component details, dependencies, and risk context.</p>
-              <p className="text-[10px] text-gray-600 mt-2 font-mono">Inspector activates with Phase 2 map</p>
-            </div>
-          </aside>
+          <Inspector node={activeNode} />
         </div>
 
         <section
           className="rounded-2xl p-4 sm:p-5"
           style={{
-            background: 'rgba(12,18,34,0.85)',
+            background: 'linear-gradient(180deg, rgba(12,18,34,0.88), rgba(3,7,18,0.76))',
             border: '1px solid rgba(52,211,153,0.12)',
           }}
         >
-          <h2 className="text-sm font-semibold text-gray-200 flex items-center gap-2 mb-4">
-            <GitBranch size={16} style={{ color: '#34d399' }} />
-            Phase roadmap
-          </h2>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+            <h2 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
+              <GitBranch size={16} style={{ color: '#34d399' }} />
+              Phase roadmap
+            </h2>
+            <span className="text-[10px] text-gray-500 font-mono flex items-center gap-1.5">
+              <Network size={12} />
+              Architecture data is static in this release
+            </span>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {ROADMAP.map((item, i) => (
               <div

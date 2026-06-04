@@ -4093,47 +4093,45 @@ App Brain Phase 1 foundation is added on `main`: admin Visualization nav item, A
 
 ---
 
-## Shared Update - Field Logs Triggers Target and Rules Flow
+## Shared Update - Admin App Brain Phase 2 Premium 3D Neural Render MVP
 
 AGENT:
-Codex GPT-5.5 Medium
+Cursor GPT-5.5
 
 BRANCH:
 main
 
 COMMIT HASH:
-Final amended commit hash reported in chat.
+Pending at log-write time; see final Cursor report.
 
 FILES CHANGED:
-- `src/components/v15r/V15rFieldLogPanel.tsx`
+- `src/components/v15r/V15rAppBrainTab.tsx`
+- `src/components/v15r/V15rAppBrainScene.tsx`
+- `src/components/v15r/appBrainMap.ts`
 - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
-- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
-
-TYPECHECK RESULT:
-PASS - `npm.cmd run typecheck`
-
-ROOT CAUSE:
-Field Logs > Triggers built its selectable dataset from active projects only, filtered projects again by `status === 'active'`, exposed only recent service logs, and did not use the selected job to render a concrete rule-study result. Trigger rules also only had active/inactive toggles in this tab, with no add/edit/remove controls.
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
 
 WHAT CHANGED:
-- Triggers now has a target study flow for either a selected project or selected service call/service log.
-- The Triggers project selector reads `backup.projects` directly inside this tab only, so archived projects appear here without changing the global `projects` active-filter used by other Field Log subtabs and dashboards.
-- Service targets now include active service logs and active service estimates/calls for study.
-- Selected targets are normalized into the existing trigger evaluation fields and show metric cards plus fired-rule chips.
-- Added inline trigger rule add, edit, remove, and active-toggle controls, all saved through the existing Field Log backup sync path.
-- AI analysis now includes the selected target metrics and triggered rule names when a target is selected.
+- Replaced the App Brain Phase 1 placeholder with a real Three.js static architecture map MVP using the existing `three` dependency.
+- Added typed static App Brain map data for architecture nodes, edges, categories, risks, related files, and connections.
+- Rendered glowing 3D architecture nodes, animated neural connection pulses, starfield depth, slow rotation/breathing motion, hover previews, click selection, category legend, and selected-node inspector.
+- Added clear static-MVP copy that generated repo manifests, live git/commit overlays, and agent overlap detection are later phases.
+
+WHAT WAS LEARNED:
+- Existing Three.js lifecycle patterns in the repo use direct `WebGLRenderer`, `ResizeObserver`, `requestAnimationFrame`, raycaster events, and explicit cleanup for geometries/materials/textures/listeners/renderers.
+- Phase 1 nav/route/admin gating remained valid and needed no changes.
+- Future generated manifest work can target `appBrainMap.ts` without rewriting the scene shell.
+
+TYPECHECK RESULT:
+BLOCKED - attempted `npm.cmd run typecheck` and required fallback `cmd /c npm.cmd run typecheck`; both returned no exit status from the shell harness.
 
 BUGS / RISKS:
-- Browser control was not callable in this session, so full click-through QA is still needed in the already-running localhost app.
-- The old local `jobOptions` const remains inert due a legacy encoded service-label line; the UI reads the clean `triggerJobOptions` dataset.
-
-MANUAL QA PERFORMED:
-- `npm.cmd run typecheck` passed.
-- `git diff --check` passed, aside from an unrelated pre-existing CRLF warning in `.claude/settings.local.json`.
-- `http://localhost:5173` returned HTTP 200 from PowerShell.
+- Manual browser QA is still needed for scene rendering, hover/click inspector behavior, resize, and navigate-away/back cleanup.
+- Static map data is manually curated and not generated from the repo yet.
+- Typecheck must be rerun outside the current shell harness blocker.
 
 NEXT RECOMMENDED ACTION:
-Open localhost, go to Field Logs > Triggers, select Projects and Service Calls, confirm archived projects appear only in this tab, then add/edit/remove a trigger rule and confirm the visible rule-study result updates.
+Run `npm.cmd run typecheck` locally, then manually open App Brain as admin owner and verify the 3D scene animates, nodes update the inspector, resize works, navigating away/back does not duplicate canvases or render loops, and unrelated tabs are unchanged.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-Field Logs > Triggers repair is complete on `main`. `V15rFieldLogPanel.tsx` now scopes archived-project inclusion to the Triggers selector/study path, supports service-log/service-call target study, renders selected-target rule hits, and provides inline trigger rule add/edit/remove controls through existing backup sync. Typecheck passes; browser manual QA remains.
+App Brain Phase 2 is implemented as a scoped Three.js MVP. `appBrainMap.ts` holds typed static architecture nodes/edges; `V15rAppBrainScene.tsx` owns renderer lifecycle, glowing nodes, animated connection pulses, raycaster hover/click, resize, and cleanup; `V15rAppBrainTab.tsx` owns the shell, status cards, legend, inspector, and static-MVP roadmap copy. No packages changed. Typecheck attempted but blocked by no-exit-status shell behavior.

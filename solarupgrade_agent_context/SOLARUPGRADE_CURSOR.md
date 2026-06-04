@@ -433,3 +433,38 @@ Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak 
 - Manual QA performed: Code-path inspection only. Browser QA not performed because the session could not run non-git shell commands reliably.
 - Next recommended action: Run `npm.cmd run typecheck` locally, then manually open the app as the admin owner and confirm the App brain tab appears under Visualization, renders the premium shell, and no unrelated tabs changed.
 - Compact handoff for next agent/chat: App Brain Phase 1 foundation is added on `main`: admin Visualization nav item, AppShell lazy route, and `V15rAppBrainTab` premium placeholder shell. No package files or dependencies changed. No customer/project data, mutations, or fake live metrics. Typecheck was attempted but blocked by shell exit-status failures for non-git commands; rerun locally before further work.
+
+---
+
+## Cursor Report — Admin App Brain — Phase 2 premium 3D neural render MVP
+
+* Task completed: Admin App Brain Phase 2 premium 3D neural render MVP.
+* Files changed:
+  * `src/components/v15r/V15rAppBrainTab.tsx`
+  * `src/components/v15r/V15rAppBrainScene.tsx`
+  * `src/components/v15r/appBrainMap.ts`
+  * `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  * `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+* Commit hash: Pending at log-write time; see final Cursor report for the actual commit hash.
+* Typecheck result: BLOCKED - attempted `npm.cmd run typecheck` and required fallback `cmd /c npm.cmd run typecheck`; both returned no exit status from the shell harness, so success/failure could not be determined.
+* What changed:
+  * Replaced the Phase 1 SVG placeholder with a real Three.js App Brain scene using the existing `three` dependency.
+  * Added typed static App Brain architecture data for nodes, edges, categories, risk levels, related files, and connections.
+  * Added glowing 3D node orbs, colored architecture clusters, animated connection pulses, starfield depth, slow rotational/breathing motion, hover previews, and click-to-select inspector behavior.
+  * Updated the Brain Inspector to show selected/hovered node label, category, description, related files, connections, and risk level.
+  * Added a category legend and explicit static-MVP copy so the UI does not claim live git or generated repo data yet.
+* What was learned:
+  * Existing Three.js code uses direct `WebGLRenderer` setup, `ResizeObserver`, `requestAnimationFrame`, raycaster event handlers, and explicit renderer/material/geometry cleanup on unmount.
+  * The App Brain route/nav foundation from Phase 1 did not need changes; Phase 2 could stay scoped to App Brain components and context files.
+  * The repo still had unrelated staged/unstaged Field Log/Codex context changes present, so commit staging must be path-scoped.
+* Learned skills / reusable patterns:
+  * Keep architecture map data separate from the scene renderer so future generated manifests can replace static arrays without rewriting UI.
+  * Use refs for selected/hovered callback state inside long-lived Three.js event handlers to avoid recreating renderers on every interaction.
+  * Dispose sprite textures, geometries, materials, resize observers, renderer events, renderer, and animation frames in one unmount cleanup.
+* Bugs / risks:
+  * Typecheck could not be completed due to the shell harness no-exit-status blocker for non-git commands.
+  * Manual browser QA is still needed for animation smoothness, interaction accuracy, resize behavior, and navigating away/back.
+  * Static map data is manually curated and not yet generated from the repo.
+* Manual QA performed: Code-path and diff inspection only. Browser QA was not performed in this session.
+* Next recommended action: Run `npm.cmd run typecheck` locally and manually QA App Brain as the admin owner, including hover/click inspector updates, resize, and navigating away/back to confirm no duplicate canvas/render loop.
+* Compact handoff for next agent/chat: App Brain Phase 2 is implemented as a scoped Three.js MVP. `appBrainMap.ts` holds typed static architecture nodes/edges; `V15rAppBrainScene.tsx` owns renderer lifecycle, animated glowing nodes, connection pulses, raycaster hover/click, resize, and cleanup; `V15rAppBrainTab.tsx` owns shell, status cards, legend, inspector, and static-MVP roadmap copy. No packages or unrelated app areas changed. Typecheck was attempted but blocked by shell no-exit-status behavior; rerun locally before the next phase.
