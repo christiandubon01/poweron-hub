@@ -151,7 +151,7 @@ type ToolMode =
   | 'measure-area'
   | 'measure-perimeter'
 
-type ShapeKind = 'square' | 'circle' | 'line' | 'arrow' | 'arch-line' | 'star' | 'cross' | 'diamond' | 'pentagon'
+type ShapeKind = 'square' | 'circle' | 'line' | 'arrow' | 'arch-line' | 'star' | 'cross' | 'diamond' | 'pentagon' | 'can-light-4' | 'can-light-6'
 type BorderStyle = 'solid' | 'dashed' | 'dotted'
 type HatchPattern = 'none' | 'diagonal' | 'cross' | 'dots'
 type GenerateQuestionType = 'coordination' | 'rfi'
@@ -3050,6 +3050,8 @@ export default function OperationsBlueprintPdfViewer({
                 { label: 'Star', value: 'star' },
                 { label: 'Cross', value: 'cross' },
                 { label: 'Pentagon', value: 'pentagon' },
+                { label: 'Can Light 4"', value: 'can-light-4' },
+                { label: 'Can Light 6"', value: 'can-light-6' },
               ]}
               onChange={(v) => {
                 if (isEdit) persistEditAnnotationMeta({ shapeKind: v })
@@ -4157,6 +4159,37 @@ export default function OperationsBlueprintPdfViewer({
                               </div>
                             )
                           }
+                          if (kind === 'can-light-4' || kind === 'can-light-6') {
+                            // Can-light symbol: outer trim ring + crosshair + aperture circle + size label.
+                            // If blueprint calibration is active, the user sizes the marker to match scale via drag.
+                            // Without calibration the symbol is still clear — 4" vs 6" distinguished by aperture radius + label.
+                            const aperture = kind === 'can-light-4' ? 20 : 26
+                            const label = kind === 'can-light-4' ? '4"' : '6"'
+                            return (
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-full' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
+                                <svg
+                                  className="absolute inset-0 overflow-visible"
+                                  viewBox="0 0 100 100"
+                                  width="100%"
+                                  height="100%"
+                                  preserveAspectRatio="xMidYMid meet"
+                                >
+                                  {/* Outer trim ring */}
+                                  <circle cx="50" cy="50" r="46" fill="none" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} opacity={fillOpacity} />
+                                  {/* Crosshair — horizontal */}
+                                  <line x1="4" y1="50" x2="96" y2="50" stroke={borderColor} strokeWidth={Math.max(0.8, borderThickness * 0.55)} opacity={fillOpacity * 0.65} />
+                                  {/* Crosshair — vertical */}
+                                  <line x1="50" y1="4" x2="50" y2="96" stroke={borderColor} strokeWidth={Math.max(0.8, borderThickness * 0.55)} opacity={fillOpacity * 0.65} />
+                                  {/* Aperture circle — filled lightly, sized by can diameter */}
+                                  <circle cx="50" cy="50" r={aperture} fill={hexWithAlpha(borderColor, 0.10)} stroke={borderColor} strokeWidth={borderThickness} opacity={fillOpacity} />
+                                  {/* Size label centered inside aperture */}
+                                  <text x="50" y="55" textAnchor="middle" fontSize="16" fontWeight="700" fontFamily="monospace" fill={borderColor} opacity={fillOpacity}>{label}</text>
+                                </svg>
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
+                              </div>
+                            )
+                          }
                           return (
                             <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
                               <div
@@ -4321,11 +4354,19 @@ export default function OperationsBlueprintPdfViewer({
 
                         if (a.type === 'textHighlight') {
                           // Text Highlighter: no border, pure fill Ã¢â‚¬â€ looks like a text marker pen.
+                          // Text Highlighter: narrow centered band (72% of bounding-box height) so it
+                          // sits across the text baseline rather than covering the full drag rectangle.
                           return (
-                            <div key={a.id} data-annotation-id={a.id} className="absolute group" style={{ left, top, width, height }} onClick={selectAnnotation}>
+                            <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
                               <div
-                                className={`w-full h-full pointer-events-none rounded-sm ${isFocused ? 'ring-2 ring-white/80' : ''}`}
-                                style={{ backgroundColor: hexWithAlpha(color, meta.opacity ?? 0.4) }}
+                                className="absolute pointer-events-none rounded-sm"
+                                style={{
+                                  left: 0,
+                                  right: 0,
+                                  top: '14%',
+                                  bottom: '14%',
+                                  backgroundColor: hexWithAlpha(color, meta.opacity ?? 0.4),
+                                }}
                               />
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
@@ -4433,12 +4474,12 @@ export default function OperationsBlueprintPdfViewer({
                             : effectiveTool === 'underline'
                               ? 'none'
                               : `1px solid ${toolColors[effectiveTool as ToolKey] || '#facc15'}`,
-                          borderRadius: effectiveTool === 'shape' && shapeKind === 'circle' ? '9999px' : '0.25rem',
+                          borderRadius: effectiveTool === 'shape' && (shapeKind === 'circle' || shapeKind === 'can-light-4' || shapeKind === 'can-light-6') ? '9999px' : '0.25rem',
                           background: effectiveTool === 'highlight'
                             ? hexWithAlpha(toolColors.highlight || '#facc15', highlightOpacity / 100)
                             : effectiveTool === 'textHighlight'
                               ? hexWithAlpha(toolColors.textHighlight || '#facc15', 0.4)
-                              : effectiveTool === 'shape' && shapeKind !== 'line' && shapeKind !== 'arrow' && shapeKind !== 'arch-line'
+                              : effectiveTool === 'shape' && shapeKind !== 'line' && shapeKind !== 'arrow' && shapeKind !== 'arch-line' && shapeKind !== 'can-light-4' && shapeKind !== 'can-light-6'
                                 ? getHatchBackground(shapeOptions.hatchPattern, shapeOptions.borderColor, shapeOptions.fillColor, shapeOptions.fillOpacity)
                                 : 'transparent',
                           borderBottom: effectiveTool === 'underline' ? `${underlineThickness}px solid ${toolColors.underline || '#facc15'}` : undefined,
