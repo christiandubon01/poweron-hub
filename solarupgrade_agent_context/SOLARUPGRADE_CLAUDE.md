@@ -1619,3 +1619,45 @@ NO — ready for screenshot QA.
 
 * Compact handoff for next agent/chat:
   Round 3 complete on main branch. Line/arrow annotations now show two endpoint handles (blue start, green end) when in layout-edit mode. startAnnotationEndpointDrag + endpointDragRef + handlePointerMove/Up multiplexing handles endpoint-specific drag with atomic rect + meta update. The floating action bar has a ⠿ drag grip; barDragOffset state + barDragRef ref makes it freely repositionable; offset resets on annotation selection change. No new annotation storage fields needed. Typecheck clean.
+
+---
+
+## BLUEPRINT PDF REPAIR ROUND 4 COMPLETION LOG
+
+* Agent: Claude Code (claude-sonnet-4-6)
+* Branch: main
+* Typecheck result: PASS — only pre-existing V15rAppBrainScene.tsx errors (unrelated Three.js types)
+
+* Root causes:
+  - Arch-line rendered with hardcoded `M 0 0 Q 100 0 100 100` path (no stored endpoint or archFactor support).
+  - Diamond/star/cross/pentagon fell through to the generic square CSS border renderer.
+  - Arch-line had no endpoint handles and no adjustable arch depth control.
+
+* What changed:
+  1. Arch-line renderer: Reads `lineX1/Y1/X2/Y2` + `archFactor` from meta. Computes quadratic bezier with perpendicular bisector control point formula. Renders SVG path with opacity on `<path>` element (not container div).
+  2. Arch-line endpoint handles: Added blue (start) and green (end) `onPointerDown → startAnnotationEndpointDrag` handles, same as line/arrow.
+  3. Arch control handle at overlay level: Yellow draggable dot positioned at the bezier control point using page-normalized coords (% of overlay). `onPointerDown → startArchControlDrag`. Must be at overlay level because annotation divs are bounding-box sized — for near-horizontal lines the bounding box height is near zero and control point percentages overflow wildly.
+  4. Shape renderers: Added `if (kind === 'diamond' || kind === 'star' || kind === 'cross' || kind === 'pentagon')` block with SVG polygon in viewBox 0-100. Points: diamond `50,0 100,50 50,100 0,50`; star `50,3 61,35 95,36 68,56 78,88 50,69 22,88 32,56 5,36 39,35`; cross `37,0 63,0 63,37 100,37 100,63 63,63 63,100 37,100 37,63 0,63 0,37 37,37`; pentagon `50,3 95,36 78,88 22,88 5,36`.
+  5. startArchControlDrag: useCallback storing annotationId, pointerId, startArchFactor, p1x/y and p2x/y in archControlDragRef and setting pointer capture on overlayRef.
+  6. handlePointerMove arch control block: Computes projection of drag vector onto perpendicular bisector axis to derive newFactor; clamps to [-3,3]; calls setAllAnnotations.
+  7. handlePointerUp acDragUp block: Clears archControlDragRef/state, reads from allAnnotationsRef, calls persistAnnotation.
+  8. handlePointerCancel: Clears archControlDragRef/archControlDrag.
+  9. Arch-line placement (handlePointerDown): Extended lineFirstPointRef state machine to cover `shapeKind === 'arch-line'`. First click shows collapsed `draftArchPathDomRef` preview; second click commits via same dragStart mechanism.
+  10. Arch placement preview (handlePointerMove): Live perpendicular bezier arc from first point to cursor.
+  11. Escape key: Hides `draftArchPathDomRef.current` when cancelling.
+  12. lineDirectionMeta: Extended to include arch-line with default `archFactor: 0.5`.
+
+* What was learned:
+  - Arch control handle must be at overlay level — annotation bounding box can be 1-2px tall for horizontal lines, making any percentage-based positioning inside it useless.
+  - `archFactor=0.5` with TL→BR endpoints exactly reproduces the legacy `M 0 0 Q 100 0 100 100` path (verified mathematically).
+  - Ref-mirror pattern (archControlDragRef) works cleanly alongside existing endpointDragRef — the two drags are mutually exclusive by pointer-id check.
+  - SVG polygon with `preserveAspectRatio="none"` and fixed viewBox 0-100 stretches correctly into any annotation bounding box.
+
+* Bugs / risks:
+  - Manual browser QA still needed for arch drag feel, handle visibility at extreme archFactor values, and polygon rendering at small sizes.
+  - If user places a legacy arch-line annotation (no lineX1/Y1 stored), it defaults to TL→BR which matches the old hardcoded path exactly.
+
+* Manual QA performed: Static code review only. No browser QA available in this session.
+
+* Compact handoff:
+  Round 4 complete on main branch. Arch-line renders from stored endpoints + archFactor; yellow control handle at overlay level for live curve adjustment; endpoint handles same as line/arrow. Diamond/star/cross/pentagon render as correct SVG polygons. Arch placement uses point-to-point flow with live bezier preview. Typecheck clean.

@@ -887,6 +887,25 @@ export default function OperationsBlueprintPdfViewer({
   const [barDragOffset, setBarDragOffset] = useState<{ x: number; y: number } | null>(null)
   const barDragRef = useRef<{ pointerId: number; startClientX: number; startClientY: number; startX: number; startY: number } | null>(null)
 
+  const [archControlDrag, setArchControlDrag] = useState<{
+    annotationId: string
+    pointerId: number
+    startArchFactor: number
+    p1x: number
+    p1y: number
+    p2x: number
+    p2y: number
+  } | null>(null)
+  const archControlDragRef = useRef<{
+    annotationId: string
+    pointerId: number
+    startArchFactor: number
+    p1x: number
+    p1y: number
+    p2x: number
+    p2y: number
+  } | null>(null)
+
   const [noteEditor, setNoteEditor] = useState<{
     mode: 'create' | 'edit'
     annotationId?: string
@@ -971,6 +990,7 @@ export default function OperationsBlueprintPdfViewer({
         lastMeasureClickRef.current = { time: 0, nx: 0, ny: 0 }
         lineFirstPointRef.current = null
         if (draftLineDomRef.current) draftLineDomRef.current.style.display = 'none'
+        if (draftArchPathDomRef.current) draftArchPathDomRef.current.style.display = 'none'
       }
       if (e.key === 'Enter' && effectiveTool === 'measure-perimeter' && !calibrateInput) {
         const pts = [...measureDraftRef.current]
@@ -2126,6 +2146,29 @@ export default function OperationsBlueprintPdfViewer({
     e.stopPropagation()
   }, [])
 
+  const startArchControlDrag = useCallback((e: React.PointerEvent<HTMLElement>, annotation: BlueprintAnnotation) => {
+    const meta = getAnnotationMeta(annotation)
+    const rect = annotation.rect || { x: 0, y: 0, w: 0.1, h: 0.1 }
+    const lx1 = meta.lineX1 ?? 0, ly1 = meta.lineY1 ?? 0
+    const lx2 = meta.lineX2 ?? 1, ly2 = meta.lineY2 ?? 1
+    const drag = {
+      annotationId: annotation.id,
+      pointerId: e.pointerId,
+      startArchFactor: meta.archFactor ?? 0.5,
+      p1x: rect.x + lx1 * (rect.w || 0),
+      p1y: rect.y + ly1 * (rect.h || 0),
+      p2x: rect.x + lx2 * (rect.w || 0),
+      p2y: rect.y + ly2 * (rect.h || 0),
+    }
+    archControlDragRef.current = drag
+    setArchControlDrag(drag)
+    setFocusedAnnotationId(annotation.id)
+    setLayoutEditId(annotation.id)
+    try { overlayRef.current?.setPointerCapture(e.pointerId) } catch {}
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
   const handleAnnotationLayoutPointerMove = useCallback((e: React.PointerEvent<HTMLElement>) => {
     // Use the ref mirror to avoid stale-closure miss on the first pointermove after setLayoutDrag
     const drag = layoutDragRef.current || layoutDrag
@@ -2504,16 +2547,19 @@ export default function OperationsBlueprintPdfViewer({
     // Point-to-point line/arrow placement: first left-click sets start point.
     // Second click (handled in handlePointerUp) creates the annotation.
     // Middle mouse is already handled above and will never reach here.
-    if (effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow')) {
+    if (effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow' || shapeKind === 'arch-line')) {
       if (!lineFirstPointRef.current) {
         lineFirstPointRef.current = { x, y }
-        const lineEl = draftLineDomRef.current
-        if (lineEl) {
-          lineEl.setAttribute('x1', String(x))
-          lineEl.setAttribute('y1', String(y))
-          lineEl.setAttribute('x2', String(x))
-          lineEl.setAttribute('y2', String(y))
-          lineEl.style.display = ''
+        if (shapeKind === 'arch-line') {
+          const archEl = draftArchPathDomRef.current
+          if (archEl) { archEl.setAttribute('d', `M ${x} ${y} Q ${x} ${y} ${x} ${y}`); archEl.style.display = '' }
+        } else {
+          const lineEl = draftLineDomRef.current
+          if (lineEl) {
+            lineEl.setAttribute('x1', String(x)); lineEl.setAttribute('y1', String(y))
+            lineEl.setAttribute('x2', String(x)); lineEl.setAttribute('y2', String(y))
+            lineEl.style.display = ''
+          }
         }
         e.preventDefault()
         return
@@ -2633,6 +2679,29 @@ export default function OperationsBlueprintPdfViewer({
       return
     }
 
+    const acDrag = archControlDragRef.current
+    if (acDrag && acDrag.pointerId === e.pointerId && overlayRef.current) {
+      const overlayRect = overlayRef.current.getBoundingClientRect()
+      const nhx = (e.clientX - overlayRect.left) / Math.max(1, overlayRect.width)
+      const nhy = (e.clientY - overlayRect.top) / Math.max(1, overlayRect.height)
+      const mx = (acDrag.p1x + acDrag.p2x) / 2
+      const my = (acDrag.p1y + acDrag.p2y) / 2
+      const perpDx = acDrag.p2y - acDrag.p1y
+      const perpDy = acDrag.p1x - acDrag.p2x
+      const perpLen2 = perpDx * perpDx + perpDy * perpDy
+      if (perpLen2 > 1e-8) {
+        const newFactor = ((nhx - mx) * perpDx + (nhy - my) * perpDy) / perpLen2
+        setAllAnnotations((prev) => prev.map((ann) => {
+          if (ann.id !== acDrag.annotationId) return ann
+          const m = getAnnotationMeta(ann)
+          return withAnnotationMeta({ ...ann, updatedAt: new Date().toISOString() }, { ...m, archFactor: Math.max(-3, Math.min(3, newFactor)) }) as BlueprintAnnotation
+        }))
+      }
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+
     if (Date.now() < suppressAnnotationUntilRef.current) return
     if (!overlayRef.current || isEditorOpen) return
     const rect = overlayRef.current.getBoundingClientRect()
@@ -2662,6 +2731,17 @@ export default function OperationsBlueprintPdfViewer({
       if (lineEl) {
         lineEl.setAttribute('x2', String(x))
         lineEl.setAttribute('y2', String(y))
+      }
+      return
+    }
+    if (effectiveTool === 'shape' && shapeKind === 'arch-line' && lineFirstPointRef.current) {
+      const archEl = draftArchPathDomRef.current
+      const p1 = lineFirstPointRef.current
+      if (archEl) {
+        const cpx = (p1.x + x) / 2 + 0.5 * (y - p1.y)
+        const cpy = (p1.y + y) / 2 - 0.5 * (x - p1.x)
+        archEl.setAttribute('d', `M ${p1.x} ${p1.y} Q ${cpx} ${cpy} ${x} ${y}`)
+        archEl.style.display = ''
       }
       return
     }
@@ -2702,8 +2782,9 @@ export default function OperationsBlueprintPdfViewer({
     if (archEl) {
       const isArchKind = effectiveTool === 'shape' && shapeKind === 'arch-line'
       if (isArchKind) {
-        // Quadratic bezier: start → control (x2, y1) → end. Control at end-x, start-y arches upward.
-        archEl.setAttribute('d', `M ${activeDragStart.x} ${activeDragStart.y} Q ${x} ${activeDragStart.y} ${x} ${y}`)
+        const cpx = (activeDragStart.x + x) / 2 + 0.5 * (y - activeDragStart.y)
+        const cpy = (activeDragStart.y + y) / 2 - 0.5 * (x - activeDragStart.x)
+        archEl.setAttribute('d', `M ${activeDragStart.x} ${activeDragStart.y} Q ${cpx} ${cpy} ${x} ${y}`)
         archEl.style.display = ''
       } else {
         archEl.style.display = 'none'
@@ -2752,6 +2833,17 @@ export default function OperationsBlueprintPdfViewer({
       endpointDragRef.current = null
       setEndpointDrag(null)
       const ann = allAnnotationsRef.current.find((a) => a.id === epDragUp.annotationId)
+      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+
+    const acDragUp = archControlDragRef.current
+    if (acDragUp && acDragUp.pointerId === e.pointerId) {
+      archControlDragRef.current = null
+      setArchControlDrag(null)
+      const ann = allAnnotationsRef.current.find((a) => a.id === acDragUp.annotationId)
       if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
       e.preventDefault()
       e.stopPropagation()
@@ -2857,28 +2949,28 @@ export default function OperationsBlueprintPdfViewer({
     if (effectiveTool === 'underline') {
       const minUnderlineWidth = 2 / Math.max(1, rect.width)
       if (norm.w < minUnderlineWidth) return
-    } else if (effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow')) {
-      // Lines and arrows can be nearly horizontal or vertical — only require total length.
+    } else if (effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow' || shapeKind === 'arch-line')) {
+      // Lines, arrows, and arch-lines can be nearly horizontal or vertical — only require total length.
       if (Math.hypot(norm.w, norm.h) < MIN_HIGHLIGHT_NORM) return
     } else if (norm.w < MIN_HIGHLIGHT_NORM || norm.h < MIN_HIGHLIGHT_NORM) return
 
     const now = new Date().toISOString()
     const type = effectiveTool === 'underline' ? 'underline' : effectiveTool === 'shape' ? 'shape' : effectiveTool === 'textHighlight' ? 'textHighlight' : 'highlight'
 
-    // For line/arrow shapes: store normalized start/end within the bounding box so the renderer
-    // can draw the correct direction regardless of which corner the user dragged from.
-    const lineDirectionMeta = (effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow'))
+    // For line/arrow/arch-line shapes: store normalized start/end within the bounding box.
+    const lineDirectionMeta = (effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow' || shapeKind === 'arch-line'))
       ? (() => {
           const normStart = toNorm(activeDragStart.x, activeDragStart.y, rect.width, rect.height)
           const normEnd = toNorm(x, y, rect.width, rect.height)
           const bw = Math.max(rawNorm.w, 0.0001)
           const bh = Math.max(rawNorm.h, 0.0001)
-          return {
+          const base = {
             lineX1: (normStart.x - rawNorm.x) / bw,
             lineY1: (normStart.y - rawNorm.y) / bh,
             lineX2: (normEnd.x - rawNorm.x) / bw,
             lineY2: (normEnd.y - rawNorm.y) / bh,
           }
+          return shapeKind === 'arch-line' ? { ...base, archFactor: 0.5 } : base
         })()
       : {}
 
@@ -2961,6 +3053,8 @@ export default function OperationsBlueprintPdfViewer({
     }
     endpointDragRef.current = null
     setEndpointDrag(null)
+    archControlDragRef.current = null
+    setArchControlDrag(null)
   }, [endTouchPointer])
 
   if (!blueprint) {
@@ -4411,15 +4505,24 @@ export default function OperationsBlueprintPdfViewer({
                             )
                           }
                           if (kind === 'arch-line') {
-                            // Quadratic bezier: start (0,0) → control (100,0) → end (100,100) in a 0-100 viewBox.
-                            // This arches through the top-right corner, producing a smooth convex curve.
+                            const alx1f = meta.lineX1 ?? 0, aly1f = meta.lineY1 ?? 0
+                            const alx2f = meta.lineX2 ?? 1, aly2f = meta.lineY2 ?? 1
+                            const archFactor = meta.archFactor ?? 0.5
+                            const avx1 = alx1f * 100, avy1 = aly1f * 100
+                            const avx2 = alx2f * 100, avy2 = aly2f * 100
+                            const avmx = (avx1 + avx2) / 2, avmy = (avy1 + avy2) / 2
+                            const avcx = avmx + archFactor * (avy2 - avy1)
+                            const avcy = avmy + archFactor * (avx1 - avx2)
+                            const alx1css = `${alx1f * 100}%`, aly1css = `${aly1f * 100}%`
+                            const alx2css = `${alx2f * 100}%`, aly2css = `${aly2f * 100}%`
                             return (
-                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height, opacity: fillOpacity }} onClick={selectAnnotation}>
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
                                 <svg className="absolute inset-0 overflow-visible" viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none">
-                                  <path d="M 0 0 Q 100 0 100 100" fill="none" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} strokeLinecap="round" />
+                                  <path d={`M ${avx1} ${avy1} Q ${avcx} ${avcy} ${avx2} ${avy2}`} fill="none" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} strokeLinecap="round" opacity={fillOpacity} />
                                 </svg>
-                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
-                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" style={{ zIndex: 1 }} />}
+                                {isLayoutEditing && <div onPointerDown={(e) => { e.stopPropagation(); startAnnotationEndpointDrag(e, a, 'start') }} className="absolute w-3 h-3 rounded-full bg-blue-400 border border-white shadow cursor-crosshair" style={{ left: alx1css, top: aly1css, transform: 'translate(-50%,-50%)', zIndex: 3, touchAction: 'none' }} />}
+                                {isLayoutEditing && <div onPointerDown={(e) => { e.stopPropagation(); startAnnotationEndpointDrag(e, a, 'end') }} className="absolute w-3 h-3 rounded-full bg-green-400 border border-white shadow cursor-crosshair" style={{ left: alx2css, top: aly2css, transform: 'translate(-50%,-50%)', zIndex: 3, touchAction: 'none' }} />}
                               </div>
                             )
                           }
@@ -4448,6 +4551,23 @@ export default function OperationsBlueprintPdfViewer({
                                   <circle cx="50" cy="50" r={aperture} fill={fillColor === 'transparent' ? 'none' : hexWithAlpha(fillColor, Math.max(fillOpacity, 0.6))} stroke={borderColor} strokeWidth={borderThickness} />
                                   {/* Size label centered inside aperture */}
                                   <text x="50" y="55" textAnchor="middle" fontSize="16" fontWeight="700" fontFamily="monospace" fill={borderColor} opacity={fillOpacity}>{label}</text>
+                                </svg>
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
+                              </div>
+                            )
+                          }
+                          if (kind === 'diamond' || kind === 'star' || kind === 'cross' || kind === 'pentagon') {
+                            const svgFill = fillColor === 'transparent' ? 'none' : hexWithAlpha(fillColor, 1)
+                            const polyPoints =
+                              kind === 'diamond' ? '50,0 100,50 50,100 0,50' :
+                              kind === 'star' ? '50,3 61,35 95,36 68,56 78,88 50,69 22,88 32,56 5,36 39,35' :
+                              kind === 'cross' ? '37,0 63,0 63,37 100,37 100,63 63,63 63,100 37,100 37,63 0,63 0,37 37,37' :
+                              '50,3 95,36 78,88 22,88 5,36'
+                            return (
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height, opacity: fillOpacity }} onClick={selectAnnotation}>
+                                <svg className="absolute inset-0" viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none">
+                                  <polygon points={polyPoints} fill={svgFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} />
                                 </svg>
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
@@ -4752,6 +4872,34 @@ export default function OperationsBlueprintPdfViewer({
 
                       {/* Permanent DOM-ref draft rect Ã¢â‚¬â€ hidden by default, shown + mutated directly
                           during pointer-move to avoid React re-renders during active drag. */}
+                      {/* Arch control handle — yellow draggable handle at bezier control point for selected arch-line */}
+                      {layoutEditId && (() => {
+                        const archAnn = pageAnnotations.find(a => a.id === layoutEditId)
+                        if (!archAnn) return null
+                        const archMeta = getAnnotationMeta(archAnn)
+                        if (archMeta.shapeKind !== 'arch-line') return null
+                        const archRect = archAnn.rect || { x: 0, y: 0, w: 0.1, h: 0.1 }
+                        const alx1 = archMeta.lineX1 ?? 0, aly1 = archMeta.lineY1 ?? 0
+                        const alx2 = archMeta.lineX2 ?? 1, aly2 = archMeta.lineY2 ?? 1
+                        const archFactor = archMeta.archFactor ?? 0.5
+                        const ap1x = archRect.x + alx1 * (archRect.w || 0)
+                        const ap1y = archRect.y + aly1 * (archRect.h || 0)
+                        const ap2x = archRect.x + alx2 * (archRect.w || 0)
+                        const ap2y = archRect.y + aly2 * (archRect.h || 0)
+                        const amx = (ap1x + ap2x) / 2, amy = (ap1y + ap2y) / 2
+                        const acx = amx + archFactor * (ap2y - ap1y)
+                        const acy = amy + archFactor * (ap1x - ap2x)
+                        return (
+                          <div
+                            key="arch-control-handle"
+                            style={{ position: 'absolute', left: `${acx * 100}%`, top: `${acy * 100}%`, transform: 'translate(-50%,-50%)', zIndex: 4, touchAction: 'none' }}
+                            className="w-3 h-3 rounded-full bg-yellow-400 border border-white shadow cursor-move"
+                            title="Drag to adjust arch curve"
+                            onPointerDown={(e) => { e.stopPropagation(); startArchControlDrag(e, archAnn) }}
+                          />
+                        )
+                      })()}
+
                       <div
                         ref={draftRectDomRef}
                         className="absolute pointer-events-none"

@@ -4181,3 +4181,42 @@ Run `npm.cmd run typecheck` locally, then manually QA App Brain filters, inspect
 
 COMPACT HANDOFF FOR NEXT CHAT:
 App Brain Phase 3 adds a static architecture intelligence layer. `appBrainMap.ts` now carries ownership/safety/overlap metadata; `appBrainFilters.ts` centralizes matching; `V15rAppBrainTab.tsx` adds search/filter controls, summary/safety panels, and richer inspector sections; `V15rAppBrainScene.tsx` dims filtered nodes and excludes them from raycaster hits. No packages changed. Typecheck attempted but blocked by no-exit-status shell behavior.
+
+---
+
+## Shared Update - Blueprint PDF Repair Round 4 (Shape Renderers + Arch-Line Overhaul)
+
+AGENT:
+Claude Code (claude-sonnet-4-6)
+
+BRANCH:
+main
+
+FILES CHANGED:
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+
+WHAT CHANGED:
+1. Arch-line renderer: Replaced hardcoded `M 0 0 Q 100 0 100 100` with endpoint-based quadratic bezier using `lineX1/Y1/X2/Y2` + `archFactor` metadata. Arch shape now respects user-placed endpoints.
+2. Arch-line endpoint handles: Added blue (start) and green (end) draggable handles matching the line/arrow renderer pattern.
+3. Arch control handle: Added a yellow draggable handle rendered at overlay level (not annotation div level) positioned at the bezier control point. Dragging it adjusts `archFactor` live.
+4. Shape renderers: Added dedicated SVG polygon renderers for diamond, star, cross, and pentagon — these no longer fall through to the square/rect renderer.
+5. Arch-line placement: Extended point-to-point placement (`lineFirstPointRef`) to cover arch-line. First click anchors start, second click commits. Preview shows live arch curve.
+6. Arch-line drag preview formula: Updated from horizontal control point to perpendicular bisector formula for natural arch curve during placement drag.
+7. Escape key: Clears `draftArchPathDomRef` display when cancelling in-progress arch placement.
+8. Commit/cancel plumbing: `startArchControlDrag`, `archControlDragRef`, `archControlDrag` state; pointer-move, pointer-up, and pointer-cancel all handle arch control drag correctly.
+
+WHAT WAS LEARNED:
+- Arch control handle must live at overlay level, not annotation div level — annotation divs are sized to the bounding box, which can be extremely thin for near-horizontal lines, causing extreme percentage overflow for the control point position.
+- `archFactor=0.5` with default TL→BR endpoints exactly reproduces the legacy hardcoded bezier path.
+- SVG polygon points for star/diamond/cross/pentagon are fixed in a 0-100 viewBox with `preserveAspectRatio="none"`.
+
+TYPECHECK RESULT:
+PASS — only pre-existing errors in `V15rAppBrainScene.tsx` (unrelated Three.js type issues).
+
+BUGS / RISKS:
+- Manual browser QA needed to verify arch curve drag feel, handle visibility, and shape polygon rendering.
+- `hexWithAlpha` must be available in the shape renderer scope (it is — used by can-light renderer in the same block).
+
+NEXT PHASE READY: YES
+COMPACT HANDOFF FOR NEXT CHAT:
+Round 4 complete. Arch-line now renders from stored endpoints with adjustable archFactor; yellow control handle draggable at overlay level. Diamond/star/cross/pentagon render as correct SVG polygons. All placement/drag/escape/persist plumbing wired. Typecheck clean (pre-existing V15rAppBrainScene errors only).
