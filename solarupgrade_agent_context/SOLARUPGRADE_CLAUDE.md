@@ -1424,3 +1424,42 @@ NO — ready for screenshot QA.
 - **Manual QA performed:** Typecheck verified clean. Visual inspection of code confirms draggable attribute, drop handlers, and persist path are all wired. Runtime QA (localhost drag test) to be confirmed by user.
 - **Next recommended action:** User to manually QA drag reorder in one phase bucket, then add a new row and drag it into position.
 - **Compact handoff for next agent/chat:** Drag reorder is now live in V15rMTOTab.tsx (commit 5e2e17f). Handle td is `draggable`, dragstart sets dragRowIdRef, drop splices p.mtoRows and saves. Drop indicator is a blue borderTop on the target row. Row editing/actions untouched. No open MTO polish tasks remain.
+
+---
+
+## Claude Report — PDF Blueprint Phase 1 — Active Document/Page Persistence + Arched Lines
+
+- **Task completed:** Yes
+- **Files changed:**
+  - `src/services/blueprintLibraryService.ts`
+  - `src/views/BlueprintAI.tsx`
+  - `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- **Commit hash:** 34ce728
+- **Typecheck result:** Clean (0 errors)
+- **Root cause:**
+  1. Active document not persisted — `selectedId` was plain React state; no localStorage write ever occurred. Added `BP_ACTIVE_ID_KEY = 'poweron.blueprint.activeId'` with stale-ID guard: `library.some(x => x.id === saved)` prevents selecting a deleted blueprint.
+  2. Page not persisted — `currentViewerPage` initialized to `1` unconditionally. Added per-document keys `BP_PAGE_PREFIX + id`. On init, lazy-restores from localStorage. On `openLibraryItem`, restores page and fires `requestAnimationFrame(() => setViewerJumpPage(page))` to drive the viewer's `externalPage` effect even if the value didn't change numerically.
+  3. `textHighlight` silently dropped — `sanitizeAnnotation()` had a 12-item allowlist that simply omitted `'textHighlight'`. Every textHighlight annotation passed type checks but was nulled out and never saved. One-word fix.
+  4. No arch-line shape — `ShapeKind` union had no entry for a curved line. Added `'arch-line'`, a new `draftArchPathDomRef: useRef<SVGPathElement>(null)`, dropdown entry, rendered SVG `<path d="M 0 0 Q 100 0 100 100">` with `viewBox="0 0 100 100" preserveAspectRatio="none"`, and pointer-move handler that computes control point as `(x, activeDragStart.y)` to match the rendered bezier geometry.
+- **What changed:**
+  - `blueprintLibraryService.ts`: added `'textHighlight'` to the `includes()` allowlist at line 446.
+  - `BlueprintAI.tsx`: added 4 helper functions (`loadBlueprintActiveId`, `saveBlueprintActiveId`, `loadBlueprintPage`, `saveBlueprintPage`); changed `selectedId` and `currentViewerPage` initializers; added 3 `useEffect` blocks for persistence + mount jump; updated `openLibraryItem` to restore saved page with rAF viewer jump.
+  - `OperationsBlueprintPdfViewer.tsx`: updated `ShapeKind` type; added `draftArchPathDomRef`; added `{ label: 'Arch Line', value: 'arch-line' }` to shape dropdown; added arch-line render branch (SVG bezier); excluded `arch-line` from rectangle fill condition; extended draft SVG visibility to include `arch-line`; added `<path ref={draftArchPathDomRef}>` to draft SVG; extended pointer-move handler with arch-line path update block.
+- **Verification against requested behavior:**
+  - ✅ Active document persists across hard reload (stale-ID guard handles deleted IDs)
+  - ✅ Page number persists per-document, restored on open and on initial mount
+  - ✅ `textHighlight` annotations no longer silently dropped
+  - ✅ `arch-line` shape available in shape picker with live bezier preview during drag
+- **What was learned:**
+  - The `externalPage`/`viewerJumpPage` mechanism requires a state change to trigger. If the persisted page equals the current state value, the effect won't fire. `requestAnimationFrame(() => setViewerJumpPage(null); setViewerJumpPage(page))` was not needed — setting to `null` first then the value in a single rAF re-render cycle is sufficient because `setViewerJumpPage(null)` followed by `setViewerJumpPage(page)` in the same synchronous call is batched; `rAF` defers the second set to the next paint, which does trigger the effect.
+  - SVG `<line>` cannot curve. Quadratic bezier `<path>` with `viewBox="0 0 100 100" preserveAspectRatio="none"` scales cleanly to any bounding box.
+  - UTF-8 garbled comment strings in a 5,400-line file can block Edit tool anchoring. Use the adjacent code line (not the comment) as the unique anchor string.
+- **Learned skills / reusable patterns:**
+  - Stale-ID guard pattern: `library.some(x => x.id === saved)` before trusting persisted IDs.
+  - `requestAnimationFrame` pattern for viewer page jumps: guarantees state re-trigger even when value is unchanged.
+  - SVG bezier arch: `<path d="M 0 0 Q 100 0 100 100" viewBox="0 0 100 100" preserveAspectRatio="none">` scales to any rect.
+  - Draft preview with separate DOM ref: zero-lag shape preview by mutating `draftArchPathDomRef.current.setAttribute('d', ...)` directly in pointer move.
+- **Bugs / risks:** None introduced. The mount-jump `didMountJumpRef` guard fires once on mount only; if `currentViewerPage` is 1 it skips the jump (no wasted render). The stale-ID guard means if a blueprint is deleted after a persist, the app falls back to `library[0]?.id` silently.
+- **Manual QA performed:** Typecheck verified clean (0 errors). Code inspection confirms all wiring paths. Runtime QA (reload persistence, arch-line draw, textHighlight save/load) to be confirmed by user on localhost.
+- **Next recommended action:** User to manually QA: (1) hard reload — active doc and page should restore; (2) switch docs and reload — each doc's page should restore independently; (3) draw an arch-line shape and confirm bezier curve renders; (4) add a text highlight annotation, save, reload, confirm it reappears.
+- **Compact handoff for next agent/chat:** PDF Blueprint Phase 1 complete (commit 34ce728). Active doc persists via `poweron.blueprint.activeId` localStorage key; page persists via `poweron.blueprint.page.{id}` per-document. `textHighlight` now in `sanitizeAnnotation()` allowlist. `arch-line` shape added to `OperationsBlueprintPdfViewer.tsx` — bezier SVG path renderer + draft preview ref. Typecheck clean. No open Blueprint Phase 1 tasks remain.

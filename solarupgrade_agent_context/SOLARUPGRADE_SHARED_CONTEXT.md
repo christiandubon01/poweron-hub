@@ -3917,3 +3917,24 @@ EVR and 8-week chart control layout polish complete. In `V15rDashboard.tsx`, bot
 **Typecheck:** clean
 
 **Next:** No pending MTO polish tasks.
+
+---
+
+## PDF Blueprint Phase 1 — Active Document/Page Persistence + Arched Lines (2026-06-03)
+
+**Commit:** 34ce728  fix(blueprint): persist active pdf and add arched lines
+
+**Files changed:**
+- `src/services/blueprintLibraryService.ts` — `textHighlight` added to sanitizer allowlist
+- `src/views/BlueprintAI.tsx` — localStorage helpers, persistence effects, mount jump, openLibraryItem page restore
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` — arch-line ShapeKind, draft ref, renderer, pointer handler
+
+**Root causes fixed:**
+1. Active document not persisted — `selectedId` was pure React state with no localStorage. Fixed with `BP_ACTIVE_ID_KEY` + stale-ID guard.
+2. Page not persisted — per-document `BP_PAGE_PREFIX + id` keys; restore on init + `requestAnimationFrame` viewer jump.
+3. `textHighlight` annotations silently dropped — missing from `sanitizeAnnotation()` allowlist (12-item list, `textHighlight` simply absent).
+4. No arch-line shape — added `arch-line` ShapeKind with SVG quadratic bezier `<path d="M 0 0 Q 100 0 100 100">`, `draftArchPathDomRef` for zero-lag preview during drag.
+
+**Typecheck:** Clean (0 errors)
+
+**Next:** Manual QA — reload app, confirm active doc and page survive hard reload; draw arch-line shape; add textHighlight annotation and reload to verify it persists.
