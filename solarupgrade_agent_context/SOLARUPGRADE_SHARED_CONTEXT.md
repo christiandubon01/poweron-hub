@@ -4320,6 +4320,44 @@ App Brain Phase 5A keeps manifest refresh manual. Run `npm run app-brain:generat
 
 ---
 
+## Shared Update - Field Logs Trigger Matrix Study Integration
+
+AGENT:
+Codex GPT-5.5 Medium
+
+BRANCH:
+main
+
+COMMIT HASH:
+Final commit hash reported in chat.
+
+FILES CHANGED:
+- `src/components/v15r/V15rFieldLogPanel.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+TYPECHECK RESULT:
+FAIL - `npm.cmd run typecheck` is blocked by pre-existing unrelated `src/components/v15r/V15rAppBrainScene.tsx` Three.js/nullability errors. Field Logs scoped diff did not introduce those errors.
+
+WHAT CHANGED:
+- Added a record-specific trigger matrix for the selected project/service-call study area.
+- Matrix rows show trigger status, factor, current value, threshold, and the reason the rule is clear/activated/needs work.
+- Separated positive `good_day` activation from work-needed flags so good-day hits are not mislabeled as problems.
+- Added a clearer "What needs work" summary for attention triggers.
+- Improved trigger threshold editing with money inputs for profit thresholds and percent inputs/sliders for travel/material share thresholds while saving back to the existing `threshold` field.
+
+BUGS / RISKS:
+- Manual browser QA remains needed for Field Logs > Triggers interactions.
+- Existing App Brain typecheck errors remain outside this task scope.
+
+NEXT RECOMMENDED ACTION:
+Open Field Logs > Triggers on localhost, select both a project and service call, verify matrix explanations, then tune bad_day/good_day/travel/material thresholds and confirm the saved threshold still evaluates correctly.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Field Logs trigger-study polish complete. `V15rFieldLogPanel.tsx` now evaluates selected project/service targets into a visible trigger matrix with current-vs-threshold explanations and clearer work-needed summaries. Trigger editor now uses money/percent/slider controls that map back to the existing threshold ratio model. Typecheck run is blocked by unrelated `V15rAppBrainScene.tsx` errors.
+
+---
+
 ## Shared Update — PDF Blueprint Repair Round 5: Freeform Arch Line Curve Control
 
 * Agent: Claude Code (claude-sonnet-4-6)

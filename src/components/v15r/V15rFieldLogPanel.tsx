@@ -169,6 +169,157 @@ function getFiredTriggerNames(backup: BackupData, data: any): string[] {
   return names
 }
 
+function getTriggerRuleDetail(backup: BackupData, rule: BackupTriggerRule, data: any): any {
+  const dailyTarget = num((backup.settings && backup.settings.dayTarget) || 361)
+  const thresholdRatio = num(rule.threshold)
+  const quoted = num(data.quoted)
+  const type = String(rule.type || '').trim()
+  let currentValue = 0
+  let thresholdValue = 0
+  let comparison = ''
+  let factorLabel = 'Value'
+  let thresholdLabel = rule.thresholdLabel || 'Threshold'
+  let unit: 'money' | 'percent' | 'number' = 'number'
+  let hit = false
+  let why = 'Rule type is not mapped to a measurable trigger factor yet.'
+
+  if (type === 'bad_day') {
+    currentValue = num(data.profit)
+    thresholdValue = dailyTarget * thresholdRatio
+    comparison = '<'
+    factorLabel = 'Profit'
+    thresholdLabel = 'Maximum profit before flag'
+    unit = 'money'
+    hit = currentValue < thresholdValue
+    why = hit
+      ? `Profit is below the configured bad-day threshold.`
+      : `Profit is at or above the bad-day threshold.`
+  } else if (type === 'good_day') {
+    currentValue = num(data.profit)
+    thresholdValue = dailyTarget * thresholdRatio
+    comparison = '>='
+    factorLabel = 'Profit'
+    thresholdLabel = 'Minimum profit target'
+    unit = 'money'
+    hit = currentValue >= thresholdValue
+    why = hit
+      ? `Profit meets or beats the configured good-day target.`
+      : `Profit is below the configured good-day target.`
+  } else if (type === 'travel') {
+    currentValue = quoted > 0 ? num(data.mileCost) / quoted : 0
+    thresholdValue = thresholdRatio
+    comparison = '>'
+    factorLabel = 'Mileage cost %'
+    thresholdLabel = 'Maximum mileage share'
+    unit = 'percent'
+    hit = quoted > 0 && currentValue > thresholdValue
+    why = quoted <= 0
+      ? `No billable/contract value is available, so mileage share cannot be evaluated.`
+      : hit
+        ? `Mileage cost share is above the configured maximum.`
+        : `Mileage cost share is within the configured maximum.`
+  } else if (type === 'material') {
+    currentValue = quoted > 0 ? num(data.mat) / quoted : 0
+    thresholdValue = thresholdRatio
+    comparison = '>'
+    factorLabel = 'Materials %'
+    thresholdLabel = 'Maximum material share'
+    unit = 'percent'
+    hit = quoted > 0 && currentValue > thresholdValue
+    why = quoted <= 0
+      ? `No billable/contract value is available, so material share cannot be evaluated.`
+      : hit
+        ? `Material cost share is above the configured maximum.`
+        : `Material cost share is within the configured maximum.`
+  }
+
+  return {
+    rule,
+    active: rule.active !== false,
+    hit: rule.active !== false && hit,
+    needsAttention: rule.active !== false && hit && type !== 'good_day',
+    rawHit: hit,
+    currentValue,
+    thresholdValue,
+    thresholdRatio,
+    comparison,
+    factorLabel,
+    thresholdLabel,
+    unit,
+    why,
+  }
+}
+
+function formatTriggerFactorValue(detail: any): string {
+  if (detail.unit === 'money') return fmt(detail.currentValue)
+  if (detail.unit === 'percent') return pct(Math.round(num(detail.currentValue) * 100))
+  return String(detail.currentValue)
+}
+
+function formatTriggerThresholdValue(detail: any): string {
+  if (detail.unit === 'money') return fmt(detail.thresholdValue)
+  if (detail.unit === 'percent') return pct(Math.round(num(detail.thresholdValue) * 100))
+  return String(detail.thresholdValue)
+}
+
+function triggerThresholdInputMeta(ruleType: string, threshold: any, dayTarget: number): any {
+  const type = String(ruleType || '').trim()
+  const ratio = num(threshold)
+  if (type === 'bad_day') {
+    return {
+      mode: 'money',
+      label: 'Maximum profit before flag',
+      helper: 'Flags when Profit is below this amount. Saved as a ratio of the daily target.',
+      value: Math.round(dayTarget * ratio),
+      min: -1000,
+      max: Math.max(1000, Math.round(dayTarget * 3)),
+      step: 25,
+    }
+  }
+  if (type === 'good_day') {
+    return {
+      mode: 'money',
+      label: 'Minimum profit target',
+      helper: 'Fires when Profit is at or above this amount. Saved as a ratio of the daily target.',
+      value: Math.round(dayTarget * ratio),
+      min: 0,
+      max: Math.max(1000, Math.round(dayTarget * 4)),
+      step: 25,
+    }
+  }
+  if (type === 'travel') {
+    return {
+      mode: 'percent',
+      label: 'Maximum mileage share',
+      helper: 'Flags when Mileage Cost is above this percent of Total Billable / Contract.',
+      value: Math.round(ratio * 100),
+      min: 0,
+      max: 100,
+      step: 1,
+    }
+  }
+  if (type === 'material') {
+    return {
+      mode: 'percent',
+      label: 'Maximum material share',
+      helper: 'Flags when Materials are above this percent of Total Billable / Contract.',
+      value: Math.round(ratio * 100),
+      min: 0,
+      max: 100,
+      step: 1,
+    }
+  }
+  return {
+    mode: 'number',
+    label: 'Threshold',
+    helper: 'Raw threshold value stored on this rule.',
+    value: ratio,
+    min: 0,
+    max: 1,
+    step: 0.01,
+  }
+}
+
 // ── Daily hours chart (last 7 days) ──────────────────────────────────────────
 
 function getDailyHoursChart(logs: BackupLog[]): Record<string, number> {
@@ -3530,7 +3681,6 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     }
 
     const triggerStudy = buildTriggerStudy()
-    const firedRules = triggerStudy ? getFiredTriggerNames(backup, triggerStudy.data) : []
 
     // Filter trigger rules by selected bucket/job
     const filteredRules = triggerRules.filter(rule => {
@@ -3542,6 +3692,12 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       }
       return true
     })
+    const triggerDetails = triggerStudy
+      ? filteredRules.map(rule => getTriggerRuleDetail(backup, rule, triggerStudy.data))
+      : []
+    const activeTriggerDetails = triggerDetails.filter(detail => detail.active)
+    const firedTriggerDetails = activeTriggerDetails.filter(detail => detail.hit)
+    const attentionTriggerDetails = firedTriggerDetails.filter(detail => detail.needsAttention)
 
     // Build job dropdown options based on bucket
     const jobOptions = triggerBucket === 'projects'
@@ -3561,7 +3717,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       const rulesSummary = filteredRules.map(r => `${r.name} (${r.type}): ${r.situation || ''} → ${r.solution || ''}`).join('\n')
       const bucketLabel = triggerBucket === 'all' ? 'all jobs' : triggerBucket === 'projects' ? 'projects' : 'service calls'
       const studySummary = triggerStudy
-        ? `\n\nSelected ${triggerStudy.typeLabel}: ${triggerStudy.label}\nMetrics:\n${triggerStudy.facts.map(([label, value]) => `${label}: ${value}`).join('\n')}\nTriggered rules: ${firedRules.length ? firedRules.join(', ') : 'none'}`
+        ? `\n\nSelected ${triggerStudy.typeLabel}: ${triggerStudy.label}\nMetrics:\n${triggerStudy.facts.map(([label, value]) => `${label}: ${value}`).join('\n')}\nTriggered rules: ${firedTriggerDetails.length ? firedTriggerDetails.map(detail => `${detail.rule.name}: ${detail.factorLabel} ${formatTriggerFactorValue(detail)} ${detail.comparison} ${formatTriggerThresholdValue(detail)}`).join('; ') : 'none'}`
         : ''
       callClaude({
         system: 'You are NEXUS, the AI operations manager for Power On Solutions, an electrical contractor. Analyze trigger patterns and provide actionable priority recommendations. Be concise.',
@@ -3572,6 +3728,23 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       }).catch(() => {
         setTriggerAiResponse('Could not reach AI service. Review your trigger patterns manually — focus on the highest-frequency rules first.')
       }).finally(() => setTriggerAiLoading(false))
+    }
+
+    const thresholdEditorMeta = triggerRuleForm
+      ? triggerThresholdInputMeta(triggerRuleForm.type || 'bad_day', triggerRuleForm.threshold, dayTarget)
+      : null
+    const updateTriggerThresholdFromEditor = (rawValue: number) => {
+      if (!triggerRuleForm || !thresholdEditorMeta) return
+      const nextThreshold = thresholdEditorMeta.mode === 'money'
+        ? (dayTarget > 0 ? rawValue / dayTarget : 0)
+        : thresholdEditorMeta.mode === 'percent'
+          ? rawValue / 100
+          : rawValue
+      setTriggerRuleForm({
+        ...triggerRuleForm,
+        threshold: String(Number.isFinite(nextThreshold) ? +nextThreshold.toFixed(4) : 0),
+        thresholdLabel: thresholdEditorMeta.label,
+      })
     }
 
     return (
@@ -3657,8 +3830,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 <div className="text-[9px] uppercase font-bold text-blue-300">{triggerStudy.typeLabel} study</div>
                 <div className="text-sm font-bold text-gray-100 mt-1">{triggerStudy.label}</div>
               </div>
-              <div className={`text-[10px] px-2 py-1 rounded-full border ${firedRules.length ? 'border-orange-500/40 bg-orange-500/15 text-orange-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'}`}>
-                {firedRules.length ? `${firedRules.length} rule${firedRules.length === 1 ? '' : 's'} triggered` : 'No active rule hits'}
+              <div className={`text-[10px] px-2 py-1 rounded-full border ${firedTriggerDetails.length ? 'border-orange-500/40 bg-orange-500/15 text-orange-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'}`}>
+                {attentionTriggerDetails.length ? `${attentionTriggerDetails.length} rule${attentionTriggerDetails.length === 1 ? '' : 's'} need attention` : firedTriggerDetails.length ? `${firedTriggerDetails.length} positive trigger${firedTriggerDetails.length === 1 ? '' : 's'} active` : 'No active rule hits'}
               </div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
@@ -3669,11 +3842,53 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 </div>
               ))}
             </div>
-            <div className="flex flex-wrap gap-2">
-              {filteredRules.filter(r => firedRules.includes(r.name)).map(rule => (
-                <span key={rule.id} className="text-[10px] rounded-full border border-orange-400/30 bg-orange-500/10 px-2 py-1 text-orange-200">{rule.name}</span>
-              ))}
-              {firedRules.length === 0 && <span className="text-[10px] text-gray-500">Pick a different target or adjust thresholds to study rule behavior.</span>}
+            {attentionTriggerDetails.length > 0 && (
+              <div className="mb-3 rounded-lg border border-orange-500/25 bg-orange-500/10 px-3 py-2">
+                <div className="text-[9px] uppercase font-bold text-orange-300 mb-1">What needs work</div>
+                <div className="space-y-1">
+                  {attentionTriggerDetails.map(detail => (
+                    <div key={detail.rule.id} className="text-[10px] text-orange-100/90">
+                      <span className="font-bold">{detail.rule.name}:</span> {detail.factorLabel} is {formatTriggerFactorValue(detail)} and the threshold is {detail.comparison} {formatTriggerThresholdValue(detail)}.
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="overflow-hidden rounded-lg border border-gray-700/80">
+              <div className="grid grid-cols-12 gap-2 bg-slate-950/60 px-3 py-2 text-[9px] font-bold uppercase tracking-[0.14em] text-gray-500">
+                <div className="col-span-3">Trigger</div>
+                <div className="col-span-2">Status</div>
+                <div className="col-span-2">Factor</div>
+                <div className="col-span-2">Current value</div>
+                <div className="col-span-2">Threshold</div>
+                <div className="col-span-1 text-right">Tune</div>
+              </div>
+              <div className="divide-y divide-gray-800/80">
+                {triggerDetails.map(detail => (
+                  <div key={detail.rule.id} className={`grid grid-cols-12 gap-2 px-3 py-3 text-[10px] ${detail.needsAttention ? 'bg-orange-500/10' : detail.hit ? 'bg-blue-500/10' : detail.active ? 'bg-slate-950/20' : 'bg-slate-950/10 opacity-60'}`}>
+                    <div className="col-span-3">
+                      <div className="text-xs font-bold text-gray-100">{detail.rule.name}</div>
+                      <div className="mt-1 text-[9px] text-gray-500">{detail.rule.type}</div>
+                    </div>
+                    <div className="col-span-2">
+                      <span className={`inline-flex rounded-full border px-2 py-1 ${!detail.active ? 'border-gray-600 bg-gray-700/20 text-gray-400' : detail.needsAttention ? 'border-orange-400/30 bg-orange-500/15 text-orange-200' : detail.hit ? 'border-blue-400/30 bg-blue-500/15 text-blue-200' : 'border-emerald-400/25 bg-emerald-500/10 text-emerald-200'}`}>
+                        {!detail.active ? 'Inactive' : detail.needsAttention ? 'Needs work' : detail.hit ? 'Activated' : 'Clear'}
+                      </span>
+                    </div>
+                    <div className="col-span-2 text-gray-300">{detail.factorLabel}</div>
+                    <div className="col-span-2 font-mono font-bold text-gray-100">{formatTriggerFactorValue(detail)}</div>
+                    <div className="col-span-2 text-gray-300">
+                      <span className="font-mono">{detail.comparison || '-'}</span> {formatTriggerThresholdValue(detail)}
+                    </div>
+                    <div className="col-span-1 text-right">
+                      <button onClick={() => startEditTriggerRule(detail.rule)} className="rounded p-1.5 text-blue-300 hover:bg-blue-500/10" title="Tune trigger">
+                        <Edit3 size={13} />
+                      </button>
+                    </div>
+                    <div className="col-span-12 text-[10px] text-gray-500">{detail.why}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -3712,10 +3927,35 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     <option value="material">Material</option>
                   </select>
                 </label>
-                <label className="space-y-1">
-                  <span className="text-[10px] text-gray-500 uppercase font-bold">Threshold</span>
-                  <input value={triggerRuleForm.threshold || ''} onChange={e => setTriggerRuleForm({ ...triggerRuleForm, threshold: e.target.value })} className="w-full bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-blue-500" placeholder="0.5" />
-                </label>
+                <div className="space-y-1 md:col-span-1">
+                  <span className="text-[10px] text-gray-500 uppercase font-bold">{thresholdEditorMeta?.label || 'Threshold'}</span>
+                  <div className="flex items-center gap-2">
+                    {thresholdEditorMeta?.mode === 'money' && <span className="text-xs font-bold text-emerald-300">$</span>}
+                    <input
+                      type="number"
+                      value={thresholdEditorMeta?.value ?? triggerRuleForm.threshold ?? ''}
+                      min={thresholdEditorMeta?.min}
+                      max={thresholdEditorMeta?.max}
+                      step={thresholdEditorMeta?.step || 0.01}
+                      onChange={e => updateTriggerThresholdFromEditor(Number(e.target.value))}
+                      className="w-full bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-blue-500"
+                    />
+                    {thresholdEditorMeta?.mode === 'percent' && <span className="text-xs font-bold text-blue-300">%</span>}
+                  </div>
+                  {thresholdEditorMeta && thresholdEditorMeta.mode !== 'number' && (
+                    <input
+                      type="range"
+                      value={thresholdEditorMeta.value}
+                      min={thresholdEditorMeta.min}
+                      max={thresholdEditorMeta.max}
+                      step={thresholdEditorMeta.step}
+                      onChange={e => updateTriggerThresholdFromEditor(Number(e.target.value))}
+                      className="w-full accent-blue-500"
+                    />
+                  )}
+                  <div className="text-[9px] leading-snug text-gray-500">{thresholdEditorMeta?.helper}</div>
+                  <div className="text-[9px] text-gray-600">Stored threshold: {triggerRuleForm.threshold || '0'}</div>
+                </div>
                 <label className="space-y-1">
                   <span className="text-[10px] text-gray-500 uppercase font-bold">Color</span>
                   <input value={triggerRuleForm.color || ''} onChange={e => setTriggerRuleForm({ ...triggerRuleForm, color: e.target.value })} className="w-full bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-blue-500" placeholder="#3b82f6" />
