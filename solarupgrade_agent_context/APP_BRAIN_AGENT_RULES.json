@@ -1,0 +1,266 @@
+{
+  "version": "1.0.0",
+  "name": "PowerOn Hub App Brain Agent Rules",
+  "description": "Clean Rules v1 seed foundation - agent-specific behavioral rules",
+  "lastUpdated": "2026-06-04",
+  "source": "appbrain-w01-a2-rules-schema",
+  "philosophy": "low-friction by default: silent or warn",
+
+  "agents": {
+    "Claude": {
+      "id": "AGENT_CLAUDE",
+      "name": "Claude",
+      "role": "Full-stack development, architecture, feature implementation",
+      "rules": [
+        {
+          "id": "CLAUDE_001",
+          "description": "Must use full context awareness from handoff specs",
+          "friction": "warn",
+          "action": "require_spec_review"
+        },
+        {
+          "id": "CLAUDE_002",
+          "description": "Must validate all TypeScript changes before commit",
+          "friction": "block",
+          "action": "require_typecheck"
+        },
+        {
+          "id": "CLAUDE_003",
+          "description": "May modify core feature components and business logic",
+          "friction": "silent",
+          "scope": [
+            "src/components/v15r/**/*.tsx",
+            "src/hooks/**/*.ts",
+            "src/utils/**/*.ts"
+          ]
+        },
+        {
+          "id": "CLAUDE_004",
+          "description": "Must never bypass package protection",
+          "friction": "block",
+          "scope": ["package.json", "package-lock.json"]
+        },
+        {
+          "id": "CLAUDE_005",
+          "description": "Should create detailed session reports",
+          "friction": "silent",
+          "action": "optional_report"
+        }
+      ]
+    },
+
+    "Codex": {
+      "id": "AGENT_CODEX",
+      "name": "Codex",
+      "role": "Code optimization, refactoring, pattern analysis",
+      "rules": [
+        {
+          "id": "CODEX_001",
+          "description": "Must maintain backward compatibility",
+          "friction": "block",
+          "action": "require_compatibility_check"
+        },
+        {
+          "id": "CODEX_002",
+          "description": "Must validate all refactoring with typecheck",
+          "friction": "block",
+          "action": "require_typecheck"
+        },
+        {
+          "id": "CODEX_003",
+          "description": "May modify utility functions and patterns",
+          "friction": "silent",
+          "scope": [
+            "src/utils/**/*.ts",
+            "src/hooks/**/*.ts"
+          ]
+        },
+        {
+          "id": "CODEX_004",
+          "description": "Must not change component interfaces",
+          "friction": "warn",
+          "scope": ["src/components/**/*.tsx"]
+        },
+        {
+          "id": "CODEX_005",
+          "description": "Should document optimization rationale",
+          "friction": "silent",
+          "action": "optional_report"
+        }
+      ]
+    },
+
+    "Cursor": {
+      "id": "AGENT_CURSOR",
+      "name": "Cursor",
+      "role": "Interactive development, real-time fixes, local iteration",
+      "rules": [
+        {
+          "id": "CURSOR_001",
+          "description": "May work on active localhost branch",
+          "friction": "silent",
+          "action": "allow_local_iteration"
+        },
+        {
+          "id": "CURSOR_002",
+          "description": "Must commit and push after each stable iteration",
+          "friction": "warn",
+          "action": "require_commit"
+        },
+        {
+          "id": "CURSOR_003",
+          "description": "Must validate with typecheck before push",
+          "friction": "block",
+          "action": "require_typecheck"
+        },
+        {
+          "id": "CURSOR_004",
+          "description": "May modify any file except protected canaries",
+          "friction": "silent",
+          "scope": ["src/**/*"],
+          "blockedScope": [
+            "src/store/authStore.ts",
+            "src/services/backupDataService.ts",
+            ".claude/settings.local.json"
+          ]
+        },
+        {
+          "id": "CURSOR_005",
+          "description": "Should create brief iteration notes",
+          "friction": "silent",
+          "action": "optional_report"
+        }
+      ]
+    },
+
+    "Haiku": {
+      "id": "AGENT_HAIKU",
+      "name": "Haiku",
+      "role": "Parallel isolated tasks, small scope work, schema/config creation",
+      "rules": [
+        {
+          "id": "HAIKU_001",
+          "description": "Must work on feature branch only",
+          "friction": "block",
+          "action": "require_branch"
+        },
+        {
+          "id": "HAIKU_002",
+          "description": "Must stage only exact scoped files",
+          "friction": "block",
+          "action": "require_explicit_staging"
+        },
+        {
+          "id": "HAIKU_003",
+          "description": "Must validate with typecheck",
+          "friction": "block",
+          "action": "require_typecheck"
+        },
+        {
+          "id": "HAIKU_004",
+          "description": "Must create isolated session report",
+          "friction": "block",
+          "action": "require_report"
+        },
+        {
+          "id": "HAIKU_005",
+          "description": "May work on assigned parallel wave scope only",
+          "friction": "block",
+          "scope": [
+            "src/components/v15r/app-brain/**",
+            "solarupgrade_agent_context/APP_BRAIN_*.json"
+          ]
+        },
+        {
+          "id": "HAIKU_006",
+          "description": "Must push feature branch after commit",
+          "friction": "block",
+          "action": "require_push"
+        }
+      ]
+    },
+
+    "Manual": {
+      "id": "AGENT_MANUAL",
+      "name": "Manual / Owner",
+      "role": "Direct intervention, approval, governance",
+      "rules": [
+        {
+          "id": "MANUAL_001",
+          "description": "Can override any rule with PIN",
+          "friction": "silent",
+          "action": "require_pin"
+        },
+        {
+          "id": "MANUAL_002",
+          "description": "Can modify all protected files",
+          "friction": "silent",
+          "action": "allow_modification"
+        },
+        {
+          "id": "MANUAL_003",
+          "description": "Must document rationale for overrides",
+          "friction": "warn",
+          "action": "optional_report"
+        },
+        {
+          "id": "MANUAL_004",
+          "description": "Can merge to main",
+          "friction": "silent",
+          "action": "allow_main_merge"
+        }
+      ]
+    }
+  },
+
+  "agentCapabilities": {
+    "Claude": {
+      "canModifyProtected": false,
+      "canBypassTypecheck": false,
+      "canMergeToMain": false,
+      "requiresReport": false
+    },
+    "Codex": {
+      "canModifyProtected": false,
+      "canBypassTypecheck": false,
+      "canMergeToMain": false,
+      "requiresReport": false
+    },
+    "Cursor": {
+      "canModifyProtected": false,
+      "canBypassTypecheck": false,
+      "canMergeToMain": false,
+      "requiresReport": false
+    },
+    "Haiku": {
+      "canModifyProtected": false,
+      "canBypassTypecheck": false,
+      "canMergeToMain": false,
+      "requiresReport": true
+    },
+    "Manual": {
+      "canModifyProtected": true,
+      "canBypassTypecheck": true,
+      "canMergeToMain": true,
+      "requiresReport": false
+    }
+  },
+
+  "conflictResolution": {
+    "rule": "Higher friction wins. Block > Warn > Silent",
+    "example1": {
+      "rule1": { "id": "R1", "friction": "silent" },
+      "rule2": { "id": "R2", "friction": "warn" },
+      "result": "Warn applies (higher friction)"
+    },
+    "example2": {
+      "rule1": { "id": "R1", "friction": "warn" },
+      "rule2": { "id": "R2", "friction": "block" },
+      "result": "Block applies (highest friction)"
+    },
+    "agentConflict": {
+      "rule": "Manual > Claude > Codex > Cursor > Haiku",
+      "rationale": "Owner approval is highest authority"
+    }
+  }
+}
