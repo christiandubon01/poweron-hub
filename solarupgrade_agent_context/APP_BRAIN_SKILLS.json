@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "createdAt": "2026-06-04T08:45:00Z",
+  "lastUpdatedAt": "2026-06-04T08:45:00Z",
+  "sourceSession": {
+    "sessionName": "appbrain-w01-a3-skills-schema",
+    "commitHash": "pending",
+    "timestamp": "2026-06-04T08:45:00Z",
+    "notes": "Initial v1 seed - clean registry from zero. No legacy imports."
+  },
+  "skills": [],
+  "totalSkills": 0,
+  "activeSkills": 0,
+  "inactiveSkills": 0,
+  "notes": "This is the clean v1 seed for App Brain Skills registry. Each skill will be added explicitly through observed learning sessions. Do not import from legacy sources or old PDF archives. Start clean."
+}
