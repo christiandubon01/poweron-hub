@@ -21,7 +21,7 @@ interface NodeRenderState {
   glow: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
   ring: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>
   hit: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
-  label: THREE.Sprite<THREE.SpriteMaterial>
+  label: THREE.Sprite
   baseScale: number
 }
 
@@ -124,8 +124,9 @@ export default function V15rAppBrainScene({
   }, [onSelectNode, onHoverNode])
 
   useEffect(() => {
-    const mount = mountRef.current
-    if (!mount) return
+    const mountElement = mountRef.current
+    if (!mountElement) return
+    const mount: HTMLDivElement = mountElement
 
     let animationFrame = 0
     let deferredInitFrame = 0
