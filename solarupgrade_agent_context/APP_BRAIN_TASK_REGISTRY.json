@@ -1,0 +1,258 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "lastUpdated": "2026-06-04T08:45:00Z",
+    "totalTasks": 0,
+    "completedTasks": 0,
+    "manifestReference": "src/components/v15r/generatedAppBrainManifest.ts"
+  },
+  "domains": {
+    "core-shell": {
+      "domain": "core-shell",
+      "displayName": "Core Shell",
+      "description": "Root application shell, layout, routing, and initialization infrastructure",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "home": {
+      "domain": "home",
+      "displayName": "Home",
+      "description": "Home dashboard, quick access, and overview panels",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "projects": {
+      "domain": "projects",
+      "displayName": "Projects",
+      "description": "Project list, creation, management, and project-level workflows",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "project-inner": {
+      "domain": "project-inner",
+      "displayName": "Project Inner",
+      "description": "Project detail view, tabs, sub-workflows, and inner project navigation",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "estimate": {
+      "domain": "estimate",
+      "displayName": "Estimate",
+      "description": "Estimating workflows, pricing calculations, and proposal generation",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "material-takeoff": {
+      "domain": "material-takeoff",
+      "displayName": "Material Takeoff (MTO)",
+      "description": "Material list generation, pricing, and takeoff calculations",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "field-logs": {
+      "domain": "field-logs",
+      "displayName": "Field Logs",
+      "description": "Service call logging, time tracking, and field operation workflows",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "graph-dashboard": {
+      "domain": "graph-dashboard",
+      "displayName": "Graph Dashboard",
+      "description": "Data visualization, charts, reporting, and analytics dashboard",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "money": {
+      "domain": "money",
+      "displayName": "Money",
+      "description": "Financial tracking, income calculations, payments, and accounting workflows",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "settings": {
+      "domain": "settings",
+      "displayName": "Settings",
+      "description": "User preferences, configuration, app settings, and profile management",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "blueprint-pdf": {
+      "domain": "blueprint-pdf",
+      "displayName": "Blueprint/PDF",
+      "description": "Blueprint viewing, PDF management, annotation, and document handling",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "price-book": {
+      "domain": "price-book",
+      "displayName": "Price Book",
+      "description": "Labor rates, material pricing, pricing history, and cost management",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "leads-sales": {
+      "domain": "leads-sales",
+      "displayName": "Leads / Sales",
+      "description": "Lead tracking, sales pipeline, customer management, and opportunity workflows",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "ai-nexus": {
+      "domain": "ai-nexus",
+      "displayName": "AI / NEXUS",
+      "description": "AI integration, NEXUS system, CrewAI, and intelligent workflow automation",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "admin-app-brain": {
+      "domain": "admin-app-brain",
+      "displayName": "Admin / App Brain",
+      "description": "App Brain control tower, admin panels, backlog registry, and system administration",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "sync-persistence": {
+      "domain": "sync-persistence",
+      "displayName": "Sync / Persistence",
+      "description": "Data synchronization, persistence layer, storage, and data backup workflows",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    },
+    "integrations": {
+      "domain": "integrations",
+      "displayName": "Integrations",
+      "description": "Third-party integrations, APIs, webhooks, and external service connections",
+      "tasks": [],
+      "stats": {
+        "total": 0,
+        "completed": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "critical": 0
+      }
+    }
+  },
+  "summary": {
+    "byStatus": {
+      "backlog": 0,
+      "planned": 0,
+      "in-progress": 0,
+      "blocked": 0,
+      "review": 0,
+      "completed": 0,
+      "archived": 0
+    },
+    "byPriority": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "backlog": 0
+    },
+    "byRisk": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "none": 0
+    },
+    "byAgent": {}
+  }
+}
