@@ -1551,3 +1551,71 @@ NO — ready for screenshot QA.
   - For SVG stroke-only shapes (lines, arcs), apply opacity directly to the SVG element, not the container div. The container div opacity multiplies against child SVG element opacity, causing double-dimming.
   - `Math.hypot(w, h)` for minimum size on lines allows 1D strokes (zero width or height) that the `w < MIN && h < MIN` guard would incorrectly reject.
 - **Compact handoff for next agent/chat:** Repair Round 2 complete on main branch. Line tool is now two-click point-to-point (lineFirstPointRef state machine). Middle mouse pans at any time. Opacity stepper no longer snap-backs (pendingAnnotationMutationsRef counter). Can-light aperture fill is visibly colored (Math.max(fillOpacity, 0.6) alpha). Line bounding-box rectangle removed from both draft preview and placed annotation. Typecheck clean.
+
+
+---
+
+## Claude Report — PDF Blueprint Repair Round 3: Line Endpoint Handles and Draggable Panel
+
+* Task completed: Yes
+* Files changed: src/components/blueprint/OperationsBlueprintPdfViewer.tsx only
+* Commit hash: (see final commit)
+* Typecheck result: PASS — 0 errors
+
+* Root cause:
+  - Lines had no endpoint-specific drag mechanism — only the generic bounding-box move/resize (which moves the whole line or scales the bounding box, neither of which is intuitive for a line).
+  - The floating action bar position was hardcoded from focusedAnnotationRect every render with no user-adjustable offset state.
+
+* What changed:
+  1. Added endpointDrag state + endpointDragRef (ref-mirror pattern) to track per-endpoint drag context: annotationId, endpoint ('start'|'end'), pointerId, startClientX/Y, startAbsX/Y (page-normalized position of dragged endpoint), otherAbsX/Y (fixed endpoint).
+  2. startAnnotationEndpointDrag: captures pointer on overlayRef so subsequent move/up events route through the main overlay handlers. Sets layoutEditId to show handles.
+  3. handlePointerMove: checks endpointDragRef.current BEFORE suppressAnnotationUntilRef check. Recomputes both-endpoint absolute page coords from delta, derives new bounding rect (min of endpoints), derives new lineX1/Y1/X2/Y2 as fractions within new rect. Calls setAllAnnotations with updated rect + meta simultaneously.
+  4. handlePointerUp: checks endpointDragRef.current before annotation-creation logic. On match: clears ref+state, reads updated annotation from allAnnotationsRef, calls persistAnnotation.
+  5. handlePointerCancel: clears endpointDragRef/endpointDrag unconditionally.
+  6. Line/arrow annotation JSX: replaced generic resize-corner handle with two endpoint circles — blue for start (lx1/ly1), green for end (lx2/ly2). Each circle has zIndex:3; move overlay has zIndex:1. Endpoint stopPropagation prevents whole-line drag from co-activating.
+  7. Added barDragOffset state + barDragRef. useEffect resets barDragOffset when focusedAnnotationId changes. Bar IIFE computes finalBarTop/finalBarLeft from offset (when set) or auto-computed position. handleBarPointerDown checks closest('button') to avoid hijacking button clicks; sets pointer capture on the bar div. handleBarPointerMove/Up update offset and clear the ref.
+  8. Added drag grip icon (⠿) at left of action bar for discoverability.
+
+* Double verification against requested behavior:
+  - [x] placed line shows two endpoint handles when selected/editing (blue start, green end)
+  - [x] start handle can be dragged independently (endpoint='start' branch in handlePointerMove)
+  - [x] end handle can be dragged independently (endpoint='end' branch)
+  - [x] updated endpoints persist (persistAnnotation called on pointerUp via allAnnotationsRef)
+  - [x] whole-line move still works (move overlay preserved, zIndex 1 below handles)
+  - [x] line placement still works (lineFirstPointRef logic untouched)
+  - [x] line angle/direction still works (lineX1/Y1/X2/Y2 storage untouched)
+  - [x] middle-mouse pan still works (button===1 intercept runs before any of this)
+  - [x] no rectangle appears around line during normal display (border:none for line/arrow unchanged)
+  - [x] draggable edit/options panel works (barDragOffset + setPointerCapture on bar div)
+  - [x] panel dragging does not create or move annotations (stopPropagation in all bar handlers)
+  - [x] panel controls remain usable (closest('button') guard skips drag initiation for buttons)
+  - [x] can-light placement/fill still works (untouched)
+  - [x] opacity still persists (pendingAnnotationMutationsRef logic untouched)
+  - [x] shape dropdown readability remains good (ToolPopover untouched)
+  - [x] active document/page persistence still works (untouched)
+  - [x] text highlighter was intentionally not changed
+  - [x] no unrelated files were touched
+
+* What was learned:
+  - Ref-mirror pattern extends cleanly to endpoint drags: endpointDragRef used in move/up handlers avoids stale closure on rapidly-fired pointermove events.
+  - When one endpoint moves, both the bounding rect AND the relative line coords (lineX1/Y1/X2/Y2) must be updated atomically in the same setAllAnnotations call — updating rect alone leaves the line pointing the wrong direction.
+  - Math.max(0.002, ...) minimum for nw/nh prevents divide-by-zero when the two endpoints land on the exact same pixel (line collapses to a point).
+  - For the draggable bar in a React portal, setPointerCapture on the bar div routes all subsequent pointer events there even if the mouse moves outside the portal element, so no window-level event listeners are needed.
+  - barDragOffset reset on focusedAnnotationId change is the right default: the bar snaps to the new annotation's location when a different annotation is selected.
+
+* Learned skills / reusable patterns:
+  - Endpoint drag pattern: store both endpoints' absolute coords at dragStart; recompute bounding box from current + fixed endpoint on every move; derive relative fracs from new box. Works for any line-segment annotation.
+  - Portal drag pattern: define handlers inline in the IIFE, use component-level barDragRef (stable) + setBarDragOffset (stable setter) from the outer closure. setPointerCapture on the portal element keeps events flowing.
+
+* Bugs / risks:
+  - Arch-line still has generic resize corner (not endpoint handles) — its bezier geometry is different and out of scope for this pass.
+  - If two lines are stacked and both are in layoutEditId, both would show handles. In practice layoutEditId can only be one annotation at a time.
+  - Text Highlighter skipped per user instruction.
+
+* Manual QA performed: Static code review only. No browser QA available in this session.
+
+* Next recommended action:
+  Manual QA: place a line, click it (select), click Move button to enter layout edit mode, drag start handle (blue), drag end handle (green), drag whole line via move overlay, drag floating action bar using ⠿ grip, confirm Delete and Edit buttons still work after bar is repositioned.
+
+* Compact handoff for next agent/chat:
+  Round 3 complete on main branch. Line/arrow annotations now show two endpoint handles (blue start, green end) when in layout-edit mode. startAnnotationEndpointDrag + endpointDragRef + handlePointerMove/Up multiplexing handles endpoint-specific drag with atomic rect + meta update. The floating action bar has a ⠿ drag grip; barDragOffset state + barDragRef ref makes it freely repositionable; offset resets on annotation selection change. No new annotation storage fields needed. Typecheck clean.

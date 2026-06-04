@@ -4014,3 +4014,34 @@ EVR and 8-week chart control layout polish complete. In `V15rDashboard.tsx`, bot
 **Known limitation:** Text Highlighter per-word strip rendering was intentionally skipped — deferred to a future dedicated QA session.
 
 **Next:** Manual QA — place a line (two-click), arrow (two-click), middle-mouse pan with line tool active, rapidly click opacity +5 three times and confirm no snap-back, place a can-light with green fill and confirm aperture is visibly green.
+
+
+---
+
+## Shared Update — PDF Blueprint Repair Round 3: Line Endpoint Handles and Draggable Panel
+
+* Agent: Claude Sonnet 4.6
+* Branch: main
+* Commit: (see below)
+* Files changed: src/components/blueprint/OperationsBlueprintPdfViewer.tsx only
+* Typecheck: PASS (0 errors)
+* User-facing behavior changed:
+  - Selected line/arrow annotations now show two endpoint handles (blue = start, green = end). Dragging either handle moves only that endpoint independently.
+  - Whole-line move still works via the move overlay beneath the handles.
+  - Floating action bar (Move/Edit/Delete) now has a drag grip (⠿) and can be repositioned anywhere in the viewport. Drag offset resets when a new annotation is selected.
+* Implementation notes:
+  - endpointDrag state + endpointDragRef (ref-mirror pattern matching layoutDragRef) store drag context.
+  - startAnnotationEndpointDrag captures pointer on overlayRef, stores both endpoint absolute page-normalized positions, then routes through handlePointerMove/Up via the ref check.
+  - On pointermove: recomputes bounding rect from two absolute endpoint coords; updates meta lineX1/Y1/X2/Y2 + annotation.rect simultaneously via setAllAnnotations.
+  - On pointerup: reads updated annotation from allAnnotationsRef and calls persistAnnotation to save.
+  - barDragOffset state + barDragRef handle floating bar drag. finalBarTop/finalBarLeft computed in the bar IIFE from offset or auto-computed position. setPointerCapture on bar div routes move/up events.
+  - barDragOffset resets to null via useEffect on focusedAnnotationId change (new annotation selected = bar snaps back to annotation).
+  - Endpoint handle zIndex 3, move overlay zIndex 1 — handles are always clickable above the move layer.
+  - Handle stopPropagation prevents whole-line move from triggering when grabbing an endpoint.
+* Risks / follow-up:
+  - Arch-line (bezier curve) does not get endpoint handles — it still uses the generic resize corner. This is intentional: its bezier control point geometry is different.
+  - Text Highlighter remains unchanged (intentional skip per user instruction).
+* Manual QA status: Ready for manual QA — place a line, select it, drag start handle, drag end handle, move whole line, drag panel.
+* Next agent should know:
+  - Line/arrow annotations have endpoint handles when layoutEditId === a.id. No new annotation fields needed — lineX1/Y1/X2/Y2 already in the meta schema.
+  - barDragOffset and barDragRef are component-level state/ref — not persisted to storage.

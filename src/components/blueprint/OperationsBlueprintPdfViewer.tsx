@@ -861,6 +861,32 @@ export default function OperationsBlueprintPdfViewer({
     startBox: { x: number; y: number; w: number; h: number }
   } | null>(null)
 
+  const [endpointDrag, setEndpointDrag] = useState<{
+    annotationId: string
+    endpoint: 'start' | 'end'
+    pointerId: number
+    startClientX: number
+    startClientY: number
+    startAbsX: number
+    startAbsY: number
+    otherAbsX: number
+    otherAbsY: number
+  } | null>(null)
+  const endpointDragRef = useRef<{
+    annotationId: string
+    endpoint: 'start' | 'end'
+    pointerId: number
+    startClientX: number
+    startClientY: number
+    startAbsX: number
+    startAbsY: number
+    otherAbsX: number
+    otherAbsY: number
+  } | null>(null)
+
+  const [barDragOffset, setBarDragOffset] = useState<{ x: number; y: number } | null>(null)
+  const barDragRef = useRef<{ pointerId: number; startClientX: number; startClientY: number; startX: number; startY: number } | null>(null)
+
   const [noteEditor, setNoteEditor] = useState<{
     mode: 'create' | 'edit'
     annotationId?: string
@@ -2069,6 +2095,36 @@ export default function OperationsBlueprintPdfViewer({
     e.stopPropagation()
   }, [])
 
+  const startAnnotationEndpointDrag = useCallback((e: React.PointerEvent<HTMLElement>, annotation: BlueprintAnnotation, endpoint: 'start' | 'end') => {
+    const meta = getAnnotationMeta(annotation)
+    const rect = annotation.rect || { x: 0, y: 0, w: 0.1, h: 0.1 }
+    const lx1 = meta.lineX1 ?? 0
+    const ly1 = meta.lineY1 ?? 0
+    const lx2 = meta.lineX2 ?? 1
+    const ly2 = meta.lineY2 ?? 1
+    const startAbsX = rect.x + lx1 * (rect.w || 0)
+    const startAbsY = rect.y + ly1 * (rect.h || 0)
+    const endAbsX = rect.x + lx2 * (rect.w || 0)
+    const endAbsY = rect.y + ly2 * (rect.h || 0)
+    const drag = {
+      annotationId: annotation.id,
+      endpoint,
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startAbsX: endpoint === 'start' ? startAbsX : endAbsX,
+      startAbsY: endpoint === 'start' ? startAbsY : endAbsY,
+      otherAbsX: endpoint === 'start' ? endAbsX : startAbsX,
+      otherAbsY: endpoint === 'start' ? endAbsY : startAbsY,
+    }
+    endpointDragRef.current = drag
+    setEndpointDrag(drag)
+    setFocusedAnnotationId(annotation.id)
+    setLayoutEditId(annotation.id)
+    try { overlayRef.current?.setPointerCapture(e.pointerId) } catch {}
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
 
   const handleAnnotationLayoutPointerMove = useCallback((e: React.PointerEvent<HTMLElement>) => {
     // Use the ref mirror to avoid stale-closure miss on the first pointermove after setLayoutDrag
@@ -2549,6 +2605,34 @@ export default function OperationsBlueprintPdfViewer({
         }
       }
     }
+    const epDrag = endpointDragRef.current
+    if (epDrag && epDrag.pointerId === e.pointerId && overlayRef.current) {
+      const overlayRect = overlayRef.current.getBoundingClientRect()
+      const dx = (e.clientX - epDrag.startClientX) / Math.max(1, overlayRect.width)
+      const dy = (e.clientY - epDrag.startClientY) / Math.max(1, overlayRect.height)
+      const newAbsX = Math.max(0, Math.min(1, epDrag.startAbsX + dx))
+      const newAbsY = Math.max(0, Math.min(1, epDrag.startAbsY + dy))
+      const x1 = epDrag.endpoint === 'start' ? newAbsX : epDrag.otherAbsX
+      const y1 = epDrag.endpoint === 'start' ? newAbsY : epDrag.otherAbsY
+      const x2 = epDrag.endpoint === 'end' ? newAbsX : epDrag.otherAbsX
+      const y2 = epDrag.endpoint === 'end' ? newAbsY : epDrag.otherAbsY
+      const nx = Math.min(x1, x2)
+      const ny = Math.min(y1, y2)
+      const nw = Math.max(0.002, Math.abs(x2 - x1))
+      const nh = Math.max(0.002, Math.abs(y2 - y1))
+      setAllAnnotations((prev) => prev.map((ann) => {
+        if (ann.id !== epDrag.annotationId) return ann
+        const m = getAnnotationMeta(ann)
+        return withAnnotationMeta(
+          { ...ann, rect: { x: nx, y: ny, w: nw, h: nh }, updatedAt: new Date().toISOString() },
+          { ...m, lineX1: (x1 - nx) / nw, lineY1: (y1 - ny) / nh, lineX2: (x2 - nx) / nw, lineY2: (y2 - ny) / nh }
+        ) as BlueprintAnnotation
+      }))
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+
     if (Date.now() < suppressAnnotationUntilRef.current) return
     if (!overlayRef.current || isEditorOpen) return
     const rect = overlayRef.current.getBoundingClientRect()
@@ -2663,6 +2747,17 @@ export default function OperationsBlueprintPdfViewer({
         return
       }
     }
+    const epDragUp = endpointDragRef.current
+    if (epDragUp && epDragUp.pointerId === e.pointerId) {
+      endpointDragRef.current = null
+      setEndpointDrag(null)
+      const ann = allAnnotationsRef.current.find((a) => a.id === epDragUp.annotationId)
+      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+
     if (Date.now() < suppressAnnotationUntilRef.current) return
     if (!overlayRef.current || !blueprint || isEditorOpen) return
     const rect = overlayRef.current.getBoundingClientRect()
@@ -2864,6 +2959,8 @@ export default function OperationsBlueprintPdfViewer({
       setDraftRect(null)
       setInkDraft(null)
     }
+    endpointDragRef.current = null
+    setEndpointDrag(null)
   }, [endTouchPointer])
 
   if (!blueprint) {
@@ -2912,6 +3009,8 @@ export default function OperationsBlueprintPdfViewer({
       setFocusedAnnotationRect(null)
     }
   }, [focusedAnnotationId])
+
+  useEffect(() => { setBarDragOffset(null) }, [focusedAnnotationId])
 
   // Refresh rect on scroll so the bar tracks the annotation as the page scrolls
   useEffect(() => {
@@ -4305,8 +4404,9 @@ export default function OperationsBlueprintPdfViewer({
                                   </defs>
                                   <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} markerEnd={kind === 'arrow' ? `url(#arrow-${a.id})` : undefined} opacity={fillOpacity} />
                                 </svg>
-                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
-                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" style={{ zIndex: 1 }} />}
+                                {isLayoutEditing && <div onPointerDown={(e) => { e.stopPropagation(); startAnnotationEndpointDrag(e, a, 'start') }} className="absolute w-3 h-3 rounded-full bg-blue-400 border border-white shadow cursor-crosshair" style={{ left: lx1, top: ly1, transform: 'translate(-50%,-50%)', zIndex: 3, touchAction: 'none' }} />}
+                                {isLayoutEditing && <div onPointerDown={(e) => { e.stopPropagation(); startAnnotationEndpointDrag(e, a, 'end') }} className="absolute w-3 h-3 rounded-full bg-green-400 border border-white shadow cursor-crosshair" style={{ left: lx2, top: ly2, transform: 'translate(-50%,-50%)', zIndex: 3, touchAction: 'none' }} />}
                               </div>
                             )
                           }
@@ -5312,13 +5412,37 @@ export default function OperationsBlueprintPdfViewer({
         const barTop = aboveTop >= 8 ? aboveTop : focusedAnnotationRect.bottom + GAP
         const barCenterX = focusedAnnotationRect.left + focusedAnnotationRect.width / 2
         const barLeft = Math.max(8, Math.min(window.innerWidth - 200, barCenterX - 80))
+        const finalBarTop = barDragOffset ? barDragOffset.y : barTop
+        const finalBarLeft = barDragOffset ? barDragOffset.x : barLeft
+        const handleBarPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+          e.stopPropagation()
+          if ((e.target as HTMLElement).closest('button')) return
+          barDragRef.current = { pointerId: e.pointerId, startClientX: e.clientX, startClientY: e.clientY, startX: finalBarLeft, startY: finalBarTop }
+          try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch {}
+        }
+        const handleBarPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+          const d = barDragRef.current
+          if (!d || d.pointerId !== e.pointerId) return
+          e.stopPropagation()
+          setBarDragOffset({
+            x: Math.max(0, Math.min(window.innerWidth - 160, d.startX + e.clientX - d.startClientX)),
+            y: Math.max(0, Math.min(window.innerHeight - 40, d.startY + e.clientY - d.startClientY)),
+          })
+        }
+        const handleBarPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+          if (barDragRef.current?.pointerId === e.pointerId) barDragRef.current = null
+          e.stopPropagation()
+        }
         const bar = (
           <div
-            style={{ position: 'fixed', top: barTop, left: barLeft, zIndex: 9998 }}
-            className="flex items-center gap-1 rounded-md border border-gray-700 bg-[#111827]/95 p-1 shadow-lg"
-            onPointerDown={(e) => e.stopPropagation()}
+            style={{ position: 'fixed', top: finalBarTop, left: finalBarLeft, zIndex: 9998, touchAction: 'none' }}
+            className="flex items-center gap-1 rounded-md border border-gray-700 bg-[#111827]/95 p-1 shadow-lg select-none"
+            onPointerDown={handleBarPointerDown}
+            onPointerMove={handleBarPointerMove}
+            onPointerUp={handleBarPointerUp}
             onClick={(e) => e.stopPropagation()}
           >
+            <div className="cursor-grab px-0.5 text-gray-500" title="Drag to reposition" style={{ fontSize: 11, lineHeight: '1', userSelect: 'none' }}>⠿</div>
             {fCanMove && (
               <button
                 type="button"
