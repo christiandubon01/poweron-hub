@@ -312,6 +312,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [triggerJobId, setTriggerJobId] = useState<string>('all')
   const [triggerAiResponse, setTriggerAiResponse] = useState<string>('')
   const [triggerAiLoading, setTriggerAiLoading] = useState(false)
+  const [editingTriggerRuleId, setEditingTriggerRuleId] = useState<string | null>(null)
+  const [triggerRuleForm, setTriggerRuleForm] = useState<Partial<BackupTriggerRule> | null>(null)
 
   // Project log form state
   const [flProj, setFlProj] = useState('')
@@ -1342,6 +1344,71 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       rule.active = active
       persist()
     }
+  }
+
+  function startAddTriggerRule() {
+    setEditingTriggerRuleId('new')
+    setTriggerRuleForm({
+      id: `trigger_${Date.now().toString(36)}`,
+      name: '',
+      type: 'bad_day',
+      color: '#3b82f6',
+      active: true,
+      condition: '',
+      threshold: '0.5',
+      thresholdLabel: 'Threshold',
+      situation: '',
+      review: '',
+      solution: '',
+      reflection: '',
+    })
+  }
+
+  function startEditTriggerRule(rule: BackupTriggerRule) {
+    setEditingTriggerRuleId(rule.id)
+    setTriggerRuleForm({ ...rule })
+  }
+
+  function cancelTriggerRuleEdit() {
+    setEditingTriggerRuleId(null)
+    setTriggerRuleForm(null)
+  }
+
+  function saveTriggerRuleForm() {
+    if (!triggerRuleForm) return
+    const name = String(triggerRuleForm.name || '').trim()
+    if (!name) return
+    const nextRule = {
+      id: String(triggerRuleForm.id || `trigger_${Date.now().toString(36)}`),
+      name,
+      type: String(triggerRuleForm.type || 'bad_day').trim() || 'bad_day',
+      color: String(triggerRuleForm.color || '#3b82f6').trim() || '#3b82f6',
+      active: triggerRuleForm.active !== false,
+      condition: String(triggerRuleForm.condition || '').trim(),
+      threshold: String(triggerRuleForm.threshold || '0').trim(),
+      thresholdLabel: String(triggerRuleForm.thresholdLabel || 'Threshold').trim(),
+      situation: String(triggerRuleForm.situation || '').trim(),
+      review: String(triggerRuleForm.review || '').trim(),
+      solution: String(triggerRuleForm.solution || '').trim(),
+      reflection: String(triggerRuleForm.reflection || '').trim(),
+    }
+    pushState(backup)
+    if (!Array.isArray(backup.triggerRules)) backup.triggerRules = []
+    const existingIdx = backup.triggerRules.findIndex(r => r.id === nextRule.id)
+    if (existingIdx >= 0) backup.triggerRules[existingIdx] = nextRule
+    else backup.triggerRules = [...backup.triggerRules, nextRule]
+    cancelTriggerRuleEdit()
+    persist()
+  }
+
+  function removeTriggerRule(ruleId: string) {
+    const rule = triggerRules.find(r => r.id === ruleId)
+    if (!rule) return
+    if (!confirm(`Remove trigger rule "${rule.name}"?`)) return
+    pushState(backup)
+    backup.triggerRules = triggerRules.filter(r => r.id !== ruleId)
+    if (editingTriggerRuleId === ruleId) cancelTriggerRuleEdit()
+    persist()
   }
 
   // ── Tab colors ─────────────────────────────────────────────────────────
@@ -3383,8 +3450,87 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
   function renderTriggers() {
     const kpis = getKPIs(backup)
-    const allProjects = (backup.projects || []).filter(isActiveProject)
+    const allProjects = backup.projects || []
     const allSvcLogs = (backup.serviceLogs || []).filter(isActiveServiceCall)
+    const allSvcEstimates = (backup.serviceEstimates || []).filter(isActiveServiceCall)
+    const allServiceTargets = [
+      ...allSvcLogs.map((record: any) => ({ id: String(record.id), kind: 'service_log', record, name: `${canonicalCustomerName(record)} - ${record.date || 'Service log'}` })),
+      ...allSvcEstimates.map((record: any) => ({ id: String(record.id), kind: 'service_estimate', record, name: `${canonicalCustomerName(record)} - ${record.date || record.serviceStatus || 'Service call'}` })),
+    ].filter((item, idx, arr) => item.id && arr.findIndex(other => other.id === item.id) === idx)
+
+    const buildTriggerStudy = () => {
+      if (triggerBucket === 'projects' && triggerJobId !== 'all') {
+        const project = allProjects.find(p => String(p.id) === String(triggerJobId))
+        if (!project) return null
+        const projectLogs = projectLogsFor(backup, project.id)
+        const projectRollup = buildProjectLogRollup(backup, project.id)
+        const lastRoll = projectRollup.logs.length ? projectRollup.byId[projectRollup.logs[projectRollup.logs.length - 1].id] : null
+        const totalMat = projectLogs.reduce((s, l) => s + num(l.mat), 0)
+        const totalMiles = projectLogs.reduce((s, l) => s + num(l.miles), 0)
+        const totalHours = projectLogs.reduce((s, l) => s + num(l.hrs), 0)
+        const totalCost = num(lastRoll?.cumTotalCost)
+        const quoted = num(project.contract)
+        const data = {
+          profit: quoted - totalCost,
+          quoted,
+          mat: totalMat,
+          mileCost: totalMiles * mileRate,
+          hrs: totalHours,
+          collected: projectLogs.reduce((s, l) => s + num(l.collected), 0),
+        }
+        return {
+          label: project.name || 'Unnamed project',
+          typeLabel: isArchivedRecord(project) ? 'Archived project' : 'Project',
+          data,
+          facts: [
+            ['Contract', fmt(quoted)],
+            ['Logged hours', totalHours.toFixed(1)],
+            ['Material cost', fmt(totalMat)],
+            ['Mileage cost', fmt(data.mileCost)],
+            ['Rule profit', fmt(data.profit)],
+          ],
+        }
+      }
+      if (triggerBucket === 'service' && triggerJobId !== 'all') {
+        const target = allServiceTargets.find(item => String(item.id) === String(triggerJobId))
+        if (!target) return null
+        const record: any = target.record
+        const estimateTotal = num(record.quoted || record.total || record.estimateTotal)
+        const estimateCost = num(record.actualCost || record.cost || record.materials)
+        const roll = target.kind === 'service_log'
+          ? getServiceRollup(record)
+          : {
+              totalBillable: estimateTotal,
+              projectedProfit: estimateTotal - estimateCost,
+              collected: num(record.collected || record.paymentsCollected),
+            }
+        const serviceMiles = num(record.miles)
+        const data = {
+          profit: num(roll.projectedProfit),
+          quoted: num(roll.totalBillable),
+          mat: num(record.mat || record.materials),
+          mileCost: serviceMiles * mileRate,
+          hrs: num(record.hrs || record.hours || record.estimatedHours),
+          collected: num(roll.collected),
+        }
+        return {
+          label: target.name,
+          typeLabel: target.kind === 'service_log' ? 'Service log' : 'Service call',
+          data,
+          facts: [
+            ['Total billable', fmt(data.quoted)],
+            ['Hours', data.hrs.toFixed(1)],
+            ['Material cost', fmt(data.mat)],
+            ['Mileage cost', fmt(data.mileCost)],
+            ['Rule profit', fmt(data.profit)],
+          ],
+        }
+      }
+      return null
+    }
+
+    const triggerStudy = buildTriggerStudy()
+    const firedRules = triggerStudy ? getFiredTriggerNames(backup, triggerStudy.data) : []
 
     // Filter trigger rules by selected bucket/job
     const filteredRules = triggerRules.filter(rule => {
@@ -3399,18 +3545,27 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
     // Build job dropdown options based on bucket
     const jobOptions = triggerBucket === 'projects'
-      ? allProjects.filter(p => p.status === 'active').map(p => ({ id: p.id, name: p.name || 'Unknown' }))
+      ? allProjects.map(p => ({ id: p.id, name: `${p.name || 'Unknown'}${isArchivedRecord(p) ? ' (archived)' : ''}` }))
       : triggerBucket === 'service'
         ? allSvcLogs.slice(-20).map(l => ({ id: l.id, name: `${canonicalCustomerName(l)} — ${l.date || ''}` }))
+        : []
+
+    const triggerJobOptions = triggerBucket === 'projects'
+      ? allProjects.map(p => ({ id: p.id, name: `${p.name || 'Unknown'}${isArchivedRecord(p) ? ' (archived)' : ''}` }))
+      : triggerBucket === 'service'
+        ? allServiceTargets.slice(-40).map(item => ({ id: item.id, name: item.name }))
         : []
 
     const handleAskAI = () => {
       setTriggerAiLoading(true)
       const rulesSummary = filteredRules.map(r => `${r.name} (${r.type}): ${r.situation || ''} → ${r.solution || ''}`).join('\n')
       const bucketLabel = triggerBucket === 'all' ? 'all jobs' : triggerBucket === 'projects' ? 'projects' : 'service calls'
+      const studySummary = triggerStudy
+        ? `\n\nSelected ${triggerStudy.typeLabel}: ${triggerStudy.label}\nMetrics:\n${triggerStudy.facts.map(([label, value]) => `${label}: ${value}`).join('\n')}\nTriggered rules: ${firedRules.length ? firedRules.join(', ') : 'none'}`
+        : ''
       callClaude({
         system: 'You are NEXUS, the AI operations manager for Power On Solutions, an electrical contractor. Analyze trigger patterns and provide actionable priority recommendations. Be concise.',
-        messages: [{ role: 'user', content: `Analyze these ${filteredRules.length} trigger rules for ${bucketLabel}. What are the recurring issues and what should I address first?\n\nRules:\n${rulesSummary}` }],
+        messages: [{ role: 'user', content: `Analyze these ${filteredRules.length} trigger rules for ${bucketLabel}. What are the recurring issues and what should I address first?${studySummary}\n\nRules:\n${rulesSummary}` }],
         max_tokens: 1024,
       }).then(res => {
         setTriggerAiResponse(extractText(res))
@@ -3460,19 +3615,25 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               {bucket === 'all' ? 'All' : bucket === 'projects' ? 'Projects' : 'Service Calls'}
             </button>
           ))}
-          {jobOptions.length > 0 && (
+          {triggerBucket !== 'all' && (
             <select
               value={triggerJobId}
               onChange={e => setTriggerJobId(e.target.value)}
               className="bg-[var(--bg-input)] border border-gray-600 rounded px-2 py-1.5 text-xs text-[var(--text-primary)] focus:border-blue-500 outline-none"
             >
               <option value="all">All {triggerBucket === 'projects' ? 'Projects' : 'Service Calls'}</option>
-              {jobOptions.map(j => (
+              {triggerJobOptions.map(j => (
                 <option key={j.id} value={j.id}>{j.name.substring(0, 40)}</option>
               ))}
             </select>
           )}
           <div className="ml-auto flex gap-2">
+            <button
+              onClick={startAddTriggerRule}
+              className="px-3 py-1.5 rounded text-xs font-semibold bg-blue-600/20 text-blue-300 border border-blue-500/30 hover:bg-blue-600/30 transition-all flex items-center gap-1"
+            >
+              <Plus size={12} /> Add Rule
+            </button>
             <button
               onClick={handleAskAI}
               disabled={triggerAiLoading}
@@ -3482,6 +3643,40 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
             </button>
           </div>
         </div>
+
+        {triggerBucket === 'projects' && (
+          <div className="rounded-lg border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-[10px] text-blue-100/80">
+            Archived projects are included here for trigger study only. Other Field Log tabs and dashboards keep their normal active-project filters.
+          </div>
+        )}
+
+        {triggerStudy && (
+          <div className="bg-[var(--bg-card)] border border-blue-500/30 rounded-lg p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+              <div>
+                <div className="text-[9px] uppercase font-bold text-blue-300">{triggerStudy.typeLabel} study</div>
+                <div className="text-sm font-bold text-gray-100 mt-1">{triggerStudy.label}</div>
+              </div>
+              <div className={`text-[10px] px-2 py-1 rounded-full border ${firedRules.length ? 'border-orange-500/40 bg-orange-500/15 text-orange-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'}`}>
+                {firedRules.length ? `${firedRules.length} rule${firedRules.length === 1 ? '' : 's'} triggered` : 'No active rule hits'}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
+              {triggerStudy.facts.map(([label, value]) => (
+                <div key={label} className="rounded border border-gray-700/80 bg-slate-950/35 px-3 py-2">
+                  <div className="text-[9px] uppercase font-bold text-gray-500">{label}</div>
+                  <div className="text-xs font-mono font-bold text-gray-100 mt-1">{value}</div>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {filteredRules.filter(r => firedRules.includes(r.name)).map(rule => (
+                <span key={rule.id} className="text-[10px] rounded-full border border-orange-400/30 bg-orange-500/10 px-2 py-1 text-orange-200">{rule.name}</span>
+              ))}
+              {firedRules.length === 0 && <span className="text-[10px] text-gray-500">Pick a different target or adjust thresholds to study rule behavior.</span>}
+            </div>
+          </div>
+        )}
 
         {/* AI Response */}
         {triggerAiResponse && (
@@ -3494,6 +3689,50 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
         {/* Trigger rules */}
         <div className="space-y-2">
           <div className="text-xs font-bold text-gray-400 uppercase">Trigger Rules ({filteredRules.length})</div>
+          {editingTriggerRuleId && triggerRuleForm && (
+            <div className="bg-[var(--bg-card)] border border-blue-500/40 rounded-lg p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs font-bold text-blue-200 uppercase">{editingTriggerRuleId === 'new' ? 'Add Trigger Rule' : 'Edit Trigger Rule'}</div>
+                <div className="flex gap-2">
+                  <button onClick={saveTriggerRuleForm} className="px-3 py-1.5 rounded text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30">Save</button>
+                  <button onClick={cancelTriggerRuleEdit} className="px-3 py-1.5 rounded text-xs font-semibold bg-slate-700/70 text-slate-300 border border-slate-600 hover:bg-slate-600/80">Cancel</button>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <label className="space-y-1">
+                  <span className="text-[10px] text-gray-500 uppercase font-bold">Name</span>
+                  <input value={triggerRuleForm.name || ''} onChange={e => setTriggerRuleForm({ ...triggerRuleForm, name: e.target.value })} className="w-full bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-blue-500" />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[10px] text-gray-500 uppercase font-bold">Type</span>
+                  <select value={triggerRuleForm.type || 'bad_day'} onChange={e => setTriggerRuleForm({ ...triggerRuleForm, type: e.target.value })} className="w-full bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-blue-500">
+                    <option value="bad_day">Bad day</option>
+                    <option value="good_day">Good day</option>
+                    <option value="travel">Travel</option>
+                    <option value="material">Material</option>
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[10px] text-gray-500 uppercase font-bold">Threshold</span>
+                  <input value={triggerRuleForm.threshold || ''} onChange={e => setTriggerRuleForm({ ...triggerRuleForm, threshold: e.target.value })} className="w-full bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-blue-500" placeholder="0.5" />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[10px] text-gray-500 uppercase font-bold">Color</span>
+                  <input value={triggerRuleForm.color || ''} onChange={e => setTriggerRuleForm({ ...triggerRuleForm, color: e.target.value })} className="w-full bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-blue-500" placeholder="#3b82f6" />
+                </label>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <span className="text-[10px] text-gray-500 uppercase font-bold">Situation</span>
+                  <textarea value={triggerRuleForm.situation || ''} onChange={e => setTriggerRuleForm({ ...triggerRuleForm, situation: e.target.value })} rows={2} className="w-full bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-blue-500" />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[10px] text-gray-500 uppercase font-bold">Solution</span>
+                  <textarea value={triggerRuleForm.solution || ''} onChange={e => setTriggerRuleForm({ ...triggerRuleForm, solution: e.target.value })} rows={2} className="w-full bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-blue-500" />
+                </label>
+              </div>
+            </div>
+          )}
           {filteredRules.length > 0 ? (
             filteredRules.map(rule => (
               <div key={rule.id} className="bg-[var(--bg-card)] border border-gray-700 rounded-lg p-3" style={{ borderLeft: `3px solid ${rule.color || '#f97316'}` }}>
@@ -3502,15 +3741,23 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     <div className="text-sm font-bold text-gray-200">{rule.name}</div>
                     <div className="text-[10px] text-gray-500 mt-1">{rule.type} · threshold {pct(Math.round(num(rule.threshold) * 100))}</div>
                   </div>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={rule.active || false}
-                      onChange={e => toggleTrigger(rule.id, e.target.checked)}
-                      className="w-4 h-4"
-                    />
-                    <span className="text-[9px] text-gray-400">{rule.active ? 'Active' : 'Inactive'}</span>
-                  </label>
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={rule.active || false}
+                        onChange={e => toggleTrigger(rule.id, e.target.checked)}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-[9px] text-gray-400">{rule.active ? 'Active' : 'Inactive'}</span>
+                    </label>
+                    <button onClick={() => startEditTriggerRule(rule)} className="p-1.5 rounded text-gray-400 hover:text-blue-300 hover:bg-blue-500/10" title="Edit trigger rule">
+                      <Edit3 size={13} />
+                    </button>
+                    <button onClick={() => removeTriggerRule(rule.id)} className="p-1.5 rounded text-gray-400 hover:text-red-300 hover:bg-red-500/10" title="Remove trigger rule">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
                 {rule.situation && (
                   <div className="text-[9px] text-gray-400 mb-1">

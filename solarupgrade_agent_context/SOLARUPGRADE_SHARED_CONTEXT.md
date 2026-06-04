@@ -4102,7 +4102,7 @@ BRANCH:
 main
 
 COMMIT HASH:
-Pending at log-write time; see final Codex report.
+Final amended commit hash reported in chat.
 
 FILES CHANGED:
 - `src/components/v15r/V15rFieldLogPanel.tsx`

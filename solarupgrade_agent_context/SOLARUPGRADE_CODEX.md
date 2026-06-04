@@ -1517,3 +1517,23 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
 - Manual QA performed: Static scoped diff review and `npm.cmd run typecheck`; browser click-through remains for the shared localhost app.
 - Next recommended action: On localhost Graph Dashboard, confirm EVR and 8-week controls are top-right aligned with their titles, subtitles remain clean, and all buttons still work.
 - Compact handoff for next agent/chat: Header layout polish complete in `V15rDashboard.tsx`. EVR and 8-week cards now have top title/action rows with controls right-aligned and subtitles below. Existing handlers and chart data paths were preserved. Typecheck passes.
+
+---
+
+## Codex Report — Field Logs — fix Triggers sub tab to target service calls or projects, manage rules, and include archived projects only here
+
+- Task completed: Repaired the Field Logs > Triggers target/study flow and added trigger-rule management controls.
+- Files changed:
+  - `src/components/v15r/V15rFieldLogPanel.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Final amended commit hash reported in chat.
+- Typecheck result: PASS — `npm.cmd run typecheck`
+- Root cause: The Triggers tab built project options from active projects only, filtered those again to `status === 'active'`, exposed only recent service logs, and did not render a selected record's evaluated trigger results. The rule list only supported active/inactive toggling, not add/edit/remove.
+- What changed: Added Triggers-only target normalization for selected projects and service calls/service logs; included archived projects only by reading `backup.projects` inside `renderTriggers()`; added selected-target metric cards and fired-rule chips; added inline add/edit/remove controls for trigger rules; kept active toggling and persistence on the existing Field Log backup sync path; included selected target context in the AI prompt.
+- What was learned: The Field Logs render path is `AppShell` -> `V15rFieldLogPanel` -> local `activeTab === 'triggers'` -> `renderTriggers()`. The global `projects` constant in the panel already filters through `isActiveProject`; archived-project inclusion needed to bypass that only inside the Triggers selector/study path.
+- Learned skills / reusable patterns: For tab-specific archive exceptions, build a local dataset at the tab render boundary instead of changing global filters. Normalize target metrics into existing trigger-evaluation fields so old trigger rules continue working.
+- Bugs / risks: Browser control was unavailable in this session, so manual click-through remains. The old `jobOptions` const is left inert because of a legacy encoded service-label line; the UI uses `triggerJobOptions`.
+- Manual QA performed: `npm.cmd run typecheck` passed; `git diff --check` passed except an unrelated CRLF warning in `.claude/settings.local.json`; `http://localhost:5173` returned HTTP 200.
+- Next recommended action: On localhost, open Field Logs > Triggers; select a service call and a project; confirm archived projects appear only here; add, edit, and remove a trigger rule; confirm other Field Logs tabs keep normal archive behavior.
+- Compact handoff for next agent/chat: Field Logs > Triggers repair complete. `V15rFieldLogPanel.tsx` now supports selected project or service target study, shows fired-rule results, includes archived projects only in this tab's project selector/study path, and manages trigger rules inline. Typecheck passes; manual browser QA remains.
