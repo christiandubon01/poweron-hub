@@ -4317,3 +4317,37 @@ Run `npm.cmd run typecheck` locally, then manually QA App Brain as admin owner a
 
 COMPACT HANDOFF FOR NEXT CHAT:
 App Brain Phase 5A keeps manifest refresh manual. Run `npm run app-brain:generate` after major source changes or before App Brain commits. The manifest now includes scanner metadata and compact output; the UI shows generatedAt, refresh command, stale/recent state, and manual-refresh guidance. No hooks added. Package-lock untouched.
+
+---
+
+## Shared Update — PDF Blueprint Repair Round 5: Freeform Arch Line Curve Control
+
+* Agent: Claude Code (claude-sonnet-4-6)
+* Branch: main
+* Commit: (see below — appended after commit)
+* Files changed: src/components/blueprint/OperationsBlueprintPdfViewer.tsx
+* Typecheck: PASS — only pre-existing V15rAppBrainScene.tsx errors (Three.js types, unrelated)
+* User-facing behavior changed:
+  - Arch Line curve/control handle now moves freely in both X and Y (was constrained to a single axis/perpendicular bisector)
+  - Dragging the yellow control handle changes both arch depth AND arch angle/direction simultaneously
+  - Control point stored as absolute page-normalized coords (archCtrlX, archCtrlY) instead of a 1D scalar (archFactor)
+  - Legacy arch-lines that only have archFactor continue to render correctly via fallback
+  - Newly placed arch-lines immediately get archCtrlX/Y stored from the default archFactor=0.5 geometry
+  - Curve control persists across reload (archCtrlX/Y saved through existing annotation persist path)
+* Implementation notes:
+  - archControlDrag state + ref simplified to {annotationId, pointerId} only — no longer carries p1/p2 or startArchFactor
+  - startArchControlDrag: no longer needs endpoint positions; just captures pointer and sets drag context
+  - handlePointerMove arch block: stores nhx/nhy (cursor in page-normalized space) directly into archCtrlX/Y — no dot-product projection
+  - Arch-line renderer: if archCtrlX/Y present, converts from page-normalized to annotation-local viewBox coords ((ctrlX - rect.x) / rect.w * 100); otherwise falls back to archFactor perpendicular formula
+  - Arch control handle overlay: if archCtrlX/Y present, uses them directly as % of overlay; otherwise falls back to archFactor formula
+  - lineDirectionMeta at placement: for arch-line, computes archCtrlX/Y from the default archFactor=0.5 perpendicular bisector and stores both for immediate freeform control on first edit
+  - Sanitizer in blueprintLibraryService.ts: no changes needed — passes meta as-is, archCtrlX/Y persist automatically
+* Risks / follow-up:
+  - Manual browser QA needed: drag control handle in all directions, confirm curve changes freely; check reload persistence; check legacy annotations without archCtrlX/Y still render
+  - When an endpoint is dragged (changing the annotation rect), the archCtrlX/Y stays fixed in page-normalized space — this is intentional and means the bezier control point stays in place while endpoints move
+* Manual QA status: Static code review only — no browser QA available in this session
+* Next agent should know:
+  - archCtrlX/Y are absolute page-normalized (0-1 of overlay), NOT relative to the annotation rect
+  - The SVG viewBox is 0-100 within the annotation div, so the renderer must convert: ((archCtrlX - rect.x) / rect.w) * 100
+  - archFactor is kept in metadata as a legacy fallback only — new annotations have both archFactor and archCtrlX/Y
+  - The arch drag handler is the simplest possible: just nhx/nhy → archCtrlX/Y

@@ -890,20 +890,10 @@ export default function OperationsBlueprintPdfViewer({
   const [archControlDrag, setArchControlDrag] = useState<{
     annotationId: string
     pointerId: number
-    startArchFactor: number
-    p1x: number
-    p1y: number
-    p2x: number
-    p2y: number
   } | null>(null)
   const archControlDragRef = useRef<{
     annotationId: string
     pointerId: number
-    startArchFactor: number
-    p1x: number
-    p1y: number
-    p2x: number
-    p2y: number
   } | null>(null)
 
   const [noteEditor, setNoteEditor] = useState<{
@@ -2147,19 +2137,7 @@ export default function OperationsBlueprintPdfViewer({
   }, [])
 
   const startArchControlDrag = useCallback((e: React.PointerEvent<HTMLElement>, annotation: BlueprintAnnotation) => {
-    const meta = getAnnotationMeta(annotation)
-    const rect = annotation.rect || { x: 0, y: 0, w: 0.1, h: 0.1 }
-    const lx1 = meta.lineX1 ?? 0, ly1 = meta.lineY1 ?? 0
-    const lx2 = meta.lineX2 ?? 1, ly2 = meta.lineY2 ?? 1
-    const drag = {
-      annotationId: annotation.id,
-      pointerId: e.pointerId,
-      startArchFactor: meta.archFactor ?? 0.5,
-      p1x: rect.x + lx1 * (rect.w || 0),
-      p1y: rect.y + ly1 * (rect.h || 0),
-      p2x: rect.x + lx2 * (rect.w || 0),
-      p2y: rect.y + ly2 * (rect.h || 0),
-    }
+    const drag = { annotationId: annotation.id, pointerId: e.pointerId }
     archControlDragRef.current = drag
     setArchControlDrag(drag)
     setFocusedAnnotationId(annotation.id)
@@ -2682,21 +2660,15 @@ export default function OperationsBlueprintPdfViewer({
     const acDrag = archControlDragRef.current
     if (acDrag && acDrag.pointerId === e.pointerId && overlayRef.current) {
       const overlayRect = overlayRef.current.getBoundingClientRect()
+      // Store the cursor position directly as a freeform 2D control point in page-normalized space.
+      // No projection — the user has full X and Y freedom to set depth and angle simultaneously.
       const nhx = (e.clientX - overlayRect.left) / Math.max(1, overlayRect.width)
       const nhy = (e.clientY - overlayRect.top) / Math.max(1, overlayRect.height)
-      const mx = (acDrag.p1x + acDrag.p2x) / 2
-      const my = (acDrag.p1y + acDrag.p2y) / 2
-      const perpDx = acDrag.p2y - acDrag.p1y
-      const perpDy = acDrag.p1x - acDrag.p2x
-      const perpLen2 = perpDx * perpDx + perpDy * perpDy
-      if (perpLen2 > 1e-8) {
-        const newFactor = ((nhx - mx) * perpDx + (nhy - my) * perpDy) / perpLen2
-        setAllAnnotations((prev) => prev.map((ann) => {
-          if (ann.id !== acDrag.annotationId) return ann
-          const m = getAnnotationMeta(ann)
-          return withAnnotationMeta({ ...ann, updatedAt: new Date().toISOString() }, { ...m, archFactor: Math.max(-3, Math.min(3, newFactor)) }) as BlueprintAnnotation
-        }))
-      }
+      setAllAnnotations((prev) => prev.map((ann) => {
+        if (ann.id !== acDrag.annotationId) return ann
+        const m = getAnnotationMeta(ann)
+        return withAnnotationMeta({ ...ann, updatedAt: new Date().toISOString() }, { ...m, archCtrlX: nhx, archCtrlY: nhy }) as BlueprintAnnotation
+      }))
       e.preventDefault()
       e.stopPropagation()
       return
@@ -2970,7 +2942,20 @@ export default function OperationsBlueprintPdfViewer({
             lineX2: (normEnd.x - rawNorm.x) / bw,
             lineY2: (normEnd.y - rawNorm.y) / bh,
           }
-          return shapeKind === 'arch-line' ? { ...base, archFactor: 0.5 } : base
+          if (shapeKind === 'arch-line') {
+            // Compute default freeform control point from archFactor=0.5 on perpendicular bisector.
+            // Store as absolute page-normalized coords so first drag just continues from the handle position.
+            const defaultFactor = 0.5
+            const abs1x = rawNorm.x + base.lineX1 * bw
+            const abs1y = rawNorm.y + base.lineY1 * bh
+            const abs2x = rawNorm.x + base.lineX2 * bw
+            const abs2y = rawNorm.y + base.lineY2 * bh
+            const amx = (abs1x + abs2x) / 2, amy = (abs1y + abs2y) / 2
+            const archCtrlX = amx + defaultFactor * (abs2y - abs1y)
+            const archCtrlY = amy + defaultFactor * (abs1x - abs2x)
+            return { ...base, archFactor: defaultFactor, archCtrlX, archCtrlY }
+          }
+          return base
         })()
       : {}
 
@@ -4507,12 +4492,22 @@ export default function OperationsBlueprintPdfViewer({
                           if (kind === 'arch-line') {
                             const alx1f = meta.lineX1 ?? 0, aly1f = meta.lineY1 ?? 0
                             const alx2f = meta.lineX2 ?? 1, aly2f = meta.lineY2 ?? 1
-                            const archFactor = meta.archFactor ?? 0.5
                             const avx1 = alx1f * 100, avy1 = aly1f * 100
                             const avx2 = alx2f * 100, avy2 = aly2f * 100
-                            const avmx = (avx1 + avx2) / 2, avmy = (avy1 + avy2) / 2
-                            const avcx = avmx + archFactor * (avy2 - avy1)
-                            const avcy = avmy + archFactor * (avx1 - avx2)
+                            // Freeform control point: stored as absolute page-normalized coords (archCtrlX/Y).
+                            // Legacy fallback: derive control point from archFactor scalar on perpendicular bisector.
+                            let avcx: number, avcy: number
+                            if (meta.archCtrlX !== undefined && meta.archCtrlY !== undefined) {
+                              // Convert page-normalized control point → annotation-local viewBox (0-100) coords
+                              const arect = a.rect || { x: 0, y: 0, w: 0.0001, h: 0.0001 }
+                              avcx = ((meta.archCtrlX - arect.x) / Math.max(arect.w, 0.0001)) * 100
+                              avcy = ((meta.archCtrlY - arect.y) / Math.max(arect.h, 0.0001)) * 100
+                            } else {
+                              const archFactor = meta.archFactor ?? 0.5
+                              const avmx = (avx1 + avx2) / 2, avmy = (avy1 + avy2) / 2
+                              avcx = avmx + archFactor * (avy2 - avy1)
+                              avcy = avmy + archFactor * (avx1 - avx2)
+                            }
                             const alx1css = `${alx1f * 100}%`, aly1css = `${aly1f * 100}%`
                             const alx2css = `${alx2f * 100}%`, aly2css = `${aly2f * 100}%`
                             return (
@@ -4879,22 +4874,30 @@ export default function OperationsBlueprintPdfViewer({
                         const archMeta = getAnnotationMeta(archAnn)
                         if (archMeta.shapeKind !== 'arch-line') return null
                         const archRect = archAnn.rect || { x: 0, y: 0, w: 0.1, h: 0.1 }
-                        const alx1 = archMeta.lineX1 ?? 0, aly1 = archMeta.lineY1 ?? 0
-                        const alx2 = archMeta.lineX2 ?? 1, aly2 = archMeta.lineY2 ?? 1
-                        const archFactor = archMeta.archFactor ?? 0.5
-                        const ap1x = archRect.x + alx1 * (archRect.w || 0)
-                        const ap1y = archRect.y + aly1 * (archRect.h || 0)
-                        const ap2x = archRect.x + alx2 * (archRect.w || 0)
-                        const ap2y = archRect.y + aly2 * (archRect.h || 0)
-                        const amx = (ap1x + ap2x) / 2, amy = (ap1y + ap2y) / 2
-                        const acx = amx + archFactor * (ap2y - ap1y)
-                        const acy = amy + archFactor * (ap1x - ap2x)
+                        // Freeform control point position: use stored archCtrlX/Y (page-normalized) if available,
+                        // otherwise derive from legacy archFactor perpendicular bisector scalar.
+                        let acx: number, acy: number
+                        if (archMeta.archCtrlX !== undefined && archMeta.archCtrlY !== undefined) {
+                          acx = archMeta.archCtrlX
+                          acy = archMeta.archCtrlY
+                        } else {
+                          const alx1 = archMeta.lineX1 ?? 0, aly1 = archMeta.lineY1 ?? 0
+                          const alx2 = archMeta.lineX2 ?? 1, aly2 = archMeta.lineY2 ?? 1
+                          const archFactor = archMeta.archFactor ?? 0.5
+                          const ap1x = archRect.x + alx1 * (archRect.w || 0)
+                          const ap1y = archRect.y + aly1 * (archRect.h || 0)
+                          const ap2x = archRect.x + alx2 * (archRect.w || 0)
+                          const ap2y = archRect.y + aly2 * (archRect.h || 0)
+                          const amx = (ap1x + ap2x) / 2, amy = (ap1y + ap2y) / 2
+                          acx = amx + archFactor * (ap2y - ap1y)
+                          acy = amy + archFactor * (ap1x - ap2x)
+                        }
                         return (
                           <div
                             key="arch-control-handle"
                             style={{ position: 'absolute', left: `${acx * 100}%`, top: `${acy * 100}%`, transform: 'translate(-50%,-50%)', zIndex: 4, touchAction: 'none' }}
                             className="w-3 h-3 rounded-full bg-yellow-400 border border-white shadow cursor-move"
-                            title="Drag to adjust arch curve"
+                            title="Drag to adjust arch curve depth and angle"
                             onPointerDown={(e) => { e.stopPropagation(); startArchControlDrag(e, archAnn) }}
                           />
                         )

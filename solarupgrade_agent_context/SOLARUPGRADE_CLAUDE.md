@@ -1661,3 +1661,65 @@ NO — ready for screenshot QA.
 
 * Compact handoff:
   Round 4 complete on main branch. Arch-line renders from stored endpoints + archFactor; yellow control handle at overlay level for live curve adjustment; endpoint handles same as line/arrow. Diamond/star/cross/pentagon render as correct SVG polygons. Arch placement uses point-to-point flow with live bezier preview. Typecheck clean.
+
+---
+
+## Claude Report — PDF Blueprint Repair Round 5: Freeform Arch Line Curve Control
+
+* Task completed: Yes
+* Files changed: src/components/blueprint/OperationsBlueprintPdfViewer.tsx, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+* Commit hash: (see final git commit output)
+* Typecheck result: PASS — only pre-existing V15rAppBrainScene.tsx Three.js type errors (unrelated)
+
+* Root cause:
+  The arch control drag handler computed `newFactor = ((nhx-mx)*perpDx + (nhy-my)*perpDy) / perpLen2` — a dot-product projection of the cursor position onto the perpendicular bisector of the line p1→p2. This collapsed 2D mouse movement to 1D along one specific direction. The control point was mathematically forced to slide along the perpendicular to the line midpoint, with no freedom to move in the line's own direction (and thus no way to change arch angle/direction, only depth).
+
+* What changed:
+  1. archControlDrag state + archControlDragRef type: Simplified from {annotationId, pointerId, startArchFactor, p1x, p1y, p2x, p2y} to {annotationId, pointerId} only. The endpoint positions and archFactor are no longer needed in the drag context.
+  2. startArchControlDrag: Removed all endpoint/archFactor computation. Just builds {annotationId, pointerId}, sets pointer capture, done.
+  3. handlePointerMove arch control block: Removed the entire perpendicular projection calculation (mx/my/perpDx/perpDy/perpLen2/newFactor). Replaced with: store nhx (e.clientX normalized to overlay) and nhy directly as archCtrlX/Y in the annotation meta. Fully 2D, no constraints.
+  4. Arch-line renderer: Added freeform branch — if meta.archCtrlX/archCtrlY are present, convert from page-normalized space to annotation-local viewBox coords: avcx = ((archCtrlX - rect.x) / rect.w) * 100, avcy = ((archCtrlY - rect.y) / rect.h) * 100. Legacy fallback: archFactor scalar formula unchanged.
+  5. Arch control handle overlay: Added freeform branch — if archCtrlX/Y stored, use them directly as handle position (% of overlay). Legacy fallback: archFactor formula unchanged. Updated tooltip to "Drag to adjust arch curve depth and angle".
+  6. lineDirectionMeta at placement: For arch-line, computes archCtrlX/Y from the default archFactor=0.5 on the perpendicular bisector, then stores both archFactor (legacy compat) and archCtrlX/Y (freeform). New annotations are immediately in freeform mode from first drag.
+
+* Double verification against requested behavior:
+  - [x] Arch Line shows start endpoint handle (blue) — unchanged from Round 4
+  - [x] Arch Line shows end endpoint handle (green) — unchanged from Round 4
+  - [x] Arch Line shows curve/control handle (yellow) — overlay-level, unchanged position logic upgraded
+  - [x] start endpoint drag works — startAnnotationEndpointDrag untouched
+  - [x] end endpoint drag works — startAnnotationEndpointDrag untouched
+  - [x] curve/control handle can move freely in 2D — new: nhx/nhy stored directly, no projection
+  - [x] curve/control handle changes both depth and angle/direction — confirmed by formula: control point can be anywhere on the page
+  - [x] curve persists after reload — archCtrlX/Y saved via existing persistAnnotation path; sanitizer passes meta as-is
+  - [x] whole-arch move still works — startAnnotationLayoutDrag 'move' overlay unchanged
+  - [x] regular Line still works — no changes to line/arrow branch
+  - [x] shape rendering still works — no changes to diamond/star/cross/pentagon branch
+  - [x] can lights still work — no changes to can-light branch
+  - [x] opacity still works — no changes to opacity handling
+  - [x] document/page persistence still works — no changes to page/document selection
+  - [x] legacy arch-lines (archFactor only, no archCtrlX/Y) still render correctly — archFactor fallback path preserved in both renderer and handle overlay
+  - [x] text highlighter was intentionally not changed
+  - [x] no unrelated files were touched (only OperationsBlueprintPdfViewer.tsx + context files)
+
+* What was learned:
+  - The "constrained to one axis" UX bug was a single math choice (dot-product projection vs. direct position store). The fix is trivially simpler than the bug.
+  - Page-normalized space (0-1 of overlay) is the natural coordinate system for cross-element handles. The renderer must convert to annotation-local viewBox coords ((ctrlX - rect.x) / rect.w * 100).
+  - Storing archCtrlX/Y at placement time (not just on first drag) ensures the handle always starts at a sensible position and there's no UX jump on first drag.
+  - The archFactor legacy field can be kept indefinitely as a fallback — it costs nothing and protects old annotations.
+
+* Learned skills / reusable patterns:
+  - Freeform 2D handle drag: store cursor position in page-normalized space (nhx/nhy) directly into metadata. No projection. Works for any bezier control point or free anchor.
+  - Page-normalized → annotation-viewBox conversion: ((absCoord - rect.origin) / rect.size) * 100. Inverse: absCoord = rect.origin + (viewBoxCoord / 100) * rect.size.
+  - Overlay-level handle positioning: (acx * 100)% and (acy * 100)% where acx/acy are page-normalized. Works even when the handle is far outside the annotation bounding box.
+
+* Bugs / risks:
+  - When an endpoint is dragged (rect changes), archCtrlX/Y stays fixed in page space. This is intentional — the control point doesn't move when you move endpoints. The bezier shape adapts naturally. If user feedback prefers the control point to track the midpoint after endpoint moves, that would require recomputing archCtrlX/Y in the endpoint drag path.
+  - Manual browser QA still needed — static review only.
+
+* Manual QA performed: Static code review only. No browser QA available in this session.
+
+* Next recommended action:
+  Manual QA: place an arch-line, select it, drag the yellow handle up/down/left/right and diagonally. Confirm the curve changes depth AND angle/direction freely. Reload and confirm the shape persists. Drag a start or end endpoint and confirm the control handle stays in place. Confirm legacy arch-lines (if any) still render. Check regular lines, can-lights, shapes, opacity, document/page persistence are unaffected.
+
+* Compact handoff for next agent/chat:
+  Round 5 complete on main branch. Arch-line control handle is now fully freeform 2D — stores archCtrlX/Y (page-normalized absolute coords) on drag, no perpendicular-bisector projection. Renderer converts page-normalized to annotation-local viewBox: ((archCtrlX - rect.x) / rect.w) * 100. Legacy archFactor fallback preserved. New placements store archCtrlX/Y immediately. archControlDrag state simplified to {annotationId, pointerId}. Typecheck clean.
