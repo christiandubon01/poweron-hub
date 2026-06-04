@@ -764,6 +764,11 @@ export default function OperationsBlueprintPdfViewer({
   // Tracks which pages have already been scanned so we don't repeat work.
   const scannedPagesRef = useRef<Set<number>>(new Set())
 
+  // Normalized PDF text item positions keyed by page number — used for text-aware textHighlight quads
+  type TextItemNorm = { x: number; y: number; w: number; h: number }
+  const [textItemsCache, setTextItemsCache] = useState<Record<number, TextItemNorm[]>>({})
+  const textItemsCacheRef = useRef<Record<number, TextItemNorm[]>>({})
+
   // Ã¢â€â‚¬Ã¢â€â‚¬ Derived calibration for current page Ã¢â‚¬â€ precedence: manual > auto > none Ã¢â€â‚¬
   const savedCalibration: CalibrationData | null = savedCalibrations[currentPage] ?? null
   const detectedResult: DetectedScaleResult | null = detectedScales[currentPage] ?? null
@@ -835,6 +840,15 @@ export default function OperationsBlueprintPdfViewer({
   const [inkDraft, setInkDraft] = useState<Array<{ x: number; y: number }> | null>(null)
   const inkDraftRef = useRef<Array<{ x: number; y: number }> | null>(null)
   const [layoutDrag, setLayoutDrag] = useState<{
+    annotationId: string
+    mode: 'move' | 'resize'
+    pointerId: number
+    startClientX: number
+    startClientY: number
+    startBox: { x: number; y: number; w: number; h: number }
+  } | null>(null)
+  // Ref mirror so handleAnnotationLayoutPointerMove reads the latest value before React batches the setState
+  const layoutDragRef = useRef<{
     annotationId: string
     mode: 'move' | 'resize'
     pointerId: number
@@ -1694,11 +1708,35 @@ export default function OperationsBlueprintPdfViewer({
     void (async () => {
       try {
         const page = await pdfDoc.getPage(currentPage)
-        const pageWidthPts: number = page.view?.[2] ?? 612
+        const pageW: number = page.view?.[2] ?? 612
+        const pageH: number = page.view?.[3] ?? 792
         const textContent = await page.getTextContent()
-        const items: string[] = (textContent.items || []).map((it: any) => it.str || '')
-        const result = detectBlueprintScaleText(items, pageWidthPts, currentPage)
+        const rawItems: any[] = textContent.items || []
+        const strItems: string[] = rawItems.map((it: any) => it.str || '')
+        const result = detectBlueprintScaleText(strItems, pageW, currentPage)
         if (result) setDetectedScales(prev => ({ ...prev, [currentPage]: result }))
+
+        // Cache normalized text item positions for text-aware textHighlight quads.
+        // PDF coordinate system: origin bottom-left, Y-axis UP → flip to screen space (Y down).
+        const normItems = rawItems
+          .filter((it: any) => it.str?.trim())
+          .map((it: any) => {
+            const tx: number = it.transform?.[4] ?? 0
+            const ty: number = it.transform?.[5] ?? 0
+            const iw: number = Math.abs(it.width ?? 0)
+            // Font height: use the font size from the transform matrix (|transform[3]|) with a fallback
+            const ih: number = Math.abs(it.transform?.[3] ?? 12)
+            // PDF Y is the baseline; convert to top-left screen coords
+            return {
+              x: tx / Math.max(1, pageW),
+              y: 1 - (ty + ih) / Math.max(1, pageH),
+              w: iw / Math.max(1, pageW),
+              h: ih / Math.max(1, pageH),
+            }
+          })
+          .filter((it: any) => it.w > 0.001 && it.h > 0.001)
+        textItemsCacheRef.current[currentPage] = normItems
+        setTextItemsCache(prev => ({ ...prev, [currentPage]: normItems }))
       } catch {}
     })()
   }, [pdfDoc, currentPage])
@@ -1979,7 +2017,7 @@ export default function OperationsBlueprintPdfViewer({
     const safeBox = clampRectToPage(box)
     setAllAnnotations((prev) => prev.map((ann) => {
       if (ann.id !== annotationId) return ann
-      if (ann.type === 'textBox' || ann.type === 'highlight' || ann.type === 'underline' || ann.type === 'shape') {
+      if (ann.type === 'textBox' || ann.type === 'highlight' || ann.type === 'textHighlight' || ann.type === 'underline' || ann.type === 'shape') {
         return { ...ann, rect: safeBox, updatedAt: new Date().toISOString() } as BlueprintAnnotation
       }
       return withAnnotationMeta({ ...ann, updatedAt: new Date().toISOString() }, { box: safeBox }) as BlueprintAnnotation
@@ -1997,14 +2035,19 @@ export default function OperationsBlueprintPdfViewer({
     const box = clampRectToPage(meta.box || annotation.rect || { x: 0.02, y: 0.02, w: DEFAULT_TEXT_BOX.w, h: DEFAULT_TEXT_BOX.h })
     setFocusedAnnotationId(annotation.id)
     setLayoutEditId(annotation.id)
-    setLayoutDrag({
+    const drag = {
       annotationId: annotation.id,
       mode,
       pointerId: e.pointerId,
       startClientX: e.clientX,
       startClientY: e.clientY,
       startBox: box,
-    })
+    }
+    // Write ref synchronously — the first pointermove fires before React batches setLayoutDrag
+    layoutDragRef.current = drag
+    setLayoutDrag(drag)
+    // Capture to overlay so pointermove/up events keep routing even if pointer leaves the handle
+    try { overlayRef.current?.setPointerCapture?.(e.pointerId) } catch { }
     try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
     e.preventDefault()
     e.stopPropagation()
@@ -2012,22 +2055,26 @@ export default function OperationsBlueprintPdfViewer({
 
 
   const handleAnnotationLayoutPointerMove = useCallback((e: React.PointerEvent<HTMLElement>) => {
-    if (!layoutDrag || layoutDrag.pointerId !== e.pointerId || !overlayRef.current) return
+    // Use the ref mirror to avoid stale-closure miss on the first pointermove after setLayoutDrag
+    const drag = layoutDragRef.current || layoutDrag
+    if (!drag || drag.pointerId !== e.pointerId || !overlayRef.current) return
     const rect = overlayRef.current.getBoundingClientRect()
-    const dx = (e.clientX - layoutDrag.startClientX) / Math.max(1, rect.width)
-    const dy = (e.clientY - layoutDrag.startClientY) / Math.max(1, rect.height)
-    const start = layoutDrag.startBox
-    const next = layoutDrag.mode === 'resize'
+    const dx = (e.clientX - drag.startClientX) / Math.max(1, rect.width)
+    const dy = (e.clientY - drag.startClientY) / Math.max(1, rect.height)
+    const start = drag.startBox
+    const next = drag.mode === 'resize'
       ? { ...start, w: start.w + dx, h: start.h + dy }
       : { ...start, x: start.x + dx, y: start.y + dy }
-    updateAnnotationLayout(layoutDrag.annotationId, next)
+    updateAnnotationLayout(drag.annotationId, next)
     e.preventDefault()
     e.stopPropagation()
   }, [layoutDrag, updateAnnotationLayout])
 
   const handleAnnotationLayoutPointerUp = useCallback((e: React.PointerEvent<HTMLElement>) => {
-    if (!layoutDrag || layoutDrag.pointerId !== e.pointerId) return
-    const id = layoutDrag.annotationId
+    const drag = layoutDragRef.current || layoutDrag
+    if (!drag || drag.pointerId !== e.pointerId) return
+    const id = drag.annotationId
+    layoutDragRef.current = null
     setLayoutDrag(null)
     void commitAnnotationLayout(id)
     e.preventDefault()
@@ -2653,12 +2700,48 @@ export default function OperationsBlueprintPdfViewer({
 
     const now = new Date().toISOString()
     const type = effectiveTool === 'underline' ? 'underline' : effectiveTool === 'shape' ? 'shape' : effectiveTool === 'textHighlight' ? 'textHighlight' : 'highlight'
+
+    // For line/arrow shapes: store normalized start/end within the bounding box so the renderer
+    // can draw the correct direction regardless of which corner the user dragged from.
+    const lineDirectionMeta = (effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow'))
+      ? (() => {
+          const normStart = toNorm(activeDragStart.x, activeDragStart.y, rect.width, rect.height)
+          const normEnd = toNorm(x, y, rect.width, rect.height)
+          const bw = Math.max(rawNorm.w, 0.0001)
+          const bh = Math.max(rawNorm.h, 0.0001)
+          return {
+            lineX1: (normStart.x - rawNorm.x) / bw,
+            lineY1: (normStart.y - rawNorm.y) / bh,
+            lineX2: (normEnd.x - rawNorm.x) / bw,
+            lineY2: (normEnd.y - rawNorm.y) / bh,
+          }
+        })()
+      : {}
+
+    // For textHighlight: intersect cached PDF text items with the drag rect and store as relative quads
+    const textHighlightItems = (effectiveTool === 'textHighlight')
+      ? (textItemsCacheRef.current[currentPage] || []).filter((it) =>
+          it.x < rawNorm.x + rawNorm.w &&
+          it.x + it.w > rawNorm.x &&
+          it.y < rawNorm.y + rawNorm.h &&
+          it.y + it.h > rawNorm.y
+        )
+      : []
+    const textHighlightQuads = textHighlightItems.length > 0
+      ? textHighlightItems.map((it) => ({
+          x: (it.x - rawNorm.x) / Math.max(rawNorm.w, 0.0001),
+          y: (it.y - rawNorm.y) / Math.max(rawNorm.h, 0.0001),
+          w: it.w / Math.max(rawNorm.w, 0.0001),
+          h: it.h / Math.max(rawNorm.h, 0.0001),
+        }))
+      : null
+
     const meta = effectiveTool === 'shape'
-      ? { shapeKind, ...shapeOptions }
+      ? { shapeKind, ...shapeOptions, ...lineDirectionMeta }
       : effectiveTool === 'underline'
         ? { thickness: drawOptions.thickness, opacity: drawOptions.opacity }
         : effectiveTool === 'textHighlight'
-          ? { opacity: 0.4 }
+          ? { opacity: 0.4, ...(textHighlightQuads ? { quads: textHighlightQuads } : {}) }
           : { opacity: 0.35 }
     const ann: BlueprintAnnotation = {
       id: `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -2807,6 +2890,8 @@ export default function OperationsBlueprintPdfViewer({
       { ...editingAnnotation, updatedAt: new Date().toISOString() },
       { ...getAnnotationMeta(editingAnnotation), ...metaChanges }
     )
+    // Optimistic local update so stepper changes appear instantly without waiting for persist
+    setAllAnnotations((prev) => prev.map((ann) => ann.id === editingAnnotation.id ? updated as BlueprintAnnotation : ann))
     void persistAnnotation(updated)
   }
 
@@ -4131,6 +4216,12 @@ export default function OperationsBlueprintPdfViewer({
                           const fillOpacity = meta.fillOpacity ?? 0.22
                           const hatchPattern = meta.hatchPattern || 'none'
                           if (kind === 'line' || kind === 'arrow') {
+                            // Use stored relative endpoints (0–1 within bounding box) for correct direction.
+                            // Fallback to TL→BR (0%,0%→100%,100%) for legacy annotations without stored coords.
+                            const lx1 = meta.lineX1 != null ? `${meta.lineX1 * 100}%` : '0%'
+                            const ly1 = meta.lineY1 != null ? `${meta.lineY1 * 100}%` : '0%'
+                            const lx2 = meta.lineX2 != null ? `${meta.lineX2 * 100}%` : '100%'
+                            const ly2 = meta.lineY2 != null ? `${meta.lineY2 * 100}%` : '100%'
                             return (
                               <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height, opacity: fillOpacity }} onClick={selectAnnotation}>
                                 <svg className="absolute inset-0 overflow-visible" width="100%" height="100%" preserveAspectRatio="none">
@@ -4139,7 +4230,7 @@ export default function OperationsBlueprintPdfViewer({
                                       <path d="M0,0 L8,4 L0,8 z" fill={borderColor} />
                                     </marker>
                                   </defs>
-                                  <line x1="0" y1="0" x2="100%" y2="100%" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} markerEnd={kind === 'arrow' ? `url(#arrow-${a.id})` : undefined} />
+                                  <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} markerEnd={kind === 'arrow' ? `url(#arrow-${a.id})` : undefined} />
                                 </svg>
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
@@ -4180,8 +4271,8 @@ export default function OperationsBlueprintPdfViewer({
                                   <line x1="4" y1="50" x2="96" y2="50" stroke={borderColor} strokeWidth={Math.max(0.8, borderThickness * 0.55)} opacity={fillOpacity * 0.65} />
                                   {/* Crosshair — vertical */}
                                   <line x1="50" y1="4" x2="50" y2="96" stroke={borderColor} strokeWidth={Math.max(0.8, borderThickness * 0.55)} opacity={fillOpacity * 0.65} />
-                                  {/* Aperture circle — filled lightly, sized by can diameter */}
-                                  <circle cx="50" cy="50" r={aperture} fill={hexWithAlpha(borderColor, 0.10)} stroke={borderColor} strokeWidth={borderThickness} opacity={fillOpacity} />
+                                  {/* Aperture circle — filled by fillColor so the color swatch is reflected */}
+                                  <circle cx="50" cy="50" r={aperture} fill={fillColor === 'transparent' ? 'none' : hexWithAlpha(fillColor, 0.6)} stroke={borderColor} strokeWidth={borderThickness} opacity={fillOpacity} />
                                   {/* Size label centered inside aperture */}
                                   <text x="50" y="55" textAnchor="middle" fontSize="16" fontWeight="700" fontFamily="monospace" fill={borderColor} opacity={fillOpacity}>{label}</text>
                                 </svg>
@@ -4356,6 +4447,30 @@ export default function OperationsBlueprintPdfViewer({
                           // Text Highlighter: no border, pure fill Ã¢â‚¬â€ looks like a text marker pen.
                           // Text Highlighter: narrow centered band (72% of bounding-box height) so it
                           // sits across the text baseline rather than covering the full drag rectangle.
+                          const hlColor = hexWithAlpha(color, meta.opacity ?? 0.4)
+                          const quads: Array<{ x: number; y: number; w: number; h: number }> | null =
+                            Array.isArray(meta.quads) && meta.quads.length > 0 ? meta.quads : null
+                          if (quads) {
+                            return (
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
+                                {quads.map((q, qi) => (
+                                  <div
+                                    key={qi}
+                                    className="absolute pointer-events-none rounded-sm"
+                                    style={{
+                                      left: `${Math.max(0, q.x) * 100}%`,
+                                      top: `${Math.max(0, q.y) * 100}%`,
+                                      width: `${Math.min(1 - Math.max(0, q.x), q.w) * 100}%`,
+                                      height: `${Math.min(1 - Math.max(0, q.y), q.h) * 100}%`,
+                                      backgroundColor: hlColor,
+                                    }}
+                                  />
+                                ))}
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
+                              </div>
+                            )
+                          }
                           return (
                             <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
                               <div
@@ -4365,7 +4480,7 @@ export default function OperationsBlueprintPdfViewer({
                                   right: 0,
                                   top: '14%',
                                   bottom: '14%',
-                                  backgroundColor: hexWithAlpha(color, meta.opacity ?? 0.4),
+                                  backgroundColor: hlColor,
                                 }}
                               />
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}

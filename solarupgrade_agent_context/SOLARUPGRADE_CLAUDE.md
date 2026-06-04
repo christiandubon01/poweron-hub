@@ -1507,3 +1507,25 @@ NO — ready for screenshot QA.
 - **Manual QA performed:** Typecheck verified clean. Code inspection confirms all branches: ShapeKind type, dropdown, draft preview (border-radius + background), SVG renderer, textHighlight band. Runtime QA to be confirmed by user on localhost.
 - **Next recommended action:** User to manually QA: (1) select "Can Light 4"" from shape picker, drag on a PDF page, confirm circle + crosshair + "4"" label renders; (2) do the same for 6"; (3) reload and confirm both markers persist; (4) use textHighlight tool, confirm band is narrower than full height; (5) confirm regular highlight is unchanged.
 - **Compact handoff for next agent/chat:** PDF Blueprint Phase 2 complete (commit bd38574). Can-light markers: `ShapeKind` `'can-light-4'` and `'can-light-6'`, rendered as SVG trim ring + crosshair + aperture circle + label. Aperture r=20 (4") vs r=26 (6"). No new annotation types — uses existing `shape` flow, sanitizer already covers it. `textHighlight` now renders a 72% centered band (top/bottom 14% insets) instead of full-height fill. Only `OperationsBlueprintPdfViewer.tsx` touched. Typecheck clean.
+
+
+---
+
+## Claude Report - PDF Blueprint Phase 3 - Shape/Highlight/Move/Opacity/Fill Repairs
+
+- **Task completed:** Yes
+- **Files changed:** ToolPopover.tsx + OperationsBlueprintPdfViewer.tsx
+- **Typecheck result:** Clean (0 errors)
+- **Root causes fixed:**
+  1. OS select/option renders with white system background on Windows regardless of CSS. Solution: custom div dropdown with dark background.
+  2. Can-light aperture circle used borderColor instead of fillColor variable.
+  3. handleAnnotationLayoutPointerMove stale closure: setLayoutDrag is async; first pointermove fires before React flush. Solution: layoutDragRef written synchronously in startAnnotationLayoutDrag.
+  4. Line bounding box stores min-corner origin; direction info lost. Solution: store lineX1/Y1/X2/Y2 as relative 0-1 fracs within bounding box at placement time.
+  5. persistEditAnnotationMeta called Supabase upsert on every stepper click with no local update first. Solution: optimistic setAllAnnotations before void persistAnnotation.
+  6. PDF text items have transform[4]/[5] position, width, |transform[3]| font height. Cache per-page, intersect with drag rect, store quads as relative percentages within annotation bounding box.
+- **What was learned:**
+  - layoutDragRef mirror pattern: whenever a React state value is needed synchronously in an event handler before the batch flushes, mirror it to a ref at the same site as setState.
+  - PDF Y-flip: text item Y is bottom-left origin. Screen Y is top-left. Normalized screen y = 1 - (ty + ih) / pageH.
+  - Garbled UTF-8 comments (Ã¢â‚¬â€) in old_string will cause Edit tool mismatch even when surrounding code is correct. Safe pattern: anchor old_string only on pure-ASCII code lines, skip the garbled comment lines entirely.
+- **Bugs / risks:** None introduced. textHighlight quad rendering falls back gracefully when PDF has no text items (scanned images). Legacy line/arrow annotations without lineX1/Y1/X2/Y2 render with TL-to-BR fallback (same as before fix).
+- **Compact handoff for next agent/chat:** PDF Blueprint Phase 3 complete. ToolPopover.tsx LabeledSelect is now a dark custom dropdown. OperationsBlueprintPdfViewer.tsx: can-light aperture uses fillColor, layoutDragRef stale-closure fix enables annotation dragging, lines store direction metadata, opacity stepper is instant, textHighlight generates per-word quads from cached PDF text items. Typecheck clean.

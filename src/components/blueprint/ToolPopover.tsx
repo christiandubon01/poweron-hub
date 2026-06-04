@@ -134,6 +134,10 @@ export function Stepper({ label, value, onChange, min, max, step, unit = '' }: S
 }
 
 // ─── LabeledSelect ────────────────────────────────────────────────────────────
+// Custom dark-safe dropdown — native <select>/<option> renders with OS-default
+// light background on Windows/Chrome regardless of CSS applied to the element.
+// This custom implementation uses a button + absolute div list so all options
+// are visible on dark backgrounds without browser theming surprises.
 interface LabeledSelectOption {
   label: string
   value: string
@@ -147,27 +151,104 @@ interface LabeledSelectProps {
 }
 
 export function LabeledSelect({ label, value, onChange, options }: LabeledSelectProps) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const selected = options.find((o) => o.value === value)
+
+  // Close when clicking outside
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  // Close on Escape
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [open])
+
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1" ref={containerRef} style={{ position: 'relative' }}>
       <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>{label}</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
         style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
           background: 'rgba(255,255,255,0.06)',
-          border: '1px solid rgba(255,255,255,0.12)',
+          border: open ? '1px solid rgba(96,165,250,0.5)' : '1px solid rgba(255,255,255,0.12)',
           borderRadius: 6,
           color: 'rgba(255,255,255,0.9)',
           fontSize: 12,
-          padding: '4px 8px',
+          padding: '5px 8px',
+          width: '100%',
+          cursor: 'pointer',
+          gap: 6,
         }}
       >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+        <span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected?.label ?? value}
+        </span>
+        <ChevronDown size={10} style={{ flexShrink: 0, opacity: 0.6, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            right: 0,
+            zIndex: 200,
+            background: '#1a1d27',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: 6,
+            overflow: 'hidden',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+            marginTop: 2,
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          {options.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              onClick={() => { onChange(o.value); setOpen(false) }}
+              style={{
+                display: 'block',
+                width: '100%',
+                textAlign: 'left',
+                padding: '7px 10px',
+                fontSize: 12,
+                color: o.value === value ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.85)',
+                background: o.value === value ? 'rgba(59,130,246,0.15)' : 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                transition: 'background 0.1s',
+              }}
+              onMouseEnter={(e) => {
+                if (o.value !== value) e.currentTarget.style.background = 'rgba(255,255,255,0.07)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = o.value === value ? 'rgba(59,130,246,0.15)' : 'transparent'
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

@@ -3962,3 +3962,25 @@ EVR and 8-week chart control layout polish complete. In `V15rDashboard.tsx`, bot
 **Typecheck:** Clean (0 errors)
 
 **Next:** Manual QA — place 4" and 6" can-lights; confirm visual distinction; reload and confirm persistence; use textHighlight and confirm band look.
+
+
+---
+
+## PDF Blueprint Phase 3 - Shape/Highlight/Move/Opacity/Fill Repairs (2026-06-03)
+
+**Files changed:**
+- `src/components/blueprint/ToolPopover.tsx`
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+
+**Six issues fixed:**
+
+1. LabeledSelect dropdown unreadable (Fix 1): Native OS select replaced with custom dark-navy div dropdown.
+2. Can-light aperture fill not reflected (Fix 2): Aperture circle now uses fillColor instead of borderColor.
+3. Placed annotations cannot be dragged/moved (Fix 3): Stale closure fixed via layoutDragRef mirror. Handlers use layoutDragRef.current || layoutDrag. overlayRef setPointerCapture added. textHighlight added to rect-update branch.
+4. Line direction wrong for non-TL-to-BR drags (Fix 4): Stores lineX1/Y1/X2/Y2 as relative 0-1 within bounding box at creation. Renderer uses stored coords with 0%/0% to 100%/100% fallback.
+5. Opacity adjustment laggy (Fix 5): persistEditAnnotationMeta now optimistically calls setAllAnnotations before async persistAnnotation.
+6. Text highlighter creates large rectangle (Fix 6): textItemsCache + textItemsCacheRef added. getTextContent effect caches normalized PDF text item positions per page (PDF Y-flip applied). On textHighlight drag end, quads stored as relative percentages within bounding box. Renderer renders per-word strips when quads present; else 72% centered band fallback.
+
+**Typecheck:** Clean (0 errors)
+
+**Next:** Manual QA - test all 6 fixes in browser.
