@@ -4135,3 +4135,49 @@ Run `npm.cmd run typecheck` locally, then manually open App Brain as admin owner
 
 COMPACT HANDOFF FOR NEXT CHAT:
 App Brain Phase 2 is implemented as a scoped Three.js MVP. `appBrainMap.ts` holds typed static architecture nodes/edges; `V15rAppBrainScene.tsx` owns renderer lifecycle, glowing nodes, animated connection pulses, raycaster hover/click, resize, and cleanup; `V15rAppBrainTab.tsx` owns the shell, status cards, legend, inspector, and static-MVP roadmap copy. No packages changed. Typecheck attempted but blocked by no-exit-status shell behavior.
+
+---
+
+## Shared Update - Admin App Brain Phase 3 Intelligence Layer
+
+AGENT:
+Cursor GPT-5.5
+
+BRANCH:
+main
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report.
+
+FILES CHANGED:
+- `src/components/v15r/V15rAppBrainTab.tsx`
+- `src/components/v15r/V15rAppBrainScene.tsx`
+- `src/components/v15r/appBrainMap.ts`
+- `src/components/v15r/appBrainFilters.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WHAT CHANGED:
+- Expanded App Brain static architecture data with owner area, connected systems, safe edit guidance, overlap warnings, and next useful phase notes.
+- Added search, category filter, risk filter, and low-risk show/hide controls.
+- Added filtered node counts, System Map Summary, Agent Safety, and a richer Brain Inspector.
+- Updated the Three.js scene so filtered-out nodes dim visually and are excluded from hover/click hit testing.
+
+WHAT WAS LEARNED:
+- Scene filtering can be handled with visible-node refs without recreating the Three.js renderer.
+- `appBrainMap.ts` is the current manual intelligence boundary until generated repo manifests are scoped.
+- Agent safety copy should remain explicit that live git/commit and overlap detection are future phases.
+
+TYPECHECK RESULT:
+BLOCKED - attempted `npm.cmd run typecheck` and fallback `cmd /c npm.cmd run typecheck`; both returned no exit status from the shell harness.
+
+BUGS / RISKS:
+- Manual browser QA is still needed for search/filter behavior, hidden-node hit testing, inspector updates, resize, and navigate-away/back cleanup.
+- Static guidance can drift until manifest generation is added.
+- Unrelated unstaged files existed during the session and were not touched or staged.
+
+NEXT RECOMMENDED ACTION:
+Run `npm.cmd run typecheck` locally, then manually QA App Brain filters, inspector updates, scene animation, resize, and navigation away/back as admin owner.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+App Brain Phase 3 adds a static architecture intelligence layer. `appBrainMap.ts` now carries ownership/safety/overlap metadata; `appBrainFilters.ts` centralizes matching; `V15rAppBrainTab.tsx` adds search/filter controls, summary/safety panels, and richer inspector sections; `V15rAppBrainScene.tsx` dims filtered nodes and excludes them from raycaster hits. No packages changed. Typecheck attempted but blocked by no-exit-status shell behavior.

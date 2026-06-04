@@ -468,3 +468,39 @@ Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak 
 * Manual QA performed: Code-path and diff inspection only. Browser QA was not performed in this session.
 * Next recommended action: Run `npm.cmd run typecheck` locally and manually QA App Brain as the admin owner, including hover/click inspector updates, resize, and navigating away/back to confirm no duplicate canvas/render loop.
 * Compact handoff for next agent/chat: App Brain Phase 2 is implemented as a scoped Three.js MVP. `appBrainMap.ts` holds typed static architecture nodes/edges; `V15rAppBrainScene.tsx` owns renderer lifecycle, animated glowing nodes, connection pulses, raycaster hover/click, resize, and cleanup; `V15rAppBrainTab.tsx` owns shell, status cards, legend, inspector, and static-MVP roadmap copy. No packages or unrelated app areas changed. Typecheck was attempted but blocked by shell no-exit-status behavior; rerun locally before the next phase.
+
+---
+
+## Cursor Report — Admin App Brain — Phase 3 intelligence layer, filters, and richer inspector
+
+* Task completed: Admin App Brain Phase 3 intelligence layer, filters, and richer inspector.
+* Files changed:
+  * `src/components/v15r/V15rAppBrainTab.tsx`
+  * `src/components/v15r/V15rAppBrainScene.tsx`
+  * `src/components/v15r/appBrainMap.ts`
+  * `src/components/v15r/appBrainFilters.ts`
+  * `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  * `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+* Commit hash: Pending at log-write time; see final Cursor report for the actual commit hash.
+* Typecheck result: BLOCKED - attempted `npm.cmd run typecheck` and required fallback `cmd /c npm.cmd run typecheck`; both returned no exit status from the shell harness, so success/failure could not be determined.
+* What changed:
+  * Expanded App Brain static node metadata with owner area, connected systems, safe edit guidance, overlap warnings, and next-phase notes.
+  * Added search, category filter, risk-level filter, and low-risk show/hide controls.
+  * Added filtered node counts, System Map Summary, and Agent Safety panels.
+  * Improved Brain Inspector with owner area, connected systems, node connections, safe edit notes, overlap warnings, and next useful phase guidance.
+  * Updated the Three.js scene to dim filtered-out nodes and remove them from hover/click hit testing while preserving animation.
+* What was learned:
+  * The Phase 2 scene could support filtering without recreating the renderer by passing visible node IDs through refs and using them during animation and raycaster picking.
+  * `appBrainMap.ts` is the right boundary for manual intelligence metadata until generated manifests are explicitly scoped.
+  * There were unrelated unstaged changes in `.claude/settings.local.json` and `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`; this phase must remain path-scoped.
+* Learned skills / reusable patterns:
+  * Keep filter logic in a small helper so scene rendering, summary cards, and inspector behavior derive from one predicate.
+  * Preserve selected-node stability by falling back to the first visible node only in the inspector while leaving the user's locked selection intact.
+  * Treat App Brain guidance as static advisory copy until live git and agent overlap detection are implemented.
+* Bugs / risks:
+  * Typecheck could not be completed due to the shell harness no-exit-status blocker for non-git commands.
+  * Manual browser QA is still needed for filters, hit testing after filtering, resize, and navigate-away/back cleanup.
+  * Static guidance is manually curated and may drift until manifest generation exists.
+* Manual QA performed: Code-path and diff inspection only. Browser QA was not performed in this session.
+* Next recommended action: Run `npm.cmd run typecheck` locally and manually QA App Brain as admin owner: search, category/risk filters, low-risk toggle, visible-node click behavior, inspector updates, resize, and navigation away/back.
+* Compact handoff for next agent/chat: App Brain Phase 3 adds the static intelligence layer. `appBrainMap.ts` now includes richer ownership/safety/overlap metadata, `appBrainFilters.ts` centralizes filter matching, `V15rAppBrainTab.tsx` adds search/filter controls, System Map Summary, Agent Safety, and richer inspector sections, and `V15rAppBrainScene.tsx` dims filtered nodes and excludes hidden nodes from raycaster hits. No packages changed. Typecheck attempted but blocked by no-exit-status shell behavior.

@@ -10,6 +10,7 @@ import {
 interface V15rAppBrainSceneProps {
   selectedNodeId: string | null
   hoveredNodeId: string | null
+  visibleNodeIds: string[]
   onSelectNode: (nodeId: string) => void
   onHoverNode: (nodeId: string | null) => void
 }
@@ -20,6 +21,7 @@ interface NodeRenderState {
   glow: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
   ring: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>
   hit: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
+  label: THREE.Sprite<THREE.SpriteMaterial>
   baseScale: number
 }
 
@@ -93,12 +95,14 @@ function makeLabelTexture(label: string, color: string): THREE.CanvasTexture {
 export default function V15rAppBrainScene({
   selectedNodeId,
   hoveredNodeId,
+  visibleNodeIds,
   onSelectNode,
   onHoverNode,
 }: V15rAppBrainSceneProps) {
   const mountRef = useRef<HTMLDivElement | null>(null)
   const selectedRef = useRef<string | null>(selectedNodeId)
   const hoveredRef = useRef<string | null>(hoveredNodeId)
+  const visibleNodeIdsRef = useRef<Set<string>>(new Set(visibleNodeIds))
   const onSelectRef = useRef(onSelectNode)
   const onHoverRef = useRef(onHoverNode)
 
@@ -109,6 +113,10 @@ export default function V15rAppBrainScene({
   useEffect(() => {
     hoveredRef.current = hoveredNodeId
   }, [hoveredNodeId])
+
+  useEffect(() => {
+    visibleNodeIdsRef.current = new Set(visibleNodeIds)
+  }, [visibleNodeIds])
 
   useEffect(() => {
     onSelectRef.current = onSelectNode
@@ -311,7 +319,7 @@ export default function V15rAppBrainScene({
         label.scale.set(0.85, 0.22, 1)
         labelGroup.add(label)
 
-        nodeStates.push({ node, core, glow, ring, hit, baseScale })
+        nodeStates.push({ node, core, glow, ring, hit, label, baseScale })
       })
 
       function setPointerFromEvent(event: PointerEvent | MouseEvent): void {
@@ -324,7 +332,11 @@ export default function V15rAppBrainScene({
       function pickNode(event: PointerEvent | MouseEvent): string | null {
         setPointerFromEvent(event)
         raycaster.setFromCamera(pointer, camera)
-        const hit = raycaster.intersectObjects(hitTargets, false)[0]
+        const visibleTargets = hitTargets.filter((target) => {
+          const nodeId = target.userData.nodeId
+          return typeof nodeId === 'string' && visibleNodeIdsRef.current.has(nodeId)
+        })
+        const hit = raycaster.intersectObjects(visibleTargets, false)[0]
         return typeof hit?.object?.userData?.nodeId === 'string' ? hit.object.userData.nodeId : null
       }
 
@@ -382,19 +394,22 @@ export default function V15rAppBrainScene({
         })
 
         nodeStates.forEach((state, index) => {
+          const isVisible = visibleNodeIdsRef.current.has(state.node.id)
           const isSelected = selectedRef.current === state.node.id
           const isHovered = hoveredRef.current === state.node.id
           const pulse = Math.sin(t * 2.1 + index * 0.75) * 0.5 + 0.5
-          const emphasis = isSelected ? 1.85 : isHovered ? 1.45 : 1
+          const emphasis = isSelected && isVisible ? 1.85 : isHovered && isVisible ? 1.45 : isVisible ? 1 : 0.42
           const coreScale = emphasis * (1 + pulse * 0.12)
           state.core.scale.setScalar(coreScale)
           state.glow.scale.setScalar(emphasis * (1.05 + pulse * 0.18))
           state.ring.scale.setScalar(emphasis * (1.05 + pulse * 0.1))
           state.ring.lookAt(camera.position)
           state.ring.rotation.z += dt * (isSelected ? 1.7 : 0.6)
-          state.core.material.opacity = isSelected ? 1 : isHovered ? 0.98 : 0.86
-          state.glow.material.opacity = isSelected ? 0.28 : isHovered ? 0.22 : 0.1 + pulse * 0.05
-          state.ring.material.opacity = isSelected ? 0.75 : isHovered ? 0.55 : 0.18
+          state.core.material.opacity = !isVisible ? 0.16 : isSelected ? 1 : isHovered ? 0.98 : 0.86
+          state.glow.material.opacity = !isVisible ? 0.025 : isSelected ? 0.28 : isHovered ? 0.22 : 0.1 + pulse * 0.05
+          state.ring.material.opacity = !isVisible ? 0.04 : isSelected ? 0.75 : isHovered ? 0.55 : 0.18
+          state.hit.visible = isVisible
+          state.label.material.opacity = !isVisible ? 0.12 : isSelected || isHovered ? 0.92 : 0.72
         })
 
         renderer.render(scene, camera)
