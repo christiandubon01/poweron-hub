@@ -3984,3 +3984,33 @@ EVR and 8-week chart control layout polish complete. In `V15rDashboard.tsx`, bot
 **Typecheck:** Clean (0 errors)
 
 **Next:** Manual QA - test all 6 fixes in browser.
+
+
+---
+
+## PDF Blueprint Repair Round 2 — Line Tool, Middle-Mouse Pan, Opacity Persistence, Can-Light Fill (2026-06-03)
+
+**Commit:** (see below — committed after context update)
+
+**Files changed:**
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` only
+
+**Five issues fixed:**
+
+1. **Line bounding-box rectangle removed:** Draft rect border is now `none` when `shapeKind === 'line' || shapeKind === 'arrow'` — previously the drag preview showed a visible rectangle outline around the line.
+2. **Point-to-point line placement:** Line/arrow tools now use a two-click state machine via `lineFirstPointRef`. First click stores the start point and shows SVG preview; second click commits both endpoints. No drag-hold required.
+3. **Middle-mouse pan while line tool active:** `handlePointerDown` now intercepts `e.button === 1` before any tool check; middle mouse pans the document regardless of active tool.
+4. **Opacity persistence rollback fixed:** Stale closure eliminated — `persistEditAnnotationMeta` reads latest annotation from `allAnnotationsRef.current` not closed-over `editingAnnotation`. `loadAnnotations` only fires after ALL queued mutations drain (`pendingAnnotationMutationsRef` counter). Optimistic `setAllAnnotations` update is applied synchronously before the async persist.
+5. **Can-light fill color visibility:** Aperture circle fill now uses `hexWithAlpha(fillColor, Math.max(fillOpacity, 0.6))` — the element-level `opacity={fillOpacity}` was removed (it was multiplying with the 0.6 fill alpha, making the effective color ~13% visible).
+
+**Bonus fix:** `Escape` key now also clears `lineFirstPointRef.current` and hides the draft SVG line, cancelling in-progress point-to-point placement.
+
+**Placed line opacity:** `opacity: fillOpacity` moved from the outer `<div>` to the SVG `<line>` element directly — lines no longer fade the entire container including any focus ring.
+
+**Minimum size check:** Lines use `Math.hypot(norm.w, norm.h) < MIN_HIGHLIGHT_NORM` instead of checking w and h independently, so horizontal/vertical lines are not rejected.
+
+**Typecheck:** Clean (0 errors)
+
+**Known limitation:** Text Highlighter per-word strip rendering was intentionally skipped — deferred to a future dedicated QA session.
+
+**Next:** Manual QA — place a line (two-click), arrow (two-click), middle-mouse pan with line tool active, rapidly click opacity +5 three times and confirm no snap-back, place a can-light with green fill and confirm aperture is visibly green.

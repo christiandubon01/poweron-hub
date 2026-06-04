@@ -523,6 +523,10 @@ export default function OperationsBlueprintPdfViewer({
   const draftRectDomRef = useRef<HTMLDivElement>(null)
   const draftLineDomRef = useRef<SVGLineElement>(null)
   const draftArchPathDomRef = useRef<SVGPathElement>(null)
+  // Point-to-point line placement: stores the first click position (pixel coords within overlay).
+  const lineFirstPointRef = useRef<{ x: number; y: number } | null>(null)
+  // Tracks how many annotation mutations are in-flight so loadAnnotations() fires only when the queue drains.
+  const pendingAnnotationMutationsRef = useRef(0)
   const pendingScrollResetRef = useRef(false)
   const relativeZoomRef = useRef(1)
   // True when viewport width is phone/tablet-sized (< 1024px).
@@ -939,6 +943,8 @@ export default function OperationsBlueprintPdfViewer({
         setMeasureCursorPx(null)
         setCalibrateInput(null)
         lastMeasureClickRef.current = { time: 0, nx: 0, ny: 0 }
+        lineFirstPointRef.current = null
+        if (draftLineDomRef.current) draftLineDomRef.current.style.display = 'none'
       }
       if (e.key === 'Enter' && effectiveTool === 'measure-perimeter' && !calibrateInput) {
         const pts = [...measureDraftRef.current]
@@ -1478,15 +1484,25 @@ export default function OperationsBlueprintPdfViewer({
   }, [onSelectedPagesChange, selectedPageNumbers, currentPage])
 
   const persistAnnotation = useCallback(async (annotation: BlueprintAnnotation) => {
+    // Increment before queuing so the counter is accurate when mutations overlap.
+    pendingAnnotationMutationsRef.current += 1
     const op = async () => {
       try {
         const backup = getBackupData()
         if (!backup) return
         await upsertOperationsBlueprintAnnotation(backup, annotation)
-        loadAnnotations()
         onAnnotationsChanged?.()
       } catch (e: any) {
         setError(e?.message || 'Failed to save annotation.')
+      } finally {
+        pendingAnnotationMutationsRef.current = Math.max(0, pendingAnnotationMutationsRef.current - 1)
+        // Only refresh annotations from backup once the entire queue has drained.
+        // Calling loadAnnotations() after every individual save was overwriting the
+        // optimistic setAllAnnotations updates that the UI had already applied, causing
+        // the opacity/color to snap back to the pre-click value mid-sequence.
+        if (pendingAnnotationMutationsRef.current === 0) {
+          loadAnnotations()
+        }
       }
     }
     mutationQueueRef.current = mutationQueueRef.current.then(op)
@@ -2354,6 +2370,21 @@ export default function OperationsBlueprintPdfViewer({
       }
     }
     if (Date.now() < suppressAnnotationUntilRef.current) return
+    // Middle mouse button (button === 1) always pans regardless of active tool.
+    if (e.pointerType === 'mouse' && e.button === 1 && !isEditorOpen && !lockView) {
+      mousePanRef.current = {
+        active: true,
+        pointerId: e.pointerId,
+        lastX: e.clientX,
+        lastY: e.clientY,
+        moved: false,
+      }
+      setMousePanActive(true)
+      try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     if (e.pointerType === 'mouse' && e.button !== 0) return
     if (isEditorOpen) return
     if (!overlayRef.current) return
@@ -2414,16 +2445,41 @@ export default function OperationsBlueprintPdfViewer({
       return
     }
 
+    // Point-to-point line/arrow placement: first left-click sets start point.
+    // Second click (handled in handlePointerUp) creates the annotation.
+    // Middle mouse is already handled above and will never reach here.
+    if (effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow')) {
+      if (!lineFirstPointRef.current) {
+        lineFirstPointRef.current = { x, y }
+        const lineEl = draftLineDomRef.current
+        if (lineEl) {
+          lineEl.setAttribute('x1', String(x))
+          lineEl.setAttribute('y1', String(y))
+          lineEl.setAttribute('x2', String(x))
+          lineEl.setAttribute('y2', String(y))
+          lineEl.style.display = ''
+        }
+        e.preventDefault()
+        return
+      }
+      // Second click: commit first point as dragStart so handlePointerUp creates the annotation.
+      dragStartRef.current = lineFirstPointRef.current
+      setDragStart(lineFirstPointRef.current)
+      lineFirstPointRef.current = null
+      try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
+      e.preventDefault()
+      return
+    }
+
     if (effectiveTool === 'highlight' || effectiveTool === 'textHighlight' || effectiveTool === 'underline' || effectiveTool === 'shape' || effectiveTool === 'callout' || effectiveTool === 'generate') {
       dragStartRef.current = { x, y }
       setDragStart({ x, y })
-      // Reset DOM draft elements (visual state only Ã¢â‚¬â€ no setDraftRect needed)
       if (draftRectDomRef.current) draftRectDomRef.current.style.display = 'none'
-      if (draftLineDomRef.current) draftLineDomRef.current.style.display = 'none'
+      if (draftLineDomRef.current && !lineFirstPointRef.current) draftLineDomRef.current.style.display = 'none'
       try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
       e.preventDefault()
     }
-  }, [effectiveTool, isEditorOpen, handleTwoFingerGesture, lockView])
+  }, [effectiveTool, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind])
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const mousePan = mousePanRef.current
@@ -2512,6 +2568,16 @@ export default function OperationsBlueprintPdfViewer({
     if (effectiveTool === 'calibrate' || effectiveTool === 'measure-distance' || effectiveTool === 'measure-area' || effectiveTool === 'measure-perimeter') {
       if (measureDraftRef.current.length > 0) {
         setMeasureCursorPx({ x, y })
+      }
+      return
+    }
+
+    // Update live-preview line while waiting for the second click in point-to-point mode.
+    if (effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow') && lineFirstPointRef.current) {
+      const lineEl = draftLineDomRef.current
+      if (lineEl) {
+        lineEl.setAttribute('x2', String(x))
+        lineEl.setAttribute('y2', String(y))
       }
       return
     }
@@ -2696,6 +2762,9 @@ export default function OperationsBlueprintPdfViewer({
     if (effectiveTool === 'underline') {
       const minUnderlineWidth = 2 / Math.max(1, rect.width)
       if (norm.w < minUnderlineWidth) return
+    } else if (effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow')) {
+      // Lines and arrows can be nearly horizontal or vertical — only require total length.
+      if (Math.hypot(norm.w, norm.h) < MIN_HIGHLIGHT_NORM) return
     } else if (norm.w < MIN_HIGHLIGHT_NORM || norm.h < MIN_HIGHLIGHT_NORM) return
 
     const now = new Date().toISOString()
@@ -2886,12 +2955,16 @@ export default function OperationsBlueprintPdfViewer({
 
   const persistEditAnnotationMeta = (metaChanges: Record<string, any>) => {
     if (!editingAnnotation) return
+    const editId = editingAnnotation.id
+    // Use allAnnotationsRef.current so rapid stepper clicks (before React re-renders)
+    // read the latest in-flight state rather than the stale closure value.
+    const latest = allAnnotationsRef.current.find((ann) => ann.id === editId) ?? editingAnnotation
     const updated = withAnnotationMeta(
-      { ...editingAnnotation, updatedAt: new Date().toISOString() },
-      { ...getAnnotationMeta(editingAnnotation), ...metaChanges }
+      { ...latest, updatedAt: new Date().toISOString() },
+      { ...getAnnotationMeta(latest), ...metaChanges }
     )
     // Optimistic local update so stepper changes appear instantly without waiting for persist
-    setAllAnnotations((prev) => prev.map((ann) => ann.id === editingAnnotation.id ? updated as BlueprintAnnotation : ann))
+    setAllAnnotations((prev) => prev.map((ann) => ann.id === editId ? updated as BlueprintAnnotation : ann))
     void persistAnnotation(updated)
   }
 
@@ -4223,14 +4296,14 @@ export default function OperationsBlueprintPdfViewer({
                             const lx2 = meta.lineX2 != null ? `${meta.lineX2 * 100}%` : '100%'
                             const ly2 = meta.lineY2 != null ? `${meta.lineY2 * 100}%` : '100%'
                             return (
-                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height, opacity: fillOpacity }} onClick={selectAnnotation}>
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
                                 <svg className="absolute inset-0 overflow-visible" width="100%" height="100%" preserveAspectRatio="none">
                                   <defs>
                                     <marker id={`arrow-${a.id}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
                                       <path d="M0,0 L8,4 L0,8 z" fill={borderColor} />
                                     </marker>
                                   </defs>
-                                  <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} markerEnd={kind === 'arrow' ? `url(#arrow-${a.id})` : undefined} />
+                                  <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} markerEnd={kind === 'arrow' ? `url(#arrow-${a.id})` : undefined} opacity={fillOpacity} />
                                 </svg>
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
@@ -4272,7 +4345,7 @@ export default function OperationsBlueprintPdfViewer({
                                   {/* Crosshair — vertical */}
                                   <line x1="50" y1="4" x2="50" y2="96" stroke={borderColor} strokeWidth={Math.max(0.8, borderThickness * 0.55)} opacity={fillOpacity * 0.65} />
                                   {/* Aperture circle — filled by fillColor so the color swatch is reflected */}
-                                  <circle cx="50" cy="50" r={aperture} fill={fillColor === 'transparent' ? 'none' : hexWithAlpha(fillColor, 0.6)} stroke={borderColor} strokeWidth={borderThickness} opacity={fillOpacity} />
+                                  <circle cx="50" cy="50" r={aperture} fill={fillColor === 'transparent' ? 'none' : hexWithAlpha(fillColor, Math.max(fillOpacity, 0.6))} stroke={borderColor} strokeWidth={borderThickness} />
                                   {/* Size label centered inside aperture */}
                                   <text x="50" y="55" textAnchor="middle" fontSize="16" fontWeight="700" fontFamily="monospace" fill={borderColor} opacity={fillOpacity}>{label}</text>
                                 </svg>
@@ -4584,9 +4657,9 @@ export default function OperationsBlueprintPdfViewer({
                         className="absolute pointer-events-none"
                         style={{
                           display: 'none',
-                          border: effectiveTool === 'shape'
+                          border: effectiveTool === 'shape' && shapeKind !== 'line' && shapeKind !== 'arrow'
                             ? `${shapeOptions.borderThickness}px ${shapeOptions.borderStyle} ${shapeOptions.borderColor}`
-                            : effectiveTool === 'underline'
+                            : effectiveTool === 'underline' || (effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow'))
                               ? 'none'
                               : `1px solid ${toolColors[effectiveTool as ToolKey] || '#facc15'}`,
                           borderRadius: effectiveTool === 'shape' && (shapeKind === 'circle' || shapeKind === 'can-light-4' || shapeKind === 'can-light-6') ? '9999px' : '0.25rem',

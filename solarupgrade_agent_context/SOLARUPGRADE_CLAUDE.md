@@ -1529,3 +1529,25 @@ NO — ready for screenshot QA.
   - Garbled UTF-8 comments (Ã¢â‚¬â€) in old_string will cause Edit tool mismatch even when surrounding code is correct. Safe pattern: anchor old_string only on pure-ASCII code lines, skip the garbled comment lines entirely.
 - **Bugs / risks:** None introduced. textHighlight quad rendering falls back gracefully when PDF has no text items (scanned images). Legacy line/arrow annotations without lineX1/Y1/X2/Y2 render with TL-to-BR fallback (same as before fix).
 - **Compact handoff for next agent/chat:** PDF Blueprint Phase 3 complete. ToolPopover.tsx LabeledSelect is now a dark custom dropdown. OperationsBlueprintPdfViewer.tsx: can-light aperture uses fillColor, layoutDragRef stale-closure fix enables annotation dragging, lines store direction metadata, opacity stepper is instant, textHighlight generates per-word quads from cached PDF text items. Typecheck clean.
+
+
+---
+
+## Claude Report - PDF Blueprint Repair Round 2 - Line Tool, Middle-Mouse Pan, Opacity Persistence, Can-Light Fill
+
+- **Task completed:** Yes
+- **Branch:** main
+- **Files changed:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` only
+- **Typecheck result:** Clean (0 errors)
+- **Issues fixed:**
+  1. **Line bounding-box rectangle:** Draft rect `border` now conditionally `none` when `shapeKind === 'line' || shapeKind === 'arrow'`. Placed line annotation outer div no longer carries `opacity: fillOpacity` — moved to SVG `<line>` element.
+  2. **Point-to-point line placement:** `lineFirstPointRef` state machine — first pointerdown stores start, shows SVG line preview; second pointerdown sets `dragStartRef` and clears `lineFirstPointRef` so `handlePointerUp` commits normally. `handlePointerMove` updates `x2/y2` on the draft SVG line directly (DOM mutation, no React re-render). Minimum size check uses `Math.hypot` for lines to allow near-horizontal/vertical strokes.
+  3. **Middle-mouse pan:** `handlePointerDown` checks `e.button === 1` before any tool check, sets `mousePanRef.current` and returns early. Works regardless of which tool is active.
+  4. **Opacity rollback:** `pendingAnnotationMutationsRef` counter delays `loadAnnotations()` until the full mutation queue drains. `persistEditAnnotationMeta` reads latest state from `allAnnotationsRef.current` (not stale closure). Optimistic `setAllAnnotations` applied synchronously before async persist.
+  5. **Can-light fill visibility:** Aperture circle `opacity={fillOpacity}` removed (was compounding with alpha on fill). Fill now uses `hexWithAlpha(fillColor, Math.max(fillOpacity, 0.6))` — minimum 60% alpha so the chosen color is always visible.
+- **Bonus:** Escape key cancels in-progress point-to-point line placement (`lineFirstPointRef.current = null`, hides draft SVG).
+- **What was learned:**
+  - Pending mutations counter pattern: increment before enqueue, decrement in finally, fire reload only when counter reaches 0 — prevents intermediate reloads from stomping optimistic state.
+  - For SVG stroke-only shapes (lines, arcs), apply opacity directly to the SVG element, not the container div. The container div opacity multiplies against child SVG element opacity, causing double-dimming.
+  - `Math.hypot(w, h)` for minimum size on lines allows 1D strokes (zero width or height) that the `w < MIN && h < MIN` guard would incorrectly reject.
+- **Compact handoff for next agent/chat:** Repair Round 2 complete on main branch. Line tool is now two-click point-to-point (lineFirstPointRef state machine). Middle mouse pans at any time. Opacity stepper no longer snap-backs (pendingAnnotationMutationsRef counter). Can-light aperture fill is visibly colored (Math.max(fillOpacity, 0.6) alpha). Line bounding-box rectangle removed from both draft preview and placed annotation. Typecheck clean.
