@@ -23,11 +23,12 @@ import {
   filterAppBrainNodes,
   type AppBrainFilters,
 } from './appBrainFilters'
+import { GENERATED_APP_BRAIN_MANIFEST } from './generatedAppBrainManifest'
 
 const ROADMAP = [
   { phase: 'Phase 2', title: '3D neural render', detail: 'Static architecture MVP with interactive nodes' },
-  { phase: 'Phase 3', title: 'Architecture manifest', detail: 'Generated repo structure and clusters' },
-  { phase: 'Phase 4', title: 'Git / commit live updates', detail: 'Changed files and activity overlay' },
+  { phase: 'Phase 3', title: 'Intelligence filters', detail: 'Search, risk filters, and safety notes' },
+  { phase: 'Phase 4', title: 'Architecture manifest', detail: 'Generated repo structure and import edges' },
   { phase: 'Phase 5', title: 'Agent overlap detection', detail: 'Safe work zones for concurrent agents' },
 ] as const
 
@@ -268,6 +269,111 @@ function AgentSafetyPanel() {
   )
 }
 
+function GeneratedManifestPanel() {
+  const manifest = GENERATED_APP_BRAIN_MANIFEST
+  const highTouch = manifest.highTouchFiles.slice(0, 6)
+  const sharedCandidates = manifest.sharedSystemCandidates.slice(0, 6)
+  const adminCandidates = manifest.adminCandidates.slice(0, 5)
+  const generatedDate = new Date(manifest.generatedAt).toLocaleString()
+
+  return (
+    <section
+      className="rounded-2xl p-4 sm:p-5 space-y-4"
+      style={{
+        background: 'linear-gradient(145deg, rgba(14,165,233,0.09), rgba(3,7,18,0.8))',
+        border: '1px solid rgba(34,211,238,0.16)',
+        boxShadow: '0 8px 36px rgba(0,0,0,0.3)',
+      }}
+    >
+      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.2em] font-bold" style={{ color: '#67e8f9' }}>
+            Generated Manifest
+          </p>
+          <h2 className="text-lg font-semibold text-gray-100 mt-1">Repo-derived architecture scan</h2>
+          <p className="text-xs text-gray-500 mt-1">
+            Scanner MVP from known source folders. This complements the curated map; it does not replace it yet.
+          </p>
+        </div>
+        <span
+          className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg"
+          style={{ color: '#94a3b8', background: 'rgba(148,163,184,0.08)', border: '1px solid rgba(148,163,184,0.18)' }}
+        >
+          Generated {generatedDate}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          { label: 'Files scanned', value: manifest.totalFiles, color: '#22d3ee' },
+          { label: 'Imports detected', value: manifest.totalImports, color: '#34d399' },
+          { label: 'Local edges', value: manifest.detectedEdges.length, color: '#a78bfa' },
+          { label: 'Areas', value: manifest.areas.length, color: '#facc15' },
+        ].map((item) => (
+          <div
+            key={item.label}
+            className="rounded-xl p-3"
+            style={{ background: 'rgba(3,7,18,0.56)', border: `1px solid ${item.color}24` }}
+          >
+            <p className="text-[10px] uppercase tracking-wider text-gray-500">{item.label}</p>
+            <p className="text-xl font-mono font-bold mt-1" style={{ color: item.color }}>{item.value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+        <div className="rounded-xl p-3" style={{ background: 'rgba(3,7,18,0.5)', border: '1px solid rgba(251,113,133,0.16)' }}>
+          <p className="text-[10px] uppercase tracking-widest text-rose-200/80 mb-2">Top high-touch files</p>
+          <div className="space-y-2">
+            {highTouch.map((file) => (
+              <div key={file.path} className="text-[11px] text-gray-300">
+                <p className="font-mono truncate">{file.path}</p>
+                <p className="text-gray-500">score {file.touchScore} / imported by {file.importedByCount}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-xl p-3" style={{ background: 'rgba(3,7,18,0.5)', border: '1px solid rgba(45,212,191,0.16)' }}>
+          <p className="text-[10px] uppercase tracking-widest text-teal-200/80 mb-2">Shared system candidates</p>
+          <div className="space-y-2">
+            {sharedCandidates.map((file) => (
+              <div key={file.path} className="text-[11px] text-gray-300">
+                <p className="font-mono truncate">{file.path}</p>
+                <p className="text-gray-500">area {file.area} / score {file.touchScore}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-xl p-3" style={{ background: 'rgba(3,7,18,0.5)', border: '1px solid rgba(167,139,250,0.16)' }}>
+          <p className="text-[10px] uppercase tracking-widest text-violet-200/80 mb-2">Admin candidates</p>
+          <div className="space-y-2">
+            {adminCandidates.map((file) => (
+              <div key={file.path} className="text-[11px] text-gray-300">
+                <p className="font-mono truncate">{file.path}</p>
+                <p className="text-gray-500">area {file.area} / imports {file.importCount}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {manifest.areas.map((area) => (
+          <span
+            key={area.name}
+            className="text-[10px] rounded-full px-2 py-1"
+            style={{ color: '#cbd5e1', background: 'rgba(15,23,42,0.7)', border: '1px solid rgba(148,163,184,0.14)' }}
+          >
+            {area.name}: {area.fileCount} files
+          </span>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function Inspector({ node }: { node: AppBrainNode | null }) {
   const categoryMeta = node ? APP_BRAIN_CATEGORY_META[node.category] : null
   const riskMeta = node ? APP_BRAIN_RISK_META[node.riskLevel] : null
@@ -442,7 +548,7 @@ export default function V15rAppBrainTab() {
               className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg"
               style={{ color: '#67e8f9', backgroundColor: 'rgba(34,211,238,0.08)', border: '1px solid rgba(34,211,238,0.22)' }}
             >
-              Phase 3 / intelligence layer
+              Phase 4 / generated manifest MVP
             </span>
             <span
               className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg"
@@ -507,6 +613,8 @@ export default function V15rAppBrainTab() {
           <AgentSafetyPanel />
         </div>
 
+        <GeneratedManifestPanel />
+
         <section
           className="rounded-2xl p-4 sm:p-5"
           style={{
@@ -521,7 +629,7 @@ export default function V15rAppBrainTab() {
             </h2>
             <span className="text-[10px] text-gray-500 font-mono flex items-center gap-1.5">
               <Network size={12} />
-              Architecture data is static in this release
+              Curated map plus generated manifest MVP
             </span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">

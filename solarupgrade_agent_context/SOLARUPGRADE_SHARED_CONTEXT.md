@@ -4220,3 +4220,52 @@ BUGS / RISKS:
 NEXT PHASE READY: YES
 COMPACT HANDOFF FOR NEXT CHAT:
 Round 4 complete. Arch-line now renders from stored endpoints with adjustable archFactor; yellow control handle draggable at overlay level. Diamond/star/cross/pentagon render as correct SVG polygons. All placement/drag/escape/persist plumbing wired. Typecheck clean (pre-existing V15rAppBrainScene errors only).
+
+---
+
+## Shared Update - Admin App Brain Phase 4 Generated Architecture Manifest MVP
+
+AGENT:
+Cursor GPT-5.5
+
+BRANCH:
+main
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report.
+
+FILES CHANGED:
+- `scripts/generate-app-brain-manifest.mjs`
+- `package.json`
+- `src/components/v15r/generatedAppBrainManifest.ts`
+- `src/components/v15r/V15rAppBrainTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+GENERATOR RESULT:
+PASS - `node scripts/generate-app-brain-manifest.mjs` generated 355 files, 1490 imports, and 598 detected local edges.
+
+TYPECHECK RESULT:
+BLOCKED - attempted `npm.cmd run typecheck` and fallback `cmd /c npm.cmd run typecheck`; both returned no exit status from the shell harness.
+
+WHAT CHANGED:
+- Added a conservative repo scanner script for scoped source folders using Node `fs`/`path` and regex import detection.
+- Added `app-brain:generate` npm script without dependency installs or package-lock changes.
+- Generated `src/components/v15r/generatedAppBrainManifest.ts` with generatedAt, totals, areas, files, local edges, high-touch files, shared-system candidates, admin candidates, and route/view candidates.
+- Added a Generated Manifest panel to App Brain that displays scanner MVP stats alongside the curated 3D map.
+
+WHAT WAS LEARNED:
+- Regex import scanning is viable for a safe MVP but approximate.
+- V15r and Neural World are the largest scanned areas in this scoped manifest.
+- `generatedAt` changes each generator run and is documented as expected manifest churn.
+
+BUGS / RISKS:
+- Manual browser QA is still needed for the new Generated Manifest panel and existing App Brain interactions.
+- Typecheck must be rerun outside the current shell harness blocker.
+- The generated manifest complements but does not replace curated map nodes yet.
+
+NEXT RECOMMENDED ACTION:
+Run `npm.cmd run typecheck` locally, then manually verify App Brain opens, the 3D scene and filters still work, and the Generated Manifest panel is populated.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+App Brain Phase 4 adds a generated manifest MVP. Use `npm run app-brain:generate` or `node scripts/generate-app-brain-manifest.mjs` to refresh `generatedAppBrainManifest.ts`. The UI reads the generated manifest in a new panel while the curated static map remains the source for 3D nodes and inspector. Package-lock remains untouched. Typecheck attempted but blocked by no-exit-status shell behavior.

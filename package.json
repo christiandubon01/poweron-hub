@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "typecheck": "tsc --noEmit",
+    "app-brain:generate": "node scripts/generate-app-brain-manifest.mjs",
     "supabase:types": "supabase gen types typescript --local > src/lib/db/types.ts"
   },
   "dependencies": {

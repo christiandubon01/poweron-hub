@@ -504,3 +504,40 @@ Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak 
 * Manual QA performed: Code-path and diff inspection only. Browser QA was not performed in this session.
 * Next recommended action: Run `npm.cmd run typecheck` locally and manually QA App Brain as admin owner: search, category/risk filters, low-risk toggle, visible-node click behavior, inspector updates, resize, and navigation away/back.
 * Compact handoff for next agent/chat: App Brain Phase 3 adds the static intelligence layer. `appBrainMap.ts` now includes richer ownership/safety/overlap metadata, `appBrainFilters.ts` centralizes filter matching, `V15rAppBrainTab.tsx` adds search/filter controls, System Map Summary, Agent Safety, and richer inspector sections, and `V15rAppBrainScene.tsx` dims filtered nodes and excludes hidden nodes from raycaster hits. No packages changed. Typecheck attempted but blocked by no-exit-status shell behavior.
+
+---
+
+## Cursor Report — Admin App Brain — Phase 4 generated architecture manifest MVP
+
+* Task completed: Admin App Brain Phase 4 generated architecture manifest MVP.
+* Files changed:
+  * `scripts/generate-app-brain-manifest.mjs`
+  * `package.json`
+  * `src/components/v15r/generatedAppBrainManifest.ts`
+  * `src/components/v15r/V15rAppBrainTab.tsx`
+  * `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  * `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+* Commit hash: Pending at log-write time; see final Cursor report for the actual commit hash.
+* Typecheck result: BLOCKED - attempted `npm.cmd run typecheck` and required fallback `cmd /c npm.cmd run typecheck`; both returned no exit status from the shell harness, so success/failure could not be determined.
+* Generator result: PASS - `node scripts/generate-app-brain-manifest.mjs` generated `src/components/v15r/generatedAppBrainManifest.ts` with 355 files, 1490 imports, and 598 detected local edges.
+* What changed:
+  * Added a conservative Node fs/path manifest generator that scans scoped app source folders and skips generated, env, build, git, and dependency folders/files.
+  * Added `app-brain:generate` npm script without changing dependencies or package-lock.
+  * Generated the first `generatedAppBrainManifest.ts` with area summaries, file records, import counts, local edges, high-touch files, shared-system candidates, admin candidates, and route/view candidates.
+  * Added a Generated Manifest panel to App Brain that displays scanner stats, top high-touch files, shared system candidates, admin candidates, and scanned area counts.
+  * Kept the generated manifest complementary to the curated static map; curated nodes still drive the 3D scene and inspector.
+* What was learned:
+  * Regex-based import scanning is enough for a safe MVP but should be treated as approximate until an AST/parser phase is explicitly scoped.
+  * The current scoped folders contain 355 scanned source files, with Neural World and V15r as the largest scanned areas.
+  * `generatedAt` changes on each generator run and is documented in the generated file header.
+* Learned skills / reusable patterns:
+  * Keep generated manifest output deterministic through stable path/import/edge sorting.
+  * Separate curated architecture intelligence from generated repository scan data so UI can compare both without replacing one with the other.
+  * Use a standalone generator script instead of runtime filesystem access in the browser app.
+* Bugs / risks:
+  * Typecheck could not be completed due to the shell harness no-exit-status blocker for non-git commands.
+  * The scanner is regex-based and may miss dynamic or unusual import patterns.
+  * `generatedAt` changes every time the generator runs, creating expected manifest churn.
+* Manual QA performed: Generator run and code/diff inspection only. Browser QA was not performed in this session.
+* Next recommended action: Run `npm.cmd run typecheck` locally, then manually QA App Brain as admin owner and verify the Generated Manifest panel, existing filters, 3D scene, resize, and navigate-away/back behavior.
+* Compact handoff for next agent/chat: App Brain Phase 4 adds the first generated manifest pipeline. Run `npm run app-brain:generate` or `node scripts/generate-app-brain-manifest.mjs` to scan scoped source folders and regenerate `generatedAppBrainManifest.ts`. The App Brain UI now shows manifest stats alongside the curated map, but does not replace curated nodes or claim live git updates. Typecheck was attempted but blocked by no-exit-status shell behavior.
