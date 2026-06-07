@@ -4,7 +4,7 @@ import { Sparkles, Plus, ArrowRight, Check, Trash2, X } from 'lucide-react'
 import { getBackupData, saveBackupData, saveBackupDataAndSync, num, fmt, fmtK, pct, getPhaseWeights, resolveProjectBucket, getProjectFinancials, isActiveProject, isActiveServiceCall } from '@/services/backupDataService'
 import { nonCriticalWrite } from '@/services/writeDebounce'
 import { pushState } from '@/services/undoRedoService'
-import { mergeInnerProjectViewPrefs, loadInnerProjectViewPrefs } from '@/utils/v15rViewPrefs'
+import { mergeInnerProjectViewPrefs, loadInnerProjectViewPrefs, phaseExpandedFromCollapsedPhases } from '@/utils/v15rViewPrefs'
 import { getProjectPhaseNames, getLegacyPhaseNames, normalizePhaseName } from '@/utils/v15rProjectPhases'
 import MileageProjectAddress, {
   MileageProjectMapPreview,
@@ -13,6 +13,39 @@ import MileageProjectAddress, {
 } from './MileageProjectAddress'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
+
+const LABOR_PHASES = ['Underground', 'Site Prep', 'Rough In', 'Trim', 'Finish']
+const LABOR_PHASE_DEFAULT_COLORS: Record<string, string> = {
+  Underground: '#78716c',
+  'Site Prep': '#f59e0b',
+  'Rough In': '#10b981',
+  Trim: '#f97316',
+  Finish: '#a855f7',
+  Unassigned: '#64748b',
+}
+const LABOR_PHASE_COLOR_DEBOUNCE_MS = 600
+
+function normalizeLaborPhaseColor(hex: string | undefined): string {
+  if (!hex || typeof hex !== 'string') return '#64748b'
+  let s = hex.trim()
+  if (!s.startsWith('#')) s = '#' + s
+  if (s.length === 4 && /^#[0-9a-fA-F]{3}$/.test(s)) {
+    const r2 = s[1], g2 = s[2], b2 = s[3]
+    s = `#${r2}${r2}${g2}${g2}${b2}${b2}`
+  }
+  if (s.length === 7 && /^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase()
+  return '#64748b'
+}
+
+function inferLaborPhaseFromDesc(desc: string): string {
+  const d = (desc || '').toLowerCase()
+  if (d.includes('underground') || /\bug\b/.test(d)) return 'Underground'
+  if (d.includes('site prep') || d.includes('site-prep') || d.includes('siteprep')) return 'Site Prep'
+  if (d.includes('rough in') || d.includes('rough-in') || d.includes('roughin') || d.includes('rough')) return 'Rough In'
+  if (d.includes('trim')) return 'Trim'
+  if (d.includes('finish')) return 'Finish'
+  return ''
+}
 
 interface V15rEstimateTabProps {
   projectId: string
@@ -73,6 +106,25 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     if (prefs.estimate?.showPipelineOverview === undefined) setShowPipelineOverview(true)
     else setShowPipelineOverview(!!prefs.estimate.showPipelineOverview)
   }, [projectId])
+
+  // Labor phase collapsibles
+  const [laborPhaseExpanded, setLaborPhaseExpanded] = useState<Record<string, boolean>>(() =>
+    phaseExpandedFromCollapsedPhases(loadInnerProjectViewPrefs(projectId).estimate?.collapsedLaborPhases)
+  )
+  const [laborPhaseColorDraft, setLaborPhaseColorDraft] = useState<Record<string, string>>({})
+  const laborPhaseColorDraftRef = useRef<Record<string, string>>({})
+  const laborPhaseColorTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+
+  useEffect(() => {
+    setLaborPhaseExpanded(
+      phaseExpandedFromCollapsedPhases(loadInnerProjectViewPrefs(projectId).estimate?.collapsedLaborPhases)
+    )
+  }, [projectId])
+
+  useEffect(() => {
+    const timers = laborPhaseColorTimers.current
+    return () => { Object.values(timers).forEach(t => clearTimeout(t)) }
+  }, [])
 
   // Service Call form state
   const [scCust, setScCust] = useState('')
@@ -189,12 +241,13 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       else if (field === 'rate') row.rate = num(value)
       else if (field === 'desc') row.desc = String(value)
       else if (field === 'empId') row.empId = String(value)
+      else if (field === 'phase') row.phase = String(value)
     }
     saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
   }
 
-  const addLaborRow = () => {
+  const addLaborRow = (phase = '') => {
   pushState()
   p.laborRows = p.laborRows || []
 
@@ -209,6 +262,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     empId: 'me',
     hrs: 0,
     rate: num(backup.settings?.billRate || 65),
+    phase: phase || '',
   })
 
   newLaborRowIdRef.current = id
@@ -1025,6 +1079,75 @@ Return ONLY valid JSON, no other text.`
     fontWeight: 700,
   }
 
+  // ── Labor phase grouping helpers ───────────────────────────────────────────
+  const classifyLaborRow = (r: any): string => {
+    if (r.phase && LABOR_PHASES.includes(r.phase)) return r.phase
+    const inferred = inferLaborPhaseFromDesc(r.desc || '')
+    return inferred || 'Unassigned'
+  }
+
+  const resolveLaborPhaseColor = (ph: string): string => {
+    const draft = laborPhaseColorDraft[ph]
+    if (draft) return normalizeLaborPhaseColor(draft)
+    const saved = (p as any).laborPhaseColors?.[ph]
+    if (saved && /^#[0-9a-fA-F]{6}$/.test(saved)) return saved
+    return LABOR_PHASE_DEFAULT_COLORS[ph] || '#64748b'
+  }
+
+  const toggleLaborPhase = (ph: string) => {
+    setLaborPhaseExpanded(prev => {
+      const wasOpen = prev[ph] !== false
+      const nowOpen = !wasOpen
+      mergeInnerProjectViewPrefs(projectId, {
+        estimate: { collapsedLaborPhases: { [ph]: !nowOpen } },
+      })
+      return { ...prev, [ph]: nowOpen }
+    })
+  }
+
+  const scheduleLaborPhaseColorCommit = (ph: string, rawHex: string) => {
+    const hex = normalizeLaborPhaseColor(rawHex)
+    laborPhaseColorDraftRef.current[ph] = hex
+    setLaborPhaseColorDraft(d => ({ ...d, [ph]: hex }))
+    const existing = laborPhaseColorTimers.current[ph]
+    if (existing !== undefined) clearTimeout(existing)
+    laborPhaseColorTimers.current[ph] = setTimeout(() => {
+      const final = laborPhaseColorDraftRef.current[ph] || hex
+      pushState()
+      ;(p as any).laborPhaseColors = (p as any).laborPhaseColors || {}
+      ;(p as any).laborPhaseColors[ph] = final
+      saveBackupDataAndSync(backup, 'projects')
+      delete laborPhaseColorTimers.current[ph]
+      delete laborPhaseColorDraftRef.current[ph]
+      setLaborPhaseColorDraft(d => { const n = { ...d }; delete n[ph]; return n })
+    }, LABOR_PHASE_COLOR_DEBOUNCE_MS)
+  }
+
+  const flushLaborPhaseColor = (ph: string) => {
+    const t = laborPhaseColorTimers.current[ph]
+    if (t !== undefined) { clearTimeout(t); delete laborPhaseColorTimers.current[ph] }
+    const hex = laborPhaseColorDraftRef.current[ph]
+    if (hex !== undefined) {
+      pushState()
+      ;(p as any).laborPhaseColors = (p as any).laborPhaseColors || {}
+      ;(p as any).laborPhaseColors[ph] = hex
+      saveBackupDataAndSync(backup, 'projects')
+      delete laborPhaseColorDraftRef.current[ph]
+      setLaborPhaseColorDraft(d => { const n = { ...d }; delete n[ph]; return n })
+    }
+  }
+
+  // Build grouped labor rows
+  const laborGrouped: Record<string, any[]> = {}
+  ;[...LABOR_PHASES, 'Unassigned'].forEach(ph => { laborGrouped[ph] = [] })
+  ;(p.laborRows || []).forEach((r: any) => {
+    const ph = classifyLaborRow(r)
+    if (!laborGrouped[ph]) laborGrouped[ph] = []
+    laborGrouped[ph].push(r)
+  })
+  const laborHasUnassigned = laborGrouped['Unassigned'].length > 0
+  const laborPhasesToShow = laborHasUnassigned ? [...LABOR_PHASES, 'Unassigned'] : LABOR_PHASES
+
   return (
     <div style={{ backgroundColor: '#1a1d27', padding: '0' }}>
 
@@ -1571,152 +1694,195 @@ Return ONLY valid JSON, no other text.`
             <span style={sectionTotalStyle('#6ee7b7', 'rgba(16,185,129,0.13)', '1px solid rgba(16,185,129,0.24)')}>{fmt(t.lab)}</span>
           </div>
           <div style={{ padding: '12px' }}>
-            <table style={{ width: '100%', fontSize: '13px', color: 'var(--t2)', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--bdr2)' }}>
-                  <th style={{ textAlign: 'left', padding: '8px', fontWeight: '600' }}>Description</th>
-                  <th style={{ textAlign: 'left', padding: '8px', fontWeight: '600', width: '120px' }}>Employee</th>
-                  <th style={{ textAlign: 'right', padding: '8px', fontWeight: '600', width: '80px' }}>Hours</th>
-                  <th style={{ textAlign: 'right', padding: '8px', fontWeight: '600', width: '80px' }}>Rate</th>
-                  <th style={{ textAlign: 'right', padding: '8px', fontWeight: '600', width: '100px' }}>Total</th>
-                  <th style={{ textAlign: 'center', padding: '8px', fontWeight: '600', width: '40px' }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {(p.laborRows || []).map(r => {
-                  const teamRoster = backup.employees || []
-                  // If empId references a deleted employee, fall back to 'me' to prevent blank dropdown
-                  const empIdValid = r.empId === 'me' || !r.empId || teamRoster.some(e => e.id === r.empId)
-                  const resolvedEmpId = empIdValid ? (r.empId || 'me') : 'me'
-                  return (
-                    <tr key={r.id} style={{ borderBottom: '1px solid var(--bdr2)' }}>
-                      <td style={{ padding: '8px' }}>
-                        <textarea
-                          ref={el => {
-                            laborTextareaRefs.current[r.id] = el
-                          }}
-                          value={r.desc || ''}
-                          onChange={e => editLaborRow(r.id, 'desc', e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter' && !e.shiftKey) {
-                              e.preventDefault()
-                              e.currentTarget.blur()
-                              saveBackupDataAndSync(backup, 'projects')
-                            }
-                          }}
-                          rows={1}
-                          onInput={e => {
-                            const el = e.currentTarget
-                            el.style.height = 'auto'
-                            el.style.height = el.scrollHeight + 'px'
-                          }}
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            color: 'var(--t1)',
-                            width: '100%',
-                            fontSize: '13px',
-                            resize: 'none',
-                            overflow: 'hidden',
-                            fontFamily: 'inherit',
-                            display: 'block',
-                            outline: 'none',
-                          }}
-                        />
-                      </td>
-                      <td style={{ padding: '8px', fontSize: '12px' }}>
-                        <select
-                          value={resolvedEmpId}
-                          onChange={e => editLaborRow(r.id, 'empId', e.target.value)}
-                          title={teamRoster.length === 0 ? 'Add crew in Team settings' : undefined}
-                          style={{
-                            background: 'rgba(255,255,255,0.04)',
-                            border: '1px solid rgba(255,255,255,0.1)',
-                            color: 'var(--t2)',
-                            fontSize: '12px',
-                            borderRadius: '4px',
-                            padding: '2px 4px',
-                            width: '100%',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          <option value="me">Owner / Me</option>
-                          {teamRoster.map(e => (
-                            <option key={e.id} value={e.id}>{e.name}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td style={{ padding: '8px', textAlign: 'right' }}>
-                        <input
-                          type="number"
-                          value={r.hrs || 0}
-                          onChange={e => editLaborRow(r.id, 'hrs', e.target.value)}
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            color: 'var(--t1)',
-                            width: '100%',
-                            textAlign: 'right',
-                            fontFamily: 'monospace',
-                            fontSize: '13px',
-                          }}
-                        />
-                      </td>
-                      <td style={{ padding: '8px', textAlign: 'right' }}>
-                        <input
-                          type="number"
-                          value={r.rate || 0}
-                          onChange={e => editLaborRow(r.id, 'rate', e.target.value)}
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            color: 'var(--t1)',
-                            width: '100%',
-                            textAlign: 'right',
-                            fontFamily: 'monospace',
-                            fontSize: '13px',
-                          }}
-                        />
-                      </td>
-                      <td style={{ padding: '8px', textAlign: 'right', fontWeight: '600', color: '#10b981' }}>
-                        {fmt((r.hrs || 0) * (r.rate || 0))}
-                      </td>
-                      <td style={{ padding: '8px', textAlign: 'center' }}>
-                        <button
-                          onClick={() => delLaborRow(r.id)}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: '#ef4444',
-                            cursor: 'pointer',
-                            fontSize: '16px',
-                            padding: '0',
-                          }}
-                        >
-                          ×
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-            <button
-              onClick={addLaborRow}
-              style={{
-                marginTop: '8px',
-                padding: '6px 12px',
-                backgroundColor: 'rgba(59,130,246,0.2)',
-                color: '#3b82f6',
-                border: '1px solid rgba(59,130,246,0.3)',
-                borderRadius: '4px',
-                fontSize: '12px',
-                fontWeight: '600',
-                cursor: 'pointer',
-              }}
-            >
-              + Add Labor Row
-            </button>
+            {laborPhasesToShow.map(ph => {
+              const phRows = laborGrouped[ph] || []
+              const isOpen = laborPhaseExpanded[ph] !== false
+              const clr = resolveLaborPhaseColor(ph)
+              const phaseTotal = phRows.reduce((s: number, r: any) => s + num(r.hrs) * num(r.rate), 0)
+              return (
+                <div key={ph} style={{ backgroundColor: '#1e2130', borderRadius: '6px', marginBottom: '8px', overflow: 'hidden' }}>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => toggleLaborPhase(ph)}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleLaborPhase(ph) } }}
+                    style={{
+                      backgroundColor: clr + '18',
+                      padding: '8px 12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                      borderBottom: isOpen ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                    }}
+                  >
+                    <span style={{ color: 'var(--t3)', fontSize: '11px', width: '12px', flexShrink: 0, textAlign: 'center' }}>
+                      {isOpen ? '▼' : '▶'}
+                    </span>
+                    {ph !== 'Unassigned' && (
+                      <input
+                        type="color"
+                        aria-label={`Color for ${ph} labor phase`}
+                        value={clr}
+                        onClick={e => e.stopPropagation()}
+                        onMouseDown={e => e.stopPropagation()}
+                        onKeyDown={e => e.stopPropagation()}
+                        onChange={e => { e.stopPropagation(); scheduleLaborPhaseColorCommit(ph, e.target.value) }}
+                        onBlur={() => flushLaborPhaseColor(ph)}
+                        onMouseUp={e => { e.stopPropagation(); flushLaborPhaseColor(ph) }}
+                        style={{
+                          width: '24px', height: '22px', padding: 0,
+                          border: '1px solid rgba(255,255,255,0.15)', borderRadius: '3px',
+                          background: 'transparent', cursor: 'pointer', flexShrink: 0,
+                        }}
+                      />
+                    )}
+                    <div style={{ width: '3px', height: '14px', borderRadius: '2px', backgroundColor: clr, flexShrink: 0 }} />
+                    <span style={{ color: 'var(--t1)', fontWeight: '600', fontSize: '12px', flex: 1 }}>{ph}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--t3)', backgroundColor: '#0f1117', padding: '2px 6px', borderRadius: '3px' }}>
+                      {phRows.length}
+                    </span>
+                    {phaseTotal > 0 && (
+                      <span style={{ fontSize: '12px', color: '#10b981', fontWeight: '600', fontFamily: 'monospace', minWidth: '60px', textAlign: 'right' }}>
+                        {fmt(phaseTotal)}
+                      </span>
+                    )}
+                  </div>
+
+                  {isOpen && (
+                    <div style={{ padding: '8px 12px' }}>
+                      {phRows.length === 0 ? (
+                        <div style={{ fontSize: '12px', color: 'var(--t3)', textAlign: 'center', padding: '8px 0' }}>
+                          No labor rows in this phase
+                        </div>
+                      ) : (
+                        <table style={{ width: '100%', fontSize: '13px', color: 'var(--t2)', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid var(--bdr2)' }}>
+                              <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: '600' }}>Description</th>
+                              <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: '600', width: '110px' }}>Employee</th>
+                              <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: '600', width: '100px' }}>Phase</th>
+                              <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: '600', width: '70px' }}>Hours</th>
+                              <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: '600', width: '70px' }}>Rate</th>
+                              <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: '600', width: '90px' }}>Total</th>
+                              <th style={{ textAlign: 'center', padding: '6px 8px', fontWeight: '600', width: '36px' }}></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {phRows.map((r: any) => {
+                              const teamRoster = backup.employees || []
+                              const empIdValid = r.empId === 'me' || !r.empId || teamRoster.some((e: any) => e.id === r.empId)
+                              const resolvedEmpId = empIdValid ? (r.empId || 'me') : 'me'
+                              return (
+                                <tr key={r.id} style={{ borderBottom: '1px solid var(--bdr2)' }}>
+                                  <td style={{ padding: '6px 8px' }}>
+                                    <textarea
+                                      ref={el => { laborTextareaRefs.current[r.id] = el }}
+                                      value={r.desc || ''}
+                                      onChange={e => editLaborRow(r.id, 'desc', e.target.value)}
+                                      onKeyDown={e => {
+                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                          e.preventDefault()
+                                          e.currentTarget.blur()
+                                          saveBackupDataAndSync(backup, 'projects')
+                                        }
+                                      }}
+                                      rows={1}
+                                      onInput={e => {
+                                        const el = e.currentTarget
+                                        el.style.height = 'auto'
+                                        el.style.height = el.scrollHeight + 'px'
+                                      }}
+                                      style={{
+                                        background: 'transparent', border: 'none', color: 'var(--t1)',
+                                        width: '100%', fontSize: '13px', resize: 'none', overflow: 'hidden',
+                                        fontFamily: 'inherit', display: 'block', outline: 'none',
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '6px 8px', fontSize: '12px' }}>
+                                    <select
+                                      value={resolvedEmpId}
+                                      onChange={e => editLaborRow(r.id, 'empId', e.target.value)}
+                                      title={teamRoster.length === 0 ? 'Add crew in Team settings' : undefined}
+                                      style={{
+                                        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+                                        color: 'var(--t2)', fontSize: '12px', borderRadius: '4px',
+                                        padding: '2px 4px', width: '100%', cursor: 'pointer',
+                                      }}
+                                    >
+                                      <option value="me">Owner / Me</option>
+                                      {teamRoster.map((e: any) => (
+                                        <option key={e.id} value={e.id}>{e.name}</option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                  <td style={{ padding: '6px 8px', fontSize: '12px' }}>
+                                    <select
+                                      value={classifyLaborRow(r)}
+                                      onChange={e => editLaborRow(r.id, 'phase', e.target.value)}
+                                      style={{
+                                        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+                                        color: 'var(--t2)', fontSize: '12px', borderRadius: '4px',
+                                        padding: '2px 4px', width: '100%', cursor: 'pointer',
+                                      }}
+                                    >
+                                      {LABOR_PHASES.map(lp => <option key={lp} value={lp}>{lp}</option>)}
+                                      <option value="Unassigned">Unassigned</option>
+                                    </select>
+                                  </td>
+                                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                                    <input
+                                      type="number" value={r.hrs || 0}
+                                      onChange={e => editLaborRow(r.id, 'hrs', e.target.value)}
+                                      style={{
+                                        background: 'transparent', border: 'none', color: 'var(--t1)',
+                                        width: '100%', textAlign: 'right', fontFamily: 'monospace', fontSize: '13px',
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                                    <input
+                                      type="number" value={r.rate || 0}
+                                      onChange={e => editLaborRow(r.id, 'rate', e.target.value)}
+                                      style={{
+                                        background: 'transparent', border: 'none', color: 'var(--t1)',
+                                        width: '100%', textAlign: 'right', fontFamily: 'monospace', fontSize: '13px',
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: '600', color: '#10b981' }}>
+                                    {fmt((r.hrs || 0) * (r.rate || 0))}
+                                  </td>
+                                  <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                                    <button
+                                      onClick={() => delLaborRow(r.id)}
+                                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '16px', padding: '0' }}
+                                    >×</button>
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                      <button
+                        onClick={() => addLaborRow(ph === 'Unassigned' ? '' : ph)}
+                        style={{
+                          marginTop: '8px', padding: '5px 10px',
+                          backgroundColor: 'rgba(59,130,246,0.15)', color: '#60a5fa',
+                          border: '1px solid rgba(59,130,246,0.25)', borderRadius: '4px',
+                          fontSize: '11px', fontWeight: '600', cursor: 'pointer',
+                        }}
+                      >
+                        + Add Row to {ph}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
 

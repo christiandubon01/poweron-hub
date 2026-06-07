@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useCallback, useEffect } from 'react'
-import { Sparkles, ChevronDown, BookOpen } from 'lucide-react'
+import { Sparkles, ChevronDown, BookOpen, X } from 'lucide-react'
 import { getBackupData, saveBackupData, saveBackupDataAndSync } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { getJournalEntriesForProject, type JournalEntry } from '@/services/voiceJournalService'
@@ -29,6 +29,9 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
   const [journalLinksOpen, setJournalLinksOpen] = useState(true)
   const [addingSection, setAddingSection] = useState<string | null>(null)
   const [addingText, setAddingText] = useState("")
+  const [editingCoordKey, setEditingCoordKey] = useState<string | null>(null)
+  const [editingCoordId, setEditingCoordId] = useState<string | null>(null)
+  const [editCoordForm, setEditCoordForm] = useState({ text: '', status: 'pending', response: '', solvedBy: '' })
 
   const backup = initialBackup || getBackupData()
   if (!backup) return <div style={{ color: 'var(--t3)' }}>No data</div>
@@ -121,6 +124,42 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
     forceUpdate()
   }
 
+  const openEditCoordModal = (key, item) => {
+    setEditingCoordKey(key)
+    setEditingCoordId(item.id)
+    setEditCoordForm({
+      text: item.text || '',
+      status: item.status || 'pending',
+      response: item.response || '',
+      solvedBy: item.solvedBy || '',
+    })
+  }
+
+  const closeEditCoordModal = () => {
+    setEditingCoordKey(null)
+    setEditingCoordId(null)
+  }
+
+  const saveEditCoordModal = () => {
+    if (!editingCoordKey || !editingCoordId) return
+    const freshBackup = getBackupData()
+    const freshP = freshBackup?.projects?.find(x => x.id === projectId)
+    if (!freshP) return
+    pushState()
+    const items = (freshP.coord || {})[editingCoordKey] || []
+    const item = items.find(i => i.id === editingCoordId)
+    if (item) {
+      item.text = editCoordForm.text
+      item.status = editCoordForm.status
+      item.response = editCoordForm.response
+      item.solvedBy = editCoordForm.solvedBy
+    }
+    saveBackupDataAndSync(freshBackup)
+    closeEditCoordModal()
+    forceUpdate()
+    if (onUpdate) onUpdate()
+  }
+
   return (
     <div style={{ backgroundColor: '#1a1d27', padding: '0' }}>
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
@@ -177,57 +216,62 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
                               padding: '8px 10px',
                               backgroundColor: '#1e2130',
                               borderRadius: '4px',
-                              display: 'flex',
-                              gap: '8px',
-                              alignItems: 'center',
                               fontSize: '12px',
+                              borderLeft: item.response ? `3px solid ${section.color}` : '3px solid transparent',
                             }}
                           >
-                            <div style={{ flex: 1 }}>
-                              <input
-                                type="text"
-                                value={item.text || ''}
-                                onChange={e => editItem(section.key, item.id, 'text', e.target.value)}
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <div style={{ flex: 1 }}>
+                                <input
+                                  type="text"
+                                  value={item.text || ''}
+                                  onChange={e => editItem(section.key, item.id, 'text', e.target.value)}
+                                  style={{
+                                    width: '100%', background: 'transparent', border: 'none',
+                                    color: 'var(--t1)', fontSize: '12px', fontFamily: 'inherit', outline: 'none',
+                                  }}
+                                />
+                              </div>
+                              <select
+                                value={item.status || 'pending'}
+                                onChange={e => editItem(section.key, item.id, 'status', e.target.value)}
                                 style={{
-                                  width: '100%',
-                                  background: 'transparent',
-                                  border: 'none',
-                                  color: 'var(--t1)',
-                                  fontSize: '12px',
-                                  fontFamily: 'inherit',
-                                  outline: 'none',
+                                  padding: '3px 6px', backgroundColor: '#0f1117',
+                                  border: '1px solid rgba(255,255,255,0.1)', borderRadius: '3px',
+                                  color: 'var(--t2)', fontSize: '11px', cursor: 'pointer',
                                 }}
-                              />
+                              >
+                                <option value="pending">Pending</option>
+                                <option value="completed">Completed</option>
+                              </select>
+                              <button
+                                onClick={() => openEditCoordModal(section.key, item)}
+                                style={{
+                                  padding: '3px 8px', backgroundColor: 'rgba(59,130,246,0.10)',
+                                  color: '#93c5fd', border: '1px solid rgba(59,130,246,0.18)',
+                                  borderRadius: '4px', fontSize: '11px', fontWeight: '700', cursor: 'pointer',
+                                }}
+                              >Edit</button>
+                              <button
+                                onClick={() => delItem(section.key, item.id)}
+                                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '14px', padding: '0' }}
+                              >×</button>
                             </div>
-                            <select
-                              value={item.status || 'pending'}
-                              onChange={e => editItem(section.key, item.id, 'status', e.target.value)}
-                              style={{
-                                padding: '3px 6px',
-                                backgroundColor: '#0f1117',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                borderRadius: '3px',
-                                color: 'var(--t2)',
-                                fontSize: '11px',
-                                cursor: 'pointer',
-                              }}
-                            >
-                              <option value="pending">Pending</option>
-                              <option value="completed">Completed</option>
-                            </select>
-                            <button
-                              onClick={() => delItem(section.key, item.id)}
-                              style={{
-                                background: 'none',
-                                border: 'none',
-                                color: '#ef4444',
-                                cursor: 'pointer',
-                                fontSize: '14px',
-                                padding: '0',
-                              }}
-                            >
-                              ×
-                            </button>
+                            {(item.response || item.solvedBy) && (
+                              <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                                {item.response && (
+                                  <div style={{ fontSize: '11px', color: '#d1fae5', lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>
+                                    <span style={{ color: '#86efac', fontWeight: '700', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', marginRight: '6px' }}>Response:</span>
+                                    {item.response}
+                                  </div>
+                                )}
+                                {item.solvedBy && (
+                                  <div style={{ marginTop: '4px', fontSize: '10px', color: 'var(--t3)' }}>
+                                    Solved by <span style={{ color: '#86efac', fontWeight: '700' }}>{item.solvedBy}</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -393,6 +437,117 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
           AI Prioritize
         </button>
       </div>
+
+      {/* EDIT COORDINATION ITEM MODAL */}
+      {editingCoordId && editingCoordKey && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)' }}
+          onClick={e => { if (e.target === e.currentTarget) closeEditCoordModal() }}
+        >
+          <div
+            style={{
+              width: '100%', maxWidth: '560px', margin: '0 16px', borderRadius: '16px',
+              backgroundColor: 'var(--bg-card)', border: '1px solid rgba(59,130,246,0.28)',
+              boxShadow: '0 24px 70px rgba(0,0,0,0.55)', maxHeight: '90vh', overflow: 'hidden',
+              display: 'flex', flexDirection: 'column',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+              <div>
+                <h3 style={{ color: 'var(--t1)', fontSize: '16px', fontWeight: '700', margin: 0 }}>Edit Coordination Item</h3>
+                <p style={{ color: 'var(--t3)', fontSize: '12px', margin: '4px 0 0 0' }}>Update text, status, response, and ownership</p>
+              </div>
+              <button
+                onClick={closeEditCoordModal}
+                style={{ background: 'none', border: 'none', color: 'var(--t3)', cursor: 'pointer', padding: '2px' }}
+                aria-label="Close"
+              ><X size={18} /></button>
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', marginBottom: '6px', letterSpacing: '0.07em' }}>Item Text</label>
+                <textarea
+                  value={editCoordForm.text}
+                  onChange={e => setEditCoordForm(prev => ({ ...prev, text: e.target.value }))}
+                  rows={3}
+                  style={{
+                    width: '100%', borderRadius: '8px', padding: '8px 12px', fontSize: '13px',
+                    color: '#e2e8f0', border: '1px solid #4b5563', outline: 'none', resize: 'vertical',
+                    backgroundColor: 'var(--bg-input)', fontFamily: 'inherit',
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', marginBottom: '6px', letterSpacing: '0.07em' }}>Status</label>
+                <select
+                  value={editCoordForm.status}
+                  onChange={e => setEditCoordForm(prev => ({ ...prev, status: e.target.value }))}
+                  style={{
+                    width: '100%', borderRadius: '8px', padding: '8px 12px', fontSize: '13px',
+                    color: '#e2e8f0', border: '1px solid #4b5563', outline: 'none',
+                    backgroundColor: 'var(--bg-input)', cursor: 'pointer',
+                  }}
+                >
+                  <option value="pending">Pending</option>
+                  <option value="completed">Completed</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', marginBottom: '6px', letterSpacing: '0.07em' }}>Response / Answer</label>
+                <textarea
+                  value={editCoordForm.response}
+                  onChange={e => setEditCoordForm(prev => ({ ...prev, response: e.target.value }))}
+                  rows={4}
+                  placeholder="Optional response, resolution, or answer..."
+                  style={{
+                    width: '100%', borderRadius: '8px', padding: '8px 12px', fontSize: '13px',
+                    color: '#e2e8f0', border: '1px solid #4b5563', outline: 'none', resize: 'vertical',
+                    backgroundColor: 'var(--bg-input)', fontFamily: 'inherit',
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', marginBottom: '6px', letterSpacing: '0.07em' }}>Solved by / Responded by</label>
+                <input
+                  type="text"
+                  value={editCoordForm.solvedBy}
+                  onChange={e => setEditCoordForm(prev => ({ ...prev, solvedBy: e.target.value }))}
+                  placeholder="Optional"
+                  style={{
+                    width: '100%', borderRadius: '8px', padding: '8px 12px', fontSize: '13px',
+                    color: '#e2e8f0', border: '1px solid #4b5563', outline: 'none',
+                    backgroundColor: 'var(--bg-input)', fontFamily: 'inherit',
+                  }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', padding: '14px 20px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+              <button
+                onClick={closeEditCoordModal}
+                style={{
+                  padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: '600',
+                  color: '#94a3b8', border: '1px solid #4b5563', cursor: 'pointer',
+                  backgroundColor: 'rgba(15,23,42,0.35)',
+                }}
+              >Cancel</button>
+              <button
+                onClick={saveEditCoordModal}
+                style={{
+                  padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: '700',
+                  color: 'white', border: '1px solid rgba(96,165,250,0.35)', cursor: 'pointer',
+                  background: 'linear-gradient(135deg, rgba(37,99,235,0.95), rgba(16,185,129,0.92))',
+                  boxShadow: '0 6px 16px rgba(37,99,235,0.22)',
+                }}
+              >Save</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

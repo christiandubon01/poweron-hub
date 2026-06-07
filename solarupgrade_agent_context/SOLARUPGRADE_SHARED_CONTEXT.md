@@ -4687,3 +4687,29 @@ Browser reached login gate at `http://localhost:5173`; Home-tab click-through re
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Home repair pass complete on `main`. Pipeline subtitle uses active-project count; agenda linking uses a real project picker modal; agenda cards scroll after 10 task rows. Scope limited to `V15rHome.tsx` plus context files.
+
+## Shared Update — Inner Project Batch 2: Labor Phase Groups and Response Tracking
+
+* Agent: Claude Code (claude-sonnet-4-6)
+* Branch: main
+* Commit: (pending)
+* Files changed:
+  - `src/components/v15r/V15rEstimateTab.tsx` — labor phase collapsibles, phase color pickers, per-phase Add Row
+  - `src/components/v15r/V15rCoordinationTab.tsx` — edit modal, response + solvedBy fields
+  - `src/utils/v15rViewPrefs.ts` — added `collapsedLaborPhases` to estimate view prefs type + deep-merge
+* Typecheck: PASS
+* User-facing behavior changed:
+  - Estimate tab Labor section now shows 5 collapsible phase buckets: Underground, Site Prep, Rough In, Trim, Finish. Each has a color picker. Collapsed state and colors persist across reload. Per-phase Add Row button. Each row has a Phase dropdown for reassignment. Labor totals unchanged.
+  - RFI tab was already complete — no changes.
+  - Coordination tab items now have an Edit button that opens a modal with Text, Status, Response, and Solved By fields. Items show response and solved-by when present.
+* Implementation notes:
+  - Labor rows now support a `phase` field (backward compatible — inferred from description if absent).
+  - Phase colors stored in `p.laborPhaseColors` (project backup). Collapse state in localStorage via viewPrefs `estimate.collapsedLaborPhases`.
+  - Coordination edit uses the same fresh-backup-read pattern as RFI to avoid stale saves.
+  - A linter was auto-reverting V15rEstimateTab.tsx edits mid-session — all changes were consolidated into a single save pass.
+* Risks / follow-up:
+  - Existing labor rows with no `phase` field and no matching keyword in description will land in Unassigned. Users can reassign via the Phase dropdown.
+  - Manual QA needed to confirm collapse persistence, phase color persistence, and coordination edit flow in browser.
+* Manual QA status: Typecheck only. Browser QA recommended.
+* Next agent should know:
+  Inner Project Batch 2 is complete. Batch 3 would cover the remaining Inner Project tab improvements (if any). All 3 scoped code files + context files in this commit. Labor totals, RFI counts, Coordination status/categories all preserved.

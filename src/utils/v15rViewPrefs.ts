@@ -9,6 +9,8 @@ export type InnerProjectEstimateView = {
   showInternalBreakdown?: boolean
   /** Estimate tab — "Estimate Pipeline Overview" section expanded when true */
   showPipelineOverview?: boolean
+  /** Estimate tab labor section — true = phase bucket is collapsed */
+  collapsedLaborPhases?: Record<string, boolean>
 }
 
 export type InnerProjectProgressView = {
@@ -68,8 +70,14 @@ export function mergeInnerProjectViewPrefs(projectId: string, patch: InnerProjec
 
   const prev = loadInnerProjectViewPrefs(projectId)
 
-  const nextEstimate =
-    patch.estimate !== undefined ? { ...prev.estimate, ...patch.estimate } : prev.estimate
+  let nextEstimate = prev.estimate
+  if (patch.estimate !== undefined) {
+    const collapsedLaborPhases =
+      patch.estimate.collapsedLaborPhases !== undefined
+        ? { ...prev.estimate?.collapsedLaborPhases, ...patch.estimate.collapsedLaborPhases }
+        : prev.estimate?.collapsedLaborPhases
+    nextEstimate = { ...prev.estimate, ...patch.estimate, collapsedLaborPhases }
+  }
 
   let nextProgress = prev.progress
   if (patch.progress !== undefined) {
