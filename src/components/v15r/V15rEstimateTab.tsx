@@ -179,6 +179,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   }
 
   const t = estTotals()
+  const cbTotal = num(p.contract) > 0 ? num(p.contract) : Math.max(t.customerCost, 1)
 
   const editLaborRow = (rowId, field, value) => {
     pushState()
@@ -1740,12 +1741,12 @@ Return ONLY valid JSON, no other text.`
                   <div style={{ textAlign: 'right' }}>Tax</div>
                   <div style={{ textAlign: 'right' }}>Supplier Cost</div>
                   <div style={{ textAlign: 'right' }}>Selling Price</div>
-                  <div style={{ textAlign: 'right' }}>Margin %</div>
+                  <div style={{ textAlign: 'right' }}>Markup %</div>
                 </div>
                 {t.matBreakdown.map((r, i) => {
                   const markupRate = num(backup.settings?.markup || 50) / 100
                   const sellingPrice = r.hasCostData ? r.raw * (1 + markupRate) : 0
-                  const marginPct = sellingPrice > 0 ? ((sellingPrice - r.raw) / sellingPrice * 100) : 0
+                  const markupPct = markupRate * 100
                   return (
                   <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 50px 90px 70px 90px 90px 68px', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--bdr2)', minWidth: '630px' }}>
                     <div>{r.phase}</div>
@@ -1754,7 +1755,7 @@ Return ONLY valid JSON, no other text.`
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#ef4444' }}>{fmt(r.tax)}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: 'var(--t2)' }}>{r.hasCostData ? fmt(r.raw) : '—'}</div>
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: '#60a5fa' }}>{r.hasCostData ? fmt(sellingPrice) : '—'}</div>
-                    <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: marginPct > 0 ? '#10b981' : 'var(--t3)' }}>{r.hasCostData ? marginPct.toFixed(1) + '%' : '—'}</div>
+                    <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '12px', color: markupPct > 0 ? '#10b981' : 'var(--t3)' }}>{r.hasCostData ? markupPct.toFixed(1) + '%' : '—'}</div>
                   </div>
                   )
                 })}
@@ -2058,6 +2059,37 @@ Return ONLY valid JSON, no other text.`
                 }}
               />
             </div>
+            {/* Profit % slider — max clamped to 99.9% to avoid division by zero */}
+            <div style={{ position: 'relative', marginBottom: '14px', padding: '10px 14px', backgroundColor: 'rgba(15,23,42,0.32)', border: '1px solid rgba(52,211,153,0.14)', borderRadius: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <span style={{ fontSize: '11px', color: '#a7f3d0', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Profit Target</span>
+                <span style={{ fontSize: '13px', color: '#34d399', fontFamily: 'monospace', fontWeight: '800' }}>{Math.max(0, Math.min(99.9, t.customerMarginPct)).toFixed(1)}%</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={99.9}
+                step={0.1}
+                value={Math.max(0, Math.min(99.9, t.customerMarginPct))}
+                onChange={e => {
+                  const pct = num(e.target.value) / 100
+                  const cost = t.customerCost
+                  if (cost > 0) {
+                    p.contract = Math.round((cost / (1 - pct)) * 100) / 100
+                    forceUpdate()
+                  }
+                }}
+                onPointerUp={() => {
+                  pushState()
+                  saveBackupDataAndSync(backup)
+                }}
+                style={{ width: '100%', accentColor: '#34d399', cursor: 'pointer' }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#374151', marginTop: '4px' }}>
+                <span>0% (break even)</span>
+                <span>max 99.9%</span>
+              </div>
+            </div>
             <div style={{ position: 'relative', display: 'grid', gap: '10px' }}>
               {[
                 { label: 'Labor', value: t.lab, color: '#3b82f6', pct: (num(p.contract) > 0) ? (t.lab / num(p.contract)) * 100 : 0 },
@@ -2083,23 +2115,26 @@ Return ONLY valid JSON, no other text.`
           <div style={{ backgroundColor: '#232738', borderRadius: '8px', marginBottom: '16px', padding: '16px' }}>
             <h4 style={{ color: 'var(--t1)', fontWeight: '600', margin: '0 0 12px 0' }}>Cost Breakdown</h4>
 
-            {/* Segmented bar: each category as proportion */}
+            {/* Segmented bar: each category as proportion of contract amount (including profit) */}
             <div style={{ display: 'flex', height: '24px', borderRadius: '4px', overflow: 'hidden', marginBottom: '16px', gap: '1px', backgroundColor: '#1e2130' }}>
               {t.lab > 0 && (
-                <div style={{ flex: t.lab / t.customerCost, backgroundColor: '#3b82f6', minWidth: '2px' }} title={`Labor: ${fmt(t.lab)}`} />
+                <div style={{ flex: t.lab, backgroundColor: '#3b82f6', minWidth: '2px' }} title={`Labor: ${fmt(t.lab)}`} />
               )}
               {(t.matSellingC + t.taxOnMatSelling) > 0 && (
-                <div style={{ flex: (t.matSellingC + t.taxOnMatSelling) / t.customerCost, backgroundColor: '#f59e0b', minWidth: '2px' }} title={`Material: ${fmt(t.matSellingC + t.taxOnMatSelling)}`} />
+                <div style={{ flex: (t.matSellingC + t.taxOnMatSelling), backgroundColor: '#f59e0b', minWidth: '2px' }} title={`Material: ${fmt(t.matSellingC + t.taxOnMatSelling)}`} />
               )}
               {t.oh > 0 && (
-                <div style={{ flex: t.oh / t.customerCost, backgroundColor: '#a855f7', minWidth: '2px' }} title={`Overhead: ${fmt(t.oh)}`} />
+                <div style={{ flex: t.oh, backgroundColor: '#a855f7', minWidth: '2px' }} title={`Overhead: ${fmt(t.oh)}`} />
               )}
               {(t.mi + t.taxOnMileage) > 0 && (
-                <div style={{ flex: (t.mi + t.taxOnMileage) / t.customerCost, backgroundColor: '#06b6d4', minWidth: '2px' }} title={`Mileage: ${fmt(t.mi + t.taxOnMileage)}`} />
+                <div style={{ flex: (t.mi + t.taxOnMileage), backgroundColor: '#06b6d4', minWidth: '2px' }} title={`Mileage: ${fmt(t.mi + t.taxOnMileage)}`} />
+              )}
+              {t.customerProfit > 0 && (
+                <div style={{ flex: t.customerProfit, backgroundColor: '#22c55e', minWidth: '2px' }} title={`Profit: ${fmt(t.customerProfit)}`} />
               )}
             </div>
 
-            {/* Legend with bars */}
+            {/* Legend with bars — percentages relative to Total Contract Amount */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '14px' }}>
               {t.lab > 0 && (
                 <div>
@@ -2109,7 +2144,7 @@ Return ONLY valid JSON, no other text.`
                   </div>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
                     <span style={costBreakdownValueStyle('#3b82f6')}>{fmt(t.lab)}</span>
-                    <span style={costBreakdownPctStyle}>({((t.lab / t.customerCost) * 100).toFixed(0)}%)</span>
+                    <span style={costBreakdownPctStyle}>({((t.lab / cbTotal) * 100).toFixed(0)}%)</span>
                   </div>
                 </div>
               )}
@@ -2121,7 +2156,7 @@ Return ONLY valid JSON, no other text.`
                   </div>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
                     <span style={costBreakdownValueStyle('#f59e0b')}>{fmt(t.matSellingC + t.taxOnMatSelling)}</span>
-                    <span style={costBreakdownPctStyle}>({(((t.matSellingC + t.taxOnMatSelling) / t.customerCost) * 100).toFixed(0)}%)</span>
+                    <span style={costBreakdownPctStyle}>({(((t.matSellingC + t.taxOnMatSelling) / cbTotal) * 100).toFixed(0)}%)</span>
                   </div>
                 </div>
               )}
@@ -2133,7 +2168,7 @@ Return ONLY valid JSON, no other text.`
                   </div>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
                     <span style={costBreakdownValueStyle('#a855f7')}>{fmt(t.oh)}</span>
-                    <span style={costBreakdownPctStyle}>({((t.oh / t.customerCost) * 100).toFixed(0)}%)</span>
+                    <span style={costBreakdownPctStyle}>({((t.oh / cbTotal) * 100).toFixed(0)}%)</span>
                   </div>
                 </div>
               )}
@@ -2145,7 +2180,19 @@ Return ONLY valid JSON, no other text.`
                   </div>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
                     <span style={costBreakdownValueStyle('#06b6d4')}>{fmt(t.mi + t.taxOnMileage)}</span>
-                    <span style={costBreakdownPctStyle}>({(((t.mi + t.taxOnMileage) / t.customerCost) * 100).toFixed(0)}%)</span>
+                    <span style={costBreakdownPctStyle}>({(((t.mi + t.taxOnMileage) / cbTotal) * 100).toFixed(0)}%)</span>
+                  </div>
+                </div>
+              )}
+              {num(p.contract) > 0 && (
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                    <div style={{ width: '8px', height: '8px', backgroundColor: t.customerProfit >= 0 ? '#22c55e' : '#ef4444', borderRadius: '2px' }} />
+                    <span style={{ fontSize: '12px', color: 'var(--t3)' }}>Profit</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
+                    <span style={costBreakdownValueStyle(t.customerProfit >= 0 ? '#22c55e' : '#ef4444')}>{fmt(t.customerProfit)}</span>
+                    <span style={costBreakdownPctStyle}>({((t.customerProfit / cbTotal) * 100).toFixed(0)}%)</span>
                   </div>
                 </div>
               )}

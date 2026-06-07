@@ -1991,3 +1991,66 @@ NO — ready for screenshot QA.
 
 * Compact handoff for next agent/chat:
   Category-based animation sync complete on main branch. ProjectCard.tsx getProjectCardGlareDelay now covers all 6 types with TYPE_GLARE_OFFSETS (Commercial/TI: 0ms, Residential: 420ms, Solar: 840ms, New Construction: 1260ms, Service: 1680ms, unknown: type-string hash). V15rProjectsPanel.tsx inline renderProjectCard now imports and calls getProjectCardGlareDelay(p) instead of raw id-hash. Typecheck: full clean pass.
+
+---
+
+## Claude Report — Estimate Tab Batch 1: Markup, Profit Slider, and Cost Breakdown Profit
+
+* Task completed: YES
+
+* Files changed:
+  - `src/components/v15r/V15rEstimateTab.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+* Commit hash: see git log — committed as "fix(estimate): sync markup and render profit controls"
+
+* Typecheck result: PASS — zero errors
+
+* Root cause:
+  1. Markup display: Estimate tab computed `(sellingPrice - cost) / sellingPrice` (true margin ≈ 20%) instead of showing markup rate (25%) from settings. Label said "Margin %" but settings/MTO use markup %.
+  2. Profit slider: No slider existed. Only a manual contract amount input was present.
+  3. Cost Breakdown Profit: The stacked bar and legend used `t.customerCost` as the total denominator, which excluded profit. No Profit segment was rendered.
+
+* What changed:
+  1. Renamed column header from "Margin %" to "Markup %" in Materials by Phase table.
+  2. Changed displayed value from margin formula `(selling-cost)/selling*100` to `markupRate*100` (direct from settings). When settings markup = 25%, Estimate now shows 25%.
+  3. Added `cbTotal` derived const after `estTotals()` — `num(p.contract) > 0 ? contract : max(customerCost, 1)`.
+  4. Added a profit % slider in Deal Overview above the breakdown grid. Slider derives `contract = customerCost / (1 - pct)`. Clamped 0–99.9% to avoid division by zero. Saves on `onPointerUp` via existing `saveBackupDataAndSync` path.
+  5. Manual contract input still works and updates slider position (slider reads `t.customerMarginPct`).
+  6. Cost Breakdown stacked bar now includes a green Profit segment (only when `t.customerProfit > 0`).
+  7. Cost Breakdown legend now includes Profit entry (shown when `num(p.contract) > 0`), with red color on negative profit.
+  8. All existing legend percentages changed to use `cbTotal` (contract-relative) instead of `t.customerCost`.
+
+* Double verification against requested behavior:
+  ✅ Estimate material markup shows Settings/MTO value (25% when settings markup = 25%)
+  ✅ Material selling price calculation unchanged (`r.raw * (1 + markupRate)`)
+  ✅ Total Contract Amount can be changed manually (input unchanged)
+  ✅ Profit slider changes Total Contract Amount (onChange derives new contract from pct)
+  ✅ Manual Total Contract Amount updates projected profit percent/slider (slider reads derived `t.customerMarginPct`)
+  ✅ Profit appears in Cost Breakdown stacked bar (green segment)
+  ✅ Profit appears in Cost Breakdown legend/value (Profit entry)
+  ✅ No unrelated tabs/files touched
+
+* What was learned:
+  - Markup (selling/cost - 1) vs margin (profit/selling) is a common confusion. Settings stores "markup" but the Estimate was showing "margin". Fix is to display the rate directly.
+  - Slider `value` tied to derived state (`t.customerMarginPct`) means manual input automatically updates slider — no extra sync needed.
+  - `cbTotal` needs a fallback to `customerCost` when contract = 0 to avoid division by zero in legend percentages.
+
+* Learned skills / reusable patterns:
+  - Profit slider pattern: `value = Math.max(0, Math.min(99.9, derivedPct))`, `onChange` derives `contract = cost / (1 - pct/100)`, guard `cost > 0`, `onPointerUp` saves.
+  - Cost breakdown total denominator: always use `Math.max(contract, customerCost, 1)` to avoid NaN/Infinity when either is zero.
+  - Markup vs margin: when label and settings both say "markup", always display `markupRate * 100` directly, never derive margin.
+
+* Bugs / risks:
+  - Slider only moves when `t.customerCost > 0`. If all fields are empty, slider is inert — intentional.
+  - When profit is negative (contract < customerCost), Profit legend shows red value; stacked bar has no Profit segment (guarded by `customerProfit > 0`) — intentional safe behavior.
+
+* Manual QA performed:
+  Static code review and typecheck only. Browser QA recommended to confirm slider drag updates contract amount live.
+
+* Next recommended action:
+  Manual QA: Open an Inner Project Estimate tab → confirm Materials by Phase shows 25% (if settings markup = 25%). Drag the Profit Target slider → confirm Total Contract Amount updates live. Manually edit Total Contract Amount → confirm slider position updates. Check Cost Breakdown section includes Profit segment and Profit legend row.
+
+* Compact handoff for next agent/chat:
+  Estimate Tab Batch 1 complete on `main`. Three fixes: (1) Materials by Phase now shows Markup % (from settings, matching MTO) instead of margin %; label renamed. (2) Profit Target slider added in Deal Overview — drags 0–99.9%, derives contract amount via `cost/(1-pct)`, saves on pointer-up. Manual contract input still works and updates slider. (3) Cost Breakdown stacked bar and legend now include Profit segment (green / red on negative), percentages relative to Total Contract Amount. Only `V15rEstimateTab.tsx` changed. Typecheck passes.

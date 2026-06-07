@@ -4641,3 +4641,32 @@ Browser reached login gate at `http://localhost:5173`; Home-tab click-through re
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Home repair pass complete on `main`. Pipeline subtitle uses active-project count; agenda linking uses a real project picker modal; agenda cards scroll after 10 task rows. Scope limited to `V15rHome.tsx` plus context files.
+
+---
+
+## Shared Update — Estimate Tab Batch 1: Markup, Profit Slider, and Cost Breakdown Profit
+
+* Agent: Claude Code (Sonnet 4.6)
+* Branch: main
+* Commit: fix(estimate): sync markup and render profit controls — see git log for hash
+* Files changed: `src/components/v15r/V15rEstimateTab.tsx`, both context files
+* Typecheck: PASS — zero errors
+* User-facing behavior changed:
+  - Materials by Phase column renamed "Margin %" → "Markup %" and now shows the markup rate from Settings (e.g. 25%), not the derived margin (e.g. 20%).
+  - Profit Target slider added in Deal Overview. Drag to set desired profit %; Total Contract Amount updates automatically. Slider position reflects manually-typed contract amount.
+  - Cost Breakdown stacked bar now includes a Profit segment (green when positive, omitted when ≤ 0).
+  - Cost Breakdown legend now includes Profit row. All legend percentages now relative to Total Contract Amount (previously relative to customerCost).
+* Implementation notes:
+  - Root cause of 20% vs 25%: Estimate computed true margin `(selling-cost)/selling` instead of displaying `markupRate * 100` directly.
+  - Slider formula: `contract = customerCost / (1 - profitPct)`. Clamped to max 99.9% to prevent division by zero.
+  - `cbTotal = num(p.contract) > 0 ? contract : max(customerCost, 1)` — safe denominator for legend percentages.
+  - Selling price math in Materials by Phase is unchanged.
+* Risks / follow-up:
+  - Slider inert when customerCost = 0 (all cost fields empty) — intentional guard.
+  - Negative profit renders red in legend; bar has no profit segment (guarded by `customerProfit > 0`).
+  - Browser QA still recommended to confirm slider drag live-updates contract amount.
+* Manual QA status: Static code review + typecheck only. Browser QA recommended.
+* Next agent should know:
+  - This is Inner Project improvement Batch 1 of 3. Batch 2 will cover additional Estimate tab or other Inner Project tab improvements as directed by the user.
+  - Do not re-touch the margin/markup calculation or slider logic unless explicitly scoped.
+  - Material Takeoff tab and Settings tab were not touched and remain unchanged.
