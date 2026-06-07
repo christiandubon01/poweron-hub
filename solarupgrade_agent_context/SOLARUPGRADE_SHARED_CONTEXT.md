@@ -4983,7 +4983,7 @@ NEXT AGENT SHOULD KNOW:
 
 * Agent: Claude Code Sonnet 4.6
 * Branch: main
-* Commit: TBD (see git log)
+* Commit: caeba57
 * Files changed: src/components/v15r/V15rEstimateTab.tsx + 2 context files
 * Typecheck: PASS — zero errors
 * User-facing behavior changed:

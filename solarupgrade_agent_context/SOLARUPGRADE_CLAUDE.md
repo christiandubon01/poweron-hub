@@ -2492,7 +2492,7 @@ NO — ready for screenshot QA.
   - src/components/v15r/V15rEstimateTab.tsx
   - solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
   - solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
-* Commit hash: TBD (see commit)
+* Commit hash: caeba57
 * Typecheck result: PASS — zero errors
 * Root cause:
   1. Duplicate Owner/Me (persisted after Phase 1): IIFE dedup only checked `e.isOwner === true`. If owner record lacked explicit isOwner flag, sentinel + real record both appeared when they had the same normalized name.
