@@ -52,18 +52,26 @@ export interface ExtendedEmployee {
  * Provides safe defaults for all new fields so old data always loads correctly.
  */
 export function normalizeEmployee(raw: any): ExtendedEmployee {
-  const isOwnerFlag: boolean = raw.isOwner === true
+  // Sentinel detection: covers records saved before isOwner was persisted.
+  // id/name sentinels identify the owner record independent of stored flags.
+  const rawId = String(raw.id ?? '').toLowerCase().trim()
+  const rawName = String(raw.name ?? '').toLowerCase().trim()
+  const isOwnerBySentinel =
+    rawId === 'me' || rawId === 'owner' || rawId === 'owner-virtual' ||
+    rawName === 'owner / me'
+  const isOwnerFlag: boolean = raw.isOwner === true || isOwnerBySentinel
   const classification: Classification = raw.classification ?? 'W-2'
   const employee_type: EmployeeType = raw.employee_type ?? 'permanent'
 
-  // Derive applyMultiplier when not explicitly stored.
-  // Payroll multiplier applies ONLY to W-2 employees.
-  // Owner, 1099, and per_project contractors never carry W-2 burden.
+  // Owner/1099/per_project never carry W-2 payroll burden.
+  // isOwner detection wins over stored applyMultiplier to fix stale records.
   let applyMultiplier: boolean
-  if (raw.applyMultiplier !== undefined) {
+  if (isOwnerFlag || classification === '1099' || employee_type === 'per_project') {
+    applyMultiplier = false
+  } else if (raw.applyMultiplier !== undefined) {
     applyMultiplier = raw.applyMultiplier !== false
   } else {
-    applyMultiplier = !(isOwnerFlag || classification === '1099' || employee_type === 'per_project')
+    applyMultiplier = true // permanent W-2 default
   }
 
   return {

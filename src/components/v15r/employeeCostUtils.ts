@@ -20,9 +20,21 @@ const SAFE_FALLBACK_HOURLY = 0
 
 export type WorkerType = 'owner' | 'w2' | '1099'
 
-/** Determine the canonical worker type from stored fields. */
+/** Determine the canonical worker type from stored fields.
+ *
+ * Owner detection wins over classification, applyMultiplier, and employee_type.
+ * Sentinel check covers stale records saved without isOwner flag.
+ */
 export function resolveWorkerType(emp: any): WorkerType {
   if (emp?.isOwner === true) return 'owner'
+  // Sentinel detection: id or name identifies this as the owner record.
+  // Covers records created before isOwner was persisted.
+  const id = String(emp?.id ?? '').toLowerCase().trim()
+  const name = String(emp?.name ?? '').toLowerCase().trim()
+  if (
+    id === 'me' || id === 'owner' || id === 'owner-virtual' ||
+    name === 'owner / me'
+  ) return 'owner'
   if (emp?.classification === '1099') return '1099'
   if (emp?.classification === 'W-2') return 'w2'
   // No explicit classification — fall back on applyMultiplier / employee_type

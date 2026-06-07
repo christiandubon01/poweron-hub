@@ -5094,3 +5094,46 @@ NEXT AGENT SHOULD KNOW:
   - resolveWorkerType priority: isOwner > classification:1099 > classification:W-2 > applyMultiplier===false > employee_type:per_project > default W-2
   - W-2 stale record recovery: base = costRate / payrollMult (in getBaseHourlyRate)
   - Do not delete the V15rTeamPanel calcEmployeeCost wrapper � it maps MonthlyBreakdown fields to the legacy return shape consumed by EmployeeCard
+
+---
+
+## Shared Update — Team Cost Repair: Owner Classification Fix
+
+- Agent: Claude Code Sonnet 4.6
+- Branch: main
+- Commit: (see below)
+- Files changed: src/components/v15r/employeeCostUtils.ts, src/components/v15r/employeeTypes.ts, src/components/v15r/V15rEstimateTab.tsx
+- Typecheck: PASS — zero errors
+
+- User-facing behavior changed:
+  Owner / Me EmployeeCard now shows Loaded Cost = Base Wage (no payroll multiplier).
+  Helper text changes from 'Loaded = base × 1.20x payroll multiplier' to 'Owner cost — no W-2 payroll burden'.
+  Monthly payroll burden for Owner / Me = $0.
+  Team Cost Summary reflects corrected (lower) owner monthly total.
+
+- Root cause:
+  AddTeamMemberModal saves permanent employees with classification: 'W-2' and no isOwner field.
+  resolveWorkerType and normalizeEmployee only checked raw.isOwner === true, so the Owner / Me
+  record (with classification: 'W-2' and no isOwner) resolved as a W-2 employee everywhere.
+
+- Owner/W-2/1099 formulas (post-fix):
+  Owner: loadedHourly = baseHourly (resolveWorkerType returns 'owner' via sentinel)
+  W-2: loadedHourly = baseHourly × payrollMult (unchanged)
+  1099: loadedHourly = baseHourly (unchanged)
+  Sentinel: id in ['me','owner','owner-virtual'] OR name === 'owner / me' → 'owner'
+
+- Team and Estimate integration notes:
+  Team Cost Summary uses calcEmployeeCost → calcMonthlyBreakdown → getWorkerCostProfile → resolveWorkerType. Fixed.
+  Estimate getEmployeeCostRate 'me' sentinel: new isOwnerRecord helper finds owner by name/id sentinel even when isOwner flag missing.
+
+- Risks / follow-up:
+  Stale records without isOwner not re-saved until next user edit. Display correct immediately.
+  AddTeamMemberModal still forces W-2 for permanent employees without isOwner persistence.
+  Consider adding isOwner persistence to AddTeamMemberModal in a future phase.
+
+- Manual QA status: Typecheck only. Browser QA required to confirm visual fix.
+
+- Next agent should know:
+  Owner / Me identification is now sentinel-based (name 'owner / me' or id 'me'/'owner'/'owner-virtual').
+  employeeCostUtils.ts resolveWorkerType and employeeTypes.ts normalizeEmployee both implement the sentinel.
+  This is the display/calculation layer fix only — storage still lacks isOwner for stale records.

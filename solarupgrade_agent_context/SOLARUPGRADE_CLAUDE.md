@@ -2664,3 +2664,90 @@ Verify Projected Monthly Cost does not double-count W-2 burden.
 
 COMPACT HANDOFF FOR NEXT AGENT/CHAT:
 employeeCostUtils.ts is the single source of truth for all worker cost rules. It exports resolveWorkerType, getBaseHourlyRate, getLoadedHourlyRate, getWorkerCostProfile, calcMonthlyBreakdown, workerTypeLabel, buildSavePayload. V15rTeamPanel (calcEmployeeCost, EmployeeCard, EmployeeEditModal, projectedMonthlyCost, logsWithCost, 3 charts), V15rEstimateTab (getEmployeeCostRate), and AddTeamMemberModal (isContr guard) all updated to use it. Typecheck passes clean. per_project workers now correctly have no payroll burden in all paths. Stale W-2 records without hourly_rate are corrected at display-time by deriving base=costRate/payrollMult. Commit on main branch.
+
+---
+
+## Claude Report — Team Cost Repair: Owner Classification Fix
+
+- Task completed: 2026-06-07
+- Files changed: src/components/v15r/employeeCostUtils.ts, src/components/v15r/employeeTypes.ts, src/components/v15r/V15rEstimateTab.tsx, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+- Commit hash: (see below)
+- Typecheck result: PASS — zero errors
+
+- Actual Owner / Me fields found:
+  - Record stored by AddTeamMemberModal with employee_type: 'permanent', classification: 'W-2', NO isOwner field
+  - applyMultiplier stored as true (W-2 default set at save time)
+  - id: 'emp-<timestamp>' (no owner sentinel in id)
+
+- Root cause:
+  AddTeamMemberModal forces classification: 'W-2' for all permanent employees and never sets isOwner.
+  resolveWorkerType checked isOwner first (correct), but if the stored record has no isOwner flag,
+  classification === 'W-2' was evaluated next and returned 'w2'.
+  normalizeEmployee similarly only checked raw.isOwner === true, so isOwner came out false.
+  applyMultiplier was stored as true, locking in the W-2 multiplier at display time.
+
+- What changed:
+  1. employeeCostUtils.ts resolveWorkerType: Added sentinel detection after isOwner check.
+     Checks id (me, owner, owner-virtual) and name ('owner / me') case-insensitively.
+     Sentinel match returns 'owner' before checking classification.
+  2. employeeTypes.ts normalizeEmployee: Added same sentinel detection.
+     isOwnerFlag is now raw.isOwner === true OR isOwnerBySentinel.
+     applyMultiplier logic restructured: owner/1099/per_project ALWAYS get false,
+     overriding any stored applyMultiplier value. W-2 falls back to stored or default.
+  3. V15rEstimateTab.tsx: Added isOwnerRecord helper (checks isOwner flag, id sentinel, name sentinel).
+     getEmployeeCostRate and getEmployeeDisplayName now use isOwnerRecord for 'me' lookup,
+     so owner records without isOwner flag are found correctly.
+
+- Owner classification behavior:
+  Owner / Me now resolves as 'owner' via name sentinel 'owner / me'.
+  This is hit even when isOwner is not stored and classification is 'W-2'.
+
+- Owner hourly/monthly behavior:
+  resolveWorkerType returns 'owner' → getLoadedHourlyRate returns base (no multiplier)
+  EmployeeCard: Base Wage = Loaded Cost = base hourly
+  Helper text: 'Owner cost — no W-2 payroll burden'
+  Monthly: payrollBurdenMonthly = $0, loadedMonthly = baseMonthly
+
+- W-2 behavior: Unchanged. classification 'W-2' resolves as 'w2', loaded = base × payrollMult.
+- 1099 behavior: Unchanged. classification '1099' resolves as '1099', loaded = base, burden = $0.
+- Team summary behavior: calcEmployeeCost uses calcMonthlyBreakdown which uses resolveWorkerType — now correct for owner.
+- Estimate allocation modal check: isOwnerRecord helper added to 'me' sentinel lookup. getLoadedHourlyRate on owner employee records now returns base (not multiplied).
+
+- Double verification against requested behavior:
+  ✓ Owner resolves as 'owner' (sentinel match overrides W-2 classification)
+  ✓ Owner Base Wage equals Loaded Cost (getLoadedHourlyRate returns base for non-w2)
+  ✓ Owner helper text: 'Owner cost — no W-2 payroll burden' (workerTypeLabel for 'owner')
+  ✓ Owner monthly payrollBurdenMonthly = $0 (loadedHourly - baseHourly = 0 for owner)
+  ✓ Owner monthly loaded = base monthly
+  ✓ W-2 still uses payroll multiplier (classification check still present, just after owner check)
+  ✓ 1099 still does not use multiplier (classification '1099' still short-circuits before W-2)
+  ✓ Team Cost Summary: calcEmployeeCost → calcMonthlyBreakdown → corrected for owner
+  ✓ Estimate allocation: isOwnerRecord helper catches stale records for 'me' sentinel lookup
+  ✓ No unrelated files touched
+
+- Bugs / risks:
+  - Records named exactly 'owner / me' (case-insensitive) will always be treated as owner.
+    This is the app's canonical owner name. Risk of false match is low.
+  - Stale records with isOwner not set will be corrected at display time but not re-saved.
+    Once user edits/saves the employee via EmployeeEditModal, the fix will persist in storage.
+  - AddTeamMemberModal still forces classification: 'W-2' for permanent employees.
+    If the user tries to re-add the owner, they would need to name them 'Owner / Me' exactly
+    for the sentinel to catch it, or the modal should be updated to preserve isOwner.
+
+- Manual QA performed: Typecheck only. Browser QA cannot be performed in this environment.
+
+- Next recommended action:
+  1. Browser QA: verify Owner / Me card shows Base Wage = Loaded Cost, no multiplier text.
+  2. Verify W-2 employee card still shows Loaded = base × 1.20x.
+  3. Verify Team Cost Summary monthly total reflects corrected owner cost.
+  4. Consider updating AddTeamMemberModal to allow marking a permanent employee as isOwner,
+     or to preserve the isOwner flag when editing an owner record.
+
+- Compact handoff for next agent/chat:
+  Owner / Me was classified as W-2 because AddTeamMemberModal saves permanent employees with
+  classification: 'W-2' and no isOwner flag. Fixed by adding sentinel detection in resolveWorkerType
+  (employeeCostUtils.ts) and normalizeEmployee (employeeTypes.ts): name 'owner / me' (case-insensitive)
+  or id 'me'/'owner'/'owner-virtual' triggers owner worker type regardless of stored classification.
+  In normalizeEmployee, isOwner detection now overrides stored applyMultiplier=true.
+  In V15rEstimateTab, isOwnerRecord helper added for 'me' sentinel lookup.
+  Typecheck passes clean. Files changed: employeeCostUtils.ts, employeeTypes.ts, V15rEstimateTab.tsx.

@@ -1195,11 +1195,17 @@ Return ONLY valid JSON, no other text.`
   }
 
   // ── Multi-employee helpers ────────────────────────────────────────────────
+  // Owner sentinel: covers records without isOwner flag (stale or pre-fix saves).
+  const isOwnerRecord = (e: any) =>
+    e.isOwner === true ||
+    String(e.id ?? '').toLowerCase().trim() === 'me' ||
+    String(e.name ?? '').toLowerCase().trim() === 'owner / me'
+
   const getEmployeeCostRate = (empId: string): number => {
     // 'me' sentinel → resolve to real owner record or settings.opCost.
     // Owner uses base/opportunity cost (no payroll burden).
     if (!empId || empId === 'me') {
-      const ownerRecord = (backup.employees || []).find((e: any) => e.isOwner)
+      const ownerRecord = (backup.employees || []).find(isOwnerRecord)
       if (ownerRecord) {
         return getBaseHourlyRate(ownerRecord, backup.settings) ||
                num(backup.settings?.opCost || 42.45)
@@ -1214,7 +1220,7 @@ Return ONLY valid JSON, no other text.`
   }
   const getEmployeeDisplayName = (empId: string): string => {
     if (!empId || empId === 'me') {
-      const ownerRecord = (backup.employees || []).find((e: any) => e.isOwner)
+      const ownerRecord = (backup.employees || []).find(isOwnerRecord)
       return ownerRecord?.name || 'Owner / Me'
     }
     return (backup.employees || []).find((e: any) => e.id === empId)?.name || empId
