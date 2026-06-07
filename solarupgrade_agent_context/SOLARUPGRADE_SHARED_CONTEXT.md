@@ -4725,3 +4725,29 @@ Home repair pass complete on `main`. Pipeline subtitle uses active-project count
   - The slider tick alignment fix is a CSS-only padding compensation. The `8px` value is a Chrome/Edge thumb half-width approximation.
   - All Estimate Tab Batch 1 behaviors (markup, slider math, profit in Cost Breakdown) remain intact.
   - Inner Project improvement Batch 2 scope TBD by user.
+
+---
+
+## Shared Update — Estimate Slider Alignment Repair: Thumb and Tick Coordinates
+
+* Agent: Claude Code (Sonnet 4.6)
+* Branch: main
+* Commit: see git log — committed as "fix(estimate): align slider thumb with ticks"
+* Files changed: `src/components/v15r/V15rEstimateTab.tsx`, both context files
+* Typecheck: PASS — zero errors
+* User-facing behavior changed:
+  - Tick marks ($0, $25k, $50k, $75k, $100k) now pixel-accurately align with the slider thumb at each position.
+  - Slider thumb is now explicitly styled: 16px circle, #34d399 green, on a 4px track.
+  - Tick marks use absolute positioning with CSS calc() so each center is at the exact thumb center coordinate.
+* Implementation notes:
+  - Root cause: flex space-between distributes item LEFT edges unevenly when items have different widths (e.g., "$0" ≈ 10px vs "$100k" ≈ 30px). This causes label-center positions to be offset.
+  - Fix: inline `<style>` block with class `est-ctr-sl` forces thumb to exactly 16px. Ticks use `position: absolute, left: calc(frac*100% + (0.5-frac)*16px), transform: translateX(-50%)`. This is the mathematically exact formula for thumb-center position at any fractional value.
+  - Computed tick positions: $0→8px, $25k→calc(25%+4px), $50k→50%, $75k→calc(75%-4px), $100k→calc(100%-8px).
+* Risks / follow-up:
+  - Style block renders on each component render (functionally harmless). Class name `est-ctr-sl` is unique enough to avoid collisions.
+  - Slider math, range, width, and all other Estimate behaviors unchanged.
+* Manual QA status: Static code review + typecheck only. Browser QA recommended.
+* Next agent should know:
+  - The slider now uses class `est-ctr-sl` for thumb/track styling. Do not remove this class or the accompanying `<style>` block or alignment will break.
+  - All Estimate Tab Batch 1 behaviors (markup, profit in Cost Breakdown, slider $0–$100k range) remain intact.
+  - Tick formula: `left = calc(frac*100% + (0.5-frac)*16px)` + `transform: translateX(-50%)`. If thumb size ever changes, update the `16` in both the CSS and the formula.

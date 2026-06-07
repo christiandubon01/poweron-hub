@@ -2172,3 +2172,71 @@ NO — ready for screenshot QA.
 
 * Compact handoff for next agent/chat:
   Estimate Tab Slider Tick Alignment complete on `main`. Added `paddingLeft: 8px, paddingRight: 8px` to tick container to compensate for browser input[type=range] thumb inset. Tick dot shape changed from round to rectangular tick for clarity. Slider math, range, width, and all other logic untouched. Typecheck passes.
+
+---
+
+## Claude Report — Estimate Slider Alignment Repair: Thumb and Tick Coordinates
+
+* Task completed: YES
+
+* Files changed:
+  - `src/components/v15r/V15rEstimateTab.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+* Commit hash: see git log — committed as "fix(estimate): align slider thumb with ticks"
+
+* Typecheck result: PASS — zero errors
+
+* Root cause:
+  Two compounding issues caused the misalignment:
+  1. The previous `flex + space-between + paddingLeft/Right: 8px` approach distributes flex item LEFT EDGES, not centers. Since `$0` label (~10px wide) and `$100k` label (~30px wide) have different widths, the space-between distribution puts their centers at different offsets from the tick positions. The `$100k` tick was shifted left by ~(30-10)/2 = 10px relative to `$0`.
+  2. The 8px padding was also imprecise because browser thumb widths vary and weren't explicitly controlled.
+
+* What changed:
+  1. Added inline `<style>` block with CSS class `est-ctr-sl` that forces the range input thumb to exactly 16px (width + height) on both webkit and Mozilla. Track is also explicitly styled to 4px height. Now `thumbHalf = 8px` is a known exact value.
+  2. Removed `accentColor` from input style (replaced by the explicit CSS thumb/track styling).
+  3. Added `className="est-ctr-sl"` to the range input.
+  4. Replaced the `flex + space-between` tick row with a `position: relative` container + absolute-positioned tick marks.
+  5. Each tick uses `left: calc(frac*100% + (0.5-frac)*16px)` — the mathematically exact formula for thumb center position given a 16px thumb.
+  6. Each tick uses `transform: translateX(-50%)` to center the tick element at its `left` position, regardless of label width.
+  7. The computed left values: $0→8px, $25k→calc(25%+4px), $50k→50%, $75k→calc(75%-4px), $100k→calc(100%-8px).
+  8. Slider math (0–100k, step 500, direct p.contract assignment, onPointerUp save) unchanged.
+  9. All other Deal Overview, Cost Breakdown, and markup logic unchanged.
+
+* Double verification against requested behavior:
+  ✅ $0 tick center: `8px` from left = thumbHalf = exact thumb center at min
+  ✅ $25k tick center: `calc(25% + 4px)` = exact thumb center at 25% of range
+  ✅ $50k tick center: `50%` = exact thumb center at midpoint
+  ✅ $75k tick center: `calc(75% - 4px)` = exact thumb center at 75%
+  ✅ $100k tick center: `calc(100% - 8px)` = exact thumb center at max
+  ✅ Labels centered under ticks via `translateX(-50%)` regardless of label width
+  ✅ Slider still updates p.contract directly (onChange unchanged)
+  ✅ Manual contract input updates slider (slider reads from p.contract, unchanged)
+  ✅ Projected profit/% still derive correctly from p.contract (unchanged)
+  ✅ Cost Breakdown still includes Profit (untouched)
+  ✅ Markup shows Settings/MTO value (untouched)
+  ✅ No unrelated files touched
+
+* What was learned:
+  - `flex space-between` with variable-width items centers item centers at inconsistent positions — the $0 and $100k ticks will always be slightly off because the padding compensates for the flex distribution of the narrowest/widest item only.
+  - The only way to pixel-perfectly align tick marks with a range thumb is to (a) know the exact thumb size and (b) use absolute positioning with the thumb-center formula: `left = calc(frac*100% + (0.5-frac)*thumbWidth)` + `transform: translateX(-50%)`.
+  - Forcing thumb size with explicit CSS eliminates browser-specific thumb size guessing entirely.
+
+* Learned skills / reusable patterns:
+  - Slider tick alignment: inject CSS to fix thumb size N, then `left = calc(frac*100% + (0.5-frac)*N + px)` with `transform: translateX(-50%)`. This is exact for any thumb size.
+  - Use inline `<style>` in JSX to target pseudo-elements (`::-webkit-slider-thumb`, `::-moz-range-thumb`) that can't be set via React's inline `style` prop.
+  - Class name pattern: use a unique descriptor like `est-ctr-sl` to avoid global CSS collisions.
+
+* Bugs / risks:
+  - The `<style>` block renders into the DOM on every render of this component. If the component is used in multiple places simultaneously, the style block may appear multiple times — functionally harmless, cosmetically redundant. Not a concern for this single-use component.
+  - The CSS class `est-ctr-sl` is global; any other input with that class would get styled the same way. The name is sufficiently unique to avoid accidental collisions.
+
+* Manual QA performed:
+  Static code review and typecheck only. Browser QA recommended.
+
+* Next recommended action:
+  Manual QA: Set contract to $0 → confirm thumb at $0 tick. Drag to $25k → confirm alignment. Drag to $50k → confirm alignment. Drag to $75k/$100k → confirm alignment. Visual check that ticks and thumb share the same pixel row.
+
+* Compact handoff for next agent/chat:
+  Estimate Slider Alignment Repair complete on `main`. Previous flex+space-between approach replaced with absolute-positioned ticks using CSS `calc(frac*100% + (0.5-frac)*16px) + translateX(-50%)`. Inline `<style>` block (class `est-ctr-sl`) forces thumb to exactly 16px so thumbHalf=8px is exact. Tick positions: $0→8px, $25k→calc(25%+4px), $50k→50%, $75k→calc(75%-4px), $100k→calc(100%-8px). All slider math, Cost Breakdown, and markup logic untouched. Typecheck passes.

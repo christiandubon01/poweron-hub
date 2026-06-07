@@ -2060,14 +2060,19 @@ Return ONLY valid JSON, no other text.`
               />
             </div>
             {/* Contract amount slider — $0–$100k reference scale; visual range clamps, manual input can exceed $100k */}
+            {/* CSS forces thumb to exactly 16px so thumbHalf=8px is exact for tick calc below */}
+            <style>{`.est-ctr-sl{-webkit-appearance:none;appearance:none;outline:none;background:transparent}.est-ctr-sl::-webkit-slider-runnable-track{height:4px;background:rgba(52,211,153,0.22);border-radius:2px}.est-ctr-sl::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;background:#34d399;cursor:pointer;margin-top:-6px}.est-ctr-sl::-moz-range-track{height:4px;background:rgba(52,211,153,0.22);border-radius:2px}.est-ctr-sl::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:#34d399;cursor:pointer;border:none}`}</style>
             <div style={{ position: 'relative', marginBottom: '14px', padding: '10px 14px', backgroundColor: 'rgba(15,23,42,0.32)', border: '1px solid rgba(52,211,153,0.14)', borderRadius: '8px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <span style={{ fontSize: '11px', color: '#a7f3d0', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Contract Reference</span>
                 <span style={{ fontSize: '12px', color: '#34d399', fontFamily: 'monospace', fontWeight: '800' }}>{t.customerMarginPct.toFixed(1)}% profit</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'center' }}>
-                <div style={{ width: '52%', minWidth: '220px', maxWidth: '320px' }}>
+                {/* Thumb is exactly 16px (thumbHalf=8px). Tick left = calc(frac*100% + (0.5-frac)*16px).
+                    Each tick uses translateX(-50%) so its center lands at the thumb center coordinate. */}
+                <div style={{ position: 'relative', width: '52%', minWidth: '220px', maxWidth: '320px' }}>
                   <input
+                    className="est-ctr-sl"
                     type="range"
                     min={0}
                     max={100000}
@@ -2081,18 +2086,19 @@ Return ONLY valid JSON, no other text.`
                       pushState()
                       saveBackupDataAndSync(backup)
                     }}
-                    style={{ width: '100%', accentColor: '#34d399', cursor: 'pointer' }}
+                    style={{ width: '100%', display: 'block', cursor: 'pointer' }}
                   />
-                  {/* paddingLeft/Right compensates for browser thumb half-width so ticks align with track positions */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '5px', paddingLeft: '8px', paddingRight: '8px' }}>
-                    {[0, 25000, 50000, 75000, 100000].map(val => (
-                      <div key={val} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
-                        <div style={{ width: '3px', height: '4px', borderRadius: '1px', backgroundColor: '#4b5563' }} />
-                        <span style={{ fontSize: '9px', color: '#4b5563', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
-                          {val === 0 ? '$0' : `$${val / 1000}k`}
-                        </span>
-                      </div>
-                    ))}
+                  <div style={{ position: 'relative', height: '20px', marginTop: '4px' }}>
+                    {[[0, 0, '$0'], [25000, 0.25, '$25k'], [50000, 0.5, '$50k'], [75000, 0.75, '$75k'], [100000, 1, '$100k']].map(([val, frac, label]) => {
+                      const offsetPx = Math.round((0.5 - frac) * 16)
+                      const leftCss = frac === 0.5 ? '50%' : `calc(${frac * 100}% + ${offsetPx}px)`
+                      return (
+                        <div key={val} style={{ position: 'absolute', left: leftCss, top: 0, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                          <div style={{ width: '1px', height: '4px', backgroundColor: '#4b5563' }} />
+                          <span style={{ fontSize: '9px', color: '#4b5563', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{label}</span>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               </div>
