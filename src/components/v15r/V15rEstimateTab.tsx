@@ -1195,15 +1195,27 @@ Return ONLY valid JSON, no other text.`
 
   // ── Multi-employee helpers ────────────────────────────────────────────────
   const getEmployeeCostRate = (empId: string): number => {
-    // 'me' sentinel: resolve to the real owner record's costRate if one exists,
-    // otherwise fall back to settings.opCost (global owner opportunity cost)
+    // 'me' sentinel: resolve to the real owner record's base/opportunity cost.
+    // Owner carries no payroll burden — use hourly_rate (base) not loaded costRate.
     if (!empId || empId === 'me') {
       const ownerRecord = (backup.employees || []).find((e: any) => e.isOwner)
-      if (ownerRecord?.costRate) return num(ownerRecord.costRate)
+      if (ownerRecord) return num(ownerRecord.hourly_rate || ownerRecord.costRate || backup.settings?.opCost || 42.45)
       return num(backup.settings?.opCost || 42.45)
     }
     const emp = (backup.employees || []).find((e: any) => e.id === empId)
-    return emp?.costRate ? num(emp.costRate) : num(backup.settings?.opCost || 42.45)
+    if (!emp) return num(backup.settings?.opCost || 42.45)
+    // 1099 / per-project contractors: base rate only, no payroll multiplier.
+    // Guard: applyMultiplier === false (persisted on save) OR classification OR type.
+    const isContractor = emp.applyMultiplier === false ||
+                         emp.classification === '1099' ||
+                         emp.employee_type === 'per_project'
+    if (isContractor) {
+      // hourly_rate is the true base; costRate may be incorrectly burdened on old records
+      const base = num(emp.hourly_rate)
+      return base > 0 ? base : (num(emp.costRate) || num(backup.settings?.opCost || 42.45))
+    }
+    // W-2: costRate already includes payroll multiplier
+    return emp.costRate ? num(emp.costRate) : num(backup.settings?.opCost || 42.45)
   }
   const getEmployeeDisplayName = (empId: string): string => {
     if (!empId || empId === 'me') {
@@ -1953,12 +1965,24 @@ Return ONLY valid JSON, no other text.`
                                           onClick={e => e.stopPropagation()}
                                         >
                                           {(() => {
-                                            // Deduplicate: only show the 'me' sentinel if no real owner record exists.
-                                            // If backup.employees has an isOwner record, it already appears in teamRoster.
-                                            const ownerInRoster = teamRoster.some((e: any) => e.isOwner)
-                                            const dropdownEmps: any[] = ownerInRoster
+                                            // Deduplicate: skip 'me' sentinel if a real isOwner record exists.
+                                            const ownerInRoster = teamRoster.some((e: any) => e.isOwner === true)
+                                            const baseList: any[] = ownerInRoster
                                               ? teamRoster
                                               : [{ id: 'me', name: 'Owner / Me' }, ...teamRoster]
+                                            // Defensive dedup by stable id, then by normalized name.
+                                            // Prevents "Owner / Me" appearing twice if roster has a
+                                            // same-named record without isOwner: true.
+                                            const seenIds = new Set<string>()
+                                            const seenNames = new Set<string>()
+                                            const dropdownEmps: any[] = []
+                                            for (const emp of baseList) {
+                                              const normName = (emp.name || '').toLowerCase().trim()
+                                              if (seenIds.has(emp.id) || seenNames.has(normName)) continue
+                                              seenIds.add(emp.id)
+                                              seenNames.add(normName)
+                                              dropdownEmps.push(emp)
+                                            }
                                             return dropdownEmps.map((emp: any) => {
                                               const rowEmps = getRowEmployees(r)
                                               const checked = rowEmps.includes(emp.id)
@@ -2992,6 +3016,25 @@ Return ONLY valid JSON, no other text.`
         const totalHrs = num(row.hrs)
         const rowRate = num(row.rate)
         const overheadPct = num(backup.settings?.overheadPct || 0)
+        // Derive overhead per billable hour from settings when possible.
+        // Priority 1: settings.defaultOHRate (user-set OH rate/hr).
+        // Priority 2: annualOverhead / billableHrsYear from expense items.
+        // Falls back to percentage if neither is available.
+        const getOverheadPerHr = (): number | null => {
+          const s = backup.settings
+          if (!s) return null
+          if (s.defaultOHRate > 0) return num(s.defaultOHRate)
+          const oh = s.overhead || {}
+          let monthly = 0
+          Object.values(oh).forEach((section: any) => {
+            if (Array.isArray(section)) section.forEach((i: any) => { monthly += num(i.monthly) })
+          })
+          const annual = monthly * 12
+          const hrs = num(s.billableHrsYear || 936)
+          if (annual > 0 && hrs > 0) return annual / hrs
+          return null
+        }
+        const overheadPerHr = getOverheadPerHr()
         const pieSlices = allocs.map((a: { empId: string; hrs: number }, i: number) => ({
           label: getEmployeeDisplayName(a.empId),
           value: a.hrs,
@@ -3000,7 +3043,9 @@ Return ONLY valid JSON, no other text.`
         const totalAllocated = allocs.reduce((s: number, a: { empId: string; hrs: number }) => s + a.hrs, 0)
         const totalLaborCost = allocs.reduce((s: number, a: { empId: string; hrs: number }) => s + a.hrs * getEmployeeCostRate(a.empId), 0)
         const totalRevenue = totalHrs * rowRate
-        const totalOHCost = totalLaborCost * overheadPct / 100
+        const totalOHCost = overheadPerHr !== null
+          ? allocs.reduce((s: number, a: { empId: string; hrs: number }) => s + a.hrs * overheadPerHr!, 0)
+          : totalLaborCost * overheadPct / 100
         const totalProfit = totalRevenue - totalLaborCost - totalOHCost
         return (
           <div
@@ -3090,9 +3135,14 @@ Return ONLY valid JSON, no other text.`
                 {allocs.map((a: { empId: string; hrs: number }) => {
                   const costRate = getEmployeeCostRate(a.empId)
                   const empCost = a.hrs * costRate
-                  const empOH = empCost * overheadPct / 100
+                  const empOH = overheadPerHr !== null
+                    ? a.hrs * overheadPerHr!
+                    : (overheadPct > 0 ? empCost * overheadPct / 100 : 0)
                   const empRev = a.hrs * rowRate
                   const empProfit = empRev - empCost - empOH
+                  const ohLabel = overheadPerHr !== null
+                    ? `Overhead recovery (@ $${overheadPerHr!.toFixed(2)}/h)`
+                    : `Overhead estimate (${overheadPct}%)`
                   return (
                     <div key={a.empId} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '10px', marginBottom: '10px' }}>
                       <div style={{ color: 'var(--t2)', fontWeight: '600', marginBottom: '6px', fontSize: '12px' }}>
@@ -3103,8 +3153,8 @@ Return ONLY valid JSON, no other text.`
                         <span style={{ fontFamily: 'monospace', color: '#6ee7b7', textAlign: 'right' }}>{fmt(empRev)}</span>
                         <span style={{ color: 'var(--t3)' }}>Labor cost (@ ${costRate.toFixed(2)}/h)</span>
                         <span style={{ fontFamily: 'monospace', color: '#93c5fd', textAlign: 'right' }}>−{fmt(empCost)}</span>
-                        {overheadPct > 0 && <>
-                          <span style={{ color: 'var(--t3)' }}>Overhead ({overheadPct}%)</span>
+                        {empOH > 0 && <>
+                          <span style={{ color: 'var(--t3)' }}>{ohLabel}</span>
                           <span style={{ fontFamily: 'monospace', color: '#fcd34d', textAlign: 'right' }}>−{fmt(empOH)}</span>
                         </>}
                         <span style={{ color: empProfit >= 0 ? '#10b981' : '#ef4444', fontWeight: '600' }}>Profit</span>
@@ -3119,16 +3169,18 @@ Return ONLY valid JSON, no other text.`
                   <span style={{ fontFamily: 'monospace', color: '#6ee7b7', fontWeight: '700', textAlign: 'right' }}>{fmt(totalRevenue)}</span>
                   <span style={{ color: 'var(--t2)', fontWeight: '600' }}>Total Labor Cost</span>
                   <span style={{ fontFamily: 'monospace', color: '#93c5fd', fontWeight: '700', textAlign: 'right' }}>−{fmt(totalLaborCost)}</span>
-                  {overheadPct > 0 && <>
-                    <span style={{ color: 'var(--t2)', fontWeight: '600' }}>Total Overhead</span>
+                  {totalOHCost > 0 && <>
+                    <span style={{ color: 'var(--t2)', fontWeight: '600' }}>
+                      {overheadPerHr !== null ? 'Total Overhead Recovery' : 'Total Overhead Estimate'}
+                    </span>
                     <span style={{ fontFamily: 'monospace', color: '#fcd34d', fontWeight: '700', textAlign: 'right' }}>−{fmt(totalOHCost)}</span>
                   </>}
                   <span style={{ color: totalProfit >= 0 ? '#10b981' : '#ef4444', fontWeight: '700', fontSize: '13px' }}>Net Profit</span>
                   <span style={{ fontFamily: 'monospace', color: totalProfit >= 0 ? '#10b981' : '#ef4444', fontWeight: '800', fontSize: '14px', textAlign: 'right' }}>{fmt(totalProfit)}</span>
                 </div>
-                {!backup.settings?.overheadPct && (
+                {overheadPerHr === null && !backup.settings?.overheadPct && (
                   <div style={{ marginTop: '10px', fontSize: '10px', color: 'var(--t3)', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '8px' }}>
-                    💡 Set an Overhead % in Settings to include overhead in this breakdown.
+                    💡 Set a Default OH Rate or Overhead % in Settings to include overhead recovery in this breakdown.
                   </div>
                 )}
                 {(backup.employees || []).filter((e: any) => rowEmps.includes(e.id) && !e.costRate).length > 0 && (

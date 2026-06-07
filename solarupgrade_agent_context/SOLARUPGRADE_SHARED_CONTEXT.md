@@ -4976,3 +4976,35 @@ NEXT AGENT SHOULD KNOW:
 - Phase 2 (retroactive migration for existing 1099 records) is deferred — existing 1099 employees need manual re-save to get corrected costRate.
 - Phase 3 (apply settings.overheadPct in allocation modal) is deferred.
 - Phase 4 (per-employee monthly overhead allocation from settings.employeeCosts[]) is deferred.
+
+---
+
+## Shared Update — Team Cost Repair: Owner Dedupe and Contractor Cost (Phase 2 ��� 2026-06-07)
+
+* Agent: Claude Code Sonnet 4.6
+* Branch: main
+* Commit: TBD (see git log)
+* Files changed: src/components/v15r/V15rEstimateTab.tsx + 2 context files
+* Typecheck: PASS — zero errors
+* User-facing behavior changed:
+  - Owner/Me in Estimate dropdown: defensive name dedup added — same-normalized-name entries collapsed to one. Resolves duplicate "Owner / Me" when owner record lacks isOwner:true flag.
+  - Edgar-style 1099 labor cost: getEmployeeCostRate now returns hourly_rate (base) for all isContractor employees (applyMultiplier===false, classification==='1099', or employee_type==='per_project'). Existing records auto-corrected at read time — no re-save required.
+  - Owner cost in allocation modal: now uses hourly_rate||costRate (base/opportunity), not a loaded rate.
+  - Overhead in allocation modal: now shows per-billable-hour recovery when settings.defaultOHRate or expense items + billableHrsYear are configured. Labeled "Overhead recovery (@ $X/h)" vs "Overhead estimate (X%)". Falls back to % if unconfigured.
+* Implementation notes:
+  - All three fixes are in V15rEstimateTab.tsx only. AddTeamMemberModal and V15rTeamPanel not touched.
+  - getEmployeeCostRate: contractor path branches on applyMultiplier/classification/employee_type; returns hourly_rate for contractors.
+  - Dropdown dedup: seenIds + seenNames Sets after baseList build.
+  - getOverheadPerHr IIFE inside modal scope: reads defaultOHRate -> derives from overhead expenses / billableHrsYear -> returns null.
+* Employee/rate/overhead data sources:
+  - backup.employees[].hourly_rate (contractor base), costRate (W-2 loaded), applyMultiplier, classification, employee_type
+  - backup.settings.opCost (owner fallback), defaultOHRate (OH priority 1), overhead (expense items, OH priority 2), billableHrsYear (OH denominator), overheadPct (% fallback)
+* Risks / follow-up:
+  - Name dedup could collapse two employees with genuinely identical names (rare in small business context).
+  - Owner without isOwner:true AND without hourly_rate falls back to costRate which may be burdened.
+  - applyMultiplier toggle in TeamPanel still active and overrides defaults.
+* Manual QA status: Typecheck PASS. Browser QA recommended for: dropdown once, Edgar $40, W-2 loaded, overhead label.
+* Next agent should know:
+  - Phase 2 complete. getEmployeeCostRate is now the single read-time source of truth for all employee cost in Estimate. Contractors: hourly_rate. W-2: costRate. Owner: hourly_rate||costRate->opCost.
+  - Overhead is now per-billable-hour when settings are configured; falls back to %.
+  - AddTeamMemberModal and V15rTeamPanel write paths from Phase 1 are still intact.

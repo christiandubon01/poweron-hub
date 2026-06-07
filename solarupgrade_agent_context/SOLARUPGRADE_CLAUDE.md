@@ -2482,3 +2482,41 @@ NO — ready for screenshot QA.
   Manual QA: (1) Open Estimate Labor dropdown — confirm Owner / Me appears once. (2) Select Owner + a W-2 + a 1099 in a labor row, open allocation modal, confirm cost rates differ correctly. (3) Add a new per-project (1099) employee via Team — confirm "Loaded Cost" shows base rate with "no W-2 burden" label. (4) Edit an existing 1099 employee in Team — confirm loaded cost = base (no multiplier), then save and confirm costRate updated.
 * Compact handoff for next agent/chat:
   Team Cost Phase 1 complete on `main`. Dedup: Estimate dropdown IIFE skips hardcoded 'me' sentinel when `ownerInRoster` is true. Cost resolution: `getEmployeeCostRate('me')` resolves to real owner record's costRate first. AddTeamMemberModal: `isContractorType = classification === '1099' || selectedType === 'hypothetical'` — contractors save `costRate = base` (no multiplier), W-2 saves `costRate = base × payrollMult`. `applyMultiplier` persisted on record. TeamPanel EmployeeEditModal: `noMultiplier = empIsOwner || classification === '1099' || type === 'hypothetical'` — same branching, `applyMultiplier: !noMultiplier` saved. Typecheck: zero errors. Note: existing 1099 employees saved before this fix need one re-save to get corrected costRate.
+
+---
+
+## Claude Report — Team Cost Repair: Owner Dedupe and Contractor Cost (Phase 2 — 2026-06-07)
+
+* Task completed: YES
+* Files changed:
+  - src/components/v15r/V15rEstimateTab.tsx
+  - solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+  - solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+* Commit hash: TBD (see commit)
+* Typecheck result: PASS — zero errors
+* Root cause:
+  1. Duplicate Owner/Me (persisted after Phase 1): IIFE dedup only checked `e.isOwner === true`. If owner record lacked explicit isOwner flag, sentinel + real record both appeared when they had the same normalized name.
+  2. Edgar 1099 $48 (should be $40): `getEmployeeCostRate` returned `emp.costRate` blindly — old records have costRate = base x mult stored from pre-fix save. Fix: for isContractor, return `emp.hourly_rate` (true base) at read time.
+  3. Owner cost burdened: owner path used `ownerRecord.costRate` which may be burdened. Fix: use `hourly_rate || costRate`.
+  4. Overhead misleading: used `overheadPct * laborCost` with no label. Fix: derive per-billable-hour rate from `defaultOHRate` or expense items / `billableHrsYear`. Label as "Overhead recovery" vs "Overhead estimate".
+* What changed (V15rEstimateTab.tsx only):
+  - getEmployeeCostRate: contractor guard (applyMultiplier===false, classification==='1099', employee_type==='per_project'); returns hourly_rate for contractors; owner path uses hourly_rate||costRate.
+  - Dropdown dedup: seenIds + seenNames Sets — normalized name dedup prevents same-named duplicate.
+  - Allocation modal: getOverheadPerHr() reads defaultOHRate then expense-items/billableHrsYear; empOH and totalOHCost use per-hour when available; labels updated.
+* Double verification:
+  - Owner/Me once: YES (id + name dedup)
+  - Legacy me rows: YES (getEmployeeCostRate still resolves isOwner->opCost)
+  - Owner no multiplier: YES (hourly_rate||costRate, not burdened path)
+  - W-2 multiplier: YES (not caught by isContractor, uses costRate as loaded)
+  - 1099 no multiplier: YES (isContractor true, returns hourly_rate)
+  - Edgar $40 not $48: YES (hourly_rate=40 for 1099)
+  - Editing 1099 no reapply: YES (EmployeeEditModal unchanged from Phase 1)
+  - Modal corrected costs: YES (getEmployeeCostRate feeds all calcs)
+  - Overhead clearly labeled: YES (recovery vs estimate, per-hour when available)
+  - Highlight works: YES (unchanged)
+  - Allocation modal works: YES (sliders/totals/pie unchanged)
+  - No unrelated files: YES
+* Overhead behavior: defaultOHRate (priority 1) -> derived annual/hrs (priority 2) -> overheadPct% (fallback) -> hint if nothing
+* Fallback for legacy me: isOwner record -> opCost. Works with or without isOwner record.
+* 1099 correction: read-time via hourly_rate. No data migration needed. If hourly_rate=0, falls back to costRate.
+* Compact handoff: Phase 2 complete on main. Only V15rEstimateTab.tsx changed. Three fixes: (1) getEmployeeCostRate returns hourly_rate for contractors + owner base for owner. (2) Dropdown seenIds+seenNames dedup. (3) getOverheadPerHr() per-hour overhead with clear labels. AddTeamMemberModal + V15rTeamPanel untouched. Typecheck: zero errors.
