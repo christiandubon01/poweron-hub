@@ -2003,7 +2003,7 @@ NO — ready for screenshot QA.
   - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
   - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
 
-* Commit hash: see git log — committed as "fix(estimate): sync markup and render profit controls"
+* Commit hash: 717be62
 
 * Typecheck result: PASS — zero errors
 
