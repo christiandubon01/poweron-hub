@@ -927,9 +927,14 @@ export default function V15rTeamPanel() {
   const projectedMonthlyCost = useMemo(() => {
     let total = 0
     employeeStats.forEach((stats) => {
-      const applyMult = stats.employee.applyMultiplier !== false ? true : stats.employee.isOwner ? false : true
-      const mult = applyMult ? 1.20 : 1.0
-      const workersComp = applyMult ? (stats.employee.costRate || 0) * 0.08 : 0
+      // W-2 only: apply payroll multiplier and workers comp
+      // Owner, 1099, and per_project contractors carry no W-2 burden
+      const isW2 = !(stats.employee.isOwner === true ||
+                     stats.employee.applyMultiplier === false ||
+                     (stats.employee as any).classification === '1099' ||
+                     (stats.employee as any).employee_type === 'per_project')
+      const mult = isW2 ? 1.20 : 1.0
+      const workersComp = isW2 ? (stats.employee.costRate || 0) * 0.08 : 0
       const loadedCost = (stats.employee.costRate || 0) * mult + workersComp
       total += stats.monthlyHours * loadedCost
     })
@@ -1617,7 +1622,7 @@ export default function V15rTeamPanel() {
               })}
             </div>
             <p className="text-xs text-gray-600 mt-3">
-              Labor cost = hours logged × rate × {payrollMult}x. Flows into project labor breakdown and Quote vs Actual chart.
+              Labor cost = hours logged × rate (1099: base rate, W-2: base × {payrollMult}x). Flows into project labor breakdown and Quote vs Actual chart.
             </p>
           </div>
         )
