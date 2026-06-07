@@ -5137,3 +5137,41 @@ NEXT AGENT SHOULD KNOW:
   Owner / Me identification is now sentinel-based (name 'owner / me' or id 'me'/'owner'/'owner-virtual').
   employeeCostUtils.ts resolveWorkerType and employeeTypes.ts normalizeEmployee both implement the sentinel.
   This is the display/calculation layer fix only — storage still lacks isOwner for stale records.
+
+---
+
+## Shared Update — Estimate Labor: Default Invalid Employee to Owner
+
+- Agent: Claude Code Sonnet 4.6
+- Branch: main
+- Commit: (see below)
+- Files changed: src/components/v15r/V15rEstimateTab.tsx
+- Typecheck: PASS — zero errors
+
+- User-facing behavior changed:
+  Estimate Labor employee dropdown button no longer shows raw 'emp-xxx...' IDs.
+  Stale/invalid employee IDs now display and default to 'Owner / Me'.
+  Dropdown dedup check for owner now works correctly even for stale records without isOwner flag.
+
+- Root cause:
+  getEmployeeDisplayName used `|| empId` as fallback — showed raw ID when employee not found.
+  getRowEmployees had no validation — passed stale IDs straight to display functions.
+  ownerInRoster check used raw e.isOwner===true, missing records identified only by name sentinel.
+
+- Employee fallback behavior:
+  - getEmployeeDisplayName: `|| empId` → `|| 'Owner / Me'` (single line change)
+  - getRowEmployees: validates IDs against roster; filters stale multi-select entries;
+    single stale empId falls back to 'me'; always returns at least ['me']
+  - ownerInRoster: now uses isOwnerRecord helper (detects by isOwner flag OR id/name sentinel)
+
+- Risks / follow-up:
+  - Stale employeeAllocations in storage not cleaned. Display is correct; storage is repaired on
+    next user edit/save of the affected row.
+  - Hours for stale-only allocation rows are preserved in r.hrs; cost display may shift to owner rate.
+
+- Manual QA status: Typecheck only. Browser QA required.
+
+- Next agent should know:
+  Estimate Labor employee dropdown is fixed for display. All three helpers updated:
+  getEmployeeDisplayName, getRowEmployees, ownerInRoster. V15rEstimateTab.tsx only.
+  Team cost formulas (employeeCostUtils.ts, employeeTypes.ts) not touched in this pass.

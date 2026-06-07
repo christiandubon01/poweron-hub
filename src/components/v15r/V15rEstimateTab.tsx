@@ -1223,11 +1223,20 @@ Return ONLY valid JSON, no other text.`
       const ownerRecord = (backup.employees || []).find(isOwnerRecord)
       return ownerRecord?.name || 'Owner / Me'
     }
-    return (backup.employees || []).find((e: any) => e.id === empId)?.name || empId
+    return (backup.employees || []).find((e: any) => e.id === empId)?.name || 'Owner / Me'
   }
   const getRowEmployees = (r: any): string[] => {
-    if (r.employees?.length) return r.employees as string[]
-    return [r.empId || 'me']
+    const teamRoster = backup.employees || []
+    // Treat 'me' and any id present in the roster as valid.
+    const isValidId = (id: string) =>
+      id === 'me' || teamRoster.some((e: any) => e.id === id)
+
+    if (r.employees?.length) {
+      const valid = (r.employees as string[]).filter(isValidId)
+      return valid.length > 0 ? valid : ['me']
+    }
+    const empId = r.empId || 'me'
+    return [isValidId(empId) ? empId : 'me']
   }
   const getRowAllocations = (r: any): { empId: string; hrs: number }[] => {
     const emps = getRowEmployees(r)
@@ -1966,8 +1975,8 @@ Return ONLY valid JSON, no other text.`
                                           onClick={e => e.stopPropagation()}
                                         >
                                           {(() => {
-                                            // Deduplicate: skip 'me' sentinel if a real isOwner record exists.
-                                            const ownerInRoster = teamRoster.some((e: any) => e.isOwner === true)
+                                            // Deduplicate: skip 'me' sentinel if a real owner record exists in roster.
+                                            const ownerInRoster = teamRoster.some(isOwnerRecord)
                                             const baseList: any[] = ownerInRoster
                                               ? teamRoster
                                               : [{ id: 'me', name: 'Owner / Me' }, ...teamRoster]

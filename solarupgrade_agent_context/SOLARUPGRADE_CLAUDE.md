@@ -2751,3 +2751,92 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
   In normalizeEmployee, isOwner detection now overrides stored applyMultiplier=true.
   In V15rEstimateTab, isOwnerRecord helper added for 'me' sentinel lookup.
   Typecheck passes clean. Files changed: employeeCostUtils.ts, employeeTypes.ts, V15rEstimateTab.tsx.
+
+---
+
+## Claude Report — Estimate Labor: Default Invalid Employee to Owner
+
+- Task completed: 2026-06-07
+- Files changed: src/components/v15r/V15rEstimateTab.tsx, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+- Commit hash: (see below)
+- Typecheck result: PASS — zero errors
+
+- Root cause:
+  getEmployeeDisplayName returned the raw empId string as the fallback when the employee was not
+  found in backup.employees (line: `|| empId`). Stale or deleted employee records like 'emp-1780...'
+  were shown directly in the dropdown button label.
+
+  getRowEmployees had no validation — it returned r.employees or r.empId without checking if those
+  IDs still existed in the roster. A stale empId would pass through to getEmployeeDisplayName and
+  appear as a raw ID in the button.
+
+  ownerInRoster check used e.isOwner === true on raw backup data, which missed the "Owner / Me"
+  record that was saved without isOwner flag (pre-fix stale records).
+
+- What changed (V15rEstimateTab.tsx only):
+  1. getEmployeeDisplayName: Changed fallback from `|| empId` to `|| 'Owner / Me'`.
+     Any employee ID that cannot be resolved to a name now displays as 'Owner / Me'.
+  2. getRowEmployees: Added ID validation against the roster.
+     - For multi-employee rows: filters out stale/invalid IDs; falls back to ['me'] if all invalid.
+     - For single-employee rows: falls back to ['me'] if empId not found in roster.
+     - 'me' sentinel always treated as valid.
+  3. ownerInRoster check: Changed from `teamRoster.some(e => e.isOwner === true)` to
+     `teamRoster.some(isOwnerRecord)`. Uses the existing isOwnerRecord helper (added in previous fix)
+     which detects owner by isOwner flag OR by id/name sentinel.
+
+- Employee display fallback behavior:
+  - Valid employee IDs → resolve to employee name (unchanged)
+  - 'me' sentinel or empty → resolve to real owner name or 'Owner / Me' (unchanged)
+  - Stale/invalid IDs → now display 'Owner / Me' instead of raw 'emp-xxx...'
+
+- Owner default behavior:
+  - New rows default to empId: 'me' (unchanged — was already correct)
+  - Stale single-employee rows fall back to 'me' via getRowEmployees validation
+  - 'me' sentinel resolves to real owner name if owner record exists in roster
+
+- Multi-select behavior:
+  - Valid IDs in r.employees array are preserved
+  - Invalid/stale IDs are filtered out by getRowEmployees
+  - If all IDs in r.employees are stale, fallback to ['me']
+  - At least one valid employee always returned
+
+- Allocation modal check:
+  - getRowAllocations calls getRowEmployees internally — now only returns valid employee IDs
+  - Hours for filtered stale employees are dropped (correct: stale employees don't exist)
+  - getEmployeeDisplayName in allocation modal now shows 'Owner / Me' for any stale IDs in
+    stored r.employeeAllocations (these would be historical stale allocations)
+
+- Double verification against requested behavior:
+  ✓ Raw emp-... no longer shown in button label (getEmployeeDisplayName fallback → 'Owner / Me')
+  ✓ Valid employee IDs display readable names (unchanged path)
+  ✓ Invalid/stale IDs fall back to Owner / Me (both in display name and in getRowEmployees)
+  ✓ New rows default to Owner / Me (empId: 'me' already default — unchanged)
+  ✓ Owner / Me appears only once (dedup by seenNames still active; ownerInRoster now uses sentinel)
+  ✓ Multi-select still works (filter only removes invalid IDs; valid IDs preserved)
+  ✓ Allocation/profit modal still works (uses getRowAllocations which calls fixed getRowEmployees)
+  ✓ Labor row billing totals unchanged (r.hrs × r.rate unaffected by employee selection)
+  ✓ No unrelated files touched
+
+- Bugs / risks:
+  - If a stale employee had allocation hours and the row has no other valid employees, those
+    hours will be reassigned to 'me'/Owner in the display. The stored r.hrs total is unchanged.
+  - r.employeeAllocations in storage still contains stale IDs — not cleaned up. On next
+    updateRowMultiEmployee save, allocations will be rebuilt correctly.
+  - ownerInRoster change: now detects 'Owner / Me' named records via isOwnerRecord, so the
+    synthetic 'me' entry is not added a second time when that record exists in roster.
+
+- Manual QA performed: Typecheck only. Browser QA cannot be performed in this environment.
+
+- Next recommended action:
+  1. Browser QA: add a labor row, confirm it shows 'Owner / Me' by default.
+  2. Edit a row to select a real W-2 employee — confirm name shows correctly.
+  3. If any old rows had stale emp-xxx: confirm they now show 'Owner / Me'.
+  4. Open Allocation & Profit modal — confirm it still shows correct employees and hours.
+  5. Optionally: clean up stale employeeAllocations by triggering a re-save on affected rows.
+
+- Compact handoff for next agent/chat:
+  Estimate Labor dropdown no longer shows raw emp-xxx IDs. Fixed by:
+  (1) getEmployeeDisplayName fallback changed from raw empId to 'Owner / Me'
+  (2) getRowEmployees now validates IDs against roster, filters stale, falls back to 'me'
+  (3) ownerInRoster check now uses isOwnerRecord helper instead of e.isOwner===true
+  All changes in V15rEstimateTab.tsx only. Typecheck passes clean. Team cost formulas untouched.
