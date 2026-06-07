@@ -701,3 +701,33 @@ Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak 
 * Do-not-touch files: untouched.
 * Next recommended phase: Wave 6 — 3D import-graph overlay wiring, watch-mode implementation, live registry ingestion (explicit scope).
 * Compact handoff: Five runtime contract preview panels live under “Wave 03 Runtime Contracts”. All read-only/static — no watch mode runtime, hooks, or mutation UI. Control Tower, Wave 02 previews, 3D map, and Generated Manifest preserved.
+
+---
+
+## Cursor Report — App Brain Wave 6 — Watch Mode Refresh MVP
+
+* Task completed: Added opt-in App Brain watch/refresh CLI utility and runtime snapshot generation.
+* Branch: `main` (no new branch).
+* Commands added: `npm run app-brain:refresh`, `npm run app-brain:watch`.
+* Script: `scripts/app-brain-watch.mjs` — `--once` (default), `--watch`, `--help`, `--interval=N`.
+* Files changed:
+  * `scripts/app-brain-watch.mjs`
+  * `package.json`
+  * `src/components/v15r/generatedAppBrainRuntimeSnapshot.ts`
+  * `src/components/v15r/generatedAppBrainManifest.ts`
+  * `src/components/v15r/generatedAppBrainDirectory.ts`
+  * `src/components/v15r/generatedAppBrainWorkManifest.ts`
+  * `src/components/v15r/app-brain/AppBrainWatchModeContractPanel.tsx`
+  * `src/components/v15r/app-brain/appBrainWatchModeContract.ts`
+  * `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  * `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+* `node scripts/app-brain-watch.mjs --help`: PASS — usage and safety notes printed.
+* `node scripts/app-brain-watch.mjs --once`: PASS — 3/3 generators succeeded.
+* `npm run app-brain:refresh`: PASS.
+* Watch mode: briefly tested with `--watch --interval=1`; snapshots refreshed, stopped manually.
+* Build result: PASS — `npm run build`.
+* Typecheck result: `npm.cmd run typecheck` blocked (no exit status from shell harness); `npx tsc --noEmit -p tsconfig.json` PASS.
+* `package-lock.json`: untouched.
+* Do-not-touch files: untouched.
+* Next recommended phase: Wave 7 — 3D import-graph overlay wiring, live registry ingestion (explicit scope).
+* Compact handoff: Opt-in CLI refresh/watch utility live. Panel shows generated snapshot only — not live websocket state. No hooks, auto-commit, secrets, or financial values.

@@ -6,7 +6,7 @@
  */
 export const GENERATED_APP_BRAIN_MANIFEST = {
   "schemaVersion": "app-brain-manifest-v1",
-  "generatedAt": "2026-06-04T07:40:41.691Z",
+  "generatedAt": "2026-06-07T07:43:52.509Z",
   "generatedBy": "scripts/generate-app-brain-manifest.mjs",
   "refreshCommand": "npm run app-brain:generate",
   "scannedRoots": [
@@ -33,8 +33,8 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     "generatedAppBrainManifest.ts"
   ],
   "repoRelative": true,
-  "totalFiles": 355,
-  "totalImports": 1490,
+  "totalFiles": 401,
+  "totalImports": 1623,
   "areas": [
     {
       "name": "Agents",
@@ -73,8 +73,8 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     },
     {
       "name": "V15r",
-      "fileCount": 83,
-      "importCount": 408
+      "fileCount": 129,
+      "importCount": 541
     },
     {
       "name": "Views",
@@ -1410,6 +1410,258 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "localImportCount": 6
     },
     {
+      "path": "src/components/v15r/app-brain/appBrainActiveWorkAnimationModel.ts",
+      "area": "V15r",
+      "importCount": 1,
+      "localImportCount": 1
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainActiveWorkAnimationPanel.tsx",
+      "area": "V15r",
+      "importCount": 7,
+      "localImportCount": 5
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainActiveWorkAnimationTypes.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainBacklogImport.ts",
+      "area": "V15r",
+      "importCount": 1,
+      "localImportCount": 1
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainBacklogImportPanel.tsx",
+      "area": "V15r",
+      "importCount": 4,
+      "localImportCount": 2
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainBacklogPanel.tsx",
+      "area": "V15r",
+      "importCount": 3,
+      "localImportCount": 2
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainBacklogTypes.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainBriefGenerator.ts",
+      "area": "V15r",
+      "importCount": 2,
+      "localImportCount": 2
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainBriefGeneratorPanel.tsx",
+      "area": "V15r",
+      "importCount": 5,
+      "localImportCount": 3
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainBriefTypes.ts",
+      "area": "V15r",
+      "importCount": 1,
+      "localImportCount": 1
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainCanaryScopePanel.tsx",
+      "area": "V15r",
+      "importCount": 5,
+      "localImportCount": 3
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainCanaryTypes.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainContextHubPanel.tsx",
+      "area": "V15r",
+      "importCount": 3,
+      "localImportCount": 2
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainDirectoryBrain.ts",
+      "area": "V15r",
+      "importCount": 2,
+      "localImportCount": 2
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainDirectoryPanel.tsx",
+      "area": "V15r",
+      "importCount": 5,
+      "localImportCount": 3
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainDomainEcosystemPanel.tsx",
+      "area": "V15r",
+      "importCount": 5,
+      "localImportCount": 3
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainDomainMap.ts",
+      "area": "V15r",
+      "importCount": 1,
+      "localImportCount": 1
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainDomainTypes.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainFileProfilePanel.tsx",
+      "area": "V15r",
+      "importCount": 4,
+      "localImportCount": 3
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainGovernancePreviewPanel.tsx",
+      "area": "V15r",
+      "importCount": 5,
+      "localImportCount": 3
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainGovernanceSummary.ts",
+      "area": "V15r",
+      "importCount": 3,
+      "localImportCount": 3
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainImportGraphOverlay.ts",
+      "area": "V15r",
+      "importCount": 1,
+      "localImportCount": 1
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainImportGraphOverlayPanel.tsx",
+      "area": "V15r",
+      "importCount": 5,
+      "localImportCount": 2
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainImportGraphTypes.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainLiveWorkPanel.tsx",
+      "area": "V15r",
+      "importCount": 5,
+      "localImportCount": 4
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainMetricsQaPanel.tsx",
+      "area": "V15r",
+      "importCount": 5,
+      "localImportCount": 3
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainMetricsSeed.ts",
+      "area": "V15r",
+      "importCount": 1,
+      "localImportCount": 1
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainMetricsTypes.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainPanelShared.tsx",
+      "area": "V15r",
+      "importCount": 4,
+      "localImportCount": 2
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainQaGateTypes.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainRulesPanel.tsx",
+      "area": "V15r",
+      "importCount": 3,
+      "localImportCount": 2
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainRulesTypes.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainScopeCanaryModel.ts",
+      "area": "V15r",
+      "importCount": 1,
+      "localImportCount": 1
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainSeedData.ts",
+      "area": "V15r",
+      "importCount": 9,
+      "localImportCount": 4
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainSessionLogPanel.tsx",
+      "area": "V15r",
+      "importCount": 6,
+      "localImportCount": 3
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainSessionLogSummary.ts",
+      "area": "V15r",
+      "importCount": 1,
+      "localImportCount": 1
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainSessionLogTypes.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainSkillsPanel.tsx",
+      "area": "V15r",
+      "importCount": 3,
+      "localImportCount": 2
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainSkillsTypes.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainWatchModeContract.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
+      "path": "src/components/v15r/app-brain/AppBrainWatchModeContractPanel.tsx",
+      "area": "V15r",
+      "importCount": 4,
+      "localImportCount": 3
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainWorkTypes.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
       "path": "src/components/v15r/appBrainFilters.ts",
       "area": "V15r",
       "importCount": 1,
@@ -1494,6 +1746,24 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "localImportCount": 0
     },
     {
+      "path": "src/components/v15r/generatedAppBrainDirectory.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
+      "path": "src/components/v15r/generatedAppBrainRuntimeSnapshot.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
+      "path": "src/components/v15r/generatedAppBrainWorkManifest.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
       "path": "src/components/v15r/MileageProjectAddress.tsx",
       "area": "V15r",
       "importCount": 3,
@@ -1526,7 +1796,7 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     {
       "path": "src/components/v15r/ProjectCard.tsx",
       "area": "V15r",
-      "importCount": 3,
+      "importCount": 4,
       "localImportCount": 1
     },
     {
@@ -1562,8 +1832,8 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     {
       "path": "src/components/v15r/V15rAppBrainTab.tsx",
       "area": "V15r",
-      "importCount": 6,
-      "localImportCount": 3
+      "importCount": 25,
+      "localImportCount": 22
     },
     {
       "path": "src/components/v15r/V15rBlueprintsTab.tsx",
@@ -1573,6 +1843,12 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     },
     {
       "path": "src/components/v15r/V15rCashFlow.tsx",
+      "area": "V15r",
+      "importCount": 4,
+      "localImportCount": 0
+    },
+    {
+      "path": "src/components/v15r/V15rChangeOrdersTab.tsx",
       "area": "V15r",
       "importCount": 4,
       "localImportCount": 0
@@ -1634,8 +1910,8 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     {
       "path": "src/components/v15r/V15rLayout.tsx",
       "area": "V15r",
-      "importCount": 19,
-      "localImportCount": 5
+      "importCount": 21,
+      "localImportCount": 6
     },
     {
       "path": "src/components/v15r/V15rLeadsPanel.tsx",
@@ -1682,8 +1958,8 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     {
       "path": "src/components/v15r/V15rProjectInner.tsx",
       "area": "V15r",
-      "importCount": 15,
-      "localImportCount": 10
+      "importCount": 16,
+      "localImportCount": 11
     },
     {
       "path": "src/components/v15r/V15rProjectLogsTab.tsx",
@@ -1700,8 +1976,8 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     {
       "path": "src/components/v15r/V15rProjectsPanel.tsx",
       "area": "V15r",
-      "importCount": 13,
-      "localImportCount": 3
+      "importCount": 14,
+      "localImportCount": 4
     },
     {
       "path": "src/components/v15r/V15rRFITab.tsx",
@@ -3608,6 +3884,282 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "to": "src/components/v15r/AIVisualSuite/VisualCarReel.tsx"
     },
     {
+      "from": "src/components/v15r/app-brain/appBrainActiveWorkAnimationModel.ts",
+      "to": "src/components/v15r/app-brain/appBrainActiveWorkAnimationTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainActiveWorkAnimationPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainActiveWorkAnimationModel.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainActiveWorkAnimationPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainActiveWorkAnimationTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainActiveWorkAnimationPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainActiveWorkAnimationPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainSeedData.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainActiveWorkAnimationPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainWorkTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainBacklogImport.ts",
+      "to": "src/components/v15r/app-brain/appBrainBacklogTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainBacklogImportPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainBacklogImport.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainBacklogImportPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainBacklogPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainBacklogPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainSeedData.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainBriefGenerator.ts",
+      "to": "src/components/v15r/app-brain/appBrainBriefTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainBriefGenerator.ts",
+      "to": "src/components/v15r/app-brain/appBrainWorkTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainBriefGeneratorPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainBriefGenerator.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainBriefGeneratorPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainBriefGeneratorPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainSeedData.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainBriefTypes.ts",
+      "to": "src/components/v15r/app-brain/appBrainWorkTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainCanaryScopePanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainCanaryTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainCanaryScopePanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainCanaryScopePanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainScopeCanaryModel.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainContextHubPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainContextHubPanel.tsx",
+      "to": "src/components/v15r/generatedAppBrainWorkManifest.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainDirectoryBrain.ts",
+      "to": "src/components/v15r/app-brain/appBrainSeedData.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainDirectoryBrain.ts",
+      "to": "src/components/v15r/generatedAppBrainDirectory.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainDirectoryPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainDirectoryBrain.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainDirectoryPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainDirectoryPanel.tsx",
+      "to": "src/components/v15r/generatedAppBrainDirectory.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainDomainEcosystemPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainDomainMap.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainDomainEcosystemPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainDomainTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainDomainEcosystemPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainDomainMap.ts",
+      "to": "src/components/v15r/app-brain/appBrainDomainTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainFileProfilePanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainDirectoryBrain.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainFileProfilePanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainFileProfilePanel.tsx",
+      "to": "src/components/v15r/generatedAppBrainDirectory.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainGovernancePreviewPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainGovernanceSummary.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainGovernancePreviewPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainGovernancePreviewPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainRulesTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainGovernanceSummary.ts",
+      "to": "src/components/v15r/app-brain/appBrainRulesTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainGovernanceSummary.ts",
+      "to": "src/components/v15r/app-brain/appBrainSeedData.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainGovernanceSummary.ts",
+      "to": "src/components/v15r/app-brain/appBrainSkillsTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainImportGraphOverlay.ts",
+      "to": "src/components/v15r/app-brain/appBrainImportGraphTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainImportGraphOverlayPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainImportGraphOverlay.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainImportGraphOverlayPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainLiveWorkPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainLiveWorkPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainSeedData.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainLiveWorkPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainWorkTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainLiveWorkPanel.tsx",
+      "to": "src/components/v15r/generatedAppBrainWorkManifest.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainMetricsQaPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainMetricsSeed.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainMetricsQaPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainMetricsQaPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainQaGateTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainMetricsSeed.ts",
+      "to": "src/components/v15r/app-brain/appBrainMetricsTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainPanelShared.tsx",
+      "to": "src/components/v15r/app-brain/appBrainRulesTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainPanelShared.tsx",
+      "to": "src/components/v15r/app-brain/appBrainSeedData.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainRulesPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainRulesPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainSeedData.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainScopeCanaryModel.ts",
+      "to": "src/components/v15r/app-brain/appBrainCanaryTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainSeedData.ts",
+      "to": "src/components/v15r/app-brain/appBrainBacklogTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainSeedData.ts",
+      "to": "src/components/v15r/app-brain/appBrainRulesTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainSeedData.ts",
+      "to": "src/components/v15r/app-brain/appBrainSkillsTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainSeedData.ts",
+      "to": "src/components/v15r/app-brain/appBrainWorkTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainSessionLogPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainSessionLogPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainSessionLogSummary.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainSessionLogPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainSessionLogTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainSessionLogSummary.ts",
+      "to": "src/components/v15r/app-brain/appBrainSessionLogTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainSkillsPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainSkillsPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainSeedData.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainWatchModeContractPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainPanelShared.tsx"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainWatchModeContractPanel.tsx",
+      "to": "src/components/v15r/app-brain/appBrainWatchModeContract.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/AppBrainWatchModeContractPanel.tsx",
+      "to": "src/components/v15r/generatedAppBrainRuntimeSnapshot.ts"
+    },
+    {
       "from": "src/components/v15r/appBrainFilters.ts",
       "to": "src/components/v15r/appBrainMap.ts"
     },
@@ -3637,11 +4189,87 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     },
     {
       "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainActiveWorkAnimationPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainBacklogImportPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainBacklogPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainBriefGeneratorPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainCanaryScopePanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainContextHubPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/appBrainDirectoryBrain.ts"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainDirectoryPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainDomainEcosystemPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainFileProfilePanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainGovernancePreviewPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainImportGraphOverlayPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainLiveWorkPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainMetricsQaPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainRulesPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainSessionLogPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainSkillsPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/AppBrainWatchModeContractPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
       "to": "src/components/v15r/appBrainFilters.ts"
     },
     {
       "from": "src/components/v15r/V15rAppBrainTab.tsx",
       "to": "src/components/v15r/appBrainMap.ts"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/generatedAppBrainDirectory.ts"
     },
     {
       "from": "src/components/v15r/V15rAppBrainTab.tsx",
@@ -3749,6 +4377,10 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     },
     {
       "from": "src/components/v15r/V15rLayout.tsx",
+      "to": "src/components/v15r/appBrainMap.ts"
+    },
+    {
+      "from": "src/components/v15r/V15rLayout.tsx",
       "to": "src/utils/pipelineCalc.ts"
     },
     {
@@ -3805,6 +4437,10 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     },
     {
       "from": "src/components/v15r/V15rProjectInner.tsx",
+      "to": "src/components/v15r/V15rChangeOrdersTab.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rProjectInner.tsx",
       "to": "src/components/v15r/V15rCoordinationTab.tsx"
     },
     {
@@ -3842,6 +4478,10 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     {
       "from": "src/components/v15r/V15rProjectLogsTab.tsx",
       "to": "src/utils/calculateProjectFinancials.ts"
+    },
+    {
+      "from": "src/components/v15r/V15rProjectsPanel.tsx",
+      "to": "src/components/v15r/ProjectCard.tsx"
     },
     {
       "from": "src/components/v15r/V15rProjectsPanel.tsx",
@@ -4652,6 +5292,13 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "touchScore": 26
     },
     {
+      "path": "src/components/v15r/V15rAppBrainTab.tsx",
+      "area": "V15r",
+      "importCount": 25,
+      "importedByCount": 0,
+      "touchScore": 25
+    },
+    {
       "path": "src/components/nexus/NexusChatPanel.tsx",
       "area": "NEXUS Components",
       "importCount": 23,
@@ -4666,6 +5313,20 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "touchScore": 22
     },
     {
+      "path": "src/components/v15r/app-brain/appBrainPanelShared.tsx",
+      "area": "V15r",
+      "importCount": 4,
+      "importedByCount": 17,
+      "touchScore": 21
+    },
+    {
+      "path": "src/components/v15r/V15rLayout.tsx",
+      "area": "V15r",
+      "importCount": 21,
+      "importedByCount": 0,
+      "touchScore": 21
+    },
+    {
       "path": "src/components/v15r/V15rDashboard.tsx",
       "area": "V15r",
       "importCount": 19,
@@ -4673,11 +5334,11 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "touchScore": 19
     },
     {
-      "path": "src/components/v15r/V15rLayout.tsx",
+      "path": "src/components/v15r/app-brain/appBrainSeedData.ts",
       "area": "V15r",
-      "importCount": 19,
-      "importedByCount": 0,
-      "touchScore": 19
+      "importCount": 9,
+      "importedByCount": 9,
+      "touchScore": 18
     },
     {
       "path": "src/components/neural-world/CommandHUD.tsx",
@@ -4694,6 +5355,13 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "touchScore": 16
     },
     {
+      "path": "src/components/v15r/V15rProjectInner.tsx",
+      "area": "V15r",
+      "importCount": 16,
+      "importedByCount": 0,
+      "touchScore": 16
+    },
+    {
       "path": "src/agents/nexus/router.ts",
       "area": "Agents",
       "importCount": 13,
@@ -4702,13 +5370,6 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     },
     {
       "path": "src/components/v15r/V15rFieldLogPanel.tsx",
-      "area": "V15r",
-      "importCount": 15,
-      "importedByCount": 0,
-      "touchScore": 15
-    },
-    {
-      "path": "src/components/v15r/V15rProjectInner.tsx",
       "area": "V15r",
       "importCount": 15,
       "importedByCount": 0,
@@ -4727,27 +5388,6 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "importCount": 1,
       "importedByCount": 14,
       "touchScore": 15
-    },
-    {
-      "path": "src/components/v15r/V15rTeamPanel.tsx",
-      "area": "V15r",
-      "importCount": 14,
-      "importedByCount": 0,
-      "touchScore": 14
-    },
-    {
-      "path": "src/features/blueprint-vr/types.ts",
-      "area": "Features",
-      "importCount": 0,
-      "importedByCount": 14,
-      "touchScore": 14
-    },
-    {
-      "path": "src/agents/blueprint/index.ts",
-      "area": "Agents",
-      "importCount": 12,
-      "importedByCount": 1,
-      "touchScore": 13
     }
   ],
   "sharedSystemCandidates": [
@@ -4780,6 +5420,20 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "touchScore": 22
     },
     {
+      "path": "src/components/v15r/app-brain/appBrainPanelShared.tsx",
+      "area": "V15r",
+      "importCount": 4,
+      "importedByCount": 17,
+      "touchScore": 21
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainSeedData.ts",
+      "area": "V15r",
+      "importCount": 9,
+      "importedByCount": 9,
+      "touchScore": 18
+    },
+    {
       "path": "src/components/neural-world/utils/makeLabel.ts",
       "area": "Neural World",
       "importCount": 1,
@@ -4799,13 +5453,6 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "importCount": 1,
       "importedByCount": 14,
       "touchScore": 15
-    },
-    {
-      "path": "src/features/blueprint-vr/types.ts",
-      "area": "Features",
-      "importCount": 0,
-      "importedByCount": 14,
-      "touchScore": 14
     }
   ],
   "adminCandidates": [

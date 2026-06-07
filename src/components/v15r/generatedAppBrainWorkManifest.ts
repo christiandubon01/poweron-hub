@@ -6,7 +6,7 @@
  */
 export const GENERATED_APP_BRAIN_WORK_MANIFEST = {
   "schemaVersion": "app-brain-work-manifest-v1",
-  "generatedAt": "2026-06-07T03:48:26.447Z",
+  "generatedAt": "2026-06-07T07:43:52.768Z",
   "generatedBy": "scripts/generate-app-brain-work-manifest.mjs",
   "refreshCommand": "node scripts/generate-app-brain-work-manifest.mjs",
   "snapshotWarning": "Generated snapshot · not watch mode. Re-run the generator to refresh; no automatic live tracking or git hooks.",
@@ -118,20 +118,20 @@ export const GENERATED_APP_BRAIN_WORK_MANIFEST = {
       "label": "Shared context",
       "path": "solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md",
       "exists": true,
-      "sizeBytes": 252598,
-      "modifiedAt": "2026-06-07T03:47:53.447Z",
+      "sizeBytes": 242457,
+      "modifiedAt": "2026-06-07T07:41:03.686Z",
       "freshness": "recent",
-      "lastReportExcerpt": "COMPACT HANDOFF FOR NEXT CHAT: App Brain Wave 2 is a read-only Directory Brain MVP. The regenerated directory manifest now has source-file metadata; the Directory panel filters/searches/selects files; the File Profile..."
+      "lastReportExcerpt": "COMPACT HANDOFF FOR NEXT CHAT: Home repair pass complete on `main`. Pipeline subtitle uses active-project count; agenda linking uses a real project picker modal; agenda cards scroll after 10 task rows. Scope limited t..."
     },
     {
       "key": "claude",
       "label": "Claude context",
       "path": "solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md",
       "exists": true,
-      "sizeBytes": 121681,
-      "modifiedAt": "2026-06-07T03:47:55.752Z",
+      "sizeBytes": 151439,
+      "modifiedAt": "2026-06-07T06:58:17.331Z",
       "freshness": "recent",
-      "lastReportExcerpt": "Compact handoff for next agent/chat: Projects tab cards now match Home tab cards on main branch. Root cause: V15rProjectsPanel.tsx has its own inline renderProjectCard function (separate from shared ProjectCard.tsx us..."
+      "lastReportExcerpt": "Compact handoff for next agent/chat: Inner Project Batch 3 complete on `main`. Progress tab phase headers now show total hours per phase (e.g. \"3 tasks · 12h\"). Estimate labor phase headers now show a hours pill (e.g...."
     },
     {
       "key": "codex",
@@ -148,10 +148,10 @@ export const GENERATED_APP_BRAIN_WORK_MANIFEST = {
       "label": "Cursor context",
       "path": "solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md",
       "exists": true,
-      "sizeBytes": 34656,
-      "modifiedAt": "2026-06-07T03:03:24.685Z",
+      "sizeBytes": 43144,
+      "modifiedAt": "2026-06-07T07:41:06.469Z",
       "freshness": "recent",
-      "lastReportExcerpt": "Compact handoff: App Brain now hides operational finance KPIs in architecture mode and shows five read-only Control Tower panels from Wave 01 JSON seeds via `appBrainSeedData.ts`. 3D map, filters, inspector, and gener..."
+      "lastReportExcerpt": "Compact handoff: Opt-in CLI refresh/watch utility live. Panel shows generated snapshot only — not live websocket state. No hooks, auto-commit, secrets, or financial values."
     },
     {
       "key": "haiku",
@@ -168,7 +168,7 @@ export const GENERATED_APP_BRAIN_WORK_MANIFEST = {
     "available": true,
     "branch": "main",
     "clean": false,
-    "changedFileCount": 7,
+    "changedFileCount": 10,
     "warning": null
   }
 } as const

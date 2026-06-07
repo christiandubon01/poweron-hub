@@ -10,6 +10,8 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "app-brain:generate": "node scripts/generate-app-brain-manifest.mjs",
+    "app-brain:refresh": "node scripts/app-brain-watch.mjs --once",
+    "app-brain:watch": "node scripts/app-brain-watch.mjs --watch",
     "supabase:types": "supabase gen types typescript --local > src/lib/db/types.ts"
   },
   "dependencies": {

@@ -4699,6 +4699,57 @@ App Brain Wave 5 integrates five read-only Wave 03 runtime contract preview pane
 
 ---
 
+## Shared Update — App Brain Wave 6 (Cursor) — Watch Mode Refresh MVP
+
+AGENT:
+Cursor
+
+BRANCH:
+main
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report.
+
+FILES CHANGED:
+- `scripts/app-brain-watch.mjs`
+- `package.json`
+- `src/components/v15r/generatedAppBrainRuntimeSnapshot.ts`
+- `src/components/v15r/generatedAppBrainManifest.ts`
+- `src/components/v15r/generatedAppBrainDirectory.ts`
+- `src/components/v15r/generatedAppBrainWorkManifest.ts`
+- `src/components/v15r/app-brain/AppBrainWatchModeContractPanel.tsx`
+- `src/components/v15r/app-brain/appBrainWatchModeContract.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WATCH MODE MVP:
+- Added `scripts/app-brain-watch.mjs` (Node built-ins only)
+- One-shot refresh: `npm run app-brain:refresh` / `--once`
+- Opt-in watch loop: `npm run app-brain:watch` / `--watch` (Ctrl+C to stop, default 30s interval)
+- Regenerates manifest, directory, and work manifest snapshots
+- Writes `generatedAppBrainRuntimeSnapshot.ts` with git branch/clean state, generator results, safety notes
+- Watch Mode Contract panel shows latest generated snapshot (not live dashboard state)
+
+GENERATOR RESULT:
+PASS — `node scripts/app-brain-watch.mjs --once` (3/3 generators succeeded)
+
+BUILD RESULT:
+PASS — `npm run build`
+
+TYPECHECK RESULT:
+`npm.cmd run typecheck` blocked (shell harness no exit status); `npx tsc --noEmit -p tsconfig.json` PASS
+
+PACKAGE FILES:
+`package.json` scripts added only — `package-lock.json` untouched
+
+NEXT RECOMMENDED PHASE:
+Wave 7 — optional 3D import-graph overlay wiring and live registry ingestion behind explicit scope.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+App Brain Wave 6 adds opt-in CLI watch/refresh utility. No git hooks, no auto-commit, no secrets or financial values in snapshots. Dashboard panel shows generated runtime snapshot only.
+
+---
+
 ## Shared Update — Home Tab Repair Pass — pipeline count, agenda picker, 10-row scroll cap [2026-06-06]
 
 AGENT:

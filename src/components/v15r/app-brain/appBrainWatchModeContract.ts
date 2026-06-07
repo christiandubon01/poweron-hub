@@ -12,6 +12,7 @@
  * Unique sources that trigger watch events
  */
 export type WatchSource =
+  | 'app-brain-manifest'
   | 'work-manifest'
   | 'directory-manifest'
   | 'context-freshness'
@@ -19,6 +20,97 @@ export type WatchSource =
   | 'isolation-boundary'
   | 'config-watch'
   | 'user-command';
+
+/**
+ * Watch / refresh execution mode for the CLI utility
+ */
+export type WatchRefreshMode = 'once' | 'watch';
+
+/**
+ * Result of a single generator invocation during refresh
+ */
+export interface GeneratorResult {
+  /** Which watch source this generator maps to */
+  source: WatchSource;
+
+  /** Command executed */
+  command: string;
+
+  /** Whether the generator completed successfully */
+  success: boolean;
+
+  /** Duration in milliseconds */
+  durationMs: number;
+
+  /** Output file path (if applicable) */
+  outputFile?: string;
+
+  /** Error message when success is false */
+  error?: string;
+}
+
+/**
+ * Safety note attached to runtime snapshots
+ */
+export interface WatchSafetyNote {
+  note: string;
+}
+
+/**
+ * Generated runtime snapshot written by scripts/app-brain-watch.mjs
+ */
+export interface AppBrainRuntimeSnapshot {
+  /** ISO timestamp when snapshot was generated */
+  generatedAt: string;
+
+  /** Schema version for the snapshot structure */
+  schemaVersion: string;
+
+  /** Whether this snapshot came from one-shot or watch loop */
+  mode: WatchRefreshMode;
+
+  /** Watch utility is available as an opt-in CLI command */
+  isWatchModeAvailable: boolean;
+
+  /** True only when a watch loop was actively running during generation */
+  isWatchModeRunning: boolean;
+
+  /** Suggested npm command for this snapshot mode */
+  refreshCommand: string;
+
+  /** Current git branch (if available) */
+  branch: string | null;
+
+  /** Whether working tree is clean (if git available) */
+  gitClean: boolean | null;
+
+  /** Raw changed file count from git porcelain */
+  changedFileCount: number;
+
+  /** Safe changed file paths (no contents, filtered) */
+  changedFiles: string[];
+
+  /** Per-generator results from the refresh cycle */
+  generatorResults: GeneratorResult[];
+
+  /** Sources successfully refreshed in this cycle */
+  sourcesRefreshed: WatchSource[];
+
+  /** Non-fatal warnings from refresh or git capture */
+  warnings: string[];
+
+  /** Safety notes for operators */
+  safetyNotes: string[];
+
+  /** Snapshot excludes secrets by design */
+  noSecrets: true;
+
+  /** Snapshot excludes operational financial values by design */
+  noFinancialValues: true;
+}
+
+/** Current runtime snapshot schema version */
+export const RUNTIME_SNAPSHOT_SCHEMA_VERSION = 'app-brain-runtime-snapshot-v1';
 
 /**
  * Event severity levels
@@ -375,6 +467,7 @@ export interface WatchModeCommandContract {
  */
 export function isValidWatchSource(value: unknown): value is WatchSource {
   const validSources: WatchSource[] = [
+    'app-brain-manifest',
     'work-manifest',
     'directory-manifest',
     'context-freshness',
