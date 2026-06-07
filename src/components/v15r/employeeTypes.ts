@@ -52,14 +52,28 @@ export interface ExtendedEmployee {
  * Provides safe defaults for all new fields so old data always loads correctly.
  */
 export function normalizeEmployee(raw: any): ExtendedEmployee {
+  const isOwnerFlag: boolean = raw.isOwner === true
+  const classification: Classification = raw.classification ?? 'W-2'
+  const employee_type: EmployeeType = raw.employee_type ?? 'permanent'
+
+  // Derive applyMultiplier when not explicitly stored.
+  // Payroll multiplier applies ONLY to W-2 employees.
+  // Owner, 1099, and per_project contractors never carry W-2 burden.
+  let applyMultiplier: boolean
+  if (raw.applyMultiplier !== undefined) {
+    applyMultiplier = raw.applyMultiplier !== false
+  } else {
+    applyMultiplier = !(isOwnerFlag || classification === '1099' || employee_type === 'per_project')
+  }
+
   return {
     id: raw.id ?? '',
     name: raw.name ?? '',
     role: raw.role ?? '',
     billRate: Number(raw.billRate ?? raw.bill_rate ?? 0),
     costRate: Number(raw.costRate ?? raw.cost_rate ?? 0),
-    employee_type: raw.employee_type ?? 'permanent',
-    classification: raw.classification ?? 'W-2',
+    employee_type,
+    classification,
     hourly_rate: Number(raw.hourly_rate ?? raw.costRate ?? raw.cost_rate ?? 0),
     status: raw.status ?? 'Active',
     hire_date: raw.hire_date,
@@ -67,8 +81,8 @@ export function normalizeEmployee(raw: any): ExtendedEmployee {
     estimated_end_date: raw.estimated_end_date,
     start_month: raw.start_month,
     project_id: raw.project_id,
-    isOwner: raw.isOwner ?? false,
-    applyMultiplier: raw.applyMultiplier !== false,
+    isOwner: isOwnerFlag,
+    applyMultiplier,
     compliance_acknowledged: raw.compliance_acknowledged ?? false,
   }
 }

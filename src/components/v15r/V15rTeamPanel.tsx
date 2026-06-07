@@ -1427,7 +1427,8 @@ export default function V15rTeamPanel() {
         <div>
           <h2 className="text-2xl font-bold text-gray-100 mb-4">Employee Cards</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {employees.map((emp) => {
+            {employees.map((rawEmp) => {
+              const emp = normalizeEmployee(rawEmp) as EnhancedEmployee
               const stats = employeeStats.get(emp.id)
               if (!stats) return null
               return (
@@ -1442,7 +1443,7 @@ export default function V15rTeamPanel() {
                   />
                   <div className="mt-2 flex gap-2 justify-end">
                     <button
-                      onClick={() => setEditingEmployee(emp)}
+                      onClick={() => setEditingEmployee(normalizeEmployee(rawEmp) as any)}
                       className="text-xs px-2 py-1 bg-blue-600/30 text-blue-300 rounded hover:bg-blue-600/40 flex items-center gap-1"
                     >
                       <Edit2 className="w-3 h-3" /> Edit
@@ -1464,7 +1465,8 @@ export default function V15rTeamPanel() {
             <div className="mt-6 bg-gradient-to-r from-blue-900/20 to-cyan-900/20 rounded-lg border border-blue-600/30 p-4">
               <h3 className="text-sm font-bold text-gray-200 mb-4">Team Cost Summary</h3>
               {(() => {
-                const teamTotals = (backup.employees || []).reduce((acc: any, emp: any) => {
+                const teamTotals = (backup.employees || []).reduce((acc: any, rawEmp: any) => {
+                  const emp = normalizeEmployee(rawEmp)
                   const c = calcEmployeeCost(emp, backup)
                   acc.monthly += c.loadedMonthlyCost
                   acc.sixMonth += c.sixMonthCost
