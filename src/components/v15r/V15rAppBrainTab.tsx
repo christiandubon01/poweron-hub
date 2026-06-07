@@ -31,6 +31,11 @@ import AppBrainSkillsPanel from './app-brain/AppBrainSkillsPanel'
 import AppBrainDirectoryPanel from './app-brain/AppBrainDirectoryPanel'
 import AppBrainFileProfilePanel from './app-brain/AppBrainFileProfilePanel'
 import AppBrainBacklogPanel from './app-brain/AppBrainBacklogPanel'
+import AppBrainDomainEcosystemPanel from './app-brain/AppBrainDomainEcosystemPanel'
+import AppBrainGovernancePreviewPanel from './app-brain/AppBrainGovernancePreviewPanel'
+import AppBrainBriefGeneratorPanel from './app-brain/AppBrainBriefGeneratorPanel'
+import AppBrainMetricsQaPanel from './app-brain/AppBrainMetricsQaPanel'
+import AppBrainBacklogImportPanel from './app-brain/AppBrainBacklogImportPanel'
 import { APP_BRAIN_DIRECTORY } from './generatedAppBrainDirectory'
 import { findDirectoryFile } from './app-brain/appBrainDirectoryBrain'
 
@@ -580,15 +585,15 @@ export default function V15rAppBrainTab() {
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>('src/components/v15r/V15rAppBrainTab.tsx')
   const visibleNodes = useMemo(() => filterAppBrainNodes(APP_BRAIN_NODES, filters), [filters])
   const visibleNodeIds = useMemo(() => visibleNodes.map((node) => node.id), [visibleNodes])
+  const selectedFile = useMemo(
+    () => findDirectoryFile(APP_BRAIN_DIRECTORY.fileMetadata, selectedFilePath),
+    [selectedFilePath],
+  )
   const selectedNodeIsVisible = visibleNodeIds.includes(selectedNodeId)
   const hoveredNodeIsVisible = hoveredNodeId ? visibleNodeIds.includes(hoveredNodeId) : false
   const activeNode = useMemo(
     () => (hoveredNodeIsVisible ? getAppBrainNode(hoveredNodeId) : null) ?? (selectedNodeIsVisible ? getAppBrainNode(selectedNodeId) : visibleNodes[0] ?? null),
     [hoveredNodeId, hoveredNodeIsVisible, selectedNodeId, selectedNodeIsVisible, visibleNodes],
-  )
-  const selectedFile = useMemo(
-    () => findDirectoryFile(APP_BRAIN_DIRECTORY.fileMetadata, selectedFilePath),
-    [selectedFilePath],
   )
 
   return (
@@ -683,10 +688,10 @@ export default function V15rAppBrainTab() {
         <section className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div>
-              <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-cyan-300/90">Wave 01 integration</p>
+              <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-cyan-300/90">Control Tower</p>
               <h2 className="text-lg font-semibold text-gray-100 mt-1">Control Tower Panels</h2>
               <p className="text-xs text-gray-500 mt-1">
-                Wave 01–03 control tower: work manifest, Context Hub, Directory Brain, and File Profile. Read-only snapshot only.
+                Wave 01–04 control tower: work manifest, Context Hub, Directory Brain, File Profile, and Wave 02 previews. Read-only snapshot only.
               </p>
             </div>
             <span
@@ -702,11 +707,37 @@ export default function V15rAppBrainTab() {
             <AppBrainContextHubPanel />
             <AppBrainRulesPanel />
             <AppBrainSkillsPanel />
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-4">
+            <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-4">
               <AppBrainDirectoryPanel selectedFilePath={selectedFilePath} onSelectFile={setSelectedFilePath} />
               <AppBrainFileProfilePanel file={selectedFile} />
             </div>
             <AppBrainBacklogPanel />
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-violet-300/90">Wave 02 Intelligence Previews</p>
+              <h2 className="text-lg font-semibold text-gray-100 mt-1">Intelligence Preview Panels</h2>
+              <p className="text-xs text-gray-500 mt-1">
+                Read-only previews from merged Haiku Wave 02 modules — no watch mode, hooks, or mutation UI.
+              </p>
+            </div>
+            <span
+              className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg self-start"
+              style={{ color: '#a78bfa', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.22)' }}
+            >
+              Preview only · not live
+            </span>
+          </div>
+
+          <div className="space-y-4">
+            <AppBrainDomainEcosystemPanel />
+            <AppBrainGovernancePreviewPanel />
+            <AppBrainBriefGeneratorPanel />
+            <AppBrainMetricsQaPanel />
+            <AppBrainBacklogImportPanel />
           </div>
         </section>
 

@@ -39,14 +39,19 @@ export function AppBrainPanelShell({
   subtitle,
   icon,
   accent = '#22d3ee',
+  mode = 'tower',
   children,
 }: {
   title: string
   subtitle: string
   icon: ReactNode
   accent?: string
+  mode?: 'tower' | 'preview'
   children: ReactNode
 }) {
+  const sectionLabel = mode === 'preview' ? 'Intelligence Preview' : 'Control Tower'
+  const badge = mode === 'preview' ? <PreviewReadOnlyBadge /> : <ReadOnlyBadge />
+
   return (
     <section className="rounded-2xl p-4 sm:p-5 space-y-4" style={panelSectionStyle(`${accent}22`)}>
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
@@ -54,17 +59,28 @@ export function AppBrainPanelShell({
           <div className="flex items-center gap-2 mb-1">
             <span style={{ color: accent }}>{icon}</span>
             <p className="text-[10px] uppercase tracking-[0.2em] font-bold" style={{ color: accent }}>
-              Control Tower
+              {sectionLabel}
             </p>
           </div>
           <h2 className="text-lg font-semibold text-gray-100">{title}</h2>
           <p className="text-xs text-gray-500 mt-1">{subtitle}</p>
         </div>
-        <ReadOnlyBadge />
+        {badge}
       </div>
-      <SeedSourceNote />
+      {mode === 'tower' ? <SeedSourceNote /> : null}
       {children}
     </section>
+  )
+}
+
+export function PreviewReadOnlyBadge() {
+  return (
+    <span
+      className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg"
+      style={{ color: '#a78bfa', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.22)' }}
+    >
+      Read-only · preview
+    </span>
   )
 }
 

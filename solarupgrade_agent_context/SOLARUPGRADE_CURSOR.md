@@ -651,3 +651,28 @@ Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak 
 * Do-not-touch files: untouched (ProjectCard/V15rProjectsPanel local edits not staged).
 * Next recommended phase: Wave 4 — watch-mode design doc, import-graph overlays, live registry ingestion (explicit scope).
 * Compact handoff: Work manifest + Context Hub integrated. Snapshot-only — no watch mode, hooks, or live tracking claims.
+
+---
+
+## Cursor Report — App Brain Wave 4 — Intelligence Preview Panels Integration
+
+* Task completed: Integrated five Wave 02 read-only intelligence preview panels into App Brain.
+* Branch: `main` (no new branch).
+* Panels added: Domain Ecosystem, Governance Preview, Agent Brief Generator, Metrics/QA Gate, Backlog Import Helper.
+* Shared shell: `appBrainPanelShared.tsx` extended with preview mode badge.
+* Files changed:
+  * `src/components/v15r/V15rAppBrainTab.tsx`
+  * `src/components/v15r/app-brain/AppBrainDomainEcosystemPanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainGovernancePreviewPanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainBriefGeneratorPanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainMetricsQaPanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainBacklogImportPanel.tsx`
+  * `src/components/v15r/app-brain/appBrainPanelShared.tsx`
+  * `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  * `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+* Build result: PASS — `npm run build`.
+* Typecheck result: `npm.cmd run typecheck` blocked (no exit status from shell harness); `npx tsc --noEmit -p tsconfig.json` PASS.
+* Package files: untouched.
+* Do-not-touch files: untouched.
+* Next recommended phase: Wave 5 — watch-mode design, domain map 3D overlay, live registry ingestion (explicit scope).
+* Compact handoff: Five preview panels live under “Wave 02 Intelligence Previews”. All read-only/static — no watch mode, hooks, or mutation UI. Control Tower and 3D map preserved.

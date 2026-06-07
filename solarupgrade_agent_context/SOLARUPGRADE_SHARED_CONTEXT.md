@@ -4607,6 +4607,52 @@ App Brain Wave 3 adds work manifest generator, Context Hub panel, and manifest-e
 
 ---
 
+## Shared Update — App Brain Wave 4 (Cursor) — Intelligence Preview Panels Integration
+
+AGENT:
+Cursor
+
+BRANCH:
+main
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report.
+
+FILES CHANGED:
+- `src/components/v15r/V15rAppBrainTab.tsx`
+- `src/components/v15r/app-brain/AppBrainDomainEcosystemPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainGovernancePreviewPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainBriefGeneratorPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainMetricsQaPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainBacklogImportPanel.tsx`
+- `src/components/v15r/app-brain/appBrainPanelShared.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+PANELS INTEGRATED:
+- Domain Ecosystem preview (appBrainDomainMap.ts)
+- Governance preview (appBrainGovernanceSummary.ts — dark theme, tabbed read-only)
+- Agent Brief Generator preview (appBrainBriefGenerator.ts sample brief)
+- Metrics / QA Gate preview (appBrainMetricsSeed.ts + QA gate placeholder)
+- Backlog Import helper summary (appBrainBacklogImport.ts classifier sample)
+
+BUILD RESULT:
+PASS — `npm run build`
+
+TYPECHECK RESULT:
+`npm.cmd run typecheck` blocked (shell harness no exit status); `npx tsc --noEmit -p tsconfig.json` PASS
+
+PACKAGE FILES:
+Untouched
+
+NEXT RECOMMENDED PHASE:
+Wave 5 — optional watch-mode design doc, domain map 3D overlay wiring, and live registry ingestion (explicit scope only).
+
+COMPACT HANDOFF FOR NEXT CHAT:
+App Brain Wave 4 integrates five read-only Wave 02 intelligence preview panels under “Wave 02 Intelligence Previews”. Control Tower (Waves 01–03), 3D map, and Generated Manifest preserved. No watch mode, hooks, mutation UI, or business financial KPIs.
+
+---
+
 ## Shared Update — Home Tab Repair Pass — pipeline count, agenda picker, 10-row scroll cap [2026-06-06]
 
 AGENT:
@@ -4641,113 +4687,3 @@ Browser reached login gate at `http://localhost:5173`; Home-tab click-through re
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Home repair pass complete on `main`. Pipeline subtitle uses active-project count; agenda linking uses a real project picker modal; agenda cards scroll after 10 task rows. Scope limited to `V15rHome.tsx` plus context files.
-
----
-
-## Shared Update — Estimate Tab Batch 1: Markup, Profit Slider, and Cost Breakdown Profit
-
-* Agent: Claude Code (Sonnet 4.6)
-* Branch: main
-* Commit: 717be62 — fix(estimate): sync markup and render profit controls
-* Files changed: `src/components/v15r/V15rEstimateTab.tsx`, both context files
-* Typecheck: PASS — zero errors
-* User-facing behavior changed:
-  - Materials by Phase column renamed "Margin %" → "Markup %" and now shows the markup rate from Settings (e.g. 25%), not the derived margin (e.g. 20%).
-  - Profit Target slider added in Deal Overview. Drag to set desired profit %; Total Contract Amount updates automatically. Slider position reflects manually-typed contract amount.
-  - Cost Breakdown stacked bar now includes a Profit segment (green when positive, omitted when ≤ 0).
-  - Cost Breakdown legend now includes Profit row. All legend percentages now relative to Total Contract Amount (previously relative to customerCost).
-* Implementation notes:
-  - Root cause of 20% vs 25%: Estimate computed true margin `(selling-cost)/selling` instead of displaying `markupRate * 100` directly.
-  - Slider formula: `contract = customerCost / (1 - profitPct)`. Clamped to max 99.9% to prevent division by zero.
-  - `cbTotal = num(p.contract) > 0 ? contract : max(customerCost, 1)` — safe denominator for legend percentages.
-  - Selling price math in Materials by Phase is unchanged.
-* Risks / follow-up:
-  - Slider inert when customerCost = 0 (all cost fields empty) — intentional guard.
-  - Negative profit renders red in legend; bar has no profit segment (guarded by `customerProfit > 0`).
-  - Browser QA still recommended to confirm slider drag live-updates contract amount.
-* Manual QA status: Static code review + typecheck only. Browser QA recommended.
-* Next agent should know:
-  - This is Inner Project improvement Batch 1 of 3. Batch 2 will cover additional Estimate tab or other Inner Project tab improvements as directed by the user.
-  - Do not re-touch the margin/markup calculation or slider logic unless explicitly scoped.
-  - Material Takeoff tab and Settings tab were not touched and remain unchanged.
-
----
-
-## Shared Update — Estimate Tab Slider Refinement: Compact $0–$100k Scale
-
-* Agent: Claude Code (Sonnet 4.6)
-* Branch: main
-* Commit: d617fb1 — fix(estimate): refine contract slider scale
-* Files changed: `src/components/v15r/V15rEstimateTab.tsx`, both context files
-* Typecheck: PASS — zero errors
-* User-facing behavior changed:
-  - Profit-percent slider replaced with a contract-amount reference slider ($0–$100k, step $500).
-  - Slider visual width reduced to ~52% of panel width (220–320px), centered.
-  - Tick dots and labels added at $0, $25k, $50k, $75k, $100k.
-  - Slider header renamed "Contract Reference"; profit % badge still visible in header.
-  - Direct onChange: `p.contract = num(e.target.value)`. No profit-% formula.
-  - Manual contract input > $100k still works; slider clamps at max visually.
-* Implementation notes:
-  - Slider reads `Math.min(Math.max(num(p.contract), 0), 100000)` — safe clamp.
-  - Tick marks are flex-row children with `justifyContent: space-between` — aligns to slider range endpoints naturally.
-  - No Cost Breakdown or markup logic touched.
-* Risks / follow-up:
-  - Projects with contract > $100k will show slider at max. This is intentional — slider is a visual reference only.
-  - Browser QA still recommended to verify tick label alignment at different panel widths.
-* Manual QA status: Static code review + typecheck only. Browser QA recommended.
-* Next agent should know:
-  - Slider is now contract-amount-based, not profit-percent-based. Do not revert to profit-% formula unless explicitly requested.
-  - Manual contract input is untouched and works independently of slider range.
-  - This was an Estimate Tab polish pass. Inner Project Batch 2 scope TBD by user.
-
----
-
-## Shared Update — Estimate Tab Slider Polish: Tick Alignment
-
-* Agent: Claude Code (Sonnet 4.6)
-* Branch: main
-* Commit: 9764cfd — fix(estimate): align contract slider ticks
-* Files changed: `src/components/v15r/V15rEstimateTab.tsx`, both context files
-* Typecheck: PASS — zero errors
-* User-facing behavior changed:
-  - Tick marks ($0, $25k, $50k, $75k, $100k) now visually align with the slider track/thumb positions.
-  - Tick shape changed from round dot to rectangular tick for better visual clarity.
-* Implementation notes:
-  - Root cause: tick container had no horizontal padding, placing $0/$100k ticks at element edges while the native thumb is inset ~8px from each edge.
-  - Fix: `paddingLeft: '8px', paddingRight: '8px'` on the tick row. The `space-between` flex distribution then matches the effective track coordinate space.
-  - 8px is appropriate for Chrome/Edge (thumb ~12–16px wide). Firefox may be 1–2px off but visually acceptable.
-  - No slider math, range, width, or other logic changed.
-* Risks / follow-up:
-  - Firefox alignment may differ slightly from Chrome/Edge. If reported, adjust padding between 6–10px.
-  - If global CSS ever customizes the range thumb size, padding should be updated to match.
-* Manual QA status: Static code review + typecheck only. Browser QA recommended.
-* Next agent should know:
-  - The slider tick alignment fix is a CSS-only padding compensation. The `8px` value is a Chrome/Edge thumb half-width approximation.
-  - All Estimate Tab Batch 1 behaviors (markup, slider math, profit in Cost Breakdown) remain intact.
-  - Inner Project improvement Batch 2 scope TBD by user.
-
----
-
-## Shared Update — Estimate Slider Alignment Repair: Thumb and Tick Coordinates
-
-* Agent: Claude Code (Sonnet 4.6)
-* Branch: main
-* Commit: 28c0b8c — fix(estimate): align slider thumb with ticks
-* Files changed: `src/components/v15r/V15rEstimateTab.tsx`, both context files
-* Typecheck: PASS — zero errors
-* User-facing behavior changed:
-  - Tick marks ($0, $25k, $50k, $75k, $100k) now pixel-accurately align with the slider thumb at each position.
-  - Slider thumb is now explicitly styled: 16px circle, #34d399 green, on a 4px track.
-  - Tick marks use absolute positioning with CSS calc() so each center is at the exact thumb center coordinate.
-* Implementation notes:
-  - Root cause: flex space-between distributes item LEFT edges unevenly when items have different widths (e.g., "$0" ≈ 10px vs "$100k" ≈ 30px). This causes label-center positions to be offset.
-  - Fix: inline `<style>` block with class `est-ctr-sl` forces thumb to exactly 16px. Ticks use `position: absolute, left: calc(frac*100% + (0.5-frac)*16px), transform: translateX(-50%)`. This is the mathematically exact formula for thumb-center position at any fractional value.
-  - Computed tick positions: $0→8px, $25k→calc(25%+4px), $50k→50%, $75k→calc(75%-4px), $100k→calc(100%-8px).
-* Risks / follow-up:
-  - Style block renders on each component render (functionally harmless). Class name `est-ctr-sl` is unique enough to avoid collisions.
-  - Slider math, range, width, and all other Estimate behaviors unchanged.
-* Manual QA status: Static code review + typecheck only. Browser QA recommended.
-* Next agent should know:
-  - The slider now uses class `est-ctr-sl` for thumb/track styling. Do not remove this class or the accompanying `<style>` block or alignment will break.
-  - All Estimate Tab Batch 1 behaviors (markup, profit in Cost Breakdown, slider $0–$100k range) remain intact.
-  - Tick formula: `left = calc(frac*100% + (0.5-frac)*16px)` + `transform: translateX(-50%)`. If thumb size ever changes, update the `16` in both the CSS and the formula.
