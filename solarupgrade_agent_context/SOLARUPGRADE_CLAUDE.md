@@ -1919,3 +1919,75 @@ NO — ready for screenshot QA.
 
 * Compact handoff for next agent/chat:
   Projects tab cards now match Home tab cards on main branch. Root cause: V15rProjectsPanel.tsx has its own inline renderProjectCard function (separate from shared ProjectCard.tsx used by Home). Added getProjectCOTotal/getProjectCOExposure imports and calculations, changed grid-cols-3 to grid-cols-2 sm:grid-cols-4, added CO Value metric. Note: two parallel card implementations still exist — future card changes need updates in both ProjectCard.tsx and renderProjectCard in V15rProjectsPanel.tsx. Typecheck: full clean pass.
+
+---
+
+## Claude Report — Project Cards: Category-Based Animation Timing
+
+* Task completed: Extended `getProjectCardGlareDelay` in `ProjectCard.tsx` to cover all 6 known project types with fixed offsets, and updated `V15rProjectsPanel.tsx` inline `renderProjectCard` to use `getProjectCardGlareDelay` instead of a raw id-hash.
+
+* Files changed:
+  - `src/components/v15r/ProjectCard.tsx` — replaced `getProjectCardGlareDelay` implementation + added `TYPE_GLARE_OFFSETS` map
+  - `src/components/v15r/V15rProjectsPanel.tsx` — added import for `getProjectCardGlareDelay`, replaced id-hash animation delay with `getProjectCardGlareDelay(p)`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md` — shared context entry appended
+  - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md` — this report
+
+* Commit hash: pending (see commit `fix(projects): sync card animations by category`)
+
+* Typecheck result: PASS — `tsc --noEmit` full clean pass, zero errors
+
+* Root cause (two separate problems):
+  1. `getProjectCardGlareDelay` in `ProjectCard.tsx` only handled Commercial/Commercial TI and Residential. Solar, New Construction, and Service all fell back to `idPhase` (based on project ID hash) — cards of the same type got different delays and animated out of sync.
+  2. `V15rProjectsPanel.tsx` inline `renderProjectCard` used its own raw id-hash and never called `getProjectCardGlareDelay` at all — all Projects tab cards were id-based regardless of type.
+
+* What changed:
+
+  In `ProjectCard.tsx`:
+  - Removed `RESIDENTIAL_GLARE_OFFSET_MS = 420` constant
+  - Added `TYPE_GLARE_OFFSETS` module-level map covering all 6 known types:
+    - Commercial / Commercial TI / Commercial IT: 0ms (base)
+    - Residential: 420ms
+    - Solar: 840ms
+    - New Construction: 1260ms
+    - Service: 1680ms
+  - Replaced `getProjectCardGlareDelay` body: checks `type in TYPE_GLARE_OFFSETS`, falls back to type-string hash (not id-hash) for unknowns
+  - Type-string hash: `type.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) * 260 % PROJ_GLARE_MS`
+
+  In `V15rProjectsPanel.tsx`:
+  - Added `import { getProjectCardGlareDelay } from './ProjectCard'`
+  - Replaced `animationDelay: -${(parseInt(p.id.slice(-4), 36) || 0) % PROJ_GLARE_MS}ms` with `animationDelay: getProjectCardGlareDelay(p)`
+
+* Double verification against requested behavior:
+  - [x] Commercial TI cards share synchronized timing (offset 0ms)
+  - [x] Commercial cards share synchronized timing (same offset as Commercial TI)
+  - [x] Residential cards share synchronized timing, staggered 420ms from Commercial
+  - [x] Solar: 840ms offset — synced within type
+  - [x] New Construction: 1260ms offset — synced within type
+  - [x] Service: 1680ms offset — synced within type
+  - [x] Unknown types hash by type string — same unknown types still sync
+  - [x] Home Job Health cards: use shared `ProjectCard.tsx` via `useRef(getProjectCardGlareDelay(p))` — now uses full type coverage
+  - [x] Projects tab cards: now use `getProjectCardGlareDelay(p)` — previously id-hash
+  - [x] Quoted/Paid/Exposure/CO Value metrics unchanged
+  - [x] No unrelated files touched
+  - [x] Typecheck clean
+
+* What was learned:
+  - The CSS `animation-delay: -Xms` sync trick: negative delay plays the animation as if it started X ms ago. `Date.now() % period` gives the same "current phase" for all cards in one render batch — so all cards sharing the same delay value are synchronized. Adding a fixed category offset staggers different categories.
+  - `V15rProjectsPanel.tsx` has its own local `PROJ_GLARE_MS = 5200` for the CSS template string. Only the delay calculation logic was migrated to the shared helper.
+
+* Learned skills / reusable patterns:
+  - Category-sync pattern: `-(Date.now() % period + CATEGORY_OFFSET) % period + "ms"` — synchronized glare within a category, staggered across categories.
+  - Type-string hash fallback: `str.split('').reduce((a,c) => a + c.charCodeAt(0), 0) * 260 % period` — stable offset from type name, ensures same-type unknowns still sync.
+
+* Bugs / risks:
+  - `V15rProjectsPanel.tsx` still has its own `PROJ_GLARE_MS = 5200` for the CSS animation template — acceptable. If animation duration changes, update both files.
+  - `useRef` in shared `ProjectCard.tsx` stabilizes the delay across re-renders. The inline `renderProjectCard` in `V15rProjectsPanel` recalculates on every re-render (no hook available in plain functions). Functionally correct — animation may briefly reset on parent state changes.
+  - No browser QA performed.
+
+* Manual QA performed: Static code review and typecheck only.
+
+* Next recommended action:
+  Manual QA: Open Projects tab — confirm Commercial TI cards animate in sync. Confirm Residential cards animate together but slightly delayed from Commercial. Confirm Solar, New Construction, Service each have their own consistent group timing. Open Home tab — confirm Job Health cards still show all 4 metrics. Click into a project and confirm navigation works.
+
+* Compact handoff for next agent/chat:
+  Category-based animation sync complete on main branch. ProjectCard.tsx getProjectCardGlareDelay now covers all 6 types with TYPE_GLARE_OFFSETS (Commercial/TI: 0ms, Residential: 420ms, Solar: 840ms, New Construction: 1260ms, Service: 1680ms, unknown: type-string hash). V15rProjectsPanel.tsx inline renderProjectCard now imports and calls getProjectCardGlareDelay(p) instead of raw id-hash. Typecheck: full clean pass.

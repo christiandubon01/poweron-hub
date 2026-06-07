@@ -4746,3 +4746,18 @@ App Brain Wave 2 is a read-only Directory Brain MVP. The regenerated directory m
 * Risks / follow-up: Two parallel card implementations exist (ProjectCard.tsx for Home, renderProjectCard in V15rProjectsPanel.tsx for Projects tab). Future card changes need to be applied in both places. Consider unifying in a future refactor session.
 * Manual QA status: Not yet performed. Ready for user QA.
 * Next agent should know: When making card-level changes, always update BOTH ProjectCard.tsx AND renderProjectCard in V15rProjectsPanel.tsx. Both render visually identical cards but from separate code paths.
+
+---
+
+## Shared Update — Project Cards: Category-Based Animation Timing [2026-06-06]
+
+* Agent: Claude Code Sonnet 4.6
+* Branch: main
+* Commit: fix(projects): sync card animations by category (pending)
+* Files changed: src/components/v15r/ProjectCard.tsx, src/components/v15r/V15rProjectsPanel.tsx, SOLARUPGRADE_SHARED_CONTEXT.md, SOLARUPGRADE_CLAUDE.md
+* Typecheck: PASS (full clean, zero errors)
+* User-facing behavior changed: Project cards now animate in sync per category. Cards of the same type share identical animation delay; different types have fixed offsets (Commercial/TI: 0ms, Residential: 420ms, Solar: 840ms, New Construction: 1260ms, Service: 1680ms). Both Home tab and Projects tab cards now use the same category-based logic.
+* Implementation notes: Added TYPE_GLARE_OFFSETS map to ProjectCard.tsx; replaced getProjectCardGlareDelay fallback (was id-hash, now type-string hash for unknown types). V15rProjectsPanel.tsx now imports and calls getProjectCardGlareDelay(p) instead of inline id-hash. PROJ_GLARE_MS constant still duplicated in V15rProjectsPanel for CSS template use — acceptable.
+* Risks / follow-up: If PROJ_GLARE_MS duration ever changes, update in both ProjectCard.tsx and V15rProjectsPanel.tsx. V15rProjectsPanel inline renderProjectCard recalculates delay on re-render (no useRef) — functionally correct but animation may reset on parent state changes.
+* Manual QA status: Not yet performed. Ready for user QA.
+* Next agent should know: Animation delay logic now lives in getProjectCardGlareDelay() in ProjectCard.tsx. Both Home (via shared ProjectCard component) and Projects tab (via imported getProjectCardGlareDelay in renderProjectCard) use this function. Category offset table is TYPE_GLARE_OFFSETS in ProjectCard.tsx.

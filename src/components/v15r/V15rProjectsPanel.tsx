@@ -8,6 +8,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react'
+import { getProjectCardGlareDelay } from './ProjectCard'
 import { Plus, Edit3, Trash2, ArrowRight, RotateCcw, Eye, FileText, X, Archive, Home, Building2, Wrench, Sun, Hammer, Store, FolderKanban } from 'lucide-react'
 import {
   getBackupData,
@@ -850,7 +851,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
         <span
           aria-hidden="true"
           className="proj-card-glare pointer-events-none absolute inset-0 overflow-hidden rounded-2xl"
-          style={{ animationDelay: `-${(parseInt(p.id.slice(-4), 36) || 0) % PROJ_GLARE_MS}ms` }}
+          style={{ animationDelay: getProjectCardGlareDelay(p) }}
         />
 
         <div className="relative z-10 p-4">

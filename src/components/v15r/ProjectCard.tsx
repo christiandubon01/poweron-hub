@@ -32,19 +32,27 @@ export const PROJECT_TYPE_STYLE: Record<string, { icon: any; gradient: string; b
 export const PROJECT_TYPE_DEFAULT_STYLE = { icon: FolderKanban, gradient: 'linear-gradient(135deg,#0f172a 0%,#020617 60%,rgba(15,20,35,0.6) 100%)', border: 'rgba(148,163,184,0.18)', glow: 'rgba(148,163,184,0.06)', iconBg: 'rgba(148,163,184,0.10)', iconColor: '#94a3b8', barGradient: 'linear-gradient(90deg,rgba(52,211,153,0.6),rgba(52,211,153,1))' }
 
 export const PROJ_GLARE_MS = 5200
-const RESIDENTIAL_GLARE_OFFSET_MS = 420
+
+// Fixed offsets per category: all cards of the same type share the same delay → synchronized sweep
+const TYPE_GLARE_OFFSETS: Record<string, number> = {
+  'commercial':       0,
+  'commercial ti':    0,
+  'commercial it':    0,
+  'residential':      420,
+  'solar':            840,
+  'new construction': 1260,
+  'service':          1680,
+}
 
 export function getProjectCardGlareDelay(p: Pick<BackupProject, 'id' | 'type'>): string {
   const syncedPhase = Date.now() % PROJ_GLARE_MS
   const type = String(p?.type || '').toLowerCase().trim()
-  if (type === 'commercial' || type === 'commercial ti' || type === 'commercial it') {
-    return `-${syncedPhase}ms`
+  if (type in TYPE_GLARE_OFFSETS) {
+    return `-${(syncedPhase + TYPE_GLARE_OFFSETS[type]) % PROJ_GLARE_MS}ms`
   }
-  if (type === 'residential') {
-    return `-${(syncedPhase + RESIDENTIAL_GLARE_OFFSET_MS) % PROJ_GLARE_MS}ms`
-  }
-  const idPhase = (parseInt(String(p?.id || '').slice(-4), 36) || 0) % PROJ_GLARE_MS
-  return `-${idPhase}ms`
+  // Unknown type: hash the type string (not id) so same unknown types still sync with each other
+  const typeHash = type.split('').reduce((acc: number, c: string) => acc + c.charCodeAt(0), 0)
+  return `-${(syncedPhase + (typeHash * 260) % PROJ_GLARE_MS) % PROJ_GLARE_MS}ms`
 }
 
 function fmtDate(dateStr?: string): string {
