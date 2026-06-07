@@ -602,3 +602,52 @@ Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak 
 * Package files: untouched (`package.json`, `package-lock.json` not modified).
 * Next recommended phase: Wave 2 — full directory file tree, live registry ingestion, and optional git/session overlay wiring behind explicit scope.
 * Compact handoff: App Brain now hides operational finance KPIs in architecture mode and shows five read-only Control Tower panels from Wave 01 JSON seeds via `appBrainSeedData.ts`. 3D map, filters, inspector, and generated manifest panel preserved. No live tracking claims yet.
+
+---
+
+## Cursor Report — App Brain Wave 2 — Directory Brain and File Profile MVP
+
+* Task completed: Searchable Directory Brain UI and read-only File Profile panel integration.
+* Branch: `main` (no new branch).
+* Directory Brain: search input, area/extension filters, area/extension count shortcuts, compact selectable file list (120 cap), match counts.
+* File Profile: path, area/domain, extension, manifest import stats, exports/components, seed active-work + backlog references, risk/safe-edit/canary placeholders.
+* Generator: updated `scripts/generate-app-brain-directory.mjs` with `fileId`, `parentDirectory`, `importCount`; regenerated `generatedAppBrainDirectory.ts` (552 files).
+* Files changed:
+  * `scripts/generate-app-brain-directory.mjs`
+  * `src/components/v15r/generatedAppBrainDirectory.ts`
+  * `src/components/v15r/V15rAppBrainTab.tsx`
+  * `src/components/v15r/app-brain/AppBrainDirectoryPanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainFileProfilePanel.tsx`
+  * `src/components/v15r/app-brain/appBrainDirectoryBrain.ts`
+  * `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  * `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+* Build result: PASS — `npm run build`.
+* Typecheck result: `npm.cmd run typecheck` blocked (no exit status from shell harness); `npx tsc --noEmit -p tsconfig.json` PASS.
+* Package files: untouched.
+* Next recommended phase: Wave 3 — live registry ingestion, import-graph enrichment, git/session overlays.
+* Compact handoff: Directory Brain search/filter/select now drives File Profile. Wave 1 panels and 3D map unchanged. Read-only only — no watch mode or live tracking.
+
+---
+
+## Cursor Report — App Brain Wave 3 — Work Manifest and Context Hub MVP
+
+* Task completed: Work manifest generator, Context Hub panel, and Live Work manifest enrichment.
+* Branch: `main` (no new branch).
+* Generator: `scripts/generate-app-brain-work-manifest.mjs` → `generatedAppBrainWorkManifest.ts` (9 sources read, Haiku context missing).
+* Context Hub: Shared/Claude/Codex/Cursor/Haiku cards with exists, size, modified time, freshness, last-report excerpt, missing-handoff warning.
+* Live Work: manifest snapshot time, agent summary enrichment, static seed warning; session cards still from `APP_BRAIN_ACTIVE_SESSIONS`.
+* Files changed:
+  * `scripts/generate-app-brain-work-manifest.mjs`
+  * `src/components/v15r/generatedAppBrainWorkManifest.ts`
+  * `src/components/v15r/app-brain/AppBrainContextHubPanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainLiveWorkPanel.tsx`
+  * `src/components/v15r/V15rAppBrainTab.tsx`
+  * `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  * `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+* Generator result: PASS — `node scripts/generate-app-brain-work-manifest.mjs` (5 active sessions, 9 sources read, 4/5 context files present, Haiku missing).
+* Build result: PASS — `npm run build`.
+* Typecheck result: `npm.cmd run typecheck` blocked (no exit status from shell harness); `npx tsc --noEmit -p tsconfig.json` PASS.
+* Package files: untouched.
+* Do-not-touch files: untouched (ProjectCard/V15rProjectsPanel local edits not staged).
+* Next recommended phase: Wave 4 — watch-mode design doc, import-graph overlays, live registry ingestion (explicit scope).
+* Compact handoff: Work manifest + Context Hub integrated. Snapshot-only — no watch mode, hooks, or live tracking claims.

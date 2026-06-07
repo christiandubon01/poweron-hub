@@ -25,6 +25,7 @@ import {
 } from './appBrainFilters'
 import { GENERATED_APP_BRAIN_MANIFEST } from './generatedAppBrainManifest'
 import AppBrainLiveWorkPanel from './app-brain/AppBrainLiveWorkPanel'
+import AppBrainContextHubPanel from './app-brain/AppBrainContextHubPanel'
 import AppBrainRulesPanel from './app-brain/AppBrainRulesPanel'
 import AppBrainSkillsPanel from './app-brain/AppBrainSkillsPanel'
 import AppBrainDirectoryPanel from './app-brain/AppBrainDirectoryPanel'
@@ -685,7 +686,7 @@ export default function V15rAppBrainTab() {
               <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-cyan-300/90">Wave 01 integration</p>
               <h2 className="text-lg font-semibold text-gray-100 mt-1">Control Tower Panels</h2>
               <p className="text-xs text-gray-500 mt-1">
-                Read-only registries from Haiku Wave 01 seeds. Live git/session ingestion is deferred.
+                Wave 01–03 control tower: work manifest, Context Hub, Directory Brain, and File Profile. Read-only snapshot only.
               </p>
             </div>
             <span
@@ -698,6 +699,7 @@ export default function V15rAppBrainTab() {
 
           <div className="space-y-4">
             <AppBrainLiveWorkPanel />
+            <AppBrainContextHubPanel />
             <AppBrainRulesPanel />
             <AppBrainSkillsPanel />
             <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-4">
