@@ -46,11 +46,19 @@ export function AppBrainPanelShell({
   subtitle: string
   icon: ReactNode
   accent?: string
-  mode?: 'tower' | 'preview'
+  mode?: 'tower' | 'preview' | 'runtime'
   children: ReactNode
 }) {
-  const sectionLabel = mode === 'preview' ? 'Intelligence Preview' : 'Control Tower'
-  const badge = mode === 'preview' ? <PreviewReadOnlyBadge /> : <ReadOnlyBadge />
+  const sectionLabel =
+    mode === 'runtime' ? 'Runtime Contract' : mode === 'preview' ? 'Intelligence Preview' : 'Control Tower'
+  const badge =
+    mode === 'runtime' ? (
+      <RuntimeContractBadge />
+    ) : mode === 'preview' ? (
+      <PreviewReadOnlyBadge />
+    ) : (
+      <ReadOnlyBadge />
+    )
 
   return (
     <section className="rounded-2xl p-4 sm:p-5 space-y-4" style={panelSectionStyle(`${accent}22`)}>
@@ -80,6 +88,28 @@ export function PreviewReadOnlyBadge() {
       style={{ color: '#a78bfa', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.22)' }}
     >
       Read-only · preview
+    </span>
+  )
+}
+
+export function RuntimeContractBadge() {
+  return (
+    <span
+      className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg"
+      style={{ color: '#67e8f9', background: 'rgba(34,211,238,0.08)', border: '1px solid rgba(34,211,238,0.22)' }}
+    >
+      Read-only · contract preview
+    </span>
+  )
+}
+
+export function DesignOnlyBadge() {
+  return (
+    <span
+      className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg"
+      style={{ color: '#facc15', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.22)' }}
+    >
+      Design only · not implemented
     </span>
   )
 }

@@ -36,6 +36,11 @@ import AppBrainGovernancePreviewPanel from './app-brain/AppBrainGovernancePrevie
 import AppBrainBriefGeneratorPanel from './app-brain/AppBrainBriefGeneratorPanel'
 import AppBrainMetricsQaPanel from './app-brain/AppBrainMetricsQaPanel'
 import AppBrainBacklogImportPanel from './app-brain/AppBrainBacklogImportPanel'
+import AppBrainImportGraphOverlayPanel from './app-brain/AppBrainImportGraphOverlayPanel'
+import AppBrainActiveWorkAnimationPanel from './app-brain/AppBrainActiveWorkAnimationPanel'
+import AppBrainSessionLogPanel from './app-brain/AppBrainSessionLogPanel'
+import AppBrainCanaryScopePanel from './app-brain/AppBrainCanaryScopePanel'
+import AppBrainWatchModeContractPanel from './app-brain/AppBrainWatchModeContractPanel'
 import { APP_BRAIN_DIRECTORY } from './generatedAppBrainDirectory'
 import { findDirectoryFile } from './app-brain/appBrainDirectoryBrain'
 
@@ -738,6 +743,33 @@ export default function V15rAppBrainTab() {
             <AppBrainBriefGeneratorPanel />
             <AppBrainMetricsQaPanel />
             <AppBrainBacklogImportPanel />
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-cyan-300/90">Wave 03 Runtime Contracts</p>
+              <h2 className="text-lg font-semibold text-gray-100 mt-1">Runtime Contract Preview Panels</h2>
+              <p className="text-xs text-gray-500 mt-1">
+                Read-only previews from merged Haiku Wave 03 modules — import graph, animation model, session log,
+                canary scope, and watch mode contract. No watch mode, hooks, or mutation UI.
+              </p>
+            </div>
+            <span
+              className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg self-start"
+              style={{ color: '#67e8f9', background: 'rgba(34,211,238,0.08)', border: '1px solid rgba(34,211,238,0.22)' }}
+            >
+              Contract preview · not live
+            </span>
+          </div>
+
+          <div className="space-y-4">
+            <AppBrainImportGraphOverlayPanel />
+            <AppBrainActiveWorkAnimationPanel />
+            <AppBrainSessionLogPanel />
+            <AppBrainCanaryScopePanel />
+            <AppBrainWatchModeContractPanel />
           </div>
         </section>
 

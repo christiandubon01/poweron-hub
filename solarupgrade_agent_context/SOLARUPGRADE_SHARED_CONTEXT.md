@@ -4653,6 +4653,52 @@ App Brain Wave 4 integrates five read-only Wave 02 intelligence preview panels u
 
 ---
 
+## Shared Update — App Brain Wave 5 (Cursor) — Runtime Contract Preview Panels Integration
+
+AGENT:
+Cursor
+
+BRANCH:
+main
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report.
+
+FILES CHANGED:
+- `src/components/v15r/V15rAppBrainTab.tsx`
+- `src/components/v15r/app-brain/AppBrainImportGraphOverlayPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainActiveWorkAnimationPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainSessionLogPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainCanaryScopePanel.tsx`
+- `src/components/v15r/app-brain/AppBrainWatchModeContractPanel.tsx`
+- `src/components/v15r/app-brain/appBrainPanelShared.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+PANELS INTEGRATED:
+- Import Graph Overlay preview (`appBrainImportGraphOverlay.ts` + manifest)
+- Active Work Animation preview (`appBrainActiveWorkAnimationModel.ts` + seed sessions)
+- Session Log preview (`APP_BRAIN_SESSION_LOG.json` + summary helpers)
+- Canary / Scope Checker preview (`appBrainScopeCanaryModel.ts`)
+- Watch Mode Contract preview (`appBrainWatchModeContract.ts` — design only)
+
+BUILD RESULT:
+PASS — `npm run build`
+
+TYPECHECK RESULT:
+`npm.cmd run typecheck` blocked (shell harness no exit status); `npx tsc --noEmit -p tsconfig.json` PASS
+
+PACKAGE FILES:
+Untouched
+
+NEXT RECOMMENDED PHASE:
+Wave 6 — optional 3D import-graph overlay wiring, watch-mode implementation behind explicit scope, and live registry ingestion.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+App Brain Wave 5 integrates five read-only Wave 03 runtime contract preview panels under “Wave 03 Runtime Contracts”. Control Tower, Wave 02 previews, 3D map, and Generated Manifest preserved. No watch mode runtime, hooks, mutation UI, or business financial KPIs.
+
+---
+
 ## Shared Update — Home Tab Repair Pass — pipeline count, agenda picker, 10-row scroll cap [2026-06-06]
 
 AGENT:
@@ -4687,53 +4733,3 @@ Browser reached login gate at `http://localhost:5173`; Home-tab click-through re
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Home repair pass complete on `main`. Pipeline subtitle uses active-project count; agenda linking uses a real project picker modal; agenda cards scroll after 10 task rows. Scope limited to `V15rHome.tsx` plus context files.
-
-## Shared Update — Inner Project Batch 2: Labor Phase Groups and Response Tracking
-
-* Agent: Claude Code (claude-sonnet-4-6)
-* Branch: main
-* Commit: 7eb422b
-* Files changed:
-  - `src/components/v15r/V15rEstimateTab.tsx` — labor phase collapsibles, phase color pickers, per-phase Add Row
-  - `src/components/v15r/V15rCoordinationTab.tsx` — edit modal, response + solvedBy fields
-  - `src/utils/v15rViewPrefs.ts` — added `collapsedLaborPhases` to estimate view prefs type + deep-merge
-* Typecheck: PASS
-* User-facing behavior changed:
-  - Estimate tab Labor section now shows 5 collapsible phase buckets: Underground, Site Prep, Rough In, Trim, Finish. Each has a color picker. Collapsed state and colors persist across reload. Per-phase Add Row button. Each row has a Phase dropdown for reassignment. Labor totals unchanged.
-  - RFI tab was already complete — no changes.
-  - Coordination tab items now have an Edit button that opens a modal with Text, Status, Response, and Solved By fields. Items show response and solved-by when present.
-* Implementation notes:
-  - Labor rows now support a `phase` field (backward compatible — inferred from description if absent).
-  - Phase colors stored in `p.laborPhaseColors` (project backup). Collapse state in localStorage via viewPrefs `estimate.collapsedLaborPhases`.
-  - Coordination edit uses the same fresh-backup-read pattern as RFI to avoid stale saves.
-  - A linter was auto-reverting V15rEstimateTab.tsx edits mid-session — all changes were consolidated into a single save pass.
-* Risks / follow-up:
-  - Existing labor rows with no `phase` field and no matching keyword in description will land in Unassigned. Users can reassign via the Phase dropdown.
-  - Manual QA needed to confirm collapse persistence, phase color persistence, and coordination edit flow in browser.
-* Manual QA status: Typecheck only. Browser QA recommended.
-* Next agent should know:
-  Inner Project Batch 2 is complete. Batch 3 would cover the remaining Inner Project tab improvements (if any). All 3 scoped code files + context files in this commit. Labor totals, RFI counts, Coordination status/categories all preserved.
-
----
-
-## Inner Project Batch 3 — Phase Hours + Description Wrap
-* Date: 2026-06-06
-* Branch: main
-* Agent: Claude Code Sonnet 4.6
-* Summary: Phase bucket headers in Progress tab and Estimate tab labor section now display total hours. Estimate tab labor description textareas auto-resize to show full text on render.
-* Files changed:
-  - `src/components/v15r/V15rProgressTab.tsx` — added `phaseHrs` from tasks; appended to subtitle
-  - `src/components/v15r/V15rEstimateTab.tsx` — added `phaseHrs` from phRows; hours pill in header; useEffect to auto-resize textareas
-* User-facing behavior changed:
-  - Progress tab: each phase header subtitle now shows `· Xh` (total hours, only when > 0). Example: "From tasks · 20% weight · 3 tasks · 12h"
-  - Estimate tab: each labor phase header now shows a `Xh` monospace pill next to the row count. Example: row count "3" + hours "12h" + dollar total "$600"
-  - Estimate tab: labor description textareas now auto-expand on initial render to show full text (no more truncation for existing long descriptions)
-* Implementation notes:
-  - Progress `phaseHrs`: `tasks.reduce((s, t) => s + num(t?.hrs ?? 0), 0)` — uses same `tasks` array from `tasksForPhase(p, ph, settingsPhases)` already in the phase loop
-  - Estimate `phaseHrs`: `phRows.reduce((s, r) => s + num(r.hrs), 0)` — uses grouped phase rows from `laborGrouped[ph]`
-  - Textarea auto-resize useEffect uses `backup` as dep (not `p?.laborRows`) because `p` is defined after conditional returns in EstimateTab and would cause a TDZ error
-  - `onInput` auto-height handler already existed for typing; the new useEffect handles initial render of existing rows
-* Typecheck: PASS
-* Manual QA status: Typecheck only. Browser QA recommended.
-* Next agent should know:
-  Inner Project Batch 3 is complete on `main`. Progress phase headers show hours. Estimate labor phase headers show hours. Labor descriptions auto-expand. No financial formulas, RFI, Coordination, MTO, or other tabs were touched.

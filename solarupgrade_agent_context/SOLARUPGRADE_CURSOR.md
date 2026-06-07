@@ -676,3 +676,28 @@ Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak 
 * Do-not-touch files: untouched.
 * Next recommended phase: Wave 5 — watch-mode design, domain map 3D overlay, live registry ingestion (explicit scope).
 * Compact handoff: Five preview panels live under “Wave 02 Intelligence Previews”. All read-only/static — no watch mode, hooks, or mutation UI. Control Tower and 3D map preserved.
+
+---
+
+## Cursor Report — App Brain Wave 5 — Runtime Contract Preview Panels Integration
+
+* Task completed: Integrated five Wave 03 read-only runtime contract preview panels into App Brain.
+* Branch: `main` (no new branch).
+* Panels added: Import Graph Overlay, Active Work Animation, Session Log, Canary / Scope Checker, Watch Mode Contract.
+* Shared shell: `appBrainPanelShared.tsx` extended with runtime contract mode badge and design-only badge.
+* Files changed:
+  * `src/components/v15r/V15rAppBrainTab.tsx`
+  * `src/components/v15r/app-brain/AppBrainImportGraphOverlayPanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainActiveWorkAnimationPanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainSessionLogPanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainCanaryScopePanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainWatchModeContractPanel.tsx`
+  * `src/components/v15r/app-brain/appBrainPanelShared.tsx`
+  * `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  * `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+* Build result: PASS — `npm run build`.
+* Typecheck result: `npm.cmd run typecheck` blocked (no exit status from shell harness); `npx tsc --noEmit -p tsconfig.json` PASS.
+* Package files: untouched.
+* Do-not-touch files: untouched.
+* Next recommended phase: Wave 6 — 3D import-graph overlay wiring, watch-mode implementation, live registry ingestion (explicit scope).
+* Compact handoff: Five runtime contract preview panels live under “Wave 03 Runtime Contracts”. All read-only/static — no watch mode runtime, hooks, or mutation UI. Control Tower, Wave 02 previews, 3D map, and Generated Manifest preserved.
