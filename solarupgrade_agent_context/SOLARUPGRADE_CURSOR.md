@@ -779,3 +779,14 @@ Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak 
 * Package files: untouched.
 * Generated manifests: untouched.
 * Compact handoff: 3D map animates smoothly across Architecture/Import Graph/Active Work overlay modes. Scene init once per mount; overlay hints read from refs.
+
+---
+
+## Cursor Report — App Brain Watch HMR Hotfix — Prevent Refresh Reset Loop
+
+* Task completed: Stopped watch/refresh from rewriting generated TS files on timestamp-only churn, preventing Vite HMR scene remounts.
+* Branch: `main` (no new branch).
+* Root cause confirmed: `app-brain-watch.mjs` rewrote `generatedAppBrain*.ts` every poll even when data unchanged, triggering Vite HMR and Three.js scene resets.
+* Fix: source mtime polling in `--watch`, no-op write protection for runtime snapshot and generator outputs, restore churn-only generator files, HMR-safe skip logging, contract/panel fields for skipped writes.
+* Files changed: see final report.
+* Compact handoff: Watch mode is HMR-safe — polls stable inputs and skips timestamp-only rewrites. Generated snapshot panel still read-only, not live websocket.

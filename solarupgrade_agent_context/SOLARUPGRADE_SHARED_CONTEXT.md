@@ -4843,6 +4843,51 @@ App Brain 3D map stabilized after Wave 7 overlay wiring. Architecture/Import Gra
 
 ---
 
+## Shared Update — App Brain Watch HMR Hotfix (Cursor) — Prevent Refresh Reset Loop
+
+AGENT:
+Cursor
+
+BRANCH:
+main
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report.
+
+FILES CHANGED:
+- `scripts/app-brain-watch.mjs`
+- `src/components/v15r/generatedAppBrainRuntimeSnapshot.ts`
+- `src/components/v15r/app-brain/AppBrainWatchModeContractPanel.tsx`
+- `src/components/v15r/app-brain/appBrainWatchModeContract.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+ROOT CAUSE:
+Opt-in watch utility rewrote generated App Brain TypeScript snapshots every poll (often timestamp-only). Vite HMR remounted App Brain and reset the Three.js scene, appearing as blink/snap every 0.5–1.5s.
+
+FIX:
+Watch polls stable source mtimes and skips refresh when inputs unchanged. Generator/runtime writes compare meaningful content and skip or restore timestamp-only churn.
+
+BUILD RESULT:
+See final Cursor report.
+
+TYPECHECK RESULT:
+See final Cursor report.
+
+PACKAGE FILES:
+Untouched
+
+GENERATED MANIFESTS:
+Only runtime snapshot committed when meaningful; manifest churn-only files not staged.
+
+NEXT RECOMMENDED PHASE:
+Wave 8 — live registry ingestion and overlay legend/inspector sync (explicit scope only).
+
+COMPACT HANDOFF FOR NEXT CHAT:
+App Brain watch mode is HMR-safe. Polls stable inputs and avoids rewriting generated TS files when only timestamps change. 3D map should stay stable while watch runs with no source edits.
+
+---
+
 ## Shared Update — Home Tab Repair Pass — pipeline count, agenda picker, 10-row scroll cap [2026-06-06]
 
 AGENT:

@@ -5,48 +5,52 @@
  * generatedAt changes each time the refresh runs.
  */
 export const GENERATED_APP_BRAIN_RUNTIME_SNAPSHOT = {
-  "generatedAt": "2026-06-07T07:43:52.945Z",
+  "generatedAt": "2026-06-07T08:29:01.233Z",
   "schemaVersion": "app-brain-runtime-snapshot-v1",
-  "mode": "watch",
+  "mode": "once",
   "isWatchModeAvailable": true,
-  "isWatchModeRunning": true,
-  "refreshCommand": "npm run app-brain:watch",
+  "isWatchModeRunning": false,
+  "hmrSafeWatch": false,
+  "sourceChanged": true,
+  "refreshCommand": "npm run app-brain:refresh",
   "branch": "main",
   "gitClean": false,
   "changedFileCount": 10,
   "changedFiles": [
-    "package.json",
+    "abw-log.txt",
     "scripts/app-brain-watch.mjs",
     "solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md",
     "solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md",
     "src/components/v15r/app-brain/appBrainWatchModeContract.ts",
-    "src/components/v15r/app-brain/AppBrainWatchModeContractPanel.tsx",
-    "src/components/v15r/generatedAppBrainDirectory.ts",
-    "src/components/v15r/generatedAppBrainManifest.ts",
-    "src/components/v15r/generatedAppBrainRuntimeSnapshot.ts",
-    "src/components/v15r/generatedAppBrainWorkManifest.ts"
+    "src/components/v15r/app-brain/AppBrainWatchModeContractPanel.tsx"
   ],
   "generatorResults": [
     {
       "source": "app-brain-manifest",
       "command": "node scripts/generate-app-brain-manifest.mjs",
       "success": true,
-      "durationMs": 127,
-      "outputFile": "src/components/v15r/generatedAppBrainManifest.ts"
+      "durationMs": 253,
+      "outputFile": "src/components/v15r/generatedAppBrainManifest.ts",
+      "written": true,
+      "skippedNoMeaningfulChange": false
     },
     {
       "source": "directory-manifest",
       "command": "node scripts/generate-app-brain-directory.mjs",
       "success": true,
-      "durationMs": 205,
-      "outputFile": "src/components/v15r/generatedAppBrainDirectory.ts"
+      "durationMs": 319,
+      "outputFile": "src/components/v15r/generatedAppBrainDirectory.ts",
+      "written": true,
+      "skippedNoMeaningfulChange": false
     },
     {
       "source": "work-manifest",
       "command": "node scripts/generate-app-brain-work-manifest.mjs",
       "success": true,
-      "durationMs": 146,
-      "outputFile": "src/components/v15r/generatedAppBrainWorkManifest.ts"
+      "durationMs": 162,
+      "outputFile": "src/components/v15r/generatedAppBrainWorkManifest.ts",
+      "written": true,
+      "skippedNoMeaningfulChange": false
     }
   ],
   "sourcesRefreshed": [
@@ -54,6 +58,13 @@ export const GENERATED_APP_BRAIN_RUNTIME_SNAPSHOT = {
     "directory-manifest",
     "work-manifest"
   ],
+  "filesWritten": [
+    "src/components/v15r/generatedAppBrainManifest.ts",
+    "src/components/v15r/generatedAppBrainDirectory.ts",
+    "src/components/v15r/generatedAppBrainWorkManifest.ts"
+  ],
+  "filesSkipped": [],
+  "skippedNoMeaningfulChanges": 0,
   "warnings": [],
   "safetyNotes": [
     "Opt-in CLI utility — not a git hook or background daemon",
@@ -61,7 +72,9 @@ export const GENERATED_APP_BRAIN_RUNTIME_SNAPSHOT = {
     "Only regenerates App Brain snapshot TypeScript files",
     "Git status captures file paths only — never diff contents",
     "Secrets, credentials, and .env paths excluded from change lists",
-    "No operational financial values in runtime snapshot"
+    "No operational financial values in runtime snapshot",
+    "Watch mode polls source mtimes — skips refresh when inputs unchanged (HMR-safe)",
+    "Timestamp-only generator output is not rewritten when content is unchanged"
   ],
   "noSecrets": true,
   "noFinancialValues": true

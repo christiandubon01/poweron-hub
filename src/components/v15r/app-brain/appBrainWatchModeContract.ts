@@ -45,6 +45,12 @@ export interface GeneratorResult {
   /** Output file path (if applicable) */
   outputFile?: string;
 
+  /** Whether the generator output file was written */
+  written?: boolean;
+
+  /** True when output matched prior content aside from timestamp fields */
+  skippedNoMeaningfulChange?: boolean;
+
   /** Error message when success is false */
   error?: string;
 }
@@ -75,6 +81,12 @@ export interface AppBrainRuntimeSnapshot {
   /** True only when a watch loop was actively running during generation */
   isWatchModeRunning: boolean;
 
+  /** Watch loop polls source mtimes and skips refresh when inputs are unchanged */
+  hmrSafeWatch?: boolean;
+
+  /** Whether meaningful watch inputs changed before this refresh */
+  sourceChanged?: boolean;
+
   /** Suggested npm command for this snapshot mode */
   refreshCommand: string;
 
@@ -88,19 +100,28 @@ export interface AppBrainRuntimeSnapshot {
   changedFileCount: number;
 
   /** Safe changed file paths (no contents, filtered) */
-  changedFiles: string[];
+  changedFiles: readonly string[];
 
   /** Per-generator results from the refresh cycle */
-  generatorResults: GeneratorResult[];
+  generatorResults: readonly GeneratorResult[];
 
   /** Sources successfully refreshed in this cycle */
-  sourcesRefreshed: WatchSource[];
+  sourcesRefreshed: readonly WatchSource[];
+
+  /** Output files written during this refresh */
+  filesWritten?: readonly string[];
+
+  /** Output files skipped because only timestamp fields changed */
+  filesSkipped?: readonly string[];
+
+  /** Count of files skipped for no meaningful content change */
+  skippedNoMeaningfulChanges?: number;
 
   /** Non-fatal warnings from refresh or git capture */
-  warnings: string[];
+  warnings: readonly string[];
 
   /** Safety notes for operators */
-  safetyNotes: string[];
+  safetyNotes: readonly string[];
 
   /** Snapshot excludes secrets by design */
   noSecrets: true;
@@ -500,6 +521,7 @@ export const DEFAULT_WATCH_MODE_CONFIG: WatchModeConfig = {
     '.vite/**',
     '.env*',
     '*.local.json',
+    'src/components/v15r/generatedAppBrain*.ts',
   ],
   safeMode: true,
   verbose: false,
