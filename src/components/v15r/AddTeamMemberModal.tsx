@@ -111,18 +111,19 @@ export default function AddTeamMemberModal({
   const [projectId, setProjectId] = useState('')
   const [startMonth, setStartMonth] = useState('')
 
-  // Derived flag: 1099 contractors and hypotheticals carry no W-2 payroll burden
-  // permanent + W-2 → multiplier applies
-  // per_project + 1099 (default) → no multiplier
-  // per_project + W-2 (user overridden) → multiplier applies
-  // hypothetical → no multiplier (planning only)
-  const isContractorType = classification === '1099' || selectedType === 'hypothetical'
+  // Derived flag: no W-2 payroll burden for contractor types.
+  // Business rules (enforced via shared helper on save):
+  //   permanent + W-2  → multiplier applies
+  //   per_project      → no multiplier regardless of classification
+  //   1099             → no multiplier
+  //   hypothetical     → no multiplier (planning only)
+  const isContractorType = classification === '1099' || selectedType === 'hypothetical' || selectedType === 'per_project'
 
   // Auto-calculate bill rate default when base wage changes (unless user has overridden it)
   useEffect(() => {
     if (!billRateOverridden) {
       const base = Number(hourlyRate) || 0
-      const isContr = classification === '1099' || selectedType === 'hypothetical'
+      const isContr = classification === '1099' || selectedType === 'hypothetical' || selectedType === 'per_project'
       const loaded = isContr ? base : base * payrollMult
       setBillRate(loaded > 0 ? parseFloat((loaded * 2.0).toFixed(2)) : '')
     }
@@ -162,9 +163,8 @@ export default function AddTeamMemberModal({
     }
 
     const baseWage = Number(hourlyRate) || 0
-    // costRate: W-2 permanent → base × payrollMult (loaded cost)
-    //           1099 contractor / hypothetical → base rate only (no W-2 burden)
-    const isContr = classification === '1099' || selectedType === 'hypothetical'
+    // per_project, 1099, and hypothetical all carry no W-2 payroll burden.
+    const isContr = classification === '1099' || selectedType === 'hypothetical' || selectedType === 'per_project'
     const loadedCost = isContr
       ? parseFloat(baseWage.toFixed(2))
       : parseFloat((baseWage * payrollMult).toFixed(2))
@@ -174,12 +174,10 @@ export default function AddTeamMemberModal({
       id: 'emp-' + Date.now(),
       employee_type: selectedType,
       hourly_rate: baseWage,
-      // costRate stores loaded cost (W-2) or base rate (1099/hypothetical)
       costRate: loadedCost,
       billRate: finalBillRate,
       status,
       classification,
-      // applyMultiplier persisted so TeamPanel and Estimate can skip W-2 burden for contractors
       applyMultiplier: !isContr,
       compliance_acknowledged: false,
     }

@@ -13,6 +13,7 @@ import MileageProjectAddress, {
 } from './MileageProjectAddress'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
+import { getLoadedHourlyRate, getBaseHourlyRate, resolveWorkerType } from './employeeCostUtils'
 
 const LABOR_PHASES = ['Underground', 'Site Prep', 'Rough In', 'Trim', 'Finish']
 const LABOR_PHASE_DEFAULT_COLORS: Record<string, string> = {
@@ -1195,27 +1196,21 @@ Return ONLY valid JSON, no other text.`
 
   // ── Multi-employee helpers ────────────────────────────────────────────────
   const getEmployeeCostRate = (empId: string): number => {
-    // 'me' sentinel: resolve to the real owner record's base/opportunity cost.
-    // Owner carries no payroll burden — use hourly_rate (base) not loaded costRate.
+    // 'me' sentinel → resolve to real owner record or settings.opCost.
+    // Owner uses base/opportunity cost (no payroll burden).
     if (!empId || empId === 'me') {
       const ownerRecord = (backup.employees || []).find((e: any) => e.isOwner)
-      if (ownerRecord) return num(ownerRecord.hourly_rate || ownerRecord.costRate || backup.settings?.opCost || 42.45)
+      if (ownerRecord) {
+        return getBaseHourlyRate(ownerRecord, backup.settings) ||
+               num(backup.settings?.opCost || 42.45)
+      }
       return num(backup.settings?.opCost || 42.45)
     }
     const emp = (backup.employees || []).find((e: any) => e.id === empId)
     if (!emp) return num(backup.settings?.opCost || 42.45)
-    // 1099 / per-project contractors: base rate only, no payroll multiplier.
-    // Guard: applyMultiplier === false (persisted on save) OR classification OR type.
-    const isContractor = emp.applyMultiplier === false ||
-                         emp.classification === '1099' ||
-                         emp.employee_type === 'per_project'
-    if (isContractor) {
-      // hourly_rate is the true base; costRate may be incorrectly burdened on old records
-      const base = num(emp.hourly_rate)
-      return base > 0 ? base : (num(emp.costRate) || num(backup.settings?.opCost || 42.45))
-    }
-    // W-2: costRate already includes payroll multiplier
-    return emp.costRate ? num(emp.costRate) : num(backup.settings?.opCost || 42.45)
+    // Shared helper: owner/1099 return base; W-2 returns base × payrollMult.
+    const rate = getLoadedHourlyRate(emp, backup.settings)
+    return rate > 0 ? rate : num(backup.settings?.opCost || 42.45)
   }
   const getEmployeeDisplayName = (empId: string): string => {
     if (!empId || empId === 'me') {

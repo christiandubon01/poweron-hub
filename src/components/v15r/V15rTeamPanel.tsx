@@ -23,6 +23,7 @@ import AddTeamMemberModal from './AddTeamMemberModal'
 import DemoInvite from '@/components/admin/DemoInvite'
 import OhmComplianceCard from './OhmComplianceCard'
 import { normalizeEmployee } from './employeeTypes'
+import { getWorkerCostProfile, calcMonthlyBreakdown, workerTypeLabel, getLoadedHourlyRate, resolveWorkerType, buildSavePayload } from './employeeCostUtils'
 import {
   getBackupData,
   saveBackupData,
@@ -101,7 +102,7 @@ function CostVsPipelineChart({ backup }) {
   }
   const chartData = months.map(m => {
     const mLogs = logs.filter(l => { const d = new Date(l.date || ''); return d.getMonth() === m.month && d.getFullYear() === m.year })
-    const cost = mLogs.reduce((s, l) => { const emp = employees.find(e => e.id === l.employeeId); return s + (parseFloat(l.hrs || 0) * (emp?.costRate || 35)) }, 0)
+    const cost = mLogs.reduce((s, l) => { const empId = l.empId || l.employeeId; const emp = employees.find(e => e.id === empId); return s + (parseFloat(l.hrs || 0) * getLoadedHourlyRate(emp, settings)) }, 0)
     const rev = projects.filter(p => p.status === 'active' || p.status === 'coming').reduce((s, p) => s + (parseFloat(p.contract || 0) / 12), 0)
     return { name: m.label, cost, revenue: rev }
   })
@@ -135,7 +136,7 @@ function LaborCostVsRevenueChart({ backup }) {
     const weekEnd = new Date(now.getTime() - w * 7 * 86400000)
     const weekStart = new Date(weekEnd.getTime() - 7 * 86400000)
     const wLogs = logs.filter(l => { const d = new Date(l.date || ''); return d >= weekStart && d < weekEnd })
-    const cost = wLogs.reduce((s, l) => { const emp = employees.find(e => e.id === l.employeeId); return s + (parseFloat(l.hrs || 0) * (emp?.costRate || 35)) }, 0)
+    const cost = wLogs.reduce((s, l) => { const empId = l.empId || l.employeeId; const emp = employees.find(e => e.id === empId); return s + (parseFloat(l.hrs || 0) * getLoadedHourlyRate(emp, backup.settings)) }, 0)
     const projRev = wLogs.reduce((s, l) => s + parseFloat(l.collected || 0), 0)
     const svcRev = serviceLogs.filter(l => { const d = new Date(l.date || ''); return d >= weekStart && d < weekEnd }).reduce((s, l) => s + parseFloat(l.collected || 0), 0)
     accumCost += cost
@@ -440,7 +441,7 @@ function EnhancedCostVsPipelineChart({ backup }) {
     const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
     const label = d.toLocaleString('en-US', { month: 'short' })
     const mLogs = logs.filter(l => { const ld = new Date(l.date || ''); return ld.getMonth() === d.getMonth() && ld.getFullYear() === d.getFullYear() })
-    const empCost = mLogs.reduce((s, l) => { const emp = employees.find(e => e.id === l.employeeId); return s + (parseFloat(l.hrs || 0) * (emp?.costRate || 35)) }, 0)
+    const empCost = mLogs.reduce((s, l) => { const empId = l.empId || l.employeeId; const emp = employees.find(e => e.id === empId); return s + (parseFloat(l.hrs || 0) * getLoadedHourlyRate(emp, settings)) }, 0)
     const revenue = projects.filter(p => p.status === 'active' || p.status === 'coming').reduce((s, p) => s + (parseFloat(p.contract || 0) / 12), 0)
     const ownerDraw = personalIncomeGoal / 12
     const overhead = revenue * overheadPct
@@ -524,23 +525,17 @@ function formatCurrency(value: number | undefined): string {
 }
 
 function calcEmployeeCost(emp: any, backup: any) {
-  const hourlyRate = num(emp.costRate || emp.rate || 0)
-  const hrsPerWeek = num(emp.hoursPerWeek || 40)
-  const baseMonthlyCost = hourlyRate * hrsPerWeek * 4.33
-  // 1099/per-project contractors carry no W-2 employer burden (no FICA, workers comp, GL)
-  const isContractor = emp.applyMultiplier === false ||
-                       emp.classification === '1099' ||
-                       emp.employee_type === 'per_project' ||
-                       emp.isOwner === true
-  const payrollTax = isContractor ? 0 : baseMonthlyCost * 0.153  // FICA + FUTA (W-2 only)
-  const workersComp = isContractor ? 0 : baseMonthlyCost * 0.04  // CA Workers Comp (W-2 only)
-  const glInsurance = isContractor ? 0 : baseMonthlyCost * 0.015 // GL Insurance (W-2 only)
-  const taxesAndInsurance = payrollTax + workersComp + glInsurance
-  const loadedMonthlyCost = baseMonthlyCost + taxesAndInsurance
-  const sixMonthCost = loadedMonthlyCost * 6
-  const targetMargin = num(backup?.settings?.markup || 35) / 100
-  const targetRevenue = targetMargin > 0 ? loadedMonthlyCost / targetMargin : 0
-  return { baseMonthlyCost, taxesAndInsurance, loadedMonthlyCost, sixMonthCost, targetRevenue, hourlyRate, hrsPerWeek }
+  // Uses shared helper — single source of truth for worker cost rules.
+  const mb = calcMonthlyBreakdown(emp, backup?.settings)
+  return {
+    baseMonthlyCost: mb.baseMonthly,
+    taxesAndInsurance: mb.payrollBurdenMonthly,
+    loadedMonthlyCost: mb.loadedMonthly,
+    sixMonthCost: mb.sixMonthCost,
+    targetRevenue: mb.targetRevenue,
+    hourlyRate: mb.baseHourly,
+    hrsPerWeek: 40,
+  }
 }
 
 function NoData() {
@@ -569,17 +564,11 @@ function EmployeeCard({
   onToggleMultiplier: (empId: string) => void
   backup?: any
 }) {
-  // 1. Base wage — what you pay the employee
-  const baseWage = num((employee as any).hourly_rate || employee.costRate)
-  // 2. Loaded cost rate — respects worker type; 1099/owner get base rate only
-  const payrollMult = num(backup?.settings?.payrollMult || 1.20)
-  const noMultiplier = employee.isOwner === true ||
-                       (employee as any).applyMultiplier === false ||
-                       (employee as any).classification === '1099' ||
-                       (employee as any).employee_type === 'per_project'
-  const loadedCostRate = noMultiplier
-    ? parseFloat(baseWage.toFixed(2))
-    : parseFloat((baseWage * payrollMult).toFixed(2))
+  // Use shared helper — single source of truth for all worker cost rules.
+  const profile = getWorkerCostProfile(employee, backup?.settings)
+  const baseWage = profile.baseHourly
+  const loadedCostRate = profile.loadedHourly
+  const payrollMult = profile.payrollMult
   // 3. Bill rate — what you charge the customer (independent)
   const billRate = num(employee.billRate)
   // 4. Margin/hr — bill rate minus loaded cost
@@ -650,7 +639,7 @@ function EmployeeCard({
 
       {/* Multiplier footnote */}
       <div className="mb-4 pb-3 border-b border-gray-700 text-xs text-gray-600">
-        {noMultiplier ? '1099 / contractor — no W-2 payroll burden' : `Loaded = base × ${payrollMult.toFixed(2)}x payroll mult`}
+        {workerTypeLabel(profile.workerType, payrollMult)}
       </div>
 
       {cost && (
@@ -704,15 +693,15 @@ function EmployeeEditModal({
   onSave: (id: string, updates: Partial<EnhancedEmployee>) => void
   onCancel: () => void
 }) {
-  const initBase = num((employee as any).hourly_rate || employee.costRate)
+  // Use shared helper to derive base wage and burden status from stored fields.
+  // This corrects stale records (missing hourly_rate) at display time before save.
+  const editSettings = { payrollMult }
+  const initProfile = getWorkerCostProfile(employee, editSettings)
+  const initBase = initProfile.baseHourly
   const initBill = num(employee.billRate)
 
-  // Determine whether this employee carries W-2 payroll burden
-  // Owner → no burden; 1099 contractor → no burden; hypothetical → no burden; W-2 permanent → burden
-  const empIsOwner = employee.isOwner === true
-  const empClassification = (employee as any).classification || 'W-2'
-  const empType = (employee as any).employee_type || 'permanent'
-  const noMultiplier = empIsOwner || empClassification === '1099' || empType === 'hypothetical'
+  // Determine whether this employee carries W-2 payroll burden (via shared helper)
+  const noMultiplier = !initProfile.applyMultiplier
 
   const [baseWage, setBaseWage] = useState<number | ''>(initBase || '')
   const [billRate, setBillRate] = useState<number | ''>(initBill || '')
@@ -813,13 +802,10 @@ function EmployeeEditModal({
           </button>
           <button
             onClick={() => {
-              const correctedCostRate = noMultiplier ? baseNum : parseFloat((baseNum * payrollMult).toFixed(2))
-              onSave(employee.id, {
-                hourly_rate: baseNum,
-                costRate: correctedCostRate,
-                billRate: billNum || correctedCostRate * 2,
-                applyMultiplier: !noMultiplier,
-              } as any)
+              // Build corrected save payload via shared helper — normalises stale records on save.
+              const workerType = resolveWorkerType(employee)
+              const payload = buildSavePayload(baseNum, billNum, workerType, editSettings)
+              onSave(employee.id, payload as any)
             }}
             className="flex-1 px-4 py-2.5 bg-blue-600/70 text-blue-100 rounded-lg text-sm font-bold hover:bg-blue-600 transition"
           >
@@ -910,9 +896,13 @@ export default function V15rTeamPanel() {
   // Logs table data with computed cost
   const logsWithCost = useMemo(() => {
     return (logs || []).map((log) => {
-      const employee = (employees || []).find((e) => e.id === log.empId)
+      // Support both empId and employeeId keys for log compatibility
+      const empId = log.empId || log.employeeId
+      const employee = (employees || []).find((e) => e.id === empId)
       const project = (projects || []).find((p) => p.id === log.projId)
-      const cost = (log.hrs || 0) * (employee?.costRate || 0)
+      // Use helper loadedHourly — respects worker type, no double-multiply
+      const loadedRate = getLoadedHourlyRate(employee, backup?.settings)
+      const cost = (log.hrs || 0) * loadedRate
 
       return {
         ...log,
@@ -927,23 +917,13 @@ export default function V15rTeamPanel() {
   const projectedMonthlyCost = useMemo(() => {
     let total = 0
     employeeStats.forEach((stats) => {
-      // W-2 only: apply payroll multiplier and workers comp
-      // Owner, 1099, and per_project contractors carry no W-2 burden
-      const isW2 = !(stats.employee.isOwner === true ||
-                     stats.employee.applyMultiplier === false ||
-                     (stats.employee as any).classification === '1099' ||
-                     (stats.employee as any).employee_type === 'per_project')
-      const mult = isW2 ? 1.20 : 1.0
-      const workersComp = isW2 ? (stats.employee.costRate || 0) * 0.08 : 0
-      const loadedCost = (stats.employee.costRate || 0) * mult + workersComp
-      total += stats.monthlyHours * loadedCost
+      // Use shared helper — loadedHourly respects worker type with no double-multiply.
+      const loaded = getLoadedHourlyRate(stats.employee, backup?.settings)
+      total += stats.monthlyHours * loaded
     })
-    // Add hypothetical costs
+    // Add hypothetical costs (no W-2 burden — planning only)
     hypotheticals.forEach((hyp) => {
-      const mult = 1.20
-      const workersComp = (hyp.costRate || 0) * 0.08
-      const loadedCost = (hyp.costRate || 0) * mult + workersComp
-      total += hyp.projectedHoursMonth * loadedCost
+      total += hyp.projectedHoursMonth * (hyp.costRate || 0)
     })
     return total
   }, [employeeStats, hypotheticals])

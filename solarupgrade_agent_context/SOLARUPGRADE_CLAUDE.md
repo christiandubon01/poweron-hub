@@ -2552,3 +2552,115 @@ NO — ready for screenshot QA.
 * Rules enforced: Owner loaded=base (no burden), 1099 loaded=base (no burden), W-2 loaded=base*payrollMult.
 * Typecheck: PASS - zero errors.
 * No unrelated files touched.
+
+---
+
+## Claude Report — Team Cost End-to-End: Central Worker Cost Rules (2026-06-07)
+
+AGENT: Claude Code Sonnet 4.6
+TASK COMPLETED: Team Cost End-to-End Repair — Single Worker Cost Source of Truth
+BRANCH: main
+
+COMMIT HASH: (appended after commit)
+
+FILES CHANGED:
+- src/components/v15r/employeeCostUtils.ts (NEW)
+- src/components/v15r/V15rTeamPanel.tsx
+- src/components/v15r/AddTeamMemberModal.tsx
+- src/components/v15r/V15rEstimateTab.tsx
+- solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+- solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+
+TYPECHECK RESULT: PASS — zero errors
+
+ROOT CAUSE:
+Six distinct code locations independently reimplemented worker-cost logic, each with subtle differences:
+1. calcEmployeeCost read costRate as base wage → added FICA/WC/GL on top of already-loaded W-2 costRate (double burden)
+2. projectedMonthlyCost multiplied stored W-2 costRate × 1.20 again (double multiply)
+3. EmployeeEditModal.noMultiplier missed per_project type (W-2 per_project could apply burden)
+4. AddTeamMemberModal.isContr missed per_project → per_project+W-2 could save burdened costRate
+5. All three chart helpers used l.employeeId (wrong key) → always fell back to $35 default
+6. No shared helper existed, so each fix to one location did not propagate to others
+
+WHAT CHANGED:
+- Created employeeCostUtils.ts with: resolveWorkerType, shouldApplyPayrollMultiplier, getBaseHourlyRate, getLoadedHourlyRate, getWorkerCostProfile, calcMonthlyBreakdown, workerTypeLabel, buildSavePayload
+- calcEmployeeCost now wraps calcMonthlyBreakdown (shared helper)
+- EmployeeCard uses getWorkerCostProfile — base, loaded, payrollMult all from single profile
+- EmployeeEditModal uses getWorkerCostProfile at init for stale-record correction; uses resolveWorkerType + buildSavePayload on save
+- projectedMonthlyCost uses getLoadedHourlyRate (no double-multiply)
+- logsWithCost uses getLoadedHourlyRate + supports both empId and employeeId log keys
+- All three chart helpers fixed: empId||employeeId key + getLoadedHourlyRate
+- AddTeamMemberModal: per_project added to isContractorType in preview AND handleSave
+- V15rEstimateTab getEmployeeCostRate wraps getLoadedHourlyRate/getBaseHourlyRate from helper
+
+WORKER COST HELPER ADDED: src/components/v15r/employeeCostUtils.ts
+
+OWNER COST BEHAVIOR:
+resolveWorkerType returns 'owner'. getBaseHourlyRate returns hourly_rate || costRate || settings.opCost. getLoadedHourlyRate = base (no multiply). Monthly breakdown: payrollBurden = 0.
+
+W-2 COST BEHAVIOR:
+resolveWorkerType returns 'w2'. getBaseHourlyRate returns hourly_rate; if missing, derives costRate/payrollMult. getLoadedHourlyRate = base × payrollMult. Monthly breakdown: payrollBurden = (loaded - base) × hrs.
+
+1099 COST BEHAVIOR:
+resolveWorkerType returns '1099'. getBaseHourlyRate returns hourly_rate || costRate. getLoadedHourlyRate = base. Monthly breakdown: payrollBurden = 0.
+
+TEAM CARD/MONTHLY BREAKDOWN BEHAVIOR:
+EmployeeCard: base and loaded from getWorkerCostProfile — correct for all types.
+Monthly breakdown (calcEmployeeCost→calcMonthlyBreakdown): base=baseMonthly, Taxes/Ins=payrollBurdenMonthly, Total=loadedMonthly. No longer reads costRate as base.
+
+TEAM SUMMARY/PROJECTED MONTHLY BEHAVIOR:
+Team Cost Summary: sums calcEmployeeCost.loadedMonthlyCost = calcMonthlyBreakdown.loadedMonthly = correct.
+projectedMonthlyCost: monthlyHours × getLoadedHourlyRate — no double-multiply.
+
+ESTIMATE ALLOCATION MODAL BEHAVIOR:
+getEmployeeCostRate wraps getLoadedHourlyRate (W-2=loaded, owner=base, 1099=base). Owner 'me' sentinel uses getBaseHourlyRate on real owner record. Fallback to settings.opCost unchanged.
+
+STALE RECORD HANDLING:
+Display-time: getBaseHourlyRate derives W-2 base = costRate/payrollMult when hourly_rate missing.
+Edit-time: EmployeeEditModal opens with corrected initBase from getWorkerCostProfile.
+Save-time: buildSavePayload writes correct hourly_rate + costRate + applyMultiplier.
+No broad migration — records corrected individually on edit-save.
+
+DOUBLE VERIFICATION AGAINST REQUESTED BEHAVIOR:
+- Owner card Base Wage = Loaded Cost: YES — getWorkerCostProfile returns loadedHourly=baseHourly for owner
+- 1099 card Base Cost = Loaded Cost: YES — same path, workerType='1099'
+- W-2 card Loaded = Base × payrollMult: YES — getWorkerCostProfile multiplies for w2
+- Owner monthly burden = 0: YES — payrollBurdenMonthly = 0 for owner/1099
+- 1099 monthly burden = 0: YES — same
+- W-2 burden uses payrollMult once: YES — calcMonthlyBreakdown applies mult once to base
+- Team Cost Summary = card totals: YES — both use calcEmployeeCost → calcMonthlyBreakdown
+- projectedMonthlyCost no double-multiply: YES — getLoadedHourlyRate (no re-multiply)
+- Hours by Employee uses helper: YES — getLoadedHourlyRate
+- Estimate allocation uses corrected costs: YES — getEmployeeCostRate wraps helper
+- Owner/Me appears once: YES — Estimate dropdown dedup intact (not touched)
+- AddTeamMemberModal preview matches save: YES — same isContr flag used for both
+- EmployeeEditModal preview matches save: YES — same noMultiplier/buildSavePayload
+- No unrelated files touched: YES — confirmed
+
+WHAT WAS LEARNED:
+When multiple components each independently reimplement the same formula, drift is inevitable. The fix is a single exported helper that all components import — the helper is the only place the formula lives.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- resolveWorkerType priority chain: isOwner > classification > applyMultiplier > employee_type > default
+- getBaseHourlyRate stale recovery: if no hourly_rate and type is W-2, derive base = costRate / payrollMult
+- buildSavePayload: always saves hourly_rate (base), costRate (loaded), applyMultiplier from workerType
+- calcMonthlyBreakdown: returns base/burden/loaded monthly + sixMonth + targetRevenue
+
+BUGS / RISKS:
+- applyMultiplier toggle still flips only the flag, not costRate. Helper reads hourly_rate first so display is correct; stale costRate persists until next edit-save.
+- Records with zero type signals default to W-2 (safest assumption — payroll burden).
+- Hypotheticals use raw costRate with no burden (per spec for planning).
+
+MANUAL QA PERFORMED:
+- Typecheck: PASS, zero errors across all files
+- Code path verification: read critical code paths after each edit
+- Cannot perform browser QA in this environment
+
+NEXT RECOMMENDED ACTION:
+Browser QA: add a test W-2 employee (base $30), a 1099 (base $50), and an owner ($45).
+Verify: W-2 Loaded=$36 (×1.20), 1099 Loaded=$50 (=base), Owner Loaded=$45 (=base).
+Verify Team Cost Summary matches visible card monthly totals.
+Verify Projected Monthly Cost does not double-count W-2 burden.
+
+COMPACT HANDOFF FOR NEXT AGENT/CHAT:
+employeeCostUtils.ts is the single source of truth for all worker cost rules. It exports resolveWorkerType, getBaseHourlyRate, getLoadedHourlyRate, getWorkerCostProfile, calcMonthlyBreakdown, workerTypeLabel, buildSavePayload. V15rTeamPanel (calcEmployeeCost, EmployeeCard, EmployeeEditModal, projectedMonthlyCost, logsWithCost, 3 charts), V15rEstimateTab (getEmployeeCostRate), and AddTeamMemberModal (isContr guard) all updated to use it. Typecheck passes clean. per_project workers now correctly have no payroll burden in all paths. Stale W-2 records without hourly_rate are corrected at display-time by deriving base=costRate/payrollMult. Commit on main branch.

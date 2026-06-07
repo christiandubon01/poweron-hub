@@ -5042,3 +5042,55 @@ NEXT AGENT SHOULD KNOW:
 * All prior fixes intact: Phase 1 AddTeamMemberModal save, Phase 2 Estimate modal getEmployeeCostRate, Phase 3 noMultiplier display guard.
 * Risks / follow-up: Records with no type signals at all (no isOwner, no classification, no employee_type) still default to W-2 behavior. User must re-save via edit modal to correct these edge cases.
 * Manual QA status: Typecheck PASS. Browser QA needed: owner card shows Base=Loaded; 1099 card shows Base=Loaded; W-2 card shows Loaded > Base.
+
+---
+
+## Shared Update — Team Cost End-to-End: Central Worker Cost Rules (2026-06-07)
+
+* Agent: Claude Code Sonnet 4.6
+* Branch: main
+* Commit: (see final commit hash in Claude report below)
+* Files changed:
+  - src/components/v15r/employeeCostUtils.ts (NEW — shared cost helper)
+  - src/components/v15r/V15rTeamPanel.tsx (calcEmployeeCost, EmployeeCard, EmployeeEditModal, projectedMonthlyCost, logsWithCost, 3 chart helpers)
+  - src/components/v15r/AddTeamMemberModal.tsx (isContr + handleSave)
+  - src/components/v15r/V15rEstimateTab.tsx (getEmployeeCostRate)
+  - solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+  - solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+* Typecheck: PASS — zero errors
+* User-facing behavior changed:
+  - Owner card: Base Wage = Loaded Cost (no payroll multiplier)
+  - 1099 card: Base Cost = Loaded Cost (no payroll multiplier)
+  - W-2 card: Loaded Cost = Base × payrollMult (from settings, not hardcoded)
+  - Monthly Cost Breakdown: payroll burden = 0 for Owner/1099, = (loadedHourly - baseHourly) × hrs for W-2
+  - Team Cost Summary: sums the corrected loadedMonthly values
+  - Projected Monthly Cost: uses loadedHourly per worker type, no double-multiply
+  - Hours by Employee table: uses loadedHourly (helper-backed), supports empId or employeeId key
+  - All three chart helpers: fixed employeeId→empId key; use getLoadedHourlyRate
+  - AddTeamMemberModal: per_project type now correctly forces no W-2 burden in both preview and save
+  - EmployeeEditModal: stale records corrected at open-time via helper; per_project included in no-multiplier guard
+  - Estimate getEmployeeCostRate: now wraps shared helper; owner=base, 1099=base, W-2=loaded
+* Worker cost source of truth: src/components/v15r/employeeCostUtils.ts
+* Owner/W-2/1099 formulas:
+  - Owner: baseHourly = hourly_rate || costRate || settings.opCost; loadedHourly = baseHourly
+  - W-2: baseHourly = hourly_rate (stale: costRate/payrollMult); loadedHourly = base × payrollMult
+  - 1099: baseHourly = hourly_rate || costRate; loadedHourly = baseHourly
+* Team and Estimate integration notes:
+  - All paths now import from employeeCostUtils.ts
+  - V15rTeamPanel imports: getWorkerCostProfile, calcMonthlyBreakdown, workerTypeLabel, getLoadedHourlyRate, resolveWorkerType, buildSavePayload
+  - V15rEstimateTab imports: getLoadedHourlyRate, getBaseHourlyRate, resolveWorkerType
+  - AddTeamMemberModal: no helper import (uses local isContr flag, formulas aligned with helper contract)
+* Stale record behavior:
+  - Display-time correction via getBaseHourlyRate (W-2 stale: costRate / payrollMult)
+  - EmployeeEditModal opens with corrected values; save writes correct hourly_rate + costRate
+  - No broad migration run
+* Risks / follow-up:
+  - Records with no type signals (no isOwner, no classification, no employee_type, applyMultiplier undefined) default to W-2. User must re-save via edit to correct.
+  - applyMultiplier toggle in toggleMultiplier() flips the flag but does not rewrite costRate. If a user toggles, the display will correct at render time via helper (reads hourly_rate first), but stored costRate stays stale until next edit-save.
+  - Hypothetical positions still use raw hyp.costRate (no multiplier applied per spec — planning only)
+* Manual QA status: Typecheck PASS. Browser QA needed: owner card Base=Loaded; 1099 card Base=Loaded; W-2 card Loaded=Base×mult; Estimate modal correct per type; per_project no burden.
+* Next agent should know:
+  - employeeCostUtils.ts is the single source of truth for all worker cost rules. Import from it, never reimplement the logic elsewhere.
+  - resolveWorkerType priority: isOwner > classification:1099 > classification:W-2 > applyMultiplier===false > employee_type:per_project > default W-2
+  - W-2 stale record recovery: base = costRate / payrollMult (in getBaseHourlyRate)
+  - Do not delete the V15rTeamPanel calcEmployeeCost wrapper — it maps MonthlyBreakdown fields to the legacy return shape consumed by EmployeeCard
