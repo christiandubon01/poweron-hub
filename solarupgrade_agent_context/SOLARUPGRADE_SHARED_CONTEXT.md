@@ -4445,25 +4445,196 @@ App Brain architecture mode hides finance KPIs and renders five read-only Contro
 
 ---
 
-## Change Orders Phase 1 Repair — Form Inputs and Manual Total [2026-06-06]
+## Shared Update — Change Orders Phase 1: Inner Project Tab and Card Metrics
 
-PHASE: Change Orders Phase 1 Repair (post-QA fix)
-STATUS: COMPLETE
+AGENT:
+Claude Code (Sonnet 4.6)
 
-WHAT WAS FIXED:
-- Focus loss on all text inputs: root cause = COForm/COModal defined as nested functions inside V15rChangeOrdersTab. React treated each re-render as a new component type → unmount+remount → focus destroyed. Fix: extracted COForm and COModal to module-level scope.
-- Blank/unreadable dropdown options: native <select> dark styling requires explicit backgroundColor on both the <select> and <option> elements plus a <style> block for the CSS class. Fixed with SELECT_STYLE + injected CSS.
-- Total CO Cost auto-calc removed: totalCost is now an independent editable <input type="number">. Labor and material cost remain informational detail fields only. createCO and saveEdit both use Number(form.totalCost) || 0.
+BRANCH:
+main
+
+COMMIT:
+(see final commit hash below — committed after this log)
 
 FILES CHANGED:
-- src/components/v15r/V15rChangeOrdersTab.tsx — full rewrite (focus fix, dropdown fix, manual total)
-- solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md — this entry
-- solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md — repair report appended
+- `src/components/v15r/V15rChangeOrdersTab.tsx` (NEW)
+- `src/components/v15r/V15rProjectInner.tsx` (MODIFIED — added tab entry + mappings)
+- `src/components/v15r/ProjectCard.tsx` (MODIFIED — added CO Value metric + CO Exposure)
+- `src/services/backupDataService.ts` (MODIFIED — added ChangeOrder types + CO helpers)
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md` (MODIFIED — this entry)
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md` (MODIFIED — full report appended)
 
-TYPECHECK: PASS
+TYPECHECK:
+PASS — `npm.cmd run typecheck` exits clean, zero errors.
 
-KEY PATTERN (reusable):
-React nested component anti-pattern → focus loss. Fix: always define form/modal components at module scope, pass state as props.
+USER-FACING BEHAVIOR CHANGED:
+- New "Change Orders" tab appears directly after "RFI Tracker" in every Inner Project view.
+- Tab shows: summary metrics header, CO list with status badges, Add/Edit/Delete flows.
+- Summary metrics: Original Quote, Approved CO Total, Pending/Exposure CO Total, Revised Total, Paid, Invoiced, Rejected, Labor, Material, Permit Count.
+- Project card financial grid changed from 3 columns (Quoted/Paid/Exposure) to responsive 2×2 grid with 4 columns: Quoted, Paid, Exposure (base + CO exposure), CO Value (approved COs in purple).
 
-NEXT PHASE:
-Change Orders Phase 2 — Attachments (deferred until user authorizes).
+IMPLEMENTATION NOTES:
+- Change orders stored as `p.changeOrders?: ChangeOrder[]` directly on the BackupProject object (same pattern as `p.rfis`).
+- Persistence: `getBackupData()` → mutate inline → `saveBackupDataAndSync(freshBackup, 'projects')`. No Supabase schema changes.
+- `pushState()` called before every mutation for undo/redo support.
+- `totalCost` auto-calculated from `laborCost + materialCost` on every save/edit.
+- Auto-sets `approvalAt` timestamp when status transitions from non-approved to an approved status (Approved/Completed/Paid) and no approval date was manually entered.
+- Status colors: Draft=gray, Sent=blue, Pending Approval=amber, Approved=green, Rejected=red, Completed=teal, Invoiced=purple, Paid=emerald.
+- Helpers added to backupDataService.ts: `getProjectCOTotal(p)` and `getProjectCOExposure(p)`.
+- Exposure on project card = `fin.risk + coExposure`. Original `fin.risk` formula untouched.
+- CO Value on project card = approved/completed/paid COs only. Always shown (even when $0).
+- Attachments NOT implemented (Phase 2). Resend/email NOT implemented (Phase 3).
+
+RISKS / FOLLOW-UP:
+- No Supabase storage bucket needed for Phase 1 (no attachments yet).
+- Phase 2 must create a `change-order-attachments` Supabase storage bucket before implementing attachments.
+- Phase 3 Resend pattern can reuse `src/services/guardian/GuardianRFIGenerator.ts` patterns — `VITE_RESEND_API_KEY` env var already in use.
+- The existing `fin.AR` reference in ProjectCard.tsx (line ~226) is a pre-existing bug (should be `fin.ar` lowercase) — not touched.
+- Health scoring does NOT include CO totals — intentional for Phase 1 safety.
+
+MANUAL QA STATUS:
+Typecheck passed. Manual browser QA recommended: verify tab appears after RFI Tracker, add approved CO and confirm metrics and card update, add exposure CO and confirm card Exposure increases.
+
+NEXT AGENT SHOULD KNOW:
+- Change Orders Phase 2 = add attachments to each CO (reuse blueprint upload pattern from V15rBlueprintsTab.tsx, new Supabase bucket needed).
+- Change Orders Phase 3 = Resend email approval flow (reuse GuardianRFIGenerator.ts pattern, needs VITE_RESEND_API_KEY).
+- Do not modify `getProjectFinancials()` formula for CO features — use the isolated helper pattern established here.
+
+---
+
+## Shared Update — App Brain Wave 2 (Cursor) — Directory Brain and File Profile MVP
+
+AGENT:
+Cursor
+
+BRANCH:
+main
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report.
+
+FILES CHANGED:
+- `scripts/generate-app-brain-directory.mjs`
+- `src/components/v15r/generatedAppBrainDirectory.ts`
+- `src/components/v15r/V15rAppBrainTab.tsx`
+- `src/components/v15r/app-brain/AppBrainDirectoryPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainFileProfilePanel.tsx`
+- `src/components/v15r/app-brain/appBrainDirectoryBrain.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+DIRECTORY BRAIN:
+- Search across paths, components, exports, areas, and extensions.
+- Area and extension filters plus clickable count shortcuts.
+- Compact scrollable file list with selection highlighting (120-row cap).
+
+FILE PROFILE:
+- Read-only panel bound to selected directory file.
+- Shows path, area, extension, manifest import/imported-by stats, exports, components.
+- Seed-linked active work and backlog counts; risk/safe-edit/canary placeholders.
+
+GENERATOR:
+- Added `fileId`, `parentDirectory`, `importCount` to directory metadata.
+- Regenerated manifest (`552` files indexed).
+
+BUILD RESULT:
+PASS — `npm run build`
+
+TYPECHECK RESULT:
+`npm.cmd run typecheck` blocked (shell harness no exit status); `npx tsc --noEmit -p tsconfig.json` PASS
+
+PACKAGE FILES:
+Untouched
+
+NEXT RECOMMENDED PHASE:
+Wave 3 — live registry ingestion, import graph edges, and git/session overlays (explicit scope only).
+
+COMPACT HANDOFF FOR NEXT CHAT:
+App Brain Wave 2 adds searchable Directory Brain with file selection and a File Profile side panel. Generator now emits stable file IDs and import counts. All read-only; Wave 1 panels and 3D map preserved.
+
+---
+
+## Shared Update — App Brain Wave 3 (Cursor) — Work Manifest and Context Hub MVP
+
+AGENT:
+Cursor
+
+BRANCH:
+main
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report.
+
+FILES CHANGED:
+- `scripts/generate-app-brain-work-manifest.mjs`
+- `src/components/v15r/generatedAppBrainWorkManifest.ts`
+- `src/components/v15r/app-brain/AppBrainContextHubPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainLiveWorkPanel.tsx`
+- `src/components/v15r/V15rAppBrainTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+WORK MANIFEST GENERATOR:
+- Reads active sessions, rules/skills/backlog registries, and agent context markdown files.
+- Optional safe `git status` summary when available.
+- Outputs `generatedAppBrainWorkManifest.ts` with sources read/missing, agents summary, context file freshness, and snapshot warning.
+
+CONTEXT HUB PANEL:
+- Shows Shared/Claude/Codex/Cursor/Haiku context cards with exists/missing, size, modified time, freshness, and last-report excerpt.
+- Missing handoff warning placeholder when files are absent (`SOLARUPGRADE_HAIKU.md` missing by design).
+
+LIVE WORK IMPROVEMENTS:
+- Enriched with work manifest snapshot time, agent summary stats, and static seed warning.
+- Falls back to `APP_BRAIN_ACTIVE_SESSIONS` seed for session cards.
+
+BUILD RESULT:
+PASS — `npm run build`
+
+TYPECHECK RESULT:
+`npm.cmd run typecheck` blocked (shell harness no exit status); `npx tsc --noEmit -p tsconfig.json` PASS
+
+PACKAGE FILES:
+Untouched
+
+NEXT RECOMMENDED PHASE:
+Wave 4 — optional watch-mode design, import-graph overlays, and live registry ingestion (explicit scope only).
+
+COMPACT HANDOFF FOR NEXT CHAT:
+App Brain Wave 3 adds work manifest generator, Context Hub panel, and manifest-enriched Live Work cards. All read-only snapshot; no watch mode or live tracking yet. Directory/File Profile and 3D map preserved.
+
+---
+
+## Shared Update — Home Tab Repair Pass — pipeline count, agenda picker, 10-row scroll cap [2026-06-06]
+
+AGENT:
+Codex
+
+BRANCH:
+main
+
+COMMIT:
+Pending at log-write time; see Codex report for final hash.
+
+FILES CHANGED:
+- `src/components/v15r/V15rHome.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+TYPECHECK:
+Attempted `npm.cmd run typecheck`; shell harness blocked on long-running tsc in this session. `V15rHome.tsx` has no new linter diagnostics.
+
+ROOT CAUSE:
+- Total Pipeline subtitle used raw `projects.length` (all backup projects) instead of `kpis.activeProjects`.
+- Agenda add/edit still used `prompt()` for project linking by ID.
+- Agenda task rows rendered in an unbounded list container with no `max-height`/`overflow-y-auto`.
+
+WHAT CHANGED:
+- Pipeline KPI subtitle now uses `kpis.activeProjects`.
+- Agenda sub-category add/edit opens a modal with title input and active-project `<select>` by readable name.
+- Agenda task list container caps visible height to 10 rows and scrolls when more tasks exist.
+
+MANUAL QA:
+Browser reached login gate at `http://localhost:5173`; Home-tab click-through remains for the running authenticated localhost session.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Home repair pass complete on `main`. Pipeline subtitle uses active-project count; agenda linking uses a real project picker modal; agenda cards scroll after 10 task rows. Scope limited to `V15rHome.tsx` plus context files.

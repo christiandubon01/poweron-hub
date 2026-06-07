@@ -51,6 +51,7 @@ import {
   getAgendaProjectName,
   resolveProjectBucket,
   isArchivedRecord,
+  isActiveProject,
   num,
   buildProjectLogRollup,
   type BackupData,
@@ -209,6 +210,12 @@ const HOME_CALENDAR_MAX_HEIGHT = 1120
 const GCAL_HEADER_H = 44
 const LOCK_DEFAULT_START_HOUR = 6
 const LOCK_START_HOURS = [3, 4, 5, 6, 7, 8, 9, 10]
+const AGENDA_VISIBLE_TASK_ROWS = 10
+const AGENDA_TASK_ROW_HEIGHT_PX = 38
+const AGENDA_TASK_ROW_GAP_PX = 6
+const AGENDA_TASK_LIST_MAX_HEIGHT =
+  AGENDA_VISIBLE_TASK_ROWS * AGENDA_TASK_ROW_HEIGHT_PX +
+  (AGENDA_VISIBLE_TASK_ROWS - 1) * AGENDA_TASK_ROW_GAP_PX
 
 function getHomeCalendarMaxHeight(): number {
   return HOME_CALENDAR_MAX_HEIGHT
@@ -316,6 +323,12 @@ export default function V15rHome() {
   const [aiRecording, setAiRecording] = useState(false)
   const aiScrollRef = useRef<HTMLDivElement>(null)
   const aiInitRef = useRef(false)
+  const [agendaCategoryModal, setAgendaCategoryModal] = useState<{
+    mode: 'add' | 'edit'
+    secId?: string
+    title: string
+    projectId: string
+  } | null>(null)
 
   // ── User first name from Supabase profile ──
   const [firstName, setFirstName] = useState<string>('')
@@ -479,6 +492,11 @@ export default function V15rHome() {
     .sort((a: any, b: any) => b.balanceDue - a.balanceDue)
 
   const activeJobHealthProjects = projects.filter(p => !isArchivedRecord(p) && resolveProjectBucket(p) === 'active')
+  const agendaPickerProjects = projects
+    .filter(p => isActiveProject(p) && p.name && p.name !== 'undefined')
+    .slice()
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+  const pipelineProjectCount = Number(kpis.activeProjects) || 0
 
   // ── Agenda CRUD handlers ─────────────────────────────────────────────────────
 
@@ -492,25 +510,37 @@ export default function V15rHome() {
     forceUpdate()
   }
 
-  function addAgendaCategory() {
-    const title = prompt('Category name:')
-    if (!title) return
-    pushState(backup)
-    const projectId = prompt('Link to project ID (leave blank for General):') || ''
-    ;(backup.agendaSections || []).push({ id: 'ag' + Date.now(), title, projectId, tasks: [] })
-    persist()
+  function openAddAgendaCategory() {
+    setAgendaCategoryModal({ mode: 'add', title: '', projectId: '' })
   }
 
-  function editAgendaCategory(secId: string) {
+  function openEditAgendaCategory(secId: string) {
     const sec = (backup.agendaSections || []).find(s => s.id === secId)
     if (!sec) return
-    const title = prompt('Category name:', sec.title)
-    if (title === null) return
+    setAgendaCategoryModal({
+      mode: 'edit',
+      secId,
+      title: sec.title || '',
+      projectId: sec.projectId || '',
+    })
+  }
+
+  function saveAgendaCategoryModal() {
+    if (!agendaCategoryModal) return
+    const title = agendaCategoryModal.title.trim()
+    if (!title) return
     pushState(backup)
-    sec.title = title
-    const pid = prompt('Project ID:', sec.projectId)
-    if (pid !== null) sec.projectId = pid
+    const projectId = agendaCategoryModal.projectId || ''
+    if (agendaCategoryModal.mode === 'add') {
+      ;(backup.agendaSections || []).push({ id: 'ag' + Date.now(), title, projectId, tasks: [] })
+    } else if (agendaCategoryModal.secId) {
+      const sec = (backup.agendaSections || []).find(s => s.id === agendaCategoryModal.secId)
+      if (!sec) return
+      sec.title = title
+      sec.projectId = projectId
+    }
     persist()
+    setAgendaCategoryModal(null)
   }
 
   function removeAgendaCategory(secId: string) {
@@ -753,7 +783,7 @@ export default function V15rHome() {
       {/* ── KPI CARDS – PREMIUM ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { accent: '#10b981', glow: 'rgba(16,185,129,0.12)', lbl: 'Total Pipeline', lblShort: 'Pipeline', val: fmtK(kpis.pipeline), sub: projects.length + (projects.length === 1 ? ' project' : ' projects'), icon: '◈' },
+          { accent: '#10b981', glow: 'rgba(16,185,129,0.12)', lbl: 'Total Pipeline', lblShort: 'Pipeline', val: fmtK(kpis.pipeline), sub: pipelineProjectCount + (pipelineProjectCount === 1 ? ' project' : ' projects'), icon: '◈' },
           { accent: '#3b82f6', glow: 'rgba(59,130,246,0.12)', lbl: 'Cash Received', lblShort: 'Cash Rcvd', val: fmtK(kpis.paid), sub: 'Accumulated', icon: '⬡' },
           { accent: '#ef4444', glow: 'rgba(239,68,68,0.12)', lbl: 'Open RFIs', lblShort: 'RFIs', val: String(kpis.openRfis), sub: kpis.openRfis === 0 ? 'All resolved' : 'Need resolution', icon: '◇' },
           { accent: '#a78bfa', glow: 'rgba(167,139,250,0.12)', lbl: 'Hours Logged', lblShort: 'Hrs Log', val: kpis.totalHours.toFixed(1) + 'h', sub: logs.length + (logs.length === 1 ? ' entry' : ' entries'), icon: '○' },
@@ -1145,7 +1175,7 @@ export default function V15rHome() {
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Agenda</h2>
-          <button onClick={addAgendaCategory} className="text-[10px] px-2 py-1 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors flex items-center gap-1">
+          <button onClick={openAddAgendaCategory} className="text-[10px] px-2 py-1 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors flex items-center gap-1">
             <Plus size={10} /> Sub-Category
           </button>
         </div>
@@ -1171,12 +1201,18 @@ export default function V15rHome() {
                     </div>
                     <div className="flex flex-shrink-0 flex-wrap justify-end gap-1.5">
                       <button onClick={() => addAgendaTask(sec.id)} className="rounded-md border border-cyan-300/30 bg-cyan-500/[0.14] px-2 py-1 text-[9px] font-bold text-cyan-100 shadow-[0_0_10px_rgba(34,211,238,0.08)] transition-colors hover:bg-cyan-400/20">+ Task</button>
-                      <button onClick={() => editAgendaCategory(sec.id)} className="rounded-md border border-white/[0.08] bg-white/[0.055] px-2 py-1 text-[9px] font-bold text-slate-300 transition-colors hover:bg-white/[0.10] hover:text-white">Edit</button>
+                      <button onClick={() => openEditAgendaCategory(sec.id)} className="rounded-md border border-white/[0.08] bg-white/[0.055] px-2 py-1 text-[9px] font-bold text-slate-300 transition-colors hover:bg-white/[0.10] hover:text-white">Edit</button>
                       <button onClick={() => removeAgendaCategory(sec.id)} className="rounded-md border border-red-400/[0.24] bg-red-500/[0.09] px-2 py-1 text-[9px] font-bold text-red-300 transition-colors hover:bg-red-500/[0.16] hover:text-red-200">Delete</button>
                     </div>
                   </div>
                   {(sec.tasks || []).length > 0 ? (
-                    <div className="relative space-y-1.5">
+                    <div
+                      className="relative space-y-1.5 overflow-y-auto pr-1"
+                      style={{
+                        maxHeight: AGENDA_TASK_LIST_MAX_HEIGHT,
+                        scrollbarGutter: 'stable',
+                      }}
+                    >
                       {(sec.tasks || []).map((t: any) => (
                         <div key={t.id} className="group flex items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.035] px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
                           <div className="h-2 w-2 flex-shrink-0 rounded-full shadow-[0_0_7px_currentColor]" style={{ color: t.status === 'done' ? '#34d399' : t.status === 'declined' ? '#f87171' : t.status === 'postponed' ? '#94a3b8' : t.status === 'active' ? '#60a5fa' : '#facc15', background: 'currentColor' }} />
@@ -1480,6 +1516,92 @@ export default function V15rHome() {
             >
               <RefreshCw size={13} />
             </button>
+          </div>
+        </div>
+      )}
+
+      {agendaCategoryModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setAgendaCategoryModal(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-cyan-400/20 bg-gradient-to-br from-slate-950 via-gray-950 to-black p-4 shadow-[0_24px_48px_rgba(0,0,0,0.65)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-100">
+                  {agendaCategoryModal.mode === 'add' ? 'Add Agenda Sub-Category' : 'Edit Agenda Sub-Category'}
+                </h3>
+                <p className="mt-1 text-[10px] text-slate-400">
+                  Choose a readable project link instead of typing an ID.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAgendaCategoryModal(null)}
+                className="rounded-md border border-white/10 bg-white/5 p-1 text-slate-400 hover:text-slate-200"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                  Category Name
+                </label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={agendaCategoryModal.title}
+                  onChange={(e) => setAgendaCategoryModal({ ...agendaCategoryModal, title: e.target.value })}
+                  placeholder="Today, Payments, Leads..."
+                  className="w-full rounded-lg border border-white/10 bg-gray-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                  Link to Project
+                </label>
+                <select
+                  value={agendaCategoryModal.projectId}
+                  onChange={(e) => setAgendaCategoryModal({ ...agendaCategoryModal, projectId: e.target.value })}
+                  className="w-full rounded-lg border border-white/10 bg-[#1a1d27] px-3 py-2 text-sm text-slate-100"
+                  style={{ backgroundColor: '#1a1d27', color: '#e2e8f0' }}
+                >
+                  <option value="" style={{ backgroundColor: '#1a1d27', color: '#e2e8f0' }}>General (no project)</option>
+                  {agendaPickerProjects.map(p => (
+                    <option key={p.id} value={p.id} style={{ backgroundColor: '#1a1d27', color: '#e2e8f0' }}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+                {agendaPickerProjects.length === 0 && (
+                  <p className="mt-1 text-[10px] text-amber-300/80">No active projects available to link.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={saveAgendaCategoryModal}
+                disabled={!agendaCategoryModal.title.trim()}
+                className="flex-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {agendaCategoryModal.mode === 'add' ? 'Create Sub-Category' : 'Save Changes'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setAgendaCategoryModal(null)}
+                className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-slate-300 transition-colors hover:bg-white/10"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

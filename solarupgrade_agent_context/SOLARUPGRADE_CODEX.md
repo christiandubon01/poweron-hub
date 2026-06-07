@@ -1557,3 +1557,38 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
 - Manual QA performed: Static scoped diff review, `git diff --check`, and `npm.cmd run typecheck` run. A follow-up verification on this branch also passed `npm.cmd run typecheck` before the unrelated App Brain typecheck failure appeared.
 - Next recommended action: On localhost, open Field Logs > Triggers; select a service call and a project; verify matrix rows explain current value vs threshold; tune each rule type; confirm saved thresholds still evaluate as expected.
 - Compact handoff for next agent/chat: Field Logs > Triggers now has a selected-record trigger matrix and clearer threshold controls. Rule logic is preserved; the UI maps profit thresholds to dollars and travel/material thresholds to percentages/sliders, then saves the same threshold ratio. Field Logs verification passed typecheck before unrelated App Brain work made the current workspace typecheck fail; manual localhost QA remains.
+
+---
+
+## Codex Report — Home Tab Repair Pass — fix failed pipeline count, broken agenda project picker, and missing 10-row scroll cap
+
+- Task completed: Repaired the three localhost Home-tab failures: active pipeline project count subtitle, agenda project linking picker, and 10-row agenda task scroll cap.
+- Files changed:
+  - `src/components/v15r/V15rHome.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final chat report.
+- Typecheck result: Attempted `npm.cmd run typecheck`; shell harness blocked on long-running `tsc` in this session. `V15rHome.tsx` linter diagnostics: none.
+- Root cause:
+  - Total Pipeline subtitle rendered `projects.length` from raw `backup.projects`, counting archived/non-active records.
+  - `addAgendaCategory` / `editAgendaCategory` still called `prompt()` for project IDs.
+  - Agenda task rows mapped inside a plain `space-y-1.5` container with no height cap or scroll overflow.
+- What changed:
+  - Pipeline KPI subtitle now uses `kpis.activeProjects`.
+  - Added agenda sub-category modal with title field and active-project `<select>` showing readable names (`isActiveProject` filtered, sorted).
+  - Task list container now uses computed `AGENDA_TASK_LIST_MAX_HEIGHT` for 10 visible rows with `overflow-y-auto`.
+- What was learned:
+  - `getKPIs()` already exposes `activeProjects`; Home only needed to bind the subtitle to that field.
+  - Alerts tab already had a working project `<select>` pattern; agenda linking could reuse the same UX in a modal.
+  - Scroll cap must be applied on the task-list container itself, not the outer agenda card wrapper.
+- Bugs / risks:
+  - Browser QA from this session stopped at the localhost login gate; authenticated Home verification remains for the running local session.
+  - Row-height cap uses stable per-row sizing constants; extreme custom zoom may shift visible row count slightly.
+- Manual QA performed:
+  - Static render-path verification in `V15rHome.tsx`.
+  - Confirmed no remaining agenda project-ID `prompt()` calls.
+  - Browser navigation to `http://localhost:5173` returned the login screen only.
+- Next recommended action:
+  - On authenticated localhost Home: confirm Pipeline subtitle shows `4 projects`, agenda Edit opens project picker with Mobile Home Remodel, and Today shows 10 visible task rows with scroll for the 12th.
+- Compact handoff for next agent/chat:
+  Home repair pass on `main`: `V15rHome.tsx` now binds pipeline subtitle to `kpis.activeProjects`, replaces agenda project-ID prompts with a modal picker of active project names, and caps agenda task lists to 10 visible rows with scroll. Context files updated. Commit scoped to Home + context files.
