@@ -114,6 +114,17 @@ export function DesignOnlyBadge() {
   )
 }
 
+export function SceneWiredBadge() {
+  return (
+    <span
+      className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg"
+      style={{ color: '#34d399', background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.22)' }}
+    >
+      Wired to 3D overlay mode
+    </span>
+  )
+}
+
 export function StatCard({ label, value, color }: { label: string; value: string | number; color: string }) {
   return (
     <div className="rounded-xl p-3" style={{ background: 'rgba(3,7,18,0.56)', border: `1px solid ${color}24` }}>

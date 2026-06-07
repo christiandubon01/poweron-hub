@@ -6,7 +6,7 @@ import { useMemo } from 'react'
 import { GitBranch } from 'lucide-react'
 import { GENERATED_APP_BRAIN_MANIFEST } from '../generatedAppBrainManifest'
 import { createImportGraphOverlay, summarizeImportGraphOverlay } from './appBrainImportGraphOverlay'
-import { AppBrainPanelShell, StatCard } from './appBrainPanelShared'
+import { AppBrainPanelShell, SceneWiredBadge, StatCard } from './appBrainPanelShared'
 
 const RISK_COLORS: Record<string, string> = {
   critical: '#fb7185',
@@ -38,13 +38,18 @@ export default function AppBrainImportGraphOverlayPanel() {
       icon={<GitBranch size={18} />}
       accent="#22d3ee"
     >
+      <div className="flex flex-wrap gap-2">
+        <SceneWiredBadge />
+      </div>
+
       <div
         className="rounded-xl p-3"
         style={{ background: 'rgba(34,211,238,0.06)', border: '1px solid rgba(34,211,238,0.16)' }}
       >
         <p className="text-xs text-cyan-100/90 leading-relaxed">
-          Overlay derived from <span className="font-mono">generatedAppBrainManifest.ts</span>. Edge and cluster
-          counts reflect manifest import metadata only — not live git or filesystem scans.
+          Preview data is wired to the 3D scene <span className="font-mono">Import Graph</span> overlay mode. Overlay
+          derived from <span className="font-mono">generatedAppBrainManifest.ts</span> — read-only, not live git or
+          websocket tracking.
         </p>
       </div>
 

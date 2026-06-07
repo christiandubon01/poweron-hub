@@ -6,13 +6,24 @@ import {
   APP_BRAIN_NODES,
   type AppBrainNode,
 } from './appBrainMap'
+import type { AppBrainSceneOverlay, AppBrainSceneOverlayMode } from './app-brain/appBrainSceneOverlayTypes'
+import { edgeHintKey } from './app-brain/appBrainSceneOverlayTypes'
+import { buildArchitectureSceneOverlay } from './app-brain/appBrainSceneOverlayAdapter'
 
 interface V15rAppBrainSceneProps {
   selectedNodeId: string | null
   hoveredNodeId: string | null
   visibleNodeIds: string[]
+  overlayMode?: AppBrainSceneOverlayMode
+  sceneOverlay?: AppBrainSceneOverlay
   onSelectNode: (nodeId: string) => void
   onHoverNode: (nodeId: string | null) => void
+}
+
+const OVERLAY_MODE_LABEL: Record<AppBrainSceneOverlayMode, string> = {
+  architecture: 'Architecture Map',
+  'import-graph': 'Import Graph',
+  'active-work': 'Active Work',
 }
 
 interface NodeRenderState {
@@ -96,6 +107,8 @@ export default function V15rAppBrainScene({
   selectedNodeId,
   hoveredNodeId,
   visibleNodeIds,
+  overlayMode = 'architecture',
+  sceneOverlay = buildArchitectureSceneOverlay(),
   onSelectNode,
   onHoverNode,
 }: V15rAppBrainSceneProps) {
@@ -103,6 +116,8 @@ export default function V15rAppBrainScene({
   const selectedRef = useRef<string | null>(selectedNodeId)
   const hoveredRef = useRef<string | null>(hoveredNodeId)
   const visibleNodeIdsRef = useRef<Set<string>>(new Set(visibleNodeIds))
+  const overlayModeRef = useRef<AppBrainSceneOverlayMode>(overlayMode)
+  const sceneOverlayRef = useRef<AppBrainSceneOverlay>(sceneOverlay)
   const onSelectRef = useRef(onSelectNode)
   const onHoverRef = useRef(onHoverNode)
 
@@ -122,6 +137,14 @@ export default function V15rAppBrainScene({
     onSelectRef.current = onSelectNode
     onHoverRef.current = onHoverNode
   }, [onSelectNode, onHoverNode])
+
+  useEffect(() => {
+    overlayModeRef.current = overlayMode
+  }, [overlayMode])
+
+  useEffect(() => {
+    sceneOverlayRef.current = sceneOverlay
+  }, [sceneOverlay])
 
   useEffect(() => {
     const mountElement = mountRef.current
@@ -146,7 +169,9 @@ export default function V15rAppBrainScene({
     const starGroup = new THREE.Group()
     const nodeStates: NodeRenderState[] = []
     const edgePulses: EdgePulse[] = []
+    const edgePulseByKey = new Map<string, EdgePulse>()
     const hitTargets: THREE.Object3D[] = []
+    let edgeLineMat: THREE.LineBasicMaterial | null = null
 
     const raycaster = new THREE.Raycaster()
     const pointer = new THREE.Vector2()
@@ -237,26 +262,28 @@ export default function V15rAppBrainScene({
           }),
         )
         pulseGroup.add(pulse)
-        edgePulses.push({
+        const pulseEntry: EdgePulse = {
           mesh: pulse,
           from: fromVector,
           to: toVector,
           speed: 0.08 + edge.strength * 0.045,
           offset: index * 0.071,
-        })
+        }
+        edgePulses.push(pulseEntry)
+        edgePulseByKey.set(edgeHintKey(edge.from, edge.to), pulseEntry)
       })
 
       const edgeGeo = new THREE.BufferGeometry()
       edgeGeo.setAttribute('position', new THREE.Float32BufferAttribute(edgePositions, 3))
       edgeGeo.setAttribute('color', new THREE.Float32BufferAttribute(edgeColors, 3))
-      const edgeMat = new THREE.LineBasicMaterial({
+      edgeLineMat = new THREE.LineBasicMaterial({
         vertexColors: true,
         transparent: true,
         opacity: 0.34,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       })
-      edgeGroup.add(new THREE.LineSegments(edgeGeo, edgeMat))
+      edgeGroup.add(new THREE.LineSegments(edgeGeo, edgeLineMat))
 
       APP_BRAIN_NODES.forEach((node) => {
         const meta = APP_BRAIN_CATEGORY_META[node.category]
@@ -385,6 +412,9 @@ export default function V15rAppBrainScene({
         starGroup.rotation.y -= dt * 0.035
         starGroup.rotation.x = Math.sin(t * 0.12) * 0.04
 
+        const overlay = sceneOverlayRef.current
+        const overlayActive = overlayModeRef.current !== 'architecture'
+
         edgePulses.forEach((pulse) => {
           const pct = (t * pulse.speed + pulse.offset) % 1
           pulse.mesh.position.copy(pulse.from).lerp(pulse.to, pct)
@@ -394,21 +424,60 @@ export default function V15rAppBrainScene({
           pulse.mesh.scale.setScalar(pulseScale)
         })
 
+        if (edgeLineMat) {
+          edgeLineMat.opacity = overlayActive ? 0.28 : 0.34
+        }
+
+        for (const [key, hint] of Object.entries(overlay.edgeHints)) {
+          const pulse = edgePulseByKey.get(key)
+          if (!pulse) continue
+          pulse.speed = 0.08 + hint.pulse * 0.12
+          pulse.mesh.material.opacity = Math.min(1, 0.3 + hint.intensity * 0.55)
+        }
+
         nodeStates.forEach((state, index) => {
           const isVisible = visibleNodeIdsRef.current.has(state.node.id)
           const isSelected = selectedRef.current === state.node.id
           const isHovered = hoveredRef.current === state.node.id
-          const pulse = Math.sin(t * 2.1 + index * 0.75) * 0.5 + 0.5
-          const emphasis = isSelected && isVisible ? 1.85 : isHovered && isVisible ? 1.45 : isVisible ? 1 : 0.42
-          const coreScale = emphasis * (1 + pulse * 0.12)
+          const hint = overlay.nodeHints[state.node.id]
+          const pulseBase = Math.sin(t * (2.1 + (hint?.pulse ?? 0) * 1.4) + index * 0.75) * 0.5 + 0.5
+          const overlayBoost = hint ? 1 + hint.intensity * 0.35 : 1
+          const dimFactor = overlayActive && !hint ? 0.72 : 1
+          const emphasis =
+            (isSelected && isVisible ? 1.85 : isHovered && isVisible ? 1.45 : isVisible ? 1 : 0.42) *
+            overlayBoost *
+            dimFactor
+          const coreScale = emphasis * (1 + pulseBase * (0.12 + (hint?.pulse ?? 0) * 0.18))
           state.core.scale.setScalar(coreScale)
-          state.glow.scale.setScalar(emphasis * (1.05 + pulse * 0.18))
-          state.ring.scale.setScalar(emphasis * (1.05 + pulse * 0.1))
+          state.glow.scale.setScalar(emphasis * (1.05 + pulseBase * (0.18 + (hint?.pulse ?? 0) * 0.12)))
+          state.ring.scale.setScalar(emphasis * (1.05 + pulseBase * 0.1) * (hint?.ring ? 1.12 : 1))
           state.ring.lookAt(camera.position)
-          state.ring.rotation.z += dt * (isSelected ? 1.7 : 0.6)
+          const ringSpeed =
+            hint?.status === 'blocked'
+              ? 2.4
+              : hint?.status === 'running'
+                ? 1.9
+                : isSelected
+                  ? 1.7
+                  : 0.6
+          state.ring.rotation.z += dt * ringSpeed
           state.core.material.opacity = !isVisible ? 0.16 : isSelected ? 1 : isHovered ? 0.98 : 0.86
-          state.glow.material.opacity = !isVisible ? 0.025 : isSelected ? 0.28 : isHovered ? 0.22 : 0.1 + pulse * 0.05
-          state.ring.material.opacity = !isVisible ? 0.04 : isSelected ? 0.75 : isHovered ? 0.55 : 0.18
+          state.glow.material.opacity = !isVisible
+            ? 0.025
+            : isSelected
+              ? 0.28
+              : isHovered
+                ? 0.22
+                : 0.1 + pulseBase * (0.05 + (hint?.intensity ?? 0) * 0.12)
+          state.ring.material.opacity = !isVisible
+            ? 0.04
+            : hint?.ring
+              ? 0.65 + pulseBase * 0.2
+              : isSelected
+                ? 0.75
+                : isHovered
+                  ? 0.55
+                  : 0.18
           state.hit.visible = isVisible
           state.label.material.opacity = !isVisible ? 0.12 : isSelected || isHovered ? 0.92 : 0.72
         })
@@ -461,7 +530,7 @@ export default function V15rAppBrainScene({
           boxShadow: '0 0 20px rgba(34,211,238,0.12)',
         }}
       >
-        Static architecture MVP / Three.js
+        {OVERLAY_MODE_LABEL[overlayMode]} · generated snapshot hints
       </div>
       <div
         className="absolute right-3 top-3 text-[10px] font-mono uppercase tracking-widest px-3 py-1.5 rounded-full pointer-events-none"

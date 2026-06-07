@@ -13,7 +13,7 @@ import {
   deriveOverlapWarningAnimation,
 } from './appBrainActiveWorkAnimationModel'
 import type { AgentModel, LiveWorkSession } from './appBrainWorkTypes'
-import { AppBrainPanelShell, StatCard } from './appBrainPanelShared'
+import { AppBrainPanelShell, SceneWiredBadge, StatCard } from './appBrainPanelShared'
 
 const AGENT_TYPES: AgentType[] = ['Claude', 'Codex', 'Cursor', 'Haiku', 'Manual/Owner']
 
@@ -148,13 +148,18 @@ export default function AppBrainActiveWorkAnimationPanel() {
       icon={<Activity size={18} />}
       accent="#a78bfa"
     >
+      <div className="flex flex-wrap gap-2">
+        <SceneWiredBadge />
+      </div>
+
       <div
         className="rounded-xl p-3"
         style={{ background: 'rgba(167,139,250,0.06)', border: '1px solid rgba(167,139,250,0.16)' }}
       >
         <p className="text-xs text-violet-100/90 leading-relaxed">
-          Animation states and domain pulses are derived from <span className="font-mono">APP_BRAIN_ACTIVE_SESSIONS</span>{' '}
-          seed data. The 3D neural scene does not render these hints yet.
+          Preview data is wired to the 3D scene <span className="font-mono">Active Work</span> overlay mode. Animation
+          states and domain pulses come from <span className="font-mono">APP_BRAIN_ACTIVE_SESSIONS</span> seed data —
+          read-only, not live rendering or websocket tracking.
         </p>
       </div>
 

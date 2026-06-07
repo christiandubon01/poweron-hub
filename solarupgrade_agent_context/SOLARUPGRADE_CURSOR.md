@@ -731,3 +731,30 @@ Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak 
 * Do-not-touch files: untouched.
 * Next recommended phase: Wave 7 — 3D import-graph overlay wiring, live registry ingestion (explicit scope).
 * Compact handoff: Opt-in CLI refresh/watch utility live. Panel shows generated snapshot only — not live websocket state. No hooks, auto-commit, secrets, or financial values.
+
+---
+
+## Cursor Report — App Brain Wave 7 — 3D Scene Overlay Modes Wiring
+
+* Task completed: Wired Import Graph and Active Work preview data into the 3D scene with overlay mode controls.
+* Branch: `main` (no new branch).
+* Overlay modes: Architecture Map (default), Import Graph, Active Work.
+* Files changed:
+  * `src/components/v15r/V15rAppBrainTab.tsx`
+  * `src/components/v15r/V15rAppBrainScene.tsx`
+  * `src/components/v15r/appBrainMap.ts`
+  * `src/components/v15r/app-brain/appBrainSceneOverlayTypes.ts`
+  * `src/components/v15r/app-brain/appBrainSceneOverlayAdapter.ts`
+  * `src/components/v15r/app-brain/AppBrainImportGraphOverlayPanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainActiveWorkAnimationPanel.tsx`
+  * `src/components/v15r/app-brain/appBrainPanelShared.tsx`
+  * `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  * `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+* Build result: PASS — `npm run build`.
+* Typecheck result: `npm.cmd run typecheck` blocked (no exit status from shell harness); `npx tsc --noEmit -p tsconfig.json` PASS.
+* Package files: untouched.
+* Generated manifests: untouched.
+* Do-not-touch files: untouched.
+* Scene safety: overlay hints applied via refs in existing animation loop; no new geometries per frame; full dispose/cleanup preserved.
+* Next recommended phase: Wave 8 — live registry ingestion and overlay legend/inspector sync (explicit scope).
+* Compact handoff: 3D map now supports three overlay modes from generated snapshot/seed data. Read-only — no websocket, hooks, or package changes.

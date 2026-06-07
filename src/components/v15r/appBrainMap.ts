@@ -248,3 +248,18 @@ export function getAppBrainNode(nodeId: string | null | undefined): AppBrainNode
   if (!nodeId) return null
   return APP_BRAIN_NODES.find((node) => node.id === nodeId) ?? null
 }
+
+/** Domain / session keys used to map overlay data onto architecture nodes */
+export const APP_BRAIN_NODE_OVERLAY_KEYS: Record<string, string[]> = {
+  'app-shell': ['core-shell', 'shell'],
+  'v15r-layout': ['core-shell', 'v15r', 'queue-system'],
+  'admin-tools': ['admin', 'orb-lab', 'admin-app-brain'],
+  'app-brain': ['app-brain', 'app-brain-core', 'admin-app-brain', 'governance'],
+  projects: ['projects', 'project-tracking', 'estimating', 'estimate'],
+  'field-log': ['field-log', 'field-logs', 'field-operations'],
+  blueprint: ['blueprint', 'blueprint-pdf'],
+  'material-takeoff': ['material-takeoff', 'price-book', 'materials'],
+  'ai-nexus': ['ai-nexus', 'neural-world', 'visual-suite', 'graph-dashboard', 'ai-workflows'],
+  'shared-systems': ['shared-systems', 'integrations', 'core-shell'],
+  'data-persistence': ['data', 'sync-persistence', 'infrastructure'],
+}

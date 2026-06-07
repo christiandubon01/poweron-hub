@@ -4750,6 +4750,54 @@ App Brain Wave 6 adds opt-in CLI watch/refresh utility. No git hooks, no auto-co
 
 ---
 
+## Shared Update — App Brain Wave 7 (Cursor) — 3D Scene Overlay Modes Wiring
+
+AGENT:
+Cursor
+
+BRANCH:
+main
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report.
+
+FILES CHANGED:
+- `src/components/v15r/V15rAppBrainTab.tsx`
+- `src/components/v15r/V15rAppBrainScene.tsx`
+- `src/components/v15r/appBrainMap.ts`
+- `src/components/v15r/app-brain/appBrainSceneOverlayTypes.ts`
+- `src/components/v15r/app-brain/appBrainSceneOverlayAdapter.ts`
+- `src/components/v15r/app-brain/AppBrainImportGraphOverlayPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainActiveWorkAnimationPanel.tsx`
+- `src/components/v15r/app-brain/appBrainPanelShared.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+OVERLAY MODES ADDED:
+- Architecture Map (default / no-op overlay)
+- Import Graph (high-touch import risk + edge intensity from manifest)
+- Active Work (agent/domain pulse + blocked/overlap hints from seed sessions)
+
+BUILD RESULT:
+PASS — `npm run build`
+
+TYPECHECK RESULT:
+`npm.cmd run typecheck` blocked (shell harness no exit status); `npx tsc --noEmit -p tsconfig.json` PASS
+
+PACKAGE FILES:
+Untouched
+
+GENERATED MANIFESTS:
+Untouched
+
+NEXT RECOMMENDED PHASE:
+Wave 8 — live registry ingestion and richer overlay legend/inspector sync (explicit scope only).
+
+COMPACT HANDOFF FOR NEXT CHAT:
+App Brain Wave 7 wires Import Graph and Active Work preview data into the 3D scene via overlay mode controls. Read-only generated snapshot/seed hints only — no websocket, hooks, or package changes.
+
+---
+
 ## Shared Update — Home Tab Repair Pass — pipeline count, agenda picker, 10-row scroll cap [2026-06-06]
 
 AGENT:
@@ -4784,57 +4832,3 @@ Browser reached login gate at `http://localhost:5173`; Home-tab click-through re
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Home repair pass complete on `main`. Pipeline subtitle uses active-project count; agenda linking uses a real project picker modal; agenda cards scroll after 10 task rows. Scope limited to `V15rHome.tsx` plus context files.
-
----
-
-## Shared Update — Estimate Labor: Multi-Employee Allocation and Profit Modal
-
-* Agent: Claude Code Sonnet 4.5 Medium
-* Branch: main
-* Commit: see git log — "feat(estimate): add multi employee labor allocation"
-* Files changed:
-  - `src/components/v15r/V15rEstimateTab.tsx`
-  - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
-  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
-* Typecheck: PASS
-* User-facing behavior changed:
-  - Estimate tab Labor rows: Employee column replaced with a custom multi-select dropdown. Single employee shows clean name display. Multiple employees show "Name +N" summary. Checkboxes for Owner/Me and all teamRoster members.
-  - When 2+ employees selected: "Allocation & Profit ›" button inside dropdown, and a "∑" icon button in the row actions cell, both open the Labor Allocation & Profit modal.
-  - Modal shows: row description + hours, SVG pie chart (no packages), per-employee hour sliders (0..totalHrs, step 0.5), per-employee cost/profit breakdown, total row with net profit. "X of Y hours allocated" indicator. Overhead line appears only when `settings.overheadPct > 0`.
-* Implementation notes:
-  - New optional labor row fields: `employees?: string[]` (backward compat — old rows use `empId`), `employeeAllocations?: {empId: string; hrs: number}[]`
-  - Employee cost rate: `BackupEmployee.costRate` if available, else `settings.opCost` (42.45 default). Fallback note shown in modal.
-  - `estTotals()` formula unchanged — uses `r.hrs * r.rate` for all labor. Multi-employee data is display/analysis only.
-  - Click-outside for dropdown: single `document.addEventListener('click', handler)` when `empDropdownOpenId` is set. Dropdown container uses `stopPropagation`.
-  - IIFE in JSX `{(() => { ... })()}` pattern used for modal to allow temp variables without a separate component.
-* Risks / follow-up:
-  - Allocation slider totals can exceed/sub-total `r.hrs` — user is shown "X of Y allocated" indicator but no auto-enforcement.
-  - Old single-empId rows remain fully compatible. `getRowEmployees(r)` falls back to `[r.empId || 'me']`.
-  - `resolvedEmpId` variable in row renderer scope is now unused (legacy from old `<select>`). Harmless with `@ts-nocheck`.
-* Manual QA status: Typecheck only. Browser QA recommended.
-* Next agent should know:
-  Multi-employee labor allocation is complete on `main`. Employee dropdown now multi-select. Allocation & Profit modal has pie chart, sliders, cost/profit breakdown. All existing labor rows, phase grouping, totals, and collapse state remain unchanged.
-
----
-
-## Shared Update — Estimate Labor: Employee Dropdown Clipping Fix
-
-* Agent: Claude Code Sonnet 4.5 Medium
-* Branch: main
-* Commit: see git log — "fix(estimate): prevent employee dropdown clipping"
-* Files changed:
-  - `src/components/v15r/V15rEstimateTab.tsx` (2-line change)
-  - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
-  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
-* Typecheck: PASS
-* User-facing behavior changed:
-  - Employee dropdown in Estimate Labor phase buckets now fully shows even in single-row phase buckets. Previously clipped by container `overflow: hidden`.
-  - Phase header visual appearance preserved: tint background still has rounded top corners (via `borderRadius` on the header div directly, conditional on isOpen).
-* Implementation notes:
-  - Root cause: `overflow: 'hidden'` on the phase bucket outer div at line 1807 was clipping the `position: 'absolute'` dropdown child.
-  - Fix: removed `overflow: 'hidden'`, added `borderRadius: isOpen ? '6px 6px 0 0' : '6px'` to the phase header div.
-  - z-index alone cannot fix CSS overflow clipping — the parent's overflow must be changed.
-* Risks / follow-up: None. Pure CSS fix, no logic changes, no data model changes.
-* Manual QA status: Typecheck only. Browser QA recommended.
-* Next agent should know:
-  Dropdown clipping is fixed. Phase bucket outer div no longer has overflow:hidden. All multi-employee functionality, modal, phase grouping, and Estimate totals unchanged. Typecheck passes.

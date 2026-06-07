@@ -43,6 +43,14 @@ import AppBrainCanaryScopePanel from './app-brain/AppBrainCanaryScopePanel'
 import AppBrainWatchModeContractPanel from './app-brain/AppBrainWatchModeContractPanel'
 import { APP_BRAIN_DIRECTORY } from './generatedAppBrainDirectory'
 import { findDirectoryFile } from './app-brain/appBrainDirectoryBrain'
+import { buildSceneOverlay } from './app-brain/appBrainSceneOverlayAdapter'
+import type { AppBrainSceneOverlayMode } from './app-brain/appBrainSceneOverlayTypes'
+
+const OVERLAY_MODES: Array<{ id: AppBrainSceneOverlayMode; label: string; accent: string }> = [
+  { id: 'architecture', label: 'Architecture Map', accent: '#22d3ee' },
+  { id: 'import-graph', label: 'Import Graph', accent: '#a78bfa' },
+  { id: 'active-work', label: 'Active Work', accent: '#34d399' },
+]
 
 const ROADMAP = [
   { phase: 'Phase 2', title: '3D neural render', detail: 'Static architecture MVP with interactive nodes' },
@@ -588,6 +596,8 @@ export default function V15rAppBrainTab() {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
   const [filters, setFilters] = useState<AppBrainFilters>(DEFAULT_APP_BRAIN_FILTERS)
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>('src/components/v15r/V15rAppBrainTab.tsx')
+  const [overlayMode, setOverlayMode] = useState<AppBrainSceneOverlayMode>('architecture')
+  const sceneOverlay = useMemo(() => buildSceneOverlay(overlayMode), [overlayMode])
   const visibleNodes = useMemo(() => filterAppBrainNodes(APP_BRAIN_NODES, filters), [filters])
   const visibleNodeIds = useMemo(() => visibleNodes.map((node) => node.id), [visibleNodes])
   const selectedFile = useMemo(
@@ -652,7 +662,51 @@ export default function V15rAppBrainTab() {
                 <Sparkles size={16} style={{ color: '#22d3ee' }} />
                 3D neural app map
               </h2>
-              <span className="text-[10px] text-gray-500 font-mono">Static map / no live repo scan yet</span>
+              <span className="text-[10px] text-gray-500 font-mono">Generated snapshot hints · not live websocket</span>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap gap-2">
+                {OVERLAY_MODES.map((mode) => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    onClick={() => setOverlayMode(mode.id)}
+                    className="text-[10px] uppercase tracking-wider font-mono px-3 py-1.5 rounded-lg transition-colors"
+                    style={{
+                      color: overlayMode === mode.id ? mode.accent : '#94a3b8',
+                      background: overlayMode === mode.id ? `${mode.accent}14` : 'rgba(148,163,184,0.06)',
+                      border: `1px solid ${overlayMode === mode.id ? `${mode.accent}33` : 'rgba(148,163,184,0.14)'}`,
+                    }}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+
+              <div
+                className="rounded-xl p-3 grid grid-cols-2 lg:grid-cols-4 gap-2 text-[10px] font-mono"
+                style={{ background: 'rgba(3,7,18,0.5)', border: '1px solid rgba(34,211,238,0.12)' }}
+              >
+                <div>
+                  <p className="text-gray-500 uppercase tracking-wider">Nodes</p>
+                  <p className="text-cyan-200 mt-0.5">{sceneOverlay.summary.highlightedNodeCount}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500 uppercase tracking-wider">Edges</p>
+                  <p className="text-cyan-200 mt-0.5">{sceneOverlay.summary.highlightedEdgeCount}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500 uppercase tracking-wider">Warnings</p>
+                  <p className="text-cyan-200 mt-0.5">{sceneOverlay.summary.warningCount}</p>
+                </div>
+                <div className="col-span-2 lg:col-span-1">
+                  <p className="text-gray-500 uppercase tracking-wider">Source</p>
+                  <p className="text-gray-400 mt-0.5 truncate" title={sceneOverlay.summary.snapshotLabel}>
+                    {sceneOverlay.summary.snapshotLabel}
+                  </p>
+                </div>
+              </div>
             </div>
 
             <div
@@ -668,6 +722,8 @@ export default function V15rAppBrainTab() {
                 selectedNodeId={selectedNodeId}
                 hoveredNodeId={hoveredNodeId}
                 visibleNodeIds={visibleNodeIds}
+                overlayMode={overlayMode}
+                sceneOverlay={sceneOverlay}
                 onSelectNode={setSelectedNodeId}
                 onHoverNode={setHoveredNodeId}
               />
@@ -676,7 +732,7 @@ export default function V15rAppBrainTab() {
             <CategoryLegend />
 
             <p className="text-xs text-gray-500 leading-relaxed">
-              This is a static architecture MVP built with the existing Three.js dependency. Nodes, connections, and risk markers are typed map data for Phase 2; generated repo manifests, changed-file activity, and live git overlays are intentionally deferred.
+              Overlay modes apply read-only visual hints from generated manifest and seed session data. Import Graph and Active Work modes emphasize high-touch import risk and agent/domain pulse states — not live websocket tracking.
             </p>
           </section>
 
