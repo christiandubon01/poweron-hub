@@ -598,8 +598,10 @@ export default function V15rAppBrainTab() {
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>('src/components/v15r/V15rAppBrainTab.tsx')
   const [overlayMode, setOverlayMode] = useState<AppBrainSceneOverlayMode>('architecture')
   const sceneOverlay = useMemo(() => buildSceneOverlay(overlayMode), [overlayMode])
+  const overlaySummary = useMemo(() => sceneOverlay.summary, [sceneOverlay])
   const visibleNodes = useMemo(() => filterAppBrainNodes(APP_BRAIN_NODES, filters), [filters])
-  const visibleNodeIds = useMemo(() => visibleNodes.map((node) => node.id), [visibleNodes])
+  const visibleNodeIdKey = useMemo(() => visibleNodes.map((node) => node.id).join('|'), [visibleNodes])
+  const visibleNodeIds = useMemo(() => visibleNodes.map((node) => node.id), [visibleNodeIdKey, visibleNodes])
   const selectedFile = useMemo(
     () => findDirectoryFile(APP_BRAIN_DIRECTORY.fileMetadata, selectedFilePath),
     [selectedFilePath],
@@ -690,20 +692,20 @@ export default function V15rAppBrainTab() {
               >
                 <div>
                   <p className="text-gray-500 uppercase tracking-wider">Nodes</p>
-                  <p className="text-cyan-200 mt-0.5">{sceneOverlay.summary.highlightedNodeCount}</p>
+                  <p className="text-cyan-200 mt-0.5">{overlaySummary.highlightedNodeCount}</p>
                 </div>
                 <div>
                   <p className="text-gray-500 uppercase tracking-wider">Edges</p>
-                  <p className="text-cyan-200 mt-0.5">{sceneOverlay.summary.highlightedEdgeCount}</p>
+                  <p className="text-cyan-200 mt-0.5">{overlaySummary.highlightedEdgeCount}</p>
                 </div>
                 <div>
                   <p className="text-gray-500 uppercase tracking-wider">Warnings</p>
-                  <p className="text-cyan-200 mt-0.5">{sceneOverlay.summary.warningCount}</p>
+                  <p className="text-cyan-200 mt-0.5">{overlaySummary.warningCount}</p>
                 </div>
                 <div className="col-span-2 lg:col-span-1">
                   <p className="text-gray-500 uppercase tracking-wider">Source</p>
-                  <p className="text-gray-400 mt-0.5 truncate" title={sceneOverlay.summary.snapshotLabel}>
-                    {sceneOverlay.summary.snapshotLabel}
+                  <p className="text-gray-400 mt-0.5 truncate" title={overlaySummary.snapshotLabel}>
+                    {overlaySummary.snapshotLabel}
                   </p>
                 </div>
               </div>

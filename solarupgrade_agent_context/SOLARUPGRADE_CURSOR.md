@@ -758,3 +758,24 @@ Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak 
 * Scene safety: overlay hints applied via refs in existing animation loop; no new geometries per frame; full dispose/cleanup preserved.
 * Next recommended phase: Wave 8 — live registry ingestion and overlay legend/inspector sync (explicit scope).
 * Compact handoff: 3D map now supports three overlay modes from generated snapshot/seed data. Read-only — no websocket, hooks, or package changes.
+
+---
+
+## Cursor Report — App Brain Wave 7 Hotfix — Scene Overlay Animation Stabilization
+
+* Task completed: Stabilized 3D neural map after Wave 7 overlay wiring — no more periodic snap/reset loop.
+* Branch: `main` (no new branch).
+* Root cause: overlay prop churn and per-frame edge speed resets disrupted continuous root/pulse animation.
+* Fix: cached overlay adapter output, sync overlay refs during render, incremental root/star yaw, base edge speeds with overlay multipliers, memoized tab overlay summary, `React.memo` on scene.
+* Files changed:
+  * `src/components/v15r/V15rAppBrainScene.tsx`
+  * `src/components/v15r/V15rAppBrainTab.tsx`
+  * `src/components/v15r/app-brain/appBrainSceneOverlayAdapter.ts`
+  * `src/components/v15r/app-brain/appBrainSceneOverlayTypes.ts`
+  * `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  * `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+* Build result: see final report.
+* Typecheck result: see final report.
+* Package files: untouched.
+* Generated manifests: untouched.
+* Compact handoff: 3D map animates smoothly across Architecture/Import Graph/Active Work overlay modes. Scene init once per mount; overlay hints read from refs.

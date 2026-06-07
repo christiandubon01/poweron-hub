@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import {
   APP_BRAIN_CATEGORY_META,
@@ -8,7 +8,7 @@ import {
 } from './appBrainMap'
 import type { AppBrainSceneOverlay, AppBrainSceneOverlayMode } from './app-brain/appBrainSceneOverlayTypes'
 import { edgeHintKey } from './app-brain/appBrainSceneOverlayTypes'
-import { buildArchitectureSceneOverlay } from './app-brain/appBrainSceneOverlayAdapter'
+import { DEFAULT_ARCHITECTURE_SCENE_OVERLAY } from './app-brain/appBrainSceneOverlayAdapter'
 
 interface V15rAppBrainSceneProps {
   selectedNodeId: string | null
@@ -40,7 +40,8 @@ interface EdgePulse {
   mesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
   from: THREE.Vector3
   to: THREE.Vector3
-  speed: number
+  baseSpeed: number
+  speedScale: number
   offset: number
 }
 
@@ -103,12 +104,12 @@ function makeLabelTexture(label: string, color: string): THREE.CanvasTexture {
   return texture
 }
 
-export default function V15rAppBrainScene({
+function V15rAppBrainScene({
   selectedNodeId,
   hoveredNodeId,
   visibleNodeIds,
   overlayMode = 'architecture',
-  sceneOverlay = buildArchitectureSceneOverlay(),
+  sceneOverlay = DEFAULT_ARCHITECTURE_SCENE_OVERLAY,
   onSelectNode,
   onHoverNode,
 }: V15rAppBrainSceneProps) {
@@ -120,6 +121,9 @@ export default function V15rAppBrainScene({
   const sceneOverlayRef = useRef<AppBrainSceneOverlay>(sceneOverlay)
   const onSelectRef = useRef(onSelectNode)
   const onHoverRef = useRef(onHoverNode)
+
+  overlayModeRef.current = overlayMode
+  sceneOverlayRef.current = sceneOverlay
 
   useEffect(() => {
     selectedRef.current = selectedNodeId
@@ -137,14 +141,6 @@ export default function V15rAppBrainScene({
     onSelectRef.current = onSelectNode
     onHoverRef.current = onHoverNode
   }, [onSelectNode, onHoverNode])
-
-  useEffect(() => {
-    overlayModeRef.current = overlayMode
-  }, [overlayMode])
-
-  useEffect(() => {
-    sceneOverlayRef.current = sceneOverlay
-  }, [sceneOverlay])
 
   useEffect(() => {
     const mountElement = mountRef.current
@@ -194,6 +190,7 @@ export default function V15rAppBrainScene({
         return
       }
       didInit = true
+      if (didDispose) return
 
       const width = Math.max(mount.clientWidth, 320)
       const height = Math.max(mount.clientHeight, 280)
@@ -266,7 +263,8 @@ export default function V15rAppBrainScene({
           mesh: pulse,
           from: fromVector,
           to: toVector,
-          speed: 0.08 + edge.strength * 0.045,
+          baseSpeed: 0.08 + edge.strength * 0.045,
+          speedScale: 1,
           offset: index * 0.071,
         }
         edgePulses.push(pulseEntry)
@@ -400,23 +398,39 @@ export default function V15rAppBrainScene({
       resizeObserver.observe(mount)
 
       let lastTime = performance.now()
+      let rootYaw = root.rotation.y
+      let starYaw = starGroup.rotation.y
       function animate(now: number): void {
+        if (didDispose) return
         animationFrame = requestAnimationFrame(animate)
         if (!renderer) return
         const dt = Math.min((now - lastTime) / 1000, 0.05)
         lastTime = now
         const t = now / 1000
 
-        root.rotation.y += dt * 0.16
+        rootYaw += dt * 0.16
+        root.rotation.y = rootYaw
         root.rotation.x = Math.sin(t * 0.35) * 0.07
-        starGroup.rotation.y -= dt * 0.035
+        starYaw -= dt * 0.035
+        starGroup.rotation.y = starYaw
         starGroup.rotation.x = Math.sin(t * 0.12) * 0.04
 
         const overlay = sceneOverlayRef.current
         const overlayActive = overlayModeRef.current !== 'architecture'
 
         edgePulses.forEach((pulse) => {
-          const pct = (t * pulse.speed + pulse.offset) % 1
+          pulse.speedScale = 1
+        })
+
+        for (const [key, hint] of Object.entries(overlay.edgeHints)) {
+          const pulse = edgePulseByKey.get(key)
+          if (!pulse) continue
+          pulse.speedScale = 1 + hint.pulse * 1.5
+        }
+
+        edgePulses.forEach((pulse) => {
+          const speed = pulse.baseSpeed * pulse.speedScale
+          const pct = (t * speed + pulse.offset) % 1
           pulse.mesh.position.copy(pulse.from).lerp(pulse.to, pct)
           const fade = Math.sin(pct * Math.PI)
           pulse.mesh.material.opacity = 0.24 + fade * 0.68
@@ -431,8 +445,8 @@ export default function V15rAppBrainScene({
         for (const [key, hint] of Object.entries(overlay.edgeHints)) {
           const pulse = edgePulseByKey.get(key)
           if (!pulse) continue
-          pulse.speed = 0.08 + hint.pulse * 0.12
-          pulse.mesh.material.opacity = Math.min(1, 0.3 + hint.intensity * 0.55)
+          const fade = Math.sin(((t * pulse.baseSpeed * pulse.speedScale + pulse.offset) % 1) * Math.PI)
+          pulse.mesh.material.opacity = Math.min(1, 0.3 + hint.intensity * 0.35 + fade * 0.2)
         }
 
         nodeStates.forEach((state, index) => {
@@ -484,6 +498,16 @@ export default function V15rAppBrainScene({
 
         renderer.render(scene, camera)
       }
+      if (didDispose) {
+        disposeObjectTree(scene)
+        scene.clear()
+        if (renderer) {
+          renderer.dispose()
+          if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
+        }
+        return
+      }
+
       animationFrame = requestAnimationFrame(animate)
 
       cleanupRendererEvents = () => {
@@ -545,3 +569,5 @@ export default function V15rAppBrainScene({
     </div>
   )
 }
+
+export default memo(V15rAppBrainScene)

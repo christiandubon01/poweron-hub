@@ -25,6 +25,8 @@ import type {
 } from './appBrainSceneOverlayTypes'
 import { edgeHintKey } from './appBrainSceneOverlayTypes'
 
+const OVERLAY_CACHE = new Map<AppBrainSceneOverlayMode, AppBrainSceneOverlay>()
+
 const AGENT_TYPES: AgentType[] = ['Claude', 'Codex', 'Cursor', 'Haiku', 'Manual/Owner']
 
 const RISK_FROM_GRAPH: Record<string, SceneOverlayRisk> = {
@@ -188,6 +190,20 @@ function buildActiveWorkSnapshot() {
   ]
 
   return buildActiveWorkAnimationSnapshot(agentSessions, domainPulses, overlapWarnings)
+}
+
+export const DEFAULT_ARCHITECTURE_SCENE_OVERLAY: AppBrainSceneOverlay = {
+  mode: 'architecture',
+  nodeHints: {},
+  edgeHints: {},
+  summary: {
+    mode: 'architecture',
+    generatedAt: new Date(0).toISOString(),
+    snapshotLabel: 'Architecture map (default)',
+    highlightedNodeCount: 0,
+    highlightedEdgeCount: 0,
+    warningCount: 0,
+  },
 }
 
 export function buildArchitectureSceneOverlay(): AppBrainSceneOverlay {
@@ -371,7 +387,7 @@ export function buildActiveWorkSceneOverlay(): AppBrainSceneOverlay {
     edgeHints,
     summary: {
       mode: 'active-work',
-      generatedAt: snapshot.snapshotAt,
+      generatedAt: GENERATED_APP_BRAIN_WORK_MANIFEST.generatedAt,
       snapshotLabel: `Active work seed · work manifest ${workLabel}`,
       highlightedNodeCount: Object.keys(nodeHints).length,
       highlightedEdgeCount: Object.keys(edgeHints).length,
@@ -381,13 +397,23 @@ export function buildActiveWorkSceneOverlay(): AppBrainSceneOverlay {
 }
 
 export function buildSceneOverlay(mode: AppBrainSceneOverlayMode): AppBrainSceneOverlay {
+  const cached = OVERLAY_CACHE.get(mode)
+  if (cached) return cached
+
+  let overlay: AppBrainSceneOverlay
   switch (mode) {
     case 'import-graph':
-      return buildImportGraphSceneOverlay()
+      overlay = buildImportGraphSceneOverlay()
+      break
     case 'active-work':
-      return buildActiveWorkSceneOverlay()
+      overlay = buildActiveWorkSceneOverlay()
+      break
     case 'architecture':
     default:
-      return buildArchitectureSceneOverlay()
+      overlay = DEFAULT_ARCHITECTURE_SCENE_OVERLAY
+      break
   }
+
+  OVERLAY_CACHE.set(mode, overlay)
+  return overlay
 }
