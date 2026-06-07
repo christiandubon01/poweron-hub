@@ -66,6 +66,8 @@ import { synthesizeWithElevenLabs } from '@/api/voice/elevenLabs'
 import { callClaude, extractText as claudeExtractText } from '@/services/claudeProxy'
 // B32 — Multi-User Role Permission Foundation
 import { getUserRole, canAccess, logAuditDecision, type B32Role, type B32Feature } from '@/services/rolePermissionService'
+import { GENERATED_APP_BRAIN_MANIFEST } from './generatedAppBrainManifest'
+import { APP_BRAIN_NODES } from './appBrainMap'
 
 /** Header metric formatter — precise rounding for all KPI pills.
  *  <$1k → exact ($471) | $1k–$9.9k → one decimal ($1.4k) | $10k–$99k → one decimal ($14.7k) | $100k+ → whole ($105k)
@@ -745,7 +747,9 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
   // Responsive breakpoints
   const isCompact = windowWidth < 1200
-  const showTargetBar = windowWidth >= 1400
+  const isAppBrainView = activeView === 'app-brain'
+  const showTargetBar = windowWidth >= 1400 && !isAppBrainView
+  const appBrainHighRiskCount = APP_BRAIN_NODES.filter((node) => node.riskLevel === 'high').length
 
   // Responsive sidebar modes (declared above, near useState for windowWidth)
 
@@ -1536,119 +1540,145 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                   <Menu size={22} />
                 </button>
               )}
-              {/* REVENUE GROUP */}
-              <div className="flex items-center gap-6">
-                {/* PIPELINE */}
-                <div className="flex flex-col items-center min-w-[80px]" title={isCompact ? 'Pipeline' : undefined}>
-                  {isCompact ? (
-                    <span className="text-sm font-bold text-green-400">{hideFinances ? '••••' : fmtHeader(safeKpis.pipeline)}</span>
-                  ) : (
-                    <>
-                      <span className="text-[8px] font-bold uppercase text-gray-500">Pipeline</span>
-                      <span className="text-base font-bold text-green-400">
-                        {hideFinances ? '••••' : fmtHeader(safeKpis.pipeline)}
-                      </span>
-                    </>
-                  )}
+              {isAppBrainView ? (
+                <div className="flex items-center gap-4 md:gap-6 flex-wrap">
+                  {[
+                    { label: 'Architecture Mode', value: 'Control Tower', color: '#22d3ee' },
+                    { label: 'Files Indexed', value: String(GENERATED_APP_BRAIN_MANIFEST.totalFiles), color: '#60a5fa' },
+                    { label: 'Imports Tracked', value: String(GENERATED_APP_BRAIN_MANIFEST.totalImports), color: '#34d399' },
+                    { label: 'Active Work Panels', value: '5', color: '#a78bfa' },
+                    { label: 'Context Registries', value: '5', color: '#facc15' },
+                    { label: 'Risk Map', value: String(appBrainHighRiskCount), color: '#fb7185' },
+                  ].map((item) => (
+                    <div key={item.label} className="flex flex-col items-center min-w-[72px]" title={isCompact ? item.label : undefined}>
+                      {isCompact ? (
+                        <span className="text-sm font-bold font-mono" style={{ color: item.color }}>{item.value}</span>
+                      ) : (
+                        <>
+                          <span className="text-[8px] font-bold uppercase text-gray-500">{item.label}</span>
+                          <span className="text-base font-bold font-mono" style={{ color: item.color }}>{item.value}</span>
+                        </>
+                      )}
+                    </div>
+                  ))}
                 </div>
+              ) : (
+                <>
+                  {/* REVENUE GROUP */}
+                  <div className="flex items-center gap-6">
+                    {/* PIPELINE */}
+                    <div className="flex flex-col items-center min-w-[80px]" title={isCompact ? 'Pipeline' : undefined}>
+                      {isCompact ? (
+                        <span className="text-sm font-bold text-green-400">{hideFinances ? '••••' : fmtHeader(safeKpis.pipeline)}</span>
+                      ) : (
+                        <>
+                          <span className="text-[8px] font-bold uppercase text-gray-500">Pipeline</span>
+                          <span className="text-base font-bold text-green-400">
+                            {hideFinances ? '••••' : fmtHeader(safeKpis.pipeline)}
+                          </span>
+                        </>
+                      )}
+                    </div>
 
-                {/* PAID */}
-                <div className="flex flex-col items-center min-w-[80px]" title={isCompact ? 'Paid' : undefined}>
-                  {isCompact ? (
-                    <span className="text-sm font-bold text-green-400">{hideFinances ? '••••' : fmtHeader(safeKpis.paid)}</span>
-                  ) : (
-                    <>
-                      <span className="text-[8px] font-bold uppercase text-gray-500">Paid</span>
-                      <span className="text-base font-bold text-green-400">
-                        {hideFinances ? '••••' : fmtHeader(safeKpis.paid)}
-                      </span>
-                    </>
-                  )}
-                </div>
+                    {/* PAID */}
+                    <div className="flex flex-col items-center min-w-[80px]" title={isCompact ? 'Paid' : undefined}>
+                      {isCompact ? (
+                        <span className="text-sm font-bold text-green-400">{hideFinances ? '••••' : fmtHeader(safeKpis.paid)}</span>
+                      ) : (
+                        <>
+                          <span className="text-[8px] font-bold uppercase text-gray-500">Paid</span>
+                          <span className="text-base font-bold text-green-400">
+                            {hideFinances ? '••••' : fmtHeader(safeKpis.paid)}
+                          </span>
+                        </>
+                      )}
+                    </div>
 
-                {/* Separator */}
-                <div className={`h-10 w-px bg-gray-700 ${isCompact ? 'hidden' : ''}`} />
-              </div>
+                    {/* Separator */}
+                    <div className={`h-10 w-px bg-gray-700 ${isCompact ? 'hidden' : ''}`} />
+                  </div>
 
-              {/* RISK GROUP */}
-              <div className="flex items-center gap-6">
-                {/* EXPOSURE */}
-                <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Exposure' : undefined}>
-                  {isCompact ? (
-                    <span className="text-sm font-bold text-red-400">{hideFinances ? '••••' : fmtHeader(safeKpis.exposure)}</span>
-                  ) : (
-                    <>
-                      <span className="text-[8px] font-bold uppercase text-gray-500">Exposure</span>
-                      <span className="text-sm font-bold text-yellow-400">{hideFinances ? '••••' : fmtHeader(safeKpis.svcUnbilled)}</span>
-                    </>
-                  )}
-                </div>
+                  {/* RISK GROUP */}
+                  <div className="flex items-center gap-6">
+                    {/* EXPOSURE */}
+                    <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Exposure' : undefined}>
+                      {isCompact ? (
+                        <span className="text-sm font-bold text-red-400">{hideFinances ? '••••' : fmtHeader(safeKpis.exposure)}</span>
+                      ) : (
+                        <>
+                          <span className="text-[8px] font-bold uppercase text-gray-500">Exposure</span>
+                          <span className="text-sm font-bold text-yellow-400">{hideFinances ? '••••' : fmtHeader(safeKpis.svcUnbilled)}</span>
+                        </>
+                      )}
+                    </div>
 
-                {/* SVC UNBILLED */}
-                <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Svc Unbilled' : undefined}>
-                  {isCompact ? (
-                    <span className="text-sm font-bold text-yellow-400">{fmtHeader(safeKpis.svcUnbilled)}</span>
-                  ) : (
-                    <>
-                      <span className="text-[8px] font-bold uppercase text-gray-500">Svc Unbilled</span>
-                      <span className="text-base font-bold text-yellow-400">
-                        {hideFinances ? '••••' : fmtHeader(safeKpis.svcUnbilled)}
-                      </span>
-                    </>
-                  )}
-                </div>
+                    {/* SVC UNBILLED */}
+                    <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Svc Unbilled' : undefined}>
+                      {isCompact ? (
+                        <span className="text-sm font-bold text-yellow-400">{fmtHeader(safeKpis.svcUnbilled)}</span>
+                      ) : (
+                        <>
+                          <span className="text-[8px] font-bold uppercase text-gray-500">Svc Unbilled</span>
+                          <span className="text-base font-bold text-yellow-400">
+                            {hideFinances ? '••••' : fmtHeader(safeKpis.svcUnbilled)}
+                          </span>
+                        </>
+                      )}
+                    </div>
 
-                {/* Separator */}
-                <div className={`h-10 w-px bg-gray-700 ${isCompact ? 'hidden' : ''}`} />
-              </div>
+                    {/* Separator */}
+                    <div className={`h-10 w-px bg-gray-700 ${isCompact ? 'hidden' : ''}`} />
+                  </div>
 
-              {/* STATUS GROUP */}
-              <div className="flex items-center gap-6">
-                {/* OPEN PROJECTS */}
-                <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Open Projects' : undefined}>
-                  {isCompact ? (
-                    <span className="text-sm font-bold text-blue-400">{safeKpis.activeProjects}</span>
-                  ) : (
-                    <>
-                      <span className="text-[8px] font-bold uppercase text-gray-500">Open Projects</span>
-                      <span className="text-base font-bold text-blue-400">
-                        {safeKpis.activeProjects}
-                      </span>
-                    </>
-                  )}
-                </div>
+                  {/* STATUS GROUP */}
+                  <div className="flex items-center gap-6">
+                    {/* OPEN PROJECTS */}
+                    <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Open Projects' : undefined}>
+                      {isCompact ? (
+                        <span className="text-sm font-bold text-blue-400">{safeKpis.activeProjects}</span>
+                      ) : (
+                        <>
+                          <span className="text-[8px] font-bold uppercase text-gray-500">Open Projects</span>
+                          <span className="text-base font-bold text-blue-400">
+                            {safeKpis.activeProjects}
+                          </span>
+                        </>
+                      )}
+                    </div>
 
-                {/* OPEN RFIs */}
-                <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Open RFIs' : undefined}>
-                  {isCompact ? (
-                    <span className="text-sm font-bold text-purple-400">{safeKpis.openRfis}</span>
-                  ) : (
-                    <>
-                      <span className="text-[8px] font-bold uppercase text-gray-500">Open RFIs</span>
-                      <span className="text-base font-bold text-purple-400">
-                        {safeKpis.openRfis}
-                      </span>
-                    </>
-                  )}
-                </div>
+                    {/* OPEN RFIs */}
+                    <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Open RFIs' : undefined}>
+                      {isCompact ? (
+                        <span className="text-sm font-bold text-purple-400">{safeKpis.openRfis}</span>
+                      ) : (
+                        <>
+                          <span className="text-[8px] font-bold uppercase text-gray-500">Open RFIs</span>
+                          <span className="text-base font-bold text-purple-400">
+                            {safeKpis.openRfis}
+                          </span>
+                        </>
+                      )}
+                    </div>
 
-                {/* Separator */}
-                <div className={`h-10 w-px bg-gray-700 ${isCompact ? 'hidden' : ''}`} />
+                    {/* Separator */}
+                    <div className={`h-10 w-px bg-gray-700 ${isCompact ? 'hidden' : ''}`} />
 
-                {/* SERVICE NET */}
-                <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Service Net' : undefined}>
-                  {isCompact ? (
-                    <span className={`text-sm font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{hideFinances ? '••••' : fmtHeader(serviceNet)}</span>
-                  ) : (
-                    <>
-                      <span className="text-[8px] font-bold uppercase text-gray-500">Service Net</span>
-                      <span className={`text-base font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {hideFinances ? '••••' : fmtHeader(serviceNet)}
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
+                    {/* SERVICE NET */}
+                    <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Service Net' : undefined}>
+                      {isCompact ? (
+                        <span className={`text-sm font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{hideFinances ? '••••' : fmtHeader(serviceNet)}</span>
+                      ) : (
+                        <>
+                          <span className="text-[8px] font-bold uppercase text-gray-500">Service Net</span>
+                          <span className={`text-base font-bold ${serviceNet >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {hideFinances ? '••••' : fmtHeader(serviceNet)}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* RIGHT: Status + Buttons */}
@@ -1726,8 +1756,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 )}
               </div>
 
-              {/* Daily Target */}
-              {!isMobile && (
+              {/* Daily Target — hidden in App Brain architecture mode */}
+              {!isMobile && !isAppBrainView && (
                 <div className="text-xs text-gray-400">
                   Daily Target: <span className="text-green-400 font-semibold">${settings.dayTarget || 0}</span>
                 </div>

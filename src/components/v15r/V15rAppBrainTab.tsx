@@ -24,6 +24,11 @@ import {
   type AppBrainFilters,
 } from './appBrainFilters'
 import { GENERATED_APP_BRAIN_MANIFEST } from './generatedAppBrainManifest'
+import AppBrainLiveWorkPanel from './app-brain/AppBrainLiveWorkPanel'
+import AppBrainRulesPanel from './app-brain/AppBrainRulesPanel'
+import AppBrainSkillsPanel from './app-brain/AppBrainSkillsPanel'
+import AppBrainDirectoryPanel from './app-brain/AppBrainDirectoryPanel'
+import AppBrainBacklogPanel from './app-brain/AppBrainBacklogPanel'
 
 const ROADMAP = [
   { phase: 'Phase 2', title: '3D neural render', detail: 'Static architecture MVP with interactive nodes' },
@@ -665,6 +670,32 @@ export default function V15rAppBrainTab() {
         </div>
 
         <GeneratedManifestPanel />
+
+        <section className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-cyan-300/90">Wave 01 integration</p>
+              <h2 className="text-lg font-semibold text-gray-100 mt-1">Control Tower Panels</h2>
+              <p className="text-xs text-gray-500 mt-1">
+                Read-only registries from Haiku Wave 01 seeds. Live git/session ingestion is deferred.
+              </p>
+            </div>
+            <span
+              className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-lg self-start"
+              style={{ color: '#94a3b8', background: 'rgba(148,163,184,0.08)', border: '1px solid rgba(148,163,184,0.18)' }}
+            >
+              Static seed data only
+            </span>
+          </div>
+
+          <div className="space-y-4">
+            <AppBrainLiveWorkPanel />
+            <AppBrainRulesPanel />
+            <AppBrainSkillsPanel />
+            <AppBrainDirectoryPanel />
+            <AppBrainBacklogPanel />
+          </div>
+        </section>
 
         <section
           className="rounded-2xl p-4 sm:p-5"

@@ -576,3 +576,29 @@ Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak 
 * Manual QA performed: Generator run and code/diff inspection only. Browser QA was not performed in this session.
 * Next recommended action: Run `npm.cmd run typecheck` locally, then manually QA App Brain as admin owner and verify the Generated Manifest panel shows generatedAt, refresh command, stale/recent badge, and existing scene/filter behavior still works.
 * Compact handoff for next agent/chat: App Brain Phase 5A keeps refresh manual. `npm run app-brain:generate` refreshes the compact manifest, which now includes schema/provenance/scanned-root/skipped-pattern metadata. The UI surfaces generatedAt, a 24-hour stale/recent badge, refresh command, and manual-refresh note. No hooks were added, package-lock is untouched, and curated nodes still drive the 3D map.
+
+---
+
+## Cursor Report — App Brain Wave 1 — privacy cleanup and control tower panels
+
+* Task completed: Sequential Wave 1 privacy cleanup and read-only Control Tower panel integration.
+* Branch: `main` (no new branch).
+* Privacy cleanup: When `activeView === 'app-brain'`, operational finance KPIs (Pipeline, Paid, Exposure, SVC Unbilled, Service Net, Daily Target, revenue target bar) are hidden and replaced with architecture-safe header cards (Architecture Mode, Files Indexed, Imports Tracked, Active Work Panels, Context Registries, Risk Map). Sync/online status and nav preserved.
+* Panels added (read-only, static seed): Live Work, Rules, Skills, Directory, Backlog under `src/components/v15r/app-brain/`.
+* Files changed:
+  * `src/components/v15r/V15rLayout.tsx`
+  * `src/components/v15r/V15rAppBrainTab.tsx`
+  * `src/components/v15r/app-brain/appBrainSeedData.ts`
+  * `src/components/v15r/app-brain/appBrainPanelShared.tsx`
+  * `src/components/v15r/app-brain/AppBrainLiveWorkPanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainRulesPanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainSkillsPanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainDirectoryPanel.tsx`
+  * `src/components/v15r/app-brain/AppBrainBacklogPanel.tsx`
+  * `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  * `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+* Build result: PASS — `npm run build`.
+* Typecheck result: `npm.cmd run typecheck` blocked (no exit status from shell harness); `npx tsc --noEmit -p tsconfig.json` PASS.
+* Package files: untouched (`package.json`, `package-lock.json` not modified).
+* Next recommended phase: Wave 2 — full directory file tree, live registry ingestion, and optional git/session overlay wiring behind explicit scope.
+* Compact handoff: App Brain now hides operational finance KPIs in architecture mode and shows five read-only Control Tower panels from Wave 01 JSON seeds via `appBrainSeedData.ts`. 3D map, filters, inspector, and generated manifest panel preserved. No live tracking claims yet.

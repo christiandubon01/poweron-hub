@@ -4389,3 +4389,56 @@ Field Logs trigger-study polish complete. `V15rFieldLogPanel.tsx` now evaluates 
   - The SVG viewBox is 0-100 within the annotation div, so the renderer must convert: ((archCtrlX - rect.x) / rect.w) * 100
   - archFactor is kept in metadata as a legacy fallback only — new annotations have both archFactor and archCtrlX/Y
   - The arch drag handler is the simplest possible: just nhx/nhy → archCtrlX/Y
+
+---
+
+## Shared Update — App Brain Wave 1 (Cursor) — privacy cleanup and control tower panels
+
+AGENT:
+Cursor
+
+BRANCH:
+main
+
+COMMIT HASH:
+Pending at log-write time; see final Cursor report.
+
+FILES CHANGED:
+- `src/components/v15r/V15rLayout.tsx`
+- `src/components/v15r/V15rAppBrainTab.tsx`
+- `src/components/v15r/app-brain/appBrainSeedData.ts`
+- `src/components/v15r/app-brain/appBrainPanelShared.tsx`
+- `src/components/v15r/app-brain/AppBrainLiveWorkPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainRulesPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainSkillsPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainDirectoryPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainBacklogPanel.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
+
+PRIVACY CLEANUP:
+- App Brain view replaces operational finance KPI header values with architecture-safe metrics.
+- Hidden in App Brain: Pipeline, Paid, Exposure, SVC Unbilled, Service Net, Daily Target, revenue target progress bar.
+- Shown instead: Architecture Mode, Files Indexed, Imports Tracked, Active Work Panels, Context Registries, Risk Map.
+
+WAVE 01 PANELS:
+- Live Work (active sessions seed)
+- Rules (global + agent rules)
+- Skills (empty v1 registry)
+- Directory (generatedAppBrainDirectory stats)
+- Backlog (task registry domain buckets)
+
+BUILD RESULT:
+PASS — `npm run build`
+
+TYPECHECK RESULT:
+`npm.cmd run typecheck` blocked (shell harness no exit status); `npx tsc --noEmit -p tsconfig.json` PASS
+
+PACKAGE FILES:
+Untouched
+
+NEXT RECOMMENDED PHASE:
+Wave 2 — directory file tree UI, live JSON/registry ingestion, git/session overlays (explicit scope only).
+
+COMPACT HANDOFF FOR NEXT CHAT:
+App Brain architecture mode hides finance KPIs and renders five read-only Control Tower panels from Wave 01 seeds. 3D map, filters, inspector, and manifest panel unchanged. Static/read-only only — no live git or session tracking yet.
