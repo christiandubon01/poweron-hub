@@ -4784,3 +4784,33 @@ Browser reached login gate at `http://localhost:5173`; Home-tab click-through re
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Home repair pass complete on `main`. Pipeline subtitle uses active-project count; agenda linking uses a real project picker modal; agenda cards scroll after 10 task rows. Scope limited to `V15rHome.tsx` plus context files.
+
+---
+
+## Shared Update — Estimate Labor: Multi-Employee Allocation and Profit Modal
+
+* Agent: Claude Code Sonnet 4.5 Medium
+* Branch: main
+* Commit: see git log — "feat(estimate): add multi employee labor allocation"
+* Files changed:
+  - `src/components/v15r/V15rEstimateTab.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+* Typecheck: PASS
+* User-facing behavior changed:
+  - Estimate tab Labor rows: Employee column replaced with a custom multi-select dropdown. Single employee shows clean name display. Multiple employees show "Name +N" summary. Checkboxes for Owner/Me and all teamRoster members.
+  - When 2+ employees selected: "Allocation & Profit ›" button inside dropdown, and a "∑" icon button in the row actions cell, both open the Labor Allocation & Profit modal.
+  - Modal shows: row description + hours, SVG pie chart (no packages), per-employee hour sliders (0..totalHrs, step 0.5), per-employee cost/profit breakdown, total row with net profit. "X of Y hours allocated" indicator. Overhead line appears only when `settings.overheadPct > 0`.
+* Implementation notes:
+  - New optional labor row fields: `employees?: string[]` (backward compat — old rows use `empId`), `employeeAllocations?: {empId: string; hrs: number}[]`
+  - Employee cost rate: `BackupEmployee.costRate` if available, else `settings.opCost` (42.45 default). Fallback note shown in modal.
+  - `estTotals()` formula unchanged — uses `r.hrs * r.rate` for all labor. Multi-employee data is display/analysis only.
+  - Click-outside for dropdown: single `document.addEventListener('click', handler)` when `empDropdownOpenId` is set. Dropdown container uses `stopPropagation`.
+  - IIFE in JSX `{(() => { ... })()}` pattern used for modal to allow temp variables without a separate component.
+* Risks / follow-up:
+  - Allocation slider totals can exceed/sub-total `r.hrs` — user is shown "X of Y allocated" indicator but no auto-enforcement.
+  - Old single-empId rows remain fully compatible. `getRowEmployees(r)` falls back to `[r.empId || 'me']`.
+  - `resolvedEmpId` variable in row renderer scope is now unused (legacy from old `<select>`). Harmless with `@ts-nocheck`.
+* Manual QA status: Typecheck only. Browser QA recommended.
+* Next agent should know:
+  Multi-employee labor allocation is complete on `main`. Employee dropdown now multi-select. Allocation & Profit modal has pie chart, sliders, cost/profit breakdown. All existing labor rows, phase grouping, totals, and collapse state remain unchanged.

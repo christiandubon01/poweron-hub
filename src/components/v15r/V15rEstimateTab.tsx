@@ -47,6 +47,38 @@ function inferLaborPhaseFromDesc(desc: string): string {
   return ''
 }
 
+// Lightweight SVG pie chart — no package needed
+const ALLOC_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#a855f7', '#ef4444', '#14b8a6', '#f43f5e', '#8b5cf6']
+
+function SvgPieChart({ slices, size = 96 }: { slices: { label: string; value: number; color: string }[]; size?: number }) {
+  const total = slices.reduce((s, d) => s + Math.max(0, d.value), 0)
+  const cx = size / 2, cy = size / 2, r = size / 2 - 3
+  if (total === 0) {
+    return (
+      <svg width={size} height={size}>
+        <circle cx={cx} cy={cy} r={r} fill="#1e2130" stroke="rgba(255,255,255,0.08)" strokeWidth="1.5" />
+      </svg>
+    )
+  }
+  let startAngle = -Math.PI / 2
+  const paths: { d: string; color: string }[] = []
+  for (const { value, color } of slices) {
+    if (value <= 0) continue
+    const sweep = (value / total) * 2 * Math.PI
+    const endAngle = startAngle + sweep
+    const x1 = cx + r * Math.cos(startAngle), y1 = cy + r * Math.sin(startAngle)
+    const x2 = cx + r * Math.cos(endAngle), y2 = cy + r * Math.sin(endAngle)
+    const largeArc = sweep > Math.PI ? 1 : 0
+    paths.push({ d: `M${cx},${cy} L${x1.toFixed(2)},${y1.toFixed(2)} A${r},${r} 0 ${largeArc},1 ${x2.toFixed(2)},${y2.toFixed(2)} Z`, color })
+    startAngle = endAngle
+  }
+  return (
+    <svg width={size} height={size}>
+      {paths.map((pt, i) => <path key={i} d={pt.d} fill={pt.color} stroke="#0d1117" strokeWidth="1.5" />)}
+    </svg>
+  )
+}
+
 interface V15rEstimateTabProps {
   projectId: string
   onUpdate?: () => void
@@ -125,6 +157,17 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     const timers = laborPhaseColorTimers.current
     return () => { Object.values(timers).forEach(t => clearTimeout(t)) }
   }, [])
+
+  // ── Multi-employee dropdown + allocation modal state ──────────────────────
+  const [allocationModalRowId, setAllocationModalRowId] = useState<string | null>(null)
+  const [empDropdownOpenId, setEmpDropdownOpenId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!empDropdownOpenId) return
+    const handler = () => setEmpDropdownOpenId(null)
+    document.addEventListener('click', handler)
+    return () => document.removeEventListener('click', handler)
+  }, [empDropdownOpenId])
 
   // Auto-resize labor description textareas when rows change (handles existing long text)
   useEffect(() => {
@@ -253,6 +296,8 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       else if (field === 'desc') row.desc = String(value)
       else if (field === 'empId') row.empId = String(value)
       else if (field === 'phase') row.phase = String(value)
+      else if (field === 'employees') { row.employees = value; row.empId = (value as string[])[0] || 'me' }
+      else if (field === 'employeeAllocations') row.employeeAllocations = value
     }
     saveBackupDataAndSync(backup, 'projects')
     forceUpdate()
@@ -1148,6 +1193,53 @@ Return ONLY valid JSON, no other text.`
     }
   }
 
+  // ── Multi-employee helpers ────────────────────────────────────────────────
+  const getEmployeeCostRate = (empId: string): number => {
+    if (!empId || empId === 'me') return num(backup.settings?.opCost || 42.45)
+    const emp = (backup.employees || []).find((e: any) => e.id === empId)
+    return emp?.costRate ? num(emp.costRate) : num(backup.settings?.opCost || 42.45)
+  }
+  const getEmployeeDisplayName = (empId: string): string => {
+    if (!empId || empId === 'me') return 'Owner / Me'
+    return (backup.employees || []).find((e: any) => e.id === empId)?.name || empId
+  }
+  const getRowEmployees = (r: any): string[] => {
+    if (r.employees?.length) return r.employees as string[]
+    return [r.empId || 'me']
+  }
+  const getRowAllocations = (r: any): { empId: string; hrs: number }[] => {
+    const emps = getRowEmployees(r)
+    const total = num(r.hrs)
+    if (r.employeeAllocations?.length) {
+      return emps.map((id: string) => ({
+        empId: id,
+        hrs: (r.employeeAllocations as { empId: string; hrs: number }[]).find(a => a.empId === id)?.hrs ?? (total / emps.length),
+      }))
+    }
+    const equalShare = emps.length > 0 ? total / emps.length : 0
+    return emps.map((id: string) => ({ empId: id, hrs: equalShare }))
+  }
+  const updateRowMultiEmployee = (rowId: string, newEmpIds: string[]) => {
+    if (newEmpIds.length === 0) return
+    pushState()
+    const row = (p.laborRows || []).find((r: any) => r.id === rowId)
+    if (!row) return
+    const equal = num(row.hrs) / newEmpIds.length
+    row.employees = newEmpIds
+    row.empId = newEmpIds[0] || 'me'
+    row.employeeAllocations = newEmpIds.map((id: string) => ({ empId: id, hrs: equal }))
+    saveBackupDataAndSync(backup, 'projects')
+    forceUpdate()
+  }
+  const updateRowAllocation = (rowId: string, empId: string, newHrs: number) => {
+    const row = (p.laborRows || []).find((r: any) => r.id === rowId)
+    if (!row) return
+    const allocs = getRowAllocations(row)
+    row.employeeAllocations = allocs.map((a: { empId: string; hrs: number }) => a.empId === empId ? { ...a, hrs: newHrs } : a)
+    saveBackupDataAndSync(backup, 'projects')
+    forceUpdate()
+  }
+
   // Build grouped labor rows
   const laborGrouped: Record<string, any[]> = {}
   ;[...LABOR_PHASES, 'Unassigned'].forEach(ph => { laborGrouped[ph] = [] })
@@ -1818,22 +1910,85 @@ Return ONLY valid JSON, no other text.`
                                       }}
                                     />
                                   </td>
-                                  <td style={{ padding: '6px 8px', fontSize: '12px' }}>
-                                    <select
-                                      value={resolvedEmpId}
-                                      onChange={e => editLaborRow(r.id, 'empId', e.target.value)}
-                                      title={teamRoster.length === 0 ? 'Add crew in Team settings' : undefined}
-                                      style={{
-                                        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
-                                        color: 'var(--t2)', fontSize: '12px', borderRadius: '4px',
-                                        padding: '2px 4px', width: '100%', cursor: 'pointer',
-                                      }}
-                                    >
-                                      <option value="me">Owner / Me</option>
-                                      {teamRoster.map((e: any) => (
-                                        <option key={e.id} value={e.id}>{e.name}</option>
-                                      ))}
-                                    </select>
+                                  <td style={{ padding: '6px 8px', fontSize: '12px', position: 'relative' }}>
+                                    {/* Multi-employee selector */}
+                                    <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+                                      <button
+                                        type="button"
+                                        onClick={e => { e.stopPropagation(); setEmpDropdownOpenId(empDropdownOpenId === r.id ? null : r.id) }}
+                                        style={{
+                                          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+                                          color: 'var(--t2)', fontSize: '12px', borderRadius: '4px',
+                                          padding: '3px 6px', width: '100%', cursor: 'pointer',
+                                          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px',
+                                        }}
+                                      >
+                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, textAlign: 'left' }}>
+                                          {(() => {
+                                            const emps = getRowEmployees(r)
+                                            if (emps.length === 1) return getEmployeeDisplayName(emps[0])
+                                            return `${getEmployeeDisplayName(emps[0])} +${emps.length - 1}`
+                                          })()}
+                                        </span>
+                                        <span style={{ fontSize: '9px', opacity: 0.5, flexShrink: 0 }}>▾</span>
+                                      </button>
+                                      {empDropdownOpenId === r.id && (
+                                        <div
+                                          style={{
+                                            position: 'absolute', top: '100%', left: 0, zIndex: 300,
+                                            backgroundColor: '#1a1f2e', border: '1px solid rgba(255,255,255,0.12)',
+                                            borderRadius: '6px', padding: '4px', minWidth: '160px',
+                                            boxShadow: '0 8px 24px rgba(0,0,0,0.5)', marginTop: '2px',
+                                          }}
+                                          onClick={e => e.stopPropagation()}
+                                        >
+                                          {[{ id: 'me', name: 'Owner / Me' }, ...teamRoster].map((emp: any) => {
+                                            const rowEmps = getRowEmployees(r)
+                                            const checked = rowEmps.includes(emp.id)
+                                            return (
+                                              <label
+                                                key={emp.id}
+                                                style={{
+                                                  display: 'flex', alignItems: 'center', gap: '6px',
+                                                  padding: '5px 8px', cursor: 'pointer', borderRadius: '3px',
+                                                  color: 'var(--t2)', fontSize: '12px',
+                                                }}
+                                              >
+                                                <input
+                                                  type="checkbox"
+                                                  checked={checked}
+                                                  onChange={e => {
+                                                    e.stopPropagation()
+                                                    const newEmps = e.target.checked
+                                                      ? [...rowEmps, emp.id]
+                                                      : rowEmps.filter((id: string) => id !== emp.id)
+                                                    if (newEmps.length === 0) return
+                                                    updateRowMultiEmployee(r.id, newEmps)
+                                                  }}
+                                                  style={{ accentColor: '#10b981', cursor: 'pointer', flexShrink: 0 }}
+                                                />
+                                                {emp.name}
+                                              </label>
+                                            )
+                                          })}
+                                          {getRowEmployees(r).length > 1 && (
+                                            <button
+                                              type="button"
+                                              onClick={() => { setEmpDropdownOpenId(null); setAllocationModalRowId(r.id) }}
+                                              style={{
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+                                                width: '100%', padding: '5px 8px', marginTop: '4px',
+                                                background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.2)',
+                                                borderRadius: '3px', color: '#10b981', fontSize: '11px',
+                                                fontWeight: '600', cursor: 'pointer',
+                                              }}
+                                            >
+                                              Allocation & Profit ›
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
                                   </td>
                                   <td style={{ padding: '6px 8px', fontSize: '12px' }}>
                                     <select
@@ -1873,10 +2028,20 @@ Return ONLY valid JSON, no other text.`
                                     {fmt((r.hrs || 0) * (r.rate || 0))}
                                   </td>
                                   <td style={{ padding: '6px 8px', textAlign: 'center' }}>
-                                    <button
-                                      onClick={() => delLaborRow(r.id)}
-                                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '16px', padding: '0' }}
-                                    >×</button>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                                      {getRowEmployees(r).length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setAllocationModalRowId(r.id)}
+                                          title="Labor allocation & profit"
+                                          style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.2)', color: '#10b981', cursor: 'pointer', fontSize: '11px', padding: '1px 5px', borderRadius: '3px', fontWeight: '600', lineHeight: '1.4' }}
+                                        >∑</button>
+                                      )}
+                                      <button
+                                        onClick={() => delLaborRow(r.id)}
+                                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '16px', padding: '0' }}
+                                      >×</button>
+                                    </div>
                                   </td>
                                 </tr>
                               )
@@ -2795,6 +2960,165 @@ Return ONLY valid JSON, no other text.`
         </div>
       </div>
       )}
+
+      {/* ── Labor Allocation & Profit Modal ──────────────────────────────────── */}
+      {allocationModalRowId != null && (() => {
+        const row = (p.laborRows || []).find((r: any) => r.id === allocationModalRowId)
+        if (!row) return null
+        const rowEmps = getRowEmployees(row)
+        const allocs = getRowAllocations(row)
+        const totalHrs = num(row.hrs)
+        const rowRate = num(row.rate)
+        const overheadPct = num(backup.settings?.overheadPct || 0)
+        const pieSlices = allocs.map((a: { empId: string; hrs: number }, i: number) => ({
+          label: getEmployeeDisplayName(a.empId),
+          value: a.hrs,
+          color: ALLOC_COLORS[i % ALLOC_COLORS.length],
+        }))
+        const totalAllocated = allocs.reduce((s: number, a: { empId: string; hrs: number }) => s + a.hrs, 0)
+        const totalLaborCost = allocs.reduce((s: number, a: { empId: string; hrs: number }) => s + a.hrs * getEmployeeCostRate(a.empId), 0)
+        const totalRevenue = totalHrs * rowRate
+        const totalOHCost = totalLaborCost * overheadPct / 100
+        const totalProfit = totalRevenue - totalLaborCost - totalOHCost
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.76)', backdropFilter: 'blur(4px)' }}
+            onClick={() => setAllocationModalRowId(null)}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{
+                backgroundColor: '#0f1117', border: '1px solid rgba(16,185,129,0.28)',
+                borderRadius: '12px', padding: '24px', width: '90%', maxWidth: '540px',
+                maxHeight: '90vh', overflowY: 'auto',
+                boxShadow: '0 20px 52px rgba(0,0,0,0.55), 0 0 40px rgba(16,185,129,0.06)',
+              }}
+            >
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '18px' }}>
+                <div>
+                  <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#10b981', marginBottom: '4px' }}>Labor Allocation & Profit</div>
+                  <div style={{ color: 'var(--t1)', fontWeight: '600', fontSize: '14px', maxWidth: '380px' }}>{row.desc || '(No description)'}</div>
+                  <div style={{ fontSize: '12px', color: 'var(--t3)', marginTop: '2px' }}>
+                    {totalHrs}h total · {rowEmps.length} employee{rowEmps.length !== 1 ? 's' : ''} · ${rowRate}/h bill rate
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAllocationModalRowId(null)}
+                  style={{ background: 'none', border: 'none', color: 'var(--t3)', cursor: 'pointer', fontSize: '22px', padding: '0', lineHeight: 1, flexShrink: 0 }}
+                >×</button>
+              </div>
+
+              {/* Pie chart + legend */}
+              <div style={{ display: 'flex', gap: '16px', marginBottom: '20px', alignItems: 'center' }}>
+                <div style={{ flexShrink: 0 }}>
+                  <SvgPieChart slices={pieSlices} size={96} />
+                </div>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  {allocs.map((a: { empId: string; hrs: number }, i: number) => (
+                    <div key={a.empId} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--t2)' }}>
+                      <div style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: ALLOC_COLORS[i % ALLOC_COLORS.length], flexShrink: 0 }} />
+                      <span style={{ flex: 1 }}>{getEmployeeDisplayName(a.empId)}</span>
+                      <span style={{ fontFamily: 'monospace', color: '#10b981', fontWeight: '600' }}>
+                        {a.hrs % 1 === 0 ? a.hrs : a.hrs.toFixed(1)}h
+                      </span>
+                    </div>
+                  ))}
+                  <div style={{ fontSize: '11px', color: totalAllocated === totalHrs ? '#10b981' : '#f59e0b', marginTop: '4px', fontWeight: '600' }}>
+                    {totalAllocated.toFixed(1)} / {totalHrs}h allocated
+                  </div>
+                </div>
+              </div>
+
+              {/* Sliders */}
+              <div style={{ marginBottom: '20px', backgroundColor: '#1a1f2e', borderRadius: '8px', padding: '14px' }}>
+                <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--t3)', marginBottom: '12px' }}>
+                  Adjust Hours per Employee
+                </div>
+                {allocs.map((a: { empId: string; hrs: number }, i: number) => (
+                  <div key={a.empId} style={{ marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px', fontSize: '12px' }}>
+                      <span style={{ color: 'var(--t2)', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: ALLOC_COLORS[i % ALLOC_COLORS.length], display: 'inline-block' }} />
+                        {getEmployeeDisplayName(a.empId)}
+                      </span>
+                      <span style={{ fontFamily: 'monospace', color: '#10b981', fontWeight: '600' }}>
+                        {a.hrs % 1 === 0 ? a.hrs : a.hrs.toFixed(1)}h
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={totalHrs}
+                      step={0.5}
+                      value={a.hrs}
+                      onChange={e => updateRowAllocation(row.id, a.empId, num(e.target.value))}
+                      style={{ width: '100%', accentColor: ALLOC_COLORS[i % ALLOC_COLORS.length], cursor: 'pointer' }}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* Cost / Profit breakdown */}
+              <div style={{ backgroundColor: '#1a1f2e', borderRadius: '8px', padding: '14px', fontSize: '12px' }}>
+                <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--t3)', marginBottom: '12px' }}>
+                  Cost & Profit Breakdown
+                </div>
+                {allocs.map((a: { empId: string; hrs: number }) => {
+                  const costRate = getEmployeeCostRate(a.empId)
+                  const empCost = a.hrs * costRate
+                  const empOH = empCost * overheadPct / 100
+                  const empRev = a.hrs * rowRate
+                  const empProfit = empRev - empCost - empOH
+                  return (
+                    <div key={a.empId} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '10px', marginBottom: '10px' }}>
+                      <div style={{ color: 'var(--t2)', fontWeight: '600', marginBottom: '6px', fontSize: '12px' }}>
+                        {getEmployeeDisplayName(a.empId)} — {a.hrs % 1 === 0 ? a.hrs : a.hrs.toFixed(1)}h
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '3px 16px' }}>
+                        <span style={{ color: 'var(--t3)' }}>Revenue ({a.hrs.toFixed(1)}h × ${rowRate}/h)</span>
+                        <span style={{ fontFamily: 'monospace', color: '#6ee7b7', textAlign: 'right' }}>{fmt(empRev)}</span>
+                        <span style={{ color: 'var(--t3)' }}>Labor cost (@ ${costRate.toFixed(2)}/h)</span>
+                        <span style={{ fontFamily: 'monospace', color: '#93c5fd', textAlign: 'right' }}>−{fmt(empCost)}</span>
+                        {overheadPct > 0 && <>
+                          <span style={{ color: 'var(--t3)' }}>Overhead ({overheadPct}%)</span>
+                          <span style={{ fontFamily: 'monospace', color: '#fcd34d', textAlign: 'right' }}>−{fmt(empOH)}</span>
+                        </>}
+                        <span style={{ color: empProfit >= 0 ? '#10b981' : '#ef4444', fontWeight: '600' }}>Profit</span>
+                        <span style={{ fontFamily: 'monospace', color: empProfit >= 0 ? '#10b981' : '#ef4444', fontWeight: '700', textAlign: 'right' }}>{fmt(empProfit)}</span>
+                      </div>
+                    </div>
+                  )
+                })}
+                {/* Totals */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '4px 16px', paddingTop: '2px' }}>
+                  <span style={{ color: 'var(--t2)', fontWeight: '600' }}>Total Revenue</span>
+                  <span style={{ fontFamily: 'monospace', color: '#6ee7b7', fontWeight: '700', textAlign: 'right' }}>{fmt(totalRevenue)}</span>
+                  <span style={{ color: 'var(--t2)', fontWeight: '600' }}>Total Labor Cost</span>
+                  <span style={{ fontFamily: 'monospace', color: '#93c5fd', fontWeight: '700', textAlign: 'right' }}>−{fmt(totalLaborCost)}</span>
+                  {overheadPct > 0 && <>
+                    <span style={{ color: 'var(--t2)', fontWeight: '600' }}>Total Overhead</span>
+                    <span style={{ fontFamily: 'monospace', color: '#fcd34d', fontWeight: '700', textAlign: 'right' }}>−{fmt(totalOHCost)}</span>
+                  </>}
+                  <span style={{ color: totalProfit >= 0 ? '#10b981' : '#ef4444', fontWeight: '700', fontSize: '13px' }}>Net Profit</span>
+                  <span style={{ fontFamily: 'monospace', color: totalProfit >= 0 ? '#10b981' : '#ef4444', fontWeight: '800', fontSize: '14px', textAlign: 'right' }}>{fmt(totalProfit)}</span>
+                </div>
+                {!backup.settings?.overheadPct && (
+                  <div style={{ marginTop: '10px', fontSize: '10px', color: 'var(--t3)', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '8px' }}>
+                    💡 Set an Overhead % in Settings to include overhead in this breakdown.
+                  </div>
+                )}
+                {(backup.employees || []).filter((e: any) => rowEmps.includes(e.id) && !e.costRate).length > 0 && (
+                  <div style={{ marginTop: '6px', fontSize: '10px', color: 'var(--t3)' }}>
+                    ℹ️ Employees without a cost rate use the Settings operating cost (${num(backup.settings?.opCost || 42.45).toFixed(2)}/h) as fallback.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       <AskAIPanel
         panelName="Estimate"

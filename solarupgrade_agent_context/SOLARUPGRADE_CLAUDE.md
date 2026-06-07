@@ -2309,3 +2309,53 @@ NO — ready for screenshot QA.
   - `p` is defined AFTER conditional returns in EstimateTab (line 159). Using `p?.laborRows` as a useEffect dep would cause a TDZ ReferenceError. Using `backup` (defined at line 58, before all hooks) as the dep is the correct pattern for this component.
 * Compact handoff for next agent/chat:
   Inner Project Batch 3 complete on `main`. Progress tab phase headers now show total hours per phase (e.g. "3 tasks · 12h"). Estimate labor phase headers now show a hours pill (e.g. "12h") next to the row count pill. Existing labor descriptions auto-resize to full height on render. Typecheck passes. Scoped files + context files committed.
+
+---
+
+## Claude Report — Estimate Labor: Multi-Employee Allocation and Profit Modal
+
+* Task completed: Yes — all 6 items implemented
+* Files changed: `src/components/v15r/V15rEstimateTab.tsx` only (+ context files)
+* Commit hash: (see git log — "feat(estimate): add multi employee labor allocation")
+* Typecheck result: PASS (clean, no errors)
+* Root cause: Labor rows previously had a single `empId` field. Multi-employee assignment required new optional fields (`employees`, `employeeAllocations`) on the row, a custom multi-select dropdown, and a profit/allocation modal.
+* What changed:
+  1. **SvgPieChart** — module-level pure SVG component, no packages. `ALLOC_COLORS` array of 8 colors. Renders arc paths from 12 o'clock, handles zero-total case.
+  2. **State** — `allocationModalRowId: string|null`, `empDropdownOpenId: string|null`. Click-outside `useEffect` closes dropdown when user clicks elsewhere.
+  3. **`editLaborRow`** — added `employees` (string[], also sets `empId` to first) and `employeeAllocations` ({empId, hrs}[]) field cases.
+  4. **Multi-employee helpers** — `getEmployeeCostRate(empId)`, `getEmployeeDisplayName(empId)`, `getRowEmployees(r)`, `getRowAllocations(r)`, `updateRowMultiEmployee(rowId, newEmpIds)`, `updateRowAllocation(rowId, empId, newHrs)`.
+  5. **Employee cell** — replaced single `<select>` with custom button-triggered dropdown. Shows checkboxes for Owner/Me + teamRoster. Summary display: "Owner / Me" (single) or "Owner / Me +2" (multi). "Allocation & Profit ›" button in dropdown when multi. Dropdown closes on outside click.
+  6. **∑ button** — small green "∑" button in delete cell when multiple employees; opens modal directly.
+  7. **Allocation modal** — fixed overlay with pie chart, per-employee hour sliders, per-employee cost/profit breakdown, totals row. Shows "X of Y hours allocated" status. Closes on backdrop click or × button.
+* Double verification against requested behavior:
+  - [x] Single employee rows still work — `getRowEmployees` falls back to `[r.empId || 'me']`; existing rows unchanged
+  - [x] Multi-employee checkbox dropdown — ✓ with checkboxes for Owner/Me + all teamRoster members
+  - [x] Multiple selected employees persist — stored as `r.employees[]` + `r.employeeAllocations[]`
+  - [x] Modal opens — via "Allocation & Profit ›" in dropdown, OR "∑" button in row actions
+  - [x] Slider allocation works — per-employee `<input type="range">` 0..totalHrs step 0.5
+  - [x] Pie chart renders — SVG with ALLOC_COLORS, arc paths
+  - [x] Total hours display — shown in modal header and "X of Y hours allocated" line
+  - [x] Labor cost uses costRate from BackupEmployee — fallback to `settings.opCost || 42.45`
+  - [x] Overhead uses `settings.overheadPct` — shown only when > 0; tip shown when absent
+  - [x] Projected profit = revenue − laborCost − overheadCost — correct formula
+  - [x] Labor totals did not change — `estTotals()` still uses `r.hrs * r.rate`; untouched
+  - [x] Phase grouping/collapse still works — no changes to `classifyLaborRow` / phase logic
+  - [x] No unrelated files touched
+* What was learned:
+  - `BackupEmployee` has `costRate` field — this is the per-employee labor cost rate. Use this for allocation modal cost calculations.
+  - `backup.settings.overheadPct` is optional. When not set, overhead = 0 in the modal. A user tip is shown.
+  - The IIFE pattern `{(() => { ...; return <JSX /> })()}` in React JSX is valid and clean for complex conditional rendering that needs temp variables.
+  - Click-outside for custom dropdown: single `document.addEventListener('click', handler)` per open dropdown, guarded by `if (!empDropdownOpenId) return`, with `onClick={e => e.stopPropagation()}` on the dropdown container.
+* Learned skills / reusable patterns:
+  - Custom multi-select dropdown: button trigger + absolute-position panel + checkboxes + click-outside via document listener
+  - SVG pie chart without packages: `ALLOC_COLORS`, arc paths from `cx,cy`, `M cx cy L x1 y1 A r r 0 largeArc 1 x2 y2 Z`
+  - Labor profit modal pattern: IIFE in JSX with pre-computed per-employee breakdowns
+* Bugs / risks:
+  - Allocation sliders are independent — total allocated can exceed or be less than `r.hrs`. This is intentional (flexible), but the modal shows "X of Y hours allocated" so user is aware.
+  - If an employee is removed from teamRoster but still in `r.employees`, `getEmployeeDisplayName` returns the raw ID string as fallback. Safe but not pretty.
+  - The existing `resolvedEmpId` variable in the row renderer scope is now unused (legacy from old `<select>`). With `@ts-nocheck` this is harmless; no TypeScript error.
+* Manual QA performed: Static code review and typecheck only. Browser QA recommended.
+* Next recommended action:
+  Browser QA: Open Estimate tab, add/select 2+ employees on a labor row, confirm dropdown shows checkboxes, open modal, move sliders, check pie chart and profit update. Refresh page, confirm allocations persist. Confirm labor totals unchanged.
+* Compact handoff for next agent/chat:
+  Multi-employee labor allocation complete on `main`. Estimate tab Employee column now shows a custom checkbox dropdown (single or multi), "∑" action button, and a full Allocation & Profit modal with SVG pie chart and per-employee sliders. New row fields: `employees?: string[]`, `employeeAllocations?: {empId,hrs}[]`. Backward compatible — old rows without these fields work as before. Employee cost uses `BackupEmployee.costRate` or `settings.opCost` fallback. Overhead from `settings.overheadPct`. Typecheck passes.
