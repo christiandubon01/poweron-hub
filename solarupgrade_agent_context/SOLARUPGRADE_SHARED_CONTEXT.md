@@ -4699,3 +4699,19 @@ App Brain Wave 2 is a read-only Directory Brain MVP. The regenerated directory m
 * Risks / follow-up: Row 3 (5-col) may be cramped on very narrow mobile; acceptable for current use. Phase 2 (attachments) and Phase 3 (email/signature) remain deferred.
 * Manual QA status: Not yet performed. Ready for user QA.
 * Next agent should know: KPI dashboard is now fully rendered. Form focus fix, manual totalCost, and project card integration are all intact and unchanged.
+
+---
+
+## Shared Update - Home Tab KPI Polish - relabel Total Pipeline composition [2026-06-06]
+
+* Agent: Codex
+* Branch: main
+* Commit: Pending at log-write time; see final Codex report.
+* Files changed: src/components/v15r/V15rHome.tsx, SOLARUPGRADE_SHARED_CONTEXT.md, SOLARUPGRADE_CODEX.md
+* Typecheck: PASS - `npm.cmd run typecheck`
+* User-facing behavior changed: Home Total Pipeline keeps the existing combined dollar total, but the subtitle now shows the composition as active projects plus open service calls instead of labeling the combined count as only projects.
+* Root cause: The Home KPI subtitle used one project-count label for a pipeline value that also includes open/unpaid service-call value, so the visible count could imply all pipeline items were projects.
+* Implementation notes: `V15rHome.tsx` now derives `pipelineProjectCount` from active, non-archived projects in the active bucket and derives `openServiceCallCount` from active service calls with `getServiceBalanceDue(l) > 0.5`. The KPI subtitle renders a compact string like `4 active projects + 1 open service call`.
+* Risks / follow-up: In-app browser attachment failed twice in this session, so authenticated visual QA remains recommended. Localhost responded with HTTP 200 and the render path now emits the corrected wording.
+* Manual QA status: Static render-path verification plus localhost HTTP 200 check; authenticated in-browser Home verification blocked by browser startup failure.
+* Next agent should know: Financial pipeline math was intentionally untouched. Only the visible Home KPI composition label changed.

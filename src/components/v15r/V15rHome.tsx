@@ -51,6 +51,7 @@ import {
   getAgendaProjectName,
   resolveProjectBucket,
   isArchivedRecord,
+  isActiveServiceCall,
   isActiveProject,
   num,
   buildProjectLogRollup,
@@ -496,7 +497,11 @@ export default function V15rHome() {
     .filter(p => isActiveProject(p) && p.name && p.name !== 'undefined')
     .slice()
     .sort((a, b) => String(a.name).localeCompare(String(b.name)))
-  const pipelineProjectCount = Number(kpis.activeProjects) || 0
+  const pipelineProjectCount = projects.filter(p => isActiveProject(p) && resolveProjectBucket(p) === 'active').length
+  const openServiceCallCount = serviceLogs
+    .filter((l: any) => isActiveServiceCall(l) && getServiceBalanceDue(l) > 0.5)
+    .length
+  const pipelineCompositionLabel = `${pipelineProjectCount} active project${pipelineProjectCount === 1 ? '' : 's'} + ${openServiceCallCount} open service call${openServiceCallCount === 1 ? '' : 's'}`
 
   // ── Agenda CRUD handlers ─────────────────────────────────────────────────────
 
@@ -783,7 +788,7 @@ export default function V15rHome() {
       {/* ── KPI CARDS – PREMIUM ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { accent: '#10b981', glow: 'rgba(16,185,129,0.12)', lbl: 'Total Pipeline', lblShort: 'Pipeline', val: fmtK(kpis.pipeline), sub: pipelineProjectCount + (pipelineProjectCount === 1 ? ' project' : ' projects'), icon: '◈' },
+          { accent: '#10b981', glow: 'rgba(16,185,129,0.12)', lbl: 'Total Pipeline', lblShort: 'Pipeline', val: fmtK(kpis.pipeline), sub: pipelineCompositionLabel, icon: '◈' },
           { accent: '#3b82f6', glow: 'rgba(59,130,246,0.12)', lbl: 'Cash Received', lblShort: 'Cash Rcvd', val: fmtK(kpis.paid), sub: 'Accumulated', icon: '⬡' },
           { accent: '#ef4444', glow: 'rgba(239,68,68,0.12)', lbl: 'Open RFIs', lblShort: 'RFIs', val: String(kpis.openRfis), sub: kpis.openRfis === 0 ? 'All resolved' : 'Need resolution', icon: '◇' },
           { accent: '#a78bfa', glow: 'rgba(167,139,250,0.12)', lbl: 'Hours Logged', lblShort: 'Hrs Log', val: kpis.totalHours.toFixed(1) + 'h', sub: logs.length + (logs.length === 1 ? ' entry' : ' entries'), icon: '○' },

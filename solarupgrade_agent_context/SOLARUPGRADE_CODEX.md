@@ -1620,3 +1620,22 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
 - Manual QA performed: Static source review plus generator/build/typecheck validation. No authenticated browser click-through was performed.
 - Next recommended action: Manually open App Brain, search/filter Directory Brain, select several files, and verify File Profile updates without disturbing the 3D map or Wave 1 panels. Keep future Context Hub/work manifest work separate from this Wave 2 patch.
 - Compact handoff for next agent/chat: App Brain Wave 2 is a read-only Directory Brain/File Profile MVP. The generator now emits deterministic file metadata; Directory filters/selects files; File Profile displays metadata plus static seed links and safety placeholders. No package files changed; no live git/session tracking, Context Hub, watch mode, or operational financial KPI exposure was added.
+
+---
+
+## Codex Report - Home Tab KPI Polish - relabel Total Pipeline card to separate active projects and open service calls
+
+- Task completed: Relabeled the Home Total Pipeline KPI subtitle so it separates active projects from open service calls while keeping the existing dollar total unchanged.
+- Files changed:
+  - `src/components/v15r/V15rHome.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final chat report.
+- Typecheck result: PASS - `npm.cmd run typecheck`
+- Root cause: The Total Pipeline KPI displayed one project-only count label for a combined pipeline value that includes both active project value and open/unpaid service-call value.
+- What changed: `V15rHome.tsx` now derives the project side from active, non-archived projects in the active bucket, derives the service side from active service calls with a balance due over the existing dust threshold, and renders the subtitle as a compact composition line like `4 active projects + 1 open service call`.
+- What was learned: Home already had the service balance helper needed for this label; the fix did not need service math, Supabase, backup schema, or KPI total changes.
+- Bugs / risks: Authenticated visual QA could not be completed because the in-app browser startup failed twice before attaching. Localhost responded with HTTP 200, and the source render path now emits the corrected composition label.
+- Manual QA performed: Static render-path verification in `V15rHome.tsx`; confirmed `npm.cmd run typecheck` passes; confirmed `http://localhost:5173` returns HTTP 200. Authenticated Home screen browser verification remains blocked by browser tool startup.
+- Next recommended action: On the live authenticated localhost Home tab, confirm the Total Pipeline card still shows the same combined dollar total and the subtitle reads `4 active projects + 1 open service call` or the matching live-data equivalent.
+- Compact handoff for next agent/chat: Home KPI polish is scoped to `V15rHome.tsx`. Total Pipeline total is unchanged; subtitle now labels the mixed composition as active projects plus open service calls. Typecheck passes. Context files updated. Browser QA needs one manual authenticated pass because the in-app browser could not attach in this session.
