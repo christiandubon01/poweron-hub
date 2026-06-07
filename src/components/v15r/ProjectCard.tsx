@@ -6,6 +6,7 @@
  * data logic, and scanner helpers.
  */
 
+import { useRef } from 'react'
 import { Home, Building2, Wrench, Sun, Hammer, Store, FolderKanban, Edit3, Trash2, ArrowRight, RotateCcw, Eye, Archive } from 'lucide-react'
 import {
   health,
@@ -31,6 +32,20 @@ export const PROJECT_TYPE_STYLE: Record<string, { icon: any; gradient: string; b
 export const PROJECT_TYPE_DEFAULT_STYLE = { icon: FolderKanban, gradient: 'linear-gradient(135deg,#0f172a 0%,#020617 60%,rgba(15,20,35,0.6) 100%)', border: 'rgba(148,163,184,0.18)', glow: 'rgba(148,163,184,0.06)', iconBg: 'rgba(148,163,184,0.10)', iconColor: '#94a3b8', barGradient: 'linear-gradient(90deg,rgba(52,211,153,0.6),rgba(52,211,153,1))' }
 
 export const PROJ_GLARE_MS = 5200
+const RESIDENTIAL_GLARE_OFFSET_MS = 420
+
+export function getProjectCardGlareDelay(p: Pick<BackupProject, 'id' | 'type'>): string {
+  const syncedPhase = Date.now() % PROJ_GLARE_MS
+  const type = String(p?.type || '').toLowerCase().trim()
+  if (type === 'commercial' || type === 'commercial ti' || type === 'commercial it') {
+    return `-${syncedPhase}ms`
+  }
+  if (type === 'residential') {
+    return `-${(syncedPhase + RESIDENTIAL_GLARE_OFFSET_MS) % PROJ_GLARE_MS}ms`
+  }
+  const idPhase = (parseInt(String(p?.id || '').slice(-4), 36) || 0) % PROJ_GLARE_MS
+  return `-${idPhase}ms`
+}
 
 function fmtDate(dateStr?: string): string {
   if (!dateStr) return ''
@@ -123,6 +138,7 @@ export function ProjectCard({
 
   const ts = PROJECT_TYPE_STYLE[p.type] || PROJECT_TYPE_DEFAULT_STYLE
   const TypeIcon = ts.icon
+  const glareDelayRef = useRef(getProjectCardGlareDelay(p))
 
   const hasActions = !!(onEdit || onDelete || onMoveStatus || onMarkLost || onArchive || onSelect)
 
@@ -140,7 +156,7 @@ export function ProjectCard({
       <span
         aria-hidden="true"
         className="proj-card-glare pointer-events-none absolute inset-0 overflow-hidden rounded-2xl"
-        style={{ animationDelay: `-${(parseInt(p.id.slice(-4), 36) || 0) % PROJ_GLARE_MS}ms` }}
+        style={{ animationDelay: glareDelayRef.current }}
       />
 
       <div className="relative z-10 p-4">

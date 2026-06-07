@@ -4715,3 +4715,19 @@ App Brain Wave 2 is a read-only Directory Brain MVP. The regenerated directory m
 * Risks / follow-up: In-app browser attachment failed twice in this session, so authenticated visual QA remains recommended. Localhost responded with HTTP 200 and the render path now emits the corrected wording.
 * Manual QA status: Static render-path verification plus localhost HTTP 200 check; authenticated in-browser Home verification blocked by browser startup failure.
 * Next agent should know: Financial pipeline math was intentionally untouched. Only the visible Home KPI composition label changed.
+
+---
+
+## Shared Update - Home Tab Polish - alerts, card motion, and Nexus collapse [2026-06-06]
+
+* Agent: Codex
+* Branch: main
+* Commit: Pending at log-write time; see final Codex report.
+* Files changed: src/components/v15r/V15rHome.tsx, src/components/v15r/ProjectCard.tsx, SOLARUPGRADE_SHARED_CONTEXT.md, SOLARUPGRADE_CODEX.md
+* Typecheck: PASS - `npm.cmd run typecheck`
+* User-facing behavior changed: Home Nexus Alerts are generated from active/non-archived projects only, alerts can be deleted, the full Nexus Alerts section can be collapsed/expanded, and Home project cards now use synchronized commercial/commercial-TI glare timing with a slight residential offset.
+* Root cause: Home generated AI alerts from raw `backup.projects`, generated AI alerts had edit/Ask AI actions but no persistent delete path, the alert section had no section-level collapse state, and shared Home cards used ID-based glare delays instead of the desired clock-cadence grouping.
+* Implementation notes: AI alert deletes create hidden dismissed custom-alert markers keyed by linked project so generated alerts stay removed. Visible custom alerts linked to archived projects are filtered out. Custom alert project pickers use the active project list. `ProjectCard.tsx` now exposes `getProjectCardGlareDelay()` and captures delay once per mount with `useRef`.
+* Risks / follow-up: In-app browser attachment failed again in this session, so authenticated visual QA remains recommended. Localhost responded with HTTP 200, typecheck passed, and static render-path review verified the scoped behavior.
+* Manual QA status: Static render-path verification, `git diff --check`, `npm.cmd run typecheck`, and localhost HTTP 200. Authenticated Home click-through blocked by browser startup failure.
+* Next agent should know: Home pipeline KPI, agenda linking/scroll, calendar, Graph Dashboard, Field Logs, Leads, and project financial logic were intentionally untouched.

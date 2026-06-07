@@ -217,6 +217,7 @@ const AGENDA_TASK_ROW_GAP_PX = 6
 const AGENDA_TASK_LIST_MAX_HEIGHT =
   AGENDA_VISIBLE_TASK_ROWS * AGENDA_TASK_ROW_HEIGHT_PX +
   (AGENDA_VISIBLE_TASK_ROWS - 1) * AGENDA_TASK_ROW_GAP_PX
+const HOME_NEXUS_ALERTS_COLLAPSED_KEY = 'poweron:v15r:homeNexusAlertsCollapsed'
 
 function getHomeCalendarMaxHeight(): number {
   return HOME_CALENDAR_MAX_HEIGHT
@@ -280,6 +281,10 @@ export default function V15rHome() {
   const [addingAlert, setAddingAlert] = useState(false)
   const [editingAIAlertId, setEditingAIAlertId] = useState<string | null>(null)
   const [editAIAlertText, setEditAIAlertText] = useState('')
+  const [nexusAlertsCollapsed, setNexusAlertsCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return localStorage.getItem(HOME_NEXUS_ALERTS_COLLAPSED_KEY) === 'true'
+  })
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
 
   const persistHomeCalendarView = useCallback((view: { collapsed: boolean; height: number; locked: boolean; lockedStartHour: number }) => {
@@ -448,8 +453,9 @@ export default function V15rHome() {
   const serviceLogs: any[] = Array.isArray(backup.serviceLogs) ? backup.serviceLogs : []
 
   // ── Agenda alerts (auto-generated) ──────────────────────────────────────────
+  const alertSourceProjects = projects.filter(p => isActiveProject(p))
   const agendaAlerts: Array<{ clr: string; txt: string; id: string }> = []
-  projects.forEach(p => {
+  alertSourceProjects.forEach(p => {
     if (!p.name || p.name === 'undefined') return
     const d = daysSince(p.lastMove)
     if (d > 365) return
@@ -463,10 +469,20 @@ export default function V15rHome() {
     })
   })
 
-  const loadedCustomAlerts = Array.isArray(backup.customAlerts) ? backup.customAlerts : []
+  const rawCustomAlerts = Array.isArray(backup.customAlerts) ? backup.customAlerts : []
+  const activeAlertProjectIds = new Set(alertSourceProjects.map(p => String(p.id)))
+  const projectIds = new Set(projects.map(p => String(p.id)))
+  const loadedCustomAlerts = rawCustomAlerts
+    .filter((a: any) => a?.dismissed !== true)
+    .filter((a: any) => {
+      const linkedProjectId = String(a?.linkedProjectId || '')
+      if (!linkedProjectId) return true
+      if (!projectIds.has(linkedProjectId)) return true
+      return activeAlertProjectIds.has(linkedProjectId)
+    })
 
   const editedProjectIds = new Set(
-    loadedCustomAlerts.filter(a => a.isAI && a.manuallyEdited).map(a => a.linkedProjectId)
+    rawCustomAlerts.filter((a: any) => a.isAI && (a.manuallyEdited || a.dismissed)).map((a: any) => a.linkedProjectId)
   )
   const filteredAgendaAlerts = agendaAlerts.filter(a => !editedProjectIds.has(a.id))
 
@@ -678,6 +694,29 @@ export default function V15rHome() {
     persist()
   }
 
+  function deleteAIAlert(alertItem: { id?: string; txt?: string }) {
+    const linkedProjectId = alertItem.id || ''
+    pushState(backup)
+    if (!backup.customAlerts) backup.customAlerts = []
+    backup.customAlerts = backup.customAlerts.filter((a: any) => !(a.isAI && a.linkedProjectId === linkedProjectId))
+    backup.customAlerts.push({
+      id: 'aidismiss_' + Date.now() + '_' + linkedProjectId,
+      title: alertItem.txt || 'Dismissed AI alert',
+      description: '',
+      action: '',
+      isAI: true,
+      manuallyEdited: true,
+      dismissed: true,
+      scheduledAt: '',
+      linkedProjectId,
+    })
+    if (editingAIAlertId) {
+      setEditingAIAlertId(null)
+      setEditAIAlertText('')
+    }
+    persist()
+  }
+
   function startEditAlert(alertItem: any) {
     setEditingAlertId(alertItem.id)
     setEditingAlertData({
@@ -693,6 +732,16 @@ export default function V15rHome() {
 
   function toggleHomeCalendarCollapsed() {
     updateHomeCalendarView(view => ({ ...view, collapsed: !view.collapsed }))
+  }
+
+  function toggleNexusAlertsCollapsed() {
+    setNexusAlertsCollapsed(prev => {
+      const next = !prev
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(HOME_NEXUS_ALERTS_COLLAPSED_KEY, String(next))
+      }
+      return next
+    })
   }
 
   function startHomeCalendarResize(event: React.PointerEvent<HTMLButtonElement>) {
@@ -1025,9 +1074,26 @@ export default function V15rHome() {
 
       {/* ── AGENDA ALERTS ── */}
       <div>
-        <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Alerts</h2>
-        {mergedAlerts.length > 0 ? (
-          <div className="space-y-2">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Nexus Alerts</h2>
+            {nexusAlertsCollapsed && mergedAlerts.length > 0 && (
+              <div className="text-[9px] text-gray-500 mt-0.5">{mergedAlerts.length} alert{mergedAlerts.length === 1 ? '' : 's'} hidden</div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={toggleNexusAlertsCollapsed}
+            className="flex items-center gap-1.5 rounded-md border border-gray-800 bg-gray-900/40 px-2.5 py-1 text-[10px] font-semibold text-gray-400 transition-colors hover:border-gray-700 hover:text-gray-200"
+            aria-expanded={!nexusAlertsCollapsed}
+            aria-controls="home-nexus-alerts"
+          >
+            <ChevronRight size={12} className={`transition-transform ${nexusAlertsCollapsed ? '' : 'rotate-90'}`} />
+            {nexusAlertsCollapsed ? 'Show' : 'Hide'}
+          </button>
+        </div>
+        {!nexusAlertsCollapsed && (mergedAlerts.length > 0 ? (
+          <div id="home-nexus-alerts" className="space-y-2">
             {mergedAlerts.filter(m => m.type === 'ai').map((m) => {
               const a = m.data as typeof agendaAlerts[0]
               const i = m.idx
@@ -1085,6 +1151,9 @@ export default function V15rHome() {
                     <button onClick={() => alert('AI analysis for this item coming soon.')} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-gray-300 transition-colors flex items-center gap-0.5">
                       ✨ Ask AI
                     </button>
+                    <button onClick={() => deleteAIAlert(a)} className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors" title="Delete alert">
+                      <X size={10} className="inline" />
+                    </button>
                   </div>
                 </div>
               )
@@ -1106,7 +1175,7 @@ export default function V15rHome() {
                         <label className="text-[9px] text-gray-500 mb-0.5 block">Link to Project</label>
                         <select value={editingAlertData.linkedProjectId || ''} onChange={(e) => setEditingAlertData({...editingAlertData, linkedProjectId: e.target.value})} className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200">
                           <option value="">None</option>
-                          {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          {agendaPickerProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                         </select>
                       </div>
                     </div>
@@ -1154,7 +1223,7 @@ export default function V15rHome() {
                     <label className="text-[9px] text-gray-500 mb-0.5 block">Link to Project</label>
                     <select value={editingAlertData.linkedProjectId || ''} onChange={(e) => setEditingAlertData({...editingAlertData, linkedProjectId: e.target.value})} className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200">
                       <option value="">None</option>
-                      {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      {agendaPickerProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                   </div>
                 </div>
@@ -1170,10 +1239,10 @@ export default function V15rHome() {
             )}
           </div>
         ) : (
-          <div className="p-3 bg-[var(--bg-card)] border border-gray-800 rounded-lg text-xs text-gray-500 text-center">
+          <div id="home-nexus-alerts" className="p-3 bg-[var(--bg-card)] border border-gray-800 rounded-lg text-xs text-gray-500 text-center">
             ✓ No urgent alerts
           </div>
-        )}
+        ))}
       </div>
 
       {/* ── AGENDA SECTIONS ── */}

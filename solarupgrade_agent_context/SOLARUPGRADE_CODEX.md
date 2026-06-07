@@ -1639,3 +1639,23 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
 - Manual QA performed: Static render-path verification in `V15rHome.tsx`; confirmed `npm.cmd run typecheck` passes; confirmed `http://localhost:5173` returns HTTP 200. Authenticated Home screen browser verification remains blocked by browser tool startup.
 - Next recommended action: On the live authenticated localhost Home tab, confirm the Total Pipeline card still shows the same combined dollar total and the subtitle reads `4 active projects + 1 open service call` or the matching live-data equivalent.
 - Compact handoff for next agent/chat: Home KPI polish is scoped to `V15rHome.tsx`. Total Pipeline total is unchanged; subtitle now labels the mixed composition as active projects plus open service calls. Typecheck passes. Context files updated. Browser QA needs one manual authenticated pass because the in-app browser could not attach in this session.
+
+---
+
+## Codex Report - Home Tab Polish - exclude archived projects from AI alerts, add alert delete, sync project-card animation cadence, and make Nexus Alerts collapsible
+
+- Task completed: Implemented the scoped Home alerts/motion/collapse polish pass.
+- Files changed:
+  - `src/components/v15r/V15rHome.tsx`
+  - `src/components/v15r/ProjectCard.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final chat report.
+- Typecheck result: PASS - `npm.cmd run typecheck`
+- Root cause: Home generated AI alerts from raw `backup.projects`, so archived records could leak into Nexus Alerts. Generated AI alerts had edit/Ask AI controls but no persistent delete path. The Nexus Alerts area had no whole-section collapse state. Shared Home project cards used ID-based glare delay, which did not create the requested commercial/residential cadence grouping.
+- What changed: Home AI alert generation now uses active/non-archived projects. Visible custom alerts linked to archived projects are filtered out, and alert project pickers use active projects. Generated AI alerts now have a delete button that writes a hidden dismissed marker so they stay removed. The Nexus Alerts section has a persisted Show/Hide toggle. Shared `ProjectCard` now captures a one-time glare delay: commercial/commercial TI/commercial IT cards sync to the same clock phase, residential cards use the same clock with a small offset, and other card types retain stable ID-based delay.
+- What was learned: Home already had the needed archived source of truth via `isActiveProject`; AI alert dismissal needed a persisted suppression record because generated alerts are rebuilt every render. Home cards use the shared `ProjectCard`, so the motion polish belongs in that shared card rather than duplicating animation code in Home.
+- Bugs / risks: Authenticated browser QA could not be completed because the in-app browser startup failed before attaching. Manual visual QA is still recommended for the exact animation feel and alert delete/collapse interactions.
+- Manual QA performed: Static render-path verification in `V15rHome.tsx` and `ProjectCard.tsx`; `git diff --check` passed; `npm.cmd run typecheck` passed; `http://localhost:5173` returned HTTP 200. In-app browser localhost QA was attempted and blocked by the browser startup failure.
+- Next recommended action: On the live authenticated Home tab, confirm archived `test dummy` is absent from Nexus Alerts, generated and custom alerts can be deleted, Nexus Alerts collapses/expands as one section, and Home project-card motion matches the commercial/residential cadence expected from Projects.
+- Compact handoff for next agent/chat: Home alerts polish complete on `main`. `V15rHome.tsx` now filters AI alerts to active projects, persists generated-alert deletes, filters archived linked custom alerts, uses active project alert pickers, and adds persisted Nexus Alerts collapse. `ProjectCard.tsx` now uses type-aware glare timing for Home cards. Typecheck passes; authenticated visual QA remains.
