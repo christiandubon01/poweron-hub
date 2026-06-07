@@ -4706,7 +4706,7 @@ Home repair pass complete on `main`. Pipeline subtitle uses active-project count
 
 * Agent: Claude Code (Sonnet 4.6)
 * Branch: main
-* Commit: see git log — committed as "fix(estimate): align contract slider ticks"
+* Commit: 9764cfd — fix(estimate): align contract slider ticks
 * Files changed: `src/components/v15r/V15rEstimateTab.tsx`, both context files
 * Typecheck: PASS — zero errors
 * User-facing behavior changed:
