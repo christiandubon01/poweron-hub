@@ -2520,3 +2520,18 @@ NO — ready for screenshot QA.
 * Fallback for legacy me: isOwner record -> opCost. Works with or without isOwner record.
 * 1099 correction: read-time via hourly_rate. No data migration needed. If hourly_rate=0, falls back to costRate.
 * Compact handoff: Phase 2 complete on main. Only V15rEstimateTab.tsx changed. Three fixes: (1) getEmployeeCostRate returns hourly_rate for contractors + owner base for owner. (2) Dropdown seenIds+seenNames dedup. (3) getOverheadPerHr() per-hour overhead with clear labels. AddTeamMemberModal + V15rTeamPanel untouched. Typecheck: zero errors.
+
+---
+
+## Claude Report - Team Cost Repair: New 1099 Cost Save/Load (2026-06-07)
+
+* Task completed: YES
+* Files changed: src/components/v15r/V15rTeamPanel.tsx + 2 context files
+* Commit hash: TBD
+* Typecheck result: PASS
+* Root cause: Save payload was correct (AddTeamMemberModal already saved costRate=base for 1099). Bug was in DISPLAY layer - three places in V15rTeamPanel re-derived loaded cost unconditionally applying payrollMult: (1) EmployeeCard.loadedCostRate always did baseWage*payrollMult. (2) calcEmployeeCost applied FICA/workersComp/GL unconditionally. (3) Per-Project Labor Flow section multiplied empRate by payrollMult for all per_project employees.
+* What changed (V15rTeamPanel.tsx only): (1) EmployeeCard: noMultiplier guard (isOwner||applyMultiplier===false||classification==='1099'||employee_type==='per_project') - loadedCostRate branches; footnote updated. (2) calcEmployeeCost: isContractor check, FICA/workersComp/GL=0 for contractors. (3) Per-Project Labor Flow: per-emp empIsContractor check, empRate=base for 1099, description updated.
+* Double verification: new 1099 card shows base=loaded YES; re-open keeps cost YES; Estimate modal uses correct cost YES; W-2 multiplier unchanged YES; owner no multiplier YES; Owner/Me once YES; no unrelated files YES.
+* 1099 save/load: AddTeamMemberModal save was already correct. Display-only fixes.
+* W-2/Owner regression: W-2 noMultiplier=false so loadedCostRate=base*mult unchanged. Owner noMultiplier=true.
+* Compact handoff: Phase 3 complete on main. V15rTeamPanel.tsx only. EmployeeCard+calcEmployeeCost+LaborFlow all fixed with noMultiplier/isContractor guard. AddTeamMemberModal and V15rEstimateTab unchanged.

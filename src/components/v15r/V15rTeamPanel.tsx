@@ -526,13 +526,17 @@ function formatCurrency(value: number | undefined): string {
 function calcEmployeeCost(emp: any, backup: any) {
   const hourlyRate = num(emp.costRate || emp.rate || 0)
   const hrsPerWeek = num(emp.hoursPerWeek || 40)
-  // Formula: base = hourlyRate × hoursPerWeek × 4.33 × 1.208 (employer burden)
   const baseMonthlyCost = hourlyRate * hrsPerWeek * 4.33
-  const payrollTax = baseMonthlyCost * 0.153  // FICA + FUTA
-  const workersComp = baseMonthlyCost * 0.04  // CA Workers Comp ~4%
-  const glInsurance = baseMonthlyCost * 0.015 // GL Insurance ~1.5%
-  const taxesAndInsurance = payrollTax + workersComp + glInsurance  // = base × 0.208
-  const loadedMonthlyCost = baseMonthlyCost + taxesAndInsurance     // = base × 1.208
+  // 1099/per-project contractors carry no W-2 employer burden (no FICA, workers comp, GL)
+  const isContractor = emp.applyMultiplier === false ||
+                       emp.classification === '1099' ||
+                       emp.employee_type === 'per_project' ||
+                       emp.isOwner === true
+  const payrollTax = isContractor ? 0 : baseMonthlyCost * 0.153  // FICA + FUTA (W-2 only)
+  const workersComp = isContractor ? 0 : baseMonthlyCost * 0.04  // CA Workers Comp (W-2 only)
+  const glInsurance = isContractor ? 0 : baseMonthlyCost * 0.015 // GL Insurance (W-2 only)
+  const taxesAndInsurance = payrollTax + workersComp + glInsurance
+  const loadedMonthlyCost = baseMonthlyCost + taxesAndInsurance
   const sixMonthCost = loadedMonthlyCost * 6
   const targetMargin = num(backup?.settings?.markup || 35) / 100
   const targetRevenue = targetMargin > 0 ? loadedMonthlyCost / targetMargin : 0
@@ -567,9 +571,15 @@ function EmployeeCard({
 }) {
   // 1. Base wage — what you pay the employee
   const baseWage = num((employee as any).hourly_rate || employee.costRate)
-  // 2. Loaded cost rate — base × payroll multiplier from cost structure
+  // 2. Loaded cost rate — respects worker type; 1099/owner get base rate only
   const payrollMult = num(backup?.settings?.payrollMult || 1.20)
-  const loadedCostRate = parseFloat((baseWage * payrollMult).toFixed(2))
+  const noMultiplier = employee.isOwner === true ||
+                       (employee as any).applyMultiplier === false ||
+                       (employee as any).classification === '1099' ||
+                       (employee as any).employee_type === 'per_project'
+  const loadedCostRate = noMultiplier
+    ? parseFloat(baseWage.toFixed(2))
+    : parseFloat((baseWage * payrollMult).toFixed(2))
   // 3. Bill rate — what you charge the customer (independent)
   const billRate = num(employee.billRate)
   // 4. Margin/hr — bill rate minus loaded cost
@@ -640,7 +650,7 @@ function EmployeeCard({
 
       {/* Multiplier footnote */}
       <div className="mb-4 pb-3 border-b border-gray-700 text-xs text-gray-600">
-        Loaded = base × {payrollMult.toFixed(2)}x payroll mult
+        {noMultiplier ? '1099 / contractor — no W-2 payroll burden' : `Loaded = base × ${payrollMult.toFixed(2)}x payroll mult`}
       </div>
 
       {cost && (
@@ -1570,14 +1580,20 @@ export default function V15rTeamPanel() {
           <div className="bg-[var(--bg-card)] rounded-lg border border-amber-700/40 p-6 mt-6">
             <h2 className="text-lg font-bold text-amber-300 mb-1">Per-Project Labor Flow</h2>
             <p className="text-xs text-gray-500 mb-4">
-              Per-project employee hours × hourly rate × {payrollMult}x payroll multiplier → flows into linked project labor cost
+              Per-project employee hours × cost rate → flows into linked project labor cost (1099 uses base rate, W-2 uses loaded rate)
             </p>
             <div className="space-y-3">
               {perProjectEmps.map((emp: any) => {
                 const project = projects.find((p: any) => p.id === emp.project_id)
                 const empLogs = (backup.logs || []).filter((l: any) => l.empId === emp.id)
                 const totalHrs = empLogs.reduce((s: number, l: any) => s + (l.hrs || 0), 0)
-                const laborCost = totalHrs * (emp.hourly_rate || emp.costRate || 0) * payrollMult
+                // 1099 contractors: base rate only (no payroll multiplier)
+                const empIsContractor = emp.applyMultiplier === false ||
+                                        emp.classification === '1099'
+                const empRate = empIsContractor
+                  ? (emp.hourly_rate || emp.costRate || 0)
+                  : (emp.hourly_rate || emp.costRate || 0) * payrollMult
+                const laborCost = totalHrs * empRate
                 return (
                   <div key={emp.id} className="flex items-center justify-between bg-amber-900/10 border border-amber-700/30 rounded-lg px-4 py-3 gap-4">
                     <div className="flex-1 min-w-0">

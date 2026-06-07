@@ -5008,3 +5008,19 @@ NEXT AGENT SHOULD KNOW:
   - Phase 2 complete. getEmployeeCostRate is now the single read-time source of truth for all employee cost in Estimate. Contractors: hourly_rate. W-2: costRate. Owner: hourly_rate||costRate->opCost.
   - Overhead is now per-billable-hour when settings are configured; falls back to %.
   - AddTeamMemberModal and V15rTeamPanel write paths from Phase 1 are still intact.
+
+---
+
+## Shared Update - Team Cost Repair: New 1099 Cost Save/Load (2026-06-07)
+
+* Agent: Claude Code Sonnet 4.6
+* Branch: main
+* Commit: TBD
+* Files changed: src/components/v15r/V15rTeamPanel.tsx + 2 context files
+* Typecheck: PASS
+* User-facing behavior changed: New 1099/per-project contractor cards now show Loaded Cost = Base Wage (no payrollMult applied). Monthly Cost Breakdown no longer shows FICA/workersComp/GL for contractors. Per-Project Labor Flow shows correct base rate for 1099 employees. Footnote clarifies worker type.
+* Implementation notes: Three display bugs fixed in V15rTeamPanel.tsx. (1) EmployeeCard: noMultiplier=(isOwner||applyMultiplier===false||classification==='1099'||employee_type==='per_project') guards loadedCostRate. (2) calcEmployeeCost: isContractor check skips employer burden. (3) Per-Project Labor Flow: per-emp empIsContractor check, empRate branches. AddTeamMemberModal save was already correct - this was purely a display-layer fix.
+* Employee/rate data sources: employee.isOwner, applyMultiplier, classification, employee_type, hourly_rate, costRate; backup.settings.payrollMult
+* Risks / follow-up: projectedMonthlyCost in TeamPanel (~line 920) was already checking applyMultiplier/isOwner - confirmed not regressed.
+* Manual QA status: Typecheck PASS. Browser QA needed: new 1099 card shows $40, not $48; footnote correct; Estimate modal $40.
+* Next agent should know: Team cost display is now correct end-to-end. Save path (AddTeamMemberModal) correct since Phase 1. Read/display path (V15rEstimateTab getEmployeeCostRate) correct since Phase 2. Display layer (V15rTeamPanel EmployeeCard + calcEmployeeCost + LaborFlow) now correct. All three layers aligned.
