@@ -4699,3 +4699,29 @@ Home repair pass complete on `main`. Pipeline subtitle uses active-project count
   - Slider is now contract-amount-based, not profit-percent-based. Do not revert to profit-% formula unless explicitly requested.
   - Manual contract input is untouched and works independently of slider range.
   - This was an Estimate Tab polish pass. Inner Project Batch 2 scope TBD by user.
+
+---
+
+## Shared Update — Estimate Tab Slider Polish: Tick Alignment
+
+* Agent: Claude Code (Sonnet 4.6)
+* Branch: main
+* Commit: see git log — committed as "fix(estimate): align contract slider ticks"
+* Files changed: `src/components/v15r/V15rEstimateTab.tsx`, both context files
+* Typecheck: PASS — zero errors
+* User-facing behavior changed:
+  - Tick marks ($0, $25k, $50k, $75k, $100k) now visually align with the slider track/thumb positions.
+  - Tick shape changed from round dot to rectangular tick for better visual clarity.
+* Implementation notes:
+  - Root cause: tick container had no horizontal padding, placing $0/$100k ticks at element edges while the native thumb is inset ~8px from each edge.
+  - Fix: `paddingLeft: '8px', paddingRight: '8px'` on the tick row. The `space-between` flex distribution then matches the effective track coordinate space.
+  - 8px is appropriate for Chrome/Edge (thumb ~12–16px wide). Firefox may be 1–2px off but visually acceptable.
+  - No slider math, range, width, or other logic changed.
+* Risks / follow-up:
+  - Firefox alignment may differ slightly from Chrome/Edge. If reported, adjust padding between 6–10px.
+  - If global CSS ever customizes the range thumb size, padding should be updated to match.
+* Manual QA status: Static code review + typecheck only. Browser QA recommended.
+* Next agent should know:
+  - The slider tick alignment fix is a CSS-only padding compensation. The `8px` value is a Chrome/Edge thumb half-width approximation.
+  - All Estimate Tab Batch 1 behaviors (markup, slider math, profit in Cost Breakdown) remain intact.
+  - Inner Project improvement Batch 2 scope TBD by user.

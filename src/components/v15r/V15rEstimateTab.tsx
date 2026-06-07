@@ -2083,10 +2083,11 @@ Return ONLY valid JSON, no other text.`
                     }}
                     style={{ width: '100%', accentColor: '#34d399', cursor: 'pointer' }}
                   />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '5px' }}>
+                  {/* paddingLeft/Right compensates for browser thumb half-width so ticks align with track positions */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '5px', paddingLeft: '8px', paddingRight: '8px' }}>
                     {[0, 25000, 50000, 75000, 100000].map(val => (
                       <div key={val} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
-                        <div style={{ width: '3px', height: '3px', borderRadius: '50%', backgroundColor: '#374151' }} />
+                        <div style={{ width: '3px', height: '4px', borderRadius: '1px', backgroundColor: '#4b5563' }} />
                         <span style={{ fontSize: '9px', color: '#4b5563', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
                           {val === 0 ? '$0' : `$${val / 1000}k`}
                         </span>

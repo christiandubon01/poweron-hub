@@ -2116,3 +2116,59 @@ NO — ready for screenshot QA.
 
 * Compact handoff for next agent/chat:
   Estimate Tab Slider Refinement complete on `main`. Contract reference slider now uses $0–$100k range (step $500), centered at ~52% width. Five tick dots + labels ($0, $25k, $50k, $75k, $100k) rendered below slider. Direct contract-amount onChange (no profit-% formula). Profit % badge still in header. Manual contract input and all Cost Breakdown / markup logic untouched. Typecheck passes.
+
+---
+
+## Claude Report — Estimate Tab Slider Polish: Tick Alignment
+
+* Task completed: YES
+
+* Files changed:
+  - `src/components/v15r/V15rEstimateTab.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+* Commit hash: see git log — committed as "fix(estimate): align contract slider ticks"
+
+* Typecheck result: PASS — zero errors
+
+* Root cause:
+  The tick row used `justifyContent: space-between` on a container with no horizontal padding. This placed the $0 and $100k tick markers at the very left/right edges of the wrapper div. However, browser native `<input type="range">` thumbs are inset from the element edges by approximately half the thumb width (~8px in Chrome/Edge on Windows). This caused the first and last ticks to appear ~8px too far outward relative to the slider track endpoints, making all five tick positions slightly misaligned.
+
+* What changed:
+  - Added `paddingLeft: '8px', paddingRight: '8px'` to the tick container div. This insets the `space-between` distribution to match the browser thumb inset, aligning $0 and $100k ticks with the min/max thumb positions.
+  - Tick dot changed from 3×3px circle (`borderRadius: '50%'`) to 3×4px tick (`borderRadius: '1px'`) for slightly better visual readability as a tick mark.
+  - Tick dot color lightened from `#374151` to `#4b5563` (both already used in the labels).
+  - No slider math, range, or behavior changed.
+
+* Double verification against requested behavior:
+  ✅ Tick dots now inset by 8px each side — matches Chrome/Edge thumb half-width
+  ✅ Labels still aligned under their tick dots (same flex column structure)
+  ✅ Slider still updates Total Contract Amount (onChange unchanged)
+  ✅ Manual contract input still updates slider/profit (unchanged)
+  ✅ Cost Breakdown still includes Profit (untouched)
+  ✅ Markup still shows Settings/MTO value (untouched)
+  ✅ Slider still half-width (52% / 220–320px — unchanged)
+  ✅ No unrelated files touched
+
+* What was learned:
+  - Native input[type=range] thumbs are inset from the element boundaries by ~half the thumb width. The effective track runs from `thumbHalf` to `width - thumbHalf` inside the element.
+  - To align tick marks with the track, apply `paddingLeft: thumbHalf, paddingRight: thumbHalf` to the tick container so `space-between` distributes within the same coordinate space as the thumb.
+  - Chrome/Edge on Windows: thumb ~12–16px wide → half ~6–8px. Using 8px covers the common range.
+
+* Learned skills / reusable patterns:
+  - Slider tick alignment pattern: `padding: 0 8px` on tick container compensates for native thumb inset across Chrome/Edge. Use `8px` as a safe cross-browser approximation.
+  - If pixel-perfect alignment is required, use `appearance: none` with custom `::-webkit-slider-thumb` sizing and set padding to exactly `thumbWidth / 2`.
+
+* Bugs / risks:
+  - Firefox thumb is typically slightly wider (~16px vs 12px in Chrome), so 8px padding may be ~1–2px off in Firefox. Visually acceptable for a reference scale.
+  - If the app ever applies global CSS that changes input[type=range] thumb size, this padding should be updated to match.
+
+* Manual QA performed:
+  Static code review and typecheck only. Browser QA recommended to visually confirm alignment.
+
+* Next recommended action:
+  Manual QA: Open Estimate tab, drag slider to $25k/$50k/$75k positions, visually confirm thumb aligns with tick marks. If Firefox alignment is noticeably off, adjust padding from 8px to 7px or 9px.
+
+* Compact handoff for next agent/chat:
+  Estimate Tab Slider Tick Alignment complete on `main`. Added `paddingLeft: 8px, paddingRight: 8px` to tick container to compensate for browser input[type=range] thumb inset. Tick dot shape changed from round to rectangular tick for clarity. Slider math, range, width, and all other logic untouched. Typecheck passes.
