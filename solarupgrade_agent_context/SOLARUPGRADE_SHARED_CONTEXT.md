@@ -4713,3 +4713,27 @@ Home repair pass complete on `main`. Pipeline subtitle uses active-project count
 * Manual QA status: Typecheck only. Browser QA recommended.
 * Next agent should know:
   Inner Project Batch 2 is complete. Batch 3 would cover the remaining Inner Project tab improvements (if any). All 3 scoped code files + context files in this commit. Labor totals, RFI counts, Coordination status/categories all preserved.
+
+---
+
+## Inner Project Batch 3 — Phase Hours + Description Wrap
+* Date: 2026-06-06
+* Branch: main
+* Agent: Claude Code Sonnet 4.6
+* Summary: Phase bucket headers in Progress tab and Estimate tab labor section now display total hours. Estimate tab labor description textareas auto-resize to show full text on render.
+* Files changed:
+  - `src/components/v15r/V15rProgressTab.tsx` — added `phaseHrs` from tasks; appended to subtitle
+  - `src/components/v15r/V15rEstimateTab.tsx` — added `phaseHrs` from phRows; hours pill in header; useEffect to auto-resize textareas
+* User-facing behavior changed:
+  - Progress tab: each phase header subtitle now shows `· Xh` (total hours, only when > 0). Example: "From tasks · 20% weight · 3 tasks · 12h"
+  - Estimate tab: each labor phase header now shows a `Xh` monospace pill next to the row count. Example: row count "3" + hours "12h" + dollar total "$600"
+  - Estimate tab: labor description textareas now auto-expand on initial render to show full text (no more truncation for existing long descriptions)
+* Implementation notes:
+  - Progress `phaseHrs`: `tasks.reduce((s, t) => s + num(t?.hrs ?? 0), 0)` — uses same `tasks` array from `tasksForPhase(p, ph, settingsPhases)` already in the phase loop
+  - Estimate `phaseHrs`: `phRows.reduce((s, r) => s + num(r.hrs), 0)` — uses grouped phase rows from `laborGrouped[ph]`
+  - Textarea auto-resize useEffect uses `backup` as dep (not `p?.laborRows`) because `p` is defined after conditional returns in EstimateTab and would cause a TDZ error
+  - `onInput` auto-height handler already existed for typing; the new useEffect handles initial render of existing rows
+* Typecheck: PASS
+* Manual QA status: Typecheck only. Browser QA recommended.
+* Next agent should know:
+  Inner Project Batch 3 is complete on `main`. Progress phase headers show hours. Estimate labor phase headers show hours. Labor descriptions auto-expand. No financial formulas, RFI, Coordination, MTO, or other tabs were touched.

@@ -126,6 +126,17 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     return () => { Object.values(timers).forEach(t => clearTimeout(t)) }
   }, [])
 
+  // Auto-resize labor description textareas when rows change (handles existing long text)
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      Object.values(laborTextareaRefs.current).forEach(el => {
+        if (!el) return
+        el.style.height = 'auto'
+        el.style.height = el.scrollHeight + 'px'
+      })
+    })
+  }, [backup])
+
   // Service Call form state
   const [scCust, setScCust] = useState('')
   const [scAddr, setScAddr] = useState('')
@@ -1699,6 +1710,7 @@ Return ONLY valid JSON, no other text.`
               const isOpen = laborPhaseExpanded[ph] !== false
               const clr = resolveLaborPhaseColor(ph)
               const phaseTotal = phRows.reduce((s: number, r: any) => s + num(r.hrs) * num(r.rate), 0)
+              const phaseHrs = phRows.reduce((s: number, r: any) => s + num(r.hrs), 0)
               return (
                 <div key={ph} style={{ backgroundColor: '#1e2130', borderRadius: '6px', marginBottom: '8px', overflow: 'hidden' }}>
                   <div
@@ -1743,6 +1755,11 @@ Return ONLY valid JSON, no other text.`
                     <span style={{ fontSize: '11px', color: 'var(--t3)', backgroundColor: '#0f1117', padding: '2px 6px', borderRadius: '3px' }}>
                       {phRows.length}
                     </span>
+                    {phaseHrs > 0 && (
+                      <span style={{ fontSize: '11px', color: 'var(--t3)', backgroundColor: '#0f1117', padding: '2px 6px', borderRadius: '3px', fontFamily: 'monospace' }}>
+                        {phaseHrs % 1 === 0 ? phaseHrs : phaseHrs.toFixed(1)}h
+                      </span>
+                    )}
                     {phaseTotal > 0 && (
                       <span style={{ fontSize: '12px', color: '#10b981', fontWeight: '600', fontFamily: 'monospace', minWidth: '60px', textAlign: 'right' }}>
                         {fmt(phaseTotal)}

@@ -757,6 +757,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
 
         {orderedPhaseEntries.map(([ph, wt, isLegacyPhase]) => {
           const tasks = tasksForPhase(p, ph, settingsPhases)
+          const phaseHrs = tasks.reduce((s: number, t: any) => s + num(t?.hrs ?? 0), 0)
           const clrSaved = resolvePhaseHeaderColor(ph, p.progressPhaseColors)
           const clrDisplay = normalizeColorPickerValue(phaseColorDraft[ph] ?? clrSaved)
           const phaseEffectivePct = effectivePhaseProgressPct(
@@ -848,7 +849,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--t3)' }}>
                     {overrideOn ? 'Manual override · ' : 'From tasks · '}
-                    {isLegacyPhase ? 'Unmapped / legacy phase · ' : (wt > 0 ? `${formatPhaseWeight(wt)}% weight · ` : '')}{tasks.length} task{tasks.length !== 1 ? 's' : ''}
+                    {isLegacyPhase ? 'Unmapped / legacy phase · ' : (wt > 0 ? `${formatPhaseWeight(wt)}% weight · ` : '')}{tasks.length} task{tasks.length !== 1 ? 's' : ''}{phaseHrs > 0 ? ` · ${phaseHrs % 1 === 0 ? phaseHrs : phaseHrs.toFixed(1)}h` : ''}
                   </div>
                 </div>
                 <div style={{ width: '80px', height: '4px', backgroundColor: '#1e2130', borderRadius: '2px', overflow: 'hidden', flexShrink: 0 }}>

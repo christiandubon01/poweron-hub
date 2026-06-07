@@ -2283,3 +2283,29 @@ NO — ready for screenshot QA.
   Manual QA: Open Estimate tab, confirm 5 phase sections visible. Collapse Underground, reload, confirm collapsed. Change Rough In color to blue, reload, confirm persists. Add a row to Trim, confirm it appears in Trim section. Add an RFI, fill Response + Solved by, save, reload, confirm persistence. Open Coordination, add an item, click Edit, fill Response + Solved by, save, reload, confirm persistence.
 * Compact handoff for next agent/chat:
   Inner Project Batch 2 complete on `main`. Estimate Labor tab now shows 5 collapsible phase sections (Underground / Site Prep / Rough In / Trim / Finish) with color pickers, persist-on-reload collapse state, and per-phase Add Row buttons. Labor totals unaffected. RFI response/solvedBy was already implemented. Coordination tab now has Edit modal with response + solvedBy fields. ViewPrefs updated with `collapsedLaborPhases` deep-merge. Typecheck passes. All 3 scoped files + context files committed.
+
+---
+
+## Inner Project Batch 3 — Phase Hours + Description Wrap
+* Date: 2026-06-06
+* Branch: main
+* Commit: (pending — see git log)
+* Agent: Claude Code Sonnet 4.6
+* Files changed:
+  - `src/components/v15r/V15rProgressTab.tsx`
+  - `src/components/v15r/V15rEstimateTab.tsx`
+* Items completed:
+  1. **Progress tab phase headers show total hours** — Added `phaseHrs = tasks.reduce((s, t) => s + num(t?.hrs ?? 0), 0)` inside `orderedPhaseEntries.map`. Displayed as `· Xh` appended to the subtitle line (e.g. "From tasks · 20% weight · 3 tasks · 12h"). Only shown when > 0.
+  2. **Estimate tab labor phase headers show total hours** — Added `phaseHrs = phRows.reduce((s, r) => s + num(r.hrs), 0)` inside `laborPhasesToShow.map`. Displayed as a monospace pill next to the row-count pill (e.g. `12h`). Only shown when > 0.
+  3. **Estimate tab labor descriptions wrap to full text** — Added a `useEffect([backup])` that runs `requestAnimationFrame` on mount and whenever backup changes, iterating all `laborTextareaRefs.current` entries and setting `height: auto` then `height: scrollHeight + 'px'`. Existing `onInput` handler already handled growth during typing; this fixes the initial-render single-line display for long existing descriptions.
+* Double verification:
+  - [x] phaseHrs computed correctly: `tasks.reduce((s, t) => s + num(t?.hrs ?? 0), 0)` for Progress; `phRows.reduce((s, r) => s + num(r.hrs), 0)` for Estimate
+  - [x] Display conditional: shown only when phaseHrs > 0
+  - [x] Decimal-aware formatting: integer → no decimal; fractional → `.toFixed(1)`
+  - [x] useEffect dep is `backup` (defined before any conditional return at line 58 — avoids TDZ issue with `p`)
+  - [x] No changes to financial calculations, labor totals, or any out-of-scope files
+  - [x] Typecheck: PASS
+* What was learned:
+  - `p` is defined AFTER conditional returns in EstimateTab (line 159). Using `p?.laborRows` as a useEffect dep would cause a TDZ ReferenceError. Using `backup` (defined at line 58, before all hooks) as the dep is the correct pattern for this component.
+* Compact handoff for next agent/chat:
+  Inner Project Batch 3 complete on `main`. Progress tab phase headers now show total hours per phase (e.g. "3 tasks · 12h"). Estimate labor phase headers now show a hours pill (e.g. "12h") next to the row count pill. Existing labor descriptions auto-resize to full height on render. Typecheck passes. Scoped files + context files committed.
