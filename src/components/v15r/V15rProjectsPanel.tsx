@@ -16,6 +16,8 @@ import {
   health,
   getOverallCompletion,
   getProjectFinancials,
+  getProjectCOTotal,
+  getProjectCOExposure,
   resolveProjectBucket,
   fmtK,
   fmt,
@@ -822,6 +824,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     const staleDays = getProjectDaysSinceLastMovement(p, backup)
     const openR = (p.rfis || []).filter((r: any) => r.status !== 'answered').length
     const fin = getProjectFinancials(p, backup)
+    const coTotal = getProjectCOTotal(p)
+    const coExposure = getProjectCOExposure(p)
     const paidPercent = fin.contract > 0 ? Math.min(100, Math.max(0, (fin.paid / fin.contract) * 100)) : 0
 
     const plannedLine = (p.plannedStart && p.plannedEnd)
@@ -883,11 +887,12 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
           </div>
 
           {/* Financial metrics */}
-          <div className="grid grid-cols-3 gap-1.5 mb-2.5 text-[10px]">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mb-2.5 text-[10px]">
             {[
-              { label: 'Quoted',   value: fmtK(fin.contract), color: '#e5e7eb' },
-              { label: 'Paid',     value: fmtK(fin.paid),     color: '#34d399' },
-              { label: 'Exposure', value: fmtK(fin.risk),     color: '#f87171' },
+              { label: 'Quoted',   value: fmtK(fin.contract),          color: '#e5e7eb' },
+              { label: 'Paid',     value: fmtK(fin.paid),              color: '#34d399' },
+              { label: 'Exposure', value: fmtK(fin.risk + coExposure), color: '#f87171' },
+              { label: 'CO Value', value: fmtK(coTotal),               color: '#a78bfa' },
             ].map(({ label, value, color }) => (
               <div
                 key={label}

@@ -1860,3 +1860,62 @@ NO — ready for screenshot QA.
 
 * Compact handoff for next agent/chat:
   Change Orders KPI dashboard restored on main branch. 3-row layout: primary (Original Quote / Approved CO Total / Revised Total), secondary (Exposure / Paid / Invoiced / Rejected), detail (Labor / Material / Permit-Related / Open / Total). All metrics computed from manual `totalCost`. COForm/COModal still at module level. Typecheck: full clean pass. Pending commit: `fix(projects): restore change order kpis`.
+
+---
+
+## Claude Report — Project Cards: Match Projects Tab to Home CO Value
+
+* Task completed: Updated inline `renderProjectCard` in `V15rProjectsPanel.tsx` to match the shared `ProjectCard.tsx` 4-metric layout including CO Value and CO-adjusted Exposure.
+
+* Files changed:
+  - `src/components/v15r/V15rProjectsPanel.tsx` — added CO helper imports, CO calculations, updated metrics grid
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md` — shared context entry appended
+  - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md` — this report
+
+* Commit hash: pending (see commit `fix(projects): align project cards with co value`)
+
+* Typecheck result: PASS — `tsc --noEmit` full clean pass, zero errors
+
+* Root cause:
+  `V15rHome.tsx` uses the shared `ProjectCard.tsx` component, which was updated in the Phase 1 CO session to show 4 metrics (Quoted/Paid/Exposure+CO/CO Value) using `getProjectCOTotal` and `getProjectCOExposure`. However, `V15rProjectsPanel.tsx` has its own inline `renderProjectCard` function that was never updated — it still had `grid-cols-3` with only 3 metrics (Quoted/Paid/Exposure using `fin.risk` without CO exposure).
+
+* What changed in `V15rProjectsPanel.tsx`:
+  1. Added `getProjectCOTotal, getProjectCOExposure` to the import from `@/services/backupDataService`
+  2. Added `const coTotal = getProjectCOTotal(p)` and `const coExposure = getProjectCOExposure(p)` inside `renderProjectCard`
+  3. Changed `grid grid-cols-3` to `grid grid-cols-2 sm:grid-cols-4`
+  4. Updated Exposure value from `fmtK(fin.risk)` to `fmtK(fin.risk + coExposure)`
+  5. Added 4th metric: `{ label: 'CO Value', value: fmtK(coTotal), color: '#a78bfa' }`
+
+* Double verification against requested behavior:
+  - [x] Home tab cards still show CO Value — `V15rHome.tsx` uses shared `ProjectCard.tsx` which was already correct
+  - [x] Projects tab cards now show CO Value — `renderProjectCard` in `V15rProjectsPanel.tsx` updated
+  - [x] Both use same 4-metric layout (Quoted/Paid/Exposure/CO Value)
+  - [x] CO Value uses `getProjectCOTotal(p)` = `totalCost` for Approved/Completed/Paid
+  - [x] Exposure includes `fin.risk + coExposure` where coExposure = `totalCost` for Sent/Pending Approval/Invoiced
+  - [x] Quoted remains `fin.contract` (original quote)
+  - [x] Paid remains `fin.paid` (unchanged)
+  - [x] `ProjectCard.tsx` untouched
+  - [x] `V15rHome.tsx` untouched
+  - [x] `backupDataService.ts` untouched
+  - [x] Change Orders tab untouched
+  - [x] Typecheck clean
+
+* What was learned:
+  - `V15rProjectsPanel.tsx` maintains its own inline `renderProjectCard` function in parallel with the shared `ProjectCard.tsx`. Both render visually identical cards but from different code paths. When a shared card change is made (e.g., adding CO Value), both paths must be updated manually.
+  - This parallel card implementation pattern means future card changes need to be applied in two places: `ProjectCard.tsx` (used by Home) and `renderProjectCard` inside `V15rProjectsPanel.tsx` (used by Projects tab).
+
+* Learned skills / reusable patterns:
+  - When `grep -n "ProjectCard"` in a panel shows no usage but the panel still renders cards, look for an inline `renderProjectCard` function. That's the separate code path.
+  - For parallel card implementations: the fix is always the same 3 steps — add the helper imports, add the calculations inside the render function, update the grid/metrics array to match.
+
+* Bugs / risks:
+  - Two parallel card implementations (`ProjectCard.tsx` + inline `renderProjectCard`) will drift again whenever shared card changes are made. A future refactor to migrate `V15rProjectsPanel.tsx` to use the shared `ProjectCard` component would eliminate this risk, but is out of scope for this task.
+  - No browser QA performed — static code review and typecheck only.
+
+* Manual QA performed: Static code review and typecheck only. No browser available in this session.
+
+* Next recommended action:
+  Manual QA: Open Home tab → confirm Job Health cards show Quoted/Paid/Exposure/CO Value. Open Projects tab → confirm project cards show same 4 metrics. Check a project with COs and confirm CO Value matches between tabs. Confirm a project with no COs shows CO Value as $0. Confirm project card buttons still work.
+
+* Compact handoff for next agent/chat:
+  Projects tab cards now match Home tab cards on main branch. Root cause: V15rProjectsPanel.tsx has its own inline renderProjectCard function (separate from shared ProjectCard.tsx used by Home). Added getProjectCOTotal/getProjectCOExposure imports and calculations, changed grid-cols-3 to grid-cols-2 sm:grid-cols-4, added CO Value metric. Note: two parallel card implementations still exist — future card changes need updates in both ProjectCard.tsx and renderProjectCard in V15rProjectsPanel.tsx. Typecheck: full clean pass.

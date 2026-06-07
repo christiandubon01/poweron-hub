@@ -4731,3 +4731,18 @@ App Brain Wave 2 is a read-only Directory Brain MVP. The regenerated directory m
 * Risks / follow-up: In-app browser attachment failed again in this session, so authenticated visual QA remains recommended. Localhost responded with HTTP 200, typecheck passed, and static render-path review verified the scoped behavior.
 * Manual QA status: Static render-path verification, `git diff --check`, `npm.cmd run typecheck`, and localhost HTTP 200. Authenticated Home click-through blocked by browser startup failure.
 * Next agent should know: Home pipeline KPI, agenda linking/scroll, calendar, Graph Dashboard, Field Logs, Leads, and project financial logic were intentionally untouched.
+
+---
+
+## Shared Update — Project Cards: Match Projects Tab to Home CO Value [2026-06-06]
+
+* Agent: Claude Code Sonnet 4.6
+* Branch: main
+* Commit: fix(projects): align project cards with co value (pending)
+* Files changed: src/components/v15r/V15rProjectsPanel.tsx, SOLARUPGRADE_SHARED_CONTEXT.md, SOLARUPGRADE_CLAUDE.md
+* Typecheck: PASS (full clean, zero errors)
+* User-facing behavior changed: Projects tab project cards now show 4 financial metrics (Quoted/Paid/Exposure/CO Value) matching Home tab cards. Exposure now includes CO exposure (Sent/Pending Approval/Invoiced). CO Value shows sum of approved/completed/paid CO totalCost.
+* Implementation notes: V15rProjectsPanel.tsx has its own inline renderProjectCard separate from the shared ProjectCard.tsx. Added getProjectCOTotal/getProjectCOExposure imports, added coTotal/coExposure calculations, changed grid-cols-3 to grid-cols-2 sm:grid-cols-4, added CO Value as 4th metric. ProjectCard.tsx (used by Home) was already correct and untouched.
+* Risks / follow-up: Two parallel card implementations exist (ProjectCard.tsx for Home, renderProjectCard in V15rProjectsPanel.tsx for Projects tab). Future card changes need to be applied in both places. Consider unifying in a future refactor session.
+* Manual QA status: Not yet performed. Ready for user QA.
+* Next agent should know: When making card-level changes, always update BOTH ProjectCard.tsx AND renderProjectCard in V15rProjectsPanel.tsx. Both render visually identical cards but from separate code paths.
