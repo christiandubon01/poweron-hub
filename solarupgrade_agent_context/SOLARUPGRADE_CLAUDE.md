@@ -2245,7 +2245,7 @@ NO — ready for screenshot QA.
 
 * Task completed: Yes — all 3 items delivered.
 * Files changed: `src/components/v15r/V15rEstimateTab.tsx`, `src/components/v15r/V15rCoordinationTab.tsx`, `src/utils/v15rViewPrefs.ts`
-* Commit hash: (pending — being committed after this update)
+* Commit hash: 7eb422b
 * Typecheck result: PASS — `tsc --noEmit` exits 0, zero errors.
 * Root cause: Labor rows were rendered as a flat unsorted table with no phase grouping. Coordination items had no edit modal or response tracking. RFI already had response/solvedBy fully implemented from a prior session.
 * What changed:

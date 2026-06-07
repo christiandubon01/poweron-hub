@@ -4692,7 +4692,7 @@ Home repair pass complete on `main`. Pipeline subtitle uses active-project count
 
 * Agent: Claude Code (claude-sonnet-4-6)
 * Branch: main
-* Commit: (pending)
+* Commit: 7eb422b
 * Files changed:
   - `src/components/v15r/V15rEstimateTab.tsx` — labor phase collapsibles, phase color pickers, per-phase Add Row
   - `src/components/v15r/V15rCoordinationTab.tsx` — edit modal, response + solvedBy fields
