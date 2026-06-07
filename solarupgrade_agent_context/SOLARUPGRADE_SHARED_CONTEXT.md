@@ -4329,7 +4329,7 @@ BRANCH:
 main
 
 COMMIT HASH:
-Final commit hash reported in chat.
+17e490b
 
 FILES CHANGED:
 - `src/components/v15r/V15rFieldLogPanel.tsx`
@@ -4337,7 +4337,7 @@ FILES CHANGED:
 - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
 
 TYPECHECK RESULT:
-FAIL - `npm.cmd run typecheck` is blocked by pre-existing unrelated `src/components/v15r/V15rAppBrainScene.tsx` Three.js/nullability errors. Field Logs scoped diff did not introduce those errors.
+FIELD LOG PATCH VERIFIED PASS - `npm.cmd run typecheck` passed before concurrent unrelated App Brain work appeared. Current workspace rerun fails in unrelated `src/components/v15r/app-brain/appBrainDirectoryBrain.ts`.
 
 WHAT CHANGED:
 - Added a record-specific trigger matrix for the selected project/service-call study area.
@@ -4348,7 +4348,7 @@ WHAT CHANGED:
 
 BUGS / RISKS:
 - Manual browser QA remains needed for Field Logs > Triggers interactions.
-- Existing App Brain typecheck errors remain outside this task scope.
+- Current uncommitted App Brain work outside this task is causing a typecheck failure in `appBrainDirectoryBrain.ts`; Field Logs scoped files are not implicated.
 
 NEXT RECOMMENDED ACTION:
 Open Field Logs > Triggers on localhost, select both a project and service call, verify matrix explanations, then tune bad_day/good_day/travel/material thresholds and confirm the saved threshold still evaluates correctly.

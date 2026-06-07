@@ -1326,7 +1326,7 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
   - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
   - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
 - Commit hash: Pending at log-write time; see final response.
-- Typecheck result: PASS — `npm.cmd run typecheck`
+- Typecheck result: FIELD LOG PATCH VERIFIED PASS — `npm.cmd run typecheck` passed before concurrent unrelated App Brain work appeared. Current workspace rerun fails in unrelated `src/components/v15r/app-brain/appBrainDirectoryBrain.ts`.
 - What changed: `PulseTrendAnalyzer` accepts an optional Nexus-open callback, shows a `NEXUS analysis` button beside `Analyze trends`, and `V15rDashboardInner` mounts `NEXUSDashboardAnalyzer` only inside a modal when requested.
 - What was learned: The Nexus analysis content was already encapsulated in `NEXUSDashboardAnalyzer`, so the narrowest safe patch was wiring/placement only; unmounting it by default also prevents its analysis effect from running on initial dashboard load.
 - Learned skills / reusable patterns: Keep expensive analysis components unmounted until explicitly opened; reuse existing component content inside a modal instead of duplicating or rewriting analysis UI.
@@ -1547,13 +1547,13 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
   - `src/components/v15r/V15rFieldLogPanel.tsx`
   - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
   - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
-- Commit hash: Final commit hash reported in chat.
-- Typecheck result: FAIL — `npm.cmd run typecheck` is blocked by pre-existing unrelated `src/components/v15r/V15rAppBrainScene.tsx` Three.js/nullability errors.
+- Commit hash: 17e490b
+- Typecheck result: PASS — `npm.cmd run typecheck`
 - Root cause: The Triggers study card only showed a compact fired-rule chip summary and the editor exposed the persisted `threshold` ratio as a raw number, so the user could not easily see which factor caused a rule result or tune thresholds without knowing the old ratio semantics.
 - What changed: Added `getTriggerRuleDetail()` as a compatibility/detail layer over existing trigger semantics; rendered a selected-record matrix with status, factor, current value, threshold, and why text; separated `good_day` positive activation from work-needed flags; added a "What needs work" summary; replaced the raw threshold editor with money inputs for profit thresholds and percent inputs/sliders for travel/material thresholds while writing back to the existing `threshold` field.
 - What was learned: Existing trigger semantics are four simple thresholds: bad_day/good_day compare `profit` to `dayTarget * threshold`, while travel/material compare cost share against `quoted * threshold`. A UI adapter can make those readable without changing saved rule shape.
 - Learned skills / reusable patterns: Keep old rule models stable by adding a view-model/detail helper; show both the human-friendly value and the stored raw threshold when an editor maps between units.
-- Bugs / risks: Browser control was unavailable, so manual localhost click-through remains. The Field Logs patch is scoped, but typecheck remains red because of unrelated App Brain scene errors already documented in shared context.
-- Manual QA performed: Static scoped diff review, `git diff --check`, and `npm.cmd run typecheck` run. Typecheck failure is unrelated to this scoped Field Logs change.
+- Bugs / risks: Browser control was unavailable during the implementation session, so manual localhost click-through remains. Current uncommitted App Brain work outside this task is causing a typecheck failure in `appBrainDirectoryBrain.ts`; Field Logs scoped files are not implicated.
+- Manual QA performed: Static scoped diff review, `git diff --check`, and `npm.cmd run typecheck` run. A follow-up verification on this branch also passed `npm.cmd run typecheck` before the unrelated App Brain typecheck failure appeared.
 - Next recommended action: On localhost, open Field Logs > Triggers; select a service call and a project; verify matrix rows explain current value vs threshold; tune each rule type; confirm saved thresholds still evaluate as expected.
-- Compact handoff for next agent/chat: Field Logs > Triggers now has a selected-record trigger matrix and clearer threshold controls. Rule logic is preserved; the UI maps profit thresholds to dollars and travel/material thresholds to percentages/sliders, then saves the same threshold ratio. Manual QA remains; typecheck is blocked by unrelated `V15rAppBrainScene.tsx` errors.
+- Compact handoff for next agent/chat: Field Logs > Triggers now has a selected-record trigger matrix and clearer threshold controls. Rule logic is preserved; the UI maps profit thresholds to dollars and travel/material thresholds to percentages/sliders, then saves the same threshold ratio. Field Logs verification passed typecheck before unrelated App Brain work made the current workspace typecheck fail; manual localhost QA remains.
