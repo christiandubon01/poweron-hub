@@ -4442,3 +4442,28 @@ Wave 2 — directory file tree UI, live JSON/registry ingestion, git/session ove
 
 COMPACT HANDOFF FOR NEXT CHAT:
 App Brain architecture mode hides finance KPIs and renders five read-only Control Tower panels from Wave 01 seeds. 3D map, filters, inspector, and manifest panel unchanged. Static/read-only only — no live git or session tracking yet.
+
+---
+
+## Change Orders Phase 1 Repair — Form Inputs and Manual Total [2026-06-06]
+
+PHASE: Change Orders Phase 1 Repair (post-QA fix)
+STATUS: COMPLETE
+
+WHAT WAS FIXED:
+- Focus loss on all text inputs: root cause = COForm/COModal defined as nested functions inside V15rChangeOrdersTab. React treated each re-render as a new component type → unmount+remount → focus destroyed. Fix: extracted COForm and COModal to module-level scope.
+- Blank/unreadable dropdown options: native <select> dark styling requires explicit backgroundColor on both the <select> and <option> elements plus a <style> block for the CSS class. Fixed with SELECT_STYLE + injected CSS.
+- Total CO Cost auto-calc removed: totalCost is now an independent editable <input type="number">. Labor and material cost remain informational detail fields only. createCO and saveEdit both use Number(form.totalCost) || 0.
+
+FILES CHANGED:
+- src/components/v15r/V15rChangeOrdersTab.tsx — full rewrite (focus fix, dropdown fix, manual total)
+- solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md — this entry
+- solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md — repair report appended
+
+TYPECHECK: PASS
+
+KEY PATTERN (reusable):
+React nested component anti-pattern → focus loss. Fix: always define form/modal components at module scope, pass state as props.
+
+NEXT PHASE:
+Change Orders Phase 2 — Attachments (deferred until user authorizes).

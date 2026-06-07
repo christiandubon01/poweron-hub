@@ -9,6 +9,7 @@ import V15rMTOTab from './V15rMTOTab'
 import V15rProgressTab from './V15rProgressTab'
 import V15rFrameworkTab from './V15rFrameworkTab'
 import V15rRFITab from './V15rRFITab'
+import V15rChangeOrdersTab from './V15rChangeOrdersTab'
 import V15rCoordinationTab from './V15rCoordinationTab'
 import V15rBlueprintsTab from './V15rBlueprintsTab'
 import V15rPhaseTimelineTab from './V15rPhaseTimelineTab'
@@ -31,6 +32,7 @@ function mapExternalToInternalTab(externalTab?: string): string {
     'project-logs': 'project-logs',
     'framework': 'framework',
     'rfi-tracker': 'rfi',
+    'change-orders': 'change-orders',
     'coordination': 'coord',
     'blueprints': 'blueprints',
     'phase-timeline': 'phase-timeline',
@@ -73,6 +75,7 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
     { id: 'project-logs', label: 'Project Logs', component: V15rProjectLogsTab },
     { id: 'framework', label: 'Framework', component: V15rFrameworkTab },
     { id: 'rfi', label: 'RFI Tracker', component: V15rRFITab },
+    { id: 'change-orders', label: 'Change Orders', component: V15rChangeOrdersTab },
     { id: 'coord', label: 'Coordination', component: V15rCoordinationTab },
     { id: 'blueprints', label: '📐 Blueprints', component: V15rBlueprintsTab },
     { id: 'phase-timeline', label: '📅 Phase Timeline', component: V15rPhaseTimelineTab },
@@ -91,6 +94,7 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
         'project-logs': 'project-logs',
         'framework': 'framework',
         'rfi': 'rfi-tracker',
+        'change-orders': 'change-orders',
         'coord': 'coordination',
         'blueprints': 'blueprints',
         'phase-timeline': 'phase-timeline',

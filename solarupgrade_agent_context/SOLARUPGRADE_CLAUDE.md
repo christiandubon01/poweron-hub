@@ -1723,3 +1723,64 @@ NO — ready for screenshot QA.
 
 * Compact handoff for next agent/chat:
   Round 5 complete on main branch. Arch-line control handle is now fully freeform 2D — stores archCtrlX/Y (page-normalized absolute coords) on drag, no perpendicular-bisector projection. Renderer converts page-normalized to annotation-local viewBox: ((archCtrlX - rect.x) / rect.w) * 100. Legacy archFactor fallback preserved. New placements store archCtrlX/Y immediately. archControlDrag state simplified to {annotationId, pointerId}. Typecheck clean.
+
+---
+
+## Claude Report — Change Orders Phase 1 Repair: Form Inputs and Manual Total
+
+* Task completed: Fix all V15rChangeOrdersTab.tsx regressions — focus loss on text inputs, blank status/stage dropdowns, and auto-calculated total that prevented manual entry.
+
+* Files changed:
+  - `src/components/v15r/V15rChangeOrdersTab.tsx` — full rewrite (primary fix target)
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md` — shared context entry appended
+  - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md` — this report
+
+* Commit hash: (staged, not yet committed at report time — see pending commit `fix(projects): repair change order form inputs`)
+
+* Typecheck result: PASS — `tsc --noEmit` zero errors
+
+* Root cause:
+  `COForm` and `Modal` were defined as nested functions INSIDE the `V15rChangeOrdersTab` default export. Every keystroke → `setAddForm(...)` → parent re-render → new function reference for `COForm` → React treats it as a new component type → full unmount + remount → DOM input element replaced → focus lost. This is the classic React anti-pattern of defining component functions inside component functions.
+
+* What changed:
+  1. `COForm` extracted to module-level (top of file, outside main component), receives `phases` as explicit prop — fixes all text input focus loss
+  2. `COModal` (renamed from `Modal`) extracted to module-level — same fix pattern
+  3. `INPUT_STYLE`, `SELECT_STYLE`, `LABEL_STYLE`, `DEFAULT_STAGES` all moved to module-level constants (prevent unnecessary re-creation on render)
+  4. `blankForm()` now includes `totalCost: ''` as an editable field
+  5. Total CO Cost changed from read-only auto-calc display to an editable `<input type="number">` — user must enter this manually; labor and material are detail fields only
+  6. `createCO` uses `Number(addForm.totalCost) || 0` (not `calcTotal(labor, material)`)
+  7. `saveEdit` uses `Number(editForm.totalCost) || 0` (not `co.laborCost + co.materialCost`)
+  8. `openEditModal` now includes `totalCost: String(co.totalCost ?? '')` so editing an existing CO pre-fills the total
+  9. `calcTotal()` function removed entirely
+  10. Select elements have explicit `backgroundColor: '#1a1d27'` and `color: '#e2e8f0'` on both `<select>` and `<option>` tags, plus injected CSS `.co-select option { background-color: #1a1d27 }` via `<style>` tag — fixes blank/unreadable dark dropdown options
+
+* Double verification:
+  - Typecheck: PASS
+  - `COForm` is at module scope: confirmed — defined before the main `export default function V15rChangeOrdersTab`
+  - `COModal` is at module scope: confirmed
+  - `blankForm()` includes `totalCost: ''`: confirmed
+  - `totalCost` input is editable (not read-only): confirmed — `onChange={e => setForm({...form, totalCost: e.target.value})}`
+  - `calcTotal` references: none remaining
+  - `ProjectCard.tsx` and `backupDataService.ts`: unchanged (already used `totalCost` correctly)
+
+* What was learned:
+  - Nested component function definitions in React cause unmount/remount on every parent render cycle. Even in a `@ts-nocheck` file this silently destroys focus. The fix is always: lift component definitions to module scope.
+  - For dark-mode native `<select>` elements: must set `backgroundColor` on BOTH the `<select>` element AND the `<option>` elements, plus inject a `<style>` block for the option CSS class. Inline styles alone do not fully control dropdown popup appearance in Chromium.
+  - `totalCost` should always be treated as a first-class independent field, not derived from sub-fields. Labor and material cost breakdowns are informational only.
+
+* Learned skills / reusable patterns:
+  - React focus loss diagnostic: if an input loses focus after one character, first suspect a nested component definition. Check if the component containing the input is defined inside another component function.
+  - Module-level extract pattern: pull `SomeForm` and `SomeModal` to top of file, pass all needed data as props. Parent holds form state with `useState`, passes it down. No `useCallback` needed since the component itself is stable.
+  - Dark select option fix: `<style>{'.my-select option { background-color: #1a1d27; color: #e2e8f0 }'}</style>` injected inside the component render, plus matching inline style on the select element.
+
+* Bugs / risks:
+  - Native `<select>` dropdown styling is OS/browser-dependent. The fix works in Chrome on Windows but option backgrounds in some browsers may still appear light. If further issues arise, a custom dropdown built from divs would give full control.
+  - No browser QA was performed — static code review and typecheck only. User should do manual QA on: creating a CO, editing a CO, confirming focus stays on all inputs, confirming Total CO Cost is editable independently of labor/material.
+
+* Manual QA performed: Static code review and typecheck only. No browser available in this session.
+
+* Next recommended action:
+  Manual QA: open any project → Change Orders tab → Add Change Order → type in Title field (confirm no focus loss after each character) → type in Description → set Status dropdown (confirm readable options) → set Stage dropdown → enter Labor Cost, Material Cost, and Total CO Cost independently → save. Edit an existing CO and confirm totalCost pre-fills. Confirm project card shows CO Value updating.
+
+* Compact handoff for next agent/chat:
+  Change Orders Phase 1 repair complete on main branch. Root cause was COForm/COModal defined inside the main component (React unmount/remount anti-pattern). Fix: extracted both to module-level, moved all style constants to module level, added totalCost as independent editable form field (removed auto-calc). Typecheck clean. Staged files: V15rChangeOrdersTab.tsx + context files. Pending commit: `fix(projects): repair change order form inputs`.

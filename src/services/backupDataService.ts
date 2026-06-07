@@ -203,6 +203,18 @@ export interface BackupProject {
   lostReason?: string
   lostNotes?: string
   completedAt?: string
+  changeOrders?: ChangeOrder[]
+}
+
+export type ChangeOrderStatus =
+  | 'Draft' | 'Sent' | 'Pending Approval' | 'Approved'
+  | 'Rejected' | 'Completed' | 'Invoiced' | 'Paid'
+
+export interface ChangeOrder {
+  id: string; title: string; description: string; stage: string
+  requestedBy: string; approvedBy: string; createdAt: string
+  approvalAt: string; laborCost: number; materialCost: number
+  totalCost: number; permitRelated: boolean; status: ChangeOrderStatus
 }
 
 export interface BackupPriceBookItem {
@@ -911,6 +923,24 @@ export function getPhaseWeights(d: BackupData): Record<string, number> {
     return buildEqualPhaseWeights(mto)
   }
   return defaults
+}
+
+export function getProjectCOTotal(p: BackupProject): number {
+  return (p.changeOrders || []).reduce((sum, co) => {
+    if (co.status === 'Approved' || co.status === 'Completed' || co.status === 'Paid') {
+      return sum + (Number(co.totalCost) || 0)
+    }
+    return sum
+  }, 0)
+}
+
+export function getProjectCOExposure(p: BackupProject): number {
+  return (p.changeOrders || []).reduce((sum, co) => {
+    if (co.status === 'Sent' || co.status === 'Pending Approval' || co.status === 'Invoiced') {
+      return sum + (Number(co.totalCost) || 0)
+    }
+    return sum
+  }, 0)
 }
 
 /** Overall completion — weighted phase average (matches HTML ov(p)) */
