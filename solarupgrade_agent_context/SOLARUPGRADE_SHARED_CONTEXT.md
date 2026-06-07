@@ -4684,3 +4684,18 @@ Manual QA Wave 2 in App Brain, then Wave 3 only if explicitly scoped. Context Hu
 
 COMPACT HANDOFF FOR NEXT CHAT:
 App Brain Wave 2 is a read-only Directory Brain MVP. The regenerated directory manifest now has source-file metadata; the Directory panel filters/searches/selects files; the File Profile panel shows generated metadata plus static seed links and safety placeholders. No package files changed. No live git/session tracking, Context Hub, watch mode, or operational financial KPIs were added.
+
+---
+
+## Shared Update — Change Orders Repair: Restore Full KPI Dashboard [2026-06-06]
+
+* Agent: Claude Code Sonnet 4.6
+* Branch: main
+* Commit: fix(projects): restore change order kpis (pending)
+* Files changed: src/components/v15r/V15rChangeOrdersTab.tsx, SOLARUPGRADE_SHARED_CONTEXT.md, SOLARUPGRADE_CLAUDE.md
+* Typecheck: PASS (full clean, zero errors)
+* User-facing behavior changed: Change Orders tab now shows 3-row KPI dashboard with 11 metrics instead of 3 cards. Original Quote, Approved CO Total, Revised Project Total in primary row; Pending/Exposure, Paid, Invoiced, Rejected in secondary row; Labor Total, Material Total, Permit-Related, Open COs, Total COs in detail row.
+* Implementation notes: p.contract used directly for Original Quote. All CO money metrics use manual totalCost. COForm/COModal remain at module level (focus fix preserved). No changes to helpers, ProjectCard, or ProjectInner.
+* Risks / follow-up: Row 3 (5-col) may be cramped on very narrow mobile; acceptable for current use. Phase 2 (attachments) and Phase 3 (email/signature) remain deferred.
+* Manual QA status: Not yet performed. Ready for user QA.
+* Next agent should know: KPI dashboard is now fully rendered. Form focus fix, manual totalCost, and project card integration are all intact and unchanged.

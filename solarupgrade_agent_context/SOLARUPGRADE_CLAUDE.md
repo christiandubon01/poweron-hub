@@ -1784,3 +1784,79 @@ NO — ready for screenshot QA.
 
 * Compact handoff for next agent/chat:
   Change Orders Phase 1 repair complete on main branch. Root cause was COForm/COModal defined inside the main component (React unmount/remount anti-pattern). Fix: extracted both to module-level, moved all style constants to module level, added totalCost as independent editable form field (removed auto-calc). Typecheck clean. Staged files: V15rChangeOrdersTab.tsx + context files. Pending commit: `fix(projects): repair change order form inputs`.
+
+---
+
+## Claude Report — Change Orders Repair: Restore Full KPI Dashboard
+
+* Task completed: Replaced the simplified 3-card CO summary with a full 3-row KPI dashboard showing 11 metrics.
+
+* Files changed:
+  - `src/components/v15r/V15rChangeOrdersTab.tsx` — metrics section expanded + KPI dashboard render replaced
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md` — shared context entry appended
+  - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md` — this report
+
+* Commit hash: pending (see commit `fix(projects): restore change order kpis`)
+
+* Typecheck result: PASS — `tsc --noEmit` zero errors (full clean pass, no errors)
+
+* Root cause: The Phase 1 Repair session simplified the dashboard to only 3 cards (CO Total Approved, CO Exposure, Open COs). The richer KPI metrics were never computed or rendered.
+
+* What changed:
+  1. Added 8 new metric calculations in the metrics section:
+     - `originalQuote` — `Number(p.contract) || 0`
+     - `revisedTotal` — `originalQuote + coTotal`
+     - `paidTotal` — sum of `totalCost` where status is Paid
+     - `invoicedTotal` — sum of `totalCost` where status is Invoiced
+     - `rejectedTotal` — sum of `totalCost` where status is Rejected
+     - `laborTotal` — sum of `laborCost` across all COs
+     - `materialTotal` — sum of `materialCost` across all COs
+     - `permitCount` — count where `permitRelated === true`
+     - `totalCount` — `cos.length`
+  2. Replaced the single 3-column grid with a 3-row KPI layout:
+     - Row 1 (primary, accented borders): Original Quote / Approved CO Total / Revised Project Total
+     - Row 2 (secondary): Pending/Exposure / Paid CO Total / Invoiced CO Total / Rejected CO Total
+     - Row 3 (detail): Labor Total / Material Total / Permit-Related / Open COs / Total COs
+  3. All CO money metrics continue to use manual `totalCost` — no derivation from labor+material
+  4. `COForm`, `COModal`, `INPUT_STYLE`, `SELECT_STYLE`, `LABEL_STYLE`, `DEFAULT_STAGES` all remain at module level (focus fix preserved)
+
+* Double verification against requested behavior:
+  - [x] Original Quote rendered — `fmtMoney(Number(p.contract) || 0)`
+  - [x] Approved CO Total rendered — uses `APPROVED_STATUSES` set (Approved/Completed/Paid) × `totalCost`
+  - [x] Pending/Exposure CO Total rendered — uses `EXPOSURE_STATUSES` set (Sent/Pending Approval/Invoiced) × `totalCost`
+  - [x] Revised Project Total rendered — `originalQuote + coTotal`
+  - [x] Paid CO Total rendered — status Paid × `totalCost`
+  - [x] Invoiced CO Total rendered — status Invoiced × `totalCost`
+  - [x] Rejected CO Total rendered — status Rejected × `totalCost`
+  - [x] Labor Total rendered — sum `laborCost`
+  - [x] Material Total rendered — sum `materialCost`
+  - [x] Permit-Related CO Count rendered — `permitRelated === true`
+  - [x] Open COs + Total COs rendered
+  - [x] Manual `totalCost` preserved — createCO and saveEdit unchanged
+  - [x] COForm at module level — focus fix preserved
+  - [x] COModal at module level — no remount on keystroke
+  - [x] Status/Stage dropdowns unchanged
+  - [x] Persistence unchanged
+  - [x] ProjectCard CO Value/Exposure unchanged (backupDataService helpers untouched)
+  - [x] Typecheck clean
+
+* What was learned:
+  - p.contract is the canonical original quote amount on BackupProject — accessible directly without calling getProjectFinancials()
+  - Revised Total is simply additive: original contract + approved CO total. This gives a live "scope-adjusted contract value."
+  - The 3-row KPI layout pattern (primary accent row / secondary status row / detail count row) scales well for financial dashboards without requiring custom CSS classes.
+
+* Learned skills / reusable patterns:
+  - Multi-row KPI grid: Row 1 with accent borders for primary financials, Row 2 with uniform muted cards for breakdowns, Row 3 with minimal cards for counts/details. Scales to any tab with multiple financial dimensions.
+  - `fmtMoney(Number(p.contract) || 0)` — safe pattern when reading numeric project fields that may be undefined/null.
+
+* Bugs / risks:
+  - Row 3 uses `repeat(5, 1fr)` — on very narrow screens (< ~350px) this could cause cramped cells. If mobile viewport issues arise, consider wrapping to `repeat(3, 1fr)` with the remaining 2 on a second sub-row.
+  - No browser QA performed — static code review and typecheck only.
+
+* Manual QA performed: Static code review and typecheck only. No browser available in this session.
+
+* Next recommended action:
+  Manual QA: Open Change Orders tab and confirm 3-row KPI dashboard is visible with all 11 metrics. Add a CO with status Approved and a manual Total CO Cost — confirm Approved CO Total and Revised Project Total update. Change status to Invoiced — confirm Exposure updates. Verify form typing still works (no focus loss). Confirm project card CO Value still updates.
+
+* Compact handoff for next agent/chat:
+  Change Orders KPI dashboard restored on main branch. 3-row layout: primary (Original Quote / Approved CO Total / Revised Total), secondary (Exposure / Paid / Invoiced / Rejected), detail (Labor / Material / Permit-Related / Open / Total). All metrics computed from manual `totalCost`. COForm/COModal still at module level. Typecheck: full clean pass. Pending commit: `fix(projects): restore change order kpis`.

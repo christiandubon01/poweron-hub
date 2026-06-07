@@ -309,9 +309,18 @@ export default function V15rChangeOrdersTab({ projectId, onUpdate, backup: backu
   const phases = Object.keys(p.phases || {})
 
   // ── Metrics ─────────────────────────────────────────────────────────────────
+  const originalQuote: number = Number(p.contract) || 0
   const coTotal = cos.reduce((s, c) => APPROVED_STATUSES.has(c.status) ? s + (Number(c.totalCost) || 0) : s, 0)
   const coExposure = cos.reduce((s, c) => EXPOSURE_STATUSES.has(c.status) ? s + (Number(c.totalCost) || 0) : s, 0)
+  const revisedTotal = originalQuote + coTotal
+  const paidTotal = cos.reduce((s, c) => c.status === 'Paid' ? s + (Number(c.totalCost) || 0) : s, 0)
+  const invoicedTotal = cos.reduce((s, c) => c.status === 'Invoiced' ? s + (Number(c.totalCost) || 0) : s, 0)
+  const rejectedTotal = cos.reduce((s, c) => c.status === 'Rejected' ? s + (Number(c.totalCost) || 0) : s, 0)
+  const laborTotal = cos.reduce((s, c) => s + (Number(c.laborCost) || 0), 0)
+  const materialTotal = cos.reduce((s, c) => s + (Number(c.materialCost) || 0), 0)
+  const permitCount = cos.filter(c => c.permitRelated).length
   const openCount = cos.filter(c => c.status !== 'Rejected' && c.status !== 'Paid' && c.status !== 'Completed').length
+  const totalCount = cos.length
 
   // ── Persistence helpers ───────────────────────────────────────────────────
 
@@ -404,18 +413,53 @@ export default function V15rChangeOrdersTab({ projectId, onUpdate, backup: backu
   return (
     <div style={{ color: '#e2e8f0' }}>
 
-      {/* Summary metrics */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '20px' }}>
-        {[
-          { label: 'CO Total (Approved)', value: fmtMoney(coTotal), color: '#a78bfa' },
-          { label: 'CO Exposure', value: fmtMoney(coExposure), color: '#f87171' },
-          { label: 'Open COs', value: String(openCount), color: '#fbbf24' },
-        ].map(({ label, value, color }) => (
-          <div key={label} style={{ backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px', padding: '14px', textAlign: 'center' }}>
-            <div style={{ fontSize: '18px', fontWeight: '700', color }}>{value}</div>
-            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '4px' }}>{label}</div>
-          </div>
-        ))}
+      {/* ── KPI Dashboard ────────────────────────────────────────────────── */}
+      <div style={{ marginBottom: '20px' }}>
+
+        {/* Primary row: Original Quote / Approved CO Total / Revised Total */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '10px' }}>
+          {[
+            { label: 'Original Quote', value: fmtMoney(originalQuote), color: '#e5e7eb', accent: 'rgba(229,231,235,0.08)' },
+            { label: 'Approved CO Total', value: fmtMoney(coTotal), color: '#a78bfa', accent: 'rgba(167,139,250,0.08)' },
+            { label: 'Revised Project Total', value: fmtMoney(revisedTotal), color: '#34d399', accent: 'rgba(52,211,153,0.08)' },
+          ].map(({ label, value, color, accent }) => (
+            <div key={label} style={{ backgroundColor: accent, border: `1px solid ${color}22`, borderRadius: '10px', padding: '14px 12px', textAlign: 'center' }}>
+              <div style={{ fontSize: '18px', fontWeight: '700', color }}>{value}</div>
+              <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '4px' }}>{label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Secondary row: Exposure / Paid / Invoiced / Rejected */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr) repeat(2, 1fr)', gap: '8px', marginBottom: '8px' }}>
+          {[
+            { label: 'Pending / Exposure', value: fmtMoney(coExposure), color: '#f87171' },
+            { label: 'Paid CO Total', value: fmtMoney(paidTotal), color: '#6ee7b7' },
+            { label: 'Invoiced CO Total', value: fmtMoney(invoicedTotal), color: '#fb923c' },
+            { label: 'Rejected CO Total', value: fmtMoney(rejectedTotal), color: '#94a3b8' },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{ backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '8px', padding: '10px 10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '15px', fontWeight: '700', color }}>{value}</div>
+              <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.35)', marginTop: '3px' }}>{label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Detail row: Labor / Material / Permit / Open COs / Total COs */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px' }}>
+          {[
+            { label: 'Labor Total', value: fmtMoney(laborTotal), color: '#60a5fa' },
+            { label: 'Material Total', value: fmtMoney(materialTotal), color: '#38bdf8' },
+            { label: 'Permit-Related', value: String(permitCount), color: '#fbbf24' },
+            { label: 'Open COs', value: String(openCount), color: '#fbbf24' },
+            { label: 'Total COs', value: String(totalCount), color: '#94a3b8' },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{ backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+              <div style={{ fontSize: '14px', fontWeight: '700', color }}>{value}</div>
+              <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', marginTop: '3px' }}>{label}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Add button */}
