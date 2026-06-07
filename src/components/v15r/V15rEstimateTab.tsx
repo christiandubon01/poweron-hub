@@ -1195,12 +1195,21 @@ Return ONLY valid JSON, no other text.`
 
   // ── Multi-employee helpers ────────────────────────────────────────────────
   const getEmployeeCostRate = (empId: string): number => {
-    if (!empId || empId === 'me') return num(backup.settings?.opCost || 42.45)
+    // 'me' sentinel: resolve to the real owner record's costRate if one exists,
+    // otherwise fall back to settings.opCost (global owner opportunity cost)
+    if (!empId || empId === 'me') {
+      const ownerRecord = (backup.employees || []).find((e: any) => e.isOwner)
+      if (ownerRecord?.costRate) return num(ownerRecord.costRate)
+      return num(backup.settings?.opCost || 42.45)
+    }
     const emp = (backup.employees || []).find((e: any) => e.id === empId)
     return emp?.costRate ? num(emp.costRate) : num(backup.settings?.opCost || 42.45)
   }
   const getEmployeeDisplayName = (empId: string): string => {
-    if (!empId || empId === 'me') return 'Owner / Me'
+    if (!empId || empId === 'me') {
+      const ownerRecord = (backup.employees || []).find((e: any) => e.isOwner)
+      return ownerRecord?.name || 'Owner / Me'
+    }
     return (backup.employees || []).find((e: any) => e.id === empId)?.name || empId
   }
   const getRowEmployees = (r: any): string[] => {
@@ -1943,39 +1952,47 @@ Return ONLY valid JSON, no other text.`
                                           }}
                                           onClick={e => e.stopPropagation()}
                                         >
-                                          {[{ id: 'me', name: 'Owner / Me' }, ...teamRoster].map((emp: any) => {
-                                            const rowEmps = getRowEmployees(r)
-                                            const checked = rowEmps.includes(emp.id)
-                                            return (
-                                              <label
-                                                key={emp.id}
-                                                style={{
-                                                  display: 'flex', alignItems: 'center', gap: '6px',
-                                                  padding: '5px 8px', cursor: 'pointer', borderRadius: '3px',
-                                                  fontSize: '12px',
-                                                  color: checked ? '#6ee7b7' : 'var(--t2)',
-                                                  backgroundColor: checked ? 'rgba(16,185,129,0.14)' : 'transparent',
-                                                  borderLeft: checked ? '2px solid #10b981' : '2px solid transparent',
-                                                  fontWeight: checked ? '600' : 'normal',
-                                                }}
-                                              >
-                                                <input
-                                                  type="checkbox"
-                                                  checked={checked}
-                                                  onChange={e => {
-                                                    e.stopPropagation()
-                                                    const newEmps = e.target.checked
-                                                      ? [...rowEmps, emp.id]
-                                                      : rowEmps.filter((id: string) => id !== emp.id)
-                                                    if (newEmps.length === 0) return
-                                                    updateRowMultiEmployee(r.id, newEmps)
+                                          {(() => {
+                                            // Deduplicate: only show the 'me' sentinel if no real owner record exists.
+                                            // If backup.employees has an isOwner record, it already appears in teamRoster.
+                                            const ownerInRoster = teamRoster.some((e: any) => e.isOwner)
+                                            const dropdownEmps: any[] = ownerInRoster
+                                              ? teamRoster
+                                              : [{ id: 'me', name: 'Owner / Me' }, ...teamRoster]
+                                            return dropdownEmps.map((emp: any) => {
+                                              const rowEmps = getRowEmployees(r)
+                                              const checked = rowEmps.includes(emp.id)
+                                              return (
+                                                <label
+                                                  key={emp.id}
+                                                  style={{
+                                                    display: 'flex', alignItems: 'center', gap: '6px',
+                                                    padding: '5px 8px', cursor: 'pointer', borderRadius: '3px',
+                                                    fontSize: '12px',
+                                                    color: checked ? '#6ee7b7' : 'var(--t2)',
+                                                    backgroundColor: checked ? 'rgba(16,185,129,0.14)' : 'transparent',
+                                                    borderLeft: checked ? '2px solid #10b981' : '2px solid transparent',
+                                                    fontWeight: checked ? '600' : 'normal',
                                                   }}
-                                                  style={{ accentColor: '#10b981', cursor: 'pointer', flexShrink: 0 }}
-                                                />
-                                                {emp.name}
-                                              </label>
-                                            )
-                                          })}
+                                                >
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={e => {
+                                                      e.stopPropagation()
+                                                      const newEmps = e.target.checked
+                                                        ? [...rowEmps, emp.id]
+                                                        : rowEmps.filter((id: string) => id !== emp.id)
+                                                      if (newEmps.length === 0) return
+                                                      updateRowMultiEmployee(r.id, newEmps)
+                                                    }}
+                                                    style={{ accentColor: '#10b981', cursor: 'pointer', flexShrink: 0 }}
+                                                  />
+                                                  {emp.name}
+                                                </label>
+                                              )
+                                            })
+                                          })()}
                                           {getRowEmployees(r).length > 1 && (
                                             <button
                                               type="button"

@@ -2430,3 +2430,55 @@ NO — ready for screenshot QA.
   Browser QA: Open Estimate Labor, click Employee dropdown on any row. Confirm selected employees show green tint + bold text + left accent bar. Confirm unselected employees look normal. Confirm checkboxes still work.
 * Compact handoff for next agent/chat:
   Selected employee highlight complete on `main`. Selected `<label>` entries in the multi-select dropdown now show: bright teal text, tinted green background, green left accent bar, semi-bold font. 4-line style change only. All other behavior unchanged. Typecheck passes.
+
+---
+
+## Claude Report — Team Cost Phase 1: Dedupe Owner and Worker Cost Rates
+
+* Task completed: YES
+* Files changed:
+  - `src/components/v15r/V15rEstimateTab.tsx`
+  - `src/components/v15r/AddTeamMemberModal.tsx`
+  - `src/components/v15r/V15rTeamPanel.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+* Commit hash: (see below)
+* Typecheck result: PASS — zero errors (`npm.cmd run typecheck`)
+* Root cause:
+  1. Duplicate Owner / Me: EstimateTab prepended a hardcoded `{ id: 'me', name: 'Owner / Me' }` sentinel unconditionally AND spread `backup.employees`. When a real owner record with `isOwner: true` existed, the owner appeared twice.
+  2. 1099/per-project costRate: AddTeamMemberModal applied `costRate = base * payrollMult` to ALL types including 1099 contractors. TeamPanel EmployeeEditModal did the same.
+  3. `getEmployeeCostRate('me')` bypassed real owner records entirely and fell straight to `settings.opCost`.
+* What changed:
+  - **AddTeamMemberModal**: Added `isContractorType = classification === '1099' || selectedType === 'hypothetical'`. `loadedCostRate`, `useEffect` bill-rate calc, and `handleSave` all branch on this. 1099/hypothetical: `costRate = base` (no multiplier). W-2/permanent: `costRate = base × payrollMult`. `applyMultiplier` now persisted on saved record (`!isContractorType`). "Loaded Cost" UI label now dynamic: "base rate (no W-2 burden)" vs "= base × Nx payroll multiplier".
+  - **V15rTeamPanel EmployeeEditModal**: Added `noMultiplier = empIsOwner || empClassification === '1099' || empType === 'hypothetical'`. `loadedCost`, `useEffect`, save handler, and label all use this. Save writes `applyMultiplier: !noMultiplier` and `costRate` branched by type.
+  - **V15rEstimateTab `getEmployeeCostRate`**: 'me' now resolves to real owner record's `costRate` if `isOwner` employee exists, falls back to `settings.opCost`.
+  - **V15rEstimateTab `getEmployeeDisplayName`**: 'me' now resolves to real owner record's name.
+  - **V15rEstimateTab dropdown**: IIFE builds `dropdownEmps = ownerInRoster ? teamRoster : [sentinel, ...teamRoster]`. Owner appears once only.
+* Double verification against requested behavior:
+  - [x] Owner / Me appears once in dropdown — IIFE dedup confirmed
+  - [x] Legacy `me` rows still resolve to owner cost — `getEmployeeCostRate` checks `isOwner` record before opCost fallback
+  - [x] W-2 employee costRate uses payroll multiplier — `isContractorType === false` for permanent W-2 → `base × payrollMult`
+  - [x] Owner costRate does not use payroll multiplier — `noMultiplier = true` (isOwner) → `costRate = baseNum`
+  - [x] 1099/per-project costRate does not use payroll multiplier — `isContractorType = true` → `costRate = base`
+  - [x] Editing a 1099 does not reapply multiplier — EmployeeEditModal: `noMultiplier = true` for 1099 → `correctedCostRate = baseNum`
+  - [x] Estimate allocation modal uses corrected rates — `getEmployeeCostRate` consumes per-employee `costRate` from record
+  - [x] Selected employee highlight still works — dropdown JSX unchanged except IIFE wrapper
+  - [x] Allocation modal still works — no changes to modal logic or state
+  - [x] Labor totals did not change unexpectedly — only cost rates in modal breakdown affected
+  - [x] No unrelated files touched — only 3 scoped files + 2 context files
+* What was learned:
+  - `costRate` on BackupEmployee already stores the "loaded" rate — the fix is at write time (AddTeamMemberModal/EmployeeEditModal), not at read time.
+  - The `isOwner` flag on a real employee record is the canonical dedup signal for the 'me' sentinel.
+  - Dropdown dedup via IIFE is clean and doesn't require moving logic up to a variable outside the JSX.
+* Learned skills / reusable patterns:
+  - IIFE dedup in JSX: `{(() => { const list = ...; return list.map(...) })()} ` — avoids leaking intermediate vars into component scope.
+  - Worker-type cost branching: always branch on `classification === '1099'` (for per_project) and `isOwner`/`selectedType === 'hypothetical'` as a compound `noMultiplier` flag. Single source of truth at save time.
+* Bugs / risks:
+  - Existing 1099 employees already in backup.employees before this fix have `costRate = base × 1.20` stored. No auto-migration. User must open and re-save each affected 1099 employee via EmployeeEditModal to get corrected costRate.
+  - Per-project employee saved as W-2 via AddTeamMemberModal (manual classification override): will correctly get multiplier applied (because `isContractorType = classification === '1099' || selectedType === 'hypothetical'` returns false for per_project + W-2).
+  - Owner cost in Estimate resolves via real owner record only when `isOwner: true` is present in backup.employees. If no such record, `settings.opCost` fallback remains active (correct behavior).
+* Manual QA performed: TypeScript typecheck confirmed PASS. Static code review confirmed. No browser session available.
+* Next recommended action:
+  Manual QA: (1) Open Estimate Labor dropdown — confirm Owner / Me appears once. (2) Select Owner + a W-2 + a 1099 in a labor row, open allocation modal, confirm cost rates differ correctly. (3) Add a new per-project (1099) employee via Team — confirm "Loaded Cost" shows base rate with "no W-2 burden" label. (4) Edit an existing 1099 employee in Team — confirm loaded cost = base (no multiplier), then save and confirm costRate updated.
+* Compact handoff for next agent/chat:
+  Team Cost Phase 1 complete on `main`. Dedup: Estimate dropdown IIFE skips hardcoded 'me' sentinel when `ownerInRoster` is true. Cost resolution: `getEmployeeCostRate('me')` resolves to real owner record's costRate first. AddTeamMemberModal: `isContractorType = classification === '1099' || selectedType === 'hypothetical'` — contractors save `costRate = base` (no multiplier), W-2 saves `costRate = base × payrollMult`. `applyMultiplier` persisted on record. TeamPanel EmployeeEditModal: `noMultiplier = empIsOwner || classification === '1099' || type === 'hypothetical'` — same branching, `applyMultiplier: !noMultiplier` saved. Typecheck: zero errors. Note: existing 1099 employees saved before this fix need one re-save to get corrected costRate.

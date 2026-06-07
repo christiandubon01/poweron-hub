@@ -4922,3 +4922,57 @@ Browser reached login gate at `http://localhost:5173`; Home-tab click-through re
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Home repair pass complete on `main`. Pipeline subtitle uses active-project count; agenda linking uses a real project picker modal; agenda cards scroll after 10 task rows. Scope limited to `V15rHome.tsx` plus context files.
+
+---
+
+## Shared Update — Team Cost Phase 1: Dedupe Owner and Worker Cost Rates
+
+AGENT:
+Claude Code Sonnet 4.5 Medium
+
+BRANCH:
+main
+
+COMMIT:
+(see below — committed after context update)
+
+FILES CHANGED:
+- `src/components/v15r/V15rEstimateTab.tsx`
+- `src/components/v15r/AddTeamMemberModal.tsx`
+- `src/components/v15r/V15rTeamPanel.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+TYPECHECK:
+PASS — zero errors (`npm.cmd run typecheck`)
+
+USER-FACING BEHAVIOR CHANGED:
+- Estimate Labor employee dropdown no longer shows Owner / Me twice when a real owner employee record exists in backup.employees.
+- Cost in the Estimate allocation modal now resolves to the real owner record's costRate when the 'me' sentinel is used in saved labor rows.
+- 1099 / per-project employees added via AddTeamMemberModal now save costRate = base wage (no payroll multiplier applied).
+- W-2 / permanent employees still save costRate = base × payrollMult as before.
+- Editing a 1099 employee via EmployeeEditModal in TeamPanel now saves costRate = baseNum and sets applyMultiplier: false.
+- Editing an owner (isOwner: true) via EmployeeEditModal saves costRate = baseNum (no multiplier).
+- Loaded Cost display label in both modals now shows "base rate (no W-2 burden)" for contractors/owner instead of "= base × 1.20x".
+
+IMPLEMENTATION NOTES:
+- AddTeamMemberModal: added `isContractorType = classification === '1099' || selectedType === 'hypothetical'`. loadedCostRate, useEffect bill-rate calc, and handleSave all branch on this flag. `applyMultiplier` is now persisted on the saved record.
+- V15rTeamPanel EmployeeEditModal: added `noMultiplier = empIsOwner || empClassification === '1099' || empType === 'hypothetical'`. loadedCost, useEffect, save handler, and label all use this flag. Save now writes `applyMultiplier: !noMultiplier`.
+- V15rEstimateTab getEmployeeCostRate: 'me' sentinel now resolves to real owner record's costRate if isOwner employee exists, falls back to settings.opCost.
+- V15rEstimateTab getEmployeeDisplayName: 'me' sentinel now resolves to real owner record's name.
+- V15rEstimateTab dropdown: IIFE wraps the list build; if ownerInRoster = true, skip the hardcoded 'me' sentinel entry.
+- Backward-compatible: old rows with empId: 'me' still resolve correctly.
+
+RISKS / FOLLOW-UP:
+- Existing 1099 employees already saved before this fix have costRate = base × 1.20 stored. They must be opened and re-saved in EmployeeEditModal to get the corrected costRate. No automatic migration was run.
+- Owner cost in Estimate resolves via real owner record only if isOwner: true is set on a backup.employees record. If no such record exists, settings.opCost fallback remains.
+- applyMultiplier toggle in TeamPanel (the manual per-employee toggle) is still functional and overrides the default.
+
+MANUAL QA STATUS:
+TypeScript typecheck confirmed PASS. Manual browser QA recommended: verify dropdown shows Owner/Me once; verify allocation modal shows different costs for W-2 vs 1099 employees; verify editing a 1099 shows "base rate (no W-2 burden)" label.
+
+NEXT AGENT SHOULD KNOW:
+- Phase 1 (dedup + cost rate by type) is complete.
+- Phase 2 (retroactive migration for existing 1099 records) is deferred — existing 1099 employees need manual re-save to get corrected costRate.
+- Phase 3 (apply settings.overheadPct in allocation modal) is deferred.
+- Phase 4 (per-employee monthly overhead allocation from settings.employeeCosts[]) is deferred.

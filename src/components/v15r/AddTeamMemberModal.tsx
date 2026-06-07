@@ -111,18 +111,28 @@ export default function AddTeamMemberModal({
   const [projectId, setProjectId] = useState('')
   const [startMonth, setStartMonth] = useState('')
 
+  // Derived flag: 1099 contractors and hypotheticals carry no W-2 payroll burden
+  // permanent + W-2 → multiplier applies
+  // per_project + 1099 (default) → no multiplier
+  // per_project + W-2 (user overridden) → multiplier applies
+  // hypothetical → no multiplier (planning only)
+  const isContractorType = classification === '1099' || selectedType === 'hypothetical'
+
   // Auto-calculate bill rate default when base wage changes (unless user has overridden it)
   useEffect(() => {
     if (!billRateOverridden) {
       const base = Number(hourlyRate) || 0
-      const loaded = base * payrollMult
+      const isContr = classification === '1099' || selectedType === 'hypothetical'
+      const loaded = isContr ? base : base * payrollMult
       setBillRate(loaded > 0 ? parseFloat((loaded * 2.0).toFixed(2)) : '')
     }
-  }, [hourlyRate, payrollMult, billRateOverridden])
+  }, [hourlyRate, payrollMult, billRateOverridden, classification, selectedType])
 
   // Derived read-only values
   const baseWageNum = Number(hourlyRate) || 0
-  const loadedCostRate = parseFloat((baseWageNum * payrollMult).toFixed(2))
+  const loadedCostRate = isContractorType
+    ? parseFloat(baseWageNum.toFixed(2))
+    : parseFloat((baseWageNum * payrollMult).toFixed(2))
   const billRateNum = Number(billRate) || 0
   const marginPerHour = parseFloat((billRateNum - loadedCostRate).toFixed(2))
 
@@ -152,18 +162,25 @@ export default function AddTeamMemberModal({
     }
 
     const baseWage = Number(hourlyRate) || 0
-    const loadedCost = parseFloat((baseWage * payrollMult).toFixed(2))
+    // costRate: W-2 permanent → base × payrollMult (loaded cost)
+    //           1099 contractor / hypothetical → base rate only (no W-2 burden)
+    const isContr = classification === '1099' || selectedType === 'hypothetical'
+    const loadedCost = isContr
+      ? parseFloat(baseWage.toFixed(2))
+      : parseFloat((baseWage * payrollMult).toFixed(2))
     const finalBillRate = Number(billRate) || loadedCost * 2.0
 
     const record: Partial<ExtendedEmployee> = {
       id: 'emp-' + Date.now(),
       employee_type: selectedType,
       hourly_rate: baseWage,
-      // costRate stores the loaded cost rate; billRate is the independent customer-facing rate
+      // costRate stores loaded cost (W-2) or base rate (1099/hypothetical)
       costRate: loadedCost,
       billRate: finalBillRate,
       status,
       classification,
+      // applyMultiplier persisted so TeamPanel and Estimate can skip W-2 burden for contractors
+      applyMultiplier: !isContr,
       compliance_acknowledged: false,
     }
 
@@ -284,7 +301,7 @@ export default function AddTeamMemberModal({
                     <Field label="Loaded Cost ($/hr) — read only">
                       <div className="flex items-center gap-2 px-3 py-2.5 bg-[#1a1d27] border border-amber-700/40 rounded text-sm">
                         <span className="text-amber-400 font-bold">${loadedCostRate.toFixed(2)}</span>
-                        <span className="text-gray-500 text-xs">= base × {payrollMult}x payroll multiplier</span>
+                        <span className="text-gray-500 text-xs">{isContractorType ? 'base rate (no W-2 burden)' : `= base × ${payrollMult}x payroll multiplier`}</span>
                       </div>
                     </Field>
                     <Field label="Bill Rate ($/hr) — what you charge customers">
@@ -396,7 +413,7 @@ export default function AddTeamMemberModal({
                     <Field label="Loaded Cost ($/hr) — read only">
                       <div className="flex items-center gap-2 px-3 py-2.5 bg-[#1a1d27] border border-amber-700/40 rounded text-sm">
                         <span className="text-amber-400 font-bold">${loadedCostRate.toFixed(2)}</span>
-                        <span className="text-gray-500 text-xs">= base × {payrollMult}x payroll multiplier</span>
+                        <span className="text-gray-500 text-xs">{isContractorType ? 'base rate (no W-2 burden)' : `= base × ${payrollMult}x payroll multiplier`}</span>
                       </div>
                     </Field>
                     <Field label="Bill Rate ($/hr) — what you charge customers">

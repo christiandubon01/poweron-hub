@@ -697,21 +697,28 @@ function EmployeeEditModal({
   const initBase = num((employee as any).hourly_rate || employee.costRate)
   const initBill = num(employee.billRate)
 
+  // Determine whether this employee carries W-2 payroll burden
+  // Owner → no burden; 1099 contractor → no burden; hypothetical → no burden; W-2 permanent → burden
+  const empIsOwner = employee.isOwner === true
+  const empClassification = (employee as any).classification || 'W-2'
+  const empType = (employee as any).employee_type || 'permanent'
+  const noMultiplier = empIsOwner || empClassification === '1099' || empType === 'hypothetical'
+
   const [baseWage, setBaseWage] = useState<number | ''>(initBase || '')
   const [billRate, setBillRate] = useState<number | ''>(initBill || '')
-  const [billOverridden, setBillOverridden] = useState(initBill > 0 && initBill !== initBase * payrollMult * 2)
+  const [billOverridden, setBillOverridden] = useState(initBill > 0 && initBill !== initBase * (noMultiplier ? 1 : payrollMult) * 2)
 
   // Auto-update bill rate default when base changes (unless user overrode)
   useEffect(() => {
     if (!billOverridden) {
       const base = Number(baseWage) || 0
-      const loaded = base * payrollMult
+      const loaded = noMultiplier ? base : base * payrollMult
       setBillRate(loaded > 0 ? parseFloat((loaded * 2.0).toFixed(2)) : '')
     }
-  }, [baseWage, payrollMult, billOverridden])
+  }, [baseWage, payrollMult, billOverridden, noMultiplier])
 
   const baseNum = Number(baseWage) || 0
-  const loadedCost = parseFloat((baseNum * payrollMult).toFixed(2))
+  const loadedCost = noMultiplier ? baseNum : parseFloat((baseNum * payrollMult).toFixed(2))
   const billNum = Number(billRate) || 0
   const margin = parseFloat((billNum - loadedCost).toFixed(2))
 
@@ -750,7 +757,9 @@ function EmployeeEditModal({
             <label className="block text-xs font-semibold text-gray-400 mb-1 uppercase tracking-wide">Loaded Cost ($/hr) — auto-calculated</label>
             <div className="flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-input)] border border-amber-700/40 rounded text-sm">
               <span className="text-amber-400 font-bold">${loadedCost.toFixed(2)}</span>
-              <span className="text-gray-500 text-xs">= base × {payrollMult.toFixed(2)}x mult</span>
+              <span className="text-gray-500 text-xs">
+                {noMultiplier ? 'base rate (no W-2 burden)' : `= base × ${payrollMult.toFixed(2)}x mult`}
+              </span>
             </div>
           </div>
 
@@ -794,10 +803,12 @@ function EmployeeEditModal({
           </button>
           <button
             onClick={() => {
+              const correctedCostRate = noMultiplier ? baseNum : parseFloat((baseNum * payrollMult).toFixed(2))
               onSave(employee.id, {
                 hourly_rate: baseNum,
-                costRate: loadedCost,
-                billRate: billNum || loadedCost * 2,
+                costRate: correctedCostRate,
+                billRate: billNum || correctedCostRate * 2,
+                applyMultiplier: !noMultiplier,
               } as any)
             }}
             className="flex-1 px-4 py-2.5 bg-blue-600/70 text-blue-100 rounded-lg text-sm font-bold hover:bg-blue-600 transition"
