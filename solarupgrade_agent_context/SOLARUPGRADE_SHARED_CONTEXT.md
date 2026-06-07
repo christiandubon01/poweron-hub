@@ -4814,3 +4814,27 @@ Home repair pass complete on `main`. Pipeline subtitle uses active-project count
 * Manual QA status: Typecheck only. Browser QA recommended.
 * Next agent should know:
   Multi-employee labor allocation is complete on `main`. Employee dropdown now multi-select. Allocation & Profit modal has pie chart, sliders, cost/profit breakdown. All existing labor rows, phase grouping, totals, and collapse state remain unchanged.
+
+---
+
+## Shared Update — Estimate Labor: Employee Dropdown Clipping Fix
+
+* Agent: Claude Code Sonnet 4.5 Medium
+* Branch: main
+* Commit: see git log — "fix(estimate): prevent employee dropdown clipping"
+* Files changed:
+  - `src/components/v15r/V15rEstimateTab.tsx` (2-line change)
+  - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+* Typecheck: PASS
+* User-facing behavior changed:
+  - Employee dropdown in Estimate Labor phase buckets now fully shows even in single-row phase buckets. Previously clipped by container `overflow: hidden`.
+  - Phase header visual appearance preserved: tint background still has rounded top corners (via `borderRadius` on the header div directly, conditional on isOpen).
+* Implementation notes:
+  - Root cause: `overflow: 'hidden'` on the phase bucket outer div at line 1807 was clipping the `position: 'absolute'` dropdown child.
+  - Fix: removed `overflow: 'hidden'`, added `borderRadius: isOpen ? '6px 6px 0 0' : '6px'` to the phase header div.
+  - z-index alone cannot fix CSS overflow clipping — the parent's overflow must be changed.
+* Risks / follow-up: None. Pure CSS fix, no logic changes, no data model changes.
+* Manual QA status: Typecheck only. Browser QA recommended.
+* Next agent should know:
+  Dropdown clipping is fixed. Phase bucket outer div no longer has overflow:hidden. All multi-employee functionality, modal, phase grouping, and Estimate totals unchanged. Typecheck passes.

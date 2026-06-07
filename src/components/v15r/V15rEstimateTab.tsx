@@ -1804,7 +1804,7 @@ Return ONLY valid JSON, no other text.`
               const phaseTotal = phRows.reduce((s: number, r: any) => s + num(r.hrs) * num(r.rate), 0)
               const phaseHrs = phRows.reduce((s: number, r: any) => s + num(r.hrs), 0)
               return (
-                <div key={ph} style={{ backgroundColor: '#1e2130', borderRadius: '6px', marginBottom: '8px', overflow: 'hidden' }}>
+                <div key={ph} style={{ backgroundColor: '#1e2130', borderRadius: '6px', marginBottom: '8px' }}>
                   <div
                     role="button"
                     tabIndex={0}
@@ -1818,6 +1818,7 @@ Return ONLY valid JSON, no other text.`
                       gap: '8px',
                       cursor: 'pointer',
                       userSelect: 'none',
+                      borderRadius: isOpen ? '6px 6px 0 0' : '6px',
                       borderBottom: isOpen ? '1px solid rgba(255,255,255,0.05)' : 'none',
                     }}
                   >

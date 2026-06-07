@@ -2359,3 +2359,38 @@ NO — ready for screenshot QA.
   Browser QA: Open Estimate tab, add/select 2+ employees on a labor row, confirm dropdown shows checkboxes, open modal, move sliders, check pie chart and profit update. Refresh page, confirm allocations persist. Confirm labor totals unchanged.
 * Compact handoff for next agent/chat:
   Multi-employee labor allocation complete on `main`. Estimate tab Employee column now shows a custom checkbox dropdown (single or multi), "∑" action button, and a full Allocation & Profit modal with SVG pie chart and per-employee sliders. New row fields: `employees?: string[]`, `employeeAllocations?: {empId,hrs}[]`. Backward compatible — old rows without these fields work as before. Employee cost uses `BackupEmployee.costRate` or `settings.opCost` fallback. Overhead from `settings.overheadPct`. Typecheck passes.
+
+---
+
+## Claude Report — Estimate Labor: Employee Dropdown Clipping Fix
+
+* Task completed: Yes
+* Files changed: `src/components/v15r/V15rEstimateTab.tsx` only (+ context files)
+* Commit hash: (see git log — "fix(estimate): prevent employee dropdown clipping")
+* Typecheck result: PASS — clean, no errors
+* Root cause: The phase bucket outer container (line 1807) had `overflow: 'hidden'` which clips all absolutely-positioned children, including the employee multi-select dropdown. When a phase bucket has only one row, the container is short, so the dropdown overflows and gets cut off. With multiple rows the container is taller and the clipping is less visible, but the fundamental issue was always `overflow: 'hidden'`.
+* What changed:
+  - Removed `overflow: 'hidden'` from phase bucket outer `<div>` (the `#1e2130` container)
+  - Added `borderRadius: isOpen ? '6px 6px 0 0' : '6px'` to the phase header div, so the colored tint background (`clr + '18'`) still has properly rounded top corners when expanded, and fully rounded corners when collapsed. This preserves the visual appearance that `overflow: hidden` was providing.
+* Double verification against requested behavior:
+  - [x] `overflow: 'hidden'` removed from phase bucket container — dropdown can now escape
+  - [x] Header still has rounded corners via `borderRadius` on header div
+  - [x] Collapsed phase still has fully rounded header corners (`6px`)
+  - [x] Expanded phase still has rounded top corners only (`6px 6px 0 0`)
+  - [x] Checkbox multi-select behavior unchanged
+  - [x] Allocation modal, pie chart, sliders unchanged
+  - [x] Labor totals, phase totals, Estimate totals unchanged
+  - [x] Phase collapse persistence unchanged
+  - [x] No unrelated files touched
+* What was learned:
+  - CSS `overflow: hidden` on a container clips `position: absolute` descendants even when they have a high z-index. z-index alone cannot fix overflow clipping — the parent's overflow must be changed.
+  - Removing `overflow: hidden` while preserving rounded corner aesthetics: apply `borderRadius` directly to the child that has the colored background, using conditional radii (top corners only when expanded, all corners when collapsed).
+* Learned skills / reusable patterns:
+  - Pattern: when a custom dropdown is inside a `borderRadius` container, never add `overflow: hidden` to that container. Instead, round child backgrounds directly.
+  - Conditional `borderRadius` on header: `isOpen ? '6px 6px 0 0' : '6px'` — top-only when content below, full when standalone.
+* Bugs / risks: None introduced. This is a pure CSS-level fix with no logic changes.
+* Manual QA performed: Static code review and typecheck only. Browser QA recommended.
+* Next recommended action:
+  Browser QA: Open a phase bucket with exactly one labor row. Click Employee dropdown. Confirm full dropdown list is visible. Select multiple employees. Confirm allocation modal opens. Confirm visual appearance of phase bucket header rounded corners is preserved.
+* Compact handoff for next agent/chat:
+  Employee dropdown clipping fixed on `main`. Root cause: `overflow: hidden` on phase bucket container clipped the absolute-position dropdown. Fix: removed overflow:hidden, added borderRadius directly to phase header div (conditional: top-only when expanded, full when collapsed). All multi-employee functionality, phase grouping, and labor totals unchanged. Typecheck passes.
