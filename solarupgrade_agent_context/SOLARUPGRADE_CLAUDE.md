@@ -2054,3 +2054,65 @@ NO — ready for screenshot QA.
 
 * Compact handoff for next agent/chat:
   Estimate Tab Batch 1 complete on `main`. Three fixes: (1) Materials by Phase now shows Markup % (from settings, matching MTO) instead of margin %; label renamed. (2) Profit Target slider added in Deal Overview — drags 0–99.9%, derives contract amount via `cost/(1-pct)`, saves on pointer-up. Manual contract input still works and updates slider. (3) Cost Breakdown stacked bar and legend now include Profit segment (green / red on negative), percentages relative to Total Contract Amount. Only `V15rEstimateTab.tsx` changed. Typecheck passes.
+
+---
+
+## Claude Report — Estimate Tab Slider Refinement: Compact $0–$100k Scale
+
+* Task completed: YES
+
+* Files changed:
+  - `src/components/v15r/V15rEstimateTab.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+* Commit hash: see git log — committed as "fix(estimate): refine contract slider scale"
+
+* Typecheck result: PASS — zero errors
+
+* Root cause:
+  Prior slider was profit-percent-based (0–99.9%) with an indirect contract formula `cost/(1-pct)`. User requested a contract-amount reference slider ($0–$100k) that is visually half the width with tick marks at $0, $25k, $50k, $75k, $100k.
+
+* What changed:
+  - Replaced profit-percent slider with a contract-amount reference slider (min=0, max=100000, step=500).
+  - Slider value is now `Math.min(Math.max(num(p.contract), 0), 100000)` — direct contract amount, clamped to $0–$100k visual range. Manual input above $100k still works; slider simply sits at max.
+  - onChange now directly sets `p.contract = num(e.target.value)`. No division-by-zero risk.
+  - Wrapped slider in a centered `width: 52%, minWidth: 220px, maxWidth: 320px` container — approximately half the prior full-width slider.
+  - Added tick marks (3px dots) and labels below slider at $0, $25k, $50k, $75k, $100k.
+  - Header label changed from "Profit Target" to "Contract Reference". Right-side badge still shows `t.customerMarginPct.toFixed(1)% profit`.
+  - onPointerUp save path unchanged.
+  - All other Deal Overview, Cost Breakdown, and markup logic unchanged.
+
+* Double verification against requested behavior:
+  ✅ Slider is visually about half prior width (52% with 220–320px bounds, centered)
+  ✅ Slider shows $0–$100k reference range
+  ✅ Tick dots and labels at $0, $25k, $50k, $75k, $100k
+  ✅ Dragging slider updates p.contract directly
+  ✅ Manual Total Contract Amount input still works (input is above slider, unchanged)
+  ✅ Manual input updates slider position (slider reads from p.contract)
+  ✅ Projected profit amount and % update correctly (derived from p.contract and t.customerCost)
+  ✅ Markup still shows Settings/MTO value (untouched)
+  ✅ Cost Breakdown still includes Profit (untouched)
+  ✅ No unrelated files touched
+
+* What was learned:
+  - Direct contract-amount slider is simpler and safer than profit-percent slider — no formula, no division-by-zero edge case.
+  - Centering a width-limited slider container inside a full-width panel is the clean way to "halve" slider width without layout disruption.
+  - Tick marks as flex children of the slider wrapper naturally align to the slider endpoints.
+
+* Learned skills / reusable patterns:
+  - Contract slider pattern: min=0, max=maxVal, step=increment, value=Math.min(Math.max(contractVal, 0), maxVal), onChange sets p.contract directly.
+  - Tick mark pattern: map over an array of values, render flex column with dot + label, flex row with space-between matches slider thumb positions.
+
+* Bugs / risks:
+  - Manual input above $100k leaves slider at max ($100k marker). This is intentional — slider is a reference, not the only input.
+  - Step of 500 means minimum contract change via slider is $500. Acceptable for reference purposes.
+
+* Manual QA performed:
+  Static code review and typecheck only. Browser QA recommended to verify tick alignment and slider drag.
+
+* Next recommended action:
+  Manual QA: Open Estimate tab → confirm slider is narrower and centered. Drag slider → confirm Total Contract Amount updates. Type a value > $100k in contract input → confirm slider stays at max. Confirm $0/$25k/$50k/$75k/$100k labels visible.
+
+* Compact handoff for next agent/chat:
+  Estimate Tab Slider Refinement complete on `main`. Contract reference slider now uses $0–$100k range (step $500), centered at ~52% width. Five tick dots + labels ($0, $25k, $50k, $75k, $100k) rendered below slider. Direct contract-amount onChange (no profit-% formula). Profit % badge still in header. Manual contract input and all Cost Breakdown / markup logic untouched. Typecheck passes.

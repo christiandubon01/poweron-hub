@@ -2059,35 +2059,41 @@ Return ONLY valid JSON, no other text.`
                 }}
               />
             </div>
-            {/* Profit % slider — max clamped to 99.9% to avoid division by zero */}
+            {/* Contract amount slider — $0–$100k reference scale; visual range clamps, manual input can exceed $100k */}
             <div style={{ position: 'relative', marginBottom: '14px', padding: '10px 14px', backgroundColor: 'rgba(15,23,42,0.32)', border: '1px solid rgba(52,211,153,0.14)', borderRadius: '8px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                <span style={{ fontSize: '11px', color: '#a7f3d0', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Profit Target</span>
-                <span style={{ fontSize: '13px', color: '#34d399', fontFamily: 'monospace', fontWeight: '800' }}>{Math.max(0, Math.min(99.9, t.customerMarginPct)).toFixed(1)}%</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <span style={{ fontSize: '11px', color: '#a7f3d0', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Contract Reference</span>
+                <span style={{ fontSize: '12px', color: '#34d399', fontFamily: 'monospace', fontWeight: '800' }}>{t.customerMarginPct.toFixed(1)}% profit</span>
               </div>
-              <input
-                type="range"
-                min={0}
-                max={99.9}
-                step={0.1}
-                value={Math.max(0, Math.min(99.9, t.customerMarginPct))}
-                onChange={e => {
-                  const pct = num(e.target.value) / 100
-                  const cost = t.customerCost
-                  if (cost > 0) {
-                    p.contract = Math.round((cost / (1 - pct)) * 100) / 100
-                    forceUpdate()
-                  }
-                }}
-                onPointerUp={() => {
-                  pushState()
-                  saveBackupDataAndSync(backup)
-                }}
-                style={{ width: '100%', accentColor: '#34d399', cursor: 'pointer' }}
-              />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#374151', marginTop: '4px' }}>
-                <span>0% (break even)</span>
-                <span>max 99.9%</span>
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <div style={{ width: '52%', minWidth: '220px', maxWidth: '320px' }}>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100000}
+                    step={500}
+                    value={Math.min(Math.max(num(p.contract || 0), 0), 100000)}
+                    onChange={e => {
+                      p.contract = num(e.target.value)
+                      forceUpdate()
+                    }}
+                    onPointerUp={() => {
+                      pushState()
+                      saveBackupDataAndSync(backup)
+                    }}
+                    style={{ width: '100%', accentColor: '#34d399', cursor: 'pointer' }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '5px' }}>
+                    {[0, 25000, 50000, 75000, 100000].map(val => (
+                      <div key={val} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
+                        <div style={{ width: '3px', height: '3px', borderRadius: '50%', backgroundColor: '#374151' }} />
+                        <span style={{ fontSize: '9px', color: '#4b5563', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                          {val === 0 ? '$0' : `$${val / 1000}k`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
             <div style={{ position: 'relative', display: 'grid', gap: '10px' }}>

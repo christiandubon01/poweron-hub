@@ -4670,3 +4670,32 @@ Home repair pass complete on `main`. Pipeline subtitle uses active-project count
   - This is Inner Project improvement Batch 1 of 3. Batch 2 will cover additional Estimate tab or other Inner Project tab improvements as directed by the user.
   - Do not re-touch the margin/markup calculation or slider logic unless explicitly scoped.
   - Material Takeoff tab and Settings tab were not touched and remain unchanged.
+
+---
+
+## Shared Update — Estimate Tab Slider Refinement: Compact $0–$100k Scale
+
+* Agent: Claude Code (Sonnet 4.6)
+* Branch: main
+* Commit: see git log — committed as "fix(estimate): refine contract slider scale"
+* Files changed: `src/components/v15r/V15rEstimateTab.tsx`, both context files
+* Typecheck: PASS — zero errors
+* User-facing behavior changed:
+  - Profit-percent slider replaced with a contract-amount reference slider ($0–$100k, step $500).
+  - Slider visual width reduced to ~52% of panel width (220–320px), centered.
+  - Tick dots and labels added at $0, $25k, $50k, $75k, $100k.
+  - Slider header renamed "Contract Reference"; profit % badge still visible in header.
+  - Direct onChange: `p.contract = num(e.target.value)`. No profit-% formula.
+  - Manual contract input > $100k still works; slider clamps at max visually.
+* Implementation notes:
+  - Slider reads `Math.min(Math.max(num(p.contract), 0), 100000)` — safe clamp.
+  - Tick marks are flex-row children with `justifyContent: space-between` — aligns to slider range endpoints naturally.
+  - No Cost Breakdown or markup logic touched.
+* Risks / follow-up:
+  - Projects with contract > $100k will show slider at max. This is intentional — slider is a visual reference only.
+  - Browser QA still recommended to verify tick label alignment at different panel widths.
+* Manual QA status: Static code review + typecheck only. Browser QA recommended.
+* Next agent should know:
+  - Slider is now contract-amount-based, not profit-percent-based. Do not revert to profit-% formula unless explicitly requested.
+  - Manual contract input is untouched and works independently of slider range.
+  - This was an Estimate Tab polish pass. Inner Project Batch 2 scope TBD by user.
