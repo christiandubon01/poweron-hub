@@ -1952,7 +1952,11 @@ Return ONLY valid JSON, no other text.`
                                                 style={{
                                                   display: 'flex', alignItems: 'center', gap: '6px',
                                                   padding: '5px 8px', cursor: 'pointer', borderRadius: '3px',
-                                                  color: 'var(--t2)', fontSize: '12px',
+                                                  fontSize: '12px',
+                                                  color: checked ? '#6ee7b7' : 'var(--t2)',
+                                                  backgroundColor: checked ? 'rgba(16,185,129,0.14)' : 'transparent',
+                                                  borderLeft: checked ? '2px solid #10b981' : '2px solid transparent',
+                                                  fontWeight: checked ? '600' : 'normal',
                                                 }}
                                               >
                                                 <input

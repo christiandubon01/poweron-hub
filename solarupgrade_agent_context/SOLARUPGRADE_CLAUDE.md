@@ -2394,3 +2394,39 @@ NO — ready for screenshot QA.
   Browser QA: Open a phase bucket with exactly one labor row. Click Employee dropdown. Confirm full dropdown list is visible. Select multiple employees. Confirm allocation modal opens. Confirm visual appearance of phase bucket header rounded corners is preserved.
 * Compact handoff for next agent/chat:
   Employee dropdown clipping fixed on `main`. Root cause: `overflow: hidden` on phase bucket container clipped the absolute-position dropdown. Fix: removed overflow:hidden, added borderRadius directly to phase header div (conditional: top-only when expanded, full when collapsed). All multi-employee functionality, phase grouping, and labor totals unchanged. Typecheck passes.
+
+---
+
+## Claude Report — Estimate Labor: Highlight Selected Employees
+
+* Task completed: Yes
+* Files changed: `src/components/v15r/V15rEstimateTab.tsx` only (+ context files)
+* Commit hash: (see git log — "fix(estimate): highlight selected labor employees")
+* Typecheck result: PASS — clean, no errors
+* Root cause: The employee dropdown `<label>` elements used a static style with no visual distinction between checked and unchecked employees. The `checked` variable was already computed per-label but only used for the checkbox `checked` prop, not for any visual styling.
+* What changed: 4 lines in the `<label>` style object — changed `color: 'var(--t2)'` to conditional, and added 3 new conditional properties:
+  - `color: checked ? '#6ee7b7' : 'var(--t2)'` — bright teal for selected, muted default for unselected
+  - `backgroundColor: checked ? 'rgba(16,185,129,0.14)' : 'transparent'` — subtle teal tint background for selected
+  - `borderLeft: checked ? '2px solid #10b981' : '2px solid transparent'` — green left accent bar for selected (transparent placeholder maintains padding for unselected)
+  - `fontWeight: checked ? '600' : 'normal'` — semi-bold text for selected
+* Double verification against requested behavior:
+  - [x] Single selected employee is highlighted — `checked === true` for that label
+  - [x] Multiple selected employees are all highlighted — each label independently checks `checked`
+  - [x] Unselected employees are not highlighted — `checked === false` returns default styles
+  - [x] Checkbox state remains clear — checkbox `checked` prop unchanged, `accentColor: '#10b981'` unchanged
+  - [x] Dropdown still fully shows in one-row bucket — `overflow: hidden` fix from previous session untouched
+  - [x] Allocation & Profit modal unchanged
+  - [x] Labor totals and phase totals unchanged
+  - [x] No unrelated files touched
+* What was learned:
+  - The `checked` variable was already available in scope; the visual highlight needed 0 logic changes — only style changes.
+  - Using `borderLeft: '2px solid transparent'` instead of `borderLeft: 'none'` ensures the text doesn't shift horizontally when toggling selected state (avoids layout jank).
+* Learned skills / reusable patterns:
+  - Stable-width conditional border: always apply `borderLeft` with a transparent fallback on the unselected state so text alignment doesn't shift.
+  - Four-property highlight pattern: color + backgroundColor + borderLeft + fontWeight gives strong but clean dark-theme selection feedback.
+* Bugs / risks: None. Pure style change, no logic or data changes.
+* Manual QA performed: Static code review and typecheck only. Browser QA recommended.
+* Next recommended action:
+  Browser QA: Open Estimate Labor, click Employee dropdown on any row. Confirm selected employees show green tint + bold text + left accent bar. Confirm unselected employees look normal. Confirm checkboxes still work.
+* Compact handoff for next agent/chat:
+  Selected employee highlight complete on `main`. Selected `<label>` entries in the multi-select dropdown now show: bright teal text, tinted green background, green left accent bar, semi-bold font. 4-line style change only. All other behavior unchanged. Typecheck passes.

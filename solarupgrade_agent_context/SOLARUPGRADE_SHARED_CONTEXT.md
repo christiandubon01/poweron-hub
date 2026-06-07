@@ -4832,3 +4832,68 @@ Browser reached login gate at `http://localhost:5173`; Home-tab click-through re
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Home repair pass complete on `main`. Pipeline subtitle uses active-project count; agenda linking uses a real project picker modal; agenda cards scroll after 10 task rows. Scope limited to `V15rHome.tsx` plus context files.
+
+---
+
+## Shared Update — Estimate Labor: Multi-Employee Allocation and Profit Modal
+
+* Agent: Claude Code Sonnet 4.5 Medium
+* Branch: main
+* Commit: 8440366 feat(estimate): add multi employee labor allocation
+* Files changed:
+  - `src/components/v15r/V15rEstimateTab.tsx`
+* Typecheck: PASS
+* User-facing behavior changed:
+  - Estimate tab Labor rows: Employee column is now a custom multi-select checkbox dropdown. Single employee shows clean name; multiple shows "Name +N" summary.
+  - When 2+ employees selected: "Allocation & Profit ›" button in dropdown and "∑" icon button in row actions open the Labor Allocation & Profit modal.
+  - Modal shows: SVG pie chart, per-employee hour sliders, per-employee cost/profit breakdown, net profit total.
+* Implementation notes:
+  - New optional labor row fields: `employees?: string[]`, `employeeAllocations?: {empId,hrs}[]`. Backward compatible — old rows use `empId`.
+  - Employee cost rate: `BackupEmployee.costRate` if available, else `settings.opCost` fallback.
+  - `estTotals()` formula unchanged — multi-employee data is display/analysis only.
+* Risks / follow-up:
+  - Allocation slider totals are independent — can exceed/sub-total `r.hrs`. User sees "X of Y allocated" indicator.
+* Manual QA status: Browser QA performed. All features confirmed working.
+* Next agent should know:
+  Multi-employee labor allocation is complete. Employee dropdown now multi-select. Allocation & Profit modal has pie chart, sliders, cost/profit. All existing labor rows, phase grouping, totals, collapse state unchanged.
+
+---
+
+## Shared Update — Estimate Labor: Employee Dropdown Clipping Fix
+
+* Agent: Claude Code Sonnet 4.5 Medium
+* Branch: main
+* Commit: 104a2ac fix(estimate): prevent employee dropdown clipping
+* Files changed:
+  - `src/components/v15r/V15rEstimateTab.tsx` (2-line change)
+* Typecheck: PASS
+* User-facing behavior changed:
+  - Employee dropdown now fully shows in single-row phase buckets. Previously clipped by `overflow: hidden` on phase bucket container.
+  - Phase header visual appearance preserved: rounded top corners via `borderRadius` on header div (conditional on isOpen).
+* Implementation notes:
+  - Root cause: `overflow: 'hidden'` on phase bucket outer div clipped `position: 'absolute'` dropdown child. z-index alone cannot fix CSS overflow clipping.
+  - Fix: removed `overflow: 'hidden'`; added `borderRadius: isOpen ? '6px 6px 0 0' : '6px'` to phase header div.
+* Risks / follow-up: None. Pure CSS fix, no logic changes.
+* Manual QA status: Browser QA confirmed — dropdown fully visible in single-row buckets.
+* Next agent should know:
+  Dropdown clipping is fixed. Phase bucket outer div no longer has overflow:hidden. All multi-employee functionality, modal, phase grouping, and Estimate totals unchanged.
+
+---
+
+## Shared Update — Estimate Labor: Highlight Selected Employees
+
+* Agent: Claude Code Sonnet 4.5 Medium
+* Branch: main
+* Commit: see git log — "fix(estimate): highlight selected labor employees"
+* Files changed:
+  - `src/components/v15r/V15rEstimateTab.tsx` (4-line style change)
+* Typecheck: PASS
+* User-facing behavior changed:
+  - Selected employees in the multi-select dropdown are now visually highlighted: bright teal text (`#6ee7b7`), teal-tinted background (`rgba(16,185,129,0.14)`), green left accent bar (`2px solid #10b981`), semi-bold font weight. Unselected employees show default muted styling.
+* Implementation notes:
+  - The `checked` variable was already computed per-label from `getRowEmployees(r).includes(emp.id)`. This was a pure style change — no logic added.
+  - Used `borderLeft: '2px solid transparent'` for unselected to prevent text shift on toggle.
+* Risks / follow-up: None.
+* Manual QA status: Typecheck only. Browser QA recommended.
+* Next agent should know:
+  Selected employee highlight complete. 4-line style change only. All other dropdown, modal, phase, and Estimate behavior unchanged.
