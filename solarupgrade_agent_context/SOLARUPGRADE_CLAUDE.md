@@ -2535,3 +2535,20 @@ NO — ready for screenshot QA.
 * 1099 save/load: AddTeamMemberModal save was already correct. Display-only fixes.
 * W-2/Owner regression: W-2 noMultiplier=false so loadedCostRate=base*mult unchanged. Owner noMultiplier=true.
 * Compact handoff: Phase 3 complete on main. V15rTeamPanel.tsx only. EmployeeCard+calcEmployeeCost+LaborFlow all fixed with noMultiplier/isContractor guard. AddTeamMemberModal and V15rEstimateTab unchanged.
+
+---
+
+## Claude Report - Team Cost Repair: W-2-Only Payroll Multiplier (Phase 4) (2026-06-07)
+
+* Task completed: YES
+* Files changed: src/components/v15r/employeeTypes.ts, src/components/v15r/V15rTeamPanel.tsx, 2 context files
+* Commit hash: 894fb3c
+* Typecheck result: PASS - zero errors
+* Root cause: Two compounding bugs: (1) normalizeEmployee in employeeTypes.ts defaulted applyMultiplier:true for all records that did not explicitly store the field, so legacy 1099 and owner records got applyMultiplier=true at normalization time. (2) EmployeeCard render loop and TeamTotals summary both passed raw (un-normalized) emp objects, so the noMultiplier guard in EmployeeCard never saw the correct applyMultiplier value for legacy records.
+* What changed:
+  - employeeTypes.ts: normalizeEmployee now derives applyMultiplier from type signals (isOwner, classification, employee_type) when not explicitly stored. Rule: applyMultiplier = !(isOwner||classification==="1099"||employee_type==="per_project").
+  - V15rTeamPanel.tsx: EmployeeCard render loop changed from employees.map((emp)=>...) to employees.map((rawEmp)=>{ const emp=normalizeEmployee(rawEmp) as EnhancedEmployee. EmployeeCard and setEditingEmployee both receive normalized emp.
+  - V15rTeamPanel.tsx: TeamTotals reduce loop changed from calcEmployeeCost(emp) to normalizeEmployee(rawEmp) then calcEmployeeCost(emp).
+* Rules enforced: Owner loaded=base (no burden), 1099 loaded=base (no burden), W-2 loaded=base*payrollMult.
+* Typecheck: PASS - zero errors.
+* No unrelated files touched.

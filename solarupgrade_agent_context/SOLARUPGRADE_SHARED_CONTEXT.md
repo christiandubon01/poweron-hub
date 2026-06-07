@@ -5024,3 +5024,21 @@ NEXT AGENT SHOULD KNOW:
 * Risks / follow-up: projectedMonthlyCost in TeamPanel (~line 920) was already checking applyMultiplier/isOwner - confirmed not regressed.
 * Manual QA status: Typecheck PASS. Browser QA needed: new 1099 card shows $40, not $48; footnote correct; Estimate modal $40.
 * Next agent should know: Team cost display is now correct end-to-end. Save path (AddTeamMemberModal) correct since Phase 1. Read/display path (V15rEstimateTab getEmployeeCostRate) correct since Phase 2. Display layer (V15rTeamPanel EmployeeCard + calcEmployeeCost + LaborFlow) now correct. All three layers aligned.
+
+---
+
+## Shared Update - Team Cost Repair: W-2-Only Payroll Multiplier (Phase 4) (2026-06-07)
+
+* Agent: Claude Code Sonnet 4.6
+* Branch: main
+* Commit: 894fb3c
+* Files changed: src/components/v15r/employeeTypes.ts, src/components/v15r/V15rTeamPanel.tsx + 2 context files
+* Typecheck: PASS - zero errors
+* User-facing behavior changed: Employee cards now show correct loaded cost for all worker types. Owner and 1099 employees show Base Wage = Loaded Cost (no payroll burden). W-2 employees still show Loaded Cost = Base x payrollMult. TeamTotals summary totals also now use normalized employees.
+* Root causes fixed:
+  1. normalizeEmployee (employeeTypes.ts) was defaulting applyMultiplier:true for all legacy records lacking the field, even when classification=1099 or isOwner=true. Fixed: derive from type signals when field absent.
+  2. EmployeeCard render loop and TeamTotals both passed raw un-normalized emp to EmployeeCard and calcEmployeeCost. Fixed: normalize at both sites.
+* Implementation notes: normalizeEmployee rule: applyMultiplier = !(isOwner||classification==="1099"||employee_type==="per_project"). EmployeeCard loop now: rawEmp -> normalizeEmployee -> EnhancedEmployee. setEditingEmployee also passes normalized. TeamTotals reduce: normalizeEmployee before calcEmployeeCost.
+* All prior fixes intact: Phase 1 AddTeamMemberModal save, Phase 2 Estimate modal getEmployeeCostRate, Phase 3 noMultiplier display guard.
+* Risks / follow-up: Records with no type signals at all (no isOwner, no classification, no employee_type) still default to W-2 behavior. User must re-save via edit modal to correct these edge cases.
+* Manual QA status: Typecheck PASS. Browser QA needed: owner card shows Base=Loaded; 1099 card shows Base=Loaded; W-2 card shows Loaded > Base.
