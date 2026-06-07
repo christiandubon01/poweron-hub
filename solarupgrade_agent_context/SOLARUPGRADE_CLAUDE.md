@@ -2527,7 +2527,7 @@ NO — ready for screenshot QA.
 
 * Task completed: YES
 * Files changed: src/components/v15r/V15rTeamPanel.tsx + 2 context files
-* Commit hash: TBD
+* Commit hash: bcadc99
 * Typecheck result: PASS
 * Root cause: Save payload was correct (AddTeamMemberModal already saved costRate=base for 1099). Bug was in DISPLAY layer - three places in V15rTeamPanel re-derived loaded cost unconditionally applying payrollMult: (1) EmployeeCard.loadedCostRate always did baseWage*payrollMult. (2) calcEmployeeCost applied FICA/workersComp/GL unconditionally. (3) Per-Project Labor Flow section multiplied empRate by payrollMult for all per_project employees.
 * What changed (V15rTeamPanel.tsx only): (1) EmployeeCard: noMultiplier guard (isOwner||applyMultiplier===false||classification==='1099'||employee_type==='per_project') - loadedCostRate branches; footnote updated. (2) calcEmployeeCost: isContractor check, FICA/workersComp/GL=0 for contractors. (3) Per-Project Labor Flow: per-emp empIsContractor check, empRate=base for 1099, description updated.

@@ -5015,7 +5015,7 @@ NEXT AGENT SHOULD KNOW:
 
 * Agent: Claude Code Sonnet 4.6
 * Branch: main
-* Commit: TBD
+* Commit: bcadc99
 * Files changed: src/components/v15r/V15rTeamPanel.tsx + 2 context files
 * Typecheck: PASS
 * User-facing behavior changed: New 1099/per-project contractor cards now show Loaded Cost = Base Wage (no payrollMult applied). Monthly Cost Breakdown no longer shows FICA/workersComp/GL for contractors. Per-Project Labor Flow shows correct base rate for 1099 employees. Footnote clarifies worker type.
