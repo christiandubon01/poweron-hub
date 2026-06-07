@@ -1,4 +1,4 @@
-﻿# SOLARUPGRADE_SHARED_CONTEXT.md
+# SOLARUPGRADE_SHARED_CONTEXT.md
 
 Branch:
 solarupgrade
@@ -231,7 +231,7 @@ New subtab to add:
 - Each agent must update its context file and this shared context after each phase.
 - Each agent must commit scoped files only.
 - Each agent must report what it changed and what the next phase must consider.
-- Each phase prompt must follow the userâ€™s standard template.
+- Each phase prompt must follow the user’s standard template.
 - The system should support clean handoff between chat sessions without relying on hidden memory.
 
 ---
@@ -286,7 +286,7 @@ Required long-term capabilities:
 - The purpose is the estimate interview input process, not a full proposal catalog.
 
 ## Estimate Summary
-Generate a summary page inspired by the userâ€™s Enphase-style reference screenshots while matching PowerOn dark premium style.
+Generate a summary page inspired by the user’s Enphase-style reference screenshots while matching PowerOn dark premium style.
 
 Summary should eventually include:
 - system size
@@ -320,7 +320,7 @@ If inspecting public websites or docs for implementation details:
 
 # FULL SOLARUPGRADE PHASE ROADMAP
 
-## Phase 1 â€” Claude â€” Audit + Retention Crash Fix
+## Phase 1 — Claude — Audit + Retention Crash Fix
 Status:
 COMPLETE
 
@@ -343,15 +343,15 @@ Completed:
 - Shared context updated with audit findings.
 
 Commits:
-- `72193d5` â€” Fix Solar Training retention crash and add solarupgrade audit context
-- `ed7bf01` â€” chore: backfill commit hash in phase 1 completion log
+- `72193d5` — Fix Solar Training retention crash and add solarupgrade audit context
+- `ed7bf01` — chore: backfill commit hash in phase 1 completion log
 
 Next phase:
 Phase 2 may add Solar Estimate tab shell after Retention.
 
 ---
 
-## Phase 2 â€” Codex â€” Solar Estimate Tab Shell
+## Phase 2 — Codex — Solar Estimate Tab Shell
 Status:
 COMPLETE
 
@@ -399,7 +399,7 @@ Complete.
 
 ---
 
-## Phase 3 â€” Claude â€” Estimate Architecture + State Model
+## Phase 3 — Claude — Estimate Architecture + State Model
 Status:
 COMPLETE
 
@@ -462,7 +462,7 @@ Complete.
 
 ---
 
-## Phase 4 â€” Codex â€” Solar Estimate Interview Flow UI
+## Phase 4 — Codex — Solar Estimate Interview Flow UI
 Status:
 COMPLETE
 
@@ -530,7 +530,7 @@ Complete.
 
 ---
 
-## Phase 5 â€” Claude/Codex â€” Estimate Summary + Editable System Controls
+## Phase 5 — Claude/Codex — Estimate Summary + Editable System Controls
 Status:
 COMPLETE
 
@@ -832,7 +832,7 @@ BUGS / RISKS:
 - The shared context file had pending edits before this phase began; Codex preserved and completed them rather than reverting.
 
 TYPECHECK RESULT:
-PASS â€” `npm.cmd run typecheck`
+PASS — `npm.cmd run typecheck`
 
 SHARED CONTEXT UPDATED:
 YES
@@ -857,7 +857,7 @@ Phase 2 added the `estimate` tab after Retention in `src/views/SolarTrainingView
 # PHASE 3 ARCHITECTURE FINDINGS
 
 ## Google Maps / Places Autocomplete
-VERDICT: Already supported â€” Phase 4 can wire it without new installs.
+VERDICT: Already supported — Phase 4 can wire it without new installs.
 
 - `@react-google-maps/api` is already installed.
 - `VITE_GOOGLE_MAPS_BROWSER_KEY` env var is already configured.
@@ -868,7 +868,7 @@ VERDICT: Already supported â€” Phase 4 can wire it without new installs.
   - Places autocomplete input
 - Phase 4 should use the same pattern for the Address step.
 - Do NOT add new Maps packages. Do NOT expose API keys in new files.
-- If the Maps key is missing at runtime, fall back to a plain text input â€” do not block the step.
+- If the Maps key is missing at runtime, fall back to a plain text input — do not block the step.
 
 ## Rate / Provider Data
 VERDICT: Existing data in `SolarNEM3Calculator.ts` is sufficient for Phase 5 integration.
@@ -877,24 +877,24 @@ VERDICT: Existing data in `SolarNEM3Calculator.ts` is sufficient for Phase 5 int
   - `Utility` type: `'SCE' | 'IID'`
   - `RatePlan` type: `SCE_TOU_D_PRIME`, `SCE_TOU_D_4_9PM`, `SCE_TOU_D_PRIME_2`, `IID_TOU_RESIDENTIAL`, `IID_STANDARD`
   - Full `TOUSchedule` objects with hourly import/export rates
-  - `calculateNEM3Savings()` â€” Phase 5 may call this directly
+  - `calculateNEM3Savings()` — Phase 5 may call this directly
 - `SolarEstimateTypes.ts` `SolarEstimateRatePlan` uses the same IDs for future alignment.
 
 ## Phase 3 Types File
 NEW FILE: `src/services/solarTraining/SolarEstimateTypes.ts`
 
 Exports:
-- `SolarEstimateData` interface â€” full interview data shape
-- `DEFAULT_ESTIMATE_DATA` â€” safe initial values
-- `ESTIMATE_STEPS` â€” ordered step ID array
-- `UTILITY_PROVIDERS`, `RATE_PLANS_BY_UTILITY`, `SHADING_OPTIONS`, `OWNERSHIP_OPTIONS`, `PROPERTY_TYPES`, `CONSUMPTION_METHODS`, `SYSTEM_MODES` â€” all option arrays for Phase 4 form UI
+- `SolarEstimateData` interface — full interview data shape
+- `DEFAULT_ESTIMATE_DATA` — safe initial values
+- `ESTIMATE_STEPS` — ordered step ID array
+- `UTILITY_PROVIDERS`, `RATE_PLANS_BY_UTILITY`, `SHADING_OPTIONS`, `OWNERSHIP_OPTIONS`, `PROPERTY_TYPES`, `CONSUMPTION_METHODS`, `SYSTEM_MODES` — all option arrays for Phase 4 form UI
 
 ## Phase 3 Component Changes
 UPDATED: `src/components/solarTraining/SolarEstimateTab.tsx`
 
-- Now stateful â€” `useState<SolarEstimateData>(DEFAULT_ESTIMATE_DATA)`
+- Now stateful — `useState<SolarEstimateData>(DEFAULT_ESTIMATE_DATA)`
 - Step navigation: `goNext()`, `goBack()`, `goToStep(step)`
-- Generic field updater: `updateField(key, value)` â€” Phase 4 wires inputs to this
+- Generic field updater: `updateField(key, value)` — Phase 4 wires inputs to this
 - Progress bar showing completed / active / pending steps with color coding
 - Step cards are now clickable buttons with active/completed visual states
 - Active step placeholder area with live state readout (step, utility, systemMode, bill)
@@ -921,12 +921,12 @@ WHAT CHANGED:
 - Created `SolarEstimateTypes.ts` with complete interview data interface, safe defaults, step order, and all option constant arrays (providers, rate plans, shading, ownership, property type, consumption method, system mode).
 - Rewrote `SolarEstimateTab.tsx` from static shell to stateful component with step navigation, generic field updater, interactive step cards, progress bar, and active step placeholder.
 - Documented Google Maps/Places and rate/provider findings in shared context.
-- Advanced active phase to Phase 4 â€” Codex.
+- Advanced active phase to Phase 4 — Codex.
 
 WHAT WAS LEARNED:
 - `@react-google-maps/api` + `places` library + `VITE_GOOGLE_MAPS_BROWSER_KEY` are already present. Phase 4 can wire Places autocomplete using the `MileageProjectAddress.tsx` pattern without any new packages.
 - `SolarNEM3Calculator.ts` has full TOU schedules for SCE and IID. Rate plan IDs in the new types file are aligned to allow Phase 5 to call `calculateNEM3Savings()` directly.
-- `tsconfig.json` has `noUnusedLocals: false` and `noUnusedParameters: false` â€” Phase 4 can add handlers even before all inputs are wired.
+- `tsconfig.json` has `noUnusedLocals: false` and `noUnusedParameters: false` — Phase 4 can add handlers even before all inputs are wired.
 - `SolarTrainingView.tsx` uses `@ts-nocheck`; new Solar Estimate files are fully typed.
 
 LEARNED SKILLS / REUSABLE PATTERNS:
@@ -936,10 +936,10 @@ LEARNED SKILLS / REUSABLE PATTERNS:
 
 BUGS / RISKS:
 - No runtime issues found.
-- `MileageProjectAddress.tsx` uses `@ts-nocheck` because of Google Maps type complexity â€” Phase 4 may need the same if TypeScript strictness causes issues with the Places API.
+- `MileageProjectAddress.tsx` uses `@ts-nocheck` because of Google Maps type complexity — Phase 4 may need the same if TypeScript strictness causes issues with the Places API.
 
 TYPECHECK RESULT:
-PASS â€” zero errors
+PASS — zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -948,9 +948,9 @@ AGENT FILE UPDATED:
 YES
 
 NEXT PHASE ADJUSTMENTS:
-- Phase 4 form screens must import from `@/services/solarTraining/SolarEstimateTypes` â€” all options and types are ready there.
-- `updateField`, `goNext`, `goBack`, `goToStep` are already in component scope â€” pass them as props or restructure into a step sub-component pattern (Codex's choice).
-- Address step: use `useV15rGoogleMapsLoader()` + `GOOGLE_MAPS_BROWSER_KEY` check before attempting Maps â€” safe text fallback if key is absent at runtime.
+- Phase 4 form screens must import from `@/services/solarTraining/SolarEstimateTypes` — all options and types are ready there.
+- `updateField`, `goNext`, `goBack`, `goToStep` are already in component scope — pass them as props or restructure into a step sub-component pattern (Codex's choice).
+- Address step: use `useV15rGoogleMapsLoader()` + `GOOGLE_MAPS_BROWSER_KEY` check before attempting Maps — safe text fallback if key is absent at runtime.
 - Energy Use step: use `RATE_PLANS_BY_UTILITY[data.utilityProvider]` to show only relevant rate plans.
 - System Config step: `data.systemMode === 'solar_plus_battery'` gates battery-specific fields in Phase 5.
 
@@ -997,7 +997,7 @@ BUGS / RISKS:
 - Phase 5 should be careful not to present unverified savings or cost outputs as precise quotes.
 
 TYPECHECK RESULT:
-PASS â€” `npm.cmd run typecheck`
+PASS — `npm.cmd run typecheck`
 
 SHARED CONTEXT UPDATED:
 YES
@@ -1056,7 +1056,7 @@ BUGS / RISKS:
 - `SolarEstimateTab.tsx` is now large; a later polish pass may split summary subcomponents if the feature grows further.
 
 TYPECHECK RESULT:
-PASS â€” `npm.cmd run typecheck`
+PASS — `npm.cmd run typecheck`
 
 SHARED CONTEXT UPDATED:
 YES
@@ -1070,7 +1070,7 @@ NEXT PHASE ADJUSTMENTS:
 - Keep future work scoped; do not add proposal engine, persistence, Supabase, product catalog, or new packages unless explicitly assigned.
 
 NEXT PHASE READY:
-NO â€” no next build phase is defined. Optional polish/stabilization is recommended.
+NO — no next build phase is defined. Optional polish/stabilization is recommended.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Phase 5 completed the Solar Estimate summary in `src/components/solarTraining/SolarEstimateTab.tsx`. The final step now shows conservative estimate cards, cost, modeled savings, energy independence, rate recommendation, monthly bill chart, consumption profile visual, battery-only backup card, assumptions/disclaimer, and editable solar/battery controls. It reuses `calculateNEM3Savings()` and local TOU schedules without modifying NEM formulas. No type changes, persistence, Supabase, product catalog, proposal engine, or unrelated tabs were added. Typecheck passes. Browser visual QA was attempted but blocked by in-app browser security policy for `http://127.0.0.1:5173`, so final polish is recommended.
@@ -1091,11 +1091,11 @@ FILES CHANGED:
 - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
 
 WHAT CHANGED:
-- Fixed duplicate `ReviewRow label="Consumption input"` in the summary grid â€” replaced second occurrence with `label="Suggested size"` showing the derived kW figure.
+- Fixed duplicate `ReviewRow label="Consumption input"` in the summary grid — replaced second occurrence with `label="Suggested size"` showing the derived kW figure.
 - Replaced stale "Phase 5 - Estimate Summary" internal badge in the header with a functional "Start new estimate" reset button that clears all state back to safe defaults.
 - Added `resetEstimate` callback in `SolarEstimateTab` that resets `data`, `solarSizeKw`, and `batterySizeKwh` to initial defaults.
-- Fixed stale build-phase language in EnergyUseStep SectionIntro ("Phase 5 can translate...") and SystemConfigStep SectionIntro ("No product catalog or estimate math is attached in this phase.") â€” updated to describe actual current behavior.
-- Fixed stale FieldLabel hint for Target offset ("Phase 5 can use this as a summary control") â†’ "Carried into the estimate summary".
+- Fixed stale build-phase language in EnergyUseStep SectionIntro ("Phase 5 can translate...") and SystemConfigStep SectionIntro ("No product catalog or estimate math is attached in this phase.") — updated to describe actual current behavior.
+- Fixed stale FieldLabel hint for Target offset ("Phase 5 can use this as a summary control") → "Carried into the estimate summary".
 - Updated `STEP_META` entry for `estimate_summary`: label changed from "Review" to "Summary"; description updated from stale Phase 5 text to "Conservative planning estimate with editable system controls."
 - Added `overflow-x-auto` wrapper with `min-w-[360px]` inner div on `BillComparisonChart` to prevent bar squishing on narrow/mobile viewports.
 - Added responsive step card grid breakpoints: `grid-cols-2 sm:grid-cols-3 md:grid-cols-5` (was `md:grid-cols-5` only, showing 1 col on mobile).
@@ -1110,7 +1110,7 @@ BUGS / RISKS:
 - Browser visual QA is still the recommended next step; no in-browser testing was done in this session.
 
 TYPECHECK RESULT:
-PASS â€” zero errors
+PASS — zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -1154,7 +1154,7 @@ BUGS / RISKS:
 - Floating button overlap was intentionally excluded from this pass per task scope.
 
 TYPECHECK RESULT:
-PASS â€” zero errors
+PASS — zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -1186,33 +1186,33 @@ FILES CHANGED:
 WHAT CHANGED:
 - Replaced the 2-chart grid in EstimateSummaryStep (BillComparisonChart + ConsumptionProfileChart side-by-side) with a 6-tab SummaryChartModule.
 - Chart tabs: Monthly Bill | 24H Flow | 25 Yr Savings | Elec. Cost | Cumulative | Payments.
-- Tab 1 (Monthly Bill): reuses existing SVG BillComparisonChart â€” before/after bars by month.
-- Tab 2 (24H Flow): new SVG chart â€” Gaussian solar curve (yellow fill) + load line (blue), hourly modeled from monthlyKwh and solarSizeKw.
-- Tab 3 (25 Yr Savings): new SVG grouped bar chart â€” annual bill without solar vs. with solar over 25 years, 4% utility escalation assumed.
-- Tab 4 (Elec. Cost): new SVG line chart â€” utility rate escalation path vs. flat solar LCOE line over 20 years.
-- Tab 5 (Cumulative): new SVG area/line chart â€” cumulative modeled savings 1â€“25 yr, with system cost payback reference line and dot.
-- Tab 6 (Payments): card-based comparison â€” No Solar / New Electric Bill / Loan Payment (25yr @6.99% APR) / Total w/ Solar + loan.
-- Added Save project estimate button in EstimateSummaryStep header row; on click shows "Estimate saved in this session â€” HH:MM" with emerald badge. Button becomes "Update saved estimate" after first save. Snapshot stored in local useState â€” no Supabase, no localStorage, no persistence outside the tab session.
+- Tab 1 (Monthly Bill): reuses existing SVG BillComparisonChart — before/after bars by month.
+- Tab 2 (24H Flow): new SVG chart — Gaussian solar curve (yellow fill) + load line (blue), hourly modeled from monthlyKwh and solarSizeKw.
+- Tab 3 (25 Yr Savings): new SVG grouped bar chart — annual bill without solar vs. with solar over 25 years, 4% utility escalation assumed.
+- Tab 4 (Elec. Cost): new SVG line chart — utility rate escalation path vs. flat solar LCOE line over 20 years.
+- Tab 5 (Cumulative): new SVG area/line chart — cumulative modeled savings 1–25 yr, with system cost payback reference line and dot.
+- Tab 6 (Payments): card-based comparison — No Solar / New Electric Bill / Loan Payment (25yr @6.99% APR) / Total w/ Solar + loan.
+- Added Save project estimate button in EstimateSummaryStep header row; on click shows "Estimate saved in this session — HH:MM" with emerald badge. Button becomes "Update saved estimate" after first save. Snapshot stored in local useState — no Supabase, no localStorage, no persistence outside the tab session.
 - Added ChartTab type, CHART_TABS constant, SavedEstimateSnapshot type, ESCALATION_RATE constant, generate25YearData, generate24hProfile, getMonthlyLoanPayment helper functions.
 
 WHAT WAS LEARNED:
 - SVG viewBox chart pattern scales cleanly across all 6 chart types without new packages.
-- All chart data derives entirely from existing nemResult, monthlyKwh, solarSizeKw, avgBeforeBill, avgAfterBill, systemCost already computed in EstimateSummaryStep â€” no new data sources.
+- All chart data derives entirely from existing nemResult, monthlyKwh, solarSizeKw, avgBeforeBill, avgAfterBill, systemCost already computed in EstimateSummaryStep — no new data sources.
 - SummaryChartModule useState for activeChart is self-contained; the 6 chart components are lazy (only the active tab renders).
 
 LEARNED SKILLS / REUSABLE PATTERNS:
 - Subtab chart module pattern: wrapper div with flex tab bar (border-b) + chart content div. border-b-2 border-cyan-400 active state. Reuse for any future multi-chart panel.
 - generate25YearData / generate24hProfile: reusable local helpers for solar planning visuals. ESCALATION_RATE=0.04 is the single source of truth for all 25-year projections.
-- SavedEstimateSnapshot type: minimal session-only save pattern â€” useState, no persistence, clear UI feedback. Reuse for other "save in session" patterns.
+- SavedEstimateSnapshot type: minimal session-only save pattern — useState, no persistence, clear UI feedback. Reuse for other "save in session" patterns.
 
 BUGS / RISKS:
-- All chart values are modeled estimates; label copy clearly says "modeled estimate â€” not a financial projection."
-- Loan payment assumptions (25yr, 6.99% APR, no down payment) are rough â€” actual financing will differ.
+- All chart values are modeled estimates; label copy clearly says "modeled estimate — not a financial projection."
+- Loan payment assumptions (25yr, 6.99% APR, no down payment) are rough — actual financing will differ.
 - 24H Energy Flow battery dispatch is not modeled; only noted as "Battery mode" label when hasBattery is true.
 - ConsumptionProfileChart is still defined in the file but no longer called (BillComparisonChart is now inside SummaryChartModule tab 1). noUnusedLocals: false so typecheck passes.
 
 TYPECHECK RESULT:
-PASS â€” zero errors
+PASS — zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -1221,10 +1221,10 @@ AGENT FILE UPDATED:
 YES
 
 NEXT PHASE READY:
-NO â€” no next build phase defined. Ready for screenshot QA on the 6-tab chart module.
+NO — no next build phase defined. Ready for screenshot QA on the 6-tab chart module.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-Summary Chart Tabs + Local Save added to `src/components/solarTraining/SolarEstimateTab.tsx`. EstimateSummaryStep now has a 6-tab SummaryChartModule replacing the old 2-chart grid: Monthly Bill (SVG bars), 24H Flow (SVG solar+load curves), 25 Yr Savings (SVG grouped bars), Elec. Cost (SVG LCOE vs rate lines), Cumulative (SVG area+line with payback dot), Payments (card grid). Save project estimate button in summary header stores a local session snapshot with emerald confirmation badge. All chart data derived from existing computed values â€” no new data sources, no Supabase, no localStorage. Typecheck passes.
+Summary Chart Tabs + Local Save added to `src/components/solarTraining/SolarEstimateTab.tsx`. EstimateSummaryStep now has a 6-tab SummaryChartModule replacing the old 2-chart grid: Monthly Bill (SVG bars), 24H Flow (SVG solar+load curves), 25 Yr Savings (SVG grouped bars), Elec. Cost (SVG LCOE vs rate lines), Cumulative (SVG area+line with payback dot), Payments (card grid). Save project estimate button in summary header stores a local session snapshot with emerald confirmation badge. All chart data derived from existing computed values — no new data sources, no Supabase, no localStorage. Typecheck passes.
 
 ---
 
@@ -1249,7 +1249,7 @@ WHAT CHANGED:
 - Moved save action to `SolarEstimateTab` parent as `handleSave` callback. Save creates a new estimate (auto-names from address) or updates the existing one (preserves user rename). Shows "Saved in Solar Estimates" emerald badge for 3 seconds after save. Button label changes to "Update estimate" when an estimate is open.
 - Added "Solar Estimates" button beside "Start new estimate" in the header. Active/inactive visual state. Shows count when estimates exist.
 - When library is open the step wizard is hidden (replaced by `SolarEstimatesLibrary`). Close button returns to wizard.
-- `SolarEstimateTab` now uses lazy `useState` initializers that call `loadActiveDraft()` on mount â€” restoring `data`, `solarSizeKw`, `batterySizeKwh`, and `activeEstimateId` from the last session.
+- `SolarEstimateTab` now uses lazy `useState` initializers that call `loadActiveDraft()` on mount — restoring `data`, `solarSizeKw`, `batterySizeKwh`, and `activeEstimateId` from the last session.
 - Added debounced auto-save `useEffect` (500ms) that writes `ActiveDraft` to `STORAGE_KEY_DRAFT` whenever `data`, `solarSizeKw`, `batterySizeKwh`, or `activeEstimateId` changes.
 - `handleOpenEstimate` loads interview data + system controls from a saved estimate, forces `currentStep = 'estimate_summary'` so the user lands on the summary, and closes the library.
 - `resetEstimate` now also clears `activeEstimateId` and `saveStatus`.
@@ -1275,7 +1275,7 @@ BUGS / RISKS:
 - ConsumptionProfileChart remains defined but unused (noUnusedLocals: false, typecheck still passes).
 
 TYPECHECK RESULT:
-PASS â€” zero errors
+PASS — zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -1284,7 +1284,7 @@ AGENT FILE UPDATED:
 YES
 
 NEXT PHASE READY:
-NO â€” no next build phase defined. Ready for screenshot QA on saved estimates feature.
+NO — no next build phase defined. Ready for screenshot QA on saved estimates feature.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Local Saved Estimates added to `src/components/solarTraining/SolarEstimateTab.tsx`. localStorage keys: `poweron.solarTraining.solarEstimates` (estimate list) and `poweron.solarTraining.activeDraft` (current open estimate + step + system controls). `SolarEstimatesLibrary` component shows saved estimates with Open/Rename/Delete. "Solar Estimates" button in header opens/closes the library. Save creates or updates (no duplicates). Active draft auto-saves on every change (500ms debounce). App reload restores current draft via lazy useState initializers. No Supabase, no new packages, no formula or unrelated tab changes. Typecheck passes.
@@ -1741,11 +1741,11 @@ LEARNED SKILLS / REUSABLE PATTERNS:
 - Verify that `items-start` is not prefixed when it should apply regardless of breakpoint.
 
 BUGS / RISKS:
-- At 1280px viewport with expanded sidebar (224px), the grid's minimum column widths (360+640+gap=1016px) slightly exceed the available container width (~920px). The section's `overflow-hidden` clips ~52px from the map column's right edge. The map is still ~92% visible and functional. To fully prevent clipping, a wider viewport (â‰¥1440px) or a collapsed sidebar is needed.
-- If the user's viewport is <1280px (below xl breakpoint), the layout stacks single-column. The xl breakpoint activates the two-column layout on standard desktop screens â‰¥1280px.
+- At 1280px viewport with expanded sidebar (224px), the grid's minimum column widths (360+640+gap=1016px) slightly exceed the available container width (~920px). The section's `overflow-hidden` clips ~52px from the map column's right edge. The map is still ~92% visible and functional. To fully prevent clipping, a wider viewport (≥1440px) or a collapsed sidebar is needed.
+- If the user's viewport is <1280px (below xl breakpoint), the layout stacks single-column. The xl breakpoint activates the two-column layout on standard desktop screens ≥1280px.
 
 TYPECHECK RESULT:
-PASS â€” zero errors
+PASS — zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -1762,7 +1762,7 @@ NEXT PHASE READY:
 NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-Step 1 Address layout final alignment: changed `xl:items-start` to `items-start` in `src/components/solarTraining/SolarEstimateTab.tsx`. The two-column grid structure (`xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)]`) is confirmed correct â€” SectionIntro + address form + Place ID/Lat/Lng in left column, AddressMapPreview in right column. Two-column layout activates at xl (1280px+ viewport). Smaller screens stack correctly. Typecheck passes. Risk note: at 1280px with expanded sidebar, ~52px of map right edge is clipped by section overflow-hidden; fully visible at 1440px+.
+Step 1 Address layout final alignment: changed `xl:items-start` to `items-start` in `src/components/solarTraining/SolarEstimateTab.tsx`. The two-column grid structure (`xl:grid-cols-[minmax(360px,0.85fr)_minmax(640px,1.35fr)]`) is confirmed correct — SectionIntro + address form + Place ID/Lat/Lng in left column, AddressMapPreview in right column. Two-column layout activates at xl (1280px+ viewport). Smaller screens stack correctly. Typecheck passes. Risk note: at 1280px with expanded sidebar, ~52px of map right edge is clipped by section overflow-hidden; fully visible at 1440px+.
 
 ---
 
@@ -1841,7 +1841,7 @@ WHAT CHANGED:
 - Preserved the full appliance option list: AC unit, Microwave, Hot tub, EV charger, Electric stove, Dryer, Washer, Furnace, Pool equipment, and Extra heavy load appliance.
 - Changed the appliance selector from an absolute popover to an inline scrollable panel so all options can render cleanly without clipping, horizontal overflow, or overlap with floating controls.
 - Added selected/unselected card states with icons and a numeric `Amps` input that appears only after an appliance is selected.
-- Updated Step 5 interview inputs to show selected appliances with amperage values, such as `EV charger â€” 50A`.
+- Updated Step 5 interview inputs to show selected appliances with amperage values, such as `EV charger — 50A`.
 - Added restore normalization for older saved estimates and active drafts that stored appliance IDs as strings, while preserving newer `{ id, amps }` entries.
 
 WHAT WAS LEARNED:
@@ -1872,7 +1872,7 @@ NEXT PHASE READY:
 NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-Scoped Step 2 Home Details appliance selector fix complete. `selectedAppliances` is now typed as `{ id: SolarEstimateAppliance; amps?: number }[]`, with normalization for older string-array saved estimates/drafts. Step 2 shows all ten appliance options in an inline scrollable panel, uses icons and selected states, and reveals a numeric `Amps` input only for selected appliances. Step 5 interview inputs show appliance load summaries like `EV charger â€” 50A`. Typecheck passes. No Step 1 Address/map, summary charts, estimate math, NEM formulas, Supabase, packages, or unrelated tabs changed.
+Scoped Step 2 Home Details appliance selector fix complete. `selectedAppliances` is now typed as `{ id: SolarEstimateAppliance; amps?: number }[]`, with normalization for older string-array saved estimates/drafts. Step 2 shows all ten appliance options in an inline scrollable panel, uses icons and selected states, and reveals a numeric `Amps` input only for selected appliances. Step 5 interview inputs show appliance load summaries like `EV charger — 50A`. Typecheck passes. No Step 1 Address/map, summary charts, estimate math, NEM formulas, Supabase, packages, or unrelated tabs changed.
 
 ---
 
@@ -2116,7 +2116,7 @@ FILES CHANGED:
 - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
 
 WHAT CHANGED:
-- Added individual visible range hints to the `Permit Cost by Size` fields: Small system `5â€“15 kW`, Medium system `15â€“30 kW`, and Large system `30â€“50 kW`.
+- Added individual visible range hints to the `Permit Cost by Size` fields: Small system `5–15 kW`, Medium system `15–30 kW`, and Large system `30–50 kW`.
 - Added the same individual visible range hints to the `Blueprint Cost by Size` fields.
 - Updated the section helper copy so it describes shared size ranges without contradicting the visible tier labels.
 
@@ -2141,13 +2141,13 @@ AGENT FILE UPDATED:
 YES
 
 NEXT PHASE ADJUSTMENTS:
-- Screenshot QA should verify both cost-by-size sections show Small `5â€“15 kW`, Medium `15â€“30 kW`, and Large `30â€“50 kW`.
+- Screenshot QA should verify both cost-by-size sections show Small `5–15 kW`, Medium `15–30 kW`, and Large `30–50 kW`.
 
 NEXT PHASE READY:
 NO active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-Scoped Settings Hub label polish complete. In `SolarEstimateSettingsPanel`, Permit Cost by Size and Blueprint Cost by Size now show per-tier range hints beside each tier label: Small `5â€“15 kW`, Medium `15â€“30 kW`, Large `30â€“50 kW`. Existing inputs, saved settings keys, formulas, threshold logic, persistence, and unrelated Solar Estimate/Settings Hub behavior were not changed. Typecheck passes.
+Scoped Settings Hub label polish complete. In `SolarEstimateSettingsPanel`, Permit Cost by Size and Blueprint Cost by Size now show per-tier range hints beside each tier label: Small `5–15 kW`, Medium `15–30 kW`, Large `30–50 kW`. Existing inputs, saved settings keys, formulas, threshold logic, persistence, and unrelated Solar Estimate/Settings Hub behavior were not changed. Typecheck passes.
 
 ---
 
@@ -2295,7 +2295,7 @@ WHAT CHANGED:
 - Added labor formula selector (Hourly crew labor / Panel labor rate) as compact button group in top-right of Labor box header.
 - Hourly/panel inputs dim (opacity-50 + disabled) when the opposing mode is selected.
 - Added amber note when hourlyCrew mode is active: "Hourly crew mode is saved for future labor-hour modeling."
-- Hourly mode does not affect cost math yet â€” panel rate still used in calculations.
+- Hourly mode does not affect cost math yet — panel rate still used in calculations.
 - `normalizeEstimateData` in SolarEstimateTab.tsx explicitly normalizes `evChargerAddition` as boolean.
 
 WHAT WAS LEARNED:
@@ -2304,16 +2304,16 @@ WHAT WAS LEARNED:
 - V15rSettingsPanel.tsx uses `// @ts-nocheck` but new imports and functions still need to be correct at runtime.
 
 LEARNED SKILLS / REUSABLE PATTERNS:
-- `safeLaborFormulaMode(value: unknown)` pattern: check exact string values, fall back to default â€” use for any future string-enum settings fields.
+- `safeLaborFormulaMode(value: unknown)` pattern: check exact string values, fall back to default — use for any future string-enum settings fields.
 - Labor formula selector button group: `flex items-center gap-0.5 rounded-lg border border-slate-700/80 bg-slate-900/70 p-0.5` with active button using `bg-cyan-700/60 text-cyan-100`.
 - Disabled-field pattern: pass `disabled?: boolean` to field helper, apply `opacity-50` on label and swap to `disabledInputClass` on input.
 
 BUGS / RISKS:
 - Hourly crew mode is saved but not yet wired to cost math. If future phases add labor-hour modeling, `calculateSolarEstimateInstallCost` must add a `laborHours` parameter and branch on `laborFormulaMode`.
-- EV charger addition cost defaults to $1,500 â€” update if actual labor/permit cost changes.
+- EV charger addition cost defaults to $1,500 — update if actual labor/permit cost changes.
 
 TYPECHECK RESULT:
-PASS â€” zero errors
+PASS — zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -2329,10 +2329,10 @@ NEXT PHASE ADJUSTMENTS:
 - If hourly labor-hour modeling is added later, branch on `laborFormulaMode` in `calculateSolarEstimateInstallCost` and add a `laborHours` parameter.
 
 NEXT PHASE READY:
-NO â€” no active build phase defined. Ready for screenshot QA.
+NO — no active build phase defined. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-EV Charger Addition toggle added to Step 4 System Config below Main Panel Upgrade. Default OFF, persists in saved estimates. Settings Hub Electrical Upgrades box now shows both Main Panel Upgrade Cost and EV Charger Addition Cost ($1,500 default) in a 2-col grid. Summary cost includes EV charger cost only when toggled ON; breakdown row appears only when active. Labor formula selector (Hourly crew / Panel rate) added as compact button group in Labor box header. Hourly inputs dim when Panel rate mode is selected; panel labor input dims when Hourly crew mode is selected. Hourly mode persists but does not affect cost math yet â€” amber note shown. Typecheck passes clean. Commit: d57277e.
+EV Charger Addition toggle added to Step 4 System Config below Main Panel Upgrade. Default OFF, persists in saved estimates. Settings Hub Electrical Upgrades box now shows both Main Panel Upgrade Cost and EV Charger Addition Cost ($1,500 default) in a 2-col grid. Summary cost includes EV charger cost only when toggled ON; breakdown row appears only when active. Labor formula selector (Hourly crew / Panel rate) added as compact button group in Labor box header. Hourly inputs dim when Panel rate mode is selected; panel labor input dims when Hourly crew mode is selected. Hourly mode persists but does not affect cost math yet — amber note shown. Typecheck passes clean. Commit: d57277e.
 
 ---
 
@@ -2355,10 +2355,10 @@ Add Labor Hours per System to Solar Estimate Settings
 
 WHAT CHANGED:
 - `SolarEstimateSettings.ts`: Added `laborHoursSmall`, `laborHoursMedium`, `laborHoursLarge` to `SolarEstimateSettings` type. Defaults: 16 / 32 / 48 hrs. Added normalization via `safeNumber` in `normalizeSolarEstimateSettings`. Updated `calculateSolarEstimateInstallCost` to branch on `laborFormulaMode`: when `hourlyCrew`, computes `getCombinedHourlyLaborRate(settings) * laborHours[tier]` instead of `panelCount * panelInstallLaborCost`. Existing `panelLaborCost` breakdown key carries the result in both modes.
-- `V15rSettingsPanel.tsx`: Added "Labor Hours per System" card directly below Permit Cost by Size. Three inputs via `numberField` with 'hrs' suffix: Small System (3â€“7 kW), Medium System (7â€“15 kW), Large System (15â€“30 kW). Always editable (not disabled by mode) so values can be pre-filled before switching.
+- `V15rSettingsPanel.tsx`: Added "Labor Hours per System" card directly below Permit Cost by Size. Three inputs via `numberField` with 'hrs' suffix: Small System (3–7 kW), Medium System (7–15 kW), Large System (15–30 kW). Always editable (not disabled by mode) so values can be pre-filled before switching.
 
 WHAT WAS LEARNED:
-- `panelLaborCost` in `SolarEstimateCostBreakdown` is the correct vehicle for both formulas â€” no new breakdown key needed.
+- `panelLaborCost` in `SolarEstimateCostBreakdown` is the correct vehicle for both formulas — no new breakdown key needed.
 - `numberField` already supports a suffix string, making hrs display trivial.
 - No changes to `SolarEstimateTab.tsx` were required: `calculateSolarEstimateInstallCost` is called with `estimateSettings` which already includes `laborFormulaMode`, so the cost math updates automatically.
 
@@ -2366,11 +2366,11 @@ LEARNED SKILLS / REUSABLE PATTERNS:
 - Formula branching pattern in `calculateSolarEstimateInstallCost`: derive `laborHours` from tier, then branch on `laborFormulaMode`. Keeps the breakdown shape stable while supporting multiple formula modes.
 
 BUGS / RISKS:
-- `getSolarSystemSizeTier` uses â‰¤6 kW for small, â‰¤12 kW for medium. Settings UI labels show 3â€“7 kW / 7â€“15 kW / 15â€“30 kW (matching existing Permit/Blueprint labels). Slight mismatch is acceptable and consistent with prior phases.
+- `getSolarSystemSizeTier` uses ≤6 kW for small, ≤12 kW for medium. Settings UI labels show 3–7 kW / 7–15 kW / 15–30 kW (matching existing Permit/Blueprint labels). Slight mismatch is acceptable and consistent with prior phases.
 - No Supabase, no new packages, no formula services touched.
 
 TYPECHECK RESULT:
-PASS â€” zero errors
+PASS — zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -2384,10 +2384,10 @@ NEXT PHASE ADJUSTMENTS:
 - If amber "hourly mode not yet affecting cost" note in Labor box should be removed now that cost math is wired, target `V15rSettingsPanel.tsx` Labor box area.
 
 NEXT PHASE READY:
-NO â€” no active build phase defined. Ready for screenshot QA.
+NO — no active build phase defined. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-Labor Hours per System added to Solar Estimate Settings. `SolarEstimateSettings` now has `laborHoursSmall` (16), `laborHoursMedium` (32), `laborHoursLarge` (48) persisted in existing localStorage key. `calculateSolarEstimateInstallCost` branches on `laborFormulaMode`: hourlyCrew uses `combinedHourlyLaborRate Ã— laborHours[tier]`; panelRate still uses `panelCount Ã— panelInstallLaborCost`. Settings Hub has a new "Labor Hours per System" card with three `numberField` inputs (hrs suffix). No changes to SolarEstimateTab.tsx or any other file. Typecheck passes. Commit: bcdbc91.
+Labor Hours per System added to Solar Estimate Settings. `SolarEstimateSettings` now has `laborHoursSmall` (16), `laborHoursMedium` (32), `laborHoursLarge` (48) persisted in existing localStorage key. `calculateSolarEstimateInstallCost` branches on `laborFormulaMode`: hourlyCrew uses `combinedHourlyLaborRate × laborHours[tier]`; panelRate still uses `panelCount × panelInstallLaborCost`. Settings Hub has a new "Labor Hours per System" card with three `numberField` inputs (hrs suffix). No changes to SolarEstimateTab.tsx or any other file. Typecheck passes. Commit: bcdbc91.
 
 ---
 
@@ -2410,23 +2410,23 @@ Make Estimated Cost use full Solar Estimate Settings formula
 
 WHAT CHANGED:
 - `SolarEstimateSettings.ts`: Added `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, `hardwareCost` to `SolarEstimateCostBreakdown` type. Updated `calculateSolarEstimateInstallCost` to compute `hardwareCost` from tier (hardwareCostSmall/Medium/Large) and include it in `totalEstimatedInstallCost`. Return object now includes `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, and `hardwareCost`.
-- `SolarEstimateTab.tsx`: Replaced monolithic grid-based `CostBreakdownCard` with a stacked formula-row breakdown. Added `CostBreakdownRow` helper component. Labor row shows formula line: hourly crew mode shows `[hours] hrs Ã— $[rate]/hr`; panel rate mode shows `[panels] panels Ã— $[rate]/panel`. Breakdown order: Labor (formula), optional Main panel upgrade, optional EV charger addition, Permit, Blueprint, Mobility, Delivery, Hardware, Estimated total (accented row).
+- `SolarEstimateTab.tsx`: Replaced monolithic grid-based `CostBreakdownCard` with a stacked formula-row breakdown. Added `CostBreakdownRow` helper component. Labor row shows formula line: hourly crew mode shows `[hours] hrs × $[rate]/hr`; panel rate mode shows `[panels] panels × $[rate]/panel`. Breakdown order: Labor (formula), optional Main panel upgrade, optional EV charger addition, Permit, Blueprint, Mobility, Delivery, Hardware, Estimated total (accented row).
 
 WHAT WAS LEARNED:
 - `hardwareCostSmall/Medium/Large` were already in `SolarEstimateSettings` but were never wired into `calculateSolarEstimateInstallCost`. Adding them required only the breakdown type extension and one additional `Math.round` operand.
-- `SolarEstimateCostBreakdown` is the sole vehicle for breakdown data â€” adding fields to it is safe as long as `calculateSolarEstimateInstallCost` always sets them.
+- `SolarEstimateCostBreakdown` is the sole vehicle for breakdown data — adding fields to it is safe as long as `calculateSolarEstimateInstallCost` always sets them.
 - The `CostBreakdownRow` component pattern (label + formula + value + detail) is reusable for any future breakdown expansion.
 
 LEARNED SKILLS / REUSABLE PATTERNS:
 - `CostBreakdownRow` helper: `label`, optional `formula` (mono font, slate-500), `value`, optional `detail`, `accent` flag for the total row.
-- Breakdown display ordering: Labor â†’ Conditional additions â†’ Uncontrolled fixed costs â†’ Hardware â†’ Total.
+- Breakdown display ordering: Labor → Conditional additions → Uncontrolled fixed costs → Hardware → Total.
 
 BUGS / RISKS:
-- `getSolarSystemSizeTier` still uses â‰¤6 kW for small, â‰¤12 kW for medium (code boundary), but UI labels display 3â€“7 / 7â€“15 / 15â€“30 kW. Consistent with prior phases.
+- `getSolarSystemSizeTier` still uses ≤6 kW for small, ≤12 kW for medium (code boundary), but UI labels display 3–7 / 7–15 / 15–30 kW. Consistent with prior phases.
 - Hardware cost defaults ($2,500 / $4,500 / $7,500) may need adjustment in Settings Hub if real costs differ.
 
 TYPECHECK RESULT:
-PASS â€” zero errors
+PASS — zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -2441,10 +2441,10 @@ NEXT PHASE ADJUSTMENTS:
 - If amber "hourly mode not yet affecting cost" note still appears in Settings Hub Labor box, it should be removed now that hourly crew mode is fully wired.
 
 NEXT PHASE READY:
-NO â€” no active build phase defined. Ready for screenshot QA.
+NO — no active build phase defined. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-Full formula cost calculation now wired. `calculateSolarEstimateInstallCost` includes hardware cost (by tier) in the total â€” prior versions excluded it. `SolarEstimateCostBreakdown` now exposes `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, and `hardwareCost` for display. `CostBreakdownCard` redesigned as stacked formula rows: Labor with formula line (hourly: hrsÃ—rate, panel: panelsÃ—rate), optional additions (main panel, EV charger), Permit, Blueprint, Mobility, Delivery, Hardware, Estimated total. Typecheck passes. Commit: see report.
+Full formula cost calculation now wired. `calculateSolarEstimateInstallCost` includes hardware cost (by tier) in the total — prior versions excluded it. `SolarEstimateCostBreakdown` now exposes `laborHours`, `laborFormulaMode`, `panelInstallLaborCost`, and `hardwareCost` for display. `CostBreakdownCard` redesigned as stacked formula rows: Labor with formula line (hourly: hrs×rate, panel: panels×rate), optional additions (main panel, EV charger), Permit, Blueprint, Mobility, Delivery, Hardware, Estimated total. Typecheck passes. Commit: see report.
 
 ---
 
@@ -2454,7 +2454,7 @@ AGENT:
 Claude Code
 
 COMMIT HASH:
-(pending â€” see below)
+(pending — see below)
 
 FILES CHANGED:
 - `src/components/solarTraining/SolarEstimateTab.tsx`
@@ -2474,14 +2474,14 @@ WHAT WAS LEARNED:
 - `data.selectedAppliances.some(a => a.id === 'ev_charger')` is the correct predicate for "existing EV charger load" in all display contexts.
 
 LEARNED SKILLS / REUSABLE PATTERNS:
-- Separate install-cost toggles from appliance-load toggles â€” never let appliance selection silently add cost items.
+- Separate install-cost toggles from appliance-load toggles — never let appliance selection silently add cost items.
 - Use `.some(a => a.id === 'X')` inline in ReviewRow value prop for boolean appliance presence checks.
 
 BUGS / RISKS:
-- None introduced. `evChargerAmperage` remains shared â€” both the existing load display and the install cost formula read from it. This is intentional and documented above.
+- None introduced. `evChargerAmperage` remains shared — both the existing load display and the install cost formula read from it. This is intentional and documented above.
 
 TYPECHECK RESULT:
-PASS â€” zero errors
+PASS — zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -2490,12 +2490,12 @@ AGENT FILE UPDATED:
 YES
 
 NEXT PHASE ADJUSTMENTS:
-- Screenshot QA: toggle EV charger in appliances â†’ verify it does NOT turn on "Add EV Charger" toggle or add cost.
-- Screenshot QA: toggle "Add EV Charger" in Step 3 â†’ verify Step 4 EV Charger Addition reflects it.
+- Screenshot QA: toggle EV charger in appliances → verify it does NOT turn on "Add EV Charger" toggle or add cost.
+- Screenshot QA: toggle "Add EV Charger" in Step 3 → verify Step 4 EV Charger Addition reflects it.
 - Screenshot QA: verify Summary separates the four EV charger rows correctly.
 
 NEXT PHASE READY:
-NO â€” no active build phase defined. Ready for screenshot QA.
+NO — no active build phase defined. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 EV load vs install separated. `toggleAppliance` no longer auto-sets `evChargerAddition`. New "Add EV Charger" toggle in Step 3 Home Configuration (below Panel Upgrade) controls install cost. Appliance helper text added. Step 4 right panel shows two rows: existing EV load + EV Charger Addition. Summary shows four rows: existing load Y/N, existing amperage, add install Y/N, install amperage. `evChargerAmperage` is shared for both concepts. Typecheck passes.
@@ -2530,14 +2530,14 @@ WHAT WAS LEARNED:
 - The 50A auto-default on toggle-ON can be done with a two-call pattern inside the onClick handler since `updateField` is a generic single-field updater.
 
 LEARNED SKILLS / REUSABLE PATTERNS:
-- Two-field onClick: `updateField('boolField', next); if (next && otherField == null) updateField('otherField', defaultVal)` — clean pattern for conditional default setting on toggle.
-- Reading per-appliance amps: `data.selectedAppliances.find(a => a.id === 'X')?.amps` — always prefer this over a separate top-level field for appliance-level data.
+- Two-field onClick: `updateField('boolField', next); if (next && otherField == null) updateField('otherField', defaultVal)` � clean pattern for conditional default setting on toggle.
+- Reading per-appliance amps: `data.selectedAppliances.find(a => a.id === 'X')?.amps` � always prefer this over a separate top-level field for appliance-level data.
 
 BUGS / RISKS:
 - None introduced. Existing estimates in localStorage that have `evChargerAmperage` set will still load correctly since `normalizeEstimateData` preserves the field.
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS � zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -2546,12 +2546,12 @@ AGENT FILE UPDATED:
 YES
 
 NEXT PHASE ADJUSTMENTS:
-- Screenshot QA: turn on EV Charger Addition in Step 3 → verify 50A is auto-selected, amperage buttons appear, Step 4 shows matching value.
-- Screenshot QA: select EV charger in appliances → verify it looks like other appliance cards (free-form amps input, no fixed buttons).
+- Screenshot QA: turn on EV Charger Addition in Step 3 ? verify 50A is auto-selected, amperage buttons appear, Step 4 shows matching value.
+- Screenshot QA: select EV charger in appliances ? verify it looks like other appliance cards (free-form amps input, no fixed buttons).
 - Screenshot QA: verify Summary rows show correct separation.
 
 NEXT PHASE READY:
-NO — no active build phase. Ready for screenshot QA.
+NO � no active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 EV charger amperage moved to EV Charger Addition toggle. Step 3 "EV Charger Addition" card (renamed from "Add EV Charger") shows 30/40/50/60/100A buttons when ON and defaults to 50A on turn-ON. Appliance EV charger card now looks like other appliances (free-form amps input). `evChargerAmperage` is now exclusively the install amperage. Step 4 right panel reads `selectedAppliances[ev_charger].amps` for existing load display. Summary separates four rows with correct data sources. Typecheck passes.
@@ -2577,7 +2577,7 @@ WHAT CHANGED:
 - Added `CONSUMPTION_SEASONAL_WEIGHTS` table for both profiles (12 months each).
 - Added `SOLAR_PRODUCTION_SEASONAL_WEIGHTS` (12-month solar production shape).
 - Added `CLIMATE_PROFILE_LABEL` map for chart subtitle text.
-- Added `detectClimateProfile(addressText)` — pure string match, no external API.
+- Added `detectClimateProfile(addressText)` � pure string match, no external API.
 - Added `SeasonalBillMonth` type and `getSeasonalBillData()` function.
   - Normalizes consumption weights so annual kWh = monthlyKwh * 12.
   - Normalizes solar weights so annual production is consistent with solarSizeKw formula.
@@ -2598,17 +2598,17 @@ WHAT WAS LEARNED:
 - `ChartNote` component (already existed) is the right pattern for the profile label below the chart.
 
 LEARNED SKILLS / REUSABLE PATTERNS:
-- Seasonal weight normalization: `rawWeights.map(w => w / (sum / 12))` — ensures annual total is preserved regardless of weight shape.
+- Seasonal weight normalization: `rawWeights.map(w => w / (sum / 12))` � ensures annual total is preserved regardless of weight shape.
 - Battery ratio from nemResult: use the flat monthly_breakdown[0] ratio to apply NEM3-consistent battery savings to seasonal data.
-- `detectClimateProfile` pattern: pure `toLowerCase().includes()` keyword match — zero cost, no API, deterministic.
+- `detectClimateProfile` pattern: pure `toLowerCase().includes()` keyword match � zero cost, no API, deterministic.
 
 BUGS / RISKS:
 - `BillComparisonChart` is now dead code. Can be cleaned up in a future polish pass if desired.
 - NEM 3.0 export rate approximation (importRate * 0.25) is conservative. Actual NEM 3.0 export rates vary by TOU period and utility. Fine for a planning estimate.
-- Hot desert keyword "desert" is broad — any address containing "desert" will match. Acceptable for planning purposes; no false negatives for Coachella Valley addresses.
+- Hot desert keyword "desert" is broad � any address containing "desert" will match. Acceptable for planning purposes; no false negatives for Coachella Valley addresses.
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS � zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -2617,14 +2617,14 @@ AGENT FILE UPDATED:
 YES
 
 NEXT PHASE ADJUSTMENTS:
-- Screenshot QA: enter Desert Hot Springs address → Monthly Bill chart should show summer months significantly taller than winter.
-- Screenshot QA: enter non-desert address → chart should be more uniform with mild summer lean.
-- Screenshot QA: hover a bar → tooltip shows profile, usage kWh, costs, savings.
+- Screenshot QA: enter Desert Hot Springs address ? Monthly Bill chart should show summer months significantly taller than winter.
+- Screenshot QA: enter non-desert address ? chart should be more uniform with mild summer lean.
+- Screenshot QA: hover a bar ? tooltip shows profile, usage kWh, costs, savings.
 - Screenshot QA: chart note below shows correct profile label.
 - If `BillComparisonChart` dead code cleanup is desired, remove it in a dedicated polish commit.
 
 NEXT PHASE READY:
-NO — no active build phase. Ready for screenshot QA.
+NO � no active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Seasonal Monthly Bill chart added. `SeasonalBillChart` replaces `BillComparisonChart` in the monthly_bill tab. Climate profile detected from address text via `detectClimateProfile`. Two profiles: `hotDesert` (Coachella Valley keywords) and `defaultSouthernCalifornia`. Seasonal consumption and solar production weights normalize so annual totals are preserved. Battery benefit derived from flat nemResult ratio. Tooltip shows profile, usage kWh, costs, savings. Chart note shows profile label. All other chart tabs untouched. Typecheck passes.
@@ -2645,34 +2645,34 @@ FILES CHANGED:
 - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
 
 ACTIVE PHASE COMPLETED:
-Anchor Average Electric Bill to estimate month — season-aware monthly consumption
+Anchor Average Electric Bill to estimate month � season-aware monthly consumption
 
 WHAT CHANGED:
 - Added `getAnchorBlendedRate(utility, ratePlan)`: returns `getAverageImportRate` when rate plan is known; falls back to SCE=$0.36, IID=$0.22, default=$0.32 when rate plan is null.
 - Added `computeAnchoredMonthlyKwhByMonth(averageBill, blendedRate, climateProfile, anchorMonthIndex)`: converts bill to anchor-month kWh, derives baseline, returns 12-month array using raw seasonal weights.
 - Added `computeNormalizedMonthlyKwhByMonth(averageMonthlyKwh, climateProfile)`: preserves old behavior for home_size / direct kWh paths.
-- Refactored `getSeasonalBillData` to accept `monthlyKwhByMonth: number[]` instead of flat `monthlyKwh: number`; removed internal consumption weight normalization; added conservative savings floors (solar-only ≥ 25%, solar+battery ≥ 15% of current bill).
+- Refactored `getSeasonalBillData` to accept `monthlyKwhByMonth: number[]` instead of flat `monthlyKwh: number`; removed internal consumption weight normalization; added conservative savings floors (solar-only = 25%, solar+battery = 15% of current bill).
 - `SeasonalBillChart`: added `anchorMonthLabel` prop; tooltip adds "Anchor month" row; helper text below subtitle shows profile + anchor month.
 - `SummaryChartModule`: added `monthlyKwhByMonth` and `anchorMonthLabel` props, passed to `SeasonalBillChart`.
 - `EstimateSummaryStep`: added `anchorMonthIndex` prop; computes `anchorMonthLabel`, `blendedRate`, and `monthlyKwhByMonth`; passes all to `SummaryChartModule`.
 - `ActiveStepPanel`: added `anchorMonthIndex` prop, passes to `EstimateSummaryStep`.
-- `SolarEstimateTab`: computes `anchorMonthIndex` via `useMemo` — uses saved estimate's `createdAt` when opened from library, else `new Date().getMonth()`.
+- `SolarEstimateTab`: computes `anchorMonthIndex` via `useMemo` � uses saved estimate's `createdAt` when opened from library, else `new Date().getMonth()`.
 
 WHAT WAS LEARNED:
 - `getSeasonalBillData` was the right place to separate "what kWh array" from "how to chart it"; moving array construction out keeps the function pure.
-- Two chart components share the same title string — uniquely identify by `aria-label` when editing.
+- Two chart components share the same title string � uniquely identify by `aria-label` when editing.
 - `useMemo` is already imported; anchor month can be derived reactively from `activeEstimateId` + `savedEstimates` with no new state.
 
 LEARNED SKILLS / REUSABLE PATTERNS:
-- Anchor-month pattern: `baselineMonthlyKwh = anchorMonthKwh / weights[anchorMonth]` → `monthly[m] = baseline * weights[m]`. Reusable for any future seasonal anchoring.
+- Anchor-month pattern: `baselineMonthlyKwh = anchorMonthKwh / weights[anchorMonth]` ? `monthly[m] = baseline * weights[m]`. Reusable for any future seasonal anchoring.
 - Conservative planning floor: `Math.max(rawAfter, beforeCost * FLOOR_PCT)` applied per month at the data layer keeps the chart honest.
 
 BUGS / RISKS:
-- `EnergyFlow24hChart` and other chart tabs still use flat `monthlyKwh` — this is intentional per scope. If those tabs need seasonal accuracy, add a separate phase.
+- `EnergyFlow24hChart` and other chart tabs still use flat `monthlyKwh` � this is intentional per scope. If those tabs need seasonal accuracy, add a separate phase.
 - Savings floors (25% / 15%) are conservative planning assumptions only; real NEM 3.0 outcomes may differ.
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS � zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -2681,11 +2681,11 @@ AGENT FILE UPDATED:
 YES
 
 NEXT PHASE ADJUSTMENTS:
-- Home Size seasonal anchoring: when consumptionMethod is home_size, the anchor approach could also be applied (use home size → flat kWh → normalize). This is deferred per task scope.
+- Home Size seasonal anchoring: when consumptionMethod is home_size, the anchor approach could also be applied (use home size ? flat kWh ? normalize). This is deferred per task scope.
 - If the 24h energy flow chart needs seasonal anchoring, add a separate `monthlyKwhByMonth` prop path to `EnergyFlow24hChart`.
 
 NEXT PHASE READY:
-NO — no active build phase. Ready for screenshot QA.
+NO � no active build phase. Ready for screenshot QA.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Anchor bill to estimate month complete. `SolarEstimateTab.tsx` only. `computeAnchoredMonthlyKwhByMonth` + `computeNormalizedMonthlyKwhByMonth` + `getAnchorBlendedRate` added. `getSeasonalBillData` now takes `number[]` instead of flat kWh. Savings floors 25%/15% applied per month. `SeasonalBillChart` shows anchor month in subtitle label and tooltip. Anchor month = saved estimate createdAt month if opened from library, else current month. Typecheck passes. Commit: 3ba7339.
@@ -2714,10 +2714,10 @@ WHAT CHANGED:
 - No changes to `getSeasonalBillData`, anchor month, seasonal weights, or other chart tabs.
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS � zero errors
 
 NEXT PHASE READY:
-NO — ready for screenshot QA.
+NO � ready for screenshot QA.
 
 ---
 
@@ -3008,7 +3008,7 @@ BUGS / RISKS:
 - The patch intentionally does not change service log/service estimate scanner filtering outside the archived-project scope.
 
 TYPECHECK RESULT:
-PASS — `npm.cmd run typecheck`
+PASS � `npm.cmd run typecheck`
 
 SHARED CONTEXT UPDATED:
 YES
@@ -3066,7 +3066,7 @@ BUGS / RISKS:
 - Low/Medium: Labor/team hours charts include all logs; confirm whether archived/inactive historical labor should remain included.
 
 TYPECHECK RESULT:
-PASS — `npm.cmd run typecheck`
+PASS � `npm.cmd run typecheck`
 
 SHARED CONTEXT UPDATED:
 YES
@@ -3112,7 +3112,7 @@ WHAT WAS LEARNED:
 - `isActiveProject` is the shared archive/status/outcome filter and should be reused at graph query boundaries.
 
 TYPECHECK RESULT:
-PASS — `npm.cmd run typecheck`
+PASS � `npm.cmd run typecheck`
 
 SHARED CONTEXT UPDATED:
 YES
@@ -3155,7 +3155,7 @@ WHAT WAS LEARNED:
 - Keeping the component unmounted by default prevents its initial analysis effect from running on page load.
 
 TYPECHECK RESULT:
-PASS — `npm.cmd run typecheck`
+PASS � `npm.cmd run typecheck`
 
 SHARED CONTEXT UPDATED:
 YES
@@ -3196,7 +3196,7 @@ ROOT CAUSE:
 - `onOpenNexus` was added to the prop type and passed from `V15rDashboardInner`, but it was omitted from the `PulseTrendAnalyzer` destructured props, causing a runtime undefined-reference error.
 
 TYPECHECK RESULT:
-PASS — `npm.cmd run typecheck`
+PASS � `npm.cmd run typecheck`
 
 SHARED CONTEXT UPDATED:
 YES
@@ -3216,7 +3216,7 @@ Nexus modal hotfix complete. Root cause was missing `onOpenNexus` destructuring 
 
 ---
 
-## MATERIAL TAKEOFF POLISH — UNIT COST $ + PROJECT-ONLY SUPPLIER COMPLETION LOG
+## MATERIAL TAKEOFF POLISH � UNIT COST $ + PROJECT-ONLY SUPPLIER COMPLETION LOG
 
 AGENT:
 Claude Code Sonnet 4.5 Medium
@@ -3243,7 +3243,7 @@ ROOT CAUSE:
 - Project supplier: The Supplier column only read from `pbItem?.src`. The `r.supplierNote` field already existed on MTO row data but was only displayed as a chip in the Item Title column. Making it editable directly in the Supplier column satisfies the project-only requirement.
 
 TYPECHECK RESULT:
-PASS — zero errors
+PASS � zero errors
 
 SHARED CONTEXT UPDATED:
 YES
@@ -3290,7 +3290,7 @@ WHAT CHANGED:
 - The dashboard's fallback baseline now uses corrected `weekBuckets.actual` instead of raw project logs.
 
 TYPECHECK RESULT:
-PASS — `npm.cmd run typecheck`
+PASS � `npm.cmd run typecheck`
 
 SHARED CONTEXT UPDATED:
 YES
@@ -3338,7 +3338,7 @@ WHAT CHANGED:
 - Added a dedicated overlap-dot hover card with date range, closing/opening project names, final payment, and deposit context.
 
 TYPECHECK RESULT:
-PASS — `npm.cmd run typecheck`
+PASS � `npm.cmd run typecheck`
 
 SHARED CONTEXT UPDATED:
 YES
@@ -3680,7 +3680,7 @@ WHAT CHANGED:
 - Added touchAction: none to handle td to suppress default touch scroll interference.
 
 ROOT CAUSE:
-handleRowMouseDown fired selection toggle immediately on mousedown (before mouseup), so any press — including the start of a drag — would toggle selection. Pointer events with a movement threshold correctly defer the toggle until pointer release and suppress it if the pointer moved.
+handleRowMouseDown fired selection toggle immediately on mousedown (before mouseup), so any press � including the start of a drag � would toggle selection. Pointer events with a movement threshold correctly defer the toggle until pointer release and suppress it if the pointer moved.
 
 TYPECHECK RESULT:
 PASS - zero errors
@@ -3758,7 +3758,7 @@ FILES CHANGED:
 
 WHAT CHANGED:
 - Replaced the four pointer-event handlers (handleHandlePointerDown/Move/Up/Cancel) with two mouse-event handlers (handleHandleMouseDown, handleHandleMouseUp).
-- Removed setPointerCapture call — this was the root cause of broken drag.
+- Removed setPointerCapture call � this was the root cause of broken drag.
 - Removed touchAction: none from handle td style.
 - Selection threshold logic preserved: mousedown records startX/Y; mouseup toggles selection only when movement is <= 6px.
 - dragState ref shape simplified: removed dragged flag (no longer needed with mouseup approach).
@@ -3828,7 +3828,7 @@ EVR controls aligned with the 8-week timeline pattern. `V15rDashboard.tsx` now u
 
 ---
 
-## MTO Polish Session 8 — Remove Bulk Selector (2026-05-18)
+## MTO Polish Session 8 � Remove Bulk Selector (2026-05-18)
 
 **Commit:** d8a84f1
 
@@ -3845,7 +3845,7 @@ EVR controls aligned with the 8-week timeline pattern. `V15rDashboard.tsx` now u
 
 **Net result:** 225 lines deleted, 3 added. Handle now drag-only (no click-to-select). No bulk placement move flow.
 
-**Risks:** None — all removed code was self-contained with no external consumers.
+**Risks:** None � all removed code was self-contained with no external consumers.
 
 **Next:** No pending MTO polish tasks.
 
@@ -3901,16 +3901,16 @@ EVR and 8-week chart control layout polish complete. In `V15rDashboard.tsx`, bot
 
 ---
 
-## MTO Polish — Restore In-Bucket Drag Reorder (2026-05-18)
+## MTO Polish � Restore In-Bucket Drag Reorder (2026-05-18)
 
 **Commit:** 5e2e17f  fix(material-takeoff): restore in-bucket drag reorder
 
-**Root cause:** The 6-dot handle had cursor:grab styling but zero drag event handlers and no `draggable` attribute. Drag-and-drop was never implemented — only implied by the visual.
+**Root cause:** The 6-dot handle had cursor:grab styling but zero drag event handlers and no `draggable` attribute. Drag-and-drop was never implemented � only implied by the visual.
 
 **What changed in V15rMTOTab.tsx:**
 - Added `dragRowIdRef` (useRef) to track the currently-dragged row ID
 - Added `dragOverRowId` (useState) for drop-target visual indicator
-- Added `reorderMTORow(dragId, dropId)` — splices dragged row out and inserts at drop position, then calls saveBackupDataAndSync + forceUpdate (order persists)
+- Added `reorderMTORow(dragId, dropId)` � splices dragged row out and inserts at drop position, then calls saveBackupDataAndSync + forceUpdate (order persists)
 - Handle td: added `draggable`, `onDragStart` (sets dragRowIdRef + dataTransfer), `onDragEnd` (clears state)
 - Row tr: added `onDragOver` (preventDefault + setDragOverRowId), `onDrop` (calls reorderMTORow), `onDragLeave` (clears indicator when leaving row bounds); added `borderTop` drop indicator (blue line)
 
@@ -3920,28 +3920,28 @@ EVR and 8-week chart control layout polish complete. In `V15rDashboard.tsx`, bot
 
 ---
 
-## PDF Blueprint Phase 1 — Active Document/Page Persistence + Arched Lines (2026-06-03)
+## PDF Blueprint Phase 1 � Active Document/Page Persistence + Arched Lines (2026-06-03)
 
 **Commit:** 34ce728  fix(blueprint): persist active pdf and add arched lines
 
 **Files changed:**
-- `src/services/blueprintLibraryService.ts` — `textHighlight` added to sanitizer allowlist
-- `src/views/BlueprintAI.tsx` — localStorage helpers, persistence effects, mount jump, openLibraryItem page restore
-- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` — arch-line ShapeKind, draft ref, renderer, pointer handler
+- `src/services/blueprintLibraryService.ts` � `textHighlight` added to sanitizer allowlist
+- `src/views/BlueprintAI.tsx` � localStorage helpers, persistence effects, mount jump, openLibraryItem page restore
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` � arch-line ShapeKind, draft ref, renderer, pointer handler
 
 **Root causes fixed:**
-1. Active document not persisted — `selectedId` was pure React state with no localStorage. Fixed with `BP_ACTIVE_ID_KEY` + stale-ID guard.
-2. Page not persisted — per-document `BP_PAGE_PREFIX + id` keys; restore on init + `requestAnimationFrame` viewer jump.
-3. `textHighlight` annotations silently dropped — missing from `sanitizeAnnotation()` allowlist (12-item list, `textHighlight` simply absent).
-4. No arch-line shape — added `arch-line` ShapeKind with SVG quadratic bezier `<path d="M 0 0 Q 100 0 100 100">`, `draftArchPathDomRef` for zero-lag preview during drag.
+1. Active document not persisted � `selectedId` was pure React state with no localStorage. Fixed with `BP_ACTIVE_ID_KEY` + stale-ID guard.
+2. Page not persisted � per-document `BP_PAGE_PREFIX + id` keys; restore on init + `requestAnimationFrame` viewer jump.
+3. `textHighlight` annotations silently dropped � missing from `sanitizeAnnotation()` allowlist (12-item list, `textHighlight` simply absent).
+4. No arch-line shape � added `arch-line` ShapeKind with SVG quadratic bezier `<path d="M 0 0 Q 100 0 100 100">`, `draftArchPathDomRef` for zero-lag preview during drag.
 
 **Typecheck:** Clean (0 errors)
 
-**Next:** Manual QA — reload app, confirm active doc and page survive hard reload; draw arch-line shape; add textHighlight annotation and reload to verify it persists.
+**Next:** Manual QA � reload app, confirm active doc and page survive hard reload; draw arch-line shape; add textHighlight annotation and reload to verify it persists.
 
 ---
 
-## PDF Blueprint Phase 2 — Can-Light Tools + TextHighlight Polish (2026-06-03)
+## PDF Blueprint Phase 2 � Can-Light Tools + TextHighlight Polish (2026-06-03)
 
 **Commit:** bd38574  feat(blueprint): add can light tools and polish text highlight
 
@@ -3951,17 +3951,17 @@ EVR and 8-week chart control layout polish complete. In `V15rDashboard.tsx`, bot
 **What changed:**
 1. `ShapeKind` type extended: `'can-light-4' | 'can-light-6'` added.
 2. Shape picker dropdown: "Can Light 4"" and "Can Light 6"" entries added after Pentagon.
-3. Can-light SVG renderer: outer trim ring + crosshair + aperture circle (r=20 for 4", r=26 for 6") + size label — uses `preserveAspectRatio="xMidYMid meet"` to keep circles non-distorted.
+3. Can-light SVG renderer: outer trim ring + crosshair + aperture circle (r=20 for 4", r=26 for 6") + size label � uses `preserveAspectRatio="xMidYMid meet"` to keep circles non-distorted.
 4. Draft preview: can-lights get circular border-radius (like `circle` kind), excluded from hatch fill during drag.
-5. `textHighlight` renderer: inner highlight band changed from `h-full` to `top: 14%, bottom: 14%` absolute positioning — 72% of bounding-box height, centered, to look like a text marker pen rather than a full rectangle.
+5. `textHighlight` renderer: inner highlight band changed from `h-full` to `top: 14%, bottom: 14%` absolute positioning � 72% of bounding-box height, centered, to look like a text marker pen rather than a full rectangle.
 
-**Calibration note:** Can-lights use existing shape annotation flow (type: `shape`, shapeKind: `can-light-*`). User sizes the marker to scale using the blueprint's calibration/measurement context. No auto-sizing was added — the symbol remains accurate regardless of calibration state.
+**Calibration note:** Can-lights use existing shape annotation flow (type: `shape`, shapeKind: `can-light-*`). User sizes the marker to scale using the blueprint's calibration/measurement context. No auto-sizing was added � the symbol remains accurate regardless of calibration state.
 
-**Sanitizer:** No changes needed — `type: 'shape'` already in allowlist.
+**Sanitizer:** No changes needed � `type: 'shape'` already in allowlist.
 
 **Typecheck:** Clean (0 errors)
 
-**Next:** Manual QA — place 4" and 6" can-lights; confirm visual distinction; reload and confirm persistence; use textHighlight and confirm band look.
+**Next:** Manual QA � place 4" and 6" can-lights; confirm visual distinction; reload and confirm persistence; use textHighlight and confirm band look.
 
 
 ---
@@ -3988,37 +3988,37 @@ EVR and 8-week chart control layout polish complete. In `V15rDashboard.tsx`, bot
 
 ---
 
-## PDF Blueprint Repair Round 2 — Line Tool, Middle-Mouse Pan, Opacity Persistence, Can-Light Fill (2026-06-03)
+## PDF Blueprint Repair Round 2 � Line Tool, Middle-Mouse Pan, Opacity Persistence, Can-Light Fill (2026-06-03)
 
-**Commit:** (see below — committed after context update)
+**Commit:** (see below � committed after context update)
 
 **Files changed:**
 - `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` only
 
 **Five issues fixed:**
 
-1. **Line bounding-box rectangle removed:** Draft rect border is now `none` when `shapeKind === 'line' || shapeKind === 'arrow'` — previously the drag preview showed a visible rectangle outline around the line.
+1. **Line bounding-box rectangle removed:** Draft rect border is now `none` when `shapeKind === 'line' || shapeKind === 'arrow'` � previously the drag preview showed a visible rectangle outline around the line.
 2. **Point-to-point line placement:** Line/arrow tools now use a two-click state machine via `lineFirstPointRef`. First click stores the start point and shows SVG preview; second click commits both endpoints. No drag-hold required.
 3. **Middle-mouse pan while line tool active:** `handlePointerDown` now intercepts `e.button === 1` before any tool check; middle mouse pans the document regardless of active tool.
-4. **Opacity persistence rollback fixed:** Stale closure eliminated — `persistEditAnnotationMeta` reads latest annotation from `allAnnotationsRef.current` not closed-over `editingAnnotation`. `loadAnnotations` only fires after ALL queued mutations drain (`pendingAnnotationMutationsRef` counter). Optimistic `setAllAnnotations` update is applied synchronously before the async persist.
-5. **Can-light fill color visibility:** Aperture circle fill now uses `hexWithAlpha(fillColor, Math.max(fillOpacity, 0.6))` — the element-level `opacity={fillOpacity}` was removed (it was multiplying with the 0.6 fill alpha, making the effective color ~13% visible).
+4. **Opacity persistence rollback fixed:** Stale closure eliminated � `persistEditAnnotationMeta` reads latest annotation from `allAnnotationsRef.current` not closed-over `editingAnnotation`. `loadAnnotations` only fires after ALL queued mutations drain (`pendingAnnotationMutationsRef` counter). Optimistic `setAllAnnotations` update is applied synchronously before the async persist.
+5. **Can-light fill color visibility:** Aperture circle fill now uses `hexWithAlpha(fillColor, Math.max(fillOpacity, 0.6))` � the element-level `opacity={fillOpacity}` was removed (it was multiplying with the 0.6 fill alpha, making the effective color ~13% visible).
 
 **Bonus fix:** `Escape` key now also clears `lineFirstPointRef.current` and hides the draft SVG line, cancelling in-progress point-to-point placement.
 
-**Placed line opacity:** `opacity: fillOpacity` moved from the outer `<div>` to the SVG `<line>` element directly — lines no longer fade the entire container including any focus ring.
+**Placed line opacity:** `opacity: fillOpacity` moved from the outer `<div>` to the SVG `<line>` element directly � lines no longer fade the entire container including any focus ring.
 
 **Minimum size check:** Lines use `Math.hypot(norm.w, norm.h) < MIN_HIGHLIGHT_NORM` instead of checking w and h independently, so horizontal/vertical lines are not rejected.
 
 **Typecheck:** Clean (0 errors)
 
-**Known limitation:** Text Highlighter per-word strip rendering was intentionally skipped — deferred to a future dedicated QA session.
+**Known limitation:** Text Highlighter per-word strip rendering was intentionally skipped � deferred to a future dedicated QA session.
 
-**Next:** Manual QA — place a line (two-click), arrow (two-click), middle-mouse pan with line tool active, rapidly click opacity +5 three times and confirm no snap-back, place a can-light with green fill and confirm aperture is visibly green.
+**Next:** Manual QA � place a line (two-click), arrow (two-click), middle-mouse pan with line tool active, rapidly click opacity +5 three times and confirm no snap-back, place a can-light with green fill and confirm aperture is visibly green.
 
 
 ---
 
-## Shared Update — PDF Blueprint Repair Round 3: Line Endpoint Handles and Draggable Panel
+## Shared Update � PDF Blueprint Repair Round 3: Line Endpoint Handles and Draggable Panel
 
 * Agent: Claude Sonnet 4.6
 * Branch: main
@@ -4028,7 +4028,7 @@ EVR and 8-week chart control layout polish complete. In `V15rDashboard.tsx`, bot
 * User-facing behavior changed:
   - Selected line/arrow annotations now show two endpoint handles (blue = start, green = end). Dragging either handle moves only that endpoint independently.
   - Whole-line move still works via the move overlay beneath the handles.
-  - Floating action bar (Move/Edit/Delete) now has a drag grip (⠿) and can be repositioned anywhere in the viewport. Drag offset resets when a new annotation is selected.
+  - Floating action bar (Move/Edit/Delete) now has a drag grip (?) and can be repositioned anywhere in the viewport. Drag offset resets when a new annotation is selected.
 * Implementation notes:
   - endpointDrag state + endpointDragRef (ref-mirror pattern matching layoutDragRef) store drag context.
   - startAnnotationEndpointDrag captures pointer on overlayRef, stores both endpoint absolute page-normalized positions, then routes through handlePointerMove/Up via the ref check.
@@ -4036,19 +4036,19 @@ EVR and 8-week chart control layout polish complete. In `V15rDashboard.tsx`, bot
   - On pointerup: reads updated annotation from allAnnotationsRef and calls persistAnnotation to save.
   - barDragOffset state + barDragRef handle floating bar drag. finalBarTop/finalBarLeft computed in the bar IIFE from offset or auto-computed position. setPointerCapture on bar div routes move/up events.
   - barDragOffset resets to null via useEffect on focusedAnnotationId change (new annotation selected = bar snaps back to annotation).
-  - Endpoint handle zIndex 3, move overlay zIndex 1 — handles are always clickable above the move layer.
+  - Endpoint handle zIndex 3, move overlay zIndex 1 � handles are always clickable above the move layer.
   - Handle stopPropagation prevents whole-line move from triggering when grabbing an endpoint.
 * Risks / follow-up:
-  - Arch-line (bezier curve) does not get endpoint handles — it still uses the generic resize corner. This is intentional: its bezier control point geometry is different.
+  - Arch-line (bezier curve) does not get endpoint handles � it still uses the generic resize corner. This is intentional: its bezier control point geometry is different.
   - Text Highlighter remains unchanged (intentional skip per user instruction).
-* Manual QA status: Ready for manual QA — place a line, select it, drag start handle, drag end handle, move whole line, drag panel.
+* Manual QA status: Ready for manual QA � place a line, select it, drag start handle, drag end handle, move whole line, drag panel.
 * Next agent should know:
-  - Line/arrow annotations have endpoint handles when layoutEditId === a.id. No new annotation fields needed — lineX1/Y1/X2/Y2 already in the meta schema.
-  - barDragOffset and barDragRef are component-level state/ref — not persisted to storage.
+  - Line/arrow annotations have endpoint handles when layoutEditId === a.id. No new annotation fields needed � lineX1/Y1/X2/Y2 already in the meta schema.
+  - barDragOffset and barDragRef are component-level state/ref � not persisted to storage.
 
 ---
 
-## Shared Update — Admin App Brain Phase 1 Foundation
+## Shared Update � Admin App Brain Phase 1 Foundation
 
 AGENT:
 Cursor GPT-5.5
@@ -4199,23 +4199,23 @@ WHAT CHANGED:
 1. Arch-line renderer: Replaced hardcoded `M 0 0 Q 100 0 100 100` with endpoint-based quadratic bezier using `lineX1/Y1/X2/Y2` + `archFactor` metadata. Arch shape now respects user-placed endpoints.
 2. Arch-line endpoint handles: Added blue (start) and green (end) draggable handles matching the line/arrow renderer pattern.
 3. Arch control handle: Added a yellow draggable handle rendered at overlay level (not annotation div level) positioned at the bezier control point. Dragging it adjusts `archFactor` live.
-4. Shape renderers: Added dedicated SVG polygon renderers for diamond, star, cross, and pentagon — these no longer fall through to the square/rect renderer.
+4. Shape renderers: Added dedicated SVG polygon renderers for diamond, star, cross, and pentagon � these no longer fall through to the square/rect renderer.
 5. Arch-line placement: Extended point-to-point placement (`lineFirstPointRef`) to cover arch-line. First click anchors start, second click commits. Preview shows live arch curve.
 6. Arch-line drag preview formula: Updated from horizontal control point to perpendicular bisector formula for natural arch curve during placement drag.
 7. Escape key: Clears `draftArchPathDomRef` display when cancelling in-progress arch placement.
 8. Commit/cancel plumbing: `startArchControlDrag`, `archControlDragRef`, `archControlDrag` state; pointer-move, pointer-up, and pointer-cancel all handle arch control drag correctly.
 
 WHAT WAS LEARNED:
-- Arch control handle must live at overlay level, not annotation div level — annotation divs are sized to the bounding box, which can be extremely thin for near-horizontal lines, causing extreme percentage overflow for the control point position.
-- `archFactor=0.5` with default TL→BR endpoints exactly reproduces the legacy hardcoded bezier path.
+- Arch control handle must live at overlay level, not annotation div level � annotation divs are sized to the bounding box, which can be extremely thin for near-horizontal lines, causing extreme percentage overflow for the control point position.
+- `archFactor=0.5` with default TL?BR endpoints exactly reproduces the legacy hardcoded bezier path.
 - SVG polygon points for star/diamond/cross/pentagon are fixed in a 0-100 viewBox with `preserveAspectRatio="none"`.
 
 TYPECHECK RESULT:
-PASS — only pre-existing errors in `V15rAppBrainScene.tsx` (unrelated Three.js type issues).
+PASS � only pre-existing errors in `V15rAppBrainScene.tsx` (unrelated Three.js type issues).
 
 BUGS / RISKS:
 - Manual browser QA needed to verify arch curve drag feel, handle visibility, and shape polygon rendering.
-- `hexWithAlpha` must be available in the shape renderer scope (it is — used by can-light renderer in the same block).
+- `hexWithAlpha` must be available in the shape renderer scope (it is � used by can-light renderer in the same block).
 
 NEXT PHASE READY: YES
 COMPACT HANDOFF FOR NEXT CHAT:
@@ -4358,13 +4358,13 @@ Field Logs trigger-study polish complete. `V15rFieldLogPanel.tsx` now evaluates 
 
 ---
 
-## Shared Update — PDF Blueprint Repair Round 5: Freeform Arch Line Curve Control
+## Shared Update � PDF Blueprint Repair Round 5: Freeform Arch Line Curve Control
 
 * Agent: Claude Code (claude-sonnet-4-6)
 * Branch: main
-* Commit: (see below — appended after commit)
+* Commit: (see below � appended after commit)
 * Files changed: src/components/blueprint/OperationsBlueprintPdfViewer.tsx
-* Typecheck: PASS — only pre-existing V15rAppBrainScene.tsx errors (Three.js types, unrelated)
+* Typecheck: PASS � only pre-existing V15rAppBrainScene.tsx errors (Three.js types, unrelated)
 * User-facing behavior changed:
   - Arch Line curve/control handle now moves freely in both X and Y (was constrained to a single axis/perpendicular bisector)
   - Dragging the yellow control handle changes both arch depth AND arch angle/direction simultaneously
@@ -4373,26 +4373,26 @@ Field Logs trigger-study polish complete. `V15rFieldLogPanel.tsx` now evaluates 
   - Newly placed arch-lines immediately get archCtrlX/Y stored from the default archFactor=0.5 geometry
   - Curve control persists across reload (archCtrlX/Y saved through existing annotation persist path)
 * Implementation notes:
-  - archControlDrag state + ref simplified to {annotationId, pointerId} only — no longer carries p1/p2 or startArchFactor
+  - archControlDrag state + ref simplified to {annotationId, pointerId} only � no longer carries p1/p2 or startArchFactor
   - startArchControlDrag: no longer needs endpoint positions; just captures pointer and sets drag context
-  - handlePointerMove arch block: stores nhx/nhy (cursor in page-normalized space) directly into archCtrlX/Y — no dot-product projection
+  - handlePointerMove arch block: stores nhx/nhy (cursor in page-normalized space) directly into archCtrlX/Y � no dot-product projection
   - Arch-line renderer: if archCtrlX/Y present, converts from page-normalized to annotation-local viewBox coords ((ctrlX - rect.x) / rect.w * 100); otherwise falls back to archFactor perpendicular formula
   - Arch control handle overlay: if archCtrlX/Y present, uses them directly as % of overlay; otherwise falls back to archFactor formula
   - lineDirectionMeta at placement: for arch-line, computes archCtrlX/Y from the default archFactor=0.5 perpendicular bisector and stores both for immediate freeform control on first edit
-  - Sanitizer in blueprintLibraryService.ts: no changes needed — passes meta as-is, archCtrlX/Y persist automatically
+  - Sanitizer in blueprintLibraryService.ts: no changes needed � passes meta as-is, archCtrlX/Y persist automatically
 * Risks / follow-up:
   - Manual browser QA needed: drag control handle in all directions, confirm curve changes freely; check reload persistence; check legacy annotations without archCtrlX/Y still render
-  - When an endpoint is dragged (changing the annotation rect), the archCtrlX/Y stays fixed in page-normalized space — this is intentional and means the bezier control point stays in place while endpoints move
-* Manual QA status: Static code review only — no browser QA available in this session
+  - When an endpoint is dragged (changing the annotation rect), the archCtrlX/Y stays fixed in page-normalized space � this is intentional and means the bezier control point stays in place while endpoints move
+* Manual QA status: Static code review only � no browser QA available in this session
 * Next agent should know:
   - archCtrlX/Y are absolute page-normalized (0-1 of overlay), NOT relative to the annotation rect
   - The SVG viewBox is 0-100 within the annotation div, so the renderer must convert: ((archCtrlX - rect.x) / rect.w) * 100
-  - archFactor is kept in metadata as a legacy fallback only — new annotations have both archFactor and archCtrlX/Y
-  - The arch drag handler is the simplest possible: just nhx/nhy → archCtrlX/Y
+  - archFactor is kept in metadata as a legacy fallback only � new annotations have both archFactor and archCtrlX/Y
+  - The arch drag handler is the simplest possible: just nhx/nhy ? archCtrlX/Y
 
 ---
 
-## Shared Update — App Brain Wave 1 (Cursor) — privacy cleanup and control tower panels
+## Shared Update � App Brain Wave 1 (Cursor) � privacy cleanup and control tower panels
 
 AGENT:
 Cursor
@@ -4429,7 +4429,7 @@ WAVE 01 PANELS:
 - Backlog (task registry domain buckets)
 
 BUILD RESULT:
-PASS — `npm run build`
+PASS � `npm run build`
 
 TYPECHECK RESULT:
 `npm.cmd run typecheck` blocked (shell harness no exit status); `npx tsc --noEmit -p tsconfig.json` PASS
@@ -4438,14 +4438,14 @@ PACKAGE FILES:
 Untouched
 
 NEXT RECOMMENDED PHASE:
-Wave 2 — directory file tree UI, live JSON/registry ingestion, git/session overlays (explicit scope only).
+Wave 2 � directory file tree UI, live JSON/registry ingestion, git/session overlays (explicit scope only).
 
 COMPACT HANDOFF FOR NEXT CHAT:
-App Brain architecture mode hides finance KPIs and renders five read-only Control Tower panels from Wave 01 seeds. 3D map, filters, inspector, and manifest panel unchanged. Static/read-only only — no live git or session tracking yet.
+App Brain architecture mode hides finance KPIs and renders five read-only Control Tower panels from Wave 01 seeds. 3D map, filters, inspector, and manifest panel unchanged. Static/read-only only � no live git or session tracking yet.
 
 ---
 
-## Shared Update — Change Orders Phase 1: Inner Project Tab and Card Metrics
+## Shared Update � Change Orders Phase 1: Inner Project Tab and Card Metrics
 
 AGENT:
 Claude Code (Sonnet 4.6)
@@ -4454,28 +4454,28 @@ BRANCH:
 main
 
 COMMIT:
-(see final commit hash below — committed after this log)
+(see final commit hash below � committed after this log)
 
 FILES CHANGED:
 - `src/components/v15r/V15rChangeOrdersTab.tsx` (NEW)
-- `src/components/v15r/V15rProjectInner.tsx` (MODIFIED — added tab entry + mappings)
-- `src/components/v15r/ProjectCard.tsx` (MODIFIED — added CO Value metric + CO Exposure)
-- `src/services/backupDataService.ts` (MODIFIED — added ChangeOrder types + CO helpers)
-- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md` (MODIFIED — this entry)
-- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md` (MODIFIED — full report appended)
+- `src/components/v15r/V15rProjectInner.tsx` (MODIFIED � added tab entry + mappings)
+- `src/components/v15r/ProjectCard.tsx` (MODIFIED � added CO Value metric + CO Exposure)
+- `src/services/backupDataService.ts` (MODIFIED � added ChangeOrder types + CO helpers)
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md` (MODIFIED � this entry)
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md` (MODIFIED � full report appended)
 
 TYPECHECK:
-PASS — `npm.cmd run typecheck` exits clean, zero errors.
+PASS � `npm.cmd run typecheck` exits clean, zero errors.
 
 USER-FACING BEHAVIOR CHANGED:
 - New "Change Orders" tab appears directly after "RFI Tracker" in every Inner Project view.
 - Tab shows: summary metrics header, CO list with status badges, Add/Edit/Delete flows.
 - Summary metrics: Original Quote, Approved CO Total, Pending/Exposure CO Total, Revised Total, Paid, Invoiced, Rejected, Labor, Material, Permit Count.
-- Project card financial grid changed from 3 columns (Quoted/Paid/Exposure) to responsive 2×2 grid with 4 columns: Quoted, Paid, Exposure (base + CO exposure), CO Value (approved COs in purple).
+- Project card financial grid changed from 3 columns (Quoted/Paid/Exposure) to responsive 2�2 grid with 4 columns: Quoted, Paid, Exposure (base + CO exposure), CO Value (approved COs in purple).
 
 IMPLEMENTATION NOTES:
 - Change orders stored as `p.changeOrders?: ChangeOrder[]` directly on the BackupProject object (same pattern as `p.rfis`).
-- Persistence: `getBackupData()` → mutate inline → `saveBackupDataAndSync(freshBackup, 'projects')`. No Supabase schema changes.
+- Persistence: `getBackupData()` ? mutate inline ? `saveBackupDataAndSync(freshBackup, 'projects')`. No Supabase schema changes.
 - `pushState()` called before every mutation for undo/redo support.
 - `totalCost` auto-calculated from `laborCost + materialCost` on every save/edit.
 - Auto-sets `approvalAt` timestamp when status transitions from non-approved to an approved status (Approved/Completed/Paid) and no approval date was manually entered.
@@ -4488,9 +4488,9 @@ IMPLEMENTATION NOTES:
 RISKS / FOLLOW-UP:
 - No Supabase storage bucket needed for Phase 1 (no attachments yet).
 - Phase 2 must create a `change-order-attachments` Supabase storage bucket before implementing attachments.
-- Phase 3 Resend pattern can reuse `src/services/guardian/GuardianRFIGenerator.ts` patterns — `VITE_RESEND_API_KEY` env var already in use.
-- The existing `fin.AR` reference in ProjectCard.tsx (line ~226) is a pre-existing bug (should be `fin.ar` lowercase) — not touched.
-- Health scoring does NOT include CO totals — intentional for Phase 1 safety.
+- Phase 3 Resend pattern can reuse `src/services/guardian/GuardianRFIGenerator.ts` patterns � `VITE_RESEND_API_KEY` env var already in use.
+- The existing `fin.AR` reference in ProjectCard.tsx (line ~226) is a pre-existing bug (should be `fin.ar` lowercase) � not touched.
+- Health scoring does NOT include CO totals � intentional for Phase 1 safety.
 
 MANUAL QA STATUS:
 Typecheck passed. Manual browser QA recommended: verify tab appears after RFI Tracker, add approved CO and confirm metrics and card update, add exposure CO and confirm card Exposure increases.
@@ -4498,11 +4498,11 @@ Typecheck passed. Manual browser QA recommended: verify tab appears after RFI Tr
 NEXT AGENT SHOULD KNOW:
 - Change Orders Phase 2 = add attachments to each CO (reuse blueprint upload pattern from V15rBlueprintsTab.tsx, new Supabase bucket needed).
 - Change Orders Phase 3 = Resend email approval flow (reuse GuardianRFIGenerator.ts pattern, needs VITE_RESEND_API_KEY).
-- Do not modify `getProjectFinancials()` formula for CO features — use the isolated helper pattern established here.
+- Do not modify `getProjectFinancials()` formula for CO features � use the isolated helper pattern established here.
 
 ---
 
-## Shared Update — App Brain Wave 2 (Cursor) — Directory Brain and File Profile MVP
+## Shared Update � App Brain Wave 2 (Cursor) � Directory Brain and File Profile MVP
 
 AGENT:
 Cursor
@@ -4538,7 +4538,7 @@ GENERATOR:
 - Regenerated manifest (`552` files indexed).
 
 BUILD RESULT:
-PASS — `npm run build`
+PASS � `npm run build`
 
 TYPECHECK RESULT:
 `npm.cmd run typecheck` blocked (shell harness no exit status); `npx tsc --noEmit -p tsconfig.json` PASS
@@ -4547,14 +4547,14 @@ PACKAGE FILES:
 Untouched
 
 NEXT RECOMMENDED PHASE:
-Wave 3 — live registry ingestion, import graph edges, and git/session overlays (explicit scope only).
+Wave 3 � live registry ingestion, import graph edges, and git/session overlays (explicit scope only).
 
 COMPACT HANDOFF FOR NEXT CHAT:
 App Brain Wave 2 adds searchable Directory Brain with file selection and a File Profile side panel. Generator now emits stable file IDs and import counts. All read-only; Wave 1 panels and 3D map preserved.
 
 ---
 
-## Shared Update — App Brain Wave 3 (Cursor) — Work Manifest and Context Hub MVP
+## Shared Update � App Brain Wave 3 (Cursor) � Work Manifest and Context Hub MVP
 
 AGENT:
 Cursor
@@ -4588,10 +4588,10 @@ LIVE WORK IMPROVEMENTS:
 - Falls back to `APP_BRAIN_ACTIVE_SESSIONS` seed for session cards.
 
 GENERATOR RESULT:
-PASS — `node scripts/generate-app-brain-work-manifest.mjs` (5 sessions, 9 sources read, 4/5 context files present, Haiku missing).
+PASS � `node scripts/generate-app-brain-work-manifest.mjs` (5 sessions, 9 sources read, 4/5 context files present, Haiku missing).
 
 BUILD RESULT:
-PASS — `npm run build`
+PASS � `npm run build`
 
 TYPECHECK RESULT:
 `npm.cmd run typecheck` blocked (shell harness no exit status); `npx tsc --noEmit -p tsconfig.json` PASS
@@ -4600,14 +4600,14 @@ PACKAGE FILES:
 Untouched
 
 NEXT RECOMMENDED PHASE:
-Wave 4 — optional watch-mode design, import-graph overlays, and live registry ingestion (explicit scope only).
+Wave 4 � optional watch-mode design, import-graph overlays, and live registry ingestion (explicit scope only).
 
 COMPACT HANDOFF FOR NEXT CHAT:
 App Brain Wave 3 adds work manifest generator, Context Hub panel, and manifest-enriched Live Work cards. All read-only snapshot; no watch mode or live tracking yet. Directory/File Profile and 3D map preserved.
 
 ---
 
-## Shared Update — App Brain Wave 4 (Cursor) — Intelligence Preview Panels Integration
+## Shared Update � App Brain Wave 4 (Cursor) � Intelligence Preview Panels Integration
 
 AGENT:
 Cursor
@@ -4631,13 +4631,13 @@ FILES CHANGED:
 
 PANELS INTEGRATED:
 - Domain Ecosystem preview (appBrainDomainMap.ts)
-- Governance preview (appBrainGovernanceSummary.ts — dark theme, tabbed read-only)
+- Governance preview (appBrainGovernanceSummary.ts � dark theme, tabbed read-only)
 - Agent Brief Generator preview (appBrainBriefGenerator.ts sample brief)
 - Metrics / QA Gate preview (appBrainMetricsSeed.ts + QA gate placeholder)
 - Backlog Import helper summary (appBrainBacklogImport.ts classifier sample)
 
 BUILD RESULT:
-PASS — `npm run build`
+PASS � `npm run build`
 
 TYPECHECK RESULT:
 `npm.cmd run typecheck` blocked (shell harness no exit status); `npx tsc --noEmit -p tsconfig.json` PASS
@@ -4646,14 +4646,14 @@ PACKAGE FILES:
 Untouched
 
 NEXT RECOMMENDED PHASE:
-Wave 5 — optional watch-mode design doc, domain map 3D overlay wiring, and live registry ingestion (explicit scope only).
+Wave 5 � optional watch-mode design doc, domain map 3D overlay wiring, and live registry ingestion (explicit scope only).
 
 COMPACT HANDOFF FOR NEXT CHAT:
-App Brain Wave 4 integrates five read-only Wave 02 intelligence preview panels under “Wave 02 Intelligence Previews”. Control Tower (Waves 01–03), 3D map, and Generated Manifest preserved. No watch mode, hooks, mutation UI, or business financial KPIs.
+App Brain Wave 4 integrates five read-only Wave 02 intelligence preview panels under �Wave 02 Intelligence Previews�. Control Tower (Waves 01�03), 3D map, and Generated Manifest preserved. No watch mode, hooks, mutation UI, or business financial KPIs.
 
 ---
 
-## Shared Update — App Brain Wave 5 (Cursor) — Runtime Contract Preview Panels Integration
+## Shared Update � App Brain Wave 5 (Cursor) � Runtime Contract Preview Panels Integration
 
 AGENT:
 Cursor
@@ -4680,10 +4680,10 @@ PANELS INTEGRATED:
 - Active Work Animation preview (`appBrainActiveWorkAnimationModel.ts` + seed sessions)
 - Session Log preview (`APP_BRAIN_SESSION_LOG.json` + summary helpers)
 - Canary / Scope Checker preview (`appBrainScopeCanaryModel.ts`)
-- Watch Mode Contract preview (`appBrainWatchModeContract.ts` — design only)
+- Watch Mode Contract preview (`appBrainWatchModeContract.ts` � design only)
 
 BUILD RESULT:
-PASS — `npm run build`
+PASS � `npm run build`
 
 TYPECHECK RESULT:
 `npm.cmd run typecheck` blocked (shell harness no exit status); `npx tsc --noEmit -p tsconfig.json` PASS
@@ -4692,14 +4692,14 @@ PACKAGE FILES:
 Untouched
 
 NEXT RECOMMENDED PHASE:
-Wave 6 — optional 3D import-graph overlay wiring, watch-mode implementation behind explicit scope, and live registry ingestion.
+Wave 6 � optional 3D import-graph overlay wiring, watch-mode implementation behind explicit scope, and live registry ingestion.
 
 COMPACT HANDOFF FOR NEXT CHAT:
-App Brain Wave 5 integrates five read-only Wave 03 runtime contract preview panels under “Wave 03 Runtime Contracts”. Control Tower, Wave 02 previews, 3D map, and Generated Manifest preserved. No watch mode runtime, hooks, mutation UI, or business financial KPIs.
+App Brain Wave 5 integrates five read-only Wave 03 runtime contract preview panels under �Wave 03 Runtime Contracts�. Control Tower, Wave 02 previews, 3D map, and Generated Manifest preserved. No watch mode runtime, hooks, mutation UI, or business financial KPIs.
 
 ---
 
-## Shared Update — App Brain Wave 6 (Cursor) — Watch Mode Refresh MVP
+## Shared Update � App Brain Wave 6 (Cursor) � Watch Mode Refresh MVP
 
 AGENT:
 Cursor
@@ -4731,26 +4731,26 @@ WATCH MODE MVP:
 - Watch Mode Contract panel shows latest generated snapshot (not live dashboard state)
 
 GENERATOR RESULT:
-PASS — `node scripts/app-brain-watch.mjs --once` (3/3 generators succeeded)
+PASS � `node scripts/app-brain-watch.mjs --once` (3/3 generators succeeded)
 
 BUILD RESULT:
-PASS — `npm run build`
+PASS � `npm run build`
 
 TYPECHECK RESULT:
 `npm.cmd run typecheck` blocked (shell harness no exit status); `npx tsc --noEmit -p tsconfig.json` PASS
 
 PACKAGE FILES:
-`package.json` scripts added only — `package-lock.json` untouched
+`package.json` scripts added only � `package-lock.json` untouched
 
 NEXT RECOMMENDED PHASE:
-Wave 7 — optional 3D import-graph overlay wiring and live registry ingestion behind explicit scope.
+Wave 7 � optional 3D import-graph overlay wiring and live registry ingestion behind explicit scope.
 
 COMPACT HANDOFF FOR NEXT CHAT:
 App Brain Wave 6 adds opt-in CLI watch/refresh utility. No git hooks, no auto-commit, no secrets or financial values in snapshots. Dashboard panel shows generated runtime snapshot only.
 
 ---
 
-## Shared Update — App Brain Wave 7 (Cursor) — 3D Scene Overlay Modes Wiring
+## Shared Update � App Brain Wave 7 (Cursor) � 3D Scene Overlay Modes Wiring
 
 AGENT:
 Cursor
@@ -4779,7 +4779,7 @@ OVERLAY MODES ADDED:
 - Active Work (agent/domain pulse + blocked/overlap hints from seed sessions)
 
 BUILD RESULT:
-PASS — `npm run build`
+PASS � `npm run build`
 
 TYPECHECK RESULT:
 `npm.cmd run typecheck` blocked (shell harness no exit status); `npx tsc --noEmit -p tsconfig.json` PASS
@@ -4791,14 +4791,14 @@ GENERATED MANIFESTS:
 Untouched
 
 NEXT RECOMMENDED PHASE:
-Wave 8 — live registry ingestion and richer overlay legend/inspector sync (explicit scope only).
+Wave 8 � live registry ingestion and richer overlay legend/inspector sync (explicit scope only).
 
 COMPACT HANDOFF FOR NEXT CHAT:
-App Brain Wave 7 wires Import Graph and Active Work preview data into the 3D scene via overlay mode controls. Read-only generated snapshot/seed hints only — no websocket, hooks, or package changes.
+App Brain Wave 7 wires Import Graph and Active Work preview data into the 3D scene via overlay mode controls. Read-only generated snapshot/seed hints only � no websocket, hooks, or package changes.
 
 ---
 
-## Shared Update — App Brain Wave 7 Hotfix (Cursor) — Scene Overlay Animation Stabilization
+## Shared Update � App Brain Wave 7 Hotfix (Cursor) � Scene Overlay Animation Stabilization
 
 AGENT:
 Cursor
@@ -4836,14 +4836,14 @@ GENERATED MANIFESTS:
 Untouched
 
 NEXT RECOMMENDED PHASE:
-Wave 8 — live registry ingestion and overlay legend/inspector sync (explicit scope only).
+Wave 8 � live registry ingestion and overlay legend/inspector sync (explicit scope only).
 
 COMPACT HANDOFF FOR NEXT CHAT:
 App Brain 3D map stabilized after Wave 7 overlay wiring. Architecture/Import Graph/Active Work modes animate smoothly without periodic reset. Read-only snapshot hints only.
 
 ---
 
-## Shared Update — App Brain Watch HMR Hotfix (Cursor) — Prevent Refresh Reset Loop
+## Shared Update � App Brain Watch HMR Hotfix (Cursor) � Prevent Refresh Reset Loop
 
 AGENT:
 Cursor
@@ -4863,7 +4863,7 @@ FILES CHANGED:
 - `solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md`
 
 ROOT CAUSE:
-Opt-in watch utility rewrote generated App Brain TypeScript snapshots every poll (often timestamp-only). Vite HMR remounted App Brain and reset the Three.js scene, appearing as blink/snap every 0.5–1.5s.
+Opt-in watch utility rewrote generated App Brain TypeScript snapshots every poll (often timestamp-only). Vite HMR remounted App Brain and reset the Three.js scene, appearing as blink/snap every 0.5�1.5s.
 
 FIX:
 Watch polls stable source mtimes and skips refresh when inputs unchanged. Generator/runtime writes compare meaningful content and skip or restore timestamp-only churn.
@@ -4881,14 +4881,14 @@ GENERATED MANIFESTS:
 Only runtime snapshot committed when meaningful; manifest churn-only files not staged.
 
 NEXT RECOMMENDED PHASE:
-Wave 8 — live registry ingestion and overlay legend/inspector sync (explicit scope only).
+Wave 8 � live registry ingestion and overlay legend/inspector sync (explicit scope only).
 
 COMPACT HANDOFF FOR NEXT CHAT:
 App Brain watch mode is HMR-safe. Polls stable inputs and avoids rewriting generated TS files when only timestamps change. 3D map should stay stable while watch runs with no source edits.
 
 ---
 
-## Shared Update — Home Tab Repair Pass — pipeline count, agenda picker, 10-row scroll cap [2026-06-06]
+## Shared Update � Home Tab Repair Pass � pipeline count, agenda picker, 10-row scroll cap [2026-06-06]
 
 AGENT:
 Codex
@@ -4925,7 +4925,7 @@ Home repair pass complete on `main`. Pipeline subtitle uses active-project count
 
 ---
 
-## Shared Update — Team Cost Phase 1: Dedupe Owner and Worker Cost Rates
+## Shared Update � Team Cost Phase 1: Dedupe Owner and Worker Cost Rates
 
 AGENT:
 Claude Code Sonnet 4.5 Medium
@@ -4934,7 +4934,7 @@ BRANCH:
 main
 
 COMMIT:
-(see below — committed after context update)
+(see below � committed after context update)
 
 FILES CHANGED:
 - `src/components/v15r/V15rEstimateTab.tsx`
@@ -4944,16 +4944,16 @@ FILES CHANGED:
 - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
 
 TYPECHECK:
-PASS — zero errors (`npm.cmd run typecheck`)
+PASS � zero errors (`npm.cmd run typecheck`)
 
 USER-FACING BEHAVIOR CHANGED:
 - Estimate Labor employee dropdown no longer shows Owner / Me twice when a real owner employee record exists in backup.employees.
 - Cost in the Estimate allocation modal now resolves to the real owner record's costRate when the 'me' sentinel is used in saved labor rows.
 - 1099 / per-project employees added via AddTeamMemberModal now save costRate = base wage (no payroll multiplier applied).
-- W-2 / permanent employees still save costRate = base × payrollMult as before.
+- W-2 / permanent employees still save costRate = base � payrollMult as before.
 - Editing a 1099 employee via EmployeeEditModal in TeamPanel now saves costRate = baseNum and sets applyMultiplier: false.
 - Editing an owner (isOwner: true) via EmployeeEditModal saves costRate = baseNum (no multiplier).
-- Loaded Cost display label in both modals now shows "base rate (no W-2 burden)" for contractors/owner instead of "= base × 1.20x".
+- Loaded Cost display label in both modals now shows "base rate (no W-2 burden)" for contractors/owner instead of "= base � 1.20x".
 
 IMPLEMENTATION NOTES:
 - AddTeamMemberModal: added `isContractorType = classification === '1099' || selectedType === 'hypothetical'`. loadedCostRate, useEffect bill-rate calc, and handleSave all branch on this flag. `applyMultiplier` is now persisted on the saved record.
@@ -4964,7 +4964,7 @@ IMPLEMENTATION NOTES:
 - Backward-compatible: old rows with empId: 'me' still resolve correctly.
 
 RISKS / FOLLOW-UP:
-- Existing 1099 employees already saved before this fix have costRate = base × 1.20 stored. They must be opened and re-saved in EmployeeEditModal to get the corrected costRate. No automatic migration was run.
+- Existing 1099 employees already saved before this fix have costRate = base � 1.20 stored. They must be opened and re-saved in EmployeeEditModal to get the corrected costRate. No automatic migration was run.
 - Owner cost in Estimate resolves via real owner record only if isOwner: true is set on a backup.employees record. If no such record exists, settings.opCost fallback remains.
 - applyMultiplier toggle in TeamPanel (the manual per-employee toggle) is still functional and overrides the default.
 
@@ -4973,22 +4973,22 @@ TypeScript typecheck confirmed PASS. Manual browser QA recommended: verify dropd
 
 NEXT AGENT SHOULD KNOW:
 - Phase 1 (dedup + cost rate by type) is complete.
-- Phase 2 (retroactive migration for existing 1099 records) is deferred — existing 1099 employees need manual re-save to get corrected costRate.
+- Phase 2 (retroactive migration for existing 1099 records) is deferred � existing 1099 employees need manual re-save to get corrected costRate.
 - Phase 3 (apply settings.overheadPct in allocation modal) is deferred.
 - Phase 4 (per-employee monthly overhead allocation from settings.employeeCosts[]) is deferred.
 
 ---
 
-## Shared Update — Team Cost Repair: Owner Dedupe and Contractor Cost (Phase 2 ��� 2026-06-07)
+## Shared Update � Team Cost Repair: Owner Dedupe and Contractor Cost (Phase 2 ??? 2026-06-07)
 
 * Agent: Claude Code Sonnet 4.6
 * Branch: main
 * Commit: caeba57
 * Files changed: src/components/v15r/V15rEstimateTab.tsx + 2 context files
-* Typecheck: PASS — zero errors
+* Typecheck: PASS � zero errors
 * User-facing behavior changed:
-  - Owner/Me in Estimate dropdown: defensive name dedup added — same-normalized-name entries collapsed to one. Resolves duplicate "Owner / Me" when owner record lacks isOwner:true flag.
-  - Edgar-style 1099 labor cost: getEmployeeCostRate now returns hourly_rate (base) for all isContractor employees (applyMultiplier===false, classification==='1099', or employee_type==='per_project'). Existing records auto-corrected at read time — no re-save required.
+  - Owner/Me in Estimate dropdown: defensive name dedup added � same-normalized-name entries collapsed to one. Resolves duplicate "Owner / Me" when owner record lacks isOwner:true flag.
+  - Edgar-style 1099 labor cost: getEmployeeCostRate now returns hourly_rate (base) for all isContractor employees (applyMultiplier===false, classification==='1099', or employee_type==='per_project'). Existing records auto-corrected at read time � no re-save required.
   - Owner cost in allocation modal: now uses hourly_rate||costRate (base/opportunity), not a loaded rate.
   - Overhead in allocation modal: now shows per-billable-hour recovery when settings.defaultOHRate or expense items + billableHrsYear are configured. Labeled "Overhead recovery (@ $X/h)" vs "Overhead estimate (X%)". Falls back to % if unconfigured.
 * Implementation notes:
@@ -5045,35 +5045,35 @@ NEXT AGENT SHOULD KNOW:
 
 ---
 
-## Shared Update — Team Cost End-to-End: Central Worker Cost Rules (2026-06-07)
+## Shared Update � Team Cost End-to-End: Central Worker Cost Rules (2026-06-07)
 
 * Agent: Claude Code Sonnet 4.6
 * Branch: main
-* Commit: (see final commit hash in Claude report below)
+* Commit: c5a20eb
 * Files changed:
-  - src/components/v15r/employeeCostUtils.ts (NEW — shared cost helper)
+  - src/components/v15r/employeeCostUtils.ts (NEW � shared cost helper)
   - src/components/v15r/V15rTeamPanel.tsx (calcEmployeeCost, EmployeeCard, EmployeeEditModal, projectedMonthlyCost, logsWithCost, 3 chart helpers)
   - src/components/v15r/AddTeamMemberModal.tsx (isContr + handleSave)
   - src/components/v15r/V15rEstimateTab.tsx (getEmployeeCostRate)
   - solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
   - solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
-* Typecheck: PASS — zero errors
+* Typecheck: PASS � zero errors
 * User-facing behavior changed:
   - Owner card: Base Wage = Loaded Cost (no payroll multiplier)
   - 1099 card: Base Cost = Loaded Cost (no payroll multiplier)
-  - W-2 card: Loaded Cost = Base × payrollMult (from settings, not hardcoded)
-  - Monthly Cost Breakdown: payroll burden = 0 for Owner/1099, = (loadedHourly - baseHourly) × hrs for W-2
+  - W-2 card: Loaded Cost = Base � payrollMult (from settings, not hardcoded)
+  - Monthly Cost Breakdown: payroll burden = 0 for Owner/1099, = (loadedHourly - baseHourly) � hrs for W-2
   - Team Cost Summary: sums the corrected loadedMonthly values
   - Projected Monthly Cost: uses loadedHourly per worker type, no double-multiply
   - Hours by Employee table: uses loadedHourly (helper-backed), supports empId or employeeId key
-  - All three chart helpers: fixed employeeId→empId key; use getLoadedHourlyRate
+  - All three chart helpers: fixed employeeId?empId key; use getLoadedHourlyRate
   - AddTeamMemberModal: per_project type now correctly forces no W-2 burden in both preview and save
   - EmployeeEditModal: stale records corrected at open-time via helper; per_project included in no-multiplier guard
   - Estimate getEmployeeCostRate: now wraps shared helper; owner=base, 1099=base, W-2=loaded
 * Worker cost source of truth: src/components/v15r/employeeCostUtils.ts
 * Owner/W-2/1099 formulas:
   - Owner: baseHourly = hourly_rate || costRate || settings.opCost; loadedHourly = baseHourly
-  - W-2: baseHourly = hourly_rate (stale: costRate/payrollMult); loadedHourly = base × payrollMult
+  - W-2: baseHourly = hourly_rate (stale: costRate/payrollMult); loadedHourly = base � payrollMult
   - 1099: baseHourly = hourly_rate || costRate; loadedHourly = baseHourly
 * Team and Estimate integration notes:
   - All paths now import from employeeCostUtils.ts
@@ -5087,10 +5087,10 @@ NEXT AGENT SHOULD KNOW:
 * Risks / follow-up:
   - Records with no type signals (no isOwner, no classification, no employee_type, applyMultiplier undefined) default to W-2. User must re-save via edit to correct.
   - applyMultiplier toggle in toggleMultiplier() flips the flag but does not rewrite costRate. If a user toggles, the display will correct at render time via helper (reads hourly_rate first), but stored costRate stays stale until next edit-save.
-  - Hypothetical positions still use raw hyp.costRate (no multiplier applied per spec — planning only)
-* Manual QA status: Typecheck PASS. Browser QA needed: owner card Base=Loaded; 1099 card Base=Loaded; W-2 card Loaded=Base×mult; Estimate modal correct per type; per_project no burden.
+  - Hypothetical positions still use raw hyp.costRate (no multiplier applied per spec � planning only)
+* Manual QA status: Typecheck PASS. Browser QA needed: owner card Base=Loaded; 1099 card Base=Loaded; W-2 card Loaded=Base�mult; Estimate modal correct per type; per_project no burden.
 * Next agent should know:
   - employeeCostUtils.ts is the single source of truth for all worker cost rules. Import from it, never reimplement the logic elsewhere.
   - resolveWorkerType priority: isOwner > classification:1099 > classification:W-2 > applyMultiplier===false > employee_type:per_project > default W-2
   - W-2 stale record recovery: base = costRate / payrollMult (in getBaseHourlyRate)
-  - Do not delete the V15rTeamPanel calcEmployeeCost wrapper — it maps MonthlyBreakdown fields to the legacy return shape consumed by EmployeeCard
+  - Do not delete the V15rTeamPanel calcEmployeeCost wrapper � it maps MonthlyBreakdown fields to the legacy return shape consumed by EmployeeCard
