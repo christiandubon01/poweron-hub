@@ -28,7 +28,10 @@ import AppBrainLiveWorkPanel from './app-brain/AppBrainLiveWorkPanel'
 import AppBrainRulesPanel from './app-brain/AppBrainRulesPanel'
 import AppBrainSkillsPanel from './app-brain/AppBrainSkillsPanel'
 import AppBrainDirectoryPanel from './app-brain/AppBrainDirectoryPanel'
+import AppBrainFileProfilePanel from './app-brain/AppBrainFileProfilePanel'
 import AppBrainBacklogPanel from './app-brain/AppBrainBacklogPanel'
+import { APP_BRAIN_DIRECTORY } from './generatedAppBrainDirectory'
+import { findDirectoryFile } from './app-brain/appBrainDirectoryBrain'
 
 const ROADMAP = [
   { phase: 'Phase 2', title: '3D neural render', detail: 'Static architecture MVP with interactive nodes' },
@@ -573,6 +576,7 @@ export default function V15rAppBrainTab() {
   const [selectedNodeId, setSelectedNodeId] = useState<string>('app-brain')
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
   const [filters, setFilters] = useState<AppBrainFilters>(DEFAULT_APP_BRAIN_FILTERS)
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>('src/components/v15r/V15rAppBrainTab.tsx')
   const visibleNodes = useMemo(() => filterAppBrainNodes(APP_BRAIN_NODES, filters), [filters])
   const visibleNodeIds = useMemo(() => visibleNodes.map((node) => node.id), [visibleNodes])
   const selectedNodeIsVisible = visibleNodeIds.includes(selectedNodeId)
@@ -580,6 +584,10 @@ export default function V15rAppBrainTab() {
   const activeNode = useMemo(
     () => (hoveredNodeIsVisible ? getAppBrainNode(hoveredNodeId) : null) ?? (selectedNodeIsVisible ? getAppBrainNode(selectedNodeId) : visibleNodes[0] ?? null),
     [hoveredNodeId, hoveredNodeIsVisible, selectedNodeId, selectedNodeIsVisible, visibleNodes],
+  )
+  const selectedFile = useMemo(
+    () => findDirectoryFile(APP_BRAIN_DIRECTORY.fileMetadata, selectedFilePath),
+    [selectedFilePath],
   )
 
   return (
@@ -692,7 +700,10 @@ export default function V15rAppBrainTab() {
             <AppBrainLiveWorkPanel />
             <AppBrainRulesPanel />
             <AppBrainSkillsPanel />
-            <AppBrainDirectoryPanel />
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-4">
+              <AppBrainDirectoryPanel selectedFilePath={selectedFilePath} onSelectFile={setSelectedFilePath} />
+              <AppBrainFileProfilePanel file={selectedFile} />
+            </div>
             <AppBrainBacklogPanel />
           </div>
         </section>

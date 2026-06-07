@@ -4638,3 +4638,49 @@ Browser reached login gate at `http://localhost:5173`; Home-tab click-through re
 
 COMPACT HANDOFF FOR NEXT CHAT:
 Home repair pass complete on `main`. Pipeline subtitle uses active-project count; agenda linking uses a real project picker modal; agenda cards scroll after 10 task rows. Scope limited to `V15rHome.tsx` plus context files.
+
+---
+
+## Shared Update - App Brain Wave 2 Directory Brain and File Profile MVP
+
+AGENT:
+Codex GPT-5.5 Medium
+
+BRANCH:
+main
+
+COMMIT HASH:
+Pending at log-write time; see final Codex report.
+
+FILES CHANGED:
+- `scripts/generate-app-brain-directory.mjs`
+- `src/components/v15r/generatedAppBrainDirectory.ts`
+- `src/components/v15r/V15rAppBrainTab.tsx`
+- `src/components/v15r/app-brain/AppBrainDirectoryPanel.tsx`
+- `src/components/v15r/app-brain/AppBrainFileProfilePanel.tsx`
+- `src/components/v15r/app-brain/appBrainDirectoryBrain.ts`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+
+WHAT CHANGED:
+- Upgraded Directory Brain from a compact preview into a searchable file/component index with search, area filter, extension filter, match counts, compact selectable file rows, area counts, and extension counts.
+- Added a read-only File Profile panel for the selected directory file with path, stable file id, parent directory, area, extension, file size, detected components, detected exports, import count, imported-by count, related static active-work seed records, related backlog count, risk placeholder, safe edit notes placeholder, and canary suggestion placeholder.
+- Added `appBrainDirectoryBrain.ts` helper functions for filtering, search matching, summaries, selected file lookup, formatting, and static related-work/backlog lookups.
+- Improved and regenerated the directory generator with deterministic output, stable sorting, tracked source-like extensions only, file ids, parent directories, import counts, component/export detection, and imported-by counts.
+- Preserved the existing 3D map, generated architecture manifest panel, Wave 1 control tower panels, and App Brain privacy cleanup behavior.
+
+VALIDATION:
+- `node scripts/generate-app-brain-directory.mjs`: PASS, generated 546 tracked source files.
+- `npx.cmd tsc --noEmit -p tsconfig.json`: PASS.
+- `npm.cmd run typecheck`: PASS.
+- `npm.cmd run build`: PASS after escalated rerun; sandboxed run was blocked by Vite config read restrictions.
+
+BUGS / RISKS:
+- Manual browser QA still needed in App Brain for search/filter behavior, row selection highlight, profile panel updates, and responsive layout.
+- Starting workspace was not clean; unrelated pre-existing edits remained in do-not-touch/unrelated files and were not staged by Codex.
+
+NEXT RECOMMENDED PHASE:
+Manual QA Wave 2 in App Brain, then Wave 3 only if explicitly scoped. Context Hub/work manifest work should remain separate and must not be mixed into this Wave 2 patch.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+App Brain Wave 2 is a read-only Directory Brain MVP. The regenerated directory manifest now has source-file metadata; the Directory panel filters/searches/selects files; the File Profile panel shows generated metadata plus static seed links and safety placeholders. No package files changed. No live git/session tracking, Context Hub, watch mode, or operational financial KPIs were added.

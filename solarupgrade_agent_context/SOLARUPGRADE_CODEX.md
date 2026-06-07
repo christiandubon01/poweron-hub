@@ -1592,3 +1592,31 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
   - On authenticated localhost Home: confirm Pipeline subtitle shows `4 projects`, agenda Edit opens project picker with Mobile Home Remodel, and Today shows 10 visible task rows with scroll for the 12th.
 - Compact handoff for next agent/chat:
   Home repair pass on `main`: `V15rHome.tsx` now binds pipeline subtitle to `kpis.activeProjects`, replaces agenda project-ID prompts with a modal picker of active project names, and caps agenda task lists to 10 visible rows with scroll. Context files updated. Commit scoped to Home + context files.
+
+---
+
+## Codex Report - App Brain - Clean Wave 2 Directory Brain and File Profile MVP
+
+- Task completed: Cleanly implemented Wave 2 Directory Brain and File Profile MVP.
+- Files changed:
+  - `scripts/generate-app-brain-directory.mjs`
+  - `src/components/v15r/generatedAppBrainDirectory.ts`
+  - `src/components/v15r/V15rAppBrainTab.tsx`
+  - `src/components/v15r/app-brain/AppBrainDirectoryPanel.tsx`
+  - `src/components/v15r/app-brain/AppBrainFileProfilePanel.tsx`
+  - `src/components/v15r/app-brain/appBrainDirectoryBrain.ts`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final Codex report.
+- Build result: PASS - `npm.cmd run build` passed after escalated rerun; sandboxed build was blocked by Vite config read restrictions.
+- TSC result: PASS - `npx.cmd tsc --noEmit -p tsconfig.json`.
+- npm.cmd typecheck result: PASS - `npm.cmd run typecheck`.
+- Root cause: Wave 1 Directory only exposed aggregate counts and a small file preview. It did not support searching, filtering, selecting a file, or inspecting file-level metadata.
+- What changed: Directory Brain now supports search across paths/components/exports/areas/extensions, area and extension filters, match count, area/extension counts, a compact scrollable selectable file list, and selected-row highlight. A new File Profile panel shows generated file metadata, imported-by data, related static active-work/backlog seed links, and placeholder risk/safe-edit/canary guidance.
+- Generator changes: Replaced the loose Wave 1 directory generator with a deterministic source-file scanner that tracks only source-like extensions, stable sorts output, creates file ids and parent directories, detects simple component/export names, counts imports, and computes imported-by counts. Regenerated `generatedAppBrainDirectory.ts` with 546 tracked files.
+- What was learned: The seed registries already provide static active-session and backlog records that can be safely cross-referenced by exact file path without adding live tracking claims.
+- Learned skills / reusable patterns: Keep generated metadata in a simple manifest and move UI search/filter/profile composition into a helper file so Directory and File Profile panels can stay presentation-focused.
+- Bugs / risks: Manual browser QA remains needed for App Brain search/filter behavior, row selection, profile updates, and responsive layout. The starting workspace was not clean and had unrelated do-not-touch/unrelated file changes; Codex did not stage them.
+- Manual QA performed: Static source review plus generator/build/typecheck validation. No authenticated browser click-through was performed.
+- Next recommended action: Manually open App Brain, search/filter Directory Brain, select several files, and verify File Profile updates without disturbing the 3D map or Wave 1 panels. Keep future Context Hub/work manifest work separate from this Wave 2 patch.
+- Compact handoff for next agent/chat: App Brain Wave 2 is a read-only Directory Brain/File Profile MVP. The generator now emits deterministic file metadata; Directory filters/selects files; File Profile displays metadata plus static seed links and safety placeholders. No package files changed; no live git/session tracking, Context Hub, watch mode, or operational financial KPI exposure was added.

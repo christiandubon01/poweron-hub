@@ -1,24 +1,20 @@
 #!/usr/bin/env node
 
 /**
- * Directory Brain Generator for PowerOn Hub App Brain
- * 
- * Scans safe app source roots and generates a comprehensive directory index.
- * Output: src/components/v15r/generatedAppBrainDirectory.ts
- * 
- * Dependencies: Node.js fs, path only (no npm packages)
- * 
- * Usage: node scripts/generate-app-brain-directory.mjs
+ * Directory Brain Generator for PowerOn Hub App Brain.
+ *
+ * Scans safe app source roots and writes a compact, deterministic directory
+ * manifest used by the read-only App Brain Directory and File Profile panels.
  */
 
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const rootDir = path.join(__dirname, '..');
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const rootDir = path.join(__dirname, '..')
+const GENERATED_AT = '2026-06-06T00:00:00.000Z'
 
-// Safe app source roots to scan
 const SAFE_ROOTS = [
   'src/components/v15r',
   'src/components/blueprint',
@@ -29,385 +25,318 @@ const SAFE_ROOTS = [
   'src/agents',
   'src/utils',
   'src/services',
-];
+]
 
-// File extensions to track
-const TRACKED_EXTENSIONS = ['.tsx', '.ts', '.js', '.jsx', '.json', '.css', '.scss'];
+const TRACKED_EXTENSIONS = new Set(['.tsx', '.ts', '.js', '.jsx', '.json', '.css', '.scss'])
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '.git', '.next', 'coverage'])
 
-/**
- * Recursively scan directory and collect file information
- */
+function toPosix(filePath) {
+  return filePath.replace(/\\/g, '/')
+}
+
+function quote(value) {
+  return JSON.stringify(value)
+}
+
+function makeFileId(filePath) {
+  return filePath
+    .toLowerCase()
+    .replace(/^src\//, '')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
 function scanDirectory(dirPath, baseDir = '') {
-  const files = [];
-  const dirs = [];
+  const files = []
 
+  let entries = []
   try {
-    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-
-    for (const entry of entries) {
-      // Skip node_modules, dist, build, .git, etc.
-      if (['node_modules', 'dist', 'build', '.git', '.next', 'coverage'].includes(entry.name)) {
-        continue;
-      }
-
-      const fullPath = path.join(dirPath, entry.name);
-      const relativePath = path.join(baseDir, entry.name);
-
-      if (entry.isDirectory()) {
-        dirs.push({
-          name: entry.name,
-          path: relativePath,
-          items: scanDirectory(fullPath, relativePath),
-        });
-      } else if (entry.isFile()) {
-        const ext = path.extname(entry.name);
-        files.push({
-          name: entry.name,
-          path: relativePath,
-          extension: ext,
-          size: fs.statSync(fullPath).size,
-        });
-      }
-    }
-  } catch (err) {
-    console.warn(`Warning: Could not read directory ${dirPath}: ${err.message}`);
+    entries = fs.readdirSync(dirPath, { withFileTypes: true })
+  } catch (error) {
+    console.warn(`Warning: could not read ${dirPath}: ${error.message}`)
+    return files
   }
 
-  return { files, dirs };
+  entries.sort((a, b) => a.name.localeCompare(b.name))
+
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      if (SKIP_DIRS.has(entry.name)) continue
+      files.push(...scanDirectory(path.join(dirPath, entry.name), path.join(baseDir, entry.name)))
+      continue
+    }
+
+    if (!entry.isFile()) continue
+
+    const extension = path.extname(entry.name)
+    if (!TRACKED_EXTENSIONS.has(extension)) continue
+
+    const relativePath = toPosix(path.join(baseDir, entry.name))
+    const fullPath = path.join(dirPath, entry.name)
+    const stat = fs.statSync(fullPath)
+
+    files.push({
+      name: entry.name,
+      path: relativePath,
+      extension,
+      size: stat.size,
+    })
+  }
+
+  return files
 }
 
-/**
- * Extract component and export names using basic regex
- */
-function extractComponentNames(filePath) {
-  const components = [];
-  const exports = [];
-
+function readTextFile(filePath) {
   try {
-    const content = fs.readFileSync(filePath, 'utf-8');
-
-    // Match export default function/const declarations
-    const defaultExports = content.match(/export\s+default\s+(?:function|const)\s+(\w+)/g) || [];
-    defaultExports.forEach(match => {
-      const name = match.match(/\s+(\w+)$/)?.[1];
-      if (name) exports.push({ type: 'default', name });
-    });
-
-    // Match named exports
-    const namedExports = content.match(/export\s+(?:const|function|interface|type|class)\s+(\w+)/g) || [];
-    namedExports.forEach(match => {
-      const name = match.match(/\s+(\w+)$/)?.[1];
-      if (name && !exports.some(e => e.name === name)) {
-        exports.push({ type: 'named', name });
-      }
-    });
-
-    // Match React component patterns (PascalCase functions)
-    const componentMatches = content.match(/(?:function|const)\s+([A-Z]\w+)\s*(?:[:=\(])/g) || [];
-    componentMatches.forEach(match => {
-      const name = match.match(/\s+([A-Z]\w+)/)?.[1];
-      if (name && !components.includes(name)) {
-        components.push(name);
-      }
-    });
-  } catch (err) {
-    // Silent fail for binary/inaccessible files
+    return fs.readFileSync(filePath, 'utf-8')
+  } catch {
+    return ''
   }
-
-  return { components, exports };
 }
 
-/**
- * Build directory tree structure
- */
-function buildTree(scanResult, indent = '') {
-  let tree = '';
-
-  if (scanResult.dirs && scanResult.dirs.length > 0) {
-    scanResult.dirs.sort((a, b) => a.name.localeCompare(b.name));
-    scanResult.dirs.forEach((dir, idx) => {
-      const isLast = idx === scanResult.dirs.length - 1 && (!scanResult.files || scanResult.files.length === 0);
-      tree += `${indent}${isLast ? '└── ' : '├── '}📁 ${dir.name}/\n`;
-      const childIndent = indent + (isLast ? '    ' : '│   ');
-      tree += buildTree(dir.items, childIndent);
-    });
-  }
-
-  if (scanResult.files && scanResult.files.length > 0) {
-    scanResult.files.sort((a, b) => a.name.localeCompare(b.name));
-    scanResult.files.forEach((file, idx) => {
-      const isLast = idx === scanResult.files.length - 1;
-      const icon = file.extension === '.tsx' ? '⚛️' : file.extension === '.ts' ? '📄' : '📋';
-      tree += `${indent}${isLast ? '└── ' : '├── '}${icon} ${file.name}\n`;
-    });
-  }
-
-  return tree;
+function uniqueSorted(values) {
+  return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b))
 }
 
-/**
- * Flatten directory structure to list all files
- */
-function flattenFiles(scanResult, basePath = '') {
-  let files = [];
-
-  if (scanResult.files && scanResult.files.length > 0) {
-    files = files.concat(
-      scanResult.files.map(f => ({
-        path: path.join(basePath, f.name).replace(/\\/g, '/'),
-        name: f.name,
-        ext: f.extension,
-        size: f.size,
-      }))
-    );
+function extractMetadata(filePath) {
+  const content = readTextFile(filePath)
+  if (!content) {
+    return { components: [], exports: [], importCount: 0, imports: [] }
   }
 
-  if (scanResult.dirs && scanResult.dirs.length > 0) {
-    scanResult.dirs.forEach(dir => {
-      files = files.concat(
-        flattenFiles(dir.items, path.join(basePath, dir.name).replace(/\\/g, '/'))
-      );
-    });
-  }
+  const components = []
+  const exports = []
+  const imports = []
 
-  return files;
-}
+  const componentPatterns = [
+    /(?:export\s+default\s+)?function\s+([A-Z][A-Za-z0-9_]*)\s*\(/g,
+    /(?:export\s+)?const\s+([A-Z][A-Za-z0-9_]*)\s*[:=]/g,
+    /class\s+([A-Z][A-Za-z0-9_]*)\s+/g,
+  ]
 
-/**
- * Count occurrences of extensions
- */
-function countExtensions(files) {
-  const counts = {};
-  files.forEach(file => {
-    const ext = file.ext || 'unknown';
-    counts[ext] = (counts[ext] || 0) + 1;
-  });
-  return counts;
-}
-
-/**
- * Generate the output TypeScript file
- */
-function generateOutputFile(data) {
-  const timestamp = new Date().toISOString();
-  
-  // Build file metadata array as string
-  let fileMetadataStr = '';
-  data.fileMetadata.forEach((fm, idx) => {
-    fileMetadataStr += `    {\n`;
-    fileMetadataStr += `      path: '${fm.path}',\n`;
-    fileMetadataStr += `      name: '${fm.name}',\n`;
-    fileMetadataStr += `      extension: '${fm.extension}',\n`;
-    fileMetadataStr += `      size: ${fm.size},\n`;
-    fileMetadataStr += `      area: '${fm.area}',\n`;
-    
-    // Always include components array (empty if no components found)
-    fileMetadataStr += `      components: [${(fm.components || []).map(c => `'${c}'`).join(', ')}],\n`;
-    
-    // Always include exports array (empty if no exports found)
-    const exportsStr = (fm.exports || []).map(e => `{ type: '${e.type}', name: '${e.name}' }`).join(', ');
-    fileMetadataStr += `      exports: [${exportsStr}],\n`;
-    
-    fileMetadataStr += `    }`;
-    if (idx < data.fileMetadata.length - 1) {
-      fileMetadataStr += ',\n';
+  for (const pattern of componentPatterns) {
+    for (const match of content.matchAll(pattern)) {
+      components.push(match[1])
     }
-  });
+  }
 
-  const output = `/**
+  const exportPatterns = [
+    /export\s+default\s+function\s+([A-Za-z0-9_]+)/g,
+    /export\s+default\s+([A-Za-z0-9_]+)/g,
+    /export\s+(?:const|function|interface|type|class|enum)\s+([A-Za-z0-9_]+)/g,
+  ]
+
+  for (const pattern of exportPatterns) {
+    for (const match of content.matchAll(pattern)) {
+      exports.push(match[1])
+    }
+  }
+
+  const namedExportBlocks = content.matchAll(/export\s*\{([^}]+)\}/g)
+  for (const match of namedExportBlocks) {
+    match[1].split(',').forEach((part) => {
+      const name = part.trim().split(/\s+as\s+/i)[0]?.trim()
+      if (name) exports.push(name)
+    })
+  }
+
+  const importPatterns = [
+    /import\s+(?:type\s+)?(?:[^'"]+from\s+)?['"]([^'"]+)['"]/g,
+    /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+  ]
+
+  for (const pattern of importPatterns) {
+    for (const match of content.matchAll(pattern)) {
+      imports.push(match[1])
+    }
+  }
+
+  return {
+    components: uniqueSorted(components),
+    exports: uniqueSorted(exports),
+    importCount: imports.length,
+    imports: uniqueSorted(imports),
+  }
+}
+
+function resolveLocalImport(importerPath, specifier) {
+  if (!specifier.startsWith('.')) return null
+
+  const importerDir = path.posix.dirname(importerPath)
+  const base = path.posix.normalize(path.posix.join(importerDir, specifier))
+  const candidates = [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    `${base}.js`,
+    `${base}.jsx`,
+    `${base}.json`,
+    path.posix.join(base, 'index.ts'),
+    path.posix.join(base, 'index.tsx'),
+    path.posix.join(base, 'index.js'),
+    path.posix.join(base, 'index.jsx'),
+  ]
+
+  return candidates
+}
+
+function countBy(items, getKey) {
+  return items.reduce((acc, item) => {
+    const key = getKey(item)
+    acc[key] = (acc[key] ?? 0) + 1
+    return acc
+  }, {})
+}
+
+function serializeFile(file) {
+  return `    {
+      fileId: ${quote(file.fileId)},
+      path: ${quote(file.path)},
+      name: ${quote(file.name)},
+      parentDirectory: ${quote(file.parentDirectory)},
+      extension: ${quote(file.extension)},
+      size: ${file.size},
+      area: ${quote(file.area)},
+      components: [${file.components.map(quote).join(', ')}],
+      exports: [${file.exports.map(quote).join(', ')}],
+      importCount: ${file.importCount},
+      importedByCount: ${file.importedByCount},
+      importedBy: [${file.importedBy.map(quote).join(', ')}],
+    }`
+}
+
+function generateOutput(files, extensionCounts, areaCounts) {
+  return `/**
  * ============================================================================
  * GENERATED FILE - DO NOT EDIT MANUALLY
- * 
+ *
  * File: generatedAppBrainDirectory.ts
  * Generator: scripts/generate-app-brain-directory.mjs
- * Generated: ${timestamp}
+ * Generated: ${GENERATED_AT}
  * Purpose: App Brain directory index for neural navigation
  * ============================================================================
  */
 
-/**
- * Directory structure of safe app source roots
- * Includes: components, views, features, agents, utils, services
- */
+export interface AppBrainDirectoryFile {
+  fileId: string
+  path: string
+  name: string
+  parentDirectory: string
+  extension: string
+  size: number
+  area: string
+  components: string[]
+  exports: string[]
+  importCount: number
+  importedByCount: number
+  importedBy: string[]
+}
+
 export const APP_BRAIN_DIRECTORY = {
-  generatedAt: '${timestamp}',
-  version: '1.0',
+  generatedAt: ${quote(GENERATED_AT)},
+  version: '2.0',
   scanRoots: [
-${SAFE_ROOTS.map(r => `    '${r}'`).join(',\n')}
+${SAFE_ROOTS.map((root) => `    ${quote(root)}`).join(',\n')}
   ],
-  
-  /**
-   * Summary statistics
-   */
   statistics: {
-    totalFiles: ${data.sortedFiles.length},
+    totalFiles: ${files.length},
     filesByExtension: {
-${Object.entries(data.extensionCounts).map(([ext, count]) => `      '${ext}': ${count}`).join(',\n')}
+${Object.entries(extensionCounts).map(([extension, count]) => `      ${quote(extension)}: ${count}`).join(',\n')}
     },
     filesPerArea: {
-${Object.entries(data.areaStats).map(([area, count]) => `      '${area}': ${count}`).join(',\n')}
+${Object.entries(areaCounts).map(([area, count]) => `      ${quote(area)}: ${count}`).join(',\n')}
     },
   },
-
-  /**
-   * All files in stable sorted order [area/path/filename]
-   */
   allFiles: [
-${data.sortedFiles.map(f => `    '${f}'`).join(',\n')}
+${files.map((file) => `    ${quote(file.path)}`).join(',\n')}
   ],
-
-  /**
-   * File metadata: name, path, extension, component exports
-   */
   fileMetadata: [
-${fileMetadataStr}
-  ],
+${files.map(serializeFile).join(',\n')}
+  ] satisfies AppBrainDirectoryFile[],
+} as const
 
-  /**
-   * Utility function: find files by area
-   */
-  getFilesByArea: (area: string) => {
-    return APP_BRAIN_DIRECTORY.fileMetadata.filter(f => f.area === area);
-  },
+export type AppBrainDirectoryType = typeof APP_BRAIN_DIRECTORY
+export type AppBrainDirectoryFilePath = (typeof APP_BRAIN_DIRECTORY.allFiles)[number]
 
-  /**
-   * Utility function: find files by extension
-   */
-  getFilesByExtension: (extension: string) => {
-    return APP_BRAIN_DIRECTORY.fileMetadata.filter(f => f.extension === extension);
-  },
-
-  /**
-   * Utility function: find files containing component names
-   */
-  searchComponents: (query: string) => {
-    const lowerQuery = query.toLowerCase();
-    return APP_BRAIN_DIRECTORY.fileMetadata.filter(f => 
-      (f.components?.length ?? 0) > 0 && f.components!.some((c: string) => c.toLowerCase().includes(lowerQuery))
-    );
-  },
-} as const;
-
-export type AppBrainDirectoryType = typeof APP_BRAIN_DIRECTORY;
-
-/**
- * Quick reference: all available areas
- */
 export const APP_AREAS = [
-${SAFE_ROOTS.map(r => `  '${r}'`).join(',\n')}
-] as const;
+${SAFE_ROOTS.map((root) => `  ${quote(root)}`).join(',\n')}
+] as const
 
-/**
- * Export a simple lookup by path
- */
-export function findFileByPath(filePath: string) {
-  return APP_BRAIN_DIRECTORY.fileMetadata.find(f => f.path === filePath);
+export function findFileByPath(filePath: string): AppBrainDirectoryFile | undefined {
+  return APP_BRAIN_DIRECTORY.fileMetadata.find((file) => file.path === filePath)
 }
-`;
-
-  return output;
+`
 }
 
-/**
- * Main execution
- */
-async function main() {
-  console.log('🧠 PowerOn App Brain Directory Generator');
-  console.log('========================================\n');
+function main() {
+  console.log('PowerOn App Brain Directory Generator')
+  console.log('====================================')
 
-  const results = {};
-  let totalFiles = 0;
-  let totalDirs = 0;
-  let allFiles = [];
-  let allFileMetadata = [];
-  let areaStats = {};
-  let directoryTrees = [];
+  const files = []
 
-  // Scan each safe root
   for (const root of SAFE_ROOTS) {
-    const fullPath = path.join(rootDir, root);
-
-    if (!fs.existsSync(fullPath)) {
-      console.warn(`⚠️  Skipping missing root: ${root}`);
-      continue;
+    const fullRoot = path.join(rootDir, root)
+    if (!fs.existsSync(fullRoot)) {
+      console.warn(`Skipping missing root: ${root}`)
+      continue
     }
 
-    console.log(`📂 Scanning ${root}...`);
+    const rootFiles = scanDirectory(fullRoot)
+    console.log(`Scanned ${root}: ${rootFiles.length} files`)
 
-    const scanResult = scanDirectory(fullPath);
-    const flatFiles = flattenFiles(scanResult);
-    const tree = buildTree(scanResult, '  ');
-
-    results[root] = { scanResult, flatFiles, tree };
-    totalFiles += flatFiles.length;
-    areaStats[root] = flatFiles.length;
-
-    // Add to global lists
-    allFiles = allFiles.concat(flatFiles.map(f => `${root}/${f.path}`));
-    directoryTrees.push(`\n### ${root}\n\`\`\`\n${tree}\`\`\``);
-
-    // Extract metadata for TypeScript/TSX files
-    flatFiles.forEach(file => {
-      if (['.ts', '.tsx', '.js', '.jsx'].includes(file.ext)) {
-        const fullFilePath = path.join(fullPath, file.path);
-        const metadata = extractComponentNames(fullFilePath);
-
-        allFileMetadata.push({
-          path: `${root}/${file.path}`,
-          name: file.name,
-          extension: file.ext,
-          size: file.size,
-          area: root,
-          components: metadata.components,
-          exports: metadata.exports,
-        });
-      }
-    });
-
-    console.log(`✓ Found ${flatFiles.length} files`);
+    for (const file of rootFiles) {
+      const appPath = `${root}/${file.path}`
+      const metadata = extractMetadata(path.join(fullRoot, file.path))
+      files.push({
+        fileId: makeFileId(appPath),
+        path: appPath,
+        name: file.name,
+        parentDirectory: path.posix.dirname(appPath),
+        extension: file.extension,
+        size: file.size,
+        area: root,
+        components: metadata.components,
+        exports: metadata.exports,
+        importCount: metadata.importCount,
+        imports: metadata.imports,
+        importedBy: [],
+        importedByCount: 0,
+      })
+    }
   }
 
-  // Count extensions
-  const extensionCounts = {};
-  allFiles.forEach(f => {
-    const ext = path.extname(f);
-    extensionCounts[ext] = (extensionCounts[ext] || 0) + 1;
-  });
+  files.sort((a, b) => a.path.localeCompare(b.path))
+  const pathSet = new Set(files.map((file) => file.path))
+  const fileByPath = new Map(files.map((file) => [file.path, file]))
 
-  // Sort all files stably
-  const sortedFiles = Array.from(new Set(allFiles)).sort((a, b) => a.localeCompare(b));
+  for (const file of files) {
+    for (const specifier of file.imports) {
+      const candidates = resolveLocalImport(file.path, specifier)
+      const resolvedPath = candidates?.find((candidate) => pathSet.has(candidate))
+      if (!resolvedPath) continue
 
-  // Generate output
-  const data = {
-    totalFiles: sortedFiles.length,
-    extensionCounts,
-    areaStats,
-    sortedFiles,
-    fileMetadata: allFileMetadata,
-    directoryTrees,
-  };
-
-  const outputContent = generateOutputFile(data);
-  const outputPath = path.join(rootDir, 'src/components/v15r/generatedAppBrainDirectory.ts');
-
-  // Ensure directory exists
-  const outputDir = path.dirname(outputPath);
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
+      const importedFile = fileByPath.get(resolvedPath)
+      if (importedFile) importedFile.importedBy.push(file.path)
+    }
   }
 
-  fs.writeFileSync(outputPath, outputContent, 'utf-8');
+  for (const file of files) {
+    file.importedBy = uniqueSorted(file.importedBy)
+    file.importedByCount = file.importedBy.length
+    delete file.imports
+  }
 
-  console.log('\n========================================');
-  console.log(`📊 Summary`);
-  console.log(`  Total files: ${sortedFiles.length}`);
-  console.log(`  Areas scanned: ${SAFE_ROOTS.length}`);
-  console.log(`  Extensions tracked: ${Object.keys(extensionCounts).join(', ')}`);
-  console.log(`\n✅ Output written to: ${path.relative(rootDir, outputPath)}`);
-  console.log('');
+  const extensionCounts = countBy(files, (file) => file.extension)
+  const areaCounts = countBy(files, (file) => file.area)
+  const output = generateOutput(files, extensionCounts, areaCounts)
+  const outputPath = path.join(rootDir, 'src/components/v15r/generatedAppBrainDirectory.ts')
+
+  fs.writeFileSync(outputPath, output, 'utf-8')
+
+  console.log('====================================')
+  console.log(`Total files: ${files.length}`)
+  console.log(`Output: ${path.relative(rootDir, outputPath)}`)
 }
 
-main().catch(err => {
-  console.error('❌ Error:', err.message);
-  process.exit(1);
-});
+main()
