@@ -3036,3 +3036,55 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 - Next recommended action: Browser QA. Confirm donut shows actual %, employee cards show hrs/day/week/month/year/logged/remaining, forecast labels are clearly "Scenario Remaining".
 - Compact handoff for next agent/chat: Overhead Recovery Tracker in V15rTeamPanel.tsx fully rebuilt. Forecast no longer double-counts: scenarioRemainingHours = max(planned - actualLogged, 0). empLogMap tracks per-employee logged hours. Employee cards show full planning detail: hrs/day/week/month/year, logged, remaining, progress bar, rate strip, actual money, scenario remaining money, scheduling insight copy. All text upgraded from text-[9px]/[10px]/gray-600/700 to text-xs/gray-400+. Typecheck clean.
 
+
+---
+
+## Phase 4 — Team Tracker: Clarify Contribution Labels and Sync New Employees
+
+- Agent: Claude Code (resumed session)
+- Branch: main
+- Commit: TBD
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
+- Typecheck: PASS — zero errors
+- Root cause / user need: (1) "Gross Contribution" label was unclear/misleading — should be "After Direct Labor Cost". (2) New employees (e.g. Allan) added after scenario creation didn't appear in Projection Scenarios table or Overhead Tracker employee rows. (3) Total vs per-worker logged hours labels were ambiguous. (4) Owner 'me' key mismatch in empLogMap.
+
+### Changes Made
+
+**Label renames (replace_all throughout Overhead Tracker)**:
+- "Gross Contribution" → "After Direct Labor Cost"
+- "Gross Contrib/hr" → "After Labor Cost/hr"
+- "hrs logged" KPI subtitle → "total hrs (all workers)"
+- "Logged Hours" → "Worker Logged Hours" (per-worker card header)
+- "actual billed" → "this worker only"
+- "Actual Logged Hours" (scenario strip) → "Total Logged Billable Hours"
+- "Actual (Logged Hours)" section heading → "Actual — This Worker's Logged Hours"
+
+**getMergedScenarioWorkers helper** (appended to helpers block, ~line 1104):
+- Takes active scenario, merges saved workers with ALL active employees
+- Missing employees added with defaults: hoursPerWeek: 0, weeksPerYear: 52
+- Owner 'me' empId handled: resolved to ownerInMap.id so no duplication
+- Used in: Projection Scenarios workerRows, Overhead Tracker empRows
+
+**ensureAndUpdateScenWorker helper**:
+- Before updating a worker field, checks if employee exists in scenario.workers
+- If missing, inserts a new entry with defaults before applying the field update
+- Used in: Projection Scenarios table input onChange handlers (hoursPerWeek, weeksPerYear)
+
+**empLogMap 'me' normalization in Overhead Tracker**:
+- After building empLogMap from backup.logs, translates empId='me' → ownerEmpForLog.id
+- Prevents owner logged hours from being lost in per-worker lookup
+
+**Overhead Tracker mergedScenWorkers**:
+- `mergedScenWorkers = getMergedScenarioWorkers(activeScen)` — all tracker calcs use this
+- empRows built from mergedScenWorkers — all active employees always appear
+
+### Behavior preserved
+- Worker cost formulas (owner/1099/W-2) unchanged
+- Settings Overhead Manager is only source of truth
+- Donut chart shows actual-only coverage %
+- Forecast math: scenarioRemainingHours = max(planned - actualLogged, 0)
+- All previously committed phases (1–3) functionality intact
+
+### Manual QA
+- Typecheck: PASS
+- Browser QA: Required (confirm new employee appears in both Projection Scenarios and Overhead Tracker)

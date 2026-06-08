@@ -5109,3 +5109,26 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 - Manual QA status: Typecheck only. Full browser QA needed.
 - Next agent should know: Overhead Recovery Tracker math is clean. No double-counting. Employee cards are full planning dashboards. Worker cost formulas (owner/1099/W-2) unchanged. Scenario KPI label is "Scenario Remaining Recovery" not "Forecasted". projectedTotal = actual + scenarioRemaining.
 
+
+---
+
+## Shared Update — Team Tracker: Contribution Labels + New Employee Sync
+
+- Agent: Claude Code (resumed session)
+- Branch: main
+- Commit: TBD
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
+- Typecheck: PASS
+
+**User-facing behavior changed**:
+- "Gross Contribution" renamed to "After Direct Labor Cost" (clarifies it's revenue minus direct labor, not net profit)
+- "Gross Contrib/hr" → "After Labor Cost/hr"
+- New employees added after a scenario was saved now appear in both Projection Scenarios table and Overhead Tracker employee rows (with 0 default hours — user can assign)
+- Total vs per-worker logged hours labels now clearly differentiated: "Total Logged Billable Hours (total hrs, all workers)" vs "Worker Logged Hours (this worker only)"
+- "Actual — This Worker's Logged Hours" section heading replaces ambiguous "Actual (Logged Hours)"
+
+**getMergedScenarioWorkers behavior**: merges scenario.workers with all active employees; missing employees get hoursPerWeek: 0, weeksPerYear: 52. Owner 'me' empId resolved to real owner id.
+
+**ensureAndUpdateScenWorker behavior**: edits to a new employee's hours in Projection Scenarios first insert them into the scenario before applying the field change. Prevents silent drops.
+
+**Risks / follow-up**: Browser QA needed to confirm new employees appear correctly. If a new employee has no logged hours yet, their OH recovery will show $0 actual (correct).

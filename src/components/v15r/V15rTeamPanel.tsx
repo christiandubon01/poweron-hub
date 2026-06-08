@@ -1107,6 +1107,40 @@ export default function V15rTeamPanel() {
     setEditingScenName(null)
   }
 
+  // ── Return scenario workers merged with ALL active employees ──────────────
+  // Employees already in the scenario keep their existing hrs/wks.
+  // Active employees missing from the scenario appear with 0 hrs/wk defaults.
+  const getMergedScenarioWorkers = (scen: any): any[] => {
+    if (!scen) return []
+    const existing: any[] = scen.workers || []
+    const ownerInMap = employees.find((e: any) => e.isOwner || String(e.name || '').toLowerCase().trim() === 'owner / me')
+    const existingIds = new Set(existing.map((w: any) => {
+      if (w.empId === 'me') return ownerInMap?.id || 'me'
+      return w.empId
+    }))
+    const activeEmps = employees.filter((e: any) => !e.status || e.status === 'Active')
+    const missing = activeEmps
+      .filter((e: any) => !existingIds.has(e.id))
+      .map((e: any) => ({ empId: e.id, hoursPerWeek: 0, weeksPerYear: 52 }))
+    return [...existing, ...missing]
+  }
+
+  // ── Add employee to scenario if not already present, then update field ────
+  const ensureAndUpdateScenWorker = (scenId: string, empId: string, field: 'hoursPerWeek' | 'weeksPerYear', value: number) => {
+    const scens = getScenarios()
+    const scen = scens.find((s: any) => s.id === scenId)
+    if (!scen) return
+    const exists = (scen.workers || []).some((w: any) => w.empId === empId)
+    const updated = scens.map((s: any) => {
+      if (s.id !== scenId) return s
+      const workers = exists
+        ? s.workers.map((w: any) => w.empId === empId ? { ...w, [field]: value } : w)
+        : [...(s.workers || []), { empId, hoursPerWeek: field === 'hoursPerWeek' ? value : 0, weeksPerYear: field === 'weeksPerYear' ? value : 52 }]
+      return { ...s, workers }
+    })
+    persistScenarios(updated)
+  }
+
   const getScenarioEmp = (empId: string) => {
     if (!empId || empId === 'me') {
       const ownerEmp = employees.find((e: any) => e.isOwner || String(e.name || '').toLowerCase().trim() === 'owner / me')
@@ -1489,8 +1523,8 @@ export default function V15rTeamPanel() {
         const activeScen = scenarios.find((s: any) => s.id === activeScenarioId) || scenarios[0]
         const payrollMult = num(backup.settings?.payrollMult || 1.20)
 
-        // Per-worker calculations for active scenario
-        const workerRows = (activeScen?.workers || []).map((w: any) => {
+        // Per-worker calculations — all active employees merged with scenario data
+        const workerRows = getMergedScenarioWorkers(activeScen).map((w: any) => {
           const emp = getScenarioEmp(w.empId)
           if (!emp) return null
           const profile = getWorkerCostProfile(emp, backup.settings)
@@ -1623,7 +1657,7 @@ export default function V15rTeamPanel() {
                                     min="0"
                                     max="80"
                                     value={r.w.hoursPerWeek}
-                                    onChange={e => updateScenWorker(activeScen.id, r.w.empId, 'hoursPerWeek', num(e.target.value))}
+                                    onChange={e => ensureAndUpdateScenWorker(activeScen.id, r.w.empId, 'hoursPerWeek', num(e.target.value))}
                                     className="w-16 bg-[var(--bg-input)] border border-gray-600 text-gray-100 text-xs px-2 py-1 rounded text-right focus:outline-none focus:border-blue-500"
                                   />
                                 </td>
@@ -1633,7 +1667,7 @@ export default function V15rTeamPanel() {
                                     min="1"
                                     max="52"
                                     value={r.w.weeksPerYear}
-                                    onChange={e => updateScenWorker(activeScen.id, r.w.empId, 'weeksPerYear', num(e.target.value))}
+                                    onChange={e => ensureAndUpdateScenWorker(activeScen.id, r.w.empId, 'weeksPerYear', num(e.target.value))}
                                     className="w-14 bg-[var(--bg-input)] border border-gray-600 text-gray-100 text-xs px-2 py-1 rounded text-right focus:outline-none focus:border-blue-500"
                                   />
                                 </td>
@@ -1696,7 +1730,7 @@ export default function V15rTeamPanel() {
         const scenarios = getScenarios()
         const activeScen = scenarios.find((s: any) => s.id === activeScenarioId) || scenarios[0]
 
-        // ── Per-employee logged hours map ──────────────────────────────────────
+        // ── Per-employee logged hours map (normalize 'me' → owner id) ──────────
         const empLogMap: Record<string, number> = {}
         ;(backup.logs || []).forEach((log: any) => {
           const hrs = num(log.hrs || log.hours || 0)
@@ -1704,6 +1738,12 @@ export default function V15rTeamPanel() {
           const eid = log.empId || log.employeeId || ''
           empLogMap[eid] = (empLogMap[eid] || 0) + hrs
         })
+        // Translate 'me' key to owner's actual emp.id so per-worker lookups work
+        const ownerEmpForLog = employees.find((e: any) => e.isOwner || String(e.name || '').toLowerCase().trim() === 'owner / me')
+        if (ownerEmpForLog && empLogMap['me'] !== undefined) {
+          empLogMap[ownerEmpForLog.id] = (empLogMap[ownerEmpForLog.id] || 0) + empLogMap['me']
+          delete empLogMap['me']
+        }
 
         // ── Actual recovered: from all logged hours × bill/cost rates ──────────
         let actualLoggedHrs = 0
@@ -1724,9 +1764,10 @@ export default function V15rTeamPanel() {
         const actualOverheadRecovered = actualLoggedHrs * overheadPerHour
         const actualTrueProfit = actualGrossContrib - actualOverheadRecovered
 
-        // ── Scenario planned hours (TOTAL) ─────────────────────────────────────
-        const scenarioPlannedHours = (activeScen?.workers || []).reduce((s: number, w: any) => s + num(w.hoursPerWeek) * num(w.weeksPerYear), 0)
-        const scenarioMonthlyHours = (activeScen?.workers || []).reduce((s: number, w: any) => s + num(w.hoursPerWeek) * 4.33, 0)
+        // ── Scenario planned hours (TOTAL) — use merged workers (all active emps)
+        const mergedScenWorkers = getMergedScenarioWorkers(activeScen)
+        const scenarioPlannedHours = mergedScenWorkers.reduce((s: number, w: any) => s + num(w.hoursPerWeek) * num(w.weeksPerYear), 0)
+        const scenarioMonthlyHours = mergedScenWorkers.reduce((s: number, w: any) => s + num(w.hoursPerWeek) * 4.33, 0)
 
         // ── Scenario REMAINING hours — subtract actual logged to avoid double-count
         const scenarioRemainingHours = Math.max(0, scenarioPlannedHours - actualLoggedHrs)
@@ -1735,7 +1776,7 @@ export default function V15rTeamPanel() {
         // ── Forecast revenue/cost based on REMAINING scenario hours only ───────
         let forecastRevenue = 0
         let forecastDirectCost = 0
-        ;(activeScen?.workers || []).forEach((w: any) => {
+        ;mergedScenWorkers.forEach((w: any) => {
           const emp = employees.find((e: any) => e.id === w.empId) || (w.empId === 'me' ? employees.find((e: any) => e.isOwner) : null)
           if (!emp) return
           const plannedYrHrs = num(w.hoursPerWeek) * num(w.weeksPerYear)
@@ -1781,8 +1822,8 @@ export default function V15rTeamPanel() {
         const arcActual = actualCoveredPct * circ - (actualCoveredPct > 0 && actualRemainingPct > 0 ? gap : 0)
         const arcActualRemaining = actualRemainingPct * circ - (actualCoveredPct > 0 && actualRemainingPct > 0 ? gap : 0)
 
-        // ── By-employee planning rows ──────────────────────────────────────────
-        const empRows = (activeScen?.workers || []).map((w: any) => {
+        // ── By-employee planning rows — all active employees via merged workers ──
+        const empRows = mergedScenWorkers.map((w: any) => {
           const emp = employees.find((e: any) => e.id === w.empId) || (w.empId === 'me' ? employees.find((e: any) => e.isOwner) : null)
           if (!emp) return null
           const hrsPerWeek = num(w.hoursPerWeek)
@@ -1932,7 +1973,7 @@ export default function V15rTeamPanel() {
                     <div className="bg-[var(--bg-secondary)] rounded p-3 text-center">
                       <div className="text-xs text-gray-400 uppercase mb-1">Actual Recovered</div>
                       <div className="text-base font-bold text-emerald-400">{formatCurrency(actualOverheadRecovered)}</div>
-                      <div className="text-xs text-gray-300">{actualLoggedHrs.toFixed(0)} hrs logged · {(actualCoveredPct * 100).toFixed(0)}% covered</div>
+                      <div className="text-xs text-gray-300">{actualLoggedHrs.toFixed(0)} total hrs (all workers) · {(actualCoveredPct * 100).toFixed(0)}%</div>
                     </div>
                     <div className="bg-[var(--bg-secondary)] rounded p-3 text-center">
                       <div className="text-xs text-gray-400 uppercase mb-1">Actual Remaining</div>
@@ -1994,7 +2035,7 @@ export default function V15rTeamPanel() {
                     <div className="text-sm font-bold text-gray-100">{scenarioPlannedHours.toLocaleString()} hrs</div>
                   </div>
                   <div>
-                    <div className="text-xs text-gray-400 mb-0.5">Actual Logged Hours</div>
+                    <div className="text-xs text-gray-400 mb-0.5">Total Logged Billable Hours</div>
                     <div className="text-sm font-bold text-emerald-400">{actualLoggedHrs.toFixed(0)} hrs</div>
                   </div>
                   <div>
@@ -2107,9 +2148,9 @@ export default function V15rTeamPanel() {
                           {/* Logged vs remaining */}
                           <div className="grid grid-cols-2 gap-3 mb-3">
                             <div className="bg-[var(--bg-card)] rounded p-2">
-                              <div className="text-xs text-gray-400 mb-0.5">Logged Hours</div>
+                              <div className="text-xs text-gray-400 mb-0.5">Worker Logged Hours</div>
                               <div className="text-base font-bold text-emerald-400">{row.empLogged.toFixed(0)} hrs</div>
-                              <div className="text-xs text-gray-400">actual billed</div>
+                              <div className="text-xs text-gray-400">this worker only</div>
                             </div>
                             <div className="bg-[var(--bg-card)] rounded p-2">
                               <div className="text-xs text-gray-400 mb-0.5">{planExceeded ? 'Plan Exceeded' : 'Remaining Hours'}</div>
@@ -2148,7 +2189,7 @@ export default function V15rTeamPanel() {
                               </div>
                             </div>
                             <div>
-                              <div className="text-xs text-gray-400 mb-0.5">Gross Contrib/hr</div>
+                              <div className="text-xs text-gray-400 mb-0.5">After Labor Cost/hr</div>
                               <div className={`text-sm font-bold ${row.grossContribPerHr >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${row.grossContribPerHr.toFixed(0)}/hr</div>
                             </div>
                           </div>
@@ -2169,14 +2210,14 @@ export default function V15rTeamPanel() {
 
                           {/* Actual (logged) money */}
                           <div className="border-t border-gray-700/50 pt-3 mb-3">
-                            <div className="text-xs text-gray-400 font-semibold uppercase mb-2">Actual (Logged Hours)</div>
+                            <div className="text-xs text-gray-400 font-semibold uppercase mb-2">Actual — This Worker's Logged Hours</div>
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
                               <div>
                                 <div className="text-gray-400 mb-0.5">OH Recovered</div>
                                 <div className="font-bold text-emerald-400">{formatCurrency(row.actualEmpOH)}</div>
                               </div>
                               <div>
-                                <div className="text-gray-400 mb-0.5">Gross Contribution</div>
+                                <div className="text-gray-400 mb-0.5">After Direct Labor Cost</div>
                                 <div className={`font-bold ${row.actualEmpGross >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(row.actualEmpGross)}</div>
                               </div>
                               {recoveryModel === 'margin' && (
@@ -2198,7 +2239,7 @@ export default function V15rTeamPanel() {
                                   <div className="font-bold text-blue-400">{formatCurrency(row.fcastOH)}</div>
                                 </div>
                                 <div>
-                                  <div className="text-gray-400 mb-0.5">Gross Contribution</div>
+                                  <div className="text-gray-400 mb-0.5">After Direct Labor Cost</div>
                                   <div className={`font-bold ${row.fcastGross >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(row.fcastGross)}</div>
                                 </div>
                                 {recoveryModel === 'margin' && (
@@ -2284,7 +2325,7 @@ export default function V15rTeamPanel() {
                             <div className="font-bold text-red-400">{formatCurrency(row.directCost)}</div>
                           </div>
                           <div>
-                            <div className="text-gray-400 mb-0.5">Gross Contribution</div>
+                            <div className="text-gray-400 mb-0.5">After Direct Labor Cost</div>
                             <div className={`font-bold ${row.grossContrib >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(row.grossContrib)}</div>
                           </div>
                           <div>
