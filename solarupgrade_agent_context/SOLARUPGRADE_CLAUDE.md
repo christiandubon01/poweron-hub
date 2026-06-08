@@ -2973,7 +2973,7 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 
 - Task completed: Yes â€” full Overhead Recovery Tracker built in V15rTeamPanel.tsx
 - Files changed: src/components/v15r/V15rTeamPanel.tsx, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
-- Commit hash: TBD (committed after context update)
+- Commit hash: 7730f5a (committed after context update)
 - Typecheck result: PASS â€” zero errors
 - Root cause / user need: Team tab overhead bucket was reading from backup.settings.employeeCosts (Employee Cost Structure), not from backup.settings.overhead (Settings Overhead Manager). This was wrong source of truth and gave misleading numbers. User needed a full tracker with donut chart, KPI cards, by-employee/by-project views, fixed/margin model toggle, and true profit after overhead.
 - Settings Overhead Manager source found: V15rSettingsPanel.tsx â€” overhead stored in backup.settings.overhead with keys: essential, extra, loans, vehicle (each an array of { id, name, monthly }). calcOverhead() reads these and returns monthlyTotal, annualTotal, costPerHr using backup.settings.billableHrsYear.
@@ -3000,7 +3000,7 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 
 - Task completed: Yes â€” targeted bug fix only
 - Files changed: src/components/v15r/V15rTeamPanel.tsx, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
-- Commit hash: TBD
+- Commit hash: 7730f5a
 - Typecheck result: PASS â€” zero errors
 - Root cause: Previous implementation combined actualOverheadRecovered + forecastOverheadRecovered into a single `remaining` and `totalCoveredPct`. Donut center showed the combined percentage, which inflated actual recovery to ~100% even when real logged hours covered only ~14%.
 - Actual recovery math verified: actualRemaining = max(annualOH - actualOverheadRecovered, 0). actualCoveredPct = actualOverheadRecovered / annualOH. Donut center shows actual % only.
@@ -3017,7 +3017,7 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 
 - Task completed: Yes
 - Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
-- Commit hash: TBD
+- Commit hash: 7730f5a
 - Typecheck result: PASS â€” zero errors
 - Root cause / user need: Forecast was double-counting logged hours (using full scenarioYearlyHours instead of remaining). Employee cards had no planning details (hrs/day, logged, remaining). All text was text-[9px]/text-[10px] with text-gray-600/700 â€” nearly invisible on dark backgrounds.
 - What changed: Full rewrite of Overhead Recovery Tracker IIFE. Three major areas: forecast math correction, employee card planning details, readability upgrade throughout.
@@ -3096,7 +3096,7 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 
 - Task completed: Yes
 - Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
-- Commit hash: TBD
+- Commit hash: 7730f5a
 - Typecheck result: PASS — zero errors
 - Root cause: empLogMap translation block at lines 1741-1746 had a self-overwrite+delete bug. When the owner's emp.id is 'me' (legacy identity — no UUID ever assigned), the guard `empLogMap['me'] !== undefined` was true (240 hrs present), so the block ran: it SET `empLogMap['me'] = empLogMap['me'] + empLogMap['me'] = 480` (self-addition), then immediately called `delete empLogMap['me']`, wiping all 240 hrs. Per-worker lookup then got `empLogMap['me'] = undefined → 0`.
 
@@ -3118,3 +3118,4 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 - Manual QA performed: Typecheck only. Browser QA required to confirm Owner card shows 240 hrs.
 - Next recommended action: Browser QA — open Team tab, Overhead Recovery Tracker, By Employee view, confirm Owner card shows 240 hrs, Josh shows 14 hrs, total shows 254 hrs.
 - Compact handoff for next agent/chat: Owner / Me showing 0 hrs in Overhead Tracker was caused by empLogMap translation block that self-deleted empLogMap['me'] when owner.id = 'me'. Fixed with ownerEmpForLog.id !== 'me' guard. Also hardened owner fallback in empRows and forecast loop to also match by name. Typecheck clean.
+

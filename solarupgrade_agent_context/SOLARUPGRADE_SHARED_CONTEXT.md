@@ -5140,7 +5140,7 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 
 - Agent: Claude Code (resumed session)
 - Branch: main
-- Commit: TBD
+- Commit: 7730f5a
 - Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
 - Typecheck: PASS
 - User-facing behavior changed: Owner / Me contribution card in Overhead Recovery Tracker now shows correct 240 logged hrs (was 0). Josh remains 14 hrs. Total Logged Billable Hours remains 254 hrs.
@@ -5149,3 +5149,4 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 - Risks / follow-up: If a future migration gives owner a real UUID and migrates logs, the translation block will fire correctly (guard condition becomes false). Browser QA required.
 - Manual QA status: Typecheck only.
 - Next agent should know: Owner logged hours bug was a self-delete in empLogMap translation. Fixed with id !== 'me' guard. No math formulas changed. No worker cost formulas changed. Josh unaffected.
+
