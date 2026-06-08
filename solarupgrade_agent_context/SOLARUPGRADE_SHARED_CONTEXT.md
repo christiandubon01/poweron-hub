@@ -5354,3 +5354,45 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 - Manual QA status: Typecheck only.
 
 - Next agent should know: Five new computed variables in allocation modal IIFE: quotedTaskRevenue, taskOverhead, combinedHourlyLaborCost, totalLaborPlusOverheadCost, profitLeftFromQuotedRate. taskOverhead uses totalHrs (task hours), not totalAllocatedHours. profitLeftFromQuotedRate uses row.rate revenue model, not employee bill rates. Old blended/parallel vars kept for use in per-worker accounting below.
+
+---
+
+## Shared Update — Estimate Material Cost Basis + Phase Dropdown Readability
+
+- Agent: Claude Code (Sonnet 4.6)
+- Branch: main
+- Commit: (see commit below)
+- Files changed:
+  - src/components/v15r/V15rEstimateTab.tsx
+  - solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+  - solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+
+- Typecheck: PASS — zero errors
+
+- User-facing behavior changed:
+  A) Deal Overview now shows profit based on material cost-to-me (raw + raw tax), not MTO selling price. Profit number will be higher when materials have markup, reflecting actual business profit.
+  B) Phase dropdown in labor rows now has solid dark background + white text. Options readable on Windows Chrome.
+
+- Material cost basis behavior:
+  New formula: dealMatCost = matC + taxOnMatRaw (raw MTO cost + raw material tax)
+  dealCost = lab + oh + dealMatCost + mi + taxOnMileage
+  dealProfit = contract - dealCost
+  "Material Cost to Me (raw)" label shown in Estimate Cost Basis card.
+  Verification example: raw=$14,399.88 + tax=$1,259.99 → dealMatCost=$15,659.87 (NOT selling price total).
+
+- Phase dropdown behavior: select backgroundColor changed to #1e2130 (dark navy), color to #f3f4f6 (near-white). Each <option> also gets explicit style={{ backgroundColor: '#1e2130', color: '#f3f4f6' }} for Windows Chrome native dropdown rendering.
+
+- Preserved behavior:
+  - MTO selling price (matSellingC, taxOnMatSelling) still computed — used in Materials by Phase table and Internal Breakdown Self-Perform Advantage section
+  - customerProfit/customerCost/customerMarginPct still computed — used only in Internal Breakdown Self-Perform Advantage (intentional comparison)
+  - Materials by Phase table: still shows matSellingC as section total (MTO view)
+  - MTO markup logic, material data entry, markup % — unchanged
+  - Labor row totals, phase totals, contract amount, allocation modal — unchanged
+  - Internal Breakdown section — unchanged
+  - Deal Overview section order/layout (manual polish) — unchanged
+
+- Risks / follow-up: Browser QA needed to confirm profit numbers are correct with real MTO data. If selling price = raw cost (no markup), dealProfit = customerProfit. If materials have markup, dealProfit > customerProfit (correct — profit is higher when you use cost-to-me).
+
+- Manual QA status: Typecheck only.
+
+- Next agent should know: estTotals() returns dealMatCost, dealCost, dealProfit, dealMarginPct. Deal Overview uses these. customerProfit/customerCost remain computed for Internal Breakdown use. Phase dropdown uses backgroundColor: '#1e2130' + option-level styles. cbTotal fallback now uses Math.max(t.dealCost, 1).

@@ -3401,3 +3401,51 @@ V15rTeamPanel.tsx empRows now carry reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth,
 - Next recommended action: Browser QA with real labor rows. Check wrapping on narrow screens. Optionally collapse the allocation balance into the pie chart legend area since the pill now shows it there already.
 
 - Compact handoff for next agent/chat: The Rate Summary Row in V15rEstimateTab.tsx allocation modal has been replaced with a "Task Cost Summary — Quoted Rate Model" flex-wrap row. Five new computed values added: quotedTaskRevenue (totalHrs × rowRate), taskOverhead (overheadPerHr × totalHrs, task-hours not allocated), combinedHourlyLaborCost (sum of worker loadedRates), totalLaborPlusOverheadCost (direct labor + taskOverhead), profitLeftFromQuotedRate (quotedTaskRevenue − totalLaborPlusOverheadCost). Worker cost cards show up to 3, with "+N more included" note. Four top summary cards and per-worker accounting below unchanged. Typecheck passes.
+
+---
+
+## Claude Report — Estimate Material Cost Basis + Phase Dropdown Readability
+
+- Task completed: YES
+- Files changed:
+  - src/components/v15r/V15rEstimateTab.tsx
+  - solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+  - solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+- Commit hash: (see commit below)
+- Typecheck result: PASS — zero errors
+
+- Root cause / user need:
+  A) Deal Overview was using MTO selling price (matSellingC + taxOnMatSelling) as the material cost basis, which inflated cost and deflated profit — it used what the customer is charged, not what the business pays. Business profit should be contract minus what the business actually spends.
+  B) Phase dropdown select used near-transparent background (rgba(255,255,255,0.04)) with var(--t2) text. On Windows Chrome, native select option backgrounds default to system white, making option text unreadable.
+
+- Material cost basis before: t.matSellingC + t.taxOnMatSelling (MTO selling price + selling tax)
+- Material cost basis after: t.dealMatCost = t.matC + t.taxOnMatRaw (raw MTO cost + raw tax)
+
+- Deal Overview formulas changed:
+  Added to estTotals():
+    dealMatCost = matC + taxOnMatRaw
+    dealCost    = lab + oh + dealMatCost + mi + taxOnMileage
+    dealProfit  = contract - dealCost
+    dealMarginPct = dealProfit / contract × 100
+
+  Deal Overview now uses dealProfit/dealMarginPct/dealCost everywhere (bars, big profit number, contract reference slider, cost breakdown chart, margin breakdown card).
+
+  "Customer View" badge renamed to "Cost-to-Me Model".
+  "Customer Rate Cost" card renamed to "Estimate Cost Basis". Materials line renamed to "Material Cost to Me (raw)" showing t.matC. Tax line shows t.taxOnMatRaw + t.taxOnMileage. Sub Total shows t.dealCost.
+  "Margin Breakdown" card: "Customer Cost" → "Estimate Cost Basis", shows t.dealCost, t.dealProfit, t.dealMarginPct.
+
+  cbTotal fallback: Math.max(t.customerCost, 1) → Math.max(t.dealCost, 1)
+
+- MTO/material selling price preservation: t.matSellingC and t.taxOnMatSelling still computed and returned from estTotals(). "Materials by Phase" table still shows t.matSellingC as section total. MTO markup logic unchanged.
+
+- Phase dropdown readability fix: select background changed from rgba(255,255,255,0.04) to #1e2130 (solid dark navy), color changed from var(--t2) to #f3f4f6. Each option also gets explicit style={{ backgroundColor: '#1e2130', color: '#f3f4f6' }} so Windows Chrome dropdown list is readable.
+
+- Manual polish preservation: No sections moved or reordered. Only targeted line-level value substitutions and label renames.
+
+- Bugs / risks: customerProfit/customerMarginPct still computed and available in t for the Internal Breakdown "Self-Perform Advantage" section (line 2811 — intentional comparison). No other references to selling-price-based profit remain in Deal Overview.
+
+- Manual QA performed: Typecheck only. Browser QA needed to verify: (1) Deal Overview profit number matches example $14,399.88 raw + $1,259.99 tax = $15,659.87; (2) phase dropdown options visible on Windows Chrome.
+
+- Next recommended action: Browser QA. Open a project with MTO items that have markup, verify Deal Overview shows raw+tax not selling price. Open a labor row phase dropdown and confirm options are readable on Windows/Chrome.
+
+- Compact handoff for next agent/chat: estTotals() in V15rEstimateTab.tsx now returns dealMatCost (matC + taxOnMatRaw), dealCost (lab+oh+dealMatCost+mi+taxOnMileage), dealProfit, dealMarginPct. Deal Overview section uses these throughout — bars, big profit display, contract slider %, cost breakdown chart/legend, estimate cost basis card, margin breakdown card. MTO selling price fields (matSellingC, taxOnMatSelling, customerProfit, customerCost) are still computed and returned but only used in: (a) estTotals internals, (b) Internal Breakdown Self-Perform Advantage section (intentional). Phase dropdown in labor rows now uses solid dark background + light text with per-option styles for Windows Chrome readability. Typecheck passes.
