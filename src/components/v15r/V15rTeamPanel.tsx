@@ -1013,20 +1013,28 @@ function EmployeeDetailModal({
   const remainingHrs = Math.max(0, plannedYearlyHrs - totalHours)
   const progressPct = plannedYearlyHrs > 0 ? Math.min((totalHours / plannedYearlyHrs) * 100, 100) : 0
 
-  // Monthly breakdown
-  const cost = calcEmployeeCost(employee, backup)
+  // Monthly cost — use scenario projected monthly hours, NOT the default 40-hr/wk basis
+  // hrsPerMonth is already = hrsPerWeek × 4.33 (from scenario above)
+  const baseMonthly = hrsPerMonth * baseHourly
+  const loadedMonthly = hrsPerMonth * loadedHourly
+  const payrollBurdenMonthly = loadedMonthly - baseMonthly
+  const sixMonthCost = loadedMonthly * 6
+  const revenueToCover = hrsPerMonth * billRate
+  const hasProjHours = hrsPerMonth > 0
 
-  // Totals from logged hours
+  // Totals from logged hours (all-time — uses actual logged data)
   const totalBillable = totalHours * billRate
   const totalLoadedCost = totalHours * loadedHourly
   const profitMargin = totalBillable - totalLoadedCost
 
-  // PTO accrual (W-2 only)
-  const ptoDefaults = settings.ptoDefaults || { ptoDaysYear: 10, sickDaysYear: 5, hoursPerDay: 8 }
-  const projPtoHours = ptoDefaults.ptoDaysYear * ptoDefaults.hoursPerDay
-  const projSickHours = ptoDefaults.sickDaysYear * ptoDefaults.hoursPerDay
-  const ptoAccrued = plannedYearlyHrs > 0 ? (totalHours / plannedYearlyHrs) * projPtoHours : 0
-  const sickAccrued = plannedYearlyHrs > 0 ? (totalHours / plannedYearlyHrs) * projSickHours : 0
+  // Sick accrual — California rule: 4 sick hrs per 104 worked hrs (W-2 only)
+  // ~3.85% of each worked hour
+  const SICK_ACCRUAL_HOURS = 4
+  const SICK_ACCRUAL_WORK_HOURS = 104
+  const sickAccrualRate = SICK_ACCRUAL_HOURS / SICK_ACCRUAL_WORK_HOURS
+  const actualSickAccrued = totalHours * sickAccrualRate
+  const projectedSickAccrued = plannedYearlyHrs * sickAccrualRate
+  const remainingSickAccrual = remainingHrs * sickAccrualRate
 
   const typeLabel = isOwner ? 'Owner' : isW2 ? 'W-2 Employee' : '1099 Contractor'
   const workerTypeBadgeCls = isOwner ? 'bg-blue-600/40 text-blue-300' : isW2 ? 'bg-emerald-700/40 text-emerald-300' : 'bg-amber-700/40 text-amber-300'
@@ -1164,34 +1172,43 @@ function EmployeeDetailModal({
             )}
           </div>
 
-          {/* Monthly cost breakdown */}
-          {cost && (
-            <div className="bg-[var(--bg-secondary)] rounded-lg p-4">
-              <div className="text-xs font-bold text-gray-400 uppercase mb-3">Monthly Cost Breakdown</div>
+          {/* Monthly cost breakdown — based on scenario projected hours */}
+          <div className="bg-[var(--bg-secondary)] rounded-lg p-4">
+            <div className="flex items-baseline justify-between mb-3">
+              <div className="text-xs font-bold text-gray-400 uppercase">Monthly Cost Breakdown</div>
+              {hasProjHours && (
+                <div className="text-[10px] text-gray-600">{hrsPerMonth.toFixed(0)} hrs/mo basis</div>
+              )}
+            </div>
+            {hasProjHours ? (
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-400">Base monthly</span>
-                  <span className="text-blue-400">{formatCurrency(cost.baseMonthlyCost)}</span>
+                  <span className="text-blue-400">{formatCurrency(baseMonthly)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-400">Taxes / Insurance</span>
-                  <span className="text-orange-400">{formatCurrency(cost.taxesAndInsurance)}</span>
-                </div>
+                {isW2 && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Payroll burden</span>
+                    <span className="text-orange-400">{formatCurrency(payrollBurdenMonthly)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between font-semibold border-t border-gray-700/50 pt-2">
                   <span className="text-gray-300">Loaded monthly</span>
-                  <span className="text-white">{formatCurrency(cost.loadedMonthlyCost)}/mo</span>
+                  <span className="text-white">{formatCurrency(loadedMonthly)}/mo</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">6-Month Cost</span>
-                  <span className="text-yellow-400">{formatCurrency(cost.sixMonthCost)}</span>
+                  <span className="text-yellow-400">{formatCurrency(sixMonthCost)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">Revenue to cover (mo)</span>
-                  <span className="text-cyan-400">{formatCurrency(cost.targetRevenue)}/mo</span>
+                  <span className="text-cyan-400">{formatCurrency(revenueToCover)}/mo</span>
                 </div>
               </div>
-            </div>
-          )}
+            ) : (
+              <p className="text-xs text-gray-500">Set projected hours in Projection Scenarios to see monthly cost breakdown.</p>
+            )}
+          </div>
 
           {/* All-time billable totals */}
           <div className="bg-[var(--bg-secondary)] rounded-lg p-4">
@@ -1212,36 +1229,35 @@ function EmployeeDetailModal({
             </div>
           </div>
 
-          {/* PTO / Sick Accrual — W-2 only */}
-          {isW2 && (
-            <div className="bg-emerald-900/15 border border-emerald-700/40 rounded-lg p-4">
-              <div className="text-xs font-bold text-emerald-400 uppercase mb-3">PTO / Sick Accrual (W-2)</div>
-              <div className="grid grid-cols-2 gap-3 text-xs mb-3">
+          {/* Sick Accrual — W-2 only, California rule */}
+          {isW2 ? (
+            <div className="bg-blue-900/15 border border-blue-700/40 rounded-lg p-4">
+              <div className="text-xs font-bold text-blue-400 uppercase mb-1">Sick Accrual (W-2)</div>
+              <div className="text-[10px] text-gray-500 mb-3">
+                CA rule: {SICK_ACCRUAL_HOURS} sick hrs / {SICK_ACCRUAL_WORK_HOURS} worked hrs · rate {(sickAccrualRate * 100).toFixed(2)}%
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-xs">
                 <div className="bg-[var(--bg-secondary)] rounded p-2">
-                  <div className="text-gray-500 mb-0.5">Projected PTO</div>
-                  <div className="font-bold text-emerald-400">{projPtoHours.toFixed(0)} hrs/yr</div>
-                  <div className="text-gray-600">{ptoDefaults.ptoDaysYear} days × {ptoDefaults.hoursPerDay}h</div>
+                  <div className="text-gray-500 mb-0.5">Accrued (logged)</div>
+                  <div className="font-bold text-blue-300">{actualSickAccrued.toFixed(2)} hrs</div>
+                  <div className="text-gray-600">{Math.round(totalHours)} hrs worked</div>
                 </div>
                 <div className="bg-[var(--bg-secondary)] rounded p-2">
-                  <div className="text-gray-500 mb-0.5">Projected Sick</div>
-                  <div className="font-bold text-blue-400">{projSickHours.toFixed(0)} hrs/yr</div>
-                  <div className="text-gray-600">{ptoDefaults.sickDaysYear} days × {ptoDefaults.hoursPerDay}h</div>
+                  <div className="text-gray-500 mb-0.5">Projected (plan)</div>
+                  <div className="font-bold text-blue-400">{projectedSickAccrued.toFixed(2)} hrs</div>
+                  <div className="text-gray-600">{Math.round(plannedYearlyHrs)} hrs/yr plan</div>
                 </div>
                 <div className="bg-[var(--bg-secondary)] rounded p-2">
-                  <div className="text-gray-500 mb-0.5">Accrued PTO</div>
-                  <div className="font-bold text-emerald-300">{ptoAccrued.toFixed(1)} hrs</div>
-                  <div className="text-gray-600">{plannedYearlyHrs > 0 ? ((totalHours / plannedYearlyHrs) * 100).toFixed(0) : 0}% of year</div>
-                </div>
-                <div className="bg-[var(--bg-secondary)] rounded p-2">
-                  <div className="text-gray-500 mb-0.5">Accrued Sick</div>
-                  <div className="font-bold text-blue-300">{sickAccrued.toFixed(1)} hrs</div>
-                  <div className="text-gray-600">{plannedYearlyHrs > 0 ? ((totalHours / plannedYearlyHrs) * 100).toFixed(0) : 0}% of year</div>
+                  <div className="text-gray-500 mb-0.5">Remaining</div>
+                  <div className="font-bold text-gray-300">{remainingSickAccrual.toFixed(2)} hrs</div>
+                  <div className="text-gray-600">{Math.round(remainingHrs)} hrs left</div>
                 </div>
               </div>
-              {plannedYearlyHrs === 0 && (
-                <p className="text-xs text-gray-500">Set projected hours in Projection Scenarios to enable accrual calculation.</p>
-              )}
-              <p className="text-xs text-emerald-700/80">Planning view only. Configure defaults in Team Cost Settings.</p>
+              <p className="text-[10px] text-blue-900/80 mt-2">Planning only · not a payroll record</p>
+            </div>
+          ) : (
+            <div className="bg-[var(--bg-secondary)] border border-gray-700 rounded-lg px-4 py-3 text-xs text-gray-500">
+              No W-2 sick accrual tracked — {isOwner ? 'Owner' : '1099 contractor'} classification.
             </div>
           )}
         </div>

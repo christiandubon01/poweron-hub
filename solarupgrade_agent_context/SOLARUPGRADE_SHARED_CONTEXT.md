@@ -5181,3 +5181,31 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 
 - Next agent should know: TeamCostSettingsModal and EmployeeDetailModal are new components defined before the main export. EmployeeCostStructure is still in file but no longer rendered inline. showCostSettingsModal and selectedEmployee are new state variables. All worker cost formulas, Overhead Tracker, and Projection Scenarios unchanged.
 
+
+---
+
+## Shared Update — Team Employee Detail Modal: Cost Basis and Sick Accrual
+
+- Agent: Claude Code (session continuation)
+- Branch: main
+- Commit: TBD
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
+- Typecheck: PASS
+
+- User-facing behavior changed:
+  - Employee Detail modal Monthly Cost Breakdown now shows costs based on scenario projected hours (not 40-hr/wk default)
+  - Owner at 24 hrs/wk: ~$3,118/mo loaded (was ~$5,196 — wrong)
+  - Josh at 35 hrs/mo: $1,050/mo loaded (was $5,196 — wrong)
+  - PTO section removed entirely from detail modal
+  - Sick accrual replaced with California rule: 4 hrs per 104 worked hrs (3.85%)
+  - Josh (14 logged hrs): accrues ~0.54 sick hrs
+
+- Cost basis behavior: baseMonthly = hrsPerMonth × baseHourly; loadedMonthly = hrsPerMonth × loadedHourly; sixMonthCost = loadedMonthly × 6; revenueToCover = hrsPerMonth × billRate. If no scenario hours set, shows guidance message.
+
+- Sick accrual behavior: SICK_ACCRUAL_HOURS=4 / SICK_ACCRUAL_WORK_HOURS=104. W-2 only. Three values shown: actual accrued from logged hrs, projected for planned yearly hrs, remaining for remaining hrs. Owner/1099 show no-accrual note.
+
+- Risks / follow-up: calcEmployeeCost (default 40-hr basis) still used in Team Cost Summary section — intentional, that section is a general team overview. Browser QA required.
+
+- Manual QA status: Typecheck only.
+
+- Next agent should know: EmployeeDetailModal no longer calls calcEmployeeCost. It computes monthly costs inline using hrsPerMonth from scenario. Sick accrual is 4/104 CA rule. PTO is gone from the modal (not from Team Cost Settings, which keeps PTO defaults for possible future use). All-time billable box and Overhead Tracker unchanged.

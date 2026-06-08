@@ -3199,3 +3199,59 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 
 - Compact handoff for next agent/chat: TeamCostSettingsModal (line ~767) wraps cost structure + payroll multiplier + PTO defaults. EmployeeDetailModal (line ~975) shows full details on card click. Compact EmployeeCard (line ~552) shows name/position/stats/4-rates/margin only. State vars showCostSettingsModal and selectedEmployee added to main component. EmployeeCostStructure component kept in file (still callable) but no longer rendered inline — it's replaced by TeamCostSettingsModal. All formulas unchanged.
 
+
+---
+
+## Claude Report — Team Employee Detail Modal: Cost Basis and Sick Accrual
+
+- Task completed: Yes
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
+- Commit hash: TBD
+- Typecheck result: PASS — zero errors
+
+- Root cause: (1) Monthly cost breakdown called `calcEmployeeCost(employee, backup)` which internally calls `calcMonthlyBreakdown(emp, settings)` with default hrsPerWeek=40, producing 40×4.33=173.2 hrs/month regardless of the employee's scenario hours. For Owner at $30/hr: 173.2×$30=$5,196 — matches the user-reported wrong value. (2) Sick accrual used percentage-of-year-elapsed formula: (loggedHours / plannedYearlyHrs) × projSickHours — which is ~21% if sickDaysYear=5, hoursPerDay=8 (40 hrs projected sick), far too high. California law is 4 hrs per 104 worked hrs (3.85%).
+
+- What changed:
+  1. Removed `const cost = calcEmployeeCost(employee, backup)` from EmployeeDetailModal
+  2. Replaced with inline calc using hrsPerMonth (already = hrsPerWeek × 4.33 from scenario): baseMonthly = hrsPerMonth × baseHourly, loadedMonthly = hrsPerMonth × loadedHourly, sixMonthCost = loadedMonthly × 6, revenueToCover = hrsPerMonth × billRate
+  3. Added hasProjHours guard: shows "Set projected hours..." message if hrsPerMonth = 0
+  4. Removed PTO from detail modal entirely
+  5. Replaced PTO/Sick accrual section with Sick Accrual (CA rule) section: SICK_ACCRUAL_HOURS=4, SICK_ACCRUAL_WORK_HOURS=104, sickAccrualRate=4/104≈3.85%
+  6. Sick accrual shows: actual accrued from logged hours, projected for planned yearly hrs, remaining for remaining hrs
+  7. For Owner/1099: shows "No W-2 sick accrual tracked" note instead
+
+- Projected monthly cost basis: hrsPerMonth = hrsPerWeek × 4.33 (from active scenario workerEntry)
+
+- Owner cost verification:
+  - $30/hr base, 24 hrs/wk scenario → hrsPerMonth = 24 × 4.33 = 103.92 ≈ 104
+  - Base monthly: 103.92 × $30 = $3,117.60 ≈ $3,118
+  - Loaded monthly: $3,118 (owner, no W-2 burden)
+  - 6-month cost: $3,118 × 6 = $18,706
+
+- W-2 (Josh) cost verification:
+  - $25 base, $30 loaded, scenario ~8.08 hrs/wk → hrsPerMonth ≈ 35
+  - Base monthly: 35 × $25 = $875
+  - Loaded monthly: 35 × $30 = $1,050
+  - 6-month cost: $1,050 × 6 = $6,300
+
+- Sick accrual behavior:
+  - Formula: sickAccrualRate = 4/104 = 0.03846 (3.85%)
+  - actualSickAccrued = totalHours × sickAccrualRate
+  - Josh (14 logged hrs): 14 × 0.03846 = 0.54 sick hrs accrued
+  - projectedSickAccrued = plannedYearlyHrs × sickAccrualRate
+  - remainingSickAccrual = remainingHrs × sickAccrualRate
+  - W-2 only; Owner/1099 show no-accrual note
+
+- PTO behavior: Removed entirely from Employee Detail modal. No PTO cards displayed.
+
+- Worker-cost formula preservation: getWorkerCostProfile() unchanged. Owner/1099 = base only, W-2 = base × payrollMult. No changes to employeeCostUtils.ts.
+
+- All-time billable preservation: totalBillable, totalLoadedCost, profitMargin unchanged — still computed as loggedHours × respective rates.
+
+- Bugs / risks: Monthly cost breakdown shows "no scenario hours" message if employee has 0 hrs/week in scenario (not a bug — correct behavior, user should set scenario hours). If hrsPerWeek is 0 for a new employee, hasProjHours = false and the hint guides user to set hours.
+
+- Manual QA performed: Typecheck only. Browser QA required.
+
+- Next recommended action: Open Team tab → click Owner card → confirm Monthly Cost shows ~$3,118/mo, 6-month ~$18,706. Click Josh card → confirm ~$875 base monthly, ~$1,050 loaded, ~$6,300/6mo. Confirm sick accrual section shows CA rule at 3.85%.
+
+- Compact handoff for next agent/chat: EmployeeDetailModal monthly cost now uses hrsPerMonth (from scenario) not default 40-hr basis. Sick accrual uses 4/104 CA rate. PTO removed. Owner shows no-accrual note. calcEmployeeCost still exists and is used by Team Cost Summary; only removed from EmployeeDetailModal.
