@@ -3315,3 +3315,49 @@ NO — no next build phase defined.
 COMPACT HANDOFF FOR NEXT CHAT:
 V15rTeamPanel.tsx empRows now carry reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth, paceDelta, daysRemaining, weeksRemaining (display-only). Each Labor Planning worker card shows "Original Plan" label, "Required Remaining Pace" section, and an ahead/behind badge. Labels renamed: "Remaining in Current Plan", "Overhead Recovery From Remaining Planned Hours", "Remaining After Direct Labor Cost". No formula, schema, or persistence changes. Typecheck passes.
 
+
+---
+
+## Claude Report — Team + Estimate Labor Allocation Cost Accounting
+
+* Task completed: YES
+* Files changed:
+  - `src/components/v15r/V15rTeamPanel.tsx`
+  - `src/components/v15r/V15rEstimateTab.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+* Commit hash: (see commit below)
+* Typecheck result: PASS — zero errors
+
+* Root cause / user need: Employee Detail modal was using scenarios[0] regardless of which scenario tab was active. Estimate allocation modal showed only row-rate revenue without per-worker base/loaded/bill rate breakdown or overhead/profit accounting.
+
+* What changed:
+  - PART A: Added `activeScenarioId` prop to EmployeeDetailModal. Changed `const activeScen = scenarios[0]` to `scenarios.find(s => s.id === activeScenarioId) || scenarios[0]`. Pass prop from parent.
+  - PART B: Added four helpers in V15rEstimateTab: getEmployeeRecord, getEmployeeBaseRate, getEmployeeBillRateForWorker, getEmployeeWorkerTypeName. Replaced old allocation modal breakdown with full cost accounting: per-worker metrics, top summary strip, rate summary row, per-worker section, totals.
+
+* Team Detail active scenario behavior: EmployeeDetailModal now receives activeScenarioId from parent and resolves scenario hours against the correct active scenario.
+
+* Allocation modal per-worker behavior: Each worker row shows type badge (Owner/W-2/1099), allocated hours, base cost/hr, loaded cost/hr, employee bill rate/hr, task row rate/hr, allocation cost, billable revenue (emp rate), billable revenue (task rate), remaining after direct labor, overhead allocation, true profit after overhead.
+
+* Allocation modal total cost behavior: Top summary strip shows Total Task Labor Cost, Total Task Billable Revenue, Remaining After Direct Labor Cost, True Profit After Overhead. Task Totals grid shows all line items including Overhead Allocation and Allocation Balance.
+
+* Blended vs parallel crew rate behavior:
+  - Blended Loaded Cost/hr = totalAllocationLoadedCost / totalAllocatedHours
+  - Parallel Crew Cost/hr = sum(each worker loadedRate)
+  - Blended Bill Rate/hr = totalEmployeeBillRevenue / totalAllocatedHours
+  - Parallel Crew Bill Rate/hr = sum(each worker empBillRate)
+  - Division by zero guarded (totalAllocatedHours > 0 checks)
+
+* Overhead/profit behavior: Overhead allocation uses overheadPerHr (from settings.defaultOHRate or annualOverhead/billableHrsYear) with overheadPct% fallback. True Profit = Remaining After Direct Labor - Overhead.
+
+* Estimate totals preservation: estTotals(), phase totals, contract amount, profit model — NOT changed. Modal is display-only accounting view.
+
+* Worker formula preservation: Owner/W-2/1099 cost formulas preserved. getLoadedHourlyRate/getBaseHourlyRate/resolveWorkerType unchanged.
+
+* Bugs / risks: None found. Slider max now uses Math.max(totalHrs, totalAllocatedHours) to avoid range clamping when overallocated.
+
+* Manual QA performed: Typecheck only. Browser QA required to verify modal layout and that all four metric helpers resolve correctly for all three worker types.
+
+* Next recommended action: Browser QA the allocation modal by opening a multi-worker labor row. Verify Employee Detail modal scenario hours change when switching scenario tabs.
+
+* Compact handoff for next agent/chat: V15rTeamPanel.tsx EmployeeDetailModal now accepts activeScenarioId prop and resolves scenario hours against the active scenario (not always [0]). V15rEstimateTab.tsx allocation modal rebuilt with top summary strip (4 big metrics), rate summary row (blended/parallel loaded cost and bill rate, allocation balance), per-worker type badges + rate cells + full cost/profit rows, and task totals grid. Four helpers added: getEmployeeRecord, getEmployeeBaseRate, getEmployeeBillRateForWorker, getEmployeeWorkerTypeName. Main estimate totals unchanged. Typecheck passes.

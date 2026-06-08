@@ -5273,3 +5273,45 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 
 - Next agent should know: empRows in V15rTeamPanel.tsx now has extra fields (reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth, paceDelta, daysRemaining, weeksRemaining). Date anchors (_today, _yearEnd, etc.) are computed once before the map. "Required Remaining Pace" section only renders when remainingHrs > 0 && daysRemaining > 0. Label changes are display-only in the By Employee card section.
 
+
+---
+
+## Shared Update — Team + Estimate Labor Allocation Cost Accounting
+
+* Agent: Claude Code (Sonnet 4.6)
+* Branch: main
+* Commit: (see commit below)
+* Files changed:
+  - src/components/v15r/V15rTeamPanel.tsx
+  - src/components/v15r/V15rEstimateTab.tsx
+  - solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+  - solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+
+* Typecheck: PASS — zero errors
+
+* User-facing behavior changed:
+  - Employee Detail modal now shows hours from the active scenario (not always first).
+  - Estimate labor allocation modal now shows full cost accounting with per-worker rates, blended rates, parallel crew rates, overhead, and profit.
+
+* Team Detail scenario behavior: activeScenarioId is resolved from parent (V15rTeamPanel) state and passed into EmployeeDetailModal. The modal uses scenarios.find(s => s.id === activeScenarioId) || scenarios[0].
+
+* Estimate allocation accounting behavior:
+  Per-worker: base cost/hr, loaded cost/hr, employee bill rate, task row rate, allocation cost, billable revenue (employee rate model and task rate model), remaining after direct labor, overhead allocation, true profit after overhead.
+  Summary strip: Total Task Labor Cost, Total Task Billable Revenue, Remaining After Direct Labor Cost, True Profit After Overhead.
+  Rate strip: Blended Loaded Cost/hr, Parallel Crew Cost/hr, Blended Bill Rate/hr, Parallel Crew Bill Rate/hr, Allocation Balance.
+  Allocation balance: "Fully allocated" / "X hrs unassigned" / "X hrs overallocated".
+
+* Preserved behavior:
+  - estTotals(), phase totals, contract amount, profit model — not changed.
+  - getLoadedHourlyRate, getBaseHourlyRate, resolveWorkerType — not changed.
+  - Worker cost formulas (Owner/W-2/1099) — not changed.
+  - Pie chart and sliders — kept, slider max now guards overallocation.
+  - All other tabs, progress, change orders, RFI, coordination, MTO — not touched.
+
+* Risks / follow-up:
+  - Browser QA needed to verify modal layout and per-worker helper resolution for all three worker types.
+  - Changing main estimate totals to use allocation-based labor cost is a separate high-risk pass — NOT done here.
+
+* Manual QA status: Typecheck only.
+
+* Next agent should know: getEmployeeRecord, getEmployeeBaseRate, getEmployeeBillRateForWorker, getEmployeeWorkerTypeName are in V15rEstimateTab.tsx component scope. They resolve owner via isOwnerRecord sentinel, fall back to settings.opCost / settings.billRate. EmployeeDetailModal activeScenarioId prop is optional (backward compatible). Main estimate totals untouched.

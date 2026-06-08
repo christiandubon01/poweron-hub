@@ -1218,6 +1218,26 @@ Return ONLY valid JSON, no other text.`
     const rate = getLoadedHourlyRate(emp, backup.settings)
     return rate > 0 ? rate : num(backup.settings?.opCost || 42.45)
   }
+  const getEmployeeRecord = (empId: string): any => {
+    if (!empId || empId === 'me') return (backup.employees || []).find(isOwnerRecord) || null
+    return (backup.employees || []).find((e: any) => e.id === empId) || null
+  }
+  const getEmployeeBaseRate = (empId: string): number => {
+    const emp = getEmployeeRecord(empId)
+    if (!emp) return num(backup.settings?.opCost || 42.45)
+    return getBaseHourlyRate(emp, backup.settings) || num(backup.settings?.opCost || 42.45)
+  }
+  const getEmployeeBillRateForWorker = (empId: string): number => {
+    const emp = getEmployeeRecord(empId)
+    if (!emp) return num(backup.settings?.billRate || 95)
+    return num(emp.billRate) || num(backup.settings?.billRate || 95)
+  }
+  const getEmployeeWorkerTypeName = (empId: string): string => {
+    const emp = getEmployeeRecord(empId)
+    if (!emp) return 'Owner'
+    const t = resolveWorkerType(emp)
+    return t === 'owner' ? 'Owner' : t === 'w2' ? 'W-2' : '1099'
+  }
   const getEmployeeDisplayName = (empId: string): string => {
     if (!empId || empId === 'me') {
       const ownerRecord = (backup.employees || []).find(isOwnerRecord)
@@ -3045,18 +3065,60 @@ Return ONLY valid JSON, no other text.`
           return null
         }
         const overheadPerHr = getOverheadPerHr()
+        // ── Per-worker metrics ────────────────────────────────────────────────
+        const workerMetrics = allocs.map((a: { empId: string; hrs: number }) => {
+          const baseRate = getEmployeeBaseRate(a.empId)
+          const loadedRate = getEmployeeCostRate(a.empId)
+          const empBillRate = getEmployeeBillRateForWorker(a.empId)
+          const allocationCost = a.hrs * loadedRate
+          const empBillRevenue = a.hrs * empBillRate
+          const taskRateRevenue = a.hrs * rowRate
+          const remainingAfterDirectLabor = empBillRevenue - allocationCost
+          const overheadAlloc = overheadPerHr !== null
+            ? a.hrs * overheadPerHr!
+            : (overheadPct > 0 ? allocationCost * overheadPct / 100 : 0)
+          const trueProfitAfterOH = remainingAfterDirectLabor - overheadAlloc
+          return {
+            empId: a.empId,
+            hrs: a.hrs,
+            baseRate,
+            loadedRate,
+            empBillRate,
+            allocationCost,
+            empBillRevenue,
+            taskRateRevenue,
+            remainingAfterDirectLabor,
+            overheadAlloc,
+            trueProfitAfterOH,
+            typeName: getEmployeeWorkerTypeName(a.empId),
+          }
+        })
+        const totalAllocatedHours = workerMetrics.reduce((s: number, m: any) => s + m.hrs, 0)
+        const totalAllocationLoadedCost = workerMetrics.reduce((s: number, m: any) => s + m.allocationCost, 0)
+        const totalEmployeeBillRevenue = workerMetrics.reduce((s: number, m: any) => s + m.empBillRevenue, 0)
+        const totalTaskRateRevenue = workerMetrics.reduce((s: number, m: any) => s + m.taskRateRevenue, 0)
+        const blendedLoadedCostHr = totalAllocatedHours > 0 ? totalAllocationLoadedCost / totalAllocatedHours : 0
+        const blendedEmployeeBillRateHr = totalAllocatedHours > 0 ? totalEmployeeBillRevenue / totalAllocatedHours : 0
+        const blendedTaskRateHr = totalAllocatedHours > 0 ? totalTaskRateRevenue / totalAllocatedHours : 0
+        const remainingAfterDirectLaborCost = totalEmployeeBillRevenue - totalAllocationLoadedCost
+        const overheadAllocated = overheadPerHr !== null
+          ? workerMetrics.reduce((s: number, m: any) => s + m.overheadAlloc, 0)
+          : totalAllocationLoadedCost * overheadPct / 100
+        const trueProfitAfterOH = remainingAfterDirectLaborCost - overheadAllocated
+        const parallelCrewLoadedCostHr = workerMetrics.reduce((s: number, m: any) => s + m.loadedRate, 0)
+        const parallelCrewBillRateHr = workerMetrics.reduce((s: number, m: any) => s + m.empBillRate, 0)
+        const unassignedHrs = totalHrs - totalAllocatedHours
+        const allocationBalanceLabel = Math.abs(unassignedHrs) < 0.01
+          ? 'Fully allocated'
+          : unassignedHrs > 0
+            ? `${unassignedHrs.toFixed(1)} hrs unassigned`
+            : `${Math.abs(unassignedHrs).toFixed(1)} hrs overallocated`
+        const allocationBalanceColor = Math.abs(unassignedHrs) < 0.01 ? '#10b981' : unassignedHrs > 0 ? '#f59e0b' : '#ef4444'
         const pieSlices = allocs.map((a: { empId: string; hrs: number }, i: number) => ({
           label: getEmployeeDisplayName(a.empId),
           value: a.hrs,
           color: ALLOC_COLORS[i % ALLOC_COLORS.length],
         }))
-        const totalAllocated = allocs.reduce((s: number, a: { empId: string; hrs: number }) => s + a.hrs, 0)
-        const totalLaborCost = allocs.reduce((s: number, a: { empId: string; hrs: number }) => s + a.hrs * getEmployeeCostRate(a.empId), 0)
-        const totalRevenue = totalHrs * rowRate
-        const totalOHCost = overheadPerHr !== null
-          ? allocs.reduce((s: number, a: { empId: string; hrs: number }) => s + a.hrs * overheadPerHr!, 0)
-          : totalLaborCost * overheadPct / 100
-        const totalProfit = totalRevenue - totalLaborCost - totalOHCost
         return (
           <div
             style={{ position: 'fixed', inset: 0, zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.76)', backdropFilter: 'blur(4px)' }}
@@ -3066,18 +3128,18 @@ Return ONLY valid JSON, no other text.`
               onClick={e => e.stopPropagation()}
               style={{
                 backgroundColor: '#0f1117', border: '1px solid rgba(16,185,129,0.28)',
-                borderRadius: '12px', padding: '24px', width: '90%', maxWidth: '540px',
-                maxHeight: '90vh', overflowY: 'auto',
+                borderRadius: '12px', padding: '24px', width: '90%', maxWidth: '580px',
+                maxHeight: '92vh', overflowY: 'auto',
                 boxShadow: '0 20px 52px rgba(0,0,0,0.55), 0 0 40px rgba(16,185,129,0.06)',
               }}
             >
               {/* Header */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
                 <div>
-                  <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#10b981', marginBottom: '4px' }}>Labor Allocation & Profit</div>
-                  <div style={{ color: 'var(--t1)', fontWeight: '600', fontSize: '14px', maxWidth: '380px' }}>{row.desc || '(No description)'}</div>
+                  <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#10b981', marginBottom: '4px' }}>Labor Allocation & Cost Accounting</div>
+                  <div style={{ color: 'var(--t1)', fontWeight: '600', fontSize: '14px', maxWidth: '400px' }}>{row.desc || '(No description)'}</div>
                   <div style={{ fontSize: '12px', color: 'var(--t3)', marginTop: '2px' }}>
-                    {totalHrs}h total · {rowEmps.length} employee{rowEmps.length !== 1 ? 's' : ''} · ${rowRate}/h bill rate
+                    {totalHrs}h total · {rowEmps.length} worker{rowEmps.length !== 1 ? 's' : ''} · ${rowRate}/h task rate
                   </div>
                 </div>
                 <button
@@ -3085,6 +3147,39 @@ Return ONLY valid JSON, no other text.`
                   onClick={() => setAllocationModalRowId(null)}
                   style={{ background: 'none', border: 'none', color: 'var(--t3)', cursor: 'pointer', fontSize: '22px', padding: '0', lineHeight: 1, flexShrink: 0 }}
                 >×</button>
+              </div>
+
+              {/* ── Top Summary Strip ─────────────────────────────────────────────── */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '10px' }}>
+                {[
+                  { label: 'Total Task Labor Cost', value: fmt(totalAllocationLoadedCost), color: '#93c5fd' },
+                  { label: 'Total Task Billable Revenue', value: fmt(totalEmployeeBillRevenue), color: '#6ee7b7' },
+                  { label: 'Remaining After Direct Labor', value: fmt(remainingAfterDirectLaborCost), color: remainingAfterDirectLaborCost >= 0 ? '#a78bfa' : '#ef4444' },
+                  { label: 'True Profit After Overhead', value: fmt(trueProfitAfterOH), color: trueProfitAfterOH >= 0 ? '#10b981' : '#ef4444' },
+                ].map(item => (
+                  <div key={item.label} style={{ backgroundColor: '#141824', borderRadius: '8px', padding: '10px 12px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>{item.label}</div>
+                    <div style={{ fontFamily: 'monospace', fontWeight: '700', fontSize: '15px', color: item.color }}>{item.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* ── Rate Summary Row ─────────────────────────────────────────────── */}
+              <div style={{ backgroundColor: '#141824', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px', textAlign: 'center' }}>
+                  {[
+                    { label: 'Blended Loaded Cost/hr', value: `$${blendedLoadedCostHr.toFixed(2)}`, color: '#93c5fd', tip: 'Total task labor cost ÷ allocated labor hours' },
+                    { label: 'Parallel Crew Cost/hr', value: `$${parallelCrewLoadedCostHr.toFixed(2)}`, color: '#7dd3fc', tip: 'Combined cost per clock hour if selected workers work at the same time' },
+                    { label: 'Blended Bill Rate/hr', value: `$${blendedEmployeeBillRateHr.toFixed(2)}`, color: '#6ee7b7', tip: 'Total billable revenue ÷ allocated labor hours' },
+                    { label: 'Parallel Crew Bill Rate/hr', value: `$${parallelCrewBillRateHr.toFixed(2)}`, color: '#34d399', tip: 'Combined bill rate per clock hour if selected workers work at the same time' },
+                    { label: 'Allocation Balance', value: allocationBalanceLabel, color: allocationBalanceColor, tip: '' },
+                  ].map(item => (
+                    <div key={item.label} title={item.tip || undefined}>
+                      <div style={{ fontSize: '9px', color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px', lineHeight: '1.3' }}>{item.label}</div>
+                      <div style={{ fontFamily: 'monospace', fontWeight: '700', fontSize: '12px', color: item.color }}>{item.value}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {/* Pie chart + legend */}
@@ -3102,8 +3197,8 @@ Return ONLY valid JSON, no other text.`
                       </span>
                     </div>
                   ))}
-                  <div style={{ fontSize: '11px', color: totalAllocated === totalHrs ? '#10b981' : '#f59e0b', marginTop: '4px', fontWeight: '600' }}>
-                    {totalAllocated.toFixed(1)} / {totalHrs}h allocated
+                  <div style={{ fontSize: '11px', color: allocationBalanceColor, marginTop: '4px', fontWeight: '600' }}>
+                    {totalAllocatedHours.toFixed(1)} / {totalHrs}h — {allocationBalanceLabel}
                   </div>
                 </div>
               </div>
@@ -3111,7 +3206,7 @@ Return ONLY valid JSON, no other text.`
               {/* Sliders */}
               <div style={{ marginBottom: '20px', backgroundColor: '#1a1f2e', borderRadius: '8px', padding: '14px' }}>
                 <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--t3)', marginBottom: '12px' }}>
-                  Adjust Hours per Employee
+                  Adjust Hours per Worker
                 </div>
                 {allocs.map((a: { empId: string; hrs: number }, i: number) => (
                   <div key={a.empId} style={{ marginBottom: '12px' }}>
@@ -3127,7 +3222,7 @@ Return ONLY valid JSON, no other text.`
                     <input
                       type="range"
                       min={0}
-                      max={totalHrs}
+                      max={Math.max(totalHrs, totalAllocatedHours)}
                       step={0.5}
                       value={a.hrs}
                       onChange={e => updateRowAllocation(row.id, a.empId, num(e.target.value))}
@@ -3137,65 +3232,95 @@ Return ONLY valid JSON, no other text.`
                 ))}
               </div>
 
-              {/* Cost / Profit breakdown */}
-              <div style={{ backgroundColor: '#1a1f2e', borderRadius: '8px', padding: '14px', fontSize: '12px' }}>
+              {/* ── Per-Worker Cost Accounting ───────────────────────────────────── */}
+              <div style={{ backgroundColor: '#1a1f2e', borderRadius: '8px', padding: '14px', fontSize: '12px', marginBottom: '14px' }}>
                 <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--t3)', marginBottom: '12px' }}>
-                  Cost & Profit Breakdown
+                  Per-Worker Cost Accounting
                 </div>
-                {allocs.map((a: { empId: string; hrs: number }) => {
-                  const costRate = getEmployeeCostRate(a.empId)
-                  const empCost = a.hrs * costRate
-                  const empOH = overheadPerHr !== null
-                    ? a.hrs * overheadPerHr!
-                    : (overheadPct > 0 ? empCost * overheadPct / 100 : 0)
-                  const empRev = a.hrs * rowRate
-                  const empProfit = empRev - empCost - empOH
-                  const ohLabel = overheadPerHr !== null
-                    ? `Overhead recovery (@ $${overheadPerHr!.toFixed(2)}/h)`
-                    : `Overhead estimate (${overheadPct}%)`
+                {workerMetrics.map((m: any) => {
+                  const typeBadgeColor = m.typeName === 'Owner' ? '#3b82f6' : m.typeName === 'W-2' ? '#10b981' : '#f59e0b'
                   return (
-                    <div key={a.empId} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '10px', marginBottom: '10px' }}>
-                      <div style={{ color: 'var(--t2)', fontWeight: '600', marginBottom: '6px', fontSize: '12px' }}>
-                        {getEmployeeDisplayName(a.empId)} — {a.hrs % 1 === 0 ? a.hrs : a.hrs.toFixed(1)}h
+                    <div key={m.empId} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px', marginBottom: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <span style={{ color: 'var(--t1)', fontWeight: '600', fontSize: '12px' }}>
+                          {getEmployeeDisplayName(m.empId)}
+                        </span>
+                        <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 6px', borderRadius: '4px', backgroundColor: `${typeBadgeColor}22`, color: typeBadgeColor, border: `1px solid ${typeBadgeColor}44` }}>
+                          {m.typeName}
+                        </span>
+                        <span style={{ fontFamily: 'monospace', color: '#10b981', fontWeight: '600', marginLeft: 'auto' }}>
+                          {m.hrs % 1 === 0 ? m.hrs : m.hrs.toFixed(1)}h
+                        </span>
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '3px 16px' }}>
-                        <span style={{ color: 'var(--t3)' }}>Revenue ({a.hrs.toFixed(1)}h × ${rowRate}/h)</span>
-                        <span style={{ fontFamily: 'monospace', color: '#6ee7b7', textAlign: 'right' }}>{fmt(empRev)}</span>
-                        <span style={{ color: 'var(--t3)' }}>Labor cost (@ ${costRate.toFixed(2)}/h)</span>
-                        <span style={{ fontFamily: 'monospace', color: '#93c5fd', textAlign: 'right' }}>−{fmt(empCost)}</span>
-                        {empOH > 0 && <>
-                          <span style={{ color: 'var(--t3)' }}>{ohLabel}</span>
-                          <span style={{ fontFamily: 'monospace', color: '#fcd34d', textAlign: 'right' }}>−{fmt(empOH)}</span>
+                      {/* Rate row */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px', marginBottom: '8px' }}>
+                        {[
+                          { label: 'Base Cost/hr', value: `$${m.baseRate.toFixed(2)}`, color: 'var(--t2)' },
+                          { label: 'Loaded Cost/hr', value: `$${m.loadedRate.toFixed(2)}`, color: '#93c5fd' },
+                          { label: 'Emp Bill Rate/hr', value: `$${m.empBillRate.toFixed(2)}`, color: '#6ee7b7' },
+                          { label: 'Task Rate/hr', value: `$${rowRate.toFixed(2)}`, color: '#a3e635' },
+                        ].map(cell => (
+                          <div key={cell.label} style={{ backgroundColor: '#0f1117', borderRadius: '5px', padding: '5px 7px', textAlign: 'center' }}>
+                            <div style={{ fontSize: '9px', color: 'var(--t3)', marginBottom: '2px' }}>{cell.label}</div>
+                            <div style={{ fontFamily: 'monospace', fontWeight: '700', fontSize: '11px', color: cell.color }}>{cell.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {/* Revenue/cost/profit row */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '2px 16px' }}>
+                        <span style={{ color: 'var(--t3)' }}>Allocation Cost ({m.hrs.toFixed(1)}h × ${m.loadedRate.toFixed(2)}/h)</span>
+                        <span style={{ fontFamily: 'monospace', color: '#93c5fd', textAlign: 'right' }}>−{fmt(m.allocationCost)}</span>
+                        <span style={{ color: 'var(--t3)' }}>Billable Rev — Emp Rate ({m.hrs.toFixed(1)}h × ${m.empBillRate.toFixed(2)}/h)</span>
+                        <span style={{ fontFamily: 'monospace', color: '#6ee7b7', textAlign: 'right' }}>{fmt(m.empBillRevenue)}</span>
+                        <span style={{ color: 'var(--t3)' }}>Billable Rev — Task Rate ({m.hrs.toFixed(1)}h × ${rowRate.toFixed(2)}/h)</span>
+                        <span style={{ fontFamily: 'monospace', color: '#a3e635', textAlign: 'right' }}>{fmt(m.taskRateRevenue)}</span>
+                        <span style={{ color: 'var(--t3)' }}>Remaining After Direct Labor Cost</span>
+                        <span style={{ fontFamily: 'monospace', color: m.remainingAfterDirectLabor >= 0 ? '#a78bfa' : '#ef4444', textAlign: 'right' }}>{fmt(m.remainingAfterDirectLabor)}</span>
+                        {m.overheadAlloc > 0 && <>
+                          <span style={{ color: 'var(--t3)' }}>
+                            {overheadPerHr !== null ? `Overhead (${m.hrs.toFixed(1)}h × $${overheadPerHr!.toFixed(2)}/h)` : `Overhead (${overheadPct}%)`}
+                          </span>
+                          <span style={{ fontFamily: 'monospace', color: '#fcd34d', textAlign: 'right' }}>−{fmt(m.overheadAlloc)}</span>
                         </>}
-                        <span style={{ color: empProfit >= 0 ? '#10b981' : '#ef4444', fontWeight: '600' }}>Profit</span>
-                        <span style={{ fontFamily: 'monospace', color: empProfit >= 0 ? '#10b981' : '#ef4444', fontWeight: '700', textAlign: 'right' }}>{fmt(empProfit)}</span>
+                        <span style={{ color: m.trueProfitAfterOH >= 0 ? '#10b981' : '#ef4444', fontWeight: '600' }}>True Profit After Overhead</span>
+                        <span style={{ fontFamily: 'monospace', color: m.trueProfitAfterOH >= 0 ? '#10b981' : '#ef4444', fontWeight: '700', textAlign: 'right' }}>{fmt(m.trueProfitAfterOH)}</span>
                       </div>
                     </div>
                   )
                 })}
-                {/* Totals */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '4px 16px', paddingTop: '2px' }}>
-                  <span style={{ color: 'var(--t2)', fontWeight: '600' }}>Total Revenue</span>
-                  <span style={{ fontFamily: 'monospace', color: '#6ee7b7', fontWeight: '700', textAlign: 'right' }}>{fmt(totalRevenue)}</span>
-                  <span style={{ color: 'var(--t2)', fontWeight: '600' }}>Total Labor Cost</span>
-                  <span style={{ fontFamily: 'monospace', color: '#93c5fd', fontWeight: '700', textAlign: 'right' }}>−{fmt(totalLaborCost)}</span>
-                  {totalOHCost > 0 && <>
-                    <span style={{ color: 'var(--t2)', fontWeight: '600' }}>
-                      {overheadPerHr !== null ? 'Total Overhead Recovery' : 'Total Overhead Estimate'}
-                    </span>
-                    <span style={{ fontFamily: 'monospace', color: '#fcd34d', fontWeight: '700', textAlign: 'right' }}>−{fmt(totalOHCost)}</span>
+              </div>
+
+              {/* ── Task Totals ───────────────────────────────────────────────────── */}
+              <div style={{ backgroundColor: '#1a1f2e', borderRadius: '8px', padding: '14px', fontSize: '12px' }}>
+                <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--t3)', marginBottom: '10px' }}>
+                  Task Totals
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '4px 16px' }}>
+                  <span style={{ color: 'var(--t2)' }}>Total Task Labor Cost</span>
+                  <span style={{ fontFamily: 'monospace', color: '#93c5fd', fontWeight: '700', textAlign: 'right' }}>−{fmt(totalAllocationLoadedCost)}</span>
+                  <span style={{ color: 'var(--t2)' }}>Total Task Billable Revenue</span>
+                  <span style={{ fontFamily: 'monospace', color: '#6ee7b7', fontWeight: '700', textAlign: 'right' }}>{fmt(totalEmployeeBillRevenue)}</span>
+                  <span style={{ color: 'var(--t3)', fontSize: '11px' }}>  (Task Rate Revenue)</span>
+                  <span style={{ fontFamily: 'monospace', color: '#a3e635', fontSize: '11px', textAlign: 'right' }}>{fmt(totalTaskRateRevenue)}</span>
+                  <span style={{ color: 'var(--t2)' }}>Remaining After Direct Labor Cost</span>
+                  <span style={{ fontFamily: 'monospace', color: remainingAfterDirectLaborCost >= 0 ? '#a78bfa' : '#ef4444', fontWeight: '700', textAlign: 'right' }}>{fmt(remainingAfterDirectLaborCost)}</span>
+                  {overheadAllocated > 0 && <>
+                    <span style={{ color: 'var(--t2)' }}>Overhead Allocation</span>
+                    <span style={{ fontFamily: 'monospace', color: '#fcd34d', fontWeight: '700', textAlign: 'right' }}>−{fmt(overheadAllocated)}</span>
                   </>}
-                  <span style={{ color: totalProfit >= 0 ? '#10b981' : '#ef4444', fontWeight: '700', fontSize: '13px' }}>Net Profit</span>
-                  <span style={{ fontFamily: 'monospace', color: totalProfit >= 0 ? '#10b981' : '#ef4444', fontWeight: '800', fontSize: '14px', textAlign: 'right' }}>{fmt(totalProfit)}</span>
+                  <span style={{ color: trueProfitAfterOH >= 0 ? '#10b981' : '#ef4444', fontWeight: '700', fontSize: '13px' }}>True Profit After Overhead</span>
+                  <span style={{ fontFamily: 'monospace', color: trueProfitAfterOH >= 0 ? '#10b981' : '#ef4444', fontWeight: '800', fontSize: '14px', textAlign: 'right' }}>{fmt(trueProfitAfterOH)}</span>
+                  <span style={{ color: allocationBalanceColor, fontWeight: '600', marginTop: '4px' }}>Allocation Balance</span>
+                  <span style={{ fontFamily: 'monospace', color: allocationBalanceColor, fontWeight: '700', textAlign: 'right', marginTop: '4px' }}>{allocationBalanceLabel}</span>
                 </div>
                 {overheadPerHr === null && !backup.settings?.overheadPct && (
                   <div style={{ marginTop: '10px', fontSize: '10px', color: 'var(--t3)', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '8px' }}>
-                    💡 Set a Default OH Rate or Overhead % in Settings to include overhead recovery in this breakdown.
+                    Set a Default OH Rate or Overhead % in Settings to include overhead recovery in this breakdown.
                   </div>
                 )}
                 {(backup.employees || []).filter((e: any) => rowEmps.includes(e.id) && !e.costRate).length > 0 && (
                   <div style={{ marginTop: '6px', fontSize: '10px', color: 'var(--t3)' }}>
-                    ℹ️ Employees without a cost rate use the Settings operating cost (${num(backup.settings?.opCost || 42.45).toFixed(2)}/h) as fallback.
+                    Workers without a cost rate use the Settings operating cost (${num(backup.settings?.opCost || 42.45).toFixed(2)}/h) as fallback.
                   </div>
                 )}
               </div>

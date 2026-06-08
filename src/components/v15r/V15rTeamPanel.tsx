@@ -977,12 +977,14 @@ function EmployeeDetailModal({
   backup,
   totalHours,
   jobCount,
+  activeScenarioId,
   onClose,
 }: {
   employee: EnhancedEmployee
   backup: BackupData
   totalHours: number
   jobCount: number
+  activeScenarioId?: string
   onClose: () => void
 }) {
   const settings = (backup?.settings || {}) as any
@@ -997,9 +999,9 @@ function EmployeeDetailModal({
   const addedCostPerHour = payrollBurdenHourly
   const addedCostPct = baseHourly > 0 ? (addedCostPerHour / baseHourly) * 100 : 0
 
-  // Scenario hours — find this employee in the active/first scenario
+  // Scenario hours — find this employee in the active scenario (or fall back to first)
   const scenarios: any[] = settings?.projectionScenarios || []
-  const activeScen = scenarios[0]
+  const activeScen = scenarios.find((s: any) => s.id === activeScenarioId) || scenarios[0]
   const workerEntry = (activeScen?.workers || []).find((w: any) =>
     w.empId === employee.id ||
     (employee.id === 'me' && w.empId === 'me') ||
@@ -2753,7 +2755,7 @@ export default function V15rTeamPanel() {
                                 <div className="font-bold text-emerald-400">{formatCurrency(row.actualEmpOH)}</div>
                               </div>
                               <div>
-                                <div className="text-gray-400 mb-0.5">After Direct Labor Cost</div>
+                                <div className="text-gray-400 mb-0.5">Produced After Direct Labor Cost</div>
                                 <div className={`font-bold ${row.actualEmpGross >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(row.actualEmpGross)}</div>
                               </div>
                               {recoveryModel === 'margin' && (
@@ -3154,6 +3156,7 @@ export default function V15rTeamPanel() {
             backup={backup}
             totalHours={stats?.totalHours || 0}
             jobCount={stats?.jobCount || 0}
+            activeScenarioId={activeScenarioId}
             onClose={() => setSelectedEmployee(null)}
           />
         )
