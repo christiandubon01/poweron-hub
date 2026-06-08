@@ -3323,12 +3323,12 @@ Return ONLY valid JSON, no other text.`
                       </div>
                       {/* Revenue/cost/profit row */}
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '2px 16px' }}>
-                        <span style={{ color: 'var(--t3)' }}>Allocation Cost ({m.hrs.toFixed(1)}h × ${m.loadedRate.toFixed(2)}/h)</span>
-                        <span style={{ fontFamily: 'monospace', color: '#93c5fd', textAlign: 'right' }}>−{fmt(m.allocationCost)}</span>
-                        <span style={{ color: 'var(--t3)' }}>Billable Rev — Emp Rate ({m.hrs.toFixed(1)}h × ${m.empBillRate.toFixed(2)}/h)</span>
-                        <span style={{ fontFamily: 'monospace', color: '#6ee7b7', textAlign: 'right' }}>{fmt(m.empBillRevenue)}</span>
                         <span style={{ color: 'var(--t3)' }}>Billable Rev — Task Rate ({m.hrs.toFixed(1)}h × ${rowRate.toFixed(2)}/h)</span>
                         <span style={{ fontFamily: 'monospace', color: '#a3e635', textAlign: 'right' }}>{fmt(m.taskRateRevenue)}</span>
+                        <span style={{ color: 'var(--t3)' }}>Billable Rev — Emp Rate ({m.hrs.toFixed(1)}h × ${m.empBillRate.toFixed(2)}/h)</span>
+                        <span style={{ fontFamily: 'monospace', color: '#6ee7b7', textAlign: 'right' }}>{fmt(m.empBillRevenue)}</span>
+                        <span style={{ color: 'var(--t3)' }}>Allocation Cost ({m.hrs.toFixed(1)}h × ${m.loadedRate.toFixed(2)}/h)</span>
+                        <span style={{ fontFamily: 'monospace', color: '#93c5fd', textAlign: 'right' }}>−{fmt(m.allocationCost)}</span>
                         <span style={{ color: 'var(--t3)' }}>Remaining After Direct Labor Cost</span>
                         <span style={{ fontFamily: 'monospace', color: m.remainingAfterDirectLabor >= 0 ? '#a78bfa' : '#ef4444', textAlign: 'right' }}>{fmt(m.remainingAfterDirectLabor)}</span>
                         {m.overheadAlloc > 0 && <>
@@ -3351,12 +3351,13 @@ Return ONLY valid JSON, no other text.`
                   Task Totals
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '4px 16px' }}>
-                  <span style={{ color: 'var(--t2)' }}>Total Task Labor Cost</span>
-                  <span style={{ fontFamily: 'monospace', color: '#93c5fd', fontWeight: '700', textAlign: 'right' }}>−{fmt(totalAllocationLoadedCost)}</span>
-                  <span style={{ color: 'var(--t2)' }}>Total Task Billable Revenue</span>
-                  <span style={{ fontFamily: 'monospace', color: '#6ee7b7', fontWeight: '700', textAlign: 'right' }}>{fmt(totalEmployeeBillRevenue)}</span>
                   <span style={{ color: 'var(--t3)', fontSize: '11px' }}>  (Task Rate Revenue)</span>
                   <span style={{ fontFamily: 'monospace', color: '#a3e635', fontSize: '11px', textAlign: 'right' }}>{fmt(totalTaskRateRevenue)}</span>
+                  <span style={{ color: 'var(--t2)' }}>Total Task Billable Revenue</span>
+                  <span style={{ fontFamily: 'monospace', color: '#6ee7b7', fontWeight: '700', textAlign: 'right' }}>{fmt(totalEmployeeBillRevenue)}</span>
+                  <span style={{ color: 'var(--t2)' }}>Total Task Labor Cost</span>
+                  <span style={{ fontFamily: 'monospace', color: '#93c5fd', fontWeight: '700', textAlign: 'right' }}>−{fmt(totalAllocationLoadedCost)}</span>
+                  
                   <span style={{ color: 'var(--t2)' }}>Remaining After Direct Labor Cost</span>
                   <span style={{ fontFamily: 'monospace', color: remainingAfterDirectLaborCost >= 0 ? '#a78bfa' : '#ef4444', fontWeight: '700', textAlign: 'right' }}>{fmt(remainingAfterDirectLaborCost)}</span>
                   {overheadAllocated > 0 && <>
