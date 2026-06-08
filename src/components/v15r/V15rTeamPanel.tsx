@@ -1689,7 +1689,6 @@ export default function V15rTeamPanel() {
           monthlyOH += (section || []).reduce((s: number, item: any) => s + num(item.monthly || 0), 0)
         })
         const annualOH = monthlyOH * 12
-        // billableHrsYear is shared with Settings — same key
         const billableHoursYear = num((backup.settings as any)?.billableHrsYear || 1800)
         const overheadPerHour = billableHoursYear > 0 ? annualOH / billableHoursYear : 0
 
@@ -1697,7 +1696,16 @@ export default function V15rTeamPanel() {
         const scenarios = getScenarios()
         const activeScen = scenarios.find((s: any) => s.id === activeScenarioId) || scenarios[0]
 
-        // ── Actual recovered: from logged hours × bill/cost rates ──────────────
+        // ── Per-employee logged hours map ──────────────────────────────────────
+        const empLogMap: Record<string, number> = {}
+        ;(backup.logs || []).forEach((log: any) => {
+          const hrs = num(log.hrs || log.hours || 0)
+          if (hrs <= 0) return
+          const eid = log.empId || log.employeeId || ''
+          empLogMap[eid] = (empLogMap[eid] || 0) + hrs
+        })
+
+        // ── Actual recovered: from all logged hours × bill/cost rates ──────────
         let actualLoggedHrs = 0
         let actualRevenue = 0
         let actualDirectCost = 0
@@ -1716,32 +1724,37 @@ export default function V15rTeamPanel() {
         const actualOverheadRecovered = actualLoggedHrs * overheadPerHour
         const actualTrueProfit = actualGrossContrib - actualOverheadRecovered
 
-        // ── Forecasted: from projection scenario ────────────────────────────────
-        const scenarioYearlyHours = (activeScen?.workers || []).reduce((s: number, w: any) => s + num(w.hoursPerWeek) * num(w.weeksPerYear), 0)
+        // ── Scenario planned hours (TOTAL) ─────────────────────────────────────
+        const scenarioPlannedHours = (activeScen?.workers || []).reduce((s: number, w: any) => s + num(w.hoursPerWeek) * num(w.weeksPerYear), 0)
         const scenarioMonthlyHours = (activeScen?.workers || []).reduce((s: number, w: any) => s + num(w.hoursPerWeek) * 4.33, 0)
 
+        // ── Scenario REMAINING hours — subtract actual logged to avoid double-count
+        const scenarioRemainingHours = Math.max(0, scenarioPlannedHours - actualLoggedHrs)
+        const scenarioRemainingRecovery = scenarioRemainingHours * overheadPerHour
+
+        // ── Forecast revenue/cost based on REMAINING scenario hours only ───────
         let forecastRevenue = 0
         let forecastDirectCost = 0
         ;(activeScen?.workers || []).forEach((w: any) => {
           const emp = employees.find((e: any) => e.id === w.empId) || (w.empId === 'me' ? employees.find((e: any) => e.isOwner) : null)
           if (!emp) return
-          const yearlyHrs = num(w.hoursPerWeek) * num(w.weeksPerYear)
+          const plannedYrHrs = num(w.hoursPerWeek) * num(w.weeksPerYear)
+          const empLogged = empLogMap[emp.id] || 0
+          const remainHrs = Math.max(0, plannedYrHrs - empLogged)
           const bill = num(emp.billRate || emp.bill_rate || 0)
           const loaded = getLoadedHourlyRate(emp, backup.settings)
-          forecastRevenue += yearlyHrs * bill
-          forecastDirectCost += yearlyHrs * loaded
+          forecastRevenue += remainHrs * bill
+          forecastDirectCost += remainHrs * loaded
         })
         const forecastGrossContrib = forecastRevenue - forecastDirectCost
-        const forecastOverheadRecovered = scenarioYearlyHours * overheadPerHour
-        const forecastTrueProfit = forecastGrossContrib - forecastOverheadRecovered
 
         // ── Actual-only math (donut shows this) ───────────────────────────────
         const actualRemaining = Math.max(0, annualOH - actualOverheadRecovered)
         const actualCoveredPct = annualOH > 0 ? Math.min(actualOverheadRecovered / annualOH, 1) : 0
         const actualRemainingPct = Math.max(0, 1 - actualCoveredPct)
 
-        // ── Projected math (forecast + actual, KPI only) ──────────────────────
-        const projectedTotal = actualOverheadRecovered + forecastOverheadRecovered
+        // ── Projected math: actual + scenario REMAINING (no double-count) ─────
+        const projectedTotal = actualOverheadRecovered + scenarioRemainingRecovery
         const projectedRemaining = Math.max(0, annualOH - projectedTotal)
         const projectedSurplus = Math.max(0, projectedTotal - annualOH)
         const projectedCoveredPct = annualOH > 0 ? Math.min(projectedTotal / annualOH, 1) : 0
@@ -1765,29 +1778,56 @@ export default function V15rTeamPanel() {
         const cx = 70; const cy = 70; const r = 54; const stroke = 18
         const circ = 2 * Math.PI * r
         const gap = (2 / 360) * circ
-        // Arc for actual recovered (emerald)
         const arcActual = actualCoveredPct * circ - (actualCoveredPct > 0 && actualRemainingPct > 0 ? gap : 0)
-        // Arc for actual remaining (dark gray)
         const arcActualRemaining = actualRemainingPct * circ - (actualCoveredPct > 0 && actualRemainingPct > 0 ? gap : 0)
 
-        // ── By-employee rows ───────────────────────────────────────────────────
+        // ── By-employee planning rows ──────────────────────────────────────────
         const empRows = (activeScen?.workers || []).map((w: any) => {
           const emp = employees.find((e: any) => e.id === w.empId) || (w.empId === 'me' ? employees.find((e: any) => e.isOwner) : null)
           if (!emp) return null
-          const yearlyHrs = num(w.hoursPerWeek) * num(w.weeksPerYear)
+          const hrsPerWeek = num(w.hoursPerWeek)
+          const weeksPerYear = num(w.weeksPerYear || 52)
+          const hrsPerDay = hrsPerWeek / 5
+          const hrsPerMonth = hrsPerWeek * 4.33
+          const plannedYearlyHrs = hrsPerWeek * weeksPerYear
+          const empLogged = empLogMap[emp.id] || 0
+          const remainingHrs = Math.max(0, plannedYearlyHrs - empLogged)
           const bill = num(emp.billRate || emp.bill_rate || 0)
           const loaded = getLoadedHourlyRate(emp, backup.settings)
-          const revenue = yearlyHrs * bill
-          const directCost = yearlyHrs * loaded
-          const grossContrib = revenue - directCost
-          const ohAllocated = yearlyHrs * overheadPerHour
-          const trueProfit = grossContrib - ohAllocated
-          const ohPct = annualOH > 0 ? Math.min(ohAllocated / annualOH * 100, 100) : 0
+          // Actual (logged)
+          const actualEmpRevenue = empLogged * bill
+          const actualEmpCost = empLogged * loaded
+          const actualEmpGross = actualEmpRevenue - actualEmpCost
+          const actualEmpOH = empLogged * overheadPerHour
+          const actualEmpProfit = actualEmpGross - actualEmpOH
+          // Forecast (remaining)
+          const fcastRevenue = remainingHrs * bill
+          const fcastCost = remainingHrs * loaded
+          const fcastGross = fcastRevenue - fcastCost
+          const fcastOH = remainingHrs * overheadPerHour
+          const fcastProfit = fcastGross - fcastOH
+          // Planned totals
+          const totalRevenue = plannedYearlyHrs * bill
+          const totalDirectCost = plannedYearlyHrs * loaded
+          const totalGrossContrib = totalRevenue - totalDirectCost
+          const totalOHAllocated = plannedYearlyHrs * overheadPerHour
+          const totalTrueProfit = totalGrossContrib - totalOHAllocated
+          const ohPct = annualOH > 0 ? Math.min(totalOHAllocated / annualOH * 100, 100) : 0
+          const grossPct = totalRevenue > 0 ? (totalGrossContrib / totalRevenue) * 100 : 0
+          const grossContribPerHr = bill - loaded
+          const trueProfitPerHr = grossContribPerHr - overheadPerHour
           const profile = getWorkerCostProfile(emp, backup.settings)
-          return { emp, yearlyHrs, bill, loaded, revenue, directCost, grossContrib, ohAllocated, trueProfit, ohPct, type: profile.workerType }
+          return {
+            emp, hrsPerDay, hrsPerWeek, hrsPerMonth, weeksPerYear, plannedYearlyHrs,
+            empLogged, remainingHrs, bill, loaded, grossContribPerHr, trueProfitPerHr,
+            actualEmpRevenue, actualEmpCost, actualEmpGross, actualEmpOH, actualEmpProfit,
+            fcastRevenue, fcastCost, fcastGross, fcastOH, fcastProfit,
+            totalRevenue, totalDirectCost, totalGrossContrib, totalOHAllocated, totalTrueProfit,
+            ohPct, grossPct, type: profile.workerType,
+          }
         }).filter(Boolean)
 
-        // ── By-project rows (from active project logs + estimates) ─────────────
+        // ── By-project rows (actual logged hours only) ─────────────────────────
         const projMap: Record<string, { id: string; name: string; hrs: number; revenue: number; directCost: number }> = {}
         ;(backup.logs || []).forEach((log: any) => {
           const hrs = num(log.hrs || log.hours || 0)
@@ -1813,11 +1853,11 @@ export default function V15rTeamPanel() {
         return (
           <div className="bg-[var(--bg-card)] rounded-lg border border-indigo-700/40 p-5">
             {/* Header */}
-            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
               <div>
                 <h2 className="text-lg font-bold text-gray-100">📊 Overhead Recovery Tracker</h2>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Payroll burden is employee cost. Overhead recovery is business fixed-cost recovery per billable hour.
+                <p className="text-sm text-gray-400 mt-0.5">
+                  Actual uses logged hours only. Scenario remaining subtracts logged hours — no double-counting.
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1835,8 +1875,8 @@ export default function V15rTeamPanel() {
                 </button>
               </div>
             </div>
-            <p className="text-[10px] text-gray-600 mb-4">
-              Overhead totals come from Settings → Overhead Manager. Use the button above to add or edit expenses.
+            <p className="text-xs text-gray-500 mb-4">
+              Overhead totals from Settings → Overhead Manager. Payroll burden is employee cost — separate from overhead recovery.
             </p>
 
             {!overheadCollapsed && (
@@ -1846,9 +1886,7 @@ export default function V15rTeamPanel() {
                   {/* Donut — actual recovery only */}
                   <div className="flex-shrink-0">
                     <svg width="140" height="140" viewBox="0 0 140 140">
-                      {/* bg ring (full remaining) */}
                       <circle cx={cx} cy={cy} r={r} fill="none" stroke="#1f2937" strokeWidth={stroke} />
-                      {/* actual remaining arc (dark) */}
                       {arcActualRemaining > 0 && (
                         <circle
                           cx={cx} cy={cy} r={r} fill="none"
@@ -1858,7 +1896,6 @@ export default function V15rTeamPanel() {
                           strokeLinecap="butt"
                         />
                       )}
-                      {/* actual recovered arc (emerald) */}
                       {arcActual > 0 && (
                         <circle
                           cx={cx} cy={cy} r={r} fill="none"
@@ -1868,14 +1905,13 @@ export default function V15rTeamPanel() {
                           strokeLinecap="butt"
                         />
                       )}
-                      {/* center: actual % only */}
                       <text x={cx} y={cy - 10} textAnchor="middle" fill="#e2e8f0" fontSize="14" fontWeight="bold">
                         {(actualCoveredPct * 100).toFixed(0)}%
                       </text>
-                      <text x={cx} y={cy + 4} textAnchor="middle" fill="#10b981" fontSize="8">actual</text>
-                      <text x={cx} y={cy + 15} textAnchor="middle" fill="#94a3b8" fontSize="7">recovered</text>
+                      <text x={cx} y={cy + 4} textAnchor="middle" fill="#10b981" fontSize="9">actual</text>
+                      <text x={cx} y={cy + 16} textAnchor="middle" fill="#94a3b8" fontSize="8">recovered</text>
                     </svg>
-                    <div className="flex gap-3 mt-1 text-[10px] justify-center">
+                    <div className="flex gap-3 mt-1 text-xs justify-center text-gray-300">
                       <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-emerald-400" />Actual</span>
                       <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-gray-600" />Remaining</span>
                     </div>
@@ -1883,119 +1919,131 @@ export default function V15rTeamPanel() {
 
                   {/* KPI cards */}
                   <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
-                      <div className="text-[9px] text-gray-500 uppercase mb-0.5">Annual Overhead</div>
-                      <div className="text-sm font-bold text-indigo-300">{formatCurrency(annualOH)}</div>
-                      <div className="text-[9px] text-gray-600">{formatCurrency(monthlyOH)}/mo</div>
+                    <div className="bg-[var(--bg-secondary)] rounded p-3 text-center">
+                      <div className="text-xs text-gray-400 uppercase mb-1">Annual Overhead</div>
+                      <div className="text-base font-bold text-indigo-300">{formatCurrency(annualOH)}</div>
+                      <div className="text-xs text-gray-400">{formatCurrency(monthlyOH)}/mo</div>
                     </div>
-                    <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
-                      <div className="text-[9px] text-gray-500 uppercase mb-0.5">OH / Billable Hr</div>
-                      <div className="text-sm font-bold text-yellow-400">{overheadPerHour > 0 ? '$' + overheadPerHour.toFixed(2) : '—'}</div>
-                      <div className="text-[9px] text-gray-600">{billableHoursYear.toFixed(0)} hr target/yr</div>
+                    <div className="bg-[var(--bg-secondary)] rounded p-3 text-center">
+                      <div className="text-xs text-gray-400 uppercase mb-1">OH / Billable Hr</div>
+                      <div className="text-base font-bold text-yellow-400">{overheadPerHour > 0 ? '$' + overheadPerHour.toFixed(2) : '—'}</div>
+                      <div className="text-xs text-gray-400">{billableHoursYear.toFixed(0)} hr target/yr</div>
                     </div>
-                    <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
-                      <div className="text-[9px] text-gray-500 uppercase mb-0.5">Actual Recovered</div>
-                      <div className="text-sm font-bold text-emerald-400">{formatCurrency(actualOverheadRecovered)}</div>
-                      <div className="text-[9px] text-gray-600">{actualLoggedHrs.toFixed(0)} hrs logged · {(actualCoveredPct * 100).toFixed(0)}% covered</div>
+                    <div className="bg-[var(--bg-secondary)] rounded p-3 text-center">
+                      <div className="text-xs text-gray-400 uppercase mb-1">Actual Recovered</div>
+                      <div className="text-base font-bold text-emerald-400">{formatCurrency(actualOverheadRecovered)}</div>
+                      <div className="text-xs text-gray-300">{actualLoggedHrs.toFixed(0)} hrs logged · {(actualCoveredPct * 100).toFixed(0)}% covered</div>
                     </div>
-                    <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
-                      <div className="text-[9px] text-gray-500 uppercase mb-0.5">Actual Remaining</div>
-                      <div className={`text-sm font-bold ${actualRemaining <= 0 ? 'text-emerald-400' : 'text-orange-400'}`}>
+                    <div className="bg-[var(--bg-secondary)] rounded p-3 text-center">
+                      <div className="text-xs text-gray-400 uppercase mb-1">Actual Remaining</div>
+                      <div className={`text-base font-bold ${actualRemaining <= 0 ? 'text-emerald-400' : 'text-orange-400'}`}>
                         {actualRemaining <= 0 ? '✓ Cleared' : formatCurrency(actualRemaining)}
                       </div>
-                      <div className="text-[9px] text-gray-600">{(actualRemainingPct * 100).toFixed(0)}% still needed</div>
+                      <div className="text-xs text-gray-300">{(actualRemainingPct * 100).toFixed(0)}% still needed</div>
                     </div>
-                    <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
-                      <div className="text-[9px] text-blue-400/80 uppercase mb-0.5">Forecasted (Scenario)</div>
-                      <div className="text-sm font-bold text-blue-400">{formatCurrency(forecastOverheadRecovered)}</div>
-                      <div className="text-[9px] text-gray-600">projected from scenario</div>
+                    <div className="bg-[var(--bg-secondary)] rounded p-3 text-center">
+                      <div className="text-xs text-blue-300 uppercase mb-1">Scenario Remaining Recovery</div>
+                      <div className="text-base font-bold text-blue-400">{formatCurrency(scenarioRemainingRecovery)}</div>
+                      <div className="text-xs text-gray-300">{scenarioRemainingHours.toFixed(0)} hrs left in plan</div>
                     </div>
-                    <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
-                      <div className="text-[9px] text-blue-400/80 uppercase mb-0.5">Projected Status</div>
+                    <div className="bg-[var(--bg-secondary)] rounded p-3 text-center">
+                      <div className="text-xs text-blue-300 uppercase mb-1">Projected Status</div>
                       {projectedSurplus > 0 ? (
                         <>
-                          <div className="text-sm font-bold text-emerald-400">+{formatCurrency(projectedSurplus)}</div>
-                          <div className="text-[9px] text-gray-600">surplus if forecast happens</div>
+                          <div className="text-base font-bold text-emerald-400">+{formatCurrency(projectedSurplus)}</div>
+                          <div className="text-xs text-gray-300">surplus if plan completes</div>
                         </>
                       ) : projectedRemaining <= 0 ? (
                         <>
-                          <div className="text-sm font-bold text-emerald-400">✓ Fully covered</div>
-                          <div className="text-[9px] text-gray-600">if forecast happens</div>
+                          <div className="text-base font-bold text-emerald-400">✓ Fully covered</div>
+                          <div className="text-xs text-gray-300">if plan completes</div>
                         </>
                       ) : (
                         <>
-                          <div className="text-sm font-bold text-blue-300">{formatCurrency(projectedRemaining)}</div>
-                          <div className="text-[9px] text-gray-600">projected remaining · {(projectedCoveredPct * 100).toFixed(0)}% projected</div>
+                          <div className="text-base font-bold text-blue-300">{formatCurrency(projectedRemaining)}</div>
+                          <div className="text-xs text-gray-300">projected remaining · {(projectedCoveredPct * 100).toFixed(0)}% projected</div>
                         </>
                       )}
                     </div>
-                    <div className="bg-[var(--bg-secondary)] rounded p-2 text-center col-span-2 sm:col-span-3">
-                      <div className="text-[9px] text-gray-500 uppercase mb-0.5">Months to Recover (at scenario pace)</div>
+                    <div className="bg-[var(--bg-secondary)] rounded p-3 text-center col-span-2 sm:col-span-3">
+                      <div className="text-xs text-gray-400 uppercase mb-1">Months to Recover (at scenario pace)</div>
                       {monthsToRecover !== null ? (
                         <div className={`text-sm font-bold ${monthsToRecover <= 12 ? 'text-emerald-400' : 'text-red-400'}`}>
                           {monthsToRecover.toFixed(1)} mo
                           {ownerMonthsToRecover !== null && ownerMonthsToRecover > monthsToRecover && (
-                            <span className="text-[9px] text-gray-600 font-normal ml-2">Owner-only: {ownerMonthsToRecover.toFixed(1)} mo</span>
+                            <span className="text-xs text-gray-400 font-normal ml-2">Owner-only: {ownerMonthsToRecover.toFixed(1)} mo</span>
                           )}
                         </div>
                       ) : (
-                        <div className="text-sm font-bold text-gray-600">—</div>
+                        <div className="text-sm font-bold text-gray-500">—</div>
                       )}
                     </div>
                   </div>
                 </div>
 
                 {annualOH === 0 && (
-                  <div className="text-xs text-amber-500/80 bg-amber-900/10 border border-amber-700/20 rounded p-3 mb-4">
-                    No overhead expenses found in Settings → Overhead Manager. Add business expenses there to populate this tracker.
+                  <div className="text-sm text-amber-400 bg-amber-900/15 border border-amber-700/30 rounded p-3 mb-4">
+                    ⚠ No overhead expenses in Settings → Overhead Manager. Add business expenses there to populate this tracker.
                   </div>
                 )}
 
-                {/* Target billable hours editor */}
-                <div className="flex items-center gap-3 mb-5 bg-[var(--bg-secondary)] rounded p-3">
-                  <span className="text-xs text-gray-400 flex-1">Target billable hours/year (shared with Settings, used to calculate overhead recovery per hour)</span>
-                  <input
-                    type="number"
-                    min="100"
-                    max="5000"
-                    value={billableHoursYear}
-                    onChange={e => {
-                      if (!backup.settings) (backup as any).settings = {}
-                      ;(backup.settings as any).billableHrsYear = num(e.target.value)
-                      saveBackupData(backup)
-                      forceUpdate({})
-                    }}
-                    className="w-24 bg-[var(--bg-input)] border border-gray-600 text-gray-100 text-xs px-2 py-1.5 rounded text-right focus:outline-none focus:border-indigo-500"
-                  />
-                  <span className="text-xs text-gray-500">hrs/yr</span>
+                {/* Scenario hours summary */}
+                <div className="flex flex-wrap gap-4 mb-4 bg-[var(--bg-secondary)] rounded p-3">
+                  <div>
+                    <div className="text-xs text-gray-400 mb-0.5">Scenario Planned Hours/yr</div>
+                    <div className="text-sm font-bold text-gray-100">{scenarioPlannedHours.toLocaleString()} hrs</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-400 mb-0.5">Actual Logged Hours</div>
+                    <div className="text-sm font-bold text-emerald-400">{actualLoggedHrs.toFixed(0)} hrs</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-400 mb-0.5">Scenario Remaining Hours</div>
+                    <div className="text-sm font-bold text-blue-300">{scenarioRemainingHours.toFixed(0)} hrs</div>
+                  </div>
+                  <div className="flex-1 flex items-end justify-end gap-3">
+                    <span className="text-xs text-gray-400 flex-1 text-right">Target billable hrs/yr</span>
+                    <input
+                      type="number" min="100" max="5000"
+                      value={billableHoursYear}
+                      onChange={e => {
+                        if (!backup.settings) (backup as any).settings = {}
+                        ;(backup.settings as any).billableHrsYear = num(e.target.value)
+                        saveBackupData(backup)
+                        forceUpdate({})
+                      }}
+                      className="w-20 bg-[var(--bg-input)] border border-gray-600 text-gray-100 text-xs px-2 py-1 rounded text-right focus:outline-none focus:border-indigo-500"
+                    />
+                    <span className="text-xs text-gray-400">hrs/yr</span>
+                  </div>
                 </div>
 
                 {/* Model + View toggles */}
-                <div className="flex flex-wrap gap-3 mb-4">
-                  <div className="flex rounded overflow-hidden border border-gray-700 text-xs">
+                <div className="flex flex-wrap gap-3 mb-3">
+                  <div className="flex rounded overflow-hidden border border-gray-600 text-sm">
                     <button
                       onClick={() => setRecoveryModel('fixed')}
-                      className={`px-3 py-1.5 transition ${recoveryModel === 'fixed' ? 'bg-indigo-600 text-white' : 'bg-[var(--bg-secondary)] text-gray-400 hover:bg-gray-700'}`}
+                      className={`px-3 py-1.5 transition ${recoveryModel === 'fixed' ? 'bg-indigo-600 text-white' : 'bg-[var(--bg-secondary)] text-gray-300 hover:bg-gray-700'}`}
                     >
-                      Fixed Recovery Model
+                      Fixed Recovery
                     </button>
                     <button
                       onClick={() => setRecoveryModel('margin')}
-                      className={`px-3 py-1.5 transition ${recoveryModel === 'margin' ? 'bg-indigo-600 text-white' : 'bg-[var(--bg-secondary)] text-gray-400 hover:bg-gray-700'}`}
+                      className={`px-3 py-1.5 transition ${recoveryModel === 'margin' ? 'bg-indigo-600 text-white' : 'bg-[var(--bg-secondary)] text-gray-300 hover:bg-gray-700'}`}
                     >
-                      True Margin Model
+                      True Margin
                     </button>
                   </div>
-                  <div className="flex rounded overflow-hidden border border-gray-700 text-xs">
+                  <div className="flex rounded overflow-hidden border border-gray-600 text-sm">
                     <button
                       onClick={() => setOverheadViewMode('employee')}
-                      className={`px-3 py-1.5 transition ${overheadViewMode === 'employee' ? 'bg-blue-700 text-white' : 'bg-[var(--bg-secondary)] text-gray-400 hover:bg-gray-700'}`}
+                      className={`px-3 py-1.5 transition ${overheadViewMode === 'employee' ? 'bg-blue-700 text-white' : 'bg-[var(--bg-secondary)] text-gray-300 hover:bg-gray-700'}`}
                     >
                       By Employee
                     </button>
                     <button
                       onClick={() => setOverheadViewMode('project')}
-                      className={`px-3 py-1.5 transition ${overheadViewMode === 'project' ? 'bg-blue-700 text-white' : 'bg-[var(--bg-secondary)] text-gray-400 hover:bg-gray-700'}`}
+                      className={`px-3 py-1.5 transition ${overheadViewMode === 'project' ? 'bg-blue-700 text-white' : 'bg-[var(--bg-secondary)] text-gray-300 hover:bg-gray-700'}`}
                     >
                       By Project
                     </button>
@@ -2003,158 +2051,276 @@ export default function V15rTeamPanel() {
                 </div>
 
                 {/* Model description */}
-                <div className="text-[10px] text-gray-600 mb-3">
+                <div className="text-xs text-gray-400 mb-4 bg-[var(--bg-secondary)] rounded px-3 py-2">
                   {recoveryModel === 'fixed'
-                    ? 'Fixed Recovery Model: overhead allocation = hours × overhead/hr. Best for tracking business fixed-cost recovery across all billable time.'
-                    : 'True Margin Model: gross contribution = bill revenue − direct labor cost. True profit = gross contribution − overhead allocation. Exposes negative margin if overhead exceeds contribution.'}
+                    ? 'Fixed Recovery: overhead allocation = hours × overhead/hr. Tracks business fixed-cost recovery across all billable time.'
+                    : 'True Margin: gross contribution = bill revenue − direct labor cost. True profit = gross contribution − overhead allocation. Negative = margin cannot cover overhead target.'}
                 </div>
 
                 {/* By Employee view */}
                 {overheadViewMode === 'employee' && (
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-semibold text-gray-500 uppercase mb-2">
-                      Employee Contribution — {activeScen?.name || 'Active Scenario'} (Forecast)
+                  <div className="space-y-3">
+                    <div className="text-sm font-semibold text-gray-300 mb-1">
+                      Labor Planning — {activeScen?.name || 'Active Scenario'}
                     </div>
                     {empRows.length === 0 && (
-                      <div className="text-xs text-gray-600 text-center py-4">No scenario workers. Add employees to a projection scenario above.</div>
+                      <div className="text-sm text-gray-400 text-center py-6">No scenario workers. Add employees to a projection scenario above.</div>
                     )}
                     {empRows.map((row: any) => {
                       const ohPctWidth = Math.min(row.ohPct, 100)
-                      const grossPct = row.revenue > 0 ? (row.grossContrib / row.revenue) * 100 : 0
+                      const planExceeded = row.empLogged > row.plannedYearlyHrs
+                      const lowMargin = row.trueProfitPerHr < 0
                       return (
-                        <div key={row.emp.id} className="bg-[var(--bg-secondary)] rounded p-3">
-                          <div className="flex items-center justify-between mb-2">
-                            <div>
-                              <span className="text-xs font-semibold text-gray-200">{row.emp.name}</span>
-                              <span className="ml-2 text-[9px] text-gray-500 uppercase">{row.type}</span>
+                        <div key={row.emp.id} className="bg-[var(--bg-secondary)] rounded-lg border border-gray-700/60 p-4">
+                          {/* Worker header */}
+                          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-gray-100">{row.emp.name}</span>
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 uppercase font-medium">{row.type}</span>
                             </div>
-                            <span className="text-[9px] text-gray-600">{row.yearlyHrs.toFixed(0)} hrs/yr</span>
+                            <div className="text-sm font-bold text-gray-200">
+                              {row.plannedYearlyHrs.toLocaleString()} planned hrs/yr
+                            </div>
                           </div>
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[10px] mb-2">
+
+                          {/* Scheduling capacity strip */}
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                            <div className="text-center bg-[var(--bg-card)] rounded p-2">
+                              <div className="text-xs text-gray-400 mb-0.5">Hrs / Day</div>
+                              <div className="text-sm font-bold text-gray-100">{row.hrsPerDay.toFixed(1)}</div>
+                              <div className="text-xs text-gray-500">@ 5 days/wk</div>
+                            </div>
+                            <div className="text-center bg-[var(--bg-card)] rounded p-2">
+                              <div className="text-xs text-gray-400 mb-0.5">Hrs / Week</div>
+                              <div className="text-sm font-bold text-gray-100">{row.hrsPerWeek.toFixed(0)}</div>
+                            </div>
+                            <div className="text-center bg-[var(--bg-card)] rounded p-2">
+                              <div className="text-xs text-gray-400 mb-0.5">Hrs / Month</div>
+                              <div className="text-sm font-bold text-gray-100">{row.hrsPerMonth.toFixed(0)}</div>
+                            </div>
+                            <div className="text-center bg-[var(--bg-card)] rounded p-2">
+                              <div className="text-xs text-gray-400 mb-0.5">Weeks / Year</div>
+                              <div className="text-sm font-bold text-gray-100">{row.weeksPerYear}</div>
+                            </div>
+                          </div>
+
+                          {/* Logged vs remaining */}
+                          <div className="grid grid-cols-2 gap-3 mb-3">
+                            <div className="bg-[var(--bg-card)] rounded p-2">
+                              <div className="text-xs text-gray-400 mb-0.5">Logged Hours</div>
+                              <div className="text-base font-bold text-emerald-400">{row.empLogged.toFixed(0)} hrs</div>
+                              <div className="text-xs text-gray-400">actual billed</div>
+                            </div>
+                            <div className="bg-[var(--bg-card)] rounded p-2">
+                              <div className="text-xs text-gray-400 mb-0.5">{planExceeded ? 'Plan Exceeded' : 'Remaining Hours'}</div>
+                              <div className={`text-base font-bold ${planExceeded ? 'text-amber-400' : 'text-blue-300'}`}>
+                                {planExceeded ? `+${(row.empLogged - row.plannedYearlyHrs).toFixed(0)}` : row.remainingHrs.toFixed(0)} hrs
+                              </div>
+                              <div className="text-xs text-gray-400">{planExceeded ? 'above plan' : 'to hit plan'}</div>
+                            </div>
+                          </div>
+
+                          {/* Progress bar: logged vs planned */}
+                          <div className="mb-3">
+                            <div className="flex justify-between text-xs text-gray-400 mb-1">
+                              <span>Hours progress</span>
+                              <span>{Math.min((row.empLogged / Math.max(row.plannedYearlyHrs, 1)) * 100, 100).toFixed(0)}% of plan logged</span>
+                            </div>
+                            <div className="h-2 bg-[var(--bg-input)] rounded overflow-hidden">
+                              <div
+                                className={`h-full rounded ${planExceeded ? 'bg-amber-400' : 'bg-emerald-500'}`}
+                                style={{ width: `${Math.min((row.empLogged / Math.max(row.plannedYearlyHrs, 1)) * 100, 100)}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Rate strip */}
+                          <div className="grid grid-cols-3 gap-2 mb-3 text-center">
                             <div>
-                              <div className="text-gray-600 mb-0.5">Bill Revenue</div>
-                              <div className="font-bold text-blue-300">{formatCurrency(row.revenue)}</div>
+                              <div className="text-xs text-gray-400 mb-0.5">Bill Rate</div>
+                              <div className="text-sm font-bold text-blue-300">${row.bill.toFixed(0)}/hr</div>
                             </div>
                             <div>
-                              <div className="text-gray-600 mb-0.5">Direct Labor Cost</div>
-                              <div className="font-bold text-red-400">{formatCurrency(row.directCost)}</div>
+                              <div className="text-xs text-gray-400 mb-0.5">Loaded Cost</div>
+                              <div className="text-sm font-bold text-red-400">${row.loaded.toFixed(0)}/hr</div>
+                              <div className="text-xs text-gray-500">
+                                {row.type === 'w2' ? `base × ${(backup.settings?.payrollMult || 1.20).toFixed(2)}x` : 'base rate'}
+                              </div>
                             </div>
                             <div>
-                              <div className="text-gray-600 mb-0.5">Gross Contribution</div>
-                              <div className={`font-bold ${row.grossContrib >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(row.grossContrib)}</div>
+                              <div className="text-xs text-gray-400 mb-0.5">Gross Contrib/hr</div>
+                              <div className={`text-sm font-bold ${row.grossContribPerHr >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${row.grossContribPerHr.toFixed(0)}/hr</div>
+                            </div>
+                          </div>
+
+                          {/* OH + profit per-hr strip */}
+                          <div className="grid grid-cols-2 gap-2 mb-3 text-center">
+                            <div>
+                              <div className="text-xs text-gray-400 mb-0.5">OH Recovery/hr</div>
+                              <div className="text-sm font-bold text-yellow-400">${overheadPerHour.toFixed(2)}/hr</div>
                             </div>
                             <div>
-                              <div className="text-gray-600 mb-0.5">OH Allocated</div>
-                              <div className="font-bold text-yellow-400">{formatCurrency(row.ohAllocated)}</div>
+                              <div className="text-xs text-gray-400 mb-0.5">True Profit/hr after OH</div>
+                              <div className={`text-sm font-bold ${row.trueProfitPerHr >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>
+                                ${row.trueProfitPerHr.toFixed(0)}/hr
+                              </div>
                             </div>
-                            {recoveryModel === 'margin' && (
+                          </div>
+
+                          {/* Actual (logged) money */}
+                          <div className="border-t border-gray-700/50 pt-3 mb-3">
+                            <div className="text-xs text-gray-400 font-semibold uppercase mb-2">Actual (Logged Hours)</div>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
                               <div>
-                                <div className="text-gray-600 mb-0.5">True Profit After OH</div>
-                                <div className={`font-bold ${row.trueProfit >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>{formatCurrency(row.trueProfit)}</div>
-                                {row.grossContrib < row.ohAllocated && (
-                                  <div className="text-[9px] text-amber-500">⚠ Margin below OH</div>
+                                <div className="text-gray-400 mb-0.5">OH Recovered</div>
+                                <div className="font-bold text-emerald-400">{formatCurrency(row.actualEmpOH)}</div>
+                              </div>
+                              <div>
+                                <div className="text-gray-400 mb-0.5">Gross Contribution</div>
+                                <div className={`font-bold ${row.actualEmpGross >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(row.actualEmpGross)}</div>
+                              </div>
+                              {recoveryModel === 'margin' && (
+                                <div>
+                                  <div className="text-gray-400 mb-0.5">True Profit After OH</div>
+                                  <div className={`font-bold ${row.actualEmpProfit >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>{formatCurrency(row.actualEmpProfit)}</div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Scenario remaining money */}
+                          {row.remainingHrs > 0 && (
+                            <div className="border-t border-blue-900/40 pt-3 mb-3">
+                              <div className="text-xs text-blue-300 font-semibold uppercase mb-2">Scenario Remaining ({row.remainingHrs.toFixed(0)} hrs)</div>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                                <div>
+                                  <div className="text-gray-400 mb-0.5">OH to Recover</div>
+                                  <div className="font-bold text-blue-400">{formatCurrency(row.fcastOH)}</div>
+                                </div>
+                                <div>
+                                  <div className="text-gray-400 mb-0.5">Gross Contribution</div>
+                                  <div className={`font-bold ${row.fcastGross >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(row.fcastGross)}</div>
+                                </div>
+                                {recoveryModel === 'margin' && (
+                                  <div>
+                                    <div className="text-gray-400 mb-0.5">True Profit After OH</div>
+                                    <div className={`font-bold ${row.fcastProfit >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>{formatCurrency(row.fcastProfit)}</div>
+                                    {row.fcastGross < row.fcastOH && (
+                                      <div className="text-xs text-amber-400 mt-0.5">⚠ Margin below OH</div>
+                                    )}
+                                  </div>
                                 )}
                               </div>
-                            )}
-                            <div>
-                              <div className="text-gray-600 mb-0.5">Margin %</div>
-                              <div className={`font-bold ${grossPct >= 30 ? 'text-emerald-400' : grossPct >= 0 ? 'text-yellow-400' : 'text-red-400'}`}>{grossPct.toFixed(0)}%</div>
                             </div>
-                          </div>
-                          {/* Contribution bar */}
+                          )}
+
+                          {/* OH contribution bar */}
                           <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[9px] text-gray-600 w-16">OH share</span>
-                            <div className="flex-1 h-2 bg-[var(--bg-input)] rounded overflow-hidden">
+                            <span className="text-xs text-gray-400 w-20">OH share</span>
+                            <div className="flex-1 h-2.5 bg-[var(--bg-input)] rounded overflow-hidden">
                               <div className="h-full rounded bg-indigo-500/70" style={{ width: `${ohPctWidth}%` }} />
                             </div>
-                            <span className="text-[9px] text-indigo-300 w-8 text-right">{row.ohPct.toFixed(0)}%</span>
+                            <span className="text-xs text-indigo-300 w-8 text-right">{row.ohPct.toFixed(0)}%</span>
                           </div>
+
+                          {/* Scheduling insight */}
+                          {planExceeded && (
+                            <div className="mt-2 text-xs text-amber-300 bg-amber-900/15 rounded px-2 py-1">
+                              Plan exceeded by {(row.empLogged - row.plannedYearlyHrs).toFixed(0)} hrs — consider updating scenario
+                            </div>
+                          )}
+                          {!planExceeded && row.remainingHrs > 0 && (
+                            <div className="mt-2 text-xs text-blue-300">
+                              Schedule focus: {row.remainingHrs.toFixed(0)} hrs remaining to hit plan
+                            </div>
+                          )}
+                          {lowMargin && (
+                            <div className="mt-1 text-xs text-red-400">
+                              ⚠ True profit/hr after OH is negative — price future estimates higher
+                            </div>
+                          )}
                         </div>
                       )
                     })}
 
-                    {/* Scenario totals */}
+                    {/* Scenario totals footer */}
                     {empRows.length > 0 && overheadPerHour > 0 && (
-                      <div className="pt-3 border-t border-gray-700/50 flex flex-col sm:flex-row justify-between gap-2 text-xs mt-2">
+                      <div className="pt-3 border-t border-gray-700/50 flex flex-col sm:flex-row justify-between gap-2 text-sm">
                         <span className="text-gray-400">
-                          Forecast: {formatCurrency(forecastOverheadRecovered)} recovered / {formatCurrency(annualOH)} annual OH
+                          Actual: {formatCurrency(actualOverheadRecovered)} + Scenario remaining: {formatCurrency(scenarioRemainingRecovery)} = {formatCurrency(projectedTotal)}
                         </span>
-                        <span className={`font-bold ${forecastOverheadRecovered >= annualOH ? 'text-emerald-400' : 'text-yellow-400'}`}>
-                          {forecastOverheadRecovered >= annualOH
-                            ? '✓ Fully covered by scenario'
-                            : `${((forecastOverheadRecovered / annualOH) * 100).toFixed(0)}% covered`}
+                        <span className={`font-bold ${projectedTotal >= annualOH ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                          {projectedTotal >= annualOH
+                            ? '✓ Projected fully covered'
+                            : `${(projectedCoveredPct * 100).toFixed(0)}% projected`}
                         </span>
                       </div>
                     )}
-                    <p className="text-[9px] text-gray-700 mt-1">
-                      Forecast uses active projection scenario hours. Exact future logs unavailable — labeled as estimated.
-                    </p>
                   </div>
                 )}
 
                 {/* By Project view */}
                 {overheadViewMode === 'project' && (
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-semibold text-gray-500 uppercase mb-2">
-                      Project Contribution (Actual Logged Hours)
+                  <div className="space-y-3">
+                    <div className="text-sm font-semibold text-gray-300 mb-1">
+                      Project Contribution — Actual Logged Hours Only
                     </div>
                     {projRows.length === 0 && (
-                      <div className="text-xs text-gray-600 text-center py-4">No logged hours with project assignments found.</div>
+                      <div className="text-sm text-gray-400 text-center py-6">No logged hours with project assignments found.</div>
                     )}
                     {projRows.map((row: any) => (
-                      <div key={row.id} className="bg-[var(--bg-secondary)] rounded p-3">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-semibold text-gray-200 truncate max-w-[60%]">{row.name}</span>
-                          <span className="text-[9px] text-gray-600">{row.hrs.toFixed(1)} hrs logged</span>
+                      <div key={row.id} className="bg-[var(--bg-secondary)] rounded-lg border border-gray-700/60 p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-sm font-bold text-gray-100 truncate max-w-[60%]">{row.name}</span>
+                          <span className="text-sm font-bold text-gray-300">{row.hrs.toFixed(1)} hrs logged</span>
                         </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[10px] mb-2">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs mb-3">
                           <div>
-                            <div className="text-gray-600 mb-0.5">Bill Revenue</div>
+                            <div className="text-gray-400 mb-0.5">Bill Revenue</div>
                             <div className="font-bold text-blue-300">{formatCurrency(row.revenue)}</div>
                           </div>
                           <div>
-                            <div className="text-gray-600 mb-0.5">Direct Labor Cost</div>
+                            <div className="text-gray-400 mb-0.5">Direct Labor Cost</div>
                             <div className="font-bold text-red-400">{formatCurrency(row.directCost)}</div>
                           </div>
                           <div>
-                            <div className="text-gray-600 mb-0.5">Gross Contribution</div>
+                            <div className="text-gray-400 mb-0.5">Gross Contribution</div>
                             <div className={`font-bold ${row.grossContrib >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(row.grossContrib)}</div>
                           </div>
                           <div>
-                            <div className="text-gray-600 mb-0.5">OH Allocated</div>
+                            <div className="text-gray-400 mb-0.5">OH Allocated</div>
                             <div className="font-bold text-yellow-400">{formatCurrency(row.ohAllocated)}</div>
                           </div>
                           {recoveryModel === 'margin' && (
                             <div>
-                              <div className="text-gray-600 mb-0.5">True Profit After OH</div>
+                              <div className="text-gray-400 mb-0.5">True Profit After OH</div>
                               <div className={`font-bold ${row.trueProfit >= 0 ? 'text-emerald-300' : 'text-red-400'}`}>{formatCurrency(row.trueProfit)}</div>
                               {row.grossContrib < row.ohAllocated && (
-                                <div className="text-[9px] text-amber-500">⚠ Margin below OH</div>
+                                <div className="text-xs text-amber-400 mt-0.5">⚠ Margin below OH</div>
                               )}
                             </div>
                           )}
                         </div>
-                        {/* OH contribution bar */}
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[9px] text-gray-600 w-16">OH share</span>
-                          <div className="flex-1 h-2 bg-[var(--bg-input)] rounded overflow-hidden">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-400 w-20">OH share</span>
+                          <div className="flex-1 h-2.5 bg-[var(--bg-input)] rounded overflow-hidden">
                             <div className="h-full rounded bg-indigo-500/70" style={{ width: `${Math.min(row.ohPct, 100)}%` }} />
                           </div>
-                          <span className="text-[9px] text-indigo-300 w-8 text-right">{row.ohPct.toFixed(0)}%</span>
+                          <span className="text-xs text-indigo-300 w-8 text-right">{row.ohPct.toFixed(0)}%</span>
                         </div>
                       </div>
                     ))}
-                    <p className="text-[9px] text-gray-700 mt-1">
-                      By Project uses actual logged hours. Forecast uses active projection scenarios where exact future logs are unavailable.
+                    <p className="text-xs text-gray-400 mt-2">
+                      By Project shows actual logged hours only. Scenario remaining hours appear in By Employee view.
                     </p>
                   </div>
                 )}
 
                 {/* Owner vs team comparison */}
                 {ownerMonthsToRecover !== null && monthsToRecover !== null && ownerMonthsToRecover > monthsToRecover && (
-                  <div className="mt-4 bg-emerald-900/15 border border-emerald-700/30 rounded p-3 text-xs">
+                  <div className="mt-4 bg-emerald-900/15 border border-emerald-700/30 rounded p-3 text-sm">
                     <div className="font-semibold text-emerald-300 mb-1">Team Advantage</div>
-                    <p className="text-gray-400">
+                    <p className="text-gray-300">
                       Owner-only would recover overhead in{' '}
                       <span className="text-yellow-400 font-semibold">{ownerMonthsToRecover.toFixed(1)} months</span>.{' '}
                       With the full team scenario ({activeScen?.name}), overhead is recovered in{' '}

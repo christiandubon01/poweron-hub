@@ -3010,3 +3010,29 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 - Worker-cost formulas: Unchanged. getLoadedHourlyRate() used throughout.
 - No unrelated files touched: Confirmed.
 
+
+---
+
+## Claude Report — Team Overhead Tracker: Planning Clarity and Forecast Trust
+
+- Task completed: Yes
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
+- Commit hash: TBD
+- Typecheck result: PASS — zero errors
+- Root cause / user need: Forecast was double-counting logged hours (using full scenarioYearlyHours instead of remaining). Employee cards had no planning details (hrs/day, logged, remaining). All text was text-[9px]/text-[10px] with text-gray-600/700 — nearly invisible on dark backgrounds.
+- What changed: Full rewrite of Overhead Recovery Tracker IIFE. Three major areas: forecast math correction, employee card planning details, readability upgrade throughout.
+- Readability changes: All text-[9px]/text-[10px] → text-xs. text-gray-600/700 helper text → text-gray-400. KPI card labels text-xs. KPI values text-base font-bold. Card containers use p-3/p-4. Model description now in a visible bg-[var(--bg-secondary)] box. Legend text text-gray-300 instead of muted.
+- Actual vs forecast math: actualOverheadRecovered = actualLoggedHrs × overheadPerHour (unchanged, correct). scenarioRemainingHours = max(scenarioPlannedHours - actualLoggedHrs, 0). scenarioRemainingRecovery = scenarioRemainingHours × overheadPerHour. projectedTotal = actual + scenarioRemainingRecovery (no double-count). Scenario KPI label changed from "Forecasted (Scenario)" to "Scenario Remaining Recovery".
+- Employee planning details: Each worker card now shows: hrsPerDay (hrs/week ÷ 5), hrsPerWeek, hrsPerMonth (hrs/week × 4.33), weeksPerYear, plannedYearlyHrs (prominent header), empLogged (from empLogMap), remainingHrs = max(planned - logged, 0). Progress bar shows % of plan logged. Separate sections for Actual (logged) and Scenario Remaining money.
+- Hours/day/week/month/year behavior: Capacity strip shows 4 KPI boxes per worker. hrsPerDay shown with "@ 5 days/wk" note. All values from scenario hoursPerWeek and weeksPerYear.
+- Logged vs remaining hours behavior: empLogMap built from backup.logs (supports both empId and employeeId keys). Per-worker logged hours subtracted from planned to get remaining. planExceeded flag shown in amber if logged > planned.
+- Fixed recovery model behavior: overhead allocation = hours × overheadPerHour. Shown for actual (logged) and scenario remaining separately.
+- True margin model behavior: gross contribution and true profit after OH shown in each section. Warning shown if gross < OH allocation. Per-hr true profit shown in rate strip.
+- Settings overhead source behavior: reads backup.settings.overhead (categories: essential/extra/loans/vehicle). billableHrsYear key shared with Settings. No new overhead bucket created.
+- Worker-cost formula preservation: getLoadedHourlyRate() used throughout. Owner/1099 = base, W-2 = base × payrollMult. No changes to employeeCostUtils.ts.
+- Double verification against requested behavior: All checks passed (see FINAL CHAT REPORT).
+- Bugs / risks: empLogMap uses emp.id to match logs; if logs have empId = 'me' and owner has a different id, owner logged hours may not match. Acceptable for now — same limitation as previous version.
+- Manual QA performed: Typecheck only. Browser QA required.
+- Next recommended action: Browser QA. Confirm donut shows actual %, employee cards show hrs/day/week/month/year/logged/remaining, forecast labels are clearly "Scenario Remaining".
+- Compact handoff for next agent/chat: Overhead Recovery Tracker in V15rTeamPanel.tsx fully rebuilt. Forecast no longer double-counts: scenarioRemainingHours = max(planned - actualLogged, 0). empLogMap tracks per-employee logged hours. Employee cards show full planning detail: hrs/day/week/month/year, logged, remaining, progress bar, rate strip, actual money, scenario remaining money, scheduling insight copy. All text upgraded from text-[9px]/[10px]/gray-600/700 to text-xs/gray-400+. Typecheck clean.
+

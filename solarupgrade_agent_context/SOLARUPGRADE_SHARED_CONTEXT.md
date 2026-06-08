@@ -5090,3 +5090,22 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 - KPI cards: "Actual Remaining" and "Projected Status" are now separate, clearly labeled cards. Forecast not mixed into actual.
 - Next agent should know: Overhead Recovery Tracker math is now correct. Actual and forecast are separated at both the math layer and UI layer. No worker cost formulas changed. Existing toggles (Fixed/Margin, By Employee/Project) preserved.
 
+
+---
+
+## Shared Update — Team Overhead Tracker: Planning Clarity and Forecast Trust
+
+- Agent: Claude Code Sonnet 4.5 Medium
+- Branch: main
+- Commit: TBD
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
+- Typecheck: PASS
+- User-facing behavior changed: Employee cards now show full labor planning detail (hrs/day, hrs/week, hrs/month, weeks/yr, planned yearly hrs, logged hrs, remaining hrs, progress bar, rate strip, actual money, scenario remaining money, scheduling insight). Readability upgraded throughout. Forecast math corrected.
+- Actual/forecast behavior: actualOverheadRecovered from logged hours only. scenarioRemainingHours = max(scenarioPlannedHours - actualLoggedHrs, 0) — logged hours subtracted to prevent double-count. projectedTotal = actual + scenarioRemainingRecovery. KPI label "Scenario Remaining Recovery" (was "Forecasted").
+- Employee planning behavior: empLogMap built per-employee. Each card shows hrs/day, hrs/week, hrs/month, weeksPerYear, plannedYearlyHrs, loggedHrs, remainingHrs, progress bar, bill/loaded/gross/OH/profit per hr, actual money section, scenario remaining section.
+- Readability behavior: text-[9px]/[10px] → text-xs. text-gray-600/700 → text-gray-400. KPI values text-base font-bold. Card padding p-3/p-4. Model description in visible bg card.
+- Overhead source of truth: backup.settings.overhead (Settings Overhead Manager). No new bucket created.
+- Risks / follow-up: empLogMap matches on emp.id; owner logged as empId='me' may not match. Browser QA required.
+- Manual QA status: Typecheck only. Full browser QA needed.
+- Next agent should know: Overhead Recovery Tracker math is clean. No double-counting. Employee cards are full planning dashboards. Worker cost formulas (owner/1099/W-2) unchanged. Scenario KPI label is "Scenario Remaining Recovery" not "Forecasted". projectedTotal = actual + scenarioRemaining.
+
