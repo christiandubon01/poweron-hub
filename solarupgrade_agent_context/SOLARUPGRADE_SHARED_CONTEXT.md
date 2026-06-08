@@ -5475,3 +5475,28 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 - Next agent: if blank space persists after device QA, do safe-area dedupe and calendar overflow pass
 
 ---
+
+## Shared Update — Estimate Labor Hours by Worker Donut
+
+- Agent: Claude Code (Sonnet 4.6)
+- Branch: main
+- Commit: 6b0b59a
+- Files changed: src/components/v15r/V15rEstimateTab.tsx
+- Typecheck: PASS — zero errors
+
+- User-facing behavior changed: New "Labor Hours by Worker" section appears in the Estimate tab, immediately below the Internal Cost Breakdown / Margin Breakdown area. Shows a 140px SVG donut chart, hover tooltip, legend chips, and a compact worker breakdown table. Display-only — no estimate data changes.
+
+- Formula/source of truth:
+  - Hours: `getRowAllocations(row)` per labor row — exact allocation data if present, equal split fallback
+  - Direct labor cost: `allocatedHrs × getEmployeeCostRate(empId)` (Owner/1099 = base rate; W-2 = loaded rate)
+  - Quoted revenue: `allocatedHrs × row.rate` (task quoted rate, NOT employee bill rate)
+  - Overhead contribution: `workerHrs × ohPerHr` — same overhead formula as allocation modal (`defaultOHRate` or overhead buckets ÷ billableHrsYear)
+  - Profit after overhead: `quotedRevenue − directLaborCost − overheadContribution`
+
+- Preserved behavior: estTotals(), phase totals, contract amounts, deal overview, margin math, labor rows, allocation modal, MTO — all unchanged. Section is pure display.
+
+- Risks / follow-up: If ohPerHr = 0, a note prompts user to configure OH rate in Settings. No data mutations; safe to roll back independently.
+
+- Manual QA status: Typecheck only. Browser QA needed: verify donut slices, table, hover tooltip, and totals row with real multi-worker project data.
+
+- Next agent should know: V15rEstimateTab.tsx has new `SvgDonutChart` component (~line 54), `laborDonutHoveredIdx` state, and LABOR HOURS BY WORKER DONUT section (after showInternalBreakdown close, before VAULT HEALTH CHECK). Uses existing `getRowAllocations`, `getEmployeeCostRate`, `getEmployeeDisplayName`, `getEmployeeWorkerTypeName` helpers. No new files or packages.

@@ -3504,3 +3504,51 @@ V15rTeamPanel.tsx empRows now carry reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth,
 - Next recommended action: Open Rock'n Bar / El Paseo Bar in Material Takeoff tab, confirm Trim/Finish/other phase bar totals are non-zero and match the sum of visible row totals.
 
 - Compact handoff for next agent/chat: V15rMTOTab.tsx `renderPhaseGroups()` phase total loop — line ~797 changed `const cu = num(pbItem?.cost || 0)` to check `r.unitCost` first (same logic as `renderRow`). Root cause: phase total ignored row-level unitCost overrides; rows without Price Book links gave cu=0. Fix is a 2-line guard identical to the renderRow cu formula. Typecheck passes.
+
+---
+
+## Claude Report — Estimate Labor Hours by Worker Donut
+
+- Task completed: Yes
+- Files changed: src/components/v15r/V15rEstimateTab.tsx
+- Commit hash: 6b0b59a
+- Typecheck result: PASS — zero errors
+
+- Root cause / user need: No per-worker labor visibility in the Estimate tab. Users needed to see each laborer's share of total project hours with full economics (direct cost, overhead, quoted revenue, profit) without having to open the allocation modal for each row.
+
+- Chart placement: Inserted immediately after the `{showInternalBreakdown && (...)}` collapsible closing `)}` and before the VAULT HEALTH CHECK section. This places it right below the Internal Cost Breakdown / Margin Breakdown area.
+
+- Aggregation behavior:
+  - Loops all `p.laborRows` using the existing `getRowAllocations(row)` helper.
+  - `getRowAllocations` already handles: allocation-exact if `employeeAllocations` present, or equal split if only `employees` array, or full row to single empId/`me` fallback.
+  - Per worker: hours, directLaborCost, quotedRevenue, overheadContribution all accumulated in a `workerMap` keyed by empId.
+
+- Worker cost formulas:
+  - `getEmployeeCostRate(empId)` — Owner/1099 → base hourly rate, W-2 → loaded rate with payroll multiplier (same helper used by allocation modal)
+  - `directLaborCost = allocatedHrs × getEmployeeCostRate(empId)`
+  - `quotedRevenue = allocatedHrs × row.rate` (task quoted rate, NOT employee bill rate)
+
+- Overhead contribution formula:
+  - Uses same logic as allocation modal: `defaultOHRate` if > 0, else `(annual overhead from settings.overhead buckets) / billableHrsYear`
+  - `overheadContribution = workerProjectHrs × ohPerHr`
+  - Shows "$0 overhead" hint if ohPerHr = 0 with guidance to configure in Settings.
+
+- Profit after overhead formula:
+  - `profitAfterOverhead = quotedRevenue - directLaborCost - overheadContribution`
+  - Green when ≥ 0, red when < 0
+
+- Hover tooltip behavior:
+  - Hovering over donut slice, legend chip, or table row highlights all three simultaneously (index-based `laborDonutHoveredIdx` state).
+  - Tooltip replaces KPI summary panel with: Laborer name + type badge, Projected Hours, Share of Total, Direct Labor Cost, Overhead Contribution, Quoted Revenue, Profit After Overhead, Cost Rate ($/hr), Avg Quoted Rate ($/hr).
+
+- Empty state: "No labor hours assigned yet. Add labor rows or assign workers to see labor hour distribution." — shown if no workers with hours after aggregation.
+
+- Preserved behavior: estTotals(), all phase totals, contract amounts, deal overview, margin math, labor rows, allocation modal, Material Takeoff — all untouched. This section is display-only.
+
+- Bugs / risks: None identified. Section is a pure computation + display layer; no data mutations. If no OH rate configured, overhead column shows $0 with a note.
+
+- Manual QA performed: Typecheck only. Browser QA needed: open a project with multi-worker labor rows, confirm donut slices, legend, and table rows all match allocation data; confirm hover tooltip shows correct figures; confirm empty state shows for projects with no labor rows.
+
+- Next recommended action: Browser QA — open a project with labor rows assigned to multiple workers, verify chart slices match allocated hours, verify hover tooltip shows all 8 data points correctly.
+
+- Compact handoff for next agent/chat: V15rEstimateTab.tsx — new `SvgDonutChart` component added above `SvgPieChart` (~line 54). New `laborDonutHoveredIdx` state at component level. Labor Hours by Worker section inserted after `{showInternalBreakdown && ...}` close (before VAULT HEALTH CHECK). Uses `getRowAllocations()` to aggregate hours per worker, `getEmployeeCostRate()` for direct cost, `row.rate` for quoted revenue, settings overhead formula for ohPerHr. SVG donut with center label, hover tooltip replacing KPI panel, legend chips, breakdown table with totals row. No data mutations. Typecheck passes. Commit: 6b0b59a.
