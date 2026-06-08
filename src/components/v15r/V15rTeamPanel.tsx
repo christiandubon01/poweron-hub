@@ -1738,9 +1738,11 @@ export default function V15rTeamPanel() {
           const eid = log.empId || log.employeeId || ''
           empLogMap[eid] = (empLogMap[eid] || 0) + hrs
         })
-        // Translate 'me' key to owner's actual emp.id so per-worker lookups work
+        // Translate 'me' key to owner's actual emp.id so per-worker lookups work.
+        // Guard: only rename when owner's real id is NOT already 'me' — otherwise
+        // we'd self-assign empLogMap['me'] += empLogMap['me'] then delete it, wiping 240 hrs.
         const ownerEmpForLog = employees.find((e: any) => e.isOwner || String(e.name || '').toLowerCase().trim() === 'owner / me')
-        if (ownerEmpForLog && empLogMap['me'] !== undefined) {
+        if (ownerEmpForLog && ownerEmpForLog.id !== 'me' && empLogMap['me'] !== undefined) {
           empLogMap[ownerEmpForLog.id] = (empLogMap[ownerEmpForLog.id] || 0) + empLogMap['me']
           delete empLogMap['me']
         }
@@ -1777,7 +1779,8 @@ export default function V15rTeamPanel() {
         let forecastRevenue = 0
         let forecastDirectCost = 0
         ;mergedScenWorkers.forEach((w: any) => {
-          const emp = employees.find((e: any) => e.id === w.empId) || (w.empId === 'me' ? employees.find((e: any) => e.isOwner) : null)
+          const emp = employees.find((e: any) => e.id === w.empId) ||
+            (w.empId === 'me' ? employees.find((e: any) => e.isOwner || String(e.name || '').toLowerCase().trim() === 'owner / me') : null)
           if (!emp) return
           const plannedYrHrs = num(w.hoursPerWeek) * num(w.weeksPerYear)
           const empLogged = empLogMap[emp.id] || 0
@@ -1824,7 +1827,8 @@ export default function V15rTeamPanel() {
 
         // ── By-employee planning rows — all active employees via merged workers ──
         const empRows = mergedScenWorkers.map((w: any) => {
-          const emp = employees.find((e: any) => e.id === w.empId) || (w.empId === 'me' ? employees.find((e: any) => e.isOwner) : null)
+          const emp = employees.find((e: any) => e.id === w.empId) ||
+            (w.empId === 'me' ? employees.find((e: any) => e.isOwner || String(e.name || '').toLowerCase().trim() === 'owner / me') : null)
           if (!emp) return null
           const hrsPerWeek = num(w.hoursPerWeek)
           const weeksPerYear = num(w.weeksPerYear || 52)

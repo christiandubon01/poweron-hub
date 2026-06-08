@@ -5133,3 +5133,19 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 
 **Risks / follow-up**: Browser QA needed to confirm new employees appear correctly. If a new employee has no logged hours yet, their OH recovery will show $0 actual (correct).
 
+
+---
+
+## Shared Update — Team Tracker: Restore Owner Logged Hours
+
+- Agent: Claude Code (resumed session)
+- Branch: main
+- Commit: TBD
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
+- Typecheck: PASS
+- User-facing behavior changed: Owner / Me contribution card in Overhead Recovery Tracker now shows correct 240 logged hrs (was 0). Josh remains 14 hrs. Total Logged Billable Hours remains 254 hrs.
+- Root cause: empLogMap translation block self-deleted owner hours. When owner.id = 'me', the block set empLogMap['me'] = empLogMap['me'] + empLogMap['me'] then deleted it — wiping all 240 hrs. Fix: added guard `ownerEmpForLog.id !== 'me'` so the block is skipped when no rename is needed.
+- Hours matching behavior: empLogMap['me'] is now preserved when owner.id is 'me'. Per-worker lookup `empLogMap[emp.id]` = `empLogMap['me']` = 240. Employee Cards (filter l.empId === emp.id) and Tracker per-worker row now agree.
+- Risks / follow-up: If a future migration gives owner a real UUID and migrates logs, the translation block will fire correctly (guard condition becomes false). Browser QA required.
+- Manual QA status: Typecheck only.
+- Next agent should know: Owner logged hours bug was a self-delete in empLogMap translation. Fixed with id !== 'me' guard. No math formulas changed. No worker cost formulas changed. Josh unaffected.

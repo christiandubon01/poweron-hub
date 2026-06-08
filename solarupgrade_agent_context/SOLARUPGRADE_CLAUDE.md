@@ -3089,3 +3089,32 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 - Typecheck: PASS
 - Browser QA: Required (confirm new employee appears in both Projection Scenarios and Overhead Tracker)
 
+
+---
+
+## Claude Report — Team Tracker: Restore Owner Logged Hours
+
+- Task completed: Yes
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
+- Commit hash: TBD
+- Typecheck result: PASS — zero errors
+- Root cause: empLogMap translation block at lines 1741-1746 had a self-overwrite+delete bug. When the owner's emp.id is 'me' (legacy identity — no UUID ever assigned), the guard `empLogMap['me'] !== undefined` was true (240 hrs present), so the block ran: it SET `empLogMap['me'] = empLogMap['me'] + empLogMap['me'] = 480` (self-addition), then immediately called `delete empLogMap['me']`, wiping all 240 hrs. Per-worker lookup then got `empLogMap['me'] = undefined → 0`.
+
+- Employee Card hours source: `employeeStats` useMemo (line 882-905). Filters `(logs || []).filter(l => l.empId === emp.id)`. Since owner emp.id = 'me' and logs store empId = 'me', this works correctly and shows 240 hrs.
+
+- Tracker worker-hours source (before fix): `empLogMap` built from backup.logs, then translation block attempted to rename 'me' → owner.id. When owner.id was 'me', it destroyed the key.
+
+- What changed:
+  1. Added guard `ownerEmpForLog.id !== 'me'` to translation block — skip rename when owner's id IS already 'me' (no-op needed, key is already correct)
+  2. Hardened forecast workers loop owner fallback: added name check `|| String(e.name||'').toLowerCase().trim() === 'owner / me'` alongside `e.isOwner`
+  3. Hardened empRows owner fallback: same name check added
+
+- Owner logged hours verified: 240 hrs (empLogMap['me'] preserved; per-worker lookup emp.id='me' → empLogMap['me']=240)
+- Josh logged hours verified: 14 hrs (unchanged, Josh uses real UUID — not affected)
+- Total logged hours verified: 254 hrs (actualLoggedHrs loop unchanged — already worked correctly)
+- Overhead recovery math preserved: actualOverheadRecovered = actualLoggedHrs × overheadPerHour (unchanged formula)
+- Worker-cost formula preservation: getLoadedHourlyRate() unchanged, no edits to employeeCostUtils.ts
+- Bugs / risks: If a future migration assigns the owner a real UUID and migrates logs, the translation block will correctly rename 'me' → UUID. No risk introduced.
+- Manual QA performed: Typecheck only. Browser QA required to confirm Owner card shows 240 hrs.
+- Next recommended action: Browser QA — open Team tab, Overhead Recovery Tracker, By Employee view, confirm Owner card shows 240 hrs, Josh shows 14 hrs, total shows 254 hrs.
+- Compact handoff for next agent/chat: Owner / Me showing 0 hrs in Overhead Tracker was caused by empLogMap translation block that self-deleted empLogMap['me'] when owner.id = 'me'. Fixed with ownerEmpForLog.id !== 'me' guard. Also hardened owner fallback in empRows and forecast loop to also match by name. Typecheck clean.
