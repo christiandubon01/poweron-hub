@@ -3119,3 +3119,82 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 - Next recommended action: Browser QA — open Team tab, Overhead Recovery Tracker, By Employee view, confirm Owner card shows 240 hrs, Josh shows 14 hrs, total shows 254 hrs.
 - Compact handoff for next agent/chat: Owner / Me showing 0 hrs in Overhead Tracker was caused by empLogMap translation block that self-deleted empLogMap['me'] when owner.id = 'me'. Fixed with ownerEmpForLog.id !== 'me' guard. Also hardened owner fallback in empRows and forecast loop to also match by name. Typecheck clean.
 
+
+---
+
+## Claude Report — Team Tab: Cost Settings and Employee Detail Modals
+
+- Task completed: Yes
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
+- Commit hash: TBD
+- Typecheck result: PASS — zero errors
+
+- Root cause / user need: Team tab too crowded; Employee Cost Structure and Payroll Multiplier were inline, making the tab tall. Employee cards showed too many details. No quick way to see per-employee projections, W-2 burden breakdown, or PTO accrual.
+
+- What changed:
+  1. Removed inline <EmployeeCostStructure> from Team tab main flow
+  2. Added "Team Cost Settings" button in header (next to Invite Beta User)
+  3. Added TeamCostSettingsModal component — contains cost structure, payroll multiplier, PTO/sick defaults, AI rate analysis, Save button
+  4. Added EmployeeDetailModal component — full employee details on card click
+  5. Rewrote EmployeeCard to compact version (name, position, stats, 4 rates, margin only)
+  6. Made employee card wrappers clickable; edit/delete use stopPropagation to avoid triggering detail modal
+  7. Added showCostSettingsModal and selectedEmployee state in main component
+
+- Team Cost Settings modal behavior:
+  - Opens via "Team Cost Settings" button (top-right header area, always visible)
+  - Contains: cost line items (add/delete/edit), payroll multiplier, PTO defaults (days/yr, sick/yr, hrs/day), AI rate analysis
+  - Save button writes employeeCosts + payrollMult + ptoDefaults to backup.settings, dispatches storage event
+  - Modal is scrollable, max-h-[90vh]
+
+- Employee card compact behavior:
+  - Shows: Name, Position, worker type badge (Owner/W-2/1099), All Time Hrs, All Jobs, Base Wage, Loaded Cost, Bill Rate, Margin/hr
+  - "Click for full details" hint at bottom
+  - No monthly breakdown, no 6-month cost, no total billable inline
+  - hover:border-gray-500 visual affordance for click
+
+- Employee detail modal behavior:
+  - Opens on card click (outer wrapper onClick)
+  - Shows: name, role, worker type badge, all-time hours, all jobs, hourly rates, W-2 cost portion, projection vs logged, monthly cost breakdown, all-time billable totals, PTO/sick accrual (W-2 only)
+  - Reads active scenario from backup.settings.projectionScenarios[0] for projected hrs
+  - Progress bar shows % of planned year logged
+  - Max-h-[92vh], scrollable
+
+- W-2 cost portion behavior:
+  - For W-2: shows base, loaded, added portion (+$/hr), added percentage (+X.XX%)
+  - Formula: addedCostPerHour = profile.payrollBurdenHourly; addedCostPct = (addedCostPerHour / baseHourly) × 100
+  - For Owner and 1099: shows "No W-2 burden applied — loaded cost = base cost"
+  - payrollMult shown as footnote
+
+- PTO / sick accrual behavior:
+  - W-2 only (not shown for Owner or 1099)
+  - Reads ptoDefaults from backup.settings.ptoDefaults (set in Team Cost Settings)
+  - Defaults: 10 PTO days/yr, 5 sick days/yr, 8 hrs/day
+  - Projected PTO hours = ptoDaysYear × hoursPerDay
+  - Projected sick hours = sickDaysYear × hoursPerDay
+  - Accrued = (loggedHours / plannedYearlyHrs) × projectedHours (guard: shows 0 if plannedYearlyHrs = 0)
+  - Labeled "Planning view only. Configure defaults in Team Cost Settings."
+
+- Owner/W-2/1099 formula preservation: All formulas unchanged. getWorkerCostProfile, getLoadedHourlyRate, calcEmployeeCost, workerTypeLabel all used same as before. No changes to employeeCostUtils.ts.
+
+- Existing Team section preservation: Projection Scenarios and Overhead Recovery Tracker untouched. Org Pyramid unchanged. Hours by Employee, Labor Trend chart, Per-Project Labor Flow, AI Insight, 6-Month Forecast chart all preserved.
+
+- Double verification against requested behavior:
+  - "Team Cost Settings" button near Invite Beta User: ✓
+  - Cost structure + payroll multiplier in modal: ✓
+  - Save behavior preserved: ✓
+  - Employee cards compact with only requested fields: ✓
+  - Cards clickable for detail modal: ✓
+  - Edit/Delete stopPropagation: ✓
+  - Employee detail modal opens with full details: ✓
+  - W-2 cost portion + percentage shown: ✓
+  - Owner/1099 "No W-2 burden": ✓
+  - PTO/sick projected + accrued W-2 only: ✓
+  - Future employees appear: ✓ (iterates over employees array, not snapshot)
+
+- Bugs / risks: EmployeeDetailModal reads scenarios[0] for projected hours — it uses first scenario, not necessarily the active one. If the user has multiple scenarios, the detail will always show scenario[0]. Acceptable for now; active scenario ID tracking would require passing more state down.
+
+- Manual QA performed: Typecheck only. Browser QA required.
+
+- Next recommended action: Browser QA — open Team tab, confirm: (1) Team Cost Settings button visible; (2) modal opens with cost structure + PTO section; (3) employee cards compact; (4) clicking a card opens detail modal; (5) W-2 employee shows cost portion + PTO accrual; (6) Owner shows "no W-2 burden"; (7) edit/delete buttons still work from card.
+
+- Compact handoff for next agent/chat: TeamCostSettingsModal (line ~767) wraps cost structure + payroll multiplier + PTO defaults. EmployeeDetailModal (line ~975) shows full details on card click. Compact EmployeeCard (line ~552) shows name/position/stats/4-rates/margin only. State vars showCostSettingsModal and selectedEmployee added to main component. EmployeeCostStructure component kept in file (still callable) but no longer rendered inline — it's replaced by TeamCostSettingsModal. All formulas unchanged.

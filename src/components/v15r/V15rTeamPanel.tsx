@@ -553,82 +553,65 @@ function EmployeeCard({
   employee,
   totalHours,
   jobCount,
-  monthlyHours,
-  onToggleMultiplier,
   backup,
 }: {
   employee: EnhancedEmployee
   totalHours: number
   jobCount: number
-  monthlyHours: number
-  onToggleMultiplier: (empId: string) => void
   backup?: any
+  // legacy props — kept for call-site compat, unused in compact view
+  monthlyHours?: number
+  onToggleMultiplier?: (empId: string) => void
 }) {
-  // Use shared helper — single source of truth for all worker cost rules.
   const profile = getWorkerCostProfile(employee, backup?.settings)
   const baseWage = profile.baseHourly
   const loadedCostRate = profile.loadedHourly
-  const payrollMult = profile.payrollMult
-  // 3. Bill rate — what you charge the customer (independent)
   const billRate = num(employee.billRate)
-  // 4. Margin/hr — bill rate minus loaded cost
   const marginPerHour = parseFloat((billRate - loadedCostRate).toFixed(2))
-
   const isOwner = employee.isOwner || false
-
-  const billAmount = totalHours * billRate
-  const costAmount = totalHours * loadedCostRate
-  const margin = billAmount - costAmount
-
-  const cost = backup ? calcEmployeeCost(employee, backup) : null
+  const typeLabel = isOwner ? 'Owner 👑' : profile.workerType === '1099' ? '1099' : 'W-2'
+  const typeCls = isOwner ? 'bg-blue-600/40 text-blue-300' : 'bg-gray-700/60 text-gray-400'
 
   return (
-    <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-4">
-      <div className="mb-3 flex items-start justify-between">
-        <div>
-          <h3 className="font-bold text-gray-100 text-base">{employee.name}</h3>
-          <p className="text-sm text-gray-500">{employee.role || 'Team Member'}</p>
+    <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-4 cursor-pointer hover:border-gray-500 transition-colors">
+      {/* Name + worker-type badge */}
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="font-bold text-gray-100 text-sm leading-tight truncate">{employee.name}</h3>
+          <p className="text-xs text-gray-500 mt-0.5 truncate">{employee.role || 'Team Member'}</p>
         </div>
-        {isOwner && <span className="text-xs px-2 py-1 bg-blue-600/40 text-blue-300 rounded">Owner 👑</span>}
+        <span className={`text-xs px-2 py-0.5 rounded shrink-0 ${typeCls}`}>{typeLabel}</span>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
-        <div className="bg-[var(--bg-secondary)] rounded px-3 py-2">
-          <div className="text-xs font-semibold text-gray-500 uppercase mb-1">All Time Hrs</div>
-          <div className="text-blue-400 font-semibold">{Math.round(totalHours)}</div>
+      {/* Stats row */}
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <div className="bg-[var(--bg-secondary)] rounded px-2 py-1.5 text-center">
+          <div className="text-[10px] text-gray-500 uppercase mb-0.5">All Time Hrs</div>
+          <div className="text-xs font-bold text-blue-400">{Math.round(totalHours)}</div>
         </div>
-        <div className="bg-[var(--bg-secondary)] rounded px-3 py-2">
-          <div className="text-xs font-semibold text-gray-500 uppercase mb-1">All Jobs</div>
-          <div className="text-emerald-400 font-semibold">{jobCount}</div>
+        <div className="bg-[var(--bg-secondary)] rounded px-2 py-1.5 text-center">
+          <div className="text-[10px] text-gray-500 uppercase mb-0.5">All Jobs</div>
+          <div className="text-xs font-bold text-emerald-400">{jobCount}</div>
         </div>
       </div>
 
-      {/* ── Rate block: Base Wage / Loaded Cost / Bill Rate / Margin ── */}
-      <div className="mb-4 space-y-2">
-        <div className="text-xs font-semibold text-gray-500 uppercase mb-1">Hourly Rates</div>
-
-        {/* Base Wage */}
-        <div className="flex justify-between items-baseline text-sm">
+      {/* Rates */}
+      <div className="space-y-1.5 text-xs">
+        <div className="flex justify-between items-baseline">
           <span className="text-gray-400">Base Wage</span>
-          <span className="font-semibold text-gray-200">${baseWage.toFixed(2)}/hr</span>
+          <span className="text-gray-200 font-semibold">${baseWage.toFixed(2)}/hr</span>
         </div>
-
-        {/* Loaded Cost Rate (amber, read-only) */}
-        <div className="flex justify-between items-baseline text-sm">
+        <div className="flex justify-between items-baseline">
           <span className="text-gray-400">Loaded Cost</span>
-          <span className="font-bold text-amber-400">${loadedCostRate.toFixed(2)}/hr</span>
+          <span className="text-amber-400 font-semibold">${loadedCostRate.toFixed(2)}/hr</span>
         </div>
-
-        {/* Bill Rate (green, independently set) */}
-        <div className="flex justify-between items-baseline text-sm">
+        <div className="flex justify-between items-baseline">
           <span className="text-gray-400">Bill Rate</span>
-          <span className="font-bold text-emerald-400">${billRate.toFixed(2)}/hr</span>
+          <span className="text-emerald-400 font-semibold">${billRate.toFixed(2)}/hr</span>
         </div>
-
-        {/* Margin/hr */}
-        <div className="flex justify-between items-center text-sm pt-2 border-t border-gray-700/50">
+        <div className="flex justify-between items-center pt-1.5 border-t border-gray-700/40">
           <span className="text-gray-400 flex items-center gap-1">
-            {marginPerHour < 0 && <AlertCircle className="w-3.5 h-3.5 text-red-400" />}
+            {marginPerHour < 0 && <AlertCircle className="w-3 h-3 text-red-400" />}
             Margin/hr
           </span>
           <span className={`font-bold ${marginPerHour >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -637,45 +620,8 @@ function EmployeeCard({
         </div>
       </div>
 
-      {/* Multiplier footnote */}
-      <div className="mb-4 pb-3 border-b border-gray-700 text-xs text-gray-600">
-        {workerTypeLabel(profile.workerType, payrollMult)}
-      </div>
-
-      {cost && (
-        <div className="space-y-1 text-xs">
-          <div className="bg-[var(--bg-secondary)] rounded p-2 mb-2">
-            <div className="text-[10px] font-semibold text-gray-500 uppercase mb-1">Monthly Cost Breakdown</div>
-            <div className="text-gray-300 text-[11px]">
-              Base: <span className="text-blue-400 font-semibold">{formatCurrency(cost.baseMonthlyCost)}</span>
-              {' | '}Taxes/Ins: <span className="text-orange-400 font-semibold">{formatCurrency(cost.taxesAndInsurance)}</span>
-              {' | '}Total: <span className="text-white font-bold">{formatCurrency(cost.loadedMonthlyCost)}/mo</span>
-            </div>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">6-Month Cost</span>
-            <span className="text-yellow-400">{formatCurrency(cost.sixMonthCost)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">Revenue needed to cover</span>
-            <span className="text-cyan-400 font-medium">{formatCurrency(cost.targetRevenue)}/mo</span>
-          </div>
-        </div>
-      )}
-
-      <div className="pt-4 border-t border-gray-700 mt-2">
-        <div className="flex justify-between items-baseline mb-2 text-sm">
-          <span className="text-gray-400">Total Billable</span>
-          <span className="text-lg font-bold text-blue-400">{formatCurrency(billAmount)}</span>
-        </div>
-        <div className="flex justify-between items-baseline mb-2 text-sm">
-          <span className="text-gray-400">Total Cost (loaded)</span>
-          <span className="text-lg font-bold text-orange-400">{formatCurrency(costAmount)}</span>
-        </div>
-        <div className="flex justify-between items-baseline pt-2 border-t border-gray-700 text-sm">
-          <span className="font-semibold text-gray-300">Profit Margin</span>
-          <span className={margin > 0 ? 'text-base font-bold text-emerald-400' : 'text-base font-bold text-red-400'}>{formatCurrency(margin)}</span>
-        </div>
+      <div className="mt-3 pt-2 border-t border-gray-700/30 text-[10px] text-gray-600 text-center">
+        Click for full details
       </div>
     </div>
   )
@@ -817,6 +763,498 @@ function EmployeeEditModal({
   )
 }
 
+// ── TEAM COST SETTINGS MODAL ─────────────────────────────────────────────────
+function TeamCostSettingsModal({ backup, onClose }: { backup: BackupData; onClose: () => void }) {
+  const settings = (backup?.settings || {}) as any
+  const [costs, setCosts] = useState<any[]>(settings.employeeCosts || [
+    { id: 'wc', label: 'Workers Comp', amount: 0 },
+    { id: 'pp', label: 'Payroll Processing', amount: 0 },
+    { id: 'hi', label: 'Health Insurance', amount: 0 },
+    { id: 'ben', label: 'Benefits', amount: 0 },
+    { id: 'li', label: 'Liability Insurance', amount: 0 },
+    { id: 'oth', label: 'Other', amount: 0 },
+  ])
+  const [payrollMult, setPayrollMult] = useState<number>(settings.payrollMult || 1.20)
+  const [ptoDaysYear, setPtoDaysYear] = useState<number>(settings.ptoDefaults?.ptoDaysYear ?? 10)
+  const [sickDaysYear, setSickDaysYear] = useState<number>(settings.ptoDefaults?.sickDaysYear ?? 5)
+  const [ptoHoursPerDay, setPtoHoursPerDay] = useState<number>(settings.ptoDefaults?.hoursPerDay ?? 8)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiResponse, setAiResponse] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  const monthlyTotal = costs.reduce((s: number, c: any) => s + num(c.amount || 0), 0)
+  const annualTotal = monthlyTotal * 12
+
+  const persist = () => {
+    pushState()
+    backup.settings.employeeCosts = costs
+    backup.settings.payrollMult = payrollMult
+    ;(backup.settings as any).ptoDefaults = { ptoDaysYear, sickDaysYear, hoursPerDay: ptoHoursPerDay }
+    saveBackupData(backup)
+    window.dispatchEvent(new Event('storage'))
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  const analyzeRates = async () => {
+    setAiLoading(true)
+    setAiResponse('')
+    try {
+      const fullBackup = getBackupData()
+      const pipelineTotal = calcPipeline(fullBackup.projects || [])
+      const serviceLogs = fullBackup.serviceLogs || []
+      const totalServiceQuoted = serviceLogs.reduce((sum: number, log: any) => sum + (num(log.quoted) || 0), 0)
+      const monthlyServicePace = totalServiceQuoted / 12
+      const systemPrompt = 'You are a business cost advisor for a small California electrical contractor. Analyze these employee costs and provide: (1) whether the payroll multiplier is appropriate for California C-10 contractors, (2) at what monthly revenue this structure becomes profitable, (3) specific rate suggestions, (4) one actionable recommendation. Be concise and specific.'
+      const userMessage = `Cost Structure Analysis:\n\nCost Items (Monthly):\n${JSON.stringify(costs, null, 2)}\n\nPayroll Multiplier: ${payrollMult}x\nPersonal Income Goal: ${fmt((fullBackup.settings?.personalIncomeGoal || 0))}\nPipeline Total: ${fmt(pipelineTotal)}\nMonthly Service Pace: ${fmt(monthlyServicePace)}`
+      const data = await callClaude({ max_tokens: 1024, system: systemPrompt, messages: [{ role: 'user', content: userMessage }] })
+      setAiResponse(extractText(data))
+    } catch (error) {
+      setAiResponse(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  const addCostItem = () => setCosts([...costs, { id: 'other-' + Date.now(), label: 'Other', amount: 0 }])
+  const deleteCostItem = (id: string) => setCosts(costs.filter((c: any) => c.id !== id))
+  const updateCostItem = (id: string, field: 'label' | 'amount', value: any) =>
+    setCosts(costs.map((c: any) => c.id === id ? { ...c, [field]: value } : c))
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
+      <div className="w-full max-w-lg bg-[var(--bg-primary)] border border-gray-700 rounded-xl shadow-2xl flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 shrink-0">
+          <h2 className="text-lg font-bold text-gray-100">⚙️ Team Cost Settings</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 transition"><X className="w-5 h-5" /></button>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="overflow-y-auto p-6 space-y-6 flex-1">
+
+          {/* Employee Cost Structure */}
+          <div>
+            <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wide mb-4">Employee Cost Structure</h3>
+            <div className="space-y-3 mb-4">
+              {costs.map((cost: any) => (
+                <div key={cost.id} className="flex gap-3 items-center">
+                  <input
+                    type="text"
+                    value={cost.label}
+                    onChange={(e) => updateCostItem(cost.id, 'label', e.target.value)}
+                    className="flex-1 bg-[var(--bg-input)] border border-gray-700 text-gray-100 text-sm px-3 py-2 rounded focus:outline-none focus:border-blue-600"
+                    placeholder="Item name"
+                  />
+                  <div className="flex items-center gap-1">
+                    <span className="text-gray-500 text-sm">$</span>
+                    <input
+                      type="number"
+                      value={cost.amount || ''}
+                      onChange={(e) => updateCostItem(cost.id, 'amount', parseFloat(e.target.value) || 0)}
+                      className="w-28 bg-[var(--bg-input)] border border-gray-700 text-gray-100 text-sm px-3 py-2 rounded focus:outline-none focus:border-blue-600"
+                      placeholder="0"
+                      step="0.01"
+                    />
+                    <span className="text-gray-500 text-xs">/mo</span>
+                  </div>
+                  <button onClick={() => deleteCostItem(cost.id)} className="p-1.5 bg-red-600/30 text-red-400 rounded hover:bg-red-600/50 transition">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button onClick={addCostItem} className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600/30 text-blue-300 rounded-lg hover:bg-blue-600/50 transition text-sm font-semibold mb-4">
+              <Plus className="w-4 h-4" /> Add Cost Item
+            </button>
+
+            {/* Totals */}
+            <div className="space-y-2 text-sm border-t border-gray-700 pt-4">
+              <div className="flex justify-between items-baseline">
+                <span className="text-gray-400">Monthly Total</span>
+                <span className="font-bold text-emerald-400">{formatCurrency(monthlyTotal)}</span>
+              </div>
+              <div className="flex justify-between items-baseline">
+                <span className="text-gray-400">Annual Total</span>
+                <span className="font-bold text-blue-400">{formatCurrency(annualTotal)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Payroll Multiplier */}
+          <div className="border-t border-gray-700 pt-4">
+            <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wide mb-3">Payroll Multiplier</h3>
+            <div className="flex justify-between items-center">
+              <label className="text-sm text-gray-300">W-2 multiplier</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  value={payrollMult}
+                  onChange={(e) => setPayrollMult(parseFloat(e.target.value) || 1.20)}
+                  step="0.01" min="1.0"
+                  className="w-20 bg-[var(--bg-input)] border border-gray-700 text-gray-100 text-sm px-2 py-1.5 rounded focus:outline-none focus:border-blue-600"
+                />
+                <span className="text-gray-500 text-sm">x</span>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">Applied to W-2 employee base cost. Owner and 1099 are not affected.</p>
+          </div>
+
+          {/* PTO / Sick Defaults */}
+          <div className="border-t border-gray-700 pt-4">
+            <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wide mb-3">PTO / Sick Time Defaults</h3>
+            <p className="text-xs text-gray-500 mb-3">Used in Employee Detail cards to project W-2 PTO and sick accrual. Planning only.</p>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <label className="text-sm text-gray-300">PTO days/year</label>
+                <input
+                  type="number" min="0" step="1"
+                  value={ptoDaysYear}
+                  onChange={(e) => setPtoDaysYear(parseInt(e.target.value) || 0)}
+                  className="w-20 bg-[var(--bg-input)] border border-gray-700 text-gray-100 text-sm px-2 py-1.5 rounded focus:outline-none focus:border-blue-600"
+                />
+              </div>
+              <div className="flex justify-between items-center">
+                <label className="text-sm text-gray-300">Sick days/year</label>
+                <input
+                  type="number" min="0" step="1"
+                  value={sickDaysYear}
+                  onChange={(e) => setSickDaysYear(parseInt(e.target.value) || 0)}
+                  className="w-20 bg-[var(--bg-input)] border border-gray-700 text-gray-100 text-sm px-2 py-1.5 rounded focus:outline-none focus:border-blue-600"
+                />
+              </div>
+              <div className="flex justify-between items-center">
+                <label className="text-sm text-gray-300">Hours/day basis</label>
+                <input
+                  type="number" min="1" max="24" step="0.5"
+                  value={ptoHoursPerDay}
+                  onChange={(e) => setPtoHoursPerDay(parseFloat(e.target.value) || 8)}
+                  className="w-20 bg-[var(--bg-input)] border border-gray-700 text-gray-100 text-sm px-2 py-1.5 rounded focus:outline-none focus:border-blue-600"
+                />
+              </div>
+              <div className="text-xs text-gray-600 bg-[var(--bg-secondary)] rounded p-2">
+                Projected PTO: {(ptoDaysYear * ptoHoursPerDay).toFixed(0)} hrs/yr · Sick: {(sickDaysYear * ptoHoursPerDay).toFixed(0)} hrs/yr
+              </div>
+            </div>
+          </div>
+
+          {/* AI Rate Analysis */}
+          <div className="border-t border-gray-700 pt-4">
+            <button
+              onClick={analyzeRates}
+              disabled={aiLoading}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-yellow-600/30 text-yellow-300 rounded-lg hover:bg-yellow-600/50 transition text-sm font-semibold disabled:opacity-50"
+            >
+              {aiLoading ? <><span className="animate-spin">⏳</span> Analyzing...</> : <><Zap className="w-4 h-4" /> AI Rate Analysis ⚡</>}
+            </button>
+            {aiResponse && (
+              <div className="mt-3 bg-[var(--bg-secondary)] rounded-lg border border-yellow-500/50 p-3">
+                <div className="flex items-center gap-2 mb-2"><Zap className="w-4 h-4 text-yellow-400" /><span className="text-xs font-bold text-yellow-400 uppercase">AI Rate Analysis</span></div>
+                <div className="text-xs text-gray-200 leading-relaxed whitespace-pre-wrap">{aiResponse}</div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer — Save */}
+        <div className="px-6 py-4 border-t border-gray-700 shrink-0 flex gap-3">
+          <button onClick={onClose} className="px-4 py-2.5 bg-gray-700/50 text-gray-300 rounded-lg text-sm font-semibold hover:bg-gray-700 transition">Cancel</button>
+          <button
+            onClick={persist}
+            className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-bold transition ${saved ? 'bg-emerald-600 text-white' : 'bg-emerald-600/50 text-emerald-300 hover:bg-emerald-600/70'}`}
+          >
+            {saved ? '✓ Saved' : 'Save Cost Settings'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── EMPLOYEE DETAIL MODAL ──────────────────────────────────────────────────────
+function EmployeeDetailModal({
+  employee,
+  backup,
+  totalHours,
+  jobCount,
+  onClose,
+}: {
+  employee: EnhancedEmployee
+  backup: BackupData
+  totalHours: number
+  jobCount: number
+  onClose: () => void
+}) {
+  const settings = (backup?.settings || {}) as any
+  const profile = getWorkerCostProfile(employee, settings)
+  const { baseHourly, loadedHourly, payrollBurdenHourly, payrollMult, workerType } = profile
+  const billRate = num(employee.billRate)
+  const marginPerHour = parseFloat((billRate - loadedHourly).toFixed(2))
+  const isW2 = workerType === 'w2'
+  const isOwner = workerType === 'owner'
+
+  // W-2 added cost portion
+  const addedCostPerHour = payrollBurdenHourly
+  const addedCostPct = baseHourly > 0 ? (addedCostPerHour / baseHourly) * 100 : 0
+
+  // Scenario hours — find this employee in the active/first scenario
+  const scenarios: any[] = settings?.projectionScenarios || []
+  const activeScen = scenarios[0]
+  const workerEntry = (activeScen?.workers || []).find((w: any) =>
+    w.empId === employee.id ||
+    (employee.id === 'me' && w.empId === 'me') ||
+    (employee.isOwner && (w.empId === 'me' || w.empId === employee.id))
+  )
+  const hrsPerWeek = num(workerEntry?.hoursPerWeek || 0)
+  const weeksPerYear = num(workerEntry?.weeksPerYear || 52)
+  const hrsPerDay = hrsPerWeek > 0 ? hrsPerWeek / 5 : 0
+  const hrsPerMonth = hrsPerWeek * 4.33
+  const plannedYearlyHrs = hrsPerWeek * weeksPerYear
+  const remainingHrs = Math.max(0, plannedYearlyHrs - totalHours)
+  const progressPct = plannedYearlyHrs > 0 ? Math.min((totalHours / plannedYearlyHrs) * 100, 100) : 0
+
+  // Monthly breakdown
+  const cost = calcEmployeeCost(employee, backup)
+
+  // Totals from logged hours
+  const totalBillable = totalHours * billRate
+  const totalLoadedCost = totalHours * loadedHourly
+  const profitMargin = totalBillable - totalLoadedCost
+
+  // PTO accrual (W-2 only)
+  const ptoDefaults = settings.ptoDefaults || { ptoDaysYear: 10, sickDaysYear: 5, hoursPerDay: 8 }
+  const projPtoHours = ptoDefaults.ptoDaysYear * ptoDefaults.hoursPerDay
+  const projSickHours = ptoDefaults.sickDaysYear * ptoDefaults.hoursPerDay
+  const ptoAccrued = plannedYearlyHrs > 0 ? (totalHours / plannedYearlyHrs) * projPtoHours : 0
+  const sickAccrued = plannedYearlyHrs > 0 ? (totalHours / plannedYearlyHrs) * projSickHours : 0
+
+  const typeLabel = isOwner ? 'Owner' : isW2 ? 'W-2 Employee' : '1099 Contractor'
+  const workerTypeBadgeCls = isOwner ? 'bg-blue-600/40 text-blue-300' : isW2 ? 'bg-emerald-700/40 text-emerald-300' : 'bg-amber-700/40 text-amber-300'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,0.75)' }}>
+      <div className="w-full max-w-lg bg-[var(--bg-primary)] border border-gray-700 rounded-xl shadow-2xl flex flex-col max-h-[92vh]">
+        {/* Header */}
+        <div className="flex items-start justify-between px-6 py-4 border-b border-gray-700 shrink-0">
+          <div>
+            <h2 className="text-lg font-bold text-gray-100">{employee.name}</h2>
+            <p className="text-sm text-gray-400">{employee.role || 'Team Member'}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`text-xs px-2 py-1 rounded font-semibold ${workerTypeBadgeCls}`}>{typeLabel}</span>
+            <button onClick={onClose} className="text-gray-500 hover:text-gray-300 transition"><X className="w-5 h-5" /></button>
+          </div>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="overflow-y-auto p-6 space-y-5 flex-1">
+
+          {/* All-time stats */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-[var(--bg-secondary)] rounded-lg p-3 text-center">
+              <div className="text-xs text-gray-500 uppercase mb-1">All Time Hours</div>
+              <div className="text-xl font-bold text-blue-400">{Math.round(totalHours)}</div>
+            </div>
+            <div className="bg-[var(--bg-secondary)] rounded-lg p-3 text-center">
+              <div className="text-xs text-gray-500 uppercase mb-1">All Jobs</div>
+              <div className="text-xl font-bold text-emerald-400">{jobCount}</div>
+            </div>
+          </div>
+
+          {/* Hourly rates */}
+          <div className="bg-[var(--bg-secondary)] rounded-lg p-4">
+            <div className="text-xs font-bold text-gray-400 uppercase mb-3">Hourly Rates</div>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Base Wage</span>
+                <span className="text-gray-200 font-semibold">${baseHourly.toFixed(2)}/hr</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Loaded Cost</span>
+                <span className="text-amber-400 font-semibold">${loadedHourly.toFixed(2)}/hr</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Bill Rate</span>
+                <span className="text-emerald-400 font-semibold">${billRate.toFixed(2)}/hr</span>
+              </div>
+              <div className="flex justify-between pt-2 border-t border-gray-700/50">
+                <span className="text-gray-400 flex items-center gap-1">
+                  {marginPerHour < 0 && <AlertCircle className="w-3.5 h-3.5 text-red-400" />}
+                  Margin/hr
+                </span>
+                <span className={`font-bold ${marginPerHour >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {marginPerHour >= 0 ? '+' : ''}${marginPerHour.toFixed(2)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* W-2 added cost portion */}
+          {isW2 ? (
+            <div className="bg-amber-900/20 border border-amber-700/40 rounded-lg p-4">
+              <div className="text-xs font-bold text-amber-400 uppercase mb-3">Employee Cost Portion Over Base Wage</div>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Base wage</span>
+                  <span className="text-gray-200">${baseHourly.toFixed(2)}/hr</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Loaded cost</span>
+                  <span className="text-amber-400">${loadedHourly.toFixed(2)}/hr</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Added portion</span>
+                  <span className="text-orange-400 font-semibold">+${addedCostPerHour.toFixed(2)}/hr</span>
+                </div>
+                <div className="flex justify-between pt-2 border-t border-amber-700/30">
+                  <span className="text-gray-400">Added percentage</span>
+                  <span className="text-orange-400 font-bold">+{addedCostPct.toFixed(2)}%</span>
+                </div>
+                <p className="text-xs text-amber-600/80 mt-1">Payroll multiplier: {payrollMult.toFixed(2)}x · Loaded = base × {payrollMult.toFixed(2)}</p>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-[var(--bg-secondary)] border border-gray-700 rounded-lg px-4 py-3 text-sm text-gray-400">
+              <span className="font-semibold text-gray-300">No W-2 burden applied</span>
+              {' — '}{isOwner ? 'Owner' : '1099 contractor'}: loaded cost = base cost.
+            </div>
+          )}
+
+          {/* Projection vs logged */}
+          <div className="bg-[var(--bg-secondary)] rounded-lg p-4">
+            <div className="text-xs font-bold text-gray-400 uppercase mb-3">
+              Projection vs Logged
+              {!workerEntry && <span className="ml-2 text-gray-600 font-normal normal-case">(no scenario hours set)</span>}
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-xs mb-3">
+              <div>
+                <div className="text-gray-500 mb-0.5">Hrs/Day</div>
+                <div className="font-semibold text-gray-200">{hrsPerDay.toFixed(1)}</div>
+              </div>
+              <div>
+                <div className="text-gray-500 mb-0.5">Hrs/Week</div>
+                <div className="font-semibold text-gray-200">{hrsPerWeek.toFixed(1)}</div>
+              </div>
+              <div>
+                <div className="text-gray-500 mb-0.5">Hrs/Month</div>
+                <div className="font-semibold text-gray-200">{hrsPerMonth.toFixed(0)}</div>
+              </div>
+              <div>
+                <div className="text-gray-500 mb-0.5">Hrs/Year (plan)</div>
+                <div className="font-semibold text-gray-200">{plannedYearlyHrs.toFixed(0)}</div>
+              </div>
+            </div>
+            {plannedYearlyHrs > 0 && (
+              <>
+                <div className="space-y-1 text-xs mb-2">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Logged / Used</span>
+                    <span className="text-blue-400 font-semibold">{Math.round(totalHours)} hrs</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Remaining</span>
+                    <span className="text-gray-300 font-semibold">{Math.round(remainingHrs)} hrs</span>
+                  </div>
+                </div>
+                <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                  <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${progressPct}%` }} />
+                </div>
+                <div className="text-[10px] text-gray-600 mt-1 text-right">{progressPct.toFixed(0)}% of planned year logged</div>
+              </>
+            )}
+          </div>
+
+          {/* Monthly cost breakdown */}
+          {cost && (
+            <div className="bg-[var(--bg-secondary)] rounded-lg p-4">
+              <div className="text-xs font-bold text-gray-400 uppercase mb-3">Monthly Cost Breakdown</div>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Base monthly</span>
+                  <span className="text-blue-400">{formatCurrency(cost.baseMonthlyCost)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Taxes / Insurance</span>
+                  <span className="text-orange-400">{formatCurrency(cost.taxesAndInsurance)}</span>
+                </div>
+                <div className="flex justify-between font-semibold border-t border-gray-700/50 pt-2">
+                  <span className="text-gray-300">Loaded monthly</span>
+                  <span className="text-white">{formatCurrency(cost.loadedMonthlyCost)}/mo</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">6-Month Cost</span>
+                  <span className="text-yellow-400">{formatCurrency(cost.sixMonthCost)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Revenue to cover (mo)</span>
+                  <span className="text-cyan-400">{formatCurrency(cost.targetRevenue)}/mo</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* All-time billable totals */}
+          <div className="bg-[var(--bg-secondary)] rounded-lg p-4">
+            <div className="text-xs font-bold text-gray-400 uppercase mb-3">All-Time Billable (Logged Hours)</div>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Total Billable</span>
+                <span className="text-blue-400 font-semibold">{formatCurrency(totalBillable)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Total Loaded Cost</span>
+                <span className="text-orange-400 font-semibold">{formatCurrency(totalLoadedCost)}</span>
+              </div>
+              <div className="flex justify-between pt-2 border-t border-gray-700/50">
+                <span className="text-gray-300 font-semibold">Profit Margin</span>
+                <span className={`font-bold ${profitMargin >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(profitMargin)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* PTO / Sick Accrual — W-2 only */}
+          {isW2 && (
+            <div className="bg-emerald-900/15 border border-emerald-700/40 rounded-lg p-4">
+              <div className="text-xs font-bold text-emerald-400 uppercase mb-3">PTO / Sick Accrual (W-2)</div>
+              <div className="grid grid-cols-2 gap-3 text-xs mb-3">
+                <div className="bg-[var(--bg-secondary)] rounded p-2">
+                  <div className="text-gray-500 mb-0.5">Projected PTO</div>
+                  <div className="font-bold text-emerald-400">{projPtoHours.toFixed(0)} hrs/yr</div>
+                  <div className="text-gray-600">{ptoDefaults.ptoDaysYear} days × {ptoDefaults.hoursPerDay}h</div>
+                </div>
+                <div className="bg-[var(--bg-secondary)] rounded p-2">
+                  <div className="text-gray-500 mb-0.5">Projected Sick</div>
+                  <div className="font-bold text-blue-400">{projSickHours.toFixed(0)} hrs/yr</div>
+                  <div className="text-gray-600">{ptoDefaults.sickDaysYear} days × {ptoDefaults.hoursPerDay}h</div>
+                </div>
+                <div className="bg-[var(--bg-secondary)] rounded p-2">
+                  <div className="text-gray-500 mb-0.5">Accrued PTO</div>
+                  <div className="font-bold text-emerald-300">{ptoAccrued.toFixed(1)} hrs</div>
+                  <div className="text-gray-600">{plannedYearlyHrs > 0 ? ((totalHours / plannedYearlyHrs) * 100).toFixed(0) : 0}% of year</div>
+                </div>
+                <div className="bg-[var(--bg-secondary)] rounded p-2">
+                  <div className="text-gray-500 mb-0.5">Accrued Sick</div>
+                  <div className="font-bold text-blue-300">{sickAccrued.toFixed(1)} hrs</div>
+                  <div className="text-gray-600">{plannedYearlyHrs > 0 ? ((totalHours / plannedYearlyHrs) * 100).toFixed(0) : 0}% of year</div>
+                </div>
+              </div>
+              {plannedYearlyHrs === 0 && (
+                <p className="text-xs text-gray-500">Set projected hours in Projection Scenarios to enable accrual calculation.</p>
+              )}
+              <p className="text-xs text-emerald-700/80">Planning view only. Configure defaults in Team Cost Settings.</p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-700 shrink-0">
+          <button onClick={onClose} className="w-full px-4 py-2.5 bg-gray-700/50 text-gray-300 rounded-lg text-sm font-semibold hover:bg-gray-700 transition">Close</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function V15rTeamPanel() {
   const { isDemoMode, hasHydrated } = useDemoMode()
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
@@ -848,6 +1286,12 @@ export default function V15rTeamPanel() {
 
   // ── Edit employee modal ────────────────────────────────────────────────────
   const [editingEmployee, setEditingEmployee] = useState<EnhancedEmployee | null>(null)
+
+  // ── Team Cost Settings modal ───────────────────────────────────────────────
+  const [showCostSettingsModal, setShowCostSettingsModal] = useState(false)
+
+  // ── Employee Detail modal ─────────────────────────────────────────────────
+  const [selectedEmployee, setSelectedEmployee] = useState<EnhancedEmployee | null>(null)
 
   // ── Three-type employee system (Migration 048) ──────────────────────────────
   const [showAddModal, setShowAddModal] = useState(false)
@@ -1161,17 +1605,27 @@ export default function V15rTeamPanel() {
             <p className="text-sm text-gray-400">Employee hours, costs, and performance tracking with owner override</p>
           </div>
         </div>
-        {/* Invite Beta User — owner only */}
-        {isOwner && (
+        {/* Header action buttons */}
+        <div className="flex items-center gap-2 flex-wrap">
           <button
-            onClick={() => setShowDemoInviteModal(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-green-600 hover:bg-green-500 text-white text-sm font-semibold transition shadow"
+            onClick={() => setShowCostSettingsModal(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm font-semibold transition shadow"
             style={{ minHeight: '44px' }}
           >
-            <UserPlus className="w-4 h-4" />
-            Invite Beta User
+            <TrendingUp className="w-4 h-4" />
+            Team Cost Settings
           </button>
-        )}
+          {isOwner && (
+            <button
+              onClick={() => setShowDemoInviteModal(true)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-green-600 hover:bg-green-500 text-white text-sm font-semibold transition shadow"
+              style={{ minHeight: '44px' }}
+            >
+              <UserPlus className="w-4 h-4" />
+              Invite Beta User
+            </button>
+          )}
+        </div>
       </div>
 
       {/* INTERACTIVE ORG PYRAMID */}
@@ -1265,8 +1719,7 @@ export default function V15rTeamPanel() {
         </div>
       </div>
 
-      {/* EMPLOYEE COST STRUCTURE BOX */}
-      <EmployeeCostStructure backup={backup} />
+      {/* EMPLOYEE COST STRUCTURE — moved to Team Cost Settings modal */}
 
       {/* ENHANCED EMPLOYEE COST VS PIPELINE CHART */}
       <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
@@ -2395,7 +2848,11 @@ export default function V15rTeamPanel() {
               const stats = employeeStats.get(emp.id)
               if (!stats) return null
               return (
-                <div key={emp.id}>
+                <div
+                  key={emp.id}
+                  onClick={() => setSelectedEmployee(emp)}
+                  className="cursor-pointer"
+                >
                   <EmployeeCard
                     employee={emp}
                     totalHours={stats.totalHours}
@@ -2406,13 +2863,13 @@ export default function V15rTeamPanel() {
                   />
                   <div className="mt-2 flex gap-2 justify-end">
                     <button
-                      onClick={() => setEditingEmployee(normalizeEmployee(rawEmp) as any)}
+                      onClick={(e) => { e.stopPropagation(); setEditingEmployee(normalizeEmployee(rawEmp) as any) }}
                       className="text-xs px-2 py-1 bg-blue-600/30 text-blue-300 rounded hover:bg-blue-600/40 flex items-center gap-1"
                     >
                       <Edit2 className="w-3 h-3" /> Edit
                     </button>
                     <button
-                      onClick={() => deleteEmployee(emp.id)}
+                      onClick={(e) => { e.stopPropagation(); deleteEmployee(emp.id) }}
                       className="text-xs px-2 py-1 bg-red-600/30 text-red-300 rounded hover:bg-red-600/40 flex items-center gap-1"
                     >
                       <Trash2 className="w-3 h-3" /> Delete
@@ -2600,6 +3057,28 @@ export default function V15rTeamPanel() {
           inviterUserId={user.id}
         />
       )}
+
+      {/* ── TEAM COST SETTINGS MODAL ──────────────────────────────────────── */}
+      {showCostSettingsModal && (
+        <TeamCostSettingsModal
+          backup={backup}
+          onClose={() => setShowCostSettingsModal(false)}
+        />
+      )}
+
+      {/* ── EMPLOYEE DETAIL MODAL ─────────────────────────────────────────── */}
+      {selectedEmployee && (() => {
+        const stats = employeeStats.get(selectedEmployee.id)
+        return (
+          <EmployeeDetailModal
+            employee={selectedEmployee}
+            backup={backup}
+            totalHours={stats?.totalHours || 0}
+            jobCount={stats?.jobCount || 0}
+            onClose={() => setSelectedEmployee(null)}
+          />
+        )
+      })()}
 
       {/* ── ADD TEAM MEMBER MODAL ──────────────────────────────────────────── */}
       {showAddModal && (

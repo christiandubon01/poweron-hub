@@ -5150,3 +5150,33 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 - Manual QA status: Typecheck only.
 - Next agent should know: Owner logged hours bug was a self-delete in empLogMap translation. Fixed with id !== 'me' guard. No math formulas changed. No worker cost formulas changed. Josh unaffected.
 
+
+---
+
+## Shared Update — Team Tab: Cost Settings and Employee Detail Modals
+
+- Agent: Claude Code (session continuation)
+- Branch: main
+- Commit: TBD
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
+- Typecheck: PASS
+
+- User-facing behavior changed:
+  - "Team Cost Settings" button now appears in Team tab header next to Invite Beta User
+  - Employee Cost Structure and Payroll Multiplier moved from inline → inside Team Cost Settings modal
+  - PTO/sick time defaults added to Team Cost Settings modal (planning only)
+  - Employee cards now compact: name, position, worker type, stats, 4 rates, margin only
+  - Clicking an employee card opens Employee Detail modal with full details
+  - Edit and Delete buttons still work via stopPropagation
+
+- Cost settings behavior: Modal contains cost line items, payroll multiplier, PTO/sick day defaults. Save writes to backup.settings.employeeCosts, .payrollMult, .ptoDefaults. AI Rate Analysis still accessible inside modal.
+
+- Employee card/detail behavior: Cards are clickable wrappers with stopPropagation on Edit/Delete. Detail modal shows: rates, W-2 cost portion, projection vs logged (hrs/day/week/month/year, progress bar), monthly breakdown, all-time billable totals, PTO/sick accrual (W-2 only).
+
+- W-2 burden/PTO behavior: Added cost portion = loadedHourly - baseHourly (= payrollBurdenHourly from profile). Added % = burden / base × 100. PTO accrual = (loggedHours / plannedYearlyHrs) × projPtoHours. Owner/1099 show "No W-2 burden applied."
+
+- Risks / follow-up: Detail modal uses scenarios[0] for projected hours (first scenario, not active scenario). Browser QA required to confirm all modals open/save correctly.
+
+- Manual QA status: Typecheck only.
+
+- Next agent should know: TeamCostSettingsModal and EmployeeDetailModal are new components defined before the main export. EmployeeCostStructure is still in file but no longer rendered inline. showCostSettingsModal and selectedEmployee are new state variables. All worker cost formulas, Overhead Tracker, and Projection Scenarios unchanged.
