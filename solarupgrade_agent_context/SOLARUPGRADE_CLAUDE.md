@@ -3411,7 +3411,7 @@ V15rTeamPanel.tsx empRows now carry reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth,
   - src/components/v15r/V15rEstimateTab.tsx
   - solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
   - solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
-- Commit hash: (see commit below)
+- Commit hash: 4948f20
 - Typecheck result: PASS — zero errors
 
 - Root cause / user need:
