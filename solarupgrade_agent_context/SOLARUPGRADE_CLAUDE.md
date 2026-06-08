@@ -3256,3 +3256,62 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 
 - Compact handoff for next agent/chat: EmployeeDetailModal monthly cost now uses hrsPerMonth (from scenario) not default 40-hr basis. Sick accrual uses 4/104 CA rate. PTO removed. Owner shows no-accrual note. calcEmployeeCost still exists and is used by Team Cost Summary; only removed from EmployeeDetailModal.
 
+---
+
+## COMPLETION LOG — Team Labor Planning: Required Remaining Pace + Label Clarifications
+
+AGENT:
+Claude Code (session: 2026-06-07)
+
+COMMIT HASH:
+(see git log)
+
+FILES CHANGED:
+- src/components/v15r/V15rTeamPanel.tsx
+- solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+- solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+
+ACTIVE PHASE COMPLETED:
+Team Labor Planning — Add Required Remaining Pace and Clarify Labels
+
+WHAT CHANGED:
+- Added date anchors before empRows map for year-end pace calculations.
+- Extended empRow with: reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth, paceDelta, daysRemaining, weeksRemaining.
+- Added "Original Plan" section label above existing scheduling grid.
+- Added "Required Remaining Pace" indigo-bordered section per worker card.
+- Added ahead/behind badge per worker card.
+- Label renames: "Remaining Hours" → "Remaining in Current Plan"; "Scenario Remaining" → "Remaining in Current Plan"; "OH to Recover" → "Overhead Recovery From Remaining Planned Hours"; "After Direct Labor Cost" (scenario section) → "Remaining After Direct Labor Cost".
+
+WHAT WAS LEARNED:
+- Date anchors computed once outside the empRows map keep the inner map clean.
+- workdaysPerWeek=5 is correct because the existing hrsPerDay = hrsPerWeek / 5 hardcodes a 5-day week.
+- Ahead/behind formula requires both daysElapsed and totalDaysInYear — cannot use yearProgressPct alone.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+- Pre-compute date anchors once before the map, reference them inside with closure.
+- Guard divide-by-zero for every pace calc (weeksRemaining, monthsRemaining, remainingWorkdays all checked > 0).
+
+BUGS / RISKS:
+- None. Display only. All existing formulas, persistence, and data models untouched.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+None currently defined.
+
+NEXT PHASE ADJUSTMENTS:
+- If daysPerWeek is ever added to scenario workers, update reqHrsPerDay to use it instead of hardcoded 5.
+
+NEXT PHASE READY:
+NO — no next build phase defined.
+
+COMPACT HANDOFF FOR NEXT CHAT:
+V15rTeamPanel.tsx empRows now carry reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth, paceDelta, daysRemaining, weeksRemaining (display-only). Each Labor Planning worker card shows "Original Plan" label, "Required Remaining Pace" section, and an ahead/behind badge. Labels renamed: "Remaining in Current Plan", "Overhead Recovery From Remaining Planned Hours", "Remaining After Direct Labor Cost". No formula, schema, or persistence changes. Typecheck passes.
+

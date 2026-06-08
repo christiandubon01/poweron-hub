@@ -5210,3 +5210,66 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 
 - Next agent should know: EmployeeDetailModal no longer calls calcEmployeeCost. It computes monthly costs inline using hrsPerMonth from scenario. Sick accrual is 4/104 CA rule. PTO is gone from the modal (not from Team Cost Settings, which keeps PTO defaults for possible future use). All-time billable box and Overhead Tracker unchanged.
 
+
+---
+
+## Shared Update — Team Labor Planning: Required Remaining Pace + Label Clarifications
+
+- Agent: Claude Code (session: 2026-06-07)
+- Branch: main
+- Commit: (see below)
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
+- Typecheck: PASS
+
+- What changed (display only — no formulas, saved values, or schema changed):
+  1. Added date anchor variables before empRows map: _today, _yearEnd, _daysRemaining, _weeksRemaining, _monthsRemaining, _yearProgressPct (shared across all workers, computed once).
+  2. Each empRow now carries: reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth, paceDelta, daysRemaining, weeksRemaining.
+  3. Each worker card now shows an "Original Plan" section label above the existing hrs/day, hrs/week, hrs/month, weeks/year grid.
+  4. Each worker card now shows a "Required Remaining Pace" indigo-bordered section (only when remainingHrs > 0 and daysRemaining > 0) with: Req. Hrs/Day, Req. Hrs/Week, Req. Hrs/Month, Weeks Left + days count.
+  5. Each worker card now shows an ahead/behind badge: green "Ahead of plan by X hrs", amber "Behind plan by X hrs", or green "On pace". Calculated from: expectedHrsByToday = plannedYearlyHrs × (daysElapsed / totalDaysInYear), paceDelta = loggedHours - expectedHrsByToday.
+  6. Label changes (display only):
+     - "Remaining Hours" (card right cell) → "Remaining in Current Plan"
+     - "Scenario Remaining ({N} hrs)" section header → "Remaining in Current Plan ({N} hrs)"
+     - "OH to Recover" → "Overhead Recovery From Remaining Planned Hours"
+     - "After Direct Labor Cost" (in scenario remaining section) → "Remaining After Direct Labor Cost"
+     - Actual logged section: "After Direct Labor Cost" label unchanged (correct context).
+  7. "Required Remaining Pace" uses workdaysPerWeek=5 (hardcoded — scenario workers already derive hrsPerDay as hrsPerWeek/5).
+
+- Formula preservation:
+  - All empRow financial calculations unchanged.
+  - remainingHrs, fcastOH, fcastGross, fcastProfit, trueProfitPerHr, grossContribPerHr unchanged.
+  - Owner/W-2/1099 rules unchanged.
+  - Overhead Tracker KPI cards unchanged.
+  - Employee cards unchanged. EmployeeDetailModal unchanged. TeamCostSettingsModal unchanged.
+  - Supabase, Estimate tab, Progress tab, Change Orders, RFI, Coordination, Material Takeoff, Leads, Settings — all unchanged.
+
+- Required remaining pace formula:
+  - daysRemaining = ceil((Dec 31 - today) / msPerDay), clamped to ≥ 0
+  - weeksRemaining = daysRemaining / 7
+  - monthsRemaining = daysRemaining / 30.4375
+  - remainingWorkdays = weeksRemaining × 5
+  - reqHrsPerDay = remainingHrs / remainingWorkdays (guard: remainingWorkdays > 0)
+  - reqHrsPerWeek = remainingHrs / weeksRemaining (guard: weeksRemaining > 0)
+  - reqHrsPerMonth = remainingHrs / monthsRemaining (guard: monthsRemaining > 0)
+
+- Ahead/behind formula:
+  - yearProgressPct = daysElapsed / totalDaysInYear
+  - expectedHrsByToday = plannedYearlyHrs × yearProgressPct
+  - paceDelta = loggedHours - expectedHrsByToday
+  - >0 → Ahead, <0 → Behind, |delta| < 1 → On pace
+
+- Example for Owner (24 hrs/wk, 52 wks = 1,248 planned, 240 logged):
+  - Remaining in Current Plan: 1,008 hrs
+  - Today is 2026-06-07: yearProgress ≈ 43.6%, expected by today ≈ 544 hrs
+  - paceDelta = 240 - 544 = -304 → Behind plan by 304 hrs
+  - daysRemaining ≈ 207, weeksRemaining ≈ 29.6, monthsRemaining ≈ 6.8
+  - reqHrsPerWeek = 1008 / 29.6 ≈ 34.1 hrs/wk
+  - reqHrsPerDay = 1008 / (29.6 × 5) ≈ 6.8 hrs/day
+  - reqHrsPerMonth = 1008 / 6.8 ≈ 148.2 hrs/mo
+
+- Risks / follow-up: None. Pure display addition. No data model, schema, or formula change.
+
+- Manual QA status: Typecheck only.
+
+- Next agent should know: empRows in V15rTeamPanel.tsx now has extra fields (reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth, paceDelta, daysRemaining, weeksRemaining). Date anchors (_today, _yearEnd, etc.) are computed once before the map. "Required Remaining Pace" section only renders when remainingHrs > 0 && daysRemaining > 0. Label changes are display-only in the By Employee card section.
+

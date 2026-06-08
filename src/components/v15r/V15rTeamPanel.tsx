@@ -2294,6 +2294,18 @@ export default function V15rTeamPanel() {
         const arcActual = actualCoveredPct * circ - (actualCoveredPct > 0 && actualRemainingPct > 0 ? gap : 0)
         const arcActualRemaining = actualRemainingPct * circ - (actualCoveredPct > 0 && actualRemainingPct > 0 ? gap : 0)
 
+        // ── Remaining-pace date anchors (shared across all workers) ─────────────
+        const _today = new Date()
+        const _yearEnd = new Date(_today.getFullYear(), 11, 31)
+        const _msPerDay = 86400000
+        const _daysRemaining = Math.max(0, Math.ceil((_yearEnd.getTime() - _today.getTime()) / _msPerDay))
+        const _weeksRemaining = _daysRemaining / 7
+        const _monthsRemaining = _daysRemaining / 30.4375
+        const _startOfYear = new Date(_today.getFullYear(), 0, 1)
+        const _totalDaysInYear = (_yearEnd.getTime() - _startOfYear.getTime()) / _msPerDay + 1
+        const _daysElapsed = Math.max(0, (_today.getTime() - _startOfYear.getTime()) / _msPerDay)
+        const _yearProgressPct = _daysElapsed / _totalDaysInYear
+
         // ── By-employee planning rows — all active employees via merged workers ──
         const empRows = mergedScenWorkers.map((w: any) => {
           const emp = employees.find((e: any) => e.id === w.empId) ||
@@ -2331,6 +2343,13 @@ export default function V15rTeamPanel() {
           const grossContribPerHr = bill - loaded
           const trueProfitPerHr = grossContribPerHr - overheadPerHour
           const profile = getWorkerCostProfile(emp, backup.settings)
+          // Required remaining pace — display only, does not affect saved scenario values
+          const remainingWorkdays = _weeksRemaining * 5
+          const reqHrsPerDay = remainingWorkdays > 0 ? remainingHrs / remainingWorkdays : 0
+          const reqHrsPerWeek = _weeksRemaining > 0 ? remainingHrs / _weeksRemaining : 0
+          const reqHrsPerMonth = _monthsRemaining > 0 ? remainingHrs / _monthsRemaining : 0
+          const expectedHrsByToday = plannedYearlyHrs * _yearProgressPct
+          const paceDelta = empLogged - expectedHrsByToday
           return {
             emp, hrsPerDay, hrsPerWeek, hrsPerMonth, weeksPerYear, plannedYearlyHrs,
             empLogged, remainingHrs, bill, loaded, grossContribPerHr, trueProfitPerHr,
@@ -2338,6 +2357,8 @@ export default function V15rTeamPanel() {
             fcastRevenue, fcastCost, fcastGross, fcastOH, fcastProfit,
             totalRevenue, totalDirectCost, totalGrossContrib, totalOHAllocated, totalTrueProfit,
             ohPct, grossPct, type: profile.workerType,
+            reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth, paceDelta,
+            daysRemaining: _daysRemaining, weeksRemaining: _weeksRemaining,
           }
         }).filter(Boolean)
 
@@ -2597,7 +2618,8 @@ export default function V15rTeamPanel() {
                             </div>
                           </div>
 
-                          {/* Scheduling capacity strip */}
+                          {/* Original Plan */}
+                          <div className="text-xs text-gray-500 font-semibold uppercase mb-1 tracking-wide">Original Plan</div>
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
                             <div className="text-center bg-[var(--bg-card)] rounded p-2">
                               <div className="text-xs text-gray-400 mb-0.5">Hrs / Day</div>
@@ -2626,13 +2648,54 @@ export default function V15rTeamPanel() {
                               <div className="text-xs text-gray-400">this worker only</div>
                             </div>
                             <div className="bg-[var(--bg-card)] rounded p-2">
-                              <div className="text-xs text-gray-400 mb-0.5">{planExceeded ? 'Plan Exceeded' : 'Remaining Hours'}</div>
+                              <div className="text-xs text-gray-400 mb-0.5">{planExceeded ? 'Plan Exceeded' : 'Remaining in Current Plan'}</div>
                               <div className={`text-base font-bold ${planExceeded ? 'text-amber-400' : 'text-blue-300'}`}>
                                 {planExceeded ? `+${(row.empLogged - row.plannedYearlyHrs).toFixed(0)}` : row.remainingHrs.toFixed(0)} hrs
                               </div>
                               <div className="text-xs text-gray-400">{planExceeded ? 'above plan' : 'to hit plan'}</div>
                             </div>
                           </div>
+
+                          {/* Ahead / Behind status */}
+                          {(() => {
+                            const delta = row.paceDelta
+                            const absD = Math.abs(delta).toFixed(0)
+                            if (Math.abs(delta) < 1) {
+                              return <div className="mb-3 text-xs text-emerald-400 bg-emerald-900/15 border border-emerald-700/30 rounded px-2 py-1">On pace with original plan</div>
+                            }
+                            if (delta > 0) {
+                              return <div className="mb-3 text-xs text-emerald-400 bg-emerald-900/15 border border-emerald-700/30 rounded px-2 py-1">Ahead of plan by {absD} hrs</div>
+                            }
+                            return <div className="mb-3 text-xs text-amber-400 bg-amber-900/15 border border-amber-700/30 rounded px-2 py-1">Behind plan by {absD} hrs</div>
+                          })()}
+
+                          {/* Required remaining pace */}
+                          {!planExceeded && row.remainingHrs > 0 && row.daysRemaining > 0 && (
+                            <div className="border border-indigo-700/40 rounded-lg p-3 mb-3 bg-indigo-950/20">
+                              <div className="text-xs text-indigo-300 font-semibold uppercase mb-2 tracking-wide">
+                                Required Remaining Pace
+                              </div>
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                <div className="text-center bg-[var(--bg-card)] rounded p-2">
+                                  <div className="text-xs text-gray-400 mb-0.5">Req. Hrs / Day</div>
+                                  <div className="text-sm font-bold text-indigo-300">{row.reqHrsPerDay.toFixed(1)}</div>
+                                </div>
+                                <div className="text-center bg-[var(--bg-card)] rounded p-2">
+                                  <div className="text-xs text-gray-400 mb-0.5">Req. Hrs / Week</div>
+                                  <div className="text-sm font-bold text-indigo-300">{row.reqHrsPerWeek.toFixed(1)}</div>
+                                </div>
+                                <div className="text-center bg-[var(--bg-card)] rounded p-2">
+                                  <div className="text-xs text-gray-400 mb-0.5">Req. Hrs / Month</div>
+                                  <div className="text-sm font-bold text-indigo-300">{row.reqHrsPerMonth.toFixed(1)}</div>
+                                </div>
+                                <div className="text-center bg-[var(--bg-card)] rounded p-2">
+                                  <div className="text-xs text-gray-400 mb-0.5">Weeks Left</div>
+                                  <div className="text-sm font-bold text-indigo-300">{row.weeksRemaining.toFixed(1)}</div>
+                                  <div className="text-xs text-gray-500">{row.daysRemaining}d</div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
 
                           {/* Progress bar: logged vs planned */}
                           <div className="mb-3">
@@ -2705,14 +2768,14 @@ export default function V15rTeamPanel() {
                           {/* Scenario remaining money */}
                           {row.remainingHrs > 0 && (
                             <div className="border-t border-blue-900/40 pt-3 mb-3">
-                              <div className="text-xs text-blue-300 font-semibold uppercase mb-2">Scenario Remaining ({row.remainingHrs.toFixed(0)} hrs)</div>
+                              <div className="text-xs text-blue-300 font-semibold uppercase mb-2">Remaining in Current Plan ({row.remainingHrs.toFixed(0)} hrs)</div>
                               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
                                 <div>
-                                  <div className="text-gray-400 mb-0.5">OH to Recover</div>
+                                  <div className="text-gray-400 mb-0.5">Overhead Recovery From Remaining Planned Hours</div>
                                   <div className="font-bold text-blue-400">{formatCurrency(row.fcastOH)}</div>
                                 </div>
                                 <div>
-                                  <div className="text-gray-400 mb-0.5">After Direct Labor Cost</div>
+                                  <div className="text-gray-400 mb-0.5">Remaining After Direct Labor Cost</div>
                                   <div className={`font-bold ${row.fcastGross >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(row.fcastGross)}</div>
                                 </div>
                                 {recoveryModel === 'margin' && (
