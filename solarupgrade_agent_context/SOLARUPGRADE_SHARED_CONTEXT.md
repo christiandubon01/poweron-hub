@@ -5435,3 +5435,43 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 - Manual QA status: Typecheck only. Browser QA needed to confirm Rock'n Bar phase totals now show correct sums.
 
 - Next agent should know: V15rMTOTab.tsx `renderPhaseGroups()` — the `cu` calculation in the phase total `rows.forEach` loop now checks `r.unitCost` first, matching `renderRow` exactly. Root cause was that legacy/orphaned rows (no matId Price Book link, but unitCost set directly) were silently contributing $0 to phase totals.
+
+---
+
+## Shared Update — Home Tab Deep Audit — tablet/iPad viewport overflow, sticky overscroll, portrait/landscape fit [2026-06-08]
+
+- Agent: Cursor
+- Branch: `main` (audit only; no dedicated branch)
+- Files inspected: `AppShell.tsx`, `V15rLayout.tsx`, `V15rHome.tsx`, `responsive.css`, `index.css`, `index.html`, `ProactiveAlertCards.tsx`, `ConclusionCards.tsx`, `ProjectCard.tsx`
+- Files changed: none
+- Typecheck: not run
+- Render path: `AppShell` home case → `ProactiveAlertCards` + `ConclusionCards` + `V15rHome` inside `V15rLayout` `<main>` scroll container
+- Scroll owner: `V15rLayout.tsx` `<main>` (`overflowY: auto`, fixed header offset `marginTop: 4rem`)
+- Primary root causes:
+  1. `V15rHome` uses `min-h-screen` inside a shorter shell scrollport → bottom blank space + extra scroll
+  2. Safe-area padding stacked (`#root` + `.safe-area-all` + inline Home padding) → iPad oversize
+  3. iOS nested-scroll rubber band (`-webkit-overflow-scrolling: touch`, no `overscroll-behavior: contain`) → sticky overscroll feel
+  4. Secondary: `maxWidth: 100vw` on shell main; calendar `overflow-visible` + `.calendar-container` CSS mismatch
+- Issue level: **both shell-level and Home-level** (shell owns scroll; Home adds the extra min-height)
+- Recommended fix order: (1) remove Home `min-h-screen`, (2) shell `overscroll-behavior` + `100%` width + optional `dvh`, (3) safe-area dedupe, (4) calendar class/overflow/tablet height
+- Coupling: step 1+4 Home-only; step 2+3 affect all tabs
+- Samsung A7 note: renders better due to Android viewport behavior, not correct layout logic
+- Manual QA: code audit only; iPad + Tab A7 browser QA still required post-fix
+- Ready for Codex implementation: **yes**
+
+---
+
+## Shared Update — Home Tab Fix Pass — tablet/iPad viewport fit and overscroll [2026-06-08]
+
+- Agent: Codex GPT-5.5 Medium
+- Branch: `main`
+- Commit: `5c571aa`
+- Files changed: `src/components/v15r/V15rHome.tsx`, `src/components/v15r/V15rLayout.tsx`
+- Typecheck: PASS — `npm.cmd run typecheck`
+- Root cause: Home `min-h-screen` inside shell `<main>` scroll owner + shell `maxWidth: 100vw` without overscroll containment
+- Fix: Removed Home `min-h-screen`; shell main now `maxWidth: 100%` with `overscrollBehavior: contain`
+- Deferred: safe-area dedupe, calendar class/responsive.css cleanup
+- Manual QA: static verification only; authenticated iPad/Samsung A7 browser QA still required
+- Next agent: if blank space persists after device QA, do safe-area dedupe and calendar overflow pass
+
+---

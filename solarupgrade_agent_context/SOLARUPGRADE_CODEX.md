@@ -1659,3 +1659,44 @@ Monthly Bill chart anchor logic fixed in `src/components/solarTraining/SolarEsti
 - Manual QA performed: Static render-path verification in `V15rHome.tsx` and `ProjectCard.tsx`; `git diff --check` passed; `npm.cmd run typecheck` passed; `http://localhost:5173` returned HTTP 200. In-app browser localhost QA was attempted and blocked by the browser startup failure.
 - Next recommended action: On the live authenticated Home tab, confirm archived `test dummy` is absent from Nexus Alerts, generated and custom alerts can be deleted, Nexus Alerts collapses/expands as one section, and Home project-card motion matches the commercial/residential cadence expected from Projects.
 - Compact handoff for next agent/chat: Home alerts polish complete on `main`. `V15rHome.tsx` now filters AI alerts to active projects, persists generated-alert deletes, filters archived linked custom alerts, uses active project alert pickers, and adds persisted Nexus Alerts collapse. `ProjectCard.tsx` now uses type-aware glare timing for Home cards. Typecheck passes; authenticated visual QA remains.
+
+---
+
+## Codex Report — Header Bar Fix Pass — replace Import/Export with Save, make SVC Unbilled red, and add Coming Up Projects Total Quoted
+
+- Task completed: Header bar fix pass completed on `main`.
+- Files changed:
+  - `src/components/v15r/V15rLayout.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: Pending at log-write time; see final Codex report.
+- Typecheck result: PASS — `npm.cmd run typecheck`
+- Root cause: The global header still exposed backup Import/Export controls while Settings already owned that workflow; SVC Unbilled was colored yellow; the non-compact Exposure pill displayed `svcUnbilled`; and there was no project-only coming-up quoted KPI in the header.
+- What changed: Removed header-only backup import/export handlers, buttons, and hidden file input; added a guarded Save button that calls `forceSyncToCloud()` and updates existing sync status/toasts; added a Coming Up KPI derived from active projects in the `coming` bucket using `contract`; changed SVC Unbilled to red; fixed non-compact Exposure to render `safeKpis.exposure`.
+- What was learned: The header is inline in `V15rLayout.tsx`, while Settings keeps a separate import/export path. `isActiveProject()` and `resolveProjectBucket()` from `backupDataService.ts` are enough to calculate the new coming-up quoted bucket locally without changing shared KPI services.
+- Bugs / risks: In-app browser startup failed twice in this session, so authenticated visual/click QA remains manual. Localhost responded with HTTP 200 and the source render path was verified.
+- Manual QA performed: `npm.cmd run typecheck` passed; `git diff --check -- src/components/v15r/V15rLayout.tsx` passed; `http://localhost:5173` returned HTTP 200. Browser verification of visible header layout and Save click was blocked by Browser runtime startup failure.
+- Next recommended action: On authenticated localhost, confirm the header shows Save instead of Import/Export, Save triggers cloud sync feedback, SVC Unbilled is red, Exposure shows the exposure value, and Coming Up shows the project-only coming-bucket contract total.
+- Compact handoff for next agent/chat: Header fix pass complete in `V15rLayout.tsx`. Header Import/Export removed; one Save button calls `forceSyncToCloud()` with existing guards/status/toasts. SVC Unbilled is red. Non-compact Exposure now renders `safeKpis.exposure`. Coming Up KPI sums active `coming` projects' `contract` only. Typecheck passes; authenticated visual QA remains.
+
+---
+
+## Codex Report — Home Tab Fix Pass — repair tablet/iPad viewport fit and overscroll
+
+- Task completed: Narrow first-pass Home/tablet viewport fix on `main`.
+- Files changed:
+  - `src/components/v15r/V15rHome.tsx`
+  - `src/components/v15r/V15rLayout.tsx`
+  - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+  - `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md`
+- Commit hash: `5c571aa`
+- Typecheck result: PASS — `npm.cmd run typecheck`
+- Root cause: `V15rHome` used `min-h-screen` inside `V15rLayout` `<main>`, which already sits below fixed header/footer/safe-area, forcing extra blank height and scroll. The shell scroll owner also used `maxWidth: '100vw'` and lacked `overscroll-behavior: contain`, causing slight horizontal oversize and iOS rubber-band overscroll on tablet.
+- What changed: Removed Home root `min-h-screen` and added `w-full max-w-full min-w-0` so Home sizes to content inside the shell scrollport. In `V15rLayout`, changed main `maxWidth` from `100vw` to `100%` and added `overscrollBehavior: 'contain'` while preserving `-webkit-overflow-scrolling: touch`.
+- What was learned: The scroll owner is `V15rLayout` `<main>`; Home should not claim viewport height when nested inside it. Replacing `100vw` with `100%` is the safer tablet width fix without global CSS experiments.
+- Bugs / risks: Safe-area padding is still stacked (`#root`, `.safe-area-all`, inline Home padding) and calendar class/overflow cleanup was intentionally deferred. Authenticated in-app browser QA was unavailable in this session; manual device QA remains.
+- Manual QA performed: Static render-path verification in `V15rHome.tsx` and `V15rLayout.tsx`; `npm.cmd run typecheck` passed. Browser MCP runtime was unavailable for iPad/Samsung A7 viewport click-through.
+- Next recommended action: On authenticated localhost, verify Home on iPad portrait/landscape and Samsung A7 portrait/landscape has no extra blank bottom space or sticky overscroll; collapse sidebar and spot-check other major tabs.
+- Compact handoff for next agent/chat: Home tablet fix pass complete on `main` (`5c571aa`). Removed Home `min-h-screen`; shell main now uses `maxWidth: 100%` + `overscrollBehavior: contain`. Safe-area dedupe and calendar responsive cleanup remain optional second pass if blank space persists.
+
+---

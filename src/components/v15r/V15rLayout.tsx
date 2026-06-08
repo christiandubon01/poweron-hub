@@ -1865,7 +1865,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             ? { display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', backgroundColor: '#000' }
             : blueprintImmersive
               ? { display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', backgroundColor: 'var(--bg-secondary)' }
-              : { backgroundColor: 'var(--bg-secondary)', marginTop: showTargetBar ? '5rem' : '4rem', overflowX: 'hidden', overflowY: 'auto', width: '100%', maxWidth: '100vw', minHeight: 0, display: 'flex', flexDirection: 'column', WebkitOverflowScrolling: 'touch' }
+              : { backgroundColor: 'var(--bg-secondary)', marginTop: showTargetBar ? '5rem' : '4rem', overflowX: 'hidden', overflowY: 'auto', width: '100%', maxWidth: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' }
           }
         >
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '100%', overflowX: 'hidden' }}>

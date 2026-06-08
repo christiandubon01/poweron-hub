@@ -813,7 +813,7 @@ export default function V15rHome() {
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-[var(--bg-secondary)] p-6 space-y-6 safe-area-all"
+    <div className="w-full max-w-full min-w-0 bg-[var(--bg-secondary)] p-6 space-y-6 safe-area-all"
       style={{
         paddingTop: `max(1.5rem, env(safe-area-inset-top))`,
         paddingBottom: `max(1.5rem, env(safe-area-inset-bottom))`,
