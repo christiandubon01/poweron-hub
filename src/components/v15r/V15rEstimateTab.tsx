@@ -3014,7 +3014,8 @@ Return ONLY valid JSON, no other text.`
 
         {/* LABOR HOURS BY WORKER DONUT */}
         {(() => {
-          // Overhead per hr — same formula as allocation modal
+          // Overhead per hr — same formula as allocation modal and Settings Overhead Manager.
+          // Priority 1: defaultOHRate (user-set $/hr). Priority 2: annualOverhead / billableHrsYear.
           const s = backup.settings
           let ohPerHr = 0
           if (s) {
@@ -3032,9 +3033,15 @@ Return ONLY valid JSON, no other text.`
             }
           }
 
-          // Aggregate all labor rows into per-worker buckets
+          // Aggregate all labor rows into per-worker buckets.
+          // Worker cost uses Team cost helpers via getEmployeeBaseRate / getEmployeeCostRate:
+          //   Owner  → loaded = base wage (no payroll burden)
+          //   1099   → loaded = base wage (no payroll burden)
+          //   W-2    → loaded = base × payrollMult
+          // Revenue uses row task rate (row.rate) — NOT employee bill rate.
           type WorkerBucket = {
             empId: string; name: string; typeName: string
+            baseRate: number; loadedRate: number
             hrs: number; directLaborCost: number
             quotedRevenue: number; overheadContribution: number
           }
@@ -3048,21 +3055,23 @@ Return ONLY valid JSON, no other text.`
                   empId: a.empId,
                   name: getEmployeeDisplayName(a.empId),
                   typeName: getEmployeeWorkerTypeName(a.empId),
+                  baseRate: getEmployeeBaseRate(a.empId),
+                  loadedRate: getEmployeeCostRate(a.empId),  // Owner/1099=base; W-2=base×payrollMult
                   hrs: 0, directLaborCost: 0, quotedRevenue: 0, overheadContribution: 0,
                 }
               }
               const w = workerMap[a.empId]
-              const costRate = getEmployeeCostRate(a.empId)
               w.hrs += a.hrs
-              w.directLaborCost += a.hrs * costRate
+              w.directLaborCost += a.hrs * w.loadedRate
               w.quotedRevenue += a.hrs * rowRate
               w.overheadContribution += a.hrs * ohPerHr
             }
           }
 
-          const workers: (WorkerBucket & { profitAfterOverhead: number; color: string })[] =
+          const workers: (WorkerBucket & { trueLaborCost: number; profitAfterOverhead: number; color: string })[] =
             Object.values(workerMap).map((w, i) => ({
               ...w,
+              trueLaborCost: w.directLaborCost + w.overheadContribution,
               profitAfterOverhead: w.quotedRevenue - w.directLaborCost - w.overheadContribution,
               color: ALLOC_COLORS[i % ALLOC_COLORS.length],
             }))
@@ -3070,6 +3079,8 @@ Return ONLY valid JSON, no other text.`
           const totalHrs = workers.reduce((s, w) => s + w.hrs, 0)
           const totalDirectCost = workers.reduce((s, w) => s + w.directLaborCost, 0)
           const totalOhContrib = workers.reduce((s, w) => s + w.overheadContribution, 0)
+          const totalTrueLaborCost = totalDirectCost + totalOhContrib
+          const totalQuotedRevenue = workers.reduce((s, w) => s + w.quotedRevenue, 0)
           const totalProfit = workers.reduce((s, w) => s + w.profitAfterOverhead, 0)
 
           const donutSlices = workers.map(w => ({ label: w.name, value: w.hrs, color: w.color }))
@@ -3114,26 +3125,35 @@ Return ONLY valid JSON, no other text.`
                     </div>
 
                     {/* Hover tooltip or KPI summary */}
-                    <div style={{ flex: 1, minWidth: '160px' }}>
+                    <div style={{ flex: 1, minWidth: '180px' }}>
                       {hoveredWorker ? (
                         <div style={{ backgroundColor: 'rgba(15,17,26,0.92)', border: `1px solid ${hoveredWorker.color}44`, borderRadius: '8px', padding: '12px 14px', fontSize: '12px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
                             <span style={{ color: 'var(--t1)', fontWeight: '700', fontSize: '13px' }}>{hoveredWorker.name}</span>
                             <span style={{ backgroundColor: workerTypeColor(hoveredWorker.typeName) + '22', color: workerTypeColor(hoveredWorker.typeName), border: `1px solid ${workerTypeColor(hoveredWorker.typeName)}44`, borderRadius: '999px', padding: '1px 7px', fontSize: '10px', fontWeight: '700' }}>{hoveredWorker.typeName}</span>
                           </div>
-                          {[
-                            { label: 'Projected Hours', value: `${hoveredWorker.hrs % 1 === 0 ? hoveredWorker.hrs.toFixed(0) : hoveredWorker.hrs.toFixed(1)} h`, mono: true, color: hoveredWorker.color },
-                            { label: 'Share of Total', value: `${totalHrs > 0 ? ((hoveredWorker.hrs / totalHrs) * 100).toFixed(1) : '0'}%`, mono: true, color: 'var(--t2)' },
-                            { label: 'Direct Labor Cost', value: fmt(hoveredWorker.directLaborCost), mono: true, color: '#f87171' },
-                            { label: 'Overhead Contribution', value: fmt(hoveredWorker.overheadContribution), mono: true, color: '#f59e0b' },
-                            { label: 'Quoted Revenue', value: fmt(hoveredWorker.quotedRevenue), mono: true, color: '#60a5fa' },
-                            { label: 'Profit After Overhead', value: fmt(hoveredWorker.profitAfterOverhead), mono: true, color: hoveredWorker.profitAfterOverhead >= 0 ? '#10b981' : '#ef4444' },
-                            { label: 'Cost Rate', value: `${fmt(hoveredWorker.hrs > 0 ? hoveredWorker.directLaborCost / hoveredWorker.hrs : 0)}/hr`, mono: true, color: 'var(--t3)' },
-                            { label: 'Avg Quoted Rate', value: `${fmt(hoveredWorker.hrs > 0 ? hoveredWorker.quotedRevenue / hoveredWorker.hrs : 0)}/hr`, mono: true, color: 'var(--t3)' },
-                          ].map(({ label, value, mono, color }) => (
-                            <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginBottom: '3px' }}>
-                              <span style={{ color: 'var(--t3)', fontSize: '11px' }}>{label}</span>
-                              <span style={{ color, fontFamily: mono ? 'monospace' : undefined, fontWeight: '600', fontSize: '12px', whiteSpace: 'nowrap' }}>{value}</span>
+                          {([
+                            { label: 'Projected Hours', value: `${hoveredWorker.hrs % 1 === 0 ? hoveredWorker.hrs.toFixed(0) : hoveredWorker.hrs.toFixed(1)} h`, color: hoveredWorker.color },
+                            { label: 'Share of Total', value: `${totalHrs > 0 ? ((hoveredWorker.hrs / totalHrs) * 100).toFixed(1) : '0'}%`, color: 'var(--t2)' },
+                            null,
+                            { label: 'Base Wage', value: `${fmt(hoveredWorker.baseRate)}/hr`, color: 'var(--t3)' },
+                            { label: 'Loaded Cost/hr', value: `${fmt(hoveredWorker.loadedRate)}/hr`, color: '#f87171' },
+                            { label: 'OH/hr', value: ohPerHr > 0 ? `${fmt(ohPerHr)}/hr` : '—', color: '#f59e0b' },
+                            { label: 'True Cost/hr', value: `${fmt(hoveredWorker.loadedRate + ohPerHr)}/hr`, color: '#fb923c' },
+                            null,
+                            { label: 'Direct Wage / Loaded Cost', value: fmt(hoveredWorker.directLaborCost), color: '#f87171' },
+                            { label: 'OH Contribution', value: fmt(hoveredWorker.overheadContribution), color: '#f59e0b' },
+                            { label: 'True Labor Cost', value: fmt(hoveredWorker.trueLaborCost), color: '#fb923c' },
+                            null,
+                            { label: 'Avg Quoted Rate', value: `${fmt(hoveredWorker.hrs > 0 ? hoveredWorker.quotedRevenue / hoveredWorker.hrs : 0)}/hr`, color: '#60a5fa' },
+                            { label: 'Quoted Labor Revenue', value: fmt(hoveredWorker.quotedRevenue), color: '#60a5fa' },
+                            { label: 'Profit After OH', value: fmt(hoveredWorker.profitAfterOverhead), color: hoveredWorker.profitAfterOverhead >= 0 ? '#10b981' : '#ef4444' },
+                          ] as const).map((item, idx) => item === null ? (
+                            <div key={`div-${idx}`} style={{ height: '1px', backgroundColor: 'rgba(255,255,255,0.06)', margin: '4px 0' }} />
+                          ) : (
+                            <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginBottom: '3px' }}>
+                              <span style={{ color: 'var(--t3)', fontSize: '11px' }}>{item.label}</span>
+                              <span style={{ color: item.color, fontFamily: 'monospace', fontWeight: '600', fontSize: '12px', whiteSpace: 'nowrap' }}>{item.value}</span>
                             </div>
                           ))}
                         </div>
@@ -3141,9 +3161,11 @@ Return ONLY valid JSON, no other text.`
                         <div style={{ display: 'grid', gap: '10px' }}>
                           {[
                             { label: 'Total Projected Hours', value: `${totalHrs % 1 === 0 ? totalHrs.toFixed(0) : totalHrs.toFixed(1)} h`, color: 'var(--t1)' },
-                            { label: 'Total Direct Labor Cost', value: fmt(totalDirectCost), color: '#f87171' },
-                            { label: 'Total Overhead Contribution', value: fmt(totalOhContrib), color: '#f59e0b' },
-                            { label: 'Total Profit After Overhead', value: fmt(totalProfit), color: totalProfit >= 0 ? '#10b981' : '#ef4444' },
+                            { label: 'Total Direct Wage / Loaded Cost', value: fmt(totalDirectCost), color: '#f87171' },
+                            { label: 'Total OH Contribution', value: fmt(totalOhContrib), color: '#f59e0b' },
+                            { label: 'Total True Labor Cost', value: fmt(totalTrueLaborCost), color: '#fb923c' },
+                            { label: 'Total Quoted Labor Revenue', value: fmt(totalQuotedRevenue), color: '#60a5fa' },
+                            { label: 'Total Profit After OH', value: fmt(totalProfit), color: totalProfit >= 0 ? '#10b981' : '#ef4444' },
                           ].map(({ label, value, color }) => (
                             <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                               <span style={{ color: 'var(--t3)', fontSize: '10px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
@@ -3182,10 +3204,10 @@ Return ONLY valid JSON, no other text.`
 
                   {/* Worker breakdown table */}
                   <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', minWidth: '480px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', minWidth: '640px' }}>
                       <thead>
                         <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                          {['Worker', 'Type', 'Hours', 'Direct Cost', 'OH Contrib.', 'Quoted Rev.', 'Profit'].map(h => (
+                          {['Worker', 'Type', 'Hrs', 'Direct Wage', 'OH Contrib.', 'True Labor Cost', 'Quoted Labor Rev.', 'Profit After OH'].map(h => (
                             <th key={h} style={{ padding: '5px 8px', textAlign: h === 'Worker' || h === 'Type' ? 'left' : 'right', color: 'var(--t3)', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '10px' }}>{h}</th>
                           ))}
                         </tr>
@@ -3217,6 +3239,7 @@ Return ONLY valid JSON, no other text.`
                             </td>
                             <td style={{ padding: '6px 8px', textAlign: 'right', color: '#f87171', fontFamily: 'monospace' }}>{fmt(w.directLaborCost)}</td>
                             <td style={{ padding: '6px 8px', textAlign: 'right', color: '#f59e0b', fontFamily: 'monospace' }}>{fmt(w.overheadContribution)}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', color: '#fb923c', fontFamily: 'monospace', fontWeight: '600' }}>{fmt(w.trueLaborCost)}</td>
                             <td style={{ padding: '6px 8px', textAlign: 'right', color: '#60a5fa', fontFamily: 'monospace' }}>{fmt(w.quotedRevenue)}</td>
                             <td style={{ padding: '6px 8px', textAlign: 'right', color: w.profitAfterOverhead >= 0 ? '#10b981' : '#ef4444', fontFamily: 'monospace', fontWeight: '700' }}>{fmt(w.profitAfterOverhead)}</td>
                           </tr>
@@ -3229,7 +3252,8 @@ Return ONLY valid JSON, no other text.`
                           </td>
                           <td style={{ padding: '7px 8px', textAlign: 'right', color: '#f87171', fontFamily: 'monospace', fontWeight: '700' }}>{fmt(totalDirectCost)}</td>
                           <td style={{ padding: '7px 8px', textAlign: 'right', color: '#f59e0b', fontFamily: 'monospace', fontWeight: '700' }}>{fmt(totalOhContrib)}</td>
-                          <td style={{ padding: '7px 8px', textAlign: 'right', color: '#60a5fa', fontFamily: 'monospace', fontWeight: '700' }}>{workers.reduce((s, w) => s + w.quotedRevenue, 0) === 0 ? '—' : fmt(workers.reduce((s, w) => s + w.quotedRevenue, 0))}</td>
+                          <td style={{ padding: '7px 8px', textAlign: 'right', color: '#fb923c', fontFamily: 'monospace', fontWeight: '800' }}>{fmt(totalTrueLaborCost)}</td>
+                          <td style={{ padding: '7px 8px', textAlign: 'right', color: '#60a5fa', fontFamily: 'monospace', fontWeight: '700' }}>{totalQuotedRevenue === 0 ? '—' : fmt(totalQuotedRevenue)}</td>
                           <td style={{ padding: '7px 8px', textAlign: 'right', color: totalProfit >= 0 ? '#10b981' : '#ef4444', fontFamily: 'monospace', fontWeight: '800' }}>{fmt(totalProfit)}</td>
                         </tr>
                       </tbody>
