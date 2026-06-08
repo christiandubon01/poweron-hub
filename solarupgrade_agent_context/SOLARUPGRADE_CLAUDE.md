@@ -3468,3 +3468,39 @@ V15rTeamPanel.tsx empRows now carry reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth,
 - Manual QA performed: Typecheck only. Browser QA recommended at 768px, 1024px, 1280px breakpoints.
 - Next recommended action: Browser QA — confirm Save button appears on iPad simulator or resized browser at ~768–1023px. Confirm Undo/Redo appear at ≥1024px. Confirm no horizontal overflow in header.
 - Compact handoff for next agent/chat: V15rLayout.tsx header — Undo2 and Redo2 buttons changed from {!isMobile && (} to {isDesktop && (} (lines ~1776–1820). Save button unchanged at {!isMobile && (}. isDesktop = windowWidth >= 1024. isTablet = 768–1023. isMobile = < 768. All other header elements untouched.
+
+---
+
+## Claude Report — MTO Phase Header Totals Fix
+
+- Task completed: Yes
+- Files changed: src/components/v15r/V15rMTOTab.tsx
+- Commit hash: (see git log)
+- Typecheck result: PASS — zero errors
+
+- Root cause: In `renderPhaseGroups()` (line ~797), the phase total accumulation used `const cu = num(pbItem?.cost || 0)` — it only looked up the Price Book item's cost and ignored the row-level `unitCost` override. If a row had no linked Price Book item (`matId` empty or unmatched), `pbItem` was null, `cu` was 0, and the row contributed $0 to the phase header total.
+
+- Why Beauty Salon worked: Beauty Salon MTO rows have `matId` values that match Price Book entries. `pbItem?.cost` was valid, so `cu > 0` and the phase total calculated correctly.
+
+- Why Rock'n Bar / El Paseo Bar failed: Rock'n Bar rows have `unitCost` set directly on the row without a matching Price Book item (matId empty or unlinked). The phase total loop ignored `r.unitCost`, so every row got `cu = 0` → phase header showed `$0.00` even though item rows displayed correct totals.
+
+- Formula now used (phase header loop):
+  ```
+  const cu = r.unitCost !== undefined && r.unitCost !== null
+    ? num(r.unitCost)
+    : num(pbItem?.cost || 0)
+  phTotal += num(r.qty || 0) * cu * (1 + markupPct) * (1 + waste)
+  ```
+  This exactly mirrors the `renderRow` formula already in place for individual row display.
+
+- Legacy item field handling: Only `unitCost` and `matId` fields are used. Both were already present on legacy rows. No new fields added. No data model changes.
+
+- Preserved behavior: Phase grouping, collapse/expand, item quantities, unit costs, sell prices, row totals, PB buttons, search/edit/delete, drag-reorder, placement chips, save behavior, export PDF, Beauty Salon correct totals all unchanged.
+
+- Bugs / risks: None identified. One-line targeted fix. No regressions expected.
+
+- Manual QA performed: Typecheck only. Browser QA needed: Beauty Salon Trim total still correct; Rock'n Bar / El Paseo Bar phase totals now match visible row sums instead of $0.00.
+
+- Next recommended action: Open Rock'n Bar / El Paseo Bar in Material Takeoff tab, confirm Trim/Finish/other phase bar totals are non-zero and match the sum of visible row totals.
+
+- Compact handoff for next agent/chat: V15rMTOTab.tsx `renderPhaseGroups()` phase total loop — line ~797 changed `const cu = num(pbItem?.cost || 0)` to check `r.unitCost` first (same logic as `renderRow`). Root cause: phase total ignored row-level unitCost overrides; rows without Price Book links gave cu=0. Fix is a 2-line guard identical to the renderRow cu formula. Typecheck passes.

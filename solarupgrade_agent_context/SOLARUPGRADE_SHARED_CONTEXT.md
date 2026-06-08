@@ -5411,3 +5411,27 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 - Risks / follow-up: None. Two-line guard change only.
 - Manual QA status: Typecheck only — browser QA at 768–1023px needed to confirm.
 - Next agent should know: V15rLayout.tsx header Undo/Redo buttons guard changed from {!isMobile && (} to {isDesktop && (}. Save button unchanged at {!isMobile && (}. Breakpoints: isMobile < 768, isTablet 768–1023, isDesktop ≥ 1024.
+
+---
+
+## Shared Update — MTO Phase Header Totals Fix
+
+- Agent: Claude Code (Sonnet 4.6)
+- Branch: main
+- Commit: (see git log)
+- Files changed: src/components/v15r/V15rMTOTab.tsx
+- Typecheck: PASS — zero errors
+
+- User-facing behavior changed: Phase header bar totals in Material Takeoff now correctly sum all rows in the phase, including rows that have a direct `unitCost` override without a Price Book link. Previously, those rows contributed $0 to the phase total, causing Rock'n Bar / El Paseo Bar to show $0.00 for phase headers.
+
+- Formula/source of truth: Phase header total now uses:
+  `cu = r.unitCost ?? pbItem?.cost ?? 0`
+  then `phTotal += qty * cu * (1 + markupPct) * (1 + waste)` — identical to the row-level formula in `renderRow`.
+
+- Preserved behavior: Phase grouping, collapse/expand, row editing, PB buttons, drag-reorder, placement chips, export PDF, Beauty Salon totals all unchanged.
+
+- Risks / follow-up: None identified. Single targeted line change in the phase total loop.
+
+- Manual QA status: Typecheck only. Browser QA needed to confirm Rock'n Bar phase totals now show correct sums.
+
+- Next agent should know: V15rMTOTab.tsx `renderPhaseGroups()` — the `cu` calculation in the phase total `rows.forEach` loop now checks `r.unitCost` first, matching `renderRow` exactly. Root cause was that legacy/orphaned rows (no matId Price Book link, but unitCost set directly) were silently contributing $0 to phase totals.

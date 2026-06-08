@@ -794,7 +794,9 @@ React.useEffect(() => { forceUpdate() }, [projectId])
       let phTotal = 0
       rows.forEach(r => {
         const pbItem = getPBItem(r.matId)
-        const cu = num(pbItem?.cost || 0)
+        const cu = r.unitCost !== undefined && r.unitCost !== null
+          ? num(r.unitCost)
+          : num(pbItem?.cost || 0)
         const waste = num(pbItem?.waste || 0)
         const markupPct = num(backup.settings?.markup || 0) / 100
         phTotal += num(r.qty || 0) * cu * (1 + markupPct) * (1 + waste)
