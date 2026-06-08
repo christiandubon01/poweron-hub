@@ -3114,6 +3114,19 @@ Return ONLY valid JSON, no other text.`
             ? `${unassignedHrs.toFixed(1)} hrs unassigned`
             : `${Math.abs(unassignedHrs).toFixed(1)} hrs overallocated`
         const allocationBalanceColor = Math.abs(unassignedHrs) < 0.01 ? '#10b981' : unassignedHrs > 0 ? '#f59e0b' : '#ef4444'
+        // ── Task-rate cost summary (quoted rate model) ────────────────────────
+        // Revenue: task hours × task quoted rate (NOT employee bill rates)
+        const quotedTaskRevenue = totalHrs * rowRate
+        // Overhead: applied against total task hours (not allocated hours)
+        const taskOverhead = overheadPerHr !== null
+          ? overheadPerHr! * totalHrs
+          : (overheadPct > 0 ? totalAllocationLoadedCost * overheadPct / 100 : 0)
+        // Combined hourly wage burn = sum of each selected worker's cost rate
+        const combinedHourlyLaborCost = workerMetrics.reduce((s: number, m: any) => s + m.loadedRate, 0)
+        // Total = direct labor wages (allocated hrs × loaded rate) + task overhead
+        const totalLaborPlusOverheadCost = totalAllocationLoadedCost + taskOverhead
+        // Profit left = quoted revenue − total labor+overhead
+        const profitLeftFromQuotedRate = quotedTaskRevenue - totalLaborPlusOverheadCost
         const pieSlices = allocs.map((a: { empId: string; hrs: number }, i: number) => ({
           label: getEmployeeDisplayName(a.empId),
           value: a.hrs,
@@ -3164,21 +3177,63 @@ Return ONLY valid JSON, no other text.`
                 ))}
               </div>
 
-              {/* ── Rate Summary Row ─────────────────────────────────────────────── */}
-              <div style={{ backgroundColor: '#141824', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px', textAlign: 'center' }}>
-                  {[
-                    { label: 'Blended Loaded Cost/hr', value: `$${blendedLoadedCostHr.toFixed(2)}`, color: '#93c5fd', tip: 'Total task labor cost ÷ allocated labor hours' },
-                    { label: 'Parallel Crew Cost/hr', value: `$${parallelCrewLoadedCostHr.toFixed(2)}`, color: '#7dd3fc', tip: 'Combined cost per clock hour if selected workers work at the same time' },
-                    { label: 'Blended Bill Rate/hr', value: `$${blendedEmployeeBillRateHr.toFixed(2)}`, color: '#6ee7b7', tip: 'Total billable revenue ÷ allocated labor hours' },
-                    { label: 'Parallel Crew Bill Rate/hr', value: `$${parallelCrewBillRateHr.toFixed(2)}`, color: '#34d399', tip: 'Combined bill rate per clock hour if selected workers work at the same time' },
-                    { label: 'Allocation Balance', value: allocationBalanceLabel, color: allocationBalanceColor, tip: '' },
-                  ].map(item => (
-                    <div key={item.label} title={item.tip || undefined}>
-                      <div style={{ fontSize: '9px', color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '3px', lineHeight: '1.3' }}>{item.label}</div>
-                      <div style={{ fontFamily: 'monospace', fontWeight: '700', fontSize: '12px', color: item.color }}>{item.value}</div>
+              {/* ── Task Cost Summary Row ────────────────────────────────────────── */}
+              <div style={{ backgroundColor: '#141824', borderRadius: '8px', padding: '12px', marginBottom: '14px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ fontSize: '9px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--t3)', marginBottom: '10px' }}>
+                  Task Cost Summary — Quoted Rate Model
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {/* Per-worker cost cards (up to 3 shown) */}
+                  {workerMetrics.slice(0, 3).map((m: any, i: number) => {
+                    const workerName = getEmployeeDisplayName(m.empId)
+                    const shortName = workerName.length > 12 ? workerName.split(' ')[0] : workerName
+                    const typeBadgeColor = m.typeName === 'Owner' ? '#3b82f6' : m.typeName === 'W-2' ? '#10b981' : '#f59e0b'
+                    return (
+                      <div key={m.empId} style={{ backgroundColor: '#0f1117', borderRadius: '7px', padding: '8px 10px', border: `1px solid ${ALLOC_COLORS[i % ALLOC_COLORS.length]}33`, minWidth: '90px', flex: '1 1 90px' }}>
+                        <div style={{ fontSize: '9px', color: 'var(--t3)', marginBottom: '3px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <span style={{ color: typeBadgeColor, fontWeight: '700' }}>{m.typeName}</span>
+                          <span>cost/hr</span>
+                        </div>
+                        <div style={{ fontSize: '10px', color: 'var(--t2)', fontWeight: '600', marginBottom: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{shortName}</div>
+                        <div style={{ fontFamily: 'monospace', fontWeight: '800', fontSize: '14px', color: ALLOC_COLORS[i % ALLOC_COLORS.length] }}>${m.loadedRate.toFixed(2)}<span style={{ fontSize: '10px', fontWeight: '400', color: 'var(--t3)' }}>/hr</span></div>
+                      </div>
+                    )
+                  })}
+                  {/* Combined hourly labor cost */}
+                  <div style={{ backgroundColor: '#0f1117', borderRadius: '7px', padding: '8px 10px', border: '1px solid rgba(147,197,253,0.25)', minWidth: '100px', flex: '1 1 100px' }}
+                    title={`Sum of selected worker cost rates: ${workerMetrics.map((m: any) => `$${m.loadedRate.toFixed(2)}`).join(' + ')}`}>
+                    <div style={{ fontSize: '9px', color: 'var(--t3)', marginBottom: '3px' }}>Combined Cost/hr</div>
+                    <div style={{ fontSize: '9px', color: 'var(--t3)', marginBottom: '2px', fontStyle: 'italic' }}>crew wage burn rate</div>
+                    <div style={{ fontFamily: 'monospace', fontWeight: '800', fontSize: '14px', color: '#93c5fd' }}>${combinedHourlyLaborCost.toFixed(2)}<span style={{ fontSize: '10px', fontWeight: '400', color: 'var(--t3)' }}>/hr</span></div>
+                    {workerMetrics.length > 3 && (
+                      <div style={{ fontSize: '9px', color: '#f59e0b', marginTop: '2px' }}>+{workerMetrics.length - 3} more included</div>
+                    )}
+                  </div>
+                  {/* Overhead portion */}
+                  <div style={{ backgroundColor: '#0f1117', borderRadius: '7px', padding: '8px 10px', border: '1px solid rgba(252,211,77,0.2)', minWidth: '100px', flex: '1 1 100px' }}
+                    title={overheadPerHr !== null ? `$${overheadPerHr!.toFixed(2)}/hr × ${totalHrs}h task` : `${overheadPct}% overhead estimate`}>
+                    <div style={{ fontSize: '9px', color: 'var(--t3)', marginBottom: '3px' }}>Overhead Portion</div>
+                    <div style={{ fontSize: '9px', color: 'var(--t3)', marginBottom: '2px', fontStyle: 'italic' }}>
+                      {overheadPerHr !== null ? `$${overheadPerHr!.toFixed(2)}/hr × ${totalHrs}h` : `${overheadPct}% of labor`}
                     </div>
-                  ))}
+                    <div style={{ fontFamily: 'monospace', fontWeight: '800', fontSize: '14px', color: '#fcd34d' }}>
+                      {taskOverhead > 0 ? fmt(taskOverhead) : <span style={{ color: 'var(--t3)', fontSize: '12px' }}>No OH set</span>}
+                    </div>
+                  </div>
+                  {/* Total labor + overhead */}
+                  <div style={{ backgroundColor: '#0f1117', borderRadius: '7px', padding: '8px 10px', border: '1px solid rgba(167,139,250,0.25)', minWidth: '110px', flex: '1 1 110px' }}
+                    title={`Direct labor cost ${fmt(totalAllocationLoadedCost)} + overhead ${fmt(taskOverhead)}`}>
+                    <div style={{ fontSize: '9px', color: 'var(--t3)', marginBottom: '3px' }}>Total Labor + OH</div>
+                    <div style={{ fontSize: '9px', color: 'var(--t3)', marginBottom: '2px', fontStyle: 'italic' }}>wages + overhead</div>
+                    <div style={{ fontFamily: 'monospace', fontWeight: '800', fontSize: '14px', color: '#a78bfa' }}>{fmt(totalLaborPlusOverheadCost)}</div>
+                  </div>
+                  {/* Profit left from quoted rate */}
+                  <div style={{ backgroundColor: '#0f1117', borderRadius: '7px', padding: '8px 10px', border: `1px solid ${profitLeftFromQuotedRate >= 0 ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`, minWidth: '110px', flex: '1 1 110px' }}
+                    title={`${totalHrs}h × $${rowRate}/hr = ${fmt(quotedTaskRevenue)} quoted − ${fmt(totalLaborPlusOverheadCost)} cost`}>
+                    <div style={{ fontSize: '9px', color: 'var(--t3)', marginBottom: '3px' }}>Profit Left</div>
+                    <div style={{ fontSize: '9px', color: 'var(--t3)', marginBottom: '2px', fontStyle: 'italic' }}>{totalHrs}h × ${rowRate}/hr = {fmt(quotedTaskRevenue)}</div>
+                    <div style={{ fontFamily: 'monospace', fontWeight: '800', fontSize: '14px', color: profitLeftFromQuotedRate >= 0 ? '#10b981' : '#ef4444' }}>{fmt(profitLeftFromQuotedRate)}</div>
+                  </div>
                 </div>
               </div>
 

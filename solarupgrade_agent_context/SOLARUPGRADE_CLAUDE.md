@@ -3361,3 +3361,43 @@ V15rTeamPanel.tsx empRows now carry reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth,
 * Next recommended action: Browser QA the allocation modal by opening a multi-worker labor row. Verify Employee Detail modal scenario hours change when switching scenario tabs.
 
 * Compact handoff for next agent/chat: V15rTeamPanel.tsx EmployeeDetailModal now accepts activeScenarioId prop and resolves scenario hours against the active scenario (not always [0]). V15rEstimateTab.tsx allocation modal rebuilt with top summary strip (4 big metrics), rate summary row (blended/parallel loaded cost and bill rate, allocation balance), per-worker type badges + rate cells + full cost/profit rows, and task totals grid. Four helpers added: getEmployeeRecord, getEmployeeBaseRate, getEmployeeBillRateForWorker, getEmployeeWorkerTypeName. Main estimate totals unchanged. Typecheck passes.
+
+---
+
+## Claude Report — Estimate Labor Allocation: Task Cost Summary Polish
+
+- Task completed: YES
+- Files changed:
+  - src/components/v15r/V15rEstimateTab.tsx
+  - solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+  - solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+- Commit hash: (see commit below)
+- Typecheck result: PASS — zero errors
+
+- Root cause / user need: The previous "Rate Summary Row" (blended/parallel rates) was abstract and hard to use for quoting decisions. User needs to see: what each selected worker costs per hour, how much the crew burns per clock hour, what overhead the task absorbs, and what profit remains after all labor+overhead costs versus the quoted task rate.
+
+- What changed: Replaced the 5-column "Rate Summary Row" (blended loaded cost/hr, parallel crew cost/hr, blended bill rate/hr, parallel crew bill rate/hr, allocation balance) with a new "Task Cost Summary — Quoted Rate Model" flex-wrap row. Added 5 new computed values in the IIFE above the JSX. The four top summary cards and all per-worker accounting below are unchanged.
+
+- Quoted task revenue behavior: quotedTaskRevenue = taskHours × row.rate (the task's quoted rate, NOT employee bill rates). Shown inline as formula hint: "8h × $95/hr = $760".
+
+- Selected laborer cost behavior: Each allocated worker gets its own cost card (up to 3 shown; "+N more included" note if more). Owner/1099 show base wage; W-2 shows loaded hourly cost (base × payrollMult). Card uses worker's short display name and type badge (Owner/W-2/1099).
+
+- Combined hourly labor cost behavior: combinedHourlyLaborCost = sum of all selected worker loadedRate values. This is the crew's simultaneous wage burn rate per clock hour. Tooltip shows the additive breakdown. Labeled "crew wage burn rate".
+
+- Overhead portion behavior: taskOverhead = overheadPerHr × taskHours (task's total hours, not allocated worker-hours). Falls back to overheadPct% of direct labor cost if no overheadPerHr. Formula hint shows "$X.xx/hr × Nh" or "${pct}% of labor". Shows "No OH set" if zero.
+
+- Total labor + overhead behavior: totalLaborPlusOverheadCost = totalAllocationLoadedCost (direct labor wages from allocated hrs) + taskOverhead. Tooltip shows additive breakdown.
+
+- Profit left from quoted rate behavior: profitLeftFromQuotedRate = quotedTaskRevenue − totalLaborPlusOverheadCost. Green when positive, red when negative. Card title tooltip shows full formula.
+
+- Estimate totals preservation: estTotals(), phase totals, contract amount, projected profit — NOT touched. All changes are display-only inside the modal IIFE.
+
+- Worker formula preservation: getEmployeeCostRate (getLoadedHourlyRate for W-2, base for owner/1099), getEmployeeBaseRate, resolveWorkerType — all unchanged.
+
+- Bugs / risks: None found. The old blendedLoadedCostHr, parallelCrewLoadedCostHr, blendedEmployeeBillRateHr, parallelCrewBillRateHr variables are still computed (used in per-worker section and task totals below) but no longer rendered in the replaced row.
+
+- Manual QA performed: Typecheck only. Browser QA needed to verify card wrapping looks correct for 1, 2, 3, and >3 worker scenarios.
+
+- Next recommended action: Browser QA with real labor rows. Check wrapping on narrow screens. Optionally collapse the allocation balance into the pie chart legend area since the pill now shows it there already.
+
+- Compact handoff for next agent/chat: The Rate Summary Row in V15rEstimateTab.tsx allocation modal has been replaced with a "Task Cost Summary — Quoted Rate Model" flex-wrap row. Five new computed values added: quotedTaskRevenue (totalHrs × rowRate), taskOverhead (overheadPerHr × totalHrs, task-hours not allocated), combinedHourlyLaborCost (sum of worker loadedRates), totalLaborPlusOverheadCost (direct labor + taskOverhead), profitLeftFromQuotedRate (quotedTaskRevenue − totalLaborPlusOverheadCost). Worker cost cards show up to 3, with "+N more included" note. Four top summary cards and per-worker accounting below unchanged. Typecheck passes.

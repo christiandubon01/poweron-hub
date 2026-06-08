@@ -5315,3 +5315,42 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 * Manual QA status: Typecheck only.
 
 * Next agent should know: getEmployeeRecord, getEmployeeBaseRate, getEmployeeBillRateForWorker, getEmployeeWorkerTypeName are in V15rEstimateTab.tsx component scope. They resolve owner via isOwnerRecord sentinel, fall back to settings.opCost / settings.billRate. EmployeeDetailModal activeScenarioId prop is optional (backward compatible). Main estimate totals untouched.
+
+---
+
+## Shared Update — Estimate Labor Allocation: Task Cost Summary Polish
+
+- Agent: Claude Code (Sonnet 4.6)
+- Branch: main
+- Commit: (see commit below)
+- Files changed:
+  - src/components/v15r/V15rEstimateTab.tsx
+  - solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+  - solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md
+
+- Typecheck: PASS — zero errors
+
+- User-facing behavior changed: The Rate Summary Row (blended/parallel rate display) inside the Estimate Labor Allocation modal has been replaced with a task-cost-focused summary that shows per-worker cost cards, combined crew hourly wage burn, overhead portion, total labor+overhead, and profit left from quoted rate.
+
+- Quoted task revenue behavior: quotedTaskRevenue = taskHours × row.rate (task quoted rate, not employee bill rates). Shown as inline formula "8h × $95/hr = $760".
+
+- Laborer cost summary behavior:
+  - Per-worker cards (up to 3): shows worker name, type badge, and loadedRate/hr (Owner/1099 = base wage; W-2 = loaded hourly)
+  - Combined Cost/hr: sum of all selected worker cost rates (crew simultaneous wage burn)
+  - Overhead Portion: overheadPerHr × taskHours (task total hours, not allocated). Formula hint shown.
+  - Total Labor + OH: totalAllocationLoadedCost + taskOverhead
+  - Profit Left: quotedTaskRevenue − totalLaborPlusOverheadCost
+
+- Preserved behavior:
+  - Four top summary cards (Total Task Labor Cost, Total Task Billable Revenue, Remaining After Direct Labor, True Profit After Overhead) — unchanged
+  - Pie chart, allocation balance in legend, sliders — unchanged
+  - Per-worker cost accounting section — unchanged
+  - Task Totals grid — unchanged
+  - estTotals(), phase totals, contract amount, projected profit — unchanged
+  - getEmployeeCostRate, getLoadedHourlyRate, getBaseHourlyRate, resolveWorkerType — unchanged
+
+- Risks / follow-up: Browser QA needed for card wrapping on 1/2/3/>3 worker scenarios. Old blended/parallel variables still computed (used in per-worker and task totals sections) but not displayed in the replaced row.
+
+- Manual QA status: Typecheck only.
+
+- Next agent should know: Five new computed variables in allocation modal IIFE: quotedTaskRevenue, taskOverhead, combinedHourlyLaborCost, totalLaborPlusOverheadCost, profitLeftFromQuotedRate. taskOverhead uses totalHrs (task hours), not totalAllocatedHours. profitLeftFromQuotedRate uses row.rate revenue model, not employee bill rates. Old blended/parallel vars kept for use in per-worker accounting below.
