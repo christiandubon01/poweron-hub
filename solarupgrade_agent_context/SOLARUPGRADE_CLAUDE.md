@@ -3449,3 +3449,22 @@ V15rTeamPanel.tsx empRows now carry reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth,
 - Next recommended action: Browser QA. Open a project with MTO items that have markup, verify Deal Overview shows raw+tax not selling price. Open a labor row phase dropdown and confirm options are readable on Windows/Chrome.
 
 - Compact handoff for next agent/chat: estTotals() in V15rEstimateTab.tsx now returns dealMatCost (matC + taxOnMatRaw), dealCost (lab+oh+dealMatCost+mi+taxOnMileage), dealProfit, dealMarginPct. Deal Overview section uses these throughout — bars, big profit display, contract slider %, cost breakdown chart/legend, estimate cost basis card, margin breakdown card. MTO selling price fields (matSellingC, taxOnMatSelling, customerProfit, customerCost) are still computed and returned but only used in: (a) estTotals internals, (b) Internal Breakdown Self-Perform Advantage section (intentional). Phase dropdown in labor rows now uses solid dark background + light text with per-option styles for Windows Chrome readability. Typecheck passes.
+
+---
+
+## Claude Report — Tablet Header Save Button Fix
+
+- Task completed: Yes
+- Files changed: src/components/v15r/V15rLayout.tsx
+- Commit hash: (see below)
+- Typecheck result: Pass — no errors
+- Root cause / user need: On tablet (768–1023px), the header right-side bar contained: sync indicator + connection dot + Daily Target + +Log button + Undo + Redo + Save + Time. The row overflowed on tablet width, pushing Save off-screen while Undo/Redo remained visible.
+- Desktop behavior: Unchanged — Undo, Redo, Save all visible (gated by isDesktop / !isMobile respectively).
+- Tablet/iPad behavior before: Undo + Redo visible, Save cut off or hidden by overflow.
+- Tablet/iPad behavior after: Undo and Redo hidden; Save visible. +Log, sync indicators, connection status, and Time remain.
+- Save handler preservation: Save button still uses handleHeaderSaveLiveData, same disabled state (syncStatus === 'syncing' || !isSupabaseConfigured()), same styling.
+- Undo/redo behavior: Undo and Redo now render only when isDesktop (windowWidth >= 1024). On tablet they are hidden. Keyboard shortcuts (Ctrl+Z / Ctrl+Y) still work via existing event handlers.
+- Bugs / risks: None identified. The fix is a two-line guard change (isDesktop instead of !isMobile). No logic altered.
+- Manual QA performed: Typecheck only. Browser QA recommended at 768px, 1024px, 1280px breakpoints.
+- Next recommended action: Browser QA — confirm Save button appears on iPad simulator or resized browser at ~768–1023px. Confirm Undo/Redo appear at ≥1024px. Confirm no horizontal overflow in header.
+- Compact handoff for next agent/chat: V15rLayout.tsx header — Undo2 and Redo2 buttons changed from {!isMobile && (} to {isDesktop && (} (lines ~1776–1820). Save button unchanged at {!isMobile && (}. isDesktop = windowWidth >= 1024. isTablet = 768–1023. isMobile = < 768. All other header elements untouched.

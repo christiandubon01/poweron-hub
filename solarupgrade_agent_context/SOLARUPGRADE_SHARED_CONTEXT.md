@@ -5396,3 +5396,18 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 - Manual QA status: Typecheck only.
 
 - Next agent should know: estTotals() returns dealMatCost, dealCost, dealProfit, dealMarginPct. Deal Overview uses these. customerProfit/customerCost remain computed for Internal Breakdown use. Phase dropdown uses backgroundColor: '#1e2130' + option-level styles. cbTotal fallback now uses Math.max(t.dealCost, 1).
+
+---
+
+## Shared Update — Tablet Header Save Button Fix
+
+- Agent: Claude Code (Sonnet 4.6)
+- Branch: main
+- Commit: (see git log)
+- Files changed: src/components/v15r/V15rLayout.tsx
+- Typecheck: Pass
+- User-facing behavior changed: On tablet (768–1023px), Undo and Redo buttons are now hidden; Save button is now visible. Desktop (≥1024px) is unchanged — Undo, Redo, and Save all visible.
+- Preserved behavior: Save handler (handleHeaderSaveLiveData), Save disabled state, Save styling, all other header elements (+Log, sync indicator, connection status, Daily Target, Time).
+- Risks / follow-up: None. Two-line guard change only.
+- Manual QA status: Typecheck only — browser QA at 768–1023px needed to confirm.
+- Next agent should know: V15rLayout.tsx header Undo/Redo buttons guard changed from {!isMobile && (} to {isDesktop && (}. Save button unchanged at {!isMobile && (}. Breakpoints: isMobile < 768, isTablet 768–1023, isDesktop ≥ 1024.

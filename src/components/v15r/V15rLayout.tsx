@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   LayoutDashboard,
   FolderKanban,
@@ -12,8 +12,7 @@ import {
   Calculator,
   BookOpen,
   Settings,
-  Download,
-  Upload,
+  Save,
   Clock,
   Zap,
   Undo2,
@@ -46,7 +45,7 @@ import {
   Cpu,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
-import { getBackupData, saveBackupData, importBackupFromFile, exportBackup, getKPIs, syncToSupabase, loadFromSupabase, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, createEmptyBackup, type BackupData } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, getKPIs, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, createEmptyBackup, isActiveProject, resolveProjectBucket, type BackupData } from '@/services/backupDataService'
 // BUG 1 FIX — Realtime sync + stale-check service
 import { initRealtimeSync } from '@/services/realtimeSyncService'
 // BUG 2 FIX — Active-only pipeline formula
@@ -104,7 +103,6 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   // Demo Mode — display layer swap
   const { isDemoMode, hasHydrated } = useDemoStore()
   const [currentTime, setCurrentTime] = useState<string>('')
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1920)
   const [blueprintImmersive, setBlueprintImmersive] = useState(false)
@@ -664,50 +662,36 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     return `${diffDays}d ago`
   }
 
-  // Download backup — uses exportBackup() for consistent PowerOn_Backup_[timestamp].json format
-  const handleBackupDownload = () => {
-    if (!backupData) return
-    const projectCount = (backupData.projects || []).length
-    const logCount = (backupData.logs || []).length
-    const serviceLogCount = (backupData.serviceLogs || []).length
-    setToastMessage(`Backup exported — ${projectCount} projects, ${logCount} service logs, ${serviceLogCount} leads`)
-    setTimeout(() => setToastMessage(null), 4000)
-    exportBackup(backupData)
-  }
-
-  // Handle import
-  const handleImportClick = () => {
-    fileInputRef.current?.click()
-  }
-
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    try {
-      const { data, summary } = await importBackupFromFile(file)
-      setBackupData(data)
-      setKpis(getKPIs(data))
-
-      // Build merge summary message
-      const parts = Object.entries(summary.merged)
-        .map(([key, count]) => `${count} ${key}`)
-        .join(', ')
-      const message = parts
-        ? `Imported ${parts} — existing data preserved`
-        : 'Import complete — no new records found (all duplicates)'
-
-      setToastMessage(message)
+  const handleHeaderSaveLiveData = async () => {
+    if (!isSupabaseConfigured()) {
+      setSyncStatus('failed')
+      setToastMessage('Supabase not configured')
       setTimeout(() => setToastMessage(null), 4000)
-      // Sync imported data to Supabase immediately, but only after tenant hydration.
-      if (authStatus === 'authenticated' && tenantDataReady && tenantUserId === authUser?.id) {
-        syncToSupabase().catch(() => {})
+      return
+    }
+    if (authStatus !== 'authenticated' || !tenantDataReady || tenantUserId !== authUser?.id) {
+      setToastMessage('Workspace still loading — save blocked')
+      setTimeout(() => setToastMessage(null), 3000)
+      return
+    }
+    if (syncStatus === 'syncing') return
+
+    setSyncStatus('syncing')
+    try {
+      const result = await forceSyncToCloud()
+      if (result.success) {
+        setSyncStatus('synced')
+        setLastSyncTime(new Date().toLocaleTimeString())
+        setToastMessage('Live data saved to cloud')
+        setTimeout(() => setToastMessage(null), 3000)
+      } else {
+        setSyncStatus('failed')
+        setToastMessage('Sync failed — ' + (result.error || 'check connection'))
+        setTimeout(() => setToastMessage(null), 4000)
       }
-      // Reset input
-      if (fileInputRef.current) fileInputRef.current.value = ''
-    } catch (err) {
-      console.error('Failed to import backup:', err)
-      setToastMessage('Failed to import backup')
+    } catch (err: any) {
+      setSyncStatus('failed')
+      setToastMessage('Sync failed — ' + (err?.message || 'check connection'))
       setTimeout(() => setToastMessage(null), 4000)
     }
   }
@@ -744,6 +728,9 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     })
     return totalQuoted - totalMaterial - totalMileage
   })()
+  const comingUpQuoted = (backupData?.projects || [])
+    .filter((p: any) => isActiveProject(p) && resolveProjectBucket(p) === 'coming')
+    .reduce((sum: number, p: any) => sum + (Number(p.contract) || 0), 0)
 
   // Responsive breakpoints
   const isCompact = windowWidth < 1200
@@ -1580,6 +1567,20 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                       )}
                     </div>
 
+                    {/* COMING UP QUOTED */}
+                    <div className="flex flex-col items-center min-w-[82px]" title={isCompact ? 'Coming Up Projects Total Quoted' : undefined}>
+                      {isCompact ? (
+                        <span className="text-sm font-bold text-cyan-300">{hideFinances ? '••••' : fmtHeader(comingUpQuoted)}</span>
+                      ) : (
+                        <>
+                          <span className="text-[8px] font-bold uppercase text-gray-500">Coming Up</span>
+                          <span className="text-base font-bold text-cyan-300">
+                            {hideFinances ? '••••' : fmtHeader(comingUpQuoted)}
+                          </span>
+                        </>
+                      )}
+                    </div>
+
                     {/* PAID */}
                     <div className="flex flex-col items-center min-w-[80px]" title={isCompact ? 'Paid' : undefined}>
                       {isCompact ? (
@@ -1607,7 +1608,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                       ) : (
                         <>
                           <span className="text-[8px] font-bold uppercase text-gray-500">Exposure</span>
-                          <span className="text-sm font-bold text-yellow-400">{hideFinances ? '••••' : fmtHeader(safeKpis.svcUnbilled)}</span>
+                          <span className="text-sm font-bold text-red-400">{hideFinances ? '••••' : fmtHeader(safeKpis.exposure)}</span>
                         </>
                       )}
                     </div>
@@ -1615,11 +1616,11 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                     {/* SVC UNBILLED */}
                     <div className="flex flex-col items-center min-w-[70px]" title={isCompact ? 'Svc Unbilled' : undefined}>
                       {isCompact ? (
-                        <span className="text-sm font-bold text-yellow-400">{fmtHeader(safeKpis.svcUnbilled)}</span>
+                        <span className="text-sm font-bold text-red-400">{fmtHeader(safeKpis.svcUnbilled)}</span>
                       ) : (
                         <>
                           <span className="text-[8px] font-bold uppercase text-gray-500">Svc Unbilled</span>
-                          <span className="text-base font-bold text-yellow-400">
+                          <span className="text-base font-bold text-red-400">
                             {hideFinances ? '••••' : fmtHeader(safeKpis.svcUnbilled)}
                           </span>
                         </>
@@ -1772,8 +1773,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 +Log
               </button>
 
-              {/* Undo Button */}
-              {!isMobile && (
+              {/* Undo Button — desktop only; hidden on tablet to keep Save visible */}
+              {isDesktop && (
                 <button
                   onClick={() => {
                     if (canUndo()) {
@@ -1795,8 +1796,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 </button>
               )}
 
-              {/* Redo Button */}
-              {!isMobile && (
+              {/* Redo Button — desktop only; hidden on tablet to keep Save visible */}
+              {isDesktop && (
                 <button
                   onClick={() => {
                     if (canRedo()) {
@@ -1818,36 +1819,18 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 </button>
               )}
 
-              {/* Backup Button */}
+              {/* Save Live Data Button */}
               {!isMobile && (
                 <button
-                  onClick={handleBackupDownload}
-                  className="p-1.5 text-gray-400 hover:text-gray-300 hover:bg-gray-800 rounded transition-colors"
-                  title="Download backup"
+                  onClick={handleHeaderSaveLiveData}
+                  disabled={syncStatus === 'syncing' || !isSupabaseConfigured()}
+                  className="px-2.5 py-1.5 text-xs font-semibold text-emerald-200 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/30 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                  title="Save live data now"
                 >
-                  <Download size={18} />
+                  <Save size={14} />
+                  Save
                 </button>
               )}
-
-              {/* Import Button */}
-              {!isMobile && (
-                <button
-                  onClick={handleImportClick}
-                  className="p-1.5 text-gray-400 hover:text-gray-300 hover:bg-gray-800 rounded transition-colors"
-                  title="Import backup"
-                >
-                  <Upload size={18} />
-                </button>
-              )}
-
-              {/* Hidden file input */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".json"
-                onChange={handleFileSelect}
-                className="hidden"
-              />
 
               {/* Time */}
               <div className="flex items-center gap-1 text-gray-400 text-sm">
