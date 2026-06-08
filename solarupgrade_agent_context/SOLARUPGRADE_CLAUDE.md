@@ -3475,7 +3475,7 @@ V15rTeamPanel.tsx empRows now carry reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth,
 
 - Task completed: Yes
 - Files changed: src/components/v15r/V15rMTOTab.tsx
-- Commit hash: (see git log)
+- Commit hash: 4ae6a6c
 - Typecheck result: PASS — zero errors
 
 - Root cause: In `renderPhaseGroups()` (line ~797), the phase total accumulation used `const cu = num(pbItem?.cost || 0)` — it only looked up the Price Book item's cost and ignored the row-level `unitCost` override. If a row had no linked Price Book item (`matId` empty or unmatched), `pbItem` was null, `cu` was 0, and the row contributed $0 to the phase header total.
