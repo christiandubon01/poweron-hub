@@ -5322,7 +5322,7 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 
 - Agent: Claude Code (Sonnet 4.6)
 - Branch: main
-- Commit: (see commit below)
+- Commit: 566c447
 - Files changed:
   - src/components/v15r/V15rEstimateTab.tsx
   - solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
