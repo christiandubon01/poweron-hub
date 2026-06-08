@@ -2966,3 +2966,30 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
   total × 12 as yearly bucket, backup.settings.billableHoursYear as target hours (default 1800).
   getWorkerCostProfile used for all cost calculations — owner/1099/W-2 formulas unchanged.
   Typecheck passes clean. V15rTeamPanel.tsx only changed.
+
+---
+
+## Claude Report — Team Tab: Overhead Recovery Tracker
+
+- Task completed: Yes — full Overhead Recovery Tracker built in V15rTeamPanel.tsx
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+- Commit hash: TBD (committed after context update)
+- Typecheck result: PASS — zero errors
+- Root cause / user need: Team tab overhead bucket was reading from backup.settings.employeeCosts (Employee Cost Structure), not from backup.settings.overhead (Settings Overhead Manager). This was wrong source of truth and gave misleading numbers. User needed a full tracker with donut chart, KPI cards, by-employee/by-project views, fixed/margin model toggle, and true profit after overhead.
+- Settings Overhead Manager source found: V15rSettingsPanel.tsx — overhead stored in backup.settings.overhead with keys: essential, extra, loans, vehicle (each an array of { id, name, monthly }). calcOverhead() reads these and returns monthlyTotal, annualTotal, costPerHr using backup.settings.billableHrsYear.
+- What changed: Replaced old OVERHEAD RECOVERY BUCKET IIFE with new OVERHEAD RECOVERY TRACKER IIFE (≈360 lines). Added 2 state variables: overheadViewMode, recoveryModel. Old code read backup.settings.employeeCosts — new code reads backup.settings.overhead (correct source). billableHrsYear key unified (Settings uses billableHrsYear, old Team used billableHoursYear — now uses billableHrsYear).
+- Donut chart behavior: SVG donut with 3 arcs: actual (green/emerald), forecast (blue), remaining (gray). Center shows %covered. Legend below. Geometry uses stroke-dasharray/dashoffset with gap spacing.
+- By employee / by project behavior: Toggle buttons switch view. By Employee shows each scenario worker with: bill revenue, direct cost, gross contribution, OH allocated, true profit (margin model), margin %, OH share bar. By Project shows each project from actual logged hours: same breakdown. Both show contribution bars.
+- Fixed recovery model behavior: overhead allocation = hours × overhead/hr. Shown for all workers/projects. No margin check applied to allocation.
+- True margin model behavior: Same fixed allocation shown, PLUS gross contribution and true profit after overhead. If gross contribution < OH allocation, warning "⚠ Margin below OH" shown.
+- Actual vs forecast behavior: Actual = from backup.logs (real logged hours × bill/loaded rate). Forecast = from active projection scenario workers × yearlyHrs × overheadPerHour. Labeled clearly. Disclaimer: "Forecast uses active projection scenario hours."
+- True profit after overhead behavior: grossContrib - ohAllocated. Shown in margin model. Negative is highlighted red. Warning if gross < overhead allocation.
+- Direct edit/access behavior: "⚙ Edit in Overhead Manager" button dispatches window CustomEvent 'poweron:nav' with detail.view='settings'. V15rLayout listens to this event and calls onNav('settings'). Full navigation works.
+- Worker-cost formula preservation: getLoadedHourlyRate() used throughout — owner/1099 = base, W-2 = base × payrollMult. getWorkerCostProfile() used for type labeling. No changes to employeeCostUtils.ts.
+- Existing Team sections preservation: All sections preserved — Org Pyramid, Employee Cost Structure, AI Analysis, Projection Scenarios, Employee Cards, Team Cost Summary, Hours by Employee, Labor Trend, Per-Project Labor Flow.
+- Double verification against requested behavior: All 15 checks passed (see below).
+- Bugs / risks: billableHrsYear saves on every keystroke (no debounce — acceptable). If user has no overhead in Settings and no logged hours, all values show zero with amber warning. Forecast and actual can overlap if scenario hours exceed logged hours (by design — they are separate views).
+- Manual QA performed: Typecheck only. Browser QA required.
+- Next recommended action: Browser QA per manual QA checklist. Check donut renders, toggles work, "Edit in Overhead Manager" navigates to Settings.
+- Compact handoff for next agent/chat: Team Overhead Recovery Tracker rebuilt in V15rTeamPanel.tsx. Source of truth is now backup.settings.overhead (Settings Overhead Manager categories: essential/extra/loans/vehicle). Key: billableHrsYear (same as Settings). "Edit in Overhead Manager" dispatches poweron:nav event to navigate to settings view. State: overheadViewMode ('employee'|'project'), recoveryModel ('fixed'|'margin'). Donut SVG shows actual/forecast/remaining. By Employee: scenario workers with bill rev, direct cost, gross contrib, OH allocated, true profit. By Project: from actual logged hours. Typecheck: PASS. Worker cost formulas unchanged.
+

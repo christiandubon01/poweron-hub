@@ -5055,3 +5055,22 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
   Team Projection Scenarios and Overhead Recovery are in V15rTeamPanel.tsx lines ~1520 and ~1717.
   Purely additive — 447 lines added, no existing code changed. Persistence via backup.settings.
   employeeCostUtils.ts, employeeTypes.ts, V15rEstimateTab.tsx untouched in this pass.
+
+---
+
+## Shared Update — Team Tab: Overhead Recovery Tracker
+
+- Agent: Claude Code Sonnet 4.5 Medium
+- Branch: main (user confirmed: use active local branch)
+- Commit: TBD
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+- Typecheck: PASS — zero errors
+- User-facing behavior changed: Team tab Overhead Recovery section now shows full tracker with donut chart, KPI cards, by-employee/by-project toggle, fixed/true margin model toggle, actual vs forecast breakdown, true profit after overhead per worker and project.
+- Overhead source of truth: backup.settings.overhead (Settings → Overhead Manager categories: essential, extra, loans, vehicle). Old code was incorrectly reading backup.settings.employeeCosts. Fixed.
+- Donut/chart behavior: Inline SVG donut (no new packages). 3 arcs: actual recovered (emerald), forecasted from scenario (blue), remaining (gray). Center shows % covered.
+- Contribution model behavior: Fixed model shows hours × overhead/hr allocation. True Margin model adds gross contribution = bill revenue − direct cost, and true profit after overhead = gross − OH allocated. Warning shown if margin < overhead.
+- Actual/forecast behavior: Actual = backup.logs (real logged hours). Forecast = active projection scenario (labeled clearly). "Edit in Overhead Manager" button dispatches poweron:nav event → navigates to Settings.
+- Risks / follow-up: If Settings Overhead Manager has no expenses (annualOH=0), amber warning shown. Donut renders empty ring. Browser QA required.
+- Manual QA status: Typecheck only. Full browser QA required.
+- Next agent should know: Overhead source is backup.settings.overhead, key billableHrsYear (shared with Settings). Navigation to Settings uses window.dispatchEvent(new CustomEvent('poweron:nav', { detail: { view: 'settings' } })). State vars overheadViewMode and recoveryModel added at component level. All existing Team sections preserved. Worker cost formulas (owner/1099/W-2) unchanged.
+
