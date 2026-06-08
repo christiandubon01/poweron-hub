@@ -5062,7 +5062,7 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 
 - Agent: Claude Code Sonnet 4.5 Medium
 - Branch: main (user confirmed: use active local branch)
-- Commit: TBD
+- Commit: 4a0e628
 - Files changed: src/components/v15r/V15rTeamPanel.tsx, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
 - Typecheck: PASS — zero errors
 - User-facing behavior changed: Team tab Overhead Recovery section now shows full tracker with donut chart, KPI cards, by-employee/by-project toggle, fixed/true margin model toggle, actual vs forecast breakdown, true profit after overhead per worker and project.
@@ -5081,7 +5081,7 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 
 - Agent: Claude Code Sonnet 4.5 Medium
 - Branch: main
-- Commit: TBD
+- Commit: 4a0e628
 - Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
 - Typecheck: PASS
 - Bug fixed: Donut was combining actual + forecast into "covered %", showing ~100% even when actual logged hours only covered ~14%. Fix: donut now shows actual-only arcs. Forecast shown separately in KPI cards.
@@ -5097,7 +5097,7 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 
 - Agent: Claude Code Sonnet 4.5 Medium
 - Branch: main
-- Commit: TBD
+- Commit: 4a0e628
 - Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
 - Typecheck: PASS
 - User-facing behavior changed: Employee cards now show full labor planning detail (hrs/day, hrs/week, hrs/month, weeks/yr, planned yearly hrs, logged hrs, remaining hrs, progress bar, rate strip, actual money, scenario remaining money, scheduling insight). Readability upgraded throughout. Forecast math corrected.
@@ -5116,7 +5116,7 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 
 - Agent: Claude Code (resumed session)
 - Branch: main
-- Commit: TBD
+- Commit: 4a0e628
 - Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
 - Typecheck: PASS
 
@@ -5132,3 +5132,4 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 **ensureAndUpdateScenWorker behavior**: edits to a new employee's hours in Projection Scenarios first insert them into the scenario before applying the field change. Prevents silent drops.
 
 **Risks / follow-up**: Browser QA needed to confirm new employees appear correctly. If a new employee has no logged hours yet, their OH recovery will show $0 actual (correct).
+
