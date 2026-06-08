@@ -5074,3 +5074,19 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 - Manual QA status: Typecheck only. Full browser QA required.
 - Next agent should know: Overhead source is backup.settings.overhead, key billableHrsYear (shared with Settings). Navigation to Settings uses window.dispatchEvent(new CustomEvent('poweron:nav', { detail: { view: 'settings' } })). State vars overheadViewMode and recoveryModel added at component level. All existing Team sections preserved. Worker cost formulas (owner/1099/W-2) unchanged.
 
+
+---
+
+## Shared Update — Team Tab: Separate Actual vs Forecast Overhead Recovery
+
+- Agent: Claude Code Sonnet 4.5 Medium
+- Branch: main
+- Commit: TBD
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
+- Typecheck: PASS
+- Bug fixed: Donut was combining actual + forecast into "covered %", showing ~100% even when actual logged hours only covered ~14%. Fix: donut now shows actual-only arcs. Forecast shown separately in KPI cards.
+- Math corrected: actualRemaining = max(annualOH - actualOverheadRecovered, 0). projectedTotal = actual + forecast. projectedRemaining, projectedSurplus computed separately and labeled as projected/forecasted.
+- Donut: 2-arc (actual/actual-remaining). Center shows actual % only.
+- KPI cards: "Actual Remaining" and "Projected Status" are now separate, clearly labeled cards. Forecast not mixed into actual.
+- Next agent should know: Overhead Recovery Tracker math is now correct. Actual and forecast are separated at both the math layer and UI layer. No worker cost formulas changed. Existing toggles (Fixed/Margin, By Employee/Project) preserved.
+

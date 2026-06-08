@@ -2993,3 +2993,20 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 - Next recommended action: Browser QA per manual QA checklist. Check donut renders, toggles work, "Edit in Overhead Manager" navigates to Settings.
 - Compact handoff for next agent/chat: Team Overhead Recovery Tracker rebuilt in V15rTeamPanel.tsx. Source of truth is now backup.settings.overhead (Settings Overhead Manager categories: essential/extra/loans/vehicle). Key: billableHrsYear (same as Settings). "Edit in Overhead Manager" dispatches poweron:nav event to navigate to settings view. State: overheadViewMode ('employee'|'project'), recoveryModel ('fixed'|'margin'). Donut SVG shows actual/forecast/remaining. By Employee: scenario workers with bill rev, direct cost, gross contrib, OH allocated, true profit. By Project: from actual logged hours. Typecheck: PASS. Worker cost formulas unchanged.
 
+
+---
+
+## Claude Report — Team Tab: Separate Actual vs Forecast Overhead Recovery
+
+- Task completed: Yes — targeted bug fix only
+- Files changed: src/components/v15r/V15rTeamPanel.tsx, solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md, solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md
+- Commit hash: TBD
+- Typecheck result: PASS — zero errors
+- Root cause: Previous implementation combined actualOverheadRecovered + forecastOverheadRecovered into a single `remaining` and `totalCoveredPct`. Donut center showed the combined percentage, which inflated actual recovery to ~100% even when real logged hours covered only ~14%.
+- Actual recovery math verified: actualRemaining = max(annualOH - actualOverheadRecovered, 0). actualCoveredPct = actualOverheadRecovered / annualOH. Donut center shows actual % only.
+- Forecast recovery math verified: forecastOverheadRecovered = scenarioYearlyHours × overheadPerHour. projectedTotal = actual + forecast. projectedRemaining = max(annualOH - projectedTotal, 0). projectedSurplus = max(projectedTotal - annualOH, 0). All shown in KPI cards labeled as "Forecasted" and "Projected Status" — not mixed into actual.
+- Donut chart behavior: 2-arc donut (was 3-arc). Emerald arc = actual recovered. Dark gray arc = actual remaining. Center shows actual % only. Forecast removed from donut rings — shown only in KPI cards.
+- KPI cards behavior: "Actual Recovered" shows hrs logged + actual %. "Actual Remaining" shows how much is still needed (not combined with forecast). "Forecasted (Scenario)" shows scenario projection labeled clearly. "Projected Status" shows surplus/covered/remaining if scenario happens. "Months to Recover" unchanged.
+- Worker-cost formulas: Unchanged. getLoadedHourlyRate() used throughout.
+- No unrelated files touched: Confirmed.
+

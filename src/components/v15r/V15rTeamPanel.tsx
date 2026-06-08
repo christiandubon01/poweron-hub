@@ -1735,11 +1735,16 @@ export default function V15rTeamPanel() {
         const forecastOverheadRecovered = scenarioYearlyHours * overheadPerHour
         const forecastTrueProfit = forecastGrossContrib - forecastOverheadRecovered
 
-        const remaining = Math.max(0, annualOH - actualOverheadRecovered - forecastOverheadRecovered)
-        const pctActual = annualOH > 0 ? Math.min(actualOverheadRecovered / annualOH, 1) : 0
-        const pctForecast = annualOH > 0 ? Math.min(forecastOverheadRecovered / annualOH, 1 - pctActual) : 0
-        const pctRemaining = Math.max(0, 1 - pctActual - pctForecast)
-        const totalCoveredPct = Math.min((pctActual + pctForecast) * 100, 100)
+        // ── Actual-only math (donut shows this) ───────────────────────────────
+        const actualRemaining = Math.max(0, annualOH - actualOverheadRecovered)
+        const actualCoveredPct = annualOH > 0 ? Math.min(actualOverheadRecovered / annualOH, 1) : 0
+        const actualRemainingPct = Math.max(0, 1 - actualCoveredPct)
+
+        // ── Projected math (forecast + actual, KPI only) ──────────────────────
+        const projectedTotal = actualOverheadRecovered + forecastOverheadRecovered
+        const projectedRemaining = Math.max(0, annualOH - projectedTotal)
+        const projectedSurplus = Math.max(0, projectedTotal - annualOH)
+        const projectedCoveredPct = annualOH > 0 ? Math.min(projectedTotal / annualOH, 1) : 0
 
         const monthsToRecover = annualOH > 0 && scenarioMonthlyHours > 0 && overheadPerHour > 0
           ? annualOH / (scenarioMonthlyHours * overheadPerHour)
@@ -1756,17 +1761,14 @@ export default function V15rTeamPanel() {
           ? annualOH / (ownerMonthlyHrs * overheadPerHour)
           : null
 
-        // ── Donut chart geometry ───────────────────────────────────────────────
+        // ── Donut chart geometry (actual-only: 2 arcs) ────────────────────────
         const cx = 70; const cy = 70; const r = 54; const stroke = 18
         const circ = 2 * Math.PI * r
-        const gapDeg = 2
-        const gap = (gapDeg / 360) * circ
-        const arcActual  = pctActual   * circ - (pctActual   > 0 ? gap : 0)
-        const arcForecast = pctForecast * circ - (pctForecast > 0 ? gap : 0)
-        const arcRemaining = pctRemaining * circ - (pctRemaining > 0 ? gap : 0)
-        const offsetActual   = 0
-        const offsetForecast = circ - arcActual - gap
-        const offsetRemaining = circ - arcActual - gap - arcForecast - gap
+        const gap = (2 / 360) * circ
+        // Arc for actual recovered (emerald)
+        const arcActual = actualCoveredPct * circ - (actualCoveredPct > 0 && actualRemainingPct > 0 ? gap : 0)
+        // Arc for actual remaining (dark gray)
+        const arcActualRemaining = actualRemainingPct * circ - (actualCoveredPct > 0 && actualRemainingPct > 0 ? gap : 0)
 
         // ── By-employee rows ───────────────────────────────────────────────────
         const empRows = (activeScen?.workers || []).map((w: any) => {
@@ -1841,50 +1843,40 @@ export default function V15rTeamPanel() {
               <>
                 {/* Donut chart + KPI row */}
                 <div className="flex flex-col sm:flex-row gap-6 mb-6 items-start">
-                  {/* Donut */}
+                  {/* Donut — actual recovery only */}
                   <div className="flex-shrink-0">
                     <svg width="140" height="140" viewBox="0 0 140 140">
-                      {/* bg ring */}
-                      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#1e293b" strokeWidth={stroke} />
-                      {/* actual (green) */}
+                      {/* bg ring (full remaining) */}
+                      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#1f2937" strokeWidth={stroke} />
+                      {/* actual remaining arc (dark) */}
+                      {arcActualRemaining > 0 && (
+                        <circle
+                          cx={cx} cy={cy} r={r} fill="none"
+                          stroke="#374151" strokeWidth={stroke}
+                          strokeDasharray={`${arcActualRemaining} ${circ - arcActualRemaining}`}
+                          strokeDashoffset={circ / 4 - arcActual - (actualCoveredPct > 0 && actualRemainingPct > 0 ? gap : 0)}
+                          strokeLinecap="butt"
+                        />
+                      )}
+                      {/* actual recovered arc (emerald) */}
                       {arcActual > 0 && (
                         <circle
                           cx={cx} cy={cy} r={r} fill="none"
                           stroke="#10b981" strokeWidth={stroke}
                           strokeDasharray={`${arcActual} ${circ - arcActual}`}
-                          strokeDashoffset={circ / 4 - offsetActual}
+                          strokeDashoffset={circ / 4}
                           strokeLinecap="butt"
                         />
                       )}
-                      {/* forecast (blue) */}
-                      {arcForecast > 0 && (
-                        <circle
-                          cx={cx} cy={cy} r={r} fill="none"
-                          stroke="#3b82f6" strokeWidth={stroke}
-                          strokeDasharray={`${arcForecast} ${circ - arcForecast}`}
-                          strokeDashoffset={circ / 4 - offsetForecast}
-                          strokeLinecap="butt"
-                        />
-                      )}
-                      {/* remaining (gray) */}
-                      {arcRemaining > 0 && (
-                        <circle
-                          cx={cx} cy={cy} r={r} fill="none"
-                          stroke="#374151" strokeWidth={stroke}
-                          strokeDasharray={`${arcRemaining} ${circ - arcRemaining}`}
-                          strokeDashoffset={circ / 4 - offsetRemaining}
-                          strokeLinecap="butt"
-                        />
-                      )}
-                      {/* center text */}
-                      <text x={cx} y={cy - 8} textAnchor="middle" fill="#e2e8f0" fontSize="13" fontWeight="bold">
-                        {totalCoveredPct.toFixed(0)}%
+                      {/* center: actual % only */}
+                      <text x={cx} y={cy - 10} textAnchor="middle" fill="#e2e8f0" fontSize="14" fontWeight="bold">
+                        {(actualCoveredPct * 100).toFixed(0)}%
                       </text>
-                      <text x={cx} y={cy + 8} textAnchor="middle" fill="#94a3b8" fontSize="8">covered</text>
+                      <text x={cx} y={cy + 4} textAnchor="middle" fill="#10b981" fontSize="8">actual</text>
+                      <text x={cx} y={cy + 15} textAnchor="middle" fill="#94a3b8" fontSize="7">recovered</text>
                     </svg>
                     <div className="flex gap-3 mt-1 text-[10px] justify-center">
                       <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-emerald-400" />Actual</span>
-                      <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-blue-500" />Forecast</span>
                       <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-gray-600" />Remaining</span>
                     </div>
                   </div>
@@ -1904,28 +1896,50 @@ export default function V15rTeamPanel() {
                     <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
                       <div className="text-[9px] text-gray-500 uppercase mb-0.5">Actual Recovered</div>
                       <div className="text-sm font-bold text-emerald-400">{formatCurrency(actualOverheadRecovered)}</div>
-                      <div className="text-[9px] text-gray-600">{actualLoggedHrs.toFixed(0)} hrs logged</div>
+                      <div className="text-[9px] text-gray-600">{actualLoggedHrs.toFixed(0)} hrs logged · {(actualCoveredPct * 100).toFixed(0)}% covered</div>
                     </div>
                     <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
-                      <div className="text-[9px] text-gray-500 uppercase mb-0.5">Forecasted</div>
+                      <div className="text-[9px] text-gray-500 uppercase mb-0.5">Actual Remaining</div>
+                      <div className={`text-sm font-bold ${actualRemaining <= 0 ? 'text-emerald-400' : 'text-orange-400'}`}>
+                        {actualRemaining <= 0 ? '✓ Cleared' : formatCurrency(actualRemaining)}
+                      </div>
+                      <div className="text-[9px] text-gray-600">{(actualRemainingPct * 100).toFixed(0)}% still needed</div>
+                    </div>
+                    <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
+                      <div className="text-[9px] text-blue-400/80 uppercase mb-0.5">Forecasted (Scenario)</div>
                       <div className="text-sm font-bold text-blue-400">{formatCurrency(forecastOverheadRecovered)}</div>
-                      <div className="text-[9px] text-gray-600">from scenario</div>
+                      <div className="text-[9px] text-gray-600">projected from scenario</div>
                     </div>
                     <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
-                      <div className="text-[9px] text-gray-500 uppercase mb-0.5">Remaining</div>
-                      <div className={`text-sm font-bold ${remaining <= 0 ? 'text-emerald-400' : 'text-orange-400'}`}>{remaining <= 0 ? '✓ Covered' : formatCurrency(remaining)}</div>
+                      <div className="text-[9px] text-blue-400/80 uppercase mb-0.5">Projected Status</div>
+                      {projectedSurplus > 0 ? (
+                        <>
+                          <div className="text-sm font-bold text-emerald-400">+{formatCurrency(projectedSurplus)}</div>
+                          <div className="text-[9px] text-gray-600">surplus if forecast happens</div>
+                        </>
+                      ) : projectedRemaining <= 0 ? (
+                        <>
+                          <div className="text-sm font-bold text-emerald-400">✓ Fully covered</div>
+                          <div className="text-[9px] text-gray-600">if forecast happens</div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-sm font-bold text-blue-300">{formatCurrency(projectedRemaining)}</div>
+                          <div className="text-[9px] text-gray-600">projected remaining · {(projectedCoveredPct * 100).toFixed(0)}% projected</div>
+                        </>
+                      )}
                     </div>
-                    <div className="bg-[var(--bg-secondary)] rounded p-2 text-center">
-                      <div className="text-[9px] text-gray-500 uppercase mb-0.5">Months to Recover</div>
+                    <div className="bg-[var(--bg-secondary)] rounded p-2 text-center col-span-2 sm:col-span-3">
+                      <div className="text-[9px] text-gray-500 uppercase mb-0.5">Months to Recover (at scenario pace)</div>
                       {monthsToRecover !== null ? (
                         <div className={`text-sm font-bold ${monthsToRecover <= 12 ? 'text-emerald-400' : 'text-red-400'}`}>
                           {monthsToRecover.toFixed(1)} mo
+                          {ownerMonthsToRecover !== null && ownerMonthsToRecover > monthsToRecover && (
+                            <span className="text-[9px] text-gray-600 font-normal ml-2">Owner-only: {ownerMonthsToRecover.toFixed(1)} mo</span>
+                          )}
                         </div>
                       ) : (
                         <div className="text-sm font-bold text-gray-600">—</div>
-                      )}
-                      {ownerMonthsToRecover !== null && ownerMonthsToRecover > (monthsToRecover || 0) && (
-                        <div className="text-[9px] text-gray-600">Owner-only: {ownerMonthsToRecover.toFixed(1)} mo</div>
                       )}
                     </div>
                   </div>
