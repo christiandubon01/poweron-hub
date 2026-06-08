@@ -3206,7 +3206,7 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 
 - Task completed: Yes
 - Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
-- Commit hash: TBD
+- Commit hash: ef0d750
 - Typecheck result: PASS — zero errors
 
 - Root cause: (1) Monthly cost breakdown called `calcEmployeeCost(employee, backup)` which internally calls `calcMonthlyBreakdown(emp, settings)` with default hrsPerWeek=40, producing 40×4.33=173.2 hrs/month regardless of the employee's scenario hours. For Owner at $30/hr: 173.2×$30=$5,196 — matches the user-reported wrong value. (2) Sick accrual used percentage-of-year-elapsed formula: (loggedHours / plannedYearlyHrs) × projSickHours — which is ~21% if sickDaysYear=5, hoursPerDay=8 (40 hrs projected sick), far too high. California law is 4 hrs per 104 worked hrs (3.85%).
@@ -3255,3 +3255,4 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 - Next recommended action: Open Team tab → click Owner card → confirm Monthly Cost shows ~$3,118/mo, 6-month ~$18,706. Click Josh card → confirm ~$875 base monthly, ~$1,050 loaded, ~$6,300/6mo. Confirm sick accrual section shows CA rule at 3.85%.
 
 - Compact handoff for next agent/chat: EmployeeDetailModal monthly cost now uses hrsPerMonth (from scenario) not default 40-hr basis. Sick accrual uses 4/104 CA rate. PTO removed. Owner shows no-accrual note. calcEmployeeCost still exists and is used by Team Cost Summary; only removed from EmployeeDetailModal.
+

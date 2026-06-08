@@ -5188,7 +5188,7 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 
 - Agent: Claude Code (session continuation)
 - Branch: main
-- Commit: TBD
+- Commit: ef0d750
 - Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
 - Typecheck: PASS
 
@@ -5209,3 +5209,4 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 - Manual QA status: Typecheck only.
 
 - Next agent should know: EmployeeDetailModal no longer calls calcEmployeeCost. It computes monthly costs inline using hrsPerMonth from scenario. Sick accrual is 4/104 CA rule. PTO is gone from the modal (not from Team Cost Settings, which keeps PTO defaults for possible future use). All-time billable box and Overhead Tracker unchanged.
+
