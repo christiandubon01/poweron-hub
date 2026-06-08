@@ -3326,7 +3326,7 @@ V15rTeamPanel.tsx empRows now carry reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth,
   - `src/components/v15r/V15rEstimateTab.tsx`
   - `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
   - `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
-* Commit hash: (see commit below)
+* Commit hash: ca188d9
 * Typecheck result: PASS — zero errors
 
 * Root cause / user need: Employee Detail modal was using scenarios[0] regardless of which scenario tab was active. Estimate allocation modal showed only row-rate revenue without per-worker base/loaded/bill rate breakdown or overhead/profit accounting.
