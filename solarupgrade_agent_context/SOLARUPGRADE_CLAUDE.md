@@ -3552,3 +3552,44 @@ V15rTeamPanel.tsx empRows now carry reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth,
 - Next recommended action: Browser QA — open a project with labor rows assigned to multiple workers, verify chart slices match allocated hours, verify hover tooltip shows all 8 data points correctly.
 
 - Compact handoff for next agent/chat: V15rEstimateTab.tsx — new `SvgDonutChart` component added above `SvgPieChart` (~line 54). New `laborDonutHoveredIdx` state at component level. Labor Hours by Worker section inserted after `{showInternalBreakdown && ...}` close (before VAULT HEALTH CHECK). Uses `getRowAllocations()` to aggregate hours per worker, `getEmployeeCostRate()` for direct cost, `row.rate` for quoted revenue, settings overhead formula for ohPerHr. SVG donut with center label, hover tooltip replacing KPI panel, legend chips, breakdown table with totals row. No data mutations. Typecheck passes. Commit: 6b0b59a.
+
+---
+
+## Claude Report — Estimate Labor Analytics Team Cost Alignment
+
+- Task completed: Yes
+- Files changed: src/components/v15r/V15rEstimateTab.tsx
+- Commit hash: c1fef92
+- Typecheck result: PASS — zero errors
+
+- User need: The Labor Hours by Worker donut section built in the previous task used `getEmployeeCostRate()` generically but did not expose the base/loaded rate breakdown in the UI. Workers' cost basis (base wage vs. loaded W-2 rate) was invisible. The `$95/hr` fallback from `getEmployeeBillRateForWorker` was never used for cost math, but the hover tooltip and table headers were not reflecting the proper Team-sourced field names.
+
+- Changes made:
+  - `WorkerBucket` type extended: added `baseRate: number` and `loadedRate: number` fields.
+  - Bucket init now explicitly pre-computes `baseRate: getEmployeeBaseRate(a.empId)` and `loadedRate: getEmployeeCostRate(a.empId)` (Owner/1099 = base; W-2 = base × payrollMult) instead of calling the helper inside the accumulator loop.
+  - `directLaborCost` accumulation uses pre-computed `w.loadedRate` — no functional change, just clearer.
+  - Workers array gains `trueLaborCost: w.directLaborCost + w.overheadContribution`.
+  - New computed totals: `totalTrueLaborCost`, `totalQuotedRevenue`.
+  - Hover tooltip enriched with two divider sections:
+    - Cost basis: Base Wage ($/hr), Loaded Cost/hr, OH/hr, True Cost/hr
+    - Project economics: Direct Wage/Loaded Cost, OH Contribution, True Labor Cost, Avg Quoted Rate, Quoted Labor Revenue, Profit After OH
+  - KPI panel expanded to 6 items: adds Total True Labor Cost and Total Quoted Labor Revenue.
+  - Table columns renamed per spec: Direct Wage (formerly Direct Labor Cost), OH Contrib., True Labor Cost (new), Quoted Labor Rev., Profit After OH (8 columns total).
+  - Totals row includes True Labor Cost column.
+  - `minWidth` bumped from `'520px'` to `'640px'` to accommodate 8 columns.
+
+- Worker cost rules enforced:
+  - Owner → `loadedRate = baseRate` (no payroll burden, isOwner sentinel detection preserved)
+  - 1099 → `loadedRate = baseRate` (no payroll burden)
+  - W-2 → `loadedRate = baseRate × payrollMult` (from settings, default 1.20)
+  - All rules implemented by `employeeCostUtils.ts` helpers — no inline if/else in the donut section.
+
+- Preserved behavior: estTotals(), all phase totals, contract amounts, deal overview, margin math, labor rows, allocation modal, Material Takeoff — all untouched. Section is display-only. No `$95` hardcoded cost fallback used.
+
+- Bugs / risks: None identified. Pure display change; no data mutations. `trueLaborCost` is purely additive to the existing formula.
+
+- Manual QA performed: Typecheck only. Browser QA needed: open project with W-2, 1099, and Owner workers on labor rows — confirm hover tooltip shows correct Base Wage vs Loaded Cost/hr split; confirm True Labor Cost column sums directLaborCost + overheadContribution; confirm 8-column table renders without overflow.
+
+- Next recommended action: Browser QA with a mixed worker-type project. Verify W-2 worker's Loaded Cost/hr is visibly higher than Base Wage in the tooltip. Verify Owner/1099 workers show same Base Wage and Loaded Cost/hr.
+
+- Compact handoff for next agent/chat: V15rEstimateTab.tsx LABOR HOURS BY WORKER DONUT section — `WorkerBucket` now has `baseRate` + `loadedRate`. Tooltip has 2 sections (cost basis + project economics). Table has 8 columns with True Labor Cost. KPI has 6 items. `trueLaborCost = directLaborCost + overheadContribution`. All cost math flows through `employeeCostUtils` helpers — no hardcoded rates. Typecheck passes. Commit: c1fef92.

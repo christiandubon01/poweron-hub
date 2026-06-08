@@ -5476,6 +5476,22 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 
 ---
 
+## Shared Update — Home Tab Regression Audit — iPad Safari got worse after viewport/overscroll fix [2026-06-08]
+
+- Agent: Cursor
+- Branch: `main`
+- Commit audited: `bcaa72d`
+- Files changed: none (audit only)
+- Typecheck: not run
+- Regression: iPad Safari Home now appears horizontally oversized / does not fit usable landscape viewport after fix pass
+- Root cause: incomplete flex width containment (shell flex chain missing `min-w-0`) + unresolved safe-area triple stack; vertical `min-h-screen` removal exposed pre-existing horizontal issues
+- Keep from bcaa72d: remove `min-h-screen`, `maxWidth: '100%'` on `<main>`
+- Revert/test: `overscrollBehavior: 'contain'` on iPad only if gesture feel still bad
+- Repair file set: `V15rLayout.tsx` (shell `min-w-0`), `V15rHome.tsx` (safe-area dedupe, calendar overflow/class)
+- Ready for Codex repair: **yes**
+
+---
+
 ## Shared Update — Estimate Labor Hours by Worker Donut
 
 - Agent: Claude Code (Sonnet 4.6)
@@ -5500,3 +5516,31 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 - Manual QA status: Typecheck only. Browser QA needed: verify donut slices, table, hover tooltip, and totals row with real multi-worker project data.
 
 - Next agent should know: V15rEstimateTab.tsx has new `SvgDonutChart` component (~line 54), `laborDonutHoveredIdx` state, and LABOR HOURS BY WORKER DONUT section (after showInternalBreakdown close, before VAULT HEALTH CHECK). Uses existing `getRowAllocations`, `getEmployeeCostRate`, `getEmployeeDisplayName`, `getEmployeeWorkerTypeName` helpers. No new files or packages.
+
+---
+
+## Shared Update — Estimate Labor Analytics Team Cost Alignment
+
+- Agent: Claude Code (Sonnet 4.6)
+- Branch: main
+- Commit: c1fef92
+- Files changed: src/components/v15r/V15rEstimateTab.tsx
+- Typecheck: PASS — zero errors
+
+- User-facing behavior changed: Labor Hours by Worker section now shows full cost basis in hover tooltip (Base Wage, Loaded Cost/hr, OH/hr, True Cost/hr) and a new True Labor Cost column in the breakdown table. Table expanded from 7 to 8 columns. KPI panel expanded from 4 to 6 items (adds Total True Labor Cost, Total Quoted Labor Revenue).
+
+- Formula/source of truth (updated):
+  - `baseRate`: `getEmployeeBaseRate(empId)` — always the true base wage
+  - `loadedRate`: `getEmployeeCostRate(empId)` — Owner/1099 = base; W-2 = base × payrollMult
+  - `directLaborCost`: `allocatedHrs × w.loadedRate` (unchanged formula, now uses pre-computed field)
+  - `trueLaborCost`: `directLaborCost + overheadContribution` (new)
+  - Quoted revenue: `allocatedHrs × row.rate` (unchanged — task quoted rate, NOT bill rate)
+  - Profit after OH: `quotedRevenue − trueLaborCost` (functionally unchanged, now via trueLaborCost)
+
+- Worker cost rules source of truth: `employeeCostUtils.ts` only — no hardcoded rates in estimate tab.
+
+- Preserved behavior: estTotals(), all phase totals, allocation modal, MTO, deal overview — all unchanged. Section is pure display.
+
+- Manual QA status: Typecheck only. Browser QA needed: mixed worker-type project (Owner + W-2 + 1099) to verify tooltip Base Wage vs Loaded Cost/hr split and 8-column table layout.
+
+- Next agent should know: `WorkerBucket` now has `baseRate` + `loadedRate` + `trueLaborCost`. Hover tooltip has two divider sections (cost basis / project economics). Table has 8 columns. Totals row includes True Labor Cost. `minWidth` is `'640px'`. All cost helpers imported from `employeeCostUtils.ts`. Commit: c1fef92.
