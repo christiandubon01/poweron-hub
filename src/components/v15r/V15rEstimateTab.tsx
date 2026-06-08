@@ -51,6 +51,64 @@ function inferLaborPhaseFromDesc(desc: string): string {
 // Lightweight SVG pie chart — no package needed
 const ALLOC_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#a855f7', '#ef4444', '#14b8a6', '#f43f5e', '#8b5cf6']
 
+function SvgDonutChart({
+  slices,
+  size = 140,
+  hoveredIdx,
+  onHover,
+}: {
+  slices: { label: string; value: number; color: string }[]
+  size?: number
+  hoveredIdx: number | null
+  onHover: (idx: number | null) => void
+}) {
+  const total = slices.reduce((s, d) => s + Math.max(0, d.value), 0)
+  const cx = size / 2, cy = size / 2
+  const outerR = size / 2 - 5
+  const innerR = Math.round(outerR * 0.58)
+  if (total === 0) {
+    return (
+      <svg width={size} height={size}>
+        <circle cx={cx} cy={cy} r={(outerR + innerR) / 2} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={outerR - innerR} />
+        <text x={cx} y={cy + 4} textAnchor="middle" fill="rgba(255,255,255,0.25)" fontSize="11">—</text>
+      </svg>
+    )
+  }
+  let startAngle = -Math.PI / 2
+  const arcs: { d: string; color: string; idx: number }[] = []
+  for (let i = 0; i < slices.length; i++) {
+    const { value, color } = slices[i]
+    if (value <= 0) continue
+    const sweep = (value / total) * 2 * Math.PI
+    const endAngle = startAngle + sweep
+    const ox1 = cx + outerR * Math.cos(startAngle), oy1 = cy + outerR * Math.sin(startAngle)
+    const ox2 = cx + outerR * Math.cos(endAngle), oy2 = cy + outerR * Math.sin(endAngle)
+    const ix1 = cx + innerR * Math.cos(endAngle), iy1 = cy + innerR * Math.sin(endAngle)
+    const ix2 = cx + innerR * Math.cos(startAngle), iy2 = cy + innerR * Math.sin(startAngle)
+    const largeArc = sweep > Math.PI ? 1 : 0
+    const d = `M${ox1.toFixed(2)},${oy1.toFixed(2)} A${outerR},${outerR} 0 ${largeArc},1 ${ox2.toFixed(2)},${oy2.toFixed(2)} L${ix1.toFixed(2)},${iy1.toFixed(2)} A${innerR},${innerR} 0 ${largeArc},0 ${ix2.toFixed(2)},${iy2.toFixed(2)} Z`
+    arcs.push({ d, color, idx: i })
+    startAngle = endAngle
+  }
+  return (
+    <svg width={size} height={size} style={{ overflow: 'visible' }}>
+      {arcs.map(({ d, color, idx }) => (
+        <path
+          key={idx}
+          d={d}
+          fill={color}
+          opacity={hoveredIdx === null || hoveredIdx === idx ? 1 : 0.38}
+          stroke="#0d1117"
+          strokeWidth="1.5"
+          style={{ cursor: 'pointer', transition: 'opacity 0.1s' }}
+          onMouseEnter={() => onHover(idx)}
+          onMouseLeave={() => onHover(null)}
+        />
+      ))}
+    </svg>
+  )
+}
+
 function SvgPieChart({ slices, size = 96 }: { slices: { label: string; value: number; color: string }[]; size?: number }) {
   const total = slices.reduce((s, d) => s + Math.max(0, d.value), 0)
   const cx = size / 2, cy = size / 2, r = size / 2 - 3
@@ -158,6 +216,9 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     const timers = laborPhaseColorTimers.current
     return () => { Object.values(timers).forEach(t => clearTimeout(t)) }
   }, [])
+
+  // ── Labor donut hover state ────────────────────────────────────────────────
+  const [laborDonutHoveredIdx, setLaborDonutHoveredIdx] = useState<number | null>(null)
 
   // ── Multi-employee dropdown + allocation modal state ──────────────────────
   const [allocationModalRowId, setAllocationModalRowId] = useState<string | null>(null)
@@ -2538,7 +2599,7 @@ Return ONLY valid JSON, no other text.`
             <div style={{ position: 'relative', display: 'grid', gap: '10px' }}>
               {[
                 { label: 'Labor', value: t.lab, color: '#3b82f6', pct: (num(p.contract) > 0) ? (t.lab / num(p.contract)) * 100 : 0 },
-                { label: 'Material Cost to Me', value: t.dealMatCost, color: '#eab308', pct: (num(p.contract) > 0) ? (t.dealMatCost / num(p.contract)) * 100 : 0 },
+                { label: 'Material Cost', value: t.dealMatCost, color: '#eab308', pct: (num(p.contract) > 0) ? (t.dealMatCost / num(p.contract)) * 100 : 0 },
                 { label: 'Mileage', value: t.mi + t.taxOnMileage, color: '#14b8a6', pct: (num(p.contract) > 0) ? ((t.mi + t.taxOnMileage) / num(p.contract)) * 100 : 0 },
                 { label: 'Planning/OH', value: t.oh, color: '#a855f7', pct: (num(p.contract) > 0) ? (t.oh / num(p.contract)) * 100 : 0 },
                 { label: 'Profit', value: t.dealProfit, color: t.dealProfit > 0 ? '#22c55e' : '#ef4444', pct: (num(p.contract) > 0) ? (t.dealProfit / num(p.contract)) * 100 : 0 },
@@ -2950,6 +3011,241 @@ Return ONLY valid JSON, no other text.`
         </div>
         </>
         )}
+
+        {/* LABOR HOURS BY WORKER DONUT */}
+        {(() => {
+          // Overhead per hr — same formula as allocation modal
+          const s = backup.settings
+          let ohPerHr = 0
+          if (s) {
+            if (num(s.defaultOHRate) > 0) {
+              ohPerHr = num(s.defaultOHRate)
+            } else {
+              const ohBuckets = s.overhead || {}
+              let monthly = 0
+              Object.values(ohBuckets).forEach((section: any) => {
+                if (Array.isArray(section)) section.forEach((i: any) => { monthly += num(i.monthly) })
+              })
+              const annual = monthly * 12
+              const billableHrs = num(s.billableHrsYear || 936)
+              if (annual > 0 && billableHrs > 0) ohPerHr = annual / billableHrs
+            }
+          }
+
+          // Aggregate all labor rows into per-worker buckets
+          type WorkerBucket = {
+            empId: string; name: string; typeName: string
+            hrs: number; directLaborCost: number
+            quotedRevenue: number; overheadContribution: number
+          }
+          const workerMap: Record<string, WorkerBucket> = {}
+          for (const row of (p.laborRows || [])) {
+            const allocs = getRowAllocations(row)
+            const rowRate = num(row.rate)
+            for (const a of allocs) {
+              if (!(a.empId in workerMap)) {
+                workerMap[a.empId] = {
+                  empId: a.empId,
+                  name: getEmployeeDisplayName(a.empId),
+                  typeName: getEmployeeWorkerTypeName(a.empId),
+                  hrs: 0, directLaborCost: 0, quotedRevenue: 0, overheadContribution: 0,
+                }
+              }
+              const w = workerMap[a.empId]
+              const costRate = getEmployeeCostRate(a.empId)
+              w.hrs += a.hrs
+              w.directLaborCost += a.hrs * costRate
+              w.quotedRevenue += a.hrs * rowRate
+              w.overheadContribution += a.hrs * ohPerHr
+            }
+          }
+
+          const workers: (WorkerBucket & { profitAfterOverhead: number; color: string })[] =
+            Object.values(workerMap).map((w, i) => ({
+              ...w,
+              profitAfterOverhead: w.quotedRevenue - w.directLaborCost - w.overheadContribution,
+              color: ALLOC_COLORS[i % ALLOC_COLORS.length],
+            }))
+
+          const totalHrs = workers.reduce((s, w) => s + w.hrs, 0)
+          const totalDirectCost = workers.reduce((s, w) => s + w.directLaborCost, 0)
+          const totalOhContrib = workers.reduce((s, w) => s + w.overheadContribution, 0)
+          const totalProfit = workers.reduce((s, w) => s + w.profitAfterOverhead, 0)
+
+          const donutSlices = workers.map(w => ({ label: w.name, value: w.hrs, color: w.color }))
+          const hoveredWorker = laborDonutHoveredIdx !== null ? workers[laborDonutHoveredIdx] ?? null : null
+
+          const workerTypeColor = (t: string) =>
+            t === 'Owner' ? '#f59e0b' : t === 'W-2' ? '#3b82f6' : '#10b981'
+
+          return (
+            <div style={{ marginTop: '20px', backgroundColor: '#1a1f2e', border: '1px solid rgba(99,102,241,0.22)', borderRadius: '10px', overflow: 'hidden' }}>
+              {/* Header */}
+              <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '6px' }}>
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.07em', color: '#818cf8' }}>Labor Hours by Worker</div>
+                  <div style={{ fontSize: '11px', color: 'var(--t3)', marginTop: '2px' }}>Projected labor hours, cost, overhead recovery, and profit by assigned worker.</div>
+                </div>
+              </div>
+
+              {workers.length === 0 || totalHrs === 0 ? (
+                <div style={{ padding: '28px 20px', textAlign: 'center', color: 'var(--t3)', fontSize: '12px' }}>
+                  No labor hours assigned yet. Add labor rows or assign workers to see labor hour distribution.
+                </div>
+              ) : (
+                <div style={{ padding: '16px' }}>
+                  {/* Chart + KPIs row */}
+                  <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'flex-start', marginBottom: '16px' }}>
+
+                    {/* Donut + center label */}
+                    <div style={{ position: 'relative', flexShrink: 0, width: 140, height: 140 }}>
+                      <SvgDonutChart
+                        slices={donutSlices}
+                        size={140}
+                        hoveredIdx={laborDonutHoveredIdx}
+                        onHover={setLaborDonutHoveredIdx}
+                      />
+                      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                        <span style={{ color: 'var(--t1)', fontWeight: '800', fontFamily: 'monospace', fontSize: '15px', lineHeight: 1.1 }}>
+                          {totalHrs % 1 === 0 ? totalHrs.toFixed(0) : totalHrs.toFixed(1)}h
+                        </span>
+                        <span style={{ color: 'var(--t3)', fontSize: '9px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: '2px' }}>Total labor</span>
+                      </div>
+                    </div>
+
+                    {/* Hover tooltip or KPI summary */}
+                    <div style={{ flex: 1, minWidth: '160px' }}>
+                      {hoveredWorker ? (
+                        <div style={{ backgroundColor: 'rgba(15,17,26,0.92)', border: `1px solid ${hoveredWorker.color}44`, borderRadius: '8px', padding: '12px 14px', fontSize: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                            <span style={{ color: 'var(--t1)', fontWeight: '700', fontSize: '13px' }}>{hoveredWorker.name}</span>
+                            <span style={{ backgroundColor: workerTypeColor(hoveredWorker.typeName) + '22', color: workerTypeColor(hoveredWorker.typeName), border: `1px solid ${workerTypeColor(hoveredWorker.typeName)}44`, borderRadius: '999px', padding: '1px 7px', fontSize: '10px', fontWeight: '700' }}>{hoveredWorker.typeName}</span>
+                          </div>
+                          {[
+                            { label: 'Projected Hours', value: `${hoveredWorker.hrs % 1 === 0 ? hoveredWorker.hrs.toFixed(0) : hoveredWorker.hrs.toFixed(1)} h`, mono: true, color: hoveredWorker.color },
+                            { label: 'Share of Total', value: `${totalHrs > 0 ? ((hoveredWorker.hrs / totalHrs) * 100).toFixed(1) : '0'}%`, mono: true, color: 'var(--t2)' },
+                            { label: 'Direct Labor Cost', value: fmt(hoveredWorker.directLaborCost), mono: true, color: '#f87171' },
+                            { label: 'Overhead Contribution', value: fmt(hoveredWorker.overheadContribution), mono: true, color: '#f59e0b' },
+                            { label: 'Quoted Revenue', value: fmt(hoveredWorker.quotedRevenue), mono: true, color: '#60a5fa' },
+                            { label: 'Profit After Overhead', value: fmt(hoveredWorker.profitAfterOverhead), mono: true, color: hoveredWorker.profitAfterOverhead >= 0 ? '#10b981' : '#ef4444' },
+                            { label: 'Cost Rate', value: `${fmt(hoveredWorker.hrs > 0 ? hoveredWorker.directLaborCost / hoveredWorker.hrs : 0)}/hr`, mono: true, color: 'var(--t3)' },
+                            { label: 'Avg Quoted Rate', value: `${fmt(hoveredWorker.hrs > 0 ? hoveredWorker.quotedRevenue / hoveredWorker.hrs : 0)}/hr`, mono: true, color: 'var(--t3)' },
+                          ].map(({ label, value, mono, color }) => (
+                            <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginBottom: '3px' }}>
+                              <span style={{ color: 'var(--t3)', fontSize: '11px' }}>{label}</span>
+                              <span style={{ color, fontFamily: mono ? 'monospace' : undefined, fontWeight: '600', fontSize: '12px', whiteSpace: 'nowrap' }}>{value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ display: 'grid', gap: '10px' }}>
+                          {[
+                            { label: 'Total Projected Hours', value: `${totalHrs % 1 === 0 ? totalHrs.toFixed(0) : totalHrs.toFixed(1)} h`, color: 'var(--t1)' },
+                            { label: 'Total Direct Labor Cost', value: fmt(totalDirectCost), color: '#f87171' },
+                            { label: 'Total Overhead Contribution', value: fmt(totalOhContrib), color: '#f59e0b' },
+                            { label: 'Total Profit After Overhead', value: fmt(totalProfit), color: totalProfit >= 0 ? '#10b981' : '#ef4444' },
+                          ].map(({ label, value, color }) => (
+                            <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <span style={{ color: 'var(--t3)', fontSize: '10px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
+                              <span style={{ color, fontFamily: 'monospace', fontWeight: '800', fontSize: '14px' }}>{value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Legend */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '14px' }}>
+                    {workers.map((w, i) => (
+                      <div
+                        key={w.empId}
+                        onMouseEnter={() => setLaborDonutHoveredIdx(i)}
+                        onMouseLeave={() => setLaborDonutHoveredIdx(null)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '5px',
+                          padding: '3px 8px', borderRadius: '999px',
+                          backgroundColor: laborDonutHoveredIdx === i ? w.color + '22' : 'rgba(255,255,255,0.04)',
+                          border: `1px solid ${laborDonutHoveredIdx === i ? w.color + '55' : 'rgba(255,255,255,0.08)'}`,
+                          cursor: 'default', transition: 'background 0.1s, border-color 0.1s',
+                          fontSize: '11px', fontWeight: '600',
+                        }}
+                      >
+                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: w.color, flexShrink: 0 }} />
+                        <span style={{ color: 'var(--t2)' }}>{w.name}</span>
+                        <span style={{ color: w.color, fontFamily: 'monospace' }}>{w.hrs % 1 === 0 ? w.hrs.toFixed(0) : w.hrs.toFixed(1)}h</span>
+                        <span style={{ color: 'var(--t3)' }}>{totalHrs > 0 ? ((w.hrs / totalHrs) * 100).toFixed(0) : 0}%</span>
+                        <span style={{ backgroundColor: workerTypeColor(w.typeName) + '22', color: workerTypeColor(w.typeName), borderRadius: '999px', padding: '0 5px', fontSize: '9px', fontWeight: '700' }}>{w.typeName}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Worker breakdown table */}
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', minWidth: '480px' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                          {['Worker', 'Type', 'Hours', 'Direct Cost', 'OH Contrib.', 'Quoted Rev.', 'Profit'].map(h => (
+                            <th key={h} style={{ padding: '5px 8px', textAlign: h === 'Worker' || h === 'Type' ? 'left' : 'right', color: 'var(--t3)', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '10px' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {workers.map((w, i) => (
+                          <tr
+                            key={w.empId}
+                            onMouseEnter={() => setLaborDonutHoveredIdx(i)}
+                            onMouseLeave={() => setLaborDonutHoveredIdx(null)}
+                            style={{
+                              borderBottom: '1px solid rgba(255,255,255,0.04)',
+                              backgroundColor: laborDonutHoveredIdx === i ? 'rgba(255,255,255,0.04)' : 'transparent',
+                              transition: 'background 0.08s',
+                            }}
+                          >
+                            <td style={{ padding: '6px 8px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: w.color, flexShrink: 0 }} />
+                                <span style={{ color: 'var(--t1)', fontWeight: '600' }}>{w.name}</span>
+                              </div>
+                            </td>
+                            <td style={{ padding: '6px 8px' }}>
+                              <span style={{ backgroundColor: workerTypeColor(w.typeName) + '22', color: workerTypeColor(w.typeName), borderRadius: '999px', padding: '1px 6px', fontSize: '10px', fontWeight: '700' }}>{w.typeName}</span>
+                            </td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', color: w.color, fontFamily: 'monospace', fontWeight: '700' }}>
+                              {w.hrs % 1 === 0 ? w.hrs.toFixed(0) : w.hrs.toFixed(1)}h
+                              <span style={{ color: 'var(--t3)', fontWeight: '400', marginLeft: '4px' }}>({totalHrs > 0 ? ((w.hrs / totalHrs) * 100).toFixed(0) : 0}%)</span>
+                            </td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', color: '#f87171', fontFamily: 'monospace' }}>{fmt(w.directLaborCost)}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', color: '#f59e0b', fontFamily: 'monospace' }}>{fmt(w.overheadContribution)}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', color: '#60a5fa', fontFamily: 'monospace' }}>{fmt(w.quotedRevenue)}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', color: w.profitAfterOverhead >= 0 ? '#10b981' : '#ef4444', fontFamily: 'monospace', fontWeight: '700' }}>{fmt(w.profitAfterOverhead)}</td>
+                          </tr>
+                        ))}
+                        {/* Totals row */}
+                        <tr style={{ borderTop: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(99,102,241,0.06)' }}>
+                          <td style={{ padding: '7px 8px', color: 'var(--t2)', fontWeight: '700', fontSize: '11px' }} colSpan={2}>Totals</td>
+                          <td style={{ padding: '7px 8px', textAlign: 'right', color: 'var(--t1)', fontFamily: 'monospace', fontWeight: '700' }}>
+                            {totalHrs % 1 === 0 ? totalHrs.toFixed(0) : totalHrs.toFixed(1)}h
+                          </td>
+                          <td style={{ padding: '7px 8px', textAlign: 'right', color: '#f87171', fontFamily: 'monospace', fontWeight: '700' }}>{fmt(totalDirectCost)}</td>
+                          <td style={{ padding: '7px 8px', textAlign: 'right', color: '#f59e0b', fontFamily: 'monospace', fontWeight: '700' }}>{fmt(totalOhContrib)}</td>
+                          <td style={{ padding: '7px 8px', textAlign: 'right', color: '#60a5fa', fontFamily: 'monospace', fontWeight: '700' }}>{workers.reduce((s, w) => s + w.quotedRevenue, 0) === 0 ? '—' : fmt(workers.reduce((s, w) => s + w.quotedRevenue, 0))}</td>
+                          <td style={{ padding: '7px 8px', textAlign: 'right', color: totalProfit >= 0 ? '#10b981' : '#ef4444', fontFamily: 'monospace', fontWeight: '800' }}>{fmt(totalProfit)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {ohPerHr === 0 && (
+                    <div style={{ marginTop: '8px', fontSize: '10px', color: 'var(--t3)', fontStyle: 'italic' }}>
+                      Overhead contribution is $0 — set a Default OH Rate or configure Overhead in Settings to see overhead recovery per worker.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })()}
 
         {/* VAULT HEALTH CHECK */}
         <div style={{ marginTop: '16px' }}>
