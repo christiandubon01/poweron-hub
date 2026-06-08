@@ -5157,7 +5157,7 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 
 - Agent: Claude Code (session continuation)
 - Branch: main
-- Commit: TBD
+- Commit: 2535654
 - Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
 - Typecheck: PASS
 
@@ -5180,3 +5180,4 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 - Manual QA status: Typecheck only.
 
 - Next agent should know: TeamCostSettingsModal and EmployeeDetailModal are new components defined before the main export. EmployeeCostStructure is still in file but no longer rendered inline. showCostSettingsModal and selectedEmployee are new state variables. All worker cost formulas, Overhead Tracker, and Projection Scenarios unchanged.
+

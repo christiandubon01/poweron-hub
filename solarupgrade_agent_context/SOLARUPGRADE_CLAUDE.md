@@ -3126,7 +3126,7 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 
 - Task completed: Yes
 - Files changed: src/components/v15r/V15rTeamPanel.tsx, both context files
-- Commit hash: TBD
+- Commit hash: 2535654
 - Typecheck result: PASS — zero errors
 
 - Root cause / user need: Team tab too crowded; Employee Cost Structure and Payroll Multiplier were inline, making the tab tall. Employee cards showed too many details. No quick way to see per-employee projections, W-2 burden breakdown, or PTO accrual.
@@ -3198,3 +3198,4 @@ employeeCostUtils.ts is the single source of truth for all worker cost rules. It
 - Next recommended action: Browser QA — open Team tab, confirm: (1) Team Cost Settings button visible; (2) modal opens with cost structure + PTO section; (3) employee cards compact; (4) clicking a card opens detail modal; (5) W-2 employee shows cost portion + PTO accrual; (6) Owner shows "no W-2 burden"; (7) edit/delete buttons still work from card.
 
 - Compact handoff for next agent/chat: TeamCostSettingsModal (line ~767) wraps cost structure + payroll multiplier + PTO defaults. EmployeeDetailModal (line ~975) shows full details on card click. Compact EmployeeCard (line ~552) shows name/position/stats/4-rates/margin only. State vars showCostSettingsModal and selectedEmployee added to main component. EmployeeCostStructure component kept in file (still callable) but no longer rendered inline — it's replaced by TeamCostSettingsModal. All formulas unchanged.
+
