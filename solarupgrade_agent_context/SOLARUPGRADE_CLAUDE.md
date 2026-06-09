@@ -3602,7 +3602,7 @@ AGENT:
 Claude Code (Sonnet 4.6)
 
 COMMIT HASH:
-TBD — see commit below
+a5c2969
 
 FILES CHANGED:
 - `src/components/v15r/V15rEstimateTab.tsx`

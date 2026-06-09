@@ -5551,7 +5551,7 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 
 - Agent: Claude Code (Sonnet 4.6)
 - Branch: main
-- Commit: TBD (see commit below)
+- Commit: a5c2969
 - Files changed: src/components/v15r/V15rEstimateTab.tsx
 - Typecheck: PASS — zero errors
 
