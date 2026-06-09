@@ -3593,3 +3593,54 @@ V15rTeamPanel.tsx empRows now carry reqHrsPerDay, reqHrsPerWeek, reqHrsPerMonth,
 - Next recommended action: Browser QA with a mixed worker-type project. Verify W-2 worker's Loaded Cost/hr is visibly higher than Base Wage in the tooltip. Verify Owner/1099 workers show same Base Wage and Loaded Cost/hr.
 
 - Compact handoff for next agent/chat: V15rEstimateTab.tsx LABOR HOURS BY WORKER DONUT section — `WorkerBucket` now has `baseRate` + `loadedRate`. Tooltip has 2 sections (cost basis + project economics). Table has 8 columns with True Labor Cost. KPI has 6 items. `trueLaborCost = directLaborCost + overheadContribution`. All cost math flows through `employeeCostUtils` helpers — no hardcoded rates. Typecheck passes. Commit: c1fef92.
+
+---
+
+## COMPLETION LOG — Estimate Labor Allocation Modal: Suggested Hourly Rate Box
+
+AGENT:
+Claude Code (Sonnet 4.6)
+
+COMMIT HASH:
+TBD — see commit below
+
+FILES CHANGED:
+- `src/components/v15r/V15rEstimateTab.tsx`
+- `solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md`
+
+ACTIVE PHASE COMPLETED:
+Estimate Labor Allocation Modal — Add Full-Width Suggested Hourly Rate Box
+
+WHAT CHANGED:
+Added a new full-width "SUGGESTED HOURLY RATE" box to the Labor Allocation & Cost Accounting modal. Placed immediately below the 4 top summary boxes and above TASK COST SUMMARY — QUOTED RATE MODEL. Shows weighted rate `$XX.XX/hr`, subtitle "Weighted by selected workers and allocated hours", detail formula line `$TOTAL ÷ XXh`, and an inline comparison strip (current task rate / suggested / diff, green/red coded). Display-only — task row rate never mutates. Shows "No allocated worker hours yet" when hours = 0.
+
+WHAT WAS LEARNED:
+`blendedEmployeeBillRateHr` (`totalEmployeeBillRevenue / totalAllocatedHours`) was already computed at ~line 3429 in the modal IIFE — no new formula needed. The new box is purely a UI read of three pre-existing variables: `blendedEmployeeBillRateHr`, `totalEmployeeBillRevenue`, `totalAllocatedHours`, and `rowRate`.
+
+LEARNED SKILLS / REUSABLE PATTERNS:
+When the modal already computes blended rate variables, a new summary box can be inserted with zero new logic — just read the right existing variable and format it.
+
+BUGS / RISKS:
+None. Pure display. No formula, persistence, or data mutations. Division by zero is guarded by the existing `totalAllocatedHours > 0` condition inherited from `blendedEmployeeBillRateHr`.
+
+TYPECHECK RESULT:
+PASS — zero errors
+
+SHARED CONTEXT UPDATED:
+YES
+
+CLAUDE FILE UPDATED:
+YES
+
+NEXT ACTIVE PHASE:
+No active build phase queued. Ready for browser QA.
+
+NEXT PHASE ADJUSTMENTS:
+Browser QA: open Labor Allocation modal for a task with Owner (16h, $95/hr bill rate) + Allan (16h, $65/hr bill rate) → should show $80.00/hr, $2,560.00 ÷ 32.0h. Adjust sliders to confirm live update. Confirm current task rate is unchanged.
+
+NEXT PHASE READY:
+YES — ready for browser QA
+
+COMPACT HANDOFF FOR NEXT CHAT:
+Labor Allocation modal in V15rEstimateTab.tsx now has a full-width SUGGESTED HOURLY RATE box at ~line 3508 (after top-4 summary grid, before Task Cost Summary). Value = `blendedEmployeeBillRateHr` (pre-computed). Detail = `fmt(totalEmployeeBillRevenue) ÷ totalAllocatedHours.toFixed(1)h`. Comparison strip shows current vs suggested rate with green/red diff. All display-only. Typecheck passes.

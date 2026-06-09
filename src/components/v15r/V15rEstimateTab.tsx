@@ -3505,6 +3505,41 @@ Return ONLY valid JSON, no other text.`
                 ))}
               </div>
 
+              {/* ── Suggested Hourly Rate ─────────────────────────────────────── */}
+              <div style={{ backgroundColor: '#141824', borderRadius: '8px', padding: '12px 14px', marginBottom: '10px', border: '1px solid rgba(110,231,183,0.15)' }}>
+                <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--t3)', marginBottom: '6px' }}>
+                  Suggested Hourly Rate
+                </div>
+                {totalAllocatedHours > 0 ? (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '4px' }}>
+                      <span style={{ fontFamily: 'monospace', fontWeight: '800', fontSize: '22px', color: '#6ee7b7' }}>
+                        ${blendedEmployeeBillRateHr.toFixed(2)}<span style={{ fontSize: '12px', fontWeight: '400', color: 'var(--t3)' }}>/hr</span>
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--t3)', marginBottom: '4px' }}>
+                      Weighted by selected workers and allocated hours
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--t3)', fontFamily: 'monospace' }}>
+                      {fmt(totalEmployeeBillRevenue)} selected worker billable value ÷ {totalAllocatedHours.toFixed(1)}h
+                    </div>
+                    {rowRate > 0 && (() => {
+                      const diff = blendedEmployeeBillRateHr - rowRate
+                      const diffColor = diff >= 0 ? '#10b981' : '#ef4444'
+                      return (
+                        <div style={{ display: 'flex', gap: '12px', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: '11px', flexWrap: 'wrap' }}>
+                          <span style={{ color: 'var(--t3)' }}>Current task rate: <span style={{ color: 'var(--t2)', fontFamily: 'monospace' }}>${rowRate.toFixed(2)}/hr</span></span>
+                          <span style={{ color: 'var(--t3)' }}>Suggested: <span style={{ color: '#6ee7b7', fontFamily: 'monospace' }}>${blendedEmployeeBillRateHr.toFixed(2)}/hr</span></span>
+                          <span style={{ color: diffColor, fontFamily: 'monospace', fontWeight: '600' }}>{diff >= 0 ? '+' : ''}{diff.toFixed(2)}/hr</span>
+                        </div>
+                      )
+                    })()}
+                  </>
+                ) : (
+                  <div style={{ fontSize: '12px', color: 'var(--t3)', fontStyle: 'italic' }}>No allocated worker hours yet</div>
+                )}
+              </div>
+
               {/* ── Task Cost Summary Row ────────────────────────────────────────── */}
               <div style={{ backgroundColor: '#141824', borderRadius: '8px', padding: '12px', marginBottom: '14px', border: '1px solid rgba(255,255,255,0.06)' }}>
                 <div style={{ fontSize: '9px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--t3)', marginBottom: '10px' }}>

@@ -5544,3 +5544,30 @@ Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save bu
 - Manual QA status: Typecheck only. Browser QA needed: mixed worker-type project (Owner + W-2 + 1099) to verify tooltip Base Wage vs Loaded Cost/hr split and 8-column table layout.
 
 - Next agent should know: `WorkerBucket` now has `baseRate` + `loadedRate` + `trueLaborCost`. Hover tooltip has two divider sections (cost basis / project economics). Table has 8 columns. Totals row includes True Labor Cost. `minWidth` is `'640px'`. All cost helpers imported from `employeeCostUtils.ts`. Commit: c1fef92.
+
+---
+
+## Shared Update — Labor Allocation Modal: Suggested Hourly Rate Box
+
+- Agent: Claude Code (Sonnet 4.6)
+- Branch: main
+- Commit: TBD (see commit below)
+- Files changed: src/components/v15r/V15rEstimateTab.tsx
+- Typecheck: PASS — zero errors
+
+- User-facing behavior changed: New full-width "SUGGESTED HOURLY RATE" box added to the Labor Allocation & Cost Accounting modal, placed immediately below the 4 top summary boxes and above "TASK COST SUMMARY — QUOTED RATE MODEL". Shows `$XX.XX/hr` weighted by selected workers and their allocated hours. Displays `$TOTAL ÷ XXh` detail line. Shows optional inline comparison: Current task rate / Suggested / Difference (green if suggested ≥ current, red if below). Display-only — no task rate auto-change.
+
+- Formula:
+  - `workerBillableValue = allocatedHoursForWorker × empBillRate` (per workerMetrics entry: m.empBillRevenue)
+  - `totalWorkerBillableValue = sum(empBillRevenue)` → already computed as `totalEmployeeBillRevenue`
+  - `totalAllocatedHours` → already computed as `totalAllocatedHours`
+  - `weightedSuggestedHourlyRate = totalEmployeeBillRevenue / totalAllocatedHours` → already computed as `blendedEmployeeBillRateHr`
+  - All three variables were pre-existing — no new computation needed.
+
+- Source of truth: `getEmployeeBillRateForWorker(empId)` → `emp.billRate` from Team tab records. Falls back to `backup.settings.billRate`. Same bill-rate lookup already used by the modal for "Billable Rev — Emp Rate" per-worker lines.
+
+- Edge cases: If `totalAllocatedHours === 0`, shows "No allocated worker hours yet". Division by zero guarded by existing variable.
+
+- Preserved behavior: All 4 top summary boxes, Task Cost Summary cards, per-worker cost accounting, pie chart, sliders — all unchanged. Box is pure display.
+
+- Next agent should know: `blendedEmployeeBillRateHr` is defined at ~line 3429 in the modal IIFE. The new box is at ~line 3508 (after top strip `</div>`, before Task Cost Summary comment). Uses `totalEmployeeBillRevenue`, `totalAllocatedHours`, `blendedEmployeeBillRateHr`, `rowRate`, and `fmt()` — all already in scope.
