@@ -1493,7 +1493,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       {/* MAIN LAYOUT */}
       {/* B52: fullscreen override when visual-suite is active */}
       <div
-        className="flex flex-col flex-1"
+        className="flex flex-col flex-1 transition-all duration-300"
         style={activeView === 'visual-suite' || activeView === 'neural-world'
           ? {
               position: 'fixed',
@@ -1506,14 +1506,13 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             ? { marginLeft: 0, ['--v15r-workspace-inset-left' as string]: `${workspaceInsetLeftPx}px` }
             : {
                 marginLeft: isMobile ? 0 : sidebarWidth,
-                transition: 'margin-left 200ms ease',
                 ['--v15r-workspace-inset-left' as string]: `${workspaceInsetLeftPx}px`,
               }
         }
       >
         {/* TOP BAR — hidden in visual-suite fullscreen */}
         {activeView === 'visual-suite' || activeView === 'neural-world' || blueprintImmersive ? null : (
-        <header className="fixed top-0 right-0 flex flex-col z-[50]" style={{ left: isMobile ? 0 : sidebarWidth, transition: 'left 200ms ease', backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}>
+        <header className="fixed top-0 right-0 flex flex-col z-[50] transition-all duration-300" style={{ left: isMobile ? 0 : sidebarWidth, transition: 'left 200ms ease', backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}>
           {/* ROW 1: KPI Pills (grouped with vertical layout) */}
           <div className="h-16 flex items-center justify-between px-4 md:px-6 border-b" style={{ borderColor: 'var(--border-primary)' }}>
             {/* LEFT: Hamburger + KPI Pills */}
@@ -1866,7 +1865,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             ? { display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', backgroundColor: '#000' }
             : blueprintImmersive
               ? { display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', backgroundColor: 'var(--bg-secondary)' }
-              : { backgroundColor: 'var(--bg-secondary)', marginTop: showTargetBar ? '4.75rem' : '4rem', overflowX: 'hidden', overflowY: 'auto', width: '100%', maxWidth: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' }
+              : { backgroundColor: 'var(--bg-secondary)', marginTop: showTargetBar ? '5rem' : '4rem', overflowX: 'hidden', overflowY: 'auto', width: '100%', maxWidth: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' }
           }
         >
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '100%', overflowX: 'hidden' }}>
@@ -1890,13 +1889,13 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       </div>
 
       {/* ── Quick Capture Floating Button (bottom-left) ── hidden on Orb Lab */}
-      {activeView !== 'orb-lab' && <QuickCaptureButton backupData={backupData} onNav={onNav} setToastMessage={setToastMessage} sidebarWidth={isMobile ? 0 : sidebarWidth} />}
+      {activeView !== 'orb-lab' && <QuickCaptureButton backupData={backupData} onNav={onNav} setToastMessage={setToastMessage} />}
     </div>
   )
 }
 
 // ── QUICK CAPTURE COMPONENT ──────────────────────────────────────────────────
-function QuickCaptureButton({ backupData, onNav, setToastMessage, sidebarWidth = 0 }: { backupData: BackupData | null, onNav: (v: string) => void, setToastMessage: (m: string | null) => void, sidebarWidth?: number }) {
+function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData: BackupData | null, onNav: (v: string) => void, setToastMessage: (m: string | null) => void }) {
   const [open, setOpen] = useState(false)
   const [text, setText] = useState('')
   const [domain, setDomain] = useState('Field Ops')
@@ -2293,7 +2292,7 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage, sidebarWidth =
       <button
         onClick={() => setOpen(true)}
         className="fixed bottom-6 w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg z-50 flex items-center justify-center transition-colors"
-        style={{ left: `${sidebarWidth + 16}px`, transition: 'left 200ms ease' }}
+        style={{ left: '72px' }}
         title="Quick log"
       >
         <Plus size={24} />
