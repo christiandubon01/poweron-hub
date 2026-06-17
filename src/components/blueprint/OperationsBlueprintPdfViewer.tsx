@@ -609,6 +609,20 @@ export default function OperationsBlueprintPdfViewer({
   // containerReady: true once the scroll area has a non-zero height.
   // Prevents Fit-to-Full-Page from running before the DOM is sized.
   const [containerReady, setContainerReady] = useState(false)
+  const getLoadedPdfDoc = useCallback(() => {
+  const doc = pdfDocRef.current || pdfDoc
+  return doc && typeof doc.getPage === 'function' ? doc : null
+}, [pdfDoc])
+
+const getSafePdfPageNumber = useCallback((value: number | string | null | undefined) => {
+  const doc = pdfDocRef.current || pdfDoc
+  const maxPages = Math.max(
+    1,
+    Number(doc?.numPages || numPages || blueprint?.pageCount || 1)
+  )
+  const requested = Math.floor(Number(value) || 1)
+  return Math.max(1, Math.min(maxPages, requested))
+}, [blueprint?.pageCount, numPages, pdfDoc])
 
   const [isFullScreenView, setIsFullScreenView] = useState(false)
   // iPad/tablet immersive fullscreen mode (in-app overlay, not browser fullscreen)
@@ -1205,7 +1219,9 @@ export default function OperationsBlueprintPdfViewer({
           renderTaskRef.current = null
         }
 
-        const page = await pdfDoc.getPage(clampedPage)
+        const doc = getLoadedPdfDoc()
+        if (!doc) return
+        const page = await doc.getPage(getSafePdfPageNumber(clampedPage))
         const baseViewport = page.getViewport({ scale: 1 })
         const measuredWidth = viewportWidth || scrollAreaRef.current?.clientWidth || 0
         const measuredHeight = scrollAreaRef.current?.clientHeight || 0
@@ -1280,7 +1296,7 @@ export default function OperationsBlueprintPdfViewer({
         try { renderTaskRef.current.cancel() } catch { }
       }
     }
-  }, [pdfDoc, currentPage, numPages, viewportWidth, relativeZoom, lockView, clampScroll, containerReady])
+  }, [pdfDoc, currentPage, numPages, viewportWidth, relativeZoom, lockView, clampScroll, containerReady, getLoadedPdfDoc, getSafePdfPageNumber])
 
   useEffect(() => {
     if (!isEditorOpen) return
@@ -1762,14 +1778,17 @@ export default function OperationsBlueprintPdfViewer({
     scannedPagesRef.current.add(currentPage)
     void (async () => {
       try {
-        const page = await pdfDoc.getPage(currentPage)
+        const doc = getLoadedPdfDoc()
+        if (!doc) return
+        const safePageNumber = getSafePdfPageNumber(currentPage)
+        const page = await doc.getPage(safePageNumber)
         const pageW: number = page.view?.[2] ?? 612
         const pageH: number = page.view?.[3] ?? 792
         const textContent = await page.getTextContent()
         const rawItems: any[] = textContent.items || []
         const strItems: string[] = rawItems.map((it: any) => it.str || '')
-        const result = detectBlueprintScaleText(strItems, pageW, currentPage)
-        if (result) setDetectedScales(prev => ({ ...prev, [currentPage]: result }))
+        const result = detectBlueprintScaleText(strItems, pageW, safePageNumber)
+        if (result) setDetectedScales(prev => ({ ...prev, [safePageNumber]: result }))
 
         // Cache normalized text item positions for text-aware textHighlight quads.
         // PDF coordinate system: origin bottom-left, Y-axis UP → flip to screen space (Y down).
@@ -1790,11 +1809,11 @@ export default function OperationsBlueprintPdfViewer({
             }
           })
           .filter((it: any) => it.w > 0.001 && it.h > 0.001)
-        textItemsCacheRef.current[currentPage] = normItems
-        setTextItemsCache(prev => ({ ...prev, [currentPage]: normItems }))
+        textItemsCacheRef.current[safePageNumber] = normItems
+        setTextItemsCache(prev => ({ ...prev, [safePageNumber]: normItems }))
       } catch {}
     })()
-  }, [pdfDoc, currentPage])
+  }, [pdfDoc, currentPage, getLoadedPdfDoc, getSafePdfPageNumber])
 
   const removeAnnotation = useCallback(async (annotationId: string) => {
     if (!blueprint?.id) return
