@@ -1838,6 +1838,40 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     mutationQueueRef.current = mutationQueueRef.current.then(op)
   }, [blueprint?.id, loadAnnotations, onAnnotationsChanged])
 
+  const handleAnnotationSelectCapture = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+  const target = e.target as Element | null
+  const annEl = target?.closest?.('[data-annotation-id]') as HTMLElement | null
+  const annotationId = annEl?.getAttribute('data-annotation-id')
+
+  if (!annEl || !annotationId) return
+
+  // If the user is already moving/resizing this annotation, let the edit handles work.
+  if (layoutEditId === annotationId) return
+
+  e.preventDefault()
+  e.stopPropagation()
+
+  if (effectiveTool === 'eraser') {
+    void removeAnnotation(annotationId)
+    return
+  }
+
+  focusedAnnotationElRef.current = annEl
+  const r = annEl.getBoundingClientRect()
+
+  setOpenPopover(null)
+  setBarDragOffset(null)
+  setFocusedAnnotationRect({
+    top: r.top,
+    left: r.left,
+    right: r.right,
+    bottom: r.bottom,
+    width: r.width,
+    height: r.height,
+  })
+  setFocusedAnnotationId(annotationId)
+}, [effectiveTool, layoutEditId, removeAnnotation])
+
   const jumpToPage = useCallback(() => {
     const raw = Number(pageInput)
     if (!Number.isFinite(raw)) return
@@ -4435,14 +4469,15 @@ const annotationPanelSizeClass =
                   >
                     <canvas ref={canvasRef} className="border border-gray-800 bg-white shadow-lg block" />
                     <div
-                      ref={overlayRef}
-                      className={`absolute inset-0 ${cursorClass}`}
-                      onClick={handleOverlayClick}
-                      onPointerDown={handlePointerDown}
-                      onPointerMove={handlePointerMove}
-                      onPointerUp={handlePointerUp}
-                      onPointerCancel={handlePointerCancel}
-                    >
+                    ref={overlayRef}
+                    className={`absolute inset-0 ${cursorClass}`}
+                    onPointerDownCapture={handleAnnotationSelectCapture}
+                    onClick={handleOverlayClick}
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPointerCancel={handlePointerCancel}
+                  >
                       {pageAnnotations.map((a) => {
                         if (!a?.rect) return null
                         const meta = getAnnotationMeta(a)
