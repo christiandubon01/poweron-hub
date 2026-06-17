@@ -623,6 +623,9 @@ export default function OperationsBlueprintPdfViewer({
   const [submittingRfi, setSubmittingRfi] = useState(false)
   const [submittingCord, setSubmittingCord] = useState(false)
   const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+    const normalBlueprintViewerMinHeight = isDesktopBlueprintLayout
+    ? 'calc(100dvh - 120px)'
+    : 'clamp(420px, 72dvh, 760px)'
 
   useEffect(() => {
     if (!blueprint?.id || !pdfDoc) return
@@ -3886,7 +3889,7 @@ export default function OperationsBlueprintPdfViewer({
               gridTemplateColumns: `${leftPaneWidth}px 6px 1fr 6px ${rightPaneWidth}px`,
               columnGap: 0,
               rowGap: 16,
-              minHeight: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100vh - 52px)' : isTabletImmersiveFullscreen ? 'calc(100vh - 40px)' : 'calc(100vh - 180px)',
+              minHeight: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100vh - 52px)' : isTabletImmersiveFullscreen ? 'calc(100vh - 40px)' : normalBlueprintViewerMinHeight,
               height: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100vh - 52px)' : isTabletImmersiveFullscreen ? 'calc(100vh - 40px)' : 'auto',
             } : undefined}
           >
@@ -4341,12 +4344,12 @@ export default function OperationsBlueprintPdfViewer({
               `}</style>
               <div
                 ref={scrollAreaRef}
-                className={`${useDesktopThreePaneLayout ? 'col-start-3 row-start-1 row-span-3 min-h-0 min-w-0 bg-[#0d0e14]' : ''} operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-scroll'} ${isFullScreenView || isTabletImmersiveFullscreen && !useDesktopThreePaneLayout ? 'h-full max-h-none min-h-0' : !useDesktopThreePaneLayout ? 'min-h-[400px]' : ''} rounded border border-gray-800`}
+                className={`${useDesktopThreePaneLayout ? 'col-start-3 row-start-1 row-span-3 min-h-0 min-w-0 bg-[#0d0e14]' : ''} operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-scroll'} ${isFullScreenView || isTabletImmersiveFullscreen && !useDesktopThreePaneLayout ? 'h-full max-h-none min-h-0' : !useDesktopThreePaneLayout ? 'min-h-[320px] sm:min-h-[360px] lg:min-h-[400px]' : ''} rounded border border-gray-800`}
                 style={{
                   // Dynamic height: fills from bottom of toolbar to bottom of viewport.
                   // Falls back to calc(100vh-300px) until toolbarAreaRef is measured.
                   ...(useDesktopThreePaneLayout
-                    ? { height: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100vh - 52px - 32px - 16px)' : isTabletImmersiveFullscreen ? 'calc(100vh - 40px - 32px - 16px)' : 'calc(100vh - 180px)' }
+                    ? { height: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100dvh - 52px - 32px - 16px)' : isTabletImmersiveFullscreen ? 'calc(100dvh - 40px - 32px - 16px)' : normalBlueprintViewerMinHeight }
                     : isFullScreenView || isTabletImmersiveFullscreen
                       ? {}
                       : {
@@ -5312,7 +5315,7 @@ export default function OperationsBlueprintPdfViewer({
               <div
                 className={`${useDesktopThreePaneLayout ? 'col-start-5 row-start-1 row-span-3 min-h-0 min-w-0' : ''} operations-pdf-scroll border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${isFullScreenView || isTabletImmersiveFullscreen && !useDesktopThreePaneLayout ? 'h-full max-h-none min-h-0' : !useDesktopThreePaneLayout ? (tabletAnnotationsOpen ? 'h-auto max-h-56 min-h-0' : 'h-auto max-h-none min-h-0') : ''}`}
                 style={{
-                  ...(useDesktopThreePaneLayout ? { height: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100vh - 52px - 32px - 16px)' : isTabletImmersiveFullscreen ? 'calc(100vh - 40px - 32px - 16px)' : 'calc(100vh - 180px)' } : {}),
+                  ...(useDesktopThreePaneLayout ? { height: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100dvh - 52px - 32px - 16px)' : isTabletImmersiveFullscreen ? 'calc(100dvh - 40px - 32px - 16px)' : normalBlueprintViewerMinHeight } : {}),
                   scrollbarWidth: 'none',
                   msOverflowStyle: 'none' as any,
                 } as React.CSSProperties}
