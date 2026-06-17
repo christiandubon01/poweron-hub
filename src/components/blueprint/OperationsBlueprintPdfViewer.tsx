@@ -3067,6 +3067,21 @@ export default function OperationsBlueprintPdfViewer({
   const visualDisplayWidth = displaySize.w ? Math.ceil(displaySize.w * visualScale) : 0
   const visualDisplayHeight = displaySize.h ? Math.ceil(displaySize.h * visualScale) : 0
   const useDesktopThreePaneLayout = isDesktopBlueprintLayout
+  const annotationPanelExpanded =
+  useDesktopThreePaneLayout && !isFullScreenView && !isTabletImmersiveFullscreen
+    ? true
+    : tabletAnnotationsOpen
+
+const annotationPanelSizeClass =
+  (isFullScreenView || isTabletImmersiveFullscreen) && !useDesktopThreePaneLayout
+    ? annotationPanelExpanded
+      ? 'h-full max-h-none min-h-0'
+      : 'h-10 max-h-10 min-h-0 overflow-hidden'
+    : !useDesktopThreePaneLayout
+      ? annotationPanelExpanded
+        ? 'h-auto max-h-56 min-h-0'
+        : 'h-10 max-h-10 min-h-0 overflow-hidden'
+      : ''
 
   // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Annotation Ã¢â€ â€ tool-key mapping Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   function annotationTypeToToolKey(type: string): ToolKey | null {
@@ -5313,7 +5328,7 @@ export default function OperationsBlueprintPdfViewer({
               )}
 
               <div
-                className={`${useDesktopThreePaneLayout ? 'col-start-5 row-start-1 row-span-3 min-h-0 min-w-0' : ''} operations-pdf-scroll border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${isFullScreenView || isTabletImmersiveFullscreen && !useDesktopThreePaneLayout ? 'h-full max-h-none min-h-0' : !useDesktopThreePaneLayout ? (tabletAnnotationsOpen ? 'h-auto max-h-56 min-h-0' : 'h-auto max-h-none min-h-0') : ''}`}
+                className={`${useDesktopThreePaneLayout ? 'col-start-5 row-start-1 row-span-3 min-h-0 min-w-0' : ''} operations-pdf-scroll border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${annotationPanelSizeClass}`}
                 style={{
                   ...(useDesktopThreePaneLayout ? { height: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100dvh - 52px - 32px - 16px)' : isTabletImmersiveFullscreen ? 'calc(100dvh - 40px - 32px - 16px)' : normalBlueprintViewerMinHeight } : {}),
                   scrollbarWidth: 'none',
@@ -5331,7 +5346,7 @@ export default function OperationsBlueprintPdfViewer({
                     >
                       Index
                     </button>
-                    {!useDesktopThreePaneLayout && (
+                    {(!useDesktopThreePaneLayout || isFullScreenView || isTabletImmersiveFullscreen) && (
                       <button
                         onClick={() => setTabletAnnotationsOpen(v => !v)}
                         className="inline-flex items-center justify-center p-0.5 rounded text-gray-400 hover:text-gray-200"
@@ -5344,7 +5359,7 @@ export default function OperationsBlueprintPdfViewer({
                 </div>
 
                 {/* ── Current Page Annotations block ── */}
-                {(useDesktopThreePaneLayout || isFullScreenView || isTabletImmersiveFullscreen || tabletAnnotationsOpen) && (
+                {annotationPanelExpanded && (
                   <div className="px-3 pt-2.5 pb-2 border-b border-gray-800">
                     <div className="text-[11px] font-semibold text-gray-300">Current Page Annotations</div>
                     <div className="text-[10px] text-gray-500 mt-0.5">Page {currentPage} · {pageAnnotations.length} {pageAnnotations.length === 1 ? 'annotation' : 'annotations'}</div>
@@ -5352,7 +5367,7 @@ export default function OperationsBlueprintPdfViewer({
                 )}
 
                 {/* ── Grouped annotation list ── */}
-                {(useDesktopThreePaneLayout || isFullScreenView || isTabletImmersiveFullscreen || tabletAnnotationsOpen) && (() => {
+                {annotationPanelExpanded && (() => {
                   if (pageAnnotations.length === 0) {
                     return <div className="px-3 py-4 text-xs text-gray-500 text-center">No annotations on this page.</div>
                   }
