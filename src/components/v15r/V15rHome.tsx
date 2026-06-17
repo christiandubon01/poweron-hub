@@ -1367,13 +1367,13 @@ export default function V15rHome() {
                       { label: 'Total', amount: fmt(num(entryTotal)), Icon: CircleDollarSign, color: '#f87171', bg: 'rgba(248,113,113,0.11)', border: 'rgba(248,113,113,0.34)', featured: true },
                     ]
                     return (
-                      <div key={l.id || i} className={`px-4 py-2.5 ${i < recentLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`}>
+                      <div key={l.id || i} className={`px-2 py-2 sm:px-4 sm:py-2.5 ${i < recentLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`}>
                         <div
-                          className="rounded-lg border border-gray-800 bg-[var(--bg-card)] p-3"
+                          className="rounded-lg border border-gray-800 bg-[var(--bg-card)] p-3 sm:p-3.5"
                           style={hasPay ? { background: 'linear-gradient(180deg, rgba(48,209,88,.10), rgba(48,209,88,.04))', borderLeft: '3px solid #10b981' } : { borderLeft: '3px solid #10b981' }}
                         >
-                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                            <div className="min-w-0 w-full space-y-2.5 lg:flex-[1_1_calc(100%-410px)]">
+                          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                            <div className="min-w-0 w-full space-y-2.5 xl:flex-[1_1_calc(100%-410px)]">
                               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                                 <span className="rounded-md border border-cyan-300/10 bg-cyan-400/[0.04] px-2 py-1 font-mono text-[10px] font-semibold text-cyan-100/70">
                                   {l.date}
@@ -1387,34 +1387,34 @@ export default function V15rHome() {
                                 {hasPay && <span className="rounded-full border border-emerald-400/20 bg-emerald-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-emerald-300">Collected</span>}
                               </div>
                               {l.notes && <div className="w-full text-[12px] font-medium leading-relaxed text-white">{l.notes}</div>}
-                              <div className="flex max-w-full flex-wrap gap-2">
-                                <div className="w-[96px] rounded-md border border-white/[0.06] bg-white/[0.025] px-2.5 py-2">
+                              <div className="grid max-w-full grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                                <div className="min-w-0 rounded-md border border-white/[0.06] bg-white/[0.025] px-2.5 py-2">
                                   <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Hrs</div>
                                   <div className="mt-0.5 font-mono text-[12px] font-bold leading-none text-slate-100">{num(l.hrs).toFixed(1)}</div>
                                 </div>
-                                <div className="w-[122px] rounded-md border border-amber-300/[0.12] bg-amber-400/[0.025] px-2.5 py-2">
+                                <div className="min-w-0 rounded-md border border-amber-300/[0.12] bg-amber-400/[0.025] px-2.5 py-2">
                                   <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Mat</div>
                                   <div className="mt-0.5 font-mono text-[12px] font-bold leading-none" style={{ color: '#fcd34d' }}>{fmt(num(l.mat))}</div>
                                 </div>
-                                <div className="w-[98px] rounded-md border border-cyan-300/[0.10] bg-cyan-400/[0.025] px-2.5 py-2">
+                                <div className="min-w-0 rounded-md border border-cyan-300/[0.10] bg-cyan-400/[0.025] px-2.5 py-2">
                                   <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Miles</div>
                                   <div className="mt-0.5 font-mono text-[12px] font-bold leading-none" style={{ color: '#60a5fa' }}>{num(l.miles)}</div>
                                 </div>
-                                <div className="w-[132px] rounded-md border border-emerald-300/[0.12] bg-emerald-400/[0.025] px-2.5 py-2">
+                                <div className="min-w-0 rounded-md border border-emerald-300/[0.12] bg-emerald-400/[0.025] px-2.5 py-2">
                                   <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">Coll</div>
                                   <div className="mt-0.5 font-mono text-[12px] font-bold leading-none" style={{ color: '#6ee7b7' }}>{fmt(num(l.collected))}</div>
                                 </div>
-                                <div className="w-[154px] rounded-md border border-cyan-200/[0.14] bg-slate-950/20 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                                <div className="min-w-0 rounded-md border border-cyan-200/[0.14] bg-slate-950/20 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                                   <div className="text-[8px] font-bold uppercase tracking-[0.12em] text-slate-400">Remaining</div>
                                   <div className="mt-0.5 font-mono text-[13px] font-extrabold leading-none" style={{ color: balanceColor }}>{fmt(runningBalance)}</div>
                                 </div>
                               </div>
                             </div>
-                            <div className="ml-auto flex w-full flex-wrap justify-end gap-2 lg:w-auto lg:min-w-[390px] lg:flex-none">
+                            <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4 xl:w-auto xl:min-w-[390px] xl:flex-none">
                               {entryTotalStats.map(({ label, amount, Icon, color, bg, border, featured }) => (
                                 <div
                                   key={label}
-                                  className={`rounded-lg border text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${featured ? 'min-w-[118px] bg-red-950/10 px-3 py-2.5' : 'min-w-[78px] bg-slate-950/20 px-2.5 py-2'}`}
+                                  className={`min-w-0 rounded-lg border text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${featured ? 'bg-red-950/10 px-3 py-2.5' : 'bg-slate-950/20 px-2.5 py-2'}`}
                                   style={{ borderColor: border, boxShadow: featured ? `inset 0 1px 0 rgba(255,255,255,0.05), 0 0 18px ${bg}` : undefined }}
                                 >
                                   <div
@@ -1432,26 +1432,26 @@ export default function V15rHome() {
                             </div>
                           </div>
                         </div>
-                        <div className="mt-1 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 rounded-md border border-white/[0.06] bg-slate-950/20 px-3 py-1.5 text-[10px] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                            <span className="inline-flex items-baseline gap-1.5">
+                        <div className="mt-1 grid gap-2 rounded-md border border-white/[0.06] bg-slate-950/20 px-3 py-2 text-[10px] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] lg:flex lg:flex-wrap lg:items-center lg:justify-between lg:gap-x-4 lg:gap-y-1.5 lg:py-1.5">
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 sm:grid-cols-4 lg:flex lg:flex-wrap lg:items-center lg:gap-x-4">
+                            <span className="inline-flex min-w-0 items-baseline gap-1.5">
                               <span className="font-medium text-slate-500">Cum Hours</span>
                               <span className="font-mono font-medium text-slate-300">{num(rr.cumHours).toFixed(1)}h</span>
                             </span>
-                            <span className="inline-flex items-baseline gap-1.5">
+                            <span className="inline-flex min-w-0 items-baseline gap-1.5">
                               <span className="font-medium text-slate-500">Cum Mat</span>
                               <span className="font-mono font-medium" style={{ color: '#fcd34d' }}>{fmt(num(rr.cumMaterialCost))}</span>
                             </span>
-                            <span className="inline-flex items-baseline gap-1.5">
+                            <span className="inline-flex min-w-0 items-baseline gap-1.5">
                               <span className="font-medium text-slate-500">Cum Collected</span>
                               <span className="font-mono font-medium text-emerald-400">{fmt(num(rr.cumCollected))}</span>
                             </span>
-                            <span className="inline-flex items-baseline gap-1.5">
+                            <span className="inline-flex min-w-0 items-baseline gap-1.5">
                               <span className="font-medium text-slate-500">Cum Cost</span>
                               <span className="font-mono font-medium text-red-400">{fmt(num(rr.cumTotalCost))}</span>
                             </span>
                           </div>
-                          <span className="inline-flex items-baseline gap-1.5">
+                          <span className="inline-flex min-w-0 items-baseline gap-1.5">
                             <span className="font-medium text-slate-400">Net</span>
                             <span className="font-mono font-semibold" style={{ color: balanceColor }}>{fmt(runningBalance)}</span>
                           </span>

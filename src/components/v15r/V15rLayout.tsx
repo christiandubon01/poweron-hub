@@ -1493,23 +1493,39 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       {/* MAIN LAYOUT */}
       {/* B52: fullscreen override when visual-suite is active */}
       <div
-        className="flex flex-col flex-1 transition-all duration-300"
-        style={activeView === 'visual-suite' || activeView === 'neural-world'
-          ? {
-              position: 'fixed',
-              inset: 0,
-              zIndex: 55,
-              marginLeft: 0,
-              ['--v15r-workspace-inset-left' as string]: `${workspaceInsetLeftPx}px`,
-            }
-          : blueprintImmersive
-            ? { marginLeft: 0, ['--v15r-workspace-inset-left' as string]: `${workspaceInsetLeftPx}px` }
-            : {
-                marginLeft: isMobile ? 0 : sidebarWidth,
-                ['--v15r-workspace-inset-left' as string]: `${workspaceInsetLeftPx}px`,
-              }
+  className="flex flex-col flex-1 min-w-0 overflow-x-hidden transition-all duration-300"
+  style={
+    activeView === 'visual-suite' || activeView === 'neural-world'
+      ? {
+          position: 'fixed',
+          inset: 0,
+          zIndex: 55,
+          marginLeft: 0,
+          width: '100vw',
+          maxWidth: '100vw',
+          minWidth: 0,
+          overflowX: 'hidden',
+          ['--v15r-workspace-inset-left' as string]: `${workspaceInsetLeftPx}px`,
         }
-      >
+      : blueprintImmersive
+        ? {
+            marginLeft: 0,
+            width: '100vw',
+            maxWidth: '100vw',
+            minWidth: 0,
+            overflowX: 'hidden',
+            ['--v15r-workspace-inset-left' as string]: `${workspaceInsetLeftPx}px`,
+          }
+        : {
+            marginLeft: isMobile ? 0 : sidebarWidth,
+            width: isMobile ? '100vw' : `calc(100vw - ${sidebarWidth}px)`,
+            maxWidth: isMobile ? '100vw' : `calc(100vw - ${sidebarWidth}px)`,
+            minWidth: 0,
+            overflowX: 'hidden',
+            ['--v15r-workspace-inset-left' as string]: `${workspaceInsetLeftPx}px`,
+          }
+  }
+>
         {/* TOP BAR — hidden in visual-suite fullscreen */}
         {activeView === 'visual-suite' || activeView === 'neural-world' || blueprintImmersive ? null : (
         <header className="fixed top-0 right-0 flex flex-col z-[50] transition-all duration-300" style={{ left: isMobile ? 0 : sidebarWidth, transition: 'left 200ms ease', backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}>
@@ -1860,7 +1876,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
         {/* CONTENT AREA — B52: fullscreen when visual-suite, otherwise normal */}
         <main
-          className="flex-1"
+          className="flex-1 min-w-0 overflow-x-hidden"
           style={activeView === 'visual-suite' || activeView === 'neural-world'
             ? { display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', backgroundColor: '#000' }
             : blueprintImmersive
