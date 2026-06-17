@@ -1219,9 +1219,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
           renderTaskRef.current = null
         }
 
-        const doc = getLoadedPdfDoc()
-        if (!doc) return
-        const page = await doc.getPage(getSafePdfPageNumber(clampedPage))
+        if (!pdfDoc || typeof pdfDoc.getPage !== 'function') return
+        const page = await pdfDoc.getPage(Math.max(1, Math.min(Number(pdfDoc.numPages || numPages || 1), clampedPage)))
         const baseViewport = page.getViewport({ scale: 1 })
         const measuredWidth = viewportWidth || scrollAreaRef.current?.clientWidth || 0
         const measuredHeight = scrollAreaRef.current?.clientHeight || 0
@@ -1296,7 +1295,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         try { renderTaskRef.current.cancel() } catch { }
       }
     }
-  }, [pdfDoc, currentPage, numPages, viewportWidth, relativeZoom, lockView, clampScroll, containerReady, getLoadedPdfDoc, getSafePdfPageNumber])
+  }, [pdfDoc, currentPage, numPages, viewportWidth, relativeZoom, lockView, clampScroll, containerReady])
 
   useEffect(() => {
     if (!isEditorOpen) return
