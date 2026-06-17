@@ -4454,16 +4454,37 @@ const annotationPanelSizeClass =
                         const isFocused = focusedAnnotationId === a.id
                         const isLayoutEditing = layoutEditId === a.id
                         const color = a.color || '#facc15'
-                        const selectAnnotation = (e: React.MouseEvent) => {
+                        const selectAnnotation = (
+                          e: React.MouseEvent<HTMLElement | SVGElement> | React.PointerEvent<HTMLElement | SVGElement>
+                        ) => {
+                          e.preventDefault()
                           e.stopPropagation()
+
                           if (effectiveTool === 'eraser') {
                             void removeAnnotation(a.id)
                             return
                           }
-                          const el = e.currentTarget as HTMLElement
+
+                          const current = e.currentTarget as Element
+                          const el = (current instanceof HTMLElement
+                            ? current
+                            : current.closest('[data-annotation-id]')) as HTMLElement | null
+
+                          if (!el) return
+
                           focusedAnnotationElRef.current = el
                           const r = el.getBoundingClientRect()
-                          setFocusedAnnotationRect({ top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height })
+
+                          setOpenPopover(null)
+                          setBarDragOffset(null)
+                          setFocusedAnnotationRect({
+                            top: r.top,
+                            left: r.left,
+                            right: r.right,
+                            bottom: r.bottom,
+                            width: r.width,
+                            height: r.height,
+                          })
                           setFocusedAnnotationId(a.id)
                         }
 
@@ -4475,7 +4496,7 @@ const annotationPanelSizeClass =
                             <div key={a.id} data-annotation-id={a.id} className="absolute inset-0" style={{ pointerEvents: 'none' }}>
                               <svg className="absolute inset-0 overflow-visible" width={displaySize.w} height={displaySize.h}>
                                 <polyline points={svgPoints} fill="none" stroke={color} strokeWidth={meta.thickness || (a.type === 'marker' ? 12 : 3)} strokeLinecap="round" strokeLinejoin="round" opacity={meta.opacity ?? (a.type === 'marker' ? 0.35 : 0.9)} style={{ pointerEvents: 'none' }} />
-                                <polyline points={svgPoints} fill="none" stroke="transparent" strokeWidth={(meta.thickness || 8) + 14} strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'stroke', cursor: 'pointer' }} onClick={selectAnnotation as any} />
+                                <polyline points={svgPoints} fill="none" stroke="transparent" strokeWidth={(meta.thickness || 8) + 14} strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'stroke', cursor: 'pointer', touchAction: 'none' }} onPointerDown={selectAnnotation as any} onClick={selectAnnotation as any} />
                               </svg>
                             </div>
                           )
@@ -4483,7 +4504,7 @@ const annotationPanelSizeClass =
 
                         if (a.type === 'underline') {
                           return (
-                            <div key={a.id} data-annotation-id={a.id} className="absolute group" style={{ left, top, width, height }} onClick={selectAnnotation}>
+                            <div key={a.id} data-annotation-id={a.id} className="absolute group" style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                               <div
                                 className={`${isFocused ? 'ring-2 ring-white/80' : ''}`}
                                 style={{ position: 'absolute', left: 0, right: 0, bottom: 0, borderBottom: `${meta.thickness || 3}px solid ${color}`, opacity: meta.opacity ?? 1 }}
@@ -4510,7 +4531,7 @@ const annotationPanelSizeClass =
                             const lx2 = meta.lineX2 != null ? `${meta.lineX2 * 100}%` : '100%'
                             const ly2 = meta.lineY2 != null ? `${meta.lineY2 * 100}%` : '100%'
                             return (
-                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                                 <svg className="absolute inset-0 overflow-visible" width="100%" height="100%" preserveAspectRatio="none">
                                   <defs>
                                     <marker id={`arrow-${a.id}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
@@ -4547,7 +4568,7 @@ const annotationPanelSizeClass =
                             const alx1css = `${alx1f * 100}%`, aly1css = `${aly1f * 100}%`
                             const alx2css = `${alx2f * 100}%`, aly2css = `${aly2f * 100}%`
                             return (
-                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                                 <svg className="absolute inset-0 overflow-visible" viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none">
                                   <path d={`M ${avx1} ${avy1} Q ${avcx} ${avcy} ${avx2} ${avy2}`} fill="none" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} strokeLinecap="round" opacity={fillOpacity} />
                                 </svg>
@@ -4564,7 +4585,7 @@ const annotationPanelSizeClass =
                             const aperture = kind === 'can-light-4' ? 20 : 26
                             const label = kind === 'can-light-4' ? '4"' : '6"'
                             return (
-                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-full' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-full' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                                 <svg
                                   className="absolute inset-0 overflow-visible"
                                   viewBox="0 0 100 100"
@@ -4596,7 +4617,7 @@ const annotationPanelSizeClass =
                               kind === 'cross' ? '37,0 63,0 63,37 100,37 100,63 63,63 63,100 37,100 37,63 0,63 0,37 37,37' :
                               '50,3 95,36 78,88 22,88 5,36'
                             return (
-                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height, opacity: fillOpacity }} onClick={selectAnnotation}>
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height, opacity: fillOpacity }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                                 <svg className="absolute inset-0" viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none">
                                   <polygon points={polyPoints} fill={svgFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} />
                                 </svg>
@@ -4606,7 +4627,7 @@ const annotationPanelSizeClass =
                             )
                           }
                           return (
-                            <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
+                            <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                               <div
                                 className="w-full h-full pointer-events-none"
                                 style={{
@@ -4643,7 +4664,7 @@ const annotationPanelSizeClass =
                               data-annotation-id={a.id}
                               className="absolute group cursor-pointer"
                               style={isInlineEditing ? { left, top, width, height } : { left, top }}
-                              onClick={selectAnnotation}
+                              onPointerDown={selectAnnotation} onClick={selectAnnotation}
                               onDoubleClick={(e) => {
                                 e.stopPropagation()
                                 if (isInlineEditing) return
@@ -4731,7 +4752,7 @@ const annotationPanelSizeClass =
                                 data-annotation-id={a.id}
                                 className="pointer-events-auto absolute group"
                                 style={{ left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.w * 100}%`, minHeight: `${box.h * 100}%` }}
-                                onClick={selectAnnotation}
+                                onPointerDown={selectAnnotation} onClick={selectAnnotation}
                                 onDoubleClick={(e) => { e.stopPropagation(); openRichTextEditor(a) }}
                               >
                                 <div
@@ -4759,7 +4780,7 @@ const annotationPanelSizeClass =
 
                         if (a.type === 'highlight') {
                           return (
-                            <div key={a.id} data-annotation-id={a.id} className="absolute group" style={{ left, top, width, height }} onClick={selectAnnotation}>
+                            <div key={a.id} data-annotation-id={a.id} className="absolute group" style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                               <div className={`w-full h-full pointer-events-none ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ border: `1px solid ${color}`, backgroundColor: hexWithAlpha(color, meta.opacity ?? 0.35) }} />
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                               {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
@@ -4776,7 +4797,7 @@ const annotationPanelSizeClass =
                             Array.isArray(meta.quads) && meta.quads.length > 0 ? meta.quads : null
                           if (quads) {
                             return (
-                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                                 {quads.map((q, qi) => (
                                   <div
                                     key={qi}
@@ -4796,7 +4817,7 @@ const annotationPanelSizeClass =
                             )
                           }
                           return (
-                            <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onClick={selectAnnotation}>
+                            <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                               <div
                                 className="absolute pointer-events-none rounded-sm"
                                 style={{
@@ -4888,9 +4909,9 @@ const annotationPanelSizeClass =
                         }
 
                         return (
-                          <div key={a.id} data-annotation-id={a.id} className="absolute group" style={{ left, top }} onClick={selectAnnotation}>
+                          <div key={a.id} data-annotation-id={a.id} className="absolute group" style={{ left, top }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                             <button
-                              onClick={selectAnnotation}
+                              onPointerDown={selectAnnotation} onClick={selectAnnotation}
                               className={`w-5 h-5 rounded-full border text-white text-[10px] font-bold ${isFocused ? 'ring-2 ring-white/80' : ''}`}
                               style={{ backgroundColor: color }}
                               title={a.text || 'Note'}
