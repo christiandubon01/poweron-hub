@@ -289,6 +289,14 @@ function isCanLightShape(annotation: any) {
 const CAN_LIGHT_KELVIN_OPTIONS = [2700, 3000, 3500, 4000, 5000, 6000] as const
 const DEFAULT_CAN_LIGHT_KELVIN = 3000
 
+// Can-light Light Output scale (the SIZE of the orange output overlay) — single
+// source of truth so the max can never silently drift back down. 1 = normal/base
+// output, 20 = maximum (≈20× the base fixture spread), 0.25 = dimmest. Both the
+// Light Output slider and the overlay-render clamp reference these constants.
+const LIGHT_OUTPUT_MIN = 0.25
+const LIGHT_OUTPUT_BASE = 1
+const LIGHT_OUTPUT_MAX = 20
+
 // Maps a can-light color temperature to a representative tint for the output
 // overlay — warm amber at low Kelvin → cool blue-white at high Kelvin. Color only;
 // the overlay's size/opacity stay driven by Light Output (lightIntensity).
@@ -3699,15 +3707,15 @@ const annotationPanelSizeClass =
             {isEdit && (currentKind === 'can-light-4' || currentKind === 'can-light-6') && (
               <div style={{ marginBottom: 2 }}>
                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Light Output</div>
-                {/* 1..20 scale (Fix 3/4): 1 = normal baseline, 20 ≈ 20× the fixture size.
-                    Drives lightIntensity directly (no lumen numbers). Legacy 0..2 values
-                    clamp into range so old can lights still render and edit safely. */}
+                {/* LIGHT_OUTPUT_MIN..LIGHT_OUTPUT_MAX scale (0.25..20): base 1 = normal,
+                    20 ≈ 20× the fixture spread. Drives lightIntensity directly (no lumen
+                    numbers). Legacy values clamp into range so old can lights still render. */}
                 <input
                   type="range"
-                  min={1}
-                  max={20}
-                  step={0.1}
-                  value={clampNorm(eMeta.lightIntensity ?? 1, 1, 20)}
+                  min={LIGHT_OUTPUT_MIN}
+                  max={LIGHT_OUTPUT_MAX}
+                  step={0.05}
+                  value={clampNorm(eMeta.lightIntensity ?? LIGHT_OUTPUT_BASE, LIGHT_OUTPUT_MIN, LIGHT_OUTPUT_MAX)}
                   onChange={(e) => updateEditingAnnotationMetaLocal({ lightIntensity: Number(e.target.value) })}
                   onPointerUp={(e) => persistEditAnnotationMeta({ lightIntensity: Number((e.target as HTMLInputElement).value) })}
                   onKeyUp={(e) => persistEditAnnotationMeta({ lightIntensity: Number((e.target as HTMLInputElement).value) })}
@@ -4951,16 +4959,16 @@ const annotationPanelSizeClass =
                             const aperture = kind === 'can-light-4' ? 20 : 26
                             const label = kind === 'can-light-4' ? '4"' : '6"'
                             // Light-output overlay — a single smooth glow whose radius scales with
-                            // lightIntensity on a 1..20 scale (1 = base/normal, 20 ≈ 20× the fixture
-                            // reference size). Its TINT comes from the selected Kelvin color temperature
-                            // (Fix 3): warm amber (low K) → cool blue-white (high K). Size/opacity stay
-                            // on Light Output; colour stays on Kelvin. No dashed ring, no lumen numbers.
-                            // Legacy 0..2 (or 0..1) intensity values and a missing Kelvin both fall back
-                            // safely. Shares the can-light center and scales with the same viewBox, so it
-                            // reads correctly at all zoom levels.
+                            // lightIntensity on the LIGHT_OUTPUT_MIN..LIGHT_OUTPUT_MAX scale (0.25..20;
+                            // base 1 = normal, 20 ≈ 20× the fixture spread). Its TINT comes from the
+                            // selected Kelvin color temperature: warm amber (low K) → cool blue-white
+                            // (high K). Size/opacity stay on Light Output; colour stays on Kelvin. No
+                            // dashed ring, no lumen numbers. Legacy intensity values (0..1 / 0..2) and a
+                            // missing Kelvin both clamp/fall back safely. Shares the can-light center and
+                            // scales with the same viewBox, so it reads correctly at all zoom levels.
                             const FIXTURE_REF_R = 46            // outer trim ring = base fixture radius
-                            const lightIntensity = clampNorm(meta.lightIntensity ?? 1, 1, 20)
-                            const outputOverlayR = FIXTURE_REF_R * lightIntensity   // 46 @1 → 920 @20 (≈20×)
+                            const lightIntensity = clampNorm(meta.lightIntensity ?? LIGHT_OUTPUT_BASE, LIGHT_OUTPUT_MIN, LIGHT_OUTPUT_MAX)
+                            const outputOverlayR = FIXTURE_REF_R * lightIntensity   // 11.5 @0.25 → 46 @1 → 920 @20 (≈20×)
                             const kelvinColor = getLightKelvinColor(meta.lightKelvin ?? DEFAULT_CAN_LIGHT_KELVIN)
                             const glowId = `canlight-glow-${a.id}`
                             return (
