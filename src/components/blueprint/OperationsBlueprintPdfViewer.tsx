@@ -285,6 +285,25 @@ function isCanLightShape(annotation: any) {
   return kind === 'can-light-4' || kind === 'can-light-6'
 }
 
+// Supported can-light color temperatures (Kelvin). 3000K is the default when missing.
+const CAN_LIGHT_KELVIN_OPTIONS = [2700, 3000, 3500, 4000, 5000, 6000] as const
+const DEFAULT_CAN_LIGHT_KELVIN = 3000
+
+// Maps a can-light color temperature to a representative tint for the output
+// overlay — warm amber at low Kelvin → cool blue-white at high Kelvin. Color only;
+// the overlay's size/opacity stay driven by Light Output (lightIntensity).
+function getLightKelvinColor(kelvin: number) {
+  switch (Number(kelvin)) {
+    case 2700: return '#ff7a18'  // warm amber/orange
+    case 3000: return '#ffa64d'  // warm soft orange
+    case 3500: return '#ffd29a'  // warm neutral
+    case 4000: return '#fff0d8'  // neutral white (soft warm-white)
+    case 5000: return '#e6f0ff'  // cool white
+    case 6000: return '#b9d2ff'  // cool blue-white
+    default:   return '#ffa64d'  // default → 3000K
+  }
+}
+
 function hexWithAlpha(hex: string, opacity: number) {
   const safe = String(hex || '#facc15').replace('#', '')
   if (safe.length !== 6) return hex
@@ -3699,6 +3718,41 @@ const annotationPanelSizeClass =
                 </div>
               </div>
             )}
+            {isEdit && (currentKind === 'can-light-4' || currentKind === 'can-light-6') && (
+              <div style={{ marginBottom: 4 }}>
+                {/* Color temperature (Kelvin) — tints the output overlay only; size/intensity
+                    stays on Light Output. Discrete options persist + update the overlay live.
+                    No lumen numbers. Default 3000K when unset (Fix 2). */}
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Color Temperature</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {CAN_LIGHT_KELVIN_OPTIONS.map((k) => {
+                    const selected = Number(eMeta.lightKelvin ?? DEFAULT_CAN_LIGHT_KELVIN) === k
+                    return (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => persistEditAnnotationMeta({ lightKelvin: k })}
+                        title={`${k}K color temperature`}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 5,
+                          padding: '4px 8px', borderRadius: 6, cursor: 'pointer',
+                          border: selected ? '1px solid rgba(96,165,250,0.9)' : '1px solid rgba(255,255,255,0.12)',
+                          background: selected ? 'rgba(59,130,246,0.18)' : 'rgba(255,255,255,0.05)',
+                          color: selected ? 'rgba(191,219,254,1)' : 'rgba(255,255,255,0.8)',
+                          fontSize: 11,
+                        }}
+                      >
+                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: getLightKelvinColor(k), border: '1px solid rgba(0,0,0,0.35)', flexShrink: 0 }} />
+                        {k}K
+                      </button>
+                    )
+                  })}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>
+                  <span>Warm</span><span>Neutral</span><span>Cool</span>
+                </div>
+              </div>
+            )}
             <LabeledSelect label="Shape" value={currentKind}
               options={[
                 { label: 'Square', value: 'square' },
@@ -4896,16 +4950,18 @@ const annotationPanelSizeClass =
                             // Without calibration the symbol is still clear — 4" vs 6" distinguished by aperture radius + label.
                             const aperture = kind === 'can-light-4' ? 20 : 26
                             const label = kind === 'can-light-4' ? '4"' : '6"'
-                            // Light-output overlay (Fix 1–3) — a single smooth ORANGE glow whose
-                            // radius scales with lightIntensity on a 1..20 scale (1 = base/normal,
-                            // 20 ≈ 20× the fixture reference size). The old dashed outer ring is gone;
-                            // only this orange overlay represents output. Legacy 0..2 (or 0..1) values
-                            // clamp safely into [1,20] so old annotations still render. Pure visual
-                            // scope (no lumen numbers); shares the can-light center and scales with the
-                            // same viewBox, so it reads correctly at all zoom levels.
+                            // Light-output overlay — a single smooth glow whose radius scales with
+                            // lightIntensity on a 1..20 scale (1 = base/normal, 20 ≈ 20× the fixture
+                            // reference size). Its TINT comes from the selected Kelvin color temperature
+                            // (Fix 3): warm amber (low K) → cool blue-white (high K). Size/opacity stay
+                            // on Light Output; colour stays on Kelvin. No dashed ring, no lumen numbers.
+                            // Legacy 0..2 (or 0..1) intensity values and a missing Kelvin both fall back
+                            // safely. Shares the can-light center and scales with the same viewBox, so it
+                            // reads correctly at all zoom levels.
                             const FIXTURE_REF_R = 46            // outer trim ring = base fixture radius
                             const lightIntensity = clampNorm(meta.lightIntensity ?? 1, 1, 20)
                             const outputOverlayR = FIXTURE_REF_R * lightIntensity   // 46 @1 → 920 @20 (≈20×)
+                            const kelvinColor = getLightKelvinColor(meta.lightKelvin ?? DEFAULT_CAN_LIGHT_KELVIN)
                             const glowId = `canlight-glow-${a.id}`
                             return (
                               <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-full' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
@@ -4917,15 +4973,15 @@ const annotationPanelSizeClass =
                                   preserveAspectRatio="xMidYMid meet"
                                 >
                                   <defs>
-                                    {/* Smooth orange light-output glow — brightest at the fixture,
+                                    {/* Smooth Kelvin-tinted light-output glow — brightest at the fixture,
                                         fading to fully transparent at the overlay edge. No dashed marks. */}
                                     <radialGradient id={glowId} cx="50%" cy="50%" r="50%">
-                                      <stop offset="0%" stopColor="#f97316" stopOpacity={0.5} />
-                                      <stop offset="55%" stopColor="#fb923c" stopOpacity={0.24} />
-                                      <stop offset="100%" stopColor="#fdba74" stopOpacity={0} />
+                                      <stop offset="0%" stopColor={kelvinColor} stopOpacity={0.5} />
+                                      <stop offset="55%" stopColor={kelvinColor} stopOpacity={0.24} />
+                                      <stop offset="100%" stopColor={kelvinColor} stopOpacity={0} />
                                     </radialGradient>
                                   </defs>
-                                  {/* Orange light-output overlay (Fix 1/2) — the ONLY outer output visual.
+                                  {/* Kelvin-tinted light-output overlay — the ONLY outer output visual.
                                       Behind the fixture, non-interactive so it never steals selection. */}
                                   <circle cx="50" cy="50" r={outputOverlayR} fill={`url(#${glowId})`} stroke="none" style={{ pointerEvents: 'none' }} />
                                   {/* Outer trim ring */}
