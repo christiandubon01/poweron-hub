@@ -874,6 +874,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // Copied annotation/shape design awaiting paste (Fix 1). Strips id/timestamps/page
   // at copy time; cloneAnnotationForPaste() builds it, pasteCopiedAnnotationAt() consumes it.
   const [copiedAnnotationTemplate, setCopiedAnnotationTemplate] = useState<any>(null)
+  // Active paste mode: only while true does a bare-page tap drop a copy. Kept
+  // separate from the template so "Stop Pasting" halts placement without losing the
+  // copied design — the user can resume via Paste without copying again.
+  const [pasteModeActive, setPasteModeActive] = useState(false)
 
   const [draftRect, setDraftRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
@@ -1487,6 +1491,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       e.preventDefault()
+      // Stop paste mode first (Fix 1, req 6) — before closing editors/fullscreen.
+      // Keeps copiedAnnotationTemplate so the user can resume via Paste.
+      if (pasteModeActive) {
+        setPasteModeActive(false)
+        return
+      }
       if (inlineTextEditId) {
         cancelTextBoxEditSessionRef.current()
         return
@@ -1511,7 +1521,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover])
+  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover, pasteModeActive])
 
   useEffect(() => {
     pendingScrollResetRef.current = true
@@ -1651,14 +1661,22 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // lastRect tracks where the most recent copy/paste landed so toolbar-button
     // pastes cascade instead of stacking exactly on top of each other.
     setCopiedAnnotationTemplate({ ...tpl, lastRect: tpl.rect })
+    // Activate paste mode immediately and force the Select tool so bare-page taps
+    // start dropping copies right away (Fix 1). The select-mode guard below keeps
+    // paste mode from being torn down by the tool-change watcher.
+    setToolMode('select')
+    setPasteModeActive(true)
   }, [cloneAnnotationForPaste])
 
   // Creates a brand-new annotation from the copied template, persists it via the
   // existing flow, and focuses it. targetX/targetY (page-normalized) center the
   // paste on a tapped point; omit them to drop a cascading offset copy.
-  const pasteCopiedAnnotationAt = useCallback(async (targetX?: number, targetY?: number) => {
+  const pasteCopiedAnnotationAt = useCallback(async (targetX?: number, targetY?: number, opts?: { focus?: boolean }) => {
     const tpl = copiedAnnotationTemplate
     if (!tpl || !blueprint) return
+    // Default to focusing the new copy, but repeated paste-mode taps pass focus:false
+    // so the per-annotation action bar doesn't pop up and block the next tap target.
+    const focusAfter = opts?.focus !== false
     const now = new Date().toISOString()
     const newId = `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
 
@@ -1741,10 +1759,18 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setCopiedAnnotationTemplate((prev: any) => (prev ? { ...prev, lastRect: clampedRect } : prev))
     setOpenPopover(null)
     setLayoutEditId(null)
-    setToolMode('select')
-    setFocusedAnnotationId(newId)
+    if (focusAfter) {
+      setToolMode('select')
+      setFocusedAnnotationId(newId)
+    }
     await persistAnnotation(pasted)
   }, [copiedAnnotationTemplate, blueprint, currentPage, persistAnnotation])
+
+  // Choosing any drawing/annotation tool other than Select cancels paste mode so the
+  // user can't keep dropping copies while trying to draw something else (Fix 1, req 7).
+  useEffect(() => {
+    if (pasteModeActive && toolMode !== 'select') setPasteModeActive(false)
+  }, [toolMode, pasteModeActive])
 
   const clearTextBoxEditSessionState = useCallback(() => {
     draftTextBoxIdRef.current = null
@@ -2432,10 +2458,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const py = e.clientY - rect.top
     const n = toNorm(px, py, rect.width, rect.height)
 
-    // Paste-on-click (Fix 1): with a copied design and the Select tool active, a
-    // tap on the bare page drops a fresh copy centered on that point.
-    if (copiedAnnotationTemplate && effectiveTool === 'select') {
-      void pasteCopiedAnnotationAt(n.x, n.y)
+    // Paste-on-click (Fix 1): only while paste mode is active does a bare-page tap
+    // drop a fresh copy at that point. This fires from the overlay click handler,
+    // which annotation elements stopPropagation on — so tapping an existing item
+    // selects it instead of pasting over it. focus:false keeps the repeated-paste
+    // flow clean (no action bar popping up between placements).
+    if (copiedAnnotationTemplate && pasteModeActive && effectiveTool === 'select') {
+      void pasteCopiedAnnotationAt(n.x, n.y, { focus: false })
       return
     }
 
@@ -2465,7 +2494,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         { x: n.x, y: n.y }
       )
     }
-  }, [effectiveTool, isEditorOpen, blueprint, displaySize, openCreateNoteEditorAt, openCreateRichTextEditor, focusedAnnotationId, copiedAnnotationTemplate, pasteCopiedAnnotationAt])
+  }, [effectiveTool, isEditorOpen, blueprint, displaySize, openCreateNoteEditorAt, openCreateRichTextEditor, focusedAnnotationId, copiedAnnotationTemplate, pasteModeActive, pasteCopiedAnnotationAt])
 
   const getTouchPoints = useCallback(() => {
     const points = Array.from(activeTouchPointersRef.current.values())
@@ -3651,12 +3680,14 @@ const annotationPanelSizeClass =
             {isEdit && (currentKind === 'can-light-4' || currentKind === 'can-light-6') && (
               <div style={{ marginBottom: 2 }}>
                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Light Output</div>
+                {/* 0..2 scale (Fix 2): 100 = normal baseline, 200 = 2x the previous max.
+                    Mapped value/100 → lightIntensity. No numeric/lumen labels shown. */}
                 <input
                   type="range"
                   min={0}
-                  max={100}
+                  max={200}
                   step={1}
-                  value={Math.round((eMeta.lightIntensity ?? 0.5) * 100)}
+                  value={Math.round((eMeta.lightIntensity ?? 1) * 100)}
                   onChange={(e) => updateEditingAnnotationMetaLocal({ lightIntensity: Number(e.target.value) / 100 })}
                   onPointerUp={(e) => persistEditAnnotationMeta({ lightIntensity: Number((e.target as HTMLInputElement).value) / 100 })}
                   onKeyUp={(e) => persistEditAnnotationMeta({ lightIntensity: Number((e.target as HTMLInputElement).value) / 100 })}
@@ -4864,15 +4895,17 @@ const annotationPanelSizeClass =
                             // Without calibration the symbol is still clear — 4" vs 6" distinguished by aperture radius + label.
                             const aperture = kind === 'can-light-4' ? 20 : 26
                             const label = kind === 'can-light-4' ? '4"' : '6"'
-                            // Third "light output" ring (Fix 3) — a normalized 0–1 lightIntensity
-                            // (default 0.5) drives the outer ring's size + prominence. Pure visual
-                            // scope of light spread; no lumen numbers. Shares the can-light center
-                            // and scales with the same viewBox, so it reads correctly at all zooms.
-                            const lightIntensity = clampNorm(meta.lightIntensity ?? 0.5, 0, 1)
-                            const outputRingR = 48 + lightIntensity * 14      // 48 → 62
-                            const outputGlowR = 50 + lightIntensity * 22      // 50 → 72 soft halo
-                            const outputRingWidth = 1 + lightIntensity * 3    // 1 → 4
-                            const outputRingOpacity = 0.18 + lightIntensity * 0.5  // 0.18 → 0.68
+                            // Third "light output" ring (Fix 2/3) — normalized lightIntensity on a
+                            // 0..2 scale (default 1 = baseline; 2 = twice the previous max growth).
+                            // Same coefficients as before, so any saved 0..1 value renders identically;
+                            // doubling the input doubles each ring's growth. Pure visual light-spread
+                            // scope, no lumen numbers. Shares the can-light center and scales with the
+                            // same viewBox, so it reads correctly at all zoom levels.
+                            const lightIntensity = clampNorm(meta.lightIntensity ?? 1, 0, 2)
+                            const outputRingR = 48 + lightIntensity * 14      // 62 @1.0 → 76 @2.0
+                            const outputGlowR = 50 + lightIntensity * 22      // 72 @1.0 → 94 @2.0 soft halo
+                            const outputRingWidth = 1 + lightIntensity * 3    // 4 @1.0 → 7 @2.0
+                            const outputRingOpacity = Math.min(1, 0.18 + lightIntensity * 0.5)  // up to 1
                             const outputGlowColor = (fillColor && fillColor !== 'transparent') ? fillColor : borderColor
                             return (
                               <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-full' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
@@ -6025,18 +6058,34 @@ const annotationPanelSizeClass =
               <Copy size={10} /> Copy
             </button>
             {copiedAnnotationTemplate && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  void pasteCopiedAnnotationAt()
-                }}
-                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-emerald-300 hover:bg-emerald-900/30"
-                title="Paste a copy (or tap the page to place it)"
-              >
-                <ClipboardPaste size={10} /> Paste
-              </button>
+              pasteModeActive ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setPasteModeActive(false)
+                  }}
+                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-amber-200 bg-amber-900/40 hover:bg-amber-900/60"
+                  title="Stop placing copies"
+                >
+                  <X size={10} /> Stop Pasting
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setToolMode('select')
+                    setPasteModeActive(true)
+                  }}
+                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-emerald-300 hover:bg-emerald-900/30"
+                  title="Paste mode — then tap the page to place copies"
+                >
+                  <ClipboardPaste size={10} /> Paste
+                </button>
+              )
             )}
             <button
               type="button"
@@ -6070,6 +6119,59 @@ const annotationPanelSizeClass =
         )
         return createPortal(bar, document.body)
       })()}
+
+      {/* ── Paste-mode control bar (Fix 1) — portal so it floats above the viewer on
+            desktop + iPad and stays reachable without a focused annotation. Adapts
+            between "Stop Pasting" (active) and "Paste"/"Clear" (idle with a template). ── */}
+      {copiedAnnotationTemplate && createPortal(
+        <div
+          style={{ position: 'fixed', left: '50%', bottom: 24, transform: 'translateX(-50%)', zIndex: 100000, touchAction: 'manipulation' }}
+          className="flex items-center gap-2 rounded-full border border-gray-700 bg-[#111827]/95 pl-3 pr-1.5 py-1.5 shadow-xl select-none"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {pasteModeActive ? (
+            <>
+              <span className="text-[11px] text-gray-200 whitespace-nowrap">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 align-middle" />
+                Paste mode: tap the page to place copies
+              </span>
+              <button
+                type="button"
+                onClick={() => setPasteModeActive(false)}
+                className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-3 py-1.5 text-xs font-semibold text-gray-900 hover:bg-amber-400 active:bg-amber-300"
+                title="Stop placing copies"
+              >
+                <X size={13} /> Stop Pasting
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="text-[11px] text-gray-300 whitespace-nowrap">
+                <ClipboardPaste size={12} className="inline mr-1 align-middle" />
+                Copied design ready
+              </span>
+              <button
+                type="button"
+                onClick={() => { setToolMode('select'); setFocusedAnnotationId(null); setPasteModeActive(true) }}
+                className="inline-flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-gray-900 hover:bg-emerald-400 active:bg-emerald-300"
+                title="Resume paste mode — then tap the page to place copies"
+              >
+                <ClipboardPaste size={13} /> Paste
+              </button>
+              <button
+                type="button"
+                onClick={() => { setPasteModeActive(false); setCopiedAnnotationTemplate(null) }}
+                className="inline-flex items-center justify-center rounded-full p-1.5 text-gray-400 hover:text-gray-200 hover:bg-white/10"
+                title="Clear copied design"
+              >
+                <X size={13} />
+              </button>
+            </>
+          )}
+        </div>,
+        document.body
+      )}
 
       {/* ── All Pages Index Modal ── */}
       {indexModalOpen && createPortal(
