@@ -3680,18 +3680,19 @@ const annotationPanelSizeClass =
             {isEdit && (currentKind === 'can-light-4' || currentKind === 'can-light-6') && (
               <div style={{ marginBottom: 2 }}>
                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Light Output</div>
-                {/* 0..2 scale (Fix 2): 100 = normal baseline, 200 = 2x the previous max.
-                    Mapped value/100 → lightIntensity. No numeric/lumen labels shown. */}
+                {/* 1..20 scale (Fix 3/4): 1 = normal baseline, 20 ≈ 20× the fixture size.
+                    Drives lightIntensity directly (no lumen numbers). Legacy 0..2 values
+                    clamp into range so old can lights still render and edit safely. */}
                 <input
                   type="range"
-                  min={0}
-                  max={200}
-                  step={1}
-                  value={Math.round((eMeta.lightIntensity ?? 1) * 100)}
-                  onChange={(e) => updateEditingAnnotationMetaLocal({ lightIntensity: Number(e.target.value) / 100 })}
-                  onPointerUp={(e) => persistEditAnnotationMeta({ lightIntensity: Number((e.target as HTMLInputElement).value) / 100 })}
-                  onKeyUp={(e) => persistEditAnnotationMeta({ lightIntensity: Number((e.target as HTMLInputElement).value) / 100 })}
-                  style={{ width: '100%', accentColor: borderColor || '#facc15', cursor: 'pointer' }}
+                  min={1}
+                  max={20}
+                  step={0.1}
+                  value={clampNorm(eMeta.lightIntensity ?? 1, 1, 20)}
+                  onChange={(e) => updateEditingAnnotationMetaLocal({ lightIntensity: Number(e.target.value) })}
+                  onPointerUp={(e) => persistEditAnnotationMeta({ lightIntensity: Number((e.target as HTMLInputElement).value) })}
+                  onKeyUp={(e) => persistEditAnnotationMeta({ lightIntensity: Number((e.target as HTMLInputElement).value) })}
+                  style={{ width: '100%', accentColor: '#f97316', cursor: 'pointer' }}
                 />
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>
                   <span>Lower</span><span>Higher</span>
@@ -4895,18 +4896,17 @@ const annotationPanelSizeClass =
                             // Without calibration the symbol is still clear — 4" vs 6" distinguished by aperture radius + label.
                             const aperture = kind === 'can-light-4' ? 20 : 26
                             const label = kind === 'can-light-4' ? '4"' : '6"'
-                            // Third "light output" ring (Fix 2/3) — normalized lightIntensity on a
-                            // 0..2 scale (default 1 = baseline; 2 = twice the previous max growth).
-                            // Same coefficients as before, so any saved 0..1 value renders identically;
-                            // doubling the input doubles each ring's growth. Pure visual light-spread
-                            // scope, no lumen numbers. Shares the can-light center and scales with the
+                            // Light-output overlay (Fix 1–3) — a single smooth ORANGE glow whose
+                            // radius scales with lightIntensity on a 1..20 scale (1 = base/normal,
+                            // 20 ≈ 20× the fixture reference size). The old dashed outer ring is gone;
+                            // only this orange overlay represents output. Legacy 0..2 (or 0..1) values
+                            // clamp safely into [1,20] so old annotations still render. Pure visual
+                            // scope (no lumen numbers); shares the can-light center and scales with the
                             // same viewBox, so it reads correctly at all zoom levels.
-                            const lightIntensity = clampNorm(meta.lightIntensity ?? 1, 0, 2)
-                            const outputRingR = 48 + lightIntensity * 14      // 62 @1.0 → 76 @2.0
-                            const outputGlowR = 50 + lightIntensity * 22      // 72 @1.0 → 94 @2.0 soft halo
-                            const outputRingWidth = 1 + lightIntensity * 3    // 4 @1.0 → 7 @2.0
-                            const outputRingOpacity = Math.min(1, 0.18 + lightIntensity * 0.5)  // up to 1
-                            const outputGlowColor = (fillColor && fillColor !== 'transparent') ? fillColor : borderColor
+                            const FIXTURE_REF_R = 46            // outer trim ring = base fixture radius
+                            const lightIntensity = clampNorm(meta.lightIntensity ?? 1, 1, 20)
+                            const outputOverlayR = FIXTURE_REF_R * lightIntensity   // 46 @1 → 920 @20 (≈20×)
+                            const glowId = `canlight-glow-${a.id}`
                             return (
                               <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-full' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                                 <svg
@@ -4916,10 +4916,18 @@ const annotationPanelSizeClass =
                                   height="100%"
                                   preserveAspectRatio="xMidYMid meet"
                                 >
-                                  {/* Light output halo + ring (Fix 3) — behind the symbol, non-interactive
-                                      so it never steals selection from this or neighbouring shapes. */}
-                                  <circle cx="50" cy="50" r={outputGlowR} fill={hexWithAlpha(outputGlowColor, 0.05 + lightIntensity * 0.13)} stroke="none" style={{ pointerEvents: 'none' }} />
-                                  <circle cx="50" cy="50" r={outputRingR} fill="none" stroke={borderColor} strokeWidth={outputRingWidth} strokeDasharray="4 3" opacity={outputRingOpacity} style={{ pointerEvents: 'none' }} />
+                                  <defs>
+                                    {/* Smooth orange light-output glow — brightest at the fixture,
+                                        fading to fully transparent at the overlay edge. No dashed marks. */}
+                                    <radialGradient id={glowId} cx="50%" cy="50%" r="50%">
+                                      <stop offset="0%" stopColor="#f97316" stopOpacity={0.5} />
+                                      <stop offset="55%" stopColor="#fb923c" stopOpacity={0.24} />
+                                      <stop offset="100%" stopColor="#fdba74" stopOpacity={0} />
+                                    </radialGradient>
+                                  </defs>
+                                  {/* Orange light-output overlay (Fix 1/2) — the ONLY outer output visual.
+                                      Behind the fixture, non-interactive so it never steals selection. */}
+                                  <circle cx="50" cy="50" r={outputOverlayR} fill={`url(#${glowId})`} stroke="none" style={{ pointerEvents: 'none' }} />
                                   {/* Outer trim ring */}
                                   <circle cx="50" cy="50" r="46" fill="none" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} opacity={fillOpacity} />
                                   {/* Crosshair — horizontal */}
