@@ -6,7 +6,7 @@
  */
 export const GENERATED_APP_BRAIN_MANIFEST = {
   "schemaVersion": "app-brain-manifest-v1",
-  "generatedAt": "2026-06-07T07:43:52.509Z",
+  "generatedAt": "2026-06-07T23:00:30.561Z",
   "generatedBy": "scripts/generate-app-brain-manifest.mjs",
   "refreshCommand": "npm run app-brain:generate",
   "scannedRoots": [
@@ -33,8 +33,8 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     "generatedAppBrainManifest.ts"
   ],
   "repoRelative": true,
-  "totalFiles": 401,
-  "totalImports": 1623,
+  "totalFiles": 404,
+  "totalImports": 1638,
   "areas": [
     {
       "name": "Agents",
@@ -73,8 +73,8 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     },
     {
       "name": "V15r",
-      "fileCount": 129,
-      "importCount": 541
+      "fileCount": 132,
+      "importCount": 556
     },
     {
       "name": "Views",
@@ -1602,6 +1602,18 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "localImportCount": 0
     },
     {
+      "path": "src/components/v15r/app-brain/appBrainSceneOverlayAdapter.ts",
+      "area": "V15r",
+      "importCount": 9,
+      "localImportCount": 8
+    },
+    {
+      "path": "src/components/v15r/app-brain/appBrainSceneOverlayTypes.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
       "path": "src/components/v15r/app-brain/appBrainScopeCanaryModel.ts",
       "area": "V15r",
       "importCount": 1,
@@ -1740,6 +1752,12 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "localImportCount": 0
     },
     {
+      "path": "src/components/v15r/employeeCostUtils.ts",
+      "area": "V15r",
+      "importCount": 0,
+      "localImportCount": 0
+    },
+    {
       "path": "src/components/v15r/employeeTypes.ts",
       "area": "V15r",
       "importCount": 0,
@@ -1826,14 +1844,14 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     {
       "path": "src/components/v15r/V15rAppBrainScene.tsx",
       "area": "V15r",
-      "importCount": 3,
-      "localImportCount": 1
+      "importCount": 5,
+      "localImportCount": 3
     },
     {
       "path": "src/components/v15r/V15rAppBrainTab.tsx",
       "area": "V15r",
-      "importCount": 25,
-      "localImportCount": 22
+      "importCount": 27,
+      "localImportCount": 24
     },
     {
       "path": "src/components/v15r/V15rBlueprintsTab.tsx",
@@ -1874,8 +1892,8 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     {
       "path": "src/components/v15r/V15rEstimateTab.tsx",
       "area": "V15r",
-      "importCount": 10,
-      "localImportCount": 4
+      "importCount": 11,
+      "localImportCount": 5
     },
     {
       "path": "src/components/v15r/V15rFieldLogPanel.tsx",
@@ -2006,8 +2024,8 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     {
       "path": "src/components/v15r/V15rTeamPanel.tsx",
       "area": "V15r",
-      "importCount": 14,
-      "localImportCount": 4
+      "importCount": 15,
+      "localImportCount": 5
     },
     {
       "path": "src/components/v15r/V15rTemplatesPanel.tsx",
@@ -4104,6 +4122,38 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "to": "src/components/v15r/app-brain/appBrainSeedData.ts"
     },
     {
+      "from": "src/components/v15r/app-brain/appBrainSceneOverlayAdapter.ts",
+      "to": "src/components/v15r/app-brain/appBrainActiveWorkAnimationModel.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainSceneOverlayAdapter.ts",
+      "to": "src/components/v15r/app-brain/appBrainActiveWorkAnimationTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainSceneOverlayAdapter.ts",
+      "to": "src/components/v15r/app-brain/appBrainImportGraphOverlay.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainSceneOverlayAdapter.ts",
+      "to": "src/components/v15r/app-brain/appBrainSceneOverlayTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainSceneOverlayAdapter.ts",
+      "to": "src/components/v15r/app-brain/appBrainSeedData.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainSceneOverlayAdapter.ts",
+      "to": "src/components/v15r/app-brain/appBrainWorkTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainSceneOverlayAdapter.ts",
+      "to": "src/components/v15r/appBrainMap.ts"
+    },
+    {
+      "from": "src/components/v15r/app-brain/appBrainSceneOverlayAdapter.ts",
+      "to": "src/components/v15r/generatedAppBrainWorkManifest.ts"
+    },
+    {
       "from": "src/components/v15r/app-brain/appBrainScopeCanaryModel.ts",
       "to": "src/components/v15r/app-brain/appBrainCanaryTypes.ts"
     },
@@ -4185,6 +4235,14 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     },
     {
       "from": "src/components/v15r/V15rAppBrainScene.tsx",
+      "to": "src/components/v15r/app-brain/appBrainSceneOverlayAdapter.ts"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainScene.tsx",
+      "to": "src/components/v15r/app-brain/appBrainSceneOverlayTypes.ts"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainScene.tsx",
       "to": "src/components/v15r/appBrainMap.ts"
     },
     {
@@ -4246,6 +4304,14 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     {
       "from": "src/components/v15r/V15rAppBrainTab.tsx",
       "to": "src/components/v15r/app-brain/AppBrainRulesPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/appBrainSceneOverlayAdapter.ts"
+    },
+    {
+      "from": "src/components/v15r/V15rAppBrainTab.tsx",
+      "to": "src/components/v15r/app-brain/appBrainSceneOverlayTypes.ts"
     },
     {
       "from": "src/components/v15r/V15rAppBrainTab.tsx",
@@ -4326,6 +4392,10 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     {
       "from": "src/components/v15r/V15rEstimateTab.tsx",
       "to": "src/components/v15r/AskAIPanel.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rEstimateTab.tsx",
+      "to": "src/components/v15r/employeeCostUtils.ts"
     },
     {
       "from": "src/components/v15r/V15rEstimateTab.tsx",
@@ -4514,6 +4584,10 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
     {
       "from": "src/components/v15r/V15rTeamPanel.tsx",
       "to": "src/components/v15r/AddTeamMemberModal.tsx"
+    },
+    {
+      "from": "src/components/v15r/V15rTeamPanel.tsx",
+      "to": "src/components/v15r/employeeCostUtils.ts"
     },
     {
       "from": "src/components/v15r/V15rTeamPanel.tsx",
@@ -5271,6 +5345,13 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "touchScore": 62
     },
     {
+      "path": "src/components/v15r/V15rAppBrainTab.tsx",
+      "area": "V15r",
+      "importCount": 27,
+      "importedByCount": 0,
+      "touchScore": 27
+    },
+    {
       "path": "src/agents/nexus/index.ts",
       "area": "Agents",
       "importCount": 23,
@@ -5290,13 +5371,6 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "importCount": 26,
       "importedByCount": 0,
       "touchScore": 26
-    },
-    {
-      "path": "src/components/v15r/V15rAppBrainTab.tsx",
-      "area": "V15r",
-      "importCount": 25,
-      "importedByCount": 0,
-      "touchScore": 25
     },
     {
       "path": "src/components/nexus/NexusChatPanel.tsx",
@@ -5327,18 +5401,18 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "touchScore": 21
     },
     {
+      "path": "src/components/v15r/app-brain/appBrainSeedData.ts",
+      "area": "V15r",
+      "importCount": 9,
+      "importedByCount": 10,
+      "touchScore": 19
+    },
+    {
       "path": "src/components/v15r/V15rDashboard.tsx",
       "area": "V15r",
       "importCount": 19,
       "importedByCount": 0,
       "touchScore": 19
-    },
-    {
-      "path": "src/components/v15r/app-brain/appBrainSeedData.ts",
-      "area": "V15r",
-      "importCount": 9,
-      "importedByCount": 9,
-      "touchScore": 18
     },
     {
       "path": "src/components/neural-world/CommandHUD.tsx",
@@ -5376,17 +5450,17 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "touchScore": 15
     },
     {
+      "path": "src/components/v15r/V15rTeamPanel.tsx",
+      "area": "V15r",
+      "importCount": 15,
+      "importedByCount": 0,
+      "touchScore": 15
+    },
+    {
       "path": "src/features/blueprint-vr/BlueprintVRExperiencePanel.tsx",
       "area": "Features",
       "importCount": 14,
       "importedByCount": 1,
-      "touchScore": 15
-    },
-    {
-      "path": "src/features/blueprint-vr/buildingModel.ts",
-      "area": "Features",
-      "importCount": 1,
-      "importedByCount": 14,
       "touchScore": 15
     }
   ],
@@ -5430,8 +5504,8 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "path": "src/components/v15r/app-brain/appBrainSeedData.ts",
       "area": "V15r",
       "importCount": 9,
-      "importedByCount": 9,
-      "touchScore": 18
+      "importedByCount": 10,
+      "touchScore": 19
     },
     {
       "path": "src/components/neural-world/utils/makeLabel.ts",
@@ -5445,13 +5519,6 @@ export const GENERATED_APP_BRAIN_MANIFEST = {
       "area": "Agents",
       "importCount": 13,
       "importedByCount": 2,
-      "touchScore": 15
-    },
-    {
-      "path": "src/features/blueprint-vr/buildingModel.ts",
-      "area": "Features",
-      "importCount": 1,
-      "importedByCount": 14,
       "touchScore": 15
     }
   ],

@@ -790,3 +790,137 @@ Summary 24H Flow is now organized like the NEM visualizer: title plus rate/peak 
 * Fix: source mtime polling in `--watch`, no-op write protection for runtime snapshot and generator outputs, restore churn-only generator files, HMR-safe skip logging, contract/panel fields for skipped writes.
 * Files changed: see final report.
 * Compact handoff: Watch mode is HMR-safe — polls stable inputs and skips timestamp-only rewrites. Generated snapshot panel still read-only, not live websocket.
+
+---
+
+## Cursor Report — Header Bar Audit — save button wiring, SVC Unbilled styling, and Coming Up quoted bucket
+
+- Task completed: Audit-only pass for 3 scoped header-bar changes (no implementation).
+- Files inspected:
+  - `src/components/v15r/V15rLayout.tsx` (header render, Import/Export handlers, KPI pills, sync retry, `fmtHeader`, `serviceNet`, pipeline override)
+  - `src/components/v15r/V15rSettingsPanel.tsx` (`DataSyncCenter`, `handleSaveLiveData`, `handleExportBackup`, `handleImportBackup`)
+  - `src/services/backupDataService.ts` (`getKPIs`, `forceSyncToCloud`, `resolveProjectBucket`, `exportBackup`, `importBackupFromFile`)
+  - `src/utils/pipelineCalc.ts` (`calcActivePipeline`, active-only pipeline split)
+  - `src/components/v15r/V15rIncomeCalc.tsx` (`dealOutlook.coming.total`)
+  - `src/components/v15r/V15rEstimateTab.tsx` (`pipelinePending` — broader than coming-only)
+  - `src/components/v15r/charts/SixMonthForecastChart.tsx` (`comingPipelineTotal`)
+  - `src/components/layout/AppShell.tsx` (wraps `V15rLayout`)
+  - `src/services/demoDataService.ts` (`getDemoKPIs`)
+- Files changed: none (audit only)
+- Commit hash: n/a
+- Typecheck result: not run (no code changes)
+- Issues audited:
+  1. Replace Import/Export with one Save button wired to Settings save-live-data action
+  2. Change SVC Unbilled KPI color to red
+  3. Add Coming Up Projects Total Quoted header bucket
+- Root causes found:
+  1. **Save:** Header has separate Download/Upload icon buttons calling `exportBackup` / `importBackupFromFile`; Settings save uses `forceSyncToCloud()`. Header sync-status pill already calls `forceSyncToCloud()` on failed/idle tap, but there is no dedicated Save button and no shared handler extracted.
+  2. **SVC Unbilled color:** Value styling is hardcoded `text-yellow-400` in `V15rLayout.tsx` lines 1610/1618/1622-1623. Value source is `getKPIs().svcUnbilled`. **Bonus bug:** non-compact Exposure pill (line 1610) renders `safeKpis.svcUnbilled` in yellow instead of `safeKpis.exposure` in red; compact mode (line 1606) is correct.
+  3. **Coming Up quoted:** No header KPI or named helper exists. Closest logic: `dealOutlook.coming.total` in `V15rIncomeCalc.tsx` and `comingProjects.reduce(... contract)` in `V15rEstimateTab.tsx` / `SixMonthForecastChart.tsx`. Projects use `contract` as quoted value; `resolveProjectBucket(p)==='coming'` is canonical bucket filter via `isActiveProject`.
+- Recommended fix plan:
+  1. **Save (V15rLayout only):** Remove Download/Upload buttons, hidden file input, `handleBackupDownload`/`handleImportClick`/`handleFileSelect`/`fileInputRef`. Add one Save button calling `forceSyncToCloud()` with same tenant guards as sync-retry (lines 1690-1708) and `isSupabaseConfigured()` disable. Reuse `syncStatus` + toast feedback. Import `Save` from lucide-react; drop unused `Download`/`Upload`/`exportBackup`/`importBackupFromFile` imports if unreferenced.
+  2. **SVC Unbilled color (V15rLayout only):** Change SVC Unbilled value classes from `text-yellow-400` → `text-red-400`. Fix Exposure non-compact value at line 1610 to `safeKpis.exposure` + `text-red-400` while touching RISK GROUP.
+  3. **Coming Up quoted (V15rLayout + optional helper):** Compute `comingUpQuoted = projects.filter(isActiveProject).filter(p => resolveProjectBucket(p)==='coming').reduce((s,p)=>s+num(p.contract),0)` inline (like `serviceNet`) or add `comingUpQuoted` to `getKPIs()`. Add new KPI pill in REVENUE or STATUS group; respect `hideFinances`; use amber/gold color (`text-amber-400` or `#eab308` to match Estimate tab pending). Demo mode: derive from demo projects or add demo constant.
+- Risks / coupling notes:
+  - Task 1 independent; Settings Import/Export remain unchanged.
+  - Task 2 independent; fix Exposure display bug on same lines (low-risk, recommended).
+  - Task 3 independent from Tasks 1–2; do NOT use `pipelinePending` (includes service estimates/calls) — scope is coming **projects** only.
+  - Header KPIs are hardcoded JSX (not config array) except App Brain mode; new pill needs compact-mode title + `hideFinances` handling.
+  - Removing header Import/Export does not remove Settings backup actions.
+- Manual QA performed: Code-path trace only; no browser QA.
+- Next recommended action: Codex narrow implementation on `main` in order: (1) SVC Unbilled + Exposure fix, (2) Save button, (3) Coming Up quoted KPI.
+- Compact handoff for next agent/chat: Header bar lives entirely in `V15rLayout.tsx` lines 1528-1875. KPIs from `getKPIs()` + `calcActivePipeline` override + inline `serviceNet`. Replace Import/Export with Save → `forceSyncToCloud()` (same as Settings `handleSaveLiveData`). SVC Unbilled is yellow hardcoded; change to red and fix Exposure value bug on line 1610. Coming Up quoted does not exist in header — sum `contract` for `resolveProjectBucket==='coming'` projects. Min files: `V15rLayout.tsx` (+ optional `backupDataService.ts`/`pipelineCalc.ts` if helper added). All 3 tasks independent. Audit only; no commit.
+
+---
+
+## Cursor Report — Home Tab Deep Audit — tablet/iPad viewport overflow, sticky overscroll, and responsive portrait/landscape fit
+
+- Task completed: Audit-only deep pass for Home tab tablet/iPad oversize, extra scroll, and sticky overscroll. No implementation.
+- Files inspected:
+  - `src/components/layout/AppShell.tsx` (Home route: ProactiveAlertCards + ConclusionCards + V15rHome)
+  - `src/components/v15r/V15rLayout.tsx` (shell height, fixed header offset, main scroll owner, tablet breakpoints)
+  - `src/components/v15r/V15rHome.tsx` (Home root sizing, safe-area padding, calendar embed, agenda/logs sections)
+  - `src/styles/responsive.css` (safe-area + calendar responsive rules)
+  - `src/index.css` (`#root` safe-area, `body` min-height)
+  - `index.html` (`viewport-fit=cover`)
+  - `src/components/ProactiveAlertCards.tsx`, `src/components/ConclusionCards.tsx` (Home-only pre-content rows)
+  - `src/components/v15r/ProjectCard.tsx` (Job Health grid — no tablet min-width overflow found)
+- Files changed: none (audit only)
+- Commit hash: n/a
+- Typecheck result: not run (no code changes)
+- Viewports audited (static code-path analysis):
+  - iPad portrait (~768×1024)
+  - iPad landscape (~1024×768)
+  - Samsung Galaxy Tab A7 portrait (~800×1280)
+  - Samsung Galaxy Tab A7 landscape (~1280×800)
+- Root causes found:
+  1. **Shell + Home double viewport sizing (primary):** `V15rLayout` root uses `h-screen` (100vh) and `<main>` owns vertical scroll (`overflowY: auto`, `marginTop: 4rem` for fixed header). `V15rHome` root also uses `min-h-screen` (min-height 100vh) *inside* that scroll container. Content is forced to at least full viewport height even though the scrollport is shorter (header + footer + safe-area already consumed), producing bottom blank space and extra scroll beyond real content.
+  2. **Stacked safe-area padding (secondary, iPad-specific):** Safe-area is applied on `#root` (`index.css`), again via `.safe-area-all` on Home, and again via inline `max(1.5rem, env(safe-area-inset-*))` on `V15rHome`. This compounds vertical/horizontal inset on iPad with `viewport-fit=cover`.
+  3. **iOS nested-scroll rubber band (sticky overscroll feel):** Main scroll container uses `WebkitOverflowScrolling: 'touch'` with no `overscroll-behavior: contain`. Combined with the extra min-height blank space, iPad Safari shows elastic overscroll that feels stuck past content end.
+  4. **Shell width constraint risk:** `<main>` uses `maxWidth: '100vw'`. On iOS, `100vw` can exceed the usable width when scrollbars/safe-area/browser chrome differ, contributing to slight horizontal oversize.
+  5. **Calendar section contributors (Home-level, not primary blank-space bug):** Home calendar wrapper is `calendar-container-wrapper`, but `responsive.css` tablet rules target `.calendar-container` — tablet calendar height overrides do not apply. Unlocked calendar uses `overflow-visible` (iframe can paint outside clip). Default persisted height is 860px (600–1120 clamp), which is legitimate content height but amplifies total scroll length.
+  6. **Samsung A7 renders better because:** Android Chrome viewport/`vh` behavior differs from iPad Safari; less aggressive rubber-band on nested scroll; same layout bugs exist but are less noticeable — not because layout logic is tablet-correct.
+- Recommended fix plan (narrow, ordered):
+  1. **Home-only quick win:** In `V15rHome.tsx`, remove `min-h-screen` from the page root; use natural content height (`min-h-0` or no min-height). Keep `overflow-x-hidden` if needed.
+  2. **Shell scroll containment:** In `V15rLayout.tsx` `<main>`, change `maxWidth: '100vw'` → `'100%'`; add `overscrollBehavior: 'contain'`; consider root `h-screen` → `h-dvh` (with `min-h-screen` fallback) for iPad visible viewport.
+  3. **Safe-area dedupe:** Pick one layer — either `#root` safe-area OR Home safe-area, not both triple-stacked. Prefer shell-level safe-area only.
+  4. **Home calendar narrow fix:** Add `calendar-container` class (or update `responsive.css` selector), default `overflow-hidden`, and tablet-aware default height cap; keep user resize persistence.
+  5. **QA pass:** Verify portrait + landscape on iPad and Tab A7 with sidebar collapsed (64px rail) and expanded overlay.
+- Risks / coupling notes:
+  - Fix 1 (remove Home `min-h-screen`) is **independent**, low risk, Home-only.
+  - Fix 2 (shell scroll/viewport) is **coupled** to all tabs using `V15rLayout`; medium risk — regression-test Projects/Field Log after change.
+  - Fix 3 (safe-area dedupe) is **coupled** to global layout/notch devices; medium risk.
+  - Fix 4 (calendar class/overflow) is **independent**, Home-only; low/medium risk.
+  - Do **not** broadly remove `min-h-screen` from unrelated panels in the same pass.
+  - Collapsed sidebar on tablet still leaves 64px `marginLeft`; that is expected and not the overscroll root cause.
+- Manual QA performed: Static render-path and CSS audit only; no in-app browser QA (no localhost session verified in this pass).
+- Next recommended action: Codex implementation pass on `main` in order above; manual iPad + Tab A7 QA after step 1+2 before calendar tweaks.
+- Compact handoff for next agent/chat: Home overscroll is **both** shell-level and Home-level. Scroll owner is `V15rLayout` `<main>` (not body). Primary bug is `V15rHome` `min-h-screen` inside a shorter scroll container + iPad `vh`/safe-area stacking. Sticky feel is iOS rubber-band on nested scroll without `overscroll-behavior: contain`. Min fix set: `V15rHome.tsx` (drop `min-h-screen`, dedupe safe-area, calendar overflow/class) + `V15rLayout.tsx` (`100%` width, `overscroll-behavior`, optional `dvh`). Calendar responsive CSS currently mismatched (`.calendar-container` vs `calendar-container-wrapper`). Audit only; no commit.
+
+---
+
+## Cursor Report — Home Tab Regression Audit — iPad Safari got worse after viewport/overscroll fix
+
+- Task completed: Deep audit of iPad Safari regression after commit `bcaa72d`; audit-only, no repair implemented.
+- Files inspected:
+  - `src/components/v15r/V15rLayout.tsx` (shell flex row, sidebar margin, `<main>` scroll owner, bcaa72d diff)
+  - `src/components/v15r/V15rHome.tsx` (root sizing, safe-area triple stack, calendar embed, wide child min-widths)
+  - `src/components/layout/AppShell.tsx` (Home route siblings: ProactiveAlertCards + ConclusionCards + V15rHome)
+  - `src/index.css` (`#root` safe-area padding, box-sizing)
+  - `src/styles/responsive.css` (`.safe-area-all`, `.calendar-container` mismatch)
+  - `index.html` (`viewport-fit=cover`)
+  - `src/components/ProactiveAlertCards.tsx`, `src/components/ConclusionCards.tsx` (Home pre-rows, horizontal card scroll)
+- Files changed: none (audit only)
+- Commit hash: n/a
+- Typecheck result: not run (no code changes)
+- Regression audited: After `bcaa72d`, iPad Safari Home appears larger/oversized horizontally, no longer fits usable landscape viewport; worse than pre-fix vertical-overscroll state.
+- Root causes found:
+  1. **Primary — incomplete flex width containment (pre-existing, exposed by partial fix):** Shell path is `div.flex.h-screen` → `div.flex.flex-col.flex-1` (marginLeft sidebar, **no `min-w-0`**) → `<main>` → inner wrapper → Home siblings. bcaa72d added `min-w-0` only on the Home leaf. iPad Safari still allows the flex column to expand to intrinsic content width when children carry min-widths (`lg:min-w-[390px]` recent-log stats, fixed-width alert/conclusion cards, calendar iframe). This produces **horizontal overflow inside `<main>`** and a page that feels oversized/zoomed.
+  2. **Primary — safe-area width pressure still unresolved (pre-existing, deferred from fix pass):** `#root` safe-area (`index.css`) + Home `.safe-area-all` + inline `max(1.5rem, env(...))` + `p-6` stack on `V15rHome`. With `viewport-fit=cover`, usable content width shrinks while wide children still demand full layout width → horizontal scroll on iPad Safari landscape.
+  3. **Secondary — vertical fix changed symptom dominance, not a new horizontal bug:** Removing Home `min-h-screen` correctly fixed extra vertical blank space but made horizontal/safe-area issues the visible regression. The page is not necessarily wider because of that removal; it is less vertically padded so horizontal misfit is more obvious.
+  4. **Keep, do not revert — `maxWidth: '100vw'` → `'100%'` on `<main>`:** Pre-fix `100vw` on a column that already has `marginLeft: sidebarWidth` could exceed viewport (`sidebar + 100vw`). The bcaa72d change is directionally correct and should be **kept**.
+  5. **Secondary — `overscrollBehavior: 'contain'` on `<main>`:** Unlikely to widen layout; may worsen iPad Safari scroll/gesture feel (sticky/rubber-band trapping). Treat as **test-revert candidate**, not primary width cause.
+  6. **Secondary — Home `w-full max-w-full min-w-0` swap:** Not the main regression driver. `min-w-0` is correct but insufficient without ancestor chain fixes. `w-full max-w-full` is redundant on a block root and can be simplified.
+  7. **Contributors unchanged by bcaa72d:** Calendar wrapper uses `calendar-container-wrapper` while `responsive.css` targets `.calendar-container`; unlocked calendar uses `overflow-visible`; default calendar height 860px adds scroll length but not primary horizontal regression.
+- Which recent changes caused it:
+  - **Contributed indirectly:** removing `min-h-screen` (revealed horizontal/safe-area issues).
+  - **Insufficient alone:** adding Home `min-w-0` without shell-chain `min-w-0`.
+  - **Should keep:** `maxWidth: '100%'` on `<main>`.
+  - **Test revert on iPad:** `overscrollBehavior: 'contain'`.
+  - **Did not fix (still active):** safe-area triple stack; shell flex `min-w-0` gap; calendar overflow/class mismatch.
+- Recommended repair plan (minimum safe, ordered):
+  1. **`V15rLayout.tsx`:** Add `min-w-0 overflow-x-hidden` to the main flex column (`flex flex-col flex-1`) and inner `<main>` child wrapper; **keep** `maxWidth: '100%'`.
+  2. **`V15rLayout.tsx`:** Trial-remove or scope `overscrollBehavior: 'contain'` if iPad gesture feel remains bad after width fix.
+  3. **`V15rHome.tsx`:** Dedupe safe-area — remove either `.safe-area-all` + inline env padding **or** rely on `#root` only; keep one `p-6` layer max.
+  4. **`V15rHome.tsx`:** Simplify root to `min-w-0` (drop redundant `w-full max-w-full`); default calendar container to `overflow-hidden`; add `calendar-container` class or fix responsive selector.
+  5. **QA:** iPad Safari portrait + landscape with sidebar collapsed (64px rail) and expanded; confirm no document-level horizontal scroll.
+- Risks / coupling notes:
+  - Shell `min-w-0` affects all tabs — low/medium risk, standard flex fix.
+  - Safe-area dedupe affects notch/PWA devices — test iPhone + iPad after change.
+  - Do **not** revert `maxWidth: '100%'` back to `100vw`.
+  - Do **not** restore Home `min-h-screen`.
+- Manual QA performed: Static code-path audit of commit `bcaa72d` diff and full shell→Home width chain; no in-app iPad Safari browser session in this pass.
+- Next recommended action: Codex repair pass on `main` using plan above; verify on user’s iPad Safari screenshot viewport before any broader CSS experiments.
+- Compact handoff for next agent/chat: iPad Safari regression after `bcaa72d` is primarily **horizontal flex containment + safe-area stacking**, not the `min-h-screen` removal itself. Keep `maxWidth:100%`; add `min-w-0`/`overflow-x-hidden` on shell flex chain in `V15rLayout.tsx`; dedupe Home safe-area in `V15rHome.tsx`; test-revert `overscrollBehavior:contain`. Do not restore `min-h-screen` or `100vw`. Audit only; no commit.
+
+---

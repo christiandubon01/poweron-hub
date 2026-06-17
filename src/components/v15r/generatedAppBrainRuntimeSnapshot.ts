@@ -5,66 +5,63 @@
  * generatedAt changes each time the refresh runs.
  */
 export const GENERATED_APP_BRAIN_RUNTIME_SNAPSHOT = {
-  "generatedAt": "2026-06-07T08:29:01.233Z",
+  "generatedAt": "2026-06-09T06:58:47.890Z",
   "schemaVersion": "app-brain-runtime-snapshot-v1",
-  "mode": "once",
+  "mode": "watch",
   "isWatchModeAvailable": true,
-  "isWatchModeRunning": false,
-  "hmrSafeWatch": false,
+  "isWatchModeRunning": true,
+  "hmrSafeWatch": true,
   "sourceChanged": true,
-  "refreshCommand": "npm run app-brain:refresh",
+  "refreshCommand": "npm run app-brain:watch",
   "branch": "main",
   "gitClean": false,
-  "changedFileCount": 10,
+  "changedFileCount": 8,
   "changedFiles": [
     "abw-log.txt",
-    "scripts/app-brain-watch.mjs",
+    "solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md",
     "solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md",
-    "solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md",
-    "src/components/v15r/app-brain/appBrainWatchModeContract.ts",
-    "src/components/v15r/app-brain/AppBrainWatchModeContractPanel.tsx"
+    "solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md"
   ],
   "generatorResults": [
     {
       "source": "app-brain-manifest",
       "command": "node scripts/generate-app-brain-manifest.mjs",
       "success": true,
-      "durationMs": 253,
+      "durationMs": 130,
       "outputFile": "src/components/v15r/generatedAppBrainManifest.ts",
-      "written": true,
-      "skippedNoMeaningfulChange": false
+      "written": false,
+      "skippedNoMeaningfulChange": true
     },
     {
       "source": "directory-manifest",
       "command": "node scripts/generate-app-brain-directory.mjs",
       "success": true,
-      "durationMs": 319,
+      "durationMs": 204,
       "outputFile": "src/components/v15r/generatedAppBrainDirectory.ts",
-      "written": true,
-      "skippedNoMeaningfulChange": false
+      "written": false,
+      "skippedNoMeaningfulChange": true
     },
     {
       "source": "work-manifest",
       "command": "node scripts/generate-app-brain-work-manifest.mjs",
       "success": true,
-      "durationMs": 162,
+      "durationMs": 156,
       "outputFile": "src/components/v15r/generatedAppBrainWorkManifest.ts",
       "written": true,
       "skippedNoMeaningfulChange": false
     }
   ],
   "sourcesRefreshed": [
-    "app-brain-manifest",
-    "directory-manifest",
     "work-manifest"
   ],
   "filesWritten": [
-    "src/components/v15r/generatedAppBrainManifest.ts",
-    "src/components/v15r/generatedAppBrainDirectory.ts",
     "src/components/v15r/generatedAppBrainWorkManifest.ts"
   ],
-  "filesSkipped": [],
-  "skippedNoMeaningfulChanges": 0,
+  "filesSkipped": [
+    "src/components/v15r/generatedAppBrainManifest.ts",
+    "src/components/v15r/generatedAppBrainDirectory.ts"
+  ],
+  "skippedNoMeaningfulChanges": 2,
   "warnings": [],
   "safetyNotes": [
     "Opt-in CLI utility — not a git hook or background daemon",

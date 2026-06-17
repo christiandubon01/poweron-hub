@@ -6,7 +6,7 @@
  */
 export const GENERATED_APP_BRAIN_WORK_MANIFEST = {
   "schemaVersion": "app-brain-work-manifest-v1",
-  "generatedAt": "2026-06-07T07:43:52.768Z",
+  "generatedAt": "2026-06-09T06:58:47.710Z",
   "generatedBy": "scripts/generate-app-brain-work-manifest.mjs",
   "refreshCommand": "node scripts/generate-app-brain-work-manifest.mjs",
   "snapshotWarning": "Generated snapshot · not watch mode. Re-run the generator to refresh; no automatic live tracking or git hooks.",
@@ -118,40 +118,40 @@ export const GENERATED_APP_BRAIN_WORK_MANIFEST = {
       "label": "Shared context",
       "path": "solarupgrade_agent_context/SOLARUPGRADE_SHARED_CONTEXT.md",
       "exists": true,
-      "sizeBytes": 242457,
-      "modifiedAt": "2026-06-07T07:41:03.686Z",
+      "sizeBytes": 293956,
+      "modifiedAt": "2026-06-09T06:58:44.648Z",
       "freshness": "recent",
-      "lastReportExcerpt": "COMPACT HANDOFF FOR NEXT CHAT: Home repair pass complete on `main`. Pipeline subtitle uses active-project count; agenda linking uses a real project picker modal; agenda cards scroll after 10 task rows. Scope limited t..."
+      "lastReportExcerpt": "COMPACT HANDOFF FOR NEXT CHAT: Header fix pass complete on `main`. `V15rLayout.tsx` now has one guarded Save button wired to `forceSyncToCloud()`, red SVC Unbilled, corrected Exposure value, and a project-only Coming ..."
     },
     {
       "key": "claude",
       "label": "Claude context",
       "path": "solarupgrade_agent_context/SOLARUPGRADE_CLAUDE.md",
       "exists": true,
-      "sizeBytes": 151439,
-      "modifiedAt": "2026-06-07T06:58:17.331Z",
+      "sizeBytes": 256583,
+      "modifiedAt": "2026-06-09T06:58:45.771Z",
       "freshness": "recent",
-      "lastReportExcerpt": "Compact handoff for next agent/chat: Inner Project Batch 3 complete on `main`. Progress tab phase headers now show total hours per phase (e.g. \"3 tasks · 12h\"). Estimate labor phase headers now show a hours pill (e.g...."
+      "lastReportExcerpt": "COMPACT HANDOFF FOR NEXT CHAT: Labor Allocation modal in V15rEstimateTab.tsx now has a full-width SUGGESTED HOURLY RATE box at ~line 3508 (after top-4 summary grid, before Task Cost Summary). Value = `blendedEmployeeB..."
     },
     {
       "key": "codex",
       "label": "Codex context",
       "path": "solarupgrade_agent_context/SOLARUPGRADE_CODEX.md",
       "exists": true,
-      "sizeBytes": 102455,
-      "modifiedAt": "2026-06-07T03:37:25.359Z",
+      "sizeBytes": 107443,
+      "modifiedAt": "2026-06-08T17:14:14.216Z",
       "freshness": "recent",
-      "lastReportExcerpt": "Compact handoff for next agent/chat: Home alerts polish complete on `main`. `V15rHome.tsx` now filters AI alerts to active projects, persists generated-alert deletes, filters archived linked custom alerts, uses active..."
+      "lastReportExcerpt": "Compact handoff for next agent/chat: Home tablet fix pass complete on `main` (`5c571aa`). Removed Home `min-h-screen`; shell main now uses `maxWidth: 100%` + `overscrollBehavior: contain`. Safe-area dedupe and calenda..."
     },
     {
       "key": "cursor",
       "label": "Cursor context",
       "path": "solarupgrade_agent_context/SOLARUPGRADE_CURSOR.md",
       "exists": true,
-      "sizeBytes": 43144,
-      "modifiedAt": "2026-06-07T07:41:06.469Z",
+      "sizeBytes": 63541,
+      "modifiedAt": "2026-06-08T17:26:40.144Z",
       "freshness": "recent",
-      "lastReportExcerpt": "Compact handoff: Opt-in CLI refresh/watch utility live. Panel shows generated snapshot only — not live websocket state. No hooks, auto-commit, secrets, or financial values."
+      "lastReportExcerpt": "Compact handoff for next agent/chat: iPad Safari regression after `bcaa72d` is primarily **horizontal flex containment + safe-area stacking**, not the `min-h-screen` removal itself. Keep `maxWidth:100%`; add `min-w-0`..."
     },
     {
       "key": "haiku",
@@ -168,7 +168,7 @@ export const GENERATED_APP_BRAIN_WORK_MANIFEST = {
     "available": true,
     "branch": "main",
     "clean": false,
-    "changedFileCount": 10,
+    "changedFileCount": 8,
     "warning": null
   }
 } as const
