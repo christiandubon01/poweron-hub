@@ -9,8 +9,12 @@ import {
   ChevronRight,
   ChevronUp,
   Circle,
+  ClipboardPaste,
+  Copy,
   Crosshair,
   Eraser,
+  Eye,
+  EyeOff,
   Highlighter,
   Italic,
   Layers,
@@ -131,6 +135,9 @@ const THICKNESS_OPTIONS = [1, 2, 3, 5, 8, 12]
 const OPACITY_OPTIONS = [0.25, 0.4, 0.55, 0.7, 0.85, 1]
 const DEFAULT_TEXT_BOX = { w: 0.22, h: 0.08 }
 const DEFAULT_CALLOUT_BOX = { w: 0.24, h: 0.1 }
+// Normalized offset applied when pasting a copied annotation via the toolbar
+// button (no explicit drop point) so repeated pastes cascade and stay visible.
+const PASTE_OFFSET_NORM = 0.03
 
 type ToolbarBucket = 'annotate' | 'draw' | 'generate' | 'view' | 'measure'
 type ToolMode =
@@ -268,6 +275,14 @@ function getAnnotationMeta(annotation: any) {
 
 function withAnnotationMeta(annotation: any, meta: Record<string, any>) {
   return { ...annotation, meta: { ...getAnnotationMeta(annotation), ...meta }, metadata: { ...getAnnotationMeta(annotation), ...meta } }
+}
+
+// Can-light detection — used to render the third "light output" ring and to
+// surface the Light Output control. Relies on the existing shape metadata.
+function isCanLightShape(annotation: any) {
+  if (!annotation || annotation.type !== 'shape') return false
+  const kind = getAnnotationMeta(annotation).shapeKind
+  return kind === 'can-light-4' || kind === 'can-light-6'
 }
 
 function hexWithAlpha(hex: string, opacity: number) {
@@ -853,6 +868,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [layoutEditId, setLayoutEditId] = useState<string | null>(null)
   const [inlineTextEditId, setInlineTextEditId] = useState<string | null>(null)
   const [focusedAnnotationRect, setFocusedAnnotationRect] = useState<{ top: number; left: number; right: number; bottom: number; width: number; height: number } | null>(null)
+
+  // Show/hide all placed annotation overlays without deleting them (Fix 2).
+  const [annotationsVisible, setAnnotationsVisible] = useState(true)
+  // Copied annotation/shape design awaiting paste (Fix 1). Strips id/timestamps/page
+  // at copy time; cloneAnnotationForPaste() builds it, pasteCopiedAnnotationAt() consumes it.
+  const [copiedAnnotationTemplate, setCopiedAnnotationTemplate] = useState<any>(null)
 
   const [draftRect, setDraftRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
@@ -1605,6 +1626,126 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     return mutationQueueRef.current
   }, [loadAnnotations, onAnnotationsChanged])
 
+  // ─── Copy / Paste for placed annotations & shapes (Fix 1) ─────────────────────
+  // Builds a paste-ready template that preserves the full design (type, rect,
+  // color, path and ALL meta — shapeKind, border/fill/hatch, line/arrow/arch
+  // endpoints, text content, can-light lightIntensity) while dropping anything
+  // that would corrupt a fresh row (id, createdAt, updatedAt, pageNumber).
+  const cloneAnnotationForPaste = useCallback((source: BlueprintAnnotation) => {
+    const meta = getAnnotationMeta(source)
+    let clonedMeta: Record<string, any> = {}
+    try { clonedMeta = JSON.parse(JSON.stringify(meta || {})) } catch { clonedMeta = { ...(meta || {}) } }
+    return {
+      type: source.type,
+      rect: source.rect ? { ...source.rect } : undefined,
+      path: Array.isArray(source.path) ? source.path.map((p: any) => ({ x: p.x, y: p.y })) : undefined,
+      text: source.text,
+      color: source.color || '#facc15',
+      meta: clonedMeta,
+    }
+  }, [])
+
+  const copyAnnotation = useCallback((source: BlueprintAnnotation) => {
+    if (!source) return
+    const tpl = cloneAnnotationForPaste(source)
+    // lastRect tracks where the most recent copy/paste landed so toolbar-button
+    // pastes cascade instead of stacking exactly on top of each other.
+    setCopiedAnnotationTemplate({ ...tpl, lastRect: tpl.rect })
+  }, [cloneAnnotationForPaste])
+
+  // Creates a brand-new annotation from the copied template, persists it via the
+  // existing flow, and focuses it. targetX/targetY (page-normalized) center the
+  // paste on a tapped point; omit them to drop a cascading offset copy.
+  const pasteCopiedAnnotationAt = useCallback(async (targetX?: number, targetY?: number) => {
+    const tpl = copiedAnnotationTemplate
+    if (!tpl || !blueprint) return
+    const now = new Date().toISOString()
+    const newId = `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+
+    const srcRect = tpl.rect || { x: 0.4, y: 0.4, w: 0.12, h: 0.12 }
+    const w = clampNorm(srcRect.w || 0.05, 0.005, 1)
+    const h = clampNorm(srcRect.h || 0.05, 0.005, 1)
+
+    let desiredX: number
+    let desiredY: number
+    if (typeof targetX === 'number' && typeof targetY === 'number') {
+      // Center the design on the tapped/clicked point.
+      desiredX = targetX - w / 2
+      desiredY = targetY - h / 2
+    } else {
+      // No drop point: offset from the last placement so repeated pastes cascade.
+      desiredX = (tpl.lastRect?.x ?? srcRect.x) + PASTE_OFFSET_NORM
+      desiredY = (tpl.lastRect?.y ?? srcRect.y) + PASTE_OFFSET_NORM
+    }
+
+    const clampedRect = clampRectToPage({ x: desiredX, y: desiredY, w, h })
+    // Effective delta after clamping — applied to absolute-coordinate metadata so
+    // pen/marker strokes and the arch control point follow the rect exactly.
+    const dx = clampedRect.x - srcRect.x
+    const dy = clampedRect.y - srcRect.y
+
+    const nextMeta: Record<string, any> = { ...(tpl.meta || {}) }
+    if (Array.isArray(nextMeta.points)) {
+      // pen/marker freehand points are page-normalized — shift by the same delta.
+      nextMeta.points = nextMeta.points.map((p: any) => ({
+        x: clampNorm((Number(p?.x) || 0) + dx),
+        y: clampNorm((Number(p?.y) || 0) + dy),
+      }))
+    }
+    if (nextMeta.archCtrlX !== undefined && nextMeta.archCtrlY !== undefined) {
+      // arch-line control point is stored as absolute page-normalized coords.
+      nextMeta.archCtrlX = clampNorm(Number(nextMeta.archCtrlX) + dx)
+      nextMeta.archCtrlY = clampNorm(Number(nextMeta.archCtrlY) + dy)
+    }
+    if (nextMeta.box && typeof nextMeta.box === 'object') {
+      // callout/generate/textBox keep their visible box as absolute page coords.
+      nextMeta.box = {
+        ...nextMeta.box,
+        x: clampNorm((Number(nextMeta.box.x) || 0) + dx),
+        y: clampNorm((Number(nextMeta.box.y) || 0) + dy),
+      }
+    }
+    if (nextMeta.anchor && typeof nextMeta.anchor === 'object') {
+      // callout/note leader-line target — keep it attached to the same offset.
+      nextMeta.anchor = {
+        ...nextMeta.anchor,
+        x: clampNorm((Number(nextMeta.anchor.x) || 0) + dx),
+        y: clampNorm((Number(nextMeta.anchor.y) || 0) + dy),
+      }
+    }
+    // line/arrow endpoints (lineX1..lineY2) are box-relative — preserved as-is so
+    // the shape's direction/length stays identical.
+
+    const nextPath = Array.isArray(tpl.path)
+      ? tpl.path.map((p: any) => ({ x: clampNorm((Number(p?.x) || 0) + dx), y: clampNorm((Number(p?.y) || 0) + dy) }))
+      : undefined
+
+    const pasted = {
+      id: newId,
+      blueprintSetId: blueprint.id,
+      projectId: blueprint.projectId,
+      pageNumber: currentPage,
+      type: tpl.type,
+      rect: clampedRect,
+      path: nextPath,
+      text: tpl.text,
+      color: tpl.color || '#facc15',
+      meta: nextMeta,
+      metadata: nextMeta,
+      createdAt: now,
+      updatedAt: now,
+    } as BlueprintAnnotation
+
+    // Immediate local render, then persist via the existing single annotation flow.
+    setAllAnnotations((prev) => [...prev, pasted])
+    setCopiedAnnotationTemplate((prev: any) => (prev ? { ...prev, lastRect: clampedRect } : prev))
+    setOpenPopover(null)
+    setLayoutEditId(null)
+    setToolMode('select')
+    setFocusedAnnotationId(newId)
+    await persistAnnotation(pasted)
+  }, [copiedAnnotationTemplate, blueprint, currentPage, persistAnnotation])
+
   const clearTextBoxEditSessionState = useCallback(() => {
     draftTextBoxIdRef.current = null
     textBoxSnapshotRef.current = null
@@ -2291,6 +2432,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const py = e.clientY - rect.top
     const n = toNorm(px, py, rect.width, rect.height)
 
+    // Paste-on-click (Fix 1): with a copied design and the Select tool active, a
+    // tap on the bare page drops a fresh copy centered on that point.
+    if (copiedAnnotationTemplate && effectiveTool === 'select') {
+      void pasteCopiedAnnotationAt(n.x, n.y)
+      return
+    }
+
     if (effectiveTool === 'note') {
       openCreateNoteEditorAt(n.x, n.y)
       return
@@ -2317,7 +2465,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         { x: n.x, y: n.y }
       )
     }
-  }, [effectiveTool, isEditorOpen, blueprint, displaySize, openCreateNoteEditorAt, openCreateRichTextEditor, focusedAnnotationId])
+  }, [effectiveTool, isEditorOpen, blueprint, displaySize, openCreateNoteEditorAt, openCreateRichTextEditor, focusedAnnotationId, copiedAnnotationTemplate, pasteCopiedAnnotationAt])
 
   const getTouchPoints = useCallback(() => {
     const points = Array.from(activeTouchPointersRef.current.values())
@@ -3258,6 +3406,19 @@ const annotationPanelSizeClass =
     void persistAnnotation(updated)
   }
 
+  // Live (non-persisting) meta update — used while dragging the Light Output slider
+  // so the ring updates every frame; the value is committed once on pointer/key up.
+  const updateEditingAnnotationMetaLocal = (metaChanges: Record<string, any>) => {
+    if (!editingAnnotation) return
+    const editId = editingAnnotation.id
+    const latest = allAnnotationsRef.current.find((ann) => ann.id === editId) ?? editingAnnotation
+    const updated = withAnnotationMeta(
+      { ...latest, updatedAt: new Date().toISOString() },
+      { ...getAnnotationMeta(latest), ...metaChanges }
+    )
+    setAllAnnotations((prev) => prev.map((ann) => ann.id === editId ? updated as BlueprintAnnotation : ann))
+  }
+
   const updateEditingTextBoxLocally = (patch: Partial<BlueprintAnnotation> & { textStyle?: Record<string, any> }) => {
     if (!editingAnnotation || editingAnnotation.type !== 'textBox') return
     const currentMeta = getAnnotationMeta(editingAnnotation)
@@ -3487,6 +3648,25 @@ const annotationPanelSizeClass =
         title: 'Shape',
         primary: (
           <>
+            {isEdit && (currentKind === 'can-light-4' || currentKind === 'can-light-6') && (
+              <div style={{ marginBottom: 2 }}>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Light Output</div>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={Math.round((eMeta.lightIntensity ?? 0.5) * 100)}
+                  onChange={(e) => updateEditingAnnotationMetaLocal({ lightIntensity: Number(e.target.value) / 100 })}
+                  onPointerUp={(e) => persistEditAnnotationMeta({ lightIntensity: Number((e.target as HTMLInputElement).value) / 100 })}
+                  onKeyUp={(e) => persistEditAnnotationMeta({ lightIntensity: Number((e.target as HTMLInputElement).value) / 100 })}
+                  style={{ width: '100%', accentColor: borderColor || '#facc15', cursor: 'pointer' }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>
+                  <span>Lower</span><span>Higher</span>
+                </div>
+              </div>
+            )}
             <LabeledSelect label="Shape" value={currentKind}
               options={[
                 { label: 'Square', value: 'square' },
@@ -4204,6 +4384,26 @@ const annotationPanelSizeClass =
                   onClick={() => setLockView((v) => !v)}
                   className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${lockView ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                 >Lock View</button>
+                {/* Hide/Show all annotation overlays (Fix 2) — overlays only; nothing is deleted. */}
+                <button
+                  onClick={() => {
+                    setAnnotationsVisible((v) => {
+                      const next = !v
+                      if (!next) {
+                        // Hiding: drop selection so no action bar / popover floats over a hidden layer.
+                        setFocusedAnnotationId(null)
+                        setLayoutEditId(null)
+                        setOpenPopover(null)
+                      }
+                      return next
+                    })
+                  }}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${annotationsVisible ? 'border-gray-700 text-gray-300 hover:text-white' : 'border-amber-500 text-amber-300 bg-amber-900/20'}`}
+                  title={annotationsVisible ? 'Hide all annotation overlays' : 'Show all annotation overlays'}
+                >
+                  {annotationsVisible ? <EyeOff size={12} /> : <Eye size={12} />}
+                  {annotationsVisible ? 'Hide Annotations' : 'Show Annotations'}
+                </button>
                 <button
                   onClick={() => { pendingScrollResetRef.current = true; setRelativeZoom(1) }}
                   className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-blue-500 text-blue-300 bg-blue-900/20`}
@@ -4521,6 +4721,9 @@ const annotationPanelSizeClass =
                     onPointerCancel={handlePointerCancel}
                   >
                       {pageAnnotations.map((a) => {
+                        // Visibility toggle (Fix 2): skip drawing overlays while hidden.
+                        // Annotations stay in state/persistence — only the canvas layer is suppressed.
+                        if (!annotationsVisible) return null
                         if (!a?.rect) return null
                         const meta = getAnnotationMeta(a)
                         const rect = clampRectToPage(a.rect as any)
@@ -4655,12 +4858,22 @@ const annotationPanelSizeClass =
                               </div>
                             )
                           }
-                          if (kind === 'can-light-4' || kind === 'can-light-6') {
+                          if (isCanLightShape(a)) {
                             // Can-light symbol: outer trim ring + crosshair + aperture circle + size label.
                             // If blueprint calibration is active, the user sizes the marker to match scale via drag.
                             // Without calibration the symbol is still clear — 4" vs 6" distinguished by aperture radius + label.
                             const aperture = kind === 'can-light-4' ? 20 : 26
                             const label = kind === 'can-light-4' ? '4"' : '6"'
+                            // Third "light output" ring (Fix 3) — a normalized 0–1 lightIntensity
+                            // (default 0.5) drives the outer ring's size + prominence. Pure visual
+                            // scope of light spread; no lumen numbers. Shares the can-light center
+                            // and scales with the same viewBox, so it reads correctly at all zooms.
+                            const lightIntensity = clampNorm(meta.lightIntensity ?? 0.5, 0, 1)
+                            const outputRingR = 48 + lightIntensity * 14      // 48 → 62
+                            const outputGlowR = 50 + lightIntensity * 22      // 50 → 72 soft halo
+                            const outputRingWidth = 1 + lightIntensity * 3    // 1 → 4
+                            const outputRingOpacity = 0.18 + lightIntensity * 0.5  // 0.18 → 0.68
+                            const outputGlowColor = (fillColor && fillColor !== 'transparent') ? fillColor : borderColor
                             return (
                               <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-full' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                                 <svg
@@ -4670,6 +4883,10 @@ const annotationPanelSizeClass =
                                   height="100%"
                                   preserveAspectRatio="xMidYMid meet"
                                 >
+                                  {/* Light output halo + ring (Fix 3) — behind the symbol, non-interactive
+                                      so it never steals selection from this or neighbouring shapes. */}
+                                  <circle cx="50" cy="50" r={outputGlowR} fill={hexWithAlpha(outputGlowColor, 0.05 + lightIntensity * 0.13)} stroke="none" style={{ pointerEvents: 'none' }} />
+                                  <circle cx="50" cy="50" r={outputRingR} fill="none" stroke={borderColor} strokeWidth={outputRingWidth} strokeDasharray="4 3" opacity={outputRingOpacity} style={{ pointerEvents: 'none' }} />
                                   {/* Outer trim ring */}
                                   <circle cx="50" cy="50" r="46" fill="none" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} opacity={fillOpacity} />
                                   {/* Crosshair — horizontal */}
@@ -5685,7 +5902,7 @@ const annotationPanelSizeClass =
       )}
 
       {/* ── Floating action bar — portal to body so it is never clipped by the scroll container ── */}
-      {focusedAnnotationId && !inlineTextEditId && (() => {
+      {focusedAnnotationId && !inlineTextEditId && annotationsVisible && (() => {
         const focusedAnn = allAnnotations.find(ann => ann.id === focusedAnnotationId)
         if (!focusedAnn) return null
         const isLayoutEditingFocused = layoutEditId === focusedAnnotationId
@@ -5793,6 +6010,32 @@ const annotationPanelSizeClass =
                 title="Edit style"
               >
                 <Pencil size={10} /> Edit
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                copyAnnotation(focusedAnn)
+              }}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-white hover:bg-white/10"
+              title="Copy this design — then tap the page or press Paste"
+            >
+              <Copy size={10} /> Copy
+            </button>
+            {copiedAnnotationTemplate && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  void pasteCopiedAnnotationAt()
+                }}
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-emerald-300 hover:bg-emerald-900/30"
+                title="Paste a copy (or tap the page to place it)"
+              >
+                <ClipboardPaste size={10} /> Paste
               </button>
             )}
             <button
