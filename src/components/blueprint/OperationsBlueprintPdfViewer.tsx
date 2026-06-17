@@ -5643,18 +5643,36 @@ const annotationPanelSizeClass =
       )}
 
       {/* ── Floating action bar — portal to body so it is never clipped by the scroll container ── */}
-      {focusedAnnotationId && focusedAnnotationRect && !inlineTextEditId && (() => {
+      {focusedAnnotationId && !inlineTextEditId && (() => {
         const focusedAnn = allAnnotations.find(ann => ann.id === focusedAnnotationId)
         if (!focusedAnn) return null
         const isLayoutEditingFocused = layoutEditId === focusedAnnotationId
         const fCanMove = focusedAnn.type === 'callout' || focusedAnn.type === 'generate' || focusedAnn.type === 'textBox' || focusedAnn.type === 'shape' || focusedAnn.type === 'highlight' || focusedAnn.type === 'textHighlight' || focusedAnn.type === 'underline' || focusedAnn.type === 'note'
         const fCanStyle = focusedAnn.type === 'highlight' || focusedAnn.type === 'textHighlight' || focusedAnn.type === 'underline' || focusedAnn.type === 'shape' || focusedAnn.type === 'pen' || focusedAnn.type === 'marker' || focusedAnn.type === 'callout' || focusedAnn.type === 'generate' || focusedAnn.type === 'textBox'
+        const focusedEl =
+          (overlayRef.current?.querySelector(`[data-annotation-anchor-id="${focusedAnnotationId}"]`) as HTMLElement | null) ||
+          (overlayRef.current?.querySelector(`[data-annotation-id="${focusedAnnotationId}"]`) as HTMLElement | null)
+
+        const resolvedFocusedRect = focusedAnnotationRect || focusedEl?.getBoundingClientRect() || null
+        const useMobileActionBar = isMobileRef.current || isTabletImmersiveFullscreen || !useDesktopThreePaneLayout
+
         const BAR_APPROX_H = 34
         const GAP = 6
-        const aboveTop = focusedAnnotationRect.top - GAP - BAR_APPROX_H
-        const barTop = aboveTop >= 8 ? aboveTop : focusedAnnotationRect.bottom + GAP
-        const barCenterX = focusedAnnotationRect.left + focusedAnnotationRect.width / 2
-        const barLeft = Math.max(8, Math.min(window.innerWidth - 200, barCenterX - 80))
+
+        const barTop = (() => {
+          if (useMobileActionBar) return Math.max(8, window.innerHeight - 72)
+          if (!resolvedFocusedRect) return 8
+          const aboveTop = resolvedFocusedRect.top - GAP - BAR_APPROX_H
+          return aboveTop >= 8 ? aboveTop : resolvedFocusedRect.bottom + GAP
+        })()
+
+        const barLeft = (() => {
+          if (useMobileActionBar) return Math.max(8, Math.floor((window.innerWidth - 260) / 2))
+          if (!resolvedFocusedRect) return 8
+          const barCenterX = resolvedFocusedRect.left + resolvedFocusedRect.width / 2
+          return Math.max(8, Math.min(window.innerWidth - 260, barCenterX - 100))
+        })()
+
         const finalBarTop = barDragOffset ? barDragOffset.y : barTop
         const finalBarLeft = barDragOffset ? barDragOffset.x : barLeft
         const handleBarPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -5678,7 +5696,14 @@ const annotationPanelSizeClass =
         }
         const bar = (
           <div
-            style={{ position: 'fixed', top: finalBarTop, left: finalBarLeft, zIndex: 9998, touchAction: 'none' }}
+            style={{
+            position: 'fixed',
+            top: finalBarTop,
+            left: finalBarLeft,
+            zIndex: 99999,
+            touchAction: 'none',
+            transform: useMobileActionBar ? 'translateZ(0)' : undefined,
+          }}
             className="flex items-center gap-1 rounded-md border border-gray-700 bg-[#111827]/95 p-1 shadow-lg select-none"
             onPointerDown={handleBarPointerDown}
             onPointerMove={handleBarPointerMove}
