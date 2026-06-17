@@ -1346,6 +1346,48 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     return () => cancelAnimationFrame(rafId)
   }, [focusedAnnotationId])
 
+  useEffect(() => {
+  if (!focusedAnnotationId) return
+
+  let rafId: number | null = null
+
+  const updateFocusedRect = () => {
+    if (rafId != null) cancelAnimationFrame(rafId)
+
+    rafId = requestAnimationFrame(() => {
+      const el =
+        (overlayRef.current?.querySelector(`[data-annotation-anchor-id="${focusedAnnotationId}"]`) as HTMLElement | null) ||
+        (overlayRef.current?.querySelector(`[data-annotation-id="${focusedAnnotationId}"]`) as HTMLElement | null)
+
+      if (!el) return
+
+      focusedAnnotationElRef.current = el
+      const r = el.getBoundingClientRect()
+
+      setFocusedAnnotationRect({
+        top: r.top,
+        left: r.left,
+        right: r.right,
+        bottom: r.bottom,
+        width: r.width,
+        height: r.height,
+      })
+    })
+  }
+
+  updateFocusedRect()
+
+  const scrollEl = overlayRef.current?.closest('.operations-pdf-scroll') as HTMLElement | null
+  scrollEl?.addEventListener('scroll', updateFocusedRect, { passive: true })
+  window.addEventListener('resize', updateFocusedRect)
+
+  return () => {
+    if (rafId != null) cancelAnimationFrame(rafId)
+    scrollEl?.removeEventListener('scroll', updateFocusedRect)
+    window.removeEventListener('resize', updateFocusedRect)
+  }
+}, [focusedAnnotationId, currentPage, displaySize.w, displaySize.h, relativeZoom, pinchPreviewZoom])
+
   // Fullscreen exits ONLY via:
   //   1. Explicit close button in the header (when isFullScreenView === true)
   //   2. Escape key (when no annotation UI is open)
@@ -5654,23 +5696,27 @@ const annotationPanelSizeClass =
           (overlayRef.current?.querySelector(`[data-annotation-id="${focusedAnnotationId}"]`) as HTMLElement | null)
 
         const resolvedFocusedRect = focusedAnnotationRect || focusedEl?.getBoundingClientRect() || null
-        const useMobileActionBar = isMobileRef.current || isTabletImmersiveFullscreen || !useDesktopThreePaneLayout
-
+        const BAR_APPROX_W = 220
         const BAR_APPROX_H = 34
-        const GAP = 6
+        const GAP = 8
 
         const barTop = (() => {
-          if (useMobileActionBar) return Math.max(8, window.innerHeight - 72)
-          if (!resolvedFocusedRect) return 8
+          if (!resolvedFocusedRect) return Math.max(8, window.innerHeight - 72)
+
           const aboveTop = resolvedFocusedRect.top - GAP - BAR_APPROX_H
-          return aboveTop >= 8 ? aboveTop : resolvedFocusedRect.bottom + GAP
+          const belowTop = resolvedFocusedRect.bottom + GAP
+
+          if (aboveTop >= 8) return aboveTop
+          if (belowTop + BAR_APPROX_H <= window.innerHeight - 8) return belowTop
+
+          return Math.max(8, Math.min(window.innerHeight - BAR_APPROX_H - 8, aboveTop))
         })()
 
         const barLeft = (() => {
-          if (useMobileActionBar) return Math.max(8, Math.floor((window.innerWidth - 260) / 2))
-          if (!resolvedFocusedRect) return 8
-          const barCenterX = resolvedFocusedRect.left + resolvedFocusedRect.width / 2
-          return Math.max(8, Math.min(window.innerWidth - 260, barCenterX - 100))
+          if (!resolvedFocusedRect) return Math.max(8, Math.floor((window.innerWidth - BAR_APPROX_W) / 2))
+
+          const centerLeft = resolvedFocusedRect.left + resolvedFocusedRect.width / 2 - BAR_APPROX_W / 2
+          return Math.max(8, Math.min(window.innerWidth - BAR_APPROX_W - 8, centerLeft))
         })()
 
         const finalBarTop = barDragOffset ? barDragOffset.y : barTop
@@ -5696,14 +5742,13 @@ const annotationPanelSizeClass =
         }
         const bar = (
           <div
-            style={{
-            position: 'fixed',
-            top: finalBarTop,
-            left: finalBarLeft,
-            zIndex: 99999,
-            touchAction: 'none',
-            transform: useMobileActionBar ? 'translateZ(0)' : undefined,
-          }}
+           style={{
+              position: 'fixed',
+              top: finalBarTop,
+              left: finalBarLeft,
+              zIndex: 99999,
+              touchAction: 'none',
+            }}
             className="flex items-center gap-1 rounded-md border border-gray-700 bg-[#111827]/95 p-1 shadow-lg select-none"
             onPointerDown={handleBarPointerDown}
             onPointerMove={handleBarPointerMove}
