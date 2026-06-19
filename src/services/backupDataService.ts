@@ -943,6 +943,38 @@ export function getProjectCOExposure(p: BackupProject): number {
   }, 0)
 }
 
+/**
+ * Confirmed change-order value for a project — counts toward Projects Total Exposure.
+ * Statuses: {Approved, Completed, Invoiced, Paid}. Excludes Draft/Sent/Pending Approval
+ * (speculative) and Rejected (void/cancelled). Does NOT subtract collections — this is
+ * total scope added, not remaining. (DASHBOARD-CFOT-MATH-FIX-JUN19-2026-1)
+ * Note: distinct from getProjectCOTotal (which omits Invoiced) — kept separate so the
+ * project-card helpers are not affected.
+ */
+export function getProjectCOConfirmedTotal(p: BackupProject): number {
+  return (p.changeOrders || []).reduce((sum, co) => {
+    if (co.status === 'Approved' || co.status === 'Completed' || co.status === 'Invoiced' || co.status === 'Paid') {
+      return sum + (Number(co.totalCost) || 0)
+    }
+    return sum
+  }, 0)
+}
+
+/**
+ * Approved-but-not-collected change-order value — counts toward Active Exposure.
+ * Statuses: {Approved, Invoiced, Completed}. Paid is excluded (already collected) and
+ * Sent/Pending Approval/Draft/Rejected are excluded (not yet owed).
+ * (DASHBOARD-CFOT-MATH-FIX-JUN19-2026-1)
+ */
+export function getProjectCOApprovedUnpaid(p: BackupProject): number {
+  return (p.changeOrders || []).reduce((sum, co) => {
+    if (co.status === 'Approved' || co.status === 'Invoiced' || co.status === 'Completed') {
+      return sum + (Number(co.totalCost) || 0)
+    }
+    return sum
+  }, 0)
+}
+
 /** Overall completion — weighted phase average (matches HTML ov(p)) */
 export function getOverallCompletion(p: BackupProject, d: BackupData): number {
   const w = getPhaseWeights(d)
