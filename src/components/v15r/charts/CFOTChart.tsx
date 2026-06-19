@@ -20,6 +20,9 @@ export default function CFOTChart({ data, backup }: { data: any[]; backup: Backu
       name: label,
       isProjection,
       exposure: isProjection ? null : nv(d.totalExposure),
+      activeExposure: isProjection ? null : nv(d.activeExposure),
+      // Projected Active Exposure spans the Now boundary into the gray future area.
+      projectedExposure: nv(d.projectedExposure),
       unbilled: nv(d.unbilled),
       pending: nv(d.pendingInv),
       svcPay: nv(d.svc),
@@ -61,6 +64,8 @@ export default function CFOTChart({ data, backup }: { data: any[]; backup: Backu
         )}
 
         <Line type="monotone" dataKey="exposure" name="Total Exposure" stroke="#dc2626" strokeWidth={3} dot={false} connectNulls={false} />
+        <Line type="monotone" dataKey="activeExposure" name="Active Exposure" stroke="#fb923c" strokeWidth={2.5} dot={false} connectNulls={false} />
+        <Line type="monotone" dataKey="projectedExposure" name="Projected Active Exposure" stroke="#fdba74" strokeWidth={2} strokeDasharray="6 4" strokeOpacity={0.85} dot={false} connectNulls={false} />
         <Line type="monotone" dataKey="unbilled" name="Unbilled" stroke="#fca5a5" strokeWidth={2} dot={false} connectNulls={false} />
         <Line type="monotone" dataKey="pending" name="Pending Invoice" stroke="#f59e0b" strokeWidth={2} dot={false} connectNulls={false} />
         <Line type="monotone" dataKey="svcPay" name="Service Payment" stroke="#86efac" strokeWidth={2} dot={false} connectNulls={false} />

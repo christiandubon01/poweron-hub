@@ -14,7 +14,7 @@ function BarChart3Icon({ size = 24, className = '' }: { size?: number; className
 function BrainIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M12 18v-5"/></svg>
 }
-import { getBackupData, getProjectFinancials, health, num, fmtK, isActiveProject, isActiveServiceCall, type BackupData } from '@/services/backupDataService'
+import { getBackupData, getProjectFinancials, getProjectCOExposure, health, num, fmtK, isActiveProject, isActiveServiceCall, type BackupData } from '@/services/backupDataService'
 // BUG 2 FIX — Active-only pipeline formula (replaces calcPipeline which included 'coming')
 import { calcActivePipeline } from '@/utils/pipelineCalc'
 // BUG 3 FIX — Canonical project financials
@@ -868,14 +868,22 @@ function V15rDashboardInner() {
       wEnd.setHours(23, 59, 59, 999)
       const k = wStart.getTime()
 
-      // Project uncollected as of week end
+      // Project uncollected as of week end.
+      //   projExposure = Total Exposure base (contract − collected), no change orders.
+      //   activeExp    = Active Exposure = base still owed + open/uncollected change
+      //                  orders (Sent / Pending Approval / Invoiced — getProjectCOExposure).
+      //   Paid/Approved/Completed COs are intentionally excluded so already-collected
+      //   change-order money is never double counted (DASHBOARD-ACTIVE-EXPOSURE-JUN19-2026-1).
       let projExposure = 0
+      let activeExp = 0
       for (const p of allProjects) {
         if (!isProjectActiveAsOf(p, wEnd)) continue
         const contract = num(p.contract)
         if (contract <= 0) continue
         const collected = collectedAsOf(p.id, wEnd)
-        projExposure += Math.max(0, contract - collected)
+        const baseOwed = Math.max(0, contract - collected)
+        projExposure += baseOwed
+        activeExp += baseOwed + getProjectCOExposure(p)
       }
 
       // Service uncollected, split by invoiced flag
@@ -910,12 +918,36 @@ function V15rDashboardInner() {
         unbilled,
         pendingInv,
         totalExposure,
+        activeExposure: activeExp,
+        // Anchor the projected line at "Now" (last historical week, i === 0) so the
+        // dashed future series visually continues from the current Active Exposure.
+        projectedExposure: i === 0 ? activeExp : null,
         isProjection: false,
       })
     }
+    // ── Future projection (gray area after "Now") ──
+    // DASHBOARD-FUTURE-EXPOSURE-JUN19-2026-1
+    // Scheduled/upcoming projects (e.g. status 'coming' with a future plannedStart) are
+    // excluded from the historical block by isProjectActiveAsOf because their start date
+    // is after today. Here we advance asOf into each future week so a project becomes
+    // part of the projected Active Exposure once its scheduled start date has passed.
+    // Currently-active projects carry their present exposure forward (no future
+    // collections are modeled in CFOT — phase payment schedules drive the separate
+    // 8-Week / Monthly charts, not this one). Future weeks never write historical fields.
     for (let i = 1; i <= 12; i++) {
       const wStart = new Date(todayWs)
       wStart.setDate(todayWs.getDate() + i * 7)
+      const wEnd = new Date(wStart)
+      wEnd.setDate(wStart.getDate() + 6)
+      wEnd.setHours(23, 59, 59, 999)
+      let futureExp = 0
+      for (const p of allProjects) {
+        if (!isProjectActiveAsOf(p, wEnd)) continue
+        const contract = num(p.contract)
+        if (contract <= 0) continue
+        const collected = collectedAsOf(p.id, wEnd)
+        futureExp += Math.max(0, contract - collected) + getProjectCOExposure(p)
+      }
       weeks.push({
         wk: 40 + i,
         svc: null,
@@ -925,6 +957,8 @@ function V15rDashboardInner() {
         unbilled: null,
         pendingInv: null,
         totalExposure: null,
+        activeExposure: null,
+        projectedExposure: futureExp,
         isProjection: true,
       })
     }
@@ -937,6 +971,11 @@ function V15rDashboardInner() {
   const cfotSummary = (() => {
     const activeProjects = projects.filter(p => p.status === 'active')
     const exposure = activeProjects.reduce((s, p) => s + Math.max(0, num(p.contract) - num(p.paid)), 0)
+    // Active Exposure = base still owed (contract − collected) + open/uncollected change
+    // orders. Paid/Approved/Completed COs are excluded (getProjectCOExposure only sums
+    // Sent / Pending Approval / Invoiced) so collected CO money is never double counted.
+    // DASHBOARD-ACTIVE-EXPOSURE-JUN19-2026-1
+    const activeExposure = activeProjects.reduce((s, p) => s + Math.max(0, num(p.contract) - num(p.paid)) + getProjectCOExposure(p), 0)
     const unbilled = activeProjects.reduce((s, p) => s + Math.max(0, num(p.contract) - num(p.billed)), 0)
     const pending = serviceLogs
       .filter((l: any) => num(l.quoted) > 0 && num(l.collected) < num(l.quoted))
@@ -944,7 +983,7 @@ function V15rDashboardInner() {
     const svcTotal = serviceLogs.reduce((s: number, l: any) => s + num(l.collected), 0)
     const projTotal = projects.reduce((s: number, p: any) => s + num(p.paid), 0)
     const accumTotal = svcTotal + projTotal
-    return { exposure, unbilled, pending, svcTotal, projTotal, accumTotal }
+    return { exposure, activeExposure, unbilled, pending, svcTotal, projTotal, accumTotal }
   })()
 
   // ── OPP: Active projects by contract value — skip unnamed/ghost projects ──
@@ -1240,7 +1279,7 @@ function V15rDashboardInner() {
           <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 lg:col-span-2" style={{ width: '100%', minWidth: 0 }}>
             <div className="mb-4">
               <h2 className="text-[30px] font-bold text-gray-100 leading-tight">Projects Cash Flow Over Time</h2>
-              <p className="text-sm text-gray-400 italic mt-1">Accumulative vs Total Exposure — Detailed with Unbilled, Invoiced and Received</p>
+              <p className="text-sm text-gray-400 italic mt-1">Total vs Active Exposure (incl. open change orders) · Accumulative income · Upcoming projects projected dashed in the gray area after Now</p>
               {/* DASHBOARD-START-DATE-GATE-APR22-2026-1 — warning pill for projects missing Start Date */}
               <StartDateWarningPill projects={projects} />
             </div>
@@ -1255,10 +1294,14 @@ function V15rDashboardInner() {
                 Log a payment on any project to activate
               </div>
             )}
-            <div className="mt-4 grid grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
+            <div className="mt-4 grid grid-cols-3 lg:grid-cols-7 gap-3 text-xs">
               <div className="bg-[var(--bg-input)] p-2 rounded">
-                <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#ef4444'}}></div><span className="text-gray-500">Exposure</span></div>
+                <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#dc2626'}}></div><span className="text-gray-500">Total Exp</span></div>
                 <p className="font-bold font-mono text-red-400 mt-1">${cfotSummary.exposure.toLocaleString()}</p>
+              </div>
+              <div className="bg-[var(--bg-input)] p-2 rounded">
+                <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#fb923c'}}></div><span className="text-gray-500">Active Exp</span></div>
+                <p className="font-bold font-mono text-orange-400 mt-1">${cfotSummary.activeExposure.toLocaleString()}</p>
               </div>
               <div className="bg-[var(--bg-input)] p-2 rounded">
                 <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background:'#f87171'}}></div><span className="text-gray-500">Unbilled</span></div>
