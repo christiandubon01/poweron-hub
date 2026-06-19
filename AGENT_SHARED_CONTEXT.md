@@ -15,9 +15,10 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 | Agent | Feature Area | Files | Mode | Status | Claimed (UTC-ish) |
 |---|---|---|---|---|---|
-| CFOT-Math-Audit (this agent) | Graph Dashboard CFOT Math Correction | src/components/v15r/V15rDashboard.tsx, src/components/v15r/charts/CFOTChart.tsx, src/services/backupDataService.ts | Implemented + correction pass (uncommitted) | CORRECTION PASS DONE — typecheck+build pass, NOT committed (awaiting user review) | 2026-06-19 |
+| CFOT-Math (prior session) | Graph Dashboard CFOT Math Correction | V15rDashboard.tsx, CFOTChart.tsx, backupDataService.ts | DONE — committed bcf0aa8 | RELEASED | 2026-06-19 |
+| CFOT-Markers-Swipe (this agent) | Graph Dashboard CFOT Project Start Dots + Swipe Timeline Navigation | src/components/v15r/V15rDashboard.tsx, src/components/v15r/charts/CFOTChart.tsx | Implementation (visual/UX only — NO math changes) | IN PROGRESS | 2026-06-19 |
 
-> Note: This is an **audit-first** claim. No source files will be edited until the user explicitly says "approved, implement." Only this coordination file is being written during the audit phase.
+> Markers+Swipe pass is VISUAL/UX only — exposure math, cards, legend, tooltip, Now marker, gray area, and Projected Total Exposure line must stay intact. Will not commit until user reviews the app.
 
 ---
 

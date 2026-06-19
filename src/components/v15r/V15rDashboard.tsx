@@ -1005,6 +1005,49 @@ function V15rDashboardInner() {
     return weeks
   })()
 
+  // ── CFOT Project-Start Markers (visual only — does NOT affect exposure math) ──
+  // DASHBOARD-CFOT-MARKERS-JUN19-2026-1. One marker per active/coming project, placed at
+  // the CFOT week bucket containing its start date (same date chain the exposure gate uses).
+  // The dot is rendered ON the Projects Total Exposure line for that week (CFOTChart maps it),
+  // so it shows where the project injected exposure. Future-start projects map into the
+  // projection weeks (gray area after Now).
+  const projectStartMarkers = (() => {
+    const weeks = cfotData
+    if (!weeks.length) return []
+    const weekStarts = weeks.map((w: any) => ({ iso: w.start, t: new Date(w.start + 'T00:00:00').getTime() }))
+    const firstT = weekStarts[0].t
+    const lastT = weekStarts[weekStarts.length - 1].t
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    const out: any[] = []
+    for (const p of (backup.projects || []).filter(isActiveProject)) {
+      const startRaw = p.startDate || p.plannedStart || p.createdAt || p.start
+      if (!startRaw) continue
+      const sd = new Date(startRaw)
+      if (isNaN(sd.getTime())) continue
+      sd.setHours(0, 0, 0, 0)
+      const st = sd.getTime()
+      const contract = num(p.contract)
+      if (contract <= 0) continue
+      let idx = 0
+      if (st <= firstT) idx = 0
+      else if (st >= lastT) idx = weekStarts.length - 1
+      else { for (let i = 0; i < weekStarts.length; i++) { if (weekStarts[i].t <= st) idx = i; else break } }
+      const confirmedCOTotal = getProjectCOConfirmedTotal(p)
+      out.push({
+        projectId: p.id,
+        projectName: (p.name && p.name.trim()) ? p.name : '(unnamed)',
+        date: sd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        startIso: toIsoDate(sd),
+        weekStartIso: weekStarts[idx].iso,
+        contract,
+        confirmedCOTotal,
+        exposureAdded: contract + confirmedCOTotal,
+        isFuture: st > today.getTime(),
+      })
+    }
+    return out
+  })()
+
   // ── CFOT Summary Boxes — computed directly from backup data ──
   const serviceLogs = (backup.serviceLogs || []).filter(isActiveServiceCall)
   const projectLogs = backup.logs || []
@@ -1331,7 +1374,7 @@ function V15rDashboardInner() {
               <div
                 style={{ position: 'relative', width: '100%', minWidth: 0, height: Math.max(300, Math.round(window.innerHeight * 0.42)) + 'px' }}
               >
-                <CFOTChartR data={cfotData} backup={backup} />
+                <CFOTChartR data={cfotData} backup={backup} markers={projectStartMarkers} />
               </div>
             ) : (
               <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
