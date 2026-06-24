@@ -418,6 +418,17 @@ const handleMapLeadSelect = (leadId: string) => {
   // VISIBILITY). Owner-only is enforced implicitly by the Edge Function's
   // service-role check (auth header required). CORS preflight must
   // succeed; tlma-scraper >= v9 required.
+  //
+  // HUNTER-SCAN-ACCURACY-2026-06-23: When a specific city geo filter is
+  // active, the scan targets only that city (8 combos instead of 104) with
+  // a 30-day lookback. Full 13-city scan is triggered only from "All" or
+  // non-city filters. Error messaging now reflects actual scan outcome
+  // (failed/partial/complete) and surfaces the first diagnostic error.
+  const GEO_TO_TLMA_CITY: Partial<Record<GeoFilter, string>> = {
+    palm_desert: 'PALM DESERT',
+    indio: 'INDIO',
+    palm_springs: 'PALM SPRINGS',
+  }
   const [isScanning, setIsScanning] = useState(false)
   const handleScanTLMA = async () => {
     if (isScanning) return
@@ -430,7 +441,14 @@ const handleMapLeadSelect = (leadId: string) => {
         alert('Not authenticated. Please refresh and sign in again.')
         return
       }
+      const tlmaCity = GEO_TO_TLMA_CITY[geoFilter] ?? null
       const params = new URLSearchParams({ source: 'manual' })
+      if (tlmaCity) {
+        // Single-city scan: 8 combos instead of 104, 30-day window to catch
+        // recent permits that the default 7-day window would miss.
+        params.set('city', tlmaCity)
+        params.set('days_back', '30')
+      }
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/tlma-scraper?${params.toString()}`, {
         method: 'GET',
         headers: { Authorization: `Bearer ${token}` },
@@ -442,13 +460,24 @@ const handleMapLeadSelect = (leadId: string) => {
       }
       const newCount = result.new_leads ?? result.inserts ?? result.inserted ?? 0
       const updatedCount = result.updated_leads ?? result.updates ?? result.updated ?? 0
-      const errorCount = (result.errors && Array.isArray(result.errors))
-        ? result.errors.length
+      const errorMessages: string[] = Array.isArray(result.errors) ? result.errors : []
+      const errorCount = errorMessages.length > 0
+        ? errorMessages.length
         : (typeof result.errors === 'number' ? result.errors : 0)
+      const matrixSize: number = typeof result.search_matrix_size === 'number'
+        ? result.search_matrix_size
+        : (tlmaCity ? 8 : 104)
+      const allFailed = errorCount > 0 && errorCount >= matrixSize && newCount === 0 && updatedCount === 0
+      const scanStatus = allFailed ? 'Scan FAILED' : errorCount > 0 ? 'Scan partial' : 'Scan complete'
+      const cityLabel = tlmaCity ? ` [${tlmaCity}]` : ''
+      const errorHint = errorMessages.length > 0
+        ? `\n\nFirst error: ${errorMessages[0]}` +
+          (errorMessages.length > 1 ? `\n(+${errorMessages.length - 1} more in Supabase logs)` : '')
+        : ''
       alert(
-        `Scan complete — ${newCount} new lead(s), ${updatedCount} updated` +
-          (errorCount ? `, ${errorCount} error(s)` : '') +
-          '.'
+        `${scanStatus}${cityLabel} — ${newCount} new lead(s), ${updatedCount} updated` +
+          (errorCount ? `, ${errorCount}/${matrixSize} request(s) failed` : '') +
+          '.' + errorHint
       )
       await fetchLeads()
     } catch (err: any) {
@@ -643,7 +672,7 @@ const handleMapLeadSelect = (leadId: string) => {
               onClick={handleScanTLMA}
               disabled={isScanning}
               className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-gray-400 disabled:cursor-not-allowed text-white text-sm rounded transition-colors"
-              title={isScanning ? 'Scan in progress…' : 'Manually trigger TLMA scan'}
+              title={isScanning ? 'Scan in progress…' : GEO_TO_TLMA_CITY[geoFilter] ? `Scan TLMA for ${GEO_TO_TLMA_CITY[geoFilter]} only (30 days)` : 'Scan all 13 TLMA cities (7 days)'}
             >
               {isScanning ? (
                 <Loader2 size={14} className="animate-spin" />
