@@ -20,6 +20,10 @@
  *   ?action=palm-desert-dry-run[&terms=electrical,lighting&pageSize=10&maxPages=2]
  *   Queries multiple public terms/pages, dedupes and classifies permits in
  *   memory, and returns a preview report. No Supabase writes.
+ *
+ *   ?action=palm-desert-geocode-backfill[&batchSize=25]
+ *   Dry-runs coordinate lookup for existing Palm Desert Aura leads. Coordinate
+ *   writes require write=true&confirm=palm-desert-geocode.
  */
 
 import { scrapeCity } from './city-scraper/shared'
@@ -69,6 +73,7 @@ const PALM_DESERT_AURA_DESCRIPTOR =
   'serviceComponent://ui.search.components.forcesearch.scopedresultsdataprovider.' +
   'ScopedResultsDataProviderController/ACTION$getItems'
 const PALM_DESERT_WRITE_CONFIRMATION = 'palm-desert-import'
+const PALM_DESERT_GEOCODE_CONFIRMATION = 'palm-desert-geocode'
 const HUNTER_TENANT_ID = '31a60821-2796-41fa-b48d-d7df59e48198'
 const HUNTER_USER_ID = '6a5c2d43-cf37-45ff-9f22-d4d315683cf8'
 const PALM_DESERT_DEFAULT_TERMS = [
@@ -493,7 +498,170 @@ function palmDesertScoreFactors(record: any) {
   return factors
 }
 
-function palmDesertLeadRow(record: any, now: string) {
+function buildPalmDesertGeocodeAddress(address: string | null | undefined) {
+  const normalized = String(address || '').replace(/\s+/g, ' ').trim()
+  if (!normalized) return null
+  if (/\bCA\b(?:\s+\d{5}(?:-\d{4})?)?$/i.test(normalized)) return normalized
+  if (/palm desert/i.test(normalized)) return `${normalized}, CA`
+  return `${normalized}, Palm Desert, CA`
+}
+
+function haversineDistanceMiles(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+) {
+  const earthRadiusMiles = 3958.8
+  const toRadians = (degrees: number) => degrees * Math.PI / 180
+  const latitudeDelta = toRadians(lat2 - lat1)
+  const longitudeDelta = toRadians(lng2 - lng1)
+  const a =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(toRadians(lat1)) *
+      Math.cos(toRadians(lat2)) *
+      Math.sin(longitudeDelta / 2) ** 2
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return Math.round(earthRadiusMiles * c * 100) / 100
+}
+
+async function getHunterHomeBase(supabase: any) {
+  const { data } = await supabase
+    .from('tenant_settings')
+    .select('setting_value')
+    .eq('tenant_id', HUNTER_TENANT_ID)
+    .eq('setting_key', 'home_base_address')
+    .maybeSingle()
+  const value = data?.setting_value
+  return value &&
+    typeof value.lat === 'number' &&
+    typeof value.lng === 'number'
+    ? { lat: value.lat, lng: value.lng }
+    : null
+}
+
+async function geocodePalmDesertAddress(
+  supabaseUrl: string,
+  supabaseKey: string,
+  address: string
+) {
+  let primaryError = ''
+  try {
+    const response = await fetch(
+      `${supabaseUrl.replace(/\/$/, '')}/functions/v1/geocode-single` +
+        `?address=${encodeURIComponent(address)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${supabaseKey}`,
+          apikey: supabaseKey,
+        },
+      }
+    )
+    const result = await response.json()
+    if (
+      response.ok &&
+      result?.status === 'success' &&
+      typeof result.lat === 'number' &&
+      typeof result.lng === 'number'
+    ) {
+      return {
+        ok: true,
+        latitude: result.lat,
+        longitude: result.lng,
+        formatted_address: result.formatted_address || null,
+        provider: 'google',
+      }
+    }
+    primaryError =
+      result?.error || `Google geocoder returned ${result?.status || response.status}.`
+  } catch (err: any) {
+    primaryError = err?.message || String(err)
+  }
+
+  try {
+    const censusUrl = new URL(
+      'https://geocoding.geo.census.gov/geocoder/locations/onelineaddress'
+    )
+    censusUrl.searchParams.set('address', address)
+    censusUrl.searchParams.set('benchmark', 'Public_AR_Current')
+    censusUrl.searchParams.set('format', 'json')
+    const response = await fetch(censusUrl.toString(), {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'PowerOn-SalesIntelligence-PalmDesert/1.0',
+      },
+    })
+    const result = await response.json()
+    const match = result?.result?.addressMatches?.[0]
+    const latitude = Number(match?.coordinates?.y)
+    const longitude = Number(match?.coordinates?.x)
+    const withinCoachellaValley =
+      latitude >= 33.4 &&
+      latitude <= 34.0 &&
+      longitude >= -116.8 &&
+      longitude <= -115.9
+
+    if (
+      response.ok &&
+      Number.isFinite(latitude) &&
+      Number.isFinite(longitude) &&
+      withinCoachellaValley
+    ) {
+      return {
+        ok: true,
+        latitude,
+        longitude,
+        formatted_address: match.matchedAddress || address,
+        provider: 'us_census',
+      }
+    }
+    return {
+      ok: false,
+      error:
+        `Google: ${primaryError || 'no result'}; ` +
+        `U.S. Census: ${
+          match && !withinCoachellaValley
+            ? 'match outside Coachella Valley safety bounds'
+            : response.ok
+            ? 'no address match'
+            : `HTTP ${response.status}`
+        }.`,
+    }
+  } catch (err: any) {
+    return {
+      ok: false,
+      error:
+        `Google: ${primaryError || 'no result'}; ` +
+        `U.S. Census: ${err?.message || String(err)}.`,
+    }
+  }
+}
+
+function palmDesertCoordinateFields(
+  geocodeResult: any,
+  homeBase: { lat: number; lng: number } | null,
+  now: string
+) {
+  if (!geocodeResult?.ok) {
+    return { geocoding_status: 'failed' }
+  }
+  return {
+    latitude: geocodeResult.latitude,
+    longitude: geocodeResult.longitude,
+    geocoded_at: now,
+    geocoding_status: 'success',
+    distance_from_base_miles: homeBase
+      ? haversineDistanceMiles(
+          homeBase.lat,
+          homeBase.lng,
+          geocodeResult.latitude,
+          geocodeResult.longitude
+        )
+      : null,
+  }
+}
+
+function palmDesertLeadRow(record: any, now: string, coordinateFields: any = {}) {
   const dateOnly = (value: string | null | undefined) =>
     value ? String(value).slice(0, 10) : null
 
@@ -522,10 +690,16 @@ function palmDesertLeadRow(record: any, now: string) {
     run_source: 'manual',
     last_seen_at: now,
     last_updated: now,
+    ...coordinateFields,
   }
 }
 
-async function importPalmDesertLeads(supabase: any, records: any[]) {
+async function importPalmDesertLeads(
+  supabase: any,
+  records: any[],
+  supabaseUrl: string,
+  supabaseKey: string
+) {
   let rowsInserted = 0
   let rowsUpdated = 0
   let rowsSkipped = 0
@@ -595,10 +769,33 @@ async function importPalmDesertLeads(supabase: any, records: any[]) {
     }
 
     if (newRecords.length) {
+      const homeBase = await getHunterHomeBase(supabase)
+      const preparedNewRecords = await mapWithConcurrency(
+        newRecords,
+        5,
+        async record => {
+          const address = buildPalmDesertGeocodeAddress(record.address)
+          if (!address) {
+            return palmDesertLeadRow(record, now, {
+              geocoding_status: 'skipped',
+            })
+          }
+          const geocodeResult = await geocodePalmDesertAddress(
+            supabaseUrl,
+            supabaseKey,
+            address
+          )
+          return palmDesertLeadRow(
+            record,
+            now,
+            palmDesertCoordinateFields(geocodeResult, homeBase, now)
+          )
+        }
+      )
       const { error: insertError } = await supabase
         .from('hunter_leads')
-        .insert(newRecords.map(record => ({
-          ...palmDesertLeadRow(record, now),
+        .insert(preparedNewRecords.map(record => ({
+          ...record,
           status: 'new',
           discovered_at: now,
         })))
@@ -738,6 +935,193 @@ exports.handler = async (event: any) => {
       return palmDesertProbeResponse(baseResult, {
         fetch_error: err?.message || String(err),
       })
+    }
+  }
+
+  // Coordinate-only maintenance route for existing Palm Desert Aura leads.
+  // Dry-run geocodes a bounded batch without updates. Writes require the
+  // exact confirmation token and remain scoped to missing-coordinate Aura rows.
+  if (params.action === 'palm-desert-geocode-backfill') {
+    const writeRequested = String(params.write || 'false').toLowerCase() === 'true'
+    const writeConfirmed =
+      writeRequested && params.confirm === PALM_DESERT_GEOCODE_CONFIRMATION
+    const dryRun = !writeConfirmed
+    const batchSize = clampInteger(params.batchSize, 25, 1, 50)
+    const timestamp = new Date().toISOString()
+    const emptySummary = {
+      source: 'palm_desert_aura',
+      mode: dryRun ? 'dry_run' : 'write',
+      dry_run: dryRun,
+      write_requested: writeRequested,
+      write_confirmed: writeConfirmed,
+      batch_size: batchSize,
+      rows_found_missing_coordinates: 0,
+      rows_selected: 0,
+      rows_geocoded: 0,
+      rows_updated: 0,
+      rows_skipped: 0,
+      rows_remaining_after_batch: 0,
+      errors: [] as any[],
+      sample_addresses: [] as any[],
+      timestamp,
+    }
+
+    if (writeRequested && !writeConfirmed) {
+      return {
+        statusCode: 400,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({
+          ...emptySummary,
+          errors: [{
+            error:
+              `Write rejected. Pass confirm=${PALM_DESERT_GEOCODE_CONFIRMATION} exactly.`,
+          }],
+        }),
+      }
+    }
+
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || ''
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+    if (!supabaseUrl || !supabaseKey) {
+      return {
+        statusCode: 500,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({
+          ...emptySummary,
+          errors: [{ error: 'Supabase env vars not configured; no rows were updated.' }],
+        }),
+      }
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseKey)
+    const { data: leads, count, error: queryError } = await supabase
+      .from('hunter_leads')
+      .select(
+        'id, permit_number, address, city, latitude, longitude, geocoding_status',
+        { count: 'exact' }
+      )
+      .eq('tenant_id', HUNTER_TENANT_ID)
+      .eq('source', 'palm_desert_aura')
+      .eq('source_city', 'Palm Desert')
+      .eq('lead_type', 'permit')
+      .or('latitude.is.null,longitude.is.null')
+      .order('permit_number', { ascending: true })
+      .limit(batchSize)
+
+    if (queryError) {
+      return {
+        statusCode: 500,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({
+          ...emptySummary,
+          errors: [{
+            error: `Palm Desert coordinate lookup failed: ${queryError.message}`,
+          }],
+        }),
+      }
+    }
+
+    const missingLeads = leads || []
+    const homeBase = await getHunterHomeBase(supabase)
+    const geocodeResults = await mapWithConcurrency(
+      missingLeads,
+      5,
+      async lead => {
+        const address = buildPalmDesertGeocodeAddress(lead.address)
+        if (!address) {
+          return {
+            lead,
+            address: null,
+            geocodeResult: { ok: false, error: 'No usable address.' },
+          }
+        }
+        return {
+          lead,
+          address,
+          geocodeResult: await geocodePalmDesertAddress(
+            supabaseUrl,
+            supabaseKey,
+            address
+          ),
+        }
+      }
+    )
+
+    let rowsGeocoded = 0
+    let rowsUpdated = 0
+    let rowsSkipped = 0
+    const errors: any[] = []
+
+    for (const result of geocodeResults) {
+      if (!result.geocodeResult.ok) {
+        rowsSkipped += 1
+        errors.push({
+          permit_number: result.lead.permit_number,
+          address: result.address || result.lead.address || null,
+          error: result.geocodeResult.error,
+        })
+        if (writeConfirmed) {
+          await supabase
+            .from('hunter_leads')
+            .update({
+              geocoding_status: result.address ? 'failed' : 'skipped',
+            })
+            .eq('id', result.lead.id)
+            .eq('tenant_id', HUNTER_TENANT_ID)
+            .eq('source', 'palm_desert_aura')
+            .eq('source_city', 'Palm Desert')
+            .eq('lead_type', 'permit')
+            .or('latitude.is.null,longitude.is.null')
+        }
+        continue
+      }
+
+      rowsGeocoded += 1
+      if (!writeConfirmed) continue
+
+      const { error: updateError } = await supabase
+        .from('hunter_leads')
+        .update(
+          palmDesertCoordinateFields(result.geocodeResult, homeBase, timestamp)
+        )
+        .eq('id', result.lead.id)
+        .eq('tenant_id', HUNTER_TENANT_ID)
+        .eq('source', 'palm_desert_aura')
+        .eq('source_city', 'Palm Desert')
+        .eq('lead_type', 'permit')
+        .or('latitude.is.null,longitude.is.null')
+
+      if (updateError) {
+        rowsSkipped += 1
+        errors.push({
+          permit_number: result.lead.permit_number,
+          address: result.address,
+          error: `Coordinate update failed: ${updateError.message}`,
+        })
+      } else {
+        rowsUpdated += 1
+      }
+    }
+
+    return {
+      statusCode: 200,
+      headers: CORS_HEADERS,
+      body: JSON.stringify({
+        ...emptySummary,
+        rows_found_missing_coordinates: count || 0,
+        rows_selected: missingLeads.length,
+        rows_geocoded: rowsGeocoded,
+        rows_updated: rowsUpdated,
+        rows_skipped: rowsSkipped,
+        rows_remaining_after_batch: writeConfirmed
+          ? Math.max(0, (count || 0) - rowsUpdated)
+          : count || 0,
+        errors,
+        sample_addresses: missingLeads.slice(0, 10).map((lead: any) => ({
+          permit_number: lead.permit_number,
+          address: buildPalmDesertGeocodeAddress(lead.address),
+        })),
+      }),
     }
   }
 
@@ -956,7 +1340,12 @@ exports.handler = async (event: any) => {
           importResult.rows_skipped = scoredRecords.length
         } else {
           const supabase = createClient(supabaseUrl, supabaseKey)
-          importResult = await importPalmDesertLeads(supabase, scoredRecords)
+          importResult = await importPalmDesertLeads(
+            supabase,
+            scoredRecords,
+            supabaseUrl,
+            supabaseKey
+          )
         }
       }
 

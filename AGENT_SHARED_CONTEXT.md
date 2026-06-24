@@ -25,10 +25,95 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Codex-Palm-Desert-Aura-Dry-Run | Palm Desert Aura Dry-Run Importer | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — local live dry run passed | RELEASED | 2026-06-24 |
 | Codex-Palm-Desert-Aura-Controlled-Importer | Palm Desert Aura Controlled Importer | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — safe paths verified, write not invoked | RELEASED | 2026-06-24 |
 | Codex-Permit-Lead-Title-Fallback | Imported Permit Lead Title Fallback | src/components/hunter/HunterLeadCard.tsx, AGENT_SHARED_CONTEXT.md | DONE — title fallback implemented | RELEASED | 2026-06-24 |
+| Codex-Palm-Desert-Geocode-Backfill | Palm Desert Imported Lead Map Coordinates | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — guarded backfill dry-run passed | RELEASED | 2026-06-24 |
 
 ---
 
 ## Audit & Change Log
+
+### 2026-06-24 — Palm Desert Imported Lead Map Coordinates
+
+**Agent:** Codex
+**Mode:** Scoped audit + controlled coordinate backfill
+**Branch:** main
+
+#### Root cause
+
+- Production read-only audit found 84 `source='palm_desert_aura'` leads.
+- All 84 are active with `status='new'`.
+- All 84 have `geocoding_status='pending'`.
+- Zero have `latitude`/`longitude`; therefore zero qualify for normal HUNTER map pins.
+- `HunterMap` requires numeric `latitude`/`longitude` (translated to `lat`/`lng`) and active status. It does not exclude Palm Desert by source or city.
+- The Aura importer wrote addresses but did not geocode. TLMA geocodes before upsert; EnerGov also currently writes without geocoding.
+
+#### Files inspected
+
+- `AGENT_SHARED_CONTEXT.md`
+- `.agents/AGENTS.md`
+- `src/components/hunter/HunterPanel.tsx`
+- `src/components/hunter/HunterMap.tsx`
+- `src/store/hunterStore.ts`
+- `src/services/hunter/HunterTypes.ts`
+- `src/services/geocoding/GeocodingClient.ts`
+- `src/utils/googleMapsLoader.ts`
+- `netlify/functions/city-scraper.ts`
+- `netlify/functions/city-scraper/shared.ts`
+- `supabase/functions/geocode-backfill/index.ts`
+- `supabase/functions/geocode-single/index.ts`
+- `supabase/functions/tlma-scraper/geocoding.ts`
+- `supabase/functions/tlma-scraper/supabase-client.ts`
+- `supabase/migrations/052_hunter_tables.sql`
+- `supabase/migrations/070_tlma_scraper_schema.sql`
+- `supabase/migrations/071_geocoding_distance_settings.sql`
+- `supabase/migrations/074_source_city.sql`
+
+#### Files changed
+
+- `netlify/functions/city-scraper.ts`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### Backfill route
+
+Dry-run:
+`https://app.poweronsolutionsllc.com/.netlify/functions/city-scraper?action=palm-desert-geocode-backfill&batchSize=25`
+
+Controlled coordinate write:
+`https://app.poweronsolutionsllc.com/.netlify/functions/city-scraper?action=palm-desert-geocode-backfill&batchSize=25&write=true&confirm=palm-desert-geocode`
+
+- Dry-run is the default.
+- A write requires the exact `palm-desert-geocode` token.
+- Invalid confirmation returns HTTP 400 before database or geocoder access.
+- Selection and update guards require the fixed tenant plus `source='palm_desert_aura'`, `source_city='Palm Desert'`, `lead_type='permit'`, and missing latitude or longitude.
+- The route never inserts leads and only updates `latitude`, `longitude`, `geocoded_at`, `geocoding_status`, and `distance_from_base_miles`.
+- Response includes dry/write flags, total missing rows, selected/geocoded/updated/skipped counts, remaining rows, errors, and sample addresses.
+
+#### Geocoding behavior
+
+- The existing Supabase `geocode-single`/Google path remains the primary provider.
+- Local safe dry-run found that deployed Google geocoding currently returns `REQUEST_DENIED` because the server API key configuration is invalid/restricted.
+- Added an official U.S. Census Geocoding Services fallback using `Public_AR_Current`.
+- Census results must fall inside broad Coachella Valley coordinate bounds before acceptance.
+- Palm Desert Aura addresses are already full street/city/state/ZIP strings and produced valid matches.
+- Future newly inserted Palm Desert Aura leads now use the same geocoding path before insert. Existing lead updates preserve coordinates.
+
+#### Verification
+
+- Production read-only audit: 84 total, 0 with coordinates, 84 missing coordinates.
+- Invalid-confirmation test: HTTP 400, 0 writes.
+- Ten-row backfill dry-run: 10 selected, 10 geocoded, 0 updated, 0 skipped, 0 errors, 1.27 seconds.
+- Post-dry-run production read-only audit: still 0 with coordinates and 84 missing, confirming no writes occurred.
+- `npm.cmd run typecheck`: passed.
+- `npm.cmd run build`: passed; existing Vite dynamic-import/chunk-size warnings only.
+- No production backfill write was invoked.
+
+#### Risks / next task
+
+- The Google server-side geocoding key remains misconfigured; Census fallback is currently carrying the route.
+- U.S. Census coordinates are address-range interpolations and may be less precise than rooftop Google coordinates.
+- Live HUNTER map pins cannot be visually confirmed until the controlled backfill is deployed and explicitly approved for write.
+- Next: deploy, run the production dry-run, then request explicit approval for bounded write batches and verify HUNTER → Palm Desert pins.
+
+---
 
 ### 2026-06-19 — CFOT Math Correction Audit (CFOT-Math-Audit agent)
 
