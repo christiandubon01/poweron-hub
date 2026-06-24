@@ -368,7 +368,7 @@ const handleMapLeadSelect = (leadId: string) => {
   const [studyExpanded, setStudyExpanded] = useState(false)
   const [cityPermitsExpanded, setCityPermitsExpanded] = useState(true)
   // HUNTER-UI-GEO-UNIFY-APR30-2026-1: geography filter persisted across sessions
-  type GeoFilter = 'all' | 'tlma' | 'indio' | 'palm_springs' | 'portal' | 'yelp'
+  type GeoFilter = 'all' | 'tlma' | 'indio' | 'palm_springs' | 'palm_desert' | 'portal' | 'yelp'
   const [geoFilter, setGeoFilterRaw] = useState<GeoFilter>(() => {
     try { return (localStorage.getItem('hunter_geo_filter') as GeoFilter) ?? 'all' } catch { return 'all' }
   })
@@ -464,8 +464,9 @@ const handleMapLeadSelect = (leadId: string) => {
   const geoFilteredLeads = useMemo(() => {
     switch (geoFilter) {
       case 'tlma':         return leads.filter((l: any) => l.source === 'tlma_riverside')
-      case 'indio':        return leads.filter((l: any) => l.city === 'Indio')
-      case 'palm_springs': return leads.filter((l: any) => l.city === 'Palm Springs')
+      case 'indio':        return leads.filter((l: any) => l.city?.toLowerCase() === 'indio')
+      case 'palm_springs': return leads.filter((l: any) => l.city?.toLowerCase() === 'palm springs')
+      case 'palm_desert':  return leads.filter((l: any) => l.city?.toLowerCase() === 'palm desert')
       case 'portal':       return leads.filter((l: any) => l.source === 'customer_portal' || l.sourceTag === 'customer_portal')
       case 'yelp':         return leads.filter((l: any) => l.source === 'yelp_ad' || l.sourceTag === 'yelp_ad' || (l as any).source_tag === 'yelp_ad')
       default:             return leads
@@ -741,7 +742,7 @@ const handleMapLeadSelect = (leadId: string) => {
             </div>
             <div className="flex items-center gap-2">
               <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                {([['all', 'All'], ['tlma', 'TLMA'], ['indio', 'Indio'], ['palm_springs', 'Palm Springs'], ['portal', '⚡ Portal'], ['yelp', 'Yelp']] as const).map(([val, label]) => (
+                {([['all', 'All'], ['tlma', 'TLMA'], ['indio', 'Indio'], ['palm_springs', 'Palm Springs'], ['palm_desert', 'Palm Desert'], ['portal', '⚡ Portal'], ['yelp', 'Yelp']] as const).map(([val, label]) => (
                   <button
                     key={val}
                     type="button"
