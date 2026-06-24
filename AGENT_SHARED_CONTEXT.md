@@ -16,9 +16,10 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Agent | Feature Area | Files | Mode | Status | Claimed (UTC-ish) |
 |---|---|---|---|---|---|
 | CFOT-Math (prior session) | Graph Dashboard CFOT Math Correction | V15rDashboard.tsx, CFOTChart.tsx, backupDataService.ts | DONE — committed bcf0aa8 | RELEASED | 2026-06-19 |
-| CFOT-Markers-Swipe (this agent) | Graph Dashboard CFOT Project Start Dots + Swipe Timeline Navigation | src/components/v15r/V15rDashboard.tsx, src/components/v15r/charts/CFOTChart.tsx | Implementation (visual/UX only — NO math changes) | IN PROGRESS | 2026-06-19 |
-
-> Markers+Swipe pass is VISUAL/UX only — exposure math, cards, legend, tooltip, Now marker, gray area, and Projected Total Exposure line must stay intact. Will not commit until user reviews the app.
+| CFOT-Markers-Swipe (prior session) | Graph Dashboard CFOT Project Start Dots + Swipe Timeline Navigation | src/components/v15r/V15rDashboard.tsx, src/components/v15r/charts/CFOTChart.tsx | DONE — committed 40f5225 | RELEASED | 2026-06-19 |
+| CFOT-Pan-Zoom (this agent) | Graph Dashboard CFOT Smooth Pan + Zoom Navigation | src/components/v15r/charts/CFOTChart.tsx | DONE — awaiting user review | RELEASED | 2026-06-23 |
+| CFOT-Source-Toggles (this agent) | Graph Dashboard CFOT Source Toggle Filters | src/components/v15r/charts/CFOTChart.tsx | DONE — awaiting user review | RELEASED | 2026-06-23 |
+| CFOT-Final-Controls (this agent) | Graph Dashboard CFOT Final Toggle Placement + Service Call Markers | src/components/v15r/charts/CFOTChart.tsx | DONE — awaiting user review | RELEASED | 2026-06-23 |
 
 ---
 
@@ -324,3 +325,553 @@ Entry path is clean and shallow. Tab bar is in `SalesIntelTabBar.tsx` / `SalesIn
 **Proposed edits:** Listed in "Exact Files Needing Edits" table above.
 **User approval needed:** YES — before any implementation.
 **Status:** Audit complete, no source files modified.
+
+---
+
+### 2026-06-23 — EnerGov City Scraper Response Parser Fix (COMMITTED 9f0ec9f)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Implementation
+**Feature Area:** Sales Intelligence EnerGov City Scraper
+**Branch:** main | HEAD after commit: `9f0ec9f`
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 0 errors, 18.93s (pre-existing chunk-size warnings only)
+
+#### Files Inspected
+- `netlify/functions/city-scraper/shared.ts` (primary target — full read)
+- `netlify/functions/city-scraper/indio.ts` (config only — no changes needed)
+- `netlify/functions/city-scraper/palm-springs.ts` (config only — no changes needed)
+- `netlify/functions/city-scraper.ts` (entry point — no changes needed)
+
+#### Files Changed
+- `netlify/functions/city-scraper/shared.ts` (+47 lines, −2 lines)
+
+#### Exact Bugs Fixed
+
+**Bug 1 — Response shape mismatch (silent 0-permit returns):**
+Line 129 original: `const permits: EnerGovPermit[] = data?.Result?.EntityResults ?? []`
+The code comment on line 128 described a DIFFERENT shape: `{ Permits: { Result: [...], Total: N } }`.
+These two cannot both be right — one shape was returning empty arrays on every run.
+
+**Fix:** Replaced with `extractPermitsFromResponse(data, config.cityLabel, page)` — a new helper that tries four paths in priority order:
+- Shape A: `data?.Result?.EntityResults` (CSS v2+)
+- Shape B: `data?.Permits?.Result` (CSS v1 — what the original comment described)
+- Shape C: `data?.Permits?.Result?.EntityResults` (nested variant)
+- Shape D: top-level array (rare sandbox responses)
+
+If none match, logs top-level key names (no values — no PII) and returns `[]`.
+Every successful match logs which shape was matched + count to Netlify function log.
+
+**Bug 2 — Duplicate object key:**
+`leadRow` had `contractor_name` assigned twice (lines 327–328). Removed the duplicate. Harmless but a latent source of confusion.
+
+#### Live / Dry-Run Verification
+Live verification was **not possible** from this environment — the Netlify function requires a deployed Netlify environment and valid Supabase credentials. TypeScript and Vite build verification passed.
+
+#### Manual Verification Steps
+To confirm which shape the real EnerGov API returns and that the parser now works:
+
+1. **DevTools capture (find the real shape):**
+   - Open `https://indioca-energovweb.tylerhost.net/apps/SelfService` in Chrome
+   - Open DevTools → Network tab → filter by `search`
+   - Submit any permit search
+   - Find the POST to `.../api/energov/search/search`
+   - Inspect the JSON response — note which top-level key wraps the permit array
+
+2. **Dry-run via deployed function (safest, no DB writes):**
+   ```
+   GET https://<your-netlify-site>.netlify.app/.netlify/functions/city-scraper?city=indio&dry_run=true
+   ```
+   Expected response: `{ city: "Indio", dry_run: true, permits_fetched: N, ... }` where N > 0.
+   Check Netlify function logs for: `[city-scraper] Indio p1: shape=A ...` (or B/C/D).
+
+3. **Live manual run (writes to Supabase):**
+   ```
+   GET https://<your-netlify-site>.netlify.app/.netlify/functions/city-scraper?city=indio&source=manual
+   ```
+   Then check `hunter_leads` for rows with `source_city = 'Indio'`.
+
+#### Risks Remaining
+- Still no geocoding for EnerGov leads (Indio/Palm Springs) — leads won't show on map.
+- Still no cron trigger — function only runs on manual invocation.
+- Still no run logging to `cron_run_log` — failures remain invisible.
+- Real response shape still unconfirmed without a live DevTools capture. The multi-shape extractor will handle whichever shape the API returns, but the specific log line will tell us definitively which one.
+
+#### Next Recommended Task
+> **Add EnerGov geocoding** — copy the geocode-single pattern from `supabase/functions/tlma-scraper/supabase-client.ts` into `netlify/functions/city-scraper/shared.ts::scrapeCity()` so Indio and Palm Springs leads appear on the HUNTER map with distance-from-base.
+
+**Lock released** — `netlify/functions/city-scraper/shared.ts` is free for other agents.
+
+---
+
+### 2026-06-23 — CFOT Smooth Pan + Zoom Navigation (awaiting user review)
+
+**Agent:** Claude Code claude-opus-4-8
+**Mode:** Implementation (UX/navigation only — NO math changes)
+**Feature Area:** Graph Dashboard — Projects Cash Flow Over Time chart
+**Branch:** main | HEAD = 40f5225
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 0 errors, 18.18s (pre-existing chunk-size warnings only)
+
+#### Files Changed
+- `src/components/v15r/charts/CFOTChart.tsx` — only file modified
+
+#### What Was Changed
+
+**Root cause of bouncing:** Y axis auto-scaled from the visible slice only. When panning shifted which weeks were visible, different peak values came into view and Recharts re-scaled the Y axis on every render, causing lines to visually jump/bounce vertically. Also, Recharts' line animation re-triggered on every data slice change during drag.
+
+**FIX 1 — Stable Y axis (stops bouncing):**
+- Added `fullYDomain` memo computed from the FULL `chartData` array, all 8 series keys + `markerY`.
+- Includes negative values (min floored at 0 if all positive) and 10% top padding so peaks are not clipped.
+- Applied `domain={fullYDomain}` to `<YAxis>` — Y axis no longer recalculates during pan.
+- Added `isAnimationActive={false}` to all 9 `<Line>` components — prevents Recharts from re-animating every time the visible slice changes during drag. (Marker line already had this; added to all others.)
+
+**FIX 2 — Zoom range controls (1M / 3M / 6M / 1Y / All):**
+- Added `zoomRange` state (`useState<ZoomRange>('6M')`), default **6M** (~26 weeks, close to prior 32-week default).
+- `ZOOM_WEEKS` maps: `1M=5, 3M=13, 6M=26, 1Y=52, All=total`.
+- `windowSize` derived from `zoomRange` instead of hard-coded 32.
+- `handleZoomChange()` keeps the current center date in view when switching ranges.
+- `handleReset()` returns to 6M default, pinned to most-recent window.
+- 'All' shows full dataset (no pan needed); hides Earlier/Later step buttons.
+
+**FIX 3 — Smooth drag with RAF throttle:**
+- `drag.current` ref now tracks `pendingIdx` and `rafPending` flag.
+- `onPointerMove` queues one `requestAnimationFrame` callback per frame; skips if a frame is already pending.
+- This throttles state updates to display refresh rate (≤60 fps) regardless of how fast pointer events fire.
+- Drag threshold kept at 6px so tap/hover still triggers tooltip.
+- Cursor changes to `grabbing` on pointer-down (direct DOM mutation, no re-render).
+
+**FIX 4 — Wheel / trackpad horizontal pan (non-passive listener):**
+- `useEffect` adds a `{ passive: false }` wheel listener to `containerRef` — this allows `e.preventDefault()` (React's synthetic `onWheel` cannot prevent default reliably).
+- Captures **horizontal deltaX** (trackpad two-finger swipe) or **Shift + vertical deltaY** (mouse wheel + shift key).
+- Plain vertical scroll passes through (not captured) → page scroll still works on desktop.
+- `canSwipeRef`, `windowSizeRef`, `maxStartRef` refs updated each render so the wheel handler always has fresh values without stale closures.
+- Cleanup removes the listener on unmount.
+
+**FIX 5 — Mobile / touch:**
+- `touchAction: 'pan-y'` on container div (already present) — browser handles vertical page scroll natively; horizontal swipe is captured by pointer events.
+- No changes needed to pointer handlers; pointer events cover both mouse and touch.
+
+**FIX 6 — UI navigation bar:**
+- **Zoom buttons:** `1M / 3M / 6M / 1Y / All` — selected state shown with indigo highlight.
+- **Range label:** `"Jun 2 – Dec 1 · drag or scroll to pan"` — subtle hint, only when `canSwipe`.
+- **Earlier ← / Later →** step buttons: still present, step = `windowSize / 4` (reduced from `/2` for finer control).
+- **Reset** button: returns to 6M default, most-recent window.
+
+#### What Was NOT Changed
+- All CFOT math formulas in `V15rDashboard.tsx` — untouched.
+- All data keys: `exposure`, `activeExposure`, `projectedTotalExposure`, `serviceExposure`, `pending`, `svcPay`, `projPay`, `accum`, `markerY` — unchanged.
+- Series colors, stroke widths, dash patterns — unchanged.
+- `ProjectStartDot` and `CFOTTooltip` components — unchanged.
+- Marker math/placement logic — unchanged.
+- Now marker (`ReferenceLine`) — unchanged.
+- Future gray area (`ReferenceArea`) — unchanged.
+- Legend — unchanged.
+- `V15rDashboard.tsx` — not modified.
+- No commit made — awaiting user review.
+
+**Lock released** — `src/components/v15r/charts/CFOTChart.tsx` is free for other agents.
+
+---
+
+### 2026-06-23 — CFOT Pan + Zoom Correction Pass (awaiting user review)
+
+**Agent:** Claude Code claude-opus-4-8
+**Mode:** UX/navigation correction — NO math changes
+**Branch:** main | HEAD = 40f5225
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 0 errors, 16.19s (pre-existing chunk-size warnings only)
+
+#### Files Changed
+- `src/components/v15r/charts/CFOTChart.tsx` — only file modified
+
+#### Fix 1 — Full-area drag from any chart location
+
+**Root cause:** `onPointerLeave` on the container div was killing drags whenever the pointer moved over the Recharts tooltip div or reached the chart boundary. No pointer capture was set, so move events were lost when the pointer exited the element.
+
+**What changed:**
+- Added a transparent `overlayRef` div (`position: absolute; inset: 0; z-index: 1`) inside the chart wrapper.
+- At rest the overlay is `pointer-events: none` — all hover/tooltip events reach Recharts normally.
+- `onPointerDown` on the outer wrapper fires for ALL child clicks via event bubbling (SVG lines, empty areas, background). On pointer-down, the overlay is switched to `pointer-events: all` and `overlay.setPointerCapture(e.pointerId)` is called — routing all subsequent move/up events to the overlay regardless of where the pointer travels (over tooltips, past chart edges, etc.).
+- `onPointerMove` and end-drag (`onPointerUp`, `onPointerCancel`) are on the overlay, which has capture.
+- `onPointerLeave` removed entirely — pointer capture makes it unnecessary and it was the main source of drag drops.
+- `touchAction: 'pan-y'` moved to the overlay — vertical page scroll still works on mobile/touch.
+
+#### Fix 2 — 90/10 Now-anchored range buttons
+
+**Root cause:** `handleZoomChange` kept the current viewport center, which with an empty initial state (or early-data default) meant the center was in early historical data (March). All range buttons then opened around March.
+
+**Root cause deeper:** `useState(maxStart)` initializes `startIdx` once at mount. If `chartData` is empty or has few points at mount time, `maxStart = 0` and `startIdx = 0` (showing earliest data). Subsequent zoom button clicks computed `center = 0 + windowSize/2` → also early data.
+
+**What changed:**
+- Added `nowIndex` useMemo: index of the last non-projection row (= the "Now" boundary week).
+- Added `anchorAtNow(win)` function: computes `startIdx` so the window shows 90% past / 10% future relative to `nowIndex`. Formula: `futureCount = max(1, round(win × 0.10))`, `rawStart = nowIndex + futureCount − win + 1`, clamped within `[0, maxStart]`.
+- `handleZoomChange`: all named ranges (1M/3M/6M/1Y) now call `anchorAtNow(newWin)`. 'All' sets `startIdx = 0` (full dataset, no pan).
+- `handleReset`: calls `anchorAtNow` with 6M window — returns to current Now view, not earliest data.
+- Initial `startIdx`: lazy initializer `() => anchorAtNow(6M window)` — opens on Now by default.
+- Safety `useEffect`: if data loads after mount (async edge case), runs once to re-anchor.
+
+#### Preserved from previous pass
+- `fullYDomain` stable Y axis (no bouncing) ✅
+- `isAnimationActive={false}` on all lines ✅
+- RAF throttle on pointer-move ✅
+- Non-passive wheel listener (horizontal trackpad / Shift+wheel) ✅
+- All CFOT math, data keys, colors, series, tooltip, markers, Now marker, gray area ✅
+- No commit made ✅
+
+---
+
+### 2026-06-23 — Palm Desert Scraper Support (COMMITTED 7c5c168)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Scoped feasibility implementation
+**Feature Area:** Sales Intelligence Palm Desert Scraper
+**Branch:** main | HEAD after commit: `7c5c168`
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 0 errors, 16.19s (pre-existing chunk-size warnings only)
+
+#### Files Inspected
+- `supabase/functions/tlma-scraper/index.ts` — confirmed `"PALM DESERT"` in CITIES array (index 3 of 13)
+- `supabase/functions/tlma-scraper/types.ts` — city field on HunterLeadRow; TLMA writes it as-is from HTML
+- `supabase/functions/tlma-scraper/parser.ts` — `cleanCell()` strips HTML/whitespace, preserves case; city is column 3
+- `supabase/functions/tlma-scraper/supabase-client.ts` — `upsertLead()` writes `city: permit.city`
+- `netlify/functions/city-scraper.ts` — routes only `indio` / `palm-springs`; no Palm Desert route
+- `netlify/functions/city-scraper/indio.ts` — `cityLabel: 'Indio'` (title case)
+- `netlify/functions/city-scraper/palm-springs.ts` — `cityLabel: 'Palm Springs'` (title case)
+- `netlify/functions/city-scraper/shared.ts` — writes `city: config.cityLabel`; case-sensitive title case
+- `src/components/hunter/HunterPanel.tsx` — geo filter type, switch, and button row
+
+#### Files Changed
+- `src/components/hunter/HunterPanel.tsx` (+5 lines, −4 lines)
+
+#### Palm Desert Source Confirmed
+**TLMA (Riverside County):** ✅ Already scraped. `"PALM DESERT"` is element 3 of the 13-city CITIES array. Every TLMA run already fetches all 8 permit types × Palm Desert, scores them, and upserts to `hunter_leads` with `source='tlma_riverside'`.
+
+**Palm Desert city-owned portal (separate from TLMA):** ❌ Not Tyler EnerGov. The task description notes the city's portal appears Clariti/Salesforce-based. No `*.tylerhost.net` endpoint was confirmed for Palm Desert. A new scraper adapter architecture would be required — not attempted here.
+
+#### Implementation Option
+**OPTION A** (TLMA already covers Palm Desert) + **OPTION C** (city portal blocked — Clariti architecture)
+
+**What changed in HunterPanel.tsx:**
+
+1. `GeoFilter` type: added `'palm_desert'`
+2. `geoFilteredLeads` switch: added `case 'palm_desert'` with case-insensitive city match; also fixed existing `'indio'` and `'palm_springs'` cases to `.toLowerCase()` — ensures TLMA leads (city stored as `"PALM DESERT"` / `"INDIO"` / `"PALM SPRINGS"` from HTML table) match alongside future EnerGov leads (title-case `cityLabel`)
+3. Geo filter button row: inserted `['palm_desert', 'Palm Desert']` between Palm Springs and Portal
+
+#### Risks Remaining
+- Palm Desert city-owned portal (Clariti) not scraped — TLMA coverage only.
+- No Tyler EnerGov endpoint confirmed for Palm Desert. If the city ever migrates to EnerGov, adding a `palm-desert.ts` config (~15 lines) + one route case would enable city-portal scraping.
+- The case-insensitive fix for Indio/Palm Springs is strictly more inclusive (no leads disappear).
+
+#### Next Recommended Tasks
+1. **Verify Palm Desert city portal** — open the city's permit portal in Chrome DevTools and check whether it POSTs to `*.tylerhost.net/apps/selfservice/api/energov/search/search`. If yes: add `netlify/functions/city-scraper/palm-desert.ts` + route case. If no (Clariti): design a Clariti scraper adapter.
+2. **Add EnerGov geocoding** — `netlify/functions/city-scraper/shared.ts::scrapeCity()` so Indio/Palm Springs leads appear on the HUNTER map.
+
+**Lock released** — `src/components/hunter/HunterPanel.tsx` is free for other agents.
+
+---
+
+### 2026-06-23 — CFOT Source Toggle Filters (NOT COMMITTED — awaiting user review)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Scoped feasibility inspection — no source files edited this session
+**Feature Area:** Graph Dashboard CFOT Source Toggle Filters
+**Branch:** main | HEAD = 7c5c168
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 0 errors, 18.50s (pre-existing chunk-size warnings only)
+
+#### Finding
+The CFOT-Pan-Zoom session (claude-opus-4-8, committed to the working tree, awaiting user review) **already implemented the full source toggle feature** as part of that change. No additional implementation was needed.
+
+#### Files Inspected
+- `src/components/v15r/charts/CFOTChart.tsx` — full read; source toggles confirmed present and complete
+
+#### Files Changed
+- **None** — feature was already implemented.
+
+#### What Was Already in CFOTChart.tsx (confirmed present)
+
+| Requirement | Status | Code location |
+|---|---|---|
+| `PROJECT_KEYS` / `SERVICE_KEYS` classification sets | ✅ | Lines 9–11 |
+| `showProjects` / `showServiceCalls` state (both default true) | ✅ | Lines 125–126 |
+| `toggleProjects()` / `toggleServiceCalls()` with "at least one active" guard | ✅ | Lines 129–136 |
+| Source-aware stable `fullYDomain` (no bounce on toggle or pan) | ✅ | Lines 140–160 |
+| Source toggle UI row ("SOURCES · Projects · Service Calls") | ✅ | Lines 310–326 |
+| `toggleStyle()` helper for active/inactive pill styling | ✅ | Lines 297–305 |
+| Project series conditionally rendered (`showProjects`) | ✅ | Lines 391–394 |
+| Service Calls series conditionally rendered (`showServiceCalls`) | ✅ | Lines 397–399 |
+| Accumulative Income shown only when BOTH sources ON | ✅ | Line 402 |
+| Project-start markers hidden when Projects OFF | ✅ | Line 405 |
+| `CFOTTooltip` filters rows by source; shows marker details only when Projects ON | ✅ | Lines 30–67 |
+| Status hint text ("· showing projects only" / "service calls only") | ✅ | Lines 321–325 |
+| All navigation (drag, wheel, zoom buttons, reset, Now marker, gray area) unchanged | ✅ | Lines 162–422 |
+| All CFOT math keys untouched (`exposure`, `activeExposure`, `projectedTotalExposure`, `serviceExposure`, `pending`, `svcPay`, `projPay`, `accum`) | ✅ | Lines 91–116 |
+| `V15rDashboard.tsx` not touched | ✅ | — |
+| `backupDataService.ts` not touched | ✅ | — |
+
+#### Visible Series Per Mode
+| Mode | Visible series |
+|---|---|
+| Both ON | Projects Total Exposure · Active Exposure · Projected Total Exposure · Project Payment · Service Calls Exposure · Pending Invoice · Service Payment · Accumulative Income · Project start dots |
+| Projects only | Projects Total Exposure · Active Exposure · Projected Total Exposure · Project Payment · Project start dots |
+| Service Calls only | Service Calls Exposure · Pending Invoice · Service Payment |
+
+#### Manual Verification Checklist (unchanged from CFOT-Pan-Zoom session — same file)
+1. Dashboard opens with both toggles ON (default) — chart looks like previous combined view
+2. Click "Projects" — service-call lines disappear; project lines and start dots remain
+3. Click "Service Calls" — project lines disappear; service-call lines appear; start dots hidden
+4. Click active toggle while the other is OFF → nothing happens (at-least-one guard holds)
+5. Tooltip rows match the selected source mode
+6. Legend entries match visible lines (Recharts auto)
+7. Y-axis does not bounce when toggling or panning
+8. "showing projects only" / "service calls only" hint text appears correctly
+9. All zoom/nav/reset/swipe/wheel behavior unchanged
+
+**Lock released** — `src/components/v15r/charts/CFOTChart.tsx` is free for other agents.
+
+---
+
+### 2026-06-23 — Sales Intelligence Scan Accuracy / Palm Desert Audit + Fix (COMMITTED 7898aa4)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Audit + scoped implementation
+**Feature Area:** Sales Intelligence Scan Accuracy / Palm Desert
+**Branch:** main | HEAD after commit: `7898aa4`
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 0 errors, 15.95s
+
+#### Files Inspected
+- `src/components/hunter/HunterPanel.tsx` — Scan Now handler, geo filter, button
+- `supabase/functions/tlma-scraper/index.ts` — search matrix loop, error handling, LiveRunReport shape
+- `supabase/functions/tlma-scraper/scoring.ts` — full scoring rules (BNR=70, BTI=65, … BMR=35)
+- `supabase/functions/tlma-scraper/types.ts` — LiveRunReport (`inserts`, `updates`, `errors: string[]`, `search_matrix_size`)
+- `supabase/functions/tlma-scraper/supabase-client.ts` — upsert/geocoding
+- `supabase/functions/tlma-scraper/README.md` — search matrix docs, troubleshooting
+
+#### Files Changed
+- `src/components/hunter/HunterPanel.tsx` (+35 lines, −6 lines)
+
+#### Root Cause of 104 Errors
+
+**What `Scan Now` calls:** `${SUPABASE_URL}/functions/v1/tlma-scraper?source=manual` — no city filter, no days_back — triggers the full 8 permit types × 13 cities = **104-combo matrix**.
+
+**Why 104 errors:** Every HTTP request to `publiclookup.rivco.org` failed. The actual error type (HTTP 403 WAF block, 429 rate limit, or network exception) was **invisible to the user** — only the count was shown. The messages live in `result.errors[]` but were never displayed.
+
+**Timing issue:** 104 combos × 200ms polite delay = 20.8s of delays alone, before HTTP round-trips. Supabase Edge Function timeouts kill remaining requests mid-run.
+
+**UI messaging bug:** Alert always said "Scan complete" regardless of failure rate.
+
+#### Palm Desert TLMA Coverage
+
+**TLMA covers:** Riverside County unincorporated areas via `publiclookup.rivco.org`.
+
+**Palm Desert as an incorporated city:** Its commercial permits are issued by the City of Palm Desert's own building department, **NOT** by Riverside County TLMA. The user's two active commercial projects are **city permits** and would NOT appear through TLMA regardless of scan health.
+
+**Palm Desert in TLMA CITIES array:** May return unincorporated county parcels with a Palm Desert mailing address. Unlikely to contain city-issued commercial construction permits.
+
+**Conclusion:** Palm Desert city-owned commercial permits require a **Clariti/OpenGov scraper adapter** — a separate implementation. Portal: `https://online.palmdesert.gov/`
+
+#### What Was Fixed (commit 7898aa4)
+
+**Fix 1 — City-contextual scan:** When `palm_desert`, `indio`, or `palm_springs` geo filter is active, Scan Now sends `?city=CITYNAME&days_back=30` (8 combos, 30-day window). All other filters use the full 104-combo scan.
+
+**Fix 2 — Honest error messaging:** `"Scan FAILED"` / `"Scan partial"` / `"Scan complete"` based on `errorCount vs matrixSize`. Includes `N/M requests failed` count.
+
+**Fix 3 — Diagnostic hint:** First error message from `result.errors[0]` appended to the alert so the user immediately sees WHY (HTTP 403, network exception, etc.).
+
+**Fix 4 — Button tooltip:** Shows `"Scan TLMA for PALM DESERT only (30 days)"` when on Palm Desert filter; `"Scan all 13 TLMA cities (7 days)"` otherwise.
+
+#### What Was NOT Fixed (separate work needed)
+
+1. **Root cause of 104 errors** — WAF/network issue unknown. Next step: click "Scan Now" on Indio filter → read first error message.
+2. **Palm Desert Clariti scraper** — city-owned permits at `https://online.palmdesert.gov/` (Clariti/OpenGov). Needs DevTools inspection to determine if public search is a plain GET or requires JavaScript/session tokens.
+3. **TLMA full-scan days_back** — still 7 days for full scan; not changed due to timeout risk.
+4. **Cron trigger** — Scan Now still manual-only.
+
+#### Palm Desert Clariti — Next Implementation Plan
+| Step | Action |
+|---|---|
+| 1 | Open `https://online.palmdesert.gov/` in Chrome DevTools → Network tab |
+| 2 | Submit a commercial permit search, capture XHR/fetch request |
+| 3 | If plain GET: build `supabase/functions/palm-desert-scraper/` mirroring TLMA pattern |
+| 4 | If requires session/CSRF tokens: evaluate serverless session strategy |
+
+#### Risks Remaining
+- 104-error root cause (WAF/network) still unknown. City-scoped scan reduces blast radius but doesn't fix TLMA access.
+- Palm Desert TLMA results may be zero even if scan works (city permits aren't in county system).
+- Clariti portal may require JavaScript/session tokens hard to automate from serverless.
+
+#### Next Recommended Task
+> **Step 1:** Click "Scan Now" with Indio filter active → read the first error in the alert → if "HTTP 403" = WAF block; if "Exception / fetch failed" = network issue. Check Supabase Edge Function logs at `supabase.com/dashboard/project/edxxbtyugohtowvslbfo/functions`.
+> **Step 2:** Open `https://online.palmdesert.gov/` in DevTools, capture the permit search API request, and design the Clariti adapter.
+
+**Lock released** — `src/components/hunter/HunterPanel.tsx` is free for other agents.
+
+---
+
+### 2026-06-23 — CFOT Final Controls: Toggle Placement + Service Call Markers (NOT COMMITTED — awaiting user review)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** UX/visual only — NO math formula changes
+**Feature Area:** Graph Dashboard — CFOT Final Controls
+**Branch:** main | HEAD = 7898aa4
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 0 errors, 18.18s (pre-existing chunk-size warnings only)
+
+#### Files Changed
+- `src/components/v15r/charts/CFOTChart.tsx` — only file modified
+
+#### GOAL 1 — Source toggle row repositioned above range controls
+
+**Before:** Source toggle row was left-aligned above the range/nav row.
+
+**After:** Two-row header layout:
+- **Row 1 (right-aligned):** `SOURCES · [Projects] [Service Calls] · showing x only`
+- **Row 2:** `range label · drag or scroll to pan` ... `[1M][3M][6M][1Y][All] | [← Earlier] [Later →] [Reset]`
+
+The source toggle pills now use `justifyContent: 'flex-end'` so they right-align flush with the range buttons. Service Calls pill color changed from green to pink (`#fca5a5`) to match the Service Calls Exposure line color in the chart.
+
+#### GOAL 2 — Service call marker dots on Service Calls Exposure line
+
+**New `ServiceCallDot` component:** Hollow pink square (`#fca5a5`), distinct from amber project rings. Renders only when `svcMarkerY` field is non-null.
+
+**New `svcMarkersByWeek` useMemo:** Filters `backup.serviceLogs` with `isActiveServiceCall` (imported from backupDataService — no file change), groups by week using date priority `log.date → log.serviceDate → log.scheduledDate → log.createdAt`, includes only logs where `remaining = max(0, quoted − collected) > 0`.
+
+**`chartData` useMemo:** added `svcMarkerY` (= serviceExposure value for that week, null if projection or no markers) and `svcMarkerList`.
+
+**`fullYDomain`:** includes `svcMarkerY` in max calc when `showServiceCalls` is ON.
+
+**`CFOTTooltip`:** excludes `svcMarkerY` from metric rows; renders 🔧 customer name, date, quoted, collected, remaining, status for each service marker in that week.
+
+**Chart Line added** (`svcMarkerY`, legendType="none", transparent stroke, `dot={<ServiceCallDot />}`, only when `showServiceCalls`).
+
+**Import updated:** added `isActiveServiceCall` to import from `@/services/backupDataService`.
+
+#### What Was NOT Changed
+- All CFOT math formulas (`V15rDashboard.tsx`) — untouched
+- All data keys: `exposure`, `activeExposure`, `projectedTotalExposure`, `serviceExposure`, `pending`, `svcPay`, `projPay`, `accum`, `markerY` — unchanged
+- All zoom/pan/drag/wheel navigation — unchanged
+- `V15rDashboard.tsx` — not modified
+- `backupDataService.ts` — not modified (only imported already-exported `isActiveServiceCall`)
+- No commit made — awaiting user review
+
+#### Manual Verification Checklist
+1. Source toggle row is right-aligned above the range/nav controls
+2. Service Calls pill is pink when active; Projects pill is indigo
+3. Project start dots (amber rings) still appear on Projects Total Exposure line
+4. Service call dots (hollow pink squares) appear on Service Calls Exposure line when Service Calls is ON
+5. Turning Service Calls OFF hides service call dots
+6. Tooltip shows 🔧 customer, date, quoted, collected, remaining, status for weeks with markers
+7. Weeks where all service calls have remaining = 0 show no dot
+8. Projection weeks show no service call dots
+9. All zoom/pan/drag/wheel/reset behavior unchanged
+10. Y-axis stable (no bounce during toggle or pan)
+
+**Lock released** — `src/components/v15r/charts/CFOTChart.tsx` is free for other agents.
+
+---
+
+### 2026-06-23 — TLMA Scraper HTTP 403 Diagnostics Fix (committed 40bab75)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Implementation — diagnostics only (no auth bypass, no proxy, no new packages)
+**Feature Area:** Sales Intelligence — TLMA scraper 403 fixes
+**Branch:** main | HEAD = 40bab75
+**Typecheck:** 0 errors ✅
+
+#### Files Changed
+- `supabase/functions/tlma-scraper/index.ts`
+- `supabase/functions/tlma-scraper/types.ts`
+- `src/components/hunter/HunterPanel.tsx`
+
+#### Changes Made
+
+**`index.ts` — header improvements:**
+- User-Agent updated from `Chrome/130.0.0.0` to `Chrome/130.0.6723.116` (real stable build)
+- Added `Cache-Control: max-age=0` to search headers (matches normal browser navigation)
+- `Sec-Fetch-Site: same-origin` retained (correct: Referer and target share origin)
+
+**`index.ts` — session cookie preflight (`fetchTlmaSessionCookie`):**
+- Before the search loop, fetches the TLMA root page with `Sec-Fetch-Site: none`
+- Extracts Set-Cookie, collapses into `name=val; name2=val2`, adds as Cookie header
+- Non-fatal: proceeds without cookie if preflight fails
+
+**`index.ts` — first-error body diagnostic:**
+- On first HTTP error, reads response body (HTML-stripped, ≤240 chars)
+- Appended to `errors[0]` as ` | body: <snippet>`; stored in `LiveRunReport.first_error_body`
+
+**`types.ts`:** Added `first_error_body?: string` to `LiveRunReport`.
+
+**`HunterPanel.tsx`:** Alert now shows body snippet + 403-block hint when 403 detected.
+
+#### Root Cause Status
+- Most likely cause: Supabase IP ranges blocked by RIVCO WAF
+- These changes may fix it (missing session cookie) or will reveal the exact block type via body snippet
+- Next step: deploy + run Scan with Indio filter, read body hint in alert
+
+**Lock released** — all three files above are free for other agents.
+
+---
+
+### 2026-06-24 — TLMA Scraper 403 Verification (no code changes)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Verification only — no code changes made
+**Feature Area:** TLMA Scraper — 403 root cause diagnosis
+**Branch:** main | HEAD = 40bab75
+**Typecheck:** 0 errors ✅
+
+#### Deployment
+- `tlma-scraper` was at v9 (2026-04-28) — pre-fix code
+- Deployed v10 via `supabase functions deploy tlma-scraper --project-ref edxxbtyugohtowvslbfo`
+- v10 confirmed active at 2026-06-24 05:12:17 UTC
+
+#### Verification Scans Run
+
+**Indio (8 combos, 30 days):**
+- Matrix: 8 | Successes: 0 | Failures: 8 | Inserts: 0 | Updates: 0
+- First error: `HTTP 403 for INDIO / Commercial Buildings (BNR) | body: Just a moment...`
+- `first_error_body`: `Just a moment... *{box-sizing:border-box;margin:0;padding:0}html{line-height:1.15;...`
+
+**Palm Desert (8 combos, 30 days):**
+- Matrix: 8 | Successes: 0 | Failures: 8 | Inserts: 0 | Updates: 0
+- First error: `HTTP 403 for PALM DESERT / Commercial Buildings (BNR) | body: Just a moment...`
+- Same Cloudflare challenge page
+
+#### Root Cause — CONFIRMED: Cloudflare Bot Management
+
+`publiclookup.rivco.org` is behind **Cloudflare Bot Management**. The "Just a moment..." page is Cloudflare's JavaScript challenge response, served to requests from data-center IP ranges (Supabase included). This is **not a header issue** — no amount of User-Agent, Cookie, or Sec-Fetch header manipulation will bypass a Cloudflare JS challenge. The challenge requires real JavaScript execution in a browser context.
+
+**Diagnostics that now work:** `first_error_body` correctly identifies the block type. The alert in HunterPanel shows the body snippet and the "portal may be blocking server-side requests" hint.
+
+#### Architecture Recommendations (TLMA still blocked)
+
+**Option A — Move to Netlify Functions:**
+- Netlify's CDN/edge IPs may not be in Cloudflare's data-center blocklist
+- Pros: Already have Netlify Functions for EnerGov; same codebase; no new packages
+- Cons: Netlify outbound IPs may also be blocked (unknown until tested); Netlify timeout limits apply
+- Risk: Medium. Worth a quick test before investing more.
+
+**Option B — Manual CSV/Import:**
+- TLMA public portal may offer a CSV export; user downloads directly in browser, imports into system
+- Pros: Always works (browser passes Cloudflare); no architecture changes
+- Cons: Manual; requires an import UI; not automated
+- Risk: Low for reliability, medium for development effort.
+
+**Option C — Browser-Assisted Operator Workflow:**
+- User opens TLMA in their browser (passes Cloudflare), copies data, pastes into app
+- Pros: Zero infra cost; Cloudflare-safe
+- Cons: Very manual; doesn't scale
+- Risk: Low technical risk, low value
+
+**Option D — Disable TLMA, Prioritize City-Specific Scrapers (RECOMMENDED):**
+- EnerGov already covers Indio + Palm Springs via Netlify (working)
+- Build Clariti/OpenGov adapter for Palm Desert (`https://online.palmdesert.gov/`)
+- Accept gap for unincorporated Riverside County areas
+- Pros: High-value cities already covered or buildable; no Cloudflare issue
+- Cons: Misses ~9 CITIES in TLMA list (Coachella, La Quinta, Rancho Mirage, etc.)
+- Risk: Low technical risk; gap in coverage for non-EnerGov cities
+
+**Recommended immediate next step:** Test Option A by adding a simple TLMA test endpoint to the existing Netlify city-scraper function and comparing results. If Netlify is also blocked, commit to Option D and build the Palm Desert Clariti adapter.
+
+#### Files Changed This Session
+None — verification only.
+
+#### TLMA Status
+- **TLMA is blocked from Supabase Edge Functions** — confirmed Cloudflare JS challenge
+- **Palm Desert TLMA coverage** — blocked (same Cloudflare block; TLMA is not the right source anyway; Palm Desert uses Clariti)
+- **EnerGov (Indio + Palm Springs)** — unaffected, runs from Netlify, not Supabase
