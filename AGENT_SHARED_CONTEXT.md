@@ -24,6 +24,7 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Codex-Palm-Desert-Aura-Probe | Palm Desert Salesforce/Aura Permit Probe | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — local live probe passed | RELEASED | 2026-06-24 |
 | Codex-Palm-Desert-Aura-Dry-Run | Palm Desert Aura Dry-Run Importer | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — local live dry run passed | RELEASED | 2026-06-24 |
 | Codex-Palm-Desert-Aura-Controlled-Importer | Palm Desert Aura Controlled Importer | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — safe paths verified, write not invoked | RELEASED | 2026-06-24 |
+| Codex-Permit-Lead-Title-Fallback | Imported Permit Lead Title Fallback | src/components/hunter/HunterLeadCard.tsx, AGENT_SHARED_CONTEXT.md | DONE — title fallback implemented | RELEASED | 2026-06-24 |
 
 ---
 
@@ -1257,3 +1258,46 @@ Controlled write, only when explicitly approved:
 - Source record ID and APN are not persisted under the current schema.
 - Batch inserts can fail as a batch if a concurrent importer creates one of the same permits between lookup and insert; errors are reported and the route remains safely retryable.
 - No production write invocation has been performed yet.
+
+---
+
+### 2026-06-24 — Imported Permit Lead Title Fallback
+
+**Agent:** Codex
+**Mode:** Scoped UI/data display fix
+**Branch:** main
+
+#### Files inspected
+
+- `AGENT_SHARED_CONTEXT.md`
+- `.agents/AGENTS.md`
+- `src/components/hunter/HunterPanel.tsx`
+- `src/components/hunter/HunterLeadCard.tsx`
+- `src/stores/hunterStore.ts`
+- `src/types/hunter.ts`
+- `netlify/functions/city-scraper.ts`
+
+#### Files changed
+
+- `src/components/hunter/HunterLeadCard.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### Result
+
+- Permit lead card headers now prefer existing project/name/title/contact values.
+- When those are absent, permit leads fall back through permit number + short address, permit number, short address, short description, then `Permit Lead`.
+- A Palm Desert record such as permit `CRAD-25-5018` with address `73010 EL PASEO 1 PALM DESERT, CA 92260` displays as `CRAD-25-5018 — 73010 EL PASEO 1`.
+- Both collapsed and expanded lead-card headers use the same display title.
+- Portal/source badge labeling and source URL behavior were not changed.
+- Scraper/import behavior, schema, TLMA, dashboards, Blueprint, Solar Training, and app chrome were not changed.
+
+#### Verification
+
+- `npm.cmd run typecheck` — passed.
+- `npm.cmd run build` — passed; existing Vite chunk-size/dynamic-import warnings only.
+- Live browser verification was attempted, but no reachable local Vite instance was available in the in-app browser. Palm Desert title behavior was verified through the rendered card data path and fallback logic; post-deploy visual confirmation remains recommended.
+
+#### Risks / next task
+
+- Low risk: title generation is isolated to permit lead card display.
+- Next recommended task: after deployment, open Sales Intelligence → HUNTER → Palm Desert and visually confirm imported cards and unchanged website Portal cards.

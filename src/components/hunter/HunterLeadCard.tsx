@@ -104,6 +104,50 @@ function getCityDisplay(lead: any): string {
   return 'Location unknown'
 }
 
+function shortLeadAddress(lead: any): string {
+  const address = String(lead.address || '').trim()
+  if (!address) return ''
+
+  const city = String(lead.city || '').trim()
+  let shortened = address.split(',')[0]?.trim() || address
+  if (city) {
+    const cityIndex = shortened.toLowerCase().lastIndexOf(` ${city.toLowerCase()}`)
+    if (cityIndex > 0) shortened = shortened.slice(0, cityIndex).trim()
+  }
+
+  return shortened.replace(/\s+/g, ' ').slice(0, 60)
+}
+
+function getLeadDisplayTitle(lead: any): string {
+  const existingTitle =
+    lead.projectName ||
+    lead.project_name ||
+    lead.title ||
+    lead.name ||
+    lead.contactName ||
+    lead.contact_name
+  if (String(existingTitle || '').trim()) return String(existingTitle).trim()
+
+  const isPermitLead =
+    Boolean(lead.permit_number) ||
+    lead.source === 'tlma_riverside' ||
+    lead.source === 'city-portal' ||
+    lead.source === 'palm_desert_aura'
+
+  // Preserve non-permit sources (especially website Portal leads) exactly as before.
+  if (!isPermitLead) return 'Unknown'
+
+  const permitNumber = String(lead.permit_number || '').trim()
+  const shortAddress = shortLeadAddress(lead)
+  if (permitNumber && shortAddress) return `${permitNumber} — ${shortAddress}`
+  if (permitNumber) return permitNumber
+  if (shortAddress) return shortAddress
+
+  const description = String(lead.description || '').replace(/\s+/g, ' ').trim()
+  if (description) return description.slice(0, 60)
+  return 'Permit Lead'
+}
+
 function RevisionsIndicator({
   expanded,
   loaded,
@@ -242,6 +286,7 @@ export function HunterLeadCard({
     : null
 
   const cityDisplay = getCityDisplay(lead)
+  const displayTitle = getLeadDisplayTitle(lead)
   const hasLocation = !!(lead.address || lead.city)
 
   const handleCopyPitch = () => {
@@ -298,11 +343,7 @@ export function HunterLeadCard({
                 </span>
               )}
               <h3 className="text-base font-bold text-white truncate">
-                {lead.contactName || lead.contact_name ||
-                (lead.source === 'city-portal'
-                  ? (lead.description?.slice(0, 50) || (lead as any).work_class_code || (lead as any).permit_type_label || 'City Permit')
-                  : 'Unknown'
-                )}
+                {displayTitle}
               </h3>
               {lead.phone && (
                 <div className="flex items-center gap-1 text-xs text-gray-400 shrink-0">
@@ -555,7 +596,7 @@ export function HunterLeadCard({
                 )}
               </div>
               <h3 className="text-lg font-bold text-white">
-                {lead.contactName || lead.contact_name || 'Unknown'}
+                {displayTitle}
               </h3>
               {/* Location + Distance */}
               <div className="flex items-center gap-3 mt-1 flex-wrap">
