@@ -23,6 +23,7 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | EVR-8Week-Audit (this agent) | Graph Dashboard EVR + 8-Week Cash Flow Projection Audit/Redesign | src/components/v15r/V15rDashboard.tsx, src/components/v15r/charts/EVRChart.tsx, src/components/v15r/charts/SVGCharts.tsx, src/services/revenueTimelineService.ts | AUDIT COMPLETE — awaiting user approval to implement | AWAITING APPROVAL | 2026-06-23 |
 | Codex-Palm-Desert-Aura-Probe | Palm Desert Salesforce/Aura Permit Probe | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — local live probe passed | RELEASED | 2026-06-24 |
 | Codex-Palm-Desert-Aura-Dry-Run | Palm Desert Aura Dry-Run Importer | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — local live dry run passed | RELEASED | 2026-06-24 |
+| Codex-Palm-Desert-Aura-Controlled-Importer | Palm Desert Aura Controlled Importer | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — safe paths verified, write not invoked | RELEASED | 2026-06-24 |
 
 ---
 
@@ -1143,3 +1144,116 @@ The original `palm-desert-probe` route was regression-tested after the refactor 
 - Search results can overlap heavily, making in-memory dedupe essential.
 - Aura loader and response shapes can change; helper-level response classifications preserve diagnostics.
 - The default request completed well inside the 26-second Netlify timeout locally, but production runtime should still be measured after deploy.
+
+---
+
+### 2026-06-24 — Palm Desert Aura Controlled Importer
+
+**Agent:** Codex GPT-5.5 Medium Reasoning
+**Mode:** Scoped implementation
+**Feature Area:** Palm Desert Aura Controlled Importer
+**Branch:** main
+
+#### Files Inspected
+- `AGENT_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md` (Solar Upgrade-specific; not applicable)
+- `netlify/functions/city-scraper.ts`
+- `netlify/functions/city-scraper/shared.ts`
+- `netlify/functions/city-scraper/indio.ts`
+- `netlify/functions/city-scraper/palm-springs.ts`
+- `src/components/hunter/HunterPanel.tsx`
+- `src/store/hunterStore.ts`
+- `src/services/hunter/HunterTypes.ts`
+- `src/services/hunter/cronRunLogService.ts`
+- `supabase/migrations/052_hunter_tables.sql`
+- `supabase/migrations/070_tlma_scraper_schema.sql`
+- `supabase/migrations/071_geocoding_distance_settings.sql`
+- `supabase/migrations/072_cron_run_log.sql`
+- `supabase/migrations/074_source_city.sql`
+
+#### Files Changed
+- `netlify/functions/city-scraper.ts`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### Import Route Behavior
+The existing route remains:
+`GET /.netlify/functions/city-scraper?action=palm-desert-dry-run`
+
+Default invocation remains read-only. Controlled writes require both:
+- `write=true`
+- `confirm=palm-desert-import`
+
+If `write=true` is supplied without the exact token, the function returns HTTP 400 immediately, before fetching Aura data or creating a Supabase client.
+
+The response now includes:
+- `dry_run`
+- `write_requested`
+- `write_confirmed`
+- `rows_considered`
+- `rows_inserted`
+- `rows_updated`
+- `rows_skipped`
+- `duplicate_count`
+- `in_memory_duplicate_count`
+- `existing_duplicate_count`
+- `error_count`
+- `errors`
+
+#### Dedupe / Upsert Strategy
+- Aura results are first deduped in memory by `source_record_id`, falling back to permit number.
+- Database lookup uses `tenant_id + permit_number`, matching the existing unique tenant/permit constraint.
+- The later `(permit_number, source_city)` index is non-unique, so it cannot safely override the stricter tenant/permit uniqueness rule.
+- Existing records are updated by ID; new records are inserted.
+- Existing HUNTER workflow `status` and original `discovered_at` are preserved on updates.
+- Existing lookups are batched in groups of 100. New leads are bulk inserted; existing leads are updated with bounded concurrency to stay within the Netlify timeout.
+
+The current schema has no `source_record_id` column. It is retained in the route preview but not persisted. A later additive schema enhancement is recommended if Salesforce record identity needs to survive permit-number changes.
+
+#### Field Mapping
+- `source`: `palm_desert_aura`
+- `source_tag`: `city-portal`
+- `lead_type`: `permit`
+- `permit_number`: Palm Desert permit number
+- `permit_url` / `portal_url`: public Salesforce permit detail URL
+- `permit_type_code`: alphabetic permit-number prefix such as `CRAD`, `ELEC`, or `SOLR`
+- `permit_type_label`: `Palm Desert Permit`
+- `permit_status`: normalized Aura status, falling back to stage
+- `applied_date`: normalized created date
+- `issued_date`: normalized issue date
+- `expired_date`: normalized expiration date
+- `address`, `city`, `description`
+- `score`: dry-run opportunity score
+- `score_tier`: mapped to existing elite/strong/qualified/expansion bands
+- `score_factors`: numeric JSON factor map plus matched-term count
+- `source_city`: `Palm Desert`
+- `run_source`: `manual`
+- `last_seen_at`, `last_updated`
+
+APN, source record ID, matched term strings, and detailed opportunity flag objects are not written because no safe existing columns match those values.
+
+#### Run Logging
+Not added. `cron_run_log` is TLMA-oriented and has no source column. Its UI groups solely by city, so writing Palm Desert Aura rows there would incorrectly mix Aura health with TLMA health. Reuse requires a source-aware schema/UI change outside this scoped task.
+
+#### Safe Local Verification
+- Default dry run: HTTP 200, `dry_run=true`, `write_requested=false`, `write_confirmed=false`, 84 rows considered, 0 inserted, 0 updated, 0 errors.
+- Invalid write confirmation: HTTP 400, `write_requested=true`, `write_confirmed=false`, 0 inserted. Rejected before portal fetch or Supabase access.
+- Confirmed write route was intentionally not invoked.
+
+#### Verification Results
+- `npm.cmd run typecheck`: PASS
+- `npm.cmd run build`: PASS; existing Vite dynamic-import/chunk-size warnings only
+- `git diff --check`: PASS
+
+#### Manual Verification URLs
+Dry run:
+`https://app.poweronsolutionsllc.com/.netlify/functions/city-scraper?action=palm-desert-dry-run&pageSize=10&maxPages=2`
+
+Controlled write, only when explicitly approved:
+`https://app.poweronsolutionsllc.com/.netlify/functions/city-scraper?action=palm-desert-dry-run&pageSize=10&maxPages=2&write=true&confirm=palm-desert-import`
+
+#### Risks
+- The unique database constraint is tenant + permit number, so an identical permit number from another source would resolve to the existing tenant record.
+- Dry-run scoring is still the imported score; production scoring alignment remains a recommended follow-up.
+- Source record ID and APN are not persisted under the current schema.
+- Batch inserts can fail as a batch if a concurrent importer creates one of the same permits between lookup and insert; errors are reported and the route remains safely retryable.
+- No production write invocation has been performed yet.

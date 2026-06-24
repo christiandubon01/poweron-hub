@@ -68,6 +68,9 @@ const PALM_DESERT_AURA_URL =
 const PALM_DESERT_AURA_DESCRIPTOR =
   'serviceComponent://ui.search.components.forcesearch.scopedresultsdataprovider.' +
   'ScopedResultsDataProviderController/ACTION$getItems'
+const PALM_DESERT_WRITE_CONFIRMATION = 'palm-desert-import'
+const HUNTER_TENANT_ID = '31a60821-2796-41fa-b48d-d7df59e48198'
+const HUNTER_USER_ID = '6a5c2d43-cf37-45ff-9f22-d4d315683cf8'
 const PALM_DESERT_DEFAULT_TERMS = [
   'electrical',
   'tenant improvement',
@@ -467,6 +470,161 @@ function classifyPalmDesertOpportunity(permit: any) {
   }
 }
 
+function palmDesertScoreTier(score: number) {
+  if (score >= 85) return 'elite'
+  if (score >= 75) return 'strong'
+  if (score >= 60) return 'qualified'
+  return 'expansion'
+}
+
+function palmDesertPermitTypeCode(permitNumber: string | null) {
+  const match = String(permitNumber || '').trim().match(/^([A-Za-z]+)/)
+  return match ? match[1].toUpperCase() : null
+}
+
+function palmDesertScoreFactors(record: any) {
+  const factors: Record<string, number> = {}
+  for (const factor of record.score_factors || []) {
+    factors[String(factor)] = 1
+  }
+  factors.matched_terms = Array.isArray(record.matched_terms)
+    ? record.matched_terms.length
+    : 0
+  return factors
+}
+
+function palmDesertLeadRow(record: any, now: string) {
+  const dateOnly = (value: string | null | undefined) =>
+    value ? String(value).slice(0, 10) : null
+
+  return {
+    tenant_id: HUNTER_TENANT_ID,
+    user_id: HUNTER_USER_ID,
+    source: 'palm_desert_aura',
+    source_tag: 'city-portal',
+    lead_type: 'permit',
+    permit_number: record.permit_number,
+    permit_url: record.source_url,
+    permit_type_code: palmDesertPermitTypeCode(record.permit_number),
+    permit_type_label: 'Palm Desert Permit',
+    permit_status: record.status || record.stage || null,
+    applied_date: dateOnly(record.created_date),
+    issued_date: dateOnly(record.issue_date),
+    expired_date: dateOnly(record.expiration_date),
+    address: record.address || null,
+    city: 'Palm Desert',
+    description: record.description || null,
+    score: record.opportunity_score,
+    score_tier: palmDesertScoreTier(record.opportunity_score),
+    score_factors: palmDesertScoreFactors(record),
+    source_city: 'Palm Desert',
+    portal_url: record.source_url,
+    run_source: 'manual',
+    last_seen_at: now,
+    last_updated: now,
+  }
+}
+
+async function importPalmDesertLeads(supabase: any, records: any[]) {
+  let rowsInserted = 0
+  let rowsUpdated = 0
+  let rowsSkipped = 0
+  let existingDuplicates = 0
+  const errors: any[] = []
+  const now = new Date().toISOString()
+  const importable = records.filter(record => {
+    if (record.permit_number) return true
+    rowsSkipped += 1
+    errors.push({
+      source_record_id: record.source_record_id || null,
+      error: 'Missing permit_number; row skipped.',
+    })
+    return false
+  })
+
+  for (let offset = 0; offset < importable.length; offset += 100) {
+    const batch = importable.slice(offset, offset + 100)
+    const permitNumbers = batch.map(record => record.permit_number)
+    const { data: existingRows, error: lookupError } = await supabase
+      .from('hunter_leads')
+      .select('id, permit_number')
+      .eq('tenant_id', HUNTER_TENANT_ID)
+      .in('permit_number', permitNumbers)
+
+    if (lookupError) {
+      rowsSkipped += batch.length
+      errors.push({
+        batch_offset: offset,
+        error: `Existing-lead lookup failed: ${lookupError.message || String(lookupError)}`,
+      })
+      continue
+    }
+
+    const existingByPermit = new Map(
+      (existingRows || []).map((row: any) => [row.permit_number, row.id])
+    )
+    const existingRecords = batch.filter(record =>
+      existingByPermit.has(record.permit_number)
+    )
+    const newRecords = batch.filter(record =>
+      !existingByPermit.has(record.permit_number)
+    )
+    existingDuplicates += existingRecords.length
+
+    const updateResults = await mapWithConcurrency(
+      existingRecords,
+      6,
+      async record => {
+        const { error } = await supabase
+          .from('hunter_leads')
+          .update(palmDesertLeadRow(record, now))
+          .eq('id', existingByPermit.get(record.permit_number))
+        return { record, error }
+      }
+    )
+    for (const result of updateResults) {
+      if (result.error) {
+        rowsSkipped += 1
+        errors.push({
+          permit_number: result.record.permit_number,
+          error: result.error.message || String(result.error),
+        })
+      } else {
+        rowsUpdated += 1
+      }
+    }
+
+    if (newRecords.length) {
+      const { error: insertError } = await supabase
+        .from('hunter_leads')
+        .insert(newRecords.map(record => ({
+          ...palmDesertLeadRow(record, now),
+          status: 'new',
+          discovered_at: now,
+        })))
+
+      if (insertError) {
+        rowsSkipped += newRecords.length
+        errors.push({
+          batch_offset: offset,
+          permit_numbers: newRecords.map(record => record.permit_number),
+          error: `Insert batch failed: ${insertError.message || String(insertError)}`,
+        })
+      } else {
+        rowsInserted += newRecords.length
+      }
+    }
+  }
+
+  return {
+    rows_inserted: rowsInserted,
+    rows_updated: rowsUpdated,
+    rows_skipped: rowsSkipped,
+    existing_duplicate_count: existingDuplicates,
+    errors,
+  }
+}
+
 async function mapWithConcurrency<T, R>(
   values: T[],
   concurrency: number,
@@ -584,9 +742,38 @@ exports.handler = async (event: any) => {
   }
 
   // ── PALM DESERT DRY-RUN IMPORTER ──────────────────────────────────────
-  // Multi-term diagnostic importer. Fetches and classifies public records in
-  // memory only; it never creates a Supabase client or writes hunter_leads.
+  // Multi-term importer. Dry-run is the default; writes require both
+  // write=true and the exact Palm Desert confirmation token.
   if (params.action === 'palm-desert-dry-run') {
+    const writeRequested = String(params.write || 'false').toLowerCase() === 'true'
+    const writeConfirmed =
+      writeRequested && params.confirm === PALM_DESERT_WRITE_CONFIRMATION
+    const dryRun = !writeConfirmed
+
+    if (writeRequested && !writeConfirmed) {
+      return {
+        statusCode: 400,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({
+          source: 'palm_desert_aura',
+          mode: 'dry_run',
+          dry_run: true,
+          write_requested: true,
+          write_confirmed: false,
+          rows_considered: 0,
+          rows_inserted: 0,
+          rows_updated: 0,
+          rows_skipped: 0,
+          duplicate_count: 0,
+          error_count: 1,
+          errors: [{
+            error: `Write rejected. Pass confirm=${PALM_DESERT_WRITE_CONFIRMATION} exactly.`,
+          }],
+          timestamp: new Date().toISOString(),
+        }),
+      }
+    }
+
     const terms = parsePalmDesertTerms(params.terms)
     const pageSize = clampInteger(params.pageSize, 10, 1, 25)
     const maxPages = clampInteger(params.maxPages, 2, 1, 5)
@@ -611,6 +798,9 @@ exports.handler = async (event: any) => {
           body: JSON.stringify({
             source: 'palm_desert_aura',
             mode: 'dry_run',
+            dry_run: true,
+            write_requested: writeRequested,
+            write_confirmed: writeConfirmed,
             terms_searched: terms,
             page_size: pageSize,
             max_pages: maxPages,
@@ -621,6 +811,11 @@ exports.handler = async (event: any) => {
             unique_records: 0,
             high_opportunity_count: 0,
             skipped_completed_count: 0,
+            rows_considered: 0,
+            rows_inserted: 0,
+            rows_updated: 0,
+            rows_skipped: 0,
+            duplicate_count: 0,
             error_count: 1,
             warnings,
             errors: [{
@@ -742,6 +937,28 @@ exports.handler = async (event: any) => {
           String(a.permit_number || '').localeCompare(String(b.permit_number || ''))
         )
       const recordsPreview = scoredRecords.slice(0, 200)
+      const inMemoryDuplicateCount = Math.max(0, rawRecordsSeen - classifiedRecords.length)
+      let importResult = {
+        rows_inserted: 0,
+        rows_updated: 0,
+        rows_skipped: 0,
+        existing_duplicate_count: 0,
+        errors: [] as any[],
+      }
+
+      if (writeConfirmed) {
+        const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || ''
+        const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+        if (!supabaseUrl || !supabaseKey) {
+          importResult.errors.push({
+            error: 'Supabase env vars not configured; no rows were written.',
+          })
+          importResult.rows_skipped = scoredRecords.length
+        } else {
+          const supabase = createClient(supabaseUrl, supabaseKey)
+          importResult = await importPalmDesertLeads(supabase, scoredRecords)
+        }
+      }
 
       if (scoredRecords.length > recordsPreview.length) {
         warnings.push(
@@ -757,7 +974,10 @@ exports.handler = async (event: any) => {
         headers: CORS_HEADERS,
         body: JSON.stringify({
           source: 'palm_desert_aura',
-          mode: 'dry_run',
+          mode: dryRun ? 'dry_run' : 'write',
+          dry_run: dryRun,
+          write_requested: writeRequested,
+          write_confirmed: writeConfirmed,
           terms_searched: terms,
           page_size: pageSize,
           max_pages: maxPages,
@@ -773,9 +993,18 @@ exports.handler = async (event: any) => {
             record => record.opportunity_score >= 60
           ).length,
           skipped_completed_count: includeCompleted ? 0 : skippedCompletedCount,
-          error_count: errors.length,
+          rows_considered: scoredRecords.length,
+          rows_inserted: importResult.rows_inserted,
+          rows_updated: importResult.rows_updated,
+          rows_skipped:
+            classifiedRecords.length - scoredRecords.length + importResult.rows_skipped,
+          duplicate_count:
+            inMemoryDuplicateCount + importResult.existing_duplicate_count,
+          in_memory_duplicate_count: inMemoryDuplicateCount,
+          existing_duplicate_count: importResult.existing_duplicate_count,
+          error_count: errors.length + importResult.errors.length,
           warnings: Array.from(new Set(warnings)),
-          errors,
+          errors: [...errors, ...importResult.errors],
           term_results: termResults,
           records_preview_truncated: scoredRecords.length > recordsPreview.length,
           records_preview: recordsPreview,
@@ -788,7 +1017,10 @@ exports.handler = async (event: any) => {
         headers: CORS_HEADERS,
         body: JSON.stringify({
           source: 'palm_desert_aura',
-          mode: 'dry_run',
+          mode: dryRun ? 'dry_run' : 'write',
+          dry_run: dryRun,
+          write_requested: writeRequested,
+          write_confirmed: writeConfirmed,
           terms_searched: terms,
           page_size: pageSize,
           max_pages: maxPages,
@@ -799,6 +1031,11 @@ exports.handler = async (event: any) => {
           unique_records: uniquePermits.size,
           high_opportunity_count: 0,
           skipped_completed_count: 0,
+          rows_considered: 0,
+          rows_inserted: 0,
+          rows_updated: 0,
+          rows_skipped: uniquePermits.size,
+          duplicate_count: Math.max(0, rawRecordsSeen - uniquePermits.size),
           error_count: errors.length + 1,
           warnings,
           errors: [
