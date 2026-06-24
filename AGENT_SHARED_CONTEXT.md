@@ -22,6 +22,7 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | CFOT-Final-Controls (this agent) | Graph Dashboard CFOT Final Toggle Placement + Service Call Markers | src/components/v15r/charts/CFOTChart.tsx | DONE — awaiting user review | RELEASED | 2026-06-23 |
 | EVR-8Week-Audit (this agent) | Graph Dashboard EVR + 8-Week Cash Flow Projection Audit/Redesign | src/components/v15r/V15rDashboard.tsx, src/components/v15r/charts/EVRChart.tsx, src/components/v15r/charts/SVGCharts.tsx, src/services/revenueTimelineService.ts | AUDIT COMPLETE — awaiting user approval to implement | AWAITING APPROVAL | 2026-06-23 |
 | Codex-Palm-Desert-Aura-Probe | Palm Desert Salesforce/Aura Permit Probe | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — local live probe passed | RELEASED | 2026-06-24 |
+| Codex-Palm-Desert-Aura-Dry-Run | Palm Desert Aura Dry-Run Importer | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — local live dry run passed | RELEASED | 2026-06-24 |
 
 ---
 
@@ -1032,3 +1033,113 @@ The public detail URL pattern was also checked and returned HTTP 200. Salesforce
 
 #### Next Recommended Task
 After production verification, design the full Palm Desert importer as a separate scoped task: pagination/query strategy, permit relevance filtering, scoring integration, dedup/upsert behavior, run logging, and dry-run review before enabling any `hunter_leads` writes.
+
+---
+
+### 2026-06-24 — Palm Desert Aura Dry-Run Importer
+
+**Agent:** Codex GPT-5.5 Medium Reasoning
+**Mode:** Scoped dry-run implementation
+**Feature Area:** Palm Desert Aura Dry-Run Importer
+**Branch:** main
+
+#### Files Inspected
+- `AGENT_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md` (Solar Upgrade-specific; not applicable here)
+- `netlify/functions/city-scraper.ts`
+- `netlify/functions/city-scraper/shared.ts`
+- `netlify/functions/city-scraper/indio.ts`
+- `netlify/functions/city-scraper/palm-springs.ts`
+- `src/components/hunter/HunterPanel.tsx`
+- `src/store/hunterStore.ts`
+- `netlify.toml`
+- `package.json`
+
+#### Files Changed
+- `netlify/functions/city-scraper.ts`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### Dry-Run Route Added
+`GET /.netlify/functions/city-scraper?action=palm-desert-dry-run&pageSize=10&maxPages=2`
+
+Optional parameters:
+- `terms`: comma-separated, deduped, capped at 15
+- `pageSize`: default 10, clamped to 1–25
+- `maxPages`: default 2, clamped to 1–5
+- `minScore`: default 40, clamped to 0–100
+- `includeCompleted`: default false
+
+Default terms:
+`electrical`, `tenant improvement`, `lighting`, `panel`, `service`, `meter`, `sub meter`, `EV`, `solar`, `commercial`, `el paseo`.
+
+The dry run uses one fresh public Aura bootstrap per invocation and reuses it across bounded three-term concurrency. Pages within each term remain sequential and stop when `moreResultsAvailable` is false, an empty page is returned, or an error occurs.
+
+#### Normalized Fields
+- `permit_number`
+- `source_record_id`
+- `address`
+- `city`
+- `apn`
+- `stage`
+- `status`
+- `description`
+- `issue_date`
+- `issue_date_display`
+- `created_date`
+- `created_date_display`
+- `last_modified_date`
+- `expiration_date`
+- `source_url`
+- `matched_terms`
+
+#### Dedupe Strategy
+In-memory map keyed by `source_record_id` first. If no record ID is present, fallback is normalized lowercase `permit_number`. Duplicate hits merge their `matched_terms`.
+
+#### Scoring / Classification Strategy
+The existing EnerGov scorer was not reused because it depends on EnerGov-specific work-class and contractor fields that the Aura response does not provide. A dry-run-only classifier adds:
+- +35 electrical keyword signal
+- +25 tenant-improvement signal
+- +20 commercial signal
+- +15 active-status signal
+- up to +10 for matching multiple search terms
+- penalties for completed, cancelled/expired, or records stale by age
+
+It returns `opportunity_score`, `opportunity_tier`, `score_factors`, `opportunity_flags`, and matched keyword groups. This is explicitly reported as a preview heuristic; a production importer should align it with the canonical HUNTER model before writes are enabled.
+
+#### Local Verification
+Bundled the Netlify function locally and invoked the handler against the live public Palm Desert Aura endpoint.
+
+Default dry-run result:
+- Elapsed: about 3.9 seconds
+- Pages requested: 21
+- Raw records seen: 200
+- Unique records: 165
+- Eligible records after completed/cancelled exclusion: 113
+- Records meeting default minimum score 40: 84
+- High-opportunity records (score 60+): 23
+- Completed/cancelled skipped: 52
+- Errors: 0
+
+Top result:
+- `CRAD-25-5018`
+- Score: 99
+- Status: In Progress
+- Matched terms: tenant improvement, lighting, el paseo
+- Flags: electrical, commercial, tenant improvement, active
+
+The original `palm-desert-probe` route was regression-tested after the refactor and still returned the confirmed five records with `successful_aura_json`.
+
+#### Verification Results
+- `npm.cmd run typecheck`: PASS
+- `npm.cmd run build`: PASS; existing Vite dynamic-import/chunk-size warnings only
+- `git diff --check`: PASS
+
+#### Production Verification URL
+`https://app.poweronsolutionsllc.com/.netlify/functions/city-scraper?action=palm-desert-dry-run&pageSize=10&maxPages=2`
+
+#### Risks
+- The global search action is relevance/term based, not a complete date-ordered permit feed. Search-term coverage must be reviewed before calling this exhaustive.
+- Production scoring is not yet aligned; dry-run scores must not be persisted as canonical HUNTER scores.
+- Search results can overlap heavily, making in-memory dedupe essential.
+- Aura loader and response shapes can change; helper-level response classifications preserve diagnostics.
+- The default request completed well inside the 26-second Netlify timeout locally, but production runtime should still be measured after deploy.
