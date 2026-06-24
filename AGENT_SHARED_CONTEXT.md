@@ -20,6 +20,7 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | CFOT-Pan-Zoom (this agent) | Graph Dashboard CFOT Smooth Pan + Zoom Navigation | src/components/v15r/charts/CFOTChart.tsx | DONE — awaiting user review | RELEASED | 2026-06-23 |
 | CFOT-Source-Toggles (this agent) | Graph Dashboard CFOT Source Toggle Filters | src/components/v15r/charts/CFOTChart.tsx | DONE — awaiting user review | RELEASED | 2026-06-23 |
 | CFOT-Final-Controls (this agent) | Graph Dashboard CFOT Final Toggle Placement + Service Call Markers | src/components/v15r/charts/CFOTChart.tsx | DONE — awaiting user review | RELEASED | 2026-06-23 |
+| EVR-8Week-Audit (this agent) | Graph Dashboard EVR + 8-Week Cash Flow Projection Audit/Redesign | src/components/v15r/V15rDashboard.tsx, src/components/v15r/charts/EVRChart.tsx, src/components/v15r/charts/SVGCharts.tsx, src/services/revenueTimelineService.ts | AUDIT COMPLETE — awaiting user approval to implement | AWAITING APPROVAL | 2026-06-23 |
 
 ---
 
@@ -875,3 +876,71 @@ None — verification only.
 - **TLMA is blocked from Supabase Edge Functions** — confirmed Cloudflare JS challenge
 - **Palm Desert TLMA coverage** — blocked (same Cloudflare block; TLMA is not the right source anyway; Palm Desert uses Clariti)
 - **EnerGov (Indio + Palm Springs)** — unaffected, runs from Netlify, not Supabase
+
+---
+
+### 2026-06-24 — Netlify TLMA Reachability Probe (committed 051834c)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Scoped implementation — diagnostic probe only, no DB writes
+**Feature Area:** Netlify TLMA Reachability Probe
+**Branch:** main | HEAD = 051834c
+**Typecheck:** 0 errors ✅
+
+#### Files Inspected
+- `netlify/functions/city-scraper.ts`
+- `netlify/functions/city-scraper/shared.ts`
+- `netlify.toml`
+- `package.json` scripts
+- `supabase/functions/tlma-scraper/index.ts` (for header/URL reference)
+
+#### Files Changed
+- `netlify/functions/city-scraper.ts` (+109 lines)
+
+#### Probe Route Added
+```
+GET /.netlify/functions/city-scraper?action=tlma-probe
+Optional: &city=INDIO&type=BNR&days_back=30
+```
+
+Defaults: city=INDIO, type=BNR, days_back=30.
+Supported type codes: BNR, BTI, BMN, BRS, BAR, BAS, BSP, BMR.
+
+#### What the Probe Returns
+```json
+{
+  "probe": "tlma-reachability",
+  "city": "INDIO",
+  "permit_type": "Commercial Buildings (BNR)",
+  "permit_type_code": "BNR",
+  "days_back": 30,
+  "target_url": "https://publiclookup.rivco.org/?...",
+  "timestamp": "2026-06-24T...",
+  "http_status": 200 | 403 | ...,
+  "is_cloudflare_challenge": true | false,
+  "looks_parseable": true | false,
+  "body_snippet": "first 300 chars of HTML-stripped response"
+}
+```
+
+#### Local Verification
+No `netlify dev` script in repo — Netlify function invocation requires push + Netlify CI deploy. No local result available.
+
+#### Deployment
+Commit `051834c` pushed to `origin/main` will trigger Netlify CI auto-deploy.
+
+**User must:**
+1. Push: `git push`
+2. Wait for Netlify build (~1–2 min)
+3. Test: `https://<your-netlify-domain>/.netlify/functions/city-scraper?action=tlma-probe&city=INDIO&type=BNR&days_back=30`
+
+#### Expected Outcomes After Deploy
+- **If `is_cloudflare_challenge: false` and `http_status: 200`** → Netlify IPs can reach TLMA. Migrate the full TLMA scraper to Netlify (Option A).
+- **If `is_cloudflare_challenge: true` and `http_status: 403`** → Both Supabase and Netlify are blocked. Abandon TLMA automated scraping; pivot to Option D (city-specific: EnerGov for Indio/Palm Springs, Clariti for Palm Desert).
+
+#### Risks
+- Probe makes one live request to a public portal per invocation — no abuse risk at manual-trigger frequency
+- No DB changes; no side effects
+
+#### Next Recommended Task
+**Push commit `051834c`**, then run the probe and report the result back. The result determines whether to migrate TLMA to Netlify or abandon TLMA automation entirely.
