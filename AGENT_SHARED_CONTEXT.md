@@ -21,6 +21,7 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | CFOT-Source-Toggles (this agent) | Graph Dashboard CFOT Source Toggle Filters | src/components/v15r/charts/CFOTChart.tsx | DONE — awaiting user review | RELEASED | 2026-06-23 |
 | CFOT-Final-Controls (this agent) | Graph Dashboard CFOT Final Toggle Placement + Service Call Markers | src/components/v15r/charts/CFOTChart.tsx | DONE — awaiting user review | RELEASED | 2026-06-23 |
 | EVR-8Week-Audit (this agent) | Graph Dashboard EVR + 8-Week Cash Flow Projection Audit/Redesign | src/components/v15r/V15rDashboard.tsx, src/components/v15r/charts/EVRChart.tsx, src/components/v15r/charts/SVGCharts.tsx, src/services/revenueTimelineService.ts | AUDIT COMPLETE — awaiting user approval to implement | AWAITING APPROVAL | 2026-06-23 |
+| Codex-Palm-Desert-Aura-Probe | Palm Desert Salesforce/Aura Permit Probe | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — local live probe passed | RELEASED | 2026-06-24 |
 
 ---
 
@@ -944,3 +945,90 @@ Commit `051834c` pushed to `origin/main` will trigger Netlify CI auto-deploy.
 
 #### Next Recommended Task
 **Push commit `051834c`**, then run the probe and report the result back. The result determines whether to migrate TLMA to Netlify or abandon TLMA automation entirely.
+
+---
+
+### 2026-06-24 — Palm Desert Salesforce/Aura Permit Probe
+
+**Agent:** Codex GPT-5.5 Medium Reasoning
+**Mode:** Scoped implementation
+**Feature Area:** Palm Desert Salesforce/Aura Permit Probe
+**Branch:** main
+
+#### Files Inspected
+- `AGENT_SHARED_CONTEXT.md`
+- `solarupgrade_agent_context/SOLARUPGRADE_CODEX.md` (Solar Upgrade-specific; not applicable here)
+- `netlify/functions/city-scraper.ts`
+- `netlify/functions/city-scraper/shared.ts`
+- `netlify/functions/city-scraper/indio.ts`
+- `netlify/functions/city-scraper/palm-springs.ts`
+- `src/components/hunter/HunterPanel.tsx`
+- `src/store/hunterStore.ts`
+- `netlify.toml`
+- `package.json`
+
+#### Files Changed
+- `netlify/functions/city-scraper.ts`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### Probe Route Added
+`GET /.netlify/functions/city-scraper?action=palm-desert-probe&term=el%20paseo&pageSize=5&page=1`
+
+Defaults: `term=el paseo`, `pageSize=5`, `page=1`. `pageSize` is clamped to 1–50 and `page` to 1–100.
+
+#### Aura Endpoint Used
+`POST https://palmdesert.my.site.com/s/sfsites/aura?r=79&ui-search-components-forcesearch-scopedresultsdataprovider.ScopedResultsDataProvider.getItems=1`
+
+Descriptor:
+`serviceComponent://ui.search.components.forcesearch.scopedresultsdataprovider.ScopedResultsDataProviderController/ACTION$getItems`
+
+The probe first fetches the public global-search page for the requested term and extracts the current `fwuid`, `app`, and loaded application value from its encoded Aura loader context. It then sends a form-encoded Aura request for `MUSW__Permit2__c`.
+
+No copied browser cookies, authenticated session headers, request IDs, trace IDs, page scope IDs, or telemetry headers are used. No Supabase client is created on this route; there are no DB writes or scoring changes.
+
+#### Fields Parsed
+- Permit number and source record ID
+- Address and city
+- APN
+- Stage and status (display labels preferred)
+- Description
+- Issue date and display date
+- Created date and display date
+- Last modified date
+- Expiration date
+- Public permit detail URL
+- Recursive raw field-name discovery for diagnostics
+
+Response classification covers successful Aura JSON, Salesforce/Aura error, HTML login page, blocked/challenge page, unexpected HTML, bootstrap parse failure, JSON parse failure, and fetch failure.
+
+#### Local Verification
+Bundled the Netlify function locally with the installed esbuild runtime and invoked the handler directly against the live public endpoint.
+
+Result:
+- `response_type`: `successful_aura_json`
+- Bootstrap HTTP status: 200
+- Aura HTTP status: 200
+- `has_error`: false
+- `totalSize`: 5
+- `moreResultsAvailable`: true
+- Sample count: 5
+- Permits: `DEMO-26-0018`, `CRAD-25-5018`, `DFPP-26-0001`, `SIGN-26-0023`, `TIMP25-0058`
+
+The public detail URL pattern was also checked and returned HTTP 200. Salesforce canonicalizes permit slugs to lowercase alphanumeric text.
+
+#### Verification Results
+- `npm.cmd run typecheck`: PASS
+- `npm.cmd run build`: PASS after rerunning outside the filesystem sandbox; existing Vite dynamic-import/chunk-size warnings only
+- `git diff --check`: PASS
+
+#### Production Verification URL
+`https://app.poweronsolutionsllc.com/.netlify/functions/city-scraper?action=palm-desert-probe&term=el%20paseo&pageSize=5&page=1`
+
+#### Risks
+- Aura `fwuid` and loaded application values can rotate; the probe mitigates this by extracting them from a fresh public search page on every invocation.
+- Salesforce can change the encoded loader URL or Aura response shape; explicit response classifications and body snippets make that diagnosable.
+- The confirmed endpoint performs broad text search, not date-window filtering. A full importer will need a deliberate crawl/query strategy plus deduplication before any DB writes.
+- Netlify production egress still requires post-deploy verification even though the local backend invocation succeeded without cookies/session state.
+
+#### Next Recommended Task
+After production verification, design the full Palm Desert importer as a separate scoped task: pagination/query strategy, permit relevance filtering, scoring integration, dedup/upsert behavior, run logging, and dry-run review before enabling any `hunter_leads` writes.
