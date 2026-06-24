@@ -46,6 +46,55 @@ export interface ScrapeResult {
   permits_scored: number
 }
 
+// ── EnerGov response shape extractor ─────────────────────────────────────
+// Tyler EnerGov CSS hosts have shipped at least two distinct response shapes.
+// The comment on the original parse line described shape B but the code read
+// shape A — causing silent 0-permit returns on whichever shape doesn't match.
+// This helper tries all known paths in priority order and logs which matched.
+// It never logs permit field values so no PII hits the function log.
+function extractPermitsFromResponse(
+  data: any,
+  cityLabel: string,
+  page: number
+): EnerGovPermit[] {
+  // Shape A (CSS v2+): { Result: { EntityResults: [...], Total: N } }
+  if (Array.isArray(data?.Result?.EntityResults)) {
+    console.log(
+      `[city-scraper] ${cityLabel} p${page}: shape=A (Result.EntityResults), count=${data.Result.EntityResults.length}`
+    )
+    return data.Result.EntityResults
+  }
+  // Shape B (CSS v1): { Permits: { Result: [...], Total: N } }
+  if (Array.isArray(data?.Permits?.Result)) {
+    console.log(
+      `[city-scraper] ${cityLabel} p${page}: shape=B (Permits.Result), count=${data.Permits.Result.length}`
+    )
+    return data.Permits.Result
+  }
+  // Shape C (nested): { Permits: { Result: { EntityResults: [...] } } }
+  if (Array.isArray(data?.Permits?.Result?.EntityResults)) {
+    console.log(
+      `[city-scraper] ${cityLabel} p${page}: shape=C (Permits.Result.EntityResults), count=${data.Permits.Result.EntityResults.length}`
+    )
+    return data.Permits.Result.EntityResults
+  }
+  // Shape D: top-level array (rare but documented in some EnerGov sandbox responses)
+  if (Array.isArray(data)) {
+    console.log(
+      `[city-scraper] ${cityLabel} p${page}: shape=D (top-level array), count=${data.length}`
+    )
+    return data
+  }
+  // Unknown — log top-level keys only (no values) to aid future debugging
+  const topKeys = data && typeof data === 'object' ? Object.keys(data) : []
+  console.warn(
+    `[city-scraper] ${cityLabel} p${page}: UNKNOWN response shape. ` +
+      `Top-level keys: [${topKeys.join(', ')}]. Returning empty array. ` +
+      `Check DevTools on the live portal to confirm the actual shape.`
+  )
+  return []
+}
+
 // ── EnerGov API fetch ─────────────────────────────────────────────────────
 
 function toISO(d: Date): string {
@@ -125,8 +174,8 @@ export async function fetchEnerGovPermits(
     }
 
     const data = await res.json()
-    // EnerGov response shape: { Permits: { Result: [...], Total: N } }
-    const permits: EnerGovPermit[] = data?.Result?.EntityResults ?? []
+    // extractPermitsFromResponse handles all known Tyler EnerGov CSS shapes
+    const permits: EnerGovPermit[] = extractPermitsFromResponse(data, config.cityLabel, page)
     allPermits.push(...permits)
 
     // Stop paginating when we get fewer results than a full page
@@ -324,7 +373,6 @@ export async function scrapeCity(
         source_city: config.cityLabel,
         portal_url: portalUrl,
         run_source: source,
-        contractor_name: p.ContractorName ?? null,
         contractor_name: p.ContractorName ?? null,
       }
 
