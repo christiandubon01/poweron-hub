@@ -119,4 +119,7 @@ export interface LiveRunReport {
   last_seen_touched: number;
   skipped_unchanged: number;
   errors: string[];
+  /** HTML-stripped body snippet (<=240 chars) from the first HTTP error.
+   *  Populated only when at least one request fails. Identifies WAF/block type. */
+  first_error_body?: string;
 }

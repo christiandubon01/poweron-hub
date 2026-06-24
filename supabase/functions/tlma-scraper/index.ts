@@ -39,17 +39,54 @@ const TLMA_BASE_URL = "https://publiclookup.rivco.org/";
 // Accept, Accept-Language, Accept-Encoding, and Referer so the request
 // looks like it came from a normal user navigating the site.
 const BROWSER_HEADERS: Record<string, string> = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+  // Chrome 130 stable build (Oct 2024) — specific build number avoids the
+  // 130.0.0.0 pattern that some WAFs recognise as a placeholder UA string.
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.6723.116 Safari/537.36",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9",
   "Accept-Encoding": "gzip, deflate, br",
+  "Cache-Control": "max-age=0",
   "Referer": "https://publiclookup.rivco.org/",
   "Upgrade-Insecure-Requests": "1",
   "Sec-Fetch-Dest": "document",
   "Sec-Fetch-Mode": "navigate",
+  // same-origin is correct: Referer and target share the same origin.
+  // For the root preflight (no Referer) we use Sec-Fetch-Site: none below.
   "Sec-Fetch-Site": "same-origin",
   "Sec-Fetch-User": "?1",
 };
+
+// Fetch the TLMA root page once per run to obtain an ASP.NET session cookie.
+// Browsers do this automatically on first visit; server-side requests must
+// replicate it. If the preflight fails we proceed without a cookie — the
+// 403 body diagnostic will then show whether a session is required.
+async function fetchTlmaSessionCookie(): Promise<string> {
+  try {
+    const resp = await fetch(TLMA_BASE_URL, {
+      headers: {
+        "User-Agent": BROWSER_HEADERS["User-Agent"],
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+        "Cache-Control": "max-age=0",
+      },
+      redirect: "follow",
+    });
+    const raw = resp.headers.get("set-cookie") ?? "";
+    if (!raw) return "";
+    // Collapse multi-value Set-Cookie into "name=val; name2=val2" string.
+    // Split on commas that precede a new name= token (avoids splitting on
+    // commas inside Expires date values like "Thu, 01 Jan 2099").
+    const pairs = raw.split(/,(?=[^;]+=)/).map((c) => c.split(";")[0].trim()).filter(Boolean);
+    return pairs.join("; ");
+  } catch (_e) {
+    return "";
+  }
+}
 
 // CORS headers — added in v9 to unblock browser-initiated calls
 // (e.g. HunterPanel manual Scan Now). Purely additive: does not change
@@ -172,6 +209,19 @@ serve(async (req: Request) => {
   const errors: string[] = [];
   const allPermits: TLMAPermit[] = [];
 
+  // Preflight: fetch root page to get ASP.NET session cookie before the
+  // search loop. Without this cookie some server-side configurations return
+  // 403 even for public search endpoints.
+  const sessionCookie = await fetchTlmaSessionCookie();
+  const searchHeaders: Record<string, string> = sessionCookie
+    ? { ...BROWSER_HEADERS, "Cookie": sessionCookie }
+    : { ...BROWSER_HEADERS };
+
+  // Capture body snippet from the first HTTP error for UI diagnostics.
+  // Reading the body of every error response would be slow and noisy; we
+  // only need one to identify the block type (Cloudflare, IP block page, etc.)
+  let firstErrorBodyHint = "";
+
   // ----- SEARCH MATRIX LOOP -----
   for (const permitType of PERMIT_TYPES) {
     for (const city of citiesToScan) {
@@ -187,10 +237,19 @@ serve(async (req: Request) => {
         });
         const fetchUrl = TLMA_BASE_URL + "?" + params.toString();
         const resp = await fetch(fetchUrl, {
-          headers: BROWSER_HEADERS,
+          headers: searchHeaders,
         });
         if (!resp.ok) {
-          errors.push(`HTTP ${resp.status} for ${city} / ${permitType}`);
+          let bodyHint = "";
+          if (!firstErrorBodyHint) {
+            try {
+              const raw = await resp.text();
+              const stripped = raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240);
+              firstErrorBodyHint = stripped;
+              bodyHint = ` | body: ${stripped}`;
+            } catch (_) { /* non-fatal */ }
+          }
+          errors.push(`HTTP ${resp.status} for ${city} / ${permitType}${bodyHint}`);
           continue;
         }
         const html = await resp.text();
@@ -206,7 +265,7 @@ serve(async (req: Request) => {
           params.set("Page", String(page));
           const pageUrl = TLMA_BASE_URL + "?" + params.toString();
           const pageResp = await fetch(pageUrl, {
-            headers: BROWSER_HEADERS,
+            headers: searchHeaders,
           });
           if (!pageResp.ok) {
             errors.push(
@@ -340,6 +399,7 @@ serve(async (req: Request) => {
     last_seen_touched: lastSeenTouched,
     skipped_unchanged: lastSeenTouched,
     errors,
+    ...(firstErrorBodyHint ? { first_error_body: firstErrorBodyHint } : {}),
   };
 
   // ----- RUN LOGGING (v9): final update -----

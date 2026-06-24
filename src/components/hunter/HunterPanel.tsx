@@ -470,8 +470,12 @@ const handleMapLeadSelect = (leadId: string) => {
       const allFailed = errorCount > 0 && errorCount >= matrixSize && newCount === 0 && updatedCount === 0
       const scanStatus = allFailed ? 'Scan FAILED' : errorCount > 0 ? 'Scan partial' : 'Scan complete'
       const cityLabel = tlmaCity ? ` [${tlmaCity}]` : ''
+      const firstErrorBody: string = typeof result.first_error_body === 'string' ? result.first_error_body : ''
+      const isBlocked = errorMessages.length > 0 && errorMessages[0].includes('403')
       const errorHint = errorMessages.length > 0
         ? `\n\nFirst error: ${errorMessages[0]}` +
+          (firstErrorBody ? `\nPage content: ${firstErrorBody}` : '') +
+          (isBlocked ? '\n\nThe TLMA portal may be blocking server-side requests. Check Supabase logs for the full response body.' : '') +
           (errorMessages.length > 1 ? `\n(+${errorMessages.length - 1} more in Supabase logs)` : '')
         : ''
       alert(
