@@ -477,6 +477,46 @@ export default function CustomerPortalView() {
   const [showTime3, setShowTime3] = useState(false)
   const [mediaFiles, setMediaFiles] = useState<UploadedFile[]>([])
   const [pdfFiles, setPdfFiles] = useState<UploadedFile[]>([])
+  const [attribution, setAttribution] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    try {
+      const ATTR_KEY = 'poweron_attribution'
+      const UTM_FIELDS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'gbraid', 'wbraid']
+
+      // Load any previously stored attribution from this session/browser
+      let stored: Record<string, string> = {}
+      try {
+        const raw = localStorage.getItem(ATTR_KEY)
+        if (raw) stored = JSON.parse(raw)
+      } catch { /* ignore */ }
+
+      // Pull UTM/click params from the current URL
+      const params = new URLSearchParams(window.location.search)
+      const fromUrl: Record<string, string> = {}
+      for (const field of UTM_FIELDS) {
+        const val = params.get(field)
+        if (val) fromUrl[field] = val
+      }
+
+      // Merge: URL params override stored values for matching keys
+      const merged: Record<string, string> = { ...stored, ...fromUrl }
+
+      // landing_page = the first URL ever captured for this session; preserve if already set
+      if (!merged.landing_page) merged.landing_page = window.location.href
+
+      // page_url = the portal page URL (current at form mount)
+      merged.page_url = window.location.href
+
+      // referrer = document referrer at page load; preserve if already set
+      if (document.referrer && !merged.referrer) merged.referrer = document.referrer
+
+      // Persist merged attribution so subsequent pages in the same session inherit it
+      try { localStorage.setItem(ATTR_KEY, JSON.stringify(merged)) } catch { /* ignore */ }
+
+      setAttribution(merged)
+    } catch { /* non-critical — never breaks the portal */ }
+  }, [])
 
   const setF = (key: keyof FormState) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -556,6 +596,15 @@ export default function CustomerPortalView() {
         if (noteParts.length) payload.notes = noteParts.join(' | ')
       }
 
+      // Append attribution safely — preserves in notes so insert never fails
+      try {
+        const attrParts = Object.entries(attribution).map(([k, v]) => `${k}=${v}`)
+        if (attrParts.length) {
+          const attrStr = 'Attribution: ' + attrParts.join(' ')
+          payload.notes = payload.notes ? `${payload.notes} | ${attrStr}` : attrStr
+        }
+      } catch { /* non-critical */ }
+
       // Insert via direct REST API (bypasses auth session for mobile compatibility)
       const { data, error: dbError } = await fetch(`${SUPABASE_URL}/rest/v1/portal_requests`, {
         method: 'POST',
@@ -596,6 +645,29 @@ export default function CustomerPortalView() {
 
       setSubmittedId(data.id)
       setSubmitted(true)
+
+      // Internal lead notification — fire and forget, never blocks lead save
+      fetch('/.netlify/functions/notify-new-lead', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId:     data.id,
+          name:          form.name.trim(),
+          phone:         form.phone.trim() || null,
+          email:         form.email.trim() || null,
+          address:       form.address.trim() || null,
+          city:          form.city.trim() || null,
+          serviceCategory: form.service_category,
+          requestType:   tab === 'gc' ? 'GC / Sub-Contractor' : 'Homeowner',
+          description:   form.description.trim() || null,
+          preferredDate: form.preferred_date || null,
+          preferredTime: times || null,
+          source:        'customer_portal',
+          attribution,
+          notes:         payload.notes || null,
+          submittedAt:   new Date().toISOString(),
+        }),
+      }).catch(() => {})
 
       // Send confirmation email (fire and forget)
       if (form.email.trim()) {

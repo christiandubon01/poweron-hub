@@ -25,7 +25,7 @@ const FROM_ADDRESS   = 'Power On Solutions <app@poweronsolutionsllc.com>'
 const COMPANY_NAME   = 'Power On Solutions LLC'
 const LICENSE_NUMBER = '1151468'
 const CSLB_VERIFY_URL = `https://www.cslb.ca.gov/OnlineServices/CheckLicenseII/CheckLicense.aspx?LicNum=${LICENSE_NUMBER}`
-const PHONE_DISPLAY  = '(760) 555-0100'   // Replace with real number
+const PHONE_DISPLAY  = '(760) 623-8962'
 const WEBSITE_URL    = 'https://poweronsolutionsllc.com'
 
 const CORS_HEADERS = {

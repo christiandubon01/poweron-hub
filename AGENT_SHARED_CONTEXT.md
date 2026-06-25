@@ -27,10 +27,90 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Codex-Palm-Desert-Aura-Controlled-Importer | Palm Desert Aura Controlled Importer | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — safe paths verified, write not invoked | RELEASED | 2026-06-24 |
 | Codex-Permit-Lead-Title-Fallback | Imported Permit Lead Title Fallback | src/components/hunter/HunterLeadCard.tsx, AGENT_SHARED_CONTEXT.md | DONE — title fallback implemented | RELEASED | 2026-06-24 |
 | Codex-Palm-Desert-Geocode-Backfill | Palm Desert Imported Lead Map Coordinates | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — guarded backfill dry-run passed | RELEASED | 2026-06-24 |
+| App-Phase1-Lead-Notify | Internal lead notification + attribution capture | src/views/CustomerPortalView.tsx, netlify/functions/notify-new-lead.ts, netlify/functions/portal-confirm-email.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ | RELEASED | 2026-06-24 |
 
 ---
 
 ## Audit & Change Log
+
+### 2026-06-24 — App Phase 1: Internal Lead Notification + Attribution Capture
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Scoped implementation
+**Feature Area:** Portal lead notification + marketing attribution
+**Branch:** main
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 0 errors, 15.25s (pre-existing chunk-size warnings only)
+
+#### Files Changed (3)
+
+| File | Change |
+|---|---|
+| `netlify/functions/notify-new-lead.ts` | NEW — internal Resend email notification function |
+| `src/views/CustomerPortalView.tsx` | Attribution capture at mount + fire notify-new-lead after save |
+| `netlify/functions/portal-confirm-email.ts` | Fixed placeholder phone `(760) 555-0100` → `(760) 623-8962` |
+
+#### What Was Implemented
+
+**1. `notify-new-lead.ts` (new Netlify function)**
+- POST endpoint, same pattern as `notifyNewBetaUser.ts`
+- FROM: `app@poweronsolutionsllc.com` (consistent with `portal-confirm-email.ts` verified domain)
+- TO: `app@poweronsolutionsllc.com`
+- Subject: `New Portal Lead — {name} · {serviceCategory}`
+- HTML email: lead table (name, phone, email, address, city, service, request type, submitted, request ID) + notes block + green attribution block
+- Attribution section extracted from notes string for clean visual display
+- Requires `RESEND_API_KEY` env var (same as all other notification functions)
+
+**2. `CustomerPortalView.tsx` — Attribution capture**
+- New `attribution` state (`Record<string, string>`)
+- New `useEffect` at mount (try/catch, non-critical) captures: `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `gclid`, `gbraid`, `wbraid`, `page_url` (`window.location.href`), `referrer` (`document.referrer`)
+- Attribution appended to `payload.notes` as `Attribution: key=val key=val ...` using the existing `|` separator pattern — existing GC company/ideal_date notes are preserved
+- No new Supabase columns added; attribution lives in the existing `notes` field
+
+**3. `CustomerPortalView.tsx` — Notify call**
+- After `setSubmitted(true)` (inside try block), fire-and-forget `fetch('/.netlify/functions/notify-new-lead', {...}).catch(() => {})`
+- Passes: requestId, name, phone, email, address, city, serviceCategory, requestType, notes (with attribution), submittedAt
+- Lead creation flow is completely unaffected by any failure in this call
+
+#### Safety Guarantees
+- Lead creation (`portal_requests` insert) never fails because of notification or attribution logic
+- Attribution capture is wrapped in try/catch; a missing `window.location` or `document.referrer` is silently ignored
+- Notification fetch failure is caught with `.catch(() => {})`
+- No new Supabase columns required; attribution is stored in the existing `notes` field
+
+#### Files NOT Changed
+- `/portal` form behavior — identical to before
+- Supabase schema — no changes
+- Dashboard, revenue, blueprint, v15r files — untouched
+- Static website folder — untouched
+- `notifyNewBetaUser.ts` FROM domain — left as-is (cannot confirm Resend domain verification without account access)
+
+#### Manual Test Steps
+1. Open `/portal` with UTM params: `/portal?utm_source=google&utm_medium=cpc&utm_campaign=summer`
+2. Fill in the form (name, phone or email, service category)
+3. Submit — form should behave identically to before (success screen, tracking link)
+4. Check `portal_requests` in Supabase: `notes` column should contain `Attribution: utm_source=google utm_medium=cpc utm_campaign=summer page_url=...`
+5. Check `app@poweronsolutionsllc.com` inbox: email titled `New Portal Lead — {name} · {ServiceCategory}` should arrive within seconds
+
+#### Future Supabase SQL (optional schema enhancement)
+```sql
+-- Add dedicated attribution columns if you want to query/filter by UTM source later:
+ALTER TABLE portal_requests
+  ADD COLUMN IF NOT EXISTS utm_source   text,
+  ADD COLUMN IF NOT EXISTS utm_medium   text,
+  ADD COLUMN IF NOT EXISTS utm_campaign text,
+  ADD COLUMN IF NOT EXISTS utm_content  text,
+  ADD COLUMN IF NOT EXISTS utm_term     text,
+  ADD COLUMN IF NOT EXISTS gclid        text,
+  ADD COLUMN IF NOT EXISTS gbraid       text,
+  ADD COLUMN IF NOT EXISTS wbraid       text,
+  ADD COLUMN IF NOT EXISTS page_url     text,
+  ADD COLUMN IF NOT EXISTS referrer     text;
+```
+Once these columns exist, `CustomerPortalView.tsx` can be updated to write attribution directly rather than into `notes`.
+
+**Lock released** — all files free for other agents.
+
+---
 
 ### 2026-06-24 — Palm Desert Imported Lead Map Coordinates
 
