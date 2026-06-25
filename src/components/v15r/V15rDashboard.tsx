@@ -1414,32 +1414,16 @@ function V15rDashboardInner() {
             <div className="mb-4">
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <h2 className="text-lg font-bold text-gray-100">EVR: Exposure vs Revenue</h2>
-                <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 rounded-md border border-gray-700 bg-[var(--bg-input)] p-1">
-                  <button
-                    type="button"
-                    onClick={() => shiftEvrWindow(-7)}
-                    className="h-7 min-w-[96px] rounded border border-gray-600 px-3 text-xs font-semibold text-[var(--text-primary)] outline-none transition-colors hover:border-blue-500/70 hover:bg-gray-800/70 focus:border-blue-500"
-                  >
-                    Previous Week
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => shiftEvrWindow(7)}
-                    className="h-7 min-w-[96px] rounded border border-gray-600 px-3 text-xs font-semibold text-[var(--text-primary)] outline-none transition-colors hover:border-blue-500/70 hover:bg-gray-800/70 focus:border-blue-500"
-                  >
-                    Next Week
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEvrTimelineOpen(true)}
-                    className="h-7 min-w-[96px] rounded border border-gray-600 px-3 text-xs font-semibold text-[var(--text-primary)] outline-none transition-colors hover:border-blue-500/70 hover:bg-gray-800/70 focus:border-blue-500"
-                  >
-                    Timeline
-                  </button>
+                <div className="ml-auto flex items-center gap-0" style={{ background: 'rgba(31,41,55,0.7)', border: '1px solid #374151', borderRadius: 7, padding: '3px 4px' }}>
+                  <button type="button" onClick={() => shiftEvrWindow(-7)} style={{ background: 'none', border: 'none', color: '#d1d5db', fontSize: 11, fontWeight: 600, padding: '3px 10px', cursor: 'pointer', borderRadius: 5 }} onMouseEnter={e => (e.currentTarget.style.background='rgba(59,130,246,0.12)')} onMouseLeave={e => (e.currentTarget.style.background='none')}>← Earlier Window</button>
+                  <button type="button" onClick={() => shiftEvrWindow(7)} style={{ background: 'none', border: 'none', color: '#d1d5db', fontSize: 11, fontWeight: 600, padding: '3px 10px', cursor: 'pointer', borderRadius: 5 }} onMouseEnter={e => (e.currentTarget.style.background='rgba(59,130,246,0.12)')} onMouseLeave={e => (e.currentTarget.style.background='none')}>Later Window →</button>
+                  <span style={{ color: '#4b5563', fontSize: 12, padding: '0 2px', userSelect: 'none' }}>|</span>
+                  <button type="button" onClick={() => { setEvrDateStart(rcaDefaultStart); setEvrDateEnd(rcaDefaultEnd) }} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: 11, padding: '3px 8px', cursor: 'pointer', borderRadius: 5 }} onMouseEnter={e => (e.currentTarget.style.background='rgba(59,130,246,0.12)')} onMouseLeave={e => (e.currentTarget.style.background='none')}>Reset Window</button>
+                  <button type="button" onClick={() => setEvrTimelineOpen(true)} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: 11, padding: '3px 8px', cursor: 'pointer', borderRadius: 5 }} onMouseEnter={e => (e.currentTarget.style.background='rgba(59,130,246,0.12)')} onMouseLeave={e => (e.currentTarget.style.background='none')}>Timeline</button>
                 </div>
               </div>
               <p className="mt-2 text-xs text-gray-400 italic">
-                {evrWindowLabel} / Project sequence by pipeline entry / Income recalculates by selected window
+                Projects sorted by pipeline entry date · Income window: {evrWindowLabel} · AR and Pipeline reflect current totals
               </p>
             </div>
             {evrProjects.length > 0 ? (
@@ -1458,32 +1442,16 @@ function V15rDashboardInner() {
             <div className="mb-4">
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <h3 className="text-lg font-bold text-gray-100">8-Week Cash Flow Projection</h3>
-                <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 rounded-md border border-gray-700 bg-[var(--bg-input)] p-1">
-                  <button
-                    type="button"
-                    onClick={() => shiftCashFlowAnchor(-7)}
-                    className="h-7 min-w-[96px] rounded border border-gray-600 px-3 text-xs font-semibold text-[var(--text-primary)] outline-none transition-colors hover:border-blue-500/70 hover:bg-gray-800/70 focus:border-blue-500"
-                  >
-                    Previous Week
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => shiftCashFlowAnchor(7)}
-                    className="h-7 min-w-[96px] rounded border border-gray-600 px-3 text-xs font-semibold text-[var(--text-primary)] outline-none transition-colors hover:border-blue-500/70 hover:bg-gray-800/70 focus:border-blue-500"
-                  >
-                    Next Week
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCashFlowTimelineOpen(true)}
-                    className="h-7 min-w-[96px] rounded border border-gray-600 px-3 text-xs font-semibold text-[var(--text-primary)] outline-none transition-colors hover:border-blue-500/70 hover:bg-gray-800/70 focus:border-blue-500"
-                  >
-                    Timeline
-                  </button>
+                <div className="ml-auto flex items-center gap-0" style={{ background: 'rgba(31,41,55,0.7)', border: '1px solid #374151', borderRadius: 7, padding: '3px 4px' }}>
+                  <button type="button" onClick={() => shiftCashFlowAnchor(-7)} style={{ background: 'none', border: 'none', color: '#d1d5db', fontSize: 11, fontWeight: 600, padding: '3px 10px', cursor: 'pointer', borderRadius: 5 }} onMouseEnter={e => (e.currentTarget.style.background='rgba(59,130,246,0.12)')} onMouseLeave={e => (e.currentTarget.style.background='none')}>← Earlier</button>
+                  <button type="button" onClick={() => shiftCashFlowAnchor(7)} style={{ background: 'none', border: 'none', color: '#d1d5db', fontSize: 11, fontWeight: 600, padding: '3px 10px', cursor: 'pointer', borderRadius: 5 }} onMouseEnter={e => (e.currentTarget.style.background='rgba(59,130,246,0.12)')} onMouseLeave={e => (e.currentTarget.style.background='none')}>Later →</button>
+                  <span style={{ color: '#4b5563', fontSize: 12, padding: '0 2px', userSelect: 'none' }}>|</span>
+                  <button type="button" onClick={() => setCashFlowAnchorDate(todayIso)} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: 11, padding: '3px 8px', cursor: 'pointer', borderRadius: 5 }} onMouseEnter={e => (e.currentTarget.style.background='rgba(59,130,246,0.12)')} onMouseLeave={e => (e.currentTarget.style.background='none')}>Reset</button>
+                  <button type="button" onClick={() => setCashFlowTimelineOpen(true)} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: 11, padding: '3px 8px', cursor: 'pointer', borderRadius: 5 }} onMouseEnter={e => (e.currentTarget.style.background='rgba(59,130,246,0.12)')} onMouseLeave={e => (e.currentTarget.style.background='none')}>Timeline</button>
                 </div>
               </div>
               <p className="mt-2 text-xs text-gray-400 italic">
-                {cashFlowWindowLabel} / Projected payments (outline) vs collected (filled) / Coral dot = overlap window
+                {cashFlowWindowLabel} · Projected project cash by start week vs actually collected · 🔴 = overlap pressure window
               </p>
             </div>
             {(() => {

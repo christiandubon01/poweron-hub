@@ -122,6 +122,21 @@ function datesOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boole
 }
 
 /**
+ * Returns the project start date using the same priority as CFOTChart:
+ * plannedStart → startDate → first-phase confirmed_start_date → first-phase actual_start_date → createdAt
+ */
+function getProjectStartDate(project: any): Date | null {
+  const firstPhase = (project.phase_timeline || [])[0]
+  return (
+    parseDate(project.plannedStart) ||
+    parseDate(project.startDate) ||
+    parseDate(firstPhase?.confirmed_start_date) ||
+    parseDate(firstPhase?.actual_start_date) ||
+    parseDate(project.createdAt)
+  )
+}
+
+/**
  * Get historical average phase duration from completed projects.
  * Returns a map of phase_name → average days, or empty map if not enough data.
  */
@@ -350,22 +365,24 @@ export function get8WeekCashFlow(
   const activeProjects = allProjects.filter(p => p.status === 'active')
   const activeProjectIds = new Set(activeProjects.map(p => String(p.id || '')).filter(Boolean))
 
-  // Projected: from payment schedule
+  // Projected: place each active project's full contract in the week of its start date.
+  // Uses project-start-date priority: plannedStart → startDate → phase[0].confirmed_start_date
+  // → phase[0].actual_start_date → createdAt. Matches the placement logic used by CFOTChart.
   for (const project of activeProjects) {
-    const schedule = getPhasePaymentSchedule(project, allProjects)
-    for (const event of schedule) {
-      if (!event.date) continue
-      for (const bucket of buckets) {
-        const we = addDays(bucket.weekStart, 6)
-        if (event.date >= bucket.weekStart && event.date <= we) {
-          bucket.projected += event.amount
-          bucket.projectedSources?.projectPayments.push({
-            label: project.name || project.title || 'Project',
-            amount: event.amount,
-            detail: `${event.type || 'payment'}${event.estimated ? ' estimated' : ''}`,
-          })
-          break
-        }
+    const startDate = getProjectStartDate(project)
+    if (!startDate) continue
+    const contract = n(project.contract)
+    if (contract === 0) continue
+    for (const bucket of buckets) {
+      const we = addDays(bucket.weekStart, 6)
+      if (startDate >= bucket.weekStart && startDate <= we) {
+        bucket.projected += contract
+        bucket.projectedSources?.projectPayments.push({
+          label: project.name || project.title || 'Project',
+          amount: contract,
+          detail: `starts ${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+        })
+        break
       }
     }
   }
@@ -413,20 +430,20 @@ export function get8WeekCashFlow(
     }
   }
 
-  // Actual: from the same service-log Total Billable value rendered in Field Log > Service Log.
+  // Actual: from service-log collected amount — what was actually received, not total invoiced.
   for (const svc of serviceRecords) {
     const svcDate = parseDate(svc.date || svc.logDate)
     if (!svcDate) continue
-    const totalBillable = getServiceLogTotalBillable(svc)
-    if (totalBillable === 0) continue
+    const collected = n(svc.collected)
+    if (collected === 0) continue
     for (const bucket of buckets) {
       const we = addDays(bucket.weekStart, 6)
       if (svcDate >= bucket.weekStart && svcDate <= we) {
-        bucket.actual += totalBillable
+        bucket.actual += collected
         bucket.actualSources?.serviceCollections.push({
           label: svc.customer || svc.name || svc.jtype || 'Service call',
-          amount: totalBillable,
-          detail: `Total Billable - ${svc.date || svc.logDate || 'service log'}`,
+          amount: collected,
+          detail: `collected · ${svc.date || svc.logDate || 'service log'}`,
         })
         break
       }

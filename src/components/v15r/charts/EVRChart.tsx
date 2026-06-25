@@ -27,19 +27,33 @@ function fmtDateLabel(d: string): string {
   return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
 }
 
-function EVRTooltip({ active, payload, label }: any) {
+function EVRTooltip({ active, payload, label, hasDateFilter }: any) {
   if (!active || !payload || !payload.length) return null
   const row = payload[0]?.payload || {}
   return (
-    <div style={{ backgroundColor: '#0f1117', border: '1px solid #374151', borderRadius: 8, padding: '10px 12px', color: '#d1d5db', fontSize: 12, minWidth: 210 }}>
+    <div style={{ backgroundColor: '#0f1117', border: '1px solid #374151', borderRadius: 8, padding: '10px 12px', color: '#d1d5db', fontSize: 12, minWidth: 230 }}>
       <div style={{ color: '#fff', fontWeight: 700, marginBottom: 4 }}>{row.fullName || label}</div>
       <div style={{ color: '#60a5fa', fontSize: 11, marginBottom: 8 }}>Pipeline entry: {row.introDateLabel || 'Date unknown'}</div>
       {payload.map((entry: any) => (
         <div key={entry.dataKey} style={{ display: 'flex', justifyContent: 'space-between', gap: 14 }}>
-          <span style={{ color: entry.color }}>{entry.name}</span>
+          <span style={{ color: entry.color }}>
+            {entry.name}
+            {entry.dataKey === 'income' && hasDateFilter && (
+              <span style={{ color: '#6b7280', fontSize: 10 }}> (window)</span>
+            )}
+          </span>
           <strong style={{ color: '#fff' }}>${Number(entry.value || 0).toLocaleString()}</strong>
         </div>
       ))}
+      {hasDateFilter ? (
+        <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid #374151', fontSize: 10, color: '#6b7280' }}>
+          Income = logs collected in the selected window only.<br />AR and Pipeline are current totals, unfiltered.
+        </div>
+      ) : (
+        <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid #374151', fontSize: 10, color: '#6b7280' }}>
+          Income = all collected payments to date.<br />AR and Pipeline are current totals.
+        </div>
+      )}
     </div>
   )
 }
@@ -115,7 +129,7 @@ export default function EVRChart({ projects, backup, dateStart, dateEnd }: { pro
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
           <XAxis dataKey="timelineLabel" tick={{ fill: '#9ca3af', fontSize: 10 }} angle={-25} textAnchor="end" height={58} interval={0} />
           <YAxis tickFormatter={fmtK} tick={{ fill: '#9ca3af', fontSize: 11 }} width={56} />
-          <Tooltip content={<EVRTooltip />} />
+          <Tooltip content={<EVRTooltip hasDateFilter={!!(dateStart || dateEnd)} />} />
           <Legend wrapperStyle={{ color: '#d1d5db', fontSize: 12 }} />
           <Line type="monotone" dataKey="income" name="Accumulated Income" stroke="#10b981" strokeWidth={3} dot={{ r: 4, fill: '#10b981' }} />
           <Line type="monotone" dataKey="ar" name="Outstanding AR" stroke="#ef4444" strokeWidth={2} dot={{ r: 3, fill: '#ef4444' }} />

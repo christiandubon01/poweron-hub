@@ -384,8 +384,10 @@ function PlannedVsActualChart({ projects, backup }) {
 }
 
 // ── REVENUE TIMELINE CHART 1: 8-Week Cash Flow Projection ──
-// Grouped bars: projected (amber outline) vs actual (green fill)
-// Coral dot above bar when an overlap window falls in that week.
+// Grouped bars: projected (amber outline = project contract, placed by project start date)
+//              vs actual (green fill = actually collected cash)
+// Coral dot = overlap pressure window. Indigo tint = current calendar week.
+// Full-column transparent hit-rect per week so hover works anywhere, not just on bars.
 function CashFlowProjectionChart({ weekBuckets, overlapWindows }) {
   var tooltipRef = React.useRef(null)
   if (!weekBuckets || !weekBuckets.length) return <EmptyChart />
@@ -397,7 +399,16 @@ function CashFlowProjectionChart({ weekBuckets, overlapWindows }) {
   var W = 900, H = 300, pad = { t: 30, r: 24, b: 48, l: 70 }
   var cW = W - pad.l - pad.r, cH = H - pad.t - pad.b
   var groupW = cW / weekBuckets.length
-  var barW = groupW * 0.35
+  var barW = groupW * 0.42
+
+  // Find which bucket contains today so we can highlight the current week.
+  var today = new Date(); today.setHours(0, 0, 0, 0)
+  var currentWeekIdx = -1
+  for (var cwi = 0; cwi < weekBuckets.length; cwi++) {
+    var cws = weekBuckets[cwi].weekStart instanceof Date ? weekBuckets[cwi].weekStart : new Date(weekBuckets[cwi].weekStart)
+    var cwe = new Date(cws.getTime() + 6 * 86400000)
+    if (today >= cws && today <= cwe) { currentWeekIdx = cwi; break }
+  }
 
   function escapeHtml(v) {
     return String(v == null ? '' : v).replace(/[&<>"']/g, function(ch) {
@@ -428,24 +439,30 @@ function CashFlowProjectionChart({ weekBuckets, overlapWindows }) {
   function showTip(i) {
     var el = tooltipRef.current; if (!el) return
     var d = weekBuckets[i]
+    var ws = d.weekStart instanceof Date ? d.weekStart : new Date(d.weekStart)
+    var we = new Date(ws.getTime() + 6 * 86400000)
+    var dateRange = formatDate(ws) + ' – ' + formatDate(we)
     var delta = (d.projected || 0) - (d.actual || 0)
     var ps = d.projectedSources || {}
     var as = d.actualSources || {}
-    var projectPayments = ps.projectPayments || []
+    var projectStarts = ps.projectPayments || []
     var serviceBalances = ps.serviceBalances || []
     var baseline = ps.baseline || []
     var projectCollections = as.projectCollections || []
     var serviceCollections = as.serviceCollections || []
-    el.innerHTML = '<b style="color:#fff">' + (d.weekLabel || '') + '</b>' +
-      '<div style="margin-top:6px;color:#f59e0b;font-weight:700">Projected: ' + fmtDollar(d.projected || 0) + '</div>' +
-      '<div style="color:#9ca3af;font-size:10px">Active project payments ' + fmtDollar(sumItems(projectPayments)) + ' + active service balances ' + fmtDollar(sumItems(serviceBalances)) + (baseline.length ? ' + baseline ' + fmtDollar(sumItems(baseline)) : '') + '</div>' +
-      '<div style="margin-top:4px">' + listLines(projectPayments, 'No active project payment events in this week') + '</div>' +
-      '<div style="margin-top:3px">' + listLines(serviceBalances, 'No active service balance due in this week') + '</div>' +
+    el.innerHTML = '<b style="color:#fff">' + escapeHtml(d.weekLabel || '') + '</b>' +
+      '<div style="color:#6b7280;font-size:10px;margin-bottom:6px">' + dateRange + '</div>' +
+      '<div style="color:#f59e0b;font-weight:700">Projected project cash: ' + fmtDollar(d.projected || 0) + '</div>' +
+      '<div style="color:#9ca3af;font-size:10px">Project starts ' + fmtDollar(sumItems(projectStarts)) + (sumItems(serviceBalances) > 0 ? ' + service balances ' + fmtDollar(sumItems(serviceBalances)) : '') + (baseline.length ? ' + baseline ' + fmtDollar(sumItems(baseline)) : '') + '</div>' +
+      '<div style="margin-top:4px">' + listLines(projectStarts, 'No project starts in this week') + '</div>' +
+      (serviceBalances.length ? '<div style="margin-top:3px">' + listLines(serviceBalances, '') + '</div>' : '') +
       (baseline.length ? '<div style="margin-top:3px">' + listLines(baseline, '') + '</div>' : '') +
-      '<div style="margin-top:8px;color:#10b981;font-weight:700">Actual: ' + fmtDollar(d.actual || 0) + '</div>' +
-      '<div style="color:#9ca3af;font-size:10px">Collected project logs ' + fmtDollar(sumItems(projectCollections)) + ' + service-log Total Billable ' + fmtDollar(sumItems(serviceCollections)) + '</div>' +
-      '<div style="margin-top:4px">' + listLines(projectCollections, 'No active project collections in this week') + '</div>' +
-      '<div style="margin-top:3px">' + listLines(serviceCollections, 'No service-log Total Billable entries in this week') + '</div>' +
+      '<div style="margin-top:8px;color:#10b981;font-weight:700">Actually collected: ' + fmtDollar(d.actual || 0) + '</div>' +
+      (projectCollections.length || serviceCollections.length
+        ? '<div style="color:#9ca3af;font-size:10px">Project logs ' + fmtDollar(sumItems(projectCollections)) + (sumItems(serviceCollections) > 0 ? ' + service collected ' + fmtDollar(sumItems(serviceCollections)) : '') + '</div>'
+        : '') +
+      '<div style="margin-top:4px">' + listLines(projectCollections, 'No project payments collected this week') + '</div>' +
+      (serviceCollections.length ? '<div style="margin-top:3px">' + listLines(serviceCollections, '') + '</div>' : '') +
       '<div style="margin-top:8px;color:' + (delta < 0 ? '#10b981' : '#9ca3af') + '">Delta: ' + (delta >= 0 ? '+' : '') + fmtDollar(delta) + '</div>'
     el.style.display = 'block'
   }
@@ -484,6 +501,10 @@ function CashFlowProjectionChart({ weekBuckets, overlapWindows }) {
           var gx = pad.l + i * groupW + groupW * 0.15
           var projH = ((d.projected || 0) / maxVal) * cH
           var actH = ((d.actual || 0) / maxVal) * cH
+          // Minimum visual height 5px for non-zero values so small bars are visible.
+          // Tooltip values remain exact — only the rendered height is clamped.
+          var projVisH = (d.projected || 0) > 0 ? Math.max(projH, 5) : 0
+          var actVisH = (d.actual || 0) > 0 ? Math.max(actH, 5) : 0
           // Check if this week has an overlap
           var overlapsForWeek = overlaps.filter(function(o) {
             var os = o.overlapStart instanceof Date ? o.overlapStart : new Date(o.overlapStart)
@@ -494,18 +515,28 @@ function CashFlowProjectionChart({ weekBuckets, overlapWindows }) {
           })
           var hasOverlap = overlapsForWeek.length > 0
           return (
-            <g key={i} onMouseEnter={function() { showTip(i) }} onMouseLeave={hideTip}>
-              {/* Projected bar — amber outline */}
-              <rect x={gx} y={pad.t + cH - projH} width={barW} height={Math.max(projH, 1)} rx={2}
-                fill="transparent" stroke="#f59e0b" strokeWidth="2" opacity={0.9} />
-              {/* Actual bar — green fill */}
-              <rect x={gx + barW + 4} y={pad.t + cH - actH} width={barW} height={Math.max(actH, 1)} rx={2}
-                fill="#10b981" opacity={0.85} />
-              {/* Overlap dot */}
+            <g key={i} onMouseLeave={hideTip}>
+              {/* Current-week column highlight (behind everything) */}
+              {i === currentWeekIdx && (
+                <rect x={pad.l + i * groupW} y={pad.t} width={groupW} height={cH}
+                  fill="#6366f1" fillOpacity={0.08} rx={2} pointerEvents="none" />
+              )}
+              {/* Full-column transparent hit area — hover anywhere in the week column to see tooltip */}
+              <rect x={pad.l + i * groupW} y={pad.t} width={groupW} height={cH}
+                fill="transparent"
+                onMouseEnter={function() { showTip(i) }}
+                style={{ cursor: 'default' }} />
+              {/* Projected bar — amber outline (project contract, placed by start date) */}
+              <rect x={gx} y={pad.t + cH - projVisH} width={barW} height={Math.max(projVisH, 0)} rx={2}
+                fill="transparent" stroke="#f59e0b" strokeWidth="2" opacity={0.9} pointerEvents="none" />
+              {/* Actual bar — green fill (actually collected) */}
+              <rect x={gx + barW + 4} y={pad.t + cH - actVisH} width={barW} height={Math.max(actVisH, 0)} rx={2}
+                fill="#10b981" opacity={0.85} pointerEvents="none" />
+              {/* Overlap dot — has its own hover for details */}
               {hasOverlap && (
                 <circle
                   cx={gx + barW}
-                  cy={Math.max(pad.t + 8, pad.t + cH - Math.max(projH, actH) - 10)}
+                  cy={Math.max(pad.t + 8, pad.t + cH - Math.max(projVisH, actVisH) - 10)}
                   r={6}
                   fill="#f87171"
                   stroke="#fecaca"
@@ -516,7 +547,7 @@ function CashFlowProjectionChart({ weekBuckets, overlapWindows }) {
                 />
               )}
               {/* X label */}
-              <text x={gx + barW} y={H - 8} textAnchor="middle" fill="#9ca3af" fontSize="9">
+              <text x={gx + barW} y={H - 8} textAnchor="middle" fill="#9ca3af" fontSize="9" pointerEvents="none">
                 {(d.weekLabel || '').replace(' ', '\n')}
               </text>
             </g>
@@ -525,9 +556,10 @@ function CashFlowProjectionChart({ weekBuckets, overlapWindows }) {
       </svg>
       <div ref={tooltipRef} style={{ display: 'none', position: 'absolute', top: 8, right: 8, background: 'rgba(15,17,23,0.95)', border: '1px solid #374151', borderRadius: 8, padding: '10px 14px', fontSize: 11, zIndex: 10, pointerEvents: 'none', minWidth: 180 }} />
       <div className="flex gap-4 mt-1 justify-center text-[10px] text-gray-400">
-        <span className="flex items-center gap-1"><span style={{ width: 10, height: 10, border: '2px solid #f59e0b', display: 'inline-block', borderRadius: 2 }} /> Projected</span>
-        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" /> Actual</span>
-        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-400" /> Overlap window</span>
+        <span className="flex items-center gap-1"><span style={{ width: 10, height: 10, border: '2px solid #f59e0b', display: 'inline-block', borderRadius: 2 }} /> Projected Project Cash</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" /> Actually Collected</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-400" /> Overlap Pressure Window</span>
+        <span className="flex items-center gap-1"><span style={{ width: 10, height: 10, background: 'rgba(99,102,241,0.2)', display: 'inline-block', borderRadius: 2 }} /> Current Week</span>
       </div>
     </div>
   )

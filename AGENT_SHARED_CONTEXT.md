@@ -20,7 +20,8 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | CFOT-Pan-Zoom (this agent) | Graph Dashboard CFOT Smooth Pan + Zoom Navigation | src/components/v15r/charts/CFOTChart.tsx | DONE — awaiting user review | RELEASED | 2026-06-23 |
 | CFOT-Source-Toggles (this agent) | Graph Dashboard CFOT Source Toggle Filters | src/components/v15r/charts/CFOTChart.tsx | DONE — awaiting user review | RELEASED | 2026-06-23 |
 | CFOT-Final-Controls (this agent) | Graph Dashboard CFOT Final Toggle Placement + Service Call Markers | src/components/v15r/charts/CFOTChart.tsx | DONE — awaiting user review | RELEASED | 2026-06-23 |
-| EVR-8Week-Audit (this agent) | Graph Dashboard EVR + 8-Week Cash Flow Projection Audit/Redesign | src/components/v15r/V15rDashboard.tsx, src/components/v15r/charts/EVRChart.tsx, src/components/v15r/charts/SVGCharts.tsx, src/services/revenueTimelineService.ts | AUDIT COMPLETE — awaiting user approval to implement | AWAITING APPROVAL | 2026-06-23 |
+| EVR-8Week-Audit (this agent) | Graph Dashboard EVR + 8-Week Cash Flow Projection Audit/Redesign | src/components/v15r/V15rDashboard.tsx, src/components/v15r/charts/EVRChart.tsx, src/components/v15r/charts/SVGCharts.tsx, src/services/revenueTimelineService.ts | DONE — awaiting user review (not committed) | RELEASED | 2026-06-23 |
+| 8Week-DateLogic-Hover (this agent) | 8-Week Cash Flow Projection Date Logic + Hover Usability | src/services/revenueTimelineService.ts, src/components/v15r/charts/SVGCharts.tsx, src/components/v15r/V15rDashboard.tsx (labels only if needed) | IN PROGRESS | ACTIVE | 2026-06-23 |
 | Codex-Palm-Desert-Aura-Probe | Palm Desert Salesforce/Aura Permit Probe | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — local live probe passed | RELEASED | 2026-06-24 |
 | Codex-Palm-Desert-Aura-Dry-Run | Palm Desert Aura Dry-Run Importer | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — local live dry run passed | RELEASED | 2026-06-24 |
 | Codex-Palm-Desert-Aura-Controlled-Importer | Palm Desert Aura Controlled Importer | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — safe paths verified, write not invoked | RELEASED | 2026-06-24 |
@@ -1036,6 +1037,97 @@ Commit `051834c` pushed to `origin/main` will trigger Netlify CI auto-deploy.
 
 ---
 
+### 2026-06-23 — EVR + 8-Week Cash Flow Projection Accuracy + Control Redesign (NOT COMMITTED — awaiting user review)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Implementation (accuracy fix + UX redesign — NO CFOT math changes)
+**Feature Area:** Graph Dashboard — EVR + 8-Week Cash Flow Projection
+**Branch:** main | HEAD = 40f5225 (at start); no commit made
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 0 errors, 16.67s (pre-existing chunk-size warnings only)
+
+#### Files Changed (4)
+
+| File | Change |
+|---|---|
+| `src/services/revenueTimelineService.ts` | Service actual: `getServiceLogTotalBillable(svc)` → `n(svc.collected)` |
+| `src/components/v15r/charts/EVRChart.tsx` | `EVRTooltip` accepts `hasDateFilter` prop; income marked "(window)"; contextual footer |
+| `src/components/v15r/charts/SVGCharts.tsx` | `CashFlowProjectionChart`: wider bars (0.35→0.42), current-week indigo highlight, cleaner tooltip text, updated legend |
+| `src/components/v15r/V15rDashboard.tsx` | EVR + 8-Week control blocks redesigned (compact inline-style buttons); updated subtitles |
+
+#### 1. revenueTimelineService.ts — Service Actual Accuracy Fix
+
+**Bug:** `get8WeekCashFlow()` used `getServiceLogTotalBillable(svc)` (total invoiced) as the "actual collected" amount. This overstated actuals for partially-paid calls and incorrectly treated invoiced-but-not-collected amounts as received.
+
+**Fix:** Changed service actual section to `n(svc.collected)` — money actually received. Skips the log if `collected === 0` (no revenue received). Tooltip detail label changed from `Total Billable - date` to `collected · date`.
+
+#### 2. EVRChart.tsx — Tooltip Clarity
+
+**Bug:** "Previous Week / Next Week" buttons shift the income-log filter window, NOT the project sequence. AR and Pipeline lines never change on click. Users expected the chart to shift but only the income calculation changed.
+
+**EVRTooltip changes:**
+- Accepts `hasDateFilter` prop (computed as `!!(dateStart || dateEnd)`)
+- When a date window is active: income entry shows `(window)` annotation; footer explains "Income = logs collected in the selected window only. AR and Pipeline are current totals, unfiltered."
+- When no filter: footer reads "Income = all collected payments to date. AR and Pipeline are current totals."
+
+Tooltip usage: `<Tooltip content={<EVRTooltip hasDateFilter={!!(dateStart || dateEnd)} />} />`
+
+#### 3. SVGCharts.tsx — CashFlowProjectionChart UX
+
+**Bar width:** `var barW = groupW * 0.42` (was 0.35) — wider bars, easier to read.
+
+**Current-week highlight:** Before the SVG bar rendering loop, detects current calendar week by comparing each bucket's `weekStart` to today. Renders an indigo rect (`fill="#6366f1"`, `fillOpacity=0.08`) spanning the full column height for the current week.
+
+**Tooltip text:**
+- `Actual:` → `Actually collected:`
+- `service-log Total Billable` → `service collected`
+- Empty-state labels updated to match
+
+**Legend (4 items):**
+- `Projected` → `Projected (phase schedule)`
+- `Actual` → `Actually collected`
+- `Overlap window` → `Overlap pressure window`
+- Added: `Current week` (indigo tint swatch)
+
+#### 4. V15rDashboard.tsx — Control Block Redesign
+
+**EVR controls (was: Previous Week / Next Week / Timeline):**
+- Now: `← Earlier Window · Later Window → | Reset Window · Timeline`
+- Compact inline-style buttons (no Tailwind h-7/min-w), matching CFOT nav style
+- Hover: `rgba(59,130,246,0.12)` blue tint
+- Subtitle: `Projects sorted by pipeline entry date · Income window: {evrWindowLabel} · AR and Pipeline reflect current totals`
+- "Reset Window" resets to `rcaDefaultStart` / `rcaDefaultEnd` inline (no new function needed)
+
+**8-Week controls (was: Previous Week / Next Week / Timeline):**
+- Now: `← Earlier · Later → | Reset · Timeline`
+- Same compact inline-style buttons
+- Subtitle: `{cashFlowWindowLabel} · Amber outline = projected (phase schedule) · Green fill = actually collected · 🔴 = overlap pressure window`
+- "Reset" resets to `todayIso` (existing variable)
+
+#### What Was NOT Changed
+- All CFOT math formulas in `V15rDashboard.tsx` — untouched
+- `CFOTChart.tsx` — not touched
+- Blueprint files — untouched
+- Phase Timeline, Gantt, Planned vs Actual — untouched
+- Layout/header, project cards, auth/sync/storage — untouched
+- No commit made — awaiting user review
+
+#### Manual Verification Checklist
+1. EVR controls say "← Earlier Window" / "Later Window →" / "Reset Window" / "Timeline"
+2. EVR subtitle mentions "Income window" and "AR and Pipeline reflect current totals"
+3. EVR tooltip shows "(window)" next to income when a date filter is active
+4. EVR tooltip footer explains income vs AR/Pipeline distinction
+5. 8-Week controls say "← Earlier" / "Later →" / "Reset" / "Timeline"
+6. 8-Week subtitle explains amber/green/red legend
+7. 8-Week chart current week has faint indigo column highlight
+8. 8-Week bars are slightly wider than before
+9. 8-Week tooltip says "Actually collected:" (not "Actual:")
+10. 8-Week legend: "Projected (phase schedule)" / "Actually collected" / "Overlap pressure window" / "Current week"
+11. Service actual in 8-Week now reflects collected (not invoiced total) — check calls where quoted > collected
+
+**Lock status:** EVR-8Week-Audit lock RELEASED — all four files free for other agents.
+
+---
+
 ### 2026-06-24 — Palm Desert Salesforce/Aura Permit Probe
 
 **Agent:** Codex GPT-5.5 Medium Reasoning
@@ -1231,6 +1323,9 @@ The original `palm-desert-probe` route was regression-tested after the refactor 
 - Aura loader and response shapes can change; helper-level response classifications preserve diagnostics.
 - The default request completed well inside the 26-second Netlify timeout locally, but production runtime should still be measured after deploy.
 
+#### Next Recommended Task
+Deploy and verify the production dry-run report, review false positives/negatives in the highest-scoring records, then define a production importer contract covering canonical scoring, dedup/upsert keys, run logging, dry-run approval, and safe `hunter_leads` writes.
+
 ---
 
 ### 2026-06-24 — Palm Desert Aura Controlled Importer
@@ -1344,8 +1439,8 @@ Controlled write, only when explicitly approved:
 - Batch inserts can fail as a batch if a concurrent importer creates one of the same permits between lookup and insert; errors are reported and the route remains safely retryable.
 - No production write invocation has been performed yet.
 
----
-
+#### Next Recommended Task
+After deploy, verify the dry-run and invalid-confirmation routes. Then, with explicit user approval, run one controlled write and inspect inserted/updated counts plus several `hunter_leads` records before considering UI controls, source-aware run logging, scheduling, or schema enhancements.
 ### 2026-06-24 — Imported Permit Lead Title Fallback
 
 **Agent:** Codex
@@ -1386,3 +1481,5 @@ Controlled write, only when explicitly approved:
 
 - Low risk: title generation is isolated to permit lead card display.
 - Next recommended task: after deployment, open Sales Intelligence → HUNTER → Palm Desert and visually confirm imported cards and unchanged website Portal cards.
+
+---
