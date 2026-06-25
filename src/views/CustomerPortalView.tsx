@@ -19,6 +19,18 @@ import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { GOOGLE_MAPS_BROWSER_KEY, loadV15rGoogleMapsScript } from '@/utils/googleMapsLoader'
 
+declare global {
+  interface Window { gtag?: (...args: unknown[]) => void }
+}
+
+function fireAdsConversion() {
+  try {
+    if (typeof window !== 'undefined' && typeof window.gtag === 'function') {
+      window.gtag('event', 'conversion', { send_to: 'AW-18227783863/ge8qCLSOj74cELfR1_ND' })
+    }
+  } catch { /* tracking failure must never break the form */ }
+}
+
 const LOGO_URL = 'https://edxxbtyugohtowvslbfo.supabase.co/storage/v1/object/public/brand-assets/ChatGPT%20Image%20Jan%2030,%202026,%2010_40_53%20AM1.png'
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string
@@ -645,6 +657,9 @@ export default function CustomerPortalView() {
 
       setSubmittedId(data.id)
       setSubmitted(true)
+
+      // Google Ads conversion — fires only after confirmed DB save, no PII sent
+      fireAdsConversion()
 
       // Internal lead notification — fire and forget, never blocks lead save
       fetch('/.netlify/functions/notify-new-lead', {
