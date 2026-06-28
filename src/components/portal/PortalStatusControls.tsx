@@ -36,14 +36,11 @@ interface PortalStatusControlsProps {
   hunterLeadId?: string | null
 }
 
-// Maps raw server-side config error strings to user-friendly messages.
+// Maps env-var missing errors to a friendly message. Passes all other errors through
+// so real Supabase/Resend errors (404, 409, delivery failures) remain visible.
 function friendlyReviewError(raw: string): string {
   const lower = raw.toLowerCase()
-  if (
-    lower.includes('not configured') ||
-    lower.includes('supabase') ||
-    lower.includes('resend_api_key')
-  ) {
+  if (lower.includes('not configured') || lower.includes('resend_api_key')) {
     return 'Review email is not configured yet. Add the required Netlify environment variables before sending review requests.'
   }
   return raw

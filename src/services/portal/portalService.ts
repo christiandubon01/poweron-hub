@@ -218,48 +218,16 @@ export async function writePortalTimelineEvent({
     triggered_by: triggeredBy,
   }
 
-  const { data: existing, error: existingError } = await (supabase as any)
-    .from('job_timeline')
-    .select('id')
-    .eq('portal_request_id', portalRequestId)
-    .eq('event_type', eventType)
-    .order('event_time', { ascending: true })
-    .limit(1)
-    .maybeSingle()
-
-  if (existingError) {
-    console.error('[portalService] writePortalTimelineEvent lookup failed:', existingError)
-    return null
-  }
-
-  if (existing?.id) {
-    const { data, error } = await (supabase as any)
-      .from('job_timeline')
-      .update({
-        title: payload.title,
-        description: payload.description,
-        event_time: payload.event_time,
-        triggered_by: payload.triggered_by,
-      })
-      .eq('id', existing.id)
-      .select('*')
-      .single()
-
-    if (error) {
-      console.error('[portalService] writePortalTimelineEvent update failed:', error)
-      return null
-    }
-    return data as PortalTimelineEvent
-  }
-
+  // Upsert on (portal_request_id, event_type) — requires the unique constraint
+  // added in migration 080. Atomic: no race window between SELECT and INSERT.
   const { data, error } = await (supabase as any)
     .from('job_timeline')
-    .insert(payload)
+    .upsert(payload, { onConflict: 'portal_request_id,event_type' })
     .select('*')
     .single()
 
   if (error) {
-    console.error('[portalService] writePortalTimelineEvent insert failed:', error)
+    console.error('[portalService] writePortalTimelineEvent upsert failed:', error)
     return null
   }
 
