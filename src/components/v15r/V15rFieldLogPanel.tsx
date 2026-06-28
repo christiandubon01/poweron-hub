@@ -889,18 +889,22 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     }
     // If this estimate came from a portal lead, update confirmed milestone with estimate date
     if (portalLeadId && !editEstimateId) {
-      import('@/lib/supabase').then(({ supabase: sb }) => {
+      Promise.all([
+        import('@/lib/supabase'),
+        import('@/services/portal/portalService'),
+      ]).then(([{ supabase: sb }, portal]) => {
         (sb as any).from('portal_requests').select('id').eq('hunter_lead_id', portalLeadId).maybeSingle()
           .then(({ data: pr }: any) => {
             if (!pr?.id) return
             const confirmedTime = estDate ? new Date(estDate + 'T12:00:00').toISOString() : new Date().toISOString()
-            ;(sb as any).from('job_timeline')
-              .update({ event_time: confirmedTime })
-              .eq('portal_request_id', pr.id)
-              .eq('event_type', 'confirmed')
-              .then(({ error }: any) => {
-                if (error) console.error('[V15rFieldLogPanel] confirmed milestone update failed:', error)
-              })
+            portal.writePortalTimelineEvent({
+              portalRequestId: pr.id,
+              eventType: 'confirmed',
+              description: 'Your appointment has been scheduled. We will be there as planned.',
+              eventTime: confirmedTime,
+            }).catch((err: any) => {
+              console.error('[V15rFieldLogPanel] confirmed milestone write failed:', err)
+            })
           })
       })
     }

@@ -31,6 +31,37 @@ export interface PortalRequest {
   hunter_lead_id: string | null
   source: string
   notes: string | null
+  completed_at?: string | null
+  review_requested_at?: string | null
+  review_request_sent_to?: string | null
+  review_request_status?: string | null
+  review_request_error?: string | null
+  review_request_last_attempt_at?: string | null
+}
+
+export type PortalTimelineEventType =
+  | 'request_received'
+  | 'accepted'
+  | 'scheduling'
+  | 'confirmed'
+  | 'on_my_way'
+  | 'arrived'
+  | 'work_started'
+  | 'work_completed'
+
+export interface PortalTimelineEvent {
+  id: string
+  portal_request_id: string
+  event_type: PortalTimelineEventType | string
+  title: string
+  description: string | null
+  event_time: string
+  triggered_by: string | null
+}
+
+export interface PortalTrackerState {
+  request: PortalRequest
+  timeline: PortalTimelineEvent[]
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -65,6 +96,52 @@ const VALUE_RANGE_MAP: Record<string, { min: number; max: number }> = {
   other:         { min: 1500,  max: 6000  },
 }
 
+const PORTAL_TIMELINE_META: Record<PortalTimelineEventType, { title: string; description: string }> = {
+  request_received: {
+    title: 'Request Received',
+    description: 'We got your request and are reviewing it.',
+  },
+  accepted: {
+    title: 'Request Accepted',
+    description: 'Your request has been accepted. We\'ll reach out with scheduling options soon.',
+  },
+  scheduling: {
+    title: 'Scheduling in Progress',
+    description: 'We\'re coordinating your appointment time and will confirm shortly.',
+  },
+  confirmed: {
+    title: 'Appointment Confirmed',
+    description: 'Your appointment has been scheduled. We will be there as planned.',
+  },
+  on_my_way: {
+    title: 'On My Way',
+    description: 'Your technician is heading to your location.',
+  },
+  arrived: {
+    title: 'Arrived',
+    description: 'Your technician has arrived.',
+  },
+  work_started: {
+    title: 'Work Started',
+    description: 'Work is in progress.',
+  },
+  work_completed: {
+    title: 'Work Completed',
+    description: 'All done. Thank you for choosing Power On Solutions.',
+  },
+}
+
+export const PORTAL_LIFECYCLE_EVENT_TYPES: PortalTimelineEventType[] = [
+  'on_my_way',
+  'arrived',
+  'work_started',
+  'work_completed',
+]
+
+export function getPortalTimelineMeta(eventType: PortalTimelineEventType) {
+  return PORTAL_TIMELINE_META[eventType]
+}
+
 // ── Service functions ─────────────────────────────────────────────────────────
 
 /**
@@ -83,6 +160,204 @@ export async function fetchNewPortalRequests(): Promise<PortalRequest[]> {
     return []
   }
   return (data ?? []) as PortalRequest[]
+}
+
+export async function fetchPortalTrackerStateForLead(hunterLeadId: string): Promise<PortalTrackerState | null> {
+  if (!hunterLeadId) return null
+
+  const { data: request, error } = await (supabase as any)
+    .from('portal_requests')
+    .select('*')
+    .eq('hunter_lead_id', hunterLeadId)
+    .maybeSingle()
+
+  if (error || !request?.id) {
+    if (error) console.error('[portalService] fetchPortalTrackerStateForLead:', error)
+    return null
+  }
+
+  const { data: timeline, error: timelineError } = await (supabase as any)
+    .from('job_timeline')
+    .select('*')
+    .eq('portal_request_id', request.id)
+    .order('event_time', { ascending: true })
+
+  if (timelineError) {
+    console.error('[portalService] fetchPortalTrackerStateForLead timeline:', timelineError)
+  }
+
+  return {
+    request: request as PortalRequest,
+    timeline: (timeline ?? []) as PortalTimelineEvent[],
+  }
+}
+
+export async function writePortalTimelineEvent({
+  portalRequestId,
+  eventType,
+  eventTime,
+  triggeredBy = 'owner',
+  description,
+}: {
+  portalRequestId: string
+  eventType: PortalTimelineEventType
+  eventTime?: string
+  triggeredBy?: string
+  description?: string
+}): Promise<PortalTimelineEvent | null> {
+  const meta = PORTAL_TIMELINE_META[eventType]
+  if (!portalRequestId || !meta) return null
+
+  const now = eventTime || new Date().toISOString()
+  const payload = {
+    portal_request_id: portalRequestId,
+    event_type: eventType,
+    title: meta.title,
+    description: description ?? meta.description,
+    event_time: now,
+    triggered_by: triggeredBy,
+  }
+
+  const { data: existing, error: existingError } = await (supabase as any)
+    .from('job_timeline')
+    .select('id')
+    .eq('portal_request_id', portalRequestId)
+    .eq('event_type', eventType)
+    .order('event_time', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (existingError) {
+    console.error('[portalService] writePortalTimelineEvent lookup failed:', existingError)
+    return null
+  }
+
+  if (existing?.id) {
+    const { data, error } = await (supabase as any)
+      .from('job_timeline')
+      .update({
+        title: payload.title,
+        description: payload.description,
+        event_time: payload.event_time,
+        triggered_by: payload.triggered_by,
+      })
+      .eq('id', existing.id)
+      .select('*')
+      .single()
+
+    if (error) {
+      console.error('[portalService] writePortalTimelineEvent update failed:', error)
+      return null
+    }
+    return data as PortalTimelineEvent
+  }
+
+  const { data, error } = await (supabase as any)
+    .from('job_timeline')
+    .insert(payload)
+    .select('*')
+    .single()
+
+  if (error) {
+    console.error('[portalService] writePortalTimelineEvent insert failed:', error)
+    return null
+  }
+
+  return data as PortalTimelineEvent
+}
+
+export async function writePortalLifecycleEvent(
+  portalRequestId: string,
+  eventType: PortalTimelineEventType
+): Promise<PortalTrackerState | null> {
+  if (!PORTAL_LIFECYCLE_EVENT_TYPES.includes(eventType)) return null
+
+  const event = await writePortalTimelineEvent({ portalRequestId, eventType })
+  if (!event) return null
+
+  if (eventType === 'work_completed') {
+    const now = event.event_time || new Date().toISOString()
+    const { error } = await (supabase as any)
+      .from('portal_requests')
+      .update({
+        status: 'closed',
+        completed_at: now,
+      })
+      .eq('id', portalRequestId)
+
+    if (error) {
+      console.error('[portalService] work_completed portal_request update failed:', error)
+      return null
+    }
+  }
+
+  const { data: request, error: requestError } = await (supabase as any)
+    .from('portal_requests')
+    .select('*')
+    .eq('id', portalRequestId)
+    .single()
+
+  const { data: timeline, error: timelineError } = await (supabase as any)
+    .from('job_timeline')
+    .select('*')
+    .eq('portal_request_id', portalRequestId)
+    .order('event_time', { ascending: true })
+
+  if (requestError || !request) {
+    console.error('[portalService] writePortalLifecycleEvent reload request failed:', requestError)
+    return null
+  }
+  if (timelineError) {
+    console.error('[portalService] writePortalLifecycleEvent reload timeline failed:', timelineError)
+  }
+
+  return {
+    request: request as PortalRequest,
+    timeline: (timeline ?? []) as PortalTimelineEvent[],
+  }
+}
+
+export async function sendPortalReviewRequest({
+  portalRequestId,
+  email,
+  force = false,
+}: {
+  portalRequestId: string
+  email?: string
+  force?: boolean
+}): Promise<{ success: boolean; error?: string; messageId?: string; sentTo?: string; alreadySent?: boolean; request?: PortalRequest }> {
+  try {
+    const res = await fetch('/.netlify/functions/send-review-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        portal_request_id: portalRequestId,
+        email,
+        force,
+      }),
+    })
+
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok || body?.success === false) {
+      return {
+        success: false,
+        error: body?.error || `Review request failed (${res.status})`,
+        alreadySent: !!body?.alreadySent,
+        request: body?.request,
+      }
+    }
+
+    return {
+      success: true,
+      messageId: body?.messageId,
+      sentTo: body?.sentTo,
+      alreadySent: !!body?.alreadySent,
+      request: body?.request,
+    }
+  } catch (err: any) {
+    console.error('[portalService] sendPortalReviewRequest failed:', err)
+    return { success: false, error: err?.message || 'Review request failed' }
+  }
 }
 
 /**
@@ -238,28 +513,18 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
 
   // ── Insert "Accepted" + "Scheduling" job_timeline milestones ─────────────
   try {
-    await (supabase as any)
-      .from('job_timeline')
-      .insert([
-        {
-          portal_request_id: request.id,
-          event_type:        'accepted',
-          title:             'Request Accepted',
-          description:       'Your request has been accepted. We\'ll reach out with scheduling options soon.',
-          event_time:        new Date().toISOString(),
-          triggered_by:      'owner',
-        },
-        {
-          portal_request_id: request.id,
-          event_type:        'scheduling',
-          title:             'Scheduling in Progress',
-          description:       'We\'re coordinating your appointment time and will confirm shortly.',
-          event_time:        new Date(Date.now() + 1000).toISOString(),
-          triggered_by:      'owner',
-        },
-      ])
+    await writePortalTimelineEvent({
+      portalRequestId: request.id,
+      eventType: 'accepted',
+      eventTime: new Date().toISOString(),
+    })
+    await writePortalTimelineEvent({
+      portalRequestId: request.id,
+      eventType: 'scheduling',
+      eventTime: new Date(Date.now() + 1000).toISOString(),
+    })
   } catch (err: any) {
-    console.error('[portalService] job_timeline accepted+scheduling insert failed (non-fatal):', err)
+    console.error('[portalService] job_timeline accepted+scheduling write failed (non-fatal):', err)
   }
 
   return newLeadId

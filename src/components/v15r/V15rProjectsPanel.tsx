@@ -370,6 +370,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
         // Find the portal_request linked to this hunter lead
         console.log('[Portal] isPortalLead=true, leadId=', leadId)
         const { supabase: sb } = await import('@/lib/supabase')
+        const { writePortalTimelineEvent } = await import('@/services/portal/portalService')
         const { data: portalReq } = await (sb as any)
           .from('portal_requests')
           .select('id')
@@ -377,19 +378,15 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
           .maybeSingle()
         if (portalReq?.id) {
           try {
-            await (sb as any)
-              .from('job_timeline')
-              .insert({
-                portal_request_id: portalReq.id,
-                event_type:        'confirmed',
-                title:             'Appointment Confirmed',
-                description:       'Your appointment has been scheduled. We will be there as planned.',
-                event_time:        npStartDate ? new Date(npStartDate + 'T12:00:00').toISOString() : new Date().toISOString(),
-                triggered_by:      'owner',
-              })
-            console.log('[Portal] confirmed milestone inserted for', portalReq.id)
+            await writePortalTimelineEvent({
+              portalRequestId: portalReq.id,
+              eventType: 'confirmed',
+              description: 'Your appointment has been scheduled. We will be there as planned.',
+              eventTime: npStartDate ? new Date(npStartDate + 'T12:00:00').toISOString() : new Date().toISOString(),
+            })
+            console.log('[Portal] confirmed milestone written for', portalReq.id)
           } catch (err: any) {
-            console.error('[V15rProjectsPanel] job_timeline confirmed insert failed:', err)
+            console.error('[V15rProjectsPanel] job_timeline confirmed write failed:', err)
           }
         }
       }

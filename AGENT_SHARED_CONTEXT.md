@@ -1563,3 +1563,38 @@ After deploy, verify the dry-run and invalid-confirmation routes. Then, with exp
 - Next recommended task: after deployment, open Sales Intelligence → HUNTER → Palm Desert and visually confirm imported cards and unchanged website Portal cards.
 
 ---
+
+### 2026-06-27 - Portal Status Sync + Review Request Flow
+
+**Agent:** Codex
+**Mode:** Scoped implementation
+**Feature Area:** Portal Tracking + Review Automation
+**Branch:** main
+
+#### Files changed
+
+- `src/services/portal/portalService.ts`
+- `src/components/hunter/HunterLeadCard.tsx`
+- `src/components/layout/AppShell.tsx`
+- `src/components/v15r/V15rProjectsPanel.tsx`
+- `src/components/v15r/V15rFieldLogPanel.tsx`
+- `src/views/PortalTrackView.tsx`
+- `netlify/functions/send-review-request.ts`
+- `supabase/migrations/079_portal_review_request_fields.sql`
+
+#### Result
+
+- Added idempotent `portal_requests` + `job_timeline` helpers for `on_my_way`, `arrived`, `work_started`, and `work_completed`.
+- Existing accepted/scheduling/confirmed writers now reuse the shared helper rather than blindly inserting duplicate milestone rows.
+- Customer Tracker controls now appear inside expanded HUNTER cards only when the lead is connected to a live `portal_requests` row.
+- Work Completed writes a `work_completed` timeline event, sets `portal_requests.status = 'closed'`, sets `completed_at`, then opens a review request modal.
+- Added `send-review-request` Netlify function using Resend and the approved Google review link only.
+- Added additive nullable review-tracking columns to `portal_requests`.
+
+#### Verification
+
+- `npm.cmd run typecheck`: PASS
+- `npm.cmd run build`: PASS, with existing Vite dynamic-import/chunk-size warnings.
+- `git diff --check`: PASS, with normal CRLF warnings only.
+
+**Lock released** - portal status/review files free for other agents.

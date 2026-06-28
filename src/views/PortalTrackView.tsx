@@ -411,6 +411,8 @@ export default function PortalTrackView() {
     const channel = supabase.channel(`pt_${requestId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'job_timeline', filter: `portal_request_id=eq.${requestId}` },
         (p) => setTimeline(prev => [...prev, p.new as JobTimeline]))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'job_timeline', filter: `portal_request_id=eq.${requestId}` },
+        (p) => setTimeline(prev => prev.map(t => t.id === (p.new as JobTimeline).id ? p.new as JobTimeline : t)))
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'portal_requests', filter: `id=eq.${requestId}` },
         (p) => setRequest(prev => prev ? { ...prev, ...p.new } : prev))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'technician_location', filter: `portal_request_id=eq.${requestId}` },

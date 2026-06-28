@@ -675,32 +675,32 @@ export function AppShell({ children }: AppShellProps) {
         })
         // Fire scheduling + confirmed milestones if portal lead
         if (lead.source_tag === 'customer_portal' || lead.source === 'customer_portal') {
-          import('@/lib/supabase').then(({ supabase: sb }) => {
+          Promise.all([
+            import('@/lib/supabase'),
+            import('@/services/portal/portalService'),
+          ]).then(([{ supabase: sb }, portal]) => {
             (sb as any).from('portal_requests').select('id, preferred_date').eq('hunter_lead_id', lead.id).maybeSingle()
               .then(({ data: portalReq }: any) => {
                 if (!portalReq?.id) return
-                ;(sb as any).from('job_timeline').insert([
-                  {
-                    portal_request_id: portalReq.id,
-                    event_type: 'scheduling',
-                    title: 'Scheduling in Progress',
+                const confirmedTime = (() => {
+                  const pd = (portalReq as any).preferred_date
+                  return pd ? new Date(pd + 'T12:00:00').toISOString() : new Date(Date.now() + 1000).toISOString()
+                })()
+                Promise.all([
+                  portal.writePortalTimelineEvent({
+                    portalRequestId: portalReq.id,
+                    eventType: 'scheduling',
                     description: 'A service call has been created for your request.',
-                    event_time: new Date().toISOString(),
-                    triggered_by: 'owner',
-                  },
-                  {
-                    portal_request_id: portalReq.id,
-                    event_type: 'confirmed',
-                    title: 'Appointment Confirmed',
+                    eventTime: new Date().toISOString(),
+                  }),
+                  portal.writePortalTimelineEvent({
+                    portalRequestId: portalReq.id,
+                    eventType: 'confirmed',
                     description: 'Your service call has been scheduled.',
-                    event_time: (() => {
-                      const pd = (portalReq as any).preferred_date
-                      return pd ? new Date(pd + 'T12:00:00').toISOString() : new Date(Date.now() + 1000).toISOString()
-                    })(),
-                    triggered_by: 'owner',
-                  },
-                ]).then(({ error }: any) => {
-                  if (error) console.error('[AppShell] service_call milestone insert failed:', error)
+                    eventTime: confirmedTime,
+                  }),
+                ]).catch((err) => {
+                  console.error('[AppShell] service_call milestone write failed:', err)
                 })
               })
           })
