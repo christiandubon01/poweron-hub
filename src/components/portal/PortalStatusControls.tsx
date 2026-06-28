@@ -86,6 +86,15 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
     (tracker.timeline || []).map((event) => event.event_type)
   )
   const reviewAlreadySent = !!tracker.request.review_requested_at
+  const workCompleted = doneTypes.has('work_completed')
+
+  const handleRequestReview = () => {
+    if (reviewEmail.trim()) {
+      sendReview()
+    } else {
+      setReviewModalOpen(true)
+    }
+  }
 
   const writeStatus = async (eventType: PortalTimelineEventType) => {
     if (!tracker?.request?.id || writing) return
@@ -97,7 +106,6 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
       if (next) {
         setTracker(next)
         setReviewEmail(next.request.email ?? lead?.email ?? '')
-        if (eventType === 'work_completed') setReviewModalOpen(true)
       } else {
         alert('Portal status update failed. Check console for details.')
       }
@@ -127,6 +135,7 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
     }
 
     setReviewSentMessage(`Review request sent to ${result.sentTo || reviewEmail}.`)
+    setReviewModalOpen(false)
     if (result.request)
       setTracker((prev) =>
         prev ? { ...prev, request: result.request as any } : prev
@@ -181,13 +190,38 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
         })}
       </div>
 
-      {reviewAlreadySent && (
-        <div className="text-xs text-emerald-300">
-          Review request already sent to{' '}
-          {tracker.request.review_request_sent_to ||
-            tracker.request.email ||
-            'customer'}
-          .
+      {workCompleted && (
+        <div className="pt-2 border-t border-gray-700">
+          {reviewAlreadySent ? (
+            <div className="inline-flex items-center gap-1.5 text-xs text-emerald-300 font-semibold">
+              <CheckCircle size={12} />
+              Review Requested — sent to{' '}
+              {tracker.request.review_request_sent_to ||
+                tracker.request.email ||
+                'customer'}
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <button
+                onClick={handleRequestReview}
+                disabled={sendingReview}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold border transition-colors bg-gray-900 text-emerald-300 border-emerald-700 hover:border-emerald-400 hover:text-emerald-200 disabled:opacity-50 disabled:cursor-wait"
+              >
+                {sendingReview ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Mail size={12} />
+                )}
+                {sendingReview ? 'Sending…' : 'Request Review'}
+              </button>
+              {reviewError && (
+                <div className="text-xs text-red-300">{reviewError}</div>
+              )}
+              {reviewSentMessage && (
+                <div className="text-xs text-emerald-300">{reviewSentMessage}</div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
