@@ -49,6 +49,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { linkEntityToAccount, upsertRelationshipEvent } from '@/services/relationshipAccountService'
 // BUG 3 FIX — Canonical project financials (remaining_balance = quote − costs)
 import { calculateProjectFinancials, calculatePortfolioFinancials, INTERNAL_LABOR_RATE, VAN_MILE_RATE } from '@/utils/calculateProjectFinancials'
+import { PortalStatusControls } from '@/components/portal/PortalStatusControls'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -852,6 +853,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       totalQuote,
       status: 'open',
       createdAt: new Date().toISOString(),
+      // Preserve the hunter_lead id for portal-originated service calls so
+      // the Customer Tracker controls can be rendered in the Open Estimates card.
+      hunterLeadId: (!editEstimateId && portalLeadId) ? portalLeadId : undefined,
     }
 
     if (editEstimateId) {
@@ -2975,54 +2979,61 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   <div
                     key={est.id}
                     data-service-estimate-id={est.id}
-                    className={`bg-[var(--bg-input)] rounded p-3 flex items-center justify-between ${sourceHighlightId === String(est.id) ? 'ring-2 ring-cyan-400/70' : ''}`}
+                    className={`bg-[var(--bg-input)] rounded p-3 space-y-2 ${sourceHighlightId === String(est.id) ? 'ring-2 ring-cyan-400/70' : ''}`}
                   >
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-semibold text-gray-200">{canonicalCustomerName(est)}</span>
-                        <span className="text-[10px] text-gray-500">{est.jobType}</span>
-                        <span className="text-[10px] text-gray-500">{est.date}</span>
-                        <span className="text-[9px] px-2 py-0.5 rounded font-bold bg-blue-500/20 text-blue-400">
-                          Open
-                        </span>
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-semibold text-gray-200">{canonicalCustomerName(est)}</span>
+                          <span className="text-[10px] text-gray-500">{est.jobType}</span>
+                          <span className="text-[10px] text-gray-500">{est.date}</span>
+                          <span className="text-[9px] px-2 py-0.5 rounded font-bold bg-blue-500/20 text-blue-400">
+                            Open
+                          </span>
+                        </div>
+                        {est.address && <div className="text-[10px] text-gray-500 mt-1">{est.address}</div>}
                       </div>
-                      {est.address && <div className="text-[10px] text-gray-500 mt-1">{est.address}</div>}
+                      <div className="text-right mr-3">
+                        <div className="font-mono text-blue-400 font-bold text-sm">{fmt(est.totalQuote)}</div>
+                      </div>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => confirmEstimateToActiveCall(est.id)}
+                          className="text-[9px] px-2 py-1 rounded bg-emerald-700/50 text-emerald-300 hover:bg-emerald-600/50"
+                        >
+                          Confirm Job
+                        </button>
+                        <button
+                          onClick={() => beginEstimateEdit(est.id)}
+                          className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-300"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => markEstimateLost(est.id)}
+                          className="text-[9px] px-2 py-1 rounded bg-amber-700/40 text-amber-300 hover:bg-amber-700/60"
+                        >
+                          Mark Lost
+                        </button>
+                        <button
+                          onClick={() => archiveEstimate(est.id)}
+                          className="text-[9px] px-2 py-1 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-600/60"
+                        >
+                          Archive
+                        </button>
+                        <button
+                          onClick={() => deleteEstimate(est.id)}
+                          className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-400 hover:text-red-400"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
-                    <div className="text-right mr-3">
-                      <div className="font-mono text-blue-400 font-bold text-sm">{fmt(est.totalQuote)}</div>
-                    </div>
-                    <div className="flex gap-1">
-                      <button
-                        onClick={() => confirmEstimateToActiveCall(est.id)}
-                        className="text-[9px] px-2 py-1 rounded bg-emerald-700/50 text-emerald-300 hover:bg-emerald-600/50"
-                      >
-                        Confirm Job
-                      </button>
-                      <button
-                        onClick={() => beginEstimateEdit(est.id)}
-                        className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-300"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => markEstimateLost(est.id)}
-                        className="text-[9px] px-2 py-1 rounded bg-amber-700/40 text-amber-300 hover:bg-amber-700/60"
-                      >
-                        Mark Lost
-                      </button>
-                      <button
-                        onClick={() => archiveEstimate(est.id)}
-                        className="text-[9px] px-2 py-1 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-600/60"
-                      >
-                        Archive
-                      </button>
-                      <button
-                        onClick={() => deleteEstimate(est.id)}
-                        className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-400 hover:text-red-400"
-                      >
-                        Delete
-                      </button>
-                    </div>
+
+                    {/* Customer Tracker — only for estimates linked to a portal service call */}
+                    {est.hunterLeadId && (
+                      <PortalStatusControls hunterLeadId={est.hunterLeadId} />
+                    )}
                   </div>
                 ))}
             </div>

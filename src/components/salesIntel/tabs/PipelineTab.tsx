@@ -3,6 +3,7 @@ import { useHunterStore } from '@/store/hunterStore';
 import type { HunterLead } from '@/services/hunter/HunterTypes';
 import { LeadStatus } from '@/services/hunter/HunterTypes';
 import { ClipboardList, ArrowLeft, FileText } from 'lucide-react';
+import { PortalStatusControls } from '@/components/portal/PortalStatusControls';
 
 /**
  * PipelineTab - Won-leads view.
@@ -142,6 +143,10 @@ function LeadTypeToggle({ lead, onOpenEstimate, onReturnToLeads }: {
   onReturnToLeads: (lead: HunterLead) => void
 }) {
   const [type, setType] = useState<'project' | 'service_call'>('project')
+  const anyLead = lead as any
+  const isPortalLead =
+    anyLead.source === 'customer_portal' || anyLead.source_tag === 'customer_portal'
+
   return (
     <div className="space-y-2">
       <div className="flex rounded-lg overflow-hidden border border-gray-700">
@@ -188,6 +193,13 @@ function LeadTypeToggle({ lead, onOpenEstimate, onReturnToLeads }: {
           <ArrowLeft size={14} />
         </button>
       </div>
+
+      {/* Customer Tracker — only for portal leads and only when routing as a service call */}
+      {isPortalLead && type === 'service_call' && (
+        <div className="mt-2">
+          <PortalStatusControls lead={lead} />
+        </div>
+      )}
     </div>
   )
 }

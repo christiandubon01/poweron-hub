@@ -1598,3 +1598,76 @@ After deploy, verify the dry-run and invalid-confirmation routes. Then, with exp
 - `git diff --check`: PASS, with normal CRLF warnings only.
 
 **Lock released** - portal status/review files free for other agents.
+
+---
+
+### 2026-06-27 — Portal Tracker Relocation (Step 11D)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Scoped implementation
+**Feature Area:** Portal Tracking + Service Call Workflow Cleanup
+**Branch:** main
+**Typecheck:** 0 errors ✅ | **Build:** ✅ built in 14.86s, 0 errors (pre-existing chunk-size warnings only)
+**git diff --check:** PASS — CRLF warnings only (pre-existing for this file; same as Step 11B)
+
+#### Files Changed (4 source + 1 new)
+
+| File | Change |
+|---|---|
+| `src/components/portal/PortalStatusControls.tsx` | NEW — extracted shared component from HunterLeadCard; accepts `lead` or `hunterLeadId` |
+| `src/components/hunter/HunterLeadCard.tsx` | Removed full `PortalStatusControls`; replaced with read-only `PortalTrackingBadge` |
+| `src/components/salesIntel/tabs/PipelineTab.tsx` | Added `PortalStatusControls` in `LeadTypeToggle` — only when portal lead + `service_call` mode |
+| `src/components/v15r/V15rFieldLogPanel.tsx` | Added `PortalStatusControls` import; added `hunterLeadId` field to saved estimate object; added `PortalStatusControls` render in Open Estimates bucket for estimates with `hunterLeadId` |
+| `AGENT_SHARED_CONTEXT.md` | This log entry |
+
+#### What Changed
+
+**Step 11B backend helpers preserved (unchanged):**
+- `portalService.ts` — all lifecycle helpers, idempotent `writePortalTimelineEvent`, `writePortalLifecycleEvent`, `sendPortalReviewRequest`
+- `PortalTrackView.tsx`, `send-review-request.ts`, migration 079 — untouched
+
+**`PortalStatusControls.tsx` (new shared component):**
+- Extracted from `HunterLeadCard.tsx` Step 11B implementation
+- Props: `lead?: HunterLead` (Pipeline usage) OR `hunterLeadId?: string` (Open Estimates usage)
+- Uses `fetchPortalTrackerStateForLead` to load state for whichever id is supplied
+- Full On My Way / Arrived / Work Started / Work Completed buttons preserved
+- Review request modal after Work Completed preserved
+- Duplicate send protection (review_requested_at guard) preserved
+
+**`HunterLeadCard.tsx`:**
+- Removed `PortalStatusControls` component (193 lines)
+- Removed no-longer-needed imports: `Loader2`, `Zap`, `PORTAL_LIFECYCLE_EVENT_TYPES`, `getPortalTimelineMeta`, `sendPortalReviewRequest`, `writePortalLifecycleEvent`
+- Added `PortalTrackingBadge` — read-only status badge showing current `portal_requests.status` + link to `/portal/track/:requestId`
+- Render call in expanded view: `<PortalTrackingBadge lead={lead} />` (was `<PortalStatusControls lead={lead} />`)
+
+**`PipelineTab.tsx`:**
+- Added import: `PortalStatusControls` from shared file
+- `LeadTypeToggle`: detects portal lead via `source === 'customer_portal' || source_tag === 'customer_portal'`
+- Renders `<PortalStatusControls lead={lead} />` only when: portal lead AND `type === 'service_call'`
+- Project mode: no tracker buttons (correct — projects don't need field-day status)
+- All existing toggle/Open Estimate/Return to Leads behavior unchanged
+
+**`V15rFieldLogPanel.tsx`:**
+- Added import: `PortalStatusControls` from shared file
+- Estimate save: adds `hunterLeadId: (!editEstimateId && portalLeadId) ? portalLeadId : undefined` — only on new estimates from portal prefill; edits don't overwrite
+- Open Estimates bucket: each estimate card layout changed from flat `flex items-center justify-between` to `space-y-2`; if `est.hunterLeadId` is set, renders `<PortalStatusControls hunterLeadId={est.hunterLeadId} />`
+- Old estimates without `hunterLeadId` are completely unaffected
+
+#### Correct Workflow After Step 11D
+
+1. Portal request arrives → Portal Inbox → Convert to Lead → HUNTER lead (source='customer_portal')
+2. HUNTER lead card expanded → shows read-only ⚡ Portal Tracking badge + Track link; no operational buttons
+3. Mark lead Won → appears in Pipeline
+4. Pipeline card: select 📋 Project → no tracker; select 🔧 Service Call → Customer Tracker buttons appear
+5. "Open as Service Call" → Field Log / Service Log estimate form pre-filled; saves estimate with `hunterLeadId`
+6. Estimate appears in Open Estimates → Customer Tracker buttons visible via saved `hunterLeadId`
+7. Click On My Way / Arrived / Work Started / Work Completed → updates `job_timeline` + `portal_requests`
+8. Work Completed → opens review request modal → send review email
+
+#### Safety Notes
+- Non-portal service estimates: `hunterLeadId` is `undefined` → no tracker rendered
+- Editing an existing estimate: `hunterLeadId` not overwritten (guard: `!editEstimateId`)
+- HUNTER cards for non-portal leads: `PortalTrackingBadge` returns null (isPortalLead guard)
+- `portal_requests`, `job_timeline`, `PortalTrackView` unchanged
+
+**Lock released** — `HunterLeadCard.tsx`, `PipelineTab.tsx` (salesIntel/tabs), `V15rFieldLogPanel.tsx`, `PortalStatusControls.tsx` are free for other agents.
