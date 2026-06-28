@@ -36,10 +36,26 @@ interface PortalStatusControlsProps {
   hunterLeadId?: string | null
 }
 
+// Maps raw server-side config error strings to user-friendly messages.
+function friendlyReviewError(raw: string): string {
+  const lower = raw.toLowerCase()
+  if (
+    lower.includes('not configured') ||
+    lower.includes('supabase') ||
+    lower.includes('resend_api_key')
+  ) {
+    return 'Review email is not configured yet. Add the required Netlify environment variables before sending review requests.'
+  }
+  return raw
+}
+
 export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControlsProps) {
   const [tracker, setTracker] = useState<PortalTrackerState | null>(null)
   const [loading, setLoading] = useState(false)
   const [writing, setWriting] = useState<PortalTimelineEventType | null>(null)
+  // Optimistic set — events added instantly on click, removed once server confirms.
+  const [optimisticDone, setOptimisticDone] = useState<Set<PortalTimelineEventType>>(new Set())
+  const [writeError, setWriteError] = useState<string | null>(null)
   const [reviewModalOpen, setReviewModalOpen] = useState(false)
   const [reviewEmail, setReviewEmail] = useState('')
   const [sendingReview, setSendingReview] = useState(false)
@@ -69,9 +85,9 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
       .then((state) => {
         if (cancelled) return
         setTracker(state)
-        setReviewEmail(
-          state?.request?.email ?? lead?.email ?? ''
-        )
+        setReviewEmail(state?.request?.email ?? lead?.email ?? '')
+        // Server state is authoritative on load — clear any stale optimistic marks.
+        setOptimisticDone(new Set())
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -82,11 +98,16 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
 
   if (!isPortalLead || loading || !tracker?.request?.id) return null
 
+  // Events confirmed by the server (from job_timeline rows)
   const doneTypes = new Set(
     (tracker.timeline || []).map((event) => event.event_type)
   )
+
+  // Merge server-confirmed + optimistic for instant visual feedback
+  const effectiveDone = new Set<string>([...doneTypes, ...optimisticDone])
+
   const reviewAlreadySent = !!tracker.request.review_requested_at
-  const workCompleted = doneTypes.has('work_completed')
+  const workCompleted = effectiveDone.has('work_completed')
 
   const handleRequestReview = () => {
     if (reviewEmail.trim()) {
@@ -97,17 +118,39 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
   }
 
   const writeStatus = async (eventType: PortalTimelineEventType) => {
-    if (!tracker?.request?.id || writing) return
+    // Hard guard: skip if already confirmed OR optimistically marked (idempotent)
+    if (!tracker?.request?.id || writing || effectiveDone.has(eventType)) return
+
     setWriting(eventType)
+    setWriteError(null)
     setReviewError(null)
     setReviewSentMessage(null)
+
+    // Optimistically mark done immediately — instant green/check before server reply
+    setOptimisticDone((prev) => new Set([...prev, eventType]))
+
     try {
       const next = await writePortalLifecycleEvent(tracker.request.id, eventType)
       if (next) {
+        // Server confirmed — let real doneTypes own it; clear from optimistic
         setTracker(next)
         setReviewEmail(next.request.email ?? lead?.email ?? '')
+        setOptimisticDone((prev) => {
+          const s = new Set(prev)
+          s.delete(eventType)
+          return s
+        })
       } else {
-        alert('Portal status update failed. Check console for details.')
+        // Rollback optimistic and surface an inline error (no browser alert)
+        setOptimisticDone((prev) => {
+          const s = new Set(prev)
+          s.delete(eventType)
+          return s
+        })
+        const meta = getPortalTimelineMeta(eventType)
+        setWriteError(
+          `Could not save "${meta?.title || eventType}". Check your connection and try again.`
+        )
       }
     } finally {
       setWriting(null)
@@ -126,7 +169,7 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
     setSendingReview(false)
 
     if (!result.success) {
-      setReviewError(result.error || 'Review request failed')
+      setReviewError(friendlyReviewError(result.error || 'Review request failed'))
       if (result.request)
         setTracker((prev) =>
           prev ? { ...prev, request: result.request as any } : prev
@@ -163,7 +206,8 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
       <div className="flex flex-wrap gap-2">
         {PORTAL_LIFECYCLE_EVENT_TYPES.map((eventType) => {
           const meta = getPortalTimelineMeta(eventType)
-          const isDone = doneTypes.has(eventType)
+          const isDone = effectiveDone.has(eventType)
+          const isSaving = writing === eventType
           return (
             <button
               key={eventType}
@@ -174,10 +218,10 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
                 isDone
                   ? 'bg-emerald-900/50 text-emerald-300 border-emerald-700 cursor-default'
                   : 'bg-gray-900 text-gray-200 border-gray-700 hover:border-yellow-500 hover:text-yellow-200',
-                writing === eventType && 'opacity-70 cursor-wait'
+                isSaving && 'opacity-70 cursor-wait'
               )}
             >
-              {writing === eventType ? (
+              {isSaving ? (
                 <Loader2 size={12} className="animate-spin" />
               ) : isDone ? (
                 <CheckCircle size={12} />
@@ -189,6 +233,10 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
           )
         })}
       </div>
+
+      {writeError && (
+        <div className="text-xs text-red-300">{writeError}</div>
+      )}
 
       {workCompleted && (
         <div className="pt-2 border-t border-gray-700">
