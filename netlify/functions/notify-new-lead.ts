@@ -50,8 +50,8 @@ function row(label, value) {
   if (!value) return ''
   return `
     <tr>
-      <td style="padding:8px 0;border-bottom:1px solid #f3f4f6;color:#6b7280;font-size:13px;width:36%;vertical-align:top;">${esc(label)}</td>
-      <td style="padding:8px 0;border-bottom:1px solid #f3f4f6;color:#111;font-size:13px;font-weight:600;">${esc(String(value))}</td>
+      <td style="padding:7px 0;border-bottom:1px solid #1e293b;color:#94a3b8;font-size:13px;width:36%;vertical-align:top;">${esc(label)}</td>
+      <td style="padding:7px 0;border-bottom:1px solid #1e293b;color:#f8fafc;font-size:13px;font-weight:600;">${esc(String(value))}</td>
     </tr>`
 }
 
@@ -88,67 +88,157 @@ function buildHtml({
   const attrEntries = Object.entries(attrObj).filter(([, v]) => v)
 
   return `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="font-family:Arial,sans-serif;font-size:14px;color:#111;max-width:580px;margin:0 auto;padding:24px;background:#f9fafb;">
-  <div style="background:#fff;border-radius:10px;padding:32px;border:1px solid #e5e7eb;">
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New Portal Lead — Power On Solutions</title>
+</head>
+<body style="margin:0;padding:0;background:#0f172a;font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#0f172a;">
+    <tr>
+      <td align="center" style="padding:40px 16px;">
 
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
-      <div style="width:10px;height:10px;background:#16a34a;border-radius:50%;flex-shrink:0;"></div>
-      <h2 style="margin:0;font-size:17px;font-weight:700;color:#111;">New Portal Lead</h2>
-      <span style="margin-left:auto;background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;border:1px solid #fde68a;">${esc(serviceLabel)}</span>
-    </div>
+        <!-- Card -->
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600"
+               style="max-width:600px;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
 
-    <p style="margin:0 0 20px;color:#4b5563;font-size:13px;">
-      A new <strong>${esc(requestType || 'portal')}</strong> request was submitted on Power On Solutions.
-    </p>
+          <!-- Header bar -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#f59e0b 0%,#d97706 100%);padding:6px 0;text-align:center;">
+              <span style="font-size:11px;font-weight:700;letter-spacing:0.15em;color:#0f172a;text-transform:uppercase;">
+                Power On Solutions LLC &middot; C-10 Licensed &middot; CA
+              </span>
+            </td>
+          </tr>
 
-    <table style="width:100%;border-collapse:collapse;">
-      ${row('Name', name)}
-      ${row('Phone', phone)}
-      ${row('Email', email)}
-      ${row('Address', address)}
-      ${row('City', city)}
-      ${row('Service', serviceLabel)}
-      ${row('Request Type', requestType)}
-      ${row('Preferred Date', preferredDate)}
-      ${row('Preferred Time', preferredTime)}
-      ${row('Submitted', formattedDate)}
-      ${row('Request ID', requestId)}
-    </table>
+          <!-- Logo / brand row -->
+          <tr>
+            <td style="padding:28px 40px 20px;text-align:center;border-bottom:1px solid #334155;">
+              <img src="https://edxxbtyugohtowvslbfo.supabase.co/storage/v1/object/public/brand-assets/ChatGPT%20Image%20Jan%2030,%202026,%2010_40_53%20AM1.png"
+                   alt="Power On Solutions LLC" width="240" height="59"
+                   style="display:block;margin:0 auto 14px;height:59px;width:240px;object-fit:contain;" />
+              <div>
+                <span style="display:inline-block;background:#0f172a;color:#4ade80;font-size:11px;font-weight:700;padding:3px 12px;border-radius:12px;border:1px solid #166534;margin-right:6px;">NEW LEAD</span>
+                <span style="display:inline-block;background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;padding:3px 12px;border-radius:12px;border:1px solid #fde68a;">${esc(serviceLabel)}</span>
+              </div>
+              <h1 style="margin:12px 0 0;font-size:20px;font-weight:700;color:#f8fafc;">New Portal Lead</h1>
+            </td>
+          </tr>
 
-    ${description ? `
-    <div style="margin-top:16px;padding:12px 16px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">
-      <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:.06em;color:#6b7280;text-transform:uppercase;">Description</p>
-      <p style="margin:0;font-size:13px;color:#374151;white-space:pre-wrap;">${esc(description)}</p>
-    </div>` : ''}
+          <!-- Lead type context -->
+          <tr>
+            <td style="padding:20px 40px 12px;">
+              <p style="margin:0;font-size:14px;color:#94a3b8;">
+                A new <strong style="color:#e2e8f0;">${esc(requestType || 'portal')}</strong> request was submitted on Power On Solutions.
+              </p>
+            </td>
+          </tr>
 
-    ${mainNotes ? `
-    <div style="margin-top:12px;padding:12px 16px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">
-      <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:.06em;color:#6b7280;text-transform:uppercase;">Notes</p>
-      <p style="margin:0;font-size:13px;color:#374151;white-space:pre-wrap;">${esc(mainNotes)}</p>
-    </div>` : ''}
+          <!-- Lead detail table -->
+          <tr>
+            <td style="padding:0 40px 16px;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+                     style="background:#0f172a;border-radius:8px;border:1px solid #334155;">
+                <tr>
+                  <td style="padding:16px 20px;">
+                    <table style="width:100%;border-collapse:collapse;">
+                      ${row('Name', name)}
+                      ${row('Phone', phone)}
+                      ${row('Email', email)}
+                      ${row('Address', address)}
+                      ${row('City', city)}
+                      ${row('Service', serviceLabel)}
+                      ${row('Request Type', requestType)}
+                      ${row('Preferred Date', preferredDate)}
+                      ${row('Preferred Time', preferredTime)}
+                      ${row('Submitted', formattedDate)}
+                      ${row('Request ID', requestId)}
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
 
-    ${attrEntries.length ? `
-    <div style="margin-top:12px;padding:12px 16px;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;">
-      <p style="margin:0 0 8px;font-size:11px;font-weight:700;letter-spacing:.06em;color:#166534;text-transform:uppercase;">Attribution</p>
-      <table style="width:100%;border-collapse:collapse;">
-        ${attrEntries.map(([k, v]) => `
-        <tr>
-          <td style="padding:3px 0;color:#6b7280;font-size:11px;font-family:monospace;width:34%;vertical-align:top;">${esc(k)}</td>
-          <td style="padding:3px 0;color:#166534;font-size:11px;font-family:monospace;word-break:break-all;">${esc(String(v))}</td>
-        </tr>`).join('')}
-      </table>
-    </div>` : ''}
+          ${description ? `
+          <!-- Description -->
+          <tr>
+            <td style="padding:0 40px 12px;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+                     style="background:#0f172a;border-radius:8px;border:1px solid #334155;">
+                <tr>
+                  <td style="padding:14px 20px;">
+                    <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:.08em;color:#64748b;text-transform:uppercase;">Description</p>
+                    <p style="margin:0;font-size:13px;color:#cbd5e1;white-space:pre-wrap;">${esc(description)}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>` : ''}
 
-    <p style="margin:20px 0 0;font-size:12px;color:#9ca3af;">
-      Sent automatically when a customer submits the portal request form.
-    </p>
-  </div>
-  <hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
-  <p style="font-size:11px;color:#9ca3af;margin:0;text-align:center;">
-    Power On Solutions LLC | C-10 License #1151468 | PowerOn Hub
-  </p>
+          ${mainNotes ? `
+          <!-- Notes -->
+          <tr>
+            <td style="padding:0 40px 12px;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+                     style="background:#0f172a;border-radius:8px;border:1px solid #334155;">
+                <tr>
+                  <td style="padding:14px 20px;">
+                    <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:.08em;color:#64748b;text-transform:uppercase;">Notes</p>
+                    <p style="margin:0;font-size:13px;color:#cbd5e1;white-space:pre-wrap;">${esc(mainNotes)}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>` : ''}
+
+          ${attrEntries.length ? `
+          <!-- Attribution -->
+          <tr>
+            <td style="padding:0 40px 12px;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%"
+                     style="background:#052e16;border-radius:8px;border:1px solid #166534;">
+                <tr>
+                  <td style="padding:14px 20px;">
+                    <p style="margin:0 0 10px;font-size:11px;font-weight:700;letter-spacing:.08em;color:#4ade80;text-transform:uppercase;">Attribution</p>
+                    <table style="width:100%;border-collapse:collapse;">
+                      ${attrEntries.map(([k, v]) => `
+                      <tr>
+                        <td style="padding:3px 0;color:#86efac;font-size:11px;font-family:monospace;width:34%;vertical-align:top;">${esc(k)}</td>
+                        <td style="padding:3px 0;color:#4ade80;font-size:11px;font-family:monospace;word-break:break-all;">${esc(String(v))}</td>
+                      </tr>`).join('')}
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>` : ''}
+
+          <!-- CTA -->
+          <tr>
+            <td style="padding:16px 40px 28px;text-align:center;">
+              <a href="https://app.poweronsolutionsllc.com/"
+                 style="display:inline-block;background:#f59e0b;color:#0f172a;font-weight:800;font-size:15px;text-decoration:none;border-radius:8px;padding:13px 32px;letter-spacing:0.02em;">
+                Open Lead in Power On Hub &rarr;
+              </a>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#0f172a;padding:16px 40px;border-top:1px solid #1e293b;text-align:center;">
+              <p style="margin:0 0 4px;font-size:12px;color:#475569;">Power On Solutions LLC &middot; C-10 License #1151468</p>
+              <p style="margin:0;font-size:11px;color:#334155;">Sent automatically when a customer submits the portal request form.</p>
+            </td>
+          </tr>
+
+        </table>
+        <!-- /Card -->
+
+      </td>
+    </tr>
+  </table>
 </body>
 </html>`
 }
@@ -207,7 +297,7 @@ exports.handler = async (event) => {
 
   const serviceLabel = SERVICE_LABELS[serviceCategory] || serviceCategory || 'Unknown'
   const displayName  = String(name).trim() || 'Unknown'
-  const subject      = `New Portal Lead - ${displayName} | ${serviceLabel}`
+  const subject      = `New Portal Lead — ${displayName} | ${serviceLabel}`
 
   const textLines = [
     'New Portal Lead',

@@ -97,29 +97,114 @@ function buildText(name) {
   const firstName = String(name || 'there').trim().split(/\s+/)[0] || 'there'
   return `Hi ${firstName},
 
-Thank you for trusting Power On Solutions with your electrical project. If you have a moment, we would appreciate your honest feedback about your experience.
+Thank you for allowing Power On Solutions to serve you at your property.
 
-You can leave a Google review here:
+If you feel our service was worth a review, it would mean the world to us if you could share your honest feedback on Google. No pressure at all — either way, we appreciate the opportunity to help and we're grateful you trusted us with your electrical work.
+
+Leave a Google Review:
 ${REVIEW_URL}
 
-Thank you again,
+Your feedback helps local customers know what to expect when choosing Power On Solutions.
+
+---
 Power On Solutions, LLC
+C-10 Licensed · California
 (760) 623-8962`
 }
 
 function buildHtml(name) {
-  const text = buildText(name)
+  const firstName = String(name || 'there').trim().split(/\s+/)[0] || 'there'
   return `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f8fafc;font-family:Arial,Helvetica,sans-serif;color:#111827;">
-  <div style="max-width:560px;margin:0 auto;padding:28px 16px;">
-    <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px;">
-      <div style="font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#166534;margin-bottom:18px;">Power On Solutions, LLC</div>
-      <p style="white-space:pre-line;font-size:15px;line-height:1.65;color:#1f2937;margin:0 0 22px;">${esc(text)}</p>
-      <a href="${REVIEW_URL}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-weight:700;border-radius:8px;padding:12px 18px;">Leave honest feedback</a>
-    </div>
-  </div>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Thank you — Power On Solutions</title>
+</head>
+<body style="margin:0;padding:0;background:#0f172a;font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#0f172a;">
+    <tr>
+      <td align="center" style="padding:40px 16px;">
+
+        <!-- Card -->
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600"
+               style="max-width:600px;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
+
+          <!-- Header bar -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#f59e0b 0%,#d97706 100%);padding:6px 0;text-align:center;">
+              <span style="font-size:11px;font-weight:700;letter-spacing:0.15em;color:#0f172a;text-transform:uppercase;">
+                Power On Solutions LLC · C-10 Licensed · CA
+              </span>
+            </td>
+          </tr>
+
+          <!-- Logo / brand row -->
+          <tr>
+            <td style="padding:36px 40px 24px;text-align:center;border-bottom:1px solid #334155;">
+              <img src="https://edxxbtyugohtowvslbfo.supabase.co/storage/v1/object/public/brand-assets/ChatGPT%20Image%20Jan%2030,%202026,%2010_40_53%20AM1.png"
+                   alt="Power On Solutions LLC" width="240" height="59"
+                   style="display:block;margin:0 auto 16px;height:59px;width:240px;object-fit:contain;" />
+              <h1 style="margin:0 0 6px;font-size:22px;font-weight:700;color:#f8fafc;">
+                Thank you for choosing Power On Solutions
+              </h1>
+              <p style="margin:0;font-size:15px;color:#94a3b8;">
+                We appreciate you trusting us with your electrical work
+              </p>
+            </td>
+          </tr>
+
+          <!-- Greeting / body -->
+          <tr>
+            <td style="padding:28px 40px 20px;">
+              <p style="margin:0 0 16px;font-size:16px;color:#e2e8f0;">
+                Hi ${esc(firstName)},
+              </p>
+              <p style="margin:0 0 16px;font-size:15px;color:#94a3b8;line-height:1.65;">
+                Thank you for allowing Power On Solutions to serve you at your property.
+              </p>
+              <p style="margin:0;font-size:15px;color:#94a3b8;line-height:1.65;">
+                If you feel our service was worth a review, it would mean the world to us if you could
+                share your honest feedback on Google. No pressure at all &mdash; either way, we appreciate
+                the opportunity to help and we&rsquo;re grateful you trusted us with your electrical work.
+              </p>
+            </td>
+          </tr>
+
+          <!-- CTA button -->
+          <tr>
+            <td style="padding:0 40px 12px;text-align:center;">
+              <a href="${REVIEW_URL}"
+                 style="display:inline-block;background:#16a34a;color:#ffffff;font-weight:700;font-size:15px;text-decoration:none;border-radius:8px;padding:14px 32px;letter-spacing:0.01em;">
+                Leave a Google Review
+              </a>
+            </td>
+          </tr>
+
+          <!-- Note under button -->
+          <tr>
+            <td style="padding:0 40px 32px;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#64748b;line-height:1.5;">
+                Your feedback helps local customers know what to expect when choosing Power On Solutions.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#0f172a;padding:20px 40px;border-top:1px solid #1e293b;text-align:center;">
+              <p style="margin:0 0 4px;font-size:12px;color:#475569;">Power On Solutions, LLC</p>
+              <p style="margin:0 0 4px;font-size:12px;color:#475569;">C-10 Licensed &bull; California</p>
+              <p style="margin:0;font-size:12px;color:#475569;">(760) 623-8962</p>
+            </td>
+          </tr>
+
+        </table>
+        <!-- /Card -->
+
+      </td>
+    </tr>
+  </table>
 </body>
 </html>`
 }
@@ -225,7 +310,7 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         from: FROM_ADDRESS,
         to: [email],
-        subject: 'Thank you from Power On Solutions',
+        subject: 'Thank you for choosing Power On Solutions',
         html: buildHtml(request.name),
         text: buildText(request.name),
       }),
