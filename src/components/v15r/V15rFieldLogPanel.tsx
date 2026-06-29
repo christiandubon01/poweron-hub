@@ -2996,34 +2996,34 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                       <div className="text-right mr-3">
                         <div className="font-mono text-blue-400 font-bold text-sm">{fmt(est.totalQuote)}</div>
                       </div>
-                      <div className="flex gap-1">
+                      <div className="flex flex-wrap gap-1.5 flex-shrink-0">
                         <button
                           onClick={() => confirmEstimateToActiveCall(est.id)}
-                          className="text-[9px] px-2 py-1 rounded bg-emerald-700/50 text-emerald-300 hover:bg-emerald-600/50"
+                          className="text-[10px] px-2.5 py-1 rounded-md font-semibold bg-emerald-800/50 text-emerald-200 hover:bg-emerald-700/60 border border-emerald-700/60 hover:border-emerald-500 transition-colors"
                         >
                           Confirm Job
                         </button>
                         <button
                           onClick={() => beginEstimateEdit(est.id)}
-                          className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-300"
+                          className="text-[10px] px-2.5 py-1 rounded-md font-semibold bg-slate-700/50 text-slate-300 hover:bg-slate-600/60 border border-slate-600/40 hover:border-slate-500 transition-colors"
                         >
                           Edit
                         </button>
                         <button
                           onClick={() => markEstimateLost(est.id)}
-                          className="text-[9px] px-2 py-1 rounded bg-amber-700/40 text-amber-300 hover:bg-amber-700/60"
+                          className="text-[10px] px-2.5 py-1 rounded-md font-semibold bg-amber-900/30 text-amber-300 hover:bg-amber-800/40 border border-amber-700/40 hover:border-amber-600 transition-colors"
                         >
                           Mark Lost
                         </button>
                         <button
                           onClick={() => archiveEstimate(est.id)}
-                          className="text-[9px] px-2 py-1 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-600/60"
+                          className="text-[10px] px-2.5 py-1 rounded-md font-semibold bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 border border-slate-700/40 hover:border-slate-600 transition-colors"
                         >
                           Archive
                         </button>
                         <button
                           onClick={() => deleteEstimate(est.id)}
-                          className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-400 hover:text-red-400"
+                          className="text-[10px] px-2.5 py-1 rounded-md font-semibold text-slate-500 hover:text-red-400 hover:bg-red-950/30 border border-transparent hover:border-red-900/40 transition-colors"
                         >
                           Delete
                         </button>
@@ -3194,22 +3194,22 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     )}
 
                     {completingEstimateId !== est.id && (
-                      <div className="flex gap-1">
+                      <div className="flex flex-wrap gap-1.5">
                         <button
                           onClick={() => startCompleteEstimate(est.id)}
-                          className="flex-1 px-3 py-1.5 rounded bg-emerald-700/50 text-emerald-300 hover:bg-emerald-600/50 text-xs font-semibold"
+                          className="flex-1 px-3 py-1.5 rounded-md bg-emerald-800/50 text-emerald-200 hover:bg-emerald-700/60 text-xs font-semibold border border-emerald-700/60 hover:border-emerald-500 transition-colors"
                         >
                           Log as Complete
                         </button>
                         <button
                           onClick={() => archiveEstimate(est.id)}
-                          className="px-3 py-1.5 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-600/60 text-xs font-semibold"
+                          className="px-3 py-1.5 rounded-md bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 text-xs font-semibold border border-slate-700/40 hover:border-slate-600 transition-colors"
                         >
                           Archive
                         </button>
                         <button
                           onClick={() => deleteEstimate(est.id)}
-                          className="px-3 py-1.5 rounded bg-gray-700/50 text-gray-400 hover:text-red-400 text-xs font-semibold"
+                          className="px-3 py-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-950/30 text-xs font-semibold border border-transparent hover:border-red-900/40 transition-colors"
                         >
                           Delete
                         </button>

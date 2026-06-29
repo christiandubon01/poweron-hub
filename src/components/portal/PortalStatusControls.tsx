@@ -183,7 +183,7 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
   }
 
   return (
-    <div className="space-y-3 p-3 bg-gray-800 rounded border border-yellow-700/30">
+    <div className="space-y-3 p-4 bg-gray-900/90 rounded-lg border border-yellow-700/25 shadow-sm">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h4 className="text-sm font-semibold text-yellow-200">Customer Tracker</h4>
@@ -211,19 +211,19 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
               onClick={() => writeStatus(eventType)}
               disabled={!!writing || isDone}
               className={clsx(
-                'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold border transition-colors',
+                'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border transition-all duration-150',
                 isDone
-                  ? 'bg-emerald-900/50 text-emerald-300 border-emerald-700 cursor-default'
-                  : 'bg-gray-900 text-gray-200 border-gray-700 hover:border-yellow-500 hover:text-yellow-200',
-                isSaving && 'opacity-70 cursor-wait'
+                  ? 'bg-emerald-950/70 text-emerald-300 border-emerald-700/70 cursor-default shadow-sm'
+                  : 'bg-slate-800/90 text-slate-300 border-slate-600/60 hover:border-slate-400 hover:bg-slate-700/80 hover:text-white cursor-pointer',
+                isSaving && 'opacity-60 cursor-wait'
               )}
             >
               {isSaving ? (
-                <Loader2 size={12} className="animate-spin" />
+                <Loader2 size={12} className="animate-spin flex-shrink-0" />
               ) : isDone ? (
-                <CheckCircle size={12} />
+                <CheckCircle size={12} className="flex-shrink-0" />
               ) : (
-                <Clock size={12} />
+                <Clock size={12} className="flex-shrink-0 opacity-60" />
               )}
               {meta?.title || eventType}
             </button>
@@ -238,19 +238,23 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
       {workCompleted && (
         <div className="pt-2 border-t border-gray-700">
           {reviewAlreadySent ? (
-            <div className="inline-flex items-center gap-1.5 text-xs text-emerald-300 font-semibold">
-              <CheckCircle size={12} />
-              Review Requested — sent to{' '}
-              {tracker.request.review_request_sent_to ||
-                tracker.request.email ||
-                'customer'}
+            <div className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-emerald-950/60 border border-emerald-800/50 text-xs font-semibold text-emerald-300">
+              <CheckCircle size={13} className="flex-shrink-0 text-emerald-400" />
+              <span>
+                Review request sent to{' '}
+                <span className="text-emerald-200">
+                  {tracker.request.review_request_sent_to ||
+                    tracker.request.email ||
+                    'customer'}
+                </span>
+              </span>
             </div>
           ) : (
             <div className="space-y-1.5">
               <button
                 onClick={handleRequestReview}
                 disabled={sendingReview}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold border transition-colors bg-gray-900 text-emerald-300 border-emerald-700 hover:border-emerald-400 hover:text-emerald-200 disabled:opacity-50 disabled:cursor-wait"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border transition-all duration-150 bg-amber-950/40 text-amber-300 border-amber-700/60 hover:bg-amber-900/50 hover:border-amber-500 hover:text-amber-200 disabled:opacity-50 disabled:cursor-wait"
               >
                 {sendingReview ? (
                   <Loader2 size={12} className="animate-spin" />
@@ -263,7 +267,10 @@ export function PortalStatusControls({ lead, hunterLeadId }: PortalStatusControl
                 <div className="text-xs text-red-300">{reviewError}</div>
               )}
               {reviewSentMessage && (
-                <div className="text-xs text-emerald-300">{reviewSentMessage}</div>
+                <div className="inline-flex items-center gap-1.5 text-xs text-emerald-300 font-medium">
+                  <CheckCircle size={11} className="flex-shrink-0" />
+                  {reviewSentMessage}
+                </div>
               )}
             </div>
           )}
