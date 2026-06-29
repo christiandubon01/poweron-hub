@@ -6,12 +6,14 @@
   NODE_VERSION = "20"
 
 [functions]
-  directory = "netlify/functions"
+  directory    = "netlify/functions"
+  node_bundler = "esbuild"
 
 [functions."city-scraper"]
   timeout = 26
+
 [functions."portal-schedule"]
-timeout = 26
+  timeout = 26
 
 # Auth callback — must be before the wildcard (Safari iOS strips fragment on redirect)
 [[redirects]]
