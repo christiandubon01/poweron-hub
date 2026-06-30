@@ -898,6 +898,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   // Show/hide all placed annotation overlays without deleting them (Fix 2).
   const [annotationsVisible, setAnnotationsVisible] = useState(true)
+  // Show/hide ONLY the can-light glow/output overlay (Step 12B). Symbol body
+  // (trim ring, crosshair, aperture, label) stays visible and selectable either way.
+  const [lightingEffectsVisible, setLightingEffectsVisible] = useState(true)
   // Copied annotation/shape design awaiting paste (Fix 1). Strips id/timestamps/page
   // at copy time; cloneAnnotationForPaste() builds it, pasteCopiedAnnotationAt() consumes it.
   const [copiedAnnotationTemplate, setCopiedAnnotationTemplate] = useState<any>(null)
@@ -4498,6 +4501,16 @@ const annotationPanelSizeClass =
                   {annotationsVisible ? <EyeOff size={12} /> : <Eye size={12} />}
                   {annotationsVisible ? 'Hide Annotations' : 'Show Annotations'}
                 </button>
+                {/* Hide/Show ONLY the can-light glow/output overlay (Step 12B) — symbol body,
+                    selection, count, and side panel listing are unaffected either way. */}
+                <button
+                  onClick={() => setLightingEffectsVisible((v) => !v)}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${lightingEffectsVisible ? 'border-gray-700 text-gray-300 hover:text-white' : 'border-amber-500 text-amber-300 bg-amber-900/20'}`}
+                  title={lightingEffectsVisible ? 'Hide light output/glow around lighting symbols' : 'Show light output/glow around lighting symbols'}
+                >
+                  {lightingEffectsVisible ? <EyeOff size={12} /> : <Eye size={12} />}
+                  {lightingEffectsVisible ? 'Hide Lighting Effects' : 'Show Lighting Effects'}
+                </button>
                 <button
                   onClick={() => { pendingScrollResetRef.current = true; setRelativeZoom(1) }}
                   className={`${useDesktopThreePaneLayout ? 'col-span-2' : ''} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-blue-500 text-blue-300 bg-blue-900/20`}
@@ -4990,8 +5003,12 @@ const annotationPanelSizeClass =
                                     </radialGradient>
                                   </defs>
                                   {/* Kelvin-tinted light-output overlay — the ONLY outer output visual.
-                                      Behind the fixture, non-interactive so it never steals selection. */}
-                                  <circle cx="50" cy="50" r={outputOverlayR} fill={`url(#${glowId})`} stroke="none" style={{ pointerEvents: 'none' }} />
+                                      Behind the fixture, non-interactive so it never steals selection.
+                                      Hidden via "Hide Lighting Effects" (Step 12B) — fixture body below
+                                      (trim ring, crosshair, aperture, label) always stays visible. */}
+                                  {lightingEffectsVisible && (
+                                    <circle cx="50" cy="50" r={outputOverlayR} fill={`url(#${glowId})`} stroke="none" style={{ pointerEvents: 'none' }} />
+                                  )}
                                   {/* Outer trim ring */}
                                   <circle cx="50" cy="50" r="46" fill="none" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} opacity={fillOpacity} />
                                   {/* Crosshair — horizontal */}

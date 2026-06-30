@@ -28,10 +28,38 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Codex-Permit-Lead-Title-Fallback | Imported Permit Lead Title Fallback | src/components/hunter/HunterLeadCard.tsx, AGENT_SHARED_CONTEXT.md | DONE — title fallback implemented | RELEASED | 2026-06-24 |
 | Codex-Palm-Desert-Geocode-Backfill | Palm Desert Imported Lead Map Coordinates | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — guarded backfill dry-run passed | RELEASED | 2026-06-24 |
 | App-Phase1-Lead-Notify | Internal lead notification + attribution capture | src/views/CustomerPortalView.tsx, netlify/functions/notify-new-lead.ts, netlify/functions/portal-confirm-email.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ | RELEASED | 2026-06-24 |
+| Step12B-Hide-Lighting-Effects (this agent) | Blueprint Viewer — Hide Lighting Effects toggle | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-06-30 |
 
 ---
 
 ## Audit & Change Log
+
+### 2026-06-30 — Blueprint Viewer: Hide Lighting Effects Toggle (Step 12B, NOT COMMITTED)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Scoped implementation
+**Feature Area:** Blueprint Viewer — can-light glow/output overlay visibility
+**Branch:** main | HEAD = 4c2fdc8
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 0 errors, 16.24s (pre-existing chunk-size warnings only)
+
+#### Files Changed (1)
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+
+#### What Was Implemented
+- New state `lightingEffectsVisible` (default `true`), declared next to existing `annotationsVisible`.
+- New "Hide Lighting Effects" / "Show Lighting Effects" button added to the View toolbar bucket, between "Hide Annotations" and "Fit to Full Page", styled identically to the existing Hide Annotations toggle (amber active state, Eye/EyeOff icon).
+- The can-light glow `<circle>` (the radial-gradient light-output overlay, previously always rendered) is now wrapped in `{lightingEffectsVisible && (...)}`. This is the ONLY visual affected — trim ring, crosshair, aperture circle, and size label all render unconditionally as before.
+- Toggle does not touch `focusedAnnotationId`, selection, side-panel listing, annotation counts, or storage — purely a render-time conditional on one SVG element.
+
+#### What Was NOT Changed
+- `annotationsVisible` / Hide Annotations behavior — untouched.
+- Symbol bodies, annotation storage, annotation counts — untouched.
+- `AppShell.tsx`, Supabase migrations, portal/service/dashboard files — untouched.
+- No commit made.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
 
 ### 2026-06-24 — App Phase 1: Internal Lead Notification + Attribution Capture
 
