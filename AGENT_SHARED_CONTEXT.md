@@ -38,10 +38,40 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Step12E-R2-Switch-Dimmer-Labels (Cursor) | Blueprint Viewer — Switch/Dimmer Polish + Electrical Label Toggle | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
 | Step12F-Fixed-Blueprint-Colors (Cursor) | Blueprint Viewer — Add 25 Fixed Blueprint Colors | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, src/components/blueprint/ToolPopover.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
 | Step12E-R3-Switch-Dimmer-Vertical-Line (Cursor) | Blueprint Viewer — Switch/Dimmer Vertical Line Polish | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step12G-Electrical-Opacity-Fix (Cursor) | Blueprint Viewer — Electrical Symbol Opacity + New Shape Defaults | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
 
 ---
 
 ## Audit & Change Log
+
+### 2026-06-30 — Blueprint Viewer: Electrical Symbol Opacity + New Shape Defaults (Step 12G, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Narrow bugfix after Step 12 drawing tools batch
+**Feature Area:** Blueprint Viewer — shape opacity behavior
+**Branch:** main | HEAD = 4032ed0
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### What Was Fixed
+- Set new shape placement defaults to `fillOpacity: 1` via `DEFAULT_SHAPE_FILL_OPACITY`.
+- Preserved old saved/missing-opacity render fallback with `LEGACY_SHAPE_FILL_OPACITY = 0.22`; no saved annotations were migrated or mutated.
+- Wrapped electrical symbol SVG output in an opacity group using the resolved shape `fillOpacity`, so strokes, fills, and external labels/badges now follow the same opacity control.
+- Kept selection rings, move/resize handles, and popovers outside the opacity group.
+
+#### Preserved
+- Hide Labels still only hides electrical external labels/badges.
+- Hide Lighting Effects still only controls can-light glow/output.
+- Guide Assist remains unchanged.
+- Free line endpoint editing remains unchanged.
+- No migrations, export changes, PDF loading changes, AppShell changes, Scope Layers, Work Packages, material counts, labor engine, portal/request/review/email, dashboard, or service log files were touched.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
 
 ### 2026-06-30 — Blueprint Viewer: Switch/Dimmer Vertical Line Polish (Step 12E-R3, NOT COMMITTED)
 

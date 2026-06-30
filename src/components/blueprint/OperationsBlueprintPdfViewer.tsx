@@ -169,6 +169,8 @@ const THICKNESS_OPTIONS = [1, 2, 3, 5, 8, 12]
 const OPACITY_OPTIONS = [0.25, 0.4, 0.55, 0.7, 0.85, 1]
 const DEFAULT_TEXT_BOX = { w: 0.22, h: 0.08 }
 const DEFAULT_CALLOUT_BOX = { w: 0.24, h: 0.1 }
+const DEFAULT_SHAPE_FILL_OPACITY = 1
+const LEGACY_SHAPE_FILL_OPACITY = 0.22
 // Normalized offset applied when pasting a copied annotation via the toolbar
 // button (no explicit drop point) so repeated pastes cascade and stay visible.
 const PASTE_OFFSET_NORM = 0.03
@@ -490,7 +492,7 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
 }) {
   const { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible } = style
   const dash = borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined
-  const symbolFill = fillColor === 'transparent' ? 'none' : hexWithAlpha(fillColor, Math.max(fillOpacity, 0.18))
+  const symbolFill = fillColor === 'transparent' ? 'none' : fillColor
   const textFill = borderColor
   const commonText = {
     textAnchor: 'middle' as const,
@@ -1328,7 +1330,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     borderStyle: 'solid' as BorderStyle,
     hatchPattern: 'none' as HatchPattern,
     fillColor: 'transparent',
-    fillOpacity: 0.22,
+    fillOpacity: DEFAULT_SHAPE_FILL_OPACITY,
     opacity: 100, // 10-100 for stepper, % display
   })
   const [generateQuestionType, setGenerateQuestionType] = useState<GenerateQuestionType>('coordination')
@@ -4203,7 +4205,9 @@ const annotationPanelSizeClass =
       const fillColor = isEdit ? (eMeta.fillColor ?? shapeOptions.fillColor) : shapeOptions.fillColor
       const borderStyle = isEdit ? (eMeta.borderStyle ?? shapeOptions.borderStyle) : shapeOptions.borderStyle
       const hatchPattern = isEdit ? (eMeta.hatchPattern ?? shapeOptions.hatchPattern) : shapeOptions.hatchPattern
-      const opacityPct = isEdit ? Math.round((eMeta.fillOpacity ?? shapeOptions.fillOpacity) * 100) : Math.round(shapeOptions.fillOpacity * 100)
+      const opacityPct = isEdit
+        ? Math.round((eMeta.fillOpacity ?? LEGACY_SHAPE_FILL_OPACITY) * 100)
+        : Math.round(shapeOptions.fillOpacity * 100)
       const currentKind = isEdit ? (eMeta.shapeKind ?? shapeKind) : shapeKind
       return {
         title: 'Shape',
@@ -5469,7 +5473,7 @@ const annotationPanelSizeClass =
                           const borderThickness = meta.borderThickness || 2
                           const borderStyle = meta.borderStyle || 'solid'
                           const fillColor = meta.fillColor || color
-                          const fillOpacity = meta.fillOpacity ?? 0.22
+                          const fillOpacity = meta.fillOpacity ?? LEGACY_SHAPE_FILL_OPACITY
                           const hatchPattern = meta.hatchPattern || 'none'
                           if (kind === 'line' || kind === 'arrow') {
                             const lineRect = a.rect || { x: 0, y: 0, w: 0.0001, h: 0.0001 }
@@ -5545,7 +5549,9 @@ const annotationPanelSizeClass =
                                   height="100%"
                                   preserveAspectRatio="xMidYMid meet"
                                 >
-                                  {renderElectricalSymbolSvg(kind, meta, { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible: electricalSymbolLabelsVisible })}
+                                  <g opacity={fillOpacity}>
+                                    {renderElectricalSymbolSvg(kind, meta, { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible: electricalSymbolLabelsVisible })}
+                                  </g>
                                 </svg>
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
