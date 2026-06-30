@@ -29,10 +29,285 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Codex-Palm-Desert-Geocode-Backfill | Palm Desert Imported Lead Map Coordinates | netlify/functions/city-scraper.ts, AGENT_SHARED_CONTEXT.md | DONE — guarded backfill dry-run passed | RELEASED | 2026-06-24 |
 | App-Phase1-Lead-Notify | Internal lead notification + attribution capture | src/views/CustomerPortalView.tsx, netlify/functions/notify-new-lead.ts, netlify/functions/portal-confirm-email.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ | RELEASED | 2026-06-24 |
 | Step12B-Hide-Lighting-Effects (this agent) | Blueprint Viewer — Hide Lighting Effects toggle | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step12C-Free-Line-Endpoints (Cursor) | Blueprint Viewer — Free Line Endpoint Editing | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step12D-Guide-Assist (Cursor) | Blueprint Viewer — Alignment Guide Helper | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step12D-R-Guide-Assist-Repair (Cursor) | Blueprint Viewer — Repair Guide Assist placement flow | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step12D-R2-Move-Guide-Assist (Cursor) | Blueprint Viewer — Guide Assist while moving existing shapes | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step12E-Electrical-Symbols (Cursor) | Blueprint Viewer — Electrical Symbols Foundation | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step12E-R-Electrical-Symbol-Polish (Cursor) | Blueprint Viewer — Electrical Symbols Visual Polish | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step12E-R2-Switch-Dimmer-Labels (Cursor) | Blueprint Viewer — Switch/Dimmer Polish + Electrical Label Toggle | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step12F-Fixed-Blueprint-Colors (Cursor) | Blueprint Viewer — Add 25 Fixed Blueprint Colors | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, src/components/blueprint/ToolPopover.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step12E-R3-Switch-Dimmer-Vertical-Line (Cursor) | Blueprint Viewer — Switch/Dimmer Vertical Line Polish | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
 
 ---
 
 ## Audit & Change Log
+
+### 2026-06-30 — Blueprint Viewer: Switch/Dimmer Vertical Line Polish (Step 12E-R3, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Scoped visual correction preserving Step 12B/12C/12D/12E/12F
+**Feature Area:** Blueprint Viewer — electrical switch/dimmer symbol polish
+**Branch:** main | HEAD = 5017337
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### What Was Implemented
+- Changed `electrical-switch` from an `S` with a horizontal line to an `S` with a vertical center line.
+- Changed `electrical-dimmer` to use the same vertical-line switch base while keeping the external `DIM` label.
+
+#### Preserved
+- Hide Labels still only hides external electrical labels/badges; the switch/dimmer `S` and vertical line remain symbol bodies.
+- Step 12F fixed colors remain intact; `ToolPopover.tsx` was not changed in this step.
+- Step 12B Hide/Show Lighting Effects remains intact.
+- Step 12C free line endpoint editing remains intact.
+- Step 12D Guide Assist remains intact.
+- No migrations, export changes, PDF loading changes, AppShell changes, Scope Layers, Work Packages, material counts, labor engine, portal/request/review/email, dashboard, or service log files were touched.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-06-30 — Blueprint Viewer: Add 25 Fixed Blueprint Colors (Step 12F, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Scoped palette expansion preserving Step 12B/12C/12D/12E/12E-R/12E-R2
+**Feature Area:** Blueprint Viewer — fixed annotation color palette
+**Branch:** main | HEAD = 5017337
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- `src/components/blueprint/ToolPopover.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### What Was Implemented
+- Expanded the fixed Blueprint annotation palette with exactly 25 distinct added colors.
+- Preserved existing palette colors, including existing orange `#f97316` and near-black `#111827`.
+- Replaced requested duplicate `#F97316` with distinct fixed color `#EA580C`.
+- Replaced requested duplicate `#111827` with distinct fixed color `#0F172A`.
+- Updated `ToolPopover`'s shared `ColorRow` palette so shape Border Color and Fill Color popovers show the expanded palette consistently.
+- Kept text/highlight-specific palettes unchanged where they intentionally pass custom color arrays.
+
+#### Preserved
+- No color picker was added.
+- Step 12B Hide/Show Lighting Effects remains intact.
+- Step 12C free line endpoint editing remains intact.
+- Step 12D Guide Assist remains intact.
+- Step 12E electrical symbols, emergency metadata, Hide/Show Labels, and polished switch/dimmer render path remain intact; electrical symbols use the same expanded shape color controls.
+- No migrations, export changes, PDF loading changes, AppShell changes, Scope Layers, Work Packages, material counts, labor engine, portal/request/review/email, dashboard, or service log files were touched.
+
+**Lock released** — Blueprint palette files are free for other agents.
+
+---
+
+### 2026-06-30 — Blueprint Viewer: Switch/Dimmer Polish + Electrical Label Toggle (Step 12E-R2, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Scoped correction preserving Step 12B/12C/12D/12E/12E-R
+**Feature Area:** Blueprint Viewer — Switch/Dimmer symbol polish and electrical label visibility
+**Branch:** main | HEAD = 5017337
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### What Was Implemented
+- Updated `electrical-switch` to render as an app-styled blueprint switch mark: an `S` with a horizontal middle line, no circle.
+- Updated `electrical-dimmer` to use the same `S` with middle-line switch base while keeping the external `DIM` corner label.
+- Added local UI state `electricalSymbolLabelsVisible` defaulting to `true`.
+- Added a `Hide Labels` / `Show Labels` button below the Electrical Symbols grid.
+- Updated the shared external electrical label helper so `DIM`, `2x2`, `2x4`, `GFCI`, `REC`, `TMR`, `PC`, and `EM` labels hide while symbol bodies remain visible.
+
+#### Preserved
+- Step 12B Hide/Show Lighting Effects remains intact and still only controls can-light glow/output.
+- Step 12C free line endpoint editing remains intact.
+- Step 12D Guide Assist remains intact because electrical symbols still use the existing `shape` rect path.
+- Step 12E shape kinds, side-panel labels, shape popover emergency toggle, and additive `meta.emergency` persistence remain intact.
+- Step 12E-R external corner label format remains the default when labels are visible.
+- No Step 12F color palette work, migrations, export changes, PDF loading changes, AppShell changes, Scope Layers, Work Packages, material counts, or labor metadata were added.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-06-30 — Blueprint Viewer: Electrical Symbols Visual Polish (Step 12E-R, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Scoped polish preserving Step 12B/12C/12D/12E
+**Feature Area:** Blueprint Viewer — Electrical Symbols visual polish
+**Branch:** main | HEAD = 5017337
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### What Was Polished
+- Reworked `renderElectricalSymbolSvg()` to use a shared small bottom-right external label badge for labeled electrical symbols.
+- Replaced centered labels for Dimmer, panel sizes, GFCI/Receptacle, Timer Control, Photocell, and Emergency Recessed Light with bottom-right labels that do not cover the main symbol.
+- Redesigned Switch from a circled/diagonal-over-S mark into a stroke-based architectural switch glyph with a terminal dot and switch-leg detail.
+- Updated Dimmer to use a switch-style base glyph with dimmer tick marks and external `DIM` label.
+- Kept Recessed Light circular and moved its emergency `EM` badge to the shared bottom-right label style.
+
+#### Preserved
+- Step 12B Hide/Show Lighting Effects remains intact and still only controls can-light glow/output.
+- Step 12C free line endpoint editing remains intact.
+- Step 12D Guide Assist remains intact because electrical symbols still use the existing `shape` rect path.
+- Step 12E shape kinds, side-panel labels, shape popover emergency toggle, and additive `meta.emergency` persistence remain intact.
+- No Step 12F color palette work, migrations, export changes, PDF loading changes, AppShell changes, Scope Layers, Work Packages, material counts, or labor metadata were added.
+- Browser smoke check reached the auth landing page locally; deeper placement QA was blocked without logging in or creating an account.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-06-30 — Blueprint Viewer: Electrical Symbols Foundation (Step 12E, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Scoped implementation preserving Step 12B/12C/12D/12D-R/12D-R2
+**Feature Area:** Blueprint Viewer — Electrical Symbols Foundation
+**Branch:** main | HEAD = 5017337
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors, 20.15s (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### What Was Implemented
+- Added electrical symbol `shapeKind` values for Switch, Dimmer, Recessed Light, Pendant Light, Sconce, 2x2 LED Panel, 2x4 LED Panel, GFCI, Receptacle, Timer Control Box, and Photocell.
+- Added an "Electrical Symbols" section under Draw / Mark, below Pen, Marker, Eraser, and Shapes.
+- Rendered electrical symbols through the existing `shape` annotation path using simple SVG bodies that respect existing border/fill/opacity controls.
+- Added a Recessed Light edit toggle for `meta.emergency`, displayed as an EM badge on the recessed light symbol.
+- Added readable side-panel labels for electrical symbols, including `Recessed Light · EM`.
+
+#### Preserved
+- Step 12B Hide/Show Lighting Effects remains intact and still only controls can-light glow/output, not symbol bodies or EM badges.
+- Step 12C absolute line endpoint metadata and free endpoint dragging remain intact.
+- Step 12D/12D-R/12D-R2 Guide Assist remains UI-only and works through existing shape rects for placement and move.
+- Existing `can-light-4` / `can-light-6` rendering and controls remain on their existing branch.
+- No migrations, export changes, PDF loading changes, AppShell changes, portal/request/review/email changes, Scope Layers, Work Packages, material counts, or labor metadata were added.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-06-30 — Blueprint Viewer: Guide Assist While Moving Existing Shapes (Step 12D-R2, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Scoped repair preserving Step 12B/12C/12D/12D-R
+**Feature Area:** Blueprint Viewer — Guide Assist during existing annotation move
+**Branch:** main | HEAD = 5017337
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 0 errors, 21.77s (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### What Was Implemented
+- Added `updateMoveGuideLines()` to reuse the existing Guide Assist candidate/rendering path while moving existing annotations.
+- Connected `handleAnnotationLayoutPointerMove()` move branches to Guide Assist using the same clamped normalized rect used by the existing move behavior.
+- Excluded the dragged annotation ID from guide targets so moved shapes only compare against other same-page annotations.
+- Cleared move guide lines on layout pointer up and pointer cancel.
+
+#### Preserved
+- Step 12D-R new placement guides continue to use the live preview rect path.
+- Step 12B Hide/Show Lighting Effects remains intact.
+- Step 12C free line endpoint editing remains intact; endpoint and arch-control drags were not connected to move guides.
+- Guide lines remain UI-only: no annotations, no persistence, no counts, no export changes.
+- No Step 12E Electrical Symbols, migrations, AppShell, PDF loading, export, portal/request/review/email, dashboard, service log, Scope Layers, Work Packages, or color palette work was started.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-06-30 — Blueprint Viewer: Guide Assist Repair (Step 12D-R, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Scoped repair preserving Step 12B/12C/12D
+**Feature Area:** Blueprint Viewer — Guide Assist placement flow
+**Branch:** main | HEAD = 5017337
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 0 errors, 21.57s (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### What Was Repaired
+- Guide Assist now derives the active placement rect from the same live pixel preview source that updates `draftRectDomRef`, then normalizes that rect for same-page alignment matching.
+- Guide lines now render imperatively into a persistent overlay SVG ref (`alignmentGuideSvgRef`) so pointer-move guide updates no longer depend on React-rendered children while the draft preview is also being mutated directly.
+- Increased the normalized threshold to a more forgiving value for manual square-to-square alignment.
+- Kept Guide Assist visual-only: no annotations, no persistence, no counts, no export changes.
+
+#### Preserved
+- Step 12B Hide/Show Lighting Effects and can-light glow conditional rendering remain intact.
+- Step 12C free line endpoint metadata/editing remains intact.
+- No Step 12E Electrical Symbols, migrations, AppShell, PDF loading, export, portal/request/review/email, dashboard, service log, Scope Layers, Work Packages, or color palette work was started.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-06-30 — Blueprint Viewer: Alignment Guide Helper (Step 12D, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Scoped implementation preserving Step 12B/12C
+**Feature Area:** Blueprint Viewer — Guide Assist placement helper
+**Branch:** main | HEAD = 5017337
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 0 errors, 17.11s (pre-existing Vite dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### What Was Implemented
+- Added local UI-only `alignmentGuidesEnabled` and `activeAlignmentGuides` state.
+- Added a View toolbar `Guide Assist` toggle near Hide Annotations and Hide Lighting Effects.
+- While drawing/placing via the existing draft flow, Guide Assist compares the draft rect's left/center/right and top/center/bottom positions against same-page existing annotations.
+- Matching positions render temporary dashed cyan guide lines across the current page overlay.
+- Guide lines clear on pointer up, pointer cancel, Escape, tool/page changes, and when annotations/guides are hidden.
+
+#### Preserved
+- Step 12B `lightingEffectsVisible`, Hide/Show Lighting Effects button, and can-light glow conditional rendering remain intact.
+- Step 12C absolute endpoint metadata, relative fallback, and free line endpoint dragging remain intact.
+- Guide lines are not annotations, are not saved, do not affect counts, and do not affect export.
+- No migration, service, PDF loading, export, portal/request/review/email, dashboard, website, or AppShell changes were made.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-06-30 — Blueprint Viewer: Free Line Endpoint Editing (Step 12C, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Scoped implementation continuing stale Claude partial
+**Feature Area:** Blueprint Viewer — line/arrow/arch endpoint editing
+**Branch:** main | HEAD = 5017337
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 0 errors, 27.84s (pre-existing Vite dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### What Was Implemented
+- Completed the additive absolute endpoint model for line-like shapes using `meta.lineAbsX1`, `meta.lineAbsY1`, `meta.lineAbsX2`, and `meta.lineAbsY2`.
+- Straight line, arrow, and arch-line rendering now prefers absolute page-normalized endpoints when present and falls back to existing `lineX1`, `lineY1`, `lineX2`, and `lineY2` relative metadata for old annotations.
+- Endpoint drag now updates only the dragged endpoint, follows pointer movement freely in page-normalized coordinates, and persists absolute endpoint metadata.
+- The old relative endpoint fields are still written during edits as a compatibility fallback; no migration was added.
+- Moving an edited line-like shape shifts absolute endpoints with the shape. Arch-line control metadata (`archCtrlX`, `archCtrlY`) remains absolute and shifts during whole-shape moves.
+- Copy/paste now shifts absolute endpoint metadata when an edited line-like annotation is pasted.
+
+#### Preserved
+- Step 12B `lightingEffectsVisible`, Hide/Show Lighting Effects button, and can-light glow conditional rendering remain intact.
+- Hide Annotations behavior, PDF loading, annotation save/load, export behavior, selection popover, Move/Edit/Copy/Delete, and non-line shapes were not intentionally changed.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
 
 ### 2026-06-30 — Blueprint Viewer: Hide Lighting Effects Toggle (Step 12B, NOT COMMITTED)
 

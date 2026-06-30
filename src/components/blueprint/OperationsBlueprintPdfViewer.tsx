@@ -120,7 +120,41 @@ const PINCH_DEADZONE_PX = 2
 const WHEEL_ZOOM_COMMIT_DELAY_MS = 150
 const MIN_HIGHLIGHT_NORM = 0.005
 const NOTE_MARKER_SIZE_NORM = 0.018
-const ANNOTATION_COLORS = ['#facc15', '#38bdf8', '#f97316', '#22c55e', '#a78bfa', '#ef4444', '#ffffff', '#111827']
+const ANNOTATION_COLORS = [
+  '#facc15',
+  '#38bdf8',
+  '#f97316',
+  '#22c55e',
+  '#a78bfa',
+  '#ef4444',
+  '#ffffff',
+  '#111827',
+  '#991B1B',
+  '#DC2626',
+  '#EA580C',
+  '#FB923C',
+  '#CA8A04',
+  '#EAB308',
+  '#84CC16',
+  '#16A34A',
+  '#15803D',
+  '#14B8A6',
+  '#06B6D4',
+  '#0284C7',
+  '#2563EB',
+  '#1D4ED8',
+  '#4F46E5',
+  '#7C3AED',
+  '#9333EA',
+  '#C026D3',
+  '#DB2777',
+  '#F43F5E',
+  '#64748B',
+  '#334155',
+  '#78716C',
+  '#A16207',
+  '#0F172A',
+]
 const TEXT_COLOR_OPTIONS = ['#111827', '#ffffff', '#facc15', '#38bdf8', '#22c55e', '#ef4444']
 const FONT_SIZE_OPTIONS = [10, 12, 14, 16, 18, 24]
 const FONT_WEIGHT_OPTIONS = [
@@ -138,6 +172,10 @@ const DEFAULT_CALLOUT_BOX = { w: 0.24, h: 0.1 }
 // Normalized offset applied when pasting a copied annotation via the toolbar
 // button (no explicit drop point) so repeated pastes cascade and stay visible.
 const PASTE_OFFSET_NORM = 0.03
+const ALIGNMENT_GUIDE_THRESHOLD_NORM = 0.018
+
+type AlignmentGuideLine = { axis: 'x' | 'y'; value: number }
+type PlacementPreviewRectPx = { left: number; top: number; w: number; h: number }
 
 type ToolbarBucket = 'annotate' | 'draw' | 'generate' | 'view' | 'measure'
 type ToolMode =
@@ -158,10 +196,65 @@ type ToolMode =
   | 'measure-area'
   | 'measure-perimeter'
 
-type ShapeKind = 'square' | 'circle' | 'line' | 'arrow' | 'arch-line' | 'star' | 'cross' | 'diamond' | 'pentagon' | 'can-light-4' | 'can-light-6'
+type ShapeKind =
+  | 'square'
+  | 'circle'
+  | 'line'
+  | 'arrow'
+  | 'arch-line'
+  | 'star'
+  | 'cross'
+  | 'diamond'
+  | 'pentagon'
+  | 'can-light-4'
+  | 'can-light-6'
+  | 'electrical-switch'
+  | 'electrical-dimmer'
+  | 'electrical-recessed-light'
+  | 'electrical-pendant-light'
+  | 'electrical-sconce'
+  | 'electrical-led-panel-2x2'
+  | 'electrical-led-panel-2x4'
+  | 'electrical-gfci'
+  | 'electrical-receptacle'
+  | 'electrical-timer-control'
+  | 'electrical-photocell'
 type BorderStyle = 'solid' | 'dashed' | 'dotted'
 type HatchPattern = 'none' | 'diagonal' | 'cross' | 'dots'
 type GenerateQuestionType = 'coordination' | 'rfi'
+
+const ELECTRICAL_SYMBOL_OPTIONS: Array<{ label: string; value: ShapeKind; shortLabel: string }> = [
+  { label: 'Switch', value: 'electrical-switch', shortLabel: 'S' },
+  { label: 'Dimmer', value: 'electrical-dimmer', shortLabel: 'DIM' },
+  { label: 'Recessed Light', value: 'electrical-recessed-light', shortLabel: 'RL' },
+  { label: 'Pendant Light', value: 'electrical-pendant-light', shortLabel: 'P' },
+  { label: 'Sconce', value: 'electrical-sconce', shortLabel: 'SC' },
+  { label: '2x2 LED Panel', value: 'electrical-led-panel-2x2', shortLabel: '2x2' },
+  { label: '2x4 LED Panel', value: 'electrical-led-panel-2x4', shortLabel: '2x4' },
+  { label: 'GFCI', value: 'electrical-gfci', shortLabel: 'GFCI' },
+  { label: 'Receptacle', value: 'electrical-receptacle', shortLabel: 'REC' },
+  { label: 'Timer Control Box', value: 'electrical-timer-control', shortLabel: 'TMR' },
+  { label: 'Photocell', value: 'electrical-photocell', shortLabel: 'PC' },
+]
+
+function isElectricalShapeKind(kind: any): kind is ShapeKind {
+  return ELECTRICAL_SYMBOL_OPTIONS.some((option) => option.value === kind)
+}
+
+function getShapeKindLabel(kind: any, meta: Record<string, any> = {}) {
+  const electrical = ELECTRICAL_SYMBOL_OPTIONS.find((option) => option.value === kind)
+  if (electrical) {
+    if (kind === 'electrical-recessed-light' && meta.emergency) return `${electrical.label} · EM`
+    return electrical.label
+  }
+  switch (kind) {
+    case 'arch-line': return 'Arch Line'
+    case 'can-light-4': return 'Can Light 4"'
+    case 'can-light-6': return 'Can Light 6"'
+    default:
+      return String(kind || 'Shape').replace(/-/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase())
+  }
+}
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Measurement & calibration types Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 type CalibrationUnit = 'ft' | 'm' | 'in' | 'cm' | 'mm'
@@ -248,6 +341,15 @@ function normRectFromDrag(start: { x: number; y: number }, end: { x: number; y: 
   }
 }
 
+function normRectFromPlacementPreview(preview: PlacementPreviewRectPx, w: number, h: number) {
+  return {
+    x: clampNorm(preview.left / Math.max(1, w)),
+    y: clampNorm(preview.top / Math.max(1, h)),
+    w: clampNorm(preview.w / Math.max(1, w), 0, 1),
+    h: clampNorm(preview.h / Math.max(1, h), 0, 1),
+  }
+}
+
 function shortText(v?: string, max = 40) {
   const s = String(v || '').trim()
   if (!s) return '(empty note)'
@@ -283,6 +385,50 @@ function isCanLightShape(annotation: any) {
   if (!annotation || annotation.type !== 'shape') return false
   const kind = getAnnotationMeta(annotation).shapeKind
   return kind === 'can-light-4' || kind === 'can-light-6'
+}
+
+function getRectAlignmentCandidates(rect: { x: number; y: number; w: number; h: number }) {
+  const safe = clampRectToPage(rect)
+  return {
+    x: [safe.x, safe.x + safe.w / 2, safe.x + safe.w],
+    y: [safe.y, safe.y + safe.h / 2, safe.y + safe.h],
+  }
+}
+
+function calculateAlignmentGuides(
+  draftRect: { x: number; y: number; w: number; h: number },
+  candidates: BlueprintAnnotation[],
+  threshold = ALIGNMENT_GUIDE_THRESHOLD_NORM
+): AlignmentGuideLine[] {
+  const draft = getRectAlignmentCandidates(draftRect)
+  let closestX: { value: number; delta: number } | null = null
+  let closestY: { value: number; delta: number } | null = null
+
+  for (const annotation of candidates) {
+    if (!annotation?.rect) continue
+    const existing = getRectAlignmentCandidates(annotation.rect as any)
+    for (const draftX of draft.x) {
+      for (const existingX of existing.x) {
+        const delta = Math.abs(draftX - existingX)
+        if (delta <= threshold && (!closestX || delta < closestX.delta)) {
+          closestX = { value: existingX, delta }
+        }
+      }
+    }
+    for (const draftY of draft.y) {
+      for (const existingY of existing.y) {
+        const delta = Math.abs(draftY - existingY)
+        if (delta <= threshold && (!closestY || delta < closestY.delta)) {
+          closestY = { value: existingY, delta }
+        }
+      }
+    }
+  }
+
+  return [
+    ...(closestX ? [{ axis: 'x' as const, value: clampNorm(closestX.value) }] : []),
+    ...(closestY ? [{ axis: 'y' as const, value: clampNorm(closestY.value) }] : []),
+  ]
 }
 
 // Supported can-light color temperatures (Kelvin). 3000K is the default when missing.
@@ -332,6 +478,156 @@ function getHatchBackground(pattern: HatchPattern, color: string, fillColor: str
     return `radial-gradient(${hatch} 1px, ${fill} 1px)`
   }
   return fill
+}
+
+function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, style: {
+  borderColor: string
+  borderThickness: number
+  borderStyle: BorderStyle
+  fillColor: string
+  fillOpacity: number
+  labelsVisible: boolean
+}) {
+  const { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible } = style
+  const dash = borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined
+  const symbolFill = fillColor === 'transparent' ? 'none' : hexWithAlpha(fillColor, Math.max(fillOpacity, 0.18))
+  const textFill = borderColor
+  const commonText = {
+    textAnchor: 'middle' as const,
+    dominantBaseline: 'middle' as const,
+    fontFamily: 'monospace',
+    fontWeight: 800,
+    fill: textFill,
+  }
+  const fineStroke = Math.max(1.4, borderThickness * 0.7)
+  const symbolStroke = Math.max(2, borderThickness)
+  const externalLabel = (label: string) => {
+    if (!labelsVisible) return null
+    const labelWidth = Math.max(22, label.length * 7 + 8)
+    const labelX = 96 - labelWidth
+    return (
+      <g>
+        <rect
+          x={labelX}
+          y="78"
+          width={labelWidth}
+          height="16"
+          rx="4"
+          fill="#0b1020"
+          fillOpacity="0.82"
+          stroke={borderColor}
+          strokeWidth="1.2"
+          opacity="0.95"
+        />
+        <text x={labelX + labelWidth / 2} y="86.5" fontSize="9.5" {...commonText}>{label}</text>
+      </g>
+    )
+  }
+  const badge = kind === 'electrical-recessed-light' && meta.emergency ? (
+    externalLabel('EM')
+  ) : null
+
+  if (kind === 'electrical-switch') {
+    return (
+      <>
+        <text x="50" y="52" fontSize="52" {...commonText}>S</text>
+        <line x1="50" y1="20" x2="50" y2="78" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" strokeDasharray={dash} />
+      </>
+    )
+  }
+  if (kind === 'electrical-dimmer') {
+    return (
+      <>
+        <text x="46" y="50" fontSize="48" {...commonText}>S</text>
+        <line x1="46" y1="20" x2="46" y2="74" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" strokeDasharray={dash} />
+        <path d="M72 28 L84 28 M74 37 L84 37 M76 46 L84 46" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.75" />
+        {externalLabel('DIM')}
+      </>
+    )
+  }
+  if (kind === 'electrical-recessed-light') {
+    return (
+      <>
+        <circle cx="48" cy="45" r="34" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <circle cx="48" cy="45" r="17" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
+        <line x1="18" y1="45" x2="78" y2="45" stroke={borderColor} strokeWidth={Math.max(1, borderThickness * 0.5)} opacity="0.65" />
+        <line x1="48" y1="15" x2="48" y2="75" stroke={borderColor} strokeWidth={Math.max(1, borderThickness * 0.5)} opacity="0.65" />
+        {badge}
+      </>
+    )
+  }
+  if (kind === 'electrical-pendant-light') {
+    return (
+      <>
+        <circle cx="50" cy="16" r="6" fill={symbolFill} stroke={borderColor} strokeWidth={fineStroke} />
+        <line x1="50" y1="22" x2="50" y2="52" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" />
+        <path d="M30 54 Q50 72 70 54" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} strokeLinecap="round" />
+        <circle cx="50" cy="62" r="13" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
+      </>
+    )
+  }
+  if (kind === 'electrical-sconce') {
+    return (
+      <>
+        <line x1="24" y1="20" x2="24" y2="78" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" />
+        <path d="M26 30 A24 20 0 0 1 26 70" fill="none" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} strokeLinecap="round" />
+        <path d="M26 38 L58 28 M26 62 L58 72" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.7" />
+        <circle cx="42" cy="50" r="7" fill={symbolFill} stroke={borderColor} strokeWidth={fineStroke} />
+      </>
+    )
+  }
+  if (kind === 'electrical-led-panel-2x2' || kind === 'electrical-led-panel-2x4') {
+    const isLong = kind === 'electrical-led-panel-2x4'
+    return (
+      <>
+        <rect x={isLong ? 10 : 18} y={isLong ? 22 : 14} width={isLong ? 78 : 58} height={isLong ? 40 : 58} rx="3" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <line x1={isLong ? 49 : 18} y1={isLong ? 22 : 43} x2={isLong ? 49 : 76} y2={isLong ? 62 : 43} stroke={borderColor} strokeWidth={fineStroke} opacity="0.65" />
+        <line x1={isLong ? 10 : 47} y1={isLong ? 42 : 14} x2={isLong ? 88 : 47} y2={isLong ? 42 : 72} stroke={borderColor} strokeWidth={fineStroke} opacity="0.65" />
+        <line x1={isLong ? 14 : 24} y1={isLong ? 26 : 20} x2={isLong ? 84 : 70} y2={isLong ? 58 : 66} stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} opacity="0.35" />
+        <line x1={isLong ? 84 : 70} y1={isLong ? 26 : 20} x2={isLong ? 14 : 24} y2={isLong ? 58 : 66} stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} opacity="0.35" />
+        {externalLabel(isLong ? '2x4' : '2x2')}
+      </>
+    )
+  }
+  if (kind === 'electrical-gfci' || kind === 'electrical-receptacle') {
+    const label = kind === 'electrical-gfci' ? 'GFCI' : 'REC'
+    return (
+      <>
+        <path d="M30 24 Q50 12 70 24 L70 66 Q50 78 30 66 Z" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <circle cx="50" cy="35" r="9" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
+        <circle cx="50" cy="58" r="9" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
+        <line x1="45" y1="35" x2="55" y2="35" stroke={borderColor} strokeWidth={fineStroke} />
+        <line x1="45" y1="58" x2="55" y2="58" stroke={borderColor} strokeWidth={fineStroke} />
+        {kind === 'electrical-gfci' && <line x1="39" y1="47" x2="61" y2="47" stroke={borderColor} strokeWidth={fineStroke} opacity="0.75" />}
+        {externalLabel(label)}
+      </>
+    )
+  }
+  if (kind === 'electrical-timer-control') {
+    return (
+      <>
+        <rect x="18" y="18" width="58" height="54" rx="5" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <circle cx="47" cy="43" r="15" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
+        <line x1="47" y1="43" x2="47" y2="33" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" />
+        <line x1="47" y1="43" x2="57" y2="49" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" />
+        <circle cx="27" cy="27" r="2.5" fill={borderColor} />
+        <circle cx="67" cy="27" r="2.5" fill={borderColor} />
+        {externalLabel('TMR')}
+      </>
+    )
+  }
+  if (kind === 'electrical-photocell') {
+    return (
+      <>
+        <circle cx="46" cy="45" r="27" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <path d="M25 45 Q46 26 67 45 Q46 64 25 45 Z" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
+        <circle cx="46" cy="45" r="6" fill={borderColor} />
+        <path d="M72 23 L80 15 M76 44 L88 44 M72 65 L80 73" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.75" />
+        {externalLabel('PC')}
+      </>
+    )
+  }
+  return null
 }
 
 // SVG <pattern> element for measurement area fills Ã¢â‚¬â€ returns null for solid/none.
@@ -454,7 +750,10 @@ function annotationLabel(annotation: BlueprintAnnotation) {
   if (annotation.type === 'generate') return getAnnotationMeta(annotation).questionType === 'rfi' ? 'RFI Question' : 'Coordination Question'
   if (annotation.type === 'pen') return 'Pen'
   if (annotation.type === 'marker') return 'Marker'
-  if (annotation.type === 'shape') return `${String(getAnnotationMeta(annotation).shapeKind || 'shape')}`
+  if (annotation.type === 'shape') {
+    const meta = getAnnotationMeta(annotation)
+    return getShapeKindLabel(meta.shapeKind || 'shape', meta)
+  }
   if (annotation.type === 'underline') return 'Underline'
   if (annotation.type === 'measure-distance') return 'Distance'
   if (annotation.type === 'measure-area') return 'Area'
@@ -565,6 +864,9 @@ export default function OperationsBlueprintPdfViewer({
   const draftRectDomRef = useRef<HTMLDivElement>(null)
   const draftLineDomRef = useRef<SVGLineElement>(null)
   const draftArchPathDomRef = useRef<SVGPathElement>(null)
+  const alignmentGuideSvgRef = useRef<SVGSVGElement>(null)
+  const activeAlignmentGuidesRef = useRef<AlignmentGuideLine[]>([])
+  const activeAlignmentGuideSignatureRef = useRef('')
   // Point-to-point line placement: stores the first click position (pixel coords within overlay).
   const lineFirstPointRef = useRef<{ x: number; y: number } | null>(null)
   // Tracks how many annotation mutations are in-flight so loadAnnotations() fires only when the queue drains.
@@ -901,6 +1203,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // Show/hide ONLY the can-light glow/output overlay (Step 12B). Symbol body
   // (trim ring, crosshair, aperture, label) stays visible and selectable either way.
   const [lightingEffectsVisible, setLightingEffectsVisible] = useState(true)
+  // Visual-only toggle for electrical symbol corner labels/badges.
+  const [electricalSymbolLabelsVisible, setElectricalSymbolLabelsVisible] = useState(true)
+  const [alignmentGuidesEnabled, setAlignmentGuidesEnabled] = useState(false)
+  const [activeAlignmentGuides, setActiveAlignmentGuides] = useState<AlignmentGuideLine[]>([])
   // Copied annotation/shape design awaiting paste (Fix 1). Strips id/timestamps/page
   // at copy time; cloneAnnotationForPaste() builds it, pasteCopiedAnnotationAt() consumes it.
   const [copiedAnnotationTemplate, setCopiedAnnotationTemplate] = useState<any>(null)
@@ -922,6 +1228,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     startClientX: number
     startClientY: number
     startBox: { x: number; y: number; w: number; h: number }
+    // Step 12C — captured only when moving a line-like shape that has free
+    // absolute endpoints (meta.lineAbsX1..Y2), so the whole line shifts with
+    // the move drag even though rendering no longer derives endpoints from box.
+    startLineAbs: { x1: number; y1: number; x2: number; y2: number } | null
+    startArchCtrl: { x: number; y: number } | null
   } | null>(null)
   // Ref mirror so handleAnnotationLayoutPointerMove reads the latest value before React batches the setState
   const layoutDragRef = useRef<{
@@ -931,6 +1242,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     startClientX: number
     startClientY: number
     startBox: { x: number; y: number; w: number; h: number }
+    startLineAbs: { x1: number; y1: number; x2: number; y2: number } | null
+    startArchCtrl: { x: number; y: number } | null
   } | null>(null)
 
   const [endpointDrag, setEndpointDrag] = useState<{
@@ -1041,6 +1354,86 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     allAnnotationsRef.current = allAnnotations
   }, [allAnnotations])
 
+  const renderAlignmentGuideLines = useCallback((guides: AlignmentGuideLine[]) => {
+    const svg = alignmentGuideSvgRef.current
+    activeAlignmentGuidesRef.current = guides
+    if (!svg) return
+    const width = displaySizeRef.current.w
+    const height = displaySizeRef.current.h
+    svg.replaceChildren()
+    if (!width || !height || guides.length === 0) return
+    for (const guide of guides) {
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+      if (guide.axis === 'x') {
+        const x = guide.value * width
+        line.setAttribute('x1', String(x))
+        line.setAttribute('y1', '0')
+        line.setAttribute('x2', String(x))
+        line.setAttribute('y2', String(height))
+      } else {
+        const y = guide.value * height
+        line.setAttribute('x1', '0')
+        line.setAttribute('y1', String(y))
+        line.setAttribute('x2', String(width))
+        line.setAttribute('y2', String(y))
+      }
+      line.setAttribute('stroke', '#22d3ee')
+      line.setAttribute('stroke-width', '2')
+      line.setAttribute('stroke-dasharray', '6 5')
+      line.setAttribute('stroke-linecap', 'round')
+      line.setAttribute('opacity', '0.85')
+      line.setAttribute('vector-effect', 'non-scaling-stroke')
+      svg.appendChild(line)
+    }
+  }, [])
+
+  const clearAlignmentGuides = useCallback(() => {
+    if (!activeAlignmentGuideSignatureRef.current && activeAlignmentGuidesRef.current.length === 0) {
+      alignmentGuideSvgRef.current?.replaceChildren()
+      return
+    }
+    activeAlignmentGuideSignatureRef.current = ''
+    renderAlignmentGuideLines([])
+    setActiveAlignmentGuides([])
+  }, [renderAlignmentGuideLines])
+
+  const updatePlacementGuideLines = useCallback((nextDraftRect: { x: number; y: number; w: number; h: number } | null) => {
+    if (!alignmentGuidesEnabled || !annotationsVisible || !nextDraftRect) {
+      clearAlignmentGuides()
+      return
+    }
+    const samePageAnnotations = allAnnotationsRef.current.filter((annotation) => (
+      Number(annotation.pageNumber) === Number(currentPageRef.current) &&
+      !!annotation?.rect
+    ))
+    const guides = calculateAlignmentGuides(nextDraftRect, samePageAnnotations)
+    const signature = guides.map((guide) => `${guide.axis}:${guide.value.toFixed(4)}`).join('|')
+    renderAlignmentGuideLines(guides)
+    if (signature !== activeAlignmentGuideSignatureRef.current) {
+      activeAlignmentGuideSignatureRef.current = signature
+      setActiveAlignmentGuides(guides)
+    }
+  }, [alignmentGuidesEnabled, annotationsVisible, clearAlignmentGuides, renderAlignmentGuideLines])
+
+  const updateMoveGuideLines = useCallback((movingRect: { x: number; y: number; w: number; h: number } | null, movingAnnotationId: string) => {
+    if (!alignmentGuidesEnabled || !annotationsVisible || !movingRect) {
+      clearAlignmentGuides()
+      return
+    }
+    const samePageAnnotations = allAnnotationsRef.current.filter((annotation) => (
+      annotation.id !== movingAnnotationId &&
+      Number(annotation.pageNumber) === Number(currentPageRef.current) &&
+      !!annotation?.rect
+    ))
+    const guides = calculateAlignmentGuides(movingRect, samePageAnnotations)
+    const signature = guides.map((guide) => `${guide.axis}:${guide.value.toFixed(4)}`).join('|')
+    renderAlignmentGuideLines(guides)
+    if (signature !== activeAlignmentGuideSignatureRef.current) {
+      activeAlignmentGuideSignatureRef.current = signature
+      setActiveAlignmentGuides(guides)
+    }
+  }, [alignmentGuidesEnabled, annotationsVisible, clearAlignmentGuides, renderAlignmentGuideLines])
+
   // Ã¢â€â‚¬Ã¢â€â‚¬ Keyboard handler for measurement tools Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1053,6 +1446,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         lineFirstPointRef.current = null
         if (draftLineDomRef.current) draftLineDomRef.current.style.display = 'none'
         if (draftArchPathDomRef.current) draftArchPathDomRef.current.style.display = 'none'
+        clearAlignmentGuides()
       }
       if (e.key === 'Enter' && effectiveTool === 'measure-perimeter' && !calibrateInput) {
         const pts = [...measureDraftRef.current]
@@ -1067,7 +1461,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [effectiveTool, calibrateInput])
+  }, [effectiveTool, calibrateInput, clearAlignmentGuides])
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Clear measure draft on tool/page change Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   useEffect(() => {
@@ -1076,7 +1470,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setMeasureCursorPx(null)
     setCalibrateInput(null)
     lastMeasureClickRef.current = { time: 0, nx: 0, ny: 0 }
-  }, [effectiveTool, currentPage])
+    clearAlignmentGuides()
+  }, [effectiveTool, currentPage, clearAlignmentGuides])
 
   const clampScroll = useCallback((scroll: HTMLDivElement, left: number, top: number) => {
     const maxLeft = Math.max(0, scroll.scrollWidth - scroll.clientWidth)
@@ -1630,6 +2025,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     [allAnnotations, currentPage]
   )
 
+  useEffect(() => {
+    if (!alignmentGuidesEnabled || !annotationsVisible) {
+      clearAlignmentGuides()
+    }
+  }, [alignmentGuidesEnabled, annotationsVisible, clearAlignmentGuides])
+
   const toggleCurrentPageSelection = useCallback(() => {
     if (!onSelectedPagesChange) return
     const current = Math.max(1, Math.floor(currentPage))
@@ -1739,6 +2140,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         x: clampNorm((Number(p?.x) || 0) + dx),
         y: clampNorm((Number(p?.y) || 0) + dy),
       }))
+    }
+    if (nextMeta.lineAbsX1 !== undefined && nextMeta.lineAbsY1 !== undefined && nextMeta.lineAbsX2 !== undefined && nextMeta.lineAbsY2 !== undefined) {
+      // Step 12C — edited line-like shapes may store endpoints as absolute
+      // page-normalized coords. Paste should move those endpoints with the copy.
+      nextMeta.lineAbsX1 = clampNorm(Number(nextMeta.lineAbsX1) + dx)
+      nextMeta.lineAbsY1 = clampNorm(Number(nextMeta.lineAbsY1) + dy)
+      nextMeta.lineAbsX2 = clampNorm(Number(nextMeta.lineAbsX2) + dx)
+      nextMeta.lineAbsY2 = clampNorm(Number(nextMeta.lineAbsY2) + dy)
     }
     if (nextMeta.archCtrlX !== undefined && nextMeta.archCtrlY !== undefined) {
       // arch-line control point is stored as absolute page-normalized coords.
@@ -2381,6 +2790,16 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const box = clampRectToPage(meta.box || annotation.rect || { x: 0.02, y: 0.02, w: DEFAULT_TEXT_BOX.w, h: DEFAULT_TEXT_BOX.h })
     setFocusedAnnotationId(annotation.id)
     setLayoutEditId(annotation.id)
+    // Step 12C — moving a line-like shape with free absolute endpoints must shift
+    // those endpoints by the same delta, since rendering no longer derives them
+    // from `box`.
+    const isLineLike = mode === 'move' && (meta.shapeKind === 'line' || meta.shapeKind === 'arrow' || meta.shapeKind === 'arch-line')
+    const startLineAbs = (isLineLike && meta.lineAbsX1 != null && meta.lineAbsY1 != null && meta.lineAbsX2 != null && meta.lineAbsY2 != null)
+      ? { x1: meta.lineAbsX1, y1: meta.lineAbsY1, x2: meta.lineAbsX2, y2: meta.lineAbsY2 }
+      : null
+    const startArchCtrl = (isLineLike && meta.archCtrlX != null && meta.archCtrlY != null)
+      ? { x: meta.archCtrlX, y: meta.archCtrlY }
+      : null
     const drag = {
       annotationId: annotation.id,
       mode,
@@ -2388,6 +2807,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       startClientX: e.clientX,
       startClientY: e.clientY,
       startBox: box,
+      startLineAbs,
+      startArchCtrl,
     }
     // Write ref synchronously — the first pointermove fires before React batches setLayoutDrag
     layoutDragRef.current = drag
@@ -2401,15 +2822,28 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   const startAnnotationEndpointDrag = useCallback((e: React.PointerEvent<HTMLElement>, annotation: BlueprintAnnotation, endpoint: 'start' | 'end') => {
     const meta = getAnnotationMeta(annotation)
-    const rect = annotation.rect || { x: 0, y: 0, w: 0.1, h: 0.1 }
-    const lx1 = meta.lineX1 ?? 0
-    const ly1 = meta.lineY1 ?? 0
-    const lx2 = meta.lineX2 ?? 1
-    const ly2 = meta.lineY2 ?? 1
-    const startAbsX = rect.x + lx1 * (rect.w || 0)
-    const startAbsY = rect.y + ly1 * (rect.h || 0)
-    const endAbsX = rect.x + lx2 * (rect.w || 0)
-    const endAbsY = rect.y + ly2 * (rect.h || 0)
+    // Step 12C — line-like shapes with free absolute endpoints (meta.lineAbsX1..Y2)
+    // start the drag from those exact page-normalized coordinates. Older saved
+    // lines without abs endpoints fall back to the original box-relative model.
+    const isLineLike = meta.shapeKind === 'line' || meta.shapeKind === 'arrow' || meta.shapeKind === 'arch-line'
+    const hasAbs = isLineLike && meta.lineAbsX1 != null && meta.lineAbsY1 != null && meta.lineAbsX2 != null && meta.lineAbsY2 != null
+    let startAbsX: number, startAbsY: number, endAbsX: number, endAbsY: number
+    if (hasAbs) {
+      startAbsX = meta.lineAbsX1
+      startAbsY = meta.lineAbsY1
+      endAbsX = meta.lineAbsX2
+      endAbsY = meta.lineAbsY2
+    } else {
+      const rect = annotation.rect || { x: 0, y: 0, w: 0.1, h: 0.1 }
+      const lx1 = meta.lineX1 ?? 0
+      const ly1 = meta.lineY1 ?? 0
+      const lx2 = meta.lineX2 ?? 1
+      const ly2 = meta.lineY2 ?? 1
+      startAbsX = rect.x + lx1 * (rect.w || 0)
+      startAbsY = rect.y + ly1 * (rect.h || 0)
+      endAbsX = rect.x + lx2 * (rect.w || 0)
+      endAbsY = rect.y + ly2 * (rect.h || 0)
+    }
     const drag = {
       annotationId: annotation.id,
       endpoint,
@@ -2452,21 +2886,61 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const next = drag.mode === 'resize'
       ? { ...start, w: start.w + dx, h: start.h + dy }
       : { ...start, x: start.x + dx, y: start.y + dy }
+    if (drag.mode === 'move' && drag.startLineAbs) {
+      const safeBox = clampRectToPage(next)
+      updateMoveGuideLines(safeBox, drag.annotationId)
+      const moveDx = safeBox.x - start.x
+      const moveDy = safeBox.y - start.y
+      const x1 = clampNorm(drag.startLineAbs.x1 + moveDx)
+      const y1 = clampNorm(drag.startLineAbs.y1 + moveDy)
+      const x2 = clampNorm(drag.startLineAbs.x2 + moveDx)
+      const y2 = clampNorm(drag.startLineAbs.y2 + moveDy)
+      const bw = Math.max(safeBox.w, 0.0001)
+      const bh = Math.max(safeBox.h, 0.0001)
+      setAllAnnotations((prev) => prev.map((ann) => {
+        if (ann.id !== drag.annotationId) return ann
+        const m = getAnnotationMeta(ann)
+        const nextMeta: Record<string, any> = {
+          ...m,
+          lineAbsX1: x1,
+          lineAbsY1: y1,
+          lineAbsX2: x2,
+          lineAbsY2: y2,
+          // Keep relative endpoint fields as a compatibility fallback.
+          lineX1: (x1 - safeBox.x) / bw,
+          lineY1: (y1 - safeBox.y) / bh,
+          lineX2: (x2 - safeBox.x) / bw,
+          lineY2: (y2 - safeBox.y) / bh,
+        }
+        if (drag.startArchCtrl) {
+          nextMeta.archCtrlX = clampNorm(drag.startArchCtrl.x + moveDx)
+          nextMeta.archCtrlY = clampNorm(drag.startArchCtrl.y + moveDy)
+        }
+        return withAnnotationMeta({ ...ann, rect: safeBox, updatedAt: new Date().toISOString() }, nextMeta) as BlueprintAnnotation
+      }))
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+    if (drag.mode === 'move') {
+      updateMoveGuideLines(clampRectToPage(next), drag.annotationId)
+    }
     updateAnnotationLayout(drag.annotationId, next)
     e.preventDefault()
     e.stopPropagation()
-  }, [layoutDrag, updateAnnotationLayout])
+  }, [layoutDrag, updateAnnotationLayout, updateMoveGuideLines])
 
   const handleAnnotationLayoutPointerUp = useCallback((e: React.PointerEvent<HTMLElement>) => {
     const drag = layoutDragRef.current || layoutDrag
     if (!drag || drag.pointerId !== e.pointerId) return
     const id = drag.annotationId
+    clearAlignmentGuides()
     layoutDragRef.current = null
     setLayoutDrag(null)
     void commitAnnotationLayout(id)
     e.preventDefault()
     e.stopPropagation()
-  }, [layoutDrag, commitAnnotationLayout])
+  }, [layoutDrag, commitAnnotationLayout, clearAlignmentGuides])
 
   const handleOverlayClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     // Always prevent propagation and default to avoid any parent handlers interfering
@@ -2726,6 +3200,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         touchPanRef.current = { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false }
         setDragStart(null)
         setDraftRect(null)
+        clearAlignmentGuides()
         handleTwoFingerGesture(e)
         e.preventDefault()
         e.stopPropagation()
@@ -2863,7 +3338,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
       e.preventDefault()
     }
-  }, [effectiveTool, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind])
+  }, [effectiveTool, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind, clearAlignmentGuides])
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const mousePan = mousePanRef.current
@@ -2901,6 +3376,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       if (activeTouchPointersRef.current.size >= 2 || pinchStateRef.current.active) {
         setDragStart(null)
         setDraftRect(null)
+        clearAlignmentGuides()
         handleTwoFingerGesture(e)
         e.preventDefault()
         e.stopPropagation()
@@ -2948,12 +3424,27 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       const ny = Math.min(y1, y2)
       const nw = Math.max(0.002, Math.abs(x2 - x1))
       const nh = Math.max(0.002, Math.abs(y2 - y1))
+      const safeBox = clampRectToPage({ x: nx, y: ny, w: nw, h: nh })
+      const bw = Math.max(safeBox.w, 0.0001)
+      const bh = Math.max(safeBox.h, 0.0001)
       setAllAnnotations((prev) => prev.map((ann) => {
         if (ann.id !== epDrag.annotationId) return ann
         const m = getAnnotationMeta(ann)
         return withAnnotationMeta(
-          { ...ann, rect: { x: nx, y: ny, w: nw, h: nh }, updatedAt: new Date().toISOString() },
-          { ...m, lineX1: (x1 - nx) / nw, lineY1: (y1 - ny) / nh, lineX2: (x2 - nx) / nw, lineY2: (y2 - ny) / nh }
+          { ...ann, rect: safeBox, updatedAt: new Date().toISOString() },
+          {
+            ...m,
+            // Step 12C source of truth for edited line endpoints.
+            lineAbsX1: x1,
+            lineAbsY1: y1,
+            lineAbsX2: x2,
+            lineAbsY2: y2,
+            // Preserve the old relative fields as a no-migration fallback.
+            lineX1: (x1 - safeBox.x) / bw,
+            lineY1: (y1 - safeBox.y) / bh,
+            lineX2: (x2 - safeBox.x) / bw,
+            lineY2: (y2 - safeBox.y) / bh,
+          }
         ) as BlueprintAnnotation
       }))
       e.preventDefault()
@@ -3008,6 +3499,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         lineEl.setAttribute('x2', String(x))
         lineEl.setAttribute('y2', String(y))
       }
+      updatePlacementGuideLines(normRectFromDrag(lineFirstPointRef.current, { x, y }, rect.width, rect.height))
       return
     }
     if (effectiveTool === 'shape' && shapeKind === 'arch-line' && lineFirstPointRef.current) {
@@ -3019,26 +3511,30 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         archEl.setAttribute('d', `M ${p1.x} ${p1.y} Q ${cpx} ${cpy} ${x} ${y}`)
         archEl.style.display = ''
       }
+      updatePlacementGuideLines(normRectFromDrag(p1, { x, y }, rect.width, rect.height))
       return
     }
 
     const activeDragStart = dragStartRef.current || dragStart
     if (!(effectiveTool === 'highlight' || effectiveTool === 'textHighlight' || effectiveTool === 'underline' || effectiveTool === 'shape' || effectiveTool === 'eraser' || effectiveTool === 'callout' || effectiveTool === 'generate') || !activeDragStart) return
 
-    const left = Math.min(activeDragStart.x, x)
-    const top = Math.min(activeDragStart.y, y)
-    const w = Math.abs(x - activeDragStart.x)
-    const h = Math.abs(y - activeDragStart.y)
+    const previewRect = {
+      left: Math.min(activeDragStart.x, x),
+      top: Math.min(activeDragStart.y, y),
+      w: Math.abs(x - activeDragStart.x),
+      h: Math.abs(y - activeDragStart.y),
+    }
 
     // Direct DOM mutation Ã¢â‚¬â€ zero React re-renders during drag for smooth preview.
     const domEl = draftRectDomRef.current
     if (domEl) {
       domEl.style.display = 'block'
-      domEl.style.left = `${left}px`
-      domEl.style.top = `${top}px`
-      domEl.style.width = `${w}px`
-      domEl.style.height = `${h}px`
+      domEl.style.left = `${previewRect.left}px`
+      domEl.style.top = `${previewRect.top}px`
+      domEl.style.width = `${previewRect.w}px`
+      domEl.style.height = `${previewRect.h}px`
     }
+    updatePlacementGuideLines(normRectFromPlacementPreview(previewRect, rect.width, rect.height))
     // For line/arrow shapes: update the SVG line preview element directly.
     const lineEl = draftLineDomRef.current
     if (lineEl) {
@@ -3069,9 +3565,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // Keep dragStartRef in sync but do NOT call setDraftRect here Ã¢â‚¬â€
     // the DOM refs above give zero-lag visual feedback without any React re-renders.
     dragStartRef.current = activeDragStart
-  }, [effectiveTool, dragStart, inkDraft, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind])
+  }, [effectiveTool, dragStart, inkDraft, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind, clearAlignmentGuides, updatePlacementGuideLines])
 
   const handlePointerUp = useCallback(async (e: React.PointerEvent<HTMLDivElement>) => {
+    clearAlignmentGuides()
     const mousePan = mousePanRef.current
     if (e.pointerType === 'mouse' && mousePan.active && mousePan.pointerId === e.pointerId) {
       const moved = mousePan.moved
@@ -3312,9 +3809,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       setFocusedAnnotationId(ann.id)
       setToolMode('select')
     }
-  }, [effectiveTool, dragStart, inkDraft, blueprint, currentPage, persistAnnotation, toolColors, isEditorOpen, endTouchPointer, openCreateRichTextEditor, shapeKind, shapeOptions, drawOptions, markerOptions])
+  }, [effectiveTool, dragStart, inkDraft, blueprint, currentPage, persistAnnotation, toolColors, isEditorOpen, endTouchPointer, openCreateRichTextEditor, shapeKind, shapeOptions, drawOptions, markerOptions, clearAlignmentGuides])
 
   const handlePointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    clearAlignmentGuides()
     const mousePan = mousePanRef.current
     if (e.pointerType === 'mouse' && mousePan.active && mousePan.pointerId === e.pointerId) {
       const moved = mousePan.moved
@@ -3344,7 +3842,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setEndpointDrag(null)
     archControlDragRef.current = null
     setArchControlDrag(null)
-  }, [endTouchPointer])
+    if (layoutDragRef.current?.pointerId === e.pointerId) {
+      layoutDragRef.current = null
+      setLayoutDrag(null)
+    }
+  }, [endTouchPointer, clearAlignmentGuides])
 
   if (!blueprint) {
     return (
@@ -3764,6 +4266,18 @@ const annotationPanelSizeClass =
                 </div>
               </div>
             )}
+            {isEdit && currentKind === 'electrical-recessed-light' && (
+              <div style={{ marginBottom: 4 }}>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Recessed Light Settings</div>
+                <ToggleRow buttons={[
+                  {
+                    label: 'Emergency / Title 24',
+                    active: !!eMeta.emergency,
+                    onClick: () => persistEditAnnotationMeta({ emergency: !eMeta.emergency }),
+                  },
+                ]} />
+              </div>
+            )}
             <LabeledSelect label="Shape" value={currentKind}
               options={[
                 { label: 'Square', value: 'square' },
@@ -3777,6 +4291,7 @@ const annotationPanelSizeClass =
                 { label: 'Pentagon', value: 'pentagon' },
                 { label: 'Can Light 4"', value: 'can-light-4' },
                 { label: 'Can Light 6"', value: 'can-light-6' },
+                ...ELECTRICAL_SYMBOL_OPTIONS.map((option) => ({ label: option.label, value: option.value })),
               ]}
               onChange={(v) => {
                 if (isEdit) persistEditAnnotationMeta({ shapeKind: v })
@@ -4439,23 +4954,55 @@ const annotationPanelSizeClass =
 
             {/* Ã¢â€â‚¬Ã¢â€â‚¬ Draw / Mark: Pen Ã‚Â· Marker Ã‚Â· Eraser Ã‚Â· Shapes Ã¢â€â‚¬Ã¢â€â‚¬ */}
             {toolbarBucket === 'draw' && (
-              <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : `flex flex-nowrap overflow-x-auto bv-tool-bucket${isTabletImmersiveFullscreen ? ' justify-center' : ''}`} gap-1.5 pt-0.5`}>
-                <button
-                  onClick={(e) => { setToolMode('pen'); setOpenPopover({ tool: 'pen', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'pen' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><PenLine size={12} /> Pen</button>
-                <button
-                  onClick={(e) => { setToolMode('marker'); setOpenPopover({ tool: 'marker', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'marker' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Highlighter size={12} /> Marker</button>
-                <button
-                  onClick={(e) => { setToolMode('eraser'); setOpenPopover({ tool: 'eraser', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'eraser' ? 'border-red-500 text-red-300 bg-red-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Eraser size={12} /> Eraser</button>
-                <button
-                  onClick={(e) => { setToolMode('shape'); setOpenPopover({ tool: 'shape', anchorEl: e.currentTarget, mode: 'tool' }) }}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Shapes size={12} /> Shapes{toolMode === 'shape' && <span className="text-gray-400 text-[10px] ml-0.5">({shapeKind})</span>}</button>
+              <div className="flex flex-col gap-2 pt-0.5">
+                <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : `flex flex-nowrap overflow-x-auto bv-tool-bucket${isTabletImmersiveFullscreen ? ' justify-center' : ''}`} gap-1.5`}>
+                  <button
+                    onClick={(e) => { setToolMode('pen'); setOpenPopover({ tool: 'pen', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                    className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'pen' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  ><PenLine size={12} /> Pen</button>
+                  <button
+                    onClick={(e) => { setToolMode('marker'); setOpenPopover({ tool: 'marker', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                    className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'marker' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  ><Highlighter size={12} /> Marker</button>
+                  <button
+                    onClick={(e) => { setToolMode('eraser'); setOpenPopover({ tool: 'eraser', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                    className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'eraser' ? 'border-red-500 text-red-300 bg-red-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  ><Eraser size={12} /> Eraser</button>
+                  <button
+                    onClick={(e) => { setToolMode('shape'); setOpenPopover({ tool: 'shape', anchorEl: e.currentTarget, mode: 'tool' }) }}
+                    className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  ><Shapes size={12} /> Shapes{toolMode === 'shape' && <span className="text-gray-400 text-[10px] ml-0.5">({getShapeKindLabel(shapeKind)})</span>}</button>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="text-[10px] uppercase tracking-wide text-gray-500">Electrical Symbols</div>
+                  <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : `flex flex-nowrap overflow-x-auto bv-tool-bucket${isTabletImmersiveFullscreen ? ' justify-center' : ''}`} gap-1.5`}>
+                    {ELECTRICAL_SYMBOL_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => {
+                          setToolMode('shape')
+                          setShapeKind(option.value)
+                          setOpenPopover(null)
+                        }}
+                        className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' && shapeKind === option.value ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                        title={`Place ${option.label}`}
+                      >
+                        <span className="inline-flex h-4 min-w-4 items-center justify-center rounded border border-current px-1 text-[9px] font-semibold leading-none">{option.shortLabel}</span>
+                        <span className="truncate">{option.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setElectricalSymbolLabelsVisible((v) => !v)}
+                    className={`w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border ${electricalSymbolLabelsVisible ? 'border-gray-700 text-gray-300 hover:text-white' : 'border-amber-500 text-amber-300 bg-amber-900/20'}`}
+                    title={electricalSymbolLabelsVisible ? 'Hide electrical symbol corner labels' : 'Show electrical symbol corner labels'}
+                  >
+                    {electricalSymbolLabelsVisible ? <EyeOff size={12} /> : <Eye size={12} />}
+                    {electricalSymbolLabelsVisible ? 'Hide Labels' : 'Show Labels'}
+                  </button>
+                </div>
               </div>
             )}
 
@@ -4510,6 +5057,20 @@ const annotationPanelSizeClass =
                 >
                   {lightingEffectsVisible ? <EyeOff size={12} /> : <Eye size={12} />}
                   {lightingEffectsVisible ? 'Hide Lighting Effects' : 'Show Lighting Effects'}
+                </button>
+                <button
+                  onClick={() => {
+                    setAlignmentGuidesEnabled((v) => {
+                      const next = !v
+                      if (!next) clearAlignmentGuides()
+                      return next
+                    })
+                  }}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${alignmentGuidesEnabled ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  title={alignmentGuidesEnabled ? 'Turn off visual placement guide lines' : 'Turn on visual placement guide lines'}
+                >
+                  <Crosshair size={12} />
+                  {alignmentGuidesEnabled ? 'Guide Assist On' : 'Guide Assist'}
                 </button>
                 <button
                   onClick={() => { pendingScrollResetRef.current = true; setRelativeZoom(1) }}
@@ -4911,12 +5472,18 @@ const annotationPanelSizeClass =
                           const fillOpacity = meta.fillOpacity ?? 0.22
                           const hatchPattern = meta.hatchPattern || 'none'
                           if (kind === 'line' || kind === 'arrow') {
-                            // Use stored relative endpoints (0–1 within bounding box) for correct direction.
-                            // Fallback to TL→BR (0%,0%→100%,100%) for legacy annotations without stored coords.
-                            const lx1 = meta.lineX1 != null ? `${meta.lineX1 * 100}%` : '0%'
-                            const ly1 = meta.lineY1 != null ? `${meta.lineY1 * 100}%` : '0%'
-                            const lx2 = meta.lineX2 != null ? `${meta.lineX2 * 100}%` : '100%'
-                            const ly2 = meta.lineY2 != null ? `${meta.lineY2 * 100}%` : '100%'
+                            const lineRect = a.rect || { x: 0, y: 0, w: 0.0001, h: 0.0001 }
+                            const hasAbs = meta.lineAbsX1 != null && meta.lineAbsY1 != null && meta.lineAbsX2 != null && meta.lineAbsY2 != null
+                            // Step 12C: edited lines render from absolute page-normalized
+                            // endpoints. Legacy lines fall back to relative endpoints.
+                            const l1x = hasAbs ? (Number(meta.lineAbsX1) - lineRect.x) / Math.max(lineRect.w, 0.0001) : (meta.lineX1 ?? 0)
+                            const l1y = hasAbs ? (Number(meta.lineAbsY1) - lineRect.y) / Math.max(lineRect.h, 0.0001) : (meta.lineY1 ?? 0)
+                            const l2x = hasAbs ? (Number(meta.lineAbsX2) - lineRect.x) / Math.max(lineRect.w, 0.0001) : (meta.lineX2 ?? 1)
+                            const l2y = hasAbs ? (Number(meta.lineAbsY2) - lineRect.y) / Math.max(lineRect.h, 0.0001) : (meta.lineY2 ?? 1)
+                            const lx1 = `${l1x * 100}%`
+                            const ly1 = `${l1y * 100}%`
+                            const lx2 = `${l2x * 100}%`
+                            const ly2 = `${l2y * 100}%`
                             return (
                               <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                                 <svg className="absolute inset-0 overflow-visible" width="100%" height="100%" preserveAspectRatio="none">
@@ -4934,8 +5501,12 @@ const annotationPanelSizeClass =
                             )
                           }
                           if (kind === 'arch-line') {
-                            const alx1f = meta.lineX1 ?? 0, aly1f = meta.lineY1 ?? 0
-                            const alx2f = meta.lineX2 ?? 1, aly2f = meta.lineY2 ?? 1
+                            const arect = a.rect || { x: 0, y: 0, w: 0.0001, h: 0.0001 }
+                            const hasAbs = meta.lineAbsX1 != null && meta.lineAbsY1 != null && meta.lineAbsX2 != null && meta.lineAbsY2 != null
+                            const alx1f = hasAbs ? (Number(meta.lineAbsX1) - arect.x) / Math.max(arect.w, 0.0001) : (meta.lineX1 ?? 0)
+                            const aly1f = hasAbs ? (Number(meta.lineAbsY1) - arect.y) / Math.max(arect.h, 0.0001) : (meta.lineY1 ?? 0)
+                            const alx2f = hasAbs ? (Number(meta.lineAbsX2) - arect.x) / Math.max(arect.w, 0.0001) : (meta.lineX2 ?? 1)
+                            const aly2f = hasAbs ? (Number(meta.lineAbsY2) - arect.y) / Math.max(arect.h, 0.0001) : (meta.lineY2 ?? 1)
                             const avx1 = alx1f * 100, avy1 = aly1f * 100
                             const avx2 = alx2f * 100, avy2 = aly2f * 100
                             // Freeform control point: stored as absolute page-normalized coords (archCtrlX/Y).
@@ -4943,7 +5514,6 @@ const annotationPanelSizeClass =
                             let avcx: number, avcy: number
                             if (meta.archCtrlX !== undefined && meta.archCtrlY !== undefined) {
                               // Convert page-normalized control point → annotation-local viewBox (0-100) coords
-                              const arect = a.rect || { x: 0, y: 0, w: 0.0001, h: 0.0001 }
                               avcx = ((meta.archCtrlX - arect.x) / Math.max(arect.w, 0.0001)) * 100
                               avcy = ((meta.archCtrlY - arect.y) / Math.max(arect.h, 0.0001)) * 100
                             } else {
@@ -4962,6 +5532,23 @@ const annotationPanelSizeClass =
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" style={{ zIndex: 1 }} />}
                                 {isLayoutEditing && <div onPointerDown={(e) => { e.stopPropagation(); startAnnotationEndpointDrag(e, a, 'start') }} className="absolute w-3 h-3 rounded-full bg-blue-400 border border-white shadow cursor-crosshair" style={{ left: alx1css, top: aly1css, transform: 'translate(-50%,-50%)', zIndex: 3, touchAction: 'none' }} />}
                                 {isLayoutEditing && <div onPointerDown={(e) => { e.stopPropagation(); startAnnotationEndpointDrag(e, a, 'end') }} className="absolute w-3 h-3 rounded-full bg-green-400 border border-white shadow cursor-crosshair" style={{ left: alx2css, top: aly2css, transform: 'translate(-50%,-50%)', zIndex: 3, touchAction: 'none' }} />}
+                              </div>
+                            )
+                          }
+                          if (isElectricalShapeKind(kind)) {
+                            return (
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
+                                <svg
+                                  className="absolute inset-0 overflow-visible"
+                                  viewBox="0 0 100 100"
+                                  width="100%"
+                                  height="100%"
+                                  preserveAspectRatio="xMidYMid meet"
+                                >
+                                  {renderElectricalSymbolSvg(kind, meta, { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible: electricalSymbolLabelsVisible })}
+                                </svg>
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
                               </div>
                             )
                           }
@@ -5375,6 +5962,15 @@ const annotationPanelSizeClass =
                           />
                         )
                       })()}
+
+                      <svg
+                        ref={alignmentGuideSvgRef}
+                        className="absolute inset-0 pointer-events-none overflow-visible"
+                        width={displaySize.w}
+                        height={displaySize.h}
+                        style={{ zIndex: 30, filter: 'drop-shadow(0 0 3px rgba(34, 211, 238, 0.85))' }}
+                        aria-hidden="true"
+                      />
 
                       <div
                         ref={draftRectDomRef}
@@ -5866,7 +6462,7 @@ const annotationPanelSizeClass =
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: a.color || '#facc15' }} />
-                          <span className="text-gray-400 truncate">{shortText(a.text, 28) || annotationLabel(a)}</span>
+                          <span className="text-gray-400 truncate">{a.text?.trim() ? shortText(a.text, 28) : annotationLabel(a)}</span>
                         </div>
                         <button
                           onClick={(e) => { e.stopPropagation(); void removeAnnotation(a.id) }}

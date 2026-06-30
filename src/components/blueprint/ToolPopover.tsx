@@ -4,7 +4,41 @@ import { createPortal } from 'react-dom'
 import { ChevronDown, ChevronUp, Minus, Plus } from 'lucide-react'
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
-const PALETTE = ['#facc15', '#38bdf8', '#f97316', '#22c55e', '#a78bfa', '#ef4444', '#ffffff']
+const PALETTE = [
+  '#facc15',
+  '#38bdf8',
+  '#f97316',
+  '#22c55e',
+  '#a78bfa',
+  '#ef4444',
+  '#ffffff',
+  '#111827',
+  '#991B1B',
+  '#DC2626',
+  '#EA580C',
+  '#FB923C',
+  '#CA8A04',
+  '#EAB308',
+  '#84CC16',
+  '#16A34A',
+  '#15803D',
+  '#14B8A6',
+  '#06B6D4',
+  '#0284C7',
+  '#2563EB',
+  '#1D4ED8',
+  '#4F46E5',
+  '#7C3AED',
+  '#9333EA',
+  '#C026D3',
+  '#DB2777',
+  '#F43F5E',
+  '#64748B',
+  '#334155',
+  '#78716C',
+  '#A16207',
+  '#0F172A',
+]
 
 // ─── ColorRow ─────────────────────────────────────────────────────────────────
 interface ColorRowProps {
