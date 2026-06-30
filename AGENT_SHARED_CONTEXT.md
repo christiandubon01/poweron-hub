@@ -39,10 +39,39 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Step12F-Fixed-Blueprint-Colors (Cursor) | Blueprint Viewer — Add 25 Fixed Blueprint Colors | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, src/components/blueprint/ToolPopover.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
 | Step12E-R3-Switch-Dimmer-Vertical-Line (Cursor) | Blueprint Viewer — Switch/Dimmer Vertical Line Polish | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
 | Step12G-Electrical-Opacity-Fix (Cursor) | Blueprint Viewer — Electrical Symbol Opacity + New Shape Defaults | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step13A-Symbol-Metadata (Cursor) | Blueprint Viewer — Symbol Metadata Foundation | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
 
 ---
 
 ## Audit & Change Log
+
+### 2026-06-30 — Blueprint Viewer: Symbol Metadata Foundation (Step 13A, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Scoped Symbol Intelligence metadata foundation after Step 12 drawing tools batch
+**Feature Area:** Blueprint Viewer — electrical symbol metadata
+**Branch:** main
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### What Was Implemented
+- Added local electrical symbol metadata helpers: `isElectricalShapeKind`, `getElectricalSymbolMetadata`, `getElectricalSymbolDisplayName`, and `getElectricalSymbolCountValue`.
+- Kept electrical symbols as existing `type: "shape"` annotations using `meta.shapeKind`; no saved annotations are migrated or automatically mutated.
+- Added derived metadata for `symbolKind`, `displayName`, `shortLabel`, `category`, `countValue`, `defaultPhase`, `materialKey`, `laborKey`, and `isElectricalSymbol`.
+- Additively stamps `symbolCategory`, `countValue`, `materialKey`, and `laborKey` only on newly placed electrical symbols or when editing a shape into an electrical symbol.
+- Added a compact read-only symbol/category/count line to the shape edit popover for electrical symbols.
+
+#### Preserved
+- Emergency recessed lights still use `meta.emergency` on `electrical-recessed-light` and display as `Recessed Light · EM`.
+- Hide Lighting Effects, Guide Assist, free line endpoint editing, electrical label visibility, symbol opacity, fixed palette behavior, and switch/dimmer vertical-line styling remain intact.
+- No migrations, export changes, PDF loading changes, AppShell changes, portal/request/review/email files, dashboard files, service log files, Scope Layers, Work Packages, material lists, labor engine, 2D/3D Layout Builder, or VR files were touched.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
 
 ### 2026-06-30 — Blueprint Viewer: Electrical Symbol Opacity + New Shape Defaults (Step 12G, NOT COMMITTED)
 

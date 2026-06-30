@@ -225,30 +225,207 @@ type BorderStyle = 'solid' | 'dashed' | 'dotted'
 type HatchPattern = 'none' | 'diagonal' | 'cross' | 'dots'
 type GenerateQuestionType = 'coordination' | 'rfi'
 
-const ELECTRICAL_SYMBOL_OPTIONS: Array<{ label: string; value: ShapeKind; shortLabel: string }> = [
-  { label: 'Switch', value: 'electrical-switch', shortLabel: 'S' },
-  { label: 'Dimmer', value: 'electrical-dimmer', shortLabel: 'DIM' },
-  { label: 'Recessed Light', value: 'electrical-recessed-light', shortLabel: 'RL' },
-  { label: 'Pendant Light', value: 'electrical-pendant-light', shortLabel: 'P' },
-  { label: 'Sconce', value: 'electrical-sconce', shortLabel: 'SC' },
-  { label: '2x2 LED Panel', value: 'electrical-led-panel-2x2', shortLabel: '2x2' },
-  { label: '2x4 LED Panel', value: 'electrical-led-panel-2x4', shortLabel: '2x4' },
-  { label: 'GFCI', value: 'electrical-gfci', shortLabel: 'GFCI' },
-  { label: 'Receptacle', value: 'electrical-receptacle', shortLabel: 'REC' },
-  { label: 'Timer Control Box', value: 'electrical-timer-control', shortLabel: 'TMR' },
-  { label: 'Photocell', value: 'electrical-photocell', shortLabel: 'PC' },
-]
+type ElectricalSymbolKind = Extract<ShapeKind,
+  | 'electrical-switch'
+  | 'electrical-dimmer'
+  | 'electrical-recessed-light'
+  | 'electrical-pendant-light'
+  | 'electrical-sconce'
+  | 'electrical-led-panel-2x2'
+  | 'electrical-led-panel-2x4'
+  | 'electrical-gfci'
+  | 'electrical-receptacle'
+  | 'electrical-timer-control'
+  | 'electrical-photocell'
+>
+type ElectricalSymbolCategory = 'lighting' | 'switching' | 'power' | 'control'
 
-function isElectricalShapeKind(kind: any): kind is ShapeKind {
-  return ELECTRICAL_SYMBOL_OPTIONS.some((option) => option.value === kind)
+type ElectricalSymbolMetadata = {
+  symbolKind: ElectricalSymbolKind
+  displayName: string
+  shortLabel: string
+  category: ElectricalSymbolCategory
+  countValue: number
+  defaultPhase: string
+  materialKey: string
+  laborKey: string
+  isElectricalSymbol: true
+}
+
+const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, ElectricalSymbolMetadata> = {
+  'electrical-switch': {
+    symbolKind: 'electrical-switch',
+    displayName: 'Switch',
+    shortLabel: 'S',
+    category: 'switching',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'switch',
+    laborKey: 'switch',
+    isElectricalSymbol: true,
+  },
+  'electrical-dimmer': {
+    symbolKind: 'electrical-dimmer',
+    displayName: 'Dimmer',
+    shortLabel: 'DIM',
+    category: 'switching',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'dimmer',
+    laborKey: 'dimmer',
+    isElectricalSymbol: true,
+  },
+  'electrical-recessed-light': {
+    symbolKind: 'electrical-recessed-light',
+    displayName: 'Recessed Light',
+    shortLabel: 'RL',
+    category: 'lighting',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'recessed-light',
+    laborKey: 'recessed-light',
+    isElectricalSymbol: true,
+  },
+  'electrical-pendant-light': {
+    symbolKind: 'electrical-pendant-light',
+    displayName: 'Pendant Light',
+    shortLabel: 'P',
+    category: 'lighting',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'pendant-light',
+    laborKey: 'pendant-light',
+    isElectricalSymbol: true,
+  },
+  'electrical-sconce': {
+    symbolKind: 'electrical-sconce',
+    displayName: 'Sconce',
+    shortLabel: 'SC',
+    category: 'lighting',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'sconce',
+    laborKey: 'sconce',
+    isElectricalSymbol: true,
+  },
+  'electrical-led-panel-2x2': {
+    symbolKind: 'electrical-led-panel-2x2',
+    displayName: '2x2 LED Panel',
+    shortLabel: '2x2',
+    category: 'lighting',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'led-panel-2x2',
+    laborKey: 'led-panel-2x2',
+    isElectricalSymbol: true,
+  },
+  'electrical-led-panel-2x4': {
+    symbolKind: 'electrical-led-panel-2x4',
+    displayName: '2x4 LED Panel',
+    shortLabel: '2x4',
+    category: 'lighting',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'led-panel-2x4',
+    laborKey: 'led-panel-2x4',
+    isElectricalSymbol: true,
+  },
+  'electrical-gfci': {
+    symbolKind: 'electrical-gfci',
+    displayName: 'GFCI',
+    shortLabel: 'GFCI',
+    category: 'power',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'gfci',
+    laborKey: 'gfci',
+    isElectricalSymbol: true,
+  },
+  'electrical-receptacle': {
+    symbolKind: 'electrical-receptacle',
+    displayName: 'Receptacle',
+    shortLabel: 'REC',
+    category: 'power',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'receptacle',
+    laborKey: 'receptacle',
+    isElectricalSymbol: true,
+  },
+  'electrical-timer-control': {
+    symbolKind: 'electrical-timer-control',
+    displayName: 'Timer Control Box',
+    shortLabel: 'TMR',
+    category: 'control',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'timer-control',
+    laborKey: 'timer-control',
+    isElectricalSymbol: true,
+  },
+  'electrical-photocell': {
+    symbolKind: 'electrical-photocell',
+    displayName: 'Photocell',
+    shortLabel: 'PC',
+    category: 'control',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'photocell',
+    laborKey: 'photocell',
+    isElectricalSymbol: true,
+  },
+}
+
+const ELECTRICAL_SYMBOL_OPTIONS: Array<{ label: string; value: ElectricalSymbolKind; shortLabel: string }> =
+  Object.values(ELECTRICAL_SYMBOL_METADATA).map((symbol) => ({
+    label: symbol.displayName,
+    value: symbol.symbolKind,
+    shortLabel: symbol.shortLabel,
+  }))
+
+function isElectricalShapeKind(shapeKind: any): shapeKind is ElectricalSymbolKind {
+  return typeof shapeKind === 'string' && shapeKind in ELECTRICAL_SYMBOL_METADATA
+}
+
+function getElectricalSymbolMetadata(shapeKind: any, meta: Record<string, any> = {}): ElectricalSymbolMetadata | null {
+  if (!isElectricalShapeKind(shapeKind)) return null
+  const base = ELECTRICAL_SYMBOL_METADATA[shapeKind]
+  return {
+    ...base,
+    countValue: Number.isFinite(Number(meta.countValue)) ? Number(meta.countValue) : base.countValue,
+  }
+}
+
+function getElectricalSymbolDisplayName(shapeKind: any, meta: Record<string, any> = {}) {
+  const symbol = getElectricalSymbolMetadata(shapeKind, meta)
+  if (!symbol) return null
+  return shapeKind === 'electrical-recessed-light' && meta.emergency
+    ? `${symbol.displayName} · EM`
+    : symbol.displayName
+}
+
+function getElectricalSymbolCountValue(shapeKind: any, meta: Record<string, any> = {}) {
+  return getElectricalSymbolMetadata(shapeKind, meta)?.countValue ?? 0
+}
+
+function formatElectricalSymbolCategory(category: ElectricalSymbolCategory) {
+  return category.charAt(0).toUpperCase() + category.slice(1)
+}
+
+function getElectricalSymbolMetadataStamp(shapeKind: any, meta: Record<string, any> = {}) {
+  const symbol = getElectricalSymbolMetadata(shapeKind, meta)
+  if (!symbol) return {}
+  return {
+    symbolCategory: symbol.category,
+    countValue: symbol.countValue,
+    materialKey: symbol.materialKey,
+    laborKey: symbol.laborKey,
+  }
 }
 
 function getShapeKindLabel(kind: any, meta: Record<string, any> = {}) {
-  const electrical = ELECTRICAL_SYMBOL_OPTIONS.find((option) => option.value === kind)
-  if (electrical) {
-    if (kind === 'electrical-recessed-light' && meta.emergency) return `${electrical.label} · EM`
-    return electrical.label
-  }
+  const electricalDisplayName = getElectricalSymbolDisplayName(kind, meta)
+  if (electricalDisplayName) return electricalDisplayName
   switch (kind) {
     case 'arch-line': return 'Arch Line'
     case 'can-light-4': return 'Can Light 4"'
@@ -538,12 +715,13 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
     )
   }
   if (kind === 'electrical-dimmer') {
+    const dimmerLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'DIM'
     return (
       <>
         <text x="46" y="50" fontSize="48" {...commonText}>S</text>
         <line x1="46" y1="20" x2="46" y2="74" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" strokeDasharray={dash} />
         <path d="M72 28 L84 28 M74 37 L84 37 M76 46 L84 46" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.75" />
-        {externalLabel('DIM')}
+        {externalLabel(dimmerLabel)}
       </>
     )
   }
@@ -580,6 +758,7 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
   }
   if (kind === 'electrical-led-panel-2x2' || kind === 'electrical-led-panel-2x4') {
     const isLong = kind === 'electrical-led-panel-2x4'
+    const panelLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? (isLong ? '2x4' : '2x2')
     return (
       <>
         <rect x={isLong ? 10 : 18} y={isLong ? 22 : 14} width={isLong ? 78 : 58} height={isLong ? 40 : 58} rx="3" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
@@ -587,12 +766,12 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
         <line x1={isLong ? 10 : 47} y1={isLong ? 42 : 14} x2={isLong ? 88 : 47} y2={isLong ? 42 : 72} stroke={borderColor} strokeWidth={fineStroke} opacity="0.65" />
         <line x1={isLong ? 14 : 24} y1={isLong ? 26 : 20} x2={isLong ? 84 : 70} y2={isLong ? 58 : 66} stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} opacity="0.35" />
         <line x1={isLong ? 84 : 70} y1={isLong ? 26 : 20} x2={isLong ? 14 : 24} y2={isLong ? 58 : 66} stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} opacity="0.35" />
-        {externalLabel(isLong ? '2x4' : '2x2')}
+        {externalLabel(panelLabel)}
       </>
     )
   }
   if (kind === 'electrical-gfci' || kind === 'electrical-receptacle') {
-    const label = kind === 'electrical-gfci' ? 'GFCI' : 'REC'
+    const label = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? (kind === 'electrical-gfci' ? 'GFCI' : 'REC')
     return (
       <>
         <path d="M30 24 Q50 12 70 24 L70 66 Q50 78 30 66 Z" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
@@ -606,6 +785,7 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
     )
   }
   if (kind === 'electrical-timer-control') {
+    const timerLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'TMR'
     return (
       <>
         <rect x="18" y="18" width="58" height="54" rx="5" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
@@ -614,18 +794,19 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
         <line x1="47" y1="43" x2="57" y2="49" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" />
         <circle cx="27" cy="27" r="2.5" fill={borderColor} />
         <circle cx="67" cy="27" r="2.5" fill={borderColor} />
-        {externalLabel('TMR')}
+        {externalLabel(timerLabel)}
       </>
     )
   }
   if (kind === 'electrical-photocell') {
+    const photocellLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'PC'
     return (
       <>
         <circle cx="46" cy="45" r="27" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
         <path d="M25 45 Q46 26 67 45 Q46 64 25 45 Z" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
         <circle cx="46" cy="45" r="6" fill={borderColor} />
         <path d="M72 23 L80 15 M76 44 L88 44 M72 65 L80 73" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.75" />
-        {externalLabel('PC')}
+        {externalLabel(photocellLabel)}
       </>
     )
   }
@@ -3781,7 +3962,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       : null
 
     const meta = effectiveTool === 'shape'
-      ? { shapeKind, ...shapeOptions, ...lineDirectionMeta }
+      ? { shapeKind, ...shapeOptions, ...lineDirectionMeta, ...getElectricalSymbolMetadataStamp(shapeKind) }
       : effectiveTool === 'underline'
         ? { thickness: drawOptions.thickness, opacity: drawOptions.opacity }
         : effectiveTool === 'textHighlight'
@@ -4209,10 +4390,21 @@ const annotationPanelSizeClass =
         ? Math.round((eMeta.fillOpacity ?? LEGACY_SHAPE_FILL_OPACITY) * 100)
         : Math.round(shapeOptions.fillOpacity * 100)
       const currentKind = isEdit ? (eMeta.shapeKind ?? shapeKind) : shapeKind
+      const electricalMetadata = getElectricalSymbolMetadata(currentKind, eMeta)
       return {
         title: 'Shape',
         primary: (
           <>
+            {isEdit && electricalMetadata && (
+              <div style={{ marginBottom: 6, border: '1px solid rgba(148,163,184,0.16)', borderRadius: 8, background: 'rgba(15,23,42,0.35)', padding: '6px 8px' }}>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.78)', fontWeight: 600 }}>
+                  Symbol: {getElectricalSymbolDisplayName(currentKind, eMeta)}
+                </div>
+                <div style={{ marginTop: 2, fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>
+                  Category: {formatElectricalSymbolCategory(electricalMetadata.category)} · Count: {getElectricalSymbolCountValue(currentKind, eMeta)}
+                </div>
+              </div>
+            )}
             {isEdit && (currentKind === 'can-light-4' || currentKind === 'can-light-6') && (
               <div style={{ marginBottom: 2 }}>
                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Light Output</div>
@@ -4298,7 +4490,7 @@ const annotationPanelSizeClass =
                 ...ELECTRICAL_SYMBOL_OPTIONS.map((option) => ({ label: option.label, value: option.value })),
               ]}
               onChange={(v) => {
-                if (isEdit) persistEditAnnotationMeta({ shapeKind: v })
+                if (isEdit) persistEditAnnotationMeta({ shapeKind: v, ...getElectricalSymbolMetadataStamp(v) })
                 else setShapeKind(v as ShapeKind)
               }} />
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Border Color</div>
