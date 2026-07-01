@@ -50,10 +50,60 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Step13B-P-Scope-Layers-Persist (Cursor) | Blueprint Work Packages — Persist Scope Layers | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, src/services/blueprintLibraryService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
 | Step13B-P-R-Scope-Layers-Remote-Merge (Cursor) | Work Package Save — Merge Scope Layers Into Latest Remote | src/services/backupDataService.ts, src/services/blueprintLibraryService.ts, src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
 | Step13B-I-Scope-Layer-Isolate (Cursor) | Work Package — Canvas Isolate Toggle | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step13B-QA1-Fullscreen-Shapes-Save (Cursor) | Blueprint QA — Fullscreen Controls, Shapes Menu, S3/S4, Save Notice | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, src/components/blueprint/ToolPopover.tsx, src/services/blueprintLibraryService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step13B-QA1-R-Light-Glare-All-Lights (Cursor) | Blueprint — Light Output/Glare for All Light Symbols | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step13B-QA1-HOTFIX (Claude Code Sonnet 4.6) | Blueprint Viewer — Fix `clearStaleSyncMessages` TDZ Runtime Crash | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 
 ---
 
 ## Audit & Change Log
+
+### 2026-07-01 — Fix `clearStaleSyncMessages` TDZ Runtime Crash (Step 13B-QA1-HOTFIX, NOT COMMITTED)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Scoped hotfix — declaration-order repair only, no behavior change
+**Feature Area:** Blueprint Viewer — runtime crash introduced by Step 13B-QA1 stale sync warning cleanup
+**Branch:** main | HEAD = a4e927b
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Root cause
+`clearStaleSyncMessages` and `showTransientSyncNotice` were declared via `useCallback` at (former) lines 2343/2353, but `persistScopeLayers` (line ~1926, from Step 13B-P) referenced `clearStaleSyncMessages` in its body and dependency array at line ~1933/1956 — earlier in the component function's execution order. This is a JS temporal-dead-zone violation: the `const` binding for `clearStaleSyncMessages` had not yet been initialized when `persistScopeLayers`'s `useCallback` dependency array was evaluated during render, throwing "Cannot access 'clearStaleSyncMessages' before initialization" and crashing the whole app (error boundary "Something went wrong").
+
+#### Fix
+Moved both `clearStaleSyncMessages` and `showTransientSyncNotice` `useCallback` declarations to immediately before `loadAnnotations` (now ~line 1897), ahead of every reference including `persistScopeLayers`. Both callbacks only depend on `setError`, `setActionMsg`, `setSyncNotice`, `syncNoticeTimerRef`, and module-level `isSyncBlockedMessage` — all declared earlier in the component (state hooks near line 1313-1365) — so the move is safe and has empty dependency arrays (`[]`), unchanged. No logic inside either function was altered. Removed the old duplicate declaration block from its former location.
+
+#### Preserved
+- Stale iPad/cloud-sync warning cleanup behavior (Step 13B-QA1) unchanged — same 8s auto-dismiss, same `poweron:data-saved` listener, same guard-message clearing logic.
+- Fullscreen portal fix, S3/S4 symbols, Shapes dropdown cleanup, light output/glare for all light symbols (Step 13B-QA1-R), Work Package persistence, and save safety guards — untouched, no logic changed anywhere else in the file.
+- No migrations, export changes, PDF loading changes, AppShell changes, dashboard files, or project tab files were touched.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-06-30 — Light Output/Glare for All Light Symbols (Step 13B-QA1-R, NOT COMMITTED)
+
+**Agent:** Cursor
+
+**Behavior:**
+- `isLightOutputShapeKind()` / `LIGHT_OUTPUT_SHAPE_KINDS` classify all 7 light symbol types
+- Shared `renderLightOutputGlowSvg()` + `getLightOutputGlowMetrics()` — same Kelvin-tinted soft radial glow as can lights
+- Electrical light symbols (recessed, pendant, sconce, 2x2/2x4 LED) render glow when `lightingEffectsVisible`
+- Light Output + Color Temperature edit controls extended to all light symbols
+- Non-light symbols (switch, S3, S4, dimmer, GFCI, receptacle, timer, photocell) unchanged — no glow
+- Hide Lighting Effects / isolate / opacity behavior preserved via existing canvas filter + `lightingEffectsVisible` gate
+
+### 2026-06-30 — Blueprint QA: Fullscreen, Shapes Menu, S3/S4, Save Notice (Step 13B-QA1, NOT COMMITTED)
+
+**Agent:** Cursor
+
+**Fixes:**
+1. **Fullscreen controls** — Portals (Move/Edit/Copy/Delete bar, ToolPopover, modals) render into `viewerRootRef` during fullscreen so they appear inside the browser Fullscreen API element (not clipped). Raised z-index to 100050. Tablet/desktop fullscreen auto-expands annotations drawer; canvas + panel use flex split (panel max 38vh).
+2. **Generic Shapes cleanup** — `GENERIC_SHAPE_KIND_OPTIONS` excludes all electrical symbols and can lights. Can lights + electrical symbols only under ELECTRICAL SYMBOLS toolbar section.
+3. **S3/S4 switches** — New shape kinds `electrical-switch-3way` and `electrical-switch-4way` with metadata, rendering, and Work Package labels ("3-Way Switch", "4-Way Switch").
+4. **Stale sync warning** — Annotation saves no longer throw on blocked cloud sync when local save succeeded. Transient amber notice (8s auto-dismiss); cleared on `poweron:data-saved` or next successful cloud sync. Save safety guards unchanged.
+
+**Not touched:** backupDataService guards, migrations, export, AppShell, V15rLayout (except no change needed)
 
 ### 2026-06-30 — Work Package Canvas Isolate (Step 13B-I, NOT COMMITTED)
 

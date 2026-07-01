@@ -216,6 +216,8 @@ type ShapeKind =
   | 'can-light-4'
   | 'can-light-6'
   | 'electrical-switch'
+  | 'electrical-switch-3way'
+  | 'electrical-switch-4way'
   | 'electrical-dimmer'
   | 'electrical-recessed-light'
   | 'electrical-pendant-light'
@@ -232,6 +234,8 @@ type GenerateQuestionType = 'coordination' | 'rfi'
 
 type ElectricalSymbolKind = Extract<ShapeKind,
   | 'electrical-switch'
+  | 'electrical-switch-3way'
+  | 'electrical-switch-4way'
   | 'electrical-dimmer'
   | 'electrical-recessed-light'
   | 'electrical-pendant-light'
@@ -267,6 +271,28 @@ const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, ElectricalSymbolM
     defaultPhase: 'electrical',
     materialKey: 'switch',
     laborKey: 'switch',
+    isElectricalSymbol: true,
+  },
+  'electrical-switch-3way': {
+    symbolKind: 'electrical-switch-3way',
+    displayName: '3-Way Switch',
+    shortLabel: 'S3',
+    category: 'switching',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'switch-3way',
+    laborKey: 'switch-3way',
+    isElectricalSymbol: true,
+  },
+  'electrical-switch-4way': {
+    symbolKind: 'electrical-switch-4way',
+    displayName: '4-Way Switch',
+    shortLabel: 'S4',
+    category: 'switching',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'switch-4way',
+    laborKey: 'switch-4way',
     isElectricalSymbol: true,
   },
   'electrical-dimmer': {
@@ -387,6 +413,28 @@ const ELECTRICAL_SYMBOL_OPTIONS: Array<{ label: string; value: ElectricalSymbolK
     value: symbol.symbolKind,
     shortLabel: symbol.shortLabel,
   }))
+
+const CAN_LIGHT_TOOL_OPTIONS: Array<{ label: string; value: 'can-light-4' | 'can-light-6'; shortLabel: string }> = [
+  { label: 'Can Light 4"', value: 'can-light-4', shortLabel: '4"' },
+  { label: 'Can Light 6"', value: 'can-light-6', shortLabel: '6"' },
+]
+
+const GENERIC_SHAPE_KIND_OPTIONS: Array<{ label: string; value: ShapeKind }> = [
+  { label: 'Square', value: 'square' },
+  { label: 'Circle', value: 'circle' },
+  { label: 'Line', value: 'line' },
+  { label: 'Arrow', value: 'arrow' },
+  { label: 'Arch Line', value: 'arch-line' },
+  { label: 'Diamond', value: 'diamond' },
+  { label: 'Star', value: 'star' },
+  { label: 'Cross', value: 'cross' },
+  { label: 'Pentagon', value: 'pentagon' },
+]
+
+function isSyncBlockedMessage(message: string | null | undefined) {
+  if (!message) return false
+  return /cloud sync was blocked/i.test(message) || /could not prove it loaded the latest remote/i.test(message)
+}
 
 function isElectricalShapeKind(shapeKind: any): shapeKind is ElectricalSymbolKind {
   return typeof shapeKind === 'string' && shapeKind in ELECTRICAL_SYMBOL_METADATA
@@ -605,8 +653,27 @@ function withAnnotationMeta(annotation: any, meta: Record<string, any>) {
   return { ...annotation, meta: { ...getAnnotationMeta(annotation), ...meta }, metadata: { ...getAnnotationMeta(annotation), ...meta } }
 }
 
-// Can-light detection — used to render the third "light output" ring and to
-// surface the Light Output control. Relies on the existing shape metadata.
+// Light-output symbol detection — used for glare/glow overlay and Light Output controls.
+const LIGHT_OUTPUT_SHAPE_KINDS = new Set<ShapeKind>([
+  'can-light-4',
+  'can-light-6',
+  'electrical-recessed-light',
+  'electrical-pendant-light',
+  'electrical-sconce',
+  'electrical-led-panel-2x2',
+  'electrical-led-panel-2x4',
+])
+
+function isLightOutputShapeKind(shapeKind: any): shapeKind is ShapeKind {
+  return typeof shapeKind === 'string' && LIGHT_OUTPUT_SHAPE_KINDS.has(shapeKind as ShapeKind)
+}
+
+function isLightOutputShape(annotation: any) {
+  if (!annotation || annotation.type !== 'shape') return false
+  return isLightOutputShapeKind(getAnnotationMeta(annotation).shapeKind)
+}
+
+// Can-light detection — used for can-light-specific body rendering (trim ring, aperture).
 function isCanLightShape(annotation: any) {
   if (!annotation || annotation.type !== 'shape') return false
   const kind = getAnnotationMeta(annotation).shapeKind
@@ -684,6 +751,55 @@ function getLightKelvinColor(kelvin: number) {
   }
 }
 
+function getLightFixtureRefRadius(shapeKind: ShapeKind) {
+  switch (shapeKind) {
+    case 'electrical-led-panel-2x4': return 54
+    case 'electrical-led-panel-2x2': return 42
+    case 'electrical-pendant-light': return 44
+    case 'electrical-sconce': return 38
+    case 'electrical-recessed-light': return 40
+    default: return 46 // can-light-4, can-light-6
+  }
+}
+
+function getLightOutputGlowMetrics(shapeKind: ShapeKind, meta: Record<string, any>) {
+  const fixtureRefR = getLightFixtureRefRadius(shapeKind)
+  const lightIntensity = clampNorm(meta.lightIntensity ?? LIGHT_OUTPUT_BASE, LIGHT_OUTPUT_MIN, LIGHT_OUTPUT_MAX)
+  return {
+    cx: 50,
+    cy: 50,
+    outputOverlayR: fixtureRefR * lightIntensity,
+    kelvinColor: getLightKelvinColor(meta.lightKelvin ?? DEFAULT_CAN_LIGHT_KELVIN),
+  }
+}
+
+function renderLightOutputGlowSvg(
+  glowId: string,
+  metrics: ReturnType<typeof getLightOutputGlowMetrics>,
+  visible: boolean,
+) {
+  if (!visible) return null
+  return (
+    <>
+      <defs>
+        <radialGradient id={glowId} cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor={metrics.kelvinColor} stopOpacity={0.5} />
+          <stop offset="55%" stopColor={metrics.kelvinColor} stopOpacity={0.24} />
+          <stop offset="100%" stopColor={metrics.kelvinColor} stopOpacity={0} />
+        </radialGradient>
+      </defs>
+      <circle
+        cx={metrics.cx}
+        cy={metrics.cy}
+        r={metrics.outputOverlayR}
+        fill={`url(#${glowId})`}
+        stroke="none"
+        style={{ pointerEvents: 'none' }}
+      />
+    </>
+  )
+}
+
 function hexWithAlpha(hex: string, opacity: number) {
   const safe = String(hex || '#facc15').replace('#', '')
   if (safe.length !== 6) return hex
@@ -757,6 +873,22 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
     return (
       <>
         <text x="50" y="52" fontSize="52" {...commonText}>S</text>
+        <line x1="50" y1="20" x2="50" y2="78" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" strokeDasharray={dash} />
+      </>
+    )
+  }
+  if (kind === 'electrical-switch-3way') {
+    return (
+      <>
+        <text x="50" y="52" fontSize="40" {...commonText}>S3</text>
+        <line x1="50" y1="20" x2="50" y2="78" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" strokeDasharray={dash} />
+      </>
+    )
+  }
+  if (kind === 'electrical-switch-4way') {
+    return (
+      <>
+        <text x="50" y="52" fontSize="40" {...commonText}>S4</text>
         <line x1="50" y1="20" x2="50" y2="78" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" strokeDasharray={dash} />
       </>
     )
@@ -1229,6 +1361,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [submittingRfi, setSubmittingRfi] = useState(false)
   const [submittingCord, setSubmittingCord] = useState(false)
   const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [syncNotice, setSyncNotice] = useState<string | null>(null)
+  const syncNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const normalBlueprintViewerMinHeight = isDesktopBlueprintLayout
     ? 'calc(100dvh - 120px)'
     : 'clamp(420px, 72dvh, 760px)'
@@ -1760,6 +1894,25 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     return { ratioX, ratioY, centerInScrollX, centerInScrollY, pageOffsetX, pageOffsetY }
   }, [])
 
+  const clearStaleSyncMessages = useCallback(() => {
+    setError((prev) => (isSyncBlockedMessage(prev) ? null : prev))
+    setActionMsg((prev) => (prev && isSyncBlockedMessage(prev.text) ? null : prev))
+    setSyncNotice(null)
+    if (syncNoticeTimerRef.current) {
+      clearTimeout(syncNoticeTimerRef.current)
+      syncNoticeTimerRef.current = null
+    }
+  }, [])
+
+  const showTransientSyncNotice = useCallback((message: string) => {
+    setSyncNotice(message)
+    if (syncNoticeTimerRef.current) clearTimeout(syncNoticeTimerRef.current)
+    syncNoticeTimerRef.current = setTimeout(() => {
+      setSyncNotice((prev) => (prev === message ? null : prev))
+      syncNoticeTimerRef.current = null
+    }, 8000)
+  }, [])
+
   const loadAnnotations = useCallback(() => {
     if (!blueprint?.id) {
       setAllAnnotations([])
@@ -1795,10 +1948,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       const backup = getBackupData()
       if (!backup) throw new Error('No local backup data available.')
       const result = await saveOperationsBlueprintScopeLayers(backup, blueprint.id, nextLayers)
-      if (result.cloudSynced) return true
+      if (result.cloudSynced) {
+        clearStaleSyncMessages()
+        return true
+      }
       if (result.localSaved) {
         if (result.warning) {
-          setActionMsg({ type: 'error', text: result.warning })
+          showTransientSyncNotice(`${result.warning} Work package saved locally on this device.`)
         }
         return true
       }
@@ -1816,7 +1972,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       loadScopeLayers()
       return false
     }
-  }, [blueprint?.id, loadScopeLayers])
+  }, [blueprint?.id, clearStaleSyncMessages, loadScopeLayers, showTransientSyncNotice])
 
   const clearDoc = useCallback(async () => {
     try {
@@ -2203,6 +2359,22 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     return () => { window.dispatchEvent(new CustomEvent('poweron:blueprint-immersive', { detail: false })) }
   }, [isTabletImmersiveFullscreen])
 
+  useEffect(() => {
+    const handleDataSaved = () => clearStaleSyncMessages()
+    window.addEventListener('poweron:data-saved', handleDataSaved)
+    return () => window.removeEventListener('poweron:data-saved', handleDataSaved)
+  }, [clearStaleSyncMessages])
+
+  useEffect(() => {
+    if (isFullScreenView || isTabletImmersiveFullscreen) {
+      setTabletAnnotationsOpen(true)
+    }
+  }, [isFullScreenView, isTabletImmersiveFullscreen])
+
+  const viewerPortalTarget = (isFullScreenView || isTabletImmersiveFullscreen) && viewerRootRef.current
+    ? viewerRootRef.current
+    : document.body
+
   // Escape key handler: closes UI state first, then exits fullscreen if no UI open.
   // This ensures Escape closes annotation editors, measurements, etc. before exiting fullscreen.
   // Fullscreen exit only happens when all annotation UI is closed.
@@ -2554,10 +2726,22 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       try {
         const backup = getBackupData()
         if (!backup) return
-        await upsertOperationsBlueprintAnnotation(backup, annotation)
+        const saveResult = await upsertOperationsBlueprintAnnotation(backup, annotation)
+        if (saveResult.cloudSynced) {
+          clearStaleSyncMessages()
+        } else if (saveResult.localSaved && saveResult.warning) {
+          showTransientSyncNotice(`${saveResult.warning} Your change is saved locally on this device.`)
+        } else if (!saveResult.localSaved) {
+          throw new Error(saveResult.error || 'Failed to save annotation.')
+        }
         onAnnotationsChanged?.()
       } catch (e: any) {
-        setError(e?.message || 'Failed to save annotation.')
+        const msg = e?.message || 'Failed to save annotation.'
+        if (isSyncBlockedMessage(msg)) {
+          showTransientSyncNotice(`${msg} Your change is saved locally on this device.`)
+        } else {
+          setError(msg)
+        }
       } finally {
         pendingAnnotationMutationsRef.current = Math.max(0, pendingAnnotationMutationsRef.current - 1)
         // Only refresh annotations from backup once the entire queue has drained.
@@ -2571,7 +2755,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     mutationQueueRef.current = mutationQueueRef.current.then(op)
     return mutationQueueRef.current
-  }, [loadAnnotations, onAnnotationsChanged])
+  }, [clearStaleSyncMessages, loadAnnotations, onAnnotationsChanged, showTransientSyncNotice])
 
   // ─── Copy / Paste for placed annotations & shapes (Fix 1) ─────────────────────
   // Builds a paste-ready template that preserves the full design (type, rect,
@@ -2979,18 +3163,30 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       try {
         const backup = getBackupData()
         if (!backup) return
-        await deleteOperationsBlueprintAnnotation(backup, bpId, annotationId)
+        const saveResult = await deleteOperationsBlueprintAnnotation(backup, bpId, annotationId)
+        if (saveResult.cloudSynced) {
+          clearStaleSyncMessages()
+        } else if (saveResult.localSaved && saveResult.warning) {
+          showTransientSyncNotice(`${saveResult.warning} Your change is saved locally on this device.`)
+        } else if (!saveResult.localSaved) {
+          throw new Error(saveResult.error || 'Failed to delete annotation.')
+        }
         // Keep ID in locallyDeletedIdsRef so any concurrent loadAnnotations
         // triggered by onAnnotationsChanged cannot re-surface a deleted item.
         onAnnotationsChanged?.()
       } catch (e: any) {
         locallyDeletedIdsRef.current.delete(annotationId)
-        setError(e?.message || 'Failed to delete annotation.')
+        const msg = e?.message || 'Failed to delete annotation.'
+        if (isSyncBlockedMessage(msg)) {
+          showTransientSyncNotice(`${msg} Your change is saved locally on this device.`)
+        } else {
+          setError(msg)
+        }
         loadAnnotations()
       }
     }
     mutationQueueRef.current = mutationQueueRef.current.then(op)
-  }, [blueprint?.id, loadAnnotations, onAnnotationsChanged])
+  }, [blueprint?.id, clearStaleSyncMessages, loadAnnotations, onAnnotationsChanged, showTransientSyncNotice])
 
   const handleAnnotationSelectCapture = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
   const target = e.target as Element | null
@@ -4384,8 +4580,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 const annotationPanelSizeClass =
   (isFullScreenView || isTabletImmersiveFullscreen) && !useDesktopThreePaneLayout
     ? annotationPanelExpanded
-      ? 'h-full max-h-none min-h-0'
-      : 'h-10 max-h-10 min-h-0 overflow-hidden'
+      ? 'min-h-0 max-h-[38vh] shrink-0'
+      : 'h-10 max-h-10 min-h-0 shrink-0 overflow-hidden'
     : !useDesktopThreePaneLayout
       ? annotationPanelExpanded
         ? 'h-auto max-h-56 min-h-0'
@@ -4728,7 +4924,7 @@ const annotationPanelSizeClass =
                 </div>
               </div>
             )}
-            {isEdit && (currentKind === 'can-light-4' || currentKind === 'can-light-6') && (
+            {isEdit && isLightOutputShapeKind(currentKind) && (
               <div style={{ marginBottom: 2 }}>
                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Light Output</div>
                 {/* LIGHT_OUTPUT_MIN..LIGHT_OUTPUT_MAX scale (0.25..20): base 1 = normal,
@@ -4750,7 +4946,7 @@ const annotationPanelSizeClass =
                 </div>
               </div>
             )}
-            {isEdit && (currentKind === 'can-light-4' || currentKind === 'can-light-6') && (
+            {isEdit && isLightOutputShapeKind(currentKind) && (
               <div style={{ marginBottom: 4 }}>
                 {/* Color temperature (Kelvin) — tints the output overlay only; size/intensity
                     stays on Light Output. Discrete options persist + update the overlay live.
@@ -4798,20 +4994,14 @@ const annotationPanelSizeClass =
               </div>
             )}
             <LabeledSelect label="Shape" value={currentKind}
-              options={[
-                { label: 'Square', value: 'square' },
-                { label: 'Circle', value: 'circle' },
-                { label: 'Line', value: 'line' },
-                { label: 'Arrow', value: 'arrow' },
-                { label: 'Arch Line', value: 'arch-line' },
-                { label: 'Diamond', value: 'diamond' },
-                { label: 'Star', value: 'star' },
-                { label: 'Cross', value: 'cross' },
-                { label: 'Pentagon', value: 'pentagon' },
-                { label: 'Can Light 4"', value: 'can-light-4' },
-                { label: 'Can Light 6"', value: 'can-light-6' },
-                ...ELECTRICAL_SYMBOL_OPTIONS.map((option) => ({ label: option.label, value: option.value })),
-              ]}
+              options={
+                isEdit && (isElectricalShapeKind(currentKind) || currentKind === 'can-light-4' || currentKind === 'can-light-6')
+                  ? [
+                    ...ELECTRICAL_SYMBOL_OPTIONS.map((option) => ({ label: option.label, value: option.value })),
+                    ...CAN_LIGHT_TOOL_OPTIONS.map((option) => ({ label: option.label, value: option.value })),
+                  ]
+                  : GENERIC_SHAPE_KIND_OPTIONS
+              }
               onChange={(v) => {
                 if (isEdit) persistEditAnnotationMeta({ shapeKind: v, ...getElectricalSymbolMetadataStamp(v) })
                 else setShapeKind(v as ShapeKind)
@@ -4968,10 +5158,10 @@ const annotationPanelSizeClass =
     <div
       ref={viewerRootRef}
       className={isFullScreenView && isDesktopBlueprintLayout
-        ? 'fixed inset-0 z-[9999] bg-[#0d0e14] flex flex-col overflow-hidden'
+        ? 'fixed inset-0 z-[9999] bg-[#0d0e14] flex flex-col overflow-hidden isolate relative'
         : isFullScreenView || isTabletImmersiveFullscreen
-        ? 'fixed inset-0 z-[9999] bg-[#0d0e14] flex flex-col overflow-hidden'
-        : 'rounded-xl border overflow-hidden w-full'
+        ? 'fixed inset-0 z-[9999] bg-[#0d0e14] flex flex-col overflow-hidden isolate relative'
+        : 'rounded-xl border overflow-hidden w-full relative'
       }
       style={isFullScreenView || isTabletImmersiveFullscreen ? {} : { borderColor: '#1e2128', backgroundColor: '#0d0e14' }}
       onClick={(e) => {
@@ -5019,6 +5209,12 @@ const annotationPanelSizeClass =
           white-space: nowrap;
         }
       `}</style>
+
+      {syncNotice && (
+        <div className="pointer-events-none absolute left-1/2 top-2 z-[100050] w-[min(92vw,640px)] -translate-x-1/2 rounded-md border border-amber-500/40 bg-amber-950/90 px-3 py-2 text-xs text-amber-100 shadow-lg">
+          {syncNotice}
+        </div>
+      )}
 
       {!isFullScreenView && !isTabletImmersiveFullscreen && !useDesktopThreePaneLayout && (
         <div className="px-3 py-1.5 border-b border-gray-800 bg-[#0d0e14] flex-shrink-0 flex items-center gap-2 overflow-x-auto">
@@ -5495,6 +5691,22 @@ const annotationPanelSizeClass =
                 <div className="space-y-1.5">
                   <div className="text-[10px] uppercase tracking-wide text-gray-500">Electrical Symbols</div>
                   <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : `flex flex-nowrap overflow-x-auto bv-tool-bucket${isTabletImmersiveFullscreen ? ' justify-center' : ''}`} gap-1.5`}>
+                    {CAN_LIGHT_TOOL_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => {
+                          setToolMode('shape')
+                          setShapeKind(option.value)
+                          setOpenPopover(null)
+                        }}
+                        className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' && shapeKind === option.value ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                        title={`Place ${option.label}`}
+                      >
+                        <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-current px-1 text-[9px] font-semibold leading-none">{option.shortLabel}</span>
+                        <span className="truncate">{option.label}</span>
+                      </button>
+                    ))}
                     {ELECTRICAL_SYMBOL_OPTIONS.map((option) => (
                       <button
                         key={option.value}
@@ -5833,14 +6045,14 @@ const annotationPanelSizeClass =
             </div>
           )}
 
-          <div className={useDesktopThreePaneLayout ? 'contents' : isTabletImmersiveFullscreen ? 'flex-1 min-h-0 overflow-hidden' : isFullScreenView ? 'flex-1 min-h-0 overflow-hidden p-2 sm:p-4' : 'p-2'}>
-            <div className={useDesktopThreePaneLayout ? 'contents' : isTabletImmersiveFullscreen ? 'grid grid-cols-1 h-full' : isFullScreenView ? 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-2 sm:gap-4 h-full' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-3 sm:gap-4'}>
+          <div className={useDesktopThreePaneLayout ? 'contents' : isTabletImmersiveFullscreen ? 'flex-1 min-h-0 overflow-hidden flex flex-col' : isFullScreenView ? 'flex-1 min-h-0 overflow-hidden flex flex-col p-2 sm:p-4' : 'p-2'}>
+            <div className={useDesktopThreePaneLayout ? 'contents' : isTabletImmersiveFullscreen || isFullScreenView ? 'flex flex-1 min-h-0 flex-col gap-2' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-3 sm:gap-4'}>
               <style>{`
                 .operations-pdf-scroll::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
               `}</style>
               <div
                 ref={scrollAreaRef}
-                className={`${useDesktopThreePaneLayout ? 'col-start-3 row-start-1 row-span-3 min-h-0 min-w-0 bg-[#0d0e14]' : ''} operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-scroll'} ${isFullScreenView || isTabletImmersiveFullscreen && !useDesktopThreePaneLayout ? 'h-full max-h-none min-h-0' : !useDesktopThreePaneLayout ? 'min-h-[320px] sm:min-h-[360px] lg:min-h-[400px]' : ''} rounded border border-gray-800`}
+                className={`${useDesktopThreePaneLayout ? 'col-start-3 row-start-1 row-span-3 min-h-0 min-w-0 bg-[#0d0e14]' : ''} operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-scroll'} ${isFullScreenView || isTabletImmersiveFullscreen && !useDesktopThreePaneLayout ? 'flex-1 min-h-0 max-h-none' : !useDesktopThreePaneLayout ? 'min-h-[320px] sm:min-h-[360px] lg:min-h-[400px]' : ''} rounded border border-gray-800`}
                 style={{
                   // Dynamic height: fills from bottom of toolbar to bottom of viewport.
                   // Falls back to calc(100vh-300px) until toolbarAreaRef is measured.
@@ -6055,6 +6267,10 @@ const annotationPanelSizeClass =
                             )
                           }
                           if (isElectricalShapeKind(kind)) {
+                            const glowMetrics = isLightOutputShapeKind(kind)
+                              ? getLightOutputGlowMetrics(kind, meta)
+                              : null
+                            const glowId = `light-glow-${a.id}`
                             return (
                               <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-sm' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                                 <svg
@@ -6064,6 +6280,7 @@ const annotationPanelSizeClass =
                                   height="100%"
                                   preserveAspectRatio="xMidYMid meet"
                                 >
+                                  {glowMetrics && renderLightOutputGlowSvg(glowId, glowMetrics, lightingEffectsVisible)}
                                   <g opacity={fillOpacity}>
                                     {renderElectricalSymbolSvg(kind, meta, { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible: electricalSymbolLabelsVisible })}
                                   </g>
@@ -6079,18 +6296,7 @@ const annotationPanelSizeClass =
                             // Without calibration the symbol is still clear — 4" vs 6" distinguished by aperture radius + label.
                             const aperture = kind === 'can-light-4' ? 20 : 26
                             const label = kind === 'can-light-4' ? '4"' : '6"'
-                            // Light-output overlay — a single smooth glow whose radius scales with
-                            // lightIntensity on the LIGHT_OUTPUT_MIN..LIGHT_OUTPUT_MAX scale (0.25..20;
-                            // base 1 = normal, 20 ≈ 20× the fixture spread). Its TINT comes from the
-                            // selected Kelvin color temperature: warm amber (low K) → cool blue-white
-                            // (high K). Size/opacity stay on Light Output; colour stays on Kelvin. No
-                            // dashed ring, no lumen numbers. Legacy intensity values (0..1 / 0..2) and a
-                            // missing Kelvin both clamp/fall back safely. Shares the can-light center and
-                            // scales with the same viewBox, so it reads correctly at all zoom levels.
-                            const FIXTURE_REF_R = 46            // outer trim ring = base fixture radius
-                            const lightIntensity = clampNorm(meta.lightIntensity ?? LIGHT_OUTPUT_BASE, LIGHT_OUTPUT_MIN, LIGHT_OUTPUT_MAX)
-                            const outputOverlayR = FIXTURE_REF_R * lightIntensity   // 11.5 @0.25 → 46 @1 → 920 @20 (≈20×)
-                            const kelvinColor = getLightKelvinColor(meta.lightKelvin ?? DEFAULT_CAN_LIGHT_KELVIN)
+                            const glowMetrics = getLightOutputGlowMetrics(kind, meta)
                             const glowId = `canlight-glow-${a.id}`
                             return (
                               <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-full' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
@@ -6101,22 +6307,7 @@ const annotationPanelSizeClass =
                                   height="100%"
                                   preserveAspectRatio="xMidYMid meet"
                                 >
-                                  <defs>
-                                    {/* Smooth Kelvin-tinted light-output glow — brightest at the fixture,
-                                        fading to fully transparent at the overlay edge. No dashed marks. */}
-                                    <radialGradient id={glowId} cx="50%" cy="50%" r="50%">
-                                      <stop offset="0%" stopColor={kelvinColor} stopOpacity={0.5} />
-                                      <stop offset="55%" stopColor={kelvinColor} stopOpacity={0.24} />
-                                      <stop offset="100%" stopColor={kelvinColor} stopOpacity={0} />
-                                    </radialGradient>
-                                  </defs>
-                                  {/* Kelvin-tinted light-output overlay — the ONLY outer output visual.
-                                      Behind the fixture, non-interactive so it never steals selection.
-                                      Hidden via "Hide Lighting Effects" (Step 12B) — fixture body below
-                                      (trim ring, crosshair, aperture, label) always stays visible. */}
-                                  {lightingEffectsVisible && (
-                                    <circle cx="50" cy="50" r={outputOverlayR} fill={`url(#${glowId})`} stroke="none" style={{ pointerEvents: 'none' }} />
-                                  )}
+                                  {renderLightOutputGlowSvg(glowId, glowMetrics, lightingEffectsVisible)}
                                   {/* Outer trim ring */}
                                   <circle cx="50" cy="50" r="46" fill="none" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} opacity={fillOpacity} />
                                   {/* Crosshair — horizontal */}
@@ -7348,6 +7539,7 @@ const annotationPanelSizeClass =
           onClose={() => setOpenPopover(null)}
           title={_popoverContent.title}
           additionalChildren={_popoverContent.additional}
+          portalContainer={viewerPortalTarget}
         >
           {_popoverContent.primary}
         </ToolPopover>
@@ -7491,7 +7683,7 @@ const annotationPanelSizeClass =
             </div>
           </div>
         </div>,
-        document.body
+        viewerPortalTarget
       )}
 
       {/* ── Floating action bar — portal to body so it is never clipped by the scroll container ── */}
@@ -7556,7 +7748,7 @@ const annotationPanelSizeClass =
               position: 'fixed',
               top: finalBarTop,
               left: finalBarLeft,
-              zIndex: 99999,
+              zIndex: 100050,
               touchAction: 'none',
             }}
             className="flex items-center gap-1 rounded-md border border-gray-700 bg-[#111827]/95 p-1 shadow-lg select-none"
@@ -7677,7 +7869,7 @@ const annotationPanelSizeClass =
             </button>
           </div>
         )
-        return createPortal(bar, document.body)
+        return createPortal(bar, viewerPortalTarget)
       })()}
 
       {/* ── Paste-mode control bar (Fix 1) — portal so it floats above the viewer on
@@ -7730,7 +7922,7 @@ const annotationPanelSizeClass =
             </>
           )}
         </div>,
-        document.body
+        viewerPortalTarget
       )}
 
       {/* ── All Pages Index Modal ── */}
@@ -7791,7 +7983,7 @@ const annotationPanelSizeClass =
             </div>
           </div>
         </div>,
-        document.body
+        viewerPortalTarget
       )}
 
       {/* ── Generate RFI Modal ── */}
@@ -7904,7 +8096,7 @@ const annotationPanelSizeClass =
             </div>
           </div>
         </div>,
-        document.body
+        viewerPortalTarget
       )}
 
       {/* ── Generate Coordination Question Modal ── */}
@@ -8006,7 +8198,7 @@ const annotationPanelSizeClass =
             </div>
           </div>
         </div>,
-        document.body
+        viewerPortalTarget
       )}
     </div>
   )

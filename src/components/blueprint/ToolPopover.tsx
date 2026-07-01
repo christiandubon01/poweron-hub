@@ -336,6 +336,7 @@ interface ToolPopoverProps {
   title: string
   children: ReactNode
   additionalChildren?: ReactNode
+  portalContainer?: HTMLElement | null
 }
 
 const POPOVER_WIDTH_DESKTOP = 280
@@ -348,6 +349,7 @@ export function ToolPopover({
   title,
   children,
   additionalChildren,
+  portalContainer,
 }: ToolPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
@@ -458,7 +460,7 @@ export function ToolPopover({
         width: popoverW,
         maxHeight: '70vh',
         overflowY: 'auto',
-        zIndex: 9999,
+        zIndex: 100050,
         background: '#1a1d27',
         border: '1px solid rgba(255,255,255,0.08)',
         borderRadius: 12,
@@ -544,5 +546,5 @@ export function ToolPopover({
     </div>
   )
 
-  return createPortal(popover, document.body)
+  return createPortal(popover, portalContainer || document.body)
 }

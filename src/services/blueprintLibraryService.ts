@@ -529,7 +529,7 @@ export async function saveOperationsBlueprintAnnotations(
   backup: any,
   blueprintSetId: string,
   annotations: BlueprintAnnotation[]
-): Promise<void> {
+): Promise<SaveBlueprintAnnotationsResult> {
   const container = getAnnotationsContainer(backup)
   container[blueprintSetId] = (Array.isArray(annotations) ? annotations : [])
     .map(sanitizeAnnotation)
@@ -537,31 +537,51 @@ export async function saveOperationsBlueprintAnnotations(
   backup._lastSavedAt = new Date().toISOString()
   const { saveBackupDataAndSyncNow } = await import('@/services/backupDataService')
   const result = await saveBackupDataAndSyncNow(backup, 'blueprintSummaries')
-  if (!result.success) {
-    throw new Error(result.error || 'Failed to sync blueprint annotations.')
+  if (result.success) {
+    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+    try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+    return { localSaved: true, cloudSynced: true }
   }
-  try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
-  try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+  if (result.blocked || result.conflict) {
+    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+    return {
+      localSaved: true,
+      cloudSynced: false,
+      warning: result.error || 'Cloud sync was blocked because remote data is newer than this local session. Reload before syncing to avoid overwriting newer data.',
+    }
+  }
+  return {
+    localSaved: false,
+    cloudSynced: false,
+    error: result.error || 'Failed to sync blueprint annotations.',
+  }
 }
 
-export async function upsertOperationsBlueprintAnnotation(backup: any, annotation: BlueprintAnnotation): Promise<void> {
+export type SaveBlueprintAnnotationsResult = {
+  localSaved: boolean
+  cloudSynced: boolean
+  warning?: string
+  error?: string
+}
+
+export async function upsertOperationsBlueprintAnnotation(backup: any, annotation: BlueprintAnnotation): Promise<SaveBlueprintAnnotationsResult> {
   const clean = sanitizeAnnotation(annotation)
-  if (!clean) return
+  if (!clean) return { localSaved: false, cloudSynced: false, error: 'Invalid annotation.' }
   const list = getOperationsBlueprintAnnotations(backup, clean.blueprintSetId)
   const idx = list.findIndex(a => a.id === clean.id)
   if (idx >= 0) list[idx] = clean
   else list.push(clean)
-  await saveOperationsBlueprintAnnotations(backup, clean.blueprintSetId, list)
+  return saveOperationsBlueprintAnnotations(backup, clean.blueprintSetId, list)
 }
 
 export async function deleteOperationsBlueprintAnnotation(
   backup: any,
   blueprintSetId: string,
   annotationId: string
-): Promise<void> {
+): Promise<SaveBlueprintAnnotationsResult> {
   const list = getOperationsBlueprintAnnotations(backup, blueprintSetId)
   const next = list.filter(a => a.id !== annotationId)
-  await saveOperationsBlueprintAnnotations(backup, blueprintSetId, next)
+  return saveOperationsBlueprintAnnotations(backup, blueprintSetId, next)
 }
 
 export function getOperationsBlueprintAnnotationSummary(backup: any, blueprintSetId: string): {
