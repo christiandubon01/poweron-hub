@@ -166,3 +166,17 @@ export function autoSnapshot(
     /* silent */
   })
 }
+
+/** Extract restorable backup payload from snapshot_data (supports header-save safety snapshots). */
+export function getSnapshotRestorePayload(
+  snapshotData: Record<string, unknown> | null | undefined
+): Record<string, unknown> {
+  if (!snapshotData || typeof snapshotData !== 'object') return {}
+  if (snapshotData.snapshotType === 'header-save-safety' && snapshotData.restoreData) {
+    const restoreData = snapshotData.restoreData
+    if (restoreData && typeof restoreData === 'object' && !Array.isArray(restoreData)) {
+      return restoreData as Record<string, unknown>
+    }
+  }
+  return snapshotData
+}

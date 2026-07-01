@@ -21,6 +21,7 @@ import {
   deleteSnapshot,
   pinSnapshot,
   shortTimestamp,
+  getSnapshotRestorePayload,
   type Snapshot,
 } from '@/services/snapshotService'
 import { getBackupData, saveBackupDataAndSync, forceSyncToCloud } from '@/services/backupDataService'
@@ -134,7 +135,7 @@ interface PreviewModalProps {
 
 function PreviewModal({ snapshot, onClose, onConfirmRestore }: PreviewModalProps) {
   const [showConfirm, setShowConfirm] = useState(false)
-  const snapshotData = snapshot.snapshot_data || {}
+  const snapshotData = getSnapshotRestorePayload(snapshot.snapshot_data as Record<string, unknown>)
   const currentData = getBackupData() || {}
   const summaryCards = [
     { label: 'Projects', value: itemCount(snapshotData, 'projects') },
@@ -528,10 +529,14 @@ export default function SnapshotPanel() {
       }
 
       // Step 3: Apply snapshot data to app state and wait for cloud write
-      await saveBackupDataAndSync(snap.snapshot_data as any, 'snapshotRestore')
+      const restorePayload = getSnapshotRestorePayload(snap.snapshot_data as Record<string, unknown>)
+      await saveBackupDataAndSync(restorePayload as any, 'snapshotRestore')
 
       // Step 3B: Force a final Supabase sync before reload so hydration pulls restored data
-      const syncResult = await forceSyncToCloud()
+      const syncResult = await forceSyncToCloud({
+        allowOverwriteNewerRemote: true,
+        source: 'snapshot-restore',
+      })
       if (!syncResult.success) {
         showToast(`Restore saved locally, but cloud sync failed: ${syncResult.error || 'Unknown error'}`)
         return

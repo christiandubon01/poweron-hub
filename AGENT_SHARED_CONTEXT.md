@@ -40,10 +40,264 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Step12E-R3-Switch-Dimmer-Vertical-Line (Cursor) | Blueprint Viewer — Switch/Dimmer Vertical Line Polish | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
 | Step12G-Electrical-Opacity-Fix (Cursor) | Blueprint Viewer — Electrical Symbol Opacity + New Shape Defaults | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
 | Step13A-Symbol-Metadata (Cursor) | Blueprint Viewer — Symbol Metadata Foundation | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step13B-Scope-Layers (Cursor) | Blueprint Viewer — Scope Layers / Work Packages Foundation | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step13B-R-Work-Package-Repair (Cursor) | Blueprint Viewer — Repair Work Package Selection and Save | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step13B-S1-Header-Save-Safety (Cursor) | Header Save — Remote Freshness Guard + Localhost Warning | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step13B-S1-R-Fail-Closed (Cursor) | Header Save — Fail Closed When Freshness Unverified | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step13B-S2-Header-Save-Snapshot (Cursor) | Header Save — Safety Snapshot Before Overwrite | src/services/backupDataService.ts, src/services/snapshotService.ts, src/components/v15r/V15rLayout.tsx, src/components/SnapshotPanel.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step13B-S3-Sync-Stale-Guard (Cursor) | Cloud Sync — Stale Full-Backup Overwrite Guard | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, src/components/SnapshotPanel.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step13B-S3-R-Baseline-Guard (Cursor) | Cloud Sync — Remote Baseline Stale Edit Guard | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step13B-P-Scope-Layers-Persist (Cursor) | Blueprint Work Packages — Persist Scope Layers | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, src/services/blueprintLibraryService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step13B-P-R-Scope-Layers-Remote-Merge (Cursor) | Work Package Save — Merge Scope Layers Into Latest Remote | src/services/backupDataService.ts, src/services/blueprintLibraryService.ts, src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
+| Step13B-I-Scope-Layer-Isolate (Cursor) | Work Package — Canvas Isolate Toggle | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
 
 ---
 
 ## Audit & Change Log
+
+### 2026-06-30 — Work Package Canvas Isolate (Step 13B-I, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Eye button on Work Package card isolates canvas annotations (local UI state only)
+
+**Files touched:**
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+**Behavior:**
+- `isolatedScopeLayerId` local state (not persisted — avoids noisy cloud saves on every eye click)
+- `canvasPageAnnotations` filters `pageAnnotations` to `selectedAnnotationIds` when isolated
+- Eye button toggles isolate; clicking another package switches isolate; click again clears
+- Side panel shows "Isolated — viewing only …" banner and per-card badge
+- Hidden focused/layout-edit annotations cleared via `useEffect`
+- Empty package shows canvas overlay: "This package has no linked annotations."
+- `visible` field on scope layers preserved (no longer toggled by eye button)
+- Work Package create/edit/delete persistence unchanged; no save guard bypass
+
+**Not touched:** backupDataService, blueprintLibraryService, migrations, export, PDF loading, AppShell, V15rLayout
+
+### 2026-06-30 — Work Package Remote Merge Save (Step 13B-P-R, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Merge scope layers into latest remote backup before sync (not full stale-local overwrite)
+**Branch:** main (no commit)
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Fix
+- `saveOperationsBlueprintScopeLayers` fetches latest remote, patches only `operationsBlueprintScopeLayers[blueprintSetId]`, saves via `saveBackupWithRemoteBaselineSync`
+- `saveBackupWithRemoteBaselineSync` sets session baseline from fetched remote row, then guarded sync (no blind allowOverwrite)
+- Remote fetch fail → local-only save + `SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG`
+- First sync (no remote row) → normal local guarded save
+
+#### Files
+- `src/services/backupDataService.ts` — `fetchLatestRemoteBackup`, `saveBackupWithRemoteBaselineSync`
+- `src/services/blueprintLibraryService.ts` — remote-merge save path
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` — result handling / warning UX
+
+---
+
+### 2026-06-30 — Persist Blueprint Scope Layers / Work Packages (Step 13B-P, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Persist Work Packages under `blueprintSummaries.operationsBlueprintScopeLayers`
+**Branch:** main (no commit)
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Persistence path
+`backup.blueprintSummaries.operationsBlueprintScopeLayers[blueprintSetId][]`
+
+#### Files
+- `src/services/blueprintLibraryService.ts` — types, sanitize, get/save, delete on blueprint set removal
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` — load on blueprint open, persist on create/edit/delete/show-hide
+
+#### Save path
+Uses guarded `saveBackupDataAndSyncNow(backup, 'blueprintSummaries')` — no stale-overwrite bypass.
+
+---
+
+### 2026-06-30 — Remote Baseline Stale Edit Guard (Step 13B-S3-R, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Fix S3 guard — compare remote vs session baseline, not local edited `_lastSavedAt`
+**Branch:** main (no commit)
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Root cause fixed
+`checkManualSaveFreshness` compared remote vs `local._lastSavedAt`, which `saveBackupDataAndSync` bumps on every edit — stale sessions could appear safe after any local change.
+
+#### Fix
+- Guard now compares: `remoteFreshnessMs > _lastKnownRemoteSavedAt + tolerance`
+- `fetchRemoteAppStateFreshness` no longer advances baseline on read
+- Baseline updated only on: `loadFromSupabase` (remote row present), successful `syncToSupabase`, successful `forceSyncToCloud`, tenant clear/switch resets baseline
+- No baseline + remote row exists → block with `SYNC_BLOCKED_NO_REMOTE_BASELINE_MSG`
+
+---
+
+### 2026-06-30 — Cloud Sync Stale Overwrite Guard (Step 13B-S3, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Central stale-overwrite guard on all normal full-backup cloud sync paths
+**Branch:** main (no commit)
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/services/backupDataService.ts` — `SyncToSupabaseOptions`, guard in `syncToSupabase`, `resolveSyncGuardError`, `dispatchSyncConflict`, save helpers + periodic sync + forceSyncToCloud pre-stamp guard
+- `src/components/v15r/V15rLayout.tsx` — `poweron:sync-conflict` listener, sync retry blocked messaging
+- `src/components/SnapshotPanel.tsx` — restore uses `allowOverwriteNewerRemote: true`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### Guarded paths (default)
+- `syncToSupabase()` — all callers unless `allowOverwriteNewerRemote: true`
+- `saveBackupDataAndSync` / `saveBackupDataAndSyncNow` / `saveAndImmediateSync`
+- `startPeriodicSync` (only clears dirty flags on success)
+- `forceSyncToCloud` without intentional overwrite (pre-stamp guard + sync guard)
+
+#### Bypass paths
+- `saveBackupDataAndSync(..., 'snapshotRestore')` — auto-inferred
+- `forceSyncToCloud({ allowOverwriteNewerRemote: true, source: 'snapshot-restore' })`
+- Header Save final sync after S1/S2 (`requireFreshRemote` / `createSafetySnapshot` skips duplicate sync guard)
+
+#### Messages
+- Remote newer: `SYNC_BLOCKED_REMOTE_NEWER_MSG`
+- Freshness unknown: `REMOTE_FRESHNESS_UNKNOWN_MSG` (fail closed)
+
+---
+
+### 2026-06-30 — Header Save Safety Snapshot (Step 13B-S2, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Create recoverable snapshot before manual header Save overwrites remote app_state
+**Branch:** main (no commit)
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/services/backupDataService.ts` — `createHeaderSaveSafetySnapshot`, `fetchRemoteAppStateRow`, `forceSyncToCloud({ createSafetySnapshot })`
+- `src/services/snapshotService.ts` — `getSnapshotRestorePayload` for header-save-safety restore
+- `src/components/v15r/V15rLayout.tsx` — header Save passes `createSafetySnapshot: true`
+- `src/components/SnapshotPanel.tsx` — restore/preview uses `getSnapshotRestorePayload` (minimal compat)
+- `AGENT_SHARED_CONTEXT.md`
+
+#### Snapshot system reused
+Supabase `public.snapshots` table via `snapshotService.createSnapshot()` (same as SnapshotPanel).
+
+#### Flow
+Header Save → freshness guard pass → safety snapshot → then `_lastSavedAt` stamp → `saveBackupData` → `syncToSupabase`.
+
+#### Snapshot payload (`snapshotType: header-save-safety`)
+- `localBeforeSave`, `remoteBeforeOverwrite` (if row exists), `restoreData` (remote preferred)
+- metadata: source, environment, timestamps, userId, remote `updated_at`
+
+#### Fail closed
+Snapshot failure blocks header Save with `HEADER_SAVE_SNAPSHOT_FAILED_MSG`.
+
+---
+
+### 2026-06-30 — Header Save Fail-Closed Repair (Step 13B-S1-R, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Repair S1 freshness guard — block Header Save when remote cannot be verified
+**Branch:** main (no commit)
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/services/backupDataService.ts` — `checkManualSaveFreshness({ failClosed })`, `REMOTE_FRESHNESS_UNKNOWN_MSG`, fetch timeout, fail-closed on auth/network/timeout errors
+- `AGENT_SHARED_CONTEXT.md`
+
+#### Behavior change (header Save only via `requireFreshRemote` + `failClosed: true`)
+- No remote row → still allow (first sync)
+- Remote older/equal → allow
+- Remote newer → block (`REMOTE_FRESHER_THAN_LOCAL_MSG`)
+- Fetch error / timeout / auth fail / missing remote data → **block** (`REMOTE_FRESHNESS_UNKNOWN_MSG`)
+- Settings restore, sync retry, auto-save → unchanged (no `requireFreshRemote`)
+
+---
+
+### 2026-06-30 — Header Save Safety Patch (Step 13B-S1, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Immediate save safety guard — no snapshots, no Work Package persistence
+**Feature Area:** Header Save / forceSyncToCloud remote freshness guard
+**Branch:** main (no commit)
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/services/backupDataService.ts` — `checkManualSaveFreshness`, `fetchRemoteAppStateFreshness`, `forceSyncToCloud({ requireFreshRemote, source })`, `_lastKnownRemoteSavedAt`
+- `src/components/v15r/V15rLayout.tsx` — `handleHeaderSaveLiveData` localhost confirm + guarded sync + blocked-save toast
+- `AGENT_SHARED_CONTEXT.md`
+
+#### Guard behavior
+- Header Save calls `forceSyncToCloud({ requireFreshRemote: true, source: 'header-save' })`.
+- Before stamping local `_lastSavedAt`, fetches remote `app_state` (`state_key = poweron_v2`) and compares `max(updated_at, data._lastSavedAt)` vs local `data._lastSavedAt` (1s tolerance).
+- If remote newer → blocked with message: "Remote data is newer than this local session. Reload before saving, or create a backup before overwriting."
+- Localhost/127.0.0.1 + Supabase configured → `window.confirm` before header Save.
+- Sync retry button, Settings save, Snapshot restore → **unchanged** (no `requireFreshRemote`).
+
+#### Not touched
+- Work Package persistence, migrations, export, OperationsBlueprintPdfViewer.tsx, blueprintLibraryService.ts
+
+---
+
+### 2026-06-30 — Blueprint Viewer: Repair Work Package Selection and Save (Step 13B-R, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Scoped repair preserving Step 13A/13B work
+**Feature Area:** Blueprint Viewer — work package selection/save UX
+**Branch:** main | HEAD = 1105038
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### What Was Repaired
+- Made package-selected annotation rows visually obvious with accent checkboxes, cyan border/background, left accent, and a `Selected` pill.
+- Highlighted the selected count in the right-panel header when one or more annotations are checked.
+- Snapshotted selected annotation IDs into modal draft state when creating/editing a work package, so Save no longer depends on live checkbox state while the modal is open.
+- Added inline work-package modal validation errors instead of relying on distant shared action messages.
+- Moved saved Scope Layers / Work Packages cards above annotation groups and scrolls them into view after save.
+- Clear checkbox selection after successful create/edit save.
+
+#### Preserved
+- Work packages remain in-memory only for this step.
+- Checkbox selection remains separate from `focusedAnnotationId`; row click focus/edit behavior is still separate.
+- Package create/edit/delete/show-hide actions remain local viewer state only.
+- No migrations, export changes, PDF loading changes, AppShell changes, material list engine, labor engine, color palette behavior, electrical symbol rendering, 2D/3D Layout Builder, or VR files were touched.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-06-30 — Blueprint Viewer: Scope Layers / Work Packages Foundation (Step 13B, NOT COMMITTED)
+
+**Agent:** Cursor
+**Mode:** Scoped v1 Scope Layers foundation preserving Step 13A metadata
+**Feature Area:** Blueprint Viewer — side-panel work package basket
+**Branch:** main | HEAD = 1105038
+**Typecheck:** 0 errors ✅ via Node npm CLI workaround | **Build:** ✅ 0 errors (pre-existing Vite eval/dynamic-import/chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Files Changed
+- `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+- `AGENT_SHARED_CONTEXT.md`
+
+#### What Was Implemented
+- Added `BlueprintScopeLayer` and `BlueprintScopeItemRef` v1 data models inside the viewer.
+- Added `selectedForPackageIds` as a side-panel checkbox basket independent of `focusedAnnotationId`.
+- Added Create Work Package modal with name, description, color, labor hour buckets, crew notes, proposal summary, selected item count, item refs, grouped summary, and labor total.
+- Added in-memory `scopeLayers` cards in a Scope Layers section under the right annotation panel.
+- Added v1 actions: create, edit, delete, and show/hide card state.
+- Used Step 13A symbol metadata to populate item ref `category` and `countValue` for electrical symbols.
+
+#### Preserved
+- Work packages are not mixed into the annotation array and annotations are not mutated to create packages.
+- Existing row click focus/select behavior remains separate from checkbox selection.
+- Move/Edit/Copy/Delete still operate on `focusedAnnotationId`.
+- No migrations, export changes, PDF loading changes, AppShell changes, material lists, labor engine, estimate generation, color palette behavior, 2D/3D Layout Builder, or VR files were touched.
+
+**Persistence note:** Scope Layers are in-memory only for Step 13B. Persistence is deferred until a safer dedicated storage helper/key is added.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
 
 ### 2026-06-30 — Blueprint Viewer: Symbol Metadata Foundation (Step 13A, NOT COMMITTED)
 

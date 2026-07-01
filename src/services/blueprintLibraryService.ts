@@ -72,6 +72,34 @@ export interface BlueprintAnnotation {
   updatedAt: string
 }
 
+export interface BlueprintScopeItemRef {
+  annotationId: string
+  pageNumber: number
+  label: string
+  shapeKind?: string
+  category?: string
+  countValue?: number
+}
+
+export interface BlueprintScopeLayer {
+  id: string
+  name: string
+  description: string
+  color: string
+  selectedAnnotationIds: string[]
+  itemRefs: BlueprintScopeItemRef[]
+  roughInHours: number
+  trimHours: number
+  testingHours: number
+  cleanupHours: number
+  crewNotes: string
+  proposalSummary: string
+  createdAt: string
+  updatedAt: string
+  visible: boolean
+  isolated: boolean
+}
+
 export const MAX_BLUEPRINT_FILE_SIZE_BYTES = 512 * 1024 * 1024
 
 function toSafeFileName(name: string): string {
@@ -263,6 +291,11 @@ export async function deleteOperationsBlueprintSet(backup: any, blueprintSetId: 
   const annotations = backup.blueprintSummaries.operationsBlueprintAnnotations
   if (annotations && typeof annotations === 'object' && !Array.isArray(annotations)) {
     delete annotations[blueprintSetId]
+  }
+
+  const scopeLayers = backup.blueprintSummaries.operationsBlueprintScopeLayers
+  if (scopeLayers && typeof scopeLayers === 'object' && !Array.isArray(scopeLayers)) {
+    delete scopeLayers[blueprintSetId]
   }
 
   backup._lastSavedAt = new Date().toISOString()
@@ -546,5 +579,207 @@ export function getOperationsBlueprintAnnotationSummary(backup: any, blueprintSe
     total: list.length,
     pagesWithAnnotations: Object.keys(byPage).length,
     byPage,
+  }
+}
+
+function coerceScopeLayerHours(value: any): number {
+  const n = Number(value)
+  return Number.isFinite(n) && n >= 0 ? n : 0
+}
+
+function sanitizeScopeItemRef(raw: any): BlueprintScopeItemRef | null {
+  if (!raw || typeof raw !== 'object') return null
+  const annotationId = String(raw.annotationId || '').trim()
+  if (!annotationId) return null
+  const pageNumber = Math.max(1, Math.floor(Number(raw.pageNumber) || 1))
+  const label = String(raw.label || 'Item').trim() || 'Item'
+  const ref: BlueprintScopeItemRef = { annotationId, pageNumber, label }
+  if (raw.shapeKind) ref.shapeKind = String(raw.shapeKind)
+  if (raw.category) ref.category = String(raw.category)
+  if (raw.countValue != null && Number.isFinite(Number(raw.countValue))) {
+    ref.countValue = Number(raw.countValue)
+  }
+  return ref
+}
+
+function sanitizeScopeLayer(raw: any): BlueprintScopeLayer | null {
+  if (!raw || typeof raw !== 'object') return null
+  const id = String(raw.id || '').trim()
+  const name = String(raw.name || '').trim()
+  if (!id || !name) return null
+
+  const selectedAnnotationIds = Array.isArray(raw.selectedAnnotationIds)
+    ? raw.selectedAnnotationIds.map((entry: any) => String(entry || '').trim()).filter(Boolean)
+    : []
+
+  const itemRefs = Array.isArray(raw.itemRefs)
+    ? (raw.itemRefs.map(sanitizeScopeItemRef).filter(Boolean) as BlueprintScopeItemRef[])
+    : []
+
+  return {
+    id,
+    name,
+    description: String(raw.description || ''),
+    color: String(raw.color || '#38bdf8'),
+    selectedAnnotationIds,
+    itemRefs,
+    roughInHours: coerceScopeLayerHours(raw.roughInHours),
+    trimHours: coerceScopeLayerHours(raw.trimHours),
+    testingHours: coerceScopeLayerHours(raw.testingHours),
+    cleanupHours: coerceScopeLayerHours(raw.cleanupHours),
+    crewNotes: String(raw.crewNotes || ''),
+    proposalSummary: String(raw.proposalSummary || ''),
+    createdAt: String(raw.createdAt || new Date().toISOString()),
+    updatedAt: String(raw.updatedAt || new Date().toISOString()),
+    visible: raw.visible === false ? false : true,
+    isolated: raw.isolated === true,
+  }
+}
+
+function getScopeLayersContainer(backup: any): Record<string, BlueprintScopeLayer[]> {
+  if (!backup.blueprintSummaries || typeof backup.blueprintSummaries !== 'object') {
+    backup.blueprintSummaries = {}
+  }
+  const raw = backup.blueprintSummaries.operationsBlueprintScopeLayers
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    backup.blueprintSummaries.operationsBlueprintScopeLayers = {}
+  }
+  return backup.blueprintSummaries.operationsBlueprintScopeLayers
+}
+
+export function getOperationsBlueprintScopeLayers(backup: any, blueprintSetId: string): BlueprintScopeLayer[] {
+  const container = getScopeLayersContainer(backup || {})
+  const rawList = container?.[blueprintSetId]
+  if (!Array.isArray(rawList)) return []
+  return rawList.map(sanitizeScopeLayer).filter(Boolean) as BlueprintScopeLayer[]
+}
+
+export const SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG =
+  'Work Package saved locally, but cloud sync could not be completed. Reload before continuing.'
+
+export type SaveScopeLayersResult = {
+  success: boolean
+  localSaved: boolean
+  cloudSynced: boolean
+  warning?: string
+  error?: string
+}
+
+function applySanitizedScopeLayersToBackup(
+  targetBackup: any,
+  blueprintSetId: string,
+  sanitizedLayers: BlueprintScopeLayer[],
+): any {
+  const merged = JSON.parse(JSON.stringify(targetBackup || {}))
+  const container = getScopeLayersContainer(merged)
+  container[blueprintSetId] = sanitizedLayers
+  return merged
+}
+
+export async function saveOperationsBlueprintScopeLayers(
+  backup: any,
+  blueprintSetId: string,
+  scopeLayers: BlueprintScopeLayer[],
+): Promise<SaveScopeLayersResult> {
+  const sanitizedLayers = (Array.isArray(scopeLayers) ? scopeLayers : [])
+    .map(sanitizeScopeLayer)
+    .filter(Boolean) as BlueprintScopeLayer[]
+
+  const {
+    getBackupData,
+    getActiveTenantUserId,
+    isSupabaseConfigured,
+    saveBackupData,
+    saveBackupDataAndSyncNow,
+    saveBackupWithRemoteBaselineSync,
+    fetchLatestRemoteBackup,
+  } = await import('@/services/backupDataService')
+
+  const userId = getActiveTenantUserId()
+  const localBase = backup || getBackupData()
+
+  const saveLocalOnly = (base: any): SaveScopeLayersResult => {
+    const merged = applySanitizedScopeLayersToBackup(base, blueprintSetId, sanitizedLayers)
+    merged._lastSavedAt = new Date().toISOString()
+    saveBackupData(merged)
+    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+    try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+    return {
+      success: false,
+      localSaved: true,
+      cloudSynced: false,
+      warning: SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
+    }
+  }
+
+  if (!isSupabaseConfigured()) {
+    if (!localBase) {
+      return { success: false, localSaved: false, cloudSynced: false, error: 'No local backup data available.' }
+    }
+    const merged = applySanitizedScopeLayersToBackup(localBase, blueprintSetId, sanitizedLayers)
+    merged._lastSavedAt = new Date().toISOString()
+    saveBackupData(merged)
+    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+    try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+    return { success: true, localSaved: true, cloudSynced: false }
+  }
+
+  const remote = await fetchLatestRemoteBackup(userId || undefined)
+
+  if (remote.error) {
+    console.warn('[ScopeLayers] Remote fetch failed — local-only save', remote.error)
+    if (!localBase) {
+      return {
+        success: false,
+        localSaved: false,
+        cloudSynced: false,
+        error: SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
+      }
+    }
+    return saveLocalOnly(localBase)
+  }
+
+  if (!remote.hasRemoteRow || !remote.remoteData) {
+    if (!localBase) {
+      return { success: false, localSaved: false, cloudSynced: false, error: 'No local backup data available.' }
+    }
+    const merged = applySanitizedScopeLayersToBackup(localBase, blueprintSetId, sanitizedLayers)
+    const result = await saveBackupDataAndSyncNow(merged, 'blueprintSummaries', { source: 'scope-layers-first-sync' })
+    if (result.success) {
+      try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+      try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+      return { success: true, localSaved: true, cloudSynced: true }
+    }
+    return {
+      success: false,
+      localSaved: true,
+      cloudSynced: false,
+      warning: SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
+      error: result.error,
+    }
+  }
+
+  const mergedFromRemote = applySanitizedScopeLayersToBackup(remote.remoteData, blueprintSetId, sanitizedLayers)
+  const result = await saveBackupWithRemoteBaselineSync(
+    mergedFromRemote,
+    {
+      remoteUpdatedAt: remote.remoteUpdatedAt,
+      remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+    },
+    { source: 'scope-layers-remote-merge' },
+  )
+
+  if (result.success) {
+    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+    try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+    return { success: true, localSaved: true, cloudSynced: true }
+  }
+
+  return {
+    success: false,
+    localSaved: result.localSaved,
+    cloudSynced: false,
+    warning: SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
+    error: result.error,
   }
 }

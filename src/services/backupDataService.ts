@@ -36,6 +36,7 @@ function getTenantStorageKey(userId: string): string {
 export function setActiveTenantUser(userId: string): void {
   _activeTenantUserId = userId
   _tenantDataReady = false
+  _lastKnownRemoteSavedAt = null
 }
 
 export function markTenantDataReady(userId: string): void {
@@ -45,6 +46,7 @@ export function markTenantDataReady(userId: string): void {
 export function clearActiveTenantUser(): void {
   _activeTenantUserId = null
   _tenantDataReady = false
+  _lastKnownRemoteSavedAt = null
 }
 
 export function getActiveTenantUserId(): string | null {
@@ -140,10 +142,17 @@ export function startPeriodicSync(): () => void {
   if (typeof window === 'undefined') return () => {}
   const id = setInterval(() => {
     if (_dataChanged && Date.now() - _lastSyncedAt >= SYNC_INTERVAL_MS) {
-      _dataChanged = false
-      _lastSyncedAt = Date.now()
-      _changedKeys.clear()
-      syncToSupabase().catch(err => console.warn('[sync] Periodic sync failed:', err))
+      syncToSupabase(_activeTenantUserId, { source: 'periodic-sync' })
+        .then((result) => {
+          if (result.success) {
+            _dataChanged = false
+            _lastSyncedAt = Date.now()
+            _changedKeys.clear()
+          } else if (result.blocked || result.conflict) {
+            console.warn('[sync] Periodic sync blocked — local changes preserved', result.error)
+          }
+        })
+        .catch(err => console.warn('[sync] Periodic sync failed:', err))
     }
   }, SYNC_INTERVAL_MS)
   return () => clearInterval(id)
@@ -1347,6 +1356,344 @@ export function exportBackup(d?: BackupData): void {
 const SUPABASE_STATE_KEY = 'poweron_v2'
 const CACHE_OWNER_KEY = 'poweron_cache_owner'
 
+/** Timestamp of the last remote app_state row loaded or checked (ISO string). */
+let _lastKnownRemoteSavedAt: string | null = null
+
+export const REMOTE_FRESHER_THAN_LOCAL_MSG =
+  'Remote data is newer than this local session. Reload before saving, or create a backup before overwriting.'
+
+export const REMOTE_FRESHNESS_UNKNOWN_MSG =
+  'Could not verify remote data freshness. Save was blocked to prevent overwriting newer data. Reload and try again.'
+
+export const HEADER_SAVE_SNAPSHOT_FAILED_MSG =
+  'Could not create a safety snapshot. Save was blocked to protect existing data.'
+
+export const SYNC_BLOCKED_REMOTE_NEWER_MSG =
+  'Cloud sync was blocked because remote data is newer than this local session. Reload before syncing to avoid overwriting newer data.'
+
+export const SYNC_BLOCKED_NO_REMOTE_BASELINE_MSG =
+  'Cloud sync was blocked because this session could not prove it loaded the latest remote data. Reload before syncing.'
+
+const REMOTE_FRESHNESS_FETCH_TIMEOUT_MS = 15000
+const FRESHNESS_TOLERANCE_MS = 1000
+
+export type SyncToSupabaseOptions = {
+  /** Caller label for logging (e.g. periodic-sync, snapshot-restore). */
+  source?: string
+  /** When true, fetch remote and block if remote is newer than local. Default: true unless allowOverwriteNewerRemote. */
+  requireFreshRemote?: boolean
+  /** When true, block sync if remote freshness cannot be verified. Default: true for guarded syncs. */
+  failClosed?: boolean
+  /** Explicit restore/intentional overwrite — bypasses stale-overwrite guard. */
+  allowOverwriteNewerRemote?: boolean
+}
+
+export type SyncToSupabaseResult = {
+  success: boolean
+  error?: string
+  skipped?: boolean
+  blocked?: boolean
+  conflict?: boolean
+}
+
+export type ForceSyncToCloudOptions = {
+  /** When true, fetch remote app_state and block if remote is newer than local. */
+  requireFreshRemote?: boolean
+  /** Caller label for logging (e.g. header-save). */
+  source?: string
+  /** When true, create a safety snapshot before writing (header Save only in S2). */
+  createSafetySnapshot?: boolean
+  /** Explicit restore/intentional overwrite — bypasses stale-overwrite guard on final sync. */
+  allowOverwriteNewerRemote?: boolean
+}
+
+export type ForceSyncToCloudResult = {
+  success: boolean
+  error?: string
+  skipped?: boolean
+  /** Save was blocked because remote data is newer than local. */
+  blocked?: boolean
+}
+
+function parseBackupTimestampMs(value?: string | null): number {
+  if (!value) return 0
+  const t = new Date(value).getTime()
+  return Number.isFinite(t) ? t : 0
+}
+
+export function getLastKnownRemoteSavedAt(): string | null {
+  return _lastKnownRemoteSavedAt
+}
+
+function getKnownRemoteBaselineMs(): number {
+  return parseBackupTimestampMs(_lastKnownRemoteSavedAt)
+}
+
+function computeRemoteFreshnessMs(
+  remoteUpdatedAt?: string | null,
+  remoteDataLastSavedAt?: string | null,
+): number {
+  return Math.max(
+    parseBackupTimestampMs(remoteUpdatedAt),
+    parseBackupTimestampMs(remoteDataLastSavedAt),
+  )
+}
+
+/** Record remote freshness this session safely loaded from or successfully synced to. */
+function setKnownRemoteBaseline(
+  remoteUpdatedAt?: string | null,
+  remoteDataLastSavedAt?: string | null,
+): number {
+  const remoteFreshnessMs = computeRemoteFreshnessMs(remoteUpdatedAt, remoteDataLastSavedAt)
+  if (remoteFreshnessMs > 0) {
+    _lastKnownRemoteSavedAt = new Date(remoteFreshnessMs).toISOString()
+  }
+  return remoteFreshnessMs
+}
+
+async function fetchRemoteAppStateFreshness(userId: string): Promise<{
+  hasRemoteRow: boolean
+  remoteUpdatedAt: string | null
+  remoteDataLastSavedAt: string | null
+  remoteFreshnessMs: number
+  error?: string
+}> {
+  const fetchFreshness = async (): Promise<{
+    hasRemoteRow: boolean
+    remoteUpdatedAt: string | null
+    remoteDataLastSavedAt: string | null
+    remoteFreshnessMs: number
+    error?: string
+  }> => {
+    if (!isSupabaseConfigured()) {
+      return { hasRemoteRow: false, remoteUpdatedAt: null, remoteDataLastSavedAt: null, remoteFreshnessMs: 0, error: 'Supabase not configured' }
+    }
+    try {
+      const { supabase } = await import('@/lib/supabase')
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        return { hasRemoteRow: false, remoteUpdatedAt: null, remoteDataLastSavedAt: null, remoteFreshnessMs: 0, error: 'Not authenticated' }
+      }
+      if (user.id !== userId) {
+        return { hasRemoteRow: false, remoteUpdatedAt: null, remoteDataLastSavedAt: null, remoteFreshnessMs: 0, error: 'Authenticated user mismatch' }
+      }
+
+      const { data: row, error } = await supabase
+        .from('app_state')
+        .select('user_id,data,updated_at')
+        .eq('user_id', userId)
+        .eq('state_key', SUPABASE_STATE_KEY)
+        .maybeSingle()
+
+      if (error) {
+        return { hasRemoteRow: false, remoteUpdatedAt: null, remoteDataLastSavedAt: null, remoteFreshnessMs: 0, error: error.message }
+      }
+
+      if (!row) {
+        return { hasRemoteRow: false, remoteUpdatedAt: null, remoteDataLastSavedAt: null, remoteFreshnessMs: 0 }
+      }
+
+      if (!row.data) {
+        return {
+          hasRemoteRow: true,
+          remoteUpdatedAt: row.updated_at ? String(row.updated_at) : null,
+          remoteDataLastSavedAt: null,
+          remoteFreshnessMs: 0,
+          error: 'Remote row exists but data is missing',
+        }
+      }
+
+      const remoteDataLastSavedAt = String((row.data as BackupData)?._lastSavedAt || '') || null
+      const remoteUpdatedAt = row.updated_at ? String(row.updated_at) : null
+      const remoteFreshnessMs = computeRemoteFreshnessMs(remoteUpdatedAt, remoteDataLastSavedAt)
+
+      return {
+        hasRemoteRow: true,
+        remoteUpdatedAt,
+        remoteDataLastSavedAt,
+        remoteFreshnessMs,
+      }
+    } catch (err: any) {
+      return {
+        hasRemoteRow: false,
+        remoteUpdatedAt: null,
+        remoteDataLastSavedAt: null,
+        remoteFreshnessMs: 0,
+        error: err?.message || 'Failed to read remote freshness',
+      }
+    }
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const timeoutPromise = new Promise<{
+    hasRemoteRow: boolean
+    remoteUpdatedAt: string | null
+    remoteDataLastSavedAt: string | null
+    remoteFreshnessMs: number
+    error?: string
+  }>((resolve) => {
+    timeoutId = setTimeout(() => {
+      resolve({
+        hasRemoteRow: false,
+        remoteUpdatedAt: null,
+        remoteDataLastSavedAt: null,
+        remoteFreshnessMs: 0,
+        error: 'Remote freshness check timed out',
+      })
+    }, REMOTE_FRESHNESS_FETCH_TIMEOUT_MS)
+  })
+
+  try {
+    return await Promise.race([fetchFreshness(), timeoutPromise])
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+  }
+}
+
+/**
+ * Compare live remote app_state against this session's known remote baseline.
+ * Does not mutate local _lastSavedAt or advance baseline on fetch.
+ * When failClosed is true, fetch failures block the save/sync.
+ */
+export async function checkManualSaveFreshness(
+  userId = _activeTenantUserId,
+  options?: { failClosed?: boolean },
+): Promise<{
+  allowed: boolean
+  blocked?: boolean
+  error?: string
+  localFreshnessMs: number
+  remoteFreshnessMs: number
+  knownRemoteBaselineMs: number
+  hasRemoteRow: boolean
+}> {
+  const local = userId ? getBackupData(userId) : getBackupData()
+  const localFreshnessMs = parseBackupTimestampMs(local?._lastSavedAt)
+  const knownRemoteBaselineMs = getKnownRemoteBaselineMs()
+  const failClosed = options?.failClosed === true
+
+  const blockUnverified = (reason: string) => {
+    console.warn('[Sync] Save/sync blocked — could not verify remote freshness:', reason)
+    return {
+      allowed: false,
+      blocked: true,
+      error: REMOTE_FRESHNESS_UNKNOWN_MSG,
+      localFreshnessMs,
+      remoteFreshnessMs: 0,
+      knownRemoteBaselineMs,
+      hasRemoteRow: false,
+    }
+  }
+
+  if (!userId) {
+    if (failClosed) return blockUnverified('No active tenant user')
+    return { allowed: true, localFreshnessMs, remoteFreshnessMs: 0, knownRemoteBaselineMs, hasRemoteRow: false }
+  }
+
+  const remote = await fetchRemoteAppStateFreshness(userId)
+  if (remote.error) {
+    if (failClosed) return blockUnverified(remote.error)
+    console.warn('[Sync] Remote freshness check failed — allowing save:', remote.error)
+    return {
+      allowed: true,
+      localFreshnessMs,
+      remoteFreshnessMs: remote.remoteFreshnessMs,
+      knownRemoteBaselineMs,
+      hasRemoteRow: remote.hasRemoteRow,
+    }
+  }
+
+  if (!remote.hasRemoteRow) {
+    return { allowed: true, localFreshnessMs, remoteFreshnessMs: 0, knownRemoteBaselineMs, hasRemoteRow: false }
+  }
+
+  if (knownRemoteBaselineMs <= 0) {
+    console.warn('[Sync] Save/sync blocked — remote row exists but session has no known remote baseline', {
+      remoteFreshnessMs: remote.remoteFreshnessMs,
+      remoteUpdatedAt: remote.remoteUpdatedAt,
+      remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+    })
+    return {
+      allowed: false,
+      blocked: true,
+      error: SYNC_BLOCKED_NO_REMOTE_BASELINE_MSG,
+      localFreshnessMs,
+      remoteFreshnessMs: remote.remoteFreshnessMs,
+      knownRemoteBaselineMs: 0,
+      hasRemoteRow: true,
+    }
+  }
+
+  if (remote.remoteFreshnessMs > knownRemoteBaselineMs + FRESHNESS_TOLERANCE_MS) {
+    console.warn('[Sync] Save/sync blocked — remote advanced since session baseline', {
+      localFreshnessMs,
+      knownRemoteBaselineMs,
+      remoteFreshnessMs: remote.remoteFreshnessMs,
+      knownRemoteBaselineAt: _lastKnownRemoteSavedAt,
+      localLastSavedAt: local?._lastSavedAt,
+      remoteUpdatedAt: remote.remoteUpdatedAt,
+      remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+    })
+    return {
+      allowed: false,
+      blocked: true,
+      error: REMOTE_FRESHER_THAN_LOCAL_MSG,
+      localFreshnessMs,
+      remoteFreshnessMs: remote.remoteFreshnessMs,
+      knownRemoteBaselineMs,
+      hasRemoteRow: true,
+    }
+  }
+
+  return {
+    allowed: true,
+    localFreshnessMs,
+    remoteFreshnessMs: remote.remoteFreshnessMs,
+    knownRemoteBaselineMs,
+    hasRemoteRow: true,
+  }
+}
+
+function resolveSyncGuardError(freshness: {
+  error?: string
+  localFreshnessMs: number
+  remoteFreshnessMs: number
+  knownRemoteBaselineMs: number
+  hasRemoteRow: boolean
+}): string {
+  if (freshness.error === SYNC_BLOCKED_NO_REMOTE_BASELINE_MSG) {
+    return SYNC_BLOCKED_NO_REMOTE_BASELINE_MSG
+  }
+  if (freshness.hasRemoteRow && freshness.knownRemoteBaselineMs <= 0) {
+    return SYNC_BLOCKED_NO_REMOTE_BASELINE_MSG
+  }
+  if (
+    freshness.hasRemoteRow &&
+    freshness.remoteFreshnessMs > freshness.knownRemoteBaselineMs + FRESHNESS_TOLERANCE_MS
+  ) {
+    return SYNC_BLOCKED_REMOTE_NEWER_MSG
+  }
+  return freshness.error || REMOTE_FRESHNESS_UNKNOWN_MSG
+}
+
+function dispatchSyncConflict(error: string, source?: string): void {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent('poweron:sync-conflict', {
+    detail: { error, source: source || 'sync' },
+  }))
+}
+
+function resolveSyncOptionsForChangedKey(
+  changedKey?: string,
+  syncOptions?: SyncToSupabaseOptions,
+): SyncToSupabaseOptions {
+  const inferred: SyncToSupabaseOptions =
+    changedKey === 'snapshotRestore'
+      ? { allowOverwriteNewerRemote: true, source: 'snapshot-restore' }
+      : { source: changedKey }
+  return { ...inferred, ...syncOptions }
+}
+
 export function setCacheOwner(userId: string): void {
   try { localStorage.setItem(CACHE_OWNER_KEY, userId) } catch {}
 }
@@ -1372,7 +1719,20 @@ export function isHydrating(): boolean { return _isHydrating }
 
 /** Sync current tenant-scoped localStorage data to Supabase app_state table.
  *  Refuses to run until the authenticated tenant has completed bootstrap. */
-export async function syncToSupabase(userId = _activeTenantUserId): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
+export async function syncToSupabase(
+  userIdOrOptions?: string | SyncToSupabaseOptions,
+  maybeOptions?: SyncToSupabaseOptions,
+): Promise<SyncToSupabaseResult> {
+  let userId = _activeTenantUserId
+  let options: SyncToSupabaseOptions = {}
+
+  if (typeof userIdOrOptions === 'string') {
+    userId = userIdOrOptions
+    options = maybeOptions ?? {}
+  } else if (userIdOrOptions && typeof userIdOrOptions === 'object') {
+    options = userIdOrOptions
+  }
+
   if (!isSupabaseConfigured()) return { success: false, skipped: true, error: 'Supabase not configured' }
   if (!userId) return { success: false, skipped: true, error: 'No active tenant user' }
   if (!_tenantDataReady || _activeTenantUserId !== userId) {
@@ -1390,6 +1750,30 @@ export async function syncToSupabase(userId = _activeTenantUserId): Promise<{ su
     console.warn('[Sync] BLOCKED by hydration flag — this should clear after login')
     return { success: false, skipped: true, error: 'Hydration in progress' }
   }
+
+  const guardEnabled = !options.allowOverwriteNewerRemote && options.requireFreshRemote !== false
+  if (guardEnabled) {
+    const failClosed = options.failClosed !== false
+    const freshness = await checkManualSaveFreshness(userId, { failClosed })
+    if (!freshness.allowed) {
+      const error = resolveSyncGuardError(freshness)
+      console.warn('[Sync] Cloud write blocked by stale-overwrite guard', {
+        source: options.source || 'sync',
+        localFreshnessMs: freshness.localFreshnessMs,
+        knownRemoteBaselineMs: freshness.knownRemoteBaselineMs,
+        remoteFreshnessMs: freshness.remoteFreshnessMs,
+        error,
+      })
+      dispatchSyncConflict(error, options.source)
+      return {
+        success: false,
+        blocked: true,
+        conflict: true,
+        error,
+      }
+    }
+  }
+
   try {
     const { supabase } = await import('@/lib/supabase')
     const { data: { user } } = await supabase.auth.getUser()
@@ -1427,7 +1811,8 @@ export async function syncToSupabase(userId = _activeTenantUserId): Promise<{ su
     }
 
     _lastSyncMeta = { savedBy: deviceId, savedAt: now }
-    console.log(`[Sync] Synced tenant ${userId} to Supabase at ${now} by ${deviceId}`)
+    setKnownRemoteBaseline(now, now)
+    console.log(`[Sync] Synced tenant ${userId} to Supabase at ${now} by ${deviceId}`, options.source ? `(${options.source})` : '')
     return { success: true }
   } catch (err: any) {
     console.error('[Sync] Supabase sync error:', err)
@@ -1527,9 +1912,9 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     const remoteDevice = remoteMeta?.savedBy || 'unknown'
     _lastSyncMeta = { savedBy: remoteDevice, savedAt: remote._lastSavedAt || row.updated_at || '' }
 
-    const remoteTime = new Date(remote._lastSavedAt || 0).getTime()
+    const remoteTime = setKnownRemoteBaseline(row.updated_at, remote._lastSavedAt)
     const local = getBackupData(userId)
-    const localTime = local ? new Date(local._lastSavedAt || 0).getTime() : 0
+    const localTime = local ? parseBackupTimestampMs(local._lastSavedAt) : 0
 
     // Login/bootstrap path (explicit user id): prefer remote, but if this browser already
     // has a newer tenant cache than Supabase (e.g. settings saved locally before periodic
@@ -1592,32 +1977,39 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
 }
 
 /** Enhanced saveBackupData that also syncs to Supabase */
-export function saveBackupDataAndSync(data: BackupData, changedKey?: string): void {
+export function saveBackupDataAndSync(
+  data: BackupData,
+  changedKey?: string,
+  syncOptions?: SyncToSupabaseOptions,
+): void {
   data._lastSavedAt = new Date().toISOString()
   if (changedKey) markChanged(changedKey)
   _dataChanged = true
   saveBackupData(data)
-  // Fire and forget — sync to Supabase in background
-  syncToSupabase().catch(err => console.warn('[sync] Background sync failed:', err))
-  // Create snapshot if interval elapsed
+  const resolvedOptions = resolveSyncOptionsForChangedKey(changedKey, syncOptions)
+  syncToSupabase(_activeTenantUserId, resolvedOptions).catch(err => console.warn('[sync] Background sync failed:', err))
   maybeAutoSnapshot('Data saved')
 }
 
 export async function saveBackupDataAndSyncNow(
   data: BackupData,
-  changedKey?: string
-): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
+  changedKey?: string,
+  syncOptions?: SyncToSupabaseOptions,
+): Promise<SyncToSupabaseResult> {
   data._lastSavedAt = new Date().toISOString()
   if (changedKey) markChanged(changedKey)
   _dataChanged = true
   saveBackupData(data)
 
-  const result = await syncToSupabase()
+  const resolvedOptions = resolveSyncOptionsForChangedKey(changedKey, syncOptions)
+  const result = await syncToSupabase(_activeTenantUserId, resolvedOptions)
 
   if (result.success) {
     _dataChanged = false
     _lastSyncedAt = Date.now()
     _changedKeys.clear()
+  } else if (result.blocked || result.conflict) {
+    console.warn('[sync] Immediate sync blocked — local changes preserved', result.error)
   }
 
   try {
@@ -1627,6 +2019,62 @@ export async function saveBackupDataAndSyncNow(
   }
 
   return result
+}
+
+export type SaveBackupWithRemoteBaselineResult = SyncToSupabaseResult & {
+  localSaved: boolean
+}
+
+/**
+ * Save a backup built from a freshly fetched remote snapshot + scoped patch.
+ * Updates the session remote baseline to the fetched row before guarded sync so
+ * the write is treated as continuing from latest remote, not stale local.
+ */
+export async function saveBackupWithRemoteBaselineSync(
+  mergedBackup: BackupData,
+  remoteBaseline: { remoteUpdatedAt?: string | null; remoteDataLastSavedAt?: string | null },
+  syncOptions?: SyncToSupabaseOptions,
+): Promise<SaveBackupWithRemoteBaselineResult> {
+  setKnownRemoteBaseline(remoteBaseline.remoteUpdatedAt, remoteBaseline.remoteDataLastSavedAt)
+
+  mergedBackup._lastSavedAt = new Date().toISOString()
+  markChanged('blueprintSummaries')
+  _dataChanged = true
+  saveBackupData(mergedBackup)
+
+  const result = await syncToSupabase(_activeTenantUserId, {
+    ...syncOptions,
+    source: syncOptions?.source || 'remote-baseline-merge',
+  })
+
+  if (result.success) {
+    _dataChanged = false
+    _lastSyncedAt = Date.now()
+    _changedKeys.clear()
+  } else if (result.blocked || result.conflict) {
+    console.warn('[sync] Remote-baseline merge sync blocked — local merged backup preserved', result.error)
+  }
+
+  return { ...result, localSaved: true }
+}
+
+export async function fetchLatestRemoteBackup(userId = _activeTenantUserId): Promise<{
+  hasRemoteRow: boolean
+  remoteUpdatedAt: string | null
+  remoteDataLastSavedAt: string | null
+  remoteData: BackupData | null
+  error?: string
+}> {
+  if (!userId) {
+    return {
+      hasRemoteRow: false,
+      remoteUpdatedAt: null,
+      remoteDataLastSavedAt: null,
+      remoteData: null,
+      error: 'No active tenant user',
+    }
+  }
+  return fetchRemoteAppStateRow(userId)
 }
 
 // ── ISSUE 2 Fix: Critical change keys that bypass debounce ──────────────────
@@ -1641,34 +2089,297 @@ export function saveAndImmediateSync(data: BackupData, changedKey?: string): voi
   if (changedKey) markChanged(changedKey)
   _dataChanged = true
   saveBackupData(data)
-  // Immediate sync — no debounce for critical data
   console.log(`[sync] Immediate sync triggered for key: ${changedKey || 'unknown'}`)
-  syncToSupabase().catch(err => console.warn('[sync] Immediate sync failed:', err))
-  // Create snapshot if interval elapsed
+  syncToSupabase(_activeTenantUserId, { source: changedKey || 'immediate-sync' })
+    .then((result) => {
+      if (result.success) {
+        _dataChanged = false
+        _lastSyncedAt = Date.now()
+        _changedKeys.clear()
+      } else if (result.blocked || result.conflict) {
+        console.warn('[sync] Immediate sync blocked — local changes preserved', result.error)
+      }
+    })
+    .catch(err => console.warn('[sync] Immediate sync failed:', err))
   maybeAutoSnapshot(`Critical update: ${changedKey || 'data'}`)
+}
+
+function getSaveEnvironment(): 'localhost' | 'production' {
+  if (typeof window === 'undefined') return 'production'
+  const host = window.location.hostname
+  return host === 'localhost' || host === '127.0.0.1' ? 'localhost' : 'production'
+}
+
+function formatHeaderSaveSnapshotLabel(date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `Before Header Save - ${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+async function fetchRemoteAppStateRow(userId: string): Promise<{
+  hasRemoteRow: boolean
+  remoteUpdatedAt: string | null
+  remoteDataLastSavedAt: string | null
+  remoteData: BackupData | null
+  error?: string
+}> {
+  if (!isSupabaseConfigured()) {
+    return {
+      hasRemoteRow: false,
+      remoteUpdatedAt: null,
+      remoteDataLastSavedAt: null,
+      remoteData: null,
+      error: 'Supabase not configured',
+    }
+  }
+
+  try {
+    const { supabase } = await import('@/lib/supabase')
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      return {
+        hasRemoteRow: false,
+        remoteUpdatedAt: null,
+        remoteDataLastSavedAt: null,
+        remoteData: null,
+        error: 'Not authenticated',
+      }
+    }
+    if (user.id !== userId) {
+      return {
+        hasRemoteRow: false,
+        remoteUpdatedAt: null,
+        remoteDataLastSavedAt: null,
+        remoteData: null,
+        error: 'Authenticated user mismatch',
+      }
+    }
+
+    const { data: row, error } = await supabase
+      .from('app_state')
+      .select('user_id,data,updated_at')
+      .eq('user_id', userId)
+      .eq('state_key', SUPABASE_STATE_KEY)
+      .maybeSingle()
+
+    if (error) {
+      return {
+        hasRemoteRow: false,
+        remoteUpdatedAt: null,
+        remoteDataLastSavedAt: null,
+        remoteData: null,
+        error: error.message,
+      }
+    }
+
+    if (!row) {
+      return {
+        hasRemoteRow: false,
+        remoteUpdatedAt: null,
+        remoteDataLastSavedAt: null,
+        remoteData: null,
+      }
+    }
+
+    if (!row.data) {
+      return {
+        hasRemoteRow: true,
+        remoteUpdatedAt: row.updated_at ? String(row.updated_at) : null,
+        remoteDataLastSavedAt: null,
+        remoteData: null,
+        error: 'Remote row exists but data is missing',
+      }
+    }
+
+    const remoteData = row.data as BackupData
+    const remoteDataLastSavedAt = String(remoteData?._lastSavedAt || '') || null
+    const remoteUpdatedAt = row.updated_at ? String(row.updated_at) : null
+    computeRemoteFreshnessMs(remoteUpdatedAt, remoteDataLastSavedAt)
+
+    return {
+      hasRemoteRow: true,
+      remoteUpdatedAt,
+      remoteDataLastSavedAt,
+      remoteData,
+    }
+  } catch (err: any) {
+    return {
+      hasRemoteRow: false,
+      remoteUpdatedAt: null,
+      remoteDataLastSavedAt: null,
+      remoteData: null,
+      error: err?.message || 'Failed to read remote app_state',
+    }
+  }
+}
+
+/**
+ * Create a recoverable safety snapshot before manual header Save overwrites remote data.
+ * Captures local session + remote cloud backup (if present). Does not mutate local backup.
+ */
+export async function createHeaderSaveSafetySnapshot(): Promise<{
+  success: boolean
+  error?: string
+  snapshotId?: string
+}> {
+  const userId = _activeTenantUserId
+  if (!userId) {
+    console.warn('[Snapshot] Header save safety snapshot blocked — no active tenant user')
+    return { success: false, error: HEADER_SAVE_SNAPSHOT_FAILED_MSG }
+  }
+
+  const local = getBackupData(userId)
+  if (!local) {
+    console.warn('[Snapshot] Header save safety snapshot blocked — no local backup data')
+    return { success: false, error: HEADER_SAVE_SNAPSHOT_FAILED_MSG }
+  }
+
+  const localClone = JSON.parse(JSON.stringify(local)) as BackupData
+  const localLastSavedAt = local._lastSavedAt || null
+  const environment = getSaveEnvironment()
+
+  const remote = await fetchRemoteAppStateRow(userId)
+  if (remote.error) {
+    console.warn('[Snapshot] Header save safety snapshot blocked — remote read failed:', remote.error)
+    return { success: false, error: HEADER_SAVE_SNAPSHOT_FAILED_MSG }
+  }
+
+  let remoteClone: BackupData | null = null
+  if (remote.hasRemoteRow && remote.remoteData) {
+    remoteClone = JSON.parse(JSON.stringify(remote.remoteData)) as BackupData
+  }
+
+  const now = new Date()
+  const snapshotPayload: Record<string, unknown> = {
+    snapshotType: 'header-save-safety',
+    source: 'header-save',
+    environment,
+    timestamp: now.toISOString(),
+    userId,
+    localLastSavedAt,
+    remoteUpdatedAt: remote.remoteUpdatedAt,
+    remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+    localBeforeSave: localClone,
+    remoteBeforeOverwrite: remoteClone,
+    restoreData: remoteClone ?? localClone,
+  }
+
+  const label = formatHeaderSaveSnapshotLabel(now)
+  const description = remoteClone
+    ? `Safety snapshot before header Save (${environment}). Includes local session and remote cloud backup.`
+    : `Safety snapshot before header Save (${environment}). Local session only — no remote row yet.`
+
+  try {
+    const { createSnapshot } = await import('@/services/snapshotService')
+    const inserted = await createSnapshot(label, snapshotPayload, description)
+    if (!inserted) {
+      console.warn('[Snapshot] Header save safety snapshot insert failed')
+      return { success: false, error: HEADER_SAVE_SNAPSHOT_FAILED_MSG }
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('poweron:snapshots-refresh'))
+    }
+
+    console.log('[Snapshot] Header save safety snapshot created:', inserted.id, label)
+    return { success: true, snapshotId: inserted.id }
+  } catch (err: any) {
+    console.warn('[Snapshot] Header save safety snapshot exception:', err?.message || err)
+    return { success: false, error: HEADER_SAVE_SNAPSHOT_FAILED_MSG }
+  }
 }
 
 /**
  * Force full sync to cloud NOW. Bypasses all debounce/timers.
- * Use for the "Save to Cloud" button in Settings.
+ * Use for the header "Save" button (with requireFreshRemote) or Settings restore flows.
  * Returns result so UI can show success/failure.
  */
-export async function forceSyncToCloud(): Promise<{ success: boolean; error?: string }> {
+export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promise<ForceSyncToCloudResult> {
   const data = getBackupData()
   if (!data) return { success: false, error: 'No local data to sync' }
 
-  // Always update timestamp before force sync
+  if (options?.requireFreshRemote) {
+    const freshness = await checkManualSaveFreshness(_activeTenantUserId, { failClosed: true })
+    if (!freshness.allowed) {
+      console.warn('[sync] Force sync blocked by freshness guard', {
+        source: options.source || 'manual',
+        localFreshnessMs: freshness.localFreshnessMs,
+        knownRemoteBaselineMs: freshness.knownRemoteBaselineMs,
+        remoteFreshnessMs: freshness.remoteFreshnessMs,
+        error: freshness.error,
+      })
+      return {
+        success: false,
+        blocked: true,
+        error: freshness.error || REMOTE_FRESHER_THAN_LOCAL_MSG,
+      }
+    }
+  }
+
+  if (options?.createSafetySnapshot) {
+    const snapshotResult = await createHeaderSaveSafetySnapshot()
+    if (!snapshotResult.success) {
+      console.warn('[sync] Force sync blocked — safety snapshot failed', {
+        source: options.source || 'manual',
+        error: snapshotResult.error,
+      })
+      return {
+        success: false,
+        blocked: true,
+        error: snapshotResult.error || HEADER_SAVE_SNAPSHOT_FAILED_MSG,
+      }
+    }
+  }
+
+  const skipPreStampGuard =
+    options?.allowOverwriteNewerRemote === true ||
+    options?.requireFreshRemote === true
+
+  if (!skipPreStampGuard) {
+    const freshness = await checkManualSaveFreshness(_activeTenantUserId, { failClosed: true })
+    if (!freshness.allowed) {
+      const error = resolveSyncGuardError(freshness)
+      console.warn('[sync] Force sync blocked by stale-overwrite guard', {
+        source: options?.source || 'manual',
+        localFreshnessMs: freshness.localFreshnessMs,
+        knownRemoteBaselineMs: freshness.knownRemoteBaselineMs,
+        remoteFreshnessMs: freshness.remoteFreshnessMs,
+        error,
+      })
+      dispatchSyncConflict(error, options?.source)
+      return {
+        success: false,
+        blocked: true,
+        error,
+      }
+    }
+  }
+
+  // Update timestamp only after freshness guard and safety snapshot pass (or when not required).
   data._lastSavedAt = new Date().toISOString()
   saveBackupData(data)
 
-  console.log('[sync] Force sync to cloud initiated')
-  const result = await syncToSupabase()
+  console.log('[sync] Force sync to cloud initiated', options?.source ? `(${options.source})` : '')
+  const syncOptions: SyncToSupabaseOptions = {
+    source: options?.source,
+    allowOverwriteNewerRemote:
+      options?.allowOverwriteNewerRemote === true ||
+      options?.requireFreshRemote === true ||
+      options?.createSafetySnapshot === true,
+  }
+  const result = await syncToSupabase(_activeTenantUserId, syncOptions)
 
   if (result.success) {
     _dataChanged = false
     _lastSyncedAt = Date.now()
     _changedKeys.clear()
+    setKnownRemoteBaseline(data._lastSavedAt, data._lastSavedAt)
     console.log('[sync] Force sync successful at', data._lastSavedAt)
+  } else if (result.blocked || result.conflict) {
+    return {
+      success: false,
+      blocked: true,
+      error: result.error,
+    }
   }
 
   return result

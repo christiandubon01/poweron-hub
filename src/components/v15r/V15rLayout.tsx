@@ -365,6 +365,18 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     return () => { stopSync(); clearInterval(interval) }
   }, [authStatus, tenantDataReady, tenantUserId, authUser?.id])
 
+  // S3 — surface stale-overwrite sync conflicts in header status/toast
+  useEffect(() => {
+    const handleSyncConflict = (event: Event) => {
+      const detail = (event as CustomEvent<{ error?: string; source?: string }>).detail
+      setSyncStatus('failed')
+      setToastMessage(detail?.error || 'Cloud sync blocked — remote data is newer')
+      setTimeout(() => setToastMessage(null), 6000)
+    }
+    window.addEventListener('poweron:sync-conflict', handleSyncConflict)
+    return () => window.removeEventListener('poweron:sync-conflict', handleSyncConflict)
+  }, [])
+
   // BUG 1 FIX — Supabase Realtime sync + stale-data detection
   // Runs after the initial loadFromSupabase() so we don't double-pull on mount.
   useEffect(() => {
@@ -676,14 +688,36 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     }
     if (syncStatus === 'syncing') return
 
+    const isLocalhostDev =
+      typeof window !== 'undefined' &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    if (isLocalhostDev) {
+      const confirmed = window.confirm(
+        'You are saving from localhost. This can overwrite live shared data. Continue only if you are sure this local session is current.'
+      )
+      if (!confirmed) {
+        setToastMessage('Save cancelled')
+        setTimeout(() => setToastMessage(null), 3000)
+        return
+      }
+    }
+
     setSyncStatus('syncing')
     try {
-      const result = await forceSyncToCloud()
+      const result = await forceSyncToCloud({
+        requireFreshRemote: true,
+        source: 'header-save',
+        createSafetySnapshot: true,
+      })
       if (result.success) {
         setSyncStatus('synced')
         setLastSyncTime(new Date().toLocaleTimeString())
         setToastMessage('Live data saved to cloud')
         setTimeout(() => setToastMessage(null), 3000)
+      } else if (result.blocked) {
+        setSyncStatus('failed')
+        setToastMessage(result.error || 'Remote data is newer — reload before saving')
+        setTimeout(() => setToastMessage(null), 6000)
       } else {
         setSyncStatus('failed')
         setToastMessage('Sync failed — ' + (result.error || 'check connection'))
@@ -1712,12 +1746,16 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                       return
                     }
                     setSyncStatus('syncing')
-                    const result = await forceSyncToCloud()
+                    const result = await forceSyncToCloud({ source: 'sync-retry' })
                     if (result.success) {
                       setSyncStatus('synced')
                       setLastSyncTime(new Date().toLocaleTimeString())
                       setToastMessage('Synced to cloud')
                       setTimeout(() => setToastMessage(null), 3000)
+                    } else if (result.blocked) {
+                      setSyncStatus('failed')
+                      setToastMessage(result.error || 'Sync blocked — remote data is newer')
+                      setTimeout(() => setToastMessage(null), 6000)
                     } else {
                       setSyncStatus('failed')
                       setToastMessage('Sync failed — ' + (result.error || 'check connection'))

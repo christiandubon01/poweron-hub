@@ -46,8 +46,13 @@ import {
   deleteOperationsBlueprintAnnotation,
   getBlueprintSignedUrl,
   getOperationsBlueprintAnnotations,
+  getOperationsBlueprintScopeLayers,
+  saveOperationsBlueprintScopeLayers,
+  SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
   type BlueprintAnnotation,
   type BlueprintLibraryItem,
+  type BlueprintScopeItemRef,
+  type BlueprintScopeLayer,
   upsertOperationsBlueprintAnnotation,
 } from '@/services/blueprintLibraryService'
 import { getBackupData } from '@/services/backupDataService'
@@ -421,6 +426,48 @@ function getElectricalSymbolMetadataStamp(shapeKind: any, meta: Record<string, a
     materialKey: symbol.materialKey,
     laborKey: symbol.laborKey,
   }
+}
+
+const DEFAULT_SCOPE_LAYER_COLOR = '#38bdf8'
+
+function getBlueprintScopeLayerLaborTotal(layer: Pick<BlueprintScopeLayer, 'roughInHours' | 'trimHours' | 'testingHours' | 'cleanupHours'>) {
+  return (
+    Number(layer.roughInHours || 0) +
+    Number(layer.trimHours || 0) +
+    Number(layer.testingHours || 0) +
+    Number(layer.cleanupHours || 0)
+  )
+}
+
+function buildBlueprintScopeItemRef(annotation: BlueprintAnnotation): BlueprintScopeItemRef {
+  const meta = getAnnotationMeta(annotation)
+  const shapeKind = annotation.type === 'shape' ? meta.shapeKind : undefined
+  const electricalMetadata = getElectricalSymbolMetadata(shapeKind, meta)
+  return {
+    annotationId: annotation.id,
+    pageNumber: Math.max(1, Math.floor(Number(annotation.pageNumber) || 1)),
+    label: annotationLabel(annotation),
+    ...(shapeKind ? { shapeKind } : {}),
+    ...(electricalMetadata ? { category: electricalMetadata.category } : {}),
+    ...(electricalMetadata ? { countValue: getElectricalSymbolCountValue(shapeKind, meta) } : {}),
+  }
+}
+
+function buildBlueprintScopeItemRefs(annotations: BlueprintAnnotation[], annotationIds: string[]) {
+  const idSet = new Set(annotationIds)
+  return annotations
+    .filter((annotation) => idSet.has(annotation.id))
+    .map(buildBlueprintScopeItemRef)
+}
+
+function buildBlueprintScopeItemSummary(itemRefs: BlueprintScopeItemRef[]) {
+  const grouped = new Map<string, number>()
+  for (const item of itemRefs) {
+    grouped.set(item.label, (grouped.get(item.label) || 0) + Number(item.countValue ?? 1))
+  }
+  return Array.from(grouped.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([label, count]) => `${count} ${label}${count === 1 ? '' : 's'}`)
 }
 
 function getShapeKindLabel(kind: any, meta: Record<string, any> = {}) {
@@ -1050,6 +1097,7 @@ export default function OperationsBlueprintPdfViewer({
   const alignmentGuideSvgRef = useRef<SVGSVGElement>(null)
   const activeAlignmentGuidesRef = useRef<AlignmentGuideLine[]>([])
   const activeAlignmentGuideSignatureRef = useRef('')
+  const scopeLayersPanelRef = useRef<HTMLDivElement | null>(null)
   // Point-to-point line placement: stores the first click position (pixel coords within overlay).
   const lineFirstPointRef = useRef<{ x: number; y: number } | null>(null)
   // Tracks how many annotation mutations are in-flight so loadAnnotations() fires only when the queue drains.
@@ -1159,6 +1207,23 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [rfiModal, setRfiModal] = useState<{ open: boolean; annotation: BlueprintAnnotation | null }>({ open: false, annotation: null })
   const [cordModal, setCordModal] = useState<{ open: boolean; annotation: BlueprintAnnotation | null }>({ open: false, annotation: null })
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [selectedForPackageIds, setSelectedForPackageIds] = useState<Set<string>>(new Set())
+  const [scopeLayers, setScopeLayers] = useState<BlueprintScopeLayer[]>([])
+  /** Local UI only — canvas isolate mode; not persisted to avoid noisy cloud saves. */
+  const [isolatedScopeLayerId, setIsolatedScopeLayerId] = useState<string | null>(null)
+  const [scopeLayerModal, setScopeLayerModal] = useState<{ open: boolean; mode: 'create' | 'edit'; layerId?: string }>({ open: false, mode: 'create' })
+  const [scopeLayerDraftIds, setScopeLayerDraftIds] = useState<string[]>([])
+  const [scopeLayerForm, setScopeLayerForm] = useState({
+    name: '',
+    description: '',
+    color: DEFAULT_SCOPE_LAYER_COLOR,
+    roughInHours: 0,
+    trimHours: 0,
+    testingHours: 0,
+    cleanupHours: 0,
+    crewNotes: '',
+    proposalSummary: '',
+  })
   const [rfiForm, setRfiForm] = useState({ requestedFrom: '', category: 'coordination', dueDate: '' })
   const [cordForm, setCordForm] = useState({ category: 'light', dueDate: '' })
   const [submittingRfi, setSubmittingRfi] = useState(false)
@@ -1710,6 +1775,49 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
   }, [blueprint?.id])
 
+  const loadScopeLayers = useCallback(() => {
+    if (!blueprint?.id) {
+      setScopeLayers([])
+      return
+    }
+    try {
+      const backup = getBackupData()
+      const items = getOperationsBlueprintScopeLayers(backup || {}, blueprint.id)
+      setScopeLayers(Array.isArray(items) ? items : [])
+    } catch {
+      setScopeLayers([])
+    }
+  }, [blueprint?.id])
+
+  const persistScopeLayers = useCallback(async (nextLayers: BlueprintScopeLayer[]) => {
+    if (!blueprint?.id) return false
+    try {
+      const backup = getBackupData()
+      if (!backup) throw new Error('No local backup data available.')
+      const result = await saveOperationsBlueprintScopeLayers(backup, blueprint.id, nextLayers)
+      if (result.cloudSynced) return true
+      if (result.localSaved) {
+        if (result.warning) {
+          setActionMsg({ type: 'error', text: result.warning })
+        }
+        return true
+      }
+      setActionMsg({
+        type: 'error',
+        text: result.error || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
+      })
+      loadScopeLayers()
+      return false
+    } catch (e: any) {
+      setActionMsg({
+        type: 'error',
+        text: e?.message || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
+      })
+      loadScopeLayers()
+      return false
+    }
+  }, [blueprint?.id, loadScopeLayers])
+
   const clearDoc = useCallback(async () => {
     try {
       if (renderTaskRef.current) {
@@ -1801,9 +1909,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       clearDoc()
       setError(null)
       setAllAnnotations([])
+      setScopeLayers([])
       return
     }
     loadAnnotations()
+    loadScopeLayers()
+    setIsolatedScopeLayerId(null)
     void loadPdf()
     return () => { void clearDoc() }
   }, [blueprint?.id])
@@ -2207,6 +2318,218 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     () => allAnnotations.filter(a => Number(a.pageNumber) === Number(currentPage)),
     [allAnnotations, currentPage]
   )
+
+  const isolatedScopeLayer = useMemo(
+    () => scopeLayers.find((layer) => layer.id === isolatedScopeLayerId) ?? null,
+    [scopeLayers, isolatedScopeLayerId],
+  )
+
+  const isolatedAnnotationIdSet = useMemo(() => {
+    if (!isolatedScopeLayer) return null
+    const ids = (isolatedScopeLayer.selectedAnnotationIds || [])
+      .map((id) => String(id).trim())
+      .filter(Boolean)
+    return new Set(ids)
+  }, [isolatedScopeLayer])
+
+  const canvasPageAnnotations = useMemo(() => {
+    if (!isolatedAnnotationIdSet) return pageAnnotations
+    return pageAnnotations.filter((annotation) => isolatedAnnotationIdSet.has(annotation.id))
+  }, [pageAnnotations, isolatedAnnotationIdSet])
+
+  const isAnnotationVisibleOnCanvas = useCallback((annotationId: string) => {
+    if (!isolatedAnnotationIdSet) return true
+    return isolatedAnnotationIdSet.has(annotationId)
+  }, [isolatedAnnotationIdSet])
+
+  const activeScopeLayerSelectionIds = scopeLayerModal.open ? scopeLayerDraftIds : Array.from(selectedForPackageIds)
+  const selectedPackageAnnotations = useMemo(
+    () => {
+      const idSet = new Set(activeScopeLayerSelectionIds)
+      return allAnnotations.filter((annotation) => idSet.has(annotation.id))
+    },
+    [activeScopeLayerSelectionIds, allAnnotations]
+  )
+  const selectedPackageItemRefs = useMemo(
+    () => buildBlueprintScopeItemRefs(allAnnotations, activeScopeLayerSelectionIds),
+    [activeScopeLayerSelectionIds, allAnnotations]
+  )
+  const selectedPackageSummary = useMemo(
+    () => buildBlueprintScopeItemSummary(selectedPackageItemRefs),
+    [selectedPackageItemRefs]
+  )
+  const selectedPackageCount = selectedForPackageIds.size
+
+  useEffect(() => {
+    setSelectedForPackageIds((prev) => {
+      if (prev.size === 0) return prev
+      const validIds = new Set(allAnnotations.map((annotation) => annotation.id))
+      const next = new Set(Array.from(prev).filter((id) => validIds.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [allAnnotations])
+
+  useEffect(() => {
+    if (!isolatedAnnotationIdSet) return
+    if (focusedAnnotationId && !isolatedAnnotationIdSet.has(focusedAnnotationId)) {
+      setFocusedAnnotationId(null)
+      setFocusedAnnotationRect(null)
+      setLayoutEditId(null)
+      setOpenPopover(null)
+      setBarDragOffset(null)
+    }
+    if (layoutEditId && !isolatedAnnotationIdSet.has(layoutEditId)) {
+      setLayoutEditId(null)
+    }
+  }, [isolatedAnnotationIdSet, focusedAnnotationId, layoutEditId])
+
+  const togglePackageSelection = useCallback((annotationId: string, checked: boolean) => {
+    setSelectedForPackageIds((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(annotationId)
+      else next.delete(annotationId)
+      return next
+    })
+  }, [])
+
+  const resetScopeLayerForm = useCallback(() => {
+    setScopeLayerForm({
+      name: '',
+      description: '',
+      color: DEFAULT_SCOPE_LAYER_COLOR,
+      roughInHours: 0,
+      trimHours: 0,
+      testingHours: 0,
+      cleanupHours: 0,
+      crewNotes: '',
+      proposalSummary: '',
+    })
+  }, [])
+
+  const openCreateScopeLayerModal = useCallback(() => {
+    if (selectedForPackageIds.size === 0) return
+    resetScopeLayerForm()
+    setScopeLayerDraftIds(Array.from(selectedForPackageIds))
+    setActionMsg(null)
+    setScopeLayerModal({ open: true, mode: 'create' })
+  }, [resetScopeLayerForm, selectedForPackageIds])
+
+  const openEditScopeLayerModal = useCallback((layer: BlueprintScopeLayer) => {
+    setScopeLayerForm({
+      name: layer.name,
+      description: layer.description,
+      color: layer.color || DEFAULT_SCOPE_LAYER_COLOR,
+      roughInHours: Number(layer.roughInHours || 0),
+      trimHours: Number(layer.trimHours || 0),
+      testingHours: Number(layer.testingHours || 0),
+      cleanupHours: Number(layer.cleanupHours || 0),
+      crewNotes: layer.crewNotes,
+      proposalSummary: layer.proposalSummary,
+    })
+    setSelectedForPackageIds(new Set(layer.selectedAnnotationIds))
+    setScopeLayerDraftIds([...layer.selectedAnnotationIds])
+    setActionMsg(null)
+    setScopeLayerModal({ open: true, mode: 'edit', layerId: layer.id })
+  }, [])
+
+  const closeScopeLayerModal = useCallback(() => {
+    setScopeLayerModal({ open: false, mode: 'create' })
+    setScopeLayerDraftIds([])
+  }, [])
+
+  const saveScopeLayerFromModal = useCallback(async () => {
+    setActionMsg(null)
+    const name = scopeLayerForm.name.trim()
+    if (!name) {
+      setActionMsg({ type: 'error', text: 'Work package name is required.' })
+      return
+    }
+    const now = new Date().toISOString()
+    const selectedIds = [...scopeLayerDraftIds]
+    const itemRefs = buildBlueprintScopeItemRefs(allAnnotations, selectedIds)
+    if (itemRefs.length === 0) {
+      setActionMsg({ type: 'error', text: 'Select at least one annotation for this work package.' })
+      return
+    }
+    const payloadBase = {
+      name,
+      description: scopeLayerForm.description.trim(),
+      color: scopeLayerForm.color || DEFAULT_SCOPE_LAYER_COLOR,
+      selectedAnnotationIds: itemRefs.map((item) => item.annotationId),
+      itemRefs,
+      roughInHours: Number(scopeLayerForm.roughInHours || 0),
+      trimHours: Number(scopeLayerForm.trimHours || 0),
+      testingHours: Number(scopeLayerForm.testingHours || 0),
+      cleanupHours: Number(scopeLayerForm.cleanupHours || 0),
+      crewNotes: scopeLayerForm.crewNotes.trim(),
+      proposalSummary: scopeLayerForm.proposalSummary.trim(),
+    }
+    let nextLayers: BlueprintScopeLayer[]
+    if (scopeLayerModal.mode === 'edit' && scopeLayerModal.layerId) {
+      nextLayers = scopeLayers.map((layer) => (
+        layer.id === scopeLayerModal.layerId
+          ? { ...layer, ...payloadBase, updatedAt: now }
+          : layer
+      ))
+    } else {
+      nextLayers = [
+        ...scopeLayers,
+        {
+          id: `scope_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          ...payloadBase,
+          createdAt: now,
+          updatedAt: now,
+          visible: true,
+          isolated: false,
+        },
+      ]
+    }
+
+    setScopeLayers(nextLayers)
+    const saved = await persistScopeLayers(nextLayers)
+    if (!saved) {
+      loadScopeLayers()
+      return
+    }
+
+    setSelectedForPackageIds(new Set())
+    setActionMsg({
+      type: 'success',
+      text: scopeLayerModal.mode === 'edit' ? 'Work package updated.' : 'Work package created.',
+    })
+    closeScopeLayerModal()
+    requestAnimationFrame(() => {
+      scopeLayersPanelRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    })
+  }, [
+    allAnnotations,
+    closeScopeLayerModal,
+    loadScopeLayers,
+    persistScopeLayers,
+    scopeLayerDraftIds,
+    scopeLayerForm,
+    scopeLayerModal,
+    scopeLayers,
+  ])
+
+  const deleteScopeLayer = useCallback(async (layerId: string) => {
+    setActionMsg(null)
+    if (isolatedScopeLayerId === layerId) {
+      setIsolatedScopeLayerId(null)
+    }
+    const nextLayers = scopeLayers.filter((layer) => layer.id !== layerId)
+    setScopeLayers(nextLayers)
+    const saved = await persistScopeLayers(nextLayers)
+    if (!saved) {
+      loadScopeLayers()
+      return
+    }
+    setActionMsg({ type: 'success', text: 'Work package deleted.' })
+  }, [isolatedScopeLayerId, loadScopeLayers, persistScopeLayers, scopeLayers])
+
+  const toggleScopeLayerIsolation = useCallback((layerId: string) => {
+    setIsolatedScopeLayerId((prev) => (prev === layerId ? null : layerId))
+  }, [])
 
   useEffect(() => {
     if (!alignmentGuidesEnabled || !annotationsVisible) {
@@ -5584,7 +5907,7 @@ const annotationPanelSizeClass =
                     onPointerUp={handlePointerUp}
                     onPointerCancel={handlePointerCancel}
                   >
-                      {pageAnnotations.map((a) => {
+                      {canvasPageAnnotations.map((a) => {
                         // Visibility toggle (Fix 2): skip drawing overlays while hidden.
                         // Annotations stay in state/persistence — only the canvas layer is suppressed.
                         if (!annotationsVisible) return null
@@ -6125,9 +6448,17 @@ const annotationPanelSizeClass =
 
                       {/* Permanent DOM-ref draft rect Ã¢â‚¬â€ hidden by default, shown + mutated directly
                           during pointer-move to avoid React re-renders during active drag. */}
+                      {isolatedScopeLayer && isolatedAnnotationIdSet && isolatedAnnotationIdSet.size === 0 && annotationsVisible && (
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[5]">
+                          <div className="rounded-lg border border-amber-500/40 bg-black/70 px-3 py-2 text-xs text-amber-200 shadow-lg">
+                            This package has no linked annotations.
+                          </div>
+                        </div>
+                      )}
+
                       {/* Arch control handle — yellow draggable handle at bezier control point for selected arch-line */}
                       {layoutEditId && (() => {
-                        const archAnn = pageAnnotations.find(a => a.id === layoutEditId)
+                        const archAnn = canvasPageAnnotations.find(a => a.id === layoutEditId)
                         if (!archAnn) return null
                         const archMeta = getAnnotationMeta(archAnn)
                         if (archMeta.shapeKind !== 'arch-line') return null
@@ -6610,8 +6941,99 @@ const annotationPanelSizeClass =
                 {/* ── Current Page Annotations block ── */}
                 {annotationPanelExpanded && (
                   <div className="px-3 pt-2.5 pb-2 border-b border-gray-800">
-                    <div className="text-[11px] font-semibold text-gray-300">Current Page Annotations</div>
-                    <div className="text-[10px] text-gray-500 mt-0.5">Page {currentPage} · {pageAnnotations.length} {pageAnnotations.length === 1 ? 'annotation' : 'annotations'}</div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-semibold text-gray-300">Current Page Annotations</div>
+                        <div className="text-[10px] text-gray-500 mt-0.5">
+                          Page {currentPage} · {pageAnnotations.length} {pageAnnotations.length === 1 ? 'annotation' : 'annotations'} · <span className={selectedPackageCount > 0 ? 'font-semibold text-sky-300' : ''}>{selectedPackageCount} selected</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={selectedPackageCount === 0}
+                        onClick={openCreateScopeLayerModal}
+                        className="rounded border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-[10px] font-semibold text-sky-200 hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:border-gray-700 disabled:bg-gray-900/40 disabled:text-gray-600"
+                      >
+                        Create Work Package
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {annotationPanelExpanded && scopeLayers.length > 0 && (
+                  <div ref={scopeLayersPanelRef} className="border-b border-sky-900/40 bg-sky-950/10">
+                    <div className="px-3 py-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-100">
+                          <Layers size={12} /> Scope Layers / Work Packages
+                        </div>
+                        <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-200">{scopeLayers.length}</span>
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-sky-200/60">Saved work packages for this viewer session.</div>
+                      {isolatedScopeLayer && (
+                        <div className="mt-1.5 rounded border border-amber-500/40 bg-amber-950/25 px-2 py-1 text-[10px] font-medium text-amber-200">
+                          Isolated — viewing only <span className="font-semibold">{isolatedScopeLayer.name}</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="space-y-2 px-3 pb-3">
+                      {scopeLayers.map((layer) => {
+                        const totalHours = getBlueprintScopeLayerLaborTotal(layer)
+                        const summary = buildBlueprintScopeItemSummary(layer.itemRefs)
+                        const isLayerIsolated = isolatedScopeLayerId === layer.id
+                        return (
+                          <div key={layer.id} className={`rounded-lg border p-2 shadow-sm ${isLayerIsolated ? 'border-amber-400/60 bg-amber-950/30 ring-1 ring-amber-400/25' : `border-sky-500/35 bg-gray-950/50 ${layer.visible ? '' : 'opacity-55'}`}`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: layer.color || DEFAULT_SCOPE_LAYER_COLOR }} />
+                                  <div className="truncate text-xs font-semibold text-gray-100">{layer.name}</div>
+                                  {isLayerIsolated && (
+                                    <span className="rounded-full border border-amber-400/40 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200">Isolated</span>
+                                  )}
+                                </div>
+                                <div className="mt-1 text-[10px] text-gray-400">
+                                  {layer.itemRefs.length} {layer.itemRefs.length === 1 ? 'item' : 'items'} · {totalHours.toFixed(1)} labor hrs
+                                </div>
+                              </div>
+                              <div className="flex flex-shrink-0 items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleScopeLayerIsolation(layer.id)}
+                                  className={`rounded border px-1 py-0.5 text-[10px] ${isLayerIsolated ? 'border-amber-400/50 bg-amber-500/15 text-amber-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+                                  title={isLayerIsolated ? 'Show all annotations' : 'Isolate this package on canvas'}
+                                >
+                                  <Eye size={10} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openEditScopeLayerModal(layer)}
+                                  className="rounded border border-gray-700 px-1.5 py-0.5 text-[10px] text-gray-300 hover:bg-white/5"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteScopeLayer(layer.id)}
+                                  className="rounded border border-red-900/50 px-1.5 py-0.5 text-[10px] text-red-300 hover:bg-red-950/30"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                            {layer.description && <div className="mt-1 text-[10px] text-gray-400 line-clamp-2">{layer.description}</div>}
+                            {summary.length > 0 && (
+                              <div className="mt-1.5 flex flex-wrap gap-1">
+                                {summary.slice(0, 4).map((item) => (
+                                  <span key={item} className="rounded-full border border-gray-800 bg-gray-900/60 px-1.5 py-0.5 text-[9px] text-gray-400">{item}</span>
+                                ))}
+                                {summary.length > 4 && <span className="text-[9px] text-gray-500">+{summary.length - 4} more</span>}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
                 )}
 
@@ -6643,25 +7065,46 @@ const annotationPanelSizeClass =
                     })
                   }
 
-                  const AnnotationRow = ({ a }: { a: BlueprintAnnotation }) => (
-                    <button
-                      key={a.id}
-                      onClick={(e) => {
-                        setFocusedAnnotationId(a.id)
-                        setLayoutEditId(null)
-                        if (a.type === 'note') { openEditNoteEditor(a); return }
-                        const toolKey = annotationTypeToToolKey(a.type)
-                        if (toolKey && a.type !== 'textBox') {
-                          setOpenPopover({ tool: toolKey as ToolMode, anchorEl: e.currentTarget as HTMLElement, mode: 'edit', editingAnnotationId: a.id })
-                        }
-                      }}
-                      className={`w-full text-left pl-6 pr-3 py-1.5 text-xs hover:bg-white/5 ${focusedAnnotationId === a.id ? 'bg-white/5' : ''}`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: a.color || '#facc15' }} />
-                          <span className="text-gray-400 truncate">{a.text?.trim() ? shortText(a.text, 28) : annotationLabel(a)}</span>
-                        </div>
+                  const AnnotationRow = ({ a }: { a: BlueprintAnnotation }) => {
+                    const isPackageSelected = selectedForPackageIds.has(a.id)
+                    return (
+                      <div
+                        key={a.id}
+                        className={`mx-2 my-0.5 flex w-auto items-center gap-2 rounded-md border px-2 py-1.5 text-xs transition-colors ${
+                          isPackageSelected
+                            ? 'border-sky-400/70 bg-sky-500/15 shadow-[inset_3px_0_0_rgba(56,189,248,0.9)]'
+                            : focusedAnnotationId === a.id
+                              ? 'border-white/10 bg-white/5'
+                              : 'border-transparent hover:bg-white/5'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isPackageSelected}
+                          onChange={(e) => togglePackageSelection(a.id, e.currentTarget.checked)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="h-4 w-4 flex-shrink-0 cursor-pointer rounded border-gray-500 bg-gray-950 accent-sky-400"
+                          title="Add to work package"
+                        />
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            setFocusedAnnotationId(a.id)
+                            setLayoutEditId(null)
+                            if (a.type === 'note') { openEditNoteEditor(a); return }
+                            const toolKey = annotationTypeToToolKey(a.type)
+                            if (toolKey && a.type !== 'textBox') {
+                              setOpenPopover({ tool: toolKey as ToolMode, anchorEl: e.currentTarget as HTMLElement, mode: 'edit', editingAnnotationId: a.id })
+                            }
+                          }}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: a.color || '#facc15' }} />
+                            <span className={`${isPackageSelected ? 'text-sky-100' : 'text-gray-400'} truncate`}>{a.text?.trim() ? shortText(a.text, 28) : annotationLabel(a)}</span>
+                            {isPackageSelected && <span className="rounded-full bg-sky-400/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-200">Selected</span>}
+                          </div>
+                        </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); void removeAnnotation(a.id) }}
                           className="text-red-400/60 hover:text-red-300 flex-shrink-0"
@@ -6670,32 +7113,50 @@ const annotationPanelSizeClass =
                           <Trash2 size={11} />
                         </button>
                       </div>
-                    </button>
-                  )
+                    )
+                  }
 
                   const GeneratedRow = ({ a }: { a: BlueprintAnnotation }) => {
                     const meta = getAnnotationMeta(a)
+                    const isPackageSelected = selectedForPackageIds.has(a.id)
                     return (
                       <div
-                        className={`pl-6 pr-3 py-1.5 text-xs hover:bg-white/5 ${focusedAnnotationId === a.id ? 'bg-white/5' : ''}`}
+                        className={`mx-2 my-0.5 rounded-md border px-2 py-1.5 text-xs transition-colors ${
+                          isPackageSelected
+                            ? 'border-sky-400/70 bg-sky-500/15 shadow-[inset_3px_0_0_rgba(56,189,248,0.9)]'
+                            : focusedAnnotationId === a.id
+                              ? 'border-white/10 bg-white/5'
+                              : 'border-transparent hover:bg-white/5'
+                        }`}
                       >
-                        <button
-                          className="w-full text-left"
-                          onClick={(e) => {
-                            setFocusedAnnotationId(a.id)
-                            setLayoutEditId(null)
-                            const toolKey = annotationTypeToToolKey(a.type)
-                            if (toolKey) {
-                              setOpenPopover({ tool: toolKey as ToolMode, anchorEl: e.currentTarget as HTMLElement, mode: 'edit', editingAnnotationId: a.id })
-                            }
-                          }}
-                        >
-                          <div className="flex items-center gap-1.5 min-w-0 mb-1">
-                            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-amber-400" />
-                            <span className="text-amber-300/80 text-[10px] uppercase tracking-wide">{meta.questionType === 'rfi' ? 'RFI' : 'Coordination'}</span>
-                          </div>
-                          <div className="text-gray-400 truncate mb-1.5">{shortText(a.text, 32)}</div>
-                        </button>
+                        <div className="flex items-start gap-2">
+                          <input
+                            type="checkbox"
+                            checked={isPackageSelected}
+                            onChange={(e) => togglePackageSelection(a.id, e.currentTarget.checked)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-0.5 h-4 w-4 flex-shrink-0 cursor-pointer rounded border-gray-500 bg-gray-950 accent-sky-400"
+                            title="Add to work package"
+                          />
+                          <button
+                            className="min-w-0 flex-1 text-left"
+                            onClick={(e) => {
+                              setFocusedAnnotationId(a.id)
+                              setLayoutEditId(null)
+                              const toolKey = annotationTypeToToolKey(a.type)
+                              if (toolKey) {
+                                setOpenPopover({ tool: toolKey as ToolMode, anchorEl: e.currentTarget as HTMLElement, mode: 'edit', editingAnnotationId: a.id })
+                              }
+                            }}
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0 mb-1">
+                              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-amber-400" />
+                              <span className="text-amber-300/80 text-[10px] uppercase tracking-wide">{meta.questionType === 'rfi' ? 'RFI' : 'Coordination'}</span>
+                              {isPackageSelected && <span className="rounded-full bg-sky-400/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-200">Selected</span>}
+                            </div>
+                            <div className={`${isPackageSelected ? 'text-sky-100' : 'text-gray-400'} truncate mb-1.5`}>{shortText(a.text, 32)}</div>
+                          </button>
+                        </div>
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => {
@@ -6790,6 +7251,81 @@ const annotationPanelSizeClass =
                     </div>
                   )
                 })()}
+                {annotationPanelExpanded && scopeLayers.length === 0 && (
+                  <div className="border-t border-gray-800">
+                    <div className="px-3 py-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-100">
+                          <Layers size={12} /> Scope Layers
+                        </div>
+                        <span className="text-[10px] text-gray-500">{scopeLayers.length}</span>
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-gray-500">V1 work packages are local to this viewer session.</div>
+                    </div>
+                    {scopeLayers.length === 0 ? (
+                      <div className="px-3 pb-3 text-[10px] text-gray-600 italic">No work packages yet. Check annotations above, then create one.</div>
+                    ) : (
+                      <div className="space-y-2 px-3 pb-3">
+                        {scopeLayers.map((layer) => {
+                          const totalHours = getBlueprintScopeLayerLaborTotal(layer)
+                          const summary = buildBlueprintScopeItemSummary(layer.itemRefs)
+                          const isLayerIsolated = isolatedScopeLayerId === layer.id
+                          return (
+                            <div key={layer.id} className={`rounded-lg border bg-gray-950/30 p-2 ${isLayerIsolated ? 'border-amber-400/60 ring-1 ring-amber-400/25' : `border-gray-800 ${layer.visible ? '' : 'opacity-55'}`}`}>
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: layer.color || DEFAULT_SCOPE_LAYER_COLOR }} />
+                                    <div className="truncate text-xs font-semibold text-gray-100">{layer.name}</div>
+                                    {isLayerIsolated && (
+                                      <span className="rounded-full border border-amber-400/40 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200">Isolated</span>
+                                    )}
+                                  </div>
+                                  <div className="mt-1 text-[10px] text-gray-500">
+                                    {layer.itemRefs.length} {layer.itemRefs.length === 1 ? 'item' : 'items'} · {totalHours.toFixed(1)} labor hrs
+                                  </div>
+                                </div>
+                                <div className="flex flex-shrink-0 items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleScopeLayerIsolation(layer.id)}
+                                    className={`rounded border px-1 py-0.5 text-[10px] ${isLayerIsolated ? 'border-amber-400/50 bg-amber-500/15 text-amber-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+                                    title={isLayerIsolated ? 'Show all annotations' : 'Isolate this package on canvas'}
+                                  >
+                                    <Eye size={10} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditScopeLayerModal(layer)}
+                                    className="rounded border border-gray-700 px-1.5 py-0.5 text-[10px] text-gray-300 hover:bg-white/5"
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => deleteScopeLayer(layer.id)}
+                                    className="rounded border border-red-900/50 px-1.5 py-0.5 text-[10px] text-red-300 hover:bg-red-950/30"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </div>
+                              {layer.description && <div className="mt-1 text-[10px] text-gray-400 line-clamp-2">{layer.description}</div>}
+                              {summary.length > 0 && (
+                                <div className="mt-1.5 flex flex-wrap gap-1">
+                                  {summary.slice(0, 4).map((item) => (
+                                    <span key={item} className="rounded-full border border-gray-800 bg-gray-900/60 px-1.5 py-0.5 text-[9px] text-gray-400">{item}</span>
+                                  ))}
+                                  {summary.length > 4 && <span className="text-[9px] text-gray-500">+{summary.length - 4} more</span>}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -6817,8 +7353,149 @@ const annotationPanelSizeClass =
         </ToolPopover>
       )}
 
+      {scopeLayerModal.open && createPortal(
+        <div className="fixed inset-0 z-[100001] flex items-center justify-center bg-black/60 px-4" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-2xl rounded-xl border border-gray-700 bg-[#111827] p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-gray-100">
+                  {scopeLayerModal.mode === 'edit' ? 'Edit Work Package' : 'Create Work Package'}
+                </div>
+                <div className="mt-0.5 text-xs text-gray-500">
+                  {selectedPackageAnnotations.length} selected {selectedPackageAnnotations.length === 1 ? 'annotation' : 'annotations'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeScopeLayerModal}
+                className="rounded p-1 text-gray-400 hover:bg-white/10 hover:text-gray-200"
+                title="Close"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            {actionMsg?.type === 'error' && (
+              <div className="mb-3 rounded border border-red-900/50 bg-red-950/35 px-2 py-1.5 text-xs text-red-200">
+                {actionMsg.text}
+              </div>
+            )}
+
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+              <div className="space-y-2">
+                <label className="block text-[11px] text-gray-400">
+                  Work Package Name
+                  <input
+                    value={scopeLayerForm.name}
+                    onChange={(e) => setScopeLayerForm((prev) => ({ ...prev, name: e.target.value }))}
+                    className="mt-1 w-full rounded border border-gray-700 bg-gray-950/60 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-sky-500"
+                    placeholder="Bedroom 1 Lighting"
+                  />
+                </label>
+                <label className="block text-[11px] text-gray-400">
+                  Description / Scope Summary
+                  <textarea
+                    value={scopeLayerForm.description}
+                    onChange={(e) => setScopeLayerForm((prev) => ({ ...prev, description: e.target.value }))}
+                    className="mt-1 h-16 w-full resize-none rounded border border-gray-700 bg-gray-950/60 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-sky-500"
+                    placeholder="Brief scope summary..."
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block text-[11px] text-gray-400">
+                    Color
+                    <input
+                      type="color"
+                      value={scopeLayerForm.color}
+                      onChange={(e) => setScopeLayerForm((prev) => ({ ...prev, color: e.target.value }))}
+                      className="mt-1 h-8 w-full rounded border border-gray-700 bg-gray-950/60 p-1"
+                    />
+                  </label>
+                  {[
+                    ['roughInHours', 'Rough-in hours'],
+                    ['trimHours', 'Trim hours'],
+                    ['testingHours', 'Testing hours'],
+                    ['cleanupHours', 'Cleanup hours'],
+                  ].map(([key, label]) => (
+                    <label key={key} className="block text-[11px] text-gray-400">
+                      {label}
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.25"
+                        value={(scopeLayerForm as any)[key]}
+                        onChange={(e) => setScopeLayerForm((prev) => ({ ...prev, [key]: Number(e.target.value) }))}
+                        className="mt-1 w-full rounded border border-gray-700 bg-gray-950/60 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-sky-500"
+                      />
+                    </label>
+                  ))}
+                </div>
+                <label className="block text-[11px] text-gray-400">
+                  Crew Notes
+                  <textarea
+                    value={scopeLayerForm.crewNotes}
+                    onChange={(e) => setScopeLayerForm((prev) => ({ ...prev, crewNotes: e.target.value }))}
+                    className="mt-1 h-14 w-full resize-none rounded border border-gray-700 bg-gray-950/60 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-sky-500"
+                    placeholder="Crew notes..."
+                  />
+                </label>
+                <label className="block text-[11px] text-gray-400">
+                  Customer Proposal Summary
+                  <textarea
+                    value={scopeLayerForm.proposalSummary}
+                    onChange={(e) => setScopeLayerForm((prev) => ({ ...prev, proposalSummary: e.target.value }))}
+                    className="mt-1 h-14 w-full resize-none rounded border border-gray-700 bg-gray-950/60 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-sky-500"
+                    placeholder="Customer-facing summary..."
+                  />
+                </label>
+              </div>
+
+              <div className="rounded-lg border border-gray-800 bg-gray-950/30 p-2">
+                <div className="text-[11px] font-semibold text-gray-300">Selected Items</div>
+                <div className="mt-0.5 text-[10px] text-gray-500">{selectedPackageItemRefs.length} item refs</div>
+                {selectedPackageSummary.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {selectedPackageSummary.map((item) => (
+                      <div key={item} className="rounded border border-gray-800 bg-gray-900/50 px-2 py-1 text-[10px] text-gray-300">{item}</div>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-2 max-h-40 overflow-auto border-t border-gray-800 pt-2">
+                  {selectedPackageItemRefs.map((item) => (
+                    <div key={item.annotationId} className="mb-1 text-[10px] text-gray-500">
+                      Pg {item.pageNumber}: {item.label}
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2 rounded border border-sky-900/40 bg-sky-950/20 px-2 py-1 text-[10px] text-sky-200">
+                  Labor total: {getBlueprintScopeLayerLaborTotal(scopeLayerForm as any).toFixed(1)} hrs
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeScopeLayerModal}
+                className="rounded border border-gray-700 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveScopeLayerFromModal}
+                className="rounded bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-500"
+              >
+                Save Work Package
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* ── Floating action bar — portal to body so it is never clipped by the scroll container ── */}
-      {focusedAnnotationId && !inlineTextEditId && annotationsVisible && (() => {
+      {focusedAnnotationId && !inlineTextEditId && annotationsVisible && isAnnotationVisibleOnCanvas(focusedAnnotationId) && (() => {
         const focusedAnn = allAnnotations.find(ann => ann.id === focusedAnnotationId)
         if (!focusedAnn) return null
         const isLayoutEditingFocused = layoutEditId === focusedAnnotationId
