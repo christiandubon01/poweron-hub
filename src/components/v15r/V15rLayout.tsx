@@ -283,9 +283,14 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     if (!previewAllowedViews) return items
     return items.filter(item => previewAllowedViews.has(item.view))
   }
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed'>('idle')
+  // 'paused' = the stale-overwrite safety guard blocked a sync (remote data is newer /
+  // freshness unverified) -- a working safety feature, not a network/auth failure.
+  // 'failed' is reserved for genuine sync errors (network, auth, unknown Supabase error).
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed' | 'paused'>('idle')
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
   const [lastSyncDevice, setLastSyncDevice] = useState<string>('')
+  // Step 13B-QA5-R: last shown sync-conflict message + when, for toast dedupe/throttle.
+  const lastSyncConflictRef = useRef<{ message: string; shownAt: number } | null>(null)
   // H3: online/offline state
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true)
   // Session 14: offline queue count from service worker
@@ -366,15 +371,67 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   }, [authStatus, tenantDataReady, tenantUserId, authUser?.id])
 
   // S3 — surface stale-overwrite sync conflicts in header status/toast
+  // Step 13B-QA5-R: dedupe/throttle so the same unresolved conflict doesn't
+  // re-toast on every periodic sync retry (was popping up every ~13s while
+  // remote stayed newer). Save safety guards themselves are unchanged — this
+  // only affects how often the identical warning is re-shown to the user.
   useEffect(() => {
+    const SYNC_CONFLICT_SUPPRESS_MS = 20 * 60 * 1000 // 20 minutes
+    // Step 13B-QA5-R4: the quiet, once-per-conflict explanation shown to the user.
+    // dispatchSyncConflict only ever fires from the stale-overwrite safety guard
+    // (remote-newer / no-verified-baseline / freshness-unknown) -- it is never used
+    // for a real network/auth sync failure -- so one calm, generic explanation
+    // covers all of its call sites without needing to parse the raw guard message.
+    const SYNC_PAUSED_TOAST_MSG = 'Cloud sync is paused because newer remote data exists. Reload latest before cloud syncing.'
     const handleSyncConflict = (event: Event) => {
-      const detail = (event as CustomEvent<{ error?: string; source?: string }>).detail
-      setSyncStatus('failed')
-      setToastMessage(detail?.error || 'Cloud sync blocked — remote data is newer')
+      const detail = (event as CustomEvent<{ error?: string; source?: string; conflictCode?: 'remote-newer' | 'no-baseline' | 'unknown' }>).detail
+      const message = detail?.error || 'Cloud sync blocked — remote data is newer'
+      // Step 13B-QA5-R4 Part 1: dispatchSyncConflict now tags every event with a
+      // reliable conflictCode ('remote-newer' | 'no-baseline' | 'unknown') instead of
+      // relying on message-string matching. All three codes originate from the same
+      // stale-overwrite safety guard (never a network/auth failure), so all three get
+      // the calm 'paused' treatment -- the code is kept in the payload for any future
+      // listener that wants to react differently, but every branch here is identical
+      // today by design.
+      setSyncStatus('paused')
+      const prev = lastSyncConflictRef.current
+      const isDuplicate = !!prev && prev.message === message && (Date.now() - prev.shownAt) < SYNC_CONFLICT_SUPPRESS_MS
+      if (isDuplicate) return
+      lastSyncConflictRef.current = { message, shownAt: Date.now() }
+      setToastMessage(SYNC_PAUSED_TOAST_MSG)
       setTimeout(() => setToastMessage(null), 6000)
     }
+    // Step 13B-QA5-R3: a real cloud sync succeeding must immediately clear any
+    // stale "failed"/"blocked" header status and its toast -- previously this
+    // listener only cleared the dedupe ref, leaving syncStatus stuck on 'failed'
+    // until the unrelated 30s status-poll interval happened to catch up.
+    const handleSyncSuccessEvent = (event: Event) => {
+      const wasConflicted = !!lastSyncConflictRef.current
+      lastSyncConflictRef.current = null
+      setSyncStatus('synced')
+      const detail = (event as CustomEvent<{ savedBy?: string; savedAt?: string }>).detail
+      setLastSyncTime(detail?.savedAt ? new Date(detail.savedAt).toLocaleTimeString() : new Date().toLocaleTimeString())
+      if (detail?.savedBy) setLastSyncDevice(detail.savedBy.split('_')[0] || '')
+      // Only dismiss the toast if it's still showing the exact paused-explanation
+      // text we suppressed -- never clobber an unrelated toast that happens to be
+      // visible at the same moment.
+      if (wasConflicted) {
+        setToastMessage((current) => (current === SYNC_PAUSED_TOAST_MSG ? null : current))
+      }
+    }
+    // A local-only save ('poweron:data-saved', not yet dispatched anywhere in this
+    // codebase today) is not proof of a successful cloud sync -- only clear the
+    // dedupe ref so the next real conflict can surface again, without touching
+    // syncStatus/toast.
+    const clearSyncConflictSuppression = () => { lastSyncConflictRef.current = null }
     window.addEventListener('poweron:sync-conflict', handleSyncConflict)
-    return () => window.removeEventListener('poweron:sync-conflict', handleSyncConflict)
+    window.addEventListener('poweron:sync-success', handleSyncSuccessEvent)
+    window.addEventListener('poweron:data-saved', clearSyncConflictSuppression)
+    return () => {
+      window.removeEventListener('poweron:sync-conflict', handleSyncConflict)
+      window.removeEventListener('poweron:sync-success', handleSyncSuccessEvent)
+      window.removeEventListener('poweron:data-saved', clearSyncConflictSuppression)
+    }
   }, [])
 
   // BUG 1 FIX — Supabase Realtime sync + stale-data detection
@@ -715,7 +772,10 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         setToastMessage('Live data saved to cloud')
         setTimeout(() => setToastMessage(null), 3000)
       } else if (result.blocked) {
-        setSyncStatus('failed')
+        // Freshness/snapshot guard blocked this explicit save -- local data is safe
+        // and this save attempt already told the user exactly why via the toast
+        // below. Treat it the same as any other guard block: 'paused', not 'failed'.
+        setSyncStatus('paused')
         setToastMessage(result.error || 'Remote data is newer — reload before saving')
         setTimeout(() => setToastMessage(null), 6000)
       } else {
@@ -1737,8 +1797,22 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
               {/* Saved + Sync indicator — tap to retry on failure */}
               <button
                 className="flex items-center gap-2 hover:opacity-80 transition-opacity"
-                title={syncStatus === 'failed' ? 'Tap to retry sync' : syncStatus === 'synced' ? 'Synced to cloud' : 'Sync pending...'}
+                title={
+                  syncStatus === 'failed' ? 'Tap to retry sync'
+                  : syncStatus === 'paused' ? 'Cloud sync paused — tap for details'
+                  : syncStatus === 'synced' ? 'Synced to cloud'
+                  : 'Sync pending...'
+                }
                 onClick={async () => {
+                  // Step 13B-QA5-R4: 'paused' means the stale-overwrite safety guard is
+                  // correctly blocking a write because remote data is newer / unverified.
+                  // Tapping must NOT blindly retry the same blocked sync forever -- that
+                  // would just re-trigger the guard. Show reload guidance instead.
+                  if (syncStatus === 'paused') {
+                    setToastMessage('Cloud sync is paused because newer remote data exists. Reload latest before cloud syncing.')
+                    setTimeout(() => setToastMessage(null), 5000)
+                    return
+                  }
                   if (syncStatus === 'failed' || syncStatus === 'idle') {
                     if (authStatus !== 'authenticated' || !tenantDataReady || tenantUserId !== authUser?.id) {
                       setToastMessage('Workspace still loading — sync blocked')
@@ -1753,8 +1827,10 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                       setToastMessage('Synced to cloud')
                       setTimeout(() => setToastMessage(null), 3000)
                     } else if (result.blocked) {
-                      setSyncStatus('failed')
-                      setToastMessage(result.error || 'Sync blocked — remote data is newer')
+                      // Guard blocked this manual retry too -- same 'paused' treatment,
+                      // not 'failed'. Local data is safe; only the cloud push is on hold.
+                      setSyncStatus('paused')
+                      setToastMessage('Cloud sync is paused because newer remote data exists. Reload latest before cloud syncing.')
                       setTimeout(() => setToastMessage(null), 6000)
                     } else {
                       setSyncStatus('failed')
@@ -1768,14 +1844,21 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                   syncStatus === 'synced' ? 'bg-green-500' :
                   syncStatus === 'syncing' ? 'bg-yellow-500 animate-pulse' :
                   syncStatus === 'failed' ? 'bg-red-500' :
+                  syncStatus === 'paused' ? 'bg-orange-400' :
                   'bg-gray-500'
                 }`} />
                 {/* Sync label — hidden on mobile to prevent overflow */}
-                <span className={`text-xs flex-shrink-0 hidden md:inline ${syncStatus === 'failed' ? 'text-red-400' : syncStatus === 'syncing' ? 'text-yellow-400' : 'text-gray-400'}`}>
+                <span className={`text-xs flex-shrink-0 hidden md:inline ${
+                  syncStatus === 'failed' ? 'text-red-400'
+                  : syncStatus === 'syncing' ? 'text-yellow-400'
+                  : syncStatus === 'paused' ? 'text-amber-400'
+                  : 'text-gray-400'
+                }`}>
                   {syncStatus === 'synced' && lastSyncTime
                     ? `Synced${lastSyncDevice ? ` by ${lastSyncDevice}` : ''} · ${lastSyncTime}`
                     : syncStatus === 'syncing' ? 'Pending sync...'
                     : syncStatus === 'failed' ? 'Sync failed — tap to retry'
+                    : syncStatus === 'paused' ? `Cloud paused — saved locally ${getRelativeTime(lastSaved)}`
                     : `Saved ${getRelativeTime(lastSaved)}`}
                 </span>
               </button>

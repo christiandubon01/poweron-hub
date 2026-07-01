@@ -1676,10 +1676,45 @@ function resolveSyncGuardError(freshness: {
   return freshness.error || REMOTE_FRESHNESS_UNKNOWN_MSG
 }
 
-function dispatchSyncConflict(error: string, source?: string): void {
+/** Reliable machine-readable classification of a stale-overwrite guard block, mirroring
+ *  resolveSyncGuardError's branches. Step 13B-QA5-R4 Part 1 -- lets UI listeners tell a
+ *  "remote is newer / can't prove freshness" safety pause apart from a real sync failure
+ *  without parsing message text. dispatchSyncConflict is only ever called from this guard,
+ *  never from a network/auth/unknown error, so every event it fires is one of these three. */
+export type SyncConflictCode = 'remote-newer' | 'no-baseline' | 'unknown'
+function resolveSyncGuardCode(freshness: {
+  error?: string
+  knownRemoteBaselineMs: number
+  remoteFreshnessMs: number
+  hasRemoteRow: boolean
+}): SyncConflictCode {
+  if (freshness.error === SYNC_BLOCKED_NO_REMOTE_BASELINE_MSG) return 'no-baseline'
+  if (freshness.hasRemoteRow && freshness.knownRemoteBaselineMs <= 0) return 'no-baseline'
+  if (
+    freshness.hasRemoteRow &&
+    freshness.remoteFreshnessMs > freshness.knownRemoteBaselineMs + FRESHNESS_TOLERANCE_MS
+  ) return 'remote-newer'
+  return 'unknown'
+}
+
+// Step 13B-QA5-R4 Part 5: source-level dedupe for identical unresolved stale-overwrite
+// conflicts. Without this, an active periodic-sync loop (every SYNC_INTERVAL_MS while
+// local edits keep coming in and remote stays newer) re-dispatches the exact same guard
+// block every ~13s. Suppress repeats of the identical message for 20 minutes (matching
+// the UI-side toast throttle window) -- a genuinely different conflict message is never
+// suppressed, since the dedupe key is the exact message string. Cleared on the next
+// successful sync (see syncToSupabase's poweron:sync-success dispatch below) so a real
+// resolution is picked up immediately rather than waiting out the window.
+const CONFLICT_DISPATCH_DEDUPE_MS = 20 * 60 * 1000 // 20 minutes
+let _lastConflictDispatch: { message: string; at: number } | null = null
+
+function dispatchSyncConflict(error: string, source?: string, code?: SyncConflictCode): void {
   if (typeof window === 'undefined') return
+  const prev = _lastConflictDispatch
+  if (prev && prev.message === error && Date.now() - prev.at < CONFLICT_DISPATCH_DEDUPE_MS) return
+  _lastConflictDispatch = { message: error, at: Date.now() }
   window.dispatchEvent(new CustomEvent('poweron:sync-conflict', {
-    detail: { error, source: source || 'sync' },
+    detail: { error, source: source || 'sync', conflictCode: code || 'unknown' },
   }))
 }
 
@@ -1757,14 +1792,16 @@ export async function syncToSupabase(
     const freshness = await checkManualSaveFreshness(userId, { failClosed })
     if (!freshness.allowed) {
       const error = resolveSyncGuardError(freshness)
+      const code = resolveSyncGuardCode(freshness)
       console.warn('[Sync] Cloud write blocked by stale-overwrite guard', {
         source: options.source || 'sync',
         localFreshnessMs: freshness.localFreshnessMs,
         knownRemoteBaselineMs: freshness.knownRemoteBaselineMs,
         remoteFreshnessMs: freshness.remoteFreshnessMs,
         error,
+        code,
       })
-      dispatchSyncConflict(error, options.source)
+      dispatchSyncConflict(error, options.source, code)
       return {
         success: false,
         blocked: true,
@@ -1812,7 +1849,15 @@ export async function syncToSupabase(
 
     _lastSyncMeta = { savedBy: deviceId, savedAt: now }
     setKnownRemoteBaseline(now, now)
+    // A real success resolves any prior stale-overwrite conflict -- let the next
+    // one (if any) dispatch immediately rather than staying throttled.
+    _lastConflictDispatch = null
     console.log(`[Sync] Synced tenant ${userId} to Supabase at ${now} by ${deviceId}`, options.source ? `(${options.source})` : '')
+    if (typeof window !== 'undefined') {
+      // Lets UI listeners (e.g. header sync-conflict toast dedupe) know a real
+      // cloud sync succeeded, so any suppressed stale-overwrite warning can clear.
+      window.dispatchEvent(new CustomEvent('poweron:sync-success', { detail: { savedBy: deviceId, savedAt: now } }))
+    }
     return { success: true }
   } catch (err: any) {
     console.error('[Sync] Supabase sync error:', err)
@@ -2338,14 +2383,16 @@ export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promi
     const freshness = await checkManualSaveFreshness(_activeTenantUserId, { failClosed: true })
     if (!freshness.allowed) {
       const error = resolveSyncGuardError(freshness)
+      const code = resolveSyncGuardCode(freshness)
       console.warn('[sync] Force sync blocked by stale-overwrite guard', {
         source: options?.source || 'manual',
         localFreshnessMs: freshness.localFreshnessMs,
         knownRemoteBaselineMs: freshness.knownRemoteBaselineMs,
         remoteFreshnessMs: freshness.remoteFreshnessMs,
         error,
+        code,
       })
-      dispatchSyncConflict(error, options?.source)
+      dispatchSyncConflict(error, options?.source, code)
       return {
         success: false,
         blocked: true,

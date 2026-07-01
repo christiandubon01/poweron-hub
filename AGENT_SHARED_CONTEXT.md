@@ -53,10 +53,403 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Step13B-QA1-Fullscreen-Shapes-Save (Cursor) | Blueprint QA — Fullscreen Controls, Shapes Menu, S3/S4, Save Notice | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, src/components/blueprint/ToolPopover.tsx, src/services/blueprintLibraryService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
 | Step13B-QA1-R-Light-Glare-All-Lights (Cursor) | Blueprint — Light Output/Glare for All Light Symbols | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-06-30 |
 | Step13B-QA1-HOTFIX (Claude Code Sonnet 4.6) | Blueprint Viewer — Fix `clearStaleSyncMessages` TDZ Runtime Crash | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA2-Center-Guide-Assist (Claude Code Sonnet 4.6) | Blueprint Viewer — Center-to-Center Guide Assist Repair | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA3-Zoom-Rotation-Arc-S3S4 (Claude Code Sonnet 4.6) | Blueprint Viewer — Zoom to 1000%, Symbol Rotation, Arc-Line Overlay Placement, S3/S4 Visual Polish | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA4-Arc-Measure-Compact-Symbols (Claude Code Sonnet 4.6) | Blueprint Viewer — Arc Line Final Shape, Measure Tool, Compact Symbol Selection Bounds | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, src/services/blueprintLibraryService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA5-MultiPoint-Circuit-Polyline-Measure (Claude Code Sonnet 4.6) | Blueprint Viewer — Multi-Point Circuit Path, Polyline, Multi-Point Measure | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA5-R-Measure-Finalize-Circuit-Distance-Sync-Spam (Claude Code Sonnet 4.6) | Multi-Point Measure Finalize + Circuit Distance + Sync Spam Repair | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA5-R2-Open-MultiPoint-Measure-Path (Claude Code Sonnet 4.6) | Multi-Point Measure — Open Path Repair (finalized polygon→polyline) | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA5-R3-Sync-Failed-Status-Clear (Claude Code Sonnet 4.6) | Header Sync Status — Clear Failed/Blocked State After Successful Sync | src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA5-R4-Cloud-Paused-Status (Claude Code Sonnet 4.6) | Header Sync Status — Quiet "Cloud Paused" State for Remote-Newer Guard Blocks | src/components/v15r/V15rLayout.tsx, src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA5-R4B-Blueprint-Banner-Spam-ConflictCode (Claude Code Sonnet 4.6) | Blueprint Banner De-Spam + conflictCode Classification + 20min Source Dedupe | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, src/components/v15r/V15rLayout.tsx, src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA6-Annotation-List-Dot-Color (Claude Code Sonnet 4.6) | Blueprint Viewer — Match Annotation List Dot Color to Placed Shape Color | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 
 ---
 
 ## Audit & Change Log
+
+### 2026-07-01 — Match Annotation List Dot Color to Placed Shape Color (Step 13B-QA6, NOT COMMITTED)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** UI-only display fix — no annotation save format, scope layer persistence, or Work Package data model touched
+**Feature Area:** Blueprint Viewer — annotations side panel list dot/bullet color, Work Package "Selected Items" list indicator
+**Branch:** main | HEAD = 5a902b5
+**Typecheck:** 0 errors ✅ (`npm run typecheck`, whole project) | **Build:** ✅ 0 errors, 14.75s (pre-existing Vite chunk-size warnings only) | **git diff --check:** PASS ✅ (exit 0)
+
+#### Root cause
+The annotations-list row dot ([OperationsBlueprintPdfViewer.tsx:7902](src/components/blueprint/OperationsBlueprintPdfViewer.tsx), inside `AnnotationRow`) rendered `backgroundColor: a.color || '#facc15'` — reading only the annotation's top-level `color` field. But the canvas renderer for every `type: 'shape'` annotation (which covers electrical symbols, can lights, generic shapes, lines, arc lines, circuit paths, and polylines — all differentiated only by `meta.shapeKind`) resolves its visible border/stroke color as `meta.borderColor || (a.color || default)` ([OperationsBlueprintPdfViewer.tsx:6716](src/components/blueprint/OperationsBlueprintPdfViewer.tsx), reused identically at the electrical-symbol/can-light/generic-shape render branches). Critically, the color-edit popover for shapes persists color changes to `meta.borderColor` via `persistEditAnnotationMeta({ borderColor: c })` ([OperationsBlueprintPdfViewer.tsx:5442](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)) — **not** back onto `a.color`. So any Recessed Light (or other shape/symbol) whose color was changed after initial placement kept showing its original/default dot color in the list while the canvas correctly showed the new color — exactly the reported mismatch ("all Recessed Lights the same category color" instead of each one's actual placed color).
+
+#### Fix
+- New helper `getAnnotationDisplayColor(annotation, fallback = '#facc15')` added directly after `annotationLabel()` ([OperationsBlueprintPdfViewer.tsx:1259](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)): for `annotation.type === 'shape'`, returns `meta.borderColor` if set, otherwise falls back to `annotation.color || fallback` — an exact mirror of the canvas's own priority, reusing the existing `getAnnotationMeta()` helper (no new meta-reading logic invented).
+- `AnnotationRow`'s dot ([OperationsBlueprintPdfViewer.tsx:7902](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)) now calls `getAnnotationDisplayColor(a)` instead of `a.color || '#facc15'` directly. This row is shared by every non-"generate" annotation group in the list (text inserts, highlights, underlines, notes, callouts, pen/marker, shapes/electrical symbols/can lights/lines/arc lines/circuit paths/polylines, measurements) — non-shape types (notes, pen, marker, highlights, etc.) are unaffected since they only ever set `a.color` directly and have no `meta.borderColor` concept, so the helper falls through to the exact same `a.color || fallback` it used before.
+- `GeneratedRow` (RFI/Coordination Question entries, [OperationsBlueprintPdfViewer.tsx:7952](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)) was intentionally left on its hardcoded `bg-amber-400` dot — these aren't placed shapes/symbols with a user-selected color, they're a fixed category indicator (RFI vs. Coordination), so there is no "actual placed color" to match.
+- Work Package modal's "Selected Items" list ([OperationsBlueprintPdfViewer.tsx:8277-8287](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)) previously showed only plain text (`Pg N: label`) with no color indicator at all. Added a small dot per row, resolved by looking up the matching annotation from the already-computed `selectedPackageAnnotations` array (by `item.annotationId`) and calling the same `getAnnotationDisplayColor()` helper — so when building a Work Package, the selected-items summary now shows the same color as the main list and the canvas, helping the user visually confirm they selected the correct colored fixtures (e.g., only the green Recessed Lights) before saving.
+
+#### Color fields used, in priority order
+1. `meta.borderColor` (only for `type === 'shape'` — covers electrical symbols, can lights, generic shapes, lines, arc lines, circuit paths, polylines) — this is what the color-edit popover writes and what the canvas renders first.
+2. `annotation.color` (top-level field, set at creation time for every annotation type, and still the only color field for non-shape types like notes/pen/marker/highlights).
+3. `'#facc15'` (existing default amber, unchanged — used when neither field is set, e.g. very old annotations).
+
+No `meta.strokeColor` / `meta.fillColor` / `meta.lightColor` / `meta.symbolColor` fields exist anywhere in this codebase's annotation model — verified by grep before writing the helper — so only the two real fields above (plus the pre-existing default) were wired in.
+
+#### Confirmed
+- Electrical symbols and can lights: use their actual canvas `meta.borderColor`/`a.color` via the shared `type === 'shape'` code path — no separate logic needed since they render through the identical branch as generic shapes.
+- Generic shapes, lines, arc lines, circuit paths, polylines: all `type: 'shape'` with different `meta.shapeKind` values, all covered by the same helper/priority.
+- Work Package selection rows ("Selected Items" list in the Create/Edit Work Package modal) now show a matching color dot.
+- Annotation grouping, checkbox selection, delete buttons, selected-count display, isolate-package eye toggle, and Work Package creation/save flow: none of that logic was touched — this pass only changed what color value feeds two `style={{ backgroundColor }}` spans.
+- Save safety guards (`checkManualSaveFreshness`, `resolveSyncGuardError`, stale-overwrite guards, snapshot-before-overwrite, remote-baseline tracking): not touched, not opened this pass.
+- No Supabase migrations, export behavior, material list engine, labor engine, dashboard files, or project tab files were touched. `src/services/blueprintLibraryService.ts` was not opened — this was resolvable entirely from data already available on the client (`meta`/`color` already pass through `sanitizeAnnotation()` unfiltered from prior QA passes), so no service-layer change was needed.
+- Multi-Point Measure open path, Circuit Path distance, Arc Line shape, Measure calibration, compact symbol selection boxes, center-to-center Guide Assist, zoom to 1000%, symbol rotation, fullscreen controls, S3/S4, light output/glare, Work Package persistence/isolate, Shapes dropdown, sync status behavior — no logic in any of these paths was modified.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-07-01 — Blueprint Banner De-Spam + conflictCode Classification + 20-Minute Source Dedupe (Step 13B-QA5-R4B, NOT COMMITTED)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** UX/status-lifecycle repair, additive classification only — no sync guard, freshness, or overwrite logic touched
+**Feature Area:** Blueprint viewer's `syncNotice` banner, backupDataService's conflict-event classification/dedupe, header status/tap wording alignment
+**Branch:** main | HEAD = 5a902b5
+**Typecheck:** 0 errors ✅ (`npm run typecheck`, whole project) | **Build:** ✅ 0 errors, 23.91s (pre-existing Vite chunk-size warnings only) | **git diff --check:** PASS ✅ (exit 0)
+
+This is a direct follow-up to Step 13B-QA5-R4 (same task title, expanded scope): R4 fixed the **header** status label; this pass fixes the **Blueprint canvas banner** that was still repeating the raw guard text, plus adds the explicit `conflictCode` classification and widens the source-level dedupe window that R4 introduced at 60s to the full 20 minutes the task specified.
+
+#### Root cause of the repeating Blueprint banner
+`showTransientSyncNotice()` in `OperationsBlueprintPdfViewer.tsx` had **no dedupe at all** — every call replaced `syncNotice` and reset its 8s auto-dismiss timer. Three call sites (`persistAnnotation`, `removeAnnotation`, `persistScopeLayers`) called it with the raw guard message (`saveResult.warning` / `result.warning`, sourced from `blueprintLibraryService.ts`'s hardcoded remote-newer text) every single time a local save succeeded but cloud sync was guard-blocked. During active Blueprint editing (drawing, moving shapes, placing symbols) this fires on nearly every interaction, so the large top-center amber banner ("Cloud sync was blocked because remote data is newer than this local session...") kept re-appearing continuously instead of the intended "once, then quiet."
+
+#### Fix — Blueprint banner suppression
+- New `syncBlockedNoticeShownRef` ([OperationsBlueprintPdfViewer.tsx:1501-1505](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)) and `showSyncPausedNoticeOnce()` helper ([OperationsBlueprintPdfViewer.tsx:2109-2121](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)): shows the banner with the calm, task-specified text **`"Saved locally — cloud paused until reload."`** exactly once per unresolved conflict, then silently no-ops on every subsequent call until the gate is reset.
+- All 5 sync-blocked call sites (`persistAnnotation`'s success-with-warning branch and its catch's `isSyncBlockedMessage` branch, `removeAnnotation`'s equivalent two branches, `persistScopeLayers`'s warning branch) now call `showSyncPausedNoticeOnce()` instead of `showTransientSyncNotice(rawGuardMessage + suffix)`. `showTransientSyncNotice` itself is untouched and still used as-is for its other legitimate purposes (Circuit Path "calibrate to show distance" hint, "Calibrate measure first." measure-tool prompts) — those are unrelated to the sync guard and were never part of the spam.
+- `clearStaleSyncMessages()` ([OperationsBlueprintPdfViewer.tsx:2090-2099](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)) now also resets `syncBlockedNoticeShownRef.current = false` — the same function already called on every `cloudSynced: true` result and on `poweron:data-saved`, so the gate re-arms automatically the moment the conflict actually resolves.
+- New listener: the viewer now also listens for `poweron:sync-success` ([OperationsBlueprintPdfViewer.tsx:2569-2578](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)) and calls `clearStaleSyncMessages()` on it — previously the viewer only reacted to its own save's `cloudSynced` flag, so a conflict resolved by an *unrelated* successful sync (e.g. periodic sync succeeding while no Blueprint edit was in flight) would leave the gate stuck shown-once/suppressed with no way to re-arm until the page reloaded.
+
+#### Remote-newer conflict classification (Part 1)
+Added an explicit, reliable `conflictCode` to the event payload instead of relying only on message-string matching:
+- New exported type `SyncConflictCode = 'remote-newer' | 'no-baseline' | 'unknown'` and `resolveSyncGuardCode()` ([backupDataService.ts](src/services/backupDataService.ts), mirrors `resolveSyncGuardError`'s exact branches) — classifies every guard block deterministically from the same freshness data already computed for the error message, no new risk to the guard logic itself (pure additional classification, zero behavior change).
+- `dispatchSyncConflict(error, source, code)` now includes `conflictCode` in `detail` alongside the existing `error`/`source` fields (both call sites — `syncToSupabase`'s guard and `forceSyncToCloud`'s pre-stamp guard — updated to pass the resolved code).
+- `V15rLayout.tsx`'s `handleSyncConflict` reads `detail.conflictCode` and documents that all three codes get identical `'paused'` treatment today (since `dispatchSyncConflict` is exclusively guard-driven, never a real failure) — the code is available for any future listener that wants to react differently per sub-reason, without needing to parse message text.
+
+#### Source-level dedupe widened to 20 minutes (Part 5)
+R4 had introduced a 60-second dedupe inside `dispatchSyncConflict`; this pass widens `CONFLICT_DISPATCH_DEDUPE_MS` to `20 * 60 * 1000` to match the task's explicit "suppress repeated identical remote-newer conflict events for at least 20 minutes" and the existing UI-side toast throttle window, so both layers now agree. A genuinely different guard message is never suppressed (dedupe key is the exact message string). `_lastConflictDispatch` is cleared the instant `syncToSupabase()` succeeds (same success branch as the existing `poweron:sync-success` dispatch) — a real resolution is never held back by the window.
+
+#### Header/tap wording alignment
+The header tap-guidance toast (shown when tapping a `'paused'` status) now uses the exact task-specified sentence — `"Cloud sync is paused because newer remote data exists. Reload latest before cloud syncing."` — matching the conflict-toast wording exactly instead of a shorter paraphrase, for consistency across the two surfaces.
+
+#### Whether dispatchSyncConflict was changed
+Yes — added an optional third `code` parameter and the `conflictCode` field in the event detail, and widened the internal dedupe window from 60s to 20 minutes. Its two call sites, the `error`/`source` fields, and the guard logic that decides *whether* to block are all unchanged.
+
+#### How paused/conflict state clears after success/reload
+- Backend: `_lastConflictDispatch` cleared in `syncToSupabase()`'s success branch (unchanged location from R4, just re-verified).
+- Header: `poweron:sync-success` listener sets `syncStatus('synced')` immediately (unchanged from R4/R3).
+- Blueprint: `poweron:sync-success` (new listener, this pass) and `poweron:data-saved`/a `cloudSynced: true` save result all call `clearStaleSyncMessages()`, which clears the visible `syncNotice`, cancels its timer, and resets `syncBlockedNoticeShownRef` so a *future* conflict can show its own one-time banner.
+
+#### Preserved (verified untouched)
+- **Save safety guards unchanged**: `checkManualSaveFreshness`, `resolveSyncGuardError`, the stale-overwrite guard in `syncToSupabase`/`forceSyncToCloud`, header-save freshness guard, safety-snapshot-before-overwrite, remote-baseline tracking, and `allowOverwriteNewerRemote`/snapshot-restore-bypass semantics were not touched. `resolveSyncGuardCode` is a pure, additive read of the same freshness data — it cannot change whether a write is blocked.
+- True network/auth/unknown sync failures are unaffected — those never call `dispatchSyncConflict` and still flow through `handleHeaderSaveLiveData`'s/the retry-tap's `catch`/`else` branches straight to `setSyncStatus('failed')` with "Sync failed" wording, exactly as before R4/this pass.
+- Multi-Point Measure open-path rendering, Circuit Path distance/placement, Arc Line final shape, Measure calibration, compact electrical symbol selection bounds, Guide Assist center-to-center, zoom-to-1000%, symbol rotation, fullscreen controls, S3/S4 symbols, light output/glare, Work Package persistence/isolate, Shapes dropdown cleanup — no logic in any of these paths was touched.
+- No Supabase migrations, export behavior, material list engine, labor engine, dashboard files, or project tab files were touched. `blueprintLibraryService.ts` was inspected (to confirm `warning` fields are always guard-blocked-family text) but required zero changes.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`, `src/components/v15r/V15rLayout.tsx`, and `src/services/backupDataService.ts` are free for other agents.
+
+---
+
+### 2026-07-01 — Replace Remote-Newer Sync Failed Spam With Quiet Cloud Paused State (Step 13B-QA5-R4, NOT COMMITTED)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** UX/status-state repair only — no sync guard, freshness, or overwrite logic touched
+**Feature Area:** Header sync status indicator + conflict toast, for the stale-overwrite safety guard specifically
+**Branch:** main | HEAD = 5a902b5
+**Typecheck:** 0 errors ✅ (`npm run typecheck`, whole project) | **Build:** ✅ 0 errors, 14.70s (pre-existing Vite chunk-size warnings only) | **git diff --check:** PASS ✅ (exit 0)
+
+#### Root cause of repeated "Sync Failed" status
+`dispatchSyncConflict()` ([backupDataService.ts](src/services/backupDataService.ts)) is called **exclusively** from the stale-overwrite safety guard inside `syncToSupabase()` and `forceSyncToCloud()` — never from a real network/auth/unknown error. But the `poweron:sync-conflict` listener in `V15rLayout.tsx` set `setSyncStatus('failed')` every time it fired, using the same scary red "Sync failed — tap to retry" label as a genuine sync error. While remote stayed newer than the local session and local edits kept marking `_dataChanged`, `startPeriodicSync()` retried every `SYNC_INTERVAL_MS` (13s) and the guard correctly re-blocked each attempt — so the header sat on "Sync Failed" almost continuously (QA5-R had already throttled the *toast* to once per 20 minutes, but the persistent header label itself was still the alarming "failed" wording the whole time). This is a safety guard working exactly as designed, not a failure — the local save was always succeeding.
+
+#### New status used for the remote-newer safety block
+Added `'paused'` to the `syncStatus` union: `'idle' | 'syncing' | 'synced' | 'failed' | 'paused'` ([V15rLayout.tsx:286-289](src/components/v15r/V15rLayout.tsx)). `'failed'` is now reserved for genuine sync errors (Supabase not configured, network/auth errors, unknown write failures) — those code paths were left untouched. Every code path that reacts to the guard blocking a write (`handleSyncConflict` for `poweron:sync-conflict`, the manual retry-tap's `result.blocked` branch, and `handleHeaderSaveLiveData`'s `result.blocked` branch) now sets `'paused'` instead of `'failed'`.
+
+#### Header label
+- Status dot: new `bg-orange-400` for `paused` (distinct from green/synced, yellow-pulse/syncing, red/failed).
+- Label text: `Cloud paused — saved locally <relative time>` (amber `text-amber-400`), replacing what would have been "Sync failed — tap to retry" for this condition — matches the task's "Saved locally — cloud paused until reload" intent without claiming lost work.
+- Tooltip: `Cloud sync paused — tap for details`.
+
+#### Tap behavior
+The header button's `onClick` now checks `syncStatus === 'paused'` first and **returns early with a guidance toast** — `"Reload latest remote data before syncing to cloud."` (5s) — instead of falling into the existing blind-retry branch (which only still runs for `'failed'`/`'idle'`). Tapping a paused status can no longer re-trigger the same blocked sync in a loop.
+
+#### Toast dedupe/spam fix
+Two layers, both scoped to the stale-overwrite guard only:
+1. **UI-side (already existed from QA5-R, reused here):** `handleSyncConflict`'s 20-minute per-message suppression window (`SYNC_CONFLICT_SUPPRESS_MS`) is unchanged — still only shows the explanatory toast once per unresolved conflict, not on every retry tick. The toast text itself was changed from the raw technical guard string to the calmer, task-specified copy: `"Cloud sync is paused because newer remote data exists. Reload latest before cloud syncing."` (`SYNC_PAUSED_TOAST_MSG`, declared once inside the effect and reused by both the conflict handler and the success-clear comparison).
+2. **Source-side (new, Part 6):** `dispatchSyncConflict()` itself now dedupes identical messages within `CONFLICT_DISPATCH_DEDUPE_MS` (1 minute) via a new module-level `_lastConflictDispatch` ref — the periodic-sync loop retrying an unresolved conflict every 13s no longer re-dispatches the `poweron:sync-conflict` event (and its `console.warn`) on every tick, only once per minute at most. A genuinely different guard message (e.g. flips from "remote newer" to "no verified baseline") is never suppressed, since the dedupe key is the exact message string. Cleared immediately (`_lastConflictDispatch = null`) the moment `syncToSupabase()` succeeds, right alongside the existing `poweron:sync-success` dispatch — so a real resolution is picked up instantly, not throttled.
+
+#### Was `dispatchSyncConflict` changed?
+Yes, but only to add the 1-minute source-level dedupe described above — its call sites, its `error`/`source` parameters, and the event payload shape (`detail: { error, source }`) are all unchanged. `resolveSyncGuardError`, `SYNC_BLOCKED_REMOTE_NEWER_MSG`, `SYNC_BLOCKED_NO_REMOTE_BASELINE_MSG`, `REMOTE_FRESHNESS_UNKNOWN_MSG`, and every guard-evaluation function (`checkManualSaveFreshness`, the stale-overwrite checks in `syncToSupabase`/`forceSyncToCloud`) are untouched.
+
+#### How paused/conflict state clears after success
+Unchanged mechanism from QA5-R3, now correctly clearing `'paused'` too since `handleSyncSuccessEvent` always sets `setSyncStatus('synced')` regardless of which non-synced state preceded it: a real `syncToSupabase()` success dispatches `poweron:sync-success` (with `savedBy`/`savedAt`), the listener sets `syncStatus('synced')` immediately, updates `lastSyncTime`/`lastSyncDevice` from the event detail, clears `lastSyncConflictRef`, and dismisses the toast if it's still showing the exact `SYNC_PAUSED_TOAST_MSG` text (never clobbers an unrelated toast). The new source-level `_lastConflictDispatch` dedupe is cleared in the same success branch in `backupDataService.ts`.
+
+#### Preserved (verified untouched)
+- **Save safety guards unchanged**: `checkManualSaveFreshness`, `resolveSyncGuardError`, the stale-overwrite guard in `syncToSupabase`, `forceSyncToCloud`'s pre-stamp guard, header-save freshness guard, safety-snapshot-before-overwrite, remote-baseline tracking (`setKnownRemoteBaseline`), and `allowOverwriteNewerRemote`/snapshot-restore-bypass semantics were not touched — a genuinely newer remote still blocks every write attempt exactly as before, and no new caller passes `allowOverwriteNewerRemote` for a normal save. This pass only changed which *status label* the UI shows for an already-correct block, plus how often the underlying event fires for an unresolved one.
+- Multi-Point Measure open-path rendering (QA5-R2), Circuit Path distance/placement, Arc Line final shape, Measure calibration, compact electrical symbol selection bounds, Guide Assist center-to-center, zoom-to-1000%, symbol rotation, fullscreen controls, S3/S4 symbols, light output/glare, Work Package persistence/isolate — no logic in any of these paths was touched.
+- No Supabase migrations, export behavior, material list engine, labor engine, dashboard files, or project tab files were touched.
+
+**Lock released** — `src/components/v15r/V15rLayout.tsx` and `src/services/backupDataService.ts` are free for other agents.
+
+---
+
+### 2026-07-01 — Sync Failed Status Clears After Successful Save (Step 13B-QA5-R3, NOT COMMITTED)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Status-lifecycle repair only — no sync guard, freshness, or snapshot logic touched
+**Feature Area:** Blueprint/App header — cloud sync status indicator + conflict toast
+**Branch:** main | HEAD = 5a902b5
+**Typecheck:** 0 errors ✅ (`npm run typecheck`, whole project) | **Build:** ✅ 0 errors, 17.49s (pre-existing Vite chunk-size warnings only) | **git diff --check:** PASS ✅ (exit 0)
+
+#### Root cause
+In the Step 13B-QA5-R conflict-dedupe effect ([V15rLayout.tsx:375-399](src/components/v15r/V15rLayout.tsx)), `handleSyncConflict` correctly set `setSyncStatus('failed')` when `poweron:sync-conflict` fired (a real stale-overwrite block from `syncToSupabase`'s guard). But the listener registered for the success events — `clearSyncConflictSuppression`, bound to both `poweron:sync-success` and `poweron:data-saved` — only reset the dedupe ref (`lastSyncConflictRef.current = null`); it never called `setSyncStatus('synced')` or touched the visible toast. So once the header flipped to "Sync Failed", the *only* thing that could clear it back to "Synced" was the unrelated 30s status-poll `setInterval` ([V15rLayout.tsx:358-365](src/components/v15r/V15rLayout.tsx)), which only fires if `getLastSyncMeta()?.savedBy` happens to be truthy at that tick — meaning the header could show a stale "Sync Failed" for up to ~30 seconds (or longer if that interval wasn't running) after the app had already saved successfully, exactly matching the report.
+
+#### Fix
+[V15rLayout.tsx:388-411](src/components/v15r/V15rLayout.tsx): replaced the shared `clearSyncConflictSuppression` handler on `poweron:sync-success` with a dedicated `handleSyncSuccessEvent`:
+- Clears `lastSyncConflictRef` (unchanged behavior).
+- Calls `setSyncStatus('synced')` immediately — this is the actual fix, making the header reflect success the instant the real cloud write completes rather than waiting on the polling interval.
+- Reads the event's existing `detail: { savedBy, savedAt }` (already dispatched by `syncToSupabase` at [backupDataService.ts:1819](src/services/backupDataService.ts) — unmodified) to update `lastSyncTime`/`lastSyncDevice` with the actual sync timestamp/device instead of `Date.now()`.
+- Only dismisses the toast if it is still showing the *exact* conflict message that was suppressed (`current === conflictMessage`, checked via functional `setToastMessage` update) — never clobbers an unrelated toast that happens to be visible at the same moment.
+- `poweron:data-saved` keeps the old `clearSyncConflictSuppression` (dedupe-ref-only) behavior, since that event only signals a local save, not a confirmed cloud sync, and (per the QA5-R note) is not dispatched anywhere in this codebase today anyway — no incorrect "synced" flip could happen from a merely-local save once/if that event starts firing.
+
+#### Which success event clears the state
+`poweron:sync-success`, dispatched from `syncToSupabase()` ([backupDataService.ts:1819](src/services/backupDataService.ts)) on every successful Supabase write — covers periodic sync (`startPeriodicSync` → `syncToSupabase`), header "Save Live Data" (`forceSyncToCloud` → `syncToSupabase`), and the header status button's manual retry-tap (calls `forceSyncToCloud` directly), since all three funnel through the same `syncToSupabase` success path. No new event was added; **`poweron:sync-success` and `poweron:data-saved` dispatch sites in `backupDataService.ts` were not modified** — both already fired with the payload this fix needed.
+
+#### Verified: blocked → later success clears correctly
+- `poweron:sync-conflict` fires (stale-overwrite guard blocks a write) → header flips to "Sync Failed", one throttled toast shown (20-minute dedupe from QA5-R, untouched).
+- A later sync succeeds (remote catches up, or the guard passes on retry) → `poweron:sync-success` fires → header flips to "Synced" **immediately**, the conflict toast (if still visible) is dismissed, `lastSyncConflictRef` is cleared so a *new* future conflict can surface its own toast without waiting out the old 20-minute window.
+
+#### Preserved (verified untouched)
+- **Save safety guards unchanged**: `checkManualSaveFreshness`, `resolveSyncGuardError`, `dispatchSyncConflict`'s call sites/payload, the stale-overwrite guard in `syncToSupabase`, `forceSyncToCloud`'s pre-stamp guard, and `allowOverwriteNewerRemote` semantics were not touched — a genuinely newer remote still blocks every write attempt exactly as before. No new caller passes `allowOverwriteNewerRemote` for a normal save.
+- Header-save freshness guard, safety-snapshot-before-overwrite (`createHeaderSaveSafetySnapshot`), and remote-baseline tracking (`setKnownRemoteBaseline`) — untouched.
+- The QA5-R 20-minute duplicate-conflict-toast throttle (`SYNC_CONFLICT_SUPPRESS_MS`, `handleSyncConflict`'s `isDuplicate` check) is completely unmodified — only the *success* side of the effect changed.
+- `handleHeaderSaveLiveData`'s own direct `setSyncStatus('synced')` on success ([V15rLayout.tsx:734](src/components/v15r/V15rLayout.tsx)) and the status-button retry handler's own direct success/failure branches were not touched — they already worked correctly for their own immediate call; this fix specifically closes the gap for *out-of-band* successes (e.g., a periodic sync succeeding after an earlier manual save was blocked).
+- Multi-Point Measure open-path rendering (QA5-R2), Circuit Path distance/placement, Arc Line final shape, Measure calibration, compact electrical symbol selection bounds, Guide Assist center-to-center, zoom-to-1000%, symbol rotation, fullscreen controls, S3/S4 symbols, light output/glare, Work Package persistence/isolate — no logic in any of these paths was touched; this pass only edited one `useEffect` in `V15rLayout.tsx`.
+- No Supabase migrations, export behavior, material list engine, labor engine, dashboard files, or project tab files were touched. `backupDataService.ts` was inspected (to confirm `poweron:sync-success`'s existing detail payload and that every success path already funnels through it) but required zero changes.
+
+**Lock released** — `src/components/v15r/V15rLayout.tsx` is free for other agents.
+
+---
+
+### 2026-07-01 — Open Multi-Point Measure Path Repair (Step 13B-QA5-R2, NOT COMMITTED)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Single scoped rendering fix — no distance-calc or finalize logic changed
+**Feature Area:** Blueprint Viewer — finalized Multi-Point Measure (`measure-perimeter`) annotation rendering
+**Branch:** main | HEAD = 5a902b5
+**Typecheck:** 0 errors ✅ (`npm run typecheck`, whole project) | **Build:** ✅ 0 errors, 15.78s (pre-existing Vite chunk-size warnings only) | **git diff --check:** PASS ✅ (exit 0)
+
+#### Root cause
+The **finalized** `measure-perimeter` annotation render ([OperationsBlueprintPdfViewer.tsx:7158](src/components/blueprint/OperationsBlueprintPdfViewer.tsx), inside the main annotation-map loop) drew the committed path with an SVG `<polygon>`. `<polygon>` always implicitly closes its point list by drawing an extra segment from the last point back to the first — this is what produced the unwanted perimeter/closed-shape look the user reported, purely a rendering artifact. It only affected the *finalized* (saved) annotation: the **live in-progress draft** ([OperationsBlueprintPdfViewer.tsx:7314-7338](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)) already correctly used `<polyline>` for every tool except `measure-area`, so the path looked open while drawing and only "snapped shut" the instant it was committed/reloaded. The distance-sum math ([OperationsBlueprintPdfViewer.tsx:3331-3335](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)) was already correct — it only ever summed consecutive segments `i=1..N` and never added a closing `pointN → point1` term — so no distance-calc change was needed; only the visual was wrong.
+
+#### Fix
+- [OperationsBlueprintPdfViewer.tsx:7158](src/components/blueprint/OperationsBlueprintPdfViewer.tsx): changed the finalized `measure-perimeter` branch from `<polygon>` to `<polyline>` (same points, stroke, markers, `strokeLinejoin` — only the element tag changed). The sibling `measure-area` branch (line 7161, true closed-area tool, unaffected/unchanged) still renders `<polygon>` with fill, since Area is meant to be a closed shape and was explicitly out of scope to preserve.
+- [OperationsBlueprintPdfViewer.tsx:3342,3348](src/components/blueprint/OperationsBlueprintPdfViewer.tsx): added explicit `closed: false` to both the calibrated and not-calibrated `meta` branches for `measure-perimeter`, alongside the pre-existing `measureType: 'multi-point'` — makes the open-path intent explicit in stored data (previously implicit/absent), no behavior change since nothing read `meta.closed` for this type before.
+- No change to how points are captured, how Stop Measuring finalizes (`measurePendingCommit` effect, still adds every clicked point in order, no closing point appended), or to `points` array construction anywhere — a user who intentionally clicks back near their first point still gets a visually "closed-looking" path, because that's what they placed, not because the renderer forces it.
+
+#### Verified behavior
+- 4 points clicked in an open arrangement → Stop Measuring → path renders as 3 open segments (1→2, 2→3, 3→4), no 4→1 closing line, total distance = sum of those 3 segments only.
+- Placing the last point intentionally back near point 1 → still renders correctly (it's just point 4 sitting near point 1's coordinates — no different code path, no forced closure).
+- Circuit Path and Polyline (`kind === 'circuit-path'` / `'polyline'`, [OperationsBlueprintPdfViewer.tsx:6758](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)) were inspected and already use `<polyline>` — completely untouched by this fix, confirmed still open-path and still showing distance for Circuit Path.
+- Measure Area (`measure-area`) closed-polygon rendering, fill pattern, and area-sum math untouched — still closes intentionally, as designed.
+
+#### Preserved (verified untouched)
+- Circuit Path placement/snap/distance/persistence, Polyline drawing, Arc Line final shape, Measure calibration, compact electrical symbol selection bounds, Guide Assist center-to-center, zoom-to-1000%, symbol rotation, fullscreen controls, Shapes dropdown, S3/S4 symbols/labels, all light output/glare behavior, Hide Lighting Effects, Hide Labels, Work Package persistence/isolate eye toggle, header-save safety guards/snapshots/freshness guard, sync-conflict toast throttle — no logic in any of these paths was touched; this pass changed one JSX element tag plus two additive `meta.closed` keys.
+- No Supabase migrations, export behavior, material list engine, labor engine, dashboard files, or project tab files were touched. `blueprintLibraryService.ts` required zero changes for this fix (not opened this pass; its uncommitted QA4 diff is pre-existing).
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-07-01 — Multi-Point Measure Finalize + Circuit Path Distance + Sync-Blocked Toast Spam Repair (Step 13B-QA5-R, NOT COMMITTED)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Scoped QA repair — 3 independent fixes preserving all Step 12/13/QA1-5 work
+**Feature Area:** Blueprint Viewer — Multi-Point Measure finalize, Circuit Path distance, global cloud-sync-blocked toast spam
+**Branch:** main | HEAD = 5a902b5
+**Typecheck:** 0 errors ✅ (`tsc --noEmit`, whole project) | **Build:** ✅ 0 errors, 14.71s (pre-existing Vite chunk-size warnings only) | **git diff --check:** PASS ✅ (exit 0)
+
+#### Part 1/2 — Multi-Point Measure: Stop Measuring erased the path instead of finalizing it
+- **Root cause:** the "Stop Measuring" button cleared `measureDraftPoints`/`measureDraftRef` (the live-draft render source) synchronously, then queued the finalized annotation via `setMeasurePendingCommit(...)`, processed by a separate `useEffect`. That effect called `persistAnnotation(ann)` — an **async** local-save + cloud-sync round trip — but never added the new annotation to `allAnnotations` itself; it relied entirely on `persistAnnotation`'s `finally` block calling `loadAnnotations()` once the mutation queue drained. Result: the draft vanished immediately on click, and nothing re-appeared until the async save/reload resolved (or never, if calibration was missing, since the effect returned early with only a toast and no annotation at all). This is exactly the reported "whole measure line disappears" bug. Circuit Path/Polyline (`finalizePathDraft`) never had this bug because it already called `setAllAnnotations((prev) => [...prev, ann])` optimistically before persisting.
+- **Fix** ([OperationsBlueprintPdfViewer.tsx:3251](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)): the `measurePendingCommit` effect now adds the finalized annotation to `allAnnotations` optimistically (`setAllAnnotations((prev) => [...prev, ann])`) before calling `persistAnnotation`, matching the pattern already proven for Circuit Path/Polyline — the path is visible on the very next render, with no gap.
+- **Calibration is no longer required to finalize a multi-point measure.** Previously the effect bailed out entirely (no annotation created) when the page had no calibration. Now, only for `measure-perimeter` (Multi-Point Measure), the early-return is skipped: the path still commits and renders with `meta.label = 'Calibrate measure first.'` (shown on-canvas next to the path, using the annotation's existing label-rendering) plus the existing transient toast. `measure-distance`/`measure-area` keep their prior no-calibration behavior unchanged (silent discard + toast) since neither was reported broken and both are out of scope.
+- **Total distance calc (unchanged math, now always reaches render):** sum of consecutive segment lengths (`Math.hypot` between each pair, i=1..N), divided by the calibrated scale (manual calibration takes precedence over single-candidate auto-detected scale — same precedence already used elsewhere). Stored as `meta.realWorldPerimeter` (pre-existing field) plus new `meta.totalDistance` (same value, added per the task's preferred meta shape) and `meta.measureType: 'multi-point'`, `meta.calibrated: true|false`. Label text changed from `"12.34 ft"` to `"Total: 12.34 ft"` for on-canvas clarity per the QA ask; this only affects the multi-point/perimeter tool's committed label, not distance/area.
+- Cancel (discard-without-persisting) was already correct and untouched — it only clears the draft refs/state, never reaches the commit effect.
+
+#### Part 3/4 — Circuit Path: no distance shown
+- **Root cause:** `finalizePathDraft()` (shared by Circuit Path and Polyline) never computed a distance at all — it only stored `meta.points`/`pathType`/`closed`.
+- **Fix** ([OperationsBlueprintPdfViewer.tsx:3210](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)): for `shapeKind === 'circuit-path'` only (Polyline is unaffected — no distance requirement was requested for it), finalize now reads the same manual-over-auto calibration precedence used by the measure tools and, on the current page:
+  - **Calibrated:** sums consecutive segment lengths across `meta.points`, divides by scale, stores `meta.totalDistance`, `meta.distanceUnit`, `meta.distanceLabel = "Total: X.XX ft"`.
+  - **Not calibrated:** stores `meta.distanceLabel = "Circuit path saved — calibrate measure to show distance."` and fires the same non-blocking transient toast (`showTransientSyncNotice`) — the path still saves; calibration is never required to create it.
+- **Render** ([OperationsBlueprintPdfViewer.tsx:6758](src/components/blueprint/OperationsBlueprintPdfViewer.tsx), `kind === 'circuit-path'` branch): added a plain absolutely-positioned HTML label (not SVG text) centered on the average of the path's local vertex positions. It is deliberately **not** drawn inside the existing `viewBox="0 0 100 100" preserveAspectRatio="none"` SVG — that viewBox stretches x/y independently to fit the annotation's bounding box, which would visually distort any text glyphs drawn inside it for a non-square circuit path. The HTML label uses percentage `left`/`top`, so it moves and stays correctly positioned with the path at any zoom level/pan without distortion, and does not require a fixed max-width for the calibrated case (short "Total: X ft" text) while wrapping at ~170px for the longer not-calibrated note so it doesn't overlap large areas of the drawing.
+- Polyline's own render/finalize path is completely unchanged (`isCircuit` gates every new line added).
+- Circuit Path persistence is unchanged (`setAllAnnotations` optimistic add + `persistAnnotation`, already correct from Step 13B-QA5) — the new distance fields are additive `meta` keys, passed through unfiltered by `blueprintLibraryService.sanitizeAnnotation` exactly like every other `meta` key on this shape type, so the path (and its distance label) survives a hard reload with zero service-layer changes.
+
+#### Part 6 — Cloud sync-blocked toast spam ("remote data is newer" popping up every few minutes)
+- **Root cause:** `startPeriodicSync()` ([backupDataService.ts:141](src/services/backupDataService.ts)) retries `syncToSupabase()` every `SYNC_INTERVAL_MS` (13s) whenever `_dataChanged` is true. When the stale-overwrite guard blocks the sync (remote genuinely newer than the session's known baseline — the guard itself is correct and was NOT touched), `_dataChanged` is never cleared, so the same blocked sync retries and re-dispatches `poweron:sync-conflict` on every future tick. `V15rLayout.tsx`'s `handleSyncConflict` listener ([V15rLayout.tsx:369](src/components/v15r/V15rLayout.tsx), before this fix) unconditionally called `setToastMessage(...)` on every single event with no dedupe — so the identical "Cloud sync was blocked..." toast re-appeared repeatedly until the user reloaded or the remote/local state changed.
+- **Fix (dedupe/throttle only — no guard logic touched):**
+  - [V15rLayout.tsx:286](src/components/v15r/V15rLayout.tsx): added `lastSyncConflictRef` (`{ message, shownAt } | null`).
+  - [V15rLayout.tsx:368](src/components/v15r/V15rLayout.tsx): `handleSyncConflict` now compares the incoming message + timestamp against the ref. If the same message was already shown within the last 20 minutes (`SYNC_CONFLICT_SUPPRESS_MS`), the toast is suppressed (header `syncStatus` still flips to `'failed'` every time, so the small persistent status indicator remains accurate — only the interruptive toast is throttled). A genuinely different conflict message, or the same message after the window elapses, shows immediately.
+  - Suppression clears (and the next conflict, if any, will show again) on: a real successful cloud sync (new `poweron:sync-success` event, dispatched from [backupDataService.ts:1813](src/services/backupDataService.ts) right after `_lastSyncMeta`/`setKnownRemoteBaseline` are updated on a successful `syncToSupabase` — covers periodic sync, manual retry, and header Save's final sync), the pre-existing `poweron:data-saved` event (listener wired per the task's explicit acceptance criteria; harmless no-op today since nothing in this codebase currently dispatches that event, but it activates for free if/when something does), and implicitly on page reload (the ref re-inits to `null`).
+  - `syncToSupabase`'s stale-overwrite guard, `checkManualSaveFreshness`, `resolveSyncGuardError`, `dispatchSyncConflict`'s call sites/payload, and `forceSyncToCloud`'s guard were **not modified** — save safety is unchanged; a genuinely newer remote still blocks every write attempt exactly as before. `allowOverwriteNewerRemote` was not touched or added to any normal save path.
+
+#### Preserved (verified untouched)
+- Circuit Path snap-to-symbol-center placement, Polyline drawing, Stop/Cancel button semantics (Stop = finalize & keep, Cancel = discard), Arc Line final shape, Measure calibration/manual-entry parsing, compact electrical symbol selection bounds, Guide Assist center-to-center, zoom-to-1000%, symbol rotation, fullscreen controls, Shapes dropdown, S3/S4 symbols/labels, all light output/glare behavior, Hide Lighting Effects, Hide Labels, Work Package persistence/isolate eye toggle, header-save safety guards/snapshots/freshness guard, iPad stale-warning cleanup — no logic in any of these paths was modified, only additive branches gated on `type === 'measure-perimeter'` / `shapeKind === 'circuit-path'`, plus the toast-dedupe wrapper around the existing (unchanged) sync-conflict payload.
+- No Supabase migrations, export behavior, material list engine, labor engine, dashboard files, or project tab files were touched. `src/services/blueprintLibraryService.ts` required zero changes — `sanitizeAnnotation()` already passes all new `meta` keys through unfiltered.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`, `src/services/backupDataService.ts`, and `src/components/v15r/V15rLayout.tsx` are free for other agents.
+
+---
+
+### 2026-07-01 — Multi-Point Circuit Path, Polyline, Multi-Point Measure (Step 13B-QA5, NOT COMMITTED)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Additive feature pass — 3 new multi-point tracing workflows preserving all Step 12/13/QA1-4 work
+**Feature Area:** Blueprint Viewer — Circuit/Switch-Leg Path, Polyline/Multi-Point Line, Multi-Point Measure
+**Branch:** main | HEAD = 5a902b5
+**Typecheck:** 0 errors ✅ (file is `@ts-nocheck`, verified whole-project `tsc --noEmit` still 0 errors) | **Build:** ✅ 0 errors, 14.87s (pre-existing Vite chunk-size warnings only) | **git diff --check:** PASS ✅ (exit 0)
+
+#### Part 1 — Circuit / Switch-Leg Path
+- New `ShapeKind` value `'circuit-path'`, activated via a dedicated "Circuit Path" toolbar button (Waypoints icon) next to Shapes, in the Electrical Symbols section — sets `toolMode('shape')` + `shapeKind('circuit-path')`, same pattern as the existing Can Light/Electrical Symbol quick-pick buttons.
+- Each click adds one point to a shared draft array (`pathDraftPoints`/`pathDraftRef`, page-normalized). If the click lands within `CIRCUIT_PATH_SNAP_RADIUS_NORM` (0.03) of an existing same-page, non-isolated annotation's center (`findNearestAnnotationCenterNorm`, reusing `getRectCenterNorm` from Guide Assist), the point snaps to that symbol's center instead of the raw click — so clicking 4 recessed lights + a switch produces a path anchored exactly on each symbol.
+- The capture-phase and per-annotation `selectAnnotation` pointerdown bypasses (previously Arc-Line-only) were extended to also skip hit-testing for `polyline`/`circuit-path`, so clicking directly on top of an existing symbol reaches the canvas draw handler instead of selecting/moving it.
+- A floating "Circuit Path — N points" pill with **Stop Circuit Path** and **Cancel** buttons appears fixed at the bottom-center of the viewer (`z-[100050]`, viewport-anchored so it stays reachable at any zoom/pan, including 1000%, and is easy to tap on iPad) whenever the draft has ≥1 point. Stop calls `finalizePathDraft()`, which commits one `type: 'shape'` annotation with `meta.points` (absolute page-normalized), `meta.pathType: 'circuit'`, `meta.closed: false`; fewer than 2 points discards silently.
+- Rendering: a new shape-kind branch draws an SVG `<polyline>` (no fill, existing border color/thickness/style) plus small filled dots at each vertex for the circuit variant — reuses the exact same `viewBox="0 0 100 100"` / `preserveAspectRatio="none"` technique as Arch Line.
+- Escape and tool/shapeKind/page-change effects clear the draft without persisting (new `useEffect` mirroring the existing measure-draft cleanup, keyed on `[effectiveTool, shapeKind, currentPage]`).
+
+#### Part 2 — Polyline / Multi-Point Line
+- New `ShapeKind` value `'polyline'`, added to `GENERIC_SHAPE_KIND_OPTIONS` under the existing Shapes dropdown ("Polyline / Multi-Point Line"). Shares 100% of the click-to-add-point / Stop-button / render machinery built for Part 1 (same `pathDraftPoints` state, same finalize function, same render branch) — the only behavioral difference is no symbol-center snapping and no vertex dots. The floating action bar shows "Polyline — N points" / **Stop Drawing** / **Cancel**.
+- Also added `'circuit-path'` to `GENERIC_SHAPE_KIND_OPTIONS` so the shape-edit popover's "Shape" dropdown has a matching entry when editing an existing circuit-path annotation (avoids an unmatched `<select>` value).
+
+#### Part 3 — Multi-Point Measure
+- Reused the **existing** `measure-perimeter` tool rather than adding a new type — it already accumulates unlimited clicked points, sums consecutive segment lengths (open path, not closed), requires calibration (`showTransientSyncNotice('Calibrate measure first.')`, from QA4), and persists as one `measure-perimeter` annotation. This is architecturally identical to what "Multi-Point Measure" asks for.
+- Added a live running-total readout: `measurePathLiveTotal` (computed each render from `measureDraftPoints` + a live rubber-band segment to `measureCursorPx`, divided by the existing `detectedScale` — manual calibration takes precedence over auto-detected, same precedence already established for the committed measurement) shown in a new floating pill: "Total: X.XX ft" once calibrated, or "N points — not calibrated" otherwise.
+- Added an explicit **Stop Measuring** button (previously only double-click-near-last-point or Enter could finish) in the same floating pill, plus **Cancel** to discard. The Measure popover's Perimeter button was relabeled "Multi-Point / Perimeter" with a clarifying title tooltip — the underlying tool key, annotation type, and persistence path are unchanged.
+
+#### Part 4/5 — Stop buttons + touch/iPad behavior
+- All three Stop actions render as fixed-position (`position: absolute` on the outer `viewerRootRef`, not inside the scrollable/zoomable canvas) pill bars at `bottom-4, left-1/2` with large tap targets — reachable and consistent regardless of scroll position or zoom level (verified against the existing `MAX_RELATIVE_ZOOM_* = 10` / 1000% ceiling from QA3, since these overlays sit outside the transformed canvas).
+- Point placement uses the same `overlayRef.getBoundingClientRect()` + `toNorm()` conversion already used by every other tool (pen, measure, line/arrow, arch-line) — page/document-normalized coordinates, not raw screen pixels, so points do not jump between zoom/pan changes.
+- Escape-key cancel (extended existing handler) and tool-switch cleanup (new effect) both safely discard an in-progress draft, matching the existing measure-tool pattern the user referenced ("similar to Copy/Paste Stop Pasting").
+
+#### Part 6 — Data model (verified safe, no service-layer changes needed)
+- Both new shapes use `type: 'shape'` (already an allowed `BlueprintAnnotation.type`) with `meta.shapeKind: 'polyline' | 'circuit-path'`, `meta.points: [{x,y}, ...]` (absolute page-normalized, same convention as pen/marker freehand strokes), `meta.pathType`, `meta.closed: false`.
+- `blueprintLibraryService.ts` **required zero changes** — `sanitizeAnnotation()` already allows `type: 'shape'` and passes `meta` through unfiltered (`meta: raw.meta && typeof raw.meta === 'object' ? raw.meta : undefined`), and `shapeKind` is typed as a bare `string` with no enum restriction. Old annotations without `meta.points` are unaffected since every new code path only runs when `meta.shapeKind` is one of the two new values.
+- Move-drag (`startAnnotationLayoutDrag` / `handleAnnotationLayoutPointerMove`) was extended with an `isPathLike` branch (mirroring the existing `isLineLike` absolute-endpoint translation) that shifts every point in `meta.points` by the drag delta — without this, dragging a polyline/circuit-path would only move its bounding box and visually distort the path. Copy/paste required **no changes**: `pasteCopiedAnnotationAt` already generically translates any `meta.points` array by the paste offset (pre-existing code for pen/marker), and `cloneAnnotationForPaste` already deep-clones `meta` via `JSON.parse(JSON.stringify(...))`.
+
+#### Preserved (verified untouched)
+- Arc Line placement/editing, Measure calibration, compact electrical symbol selection bounds (QA4); Guide Assist center-to-center, zoom-to-1000%, symbol rotation, arc-line-over-existing-items, S3/S4 polish (QA3); Work Package persistence/isolate eye toggle; header-save safety guards/snapshots/freshness guard; Hide Lighting Effects/Hide Labels; light output/glare. No logic in any of these paths was modified — only additive branches gated on the two brand-new `shapeKind` values, plus the reused-unchanged `measure-perimeter` tool's UI layer.
+- No Supabase migrations, export behavior, material list engine, labor engine, dashboard files, or project tab files were touched. `src/services/blueprintLibraryService.ts` shows only the pre-existing uncommitted QA4 diff (4 lines) — this pass did not open or edit that file.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-07-01 — Arc Line Final Shape, Measure Tool, Compact Symbol Selection Bounds (Step 13B-QA4, NOT COMMITTED)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Scoped QA pass — 3 independent fixes preserving Step 12/13/QA1/QA2/QA3 work
+**Feature Area:** Blueprint Viewer — arc-line placement geometry, measure/calibrate tool, electrical symbol selection bounds
+**Branch:** main | HEAD = 5a902b5
+**Typecheck:** 0 errors ✅ via Node CLI workaround | **Build:** ✅ 0 errors, 15.29s (pre-existing Vite chunk-size warnings only) | **git diff --check:** PASS ✅
+
+#### Part 1 — Arc Line final shape mismatch
+- Root cause: the live preview computed the bezier control point in screen-pixel space (`cpx = mid.x + 0.5*(y-p1.y)`, isotropic — x and y pixels are the same physical unit). The pointerup finalize code instead computed it in page-normalized space, applying the same `0.5` factor to a normalized y-delta to offset a normalized x-coordinate (`archCtrlX = amx + 0.5*(abs2y-abs1y)`). Normalized x is a fraction of page *width*, normalized y a fraction of page *height* — for any non-square page these are different physical scales, so the reconstructed control point was distorted by the page's aspect ratio, producing a much larger (or smaller) arc than the preview on release.
+- Fix ([OperationsBlueprintPdfViewer.tsx:4543](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)): finalize now computes the control point using the exact same pixel-space formula as the preview (`activeDragStart`/`x`,`y`), then converts it once to normalized coords via `toNorm()` (which divides x by width and y by height independently — the correct per-axis conversion). The existing Guide Assist center-snap translation (`finalNorm.x - norm.x`, `finalNorm.y - norm.y`) is re-applied to the converted point so a snapped arc still keeps its control point attached to the endpoints.
+- `archCtrlX`/`archCtrlY` meta fields, `archFactor`, and all edit-handle/drag code (`archControlDragRef`, the yellow control-point handle, `startArchControlDrag`) were not touched — arc editability after placement is unaffected.
+- Part 2 (arc-line placement over existing items, from Step 13B-QA3) was not touched — verified the capture/bubble-phase pointerdown early-returns for `shapeKind === 'arch-line'` are untouched.
+
+#### Part 3/4 — Measure tool never displayed a distance
+- Root cause: `sanitizeAnnotation()` in `blueprintLibraryService.ts` had a hardcoded runtime type allowlist that did **not** include `'measure-distance'`, `'measure-area'`, `'measure-perimeter'`, or `'calibrate'` (and the `BlueprintAnnotation.type` TS union didn't either). Every measurement created by the viewer was silently rejected by `upsertOperationsBlueprintAnnotation` (`sanitizeAnnotation` returns `null` → `{ localSaved: false, error: 'Invalid annotation.' }`), so the annotation never saved and vanished the moment `loadAnnotations()` re-synced from the (now annotation-less) backup — matching the user's "no distance appeared" report exactly. Calibration storage itself (`savedCalibrations` state + `localStorage blueprint_calibrations_${id}`, keyed per page) was already working correctly and was not touched.
+- Fix ([blueprintLibraryService.ts:66,479](src/services/blueprintLibraryService.ts)): added the four measure/calibrate types to both the `BlueprintAnnotation['type']` union and the `sanitizeAnnotation` runtime allowlist (also added `'textHighlight'`, which was already allowed at runtime but missing from the type union).
+- Added a `parseCalibrationLength()` helper ([OperationsBlueprintPdfViewer.tsx:547](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)) supporting `10`, `10 ft`, `10'`, `10' 6"`, `10'-6"`, `10.5 ft`, `126 in`, `126"` — feet-inches and explicit-unit input override the unit dropdown; a plain number falls back to the dropdown's selected unit. The Calibrate manual-length `<input>` was changed from `type="number"` (which outright blocks `'`/`"` characters, so users could never type feet-inches) to `type="text" inputMode="decimal"`, wired to the new parser in both the Enter-key and Save-button handlers.
+- Added a `showTransientSyncNotice('Calibrate measure first.')` call when a measurement is completed with no calibration on the page (reuses the existing global amber toast at `z-[100050]`, already visible above canvas/panels — no new UI surface needed).
+- Measurement rendering (label box + line/polygon + zoom-aware `displaySize`-based pixel conversion) was already correct and untouched — it only needed the annotation to actually persist.
+
+#### Part 6 — Compact electrical symbol selection bounds
+- Root cause: the selection-highlight ring (`ring-2 ring-white/80`) was drawn around the full annotation `rect` (the user's placed/dragged box), but several device-symbol glyphs (Switch/S3/S4 "S"+line, Sconce's wall-mounted arc) only occupy a narrow, sometimes off-center portion of their 0-100 SVG viewBox — leaving a large visually-empty margin inside the selection box, most pronounced for Sconce (glyph confined to the left ~45% of the box) and Switch/S3/S4 (narrow vertical glyph with wide empty margins left/right).
+- Fix: added `ELECTRICAL_SYMBOL_VISUAL_BOUNDS` ([OperationsBlueprintPdfViewer.tsx:914](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)) — per-symbol ink bounding boxes (0-100 viewBox units, with touch-friendly padding baked in) for the 9 flagged kinds (Switch, S3, S4, Dimmer, Receptacle, GFCI, Sconce, Photocell, Timer Control Box). `renderElectricalSymbolSvg()` now draws a white compact selection outline `<rect>` from these bounds **inside the same rotated `<g transform>` as the body**, so it rotates correctly with the symbol at 0/90/180/270°. Light/LED/can-light symbols (not in the flagged list) keep the previous full-box ring unchanged.
+- The full-size wrapper `<div>` (`{ left, top, width, height }`, `data-annotation-id`, `onPointerDown`/`onClick`) is completely unchanged — the actual touch/click hit target stays exactly as large as before, so tap-friendliness on iPad is preserved. Only the *visual* highlight outline was tightened; hit-testing, Move/Edit/Copy/Delete toolbar positioning (which reads this same unchanged div's bounding rect), rotation, and Work Package isolate filtering are all unaffected.
+- The compact bounds are computed purely from each symbol's body glyph geometry — light-output glow (`renderLightOutputGlowSvg`, fixed `cx=50,cy=50` radius, rendered as a sibling outside `renderElectricalSymbolSvg`'s return) and external labels/badges (`externalLabel()`, positioned bottom-right outside the chosen bounds) do not influence the selection box size.
+- Known minor limitation: the compact selection rect is nested inside the same `<g opacity={fillOpacity}>` group as the symbol body, so at very low fill opacity the selection outline dims proportionally too (previously the CSS ring was opacity-independent). Still clearly visible at typical/default opacity; not a functional regression.
+
+#### Preserved (verified untouched)
+- Guide Assist center-to-center repair, zoom-to-1000% ceiling, symbol rotation (`ROTATABLE_ELECTRICAL_SHAPE_KINDS`, `rotateAnnotationSymbol`), fullscreen portal controls, Shapes dropdown cleanup, S3/S4 body/label split, light output/glare for all light symbols, Hide Lighting Effects, Hide Labels, Work Package persistence/isolate eye toggle, header-save safety guards/snapshots/freshness guard, and the QA1-HOTFIX TDZ fix — no logic in any of these paths was modified.
+- No Supabase migrations, export behavior, material list engine, labor engine, dashboard files, or project tab files were touched. `blueprintLibraryService.ts` was touched only for the minimal type-allowlist fix required to make measurements persist at all (explicitly permitted by the task brief as "only touch if absolutely necessary").
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` and `src/services/blueprintLibraryService.ts` are free for other agents.
+
+---
+
+### 2026-07-01 — Zoom to 1000%, Symbol Rotation, Arc-Line Overlay Placement, S3/S4 Visual Polish (Step 13B-QA3, NOT COMMITTED)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Scoped QA pass — 4 independent fixes preserving Step 12/13/QA1/QA2 work
+**Feature Area:** Blueprint Viewer — zoom ceiling, wall-symbol rotation, arc-line hit-testing, S3/S4 rendering
+**Branch:** main | HEAD = 5a902b5
+**Typecheck:** 0 errors ✅ via Node CLI workaround | **Build:** ✅ 0 errors, 18.74s (pre-existing Vite chunk-size warnings only) | **git diff --check:** PASS ✅
+
+#### Part 1 — Zoom to 1000%
+- `MAX_RELATIVE_ZOOM_DESKTOP` and `MAX_RELATIVE_ZOOM_MOBILE` raised from 4.5/8 to `10` (1000% of Fit-to-Full-Page).
+- `MAX_RENDER_SCALE` raised from `4.5` to `10` to match — this constant caps the actual PDF raster resolution (`actualRenderScale = min(MAX_RENDER_SCALE, fitWidthScale * relativeZoom)`), and the page-frame CSS size is bound directly to that raster's pixel dimensions. Raising only the relative-zoom cap without raising `MAX_RENDER_SCALE` would let the % readout say 1000% while the visible page stopped growing at the old 450% raster ceiling — so both had to move together, preserving the pre-existing 1:1 relationship between the two constants.
+- Zoom in/out buttons, wheel-zoom debounce/commit flow, pinch-zoom preview, Fit to Full Page, and Lock View were not touched — only the two ceiling constants changed.
+
+#### Part 2 — Rotation for wall-mounted electrical symbols
+- New `ROTATABLE_ELECTRICAL_SHAPE_KINDS` set: receptacle, switch, 3-way switch, 4-way switch, dimmer, sconce, GFCI, photocell, timer control box. Can lights, recessed/pendant lights, LED panels, and all non-electrical shapes are excluded.
+- New `getAnnotationRotationDeg(meta)` reads `meta.rotationDeg`, normalizes to one of 0/90/180/270.
+- `renderElectricalSymbolSvg()` was restructured to build `body` (the rotatable glyph) and `label` (the external badge, e.g. GFCI/DIM/TMR/PC/S3/S4) as separate values, then wraps only `body` in `<g transform="rotate(deg 50 50)">` while `label` renders unrotated afterward — so external labels stay horizontally readable at any rotation, matching the existing GFCI label pattern.
+- Added a `Rotate` button (RotateCw icon) to the floating Move/Edit/Copy/Delete selection action bar, gated by `fCanRotate = focusedAnn.type === 'shape' && isRotatableElectricalShapeKind(shapeKind)`. Clicking cycles `meta.rotationDeg` 0° → 90° → 180° → 270° → 0° via a new `rotateAnnotationSymbol()` callback that optimistically updates local state and persists through the existing `persistAnnotation()` queue — no new storage path.
+- Rotation persists (stored additively in `meta`, passed through `blueprintLibraryService.sanitizeAnnotation` unchanged — no allowlist strips unknown meta keys) and copies correctly (the existing `cloneAnnotationForPaste()` deep-clones the entire `meta` object, so `rotationDeg` carries over for free). Works in Work Package isolate view since rotation is only a render-time transform on the same annotation node already covered by isolate filtering.
+
+#### Part 3 — Arc Line can be placed over existing items
+- Root cause: `handleAnnotationSelectCapture` (capture-phase pointerdown handler on the page overlay) and the per-item `selectAnnotation` closure (bubble-phase, attached to every rendered annotation's wrapper div/stroke) both unconditionally called `preventDefault()` + `stopPropagation()` whenever a pointerdown landed on an existing annotation's DOM element — regardless of which tool was active. This blocked the two-click Arc Line placement flow (`handlePointerDown`, bound via bubble-phase on the overlay) from ever firing when a click landed on top of an existing symbol/light/switch.
+- Fix: both handlers now return early — doing nothing, letting the event propagate untouched — when `effectiveTool === 'shape' && shapeKind === 'arch-line'`. This is scoped narrowly to the active Arc Line tool only; normal selection behavior for Select mode and every other tool (including other shapes/pen/marker) is unchanged.
+- The newly created arc-line annotation is appended to the end of the `allAnnotations` array (existing behavior, unchanged), so it renders after — and visually on top of — the item it was drawn over, with no z-order changes needed.
+- After placement, the arc-line is a normal shape annotation and is selectable/editable/deletable/persistable exactly like any other line-like shape; existing items underneath are untouched. Guide Assist and Work Package isolate filtering are unaffected since neither was touched.
+
+#### Part 4 — S3/S4 visual polish
+- `electrical-switch-3way` and `electrical-switch-4way` bodies now reuse the exact same body JSX as `electrical-switch` (the `S` glyph + vertical center line) instead of rendering custom `S3`/`S4` text as the symbol body.
+- `S3` / `S4` are now rendered as external bottom-right labels via the same `externalLabel()` helper GFCI/DIM/TMR/PC use — respecting `Hide Labels`.
+- Work Package summary labels (`3-Way Switch` / `4-Way Switch`), `ELECTRICAL_SYMBOL_METADATA`, `Object`/count-value plumbing, opacity, and light-glow exclusion (`isLightOutputShapeKind` already excludes switches) were not touched — only the SVG body/label split changed.
+
+#### Preserved (verified untouched)
+- Guide Assist center-to-center repair (Step 13B-QA2), fullscreen portal controls, Shapes dropdown cleanup, light output/glare for all light symbols, Hide Lighting Effects, Hide Labels, Work Package persistence/isolate eye toggle, header-save safety guards/snapshots/freshness guard, and the QA1-HOTFIX TDZ fix — no logic in any of these paths was modified.
+- No Supabase migrations, export behavior, material list engine, labor engine, dashboard files, or project tab files were touched. `blueprintLibraryService.ts` was inspected but required no changes — `sanitizeAnnotation()` already passes `meta` through unfiltered.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-07-01 — Center-to-Center Guide Assist Repair (Step 13B-QA2, NOT COMMITTED)
+
+**Agent:** Claude Code Sonnet 4.6
+**Mode:** Scoped repair of Step 12D/12D-R/12D-R2 Guide Assist — center-only matching + real snap/lock
+**Feature Area:** Blueprint Viewer — Guide Assist placement + move alignment
+**Branch:** main | HEAD = 5a902b5
+**Typecheck:** 0 errors ✅ via Node CLI workaround | **Build:** ✅ 0 errors, 19.67s (pre-existing Vite chunk-size warnings only) | **git diff --check:** PASS ✅
+
+#### User complaint
+Guide Assist compared each shape's left/center/right and top/center/bottom edges against every other shape's same three points (`getRectAlignmentCandidates`), so up to 9 point-pairs per candidate could match at once — producing multiple competing, jittery lines that made it hard to line up lights, especially on iPad.
+
+#### Fix
+- Replaced `getRectAlignmentCandidates` with `getRectCenterNorm(rect)` — returns only the rect's own center `{x, y}` in page-normalized coordinates. This is now the single source of truth for every Guide Assist comparison.
+- Rewrote `calculateAlignmentGuides()` to compare the active rect's center against only the center of each candidate annotation — one delta per axis per candidate, keeping the single nearest match per axis (still at most one vertical + one horizontal guide, now edge-free).
+- Added `applyCenterSnap(rect, guides)` — when a guide matches, shifts the rect's x and/or y so its center lands exactly on the matched axis value, size unchanged.
+- Added `isGuideTargetVisible(annotationId)` backed by a new `isolatedAnnotationIdSetRef` (mirrored from the existing `isolatedAnnotationIdSet` via a `useEffect`, to avoid a TDZ hook-ordering issue) — isolated Work Package hidden annotations are excluded from Guide Assist candidates entirely, so they never render a guide line or snap the active shape.
+- `updateMoveGuideLines()` now returns the (possibly snapped) rect instead of void; `handleAnnotationLayoutPointerMove` applies that returned rect on every move tick (both the line-like absolute-endpoint branch and the generic branch), so existing-annotation dragging snaps center-to-center in real time, including on touch.
+- `handlePointerUp` snapshots `activeAlignmentGuidesRef.current` into `pendingAlignmentGuides` before calling `clearAlignmentGuides()`, then for `effectiveTool === 'shape'` only, applies `applyCenterSnap` to the final placement rect (`finalNorm`). The line/arch-line endpoint math (`lineX1/Y1/X2/Y2`, `archCtrlX/Y`) was repointed from the old unsnapped `rawNorm` box origin to `finalNorm`, so a snapped line/arrow/arch-line translates as one rigid piece instead of its internal geometry drifting from the box.
+- New-symbol placement and the existing two-click line/arrow/arch-line mode both funnel through the same `handlePointerUp` commit path, so both are covered by one fix — no separate code path was needed for point-to-point line drawing.
+
+#### Verified untouched
+- Light output/glare glow (`renderLightOutputGlowSvg`, `getLightOutputGlowMetrics`) uses a fixed local `cx=50,cy=50` symbol-space radius — never read by Guide Assist, confirming glow/output radius cannot affect guide centers.
+- Work Package persistence, isolate toggle logic itself, S3/S4 switch symbols, Hide Lighting Effects, Hide Labels, fullscreen controls, shape dropdown cleanup, and save safety guards were not modified — only Guide Assist's own helper functions and the two call sites that apply its output.
+- No migrations, export changes, or dashboard/project-tab files touched.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
 
 ### 2026-07-01 — Fix `clearStaleSyncMessages` TDZ Runtime Crash (Step 13B-QA1-HOTFIX, NOT COMMITTED)
 
