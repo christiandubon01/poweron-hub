@@ -84,30 +84,49 @@ async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
 }
 
 
-function shouldUseDesktopBlueprintLayout() {
+// ── Device / layout detection (Step 13B-QA7-R2) ──────────────────────────────
+// iPad Pro landscape is 1366px wide — wider than the desktop xl breakpoint —
+// so layout decisions must NEVER rely on viewport width alone. Detection
+// combines the classic UA/platform sniff (iPadOS Safari reports "MacIntel" +
+// multitouch in desktop-site mode) with a capability check (coarse primary
+// pointer + multitouch), so iPads/tablets still get the stacked touch layout
+// when the UA sniff misses (DevTools device emulation, third-party iPad
+// browsers, future UA string changes). A wide window is only "desktop" when
+// BOTH signals say it is not a touch-first device.
+function isIPadLikeDevice() {
   if (typeof window === 'undefined') return false
   const nav = window.navigator
   const ua = nav.userAgent || ''
   const platform = nav.platform || ''
   const maxTouchPoints = nav.maxTouchPoints || 0
-  const isIPadLike =
+  return (
     /iPad/i.test(ua) ||
     ((/MacIntel|Macintosh/i.test(platform) || /Macintosh/i.test(ua)) && maxTouchPoints > 1)
+  )
+}
 
-  return !isIPadLike && window.innerWidth >= 1280
+function isTouchFirstDevice() {
+  if (typeof window === 'undefined') return false
+  const maxTouchPoints = window.navigator.maxTouchPoints || 0
+  let coarsePrimaryPointer = false
+  try {
+    coarsePrimaryPointer = !!window.matchMedia?.('(pointer: coarse)')?.matches
+  } catch { /* matchMedia unavailable — treat as not touch-first */ }
+  // Touch-capable laptops keep a fine primary pointer (mouse/trackpad) and so
+  // stay on the desktop layout; touch-first tablets report a coarse pointer.
+  // maxTouchPoints > 0 (not > 1): Chrome DevTools device/responsive emulation
+  // reports exactly 1 — requiring > 1 made emulated iPads fall through to the
+  // desktop three-pane layout. Real iPads report 5.
+  return coarsePrimaryPointer && maxTouchPoints > 0
+}
+
+function shouldUseDesktopBlueprintLayout() {
+  if (typeof window === 'undefined') return false
+  return !isIPadLikeDevice() && !isTouchFirstDevice() && window.innerWidth >= 1280
 }
 
 function isTabletDevice() {
-  if (typeof window === 'undefined') return false
-  const nav = window.navigator
-  const ua = nav.userAgent || ''
-  const platform = nav.platform || ''
-  const maxTouchPoints = nav.maxTouchPoints || 0
-  const isIPadLike =
-    /iPad/i.test(ua) ||
-    ((/MacIntel|Macintosh/i.test(platform) || /Macintosh/i.test(ua)) && maxTouchPoints > 1)
-  
-  return isIPadLike
+  return isIPadLikeDevice() || isTouchFirstDevice()
 }
 
 // Zoom floor = 1.0 means the user can never zoom out past "Fit to Full Page".
@@ -118,6 +137,18 @@ const MIN_RELATIVE_ZOOM = 1
 const MAX_RELATIVE_ZOOM_DESKTOP = 10
 const MAX_RELATIVE_ZOOM_MOBILE = 10
 const MAX_RENDER_SCALE = 10
+// Raster budget for the committed PDF canvas (and the annotation SVG overlays,
+// which are sized to the same displaySize). iPad/iOS Safari silently paints
+// nothing once a canvas/layer exceeds roughly 16.7M pixels, and giant layers
+// destabilize the whole viewport. The canvas is therefore never rastered past
+// this budget — the remaining zoom (up to the full 1000%) is applied as a CSS
+// transform on the page frame (visualScale), the same mechanism the live pinch
+// preview already uses. Zoom math stays in "relative zoom" space untouched.
+const MAX_CANVAS_AREA_TOUCH = 15_000_000
+const MAX_CANVAS_AREA_DESKTOP = 33_000_000
+// Per-dimension safety cap (Safari max texture dimension is 8192 on older iPads).
+const MAX_CANVAS_DIM_TOUCH = 8000
+const MAX_CANVAS_DIM_DESKTOP = 16000
 const PINCH_SENSITIVITY = 0.55
 const PINCH_DEADZONE_PX = 2
 // Debounce window for committing wheel-zoom changes to the actual PDF canvas
@@ -1369,6 +1400,18 @@ export default function OperationsBlueprintPdfViewer({
   // Ref to the toolbar area so we can measure its height and set the
   // scroll area to exactly fill the remaining vertical space.
   const toolbarAreaRef = useRef<HTMLDivElement>(null)
+  // Step 13B-QA7-R6: the ONE fullscreen vertical content scroller (from R5) —
+  // holds the document work-screen + annotations below it. We attach a custom
+  // OVERLAY scroll handle to it so touch users (iOS overlay scrollbars ignore
+  // CSS) and mouse users get a big, grabbable affordance to move between the
+  // document and the annotations. The overlay is position:absolute so it adds
+  // ZERO layout width — the document display size / fit-scale are unaffected,
+  // and there is no hover reflow. Native scrollbars are left untouched.
+  const fullscreenScrollerRef = useRef<HTMLDivElement>(null)
+  const fsThumbDragRef = useRef<{ startY: number; startScrollTop: number } | null>(null)
+  const [fsRail, setFsRail] = useState<{ show: boolean; top: number; height: number; thumbTop: number; thumbH: number }>({
+    show: false, top: 0, height: 0, thumbTop: 0, thumbH: 0,
+  })
   // Draft rect DOM ref Ã¢â‚¬â€ mutated directly during pointer-move for zero-lag
   // visual feedback (bypasses React re-renders entirely during active drag).
   const draftRectDomRef = useRef<HTMLDivElement>(null)
@@ -1384,6 +1427,11 @@ export default function OperationsBlueprintPdfViewer({
   const pendingAnnotationMutationsRef = useRef(0)
   const pendingScrollResetRef = useRef(false)
   const relativeZoomRef = useRef(1)
+  // The relative zoom the CURRENT canvas raster actually represents. Below the
+  // raster budget this equals the committed relativeZoom; once the budget caps
+  // the canvas, renderedZoom stays at the cap and the remainder of the user's
+  // zoom is expressed via the CSS visualScale transform on the page frame.
+  const renderedZoomRef = useRef(1)
   // True when viewport width is phone/tablet-sized (< 1024px).
   const isMobileRef = useRef(typeof window !== 'undefined' && window.innerWidth < 1024)
   const [isDesktopBlueprintLayout, setIsDesktopBlueprintLayout] = useState(shouldUseDesktopBlueprintLayout)
@@ -1453,6 +1501,9 @@ export default function OperationsBlueprintPdfViewer({
   currentPageRef.current = currentPage
   const [pageInput, setPageInput] = useState('1')
   const [relativeZoom, setRelativeZoom] = useState(1)
+  // State mirror of renderedZoomRef so the JSX visualScale recomputes when a
+  // freshly committed raster changes what zoom the canvas represents.
+  const [renderedZoom, setRenderedZoom] = useState(1)
   const [pinchPreviewZoom, setPinchPreviewZoom] = useState<number | null>(null)
   const [lockView, setLockView] = useState(false)
   const [mousePanActive, setMousePanActive] = useState(false)
@@ -2229,6 +2280,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       setRelativeZoom(1)
       setPinchPreviewZoom(null)
       relativeZoomRef.current = 1
+      renderedZoomRef.current = 1
+      setRenderedZoom(1)
       pinchPreviewZoomRef.current = null
       displaySizeRef.current = { w: 0, h: 0 }
       suppressAnnotationUntilRef.current = 0
@@ -2354,9 +2407,21 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
           ? availableHeight / Math.max(1, baseViewport.height)
           : widthScale
         const fitWidthScale = Math.max(0.01, Math.min(widthScale, heightScale))
+        // Raster budget: never raster a canvas the platform can't paint.
+        // iOS Safari silently renders blank past ~16.7M px, which was making
+        // documents/annotations disappear and the viewport unstable at high
+        // zoom. Any zoom beyond this cap is carried by the CSS visualScale
+        // transform instead (renderedZoom bookkeeping below).
+        const isTouchRasterBudget = isTabletDevice() || isMobileRef.current
+        const maxCanvasArea = isTouchRasterBudget ? MAX_CANVAS_AREA_TOUCH : MAX_CANVAS_AREA_DESKTOP
+        const maxCanvasDim = isTouchRasterBudget ? MAX_CANVAS_DIM_TOUCH : MAX_CANVAS_DIM_DESKTOP
+        const baseArea = Math.max(1, baseViewport.width * baseViewport.height)
+        const maxAreaScale = Math.sqrt(maxCanvasArea / baseArea)
+        const maxDimScale = maxCanvasDim / Math.max(1, baseViewport.width, baseViewport.height)
+        const requestedScale = fitWidthScale * clampRelativeZoom(relativeZoom)
         const actualRenderScale = Math.max(
           0.01,
-          Math.min(MAX_RENDER_SCALE, fitWidthScale * clampRelativeZoom(relativeZoom))
+          Math.min(MAX_RENDER_SCALE, maxAreaScale, maxDimScale, requestedScale)
         )
         const viewport = page.getViewport({ scale: actualRenderScale })
         const canvas = canvasRef.current
@@ -2381,6 +2446,16 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         context.drawImage(tempCanvas, 0, 0)
         setDisplaySize({ w: tempCanvas.width, h: tempCanvas.height })
 
+        // Record what relative zoom this raster actually represents. Equals the
+        // committed relativeZoom until the raster budget caps the canvas; the
+        // gap between the two is rendered via the CSS visualScale transform.
+        const committedRenderedZoom = Math.max(
+          MIN_RELATIVE_ZOOM,
+          actualRenderScale / Math.max(0.0001, fitWidthScale)
+        )
+        renderedZoomRef.current = committedRenderedZoom
+        setRenderedZoom(committedRenderedZoom)
+
         const pendingAnchor = pendingPinchAnchorRef.current
         if (pendingAnchor && scrollAreaRef.current && pageFrameRef.current && !lockView) {
           const scroll = scrollAreaRef.current
@@ -2388,8 +2463,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
           const pageRect = pageFrameRef.current.getBoundingClientRect()
           const pageOffsetX = (pageRect.left - scrollRect.left) + scroll.scrollLeft
           const pageOffsetY = (pageRect.top - scrollRect.top) + scroll.scrollTop
-          const targetLeft = pageOffsetX + (pendingAnchor.ratioX * tempCanvas.width) - pendingAnchor.centerInScrollX
-          const targetTop = pageOffsetY + (pendingAnchor.ratioY * tempCanvas.height) - pendingAnchor.centerInScrollY
+          // Anchor targets must use the VISUAL page size (raster × CSS scale),
+          // which is larger than the raster once the budget caps the canvas.
+          const commitVisualScale = Math.max(
+            1,
+            clampRelativeZoom(relativeZoom) / Math.max(0.001, committedRenderedZoom)
+          )
+          const targetLeft = pageOffsetX + (pendingAnchor.ratioX * tempCanvas.width * commitVisualScale) - pendingAnchor.centerInScrollX
+          const targetTop = pageOffsetY + (pendingAnchor.ratioY * tempCanvas.height * commitVisualScale) - pendingAnchor.centerInScrollY
           clampScroll(scroll, targetLeft, targetTop)
           pendingPinchAnchorRef.current = null
         }
@@ -2682,7 +2763,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const nextZoom = clampRelativeZoom(currentZoom + delta)
     if (Math.abs(nextZoom - currentZoom) < 0.001) return
 
-    const baseCommittedZoom = Math.max(0.001, clampRelativeZoom(relativeZoomRef.current))
+    // displaySize reflects renderedZoom (the raster's zoom), so visual sizes
+    // must be derived from renderedZoom — not the committed relativeZoom.
+    const baseCommittedZoom = Math.max(0.001, renderedZoomRef.current)
     const currentVisualScale = Math.max(1, currentZoom / baseCommittedZoom)
     const nextVisualScale = Math.max(1, nextZoom / baseCommittedZoom)
     const currentVisualW = displaySizeRef.current.w * currentVisualScale
@@ -4126,7 +4209,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       // anchor recomputes against a scroll position that itself was moved by
       // the previous frame, causing the page to drift right during pinch.
       if (scroll && displaySizeRef.current.w > 0 && displaySizeRef.current.h > 0) {
-        const baseCommittedZoom = Math.max(0.001, clampRelativeZoom(relativeZoomRef.current))
+        const baseCommittedZoom = Math.max(0.001, renderedZoomRef.current)
         const startVisualScale = Math.max(1, startZoom / baseCommittedZoom)
         const startVisualW = displaySizeRef.current.w * startVisualScale
         const startVisualH = displaySizeRef.current.h * startVisualScale
@@ -4162,7 +4245,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         if (scroll && displaySizeRef.current.w > 0 && displaySizeRef.current.h > 0) {
           const startAnchor = pendingPinchAnchorRef.current
           if (startAnchor) {
-            const baseCommittedZoom = Math.max(0.001, clampRelativeZoom(relativeZoomRef.current))
+            const baseCommittedZoom = Math.max(0.001, renderedZoomRef.current)
             const nextVisualScale = Math.max(1, nextZoom / baseCommittedZoom)
             const nextVisualW = displaySizeRef.current.w * nextVisualScale
             const nextVisualH = displaySizeRef.current.h * nextVisualScale
@@ -4213,7 +4296,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
       const scroll = scrollAreaRef.current
       const center = state.lastCenter
-      const currentZoom = Math.max(0.001, relativeZoomRef.current)
+      // displaySize reflects renderedZoom, so the on-screen preview scale is
+      // finalZoom relative to the raster's zoom, not the committed relativeZoom.
+      const currentZoom = Math.max(0.001, renderedZoomRef.current)
       const previewScale = finalZoom / currentZoom
 
       if (scroll && center && displaySizeRef.current.w > 0 && displaySizeRef.current.h > 0) {
@@ -5012,10 +5097,98 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   })()
 
   const livePinchZoom = pinchPreviewZoom ?? relativeZoom
-  const visualScale = Math.max(1, livePinchZoom / Math.max(0.001, clampRelativeZoom(relativeZoom)))
+  // Divide by renderedZoom (what the raster actually represents), not by the
+  // committed relativeZoom: once the raster budget caps the canvas, the CSS
+  // transform persistently carries the zoom remainder up to the full 1000%.
+  const visualScale = Math.max(1, livePinchZoom / Math.max(0.001, renderedZoom))
   const visualDisplayWidth = displaySize.w ? Math.ceil(displaySize.w * visualScale) : 0
   const visualDisplayHeight = displaySize.h ? Math.ceil(displaySize.h * visualScale) : 0
-  const useDesktopThreePaneLayout = isDesktopBlueprintLayout
+  // HARD OVERRIDE (Step 13B-QA7-R3): the desktop three-pane (left tool column /
+  // right annotations column) is NEVER allowed while tablet immersive
+  // fullscreen is active, and never on a tablet/touch-first device in any
+  // mode — regardless of viewport width. iPad fullscreen is always the
+  // stacked layout: tools top, document middle, annotations bottom drawer.
+  const useDesktopThreePaneLayout =
+    isDesktopBlueprintLayout && !isTabletImmersiveFullscreen && !isTabletDevice()
+
+  // ── Fullscreen overlay scroll handle (Step 13B-QA7-R6) ─────────────────────
+  // Only active in stacked fullscreen (immersive or non-desktop native). Reads
+  // the fullscreen scroller's scroll metrics + viewport rect (the fullscreen
+  // root is fixed at 0,0, so rect.top is the offset within the root) and
+  // derives an overlay thumb: min 44px tall for a finger, positioned by scroll
+  // ratio. Never touches the inner PDF zoom/pan scroller (scrollAreaRef).
+  const fsStackedFullscreen =
+    (isFullScreenView || isTabletImmersiveFullscreen) && !useDesktopThreePaneLayout
+  const updateFsRail = useCallback(() => {
+    const el = fullscreenScrollerRef.current
+    if (!el || !fsStackedFullscreen) {
+      setFsRail((prev) => (prev.show ? { ...prev, show: false } : prev))
+      return
+    }
+    const { scrollTop, scrollHeight, clientHeight } = el
+    if (scrollHeight <= clientHeight + 4) {
+      setFsRail((prev) => (prev.show ? { ...prev, show: false } : prev))
+      return
+    }
+    const rect = el.getBoundingClientRect()
+    const railTop = rect.top + 8
+    const railHeight = Math.max(0, rect.height - 16)
+    const thumbH = Math.max(44, (clientHeight / scrollHeight) * railHeight)
+    const maxScroll = scrollHeight - clientHeight
+    const travel = Math.max(0, railHeight - thumbH)
+    const thumbTop = railTop + (maxScroll > 0 ? (scrollTop / maxScroll) * travel : 0)
+    setFsRail({ show: true, top: railTop, height: railHeight, thumbTop, thumbH })
+  }, [fsStackedFullscreen])
+
+  useEffect(() => {
+    if (!fsStackedFullscreen) {
+      setFsRail((prev) => (prev.show ? { ...prev, show: false } : prev))
+      return
+    }
+    const el = fullscreenScrollerRef.current
+    if (!el) return
+    // Initial + observe size changes (annotations expand/collapse, rotation).
+    const raf = requestAnimationFrame(updateFsRail)
+    const ro = new ResizeObserver(() => updateFsRail())
+    ro.observe(el)
+    window.addEventListener('resize', updateFsRail, { passive: true })
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+      window.removeEventListener('resize', updateFsRail)
+    }
+  }, [fsStackedFullscreen, updateFsRail, tabletAnnotationsOpen, currentPage, allAnnotations.length])
+
+  const handleFsThumbPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const el = fullscreenScrollerRef.current
+    if (!el) return
+    e.preventDefault()
+    e.stopPropagation()
+    ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+    fsThumbDragRef.current = { startY: e.clientY, startScrollTop: el.scrollTop }
+  }, [])
+
+  const handleFsThumbPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = fsThumbDragRef.current
+    const el = fullscreenScrollerRef.current
+    if (!drag || !el) return
+    e.preventDefault()
+    e.stopPropagation()
+    const { scrollHeight, clientHeight } = el
+    const railHeight = Math.max(0, el.getBoundingClientRect().height - 16)
+    const thumbH = Math.max(44, (clientHeight / scrollHeight) * railHeight)
+    const travel = Math.max(1, railHeight - thumbH)
+    const maxScroll = scrollHeight - clientHeight
+    const dy = e.clientY - drag.startY
+    el.scrollTop = Math.max(0, Math.min(maxScroll, drag.startScrollTop + (dy / travel) * maxScroll))
+    updateFsRail()
+  }, [updateFsRail])
+
+  const handleFsThumbPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    fsThumbDragRef.current = null
+    ;(e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId)
+  }, [])
+
   const annotationPanelExpanded =
   useDesktopThreePaneLayout && !isFullScreenView && !isTabletImmersiveFullscreen
     ? true
@@ -5024,8 +5197,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 const annotationPanelSizeClass =
   (isFullScreenView || isTabletImmersiveFullscreen) && !useDesktopThreePaneLayout
     ? annotationPanelExpanded
-      ? 'min-h-0 max-h-[38vh] shrink-0'
-      : 'h-10 max-h-10 min-h-0 shrink-0 overflow-hidden'
+      // Fullscreen (QA7-R5): panel sits BELOW the full-height document work
+      // screen inside the vertical scroller — natural height, reached by
+      // scrolling down. No max-h cap: it no longer shares the visible
+      // viewport with the document, so it cannot shrink it.
+      ? 'mt-2 min-h-0'
+      : 'mt-2 h-10 max-h-10 min-h-0 overflow-hidden'
     : !useDesktopThreePaneLayout
       ? annotationPanelExpanded
         ? 'h-auto max-h-56 min-h-0'
@@ -5601,13 +5778,33 @@ const annotationPanelSizeClass =
   return (
     <div
       ref={viewerRootRef}
-      className={isFullScreenView && isDesktopBlueprintLayout
-        ? 'fixed inset-0 z-[9999] bg-[#0d0e14] flex flex-col overflow-hidden isolate relative'
-        : isFullScreenView || isTabletImmersiveFullscreen
-        ? 'fixed inset-0 z-[9999] bg-[#0d0e14] flex flex-col overflow-hidden isolate relative'
+      className={isFullScreenView || isTabletImmersiveFullscreen
+        ? 'z-[9999] bg-[#0d0e14] flex flex-col isolate'
         : 'rounded-xl border overflow-hidden w-full relative'
       }
-      style={isFullScreenView || isTabletImmersiveFullscreen ? {} : { borderColor: '#1e2128', backgroundColor: '#0d0e14' }}
+      style={isFullScreenView || isTabletImmersiveFullscreen
+        ? {
+            // HARD FULLSCREEN CONTAINMENT (Step 13B-QA7-R4). Inline styles, not
+            // Tailwind classes: the previous class list combined `fixed` with
+            // `relative`, and Tailwind emits `.relative` AFTER `.fixed`, so the
+            // cascade resolved the "fullscreen" root to position:relative —
+            // an in-flow element whose height came from its content. The zoomed
+            // document therefore sized the app page (infinite page growth in
+            // fullscreen). Inline position:fixed cannot lose that fight, and
+            // the explicit viewport width/height + overflow hidden guarantee no
+            // child can ever size this shell.
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            width: '100vw',
+            height: '100dvh',
+            maxWidth: '100vw',
+            maxHeight: '100dvh',
+            overflow: 'hidden',
+          }
+        : { borderColor: '#1e2128', backgroundColor: '#0d0e14' }}
       onClick={(e) => {
         // In fullscreen mode, prevent any clicks that haven't been explicitly handled
         // from reaching the OS-level fullscreen backdrop, which would exit fullscreen.
@@ -5652,11 +5849,54 @@ const annotationPanelSizeClass =
           flex-shrink: 0 !important;
           white-space: nowrap;
         }
+        /* Step 13B-QA7-R6: fullscreen overlay scroll thumb. Overlay only —
+           adds no layout width, so document size never changes and there is
+           no hover reflow. Widens on hover/active for an easier grab target. */
+        .bv-fs-scroll-thumb {
+          width: 8px;
+          background: rgba(148,163,184,0.55);
+          border-radius: 9999px;
+          transition: width 0.12s ease, background-color 0.12s ease;
+          cursor: grab;
+          touch-action: none;
+        }
+        .bv-fs-scroll-thumb:hover,
+        .bv-fs-scroll-thumb:active {
+          width: 14px;
+          background: rgba(191,206,224,0.9);
+          cursor: grabbing;
+        }
       `}</style>
 
       {syncNotice && (
         <div className="pointer-events-none absolute left-1/2 top-2 z-[100050] w-[min(92vw,640px)] -translate-x-1/2 rounded-md border border-amber-500/40 bg-amber-950/90 px-3 py-2 text-xs text-amber-100 shadow-lg">
           {syncNotice}
+        </div>
+      )}
+
+      {/* Step 13B-QA7-R6: fullscreen overlay scroll handle. Absolute overlay on
+          the fixed fullscreen root (so it never affects document width / fit
+          scale and never reflows on hover). Controls ONLY the fullscreen
+          vertical content scroller (document work-screen ⇄ annotations below),
+          never the inner PDF zoom/pan scroller. Hidden unless that content
+          overflows. Right edge, so it stays clear of the top tools and the
+          bottom-centered Move/Edit/Copy/Delete toolbar. */}
+      {fsRail.show && (
+        <div
+          className="absolute z-[100045]"
+          style={{ top: fsRail.top, right: 4, height: fsRail.height, width: 16, display: 'flex', justifyContent: 'flex-end' }}
+        >
+          <div
+            role="scrollbar"
+            aria-orientation="vertical"
+            aria-label="Scroll between document and annotations"
+            className="bv-fs-scroll-thumb absolute"
+            style={{ top: fsRail.thumbTop - fsRail.top, height: fsRail.thumbH, right: 0 }}
+            onPointerDown={handleFsThumbPointerDown}
+            onPointerMove={handleFsThumbPointerMove}
+            onPointerUp={handleFsThumbPointerUp}
+            onPointerCancel={handleFsThumbPointerUp}
+          />
         </div>
       )}
 
@@ -6019,7 +6259,7 @@ const annotationPanelSizeClass =
           )}
 
           <div
-            className={useDesktopThreePaneLayout ? `grid grid-rows-[auto_auto_minmax(0,1fr)] p-4${draggingDivider ? ' select-none' : ''}` : isTabletImmersiveFullscreen ? 'flex-1 flex flex-col min-h-0' : ''}
+            className={useDesktopThreePaneLayout ? `grid grid-rows-[auto_auto_minmax(0,1fr)] p-4${draggingDivider ? ' select-none' : ''}` : isTabletImmersiveFullscreen || isFullScreenView ? 'flex-1 flex flex-col min-h-0' : ''}
             style={useDesktopThreePaneLayout ? {
               gridTemplateColumns: `${leftPaneWidth}px 6px 1fr 6px ${rightPaneWidth}px`,
               columnGap: 0,
@@ -6570,14 +6810,41 @@ const annotationPanelSizeClass =
             </div>
           )}
 
-          <div className={useDesktopThreePaneLayout ? 'contents' : isTabletImmersiveFullscreen ? 'flex-1 min-h-0 overflow-hidden flex flex-col' : isFullScreenView ? 'flex-1 min-h-0 overflow-hidden flex flex-col p-2 sm:p-4' : 'p-2'}>
-            <div className={useDesktopThreePaneLayout ? 'contents' : isTabletImmersiveFullscreen || isFullScreenView ? 'flex flex-1 min-h-0 flex-col gap-2' : 'grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-3 sm:gap-4'}>
+          {/* Fullscreen (Step 13B-QA7-R5): this wrapper is the ONE internal
+              vertical scroller inside the fixed fullscreen shell. The first
+              "screen" of its content is the document scroll area at exactly
+              100% of the scroller's height (tools pinned above, document
+              filling everything else); the annotations panel flows BELOW that
+              first screen, reached by scrolling down — it never steals height
+              from the document. The zoomed PDF spacer stays trapped inside the
+              inner operations-pdf-scroll area only. */}
+          <div
+            ref={fullscreenScrollerRef}
+            onScroll={fsStackedFullscreen ? updateFsRail : undefined}
+            className={useDesktopThreePaneLayout ? 'contents' : isTabletImmersiveFullscreen ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden' : isFullScreenView ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-2 sm:p-4' : 'p-2'}
+            style={!useDesktopThreePaneLayout && (isTabletImmersiveFullscreen || isFullScreenView) ? { overscrollBehavior: 'contain' } : undefined}
+          >
+            {/* Default (non-fullscreen, non-desktop-three-pane) mode is a single
+                column: tools on top, document in the middle, annotations panel at
+                the BOTTOM. The previous xl: side-column variant here was only
+                reachable on iPad-Pro-landscape widths (every non-iPad browser
+                >=1280px takes the desktop three-pane branch instead), so it moved
+                annotations to a right sidebar on exactly those iPads — breaking
+                the accepted iPad layout. Removed per Step 13B-QA7-R. */}
+            {/* Fullscreen: 'contents' — the PDF scroll area and annotations
+                panel must be box-children of the vertical scroller above, so
+                the scroll area's height:100% resolves against the scroller's
+                definite height (one full work screen) and annotations flow
+                below it. The old 'flex flex-col' here made document +
+                annotations SPLIT the same visible height, shrinking the
+                document by up to 38vh when the drawer was open. */}
+            <div className={useDesktopThreePaneLayout ? 'contents' : isTabletImmersiveFullscreen || isFullScreenView ? 'contents' : 'grid grid-cols-1 gap-3 sm:gap-4'}>
               <style>{`
                 .operations-pdf-scroll::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
               `}</style>
               <div
                 ref={scrollAreaRef}
-                className={`${useDesktopThreePaneLayout ? 'col-start-3 row-start-1 row-span-3 min-h-0 min-w-0 bg-[#0d0e14]' : ''} operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-scroll'} ${isFullScreenView || isTabletImmersiveFullscreen && !useDesktopThreePaneLayout ? 'flex-1 min-h-0 max-h-none' : !useDesktopThreePaneLayout ? 'min-h-[320px] sm:min-h-[360px] lg:min-h-[400px]' : ''} rounded border border-gray-800`}
+                className={`${useDesktopThreePaneLayout ? 'col-start-3 row-start-1 row-span-3 min-h-0 min-w-0 bg-[#0d0e14]' : ''} operations-pdf-scroll ${lockView ? 'overflow-hidden' : 'overflow-scroll'} ${(isFullScreenView || isTabletImmersiveFullscreen) && !useDesktopThreePaneLayout ? 'h-full w-full max-w-full min-h-0 min-w-0 max-h-none' : !useDesktopThreePaneLayout ? 'min-h-[320px] sm:min-h-[360px] lg:min-h-[400px]' : ''} rounded border border-gray-800`}
                 style={{
                   // Dynamic height: fills from bottom of toolbar to bottom of viewport.
                   // Falls back to calc(100vh-300px) until toolbarAreaRef is measured.
@@ -6586,7 +6853,17 @@ const annotationPanelSizeClass =
                     : isFullScreenView || isTabletImmersiveFullscreen
                       ? {}
                       : {
-                        height: scrollAreaHeight > 100 ? `${scrollAreaHeight - 16}px` : 'calc(100vh - 300px)',
+                        // scrollAreaHeight is measured as innerHeight - toolbar
+                        // bottom; if the page was scrolled past the toolbar at
+                        // measure time that value EXCEEDS the viewport, growing
+                        // the page (and iOS URL-bar resize events re-trigger the
+                        // measurement — runaway growth). min()/maxHeight clamp
+                        // the document viewport to the visible viewport so only
+                        // the scroll area ever scrolls, never the app page.
+                        height: scrollAreaHeight > 100
+                          ? `min(${scrollAreaHeight - 16}px, calc(100dvh - 140px))`
+                          : 'calc(100dvh - 300px)',
+                        maxHeight: 'calc(100dvh - 140px)',
                       }),
                   // Hide scrollbars across all browsers Ã¢â‚¬â€ inline guarantees they
                   // apply regardless of CSS file load order. Container still

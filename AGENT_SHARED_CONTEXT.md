@@ -63,10 +63,169 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Step13B-QA5-R4-Cloud-Paused-Status (Claude Code Sonnet 4.6) | Header Sync Status — Quiet "Cloud Paused" State for Remote-Newer Guard Blocks | src/components/v15r/V15rLayout.tsx, src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 | Step13B-QA5-R4B-Blueprint-Banner-Spam-ConflictCode (Claude Code Sonnet 4.6) | Blueprint Banner De-Spam + conflictCode Classification + 20min Source Dedupe | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, src/components/v15r/V15rLayout.tsx, src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 | Step13B-QA6-Annotation-List-Dot-Color (Claude Code Sonnet 4.6) | Blueprint Viewer — Match Annotation List Dot Color to Placed Shape Color | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA7-iPad-Viewport-1000-Zoom (Claude Code) | Blueprint Viewer — Repair Default/Fullscreen Viewport After 1000% Zoom (canvas raster cap + CSS zoom remainder) | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA7-R-iPad-Layout-Restore (Claude Code) | Blueprint Viewer — Keep annotations at bottom on iPad default mode (remove tablet-only xl side column), preserve QA7 raster cap | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA7-R2-iPad-Fullscreen-Stacked (Claude Code) | Blueprint Viewer — Robust tablet detection so iPad fullscreen renders stacked layout, never desktop 3-column | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA7-R3-Emergency-Layout-Override (Claude Code) | Blueprint Viewer — Fix maxTouchPoints>1 emulation gap + hard override: three-pane never renders on tablet/immersive | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA7-R4-Fullscreen-Containment (Claude Code) | Blueprint Viewer — Fullscreen root was position:relative (fixed+relative class conflict); inline fixed containment + default scroll-area viewport clamp | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA7-R5-Fullscreen-WorkScreen (Claude Code Opus) | Blueprint Viewer — Fullscreen: document fills the screen, annotations moved BELOW the work screen (internal vertical scroller) | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-QA7-R6-Fullscreen-Scroll-Handle (Claude Code Opus) | Blueprint Viewer — Custom overlay scroll handle for the fullscreen vertical scroller (touch + hover-widen, zero layout impact) | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 
 ---
 
 ## Audit & Change Log
+
+### 2026-07-01 — Fullscreen Overlay Scroll Handle (Step 13B-QA7-R6, NOT COMMITTED)
+
+**Agent:** Claude Code (Fable 5, task labeled Opus)
+**Mode:** Additive UI affordance — no document sizing, zoom, or PDF-scroller logic changed
+**Branch:** main | HEAD = 43c538f
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 20.76s | **git diff --check:** PASS ✅
+
+#### Scroller identified
+The R5 fullscreen vertical content scroller (`flex-1 min-h-0 overflow-y-auto overflow-x-hidden`, ~line 6690) — the outer scroller holding the document work-screen + annotations-below. NOT the inner PDF zoom/pan `operations-pdf-scroll` (`scrollAreaRef`), which was left untouched.
+
+#### What was added
+- New `fullscreenScrollerRef` on that scroller + `onScroll` (fullscreen only) → `updateFsRail()`.
+- `updateFsRail()` reads scrollTop/scrollHeight/clientHeight + `getBoundingClientRect` (root is fixed at 0,0 so rect.top = offset in root) → derives an overlay thumb: height = max(44px, ratio·rail) for a finger target, positioned by scroll ratio. Shows only when content overflows and only in stacked fullscreen (`fsStackedFullscreen`).
+- Effect: rAF initial + `ResizeObserver` on the scroller + window resize; deps include `tabletAnnotationsOpen`/`currentPage`/`allAnnotations.length` so the thumb re-measures when the annotations drawer expands/collapses.
+- Pointer handlers (`handleFsThumbPointerDown/Move/Up`) with `setPointerCapture` → drag maps dy→scrollTop of the fullscreen scroller only; `stopPropagation` + `touch-action: none` so it never reaches the PDF pan/zoom.
+- Overlay rail+thumb rendered as an `absolute` sibling on the fixed root (right edge, z-100045) — clear of the top tools and the bottom-centered Move/Edit/Copy/Delete toolbar.
+- `.bv-fs-scroll-thumb` CSS: 8px → 14px on hover/active with a subtle color bump.
+
+#### Why an overlay (not native `::-webkit-scrollbar` widening)
+"Bigger on hover" + "no layout jump" + "don't change document size" conflict for a native scrollbar (widening reflows; a stable gutter reserves width and shrinks the document/fit-scale, which is computed from the inner scroll area). An absolute overlay has zero layout width → document size and fit-scale are byte-for-byte unchanged, no hover reflow. Native scrollbars were deliberately NOT modified.
+
+#### Preserved
+Document display size, fullscreen work-screen height, PDF zoom scale, 1000% zoom, raster cap, renderedZoom, visualScale, and the inner PDF scroller are all unchanged. No `resize:` CSS anywhere in the viewer. All tools (symbols, S3/S4, glare, hide toggles, colors, opacity, rotation, arc line, circuit path, measure, Guide Assist, Work Packages, dot colors), save/sync, and the Move/Edit/Copy/Delete toolbar untouched.
+
+**Lock released.**
+
+---
+
+### 2026-07-01 — Fullscreen Work Screen: Document Fills Viewport, Annotations Below (Step 13B-QA7-R5, NOT COMMITTED)
+
+**Agent:** Claude Code (Fable 5, task labeled Opus)
+**Mode:** Fullscreen layout restructure only — zoom math, raster cap, tools, save/sync untouched
+**Branch:** main | HEAD = 43c538f
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 21.89s | **git diff --check:** PASS ✅
+
+#### Wrapper that was shrinking the document
+The fullscreen inner wrapper `'flex flex-1 min-h-0 flex-col gap-2'` made the PDF scroll area and the annotations panel SPLIT the same visible flex height — an expanded annotations drawer (`max-h-[38vh]`) stole up to 38vh from the document inside the fixed 100dvh shell (the R4 containment made the shell honest, which surfaced this split).
+
+#### New fullscreen structure (immersive AND non-desktop native fullscreen)
+fixed root (inline: fixed, 100vw×100dvh, overflow hidden — from R4) → pinned header/tool rows (flex-none) → container `flex-1 flex flex-col min-h-0` (now also applied to non-desktop `isFullScreenView`, whose branch was previously an empty class breaking the height chain) → **internal vertical scroller** (`flex-1 min-h-0 overflow-y-auto overflow-x-hidden`, `overscrollBehavior: contain`) → inner wrapper `contents` → **PDF scroll area `h-full`** (= exactly one full work screen; document fills all height below the tools) followed by the **annotations panel below** (`mt-2`, natural height, no max-h cap) — reached by scrolling down, never subtracting from the document. Percentage height resolves because `contents` makes the scroll area a box-child of the definite-height scroller.
+Also parenthesized the long-standing `isFullScreenView || isTabletImmersiveFullscreen && !useDesktopThreePaneLayout` precedence quirk on the scroll-area class. Desktop three-pane fullscreen unchanged (its scroll area is height-styled by the grid branch). Default embedded mode unchanged (grid + R4 viewport clamp). Zoomed spacer still lives only inside `operations-pdf-scroll`. No `resize:` CSS exists in the viewer (corner handle in screenshots = V15r workspace panel, out of scope).
+
+**Lock released.**
+
+---
+
+### 2026-07-01 — Fullscreen Root Containment + Scroll-Area Viewport Clamp (Step 13B-QA7-R4, NOT COMMITTED)
+
+**Agent:** Claude Code (Fable 5)
+**Mode:** Overflow/containment repair only — no tools, zoom math, raster cap, or layout branching changed
+**Branch:** main | HEAD = 43c538f
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 16.00s | **git diff --check:** PASS ✅
+
+#### Root cause 1 — fullscreen page growth (THE expanding ancestor)
+The fullscreen/immersive viewer root's class list combined `fixed` with `relative` (`'fixed inset-0 z-[9999] … isolate relative'`, the `isolate relative` pair added in QA1/5a902b5 — matching exactly when "fullscreen expands the page" was first reported). Tailwind emits `.relative` AFTER `.fixed` in its position utilities, so at equal specificity the cascade resolved the root to `position: relative` — an ordinary in-flow element. `inset-0` became inert offsets, the root's height came from its content, and the zoomed document sized the entire app page. Fix: fullscreen branches now use inline styles that cannot lose a cascade fight — `position: fixed; top/left/right/bottom: 0; width: 100vw; height: 100dvh; maxWidth/maxHeight: 100vw/100dvh; overflow: hidden` — and the `fixed`/`relative`/`overflow-hidden`/`inset-0` classes were removed from those branches (kept `z-[9999] bg flex flex-col isolate`). Default embedded mode keeps its original classes/style untouched.
+
+#### Root cause 2 — default-mode runaway height
+`scrollAreaHeight` is measured as `window.innerHeight - toolbarArea.getBoundingClientRect().bottom`. If the page is scrolled past the toolbar when a resize event fires (iOS Safari URL-bar collapse fires resize on scroll), `bottom` is negative and the measured height EXCEEDS the viewport → the scroll area grows the page → more scrolling → more resize events (runaway growth). Fix: the default-mode scroll area height is now `min(measured, calc(100dvh - 140px))` with `maxHeight: calc(100dvh - 140px)` — the document viewport can never exceed the visible viewport; only its internal scroll pans the zoomed document.
+
+#### Confirmed contained
+The large zoom spacer (`visualDisplayWidth/Height`) and page frame transform live only inside `scrollAreaRef` (`overflow-scroll`, `overscroll-behavior: contain`) — no parent uses document-derived sizing. No `resize:` CSS exists in the viewer (the corner handle in the user's screenshot is the V15r workspace panel, outside this file). QA7 raster cap, renderedZoom/visualScale, 1000% zoom, R2/R3 tablet detection + stacked layout all preserved.
+
+**Lock released.**
+
+---
+
+### 2026-07-01 — Emergency Layout Override: Three-Pane Never on Tablet/Immersive (Step 13B-QA7-R3, NOT COMMITTED)
+
+**Agent:** Claude Code (Fable 5)
+**Mode:** Two-line layout-decision repair guided by user's DevTools DOM screenshot
+**Branch:** main | HEAD = 43c538f
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 16.63s | **git diff --check:** PASS ✅
+
+#### Evidence from user screenshot (DevTools, responsive 1377×865, fullscreen active)
+DOM showed viewer root `fixed inset-0 z-[9999]` containing the live desktop three-pane grid (`grid-template-columns: 343px 6px 1fr 6px 358px`) — `useDesktopThreePaneLayout` was still true.
+
+#### Why R2's detection missed
+R2's `isTouchFirstDevice()` required `maxTouchPoints > 1`. **Chrome DevTools device/responsive emulation reports `navigator.maxTouchPoints === 1`** (real iPads report 5), so emulated-iPad testing fell through both signals to the width check (1377 ≥ 1280) → desktop three-pane + native fullscreen.
+
+#### Fix
+1. `isTouchFirstDevice()`: `maxTouchPoints > 0` (still requires `pointer: coarse` primary pointer, so touch-screen laptops with mouse/trackpad stay desktop).
+2. Hard override at the layout decision: `useDesktopThreePaneLayout = isDesktopBlueprintLayout && !isTabletImmersiveFullscreen && !isTabletDevice()` — the left-controls/right-annotations three-pane can never render while immersive fullscreen is active or on any tablet/touch-first device, regardless of width. Tablet default + fullscreen = tools top, document middle, annotations bottom.
+QA7 raster cap, 1000% zoom, all tools/save/sync untouched.
+
+**Lock released.**
+
+---
+
+### 2026-07-01 — iPad Fullscreen Renders Stacked Layout, Never Desktop 3-Column (Step 13B-QA7-R2, NOT COMMITTED)
+
+**Agent:** Claude Code (Fable 5)
+**Mode:** Device-detection hardening — no layout JSX changed this pass; QA7 raster cap and QA7-R bottom-annotations fix preserved
+**Feature Area:** Blueprint Viewer — `shouldUseDesktopBlueprintLayout()` / `isTabletDevice()`
+**Branch:** main | HEAD = 43c538f
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 18.28s (pre-existing chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Root cause of desktop 3-column fullscreen on iPad
+Both `shouldUseDesktopBlueprintLayout()` (drives `useDesktopThreePaneLayout` = left controls column + right annotations column) and `isTabletDevice()` (routes the fullscreen button to immersive vs native/desktop fullscreen) relied on a single UA/platform sniff (`/iPad/` in UA, or MacIntel/Macintosh + maxTouchPoints > 1). When that sniff misses (DevTools iPad emulation without full touch emulation, third-party iPad browsers, UA changes), an iPad Pro landscape viewport (1366px ≥ 1280) falls straight into the desktop three-pane layout AND native desktop fullscreen — exactly the 3-column fullscreen in the user's screenshot. Width was effectively the deciding signal.
+
+#### Fix
+Refactored the duplicated sniff into `isIPadLikeDevice()` and added a capability-based `isTouchFirstDevice()` (`matchMedia('(pointer: coarse)')` + `maxTouchPoints > 1`). Now:
+- `shouldUseDesktopBlueprintLayout()` = NOT iPad-like AND NOT touch-first AND width ≥ 1280 — a wide window is only "desktop" when both signals agree it isn't a touch device.
+- `isTabletDevice()` = iPad-like OR touch-first — fullscreen routes to the immersive stacked overlay (2-row tool header top, document flex-1 middle, annotations bottom drawer max-h-[38vh], root fixed inset-0 overflow-hidden) whenever either signal fires. Touch-capable laptops keep a fine primary pointer → still desktop.
+- QA7's raster budget also keys off `isTabletDevice()`, so the touch budget now covers the same devices consistently.
+No JSX/layout branches were edited this pass — with detection fixed, the existing branches produce: iPad default = tools top / document middle / annotations bottom (QA7-R); iPad fullscreen = immersive stacked (never 3-column); desktop unchanged.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-07-01 — Restore Accepted iPad Layout, Keep QA7 Raster Cap (Step 13B-QA7-R, NOT COMMITTED)
+
+**Agent:** Claude Code (Fable 5)
+**Mode:** One-line layout branch fix + git-history audit — QA7 zoom/raster work fully preserved
+**Feature Area:** Blueprint Viewer — default-mode iPad annotations panel placement
+**Branch:** main | HEAD = 43c538f
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 17.63s (pre-existing chunk warnings only) | **git diff --check:** PASS ✅
+
+#### Audit finding
+Git-history comparison (462f1a5 → 43c538f → QA7 working tree) confirmed QA7's uncommitted diff contains ZERO layout/className changes — it is raster/zoom math only. The layout branches were also structurally stable across the recent commits except QA1 (5a902b5), which moved fullscreen/immersive annotations to the bottom drawer (`max-h-[38vh]`) — i.e. TOWARD the accepted layout. The one branch still contradicting the accepted iPad layout: the default-mode container `grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px]`. Since `useDesktopThreePaneLayout` already captures every non-iPad browser ≥1280px, that `xl:` side column was reachable ONLY on iPad-Pro-landscape-width devices (1366px ≥ xl 1280) — on exactly those iPads it moved the annotations panel from the bottom to a 300px right sidebar.
+
+#### Fix
+Default-mode container is now always single-column: `grid grid-cols-1 gap-3 sm:gap-4` (annotations panel renders full-width BELOW the document scroll area, bounded by its existing `max-h-56` expanded / `h-10` collapsed classes). No effect on any non-iPad device: desktop ≥1280 takes the three-pane branch, everything else was already below the xl breakpoint. Fullscreen/immersive branches untouched (already: tools top via 2-row header, document `flex-1` middle, annotations bottom drawer). QA7's raster budgets, `renderedZoom` bookkeeping, and 1000% zoom are untouched.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-07-01 — Repair iPad Default/Fullscreen Viewport After 1000% Zoom (Step 13B-QA7, NOT COMMITTED)
+
+**Agent:** Claude Code (Fable 5)
+**Mode:** Rendering-pipeline repair — zoom UX/math preserved, no annotation data model or persistence touched
+**Feature Area:** Blueprint Viewer — PDF canvas raster sizing, zoom containment, iPad Safari stability
+**Branch:** main | HEAD = 43c538f
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 16.67s (pre-existing chunk-size warnings only) | **git diff --check:** PASS ✅
+
+#### Root cause
+Step 13B-QA3 raised `MAX_RELATIVE_ZOOM_*`/`MAX_RENDER_SCALE` from 4.5 to 10. The render effect rasters the PDF canvas at the FULL committed zoom (`fitScale × relativeZoom`), and the annotation SVG overlays are sized to the same `displaySize`. At high zoom on large sheets this produces 50–100M-pixel canvases/layers. iPad Safari silently paints nothing past ~16.7M px (canvas area) / 8192px (texture dimension) — blank documents, dropped annotation layers (document-size dependent → "some documents"; default vs fullscreen differ because fit scale differs), and giant composited elements destabilizing the viewport. Pre-QA3, mobile already implicitly relied on the absolute 4.5 render cap keeping canvases under these limits.
+
+#### Fix (all in OperationsBlueprintPdfViewer.tsx)
+- New raster budgets: `MAX_CANVAS_AREA_TOUCH = 15M px` / `MAX_CANVAS_AREA_DESKTOP = 33M px`, plus per-dimension caps 8000/16000. Render effect computes `actualRenderScale = min(MAX_RENDER_SCALE, maxAreaScale, maxDimScale, fitScale × relativeZoom)` — the canvas is never rastered past what the platform can paint.
+- New `renderedZoom` (ref + state): the relative zoom the current raster actually represents (`actualRenderScale / fitScale`), recorded on every successful render, reset to 1 in `clearDoc`.
+- The zoom remainder (up to the full 1000%) is carried by the existing CSS `visualScale` transform on `pageFrameRef` (same mechanism as the live pinch preview): `visualScale = livePinchZoom / renderedZoom` instead of `/ relativeZoom`. All 4 gesture-math sites (`handleWheel`, pinch start, pinch move, `endTouchPointer`) now derive visual page sizes from `renderedZoomRef`; the post-render pinch-anchor application multiplies by the commit visual scale.
+- Zoom state machine (`relativeZoom`, clamps, buttons, % label, Fit Full Page reset) untouched — max zoom stays 1000%.
+
+#### Containment
+Zoom scales the document inside the existing scroll container (`scrollAreaRef`, `overflow-scroll`, explicit height in every mode) via the spacer div + transform; the outer app shell never grows. This architecture was already correct — the instability came from the oversized rasters, not the containers, so no layout container was changed.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
 
 ### 2026-07-01 — Match Annotation List Dot Color to Placed Shape Color (Step 13B-QA6, NOT COMMITTED)
 
