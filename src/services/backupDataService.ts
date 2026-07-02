@@ -1374,6 +1374,10 @@ export const SYNC_BLOCKED_REMOTE_NEWER_MSG =
 export const SYNC_BLOCKED_NO_REMOTE_BASELINE_MSG =
   'Cloud sync was blocked because this session could not prove it loaded the latest remote data. Reload before syncing.'
 
+/** Shown only on localhost/dev when a stale full snapshot would overwrite newer cloud data. */
+export const LOCALHOST_STALE_SNAPSHOT_BLOCKED_MSG =
+  'Localhost session is older than production cloud data. Full snapshot save blocked to prevent overwriting newer cloud data.'
+
 const REMOTE_FRESHNESS_FETCH_TIMEOUT_MS = 15000
 const FRESHNESS_TOLERANCE_MS = 1000
 
@@ -1386,6 +1390,8 @@ export type SyncToSupabaseOptions = {
   failClosed?: boolean
   /** Explicit restore/intentional overwrite — bypasses stale-overwrite guard. */
   allowOverwriteNewerRemote?: boolean
+  /** Internal: prevents production merge retry recursion. */
+  _skipProductionMerge?: boolean
 }
 
 export type SyncToSupabaseResult = {
@@ -1654,6 +1660,162 @@ export async function checkManualSaveFreshness(
   }
 }
 
+function getSaveEnvironment(): 'localhost' | 'production' {
+  if (typeof window === 'undefined') return 'production'
+  const host = window.location.hostname
+  return host === 'localhost' || host === '127.0.0.1' ? 'localhost' : 'production'
+}
+
+export function isLocalDevOrigin(): boolean {
+  return getSaveEnvironment() === 'localhost'
+}
+
+type MergeableRecord = { id?: string; updatedAt?: string }
+
+function mergeArrayByIdPreferNewer<T extends MergeableRecord>(remoteList: T[], localList: T[]): T[] {
+  const byId = new Map<string, T>()
+  const noId: T[] = []
+  for (const item of remoteList) {
+    const id = String(item?.id || '').trim()
+    if (id) byId.set(id, item)
+    else noId.push(item)
+  }
+  for (const item of localList) {
+    const id = String(item?.id || '').trim()
+    if (!id) {
+      noId.push(item)
+      continue
+    }
+    const existing = byId.get(id)
+    if (!existing) {
+      byId.set(id, item)
+      continue
+    }
+    const localMs = parseBackupTimestampMs(item.updatedAt)
+    const remoteMs = parseBackupTimestampMs(existing.updatedAt)
+    byId.set(id, localMs >= remoteMs ? item : existing)
+  }
+  return [...byId.values(), ...noId]
+}
+
+function mergeBlueprintSummariesObject(remoteRaw: any, localRaw: any): Record<string, unknown> {
+  const remote = remoteRaw && typeof remoteRaw === 'object' ? remoteRaw : {}
+  const local = localRaw && typeof localRaw === 'object' ? localRaw : {}
+  const merged: Record<string, unknown> = { ...remote }
+
+  for (const [key, localVal] of Object.entries(local)) {
+    if (key === 'operationsBlueprintAnnotations') {
+      const remoteAnn = (merged[key] && typeof merged[key] === 'object') ? merged[key] as Record<string, unknown[]> : {}
+      const localAnn = (localVal && typeof localVal === 'object') ? localVal as Record<string, unknown[]> : {}
+      const setIds = new Set([...Object.keys(remoteAnn), ...Object.keys(localAnn)])
+      const nextAnn: Record<string, unknown[]> = { ...remoteAnn }
+      for (const setId of setIds) {
+        nextAnn[setId] = mergeArrayByIdPreferNewer(
+          Array.isArray(remoteAnn[setId]) ? remoteAnn[setId] as MergeableRecord[] : [],
+          Array.isArray(localAnn[setId]) ? localAnn[setId] as MergeableRecord[] : [],
+        )
+      }
+      merged[key] = nextAnn
+    } else if (key === 'operationsBlueprintScopeLayers') {
+      const remoteLayers = (merged[key] && typeof merged[key] === 'object') ? merged[key] as Record<string, unknown> : {}
+      const localLayers = (localVal && typeof localVal === 'object') ? localVal as Record<string, unknown> : {}
+      merged[key] = { ...remoteLayers, ...localLayers }
+    } else {
+      merged[key] = localVal
+    }
+  }
+  return merged
+}
+
+function mergeLocalChangesIntoRemote(
+  remote: BackupData,
+  local: BackupData,
+  changedKeys: Set<string>,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remote)) as BackupData
+  const arrayKeys = new Set([
+    'serviceLogs', 'serviceLeads', 'logs', 'projects', 'gcContacts', 'employees',
+    'templates', 'triggerRules', 'agendaSections', 'completedArchive',
+    'activeServiceCalls', 'serviceEstimates', 'taskSchedule', 'dailyJobs',
+    'weeklyReviews', 'imports', 'customers', 'priceBook',
+  ])
+  const objectKeys = new Set(['settings', 'calcRefs', 'projectDashboards'])
+
+  for (const key of changedKeys) {
+    if (!(key in local)) continue
+    const localVal = (local as any)[key]
+    if (key === 'blueprintSummaries') {
+      ;(merged as any)[key] = mergeBlueprintSummariesObject((remote as any)[key], localVal)
+    } else if (arrayKeys.has(key) && Array.isArray(localVal)) {
+      const remoteArr = Array.isArray((remote as any)[key]) ? (remote as any)[key] : []
+      ;(merged as any)[key] = mergeArrayByIdPreferNewer(remoteArr, localVal)
+    } else if (objectKeys.has(key) && localVal && typeof localVal === 'object' && !Array.isArray(localVal)) {
+      ;(merged as any)[key] = { ...((remote as any)[key] || {}), ...localVal }
+    } else {
+      ;(merged as any)[key] = localVal
+    }
+  }
+  return merged
+}
+
+/**
+ * Production multi-device path: when remote advanced since session baseline,
+ * merge local changed keys into latest remote, advance baseline, then sync.
+ * Returns null to fall through to the localhost-style guard block.
+ */
+async function attemptProductionMergeAndSync(
+  userId: string,
+  options: SyncToSupabaseOptions,
+): Promise<SyncToSupabaseResult | null> {
+  if (getSaveEnvironment() === 'localhost') return null
+
+  const local = getBackupData(userId)
+  if (!local) return null
+
+  const remote = await fetchRemoteAppStateRow(userId)
+  if (remote.error || !remote.hasRemoteRow || !remote.remoteData) return null
+
+  const changedKeys = _changedKeys.size > 0
+    ? new Set(_changedKeys)
+    : (options.source === 'blueprintSummaries' || String(options.source || '').includes('annotation')
+      ? new Set(['blueprintSummaries'])
+      : new Set<string>())
+
+  if (changedKeys.size === 0) {
+    setKnownRemoteBaseline(remote.remoteUpdatedAt, remote.remoteDataLastSavedAt)
+    saveBackupDataSilent(remote.remoteData, userId)
+    _dataChanged = false
+    _lastSyncedAt = Date.now()
+    _lastConflictDispatch = null
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('poweron:sync-success', {
+        detail: {
+          savedBy: ((remote.remoteData as any)?._syncMeta as any)?.savedBy,
+          savedAt: remote.remoteDataLastSavedAt || remote.remoteUpdatedAt,
+          merged: true,
+        },
+      }))
+    }
+    return { success: true, skipped: true }
+  }
+
+  const merged = mergeLocalChangesIntoRemote(remote.remoteData, local, changedKeys)
+  setKnownRemoteBaseline(remote.remoteUpdatedAt, remote.remoteDataLastSavedAt)
+  merged._lastSavedAt = new Date().toISOString()
+  saveBackupData(merged)
+
+  console.log('[Sync] Production merge-before-save', {
+    source: options.source || 'sync',
+    changedKeys: [...changedKeys],
+  })
+
+  return syncToSupabase(userId, {
+    ...options,
+    _skipProductionMerge: true,
+    source: options.source ? `${options.source}-production-merge` : 'production-merge',
+  })
+}
+
 function resolveSyncGuardError(freshness: {
   error?: string
   localFreshnessMs: number
@@ -1671,7 +1833,9 @@ function resolveSyncGuardError(freshness: {
     freshness.hasRemoteRow &&
     freshness.remoteFreshnessMs > freshness.knownRemoteBaselineMs + FRESHNESS_TOLERANCE_MS
   ) {
-    return SYNC_BLOCKED_REMOTE_NEWER_MSG
+    return getSaveEnvironment() === 'localhost'
+      ? LOCALHOST_STALE_SNAPSHOT_BLOCKED_MSG
+      : SYNC_BLOCKED_REMOTE_NEWER_MSG
   }
   return freshness.error || REMOTE_FRESHNESS_UNKNOWN_MSG
 }
@@ -1791,6 +1955,17 @@ export async function syncToSupabase(
     const failClosed = options.failClosed !== false
     const freshness = await checkManualSaveFreshness(userId, { failClosed })
     if (!freshness.allowed) {
+      if (!options._skipProductionMerge) {
+        const mergeResult = await attemptProductionMergeAndSync(userId, options)
+        if (mergeResult) {
+          if (mergeResult.success) {
+            _dataChanged = false
+            _lastSyncedAt = Date.now()
+            _changedKeys.clear()
+          }
+          return mergeResult
+        }
+      }
       const error = resolveSyncGuardError(freshness)
       const code = resolveSyncGuardCode(freshness)
       console.warn('[Sync] Cloud write blocked by stale-overwrite guard', {
@@ -1800,6 +1975,7 @@ export async function syncToSupabase(
         remoteFreshnessMs: freshness.remoteFreshnessMs,
         error,
         code,
+        environment: getSaveEnvironment(),
       })
       dispatchSyncConflict(error, options.source, code)
       return {
@@ -2149,12 +2325,6 @@ export function saveAndImmediateSync(data: BackupData, changedKey?: string): voi
   maybeAutoSnapshot(`Critical update: ${changedKey || 'data'}`)
 }
 
-function getSaveEnvironment(): 'localhost' | 'production' {
-  if (typeof window === 'undefined') return 'production'
-  const host = window.location.hostname
-  return host === 'localhost' || host === '127.0.0.1' ? 'localhost' : 'production'
-}
-
 function formatHeaderSaveSnapshotLabel(date = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `Before Header Save - ${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
@@ -2345,6 +2515,25 @@ export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promi
   if (options?.requireFreshRemote) {
     const freshness = await checkManualSaveFreshness(_activeTenantUserId, { failClosed: true })
     if (!freshness.allowed) {
+      const mergeResult = await attemptProductionMergeAndSync(_activeTenantUserId, {
+        source: options.source || 'manual',
+      })
+      if (mergeResult?.success) {
+        _dataChanged = false
+        _lastSyncedAt = Date.now()
+        _changedKeys.clear()
+        return { success: true }
+      }
+      if (getSaveEnvironment() !== 'localhost') {
+        // Production merge failed — surface the merge/sync error, not localhost guard text.
+        if (mergeResult && !mergeResult.success) {
+          return {
+            success: false,
+            blocked: mergeResult.blocked,
+            error: mergeResult.error,
+          }
+        }
+      }
       console.warn('[sync] Force sync blocked by freshness guard', {
         source: options.source || 'manual',
         localFreshnessMs: freshness.localFreshnessMs,
@@ -2355,7 +2544,7 @@ export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promi
       return {
         success: false,
         blocked: true,
-        error: freshness.error || REMOTE_FRESHER_THAN_LOCAL_MSG,
+        error: resolveSyncGuardError(freshness),
       }
     }
   }
@@ -2382,6 +2571,15 @@ export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promi
   if (!skipPreStampGuard) {
     const freshness = await checkManualSaveFreshness(_activeTenantUserId, { failClosed: true })
     if (!freshness.allowed) {
+      const mergeResult = await attemptProductionMergeAndSync(_activeTenantUserId, {
+        source: options?.source || 'manual',
+      })
+      if (mergeResult?.success) {
+        _dataChanged = false
+        _lastSyncedAt = Date.now()
+        _changedKeys.clear()
+        return { success: true }
+      }
       const error = resolveSyncGuardError(freshness)
       const code = resolveSyncGuardCode(freshness)
       console.warn('[sync] Force sync blocked by stale-overwrite guard', {

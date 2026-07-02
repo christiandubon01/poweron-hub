@@ -77,10 +77,37 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 | Agent | Feature Area | Files | Mode | Status | Claimed |
 |---|---|---|---|---|---|
+| Step13B-QA9-Production-Sync-Guard (Claude Opus 4.8) | Multi-device sync guard — localhost block only, production merge-before-save | src/services/backupDataService.ts, src/services/blueprintLibraryService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 | Step13B-QA8-Zoom-Symbol-Audit (Claude Opus 4.8) | Blueprint Viewer — zoom/symbol coordinate audit + fix | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 | Step13B-QA7-R7-Default-Annotations (Claude Code Opus) | Blueprint Viewer — default/embedded iPad annotations panel: expand naturally below document, not collapsed/capped drawer | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 
 ## Audit & Change Log
+
+### 2026-07-01 — Production multi-device sync guard (localhost block only) (Step 13B-QA9, NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Sync/save guard only — Blueprint rendering/zoom/layout NOT touched
+**Branch:** main | HEAD = `cd5ba699ee460066208d6621c1879a314095e1ec`
+
+#### Audit findings
+1. **Warning source:** `checkManualSaveFreshness()` → `syncToSupabase()` / `forceSyncToCloud()` → `dispatchSyncConflict()` → `V15rLayout` `poweron:sync-conflict` listener. Message constants in `backupDataService.ts` (`REMOTE_FRESHER_THAN_LOCAL_MSG`, `SYNC_BLOCKED_REMOTE_NEWER_MSG`).
+2. **Trigger:** `remote.remoteFreshnessMs > knownRemoteBaselineMs + 1000ms` — any device that loaded before another device saved gets blocked on ALL syncs (periodic, header save, blueprint annotations).
+3. **localhost vs production:** `getSaveEnvironment()` existed but was only used for snapshot labels — guard applied identically everywhere.
+4. **Scope:** Blocked all cloud writes via `syncToSupabase` default guard — not just header Save.
+5. **Blueprint annotations:** Used plain `saveBackupDataAndSyncNow` (no remote merge); scope layers already had `saveBackupWithRemoteBaselineSync`.
+6. **Baseline update:** Successful sync calls `setKnownRemoteBaseline(now, now)` — but blocked saves never reached that path.
+7. **Why production showed localhost-style warning:** Same guard + same `dispatchSyncConflict` toast on all origins; iPad/Windows cross-device saves advance remote while other tabs retain stale baseline.
+
+#### Fix
+- **`isLocalDevOrigin()` / `LOCALHOST_STALE_SNAPSHOT_BLOCKED_MSG`:** localhost-only scary block message.
+- **`attemptProductionMergeAndSync()`:** on production, when guard would block: fetch remote → merge local `_changedKeys` into remote (annotation id merge by newer `updatedAt`) → advance baseline → sync.
+- **`saveOperationsBlueprintAnnotations()`:** remote-latest merge via `saveBackupWithRemoteBaselineSync` (same pattern as scope layers).
+- **`V15rLayout`:** `poweron:sync-conflict` paused toast only on localhost; production relies on merge + `poweron:sync-success` for normal status.
+
+#### Preserved
+Blueprint viewer rendering/zoom/layout untouched. Data safety: localhost still blocks stale full snapshot; production never blindly overwrites — merges changed keys only, annotations merge by id with newer-wins.
+
+**Lock released.**
 
 ### 2026-07-01 — Blueprint zoom/symbol unified overlay coordinate system (Step 13B-QA8, NOT COMMITTED)
 

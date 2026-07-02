@@ -525,33 +525,125 @@ export function getOperationsBlueprintAnnotations(backup: any, blueprintSetId: s
   return rawList.map(sanitizeAnnotation).filter(Boolean) as BlueprintAnnotation[]
 }
 
-export async function saveOperationsBlueprintAnnotations(
-  backup: any,
+function applyAnnotationsToBackup(
+  targetBackup: any,
   blueprintSetId: string,
-  annotations: BlueprintAnnotation[]
-): Promise<SaveBlueprintAnnotationsResult> {
-  const container = getAnnotationsContainer(backup)
+  annotations: BlueprintAnnotation[],
+): any {
+  const merged = JSON.parse(JSON.stringify(targetBackup || {}))
+  const container = getAnnotationsContainer(merged)
   container[blueprintSetId] = (Array.isArray(annotations) ? annotations : [])
     .map(sanitizeAnnotation)
     .filter(Boolean) as BlueprintAnnotation[]
-  backup._lastSavedAt = new Date().toISOString()
-  const { saveBackupDataAndSyncNow } = await import('@/services/backupDataService')
-  const result = await saveBackupDataAndSyncNow(backup, 'blueprintSummaries')
+  return merged
+}
+
+export async function saveOperationsBlueprintAnnotations(
+  backup: any,
+  blueprintSetId: string,
+  annotations: BlueprintAnnotation[],
+): Promise<SaveBlueprintAnnotationsResult> {
+  const sanitized = (Array.isArray(annotations) ? annotations : [])
+    .map(sanitizeAnnotation)
+    .filter(Boolean) as BlueprintAnnotation[]
+
+  const {
+    getBackupData,
+    getActiveTenantUserId,
+    isSupabaseConfigured,
+    saveBackupData,
+    saveBackupDataAndSyncNow,
+    saveBackupWithRemoteBaselineSync,
+    fetchLatestRemoteBackup,
+    isLocalDevOrigin,
+  } = await import('@/services/backupDataService')
+
+  const userId = getActiveTenantUserId()
+  const localBase = backup || getBackupData()
+
+  const saveLocalOnly = (base: any): SaveBlueprintAnnotationsResult => {
+    const merged = applyAnnotationsToBackup(base, blueprintSetId, sanitized)
+    merged._lastSavedAt = new Date().toISOString()
+    saveBackupData(merged)
+    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+    try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+    return {
+      localSaved: true,
+      cloudSynced: false,
+      warning: isLocalDevOrigin()
+        ? 'Annotations saved locally. Localhost cloud sync blocked while remote is newer.'
+        : 'Annotations saved locally. Cloud sync will retry shortly.',
+    }
+  }
+
+  if (!isSupabaseConfigured()) {
+    if (!localBase) {
+      return { localSaved: false, cloudSynced: false, error: 'No local backup data available.' }
+    }
+    const merged = applyAnnotationsToBackup(localBase, blueprintSetId, sanitized)
+    merged._lastSavedAt = new Date().toISOString()
+    saveBackupData(merged)
+    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+    try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+    return { localSaved: true, cloudSynced: false }
+  }
+
+  const remote = await fetchLatestRemoteBackup(userId || undefined)
+
+  if (remote.error) {
+    console.warn('[Annotations] Remote fetch failed — local-only save', remote.error)
+    if (!localBase) {
+      return { localSaved: false, cloudSynced: false, error: 'No local backup data available.' }
+    }
+    return saveLocalOnly(localBase)
+  }
+
+  if (!remote.hasRemoteRow || !remote.remoteData) {
+    if (!localBase) {
+      return { localSaved: false, cloudSynced: false, error: 'No local backup data available.' }
+    }
+    const merged = applyAnnotationsToBackup(localBase, blueprintSetId, sanitized)
+    const result = await saveBackupDataAndSyncNow(merged, 'blueprintSummaries', { source: 'annotations-first-sync' })
+    if (result.success) {
+      try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+      try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+      return { localSaved: true, cloudSynced: true }
+    }
+    return {
+      localSaved: true,
+      cloudSynced: false,
+      warning: result.error,
+      error: result.error,
+    }
+  }
+
+  const mergedFromRemote = applyAnnotationsToBackup(remote.remoteData, blueprintSetId, sanitized)
+  const result = await saveBackupWithRemoteBaselineSync(
+    mergedFromRemote,
+    {
+      remoteUpdatedAt: remote.remoteUpdatedAt,
+      remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+    },
+    { source: 'annotations-remote-merge' },
+  )
+
   if (result.success) {
     try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
     try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
     return { localSaved: true, cloudSynced: true }
   }
+
   if (result.blocked || result.conflict) {
     try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
     return {
       localSaved: true,
       cloudSynced: false,
-      warning: result.error || 'Cloud sync was blocked because remote data is newer than this local session. Reload before syncing to avoid overwriting newer data.',
+      warning: result.error,
     }
   }
+
   return {
-    localSaved: false,
+    localSaved: result.localSaved,
     cloudSynced: false,
     error: result.error || 'Failed to sync blueprint annotations.',
   }

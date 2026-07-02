@@ -386,6 +386,15 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     const handleSyncConflict = (event: Event) => {
       const detail = (event as CustomEvent<{ error?: string; source?: string; conflictCode?: 'remote-newer' | 'no-baseline' | 'unknown' }>).detail
       const message = detail?.error || 'Cloud sync blocked — remote data is newer'
+      const isLocalDev =
+        typeof window !== 'undefined' &&
+        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+      // Production multi-device merge handles remote-newer before this fires.
+      // Only surface the scary paused toast on localhost/dev guard blocks.
+      if (!isLocalDev) {
+        console.warn('[Sync] Production conflict event (merge may retry on next save):', message, detail?.source)
+        return
+      }
       // Step 13B-QA5-R4 Part 1: dispatchSyncConflict now tags every event with a
       // reliable conflictCode ('remote-newer' | 'no-baseline' | 'unknown') instead of
       // relying on message-string matching. All three codes originate from the same
@@ -772,11 +781,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         setToastMessage('Live data saved to cloud')
         setTimeout(() => setToastMessage(null), 3000)
       } else if (result.blocked) {
-        // Freshness/snapshot guard blocked this explicit save -- local data is safe
-        // and this save attempt already told the user exactly why via the toast
-        // below. Treat it the same as any other guard block: 'paused', not 'failed'.
-        setSyncStatus('paused')
-        setToastMessage(result.error || 'Remote data is newer — reload before saving')
+        setSyncStatus(isLocalhostDev ? 'paused' : 'synced')
+        setToastMessage(
+          isLocalhostDev
+            ? (result.error || 'Localhost session is older than production cloud data. Full snapshot save blocked.')
+            : (result.error || 'Could not merge cloud changes — try again')
+        )
         setTimeout(() => setToastMessage(null), 6000)
       } else {
         setSyncStatus('failed')
