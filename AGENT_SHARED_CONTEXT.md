@@ -77,11 +77,62 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 | Agent | Feature Area | Files | Mode | Status | Claimed |
 |---|---|---|---|---|---|
+| Step13C-R1-Smoke-PickHighlight (Claude Opus 4.8) | Blueprint Viewer — redesign Smoke Alarm glyph + on-canvas Package Pick highlight | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
+| Step13C-Package-Speed-Symbols (Claude Opus 4.8) | Blueprint Viewer — Package Pick mode (+LeftControl toggle), Work Package add/remove items, Smoke/CO Alarm symbols, multi-package visibility | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
 | Step13B-QA9-Production-Sync-Guard (Claude Opus 4.8) | Multi-device sync guard — localhost block only, production merge-before-save | src/services/backupDataService.ts, src/services/blueprintLibraryService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 | Step13B-QA8-Zoom-Symbol-Audit (Claude Opus 4.8) | Blueprint Viewer — zoom/symbol coordinate audit + fix | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 | Step13B-QA7-R7-Default-Annotations (Claude Code Opus) | Blueprint Viewer — default/embedded iPad annotations panel: expand naturally below document, not collapsed/capped drawer | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 
 ## Audit & Change Log
+
+### 2026-07-02 — Smoke Alarm glyph redesign + on-canvas Package Pick highlight (Step 13C-R1, NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Symbol glyph + selection-feedback visuals only — zoom/rendering/layout/sync NOT touched
+**File:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` (+ this ledger)
+
+**1) Smoke Alarm glyph:** Rewrote only the `kind === 'electrical-smoke-alarm'` branch in `renderElectricalSymbolSvg`. Now a circular detector base + faint inner ring with three stacked wavy "smoke plume" lines (`q6.5 -7 13 0 t13 0`) inside the body — reads clearly as smoke and stays distinct from CO Alarm (straight horizontal vent slots). Keeps external `SA` label, same viewBox/coords, same style props (color/opacity/rotation/selection/persistence unchanged). CO Alarm branch untouched.
+
+**2) On-canvas Package Pick highlight:** Added one dedicated highlight pass immediately after the annotation `.map()` inside the overlay: for each `canvasPageAnnotations` item in `selectedForPackageIds`, renders a `pointer-events:none` div at the SAME `rect→percentage` position the map already uses (`clampRectToPage(a.rect)`), styled as an emerald dashed ring + glow + light tint + a small `Check` badge. Distinct from the white single-selection ring; visible on the plan without opening the annotation list; works for all package-pickable annotation types. Shows whenever `selectedForPackageIds.size > 0`. Does not read/modify displaySize/overlayRef/zoom, never mutates annotation data, and cannot intercept clicks/movement/editing (pointer-events:none).
+
+**Preserved:** Package Pick behavior/toggle/count/clear, edit add/remove items, CO Alarm glyph, multi-package visibility, zoom/rendering/overlay math, PDF canvas, sync/save, document size, fullscreen/default layout. typecheck ✅ build ✅ `git diff --check` ✅.
+
+**Lock released.**
+
+### 2026-07-02 — HOTFIX: Blueprint route crash — togglePackagePickMode TDZ (Step 13C-HOTFIX, NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Initialization-order only — no behavior/zoom/rendering/layout/sync change
+**File:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+
+**Bug:** "Cannot access 'togglePackagePickMode' before initialization." The Package Pick keyboard `useEffect` (references `togglePackagePickMode` in body + dependency array) sat ~830 lines ABOVE the `const togglePackagePickMode = useCallback(...)` declaration. `const` is not hoisted, so evaluating the effect's dependency array during render hit the temporal dead zone → route crash.
+
+**Fix:** Moved only the 3-line `togglePackagePickMode` useCallback declaration to immediately above the keyboard effect that uses it (it depends solely on the hoisted `setIsPackagePickMode` state setter, so the relocation is safe). Added a 2-line explanatory comment. No other callback needed moving — `togglePackagePickId`/`clearPackagePickSelection`/`removeScopeDraftItem`/`addPickedItemsToScopeDraft`/`clearScopeLayerVisibilityFilter` are all declared before their first use (capture handler / JSX). No behavior, feature, geometry, or data-model change. typecheck ✅ build ✅ `git diff --check` ✅.
+
+### 2026-07-02 — Package Builder Speed Tools + Smoke/CO Symbols (Step 13C, NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Package/symbol UI + local state only — zoom/rendering/layout/sync NOT touched
+**Branch:** main | HEAD before edits = `ad30ad4daa30376eb9297ab7f4d630b19b9aa8e7`
+**File:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` (+ this ledger)
+
+#### Audit findings
+1. Work Package items already stored as `BlueprintScopeLayer.selectedAnnotationIds` + derived `itemRefs`; save rebuilds itemRefs from `scopeLayerDraftIds` in `saveScopeLayerFromModal`.
+2. `selectedForPackageIds: Set<string>` already existed as the package-pick set (previously only toggled via annotation-list checkboxes).
+3. Canvas selection funnels through `handleAnnotationSelectCapture` (pointerdown-capture on the overlay) — a single universal interception point; inner per-annotation `selectAnnotation` handles click.
+4. Isolate was single-package: `isolatedScopeLayerId: string | null` → `isolatedAnnotationIdSet` filter.
+5. Electrical symbols are data-driven: `ELECTRICAL_SYMBOL_METADATA` Record + `ELECTRICAL_SYMBOL_OPTIONS` auto-render the picker; glyphs in `renderElectricalSymbolSvg`.
+
+#### Changes
+- **Package Pick mode:** new `isPackagePickMode` state + on-screen toggle button (annotations header) + Left Control (`e.code==='ControlLeft'`, `!e.repeat`, ignores editable fields, no preventDefault so Ctrl+S/Z/C unaffected) + Escape exits. Canvas clicks intercepted in `handleAnnotationSelectCapture` (toggle once on pointerdown, stop propagation → no move/edit/delete); inner `selectAnnotation` guarded to block focus. Count "Package Pick: N selected" + Clear button.
+- **Add/remove package items:** edit modal Items section now has per-item remove (`removeScopeDraftItem`, package-only) + "Add selected items (N)" (`addPickedItemsToScopeDraft`, dedup). `openEditScopeLayerModal` no longer clobbers the pick set. Save path unchanged.
+- **Smoke/CO symbols:** added `electrical-smoke-alarm` (SA) + `electrical-co-alarm` (CO) to ShapeKind/ElectricalSymbolKind unions, metadata, and `renderElectricalSymbolSvg`. Auto-appear in Electrical Symbols; reuse existing placement/color/opacity/select/move/copy/delete/persistence.
+- **Multi-package visibility:** `isolatedScopeLayerId` → `isolatedScopeLayerIds: Set<string>`; `isolatedAnnotationIdSet` = union across visible packages (null=show all). Eye toggles add/remove; empty set → show all. "Showing N packages" + "Show All" (`clearScopeLayerVisibilityFilter`).
+
+#### Preserved (not touched)
+visualScale/renderedZoom/visualPageSize/displaySize, pageFrameRef sizing, overlayRef coordinate math, canvas rendering, PDF zoom/pan, fullscreen/default layout, production sync guard, save/sync service files, ToolPopover. typecheck ✅ build ✅ `git diff --check` ✅.
+
+**Lock released.**
 
 ### 2026-07-01 — Production multi-device sync guard (localhost block only) (Step 13B-QA9, NOT COMMITTED)
 

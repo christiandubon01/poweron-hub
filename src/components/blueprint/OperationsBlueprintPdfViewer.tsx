@@ -267,6 +267,8 @@ type ShapeKind =
   | 'electrical-receptacle'
   | 'electrical-timer-control'
   | 'electrical-photocell'
+  | 'electrical-smoke-alarm'
+  | 'electrical-co-alarm'
 type BorderStyle = 'solid' | 'dashed' | 'dotted'
 type HatchPattern = 'none' | 'diagonal' | 'cross' | 'dots'
 type GenerateQuestionType = 'coordination' | 'rfi'
@@ -285,6 +287,8 @@ type ElectricalSymbolKind = Extract<ShapeKind,
   | 'electrical-receptacle'
   | 'electrical-timer-control'
   | 'electrical-photocell'
+  | 'electrical-smoke-alarm'
+  | 'electrical-co-alarm'
 >
 type ElectricalSymbolCategory = 'lighting' | 'switching' | 'power' | 'control'
 
@@ -442,6 +446,28 @@ const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, ElectricalSymbolM
     defaultPhase: 'electrical',
     materialKey: 'photocell',
     laborKey: 'photocell',
+    isElectricalSymbol: true,
+  },
+  'electrical-smoke-alarm': {
+    symbolKind: 'electrical-smoke-alarm',
+    displayName: 'Smoke Alarm',
+    shortLabel: 'SA',
+    category: 'control',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'smoke-alarm',
+    laborKey: 'smoke-alarm',
+    isElectricalSymbol: true,
+  },
+  'electrical-co-alarm': {
+    symbolKind: 'electrical-co-alarm',
+    displayName: 'CO Alarm',
+    shortLabel: 'CO',
+    category: 'control',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'co-alarm',
+    laborKey: 'co-alarm',
     isElectricalSymbol: true,
   },
 }
@@ -1140,6 +1166,32 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
       </>
     )
     label = externalLabel(photocellLabel)
+  } else if (kind === 'electrical-smoke-alarm') {
+    const smokeLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'SA'
+    // Ceiling-mounted smoke detector: circular detector base + inner ring, with stacked wavy
+    // "smoke plume" lines inside the body. The wavy plume reads clearly as smoke and keeps it
+    // distinct from the CO Alarm (straight horizontal vent slots).
+    body = (
+      <>
+        <circle cx="48" cy="45" r="30" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <circle cx="48" cy="45" r="21" fill="none" stroke={borderColor} strokeWidth={fineStroke} opacity="0.5" />
+        <path d="M35 53 q6.5 -7 13 0 t13 0" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" />
+        <path d="M35 45 q6.5 -7 13 0 t13 0" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" />
+        <path d="M35 37 q6.5 -7 13 0 t13 0" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.8" />
+      </>
+    )
+    label = externalLabel(smokeLabel)
+  } else if (kind === 'electrical-co-alarm') {
+    const coLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'CO'
+    // Ceiling/wall CO detector: outer body, inner ring, horizontal vent slots.
+    body = (
+      <>
+        <circle cx="48" cy="45" r="30" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <circle cx="48" cy="45" r="18" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
+        <path d="M40 38 L56 38 M38 45 L58 45 M40 52 L56 52" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.7" />
+      </>
+    )
+    label = externalLabel(coLabel)
   }
 
   if (!body) return null
@@ -1555,8 +1607,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [selectedForPackageIds, setSelectedForPackageIds] = useState<Set<string>>(new Set())
   const [scopeLayers, setScopeLayers] = useState<BlueprintScopeLayer[]>([])
-  /** Local UI only — canvas isolate mode; not persisted to avoid noisy cloud saves. */
-  const [isolatedScopeLayerId, setIsolatedScopeLayerId] = useState<string | null>(null)
+  /** Local UI only — canvas isolate mode; not persisted to avoid noisy cloud saves.
+   *  Set-based so multiple work packages can be made visible at once (multi-package
+   *  visibility filter). Empty set = no filter = show all annotations. */
+  const [isolatedScopeLayerIds, setIsolatedScopeLayerIds] = useState<Set<string>>(new Set())
+  /** Local UI only — Package Pick / Multi Select mode. When on, clicking an annotation on the
+   *  canvas toggles it into selectedForPackageIds instead of selecting/moving/editing it. */
+  const [isPackagePickMode, setIsPackagePickMode] = useState(false)
   const [scopeLayerModal, setScopeLayerModal] = useState<{ open: boolean; mode: 'create' | 'edit'; layerId?: string }>({ open: false, mode: 'create' })
   const [scopeLayerDraftIds, setScopeLayerDraftIds] = useState<string[]>([])
   const [scopeLayerForm, setScopeLayerForm] = useState({
@@ -2109,6 +2166,34 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     return () => window.removeEventListener('keydown', onKey)
   }, [effectiveTool, calibrateInput, clearAlignmentGuides])
 
+  // Declared before the keyboard effect below so it is initialized before that effect's
+  // dependency array is evaluated during render (avoids a const temporal-dead-zone crash).
+  const togglePackagePickMode = useCallback(() => {
+    setIsPackagePickMode((v) => !v)
+  }, [])
+
+  // ── Package Pick mode toggle: Left Control (desktop) + Escape ──
+  // Left Control alone toggles the mode. We deliberately key off e.code === 'ControlLeft'
+  // so Ctrl+S / Ctrl+Z / Ctrl+C (which fire on the letter key, not the modifier) are never
+  // intercepted, and we never call preventDefault so browser shortcuts keep working.
+  // iPad has no Left Control key — the on-screen button provides the same toggle.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement as HTMLElement | null
+      const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+      if (e.code === 'ControlLeft' && !e.repeat && !typing) {
+        togglePackagePickMode()
+        return
+      }
+      // Escape leaves Package Pick mode (selection is preserved; use the Clear button to reset it).
+      if (e.key === 'Escape' && !typing) {
+        setIsPackagePickMode(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [togglePackagePickMode])
+
   // Ã¢â€â‚¬Ã¢â€â‚¬ Clear measure draft on tool/page change Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   useEffect(() => {
     measureDraftRef.current = []
@@ -2358,7 +2443,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     loadAnnotations()
     loadScopeLayers()
-    setIsolatedScopeLayerId(null)
+    setIsolatedScopeLayerIds(new Set())
     void loadPdf()
     return () => { void clearDoc() }
   }, [blueprint?.id])
@@ -2818,18 +2903,25 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     [allAnnotations, currentPage]
   )
 
-  const isolatedScopeLayer = useMemo(
-    () => scopeLayers.find((layer) => layer.id === isolatedScopeLayerId) ?? null,
-    [scopeLayers, isolatedScopeLayerId],
+  const isolatedScopeLayers = useMemo(
+    () => scopeLayers.filter((layer) => isolatedScopeLayerIds.has(layer.id)),
+    [scopeLayers, isolatedScopeLayerIds],
   )
+  const isPackageVisibilityFilterActive = isolatedScopeLayers.length > 0
 
   const isolatedAnnotationIdSet = useMemo(() => {
-    if (!isolatedScopeLayer) return null
-    const ids = (isolatedScopeLayer.selectedAnnotationIds || [])
-      .map((id) => String(id).trim())
-      .filter(Boolean)
-    return new Set(ids)
-  }, [isolatedScopeLayer])
+    // No packages selected for the visibility filter → null → show all annotations.
+    if (isolatedScopeLayers.length === 0) return null
+    // Union of every annotation id across all packages in the visible set.
+    const ids = new Set<string>()
+    isolatedScopeLayers.forEach((layer) => {
+      (layer.selectedAnnotationIds || []).forEach((id) => {
+        const clean = String(id).trim()
+        if (clean) ids.add(clean)
+      })
+    })
+    return ids
+  }, [isolatedScopeLayers])
 
   useEffect(() => {
     isolatedAnnotationIdSetRef.current = isolatedAnnotationIdSet
@@ -2895,6 +2987,35 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     })
   }, [])
 
+  // Package Pick canvas toggle — flips a single annotation in/out of the package-pick set.
+  // Never mutates annotation geometry; only the local selection set changes.
+  const togglePackagePickId = useCallback((annotationId: string) => {
+    setSelectedForPackageIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(annotationId)) next.delete(annotationId)
+      else next.add(annotationId)
+      return next
+    })
+  }, [])
+
+  const clearPackagePickSelection = useCallback(() => {
+    setSelectedForPackageIds(new Set())
+  }, [])
+
+  // Work Package edit — remove one item from the in-progress draft (does NOT delete the annotation).
+  const removeScopeDraftItem = useCallback((annotationId: string) => {
+    setScopeLayerDraftIds((prev) => prev.filter((id) => id !== annotationId))
+  }, [])
+
+  // Work Package edit — merge the current package-pick selection into the draft, avoiding duplicates.
+  const addPickedItemsToScopeDraft = useCallback(() => {
+    setScopeLayerDraftIds((prev) => {
+      const merged = new Set(prev)
+      selectedForPackageIds.forEach((id) => merged.add(id))
+      return Array.from(merged)
+    })
+  }, [selectedForPackageIds])
+
   const resetScopeLayerForm = useCallback(() => {
     setScopeLayerForm({
       name: '',
@@ -2929,7 +3050,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       crewNotes: layer.crewNotes,
       proposalSummary: layer.proposalSummary,
     })
-    setSelectedForPackageIds(new Set(layer.selectedAnnotationIds))
+    // The editable item list is the draft; the package-pick selection is left intact so the
+    // user can add canvas-picked items into this package via "Add selected items".
     setScopeLayerDraftIds([...layer.selectedAnnotationIds])
     setActionMsg(null)
     setScopeLayerModal({ open: true, mode: 'edit', layerId: layer.id })
@@ -3017,9 +3139,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   const deleteScopeLayer = useCallback(async (layerId: string) => {
     setActionMsg(null)
-    if (isolatedScopeLayerId === layerId) {
-      setIsolatedScopeLayerId(null)
-    }
+    setIsolatedScopeLayerIds((prev) => {
+      if (!prev.has(layerId)) return prev
+      const next = new Set(prev)
+      next.delete(layerId)
+      return next
+    })
     const nextLayers = scopeLayers.filter((layer) => layer.id !== layerId)
     setScopeLayers(nextLayers)
     const saved = await persistScopeLayers(nextLayers)
@@ -3028,10 +3153,21 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       return
     }
     setActionMsg({ type: 'success', text: 'Work package deleted.' })
-  }, [isolatedScopeLayerId, loadScopeLayers, persistScopeLayers, scopeLayers])
+  }, [loadScopeLayers, persistScopeLayers, scopeLayers])
 
+  // Multi-package visibility toggle. Adds/removes a package from the visible set.
+  // Empty set = no filter = all annotations shown (handled by isolatedAnnotationIdSet).
   const toggleScopeLayerIsolation = useCallback((layerId: string) => {
-    setIsolatedScopeLayerId((prev) => (prev === layerId ? null : layerId))
+    setIsolatedScopeLayerIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(layerId)) next.delete(layerId)
+      else next.add(layerId)
+      return next
+    })
+  }, [])
+
+  const clearScopeLayerVisibilityFilter = useCallback(() => {
+    setIsolatedScopeLayerIds(new Set())
   }, [])
 
   useEffect(() => {
@@ -3645,6 +3781,18 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   if (!annEl || !annotationId) return
 
+  // Package Pick mode takes precedence over all normal interactions. A pointerdown on an
+  // annotation toggles it in/out of the package-pick set and stops here — no focus, move,
+  // edit, draw or delete is triggered, and annotation geometry is never touched. This fires
+  // once per click (pointerdown capture); the inner selectAnnotation click handler is also
+  // guarded so it does nothing while in this mode.
+  if (isPackagePickMode) {
+    e.preventDefault()
+    e.stopPropagation()
+    togglePackagePickId(annotationId)
+    return
+  }
+
   // If the user is already moving/resizing this annotation, let the edit handles work.
   if (layoutEditId === annotationId) return
 
@@ -3676,7 +3824,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     height: r.height,
   })
   setFocusedAnnotationId(annotationId)
-}, [effectiveTool, layoutEditId, removeAnnotation, shapeKind])
+}, [effectiveTool, layoutEditId, removeAnnotation, shapeKind, isPackagePickMode, togglePackagePickId])
 
   const jumpToPage = useCallback(() => {
     const raw = Number(pageInput)
@@ -7008,6 +7156,15 @@ const annotationPanelSizeClass =
                         const selectAnnotation = (
                           e: React.MouseEvent<HTMLElement | SVGElement> | React.PointerEvent<HTMLElement | SVGElement>
                         ) => {
+                          // Package Pick mode: selection toggling is handled once on pointerdown by
+                          // handleAnnotationSelectCapture. Here we only block the normal click-select /
+                          // move / edit behaviour so the item is never accidentally focused or moved.
+                          if (isPackagePickMode) {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            return
+                          }
+
                           // Arc Line / Polyline / Circuit Path placement must be able to draw on top of
                           // existing annotations — let the event bubble through untouched to the canvas
                           // draw handlers.
@@ -7579,10 +7736,43 @@ const annotationPanelSizeClass =
 
                       {/* Permanent DOM-ref draft rect Ã¢â‚¬â€ hidden by default, shown + mutated directly
                           during pointer-move to avoid React re-renders during active drag. */}
-                      {isolatedScopeLayer && isolatedAnnotationIdSet && isolatedAnnotationIdSet.size === 0 && annotationsVisible && (
+                      {/* ── Package Pick on-canvas highlight ──
+                          A non-interactive halo drawn around every annotation currently in the
+                          package-pick set, so picked items are obvious on the plan itself without
+                          opening the annotation list. Deliberately distinct from the white
+                          single-selection ring (emerald dashed ring + glow + check badge).
+                          Reuses the exact same rect->percentage positioning as the annotation map;
+                          pointer-events:none guarantees it never intercepts clicks / movement /
+                          editing, and it never mutates annotation data. */}
+                      {annotationsVisible && selectedForPackageIds.size > 0 && canvasPageAnnotations.map((a) => {
+                        if (!a?.rect || !selectedForPackageIds.has(a.id)) return null
+                        const rect = clampRectToPage(a.rect as any)
+                        return (
+                          <div
+                            key={`pkgpick-${a.id}`}
+                            className="absolute pointer-events-none z-[6] rounded-md"
+                            style={{
+                              left: `${(rect.x || 0) * 100}%`,
+                              top: `${(rect.y || 0) * 100}%`,
+                              width: `${Math.max(0.01, (rect.w || 0)) * 100}%`,
+                              height: `${Math.max(0.01, (rect.h || 0)) * 100}%`,
+                              outline: '2px dashed rgba(16,185,129,0.95)',
+                              outlineOffset: '2px',
+                              boxShadow: '0 0 0 2px rgba(16,185,129,0.35), 0 0 10px 2px rgba(16,185,129,0.45)',
+                              background: 'rgba(16,185,129,0.10)',
+                            }}
+                          >
+                            <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-400 text-emerald-950 shadow ring-1 ring-emerald-900/40">
+                              <Check size={10} strokeWidth={3} />
+                            </span>
+                          </div>
+                        )
+                      })}
+
+                      {isPackageVisibilityFilterActive && isolatedAnnotationIdSet && isolatedAnnotationIdSet.size === 0 && annotationsVisible && (
                         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[5]">
                           <div className="rounded-lg border border-amber-500/40 bg-black/70 px-3 py-2 text-xs text-amber-200 shadow-lg">
-                            This package has no linked annotations.
+                            {isolatedScopeLayers.length === 1 ? 'This package has no linked annotations.' : 'These packages have no linked annotations.'}
                           </div>
                         </div>
                       )}
@@ -8127,6 +8317,34 @@ const annotationPanelSizeClass =
                         Create Work Package
                       </button>
                     </div>
+                    {/* ── Package Pick / Multi Select controls ── */}
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={togglePackagePickMode}
+                        className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-semibold ${isPackagePickMode ? 'border-emerald-400/70 bg-emerald-500/15 text-emerald-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+                        title="Toggle Package Pick mode — click symbols/shapes on the canvas to add them to a work package. Desktop: press Left Control."
+                      >
+                        <MousePointer2 size={11} />
+                        {isPackagePickMode ? 'Package Pick: On' : 'Package Pick'}
+                      </button>
+                      <span className={`text-[10px] ${selectedPackageCount > 0 ? 'font-semibold text-emerald-300' : 'text-gray-500'}`}>
+                        Package Pick: {selectedPackageCount} selected
+                      </span>
+                      {selectedPackageCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={clearPackagePickSelection}
+                          className="inline-flex items-center gap-1 rounded border border-gray-700 px-2 py-1 text-[10px] text-gray-300 hover:bg-white/5"
+                          title="Clear the package-pick selection"
+                        >
+                          <X size={10} /> Clear
+                        </button>
+                      )}
+                      {isPackagePickMode && (
+                        <span className="text-[9px] text-emerald-300/70">Tap items on the canvas to add/remove · Left Ctrl or Esc to exit</span>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -8140,9 +8358,20 @@ const annotationPanelSizeClass =
                         <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-200">{scopeLayers.length}</span>
                       </div>
                       <div className="mt-0.5 text-[10px] text-sky-200/60">Saved work packages for this viewer session.</div>
-                      {isolatedScopeLayer && (
-                        <div className="mt-1.5 rounded border border-amber-500/40 bg-amber-950/25 px-2 py-1 text-[10px] font-medium text-amber-200">
-                          Isolated — viewing only <span className="font-semibold">{isolatedScopeLayer.name}</span>
+                      {isPackageVisibilityFilterActive && (
+                        <div className="mt-1.5 flex items-center justify-between gap-2 rounded border border-amber-500/40 bg-amber-950/25 px-2 py-1 text-[10px] font-medium text-amber-200">
+                          <span>
+                            Showing {isolatedScopeLayers.length} {isolatedScopeLayers.length === 1 ? 'package' : 'packages'}
+                            {isolatedScopeLayers.length === 1 && <> — <span className="font-semibold">{isolatedScopeLayers[0].name}</span></>}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={clearScopeLayerVisibilityFilter}
+                            className="rounded border border-amber-400/50 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-amber-100 hover:bg-amber-500/25"
+                            title="Clear the package visibility filter and show all annotations"
+                          >
+                            Show All
+                          </button>
                         </div>
                       )}
                     </div>
@@ -8150,7 +8379,7 @@ const annotationPanelSizeClass =
                       {scopeLayers.map((layer) => {
                         const totalHours = getBlueprintScopeLayerLaborTotal(layer)
                         const summary = buildBlueprintScopeItemSummary(layer.itemRefs)
-                        const isLayerIsolated = isolatedScopeLayerId === layer.id
+                        const isLayerIsolated = isolatedScopeLayerIds.has(layer.id)
                         return (
                           <div key={layer.id} className={`rounded-lg border p-2 shadow-sm ${isLayerIsolated ? 'border-amber-400/60 bg-amber-950/30 ring-1 ring-amber-400/25' : `border-sky-500/35 bg-gray-950/50 ${layer.visible ? '' : 'opacity-55'}`}`}>
                             <div className="flex items-start justify-between gap-2">
@@ -8159,7 +8388,7 @@ const annotationPanelSizeClass =
                                   <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: layer.color || DEFAULT_SCOPE_LAYER_COLOR }} />
                                   <div className="truncate text-xs font-semibold text-gray-100">{layer.name}</div>
                                   {isLayerIsolated && (
-                                    <span className="rounded-full border border-amber-400/40 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200">Isolated</span>
+                                    <span className="rounded-full border border-amber-400/40 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200">Visible</span>
                                   )}
                                 </div>
                                 <div className="mt-1 text-[10px] text-gray-400">
@@ -8171,7 +8400,7 @@ const annotationPanelSizeClass =
                                   type="button"
                                   onClick={() => toggleScopeLayerIsolation(layer.id)}
                                   className={`rounded border px-1 py-0.5 text-[10px] ${isLayerIsolated ? 'border-amber-400/50 bg-amber-500/15 text-amber-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
-                                  title={isLayerIsolated ? 'Show all annotations' : 'Isolate this package on canvas'}
+                                  title={isLayerIsolated ? 'Remove this package from the visible set' : 'Show this package on canvas (add to visible set)'}
                                 >
                                   <Eye size={10} />
                                 </button>
@@ -8439,7 +8668,7 @@ const annotationPanelSizeClass =
                         {scopeLayers.map((layer) => {
                           const totalHours = getBlueprintScopeLayerLaborTotal(layer)
                           const summary = buildBlueprintScopeItemSummary(layer.itemRefs)
-                          const isLayerIsolated = isolatedScopeLayerId === layer.id
+                          const isLayerIsolated = isolatedScopeLayerIds.has(layer.id)
                           return (
                             <div key={layer.id} className={`rounded-lg border bg-gray-950/30 p-2 ${isLayerIsolated ? 'border-amber-400/60 ring-1 ring-amber-400/25' : `border-gray-800 ${layer.visible ? '' : 'opacity-55'}`}`}>
                               <div className="flex items-start justify-between gap-2">
@@ -8622,25 +8851,54 @@ const annotationPanelSizeClass =
               </div>
 
               <div className="rounded-lg border border-gray-800 bg-gray-950/30 p-2">
-                <div className="text-[11px] font-semibold text-gray-300">Selected Items</div>
-                <div className="mt-0.5 text-[10px] text-gray-500">{selectedPackageItemRefs.length} item refs</div>
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-semibold text-gray-300">Items</div>
+                  <span className="rounded-full bg-gray-800 px-1.5 py-0.5 text-[9px] font-semibold text-gray-300">{selectedPackageItemRefs.length}</span>
+                </div>
+                <div className="mt-0.5 text-[10px] text-gray-500">Items in this work package. Remove is package-only — the annotation stays on the plan.</div>
                 {selectedPackageSummary.length > 0 && (
-                  <div className="mt-2 space-y-1">
+                  <div className="mt-2 flex flex-wrap gap-1">
                     {selectedPackageSummary.map((item) => (
-                      <div key={item} className="rounded border border-gray-800 bg-gray-900/50 px-2 py-1 text-[10px] text-gray-300">{item}</div>
+                      <span key={item} className="rounded-full border border-gray-800 bg-gray-900/50 px-1.5 py-0.5 text-[9px] text-gray-300">{item}</span>
                     ))}
                   </div>
                 )}
-                <div className="mt-2 max-h-40 overflow-auto border-t border-gray-800 pt-2">
+                {/* Add items collected in Package Pick mode (skips items already in the package). */}
+                {(() => {
+                  const toAddCount = Array.from(selectedForPackageIds).filter((id) => !scopeLayerDraftIds.includes(id)).length
+                  return (
+                    <button
+                      type="button"
+                      onClick={addPickedItemsToScopeDraft}
+                      disabled={toAddCount === 0}
+                      className="mt-2 w-full rounded border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:border-gray-700 disabled:bg-gray-900/40 disabled:text-gray-600"
+                      title="Add items selected with Package Pick to this work package"
+                    >
+                      Add selected items{toAddCount > 0 ? ` (${toAddCount})` : ''}
+                    </button>
+                  )
+                })()}
+                <div className="mt-2 max-h-48 overflow-auto border-t border-gray-800 pt-2">
+                  {selectedPackageItemRefs.length === 0 && (
+                    <div className="py-2 text-[10px] italic text-gray-600">No items yet. Turn on Package Pick, tap items on the canvas, then Add selected items.</div>
+                  )}
                   {selectedPackageItemRefs.map((item) => {
                     const itemAnnotation = selectedPackageAnnotations.find((annotation) => annotation.id === item.annotationId)
                     return (
-                      <div key={item.annotationId} className="mb-1 flex items-center gap-1.5 text-[10px] text-gray-500">
+                      <div key={item.annotationId} className="mb-1 flex items-center gap-1.5 text-[10px] text-gray-400">
                         <span
                           className="h-1.5 w-1.5 rounded-full flex-shrink-0"
                           style={{ backgroundColor: itemAnnotation ? getAnnotationDisplayColor(itemAnnotation) : '#facc15' }}
                         />
-                        <span>Pg {item.pageNumber}: {item.label}</span>
+                        <span className="min-w-0 flex-1 truncate">Pg {item.pageNumber}: {item.label}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeScopeDraftItem(item.annotationId)}
+                          className="flex-shrink-0 rounded p-0.5 text-red-400/70 hover:bg-red-950/40 hover:text-red-300"
+                          title="Remove this item from the work package (does not delete the annotation)"
+                        >
+                          <X size={11} />
+                        </button>
                       </div>
                     )
                   })}
