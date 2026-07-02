@@ -684,6 +684,21 @@ function toNorm(x: number, y: number, w: number, h: number) {
   }
 }
 
+/** Map overlay visual pixels → capped-raster page pixels (single annotation coordinate space). */
+function overlayPxToPagePx(
+  vx: number,
+  vy: number,
+  overlayW: number,
+  overlayH: number,
+  pageW: number,
+  pageH: number,
+) {
+  return {
+    x: (vx / Math.max(1, overlayW)) * pageW,
+    y: (vy / Math.max(1, overlayH)) * pageH,
+  }
+}
+
 function normRectFromDrag(start: { x: number; y: number }, end: { x: number; y: number }, w: number, h: number) {
   const left = Math.min(start.x, end.x)
   const top = Math.min(start.y, end.y)
@@ -2441,8 +2456,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         if (!context) throw new Error('Could not get canvas context.')
         canvas.width = tempCanvas.width
         canvas.height = tempCanvas.height
-        canvas.style.width = `${tempCanvas.width}px`
-        canvas.style.height = `${tempCanvas.height}px`
+        // Display size is owned by React (visualDisplayWidth/Height on pageFrame).
+        // Do NOT set canvas.style.width/height to raster px — above the raster cap
+        // pageFrame is larger than displaySize and that mismatch drifted symbols.
         context.drawImage(tempCanvas, 0, 0)
         setDisplaySize({ w: tempCanvas.width, h: tempCanvas.height })
 
@@ -4481,14 +4497,22 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     if (effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow' || shapeKind === 'arch-line')) {
       if (!lineFirstPointRef.current) {
         lineFirstPointRef.current = { x, y }
+        const pageW = displaySizeRef.current.w
+        const pageH = displaySizeRef.current.h
+        const pagePt = overlayPxToPagePx(x, y, rect.width, rect.height, pageW, pageH)
         if (shapeKind === 'arch-line') {
           const archEl = draftArchPathDomRef.current
-          if (archEl) { archEl.setAttribute('d', `M ${x} ${y} Q ${x} ${y} ${x} ${y}`); archEl.style.display = '' }
+          if (archEl) {
+            archEl.setAttribute('d', `M ${pagePt.x} ${pagePt.y} Q ${pagePt.x} ${pagePt.y} ${pagePt.x} ${pagePt.y}`)
+            archEl.style.display = ''
+          }
         } else {
           const lineEl = draftLineDomRef.current
           if (lineEl) {
-            lineEl.setAttribute('x1', String(x)); lineEl.setAttribute('y1', String(y))
-            lineEl.setAttribute('x2', String(x)); lineEl.setAttribute('y2', String(y))
+            lineEl.setAttribute('x1', String(pagePt.x))
+            lineEl.setAttribute('y1', String(pagePt.y))
+            lineEl.setAttribute('x2', String(pagePt.x))
+            lineEl.setAttribute('y2', String(pagePt.y))
             lineEl.style.display = ''
           }
         }
@@ -4697,9 +4721,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // Update live-preview line while waiting for the second click in point-to-point mode.
     if (effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow') && lineFirstPointRef.current) {
       const lineEl = draftLineDomRef.current
+      const pageW = displaySizeRef.current.w
+      const pageH = displaySizeRef.current.h
+      const pagePt = overlayPxToPagePx(x, y, rect.width, rect.height, pageW, pageH)
       if (lineEl) {
-        lineEl.setAttribute('x2', String(x))
-        lineEl.setAttribute('y2', String(y))
+        lineEl.setAttribute('x2', String(pagePt.x))
+        lineEl.setAttribute('y2', String(pagePt.y))
       }
       updatePlacementGuideLines(normRectFromDrag(lineFirstPointRef.current, { x, y }, rect.width, rect.height))
       return
@@ -4707,10 +4734,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     if (effectiveTool === 'shape' && shapeKind === 'arch-line' && lineFirstPointRef.current) {
       const archEl = draftArchPathDomRef.current
       const p1 = lineFirstPointRef.current
+      const pageW = displaySizeRef.current.w
+      const pageH = displaySizeRef.current.h
+      const p1Page = overlayPxToPagePx(p1.x, p1.y, rect.width, rect.height, pageW, pageH)
+      const pagePt = overlayPxToPagePx(x, y, rect.width, rect.height, pageW, pageH)
       if (archEl) {
-        const cpx = (p1.x + x) / 2 + 0.5 * (y - p1.y)
-        const cpy = (p1.y + y) / 2 - 0.5 * (x - p1.x)
-        archEl.setAttribute('d', `M ${p1.x} ${p1.y} Q ${cpx} ${cpy} ${x} ${y}`)
+        const cpx = (p1Page.x + pagePt.x) / 2 + 0.5 * (pagePt.y - p1Page.y)
+        const cpy = (p1Page.y + pagePt.y) / 2 - 0.5 * (pagePt.x - p1Page.x)
+        archEl.setAttribute('d', `M ${p1Page.x} ${p1Page.y} Q ${cpx} ${cpy} ${pagePt.x} ${pagePt.y}`)
         archEl.style.display = ''
       }
       updatePlacementGuideLines(normRectFromDrag(p1, { x, y }, rect.width, rect.height))
@@ -5109,6 +5140,21 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const visualScale = Math.max(1, livePinchZoom / Math.max(0.001, renderedZoom))
   const visualDisplayWidth = displaySize.w ? Math.ceil(displaySize.w * visualScale) : 0
   const visualDisplayHeight = displaySize.h ? Math.ceil(displaySize.h * visualScale) : 0
+  // Single overlay coordinate system: viewBox = capped raster (displaySize),
+  // SVG pixel size = visual page (visualDisplay*). Pointer input converts
+  // overlay visual px → page px via overlayPxToPagePx; rect annotations use %.
+  const overlayPageW = displaySize.w
+  const overlayPageH = displaySize.h
+  const overlayVisualW = visualDisplayWidth
+  const overlayVisualH = visualDisplayHeight
+  const pageOverlaySvgProps =
+    overlayPageW > 0 && overlayVisualW > 0
+      ? {
+          width: overlayVisualW,
+          height: overlayVisualH,
+          viewBox: `0 0 ${overlayPageW} ${overlayPageH}`,
+        }
+      : null
   // HARD OVERRIDE (Step 13B-QA7-R3): the desktop three-pane (left tool column /
   // right annotations column) is NEVER allowed while tablet immersive
   // fullscreen is active, and never on a tablet/touch-first device in any
@@ -6925,12 +6971,19 @@ const annotationPanelSizeClass =
                   >
                     <canvas
                       ref={canvasRef}
-                      className="absolute inset-0 border border-gray-800 bg-white shadow-lg block"
-                      style={{ width: '100%', height: '100%' }}
+                      className="absolute left-0 top-0 border border-gray-800 bg-white shadow-lg block"
+                      style={{
+                        width: overlayVisualW || '100%',
+                        height: overlayVisualH || '100%',
+                      }}
                     />
                     <div
                     ref={overlayRef}
-                    className={`absolute inset-0 ${cursorClass}`}
+                    className={`absolute left-0 top-0 ${cursorClass}`}
+                    style={{
+                      width: overlayVisualW || undefined,
+                      height: overlayVisualH || undefined,
+                    }}
                     onPointerDownCapture={handleAnnotationSelectCapture}
                     onClick={handleOverlayClick}
                     onPointerDown={handlePointerDown}
@@ -6997,7 +7050,7 @@ const annotationPanelSizeClass =
                           const handle = points[points.length - 1] || { x: rect.x + rect.w, y: rect.y + rect.h }
                           return (
                             <div key={a.id} data-annotation-id={a.id} className="absolute inset-0" style={{ pointerEvents: 'none' }}>
-                              <svg className="absolute inset-0 overflow-visible" width="100%" height="100%" viewBox={`0 0 ${displaySize.w} ${displaySize.h}`}>
+                              <svg className="absolute inset-0 overflow-visible" {...pageOverlaySvgProps}>
                                 <polyline points={svgPoints} fill="none" stroke={color} strokeWidth={meta.thickness || (a.type === 'marker' ? 12 : 3)} strokeLinecap="round" strokeLinejoin="round" opacity={meta.opacity ?? (a.type === 'marker' ? 0.35 : 0.9)} style={{ pointerEvents: 'none' }} />
                                 <polyline points={svgPoints} fill="none" stroke="transparent" strokeWidth={(meta.thickness || 8) + 14} strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'stroke', cursor: 'pointer', touchAction: 'none' }} onPointerDown={selectAnnotation as any} onClick={selectAnnotation as any} />
                               </svg>
@@ -7339,7 +7392,7 @@ const annotationPanelSizeClass =
                           const pathD = `M ${edgePx.x} ${edgePx.y} L ${elbowX} ${edgePx.y} L ${elbowX} ${anchorPxY} L ${anchorPxX} ${anchorPxY}`
                           return (
                             <div key={a.id} className="pointer-events-none absolute inset-0">
-                              <svg className="pointer-events-none absolute inset-0 overflow-visible" width="100%" height="100%" viewBox={`0 0 ${displaySize.w} ${displaySize.h}`}>
+                              <svg className="pointer-events-none absolute inset-0 overflow-visible" {...pageOverlaySvgProps}>
                                 <defs>
                                   <marker id={`callout-arrow-${a.id}`} markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
                                     <path d="M0,0 L9,4.5 L0,9 z" fill={color} />
@@ -7478,7 +7531,7 @@ const annotationPanelSizeClass =
 
                           return (
                             <div key={a.id} className="absolute inset-0" style={{ pointerEvents: 'none' }}>
-                              <svg className="absolute inset-0 overflow-visible" width="100%" height="100%" viewBox={`0 0 ${displaySize.w} ${displaySize.h}`}>
+                              <svg className="absolute inset-0 overflow-visible" {...pageOverlaySvgProps}>
                                 <defs>
                                   {usePattern && getMeasurePatternDef(patId, fillPat, fillCol, fillOp)}
                                   {endStyle === 'arrow' && (
@@ -7573,9 +7626,7 @@ const annotationPanelSizeClass =
                       <svg
                         ref={alignmentGuideSvgRef}
                         className="absolute inset-0 pointer-events-none overflow-visible"
-                        width="100%"
-                        height="100%"
-                        viewBox={`0 0 ${displaySize.w} ${displaySize.h}`}
+                        {...pageOverlaySvgProps}
                         style={{ zIndex: 30, filter: 'drop-shadow(0 0 3px rgba(34, 211, 238, 0.85))' }}
                         aria-hidden="true"
                       />
@@ -7604,9 +7655,7 @@ const annotationPanelSizeClass =
                       {/* SVG for line/arrow shape preview Ã¢â‚¬â€ line element mutated directly during drag. */}
                       <svg
                         className="absolute inset-0 pointer-events-none overflow-visible"
-                        width="100%"
-                        height="100%"
-                        viewBox={`0 0 ${visualDisplayWidth} ${visualDisplayHeight}`}
+                        {...pageOverlaySvgProps}
                         style={{ display: effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow' || shapeKind === 'arch-line') ? '' : 'none' }}
                       >
                         <defs>
@@ -7635,10 +7684,13 @@ const annotationPanelSizeClass =
                         />
                       </svg>
 
-                      {inkDraft && (effectiveTool === 'pen' || effectiveTool === 'marker') && (
-                        <svg className="absolute inset-0 pointer-events-none overflow-visible" width="100%" height="100%" viewBox={`0 0 ${visualDisplayWidth} ${visualDisplayHeight}`}>
+                      {inkDraft && (effectiveTool === 'pen' || effectiveTool === 'marker') && pageOverlaySvgProps && (
+                        <svg className="absolute inset-0 pointer-events-none overflow-visible" {...pageOverlaySvgProps}>
                           <polyline
-                            points={inkDraft.map((p) => `${p.x},${p.y}`).join(' ')}
+                            points={inkDraft.map((p) => {
+                              const pg = overlayPxToPagePx(p.x, p.y, overlayVisualW, overlayVisualH, overlayPageW, overlayPageH)
+                              return `${pg.x},${pg.y}`
+                            }).join(' ')}
                             fill="none"
                             stroke={toolColors[effectiveTool as ToolKey] || '#facc15'}
                             strokeWidth={effectiveTool === 'marker' ? markerOptions.thickness : drawOptions.thickness}
@@ -7650,8 +7702,8 @@ const annotationPanelSizeClass =
                       )}
 
                       {/* Measure draft SVG Ã¢â‚¬â€ placed points + rubber-band to cursor */}
-                      {displaySize.w > 0 && measureDraftPoints.length > 0 && (effectiveTool === 'calibrate' || effectiveTool === 'measure-distance' || effectiveTool === 'measure-area' || effectiveTool === 'measure-perimeter') && (
-                        <svg className="absolute inset-0 pointer-events-none overflow-visible" width="100%" height="100%" viewBox={`0 0 ${displaySize.w} ${displaySize.h}`}>
+                      {displaySize.w > 0 && measureDraftPoints.length > 0 && (effectiveTool === 'calibrate' || effectiveTool === 'measure-distance' || effectiveTool === 'measure-area' || effectiveTool === 'measure-perimeter') && pageOverlaySvgProps && (
+                        <svg className="absolute inset-0 pointer-events-none overflow-visible" {...pageOverlaySvgProps}>
                           {(() => {
                             const col = toolColors[effectiveTool as ToolKey] || '#38bdf8'
                             const pxPts = measureDraftPoints.map(p => ({ px: p.x * displaySize.w, py: p.y * displaySize.h }))
@@ -7678,8 +7730,8 @@ const annotationPanelSizeClass =
 
                       {/* Multi-point path draft SVG — placed points + rubber-band to cursor,
                           shared by Polyline and Circuit/Switch-Leg Path (Step 13B-QA5) */}
-                      {displaySize.w > 0 && pathDraftPoints.length > 0 && effectiveTool === 'shape' && (shapeKind === 'polyline' || shapeKind === 'circuit-path') && (
-                        <svg className="absolute inset-0 pointer-events-none overflow-visible" width="100%" height="100%" viewBox={`0 0 ${displaySize.w} ${displaySize.h}`}>
+                      {displaySize.w > 0 && pathDraftPoints.length > 0 && effectiveTool === 'shape' && (shapeKind === 'polyline' || shapeKind === 'circuit-path') && pageOverlaySvgProps && (
+                        <svg className="absolute inset-0 pointer-events-none overflow-visible" {...pageOverlaySvgProps}>
                           {(() => {
                             const col = shapeOptions.borderColor || '#facc15'
                             const pxPts = pathDraftPoints.map(p => ({ px: p.x * displaySize.w, py: p.y * displaySize.h }))

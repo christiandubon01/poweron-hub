@@ -77,9 +77,48 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 | Agent | Feature Area | Files | Mode | Status | Claimed |
 |---|---|---|---|---|---|
+| Step13B-QA8-Zoom-Symbol-Audit (Claude Opus 4.8) | Blueprint Viewer — zoom/symbol coordinate audit + fix | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 | Step13B-QA7-R7-Default-Annotations (Claude Code Opus) | Blueprint Viewer — default/embedded iPad annotations panel: expand naturally below document, not collapsed/capped drawer | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 
 ## Audit & Change Log
+
+### 2026-07-01 — Blueprint zoom/symbol unified overlay coordinate system (Step 13B-QA8, NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Zoom/symbol rendering audit + fix only — no layout/panel/save changes
+**Branch:** main | **HEAD before fix:** `9be326205aec3dea26da1bd4876d1a8986690c57` (revert of c72f930)
+
+#### Audit — coordinate systems before fix (HEAD = 9be3262)
+1. **PDF canvas:** Raster capped at `displaySize` (touch 15M px / 8000 dim). `pageFrame` sized to `visualDisplayWidth/Height` (= `displaySize × visualScale`). Canvas CSS `width/height: 100%` of pageFrame, BUT render effect also set `canvas.style.width/height` to **raster px** — mismatch above raster cap.
+2. **Visible page/scroll:** Spacer + `pageFrame` use `visualDisplayWidth/Height`; scroll/pan math uses visual dimensions. No CSS `transform` (c72f930 reverted).
+3. **Symbol overlay:** `absolute inset-0` on pageFrame. Rect annotations use `%` of overlay (visual). Full-page SVGs mixed `width="100%" viewBox=displaySize` with draft previews using `viewBox=visualDisplayWidth/Height` and visual-pixel line/ink coords.
+4. **Pointer/hit-test:** `overlayRef.getBoundingClientRect()` (visual size) → `toNorm(px, py, rect.width, rect.height)` for normalized storage. Measure/path cursors mapped to `displaySize` px. Ink/line drafts stored visual px into mismatched viewBoxes.
+
+#### Root cause
+Above ~350% on iPad the raster cap stops growing (`renderedZoom` capped, `visualScale > 1`). The PDF render effect wrote `canvas.style.width/height = displaySize` while `pageFrame`/overlay grew to `visualDisplay*` — canvas displayed at raster px inside a larger frame, drifting symbols from the overlay. Draft SVGs also mixed visual-pixel coords with `displaySize` vs `visualDisplay` viewBoxes.
+
+#### c72f930 status
+Present in history but **reverted at HEAD (9be3262)**. Its CSS `transform: scale(visualScale)` on a raster-sized pageFrame was **not** re-applied — it made symbols disappear on iPad (composited transform layer paint failure). This fix keeps visual page sizing (b3742ad approach) and fixes alignment without CSS transform.
+
+#### Fix architecture
+- **Keep:** visual page/spacer sizing for scroll; raster cap; 1000% zoom; no layout/panel changes; no CSS transform on pageFrame.
+- **Remove:** `canvas.style.width/height` raster override in PDF render effect.
+- **Unify:** `pageOverlaySvgProps` = `{ width: visualDisplayW, height: visualDisplayH, viewBox: '0 0 displaySize.w displaySize.h' }` for all full-page SVG layers (pen/marker, callout leaders, measure/circuit paths, alignment guides, drafts).
+- **Canvas + overlay:** explicit `visualDisplayWidth/Height` CSS dimensions (not inset-0 + 100%).
+- **Helper:** `overlayPxToPagePx()` for draft ink/line/arch SVG coords; pointer normalized coords unchanged.
+
+#### Code areas changed
+- `overlayPxToPagePx` helper (~680)
+- PDF render effect: removed canvas.style raster override (~2456)
+- `pageOverlaySvgProps` bundle (~5140)
+- Canvas/overlay explicit visual dimensions (~6971)
+- All full-page SVG layers → `{...pageOverlaySvgProps}`
+- Line/arch/ink draft pointer → page px for SVG attributes
+
+#### Preserved (verified by diff)
+Fullscreen layout, default annotations panel, document display size / fit-scale, scroll-to-annotations, save/sync, raster cap, max zoom 1000%, wheel/pinch zoom math, ToolPopover and all other files untouched.
+
+**Lock released** — `OperationsBlueprintPdfViewer.tsx` free for other agents.
 
 ### 2026-07-01 — Remove pageFrame willChange:transform (annotations vanish on zoom) (Step 13B-QA7-R8, NOT COMMITTED)
 
