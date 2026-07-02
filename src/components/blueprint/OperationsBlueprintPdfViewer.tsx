@@ -5189,8 +5189,15 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     ;(e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId)
   }, [])
 
+  // Default / embedded (non-fullscreen) iPad-or-narrow mode: the annotations
+  // panel is a normal block below the document — NOT the collapsible fullscreen
+  // drawer. It is always expanded and grows naturally (the app page scrolls).
+  const isDefaultEmbeddedLayout =
+    !useDesktopThreePaneLayout && !isFullScreenView && !isTabletImmersiveFullscreen
   const annotationPanelExpanded =
-  useDesktopThreePaneLayout && !isFullScreenView && !isTabletImmersiveFullscreen
+  // Expanded in every non-fullscreen mode (desktop three-pane AND default
+  // embedded). Only the fullscreen drawer stays collapsible via the chevron.
+  (!isFullScreenView && !isTabletImmersiveFullscreen)
     ? true
     : tabletAnnotationsOpen
 
@@ -5204,9 +5211,12 @@ const annotationPanelSizeClass =
       ? 'mt-2 min-h-0'
       : 'mt-2 h-10 max-h-10 min-h-0 overflow-hidden'
     : !useDesktopThreePaneLayout
-      ? annotationPanelExpanded
-        ? 'h-auto max-h-56 min-h-0'
-        : 'h-10 max-h-10 min-h-0 overflow-hidden'
+      // Default embedded (QA7-R7): expand NATURALLY below the document — no
+      // max-h cap and no internal scroll, so the annotation list is fully
+      // readable and the normal app page scrolls. The old 'max-h-56' (224px)
+      // internal-scroll cap was a fullscreen-drawer rule leaking into default
+      // mode, making the panel look clipped/compressed.
+      ? 'h-auto min-h-[240px]'
       : ''
 
   // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Annotation Ã¢â€ â€ tool-key mapping Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -8000,6 +8010,12 @@ const annotationPanelSizeClass =
                 className={`${useDesktopThreePaneLayout ? 'col-start-5 row-start-1 row-span-3 min-h-0 min-w-0' : ''} operations-pdf-scroll border border-gray-800 rounded-md bg-[#10131c] overflow-auto ${annotationPanelSizeClass}`}
                 style={{
                   ...(useDesktopThreePaneLayout ? { height: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100dvh - 52px - 32px - 16px)' : isTabletImmersiveFullscreen ? 'calc(100dvh - 40px - 32px - 16px)' : normalBlueprintViewerMinHeight } : {}),
+                  // Default embedded (QA7-R7): the shared operations-pdf-scroll
+                  // class sets touch-action:none (needed for PDF pan/zoom), but
+                  // on this natural-height annotations block it would block the
+                  // app page from scrolling under a finger. Restore normal
+                  // touch scrolling here only.
+                  ...(isDefaultEmbeddedLayout ? { touchAction: 'auto' as any, overscrollBehavior: 'auto' as any } : {}),
                   scrollbarWidth: 'none',
                   msOverflowStyle: 'none' as any,
                 } as React.CSSProperties}
@@ -8015,7 +8031,11 @@ const annotationPanelSizeClass =
                     >
                       Index
                     </button>
-                    {(!useDesktopThreePaneLayout || isFullScreenView || isTabletImmersiveFullscreen) && (
+                    {/* Collapse chevron only in fullscreen (the drawer). In
+                        default embedded mode the panel is always expanded and
+                        grows naturally, so the toggle would be a dead control
+                        (QA7-R7). */}
+                    {(isFullScreenView || isTabletImmersiveFullscreen) && (
                       <button
                         onClick={() => setTabletAnnotationsOpen(v => !v)}
                         className="inline-flex items-center justify-center p-0.5 rounded text-gray-400 hover:text-gray-200"

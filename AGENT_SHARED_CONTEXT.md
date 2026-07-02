@@ -73,7 +73,34 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 ---
 
+## Active File Locks (current)
+
+| Agent | Feature Area | Files | Mode | Status | Claimed |
+|---|---|---|---|---|---|
+| Step13B-QA7-R7-Default-Annotations (Claude Code Opus) | Blueprint Viewer — default/embedded iPad annotations panel: expand naturally below document, not collapsed/capped drawer | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+
 ## Audit & Change Log
+
+### 2026-07-01 — Default/Embedded iPad Annotations Panel Expands Naturally (Step 13B-QA7-R7, NOT COMMITTED)
+
+**Agent:** Claude Code (Fable 5, task labeled Opus)
+**Mode:** Default-mode-only annotations layout fix — fullscreen, zoom, PDF scroller untouched
+**Branch:** main | HEAD = 49f6103
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 19.05s | **git diff --check:** PASS ✅
+
+#### Wrapper/condition that broke default annotations
+In default embedded iPad/mobile mode (`!useDesktopThreePaneLayout && !fullscreen`) the annotations panel used the fullscreen-drawer paradigm: (a) `annotationPanelExpanded = tabletAnnotationsOpen` which defaults **false** → panel rendered as a collapsed 40px `h-10` strip; (b) when expanded, `annotationPanelSizeClass = 'h-auto max-h-56 min-h-0'` — a 224px cap with internal `overflow-auto` scroll, so the list looked clipped/compressed; (c) the shared `operations-pdf-scroll` class set `touch-action: none`, which would block the app page from scrolling under a finger on a tall panel.
+
+#### Fix (default mode only)
+- `annotationPanelExpanded` is now `true` in every non-fullscreen mode (desktop three-pane already was; default embedded now is too) — fullscreen keeps `tabletAnnotationsOpen` so the accepted collapsible drawer is unchanged.
+- New `isDefaultEmbeddedLayout` flag. Its size class changed `'h-auto max-h-56 min-h-0'` → `'h-auto min-h-[240px]'`: grows naturally below the document, no internal-scroll cap, the normal app page scrolls.
+- Inline `touchAction: 'auto'` + `overscrollBehavior: 'auto'` on the panel div only when `isDefaultEmbeddedLayout`, overriding the shared class so finger-scroll of the page works over the annotations.
+- Collapse chevron now shows only in fullscreen (was `!useDesktopThreePaneLayout || fullscreen`) — in default embedded it would be a dead control since the panel is always expanded.
+
+#### Preserved (verified)
+Fullscreen stacked layout (QA7-R5) and its overlay scroll handle (QA7-R6): the `(isFullScreenView || isTabletImmersiveFullscreen)` size-class branch and `fsStackedFullscreen` logic are byte-for-byte unchanged. Desktop three-pane branch unchanged. Document display size, 1000% zoom, raster cap, renderedZoom, visualScale, and the inner PDF `operations-pdf-scroll` zoom/pan area untouched (touch-action override applies only to the annotations panel element in default embedded, never the PDF scroll area). No `resize:` CSS. All tools/features and save/sync untouched.
+
+**Lock released.**
 
 ### 2026-07-01 — Fullscreen Overlay Scroll Handle (Step 13B-QA7-R6, NOT COMMITTED)
 
