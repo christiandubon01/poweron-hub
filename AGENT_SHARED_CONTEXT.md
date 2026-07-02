@@ -77,13 +77,33 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 | Agent | Feature Area | Files | Mode | Status | Claimed |
 |---|---|---|---|---|---|
-| Step13C-R1-Smoke-PickHighlight (Claude Opus 4.8) | Blueprint Viewer — redesign Smoke Alarm glyph + on-canvas Package Pick highlight | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
+| Step13C-R2-Reorder-Packages (Claude Opus 4.8) | Blueprint Viewer — drag + up/down reorder of Work Package / Scope Layer cards | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
+| Step13C-R1-Smoke-PickHighlight (Claude Opus 4.8) | Blueprint Viewer — redesign Smoke Alarm glyph + on-canvas Package Pick highlight | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed, now COMMITTED a9a8296) | RELEASED | 2026-07-02 |
 | Step13C-Package-Speed-Symbols (Claude Opus 4.8) | Blueprint Viewer — Package Pick mode (+LeftControl toggle), Work Package add/remove items, Smoke/CO Alarm symbols, multi-package visibility | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
 | Step13B-QA9-Production-Sync-Guard (Claude Opus 4.8) | Multi-device sync guard — localhost block only, production merge-before-save | src/services/backupDataService.ts, src/services/blueprintLibraryService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 | Step13B-QA8-Zoom-Symbol-Audit (Claude Opus 4.8) | Blueprint Viewer — zoom/symbol coordinate audit + fix | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 | Step13B-QA7-R7-Default-Annotations (Claude Code Opus) | Blueprint Viewer — default/embedded iPad annotations panel: expand naturally below document, not collapsed/capped drawer | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 
 ## Audit & Change Log
+
+### 2026-07-02 — Reorder Work Package / Scope Layer cards (Step 13C-R2, NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Scope-layer list ordering only — zoom/rendering/layout/sync/symbol NOT touched
+**File:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` (+ this ledger)
+**Branch:** main | HEAD before edits = `a9a82960f93d48c6417246203d0f1983d06efe5b`
+
+**Audit:** Work Packages live in `scopeLayers: BlueprintScopeLayer[]`; the panel renders `scopeLayers.map(...)` in array order — array order IS the display/persist order, there is NO separate index field. Persisted whole via existing `persistScopeLayers(nextLayers)` → `saveOperationsBlueprintScopeLayers(backup, blueprintId, nextLayers)` (same path used by create/edit/delete). So reorder = rebuild array + persist; no schema change, fully backward compatible (existing packages keep current order).
+
+**Changes:**
+- Added local UI state `draggingScopeLayerId` / `dragOverScopeLayerId`.
+- Added `persistReorderedScopeLayers(nextLayers)` (setScopeLayers + persistScopeLayers, reload on failure — mirrors deleteScopeLayer), `reorderScopeLayer(fromId,toId)` (splice from→to), `moveScopeLayer(id,'up'|'down')` (swap with neighbor).
+- Card UI: `GripVertical` drag handle (draggable span, HTML5 DnD), card `onDragOver/onDragEnter/onDrop`, dragged card `opacity-40`, drop-target `emerald ring`. Up/down chevron buttons (disabled at first/last). Subtitle hint added.
+- Persist uses existing package save path only.
+
+**Preserved:** package membership (selectedAnnotationIds/itemRefs), names/details, eye visibility toggle + multi-package filter, Package Pick selection, edit/delete, badges, counts. Only array position changes. typecheck ✅ build ✅ `git diff --check` ✅.
+
+**Lock released.**
 
 ### 2026-07-02 — Smoke Alarm glyph redesign + on-canvas Package Pick highlight (Step 13C-R1, NOT COMMITTED)
 

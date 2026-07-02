@@ -16,6 +16,7 @@ import {
   Eraser,
   Eye,
   EyeOff,
+  GripVertical,
   Highlighter,
   Italic,
   Layers,
@@ -1614,6 +1615,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   /** Local UI only — Package Pick / Multi Select mode. When on, clicking an annotation on the
    *  canvas toggles it into selectedForPackageIds instead of selecting/moving/editing it. */
   const [isPackagePickMode, setIsPackagePickMode] = useState(false)
+  /** Local UI only — drag-to-reorder state for the Work Package / Scope Layer cards.
+   *  Order is the scopeLayers array order (no separate index field); reordering rebuilds the
+   *  array and persists via the existing persistScopeLayers path. */
+  const [draggingScopeLayerId, setDraggingScopeLayerId] = useState<string | null>(null)
+  const [dragOverScopeLayerId, setDragOverScopeLayerId] = useState<string | null>(null)
   const [scopeLayerModal, setScopeLayerModal] = useState<{ open: boolean; mode: 'create' | 'edit'; layerId?: string }>({ open: false, mode: 'create' })
   const [scopeLayerDraftIds, setScopeLayerDraftIds] = useState<string[]>([])
   const [scopeLayerForm, setScopeLayerForm] = useState({
@@ -3169,6 +3175,43 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const clearScopeLayerVisibilityFilter = useCallback(() => {
     setIsolatedScopeLayerIds(new Set())
   }, [])
+
+  // ── Work Package / Scope Layer reordering ──
+  // Order is the array order (no separate index field). These helpers only move a card within
+  // the array and persist the reordered array via the existing persistScopeLayers path — same
+  // pattern as deleteScopeLayer. Package membership (selectedAnnotationIds/itemRefs),
+  // names/details, visibility filter and package-pick selection are never modified.
+  const persistReorderedScopeLayers = useCallback(async (nextLayers: BlueprintScopeLayer[]) => {
+    setScopeLayers(nextLayers)
+    const saved = await persistScopeLayers(nextLayers)
+    if (!saved) {
+      loadScopeLayers()
+    }
+  }, [loadScopeLayers, persistScopeLayers])
+
+  // Drop card `fromId` at the position currently occupied by `toId`.
+  const reorderScopeLayer = useCallback((fromId: string, toId: string) => {
+    if (fromId === toId) return
+    const fromIndex = scopeLayers.findIndex((l) => l.id === fromId)
+    const toIndex = scopeLayers.findIndex((l) => l.id === toId)
+    if (fromIndex === -1 || toIndex === -1) return
+    const next = [...scopeLayers]
+    const [moved] = next.splice(fromIndex, 1)
+    next.splice(toIndex, 0, moved)
+    void persistReorderedScopeLayers(next)
+  }, [scopeLayers, persistReorderedScopeLayers])
+
+  // Fallback up/down control (reliable on touch where native drag is finicky).
+  const moveScopeLayer = useCallback((layerId: string, direction: 'up' | 'down') => {
+    const index = scopeLayers.findIndex((l) => l.id === layerId)
+    if (index === -1) return
+    const target = direction === 'up' ? index - 1 : index + 1
+    if (target < 0 || target >= scopeLayers.length) return
+    const next = [...scopeLayers]
+    const [moved] = next.splice(index, 1)
+    next.splice(target, 0, moved)
+    void persistReorderedScopeLayers(next)
+  }, [scopeLayers, persistReorderedScopeLayers])
 
   useEffect(() => {
     if (!alignmentGuidesEnabled || !annotationsVisible) {
@@ -8357,7 +8400,7 @@ const annotationPanelSizeClass =
                         </div>
                         <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-200">{scopeLayers.length}</span>
                       </div>
-                      <div className="mt-0.5 text-[10px] text-sky-200/60">Saved work packages for this viewer session.</div>
+                      <div className="mt-0.5 text-[10px] text-sky-200/60">Saved work packages for this viewer session. Drag the handle or use ↑/↓ to reorder.</div>
                       {isPackageVisibilityFilterActive && (
                         <div className="mt-1.5 flex items-center justify-between gap-2 rounded border border-amber-500/40 bg-amber-950/25 px-2 py-1 text-[10px] font-medium text-amber-200">
                           <span>
@@ -8376,26 +8419,73 @@ const annotationPanelSizeClass =
                       )}
                     </div>
                     <div className="space-y-2 px-3 pb-3">
-                      {scopeLayers.map((layer) => {
+                      {scopeLayers.map((layer, layerIndex) => {
                         const totalHours = getBlueprintScopeLayerLaborTotal(layer)
                         const summary = buildBlueprintScopeItemSummary(layer.itemRefs)
                         const isLayerIsolated = isolatedScopeLayerIds.has(layer.id)
+                        const isDragging = draggingScopeLayerId === layer.id
+                        const isDropTarget = dragOverScopeLayerId === layer.id && draggingScopeLayerId !== layer.id
+                        const isFirstLayer = layerIndex === 0
+                        const isLastLayer = layerIndex === scopeLayers.length - 1
                         return (
-                          <div key={layer.id} className={`rounded-lg border p-2 shadow-sm ${isLayerIsolated ? 'border-amber-400/60 bg-amber-950/30 ring-1 ring-amber-400/25' : `border-sky-500/35 bg-gray-950/50 ${layer.visible ? '' : 'opacity-55'}`}`}>
+                          <div
+                            key={layer.id}
+                            onDragOver={(e) => { e.preventDefault(); if (draggingScopeLayerId) setDragOverScopeLayerId(layer.id) }}
+                            onDragEnter={(e) => { e.preventDefault(); if (draggingScopeLayerId) setDragOverScopeLayerId(layer.id) }}
+                            onDrop={(e) => {
+                              e.preventDefault()
+                              if (draggingScopeLayerId) reorderScopeLayer(draggingScopeLayerId, layer.id)
+                              setDraggingScopeLayerId(null)
+                              setDragOverScopeLayerId(null)
+                            }}
+                            className={`rounded-lg border p-2 shadow-sm transition-opacity ${isDragging ? 'opacity-40' : ''} ${isDropTarget ? 'border-emerald-400/80 ring-2 ring-emerald-400/40' : isLayerIsolated ? 'border-amber-400/60 bg-amber-950/30 ring-1 ring-amber-400/25' : `border-sky-500/35 bg-gray-950/50 ${layer.visible ? '' : 'opacity-55'}`}`}
+                          >
                             <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: layer.color || DEFAULT_SCOPE_LAYER_COLOR }} />
-                                  <div className="truncate text-xs font-semibold text-gray-100">{layer.name}</div>
-                                  {isLayerIsolated && (
-                                    <span className="rounded-full border border-amber-400/40 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200">Visible</span>
-                                  )}
-                                </div>
-                                <div className="mt-1 text-[10px] text-gray-400">
-                                  {layer.itemRefs.length} {layer.itemRefs.length === 1 ? 'item' : 'items'} · {totalHours.toFixed(1)} labor hrs
+                              <div className="flex min-w-0 items-start gap-1.5">
+                                <span
+                                  draggable
+                                  onDragStart={(e) => { setDraggingScopeLayerId(layer.id); setDragOverScopeLayerId(null); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', layer.id) } catch {} }}
+                                  onDragEnd={() => { setDraggingScopeLayerId(null); setDragOverScopeLayerId(null) }}
+                                  className="mt-0.5 flex-shrink-0 cursor-grab touch-none text-gray-500 hover:text-gray-300 active:cursor-grabbing"
+                                  title="Drag to reorder this work package"
+                                  aria-label="Drag to reorder"
+                                >
+                                  <GripVertical size={12} />
+                                </span>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: layer.color || DEFAULT_SCOPE_LAYER_COLOR }} />
+                                    <div className="truncate text-xs font-semibold text-gray-100">{layer.name}</div>
+                                    {isLayerIsolated && (
+                                      <span className="rounded-full border border-amber-400/40 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200">Visible</span>
+                                    )}
+                                  </div>
+                                  <div className="mt-1 text-[10px] text-gray-400">
+                                    {layer.itemRefs.length} {layer.itemRefs.length === 1 ? 'item' : 'items'} · {totalHours.toFixed(1)} labor hrs
+                                  </div>
                                 </div>
                               </div>
                               <div className="flex flex-shrink-0 items-center gap-1">
+                                <div className="flex flex-col">
+                                  <button
+                                    type="button"
+                                    onClick={() => moveScopeLayer(layer.id, 'up')}
+                                    disabled={isFirstLayer}
+                                    className="rounded border border-gray-700 px-1 leading-none text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-700"
+                                    title="Move up"
+                                  >
+                                    <ChevronUp size={10} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => moveScopeLayer(layer.id, 'down')}
+                                    disabled={isLastLayer}
+                                    className="mt-0.5 rounded border border-gray-700 px-1 leading-none text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-700"
+                                    title="Move down"
+                                  >
+                                    <ChevronDown size={10} />
+                                  </button>
+                                </div>
                                 <button
                                   type="button"
                                   onClick={() => toggleScopeLayerIsolation(layer.id)}
