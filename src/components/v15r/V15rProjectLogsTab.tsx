@@ -134,7 +134,7 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
 
   function persist() {
     backup._lastSavedAt = new Date().toISOString()
-    saveBackupDataAndSync(backup)
+    saveBackupDataAndSync(backup, 'logs')
     window.dispatchEvent(new Event('storage'))
     window.dispatchEvent(new Event('poweron-data-saved'))
     forceUpdate()

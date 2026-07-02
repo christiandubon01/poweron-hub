@@ -77,6 +77,7 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 | Agent | Feature Area | Files | Mode | Status | Claimed |
 |---|---|---|---|---|---|
+| ProjectLogs-Fix-LogsKey (Claude Opus 4.8) | Project/Field Logs — mark 'logs' changed key so production merge preserves new entries | src/components/v15r/V15rProjectLogsTab.tsx, src/components/v15r/V15rFieldLogPanel.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
 | Step13C-R2-Reorder-Packages (Claude Opus 4.8) | Blueprint Viewer — drag + up/down reorder of Work Package / Scope Layer cards | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
 | Step13C-R1-Smoke-PickHighlight (Claude Opus 4.8) | Blueprint Viewer — redesign Smoke Alarm glyph + on-canvas Package Pick highlight | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed, now COMMITTED a9a8296) | RELEASED | 2026-07-02 |
 | Step13C-Package-Speed-Symbols (Claude Opus 4.8) | Blueprint Viewer — Package Pick mode (+LeftControl toggle), Work Package add/remove items, Smoke/CO Alarm symbols, multi-package visibility | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
@@ -85,6 +86,20 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Step13B-QA7-R7-Default-Annotations (Claude Code Opus) | Blueprint Viewer — default/embedded iPad annotations panel: expand naturally below document, not collapsed/capped drawer | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 
 ## Audit & Change Log
+
+### 2026-07-02 — Project/Field Logs mark 'logs' changed key (NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Minimal audited fix only — backupDataService/sync guard/Blueprint NOT touched
+**Files:** `V15rProjectLogsTab.tsx`, `V15rFieldLogPanel.tsx` (+ this ledger)
+
+**Root cause (from prior audit):** Both log tabs write top-level `backup.logs` but called `saveBackupDataAndSync(backup)` with NO `changedKey`, so `_changedKeys` never contained `'logs'`. When the production guard blocked a sync (no baseline / remote newer), `attemptProductionMergeAndSync` saw `changedKeys.size === 0` and OVERWROTE local with remote (which lacked the new log) — entry disappeared. `mergeLocalChangesIntoRemote` already lists `'logs'` in its array-merge allowlist, so marking the key is sufficient; backupDataService untouched.
+
+**Fix:** `saveBackupDataAndSync(backup)` → `saveBackupDataAndSync(backup, 'logs')` in `V15rProjectLogsTab.tsx` `persist()` (line 137) and `V15rFieldLogPanel.tsx` `persist()` (line 658). One line each; no behavior/UI/data-model change.
+
+**EOL note:** `V15rFieldLogPanel.tsx` is committed with CRLF baked into blob content (unlike LF-normalized siblings). The Edit tool writing LF produced phantom whitespace hunks + `git diff --check` failures. Resolved by a byte-precise replace that keeps every unchanged line's original CRLF and terminates only the changed line with LF (no trailing CR) → clean minimal diff, `git diff --check` passes.
+
+typecheck ✅ build ✅ `git diff --check` ✅. **Lock released.**
 
 ### 2026-07-02 — Reorder Work Package / Scope Layer cards (Step 13C-R2, NOT COMMITTED)
 

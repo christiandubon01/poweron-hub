@@ -655,7 +655,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     backup._lastSavedAt = new Date().toISOString()
     // Use auto-sync variant — writes localStorage + fire-and-forget Supabase sync
     // The 30s periodic sync handles debouncing so rapid keystrokes don't flood the network
-    saveBackupDataAndSync(backup)
+    saveBackupDataAndSync(backup, 'logs')
     // Dispatch event to trigger KPI refresh in Layout
     window.dispatchEvent(new Event('storage'))
     window.dispatchEvent(new Event('poweron-data-saved'))
