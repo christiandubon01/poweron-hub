@@ -6917,7 +6917,14 @@ const annotationPanelSizeClass =
                       height: displaySize.h || undefined,
                       transform: visualScale !== 1 ? `scale(${visualScale})` : undefined,
                       transformOrigin: 'top left',
-                      willChange: visualScale !== 1 ? 'transform' : undefined,
+                      // QA7-R8: `willChange: 'transform'` removed. It forced the
+                      // page frame into a persistent composited layer sized to
+                      // displaySize × visualScale; above the raster cap that
+                      // layer exceeded the browser's max texture size and its
+                      // painted content (the annotation SVG overlay) dropped
+                      // out — annotations vanished on zoom-in. Removing the hint
+                      // lets the browser rasterize on demand. Compositing hint
+                      // only: transform/origin/size/zoom/raster all unchanged.
                     }}
                   >
                     <canvas ref={canvasRef} className="border border-gray-800 bg-white shadow-lg block" />

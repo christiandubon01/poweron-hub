@@ -81,6 +81,21 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 ## Audit & Change Log
 
+### 2026-07-01 — Remove pageFrame willChange:transform (annotations vanish on zoom) (Step 13B-QA7-R8, NOT COMMITTED)
+
+**Agent:** Claude Code (Fable 5, task labeled Opus)
+**Mode:** Surgical one-line compositing-hint removal
+**Branch:** main | HEAD = 2767e1c
+**Typecheck:** 0 errors ✅ | **Build:** ✅ 17.11s | **git diff --check:** PASS ✅
+
+**Change:** Removed `willChange: visualScale !== 1 ? 'transform' : undefined` from the `pageFrameRef` style ([OperationsBlueprintPdfViewer.tsx:6920](src/components/blueprint/OperationsBlueprintPdfViewer.tsx)). Nothing else touched.
+
+**Why:** QA7 made normal button/wheel zoom apply `transform: scale(visualScale)` above the raster cap (pre-QA7 it only rendered a bigger canvas). `willChange: transform` forced the page frame into a persistent composited layer sized to `displaySize × visualScale`; at high zoom that exceeded the browser max texture/layer size and its painted DOM/SVG content (the annotation overlay) dropped out — annotations vanished on zoom-in while the canvas looked fine. Removing the hint lets the browser rasterize the transformed content on demand.
+
+**Unchanged (verified by diff):** transform, transformOrigin, width, height, displaySize, renderedZoom, visualScale, raster cap, canvas rendering, overlay dims, SVG viewBox, annotation math, z-index, fullscreen layout, default embedded layout, annotations panel, scroll handle, document viewport sizing. Diff is the single style line → comment. Manual zoom QA (100/250/500/1000% default + fullscreen) still pending on-device.
+
+**Lock released.**
+
 ### 2026-07-01 — Default/Embedded iPad Annotations Panel Expands Naturally (Step 13B-QA7-R7, NOT COMMITTED)
 
 **Agent:** Claude Code (Fable 5, task labeled Opus)
