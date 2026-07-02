@@ -77,7 +77,7 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 | Agent | Feature Area | Files | Mode | Status | Claimed |
 |---|---|---|---|---|---|
-| Step13B-QA7-R7-Default-Annotations (Claude Code Opus) | Blueprint Viewer — default/embedded iPad annotations panel: expand naturally below document, not collapsed/capped drawer | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13B-iPad-HighZoom-Alignment (Claude Code Opus 4.8) | Blueprint Viewer — iPad high-zoom symbol/annotation alignment after raster cap | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | IN PROGRESS | ACTIVE | 2026-07-01 |
 
 ## Audit & Change Log
 

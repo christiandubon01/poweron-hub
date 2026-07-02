@@ -6919,15 +6919,13 @@ const annotationPanelSizeClass =
                     ref={pageFrameRef}
                     className="relative"
                     style={{
-                      width: visualDisplayWidth || undefined,
-                      height: visualDisplayHeight || undefined,
+                      width: displaySize.w || undefined,
+                      height: displaySize.h || undefined,
+                      transform: visualScale !== 1 ? `scale(${visualScale})` : undefined,
+                      transformOrigin: 'top left',
                     }}
                   >
-                    <canvas
-                      ref={canvasRef}
-                      className="absolute inset-0 border border-gray-800 bg-white shadow-lg block"
-                      style={{ width: '100%', height: '100%' }}
-                    />
+                    <canvas ref={canvasRef} className="border border-gray-800 bg-white shadow-lg block" />
                     <div
                     ref={overlayRef}
                     className={`absolute inset-0 ${cursorClass}`}
@@ -6997,7 +6995,7 @@ const annotationPanelSizeClass =
                           const handle = points[points.length - 1] || { x: rect.x + rect.w, y: rect.y + rect.h }
                           return (
                             <div key={a.id} data-annotation-id={a.id} className="absolute inset-0" style={{ pointerEvents: 'none' }}>
-                              <svg className="absolute inset-0 overflow-visible" width="100%" height="100%" viewBox={`0 0 ${displaySize.w} ${displaySize.h}`}>
+                              <svg className="absolute inset-0 overflow-visible" width={displaySize.w} height={displaySize.h}>
                                 <polyline points={svgPoints} fill="none" stroke={color} strokeWidth={meta.thickness || (a.type === 'marker' ? 12 : 3)} strokeLinecap="round" strokeLinejoin="round" opacity={meta.opacity ?? (a.type === 'marker' ? 0.35 : 0.9)} style={{ pointerEvents: 'none' }} />
                                 <polyline points={svgPoints} fill="none" stroke="transparent" strokeWidth={(meta.thickness || 8) + 14} strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'stroke', cursor: 'pointer', touchAction: 'none' }} onPointerDown={selectAnnotation as any} onClick={selectAnnotation as any} />
                               </svg>
@@ -7339,7 +7337,7 @@ const annotationPanelSizeClass =
                           const pathD = `M ${edgePx.x} ${edgePx.y} L ${elbowX} ${edgePx.y} L ${elbowX} ${anchorPxY} L ${anchorPxX} ${anchorPxY}`
                           return (
                             <div key={a.id} className="pointer-events-none absolute inset-0">
-                              <svg className="pointer-events-none absolute inset-0 overflow-visible" width="100%" height="100%" viewBox={`0 0 ${displaySize.w} ${displaySize.h}`}>
+                              <svg className="pointer-events-none absolute inset-0 overflow-visible" width={displaySize.w} height={displaySize.h}>
                                 <defs>
                                   <marker id={`callout-arrow-${a.id}`} markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
                                     <path d="M0,0 L9,4.5 L0,9 z" fill={color} />
@@ -7478,7 +7476,7 @@ const annotationPanelSizeClass =
 
                           return (
                             <div key={a.id} className="absolute inset-0" style={{ pointerEvents: 'none' }}>
-                              <svg className="absolute inset-0 overflow-visible" width="100%" height="100%" viewBox={`0 0 ${displaySize.w} ${displaySize.h}`}>
+                              <svg className="absolute inset-0 overflow-visible" width={displaySize.w} height={displaySize.h}>
                                 <defs>
                                   {usePattern && getMeasurePatternDef(patId, fillPat, fillCol, fillOp)}
                                   {endStyle === 'arrow' && (
@@ -7573,9 +7571,8 @@ const annotationPanelSizeClass =
                       <svg
                         ref={alignmentGuideSvgRef}
                         className="absolute inset-0 pointer-events-none overflow-visible"
-                        width="100%"
-                        height="100%"
-                        viewBox={`0 0 ${displaySize.w} ${displaySize.h}`}
+                        width={displaySize.w}
+                        height={displaySize.h}
                         style={{ zIndex: 30, filter: 'drop-shadow(0 0 3px rgba(34, 211, 238, 0.85))' }}
                         aria-hidden="true"
                       />
@@ -7604,9 +7601,8 @@ const annotationPanelSizeClass =
                       {/* SVG for line/arrow shape preview Ã¢â‚¬â€ line element mutated directly during drag. */}
                       <svg
                         className="absolute inset-0 pointer-events-none overflow-visible"
-                        width="100%"
-                        height="100%"
-                        viewBox={`0 0 ${visualDisplayWidth} ${visualDisplayHeight}`}
+                        width={displaySize.w}
+                        height={displaySize.h}
                         style={{ display: effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow' || shapeKind === 'arch-line') ? '' : 'none' }}
                       >
                         <defs>
@@ -7636,7 +7632,7 @@ const annotationPanelSizeClass =
                       </svg>
 
                       {inkDraft && (effectiveTool === 'pen' || effectiveTool === 'marker') && (
-                        <svg className="absolute inset-0 pointer-events-none overflow-visible" width="100%" height="100%" viewBox={`0 0 ${visualDisplayWidth} ${visualDisplayHeight}`}>
+                        <svg className="absolute inset-0 pointer-events-none overflow-visible" width={displaySize.w} height={displaySize.h}>
                           <polyline
                             points={inkDraft.map((p) => `${p.x},${p.y}`).join(' ')}
                             fill="none"
@@ -7651,7 +7647,7 @@ const annotationPanelSizeClass =
 
                       {/* Measure draft SVG Ã¢â‚¬â€ placed points + rubber-band to cursor */}
                       {displaySize.w > 0 && measureDraftPoints.length > 0 && (effectiveTool === 'calibrate' || effectiveTool === 'measure-distance' || effectiveTool === 'measure-area' || effectiveTool === 'measure-perimeter') && (
-                        <svg className="absolute inset-0 pointer-events-none overflow-visible" width="100%" height="100%" viewBox={`0 0 ${displaySize.w} ${displaySize.h}`}>
+                        <svg className="absolute inset-0 pointer-events-none overflow-visible" width={displaySize.w} height={displaySize.h}>
                           {(() => {
                             const col = toolColors[effectiveTool as ToolKey] || '#38bdf8'
                             const pxPts = measureDraftPoints.map(p => ({ px: p.x * displaySize.w, py: p.y * displaySize.h }))
@@ -7679,7 +7675,7 @@ const annotationPanelSizeClass =
                       {/* Multi-point path draft SVG — placed points + rubber-band to cursor,
                           shared by Polyline and Circuit/Switch-Leg Path (Step 13B-QA5) */}
                       {displaySize.w > 0 && pathDraftPoints.length > 0 && effectiveTool === 'shape' && (shapeKind === 'polyline' || shapeKind === 'circuit-path') && (
-                        <svg className="absolute inset-0 pointer-events-none overflow-visible" width="100%" height="100%" viewBox={`0 0 ${displaySize.w} ${displaySize.h}`}>
+                        <svg className="absolute inset-0 pointer-events-none overflow-visible" width={displaySize.w} height={displaySize.h}>
                           {(() => {
                             const col = shapeOptions.borderColor || '#facc15'
                             const pxPts = pathDraftPoints.map(p => ({ px: p.x * displaySize.w, py: p.y * displaySize.h }))
