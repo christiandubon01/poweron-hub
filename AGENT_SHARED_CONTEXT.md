@@ -2851,6 +2851,15 @@ After deploy, verify the dry-run and invalid-confirmation routes. Then, with exp
 - Added `send-review-request` Netlify function using Resend and the approved Google review link only.
 - Added additive nullable review-tracking columns to `portal_requests`.
 
+### 2026-07-01 — Blueprint Viewer Overlay Layer Lock
+
+**Agent:** Codex
+**Mode:** Scoped bug fix
+**File Lock:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+**Baseline:** `61381da` accepted (`Fix Blueprint annotations disappearing on zoom`)
+**Frozen Zones:** iPad fullscreen layout; default/non-fullscreen document and annotations-panel layout; scrollbars/scroll handle behavior; 1000% max zoom; raster cap/renderedZoom/visualScale mechanism; canvas backing-store sizing; save/sync; Work Packages; colors; opacity; labels; light/glare effects; selection/move/edit/copy/delete; rotation; measurements; circuit paths; canvas/overlay/selection z-order.
+**Open Item:** overlay out of transformed layer.
+
 #### Verification
 
 - `npm.cmd run typecheck`: PASS
