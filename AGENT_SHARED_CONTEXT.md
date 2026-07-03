@@ -3162,3 +3162,32 @@ Task: add a visually distinct 240V receptacle electrical symbol (separate from S
 - No changes to placement system, package/work-package logic, sync, persistence, or any other symbol kind's rendering.
 
 **Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-07-02 — Blueprint Work Packages Page-Aware Scoping (Step 14A)
+
+**Agent:** Claude (Opus 4.8)
+**Mode:** Scoped implementation
+**File Lock:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`, `src/services/blueprintLibraryService.ts` — CLAIMED (applied on top of uncommitted prior R1/R2 changes, not reset/reverted)
+**Baseline HEAD:** `d0a4292` (+ uncommitted R1/R2 Symbols Size/500%/custom label colors/240V receptacle, all preserved)
+**Status:** DONE
+
+Task: make Work Packages / Scope Layers page-aware like annotations, so a package created on Page X shows on Page X by default instead of on every page.
+
+**Verification**
+- `npm.cmd run typecheck`: PASS (0 errors)
+- `npm.cmd run build`: PASS (existing chunk-size warnings only, no errors)
+- `git diff --check`: PASS (CRLF-only warnings, no conflict markers/whitespace errors)
+
+**What changed**
+- `BlueprintScopeLayer` gained optional `pageNumber?: number` (`blueprintLibraryService.ts`).
+- `sanitizeScopeLayer()`: keeps `raw.pageNumber` if valid; else infers from `itemRefs[0].pageNumber` if present; else leaves `pageNumber` undefined (old packages are never rejected or forced onto Page 1).
+- `saveScopeLayerFromModal()` (create path only): new packages store `pageNumber: currentPage` as the package's home page. Edit path spreads `...layer, ...payloadBase` — `payloadBase` has no `pageNumber` key, so an existing package's `pageNumber` is untouched by edits (adding/removing items never moves its home page).
+- New `pageFilteredScopeLayers` memo: when `scopeLayerShowAllPages` is false (default), shows packages where `pageNumber == null || pageNumber === currentPage`; when true, shows all. Both existing panel render blocks (`scopeLayers.length > 0` and the `=== 0` fallback) now map over this filtered list instead of raw `scopeLayers`.
+- Added "Showing: Current Page" / "Showing: All Pages" toggle button in the Work Packages panel header (`scopeLayerShowAllPages` state, local UI only, not persisted).
+- Added a page badge per card: `Page N` or `Unscoped`; added a `Spans N pages` badge (via new `getBlueprintScopeLayerDistinctPageCount` helper) when a package's `itemRefs` cover more than one distinct page — informational only.
+- Eye toggle/isolate, edit, delete, reorder (up/down + drag) all continue to operate on the full `scopeLayers` array by id — filtering only changes which cards render, never mutates visibility/isolation state. Turning "Show All Pages" off does not clear `isolatedScopeLayerIds`.
+- No changes to annotation filtering/rendering, zoom/canvas/overlay math, sync guard, or persistence path — `pageNumber` rides through the existing `saveOperationsBlueprintScopeLayers` flow as a normal field on the layer object.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` and `src/services/blueprintLibraryService.ts` are free for other agents.

@@ -88,6 +88,7 @@ export interface BlueprintScopeLayer {
   color: string
   selectedAnnotationIds: string[]
   itemRefs: BlueprintScopeItemRef[]
+  pageNumber?: number
   roughInHours: number
   trimHours: number
   testingHours: number
@@ -728,6 +729,13 @@ function sanitizeScopeLayer(raw: any): BlueprintScopeLayer | null {
     ? (raw.itemRefs.map(sanitizeScopeItemRef).filter(Boolean) as BlueprintScopeItemRef[])
     : []
 
+  let pageNumber: number | undefined
+  if (raw.pageNumber != null && Number.isFinite(Number(raw.pageNumber)) && Number(raw.pageNumber) >= 1) {
+    pageNumber = Math.floor(Number(raw.pageNumber))
+  } else if (itemRefs.length > 0 && Number.isFinite(itemRefs[0].pageNumber) && itemRefs[0].pageNumber >= 1) {
+    pageNumber = itemRefs[0].pageNumber
+  }
+
   return {
     id,
     name,
@@ -735,6 +743,7 @@ function sanitizeScopeLayer(raw: any): BlueprintScopeLayer | null {
     color: String(raw.color || '#38bdf8'),
     selectedAnnotationIds,
     itemRefs,
+    pageNumber,
     roughInHours: coerceScopeLayerHours(raw.roughInHours),
     trimHours: coerceScopeLayerHours(raw.trimHours),
     testingHours: coerceScopeLayerHours(raw.testingHours),

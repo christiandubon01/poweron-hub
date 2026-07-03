@@ -598,6 +598,13 @@ function getBlueprintScopeLayerLaborTotal(layer: Pick<BlueprintScopeLayer, 'roug
   )
 }
 
+// Distinct page count across a package's linked items — informational "Spans N pages" badge only.
+function getBlueprintScopeLayerDistinctPageCount(layer: Pick<BlueprintScopeLayer, 'itemRefs'>) {
+  const pages = new Set<number>()
+  layer.itemRefs.forEach((ref) => { if (Number.isFinite(ref.pageNumber)) pages.add(ref.pageNumber) })
+  return pages.size
+}
+
 function buildBlueprintScopeItemRef(annotation: BlueprintAnnotation): BlueprintScopeItemRef {
   const meta = getAnnotationMeta(annotation)
   const shapeKind = annotation.type === 'shape' ? meta.shapeKind : undefined
@@ -1712,6 +1719,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
    *  Set-based so multiple work packages can be made visible at once (multi-package
    *  visibility filter). Empty set = no filter = show all annotations. */
   const [isolatedScopeLayerIds, setIsolatedScopeLayerIds] = useState<Set<string>>(new Set())
+  /** Local UI only — when off (default), the Work Package panel shows only packages whose
+   *  pageNumber matches the current page plus unscoped packages; when on, shows every package. */
+  const [scopeLayerShowAllPages, setScopeLayerShowAllPages] = useState(false)
   /** Local UI only — Package Pick / Multi Select mode. When on, clicking an annotation on the
    *  canvas toggles it into selectedForPackageIds instead of selecting/moving/editing it. */
   const [isPackagePickMode, setIsPackagePickMode] = useState(false)
@@ -3052,6 +3062,18 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   )
   const isPackageVisibilityFilterActive = isolatedScopeLayers.length > 0
 
+  // Page-aware Work Package panel list: current-page + unscoped packages by default,
+  // everything when "Show All Pages" is on. Eye-toggle/visibility state itself is untouched —
+  // this only controls which cards render in the panel.
+  const pageFilteredScopeLayers = useMemo(
+    () => (
+      scopeLayerShowAllPages
+        ? scopeLayers
+        : scopeLayers.filter((layer) => layer.pageNumber == null || layer.pageNumber === currentPage)
+    ),
+    [scopeLayers, scopeLayerShowAllPages, currentPage],
+  )
+
   const isolatedAnnotationIdSet = useMemo(() => {
     // No packages selected for the visibility filter → null → show all annotations.
     if (isolatedScopeLayers.length === 0) return null
@@ -3234,6 +3256,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     let nextLayers: BlueprintScopeLayer[]
     if (scopeLayerModal.mode === 'edit' && scopeLayerModal.layerId) {
+      // Preserve the package's existing home page — adding/removing items never moves it.
       nextLayers = scopeLayers.map((layer) => (
         layer.id === scopeLayerModal.layerId
           ? { ...layer, ...payloadBase, updatedAt: now }
@@ -3245,6 +3268,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         {
           id: `scope_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
           ...payloadBase,
+          pageNumber: currentPage,
           createdAt: now,
           updatedAt: now,
           visible: true,
@@ -3272,6 +3296,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   }, [
     allAnnotations,
     closeScopeLayerModal,
+    currentPage,
     loadScopeLayers,
     persistScopeLayers,
     scopeLayerDraftIds,
@@ -8579,9 +8604,19 @@ const annotationPanelSizeClass =
                         <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-100">
                           <Layers size={12} /> Scope Layers / Work Packages
                         </div>
-                        <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-200">{scopeLayers.length}</span>
+                        <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-200">{pageFilteredScopeLayers.length}{!scopeLayerShowAllPages && pageFilteredScopeLayers.length !== scopeLayers.length ? ` / ${scopeLayers.length}` : ''}</span>
                       </div>
-                      <div className="mt-0.5 text-[10px] text-sky-200/60">Saved work packages for this viewer session. Drag the handle or use ↑/↓ to reorder.</div>
+                      <div className="mt-0.5 flex items-center justify-between gap-2">
+                        <div className="text-[10px] text-sky-200/60">Saved work packages for this viewer session. Drag the handle or use ↑/↓ to reorder.</div>
+                        <button
+                          type="button"
+                          onClick={() => setScopeLayerShowAllPages((prev) => !prev)}
+                          className={`flex-shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-semibold ${scopeLayerShowAllPages ? 'border-sky-400/60 bg-sky-500/20 text-sky-100' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+                          title={scopeLayerShowAllPages ? 'Showing packages from all pages — click to show only this page' : 'Showing only this page\'s packages — click to show all pages'}
+                        >
+                          {scopeLayerShowAllPages ? 'Showing: All Pages' : 'Showing: Current Page'}
+                        </button>
+                      </div>
                       {isPackageVisibilityFilterActive && (
                         <div className="mt-1.5 flex items-center justify-between gap-2 rounded border border-amber-500/40 bg-amber-950/25 px-2 py-1 text-[10px] font-medium text-amber-200">
                           <span>
@@ -8599,8 +8634,12 @@ const annotationPanelSizeClass =
                         </div>
                       )}
                     </div>
+                    {pageFilteredScopeLayers.length === 0 && (
+                      <div className="px-3 pb-3 text-[10px] text-gray-500 italic">No work packages on this page. Turn on "Show All Pages" to see packages from other pages.</div>
+                    )}
                     <div className="space-y-2 px-3 pb-3">
-                      {scopeLayers.map((layer, layerIndex) => {
+                      {pageFilteredScopeLayers.map((layer) => {
+                        const layerIndex = scopeLayers.findIndex((l) => l.id === layer.id)
                         const totalHours = getBlueprintScopeLayerLaborTotal(layer)
                         const summary = buildBlueprintScopeItemSummary(layer.itemRefs)
                         const isLayerIsolated = isolatedScopeLayerIds.has(layer.id)
@@ -8608,6 +8647,8 @@ const annotationPanelSizeClass =
                         const isDropTarget = dragOverScopeLayerId === layer.id && draggingScopeLayerId !== layer.id
                         const isFirstLayer = layerIndex === 0
                         const isLastLayer = layerIndex === scopeLayers.length - 1
+                        const distinctPageCount = getBlueprintScopeLayerDistinctPageCount(layer)
+                        const pageBadgeLabel = layer.pageNumber != null ? `Page ${layer.pageNumber}` : 'Unscoped'
                         return (
                           <div
                             key={layer.id}
@@ -8643,6 +8684,12 @@ const annotationPanelSizeClass =
                                   </div>
                                   <div className="mt-1 text-[10px] text-gray-400">
                                     {layer.itemRefs.length} {layer.itemRefs.length === 1 ? 'item' : 'items'} · {totalHours.toFixed(1)} labor hrs
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                                    <span className="rounded-full border border-gray-700 bg-gray-900/60 px-1.5 py-0.5 text-[9px] text-gray-400">{pageBadgeLabel}</span>
+                                    {distinctPageCount > 1 && (
+                                      <span className="rounded-full border border-indigo-500/40 bg-indigo-950/40 px-1.5 py-0.5 text-[9px] text-indigo-300">Spans {distinctPageCount} pages</span>
+                                    )}
                                   </div>
                                 </div>
                               </div>
@@ -8932,14 +8979,16 @@ const annotationPanelSizeClass =
                       </div>
                       <div className="mt-0.5 text-[10px] text-gray-500">V1 work packages are local to this viewer session.</div>
                     </div>
-                    {scopeLayers.length === 0 ? (
+                    {pageFilteredScopeLayers.length === 0 ? (
                       <div className="px-3 pb-3 text-[10px] text-gray-600 italic">No work packages yet. Check annotations above, then create one.</div>
                     ) : (
                       <div className="space-y-2 px-3 pb-3">
-                        {scopeLayers.map((layer) => {
+                        {pageFilteredScopeLayers.map((layer) => {
                           const totalHours = getBlueprintScopeLayerLaborTotal(layer)
                           const summary = buildBlueprintScopeItemSummary(layer.itemRefs)
                           const isLayerIsolated = isolatedScopeLayerIds.has(layer.id)
+                          const distinctPageCount = getBlueprintScopeLayerDistinctPageCount(layer)
+                          const pageBadgeLabel = layer.pageNumber != null ? `Page ${layer.pageNumber}` : 'Unscoped'
                           return (
                             <div key={layer.id} className={`rounded-lg border bg-gray-950/30 p-2 ${isLayerIsolated ? 'border-amber-400/60 ring-1 ring-amber-400/25' : `border-gray-800 ${layer.visible ? '' : 'opacity-55'}`}`}>
                               <div className="flex items-start justify-between gap-2">
@@ -8953,6 +9002,12 @@ const annotationPanelSizeClass =
                                   </div>
                                   <div className="mt-1 text-[10px] text-gray-500">
                                     {layer.itemRefs.length} {layer.itemRefs.length === 1 ? 'item' : 'items'} · {totalHours.toFixed(1)} labor hrs
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                                    <span className="rounded-full border border-gray-700 bg-gray-900/60 px-1.5 py-0.5 text-[9px] text-gray-400">{pageBadgeLabel}</span>
+                                    {distinctPageCount > 1 && (
+                                      <span className="rounded-full border border-indigo-500/40 bg-indigo-950/40 px-1.5 py-0.5 text-[9px] text-indigo-300">Spans {distinctPageCount} pages</span>
+                                    )}
                                   </div>
                                 </div>
                                 <div className="flex flex-shrink-0 items-center gap-1">
