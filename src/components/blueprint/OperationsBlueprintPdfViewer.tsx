@@ -270,6 +270,7 @@ type ShapeKind =
   | 'electrical-led-panel-2x4'
   | 'electrical-gfci'
   | 'electrical-receptacle'
+  | 'electrical-receptacle-240v'
   | 'electrical-timer-control'
   | 'electrical-photocell'
   | 'electrical-smoke-alarm'
@@ -292,6 +293,7 @@ type ElectricalSymbolKind = Extract<ShapeKind,
   | 'electrical-led-panel-2x4'
   | 'electrical-gfci'
   | 'electrical-receptacle'
+  | 'electrical-receptacle-240v'
   | 'electrical-timer-control'
   | 'electrical-photocell'
   | 'electrical-smoke-alarm'
@@ -433,6 +435,17 @@ const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, ElectricalSymbolM
     defaultPhase: 'electrical',
     materialKey: 'receptacle',
     laborKey: 'receptacle',
+    isElectricalSymbol: true,
+  },
+  'electrical-receptacle-240v': {
+    symbolKind: 'electrical-receptacle-240v',
+    displayName: '240V Receptacle',
+    shortLabel: '240V',
+    category: 'power',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'receptacle-240v',
+    laborKey: 'receptacle-240v',
     isElectricalSymbol: true,
   },
   'electrical-timer-control': {
@@ -828,6 +841,7 @@ function isLightOutputShapeKind(shapeKind: any): shapeKind is ShapeKind {
 // Light fixtures (can lights, recessed/pendant lights, LED panels) intentionally excluded.
 const ROTATABLE_ELECTRICAL_SHAPE_KINDS = new Set<ShapeKind>([
   'electrical-receptacle',
+  'electrical-receptacle-240v',
   'electrical-switch',
   'electrical-switch-3way',
   'electrical-switch-4way',
@@ -1025,6 +1039,7 @@ const ELECTRICAL_SYMBOL_VISUAL_BOUNDS: Partial<Record<ElectricalSymbolKind, { x:
   'electrical-switch-4way': { x: 30, y: 15, w: 40, h: 68 },
   'electrical-dimmer': { x: 13, y: 15, w: 74, h: 64 },
   'electrical-receptacle': { x: 25, y: 9, w: 50, h: 74 },
+  'electrical-receptacle-240v': { x: 25, y: 9, w: 50, h: 74 },
   'electrical-gfci': { x: 25, y: 9, w: 50, h: 74 },
   'electrical-sconce': { x: 15, y: 15, w: 47, h: 68 },
   'electrical-photocell': { x: 14, y: 11, w: 78, h: 68 },
@@ -1043,11 +1058,21 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
   fillOpacity: number
   labelsVisible: boolean
   labelScale?: number
+  labelCustomColorsEnabled?: boolean
+  labelTextColor?: string
+  labelBorderColor?: string
+  labelFillColor?: string
 }, rotationDeg: number = 0, showCompactSelectionBox: boolean = false) {
   const { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible } = style
   // Label-only scale (Symbols Size control) — affects the external label badge/text size only,
   // never the symbol glyph geometry or the annotation box. Defaults to 1 (100%).
-  const labelScale = Number.isFinite(style.labelScale) ? Math.max(0.5, Math.min(2.5, style.labelScale as number)) : 1
+  const labelScale = Number.isFinite(style.labelScale) ? Math.max(0.5, Math.min(5, style.labelScale as number)) : 1
+  // Label-only color override (Symbols Size popup "Custom Label Colors" toggle). Applies to the
+  // external label badge (text/border/fill) only — never the symbol glyph/body/geometry.
+  const labelColorsEnabled = !!style.labelCustomColorsEnabled
+  const customLabelTextColor = style.labelTextColor
+  const customLabelBorderColor = style.labelBorderColor
+  const customLabelFillColor = style.labelFillColor
   const dash = borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined
   const symbolFill = fillColor === 'transparent' ? 'none' : fillColor
   const textFill = borderColor
@@ -1070,6 +1095,9 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
     const labelHeight = 16 * labelScale
     const labelX = 96 - labelWidth
     const labelTop = 78
+    const labelTextFill = labelColorsEnabled && customLabelTextColor ? customLabelTextColor : textFill
+    const labelBorder = labelColorsEnabled && customLabelBorderColor ? customLabelBorderColor : borderColor
+    const labelFill = labelColorsEnabled && customLabelFillColor ? customLabelFillColor : '#0b1020'
     return (
       <g>
         <rect
@@ -1078,13 +1106,13 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
           width={labelWidth}
           height={labelHeight}
           rx={4 * labelScale}
-          fill="#0b1020"
+          fill={labelFill}
           fillOpacity="0.82"
-          stroke={borderColor}
+          stroke={labelBorder}
           strokeWidth="1.2"
           opacity="0.95"
         />
-        <text x={labelX + labelWidth / 2} y={labelTop + labelHeight / 2} fontSize={9.5 * labelScale} {...commonText}>{label}</text>
+        <text x={labelX + labelWidth / 2} y={labelTop + labelHeight / 2} fontSize={9.5 * labelScale} {...commonText} fill={labelTextFill}>{label}</text>
       </g>
     )
   }
@@ -1177,6 +1205,22 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
       </>
     )
     label = externalLabel(symbolLabel)
+  } else if (kind === 'electrical-receptacle-240v') {
+    const v240Label = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? '240V'
+    // 240V receptacle: same outlet-face silhouette as Standard Receptacle, but with angled
+    // (diagonal) blade slots instead of round slots, a round ground hole below, and a thicker
+    // outline — reads as a distinct high-voltage outlet at a glance, never touches the
+    // Standard Receptacle glyph above.
+    const heavyStroke = Math.max(3, borderThickness * 1.4)
+    body = (
+      <>
+        <path d="M28 22 Q50 10 72 22 L72 68 Q50 80 28 68 Z" fill={symbolFill} stroke={borderColor} strokeWidth={heavyStroke} strokeDasharray={dash} />
+        <line x1="38" y1="30" x2="48" y2="42" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" />
+        <line x1="62" y1="30" x2="52" y2="42" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" />
+        <circle cx="50" cy="58" r="7" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
+      </>
+    )
+    label = externalLabel(v240Label)
   } else if (kind === 'electrical-timer-control') {
     const timerLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'TMR'
     body = (
@@ -1934,11 +1978,19 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // Visual-only toggle for electrical symbol corner labels/badges.
   const [electricalSymbolLabelsVisible, setElectricalSymbolLabelsVisible] = useState(true)
   // Symbols Size control — scales symbol LABEL text only (not the glyph/box/geometry). Local UI
-  // state (0.75x–1.75x, default 1.0). The draggable popup and its position are also local UI only.
+  // state (0.75x–5.0x, default 1.0). The draggable popup and its position are also local UI only.
   const [symbolLabelScale, setSymbolLabelScale] = useState(1)
   const [isSymbolSizePanelOpen, setIsSymbolSizePanelOpen] = useState(false)
   const [symbolSizePanelPos, setSymbolSizePanelPos] = useState<{ x: number; y: number }>({ x: 24, y: 96 })
   const symbolSizeDragRef = useRef<{ dx: number; dy: number } | null>(null)
+  const symbolSizeButtonRef = useRef<HTMLButtonElement | null>(null)
+  // Label-only color override (Symbols Size popup "Custom Label Colors" toggle). Applies to the
+  // external label badge text/border/fill only — never symbol bodies/geometry/annotation data.
+  // Local UI state only; resets on reload.
+  const [symbolLabelCustomColorsEnabled, setSymbolLabelCustomColorsEnabled] = useState(false)
+  const [symbolLabelTextColor, setSymbolLabelTextColor] = useState('#22d3ee')
+  const [symbolLabelBorderColor, setSymbolLabelBorderColor] = useState('#22d3ee')
+  const [symbolLabelFillColor, setSymbolLabelFillColor] = useState('#0b1020')
   const [alignmentGuidesEnabled, setAlignmentGuidesEnabled] = useState(false)
   const [activeAlignmentGuides, setActiveAlignmentGuides] = useState<AlignmentGuideLine[]>([])
   // Copied annotation/shape design awaiting paste (Fix 1). Strips id/timestamps/page
@@ -3297,6 +3349,23 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     next.splice(target, 0, moved)
     void persistReorderedScopeLayers(next)
   }, [scopeLayers, persistReorderedScopeLayers])
+
+  // ── Symbols Size popup open — positions the panel just below its toggle button ──
+  // Pure UI positioning; never touches annotation data, geometry, or viewer layout.
+  const PANEL_W = 224
+  const PANEL_H_ESTIMATE = 340
+  const openSymbolSizePanel = useCallback(() => {
+    const btnRect = symbolSizeButtonRef.current?.getBoundingClientRect()
+    if (btnRect) {
+      const margin = 8
+      const vw = typeof window !== 'undefined' ? window.innerWidth : 1200
+      const vh = typeof window !== 'undefined' ? window.innerHeight : 800
+      const x = Math.max(4, Math.min(vw - PANEL_W - 4, btnRect.left))
+      const y = Math.max(4, Math.min(vh - PANEL_H_ESTIMATE - 4, btnRect.bottom + margin))
+      setSymbolSizePanelPos({ x, y })
+    }
+    setIsSymbolSizePanelOpen((v) => !v)
+  }, [])
 
   // ── Symbols Size popup drag (label-scale panel) ──
   // Pure UI positioning of the floating panel; never touches annotation data or geometry.
@@ -6854,8 +6923,9 @@ const annotationPanelSizeClass =
                     {electricalSymbolLabelsVisible ? 'Hide Labels' : 'Show Labels'}
                   </button>
                   <button
+                    ref={symbolSizeButtonRef}
                     type="button"
-                    onClick={() => setIsSymbolSizePanelOpen((v) => !v)}
+                    onClick={openSymbolSizePanel}
                     className={`w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border ${isSymbolSizePanelOpen ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                     title="Adjust symbol LABEL text size (does not resize symbols)"
                   >
@@ -7531,7 +7601,7 @@ const annotationPanelSizeClass =
                                 >
                                   {glowMetrics && renderLightOutputGlowSvg(glowId, glowMetrics, lightingEffectsVisible)}
                                   <g opacity={fillOpacity}>
-                                    {renderElectricalSymbolSvg(kind, meta, { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible: electricalSymbolLabelsVisible, labelScale: symbolLabelScale }, getAnnotationRotationDeg(meta), isFocused)}
+                                    {renderElectricalSymbolSvg(kind, meta, { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible: electricalSymbolLabelsVisible, labelScale: symbolLabelScale, labelCustomColorsEnabled: symbolLabelCustomColorsEnabled, labelTextColor: symbolLabelTextColor, labelBorderColor: symbolLabelBorderColor, labelFillColor: symbolLabelFillColor }, getAnnotationRotationDeg(meta), isFocused)}
                                   </g>
                                 </svg>
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
@@ -9165,7 +9235,7 @@ const annotationPanelSizeClass =
             <input
               type="range"
               min={0.75}
-              max={1.75}
+              max={5}
               step={0.05}
               value={symbolLabelScale}
               onChange={(e) => setSymbolLabelScale(Number(e.target.value))}
@@ -9180,9 +9250,66 @@ const annotationPanelSizeClass =
               >
                 Reset 100%
               </button>
-              <span>175%</span>
+              <span>500%</span>
             </div>
             <div className="mt-2 text-[9px] text-gray-500">Adjusts symbol label text only — symbol shapes and positions are unchanged.</div>
+
+            <div className="mt-3 border-t border-gray-700 pt-2.5">
+              <button
+                type="button"
+                onClick={() => setSymbolLabelCustomColorsEnabled((v) => !v)}
+                className={`flex w-full items-center justify-between rounded-md border px-2 py-1.5 text-[11px] ${symbolLabelCustomColorsEnabled ? 'border-cyan-500 bg-cyan-900/20 text-cyan-300' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                title="Override label text/border/fill colors (labels only, not symbol bodies)"
+              >
+                <span>Custom Label Colors</span>
+                <span className={`inline-flex h-4 w-7 items-center rounded-full px-0.5 ${symbolLabelCustomColorsEnabled ? 'bg-cyan-500 justify-end' : 'bg-gray-600 justify-start'}`}>
+                  <span className="h-3 w-3 rounded-full bg-white" />
+                </span>
+              </button>
+
+              {symbolLabelCustomColorsEnabled && (
+                <div className="mt-2 space-y-1.5">
+                  <div className="flex items-center justify-between text-[10px] text-gray-400">
+                    <span>Text</span>
+                    <input
+                      type="color"
+                      value={symbolLabelTextColor}
+                      onChange={(e) => setSymbolLabelTextColor(e.target.value)}
+                      className="h-5 w-8 cursor-pointer rounded border border-gray-700 bg-transparent p-0"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-gray-400">
+                    <span>Border</span>
+                    <input
+                      type="color"
+                      value={symbolLabelBorderColor}
+                      onChange={(e) => setSymbolLabelBorderColor(e.target.value)}
+                      className="h-5 w-8 cursor-pointer rounded border border-gray-700 bg-transparent p-0"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-gray-400">
+                    <span>Fill</span>
+                    <input
+                      type="color"
+                      value={symbolLabelFillColor}
+                      onChange={(e) => setSymbolLabelFillColor(e.target.value)}
+                      className="h-5 w-8 cursor-pointer rounded border border-gray-700 bg-transparent p-0"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSymbolLabelTextColor('#22d3ee')
+                      setSymbolLabelBorderColor('#22d3ee')
+                      setSymbolLabelFillColor('#0b1020')
+                    }}
+                    className="w-full rounded border border-gray-700 px-1.5 py-0.5 text-[9px] text-gray-300 hover:bg-white/5"
+                  >
+                    Reset Colors
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>,
         viewerPortalTarget

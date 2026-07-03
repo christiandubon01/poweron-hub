@@ -3110,3 +3110,55 @@ After deploy, verify the dry-run and invalid-confirmation routes. Then, with exp
 - `portal_requests`, `job_timeline`, `PortalTrackView` unchanged
 
 **Lock released** — `HunterLeadCard.tsx`, `PipelineTab.tsx` (salesIntel/tabs), `V15rFieldLogPanel.tsx`, `PortalStatusControls.tsx` are free for other agents.
+
+---
+
+### 2026-07-02 — Blueprint Symbols Size Popup Position + 500% Label Scale + Label Color Override (Step 13D-R1)
+
+**Agent:** Claude (Opus 4.8)
+**Mode:** Scoped implementation
+**File Lock:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` — CLAIMED
+**Baseline:** `7ad5e06` (Add Blueprint soft guides data symbols and label size control)
+**Status:** IN PROGRESS
+
+Task: reposition Symbols Size popup to open below its button (clamped to viewport, still draggable), raise label scale max from 175% to 500%, and add a label-only "Custom Label Colors" toggle (text/border/fill) that overrides label styling only — symbol bodies/geometry untouched. No zoom/rendering/sync/layout changes.
+
+**Verification**
+- `npm.cmd run typecheck`: PASS (0 errors)
+- `npm.cmd run build`: PASS (existing chunk-size warnings only, no errors)
+- `git diff --check`: PASS (CRLF-only warnings, no conflict markers/whitespace errors)
+
+**What changed**
+- Symbols Size popup now opens just below its toggle button (measured via new `symbolSizeButtonRef` + `openSymbolSizePanel`), clamped to viewport; remains draggable, closable, resettable as before.
+- `symbolLabelScale` slider range raised from 75%–175% to 75%–500% (clamp in `renderElectricalSymbolSvg` raised from 2.5 to 5); label-only, symbol glyph/geometry untouched.
+- Added "Custom Label Colors" toggle (`symbolLabelCustomColorsEnabled`) with Text/Border/Fill color pickers (`symbolLabelTextColor`, `symbolLabelBorderColor`, `symbolLabelFillColor`) + Reset Colors button, applied only inside `externalLabel()`'s badge — symbol bodies/paths/annotation data untouched. OFF (default) preserves prior per-symbol default label colors exactly.
+- All new state is local component UI state (useState) — resets on reload, not persisted, no sync/service files touched.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-07-02 — Blueprint 240V Receptacle Symbol (Step 13D-R2)
+
+**Agent:** Claude (Opus 4.8)
+**Mode:** Scoped implementation
+**File Lock:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` — CLAIMED (applied on top of uncommitted R1 changes, not reset/reverted)
+**Baseline:** `7ad5e06` + uncommitted R1 (Symbols Size popup position/500%/custom label colors)
+**Status:** IN PROGRESS
+
+Task: add a visually distinct 240V receptacle electrical symbol (separate from Standard Receptacle) with a "240V" label routed through the existing shared `externalLabel` path so Symbols Size, custom label colors, and Hide Labels all apply. No zoom/rendering/sync/layout/package changes.
+
+**Verification**
+- `npm.cmd run typecheck`: PASS (0 errors)
+- `npm.cmd run build`: PASS (existing chunk-size warnings only, no errors)
+- `git diff --check`: PASS (CRLF-only warnings, no conflict markers/whitespace errors)
+
+**What changed**
+- Added new `ElectricalSymbolKind`/`ShapeKind` member `electrical-receptacle-240v` alongside existing `electrical-receptacle` (Standard Receptacle glyph/branch untouched).
+- Added metadata entry: displayName `240V Receptacle`, shortLabel `240V`, category `power`, materialKey/laborKey `receptacle-240v` — auto-appears in `ELECTRICAL_SYMBOL_OPTIONS` (Electrical Symbols palette) since that list derives from `Object.values(ELECTRICAL_SYMBOL_METADATA)`.
+- New glyph branch in `renderElectricalSymbolSvg`: same outlet-face silhouette as Standard Receptacle but with angled/diagonal blade-slot lines instead of round slots, a round ground hole below, and a heavier outline stroke — visually distinct from Standard Receptacle and GFCI.
+- Label routed through the shared `externalLabel('240V')` call — same path as every other electrical symbol, so it automatically respects Hide Labels, Symbols Size (`symbolLabelScale`), and the R1 Custom Label Colors override (all from the same uncommitted working tree, preserved).
+- Added to `ROTATABLE_ELECTRICAL_SHAPE_KINDS` and `ELECTRICAL_SYMBOL_VISUAL_BOUNDS` (reusing receptacle's compact selection-box bounds) so placement/rotation/selection behave consistently with other power symbols.
+- No changes to placement system, package/work-package logic, sync, persistence, or any other symbol kind's rendering.
+
+**Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
