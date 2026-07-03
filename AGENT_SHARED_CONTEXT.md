@@ -77,6 +77,7 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 | Agent | Feature Area | Files | Mode | Status | Claimed |
 |---|---|---|---|---|---|
+| Step13D-SoftGuide-HDMI-LabelSize (Claude Opus 4.8) | Blueprint Viewer — soft (visual-only) Guide Assist, HDMI/Data symbols, Symbols Size label-scale popup | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
 | ProjectLogs-Fix-LogsKey (Claude Opus 4.8) | Project/Field Logs — mark 'logs' changed key so production merge preserves new entries | src/components/v15r/V15rProjectLogsTab.tsx, src/components/v15r/V15rFieldLogPanel.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
 | Step13C-R2-Reorder-Packages (Claude Opus 4.8) | Blueprint Viewer — drag + up/down reorder of Work Package / Scope Layer cards | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
 | Step13C-R1-Smoke-PickHighlight (Claude Opus 4.8) | Blueprint Viewer — redesign Smoke Alarm glyph + on-canvas Package Pick highlight | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed, now COMMITTED a9a8296) | RELEASED | 2026-07-02 |
@@ -86,6 +87,23 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Step13B-QA7-R7-Default-Annotations (Claude Code Opus) | Blueprint Viewer — default/embedded iPad annotations panel: expand naturally below document, not collapsed/capped drawer | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 
 ## Audit & Change Log
+
+### 2026-07-02 — Soft Guide Assist + HDMI/Data symbols + Symbols Size label scale (Step 13D, NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Guide behavior + symbols + label-scale UI only — zoom/rendering/layout/sync NOT touched
+**File:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` (+ this ledger)
+**Branch:** main | HEAD before edits = `fdc08b3d5589351053ac7293eab83210d1b363a5`
+
+**1) Guide Assist → soft/visual-only:** `applyCenterSnap()` neutralized to return the rect unchanged (single choke point), so every consumer — move (`updateMoveGuideLines`), new placement (finalNorm), and arch control-point carry (snapDx/Dy now 0) — no longer moves the annotation; the user's drop is final. Detection threshold `ALIGNMENT_GUIDE_THRESHOLD_NORM` 0.018→0.03 (earlier/more forgiving). `AlignmentGuideLine` gained `refId`; `calculateAlignmentGuides` records the matched annotation; `renderAlignmentGuideLines` now draws a cyan ring around the reference item(s) in the SAME imperative guide SVG (zero React re-renders, no data change). Circuit-Path `findNearestAnnotationCenterNorm` (a separate deliberate connect-to-symbol feature) left untouched.
+
+**2) HDMI + Data symbols:** added `electrical-hdmi` (HDMI) and `electrical-data` (DATA) to ShapeKind/ElectricalSymbolKind unions, metadata (category 'power', low-voltage), and `renderElectricalSymbolSvg` (HDMI = plate + trapezoid connector mouth; Data = plate + RJ45 keyed jack). Auto-appear in Electrical Symbols; reuse full symbol system (placement/color/opacity/label/select/move/edit/copy/delete/package-pick/work-package/persistence/annotation-list). No zoom/render math touched.
+
+**3) Symbols Size (label scale only):** new local state `symbolLabelScale` (0.75–1.75, default 1), `isSymbolSizePanelOpen`, `symbolSizePanelPos`. "Symbols Size (NN%)" button added under Hide Labels; opens a draggable (pointer-capture) floating popup titled "Symbols Size" with a range slider + live % + Reset 100%. Scale threads into `renderElectricalSymbolSvg` style → `externalLabel` scales badge/text ONLY (anchored at x=96 right edge, y=78 top) — symbol glyphs, boxes, and coordinates unchanged. Respects Hide Labels (externalLabel returns null when off). Local UI only — no persistence this pass (would be a separate follow-up; sync services deliberately not touched).
+
+**Preserved:** zoom/rendering/overlay math, canvas, PDF pan, fullscreen/default layout, sync/save, package pick, work packages, reorder, CO Alarm. typecheck ✅ build ✅ `git diff --check` ✅.
+
+**Lock released.**
 
 ### 2026-07-02 — Project/Field Logs mark 'logs' changed key (NOT COMMITTED)
 

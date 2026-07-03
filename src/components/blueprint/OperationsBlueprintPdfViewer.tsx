@@ -214,12 +214,16 @@ const LEGACY_SHAPE_FILL_OPACITY = 0.22
 // Normalized offset applied when pasting a copied annotation via the toolbar
 // button (no explicit drop point) so repeated pastes cascade and stay visible.
 const PASTE_OFFSET_NORM = 0.03
-const ALIGNMENT_GUIDE_THRESHOLD_NORM = 0.018
+// Guide Assist is soft / visual-only (Step 13D): a more forgiving threshold surfaces alignment
+// opportunities earlier, but Guide Assist never moves the item — the user's drop is final.
+const ALIGNMENT_GUIDE_THRESHOLD_NORM = 0.03
 // Circuit/Switch-Leg Path: max distance (page-normalized) a click can be from an existing
 // annotation's center and still snap to it, rather than using the raw click point.
 const CIRCUIT_PATH_SNAP_RADIUS_NORM = 0.03
 
-type AlignmentGuideLine = { axis: 'x' | 'y'; value: number }
+// refId (optional) = the annotation this guide is lining up against, so the canvas can highlight
+// the reference item during Guide Assist. Purely visual — never used to move data.
+type AlignmentGuideLine = { axis: 'x' | 'y'; value: number; refId?: string }
 type PlacementPreviewRectPx = { left: number; top: number; w: number; h: number }
 
 type ToolbarBucket = 'annotate' | 'draw' | 'generate' | 'view' | 'measure'
@@ -270,6 +274,8 @@ type ShapeKind =
   | 'electrical-photocell'
   | 'electrical-smoke-alarm'
   | 'electrical-co-alarm'
+  | 'electrical-hdmi'
+  | 'electrical-data'
 type BorderStyle = 'solid' | 'dashed' | 'dotted'
 type HatchPattern = 'none' | 'diagonal' | 'cross' | 'dots'
 type GenerateQuestionType = 'coordination' | 'rfi'
@@ -290,6 +296,8 @@ type ElectricalSymbolKind = Extract<ShapeKind,
   | 'electrical-photocell'
   | 'electrical-smoke-alarm'
   | 'electrical-co-alarm'
+  | 'electrical-hdmi'
+  | 'electrical-data'
 >
 type ElectricalSymbolCategory = 'lighting' | 'switching' | 'power' | 'control'
 
@@ -469,6 +477,28 @@ const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, ElectricalSymbolM
     defaultPhase: 'electrical',
     materialKey: 'co-alarm',
     laborKey: 'co-alarm',
+    isElectricalSymbol: true,
+  },
+  'electrical-hdmi': {
+    symbolKind: 'electrical-hdmi',
+    displayName: 'HDMI',
+    shortLabel: 'HDMI',
+    category: 'power',
+    countValue: 1,
+    defaultPhase: 'low-voltage',
+    materialKey: 'hdmi',
+    laborKey: 'hdmi',
+    isElectricalSymbol: true,
+  },
+  'electrical-data': {
+    symbolKind: 'electrical-data',
+    displayName: 'Data',
+    shortLabel: 'DATA',
+    category: 'power',
+    countValue: 1,
+    defaultPhase: 'low-voltage',
+    materialKey: 'data',
+    laborKey: 'data',
     isElectricalSymbol: true,
   },
 }
@@ -847,46 +877,42 @@ function calculateAlignmentGuides(
   threshold = ALIGNMENT_GUIDE_THRESHOLD_NORM
 ): AlignmentGuideLine[] {
   const draftCenter = getRectCenterNorm(draftRect)
-  let closestX: { value: number; delta: number } | null = null
-  let closestY: { value: number; delta: number } | null = null
+  let closestX: { value: number; delta: number; refId: string } | null = null
+  let closestY: { value: number; delta: number; refId: string } | null = null
 
   for (const annotation of candidates) {
     if (!annotation?.rect) continue
     const center = getRectCenterNorm(annotation.rect as any)
     const deltaX = Math.abs(draftCenter.x - center.x)
     if (deltaX <= threshold && (!closestX || deltaX < closestX.delta)) {
-      closestX = { value: center.x, delta: deltaX }
+      closestX = { value: center.x, delta: deltaX, refId: annotation.id }
     }
     const deltaY = Math.abs(draftCenter.y - center.y)
     if (deltaY <= threshold && (!closestY || deltaY < closestY.delta)) {
-      closestY = { value: center.y, delta: deltaY }
+      closestY = { value: center.y, delta: deltaY, refId: annotation.id }
     }
   }
 
   // At most one vertical (x) and one horizontal (y) guide — the single nearest center match
-  // on each axis — so multiple competing lines never render at once.
+  // on each axis — so multiple competing lines never render at once. refId records the
+  // reference annotation so the canvas can highlight it (visual only).
   return [
-    ...(closestX ? [{ axis: 'x' as const, value: clampNorm(closestX.value) }] : []),
-    ...(closestY ? [{ axis: 'y' as const, value: clampNorm(closestY.value) }] : []),
+    ...(closestX ? [{ axis: 'x' as const, value: clampNorm(closestX.value), refId: closestX.refId }] : []),
+    ...(closestY ? [{ axis: 'y' as const, value: clampNorm(closestY.value), refId: closestY.refId }] : []),
   ]
 }
 
-// Snaps a rect's center onto any matched center-alignment guide(s), preserving size — used to
-// lock symbol placement/move to exact center-to-center alignment (Step 13B-QA2).
+// Guide Assist soft mode (Step 13D): Guide Assist is now visual-only. It shows alignment guide
+// lines and highlights the reference item, but never moves the edited/placed annotation — the
+// user's drop position is final. This intentionally returns the rect unchanged so every existing
+// call site (move, new placement, arch control-point carry) becomes a no-op translation while
+// the guide-line detection/rendering stays exactly as before. Kept as a single choke point so
+// forced center-to-center snapping can be reintroduced behind a setting later if ever wanted.
 function applyCenterSnap(
   rect: { x: number; y: number; w: number; h: number },
-  guides: AlignmentGuideLine[],
+  _guides: AlignmentGuideLine[],
 ): { x: number; y: number; w: number; h: number } {
-  if (!guides.length) return rect
-  let { x, y, w, h } = rect
-  for (const guide of guides) {
-    if (guide.axis === 'x') {
-      x = clampNorm(guide.value - w / 2, 0, Math.max(0, 1 - w))
-    } else {
-      y = clampNorm(guide.value - h / 2, 0, Math.max(0, 1 - h))
-    }
-  }
-  return { x, y, w, h }
+  return rect
 }
 
 // Supported can-light color temperatures (Kelvin). 3000K is the default when missing.
@@ -1016,8 +1042,12 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
   fillColor: string
   fillOpacity: number
   labelsVisible: boolean
+  labelScale?: number
 }, rotationDeg: number = 0, showCompactSelectionBox: boolean = false) {
   const { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible } = style
+  // Label-only scale (Symbols Size control) — affects the external label badge/text size only,
+  // never the symbol glyph geometry or the annotation box. Defaults to 1 (100%).
+  const labelScale = Number.isFinite(style.labelScale) ? Math.max(0.5, Math.min(2.5, style.labelScale as number)) : 1
   const dash = borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined
   const symbolFill = fillColor === 'transparent' ? 'none' : fillColor
   const textFill = borderColor
@@ -1034,23 +1064,27 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
   // readable at any rotation angle, matching the existing GFCI label pattern.
   const externalLabel = (label: string) => {
     if (!labelsVisible) return null
-    const labelWidth = Math.max(22, label.length * 7 + 8)
+    // Label badge scales with labelScale (Symbols Size), anchored to its right edge (x=96) and
+    // top (y=78) so growing/shrinking text never shifts the symbol glyph.
+    const labelWidth = Math.max(22, label.length * 7 + 8) * labelScale
+    const labelHeight = 16 * labelScale
     const labelX = 96 - labelWidth
+    const labelTop = 78
     return (
       <g>
         <rect
           x={labelX}
-          y="78"
+          y={labelTop}
           width={labelWidth}
-          height="16"
-          rx="4"
+          height={labelHeight}
+          rx={4 * labelScale}
           fill="#0b1020"
           fillOpacity="0.82"
           stroke={borderColor}
           strokeWidth="1.2"
           opacity="0.95"
         />
-        <text x={labelX + labelWidth / 2} y="86.5" fontSize="9.5" {...commonText}>{label}</text>
+        <text x={labelX + labelWidth / 2} y={labelTop + labelHeight / 2} fontSize={9.5 * labelScale} {...commonText}>{label}</text>
       </g>
     )
   }
@@ -1193,6 +1227,28 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
       </>
     )
     label = externalLabel(coLabel)
+  } else if (kind === 'electrical-hdmi') {
+    const hdmiLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'HDMI'
+    // HDMI wall plate: trapezoidal HDMI connector mouth inside a plate outline.
+    body = (
+      <>
+        <rect x="22" y="26" width="52" height="38" rx="4" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <path d="M34 40 L62 40 L58 52 L38 52 Z" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinejoin="round" />
+        <path d="M40 44 L56 44" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} strokeLinecap="round" opacity="0.7" />
+      </>
+    )
+    label = externalLabel(hdmiLabel)
+  } else if (kind === 'electrical-data') {
+    const dataLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'DATA'
+    // Data / network jack: RJ45-style keyed port inside a plate outline.
+    body = (
+      <>
+        <rect x="24" y="26" width="48" height="40" rx="4" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <path d="M36 38 L60 38 L60 52 L54 52 L54 57 L42 57 L42 52 L36 52 Z" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinejoin="round" />
+        <path d="M41 42 L41 48 M48 42 L48 48 M55 42 L55 48" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.75)} strokeLinecap="round" opacity="0.65" />
+      </>
+    )
+    label = externalLabel(dataLabel)
   }
 
   if (!body) return null
@@ -1877,6 +1933,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [lightingEffectsVisible, setLightingEffectsVisible] = useState(true)
   // Visual-only toggle for electrical symbol corner labels/badges.
   const [electricalSymbolLabelsVisible, setElectricalSymbolLabelsVisible] = useState(true)
+  // Symbols Size control — scales symbol LABEL text only (not the glyph/box/geometry). Local UI
+  // state (0.75x–1.75x, default 1.0). The draggable popup and its position are also local UI only.
+  const [symbolLabelScale, setSymbolLabelScale] = useState(1)
+  const [isSymbolSizePanelOpen, setIsSymbolSizePanelOpen] = useState(false)
+  const [symbolSizePanelPos, setSymbolSizePanelPos] = useState<{ x: number; y: number }>({ x: 24, y: 96 })
+  const symbolSizeDragRef = useRef<{ dx: number; dy: number } | null>(null)
   const [alignmentGuidesEnabled, setAlignmentGuidesEnabled] = useState(false)
   const [activeAlignmentGuides, setActiveAlignmentGuides] = useState<AlignmentGuideLine[]>([])
   // Copied annotation/shape design awaiting paste (Fix 1). Strips id/timestamps/page
@@ -2058,6 +2120,29 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       line.setAttribute('opacity', '0.85')
       line.setAttribute('vector-effect', 'non-scaling-stroke')
       svg.appendChild(line)
+    }
+    // Highlight the reference annotation(s) being lined up against — a cyan ring around each
+    // aligned item so the user can see WHAT they're aligning to. Purely visual; drawn in the
+    // same imperative guide SVG so it adds no React re-renders and never touches annotation data.
+    const highlightedIds = new Set<string>()
+    for (const guide of guides) {
+      if (!guide.refId || highlightedIds.has(guide.refId)) continue
+      highlightedIds.add(guide.refId)
+      const refAnn = allAnnotationsRef.current.find((a) => a.id === guide.refId)
+      if (!refAnn?.rect) continue
+      const r = clampRectToPage(refAnn.rect as any)
+      const ring = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+      ring.setAttribute('x', String(r.x * width - 3))
+      ring.setAttribute('y', String(r.y * height - 3))
+      ring.setAttribute('width', String(Math.max(0.001, r.w) * width + 6))
+      ring.setAttribute('height', String(Math.max(0.001, r.h) * height + 6))
+      ring.setAttribute('rx', '5')
+      ring.setAttribute('fill', 'rgba(34,211,238,0.10)')
+      ring.setAttribute('stroke', '#22d3ee')
+      ring.setAttribute('stroke-width', '2.5')
+      ring.setAttribute('opacity', '0.9')
+      ring.setAttribute('vector-effect', 'non-scaling-stroke')
+      svg.appendChild(ring)
     }
   }, [])
 
@@ -3212,6 +3297,24 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     next.splice(target, 0, moved)
     void persistReorderedScopeLayers(next)
   }, [scopeLayers, persistReorderedScopeLayers])
+
+  // ── Symbols Size popup drag (label-scale panel) ──
+  // Pure UI positioning of the floating panel; never touches annotation data or geometry.
+  const handleSymbolSizeDragStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    symbolSizeDragRef.current = { dx: e.clientX - symbolSizePanelPos.x, dy: e.clientY - symbolSizePanelPos.y }
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch {}
+  }, [symbolSizePanelPos])
+  const handleSymbolSizeDragMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = symbolSizeDragRef.current
+    if (!drag) return
+    const x = Math.max(4, Math.min((typeof window !== 'undefined' ? window.innerWidth : 1200) - 60, e.clientX - drag.dx))
+    const y = Math.max(4, Math.min((typeof window !== 'undefined' ? window.innerHeight : 800) - 40, e.clientY - drag.dy))
+    setSymbolSizePanelPos({ x, y })
+  }, [])
+  const handleSymbolSizeDragEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    symbolSizeDragRef.current = null
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch {}
+  }, [])
 
   useEffect(() => {
     if (!alignmentGuidesEnabled || !annotationsVisible) {
@@ -6750,6 +6853,14 @@ const annotationPanelSizeClass =
                     {electricalSymbolLabelsVisible ? <EyeOff size={12} /> : <Eye size={12} />}
                     {electricalSymbolLabelsVisible ? 'Hide Labels' : 'Show Labels'}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsSymbolSizePanelOpen((v) => !v)}
+                    className={`w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border ${isSymbolSizePanelOpen ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                    title="Adjust symbol LABEL text size (does not resize symbols)"
+                  >
+                    <Type size={12} /> Symbols Size ({Math.round(symbolLabelScale * 100)}%)
+                  </button>
                 </div>
               </div>
             )}
@@ -7420,7 +7531,7 @@ const annotationPanelSizeClass =
                                 >
                                   {glowMetrics && renderLightOutputGlowSvg(glowId, glowMetrics, lightingEffectsVisible)}
                                   <g opacity={fillOpacity}>
-                                    {renderElectricalSymbolSvg(kind, meta, { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible: electricalSymbolLabelsVisible }, getAnnotationRotationDeg(meta), isFocused)}
+                                    {renderElectricalSymbolSvg(kind, meta, { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible: electricalSymbolLabelsVisible, labelScale: symbolLabelScale }, getAnnotationRotationDeg(meta), isFocused)}
                                   </g>
                                 </svg>
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
@@ -9015,6 +9126,63 @@ const annotationPanelSizeClass =
                 Save Work Package
               </button>
             </div>
+          </div>
+        </div>,
+        viewerPortalTarget
+      )}
+
+      {/* ── Symbols Size — draggable label-scale popup ──
+          Adjusts symbol LABEL text size only (via symbolLabelScale → renderElectricalSymbolSvg's
+          externalLabel). Never resizes symbol glyphs, boxes, or annotation geometry, and never
+          writes annotation data. Local UI state only. */}
+      {isSymbolSizePanelOpen && createPortal(
+        <div
+          className="fixed z-[100000] w-56 rounded-lg border border-gray-700 bg-[#111827] shadow-2xl"
+          style={{ left: symbolSizePanelPos.x, top: symbolSizePanelPos.y }}
+        >
+          <div
+            onPointerDown={handleSymbolSizeDragStart}
+            onPointerMove={handleSymbolSizeDragMove}
+            onPointerUp={handleSymbolSizeDragEnd}
+            onPointerCancel={handleSymbolSizeDragEnd}
+            className="flex touch-none cursor-move select-none items-center justify-between gap-2 rounded-t-lg border-b border-gray-700 bg-gray-800/60 px-2.5 py-1.5"
+          >
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-100"><Type size={12} /> Symbols Size</span>
+            <button
+              type="button"
+              onClick={() => setIsSymbolSizePanelOpen(false)}
+              className="rounded p-0.5 text-gray-400 hover:bg-white/10 hover:text-gray-200"
+              title="Close"
+            >
+              <X size={13} />
+            </button>
+          </div>
+          <div className="px-3 py-2.5">
+            <div className="mb-1.5 flex items-center justify-between text-[11px] text-gray-400">
+              <span>Label text size</span>
+              <span className="font-semibold text-cyan-300">{Math.round(symbolLabelScale * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min={0.75}
+              max={1.75}
+              step={0.05}
+              value={symbolLabelScale}
+              onChange={(e) => setSymbolLabelScale(Number(e.target.value))}
+              className="w-full accent-cyan-400"
+            />
+            <div className="mt-1 flex items-center justify-between text-[9px] text-gray-500">
+              <span>75%</span>
+              <button
+                type="button"
+                onClick={() => setSymbolLabelScale(1)}
+                className="rounded border border-gray-700 px-1.5 py-0.5 text-[9px] text-gray-300 hover:bg-white/5"
+              >
+                Reset 100%
+              </button>
+              <span>175%</span>
+            </div>
+            <div className="mt-2 text-[9px] text-gray-500">Adjusts symbol label text only — symbol shapes and positions are unchanged.</div>
           </div>
         </div>,
         viewerPortalTarget
