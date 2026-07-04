@@ -3497,3 +3497,28 @@ Upgraded Blueprint annotations and work packages (scope layers) from per-set who
 - Existing hard-deleted items remain unrecoverable (pre-5E deletes have no tombstone); resurrection protection applies to deletes made from 5E onward. Tombstones retained indefinitely — a future phase should add GC.
 
 **Lock released.**
+
+---
+
+### 2026-07-04 — Phase 5G: Fix Text-Box ID Swap Delete Bug
+
+**Agent:** Claude (Opus 4.8)
+**Mode:** Scoped implementation (Phase 5G)
+**Baseline HEAD:** `cacb16b` (Phase 5E "Add blueprint tombstones and item-level merge")
+**Files touched:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`, `AGENT_SHARED_CONTEXT.md`
+**Status:** DONE — typecheck ✅ build ✅ (NOT committed)
+
+Fixed the isolated Blueprint UI bug found in the Phase 5F audit: an inline text annotation received a temporary `ann_draft_…` id at placement and a **different** `ann_…` id at inline commit. Deleting the box immediately (before a refresh) could pass the stale pre-swap id to `deleteOperationsBlueprintAnnotation`, which then found nothing in storage and no-op'd (`[Annotations] delete: annotation not found; nothing to tombstone`). Refresh masked it because state reloaded with the persisted id.
+
+**What changed (two lines, one file):**
+- `openCreateRichTextEditor` (Insert Text placement): the text-box id is now generated as the **final** stable `ann_${Date.now()}_${rand}` instead of `ann_draft_${…}`. Draft status is still tracked via `draftTextBoxIdRef` (unchanged), not the id string.
+- `saveTextBoxEditSession` (inline commit): `persistedId = current.id` — the commit no longer mints a new id. The id is now identical across placement → inline edit → commit → persist → selection → delete, eliminating the divergence window.
+
+**Preserved / NOT changed:**
+- Empty-draft discard still works (keys off `isDraft = draftTextBoxIdRef.current === editingId`, not the id prefix).
+- Rect re-measure, `withAnnotationMeta`, the in-place `setAllAnnotations` swap, `setFocusedAnnotationId`, `persistAnnotation`, and the mutation-queue ordering are all unchanged.
+- `removeAnnotation` and `deleteOperationsBlueprintAnnotation` are untouched — the fix is id-identity stability, not a service-side fallback.
+- No tombstone or item-level merge behavior changed. No Save/stale/baseline behavior changed. No service files changed (`backupDataService.ts`, `blueprintLibraryService.ts`, `scopeRegistry.ts` all untouched). `attemptProductionMergeAndSync` / `mergeLocalChangesIntoRemote` remain dead.
+- Only affected path was inline text boxes; notes, shapes, copy/paste, rich-text-modal, moves, and existing-annotation edits already minted one stable id and were never affected.
+
+**Lock released.**

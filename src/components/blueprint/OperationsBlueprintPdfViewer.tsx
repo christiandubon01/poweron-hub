@@ -3675,9 +3675,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         clearTextBoxEditSessionState()
         return
       }
-      const persistedId = isDraft
-        ? `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
-        : current.id
+      // Phase 5G: keep the id stable. The placement id (Phase 5G) is already the final
+      // `ann_` id, so committing a draft must NOT mint a new id — reuse current.id so the
+      // persisted row matches the id held by selection/DOM/focus. isDraft is still used
+      // below for the empty-draft discard and the in-place state swap.
+      const persistedId = current.id
       const payload = withAnnotationMeta(
         {
           ...current,
@@ -4183,7 +4185,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setFocusedAnnotationId(null)
     setLayoutEditId(null)
     if (annotationType === 'textBox') {
-      const draftId = `ann_draft_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+      // Phase 5G: assign the FINAL stable annotation id at placement (no `ann_draft_`
+      // prefix). Draft status is tracked via draftTextBoxIdRef, not the id, so the id no
+      // longer swaps at inline commit — placement → edit → commit → persist → select →
+      // delete all use this same id, preventing the stale-id delete no-op.
+      const draftId = `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
       const now = new Date().toISOString()
       if (blueprint) {
         const draftAnn: BlueprintAnnotation = {
