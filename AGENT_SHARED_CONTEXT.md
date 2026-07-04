@@ -3561,3 +3561,19 @@ Fixed the isolated Blueprint UI bug found in the Phase 5F audit: an inline text 
 - Only affected path was inline text boxes; notes, shapes, copy/paste, rich-text-modal, moves, and existing-annotation edits already minted one stable id and were never affected.
 
 **Lock released.**
+
+---
+
+### 2026-07-04 — Phase 6D: Change Order Modal Input Drag Close Fix
+
+**Agent:** Codex
+**Mode:** Scoped implementation (Phase 6D)
+**Baseline HEAD:** `015e856` (Phase 6B "Add scoped merge for project change orders")
+**Files touched:** `src/components/v15r/V15rChangeOrdersTab.tsx`, `AGENT_SHARED_CONTEXT.md`
+**Status:** DONE — typecheck PASS, build PASS, localhost manual test deferred to user (NOT committed)
+
+Fixed the Change Order modal backdrop close behavior. `COModal` now tracks whether pointer-down started on the backdrop and only allows a backdrop click close when both pointer-down and click target are the backdrop, so input drag/select gestures that start inside the modal do not close it.
+
+Normal intentional backdrop click still closes. X/Cancel still close directly. No Change Order scoped merge, tombstone, create/edit/delete business logic, Save/stale/baseline behavior, app sync logic, dashboard calculation, or service code was changed.
+
+This pointer-down origin tracking pattern should be reused later for other hand-coded modals that close from backdrop clicks.

@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import {
   fetchLatestRemoteBackup,
   getBackupData,
@@ -241,6 +241,8 @@ interface COModalProps {
 }
 
 function COModal({ title, onClose, onSave, saveLabel = 'Save', warning, children }: COModalProps) {
+  const backdropPointerDownStartedOnBackdropRef = useRef(false)
+
   return (
     <div
       style={{
@@ -249,7 +251,14 @@ function COModal({ title, onClose, onSave, saveLabel = 'Save', warning, children
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: '16px',
       }}
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+      onPointerDown={e => {
+        backdropPointerDownStartedOnBackdropRef.current = e.target === e.currentTarget
+      }}
+      onClick={e => {
+        const shouldClose = e.target === e.currentTarget && backdropPointerDownStartedOnBackdropRef.current
+        backdropPointerDownStartedOnBackdropRef.current = false
+        if (shouldClose) onClose()
+      }}
     >
       <div
         style={{
@@ -260,6 +269,7 @@ function COModal({ title, onClose, onSave, saveLabel = 'Save', warning, children
           maxHeight: '90vh', overflowY: 'auto',
           padding: '24px',
         }}
+        onClick={e => e.stopPropagation()}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <h3 style={{ color: '#e2e8f0', fontSize: '16px', fontWeight: '700', margin: 0 }}>{title}</h3>
