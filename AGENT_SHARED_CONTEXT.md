@@ -90,8 +90,32 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Phase4-Verified-Save-Readback (Claude Opus 4.8) | Header Save now requires cloud read-back verification; baseline advances only from verified read-back; production sync-conflict UI gate fixed | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (COMMITTED 163d579) | RELEASED | 2026-07-03 |
 | Phase4B-Baseline-Server-UpdatedAt (Claude Opus 4.8) | Fix false stale-block after successful write — syncToSupabase baselines from Supabase server updated_at returned by upsert, not client now | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (COMMITTED 248711f) | RELEASED | 2026-07-03 |
 | Phase4D-ForceSync-Baseline-Poison-Fix (Claude Opus 4.8) | Remove redundant client-time baseline overwrite in forceSyncToCloud that re-poisoned the server baseline set by syncToSupabase | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
+| Phase4F-Verified-Save-False-Mismatch-Fix (Claude Opus 4.8) | Fix verified-save false mismatch — expected summary from post-sync payload, bounded read-back retry, timestamp-lag no longer becomes data mismatch | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
 
 ## Audit & Change Log
+
+### 2026-07-03 — Phase 4F: verified-save false mismatch fix (NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Scoped fix inside `saveLiveDataVerified` (+ two small helpers) — no UI, no merge, no feature tabs.
+**Branch:** main | HEAD before edits = `0657442`
+**File Lock:** `src/services/backupDataService.ts`, `AGENT_SHARED_CONTEXT.md` — CLAIMED then RELEASED.
+
+**Bug (Phase 4E audit):** First header Save ran the full verified flow (snapshot → saving → verifying) then reported *"Cloud save could not be verified — data may not be saved."*; the next Save then reported *"Cloud sync was blocked because remote data is newer than this local session."* Root cause: `saveLiveDataVerified` computed the **expected** summary from the local object stamped at T0 **before** `syncToSupabase` built/re-stamped the final payload at T1. `syncToSupabase` re-stamps `_lastSavedAt` to its own `now` (T1) and writes that to the cloud, so the cloud row legitimately carried T1 while `expected` still held T0. A single immediate read-back could also briefly return the pre-write row. Either produced a false `verify-mismatch`; the mismatch path then rolled `_lastKnownRemoteSavedAt` back to `preBaseline`, so the next Save saw the (real, newer) server `updated_at` and false stale-blocked.
+
+**Fix — `backupDataService.ts`, `saveLiveDataVerified` + helpers only:**
+1. **Expected summary now comes from the post-sync payload.** Removed the pre-write `computeVerificationSummary(local, …)`. After `syncToSupabase` returns success we re-read `getBackupData(userId)` (which `syncToSupabase` just wrote back via `saveBackupDataSilent` with its T1 `_lastSavedAt`) and compute `expected` from that. `expected._lastSavedAt` now equals the exact value written to the cloud, so a fresh read-back matches. The pre-write local read/stamp/`saveBackupData(local)` is kept purely for freshness/snapshot/write prep.
+2. **Bounded read-back retry.** The single `fetchRemoteAppStateRow` call is now a loop: up to 3 attempts, `wait(300ms)` between them (new `const wait = ms => new Promise(...)` helper). Verified → break to success. Read-back error/no-row → retry, then `readback-failed`. Not-verified-but-stale → retry; stable mismatch → stop early.
+3. **Stale read-back ≠ data mismatch.** New `classifyUnverifiedReadback(comparison)` helper: if the cloud row's `_lastSavedAt` is OLDER than `expected` (or missing) it's read-your-write lag → `stale`; only a **current** cloud timestamp with a differing critical count (`projectsCount`, `logsCount`, `serviceLogsCount`, `rfiTotalCount`, `blueprintAnnotationSetCount`, `blueprintWorkPackageSetCount`) or `tenantUserId` is a `mismatch`. A timestamp-only difference with matching counts is treated as `stale`, never a mismatch.
+4. **Baseline behavior after the fix:**
+   - `saved-verified` → `setKnownRemoteBaseline` from the verified read-back row (unchanged).
+   - `verify-mismatch` (stable count/tenant diff on a current row) → baseline rolled back to `preBaseline` (protected; next Save re-checks freshness). Does not pretend success.
+   - `readback-failed` (read-back error/no-row, OR stale/lagged after retries) → **no baseline rollback.** `syncToSupabase` already advanced the baseline from the server `updated_at`; leaving it there prevents the Phase 4E next-save false-block loop, because the write ACK actually succeeded. Success is still NOT shown.
+   - `cloud-write-failed` (write never ACKed) → baseline rolled back to `preBaseline` (unchanged).
+
+**Protection preserved / NOT touched:** `checkManualSaveFreshness` still runs first and can still `stale-blocked` before any write — stale-save blocking is NOT weakened, a stale browser still cannot overwrite the cloud. `syncToSupabase` unchanged. `attemptProductionMergeAndSync` / `mergeLocalChangesIntoRemote` stay dead (NOT reconnected). `saveBackupWithRemoteBaselineSync` untouched. No UI changes. No Blueprint/RFI/FieldLog/Leads/PriceBook/Team changes. No Supabase/migration/Recovery Center work.
+
+**Lock released.**
 
 ### 2026-07-03 — Phase 4D: remove forceSyncToCloud client-time baseline poison (NOT COMMITTED)
 

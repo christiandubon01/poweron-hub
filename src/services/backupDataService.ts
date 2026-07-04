@@ -2750,6 +2750,61 @@ export function compareVerificationSummary(
   return { verified: mismatches.length === 0, mismatches, expected, actual }
 }
 
+/** Tiny sleep helper for bounded read-back retry (Phase 4F). */
+const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+
+/**
+ * Phase 4F: classify a NON-verified read-back comparison as either read-back lag
+ * (`stale`) or a genuine data mismatch (`mismatch`).
+ *
+ * The failure we must not mistake for data loss is read-your-write lag: an immediate
+ * cloud read can briefly return the PRE-write row, which carries an OLDER _lastSavedAt
+ * than the payload we just persisted. Since `expected` is now computed from the actual
+ * post-sync payload (its _lastSavedAt equals the value written to the cloud), a read-back
+ * whose timestamp is older than expected is proof the read lagged — not proof the cloud
+ * lost content. Those are retried and, if they persist, reported as readback-failed.
+ *
+ * Only when the cloud row carries a CURRENT timestamp (>= what we wrote, within skew
+ * tolerance) yet a critical count still differs do we treat it as a true mismatch — the
+ * write landed but dropped content. A timestamp-only difference with matching counts is
+ * likewise treated as lag, never a mismatch.
+ */
+function classifyUnverifiedReadback(
+  comparison: VerificationComparison,
+): 'stale' | 'mismatch' {
+  const expectedMs = parseBackupTimestampMs(comparison.expected.lastSavedAt)
+  const actualMs = parseBackupTimestampMs(comparison.actual.lastSavedAt)
+
+  // Cloud timestamp older than (or missing relative to) what we just persisted =>
+  // the read returned a pre-write / lagged row. Do not call this a data mismatch.
+  if (expectedMs > 0 && (actualMs <= 0 || actualMs < expectedMs - FRESHNESS_TOLERANCE_MS)) {
+    return 'stale'
+  }
+
+  // Cloud timestamp is current — a stable critical-count or tenant difference here
+  // means the write actually dropped content.
+  const countKeys: (keyof VerificationSummary)[] = [
+    'projectsCount',
+    'logsCount',
+    'serviceLogsCount',
+    'rfiTotalCount',
+    'blueprintAnnotationSetCount',
+    'blueprintWorkPackageSetCount',
+  ]
+  const countDiffers = countKeys.some(
+    k => comparison.expected[k] !== comparison.actual[k],
+  )
+  const tenantDiffers =
+    !!comparison.expected.tenantUserId &&
+    !!comparison.actual.tenantUserId &&
+    comparison.expected.tenantUserId !== comparison.actual.tenantUserId
+
+  if (countDiffers || tenantDiffers) return 'mismatch'
+
+  // Only a timestamp difference remains with matching counts — treat as lag.
+  return 'stale'
+}
+
 export type VerifiedSaveStatus =
   | 'saved-verified'
   | 'stale-blocked'
@@ -2830,12 +2885,11 @@ export async function saveLiveDataVerified(
   const preBaseline = _lastKnownRemoteSavedAt
 
   // g. Stamp save timestamp and h. persist local copy via the existing safe helper.
+  //    This is only write preparation — the authoritative _lastSavedAt is re-stamped
+  //    inside syncToSupabase() (see below), so the expected summary is NOT taken here.
   const saveTimestamp = new Date().toISOString()
   local._lastSavedAt = saveTimestamp
   saveBackupData(local)
-
-  // b. Expected summary from exactly the data we are about to send.
-  const expected = computeVerificationSummary(local, userId)
 
   // i. Write to Supabase. We already gated freshness above, so allow the overwrite
   //    on the final upsert (matches the header force-sync semantics). Suppress the
@@ -2847,6 +2901,8 @@ export async function saveLiveDataVerified(
     _suppressSuccessEvent: true,
   })
   if (!writeResult.success) {
+    // The write never landed — nothing was persisted to the cloud, so roll the
+    // session baseline back to its pre-write value.
     _lastKnownRemoteSavedAt = preBaseline
     return {
       status: 'cloud-write-failed',
@@ -2854,29 +2910,94 @@ export async function saveLiveDataVerified(
     }
   }
 
-  // j. Read the cloud row back.
+  // b. Phase 4F: compute the expected summary from the payload syncToSupabase actually
+  //    persisted. syncToSupabase re-stamps _lastSavedAt to its own `now` (T1, a few ms
+  //    after the T0 stamp above) and writes that payload back to localStorage via
+  //    saveBackupDataSilent(). Re-reading it here means expected._lastSavedAt equals the
+  //    exact value written to the cloud, so an immediate read-back should match — no
+  //    false timestamp mismatch from comparing against the stale pre-sync T0 value.
+  const postSyncLocal = getBackupData(userId)
+  const expected = computeVerificationSummary(postSyncLocal ?? local, userId)
+
+  // j. Read the cloud row back and verify. A single immediate read can briefly return
+  //    the PRE-write row (read-your-write lag), so retry a few times before deciding.
   onPhase?.('verifying')
-  const remote = await fetchRemoteAppStateRow(userId)
-  if (remote.error || !remote.hasRemoteRow || !remote.remoteData) {
-    // Write ACKed but we could not prove it. Do not claim success; restore baseline.
-    _lastKnownRemoteSavedAt = preBaseline
+  const MAX_READBACK_ATTEMPTS = 3
+  const READBACK_RETRY_DELAY_MS = 300
+  let lastComparison: VerificationComparison | null = null
+  let lastReadbackError: string | undefined
+  let verifiedRemote: Awaited<ReturnType<typeof fetchRemoteAppStateRow>> | null = null
+
+  for (let attempt = 1; attempt <= MAX_READBACK_ATTEMPTS; attempt++) {
+    const remote = await fetchRemoteAppStateRow(userId)
+
+    if (remote.error || !remote.hasRemoteRow || !remote.remoteData) {
+      // Read-back could not return usable data this attempt.
+      lastReadbackError = remote.error || 'Could not read cloud data back to verify the save'
+      lastComparison = null
+      if (attempt < MAX_READBACK_ATTEMPTS) { await wait(READBACK_RETRY_DELAY_MS); continue }
+      break
+    }
+
+    // k. Actual summary from the read-back cloud data. l. Compare.
+    const actual = computeVerificationSummary(remote.remoteData, userId)
+    const comparison = compareVerificationSummary(expected, actual)
+    lastComparison = comparison
+    lastReadbackError = undefined
+
+    if (comparison.verified) { verifiedRemote = remote; break }
+
+    // Not verified yet. If it is only read-back lag (older/stale row), retry; a stable
+    // critical-count difference is a real mismatch and needs no further retries.
+    if (attempt < MAX_READBACK_ATTEMPTS && classifyUnverifiedReadback(comparison) === 'stale') {
+      await wait(READBACK_RETRY_DELAY_MS)
+      continue
+    }
+    break
+  }
+
+  // Read-back never returned usable cloud data after retries. The write ACK succeeded,
+  // so this is unproven-but-likely-saved read-back lag, NOT proof of lost data. Do not
+  // claim success, but do NOT roll the baseline back — syncToSupabase already advanced
+  // it from the server-authoritative updated_at, and rolling back here would falsely
+  // stale-block the very next save (the Phase 4E false-block loop).
+  if (!lastComparison) {
     return {
       status: 'readback-failed',
-      error: remote.error || 'Could not read cloud data back to verify the save',
+      error: lastReadbackError || 'Could not read cloud data back to verify the save',
     }
   }
 
-  // k. Actual summary from the read-back cloud data. l. Compare.
-  const actual = computeVerificationSummary(remote.remoteData, userId)
-  const comparison = compareVerificationSummary(expected, actual)
-
-  if (!comparison.verified) {
-    // Do NOT advance baseline on an unverified save — force the next save to
-    // re-check freshness against the now-uncertain remote.
-    _lastKnownRemoteSavedAt = preBaseline
-    console.warn('[VerifiedSave] Cloud read-back did not match expected summary', comparison.mismatches)
-    return { status: 'verify-mismatch', comparison, expected, actual }
+  if (!verifiedRemote) {
+    const kind = classifyUnverifiedReadback(lastComparison)
+    if (kind === 'mismatch') {
+      // True, stable critical-count/tenant difference against a CURRENT cloud row —
+      // the write landed but dropped content. Protect the baseline (roll back so the
+      // next save re-checks freshness) and report a real mismatch.
+      _lastKnownRemoteSavedAt = preBaseline
+      console.warn('[VerifiedSave] Cloud read-back shows a stable data mismatch', lastComparison.mismatches)
+      return {
+        status: 'verify-mismatch',
+        comparison: lastComparison,
+        expected,
+        actual: lastComparison.actual,
+      }
+    }
+    // Stale/lagged read-back only (timestamp older, counts effectively matching). The
+    // write ACK succeeded, so treat as unverified readback-failed rather than a data
+    // mismatch, and keep the write-ACK baseline to avoid the next-save false-block loop.
+    console.warn('[VerifiedSave] Cloud read-back lagged; write ACKed but not yet verified', lastComparison.mismatches)
+    return {
+      status: 'readback-failed',
+      error: 'Cloud save was written but could not be confirmed yet (read-back lagged). Your data was sent to the cloud.',
+      comparison: lastComparison,
+      expected,
+      actual: lastComparison.actual,
+    }
   }
+
+  const remote = verifiedRemote
+  const actual = lastComparison.actual
 
   // m. Verified: advance baseline from the READ-BACK row (authoritative), clear
   //    dirty state, and dispatch the success event now (not on write-ACK).
@@ -2902,7 +3023,7 @@ export async function saveLiveDataVerified(
     projectsCount: actual.projectsCount,
     rfiTotalCount: actual.rfiTotalCount,
   })
-  return { status: 'saved-verified', comparison, expected, actual }
+  return { status: 'saved-verified', comparison: lastComparison, expected, actual }
 }
 
 // Legacy mappers (kept for backward compat)
