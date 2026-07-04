@@ -1,7 +1,18 @@
 // @ts-nocheck
-import React, { useState } from 'react'
-import { getBackupData, saveBackupDataAndSync } from '@/services/backupDataService'
+import React, { useEffect, useState } from 'react'
+import {
+  fetchLatestRemoteBackup,
+  getBackupData,
+  saveBackupData,
+  saveBackupDataAndSync,
+  saveBackupWithRemoteBaselineSync,
+} from '@/services/backupDataService'
 import type { ChangeOrder, ChangeOrderStatus } from '@/services/backupDataService'
+import {
+  createChangeOrderTombstone,
+  getLiveChangeOrders,
+  mergeProjectChangeOrdersIntoRemote,
+} from '@/services/projectScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import { useDemoMode } from '@/store/demoStore'
 
@@ -81,6 +92,10 @@ function statusColor(s: ChangeOrderStatus): string {
     'Paid': '#6ee7b7',
   }
   return map[s] || '#94a3b8'
+}
+
+function cloneChangeOrders(changeOrders: any[]): ChangeOrder[] {
+  return (Array.isArray(changeOrders) ? changeOrders : []).map((co: any) => ({ ...co }))
 }
 
 function fmtMoney(n: number): string {
@@ -299,13 +314,19 @@ export default function V15rChangeOrdersTab({ projectId, onUpdate, backup: backu
   const [editForm, setEditForm] = useState(blankForm)
 
   const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [localRawChangeOrders, setLocalRawChangeOrders] = useState<ChangeOrder[] | null>(null)
+
+  useEffect(() => {
+    setLocalRawChangeOrders(null)
+  }, [projectId])
 
   const backup = backupProp || getBackupData()
   if (!backup) return null
   const p = backup.projects.find((x: any) => x.id === projectId)
   if (!p) return null
 
-  const cos: ChangeOrder[] = p.changeOrders || []
+  const rawChangeOrders: ChangeOrder[] = localRawChangeOrders ?? (p.changeOrders || [])
+  const cos: ChangeOrder[] = getLiveChangeOrders(rawChangeOrders)
   const phases = Object.keys(p.phases || {})
 
   // ── Metrics ─────────────────────────────────────────────────────────────────
@@ -324,21 +345,58 @@ export default function V15rChangeOrdersTab({ projectId, onUpdate, backup: backu
 
   // ── Persistence helpers ───────────────────────────────────────────────────
 
-  function persist(mutate: (proj: any) => void) {
+  async function persist(mutate: (proj: any) => void) {
     const fresh = getBackupData()
     if (!fresh) return
-    const proj = fresh.projects.find((x: any) => x.id === projectId)
+    const proj = (fresh.projects || []).find((x: any) => x.id === projectId)
     if (!proj) return
     pushState()
     mutate(proj)
-    saveBackupDataAndSync(fresh, 'projects')
+    setLocalRawChangeOrders(cloneChangeOrders(proj.changeOrders || []))
+    fresh._lastSavedAt = new Date().toISOString()
+    saveBackupData(fresh)
     if (onUpdate) onUpdate()
+
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      const remoteHasProject = !!(
+        remote.hasRemoteRow &&
+        remote.remoteData &&
+        (remote.remoteData.projects || []).some((rp: any) => String(rp?.id || '') === projectId)
+      )
+
+      if (remoteHasProject) {
+        const merged = mergeProjectChangeOrdersIntoRemote(remote.remoteData, fresh, projectId)
+        const mergedProject = (merged.projects || []).find((mp: any) => String(mp?.id || '') === projectId)
+        setLocalRawChangeOrders(cloneChangeOrders(mergedProject?.changeOrders || []))
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          {
+            remoteUpdatedAt: remote.remoteUpdatedAt,
+            remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+          },
+          {
+            source: 'project-change-orders-remote-merge',
+            changedKey: 'projects',
+            _scopes: ['project.changeOrders'],
+          },
+        )
+        if (onUpdate) onUpdate()
+        return
+      }
+
+      saveBackupDataAndSync(fresh, 'projects', { source: 'project.changeOrders' })
+    } catch (err) {
+      console.warn('[V15rChangeOrdersTab] Change Order remote-merge save failed; kept local and used guarded sync', err)
+      saveBackupDataAndSync(fresh, 'projects', { source: 'project.changeOrders' })
+    }
   }
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
   function createCO() {
     if (!addForm.title.trim()) return
+    const now = isoNow()
     const newCO: ChangeOrder = {
       id: crypto.randomUUID(),
       title: addForm.title.trim(),
@@ -346,13 +404,14 @@ export default function V15rChangeOrdersTab({ projectId, onUpdate, backup: backu
       stage: addForm.stage,
       requestedBy: addForm.requestedBy.trim(),
       approvedBy: addForm.approvedBy.trim(),
-      createdAt: addForm.createdAt ? new Date(addForm.createdAt).toISOString() : isoNow(),
+      createdAt: addForm.createdAt ? new Date(addForm.createdAt).toISOString() : now,
       approvalAt: addForm.approvalAt ? new Date(addForm.approvalAt).toISOString() : '',
       laborCost: Number(addForm.laborCost) || 0,
       materialCost: Number(addForm.materialCost) || 0,
       totalCost: Number(addForm.totalCost) || 0,
       permitRelated: addForm.permitRelated,
       status: addForm.status,
+      updatedAt: now,
     }
     persist(proj => {
       if (!proj.changeOrders) proj.changeOrders = []
@@ -397,13 +456,21 @@ export default function V15rChangeOrdersTab({ projectId, onUpdate, backup: backu
       co.totalCost = Number(editForm.totalCost) || 0
       co.permitRelated = editForm.permitRelated
       co.status = editForm.status
+      co.updatedAt = isoNow()
     })
     setEditingId(null)
   }
 
   function deleteCO(id: string) {
     persist(proj => {
-      proj.changeOrders = (proj.changeOrders || []).filter((c: ChangeOrder) => c.id !== id)
+      const arr: ChangeOrder[] = proj.changeOrders || []
+      const idx = arr.findIndex((c: ChangeOrder) => c.id === id)
+      if (idx === -1) {
+        console.warn('[V15rChangeOrdersTab] delete: Change Order not found; nothing to tombstone', id)
+        return
+      }
+      arr[idx] = createChangeOrderTombstone(arr[idx])
+      proj.changeOrders = arr
     })
     setDeleteId(null)
   }
@@ -554,7 +621,7 @@ export default function V15rChangeOrdersTab({ projectId, onUpdate, backup: backu
           onClose={() => setDeleteId(null)}
           onSave={() => deleteCO(deleteId)}
           saveLabel="Delete"
-          warning="This will permanently delete this change order. This cannot be undone."
+          warning="This will remove this change order from live views and preserve a delete marker for sync safety."
         />
       )}
     </div>

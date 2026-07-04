@@ -15,6 +15,7 @@ function BrainIcon({ size = 24, className = '' }: { size?: number; className?: s
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M12 18v-5"/></svg>
 }
 import { getBackupData, getProjectFinancials, getProjectCOConfirmedTotal, getProjectCOApprovedUnpaid, health, num, fmtK, isActiveProject, isActiveServiceCall, type BackupData } from '@/services/backupDataService'
+import { getLiveChangeOrders } from '@/services/projectScopeMerge'
 // BUG 2 FIX — Active-only pipeline formula (replaces calcPipeline which included 'coming')
 import { calcActivePipeline } from '@/utils/pipelineCalc'
 // BUG 3 FIX — Canonical project financials
@@ -908,7 +909,7 @@ function V15rDashboardInner() {
         if (contract <= 0) continue
         let confirmedCO = 0
         let approvedUnpaidCO = 0
-        for (const co of (p.changeOrders || [])) {
+        for (const co of getLiveChangeOrders(p.changeOrders || [])) {
           const cd = coEffectiveDate(co, p)
           if (!cd || cd > wEnd) continue
           const amt = num(co.totalCost)
@@ -981,7 +982,7 @@ function V15rDashboardInner() {
         const contract = num(p.contract)
         if (contract <= 0) continue
         let confirmedCO = 0
-        for (const co of (p.changeOrders || [])) {
+        for (const co of getLiveChangeOrders(p.changeOrders || [])) {
           const cd = coEffectiveDate(co, p)
           if (!cd || cd > wEnd) continue
           if (coIsConfirmed(co)) confirmedCO += num(co.totalCost)

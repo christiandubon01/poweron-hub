@@ -77,6 +77,7 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 | Agent | Feature Area | Files | Mode | Status | Claimed |
 |---|---|---|---|---|---|
+| Codex-Phase6B-CO-Scoped-Merge | Project Change Orders item-level scoped merge | src/services/projectScopeMerge.ts, src/components/v15r/V15rChangeOrdersTab.tsx, src/services/scopeRegistry.ts, src/services/backupDataService.ts, src/components/v15r/V15rDashboard.tsx, AGENT_SHARED_CONTEXT.md | DONE - typecheck PASS, build PASS, localhost blocked by logged-out/demo-readonly state | RELEASED | 2026-07-04 |
 | Step13D-SoftGuide-HDMI-LabelSize (Claude Opus 4.8) | Blueprint Viewer — soft (visual-only) Guide Assist, HDMI/Data symbols, Symbols Size label-scale popup | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
 | ProjectLogs-Fix-LogsKey (Claude Opus 4.8) | Project/Field Logs — mark 'logs' changed key so production merge preserves new entries | src/components/v15r/V15rProjectLogsTab.tsx, src/components/v15r/V15rFieldLogPanel.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
 | Step13C-R2-Reorder-Packages (Claude Opus 4.8) | Blueprint Viewer — drag + up/down reorder of Work Package / Scope Layer cards | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
@@ -110,6 +111,44 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 - **`backupDataService.ts`**: static import of the pure registry; `resolveSyncOptionsForChangedKey` now resolves scopes from `source`/`changedKey` and attaches them as internal `_scopes` **option metadata only** (never written to BackupData, never sent to Supabase — `syncToSupabase` reads only guard-related option fields). Added `SyncToSupabaseOptions._scopes?: DataScope[]` (metadata field). Added `warnIfUnscopedSyncSave` — a **dev-only** (`import.meta.env.DEV`) `console.warn('[ScopeRegistry] Unscoped sync save detected. …')`; never throws/blocks/mutates; wired into `resolveSyncOptionsForChangedKey` (covers `saveBackupDataAndSync`/`saveBackupDataAndSyncNow`) and directly into `saveAndImmediateSync` (which bypasses that resolver).
 
 **Explicitly NOT done:** no scoped merge / fetch-latest-patch / tombstone / per-scope write logic; no feature-tab changes; no change to `source`, `allowOverwriteNewerRemote`, `requireFreshRemote`, `failClosed`, monotonic baseline, same-device allowance, or verified Save; `saveBackupWithRemoteBaselineSync` untouched; `attemptProductionMergeAndSync` / `mergeLocalChangesIntoRemote` stay dead; no Supabase migration / Recovery Center. app_state payload shape unchanged.
+
+**Lock released.**
+
+---
+
+### 2026-07-04 - Phase 6B: Project Change Orders Scoped Merge
+
+**Agent:** Codex
+**Mode:** Scoped implementation (Phase 6B)
+**Baseline HEAD:** `e2cde5c` (Keep text annotation IDs stable)
+**Files touched:** `src/services/projectScopeMerge.ts`, `src/components/v15r/V15rChangeOrdersTab.tsx`, `src/services/scopeRegistry.ts`, `src/services/backupDataService.ts`, `src/components/v15r/V15rDashboard.tsx`, `AGENT_SHARED_CONTEXT.md`
+**Status:** DONE - typecheck PASS, build PASS, localhost CRUD test blocked by logged-out/demo-readonly state
+
+Implemented delete-safe, item-level nested merge for `project.changeOrders` only.
+
+**What changed**
+- Added pure `projectScopeMerge.ts` helpers for timestamp parsing, Change Order sanitization, live filtering, tombstone creation, id merge, and `mergeProjectChangeOrdersIntoRemote`.
+- `V15rChangeOrdersTab.tsx` now renders/sums only live Change Orders via `getLiveChangeOrders`; create/edit stamp `updatedAt`; delete writes a `deletedAt`/`updatedAt` tombstone instead of hard-filtering.
+- Change Order saves fetch latest remote and patch only `projects[id].changeOrders`, then use the existing remote-baseline save path. If there is no remote row/remote project, the tab falls back to the existing guarded `projects` save.
+- `scopeRegistry.ts` updated only for `project.changeOrders`: `timestampField: updatedAt`, `tombstoneField: deletedAt`, notes describe Phase 6B nested item-level merge; other project scopes remain future/unimplemented.
+- `backupDataService.ts` touched minimally: optional CO timestamp/tombstone fields, shared CO total helpers filter tombstones, and `saveBackupWithRemoteBaselineSync` accepts an optional `changedKey` so CO saves can mark `projects` while preserving existing Blueprint default behavior.
+- `V15rDashboard.tsx` touched only because it had direct raw `p.changeOrders` CFOT loops that would otherwise count deleted/tombstoned COs; those loops now use `getLiveChangeOrders`.
+
+**Preserved / NOT changed**
+- No RFIs, estimate/MTO, project logs, payments/logs shared merge behavior, Field Logs, Leads, Price Book, Team, Service Calls, Settings, or Blueprint files changed.
+- Save/stale/baseline freshness logic, verified save, sync guard, and dead merge helpers remain unchanged/not reconnected.
+- No branch, commit, push, deploy, restore script, manual Supabase action, or manual localStorage write.
+
+**Verification**
+- `npm.cmd run typecheck`: PASS
+- `npm.cmd run build`: PASS (existing Vite dynamic-import/chunk warnings only)
+- `npm.cmd run dev` started on `http://127.0.0.1:5173`.
+- Manual localhost CRUD test could not be completed: the browser reached the logged-out landing page; `?demo=true` exists but demo mode hides Add/Edit/Delete for Change Orders, so the requested add/edit/delete/refresh/save flow requires an authenticated localhost session.
+
+**Risks**
+- Tombstones are retained indefinitely; no GC.
+- Merge ordering uses client-clock timestamps, so severe clock skew can misorder truly concurrent edits.
+- Existing hard-deleted COs from before Phase 6B cannot be reconstructed.
 
 **Lock released.**
 

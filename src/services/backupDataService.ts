@@ -27,6 +27,7 @@ import {
   resolveScopesForSyncInput,
   type DataScope,
 } from './scopeRegistry'
+import { getLiveChangeOrders } from './projectScopeMerge'
 
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
 const STORAGE_KEY = LEGACY_STORAGE_KEY
@@ -232,6 +233,9 @@ export interface ChangeOrder {
   requestedBy: string; approvedBy: string; createdAt: string
   approvalAt: string; laborCost: number; materialCost: number
   totalCost: number; permitRelated: boolean; status: ChangeOrderStatus
+  updatedAt?: string
+  deletedAt?: string
+  deletedBy?: string
 }
 
 export interface BackupPriceBookItem {
@@ -943,7 +947,7 @@ export function getPhaseWeights(d: BackupData): Record<string, number> {
 }
 
 export function getProjectCOTotal(p: BackupProject): number {
-  return (p.changeOrders || []).reduce((sum, co) => {
+  return getLiveChangeOrders(p.changeOrders || []).reduce((sum, co) => {
     if (co.status === 'Approved' || co.status === 'Completed' || co.status === 'Paid') {
       return sum + (Number(co.totalCost) || 0)
     }
@@ -952,7 +956,7 @@ export function getProjectCOTotal(p: BackupProject): number {
 }
 
 export function getProjectCOExposure(p: BackupProject): number {
-  return (p.changeOrders || []).reduce((sum, co) => {
+  return getLiveChangeOrders(p.changeOrders || []).reduce((sum, co) => {
     if (co.status === 'Sent' || co.status === 'Pending Approval' || co.status === 'Invoiced') {
       return sum + (Number(co.totalCost) || 0)
     }
@@ -969,7 +973,7 @@ export function getProjectCOExposure(p: BackupProject): number {
  * project-card helpers are not affected.
  */
 export function getProjectCOConfirmedTotal(p: BackupProject): number {
-  return (p.changeOrders || []).reduce((sum, co) => {
+  return getLiveChangeOrders(p.changeOrders || []).reduce((sum, co) => {
     if (co.status === 'Approved' || co.status === 'Completed' || co.status === 'Invoiced' || co.status === 'Paid') {
       return sum + (Number(co.totalCost) || 0)
     }
@@ -984,7 +988,7 @@ export function getProjectCOConfirmedTotal(p: BackupProject): number {
  * (DASHBOARD-CFOT-MATH-FIX-JUN19-2026-1)
  */
 export function getProjectCOApprovedUnpaid(p: BackupProject): number {
-  return (p.changeOrders || []).reduce((sum, co) => {
+  return getLiveChangeOrders(p.changeOrders || []).reduce((sum, co) => {
     if (co.status === 'Approved' || co.status === 'Invoiced' || co.status === 'Completed') {
       return sum + (Number(co.totalCost) || 0)
     }
@@ -2355,18 +2359,19 @@ export type SaveBackupWithRemoteBaselineResult = SyncToSupabaseResult & {
 export async function saveBackupWithRemoteBaselineSync(
   mergedBackup: BackupData,
   remoteBaseline: { remoteUpdatedAt?: string | null; remoteDataLastSavedAt?: string | null },
-  syncOptions?: SyncToSupabaseOptions,
+  syncOptions?: SyncToSupabaseOptions & { changedKey?: string },
 ): Promise<SaveBackupWithRemoteBaselineResult> {
   setKnownRemoteBaseline(remoteBaseline.remoteUpdatedAt, remoteBaseline.remoteDataLastSavedAt)
 
   mergedBackup._lastSavedAt = new Date().toISOString()
-  markChanged('blueprintSummaries')
+  const { changedKey, ...syncOnlyOptions } = syncOptions || {}
+  markChanged(changedKey || 'blueprintSummaries')
   _dataChanged = true
   saveBackupData(mergedBackup)
 
   const result = await syncToSupabase(_activeTenantUserId, {
-    ...syncOptions,
-    source: syncOptions?.source || 'remote-baseline-merge',
+    ...syncOnlyOptions,
+    source: syncOnlyOptions?.source || 'remote-baseline-merge',
   })
 
   if (result.success) {
