@@ -1480,29 +1480,64 @@ function computeRemoteFreshnessMs(
   )
 }
 
-/** Record remote freshness this session safely loaded from or successfully synced to. */
+/**
+ * Record remote freshness this session safely loaded from or successfully synced to.
+ *
+ * Phase 4H: the session baseline is MONOTONIC. It may be initialized from zero and may
+ * move forward, but an OLDER candidate (an out-of-order realtime row, a lagging load,
+ * or a slower sync ACK) must never move it backward during a live tenant session. An
+ * explicit tenant reset (setActiveTenantUser / clearActiveTenantUser) still clears it to
+ * null — that is the only way it goes back to zero.
+ *
+ * The return value is always the CANDIDATE remote freshness (not the retained baseline),
+ * so callers such as loadFromSupabase keep their remote-vs-local selection logic intact.
+ */
 function setKnownRemoteBaseline(
   remoteUpdatedAt?: string | null,
   remoteDataLastSavedAt?: string | null,
 ): number {
-  const remoteFreshnessMs = computeRemoteFreshnessMs(remoteUpdatedAt, remoteDataLastSavedAt)
-  if (remoteFreshnessMs > 0) {
-    _lastKnownRemoteSavedAt = new Date(remoteFreshnessMs).toISOString()
+  const candidateBaselineMs = computeRemoteFreshnessMs(remoteUpdatedAt, remoteDataLastSavedAt)
+  const currentBaselineMs = getKnownRemoteBaselineMs()
+
+  // Only advance (or initialize from zero); never lower.
+  const applied = candidateBaselineMs > 0 && candidateBaselineMs >= currentBaselineMs
+  if (applied) {
+    _lastKnownRemoteSavedAt = new Date(candidateBaselineMs).toISOString()
   }
+
   // [Phase 4G diagnostic — TEMPORARY, remove after root-cause] no behavior change.
   try {
     console.info('[POWERON_BASELINE_SET]', {
       inputRemoteUpdatedAt: remoteUpdatedAt ?? null,
       inputRemoteDataLastSavedAt: remoteDataLastSavedAt ?? null,
-      computedBaselineMs: remoteFreshnessMs,
-      computedBaselineAt: remoteFreshnessMs > 0 ? new Date(remoteFreshnessMs).toISOString() : null,
-      appliedToSession: remoteFreshnessMs > 0,
+      candidateBaselineMs,
+      currentBaselineMs,
+      computedBaselineMs: candidateBaselineMs,
+      computedBaselineAt: candidateBaselineMs > 0 ? new Date(candidateBaselineMs).toISOString() : null,
+      appliedToSession: applied,
       callerHint: (new Error().stack?.split('\n')[2] || '').trim(),
       now: Date.now(),
       nowIso: new Date().toISOString(),
     })
   } catch { /* diagnostics must never throw */ }
-  return remoteFreshnessMs
+
+  // [Phase 4H diagnostic] A real timestamp older than the current baseline was refused.
+  if (candidateBaselineMs > 0 && candidateBaselineMs < currentBaselineMs) {
+    try {
+      console.info('[POWERON_BASELINE_IGNORED_OLDER]', {
+        currentBaselineMs,
+        currentBaselineAt: _lastKnownRemoteSavedAt,
+        candidateBaselineMs,
+        candidateBaselineAt: new Date(candidateBaselineMs).toISOString(),
+        inputRemoteUpdatedAt: remoteUpdatedAt ?? null,
+        inputRemoteDataLastSavedAt: remoteDataLastSavedAt ?? null,
+        callerHint: (new Error().stack?.split('\n')[2] || '').trim(),
+        now: Date.now(),
+      })
+    } catch { /* diagnostics must never throw */ }
+  }
+
+  return candidateBaselineMs
 }
 
 async function fetchRemoteAppStateFreshness(userId: string): Promise<{
@@ -1510,6 +1545,8 @@ async function fetchRemoteAppStateFreshness(userId: string): Promise<{
   remoteUpdatedAt: string | null
   remoteDataLastSavedAt: string | null
   remoteFreshnessMs: number
+  /** Phase 4H: device id (_syncMeta.savedBy) that last wrote the remote row, if known. */
+  remoteSavedBy?: string | null
   error?: string
 }> {
   const fetchFreshness = async (): Promise<{
@@ -1517,6 +1554,7 @@ async function fetchRemoteAppStateFreshness(userId: string): Promise<{
     remoteUpdatedAt: string | null
     remoteDataLastSavedAt: string | null
     remoteFreshnessMs: number
+    remoteSavedBy?: string | null
     error?: string
   }> => {
     if (!isSupabaseConfigured()) {
@@ -1560,12 +1598,15 @@ async function fetchRemoteAppStateFreshness(userId: string): Promise<{
       const remoteDataLastSavedAt = String((row.data as BackupData)?._lastSavedAt || '') || null
       const remoteUpdatedAt = row.updated_at ? String(row.updated_at) : null
       const remoteFreshnessMs = computeRemoteFreshnessMs(remoteUpdatedAt, remoteDataLastSavedAt)
+      // Phase 4H: same source the load path uses to print "saved by <device>".
+      const remoteSavedBy = ((row.data as any)?._syncMeta?.savedBy as string | undefined) ?? null
 
       return {
         hasRemoteRow: true,
         remoteUpdatedAt,
         remoteDataLastSavedAt,
         remoteFreshnessMs,
+        remoteSavedBy,
       }
     } catch (err: any) {
       return {
@@ -1584,6 +1625,7 @@ async function fetchRemoteAppStateFreshness(userId: string): Promise<{
     remoteUpdatedAt: string | null
     remoteDataLastSavedAt: string | null
     remoteFreshnessMs: number
+    remoteSavedBy?: string | null
     error?: string
   }>((resolve) => {
     timeoutId = setTimeout(() => {
@@ -1704,6 +1746,40 @@ export async function checkManualSaveFreshness(
   }
 
   if (remote.remoteFreshnessMs > knownRemoteBaselineMs + FRESHNESS_TOLERANCE_MS) {
+    // Phase 4H: same-device local-newer allowance. Before blocking, check whether the
+    // remote row was written by THIS device and our local pending state is at least as
+    // new as that remote row. That is NOT a stale other-device overwrite — it is this
+    // device pushing its own newer local edits over an older/equal cloud copy of its own
+    // work (e.g. the server updated_at ticked forward, or a load re-read our own row).
+    // This does NOT relax protection: a stale device (local older than remote) or a row
+    // written by a DIFFERENT device still falls through and blocks.
+    const currentDeviceId = getDeviceId()
+    const remoteSavedBy = remote.remoteSavedBy ?? null
+    const localAtLeastAsNewAsRemote = localFreshnessMs >= remote.remoteFreshnessMs - FRESHNESS_TOLERANCE_MS
+    if (remoteSavedBy && remoteSavedBy === currentDeviceId && localAtLeastAsNewAsRemote) {
+      try {
+        console.info('[POWERON_SYNC_BLOCK_BYPASSED_SAME_DEVICE_LOCAL_NEWER]', {
+          localFreshnessMs,
+          remoteFreshnessMs: remote.remoteFreshnessMs,
+          knownRemoteBaselineMs,
+          remoteSavedBy,
+          currentDeviceId,
+          localLastSavedAt: local?._lastSavedAt ?? null,
+          remoteUpdatedAt: remote.remoteUpdatedAt,
+          remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+          now: Date.now(),
+          nowIso: new Date().toISOString(),
+        })
+      } catch { /* diagnostics must never throw */ }
+      return {
+        allowed: true,
+        localFreshnessMs,
+        remoteFreshnessMs: remote.remoteFreshnessMs,
+        knownRemoteBaselineMs,
+        hasRemoteRow: true,
+      }
+    }
+
     console.warn('[Sync] Save/sync blocked — remote advanced since session baseline', {
       localFreshnessMs,
       knownRemoteBaselineMs,

@@ -91,9 +91,31 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Phase4B-Baseline-Server-UpdatedAt (Claude Opus 4.8) | Fix false stale-block after successful write — syncToSupabase baselines from Supabase server updated_at returned by upsert, not client now | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (COMMITTED 248711f) | RELEASED | 2026-07-03 |
 | Phase4D-ForceSync-Baseline-Poison-Fix (Claude Opus 4.8) | Remove redundant client-time baseline overwrite in forceSyncToCloud that re-poisoned the server baseline set by syncToSupabase | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
 | Phase4F-Verified-Save-False-Mismatch-Fix (Claude Opus 4.8) | Fix verified-save false mismatch — expected summary from post-sync payload, bounded read-back retry, timestamp-lag no longer becomes data mismatch | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
-| Phase4G-Sync-Block-Diagnostics (Claude Opus 4.8) | DIAGNOSTIC ONLY — temporary console logging around the stale/freshness guard + baseline to root-cause the persistent false stale-block. No fix, no behavior change. | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
+| Phase4G-Sync-Block-Diagnostics (Claude Opus 4.8) | DIAGNOSTIC ONLY — temporary console logging around the stale/freshness guard + baseline to root-cause the persistent false stale-block. No fix, no behavior change. | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (COMMITTED a973c73) | RELEASED | 2026-07-03 |
+| Phase4H-Monotonic-Baseline-SameDevice-Allowance (Claude Opus 4.8) | Monotonic remote baseline (older realtime/load/sync rows can't move it backward) + same-device local-newer allowance in the freshness guard. Stale other-device saves still block. Phase 4G diagnostics kept. | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-04 |
 
 ## Audit & Change Log
+
+### 2026-07-04 — Phase 4H: monotonic baseline + same-device local-newer allowance (NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Scoped fix in `backupDataService.ts` sync-guard internals — no UI, no merge, no feature tabs.
+**Branch:** main | HEAD before edits = `a973c73`
+**File Lock:** `src/services/backupDataService.ts`, `AGENT_SHARED_CONTEXT.md` — CLAIMED then RELEASED.
+
+**Root cause (confirmed by Phase 4G logs):** After a verified first Save, a small edit + an out-of-order realtime/load/sync event fed `setKnownRemoteBaseline` an OLDER remote row, which moved the session baseline BACKWARD. loadFromSupabase then still (correctly) kept the newer local data, but the lowered baseline meant the next Save's freshness check saw the real (newer) server `updated_at` as "remote advanced past baseline" and blocked — even though the remote row was written by THIS device and local was newer. Net effect: false *"Cloud sync was blocked because remote data is newer than this local session."*
+
+**Fix 1 — monotonic `setKnownRemoteBaseline`:** Computes the candidate from `remoteUpdatedAt`/`remoteDataLastSavedAt` as before, but now only assigns `_lastKnownRemoteSavedAt` when `candidateBaselineMs > 0 && candidateBaselineMs >= currentBaselineMs`. An older candidate is refused (baseline stays put) and logged as `[POWERON_BASELINE_IGNORED_OLDER]`. The function still RETURNS the candidate value (not the retained baseline), so loadFromSupabase's remote-vs-local selection is unchanged. Baseline may init from zero, may move forward, may never move backward within a tenant session. Explicit tenant reset (`setActiveTenantUser`/`clearActiveTenantUser` → `_lastKnownRemoteSavedAt = null`) is untouched and remains the only path to zero.
+
+**Fix 2 (A2 audit):** loadFromSupabase needed NO logic change — with the monotonic guard, an older realtime row can no longer lower the baseline, while the returned `remoteTime` still carries the actual remote freshness for the keep-local decision. `saveBackupWithRemoteBaselineSync` (read-only reference) also unaffected: it seeds the baseline from a freshly-fetched latest remote, which is forward, not backward.
+
+**Fix 3 — same-device local-newer allowance in `checkManualSaveFreshness`:** In the "remote advanced past baseline" branch, BEFORE blocking, it now checks `remoteSavedBy === getDeviceId()` AND `localFreshnessMs >= remoteFreshnessMs - FRESHNESS_TOLERANCE_MS`. If both hold, the save is allowed (logged `[POWERON_SYNC_BLOCK_BYPASSED_SAME_DEVICE_LOCAL_NEWER]`) — this device pushing its own newer local edits over an older/equal cloud copy of its own work. To supply `remoteSavedBy`, `fetchRemoteAppStateFreshness` now also returns `_syncMeta.savedBy` from the already-fetched row (same source the load path prints as "saved by <device>"). No extra network call.
+
+**Stale protection preserved:** The bypass requires BOTH same-device AND local-at-least-as-new. A stale device (local older than remote) fails the second condition and still blocks; a row from a DIFFERENT device fails the first and still blocks; the no-known-baseline block path is untouched. `requireFreshRemote`/`failClosed` unchanged, `checkManualSaveFreshness` still runs first, no global bypass.
+
+**NOT touched / NOT reconnected:** `attemptProductionMergeAndSync` / `mergeLocalChangesIntoRemote` stay dead. `saveBackupWithRemoteBaselineSync` read-only. `saveLiveDataVerified` unchanged (still consumes the freshness result as-is). `syncToSupabase` only interacts via the monotonic helper (no direct edit). No UI, no Blueprint/RFI/FieldLog/Leads/PriceBook/Team changes. Phase 4G `[POWERON_*]` diagnostics kept for one more validation cycle; two new diagnostics added (`[POWERON_BASELINE_IGNORED_OLDER]`, `[POWERON_SYNC_BLOCK_BYPASSED_SAME_DEVICE_LOCAL_NEWER]`).
+
+**Lock released.**
 
 ### 2026-07-03 — Phase 4G: false stale-block diagnostics (DIAGNOSTIC ONLY, NOT COMMITTED)
 
