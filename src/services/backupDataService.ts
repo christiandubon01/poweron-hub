@@ -20,6 +20,14 @@
  * Then push to git → Netlify auto-deploys from the connected branch.
  */
 
+// Phase 5A: scope registry scaffolding. Pure module (no React/Supabase/localStorage).
+// Used here only to resolve scopes for logging/metadata + a dev-only unscoped-save
+// warning. NO scoped-merge behavior is enabled in this phase.
+import {
+  resolveScopesForSyncInput,
+  type DataScope,
+} from './scopeRegistry'
+
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
 const STORAGE_KEY = LEGACY_STORAGE_KEY
 
@@ -1398,6 +1406,12 @@ export type SyncToSupabaseOptions = {
    * cloud read-back confirms the write. Prevents a premature green "synced" state.
    */
   _suppressSuccessEvent?: boolean
+  /**
+   * Internal (Phase 5A scaffolding): scopes resolved from the caller's changedKey/source.
+   * Metadata only — NOT used to alter sync behavior and NOT written to BackupData or
+   * the Supabase payload. Reserved for future scoped-merge phases.
+   */
+  _scopes?: DataScope[]
 }
 
 export type SyncToSupabaseResult = {
@@ -1931,6 +1945,27 @@ function dispatchSyncConflict(error: string, source?: string, code?: SyncConflic
   }))
 }
 
+/**
+ * Phase 5A: dev-only warning when a sync save carries no resolvable scope. Never
+ * throws, never blocks, never mutates data, and is stripped/no-op in production
+ * (guarded by import.meta.env.DEV). Future phases will require a DataScope here.
+ */
+function warnIfUnscopedSyncSave(
+  changedKey?: string | null,
+  scopes?: DataScope[],
+  callerHint?: string,
+): void {
+  try {
+    if (!import.meta.env.DEV) return
+    if (scopes && scopes.length > 0) return
+    if (changedKey) return // legacy key present but unmapped — still informative, but not "unscoped"
+    console.warn(
+      '[ScopeRegistry] Unscoped sync save detected. Future phases will require a DataScope.',
+      { changedKey: changedKey ?? null, source: callerHint ?? null },
+    )
+  } catch { /* dev-only diagnostics must never affect runtime */ }
+}
+
 function resolveSyncOptionsForChangedKey(
   changedKey?: string,
   syncOptions?: SyncToSupabaseOptions,
@@ -1939,7 +1974,16 @@ function resolveSyncOptionsForChangedKey(
     changedKey === 'snapshotRestore'
       ? { allowOverwriteNewerRemote: true, source: 'snapshot-restore' }
       : { source: changedKey }
-  return { ...inferred, ...syncOptions }
+  const merged = { ...inferred, ...syncOptions }
+
+  // Phase 5A metadata only — resolve scopes for logging. Does NOT change source,
+  // allowOverwriteNewerRemote, requireFreshRemote, or any sync behavior. `_scopes`
+  // is internal option metadata only; it is never written into BackupData nor sent
+  // to Supabase (syncToSupabase reads only guard-related option fields).
+  const resolvedScopes = resolveScopesForSyncInput(merged.source ?? changedKey ?? null)
+  merged._scopes = resolvedScopes
+  warnIfUnscopedSyncSave(changedKey ?? null, resolvedScopes, merged.source)
+  return merged
 }
 
 export function setCacheOwner(userId: string): void {
@@ -2367,6 +2411,8 @@ export function saveAndImmediateSync(data: BackupData, changedKey?: string): voi
   if (changedKey) markChanged(changedKey)
   _dataChanged = true
   saveBackupData(data)
+  // Phase 5A: dev-only unscoped-save warning (this path bypasses resolveSyncOptionsForChangedKey).
+  warnIfUnscopedSyncSave(changedKey ?? null, resolveScopesForSyncInput(changedKey ?? null), 'immediate-sync')
   console.log(`[sync] Immediate sync triggered for key: ${changedKey || 'unknown'}`)
   syncToSupabase(_activeTenantUserId, { source: changedKey || 'immediate-sync' })
     .then((result) => {

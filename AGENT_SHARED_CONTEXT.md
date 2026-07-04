@@ -93,9 +93,25 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Phase4F-Verified-Save-False-Mismatch-Fix (Claude Opus 4.8) | Fix verified-save false mismatch — expected summary from post-sync payload, bounded read-back retry, timestamp-lag no longer becomes data mismatch | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
 | Phase4G-Sync-Block-Diagnostics (Claude Opus 4.8) | DIAGNOSTIC ONLY — temporary console logging around the stale/freshness guard + baseline to root-cause the persistent false stale-block. No fix, no behavior change. | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (COMMITTED a973c73) | RELEASED | 2026-07-03 |
 | Phase4H-Monotonic-Baseline-SameDevice-Allowance (Claude Opus 4.8) | Monotonic remote baseline (older realtime/load/sync rows can't move it backward) + same-device local-newer allowance in the freshness guard. Stale other-device saves still block. Phase 4G diagnostics kept. | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (COMMITTED 2ff28de) | RELEASED | 2026-07-04 |
-| Phase4I-Remove-Sync-Diagnostics (Claude Opus 4.8) | CLEANUP ONLY — remove temporary Phase 4G/4H [POWERON_*] console diagnostics + __POWERON_SYNC_DEBUG__ helper. Behavior unchanged. | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-04 |
+| Phase4I-Remove-Sync-Diagnostics (Claude Opus 4.8) | CLEANUP ONLY — remove temporary Phase 4G/4H [POWERON_*] console diagnostics + __POWERON_SYNC_DEBUG__ helper. Behavior unchanged. | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (COMMITTED 6e74bf2) | RELEASED | 2026-07-04 |
+| Phase5A-Scope-Registry-Scaffold (Claude Opus 4.8) | Add typed DataScope registry + legacy changedKey→scope map + resolver helpers + dev-only unscoped-save warning. NO scoped merge, NO tab changes, NO save/stale/baseline behavior change. | src/services/scopeRegistry.ts (new), src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-04 |
 
 ## Audit & Change Log
+
+### 2026-07-04 — Phase 5A: scope registry scaffolding (NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Additive scaffolding only — no scoped merge, no runtime save-behavior change.
+**Branch:** main | HEAD before edits = `6e74bf2`
+**File Lock:** `src/services/scopeRegistry.ts` (new), `src/services/backupDataService.ts`, `AGENT_SHARED_CONTEXT.md` — CLAIMED then RELEASED.
+
+**What was added:**
+- **NEW `src/services/scopeRegistry.ts`** (pure module — no React / Supabase / localStorage / side effects): `DataScope` union (30 scopes: blueprint.annotations/workPackages; project.rfis/changeOrders/estimate/payments/logs/materials/schedule/notes/files; fieldLogs.entries/materials/photos/payments; leads.accounts/relationships/pipeline/map/cleanup; team.members/roles/assignments/time; priceBook.items/categories/laborRates/materials; service.calls; settings), plus `ScopeMergeStrategy` (id-merge | map-merge | lww | field-lww | future), `ScopePriority` (critical | high | medium | low | future), `ScopeDescriptor` interface, `SCOPE_REGISTRY` (readonly descriptor per scope with dataPath/owner/level/identity/timestamp/tombstone/strategy/priority from the Phase 5 audit), `LEGACY_CHANGED_KEY_TO_SCOPES` map, and helpers `isDataScope`, `getScopeDescriptor`, `getAllScopes`, `normalizeScopes`, `describeScopes`, `resolveScopesFromLegacyChangedKey`, `resolveScopesForSyncInput`.
+- **`backupDataService.ts`**: static import of the pure registry; `resolveSyncOptionsForChangedKey` now resolves scopes from `source`/`changedKey` and attaches them as internal `_scopes` **option metadata only** (never written to BackupData, never sent to Supabase — `syncToSupabase` reads only guard-related option fields). Added `SyncToSupabaseOptions._scopes?: DataScope[]` (metadata field). Added `warnIfUnscopedSyncSave` — a **dev-only** (`import.meta.env.DEV`) `console.warn('[ScopeRegistry] Unscoped sync save detected. …')`; never throws/blocks/mutates; wired into `resolveSyncOptionsForChangedKey` (covers `saveBackupDataAndSync`/`saveBackupDataAndSyncNow`) and directly into `saveAndImmediateSync` (which bypasses that resolver).
+
+**Explicitly NOT done:** no scoped merge / fetch-latest-patch / tombstone / per-scope write logic; no feature-tab changes; no change to `source`, `allowOverwriteNewerRemote`, `requireFreshRemote`, `failClosed`, monotonic baseline, same-device allowance, or verified Save; `saveBackupWithRemoteBaselineSync` untouched; `attemptProductionMergeAndSync` / `mergeLocalChangesIntoRemote` stay dead; no Supabase migration / Recovery Center. app_state payload shape unchanged.
+
+**Lock released.**
 
 ### 2026-07-04 — Phase 4I: remove temporary sync diagnostics (CLEANUP ONLY, NOT COMMITTED)
 
