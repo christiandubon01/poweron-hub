@@ -1,6 +1,24 @@
 // @ts-nocheck
 import { supabase } from '@/lib/supabase'
 import { getPageCount } from '@/services/blueprintExtractor'
+import { SCOPE_REGISTRY, type DataScope } from '@/services/scopeRegistry'
+
+// Phase 5C: dev-only assertion that the registry descriptors still point at the
+// concrete BackupData container keys these save paths write. Metadata sanity check
+// only — console.warn, never throws, never blocks a save, no-op in production.
+;(function assertBlueprintScopeDescriptors() {
+  try {
+    if (!import.meta.env?.DEV) return
+    const ann = SCOPE_REGISTRY['blueprint.annotations']?.dataPath || ''
+    const wp = SCOPE_REGISTRY['blueprint.workPackages']?.dataPath || ''
+    if (!ann.includes('operationsBlueprintAnnotations')) {
+      console.warn('[ScopeRegistry] blueprint.annotations dataPath no longer references operationsBlueprintAnnotations:', ann)
+    }
+    if (!wp.includes('operationsBlueprintScopeLayers')) {
+      console.warn('[ScopeRegistry] blueprint.workPackages dataPath no longer references operationsBlueprintScopeLayers:', wp)
+    }
+  } catch { /* dev-only diagnostics must never affect runtime */ }
+})()
 
 export type BlueprintLibraryType =
   | 'Full Set'
@@ -544,6 +562,9 @@ export async function saveOperationsBlueprintAnnotations(
   blueprintSetId: string,
   annotations: BlueprintAnnotation[],
 ): Promise<SaveBlueprintAnnotationsResult> {
+  // Phase 5C: scope metadata only. Does NOT change merge/save/stale/baseline behavior.
+  const SCOPE: DataScope = 'blueprint.annotations'
+
   const sanitized = (Array.isArray(annotations) ? annotations : [])
     .map(sanitizeAnnotation)
     .filter(Boolean) as BlueprintAnnotation[]
@@ -604,7 +625,7 @@ export async function saveOperationsBlueprintAnnotations(
       return { localSaved: false, cloudSynced: false, error: 'No local backup data available.' }
     }
     const merged = applyAnnotationsToBackup(localBase, blueprintSetId, sanitized)
-    const result = await saveBackupDataAndSyncNow(merged, 'blueprintSummaries', { source: 'annotations-first-sync' })
+    const result = await saveBackupDataAndSyncNow(merged, 'blueprintSummaries', { source: 'annotations-first-sync', _scopes: [SCOPE] })
     if (result.success) {
       try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
       try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
@@ -625,7 +646,7 @@ export async function saveOperationsBlueprintAnnotations(
       remoteUpdatedAt: remote.remoteUpdatedAt,
       remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
     },
-    { source: 'annotations-remote-merge' },
+    { source: 'annotations-remote-merge', _scopes: [SCOPE] },
   )
 
   if (result.success) {
@@ -802,6 +823,9 @@ export async function saveOperationsBlueprintScopeLayers(
   blueprintSetId: string,
   scopeLayers: BlueprintScopeLayer[],
 ): Promise<SaveScopeLayersResult> {
+  // Phase 5C: scope metadata only. Does NOT change merge/save/stale/baseline behavior.
+  const SCOPE: DataScope = 'blueprint.workPackages'
+
   const sanitizedLayers = (Array.isArray(scopeLayers) ? scopeLayers : [])
     .map(sanitizeScopeLayer)
     .filter(Boolean) as BlueprintScopeLayer[]
@@ -865,7 +889,7 @@ export async function saveOperationsBlueprintScopeLayers(
       return { success: false, localSaved: false, cloudSynced: false, error: 'No local backup data available.' }
     }
     const merged = applySanitizedScopeLayersToBackup(localBase, blueprintSetId, sanitizedLayers)
-    const result = await saveBackupDataAndSyncNow(merged, 'blueprintSummaries', { source: 'scope-layers-first-sync' })
+    const result = await saveBackupDataAndSyncNow(merged, 'blueprintSummaries', { source: 'scope-layers-first-sync', _scopes: [SCOPE] })
     if (result.success) {
       try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
       try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
@@ -887,7 +911,7 @@ export async function saveOperationsBlueprintScopeLayers(
       remoteUpdatedAt: remote.remoteUpdatedAt,
       remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
     },
-    { source: 'scope-layers-remote-merge' },
+    { source: 'scope-layers-remote-merge', _scopes: [SCOPE] },
   )
 
   if (result.success) {

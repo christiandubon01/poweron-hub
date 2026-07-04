@@ -3427,3 +3427,31 @@ Task: make Work Packages / Scope Layers page-aware like annotations, so a packag
 - No changes to annotation filtering/rendering, zoom/canvas/overlay math, sync guard, or persistence path — `pageNumber` rides through the existing `saveOperationsBlueprintScopeLayers` flow as a normal field on the layer object.
 
 **Lock released** — `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` and `src/services/blueprintLibraryService.ts` are free for other agents.
+
+---
+
+### 2026-07-04 — Phase 5C: Blueprint Scope Registry Retrofit (metadata-only)
+
+**Agent:** Claude (Opus 4.8)
+**Mode:** Scoped implementation (Phase 5C)
+**Baseline HEAD:** `ab65f62` (Phase 5A "Add data scope registry scaffold")
+**Files touched:** `src/services/blueprintLibraryService.ts`, `src/services/scopeRegistry.ts`, `AGENT_SHARED_CONTEXT.md`
+**Status:** DONE
+
+Retrofitted the existing Blueprint save paths onto the Phase 5A scope registry as **metadata only**. No behavior change.
+
+**What changed**
+- Tagged the Blueprint annotation save path with the `blueprint.annotations` scope: `saveOperationsBlueprintAnnotations` now passes `_scopes: ['blueprint.annotations']` alongside the existing `source` strings on both the remote-merge (`annotations-remote-merge` → `saveBackupWithRemoteBaselineSync`) and first-sync (`annotations-first-sync` → `saveBackupDataAndSyncNow`) call sites.
+- Tagged the Blueprint work-package/scope-layer save path with the `blueprint.workPackages` scope: `saveOperationsBlueprintScopeLayers` now passes `_scopes: ['blueprint.workPackages']` on both the remote-merge (`scope-layers-remote-merge`) and first-sync (`scope-layers-first-sync`) call sites.
+- `_scopes` is an existing `SyncToSupabaseOptions` field (backupDataService.ts, Phase 5A). It is internal metadata only — never written into `BackupData` nor sent to Supabase, and `syncToSupabase` ignores it for guard logic. `backupDataService.ts` was **not** modified.
+- Added a dev-only, non-throwing `console.warn` assertion in `blueprintLibraryService.ts` that the two registry descriptors' `dataPath` still reference `operationsBlueprintAnnotations` / `operationsBlueprintScopeLayers`. No-op in production.
+- Corrected the `notes` on `SCOPE_REGISTRY['blueprint.annotations']` and `['blueprint.workPackages']` in `scopeRegistry.ts` to state the current implementation is **per-blueprint-set whole-array replacement onto a freshly fetched remote BackupData**, NOT true item-level id-merge, and that tombstones are still needed before item-level delete-safe merge. `DataScope` union and all descriptors otherwise unchanged.
+
+**Explicitly NOT done**
+- Did not implement item-level id-merge.
+- Did not add tombstones.
+- Did not change Blueprint UI (`OperationsBlueprintPdfViewer.tsx` untouched — still consumes `cloudSynced`/`localSaved`/`warning` unchanged).
+- Did not change the fetch-latest → patch-blueprint-branch → remote-baseline-sync merge behavior, sanitization, array-replacement, remote-fetch, local-only fallback, warning, or return shapes.
+- Did not change Phase 4 Save/stale/baseline behavior.
+- Did NOT reconnect `attemptProductionMergeAndSync` or `mergeLocalChangesIntoRemote`.
+- Did not touch RFIs, Field Logs, Leads, Price Book, Team, Service Calls, or Settings.

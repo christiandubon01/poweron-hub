@@ -100,7 +100,7 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
     needsTombstone: true,
     strategy: 'id-merge',
     priority: 'critical',
-    notes: 'Already merges per blueprintSetId via saveBackupWithRemoteBaselineSync — the reference pattern.',
+    notes: 'Reference pattern (fetch-latest → patch branch → remote-baseline sync). Current implementation is per-blueprint-set WHOLE-ARRAY replacement onto a freshly fetched remote BackupData — NOT true item-level id-merge yet. Tombstones are still needed before item-level delete-safe merge.',
   },
   'blueprint.workPackages': {
     scope: 'blueprint.workPackages',
@@ -113,7 +113,7 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
     needsTombstone: true,
     strategy: 'id-merge',
     priority: 'critical',
-    notes: 'Scope layers / work packages. Already page-aware and id-merged per set.',
+    notes: 'Scope layers / work packages, page-aware. Current implementation is per-blueprint-set WHOLE-ARRAY replacement onto a freshly fetched remote BackupData — NOT true item-level id-merge yet. Tombstones are still needed before item-level delete-safe merge.',
   },
 
   // ── Project inner tabs (all live inside projects[]) ──
