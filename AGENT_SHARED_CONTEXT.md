@@ -88,9 +88,28 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Step13E-Emergency-Prod-Sync-Rollback (Claude Opus 4.8) | Emergency rollback — neutralize ad30ad4 production merge/freshness guard so production saves upload normally; localhost/dev stale-overwrite guard unchanged | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-03 |
 | Phase2-Stop-Bleeding-Stale-Save-Block (Claude Opus 4.8) | Re-enable stale-save freshness BLOCK on production + localhost (no auto-merge); supersedes Step 13E production ungating | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (COMMITTED b37a034) | RELEASED | 2026-07-03 |
 | Phase4-Verified-Save-Readback (Claude Opus 4.8) | Header Save now requires cloud read-back verification; baseline advances only from verified read-back; production sync-conflict UI gate fixed | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (COMMITTED 163d579) | RELEASED | 2026-07-03 |
-| Phase4B-Baseline-Server-UpdatedAt (Claude Opus 4.8) | Fix false stale-block after successful write — syncToSupabase baselines from Supabase server updated_at returned by upsert, not client now | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
+| Phase4B-Baseline-Server-UpdatedAt (Claude Opus 4.8) | Fix false stale-block after successful write — syncToSupabase baselines from Supabase server updated_at returned by upsert, not client now | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (COMMITTED 248711f) | RELEASED | 2026-07-03 |
+| Phase4D-ForceSync-Baseline-Poison-Fix (Claude Opus 4.8) | Remove redundant client-time baseline overwrite in forceSyncToCloud that re-poisoned the server baseline set by syncToSupabase | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
 
 ## Audit & Change Log
+
+### 2026-07-03 — Phase 4D: remove forceSyncToCloud client-time baseline poison (NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Single-line baseline fix in forceSyncToCloud — no UI, no merge, no feature tabs.
+**Branch:** main | HEAD before edits = `248711f`
+
+**Bug (Phase 4C audit):** After Phase 4B, the false "Cloud sync was blocked because remote data is newer than this local session" persisted. `syncToSupabase` baselines correctly from the server `updated_at`, but `forceSyncToCloud`'s success branch then ran `setKnownRemoteBaseline(data._lastSavedAt, data._lastSavedAt)` — overwriting the correct server baseline with the CLIENT `_lastSavedAt` (stamped a few ms earlier, and older than the server `updated_at` set by the `moddatetime` trigger). The next freshness check read the newer server `updated_at` and false-blocked. `forceSyncToCloud` is reached from the header sync-status "tap to retry" pill (`source:'sync-retry'`), Settings cloud-sync/restore, and Snapshot restore — so any of those poisoned the baseline for the subsequent header Save, which then could not self-heal (its freshness pre-check blocks before it can re-baseline from a read-back). Reload cleared it because `loadFromSupabase` re-seeds the baseline from the server `updated_at`.
+
+**Fix — `backupDataService.ts` `forceSyncToCloud` only:**
+- Deleted `setKnownRemoteBaseline(data._lastSavedAt, data._lastSavedAt)` from the `result.success` branch. The preceding `await syncToSupabase(...)` already set the authoritative baseline from the server `updated_at` (Phase 4B), so this call was both redundant and wrong. Kept `_dataChanged = false`, `_lastSyncedAt = Date.now()`, `_changedKeys.clear()`.
+- `syncToSupabase` is now the sole baseline owner for the force-sync write path.
+
+**NOT touched / NOT reconnected:** `syncToSupabase`, `saveLiveDataVerified`, `checkManualSaveFreshness`, `saveBackupWithRemoteBaselineSync` all unchanged. `attemptProductionMergeAndSync` / `mergeLocalChangesIntoRemote` stay dead. No UI change. Phase 2 stale-save blocking intact.
+
+**Deploy/cache note (from 4C audit, not a code change):** `public/sw.js` is cache-first on the app shell (`/`, `/index.html`) and `/assets/`, so a returning browser can serve a stale bundle after deploy — verify the new build is actually running (hard-reload / SW update) when validating.
+
+**Lock released.**
 
 ### 2026-07-03 — Phase 4B: baseline from server updated_at (false stale-block hotfix, NOT COMMITTED)
 

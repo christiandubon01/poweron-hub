@@ -2611,7 +2611,14 @@ export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promi
     _dataChanged = false
     _lastSyncedAt = Date.now()
     _changedKeys.clear()
-    setKnownRemoteBaseline(data._lastSavedAt, data._lastSavedAt)
+    // Phase 4D: do NOT re-baseline here. syncToSupabase already set the session
+    // baseline from the SERVER-authoritative updated_at returned by the upsert
+    // (Phase 4B). The old `setKnownRemoteBaseline(data._lastSavedAt, ...)` call
+    // overwrote that correct server baseline with the CLIENT _lastSavedAt, which
+    // is older than the server updated_at (moddatetime trigger) — so the next
+    // freshness check false-blocked with "remote data is newer than this local
+    // session" after a successful forceSyncToCloud (tap-to-retry / settings /
+    // snapshot restore). Leaving the syncToSupabase baseline in place fixes it.
     console.log('[sync] Force sync successful at', data._lastSavedAt)
   } else if (result.blocked || result.conflict) {
     return {
