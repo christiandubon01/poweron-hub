@@ -1392,6 +1392,12 @@ export type SyncToSupabaseOptions = {
   allowOverwriteNewerRemote?: boolean
   /** Internal: prevents production merge retry recursion. */
   _skipProductionMerge?: boolean
+  /**
+   * Internal (Phase 4 verified save): suppress the optimistic `poweron:sync-success`
+   * event on write-ACK so the verified-save orchestrator can fire it ONLY after a
+   * cloud read-back confirms the write. Prevents a premature green "synced" state.
+   */
+  _suppressSuccessEvent?: boolean
 }
 
 export type SyncToSupabaseResult = {
@@ -2024,9 +2030,11 @@ export async function syncToSupabase(
     // one (if any) dispatch immediately rather than staying throttled.
     _lastConflictDispatch = null
     console.log(`[Sync] Synced tenant ${userId} to Supabase at ${now} by ${deviceId}`, options.source ? `(${options.source})` : '')
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && !options._suppressSuccessEvent) {
       // Lets UI listeners (e.g. header sync-conflict toast dedupe) know a real
       // cloud sync succeeded, so any suppressed stale-overwrite warning can clear.
+      // Phase 4: the verified-save path suppresses this and re-dispatches only
+      // after a successful cloud read-back, so success is never shown on write-ACK.
       window.dispatchEvent(new CustomEvent('poweron:sync-success', { detail: { savedBy: deviceId, savedAt: now } }))
     }
     return { success: true }
@@ -2603,6 +2611,280 @@ export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promi
   }
 
   return result
+}
+
+// ── Phase 4: Verified Save (cloud read-back) ─────────────────────────────────
+// The header Save button must mean "cloud was read back and verified", not just
+// "write request finished". These helpers + saveLiveDataVerified() implement that
+// truth contract. No merge logic is used — Phase 2 stale-save blocking is preserved
+// and attemptProductionMergeAndSync is NOT called.
+
+/**
+ * Cheap, count-based fingerprint of the critical data in a BackupData blob.
+ * Deliberately does NOT deep-hash or stringify the whole blob — counts + the
+ * save timestamp are enough to catch the real failure modes (dropped/truncated
+ * arrays, wrong row, stale write) at negligible cost.
+ *
+ * RFIs are nested under projects[i].rfis[]. Blueprint annotation sets live under
+ * blueprintSummaries.operationsBlueprintAnnotations, and work packages / scope
+ * layers under blueprintSummaries.operationsBlueprintScopeLayers.
+ */
+export interface VerificationSummary {
+  projectsCount: number
+  logsCount: number
+  serviceLogsCount: number
+  rfiTotalCount: number
+  blueprintAnnotationSetCount: number
+  blueprintWorkPackageSetCount: number
+  lastSavedAt: string | null
+  tenantUserId: string | null
+}
+
+export function computeVerificationSummary(
+  data: BackupData | null | undefined,
+  userId?: string | null,
+): VerificationSummary {
+  const projects = Array.isArray(data?.projects) ? (data!.projects as any[]) : []
+  const logs = Array.isArray(data?.logs) ? (data!.logs as any[]) : []
+  const serviceLogs = Array.isArray(data?.serviceLogs) ? (data!.serviceLogs as any[]) : []
+
+  let rfiTotalCount = 0
+  for (const p of projects) {
+    const rfis = (p as any)?.rfis
+    if (Array.isArray(rfis)) rfiTotalCount += rfis.length
+  }
+
+  const bp = (data as any)?.blueprintSummaries
+  const bpObj = bp && typeof bp === 'object' ? (bp as Record<string, any>) : {}
+  const ann = bpObj.operationsBlueprintAnnotations
+  const annObj = ann && typeof ann === 'object' ? ann : {}
+  const wp = bpObj.operationsBlueprintScopeLayers
+  const wpObj = wp && typeof wp === 'object' ? wp : {}
+
+  return {
+    projectsCount: projects.length,
+    logsCount: logs.length,
+    serviceLogsCount: serviceLogs.length,
+    rfiTotalCount,
+    blueprintAnnotationSetCount: Object.keys(annObj).length,
+    blueprintWorkPackageSetCount: Object.keys(wpObj).length,
+    lastSavedAt: (data as any)?._lastSavedAt ?? null,
+    tenantUserId: userId ?? (data as any)?._tenantUserId ?? null,
+  }
+}
+
+export interface VerificationComparison {
+  verified: boolean
+  mismatches: string[]
+  expected: VerificationSummary
+  actual: VerificationSummary
+}
+
+/**
+ * Compare an expected (locally-sent) summary against the actual (cloud read-back)
+ * summary. All critical counts must match exactly. The cloud lastSavedAt must be
+ * at or after the timestamp we stamped/sent — the cloud write path re-stamps its
+ * own _lastSavedAt a few ms later, so an exact string match is not required, but a
+ * cloud timestamp OLDER than what we sent means our write did not land.
+ */
+export function compareVerificationSummary(
+  expected: VerificationSummary,
+  actual: VerificationSummary,
+): VerificationComparison {
+  const mismatches: string[] = []
+
+  const countKeys: (keyof VerificationSummary)[] = [
+    'projectsCount',
+    'logsCount',
+    'serviceLogsCount',
+    'rfiTotalCount',
+    'blueprintAnnotationSetCount',
+    'blueprintWorkPackageSetCount',
+  ]
+  for (const key of countKeys) {
+    if (expected[key] !== actual[key]) {
+      mismatches.push(`${key}: expected ${expected[key]}, cloud has ${actual[key]}`)
+    }
+  }
+
+  const expectedMs = parseBackupTimestampMs(expected.lastSavedAt)
+  const actualMs = parseBackupTimestampMs(actual.lastSavedAt)
+  // Allow a small tolerance below the sent timestamp for clock skew; the cloud
+  // value should normally be >= what we sent (it re-stamps slightly later).
+  if (expectedMs > 0 && actualMs > 0 && actualMs < expectedMs - FRESHNESS_TOLERANCE_MS) {
+    mismatches.push(
+      `lastSavedAt: cloud (${actual.lastSavedAt}) is older than saved value (${expected.lastSavedAt})`,
+    )
+  } else if (expectedMs > 0 && actualMs <= 0) {
+    mismatches.push('lastSavedAt: cloud row has no _lastSavedAt after save')
+  }
+
+  if (
+    expected.tenantUserId &&
+    actual.tenantUserId &&
+    expected.tenantUserId !== actual.tenantUserId
+  ) {
+    mismatches.push(
+      `tenantUserId: expected ${expected.tenantUserId}, cloud has ${actual.tenantUserId}`,
+    )
+  }
+
+  return { verified: mismatches.length === 0, mismatches, expected, actual }
+}
+
+export type VerifiedSaveStatus =
+  | 'saved-verified'
+  | 'stale-blocked'
+  | 'snapshot-failed'
+  | 'cloud-write-failed'
+  | 'readback-failed'
+  | 'verify-mismatch'
+  | 'error'
+
+export interface VerifiedSaveResult {
+  status: VerifiedSaveStatus
+  error?: string
+  comparison?: VerificationComparison
+  expected?: VerificationSummary
+  actual?: VerificationSummary
+}
+
+export type VerifiedSavePhase =
+  | 'checking-cloud'
+  | 'creating-snapshot'
+  | 'saving'
+  | 'verifying'
+
+export interface SaveLiveDataVerifiedOptions {
+  source?: string
+  /** Optional progress callback so the UI can show the current phase truthfully. */
+  onPhase?: (phase: VerifiedSavePhase) => void
+}
+
+/**
+ * Header Save truth contract (Phase 4):
+ * 1. read current local backup + compute expected summary
+ * 2. freshness/stale check (Phase 2 guard) — stale => blocked, no write
+ * 3. before-save safety snapshot — failure => blocked, no write
+ * 4. write to cloud (existing guarded upsert; success event suppressed)
+ * 5. read the cloud row back
+ * 6. recompute summary from read-back and compare
+ * 7. advance baseline ONLY from the verified read-back row
+ * 8. success ONLY after verification
+ *
+ * Never calls attemptProductionMergeAndSync. Never merges. On any non-verified
+ * outcome the session baseline is restored to its pre-write value so a later save
+ * cannot slip through the stale guard on an unproven write.
+ */
+export async function saveLiveDataVerified(
+  options?: SaveLiveDataVerifiedOptions,
+): Promise<VerifiedSaveResult> {
+  const source = options?.source || 'header-save-verified'
+  const onPhase = options?.onPhase
+  const userId = _activeTenantUserId
+
+  if (!isSupabaseConfigured()) return { status: 'error', error: 'Supabase not configured' }
+  if (!userId) return { status: 'error', error: 'No active tenant user' }
+
+  // a. Read current local backup for this tenant.
+  const local = getBackupData(userId)
+  if (!local) return { status: 'error', error: 'No local data to save' }
+
+  // c. Freshness / stale-overwrite guard (same check Phase 2 enforces). Runs in
+  //    production AND localhost. Stale => block before any write, no merge.
+  onPhase?.('checking-cloud')
+  const freshness = await checkManualSaveFreshness(userId, { failClosed: true })
+  if (!freshness.allowed) {
+    return { status: 'stale-blocked', error: resolveSyncGuardError(freshness) }
+  }
+
+  // e. Before-save safety snapshot. Failure blocks the write.
+  onPhase?.('creating-snapshot')
+  const snapshotResult = await createHeaderSaveSafetySnapshot()
+  if (!snapshotResult.success) {
+    return {
+      status: 'snapshot-failed',
+      error: snapshotResult.error || HEADER_SAVE_SNAPSHOT_FAILED_MSG,
+    }
+  }
+
+  // Capture the pre-write baseline so we can restore it if the save is not verified.
+  const preBaseline = _lastKnownRemoteSavedAt
+
+  // g. Stamp save timestamp and h. persist local copy via the existing safe helper.
+  const saveTimestamp = new Date().toISOString()
+  local._lastSavedAt = saveTimestamp
+  saveBackupData(local)
+
+  // b. Expected summary from exactly the data we are about to send.
+  const expected = computeVerificationSummary(local, userId)
+
+  // i. Write to Supabase. We already gated freshness above, so allow the overwrite
+  //    on the final upsert (matches the header force-sync semantics). Suppress the
+  //    optimistic success event — we only claim success after read-back verifies.
+  onPhase?.('saving')
+  const writeResult = await syncToSupabase(userId, {
+    source,
+    allowOverwriteNewerRemote: true,
+    _suppressSuccessEvent: true,
+  })
+  if (!writeResult.success) {
+    _lastKnownRemoteSavedAt = preBaseline
+    return {
+      status: 'cloud-write-failed',
+      error: writeResult.error || 'Cloud write failed',
+    }
+  }
+
+  // j. Read the cloud row back.
+  onPhase?.('verifying')
+  const remote = await fetchRemoteAppStateRow(userId)
+  if (remote.error || !remote.hasRemoteRow || !remote.remoteData) {
+    // Write ACKed but we could not prove it. Do not claim success; restore baseline.
+    _lastKnownRemoteSavedAt = preBaseline
+    return {
+      status: 'readback-failed',
+      error: remote.error || 'Could not read cloud data back to verify the save',
+    }
+  }
+
+  // k. Actual summary from the read-back cloud data. l. Compare.
+  const actual = computeVerificationSummary(remote.remoteData, userId)
+  const comparison = compareVerificationSummary(expected, actual)
+
+  if (!comparison.verified) {
+    // Do NOT advance baseline on an unverified save — force the next save to
+    // re-check freshness against the now-uncertain remote.
+    _lastKnownRemoteSavedAt = preBaseline
+    console.warn('[VerifiedSave] Cloud read-back did not match expected summary', comparison.mismatches)
+    return { status: 'verify-mismatch', comparison, expected, actual }
+  }
+
+  // m. Verified: advance baseline from the READ-BACK row (authoritative), clear
+  //    dirty state, and dispatch the success event now (not on write-ACK).
+  setKnownRemoteBaseline(remote.remoteUpdatedAt, remote.remoteDataLastSavedAt)
+  _dataChanged = false
+  _lastSyncedAt = Date.now()
+  _changedKeys.clear()
+  _lastConflictDispatch = null
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('poweron:sync-success', {
+        detail: {
+          savedBy: (remote.remoteData as any)?._syncMeta?.savedBy,
+          savedAt: remote.remoteDataLastSavedAt || remote.remoteUpdatedAt,
+          verified: true,
+        },
+      }),
+    )
+  }
+  console.log('[VerifiedSave] Save verified against cloud read-back', {
+    source,
+    remoteUpdatedAt: remote.remoteUpdatedAt,
+    projectsCount: actual.projectsCount,
+    rfiTotalCount: actual.rfiTotalCount,
+  })
+  return { status: 'saved-verified', comparison, expected, actual }
 }
 
 // Legacy mappers (kept for backward compat)

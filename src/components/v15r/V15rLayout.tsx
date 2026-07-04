@@ -45,7 +45,7 @@ import {
   Cpu,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
-import { getBackupData, saveBackupData, getKPIs, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, getLastSyncMeta, createEmptyBackup, isActiveProject, resolveProjectBucket, type BackupData } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, getKPIs, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, saveLiveDataVerified, getLastSyncMeta, createEmptyBackup, isActiveProject, resolveProjectBucket, type BackupData } from '@/services/backupDataService'
 // BUG 1 FIX — Realtime sync + stale-check service
 import { initRealtimeSync } from '@/services/realtimeSyncService'
 // BUG 2 FIX — Active-only pipeline formula
@@ -342,8 +342,11 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       setSyncStatus('failed')
       return
     }
-    setSyncStatus('synced')
-    setLastSyncTime(new Date().toLocaleTimeString())
+    // Phase 4: do NOT assert 'synced' on mount before any real sync/verification
+    // has happened — that green dot was a lie at startup. Stay 'idle' (neutral
+    // "Saved {relative time}" from local _lastSavedAt); the periodic status poll
+    // and verified saves flip it to 'synced' once a real cloud sync is confirmed.
+    setSyncStatus('idle')
   }, [])
 
   // Periodic sync to Supabase — startPeriodicSync handles the 30s debounced push.
@@ -386,15 +389,11 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     const handleSyncConflict = (event: Event) => {
       const detail = (event as CustomEvent<{ error?: string; source?: string; conflictCode?: 'remote-newer' | 'no-baseline' | 'unknown' }>).detail
       const message = detail?.error || 'Cloud sync blocked — remote data is newer'
-      const isLocalDev =
-        typeof window !== 'undefined' &&
-        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-      // Production multi-device merge handles remote-newer before this fires.
-      // Only surface the scary paused toast on localhost/dev guard blocks.
-      if (!isLocalDev) {
-        console.warn('[Sync] Production conflict event (merge may retry on next save):', message, detail?.source)
-        return
-      }
+      // Phase 4: the Phase 2 stale-overwrite guard now blocks in production AND
+      // localhost, so background/periodic production blocks legitimately dispatch
+      // this event. The old localhost-only early-return (which assumed a production
+      // merge would silently retry) hid those blocks from the user. Surface the
+      // paused state in both environments now — no production merge exists anymore.
       // Step 13B-QA5-R4 Part 1: dispatchSyncConflict now tags every event with a
       // reliable conflictCode ('remote-newer' | 'no-baseline' | 'unknown') instead of
       // relying on message-string matching. All three codes originate from the same
@@ -770,32 +769,60 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
     setSyncStatus('syncing')
     try {
-      const result = await forceSyncToCloud({
-        requireFreshRemote: true,
+      // Phase 4: verified save — Save now means "cloud was read back and verified",
+      // not "write request finished". The onPhase callback surfaces each real stage.
+      const result = await saveLiveDataVerified({
         source: 'header-save',
-        createSafetySnapshot: true,
+        onPhase: (phase) => {
+          setToastMessage(
+            phase === 'checking-cloud' ? 'Checking cloud…'
+            : phase === 'creating-snapshot' ? 'Creating safety snapshot…'
+            : phase === 'saving' ? 'Saving to cloud…'
+            : 'Verifying cloud save…'
+          )
+        },
       })
-      if (result.success) {
-        setSyncStatus('synced')
-        setLastSyncTime(new Date().toLocaleTimeString())
-        setToastMessage('Live data saved to cloud')
-        setTimeout(() => setToastMessage(null), 3000)
-      } else if (result.blocked) {
-        // Phase 2 (stop-bleeding): the requireFreshRemote guard now blocks stale
-        // saves in production AND localhost (see backupDataService.forceSyncToCloud).
-        // A blocked header save means the cloud holds newer data than this session
-        // (or the pre-save safety snapshot failed) -- either way local data is safe
-        // and this is NOT a "synced" state. Show the paused state with reload
-        // guidance, not a generic sync failure.
-        setSyncStatus('paused')
-        setToastMessage(
-          result.error || 'Cloud has newer data than this session. Reload latest before saving to cloud.'
-        )
-        setTimeout(() => setToastMessage(null), 6000)
-      } else {
-        setSyncStatus('failed')
-        setToastMessage('Sync failed — ' + (result.error || 'check connection'))
-        setTimeout(() => setToastMessage(null), 4000)
+
+      switch (result.status) {
+        case 'saved-verified':
+          setSyncStatus('synced')
+          setLastSyncTime(new Date().toLocaleTimeString())
+          setToastMessage('Saved and verified')
+          setTimeout(() => setToastMessage(null), 3000)
+          break
+        case 'stale-blocked':
+          // Cloud is newer than this session — Phase 2 guard blocked the write.
+          // Local data is safe; this is not a failure and not a success.
+          setSyncStatus('paused')
+          setToastMessage(
+            result.error || 'Cloud has newer data — reload latest before saving'
+          )
+          setTimeout(() => setToastMessage(null), 6000)
+          break
+        case 'snapshot-failed':
+          setSyncStatus('failed')
+          setToastMessage('Safety snapshot failed — cloud save blocked')
+          setTimeout(() => setToastMessage(null), 6000)
+          break
+        case 'readback-failed':
+          // Write ACKed but we could not read it back to prove it. Never show green.
+          setSyncStatus('failed')
+          setToastMessage('Could not verify cloud — saved locally only')
+          setTimeout(() => setToastMessage(null), 6000)
+          break
+        case 'verify-mismatch':
+          // Cloud read-back did not match what we sent. Do not claim success.
+          setSyncStatus('failed')
+          setToastMessage('Cloud save could not be verified — data may not be saved')
+          setTimeout(() => setToastMessage(null), 8000)
+          break
+        case 'cloud-write-failed':
+        case 'error':
+        default:
+          setSyncStatus('failed')
+          setToastMessage('Sync failed — ' + (result.error || 'tap to retry'))
+          setTimeout(() => setToastMessage(null), 4000)
+          break
       }
     } catch (err: any) {
       setSyncStatus('failed')

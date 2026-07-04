@@ -86,9 +86,36 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Step13B-QA8-Zoom-Symbol-Audit (Claude Opus 4.8) | Blueprint Viewer — zoom/symbol coordinate audit + fix | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 | Step13B-QA7-R7-Default-Annotations (Claude Code Opus) | Blueprint Viewer — default/embedded iPad annotations panel: expand naturally below document, not collapsed/capped drawer | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 | Step13E-Emergency-Prod-Sync-Rollback (Claude Opus 4.8) | Emergency rollback — neutralize ad30ad4 production merge/freshness guard so production saves upload normally; localhost/dev stale-overwrite guard unchanged | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-03 |
-| Phase2-Stop-Bleeding-Stale-Save-Block (Claude Opus 4.8) | Re-enable stale-save freshness BLOCK on production + localhost (no auto-merge); supersedes Step 13E production ungating | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-03 |
+| Phase2-Stop-Bleeding-Stale-Save-Block (Claude Opus 4.8) | Re-enable stale-save freshness BLOCK on production + localhost (no auto-merge); supersedes Step 13E production ungating | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (COMMITTED b37a034) | RELEASED | 2026-07-03 |
+| Phase4-Verified-Save-Readback (Claude Opus 4.8) | Header Save now requires cloud read-back verification; baseline advances only from verified read-back; production sync-conflict UI gate fixed | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
 
 ## Audit & Change Log
+
+### 2026-07-03 — Phase 4: verified Save with cloud read-back (NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Save-button truth contract only — header Save path + sync-status UI. No merge logic, no schema, no feature tabs.
+**Branch:** main | HEAD before edits = `b37a034`
+
+**Goal:** The header Save button must mean "cloud was read back and verified," not "write request finished." Previously success was asserted from the Supabase write-ACK with no proof the blob landed with the expected data.
+
+**Implementation — `backupDataService.ts` (additive):**
+- `computeVerificationSummary(data, userId?)` — pure, cheap count-based fingerprint: `projectsCount`, `logsCount`, `serviceLogsCount`, `rfiTotalCount` (Σ `projects[i].rfis[]`), `blueprintAnnotationSetCount` (keys of `blueprintSummaries.operationsBlueprintAnnotations`), `blueprintWorkPackageSetCount` (keys of `operationsBlueprintScopeLayers`), `lastSavedAt`, `tenantUserId`. No deep-hash / no full-blob stringify.
+- `compareVerificationSummary(expected, actual)` — all six counts must match exactly; cloud `lastSavedAt` must be ≥ sent value (within `FRESHNESS_TOLERANCE_MS`); tenant owner must match. Returns `{ verified, mismatches[], expected, actual }`.
+- `saveLiveDataVerified(options)` — orchestrates: (1) read local + compute expected summary, (2) `checkManualSaveFreshness` (Phase 2 guard; stale → `stale-blocked`, no write), (3) `createHeaderSaveSafetySnapshot` (fail → `snapshot-failed`, no write), (4) stamp + `saveBackupData` + `syncToSupabase` (with `_suppressSuccessEvent`), (5) `fetchRemoteAppStateRow` read-back (fail → `readback-failed`), (6) recompute + compare (mismatch → `verify-mismatch`), (7) on verified: `setKnownRemoteBaseline` **from the read-back row**, clear dirty state, dispatch `poweron:sync-success`, return `saved-verified`. Result union: `saved-verified | stale-blocked | snapshot-failed | cloud-write-failed | readback-failed | verify-mismatch | error`. Optional `onPhase` callback emits `checking-cloud | creating-snapshot | saving | verifying`.
+- Baseline safety: captures pre-write `_lastKnownRemoteSavedAt` and **restores it** on `cloud-write-failed` / `readback-failed` / `verify-mismatch` so an unproven save can never advance the baseline (a later stale write would otherwise slip through).
+- Added internal `SyncToSupabaseOptions._suppressSuccessEvent` and gated the optimistic `poweron:sync-success` dispatch in `syncToSupabase` so the verified path fires success only after read-back.
+
+**NOT touched / NOT reconnected:** `attemptProductionMergeAndSync` and all merge helpers remain dead/unreferenced (verified path never calls them). `saveBackupWithRemoteBaselineSync` unchanged. `forceSyncToCloud` unchanged and still used by the header "tap to retry" button and other callers. Phase 2 stale-save blocking preserved.
+
+**UI — `V15rLayout.tsx`:**
+- `handleHeaderSaveLiveData` now calls `saveLiveDataVerified` and maps its status union to statuses/toasts: `saved-verified`→'synced' "Saved and verified"; `stale-blocked`→'paused' "Cloud has newer data — reload latest before saving"; `snapshot-failed`→'failed' "Safety snapshot failed — cloud save blocked"; `readback-failed`→'failed' "Could not verify cloud — saved locally only"; `verify-mismatch`→'failed' "Cloud save could not be verified — data may not be saved"; `cloud-write-failed`/`error`→'failed' "Sync failed". `onPhase` drives "Checking cloud… / Creating safety snapshot… / Saving to cloud… / Verifying cloud save…". Green success shows ONLY on `saved-verified`.
+- `handleSyncConflict` production early-return removed — background/periodic production stale-blocks now surface as 'paused' in both environments (no production merge exists post-Phase 2).
+- Mount effect no longer asserts `setSyncStatus('synced')`; uses `'idle'` (neutral) until a real sync/verification confirms.
+
+**Not done (out of scope):** snapshots schema migration, Recovery Center, Blueprint/RFI merge, Field Logs/Leads/Price Book/Team/inner-tab merge logic. typecheck ✅ build ✅.
+
+**Lock released.**
 
 ### 2026-07-03 — Phase 2: re-enable stale-save blocking on production + localhost (block-only, no merge; NOT COMMITTED)
 
