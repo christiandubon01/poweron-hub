@@ -88,6 +88,11 @@ export interface BlueprintAnnotation {
   color: string
   createdAt: string
   updatedAt: string
+  // Phase 5E: soft-delete tombstone. Presence of deletedAt marks the item deleted.
+  // Tombstones stay in the raw arrays so item-level merge can beat a stale live copy
+  // on another tab/device. Public accessors filter these out so the UI never renders them.
+  deletedAt?: string
+  deletedBy?: string
 }
 
 export interface BlueprintScopeItemRef {
@@ -117,6 +122,9 @@ export interface BlueprintScopeLayer {
   updatedAt: string
   visible: boolean
   isolated: boolean
+  // Phase 5E: soft-delete tombstone (see BlueprintAnnotation.deletedAt).
+  deletedAt?: string
+  deletedBy?: string
 }
 
 export const MAX_BLUEPRINT_FILE_SIZE_BYTES = 512 * 1024 * 1024
@@ -471,6 +479,134 @@ export async function getBlueprintSignedUrl(storagePath: string, expiresIn = 900
   return data.signedUrl
 }
 
+// ── Phase 5E: timestamp normalization + item-level merge (delete-safe) ──────────
+// Pure, local to this service. No React, no Supabase, no side effects.
+
+const EPOCH_FALLBACK_ISO = '1970-01-01T00:00:00.000Z'
+
+function isValidDateString(value: any): boolean {
+  if (typeof value !== 'string' || !value.trim()) return false
+  return Number.isFinite(Date.parse(value))
+}
+
+function parseTimestampMs(value: any): number {
+  if (typeof value !== 'string') return NaN
+  const t = Date.parse(value)
+  return Number.isFinite(t) ? t : NaN
+}
+
+// Ops blueprint ids embed a 13-digit ms epoch (e.g. ann_1699999999999_ab, scope_1699999999999_ab).
+// Recover a stable timestamp from the id so legacy rows don't fall back to a fabricated "now".
+function timestampFromId(id: any): string | null {
+  if (typeof id !== 'string') return null
+  const m = id.match(/(\d{13})/)
+  if (!m) return null
+  const ms = Number(m[1])
+  if (!Number.isFinite(ms) || ms <= 0) return null
+  try { return new Date(ms).toISOString() } catch { return null }
+}
+
+// createdAt fallback chain: valid createdAt → timestamp parsed from id → stable epoch.
+// Deliberately NEVER defaults to now(): new items already carry a real createdAt from the
+// UI, and defaulting legacy rows to now() would make them look freshly edited (and beat
+// real deletes during merge).
+function normalizeCreatedAt(raw: any): string {
+  if (isValidDateString(raw?.createdAt)) return String(raw.createdAt)
+  const fromId = timestampFromId(raw?.id)
+  if (fromId) return fromId
+  return EPOCH_FALLBACK_ISO
+}
+
+// updatedAt fallback chain: valid updatedAt → normalized createdAt → stable epoch.
+// Also NEVER defaults to now(); a tombstone's updatedAt is bumped to at least deletedAt
+// so a delete deterministically beats an equal-or-older live edit during merge.
+function normalizeUpdatedAt(raw: any, createdAtResolved: string): string {
+  let updatedAt = isValidDateString(raw?.updatedAt) ? String(raw.updatedAt) : createdAtResolved
+  if (isValidDateString(raw?.deletedAt) && parseTimestampMs(raw.deletedAt) > parseTimestampMs(updatedAt)) {
+    updatedAt = String(raw.deletedAt)
+  }
+  return updatedAt
+}
+
+type TombstonedItem = { id: string; updatedAt: string; deletedAt?: string }
+
+// Resolve which of two same-id items wins. Tombstones (deletedAt) beat an equal-or-older
+// live edit; a strictly newer live edit (updatedAt > deletedAt) is treated as a genuine
+// re-edit/undelete and wins. On exact live-vs-live ties, remote wins (deterministic +
+// avoids clock-skew flip-flop). Returns the winning item.
+function resolveMergeWinner<T extends TombstonedItem>(remote: T, incoming: T): T {
+  const remoteDeleted = isValidDateString(remote.deletedAt)
+  const incomingDeleted = isValidDateString(incoming.deletedAt)
+
+  if (remoteDeleted && incomingDeleted) {
+    // Both tombstones: keep the newest deletedAt (tie → remote).
+    return parseTimestampMs(incoming.deletedAt) > parseTimestampMs(remote.deletedAt) ? incoming : remote
+  }
+  if (remoteDeleted || incomingDeleted) {
+    const tomb = remoteDeleted ? remote : incoming
+    const live = remoteDeleted ? incoming : remote
+    const liveMs = parseTimestampMs(live.updatedAt)
+    const tombMs = parseTimestampMs(tomb.deletedAt)
+    // Live wins only if strictly newer than the delete; tie or older → tombstone wins.
+    return liveMs > tombMs ? live : tomb
+  }
+  // Both live: newest updatedAt wins; exact tie → remote (deterministic).
+  return parseTimestampMs(incoming.updatedAt) > parseTimestampMs(remote.updatedAt) ? incoming : remote
+}
+
+// Generic id-keyed, delete-safe merge preserving tombstones in the raw output.
+// Order: incoming order first (so a local reorder survives), then remote-only ids appended
+// in remote order. Ordering never affects which version wins — that is decided per id by
+// resolveMergeWinner — so delete-safety is independent of order. Items without an id are
+// kept (appended, incoming then remote) rather than dropped.
+function mergeItemsById<T extends TombstonedItem>(remoteItems: T[], incomingItems: T[]): T[] {
+  const remoteById = new Map<string, T>()
+  const remoteNoId: T[] = []
+  const remoteOrder: string[] = []
+  for (const item of Array.isArray(remoteItems) ? remoteItems : []) {
+    const id = String((item as any)?.id || '').trim()
+    if (!id) { remoteNoId.push(item); continue }
+    if (!remoteById.has(id)) remoteOrder.push(id)
+    remoteById.set(id, item)
+  }
+
+  const out: T[] = []
+  const emitted = new Set<string>()
+  const incomingNoId: T[] = []
+  for (const item of Array.isArray(incomingItems) ? incomingItems : []) {
+    const id = String((item as any)?.id || '').trim()
+    if (!id) { incomingNoId.push(item); continue }
+    if (emitted.has(id)) continue
+    const remote = remoteById.get(id)
+    out.push(remote ? resolveMergeWinner(remote, item) : item)
+    emitted.add(id)
+  }
+  for (const id of remoteOrder) {
+    if (emitted.has(id)) continue
+    out.push(remoteById.get(id) as T)
+    emitted.add(id)
+  }
+  return [...out, ...incomingNoId, ...remoteNoId]
+}
+
+export function mergeBlueprintAnnotationsById(
+  remoteItems: any[],
+  incomingItems: any[],
+): BlueprintAnnotation[] {
+  const remote = (Array.isArray(remoteItems) ? remoteItems : []).map(sanitizeAnnotation).filter(Boolean) as BlueprintAnnotation[]
+  const incoming = (Array.isArray(incomingItems) ? incomingItems : []).map(sanitizeAnnotation).filter(Boolean) as BlueprintAnnotation[]
+  return mergeItemsById(remote as TombstonedItem[], incoming as TombstonedItem[]) as unknown as BlueprintAnnotation[]
+}
+
+export function mergeBlueprintScopeLayersById(
+  remoteItems: any[],
+  incomingItems: any[],
+): BlueprintScopeLayer[] {
+  const remote = (Array.isArray(remoteItems) ? remoteItems : []).map(sanitizeScopeLayer).filter(Boolean) as BlueprintScopeLayer[]
+  const incoming = (Array.isArray(incomingItems) ? incomingItems : []).map(sanitizeScopeLayer).filter(Boolean) as BlueprintScopeLayer[]
+  return mergeItemsById(remote as TombstonedItem[], incoming as TombstonedItem[]) as unknown as BlueprintScopeLayer[]
+}
+
 function normalizeRect(rect?: BlueprintAnnotationRect): BlueprintAnnotationRect | undefined {
   if (!rect || typeof rect !== 'object') return undefined
   const x = Number(rect.x)
@@ -506,8 +642,11 @@ function sanitizeAnnotation(raw: any): BlueprintAnnotation | null {
         y: Math.max(0, Math.min(1, p.y)),
       }))
     : undefined
-  const createdAt = String(raw.createdAt || new Date().toISOString())
-  const updatedAt = String(raw.updatedAt || new Date().toISOString())
+  // Phase 5E: stable timestamp fallback (never fabricate now() for legacy rows).
+  const createdAt = normalizeCreatedAt(raw)
+  const updatedAt = normalizeUpdatedAt(raw, createdAt)
+  const deletedAt = isValidDateString(raw.deletedAt) ? String(raw.deletedAt) : undefined
+  const deletedBy = deletedAt && raw.deletedBy != null ? String(raw.deletedBy) : undefined
 
   return {
     id,
@@ -523,6 +662,9 @@ function sanitizeAnnotation(raw: any): BlueprintAnnotation | null {
     metadata: raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : undefined,
     createdAt,
     updatedAt,
+    // Tombstone fields preserved so item-level merge keeps deletes; UI accessors filter these.
+    ...(deletedAt ? { deletedAt } : {}),
+    ...(deletedBy ? { deletedBy } : {}),
   }
 }
 
@@ -537,11 +679,20 @@ function getAnnotationsContainer(backup: any): Record<string, BlueprintAnnotatio
   return backup.blueprintSummaries.operationsBlueprintAnnotations
 }
 
-export function getOperationsBlueprintAnnotations(backup: any, blueprintSetId: string): BlueprintAnnotation[] {
+/**
+ * Phase 5E: raw accessor — returns sanitized annotations INCLUDING tombstones
+ * (deletedAt present). Merge/save code needs to see tombstones; the UI must not.
+ */
+export function getOperationsBlueprintAnnotationsRaw(backup: any, blueprintSetId: string): BlueprintAnnotation[] {
   const container = getAnnotationsContainer(backup || {})
   const rawList = container?.[blueprintSetId]
   if (!Array.isArray(rawList)) return []
   return rawList.map(sanitizeAnnotation).filter(Boolean) as BlueprintAnnotation[]
+}
+
+export function getOperationsBlueprintAnnotations(backup: any, blueprintSetId: string): BlueprintAnnotation[] {
+  // Public/UI accessor: hide tombstoned items.
+  return getOperationsBlueprintAnnotationsRaw(backup, blueprintSetId).filter((a) => !a.deletedAt)
 }
 
 function applyAnnotationsToBackup(
@@ -549,11 +700,14 @@ function applyAnnotationsToBackup(
   blueprintSetId: string,
   annotations: BlueprintAnnotation[],
 ): any {
+  // Phase 5E: item-level, delete-safe merge onto the target's existing (raw) array for
+  // this set only. `annotations` (incoming) may include tombstones (from the delete path);
+  // any tombstone already on the target survives the union. Other sets and other BackupData
+  // branches are untouched. Replaces the previous whole-array overwrite.
   const merged = JSON.parse(JSON.stringify(targetBackup || {}))
   const container = getAnnotationsContainer(merged)
-  container[blueprintSetId] = (Array.isArray(annotations) ? annotations : [])
-    .map(sanitizeAnnotation)
-    .filter(Boolean) as BlueprintAnnotation[]
+  const existingRaw = Array.isArray(container[blueprintSetId]) ? container[blueprintSetId] : []
+  container[blueprintSetId] = mergeBlueprintAnnotationsById(existingRaw, Array.isArray(annotations) ? annotations : [])
   return merged
 }
 
@@ -693,8 +847,28 @@ export async function deleteOperationsBlueprintAnnotation(
   blueprintSetId: string,
   annotationId: string
 ): Promise<SaveBlueprintAnnotationsResult> {
-  const list = getOperationsBlueprintAnnotations(backup, blueprintSetId)
-  const next = list.filter(a => a.id !== annotationId)
+  // Phase 5E: soft-delete. Instead of dropping the item, mark a tombstone so a stale
+  // live copy on another tab/device cannot resurrect it during item-level merge.
+  const raw = getOperationsBlueprintAnnotationsRaw(backup, blueprintSetId)
+  const now = new Date().toISOString()
+  let userId: string | null = null
+  try {
+    const { getActiveTenantUserId } = await import('@/services/backupDataService')
+    userId = getActiveTenantUserId()
+  } catch { /* deletedBy is best-effort; never block a delete on it */ }
+
+  const existing = raw.find(a => a.id === annotationId)
+  let next: BlueprintAnnotation[]
+  if (existing) {
+    next = raw.map(a => a.id === annotationId
+      ? { ...a, deletedAt: now, updatedAt: now, ...(userId ? { deletedBy: userId } : {}) }
+      : a)
+  } else {
+    // Not found locally — no required fields to synthesize a valid tombstone. Re-save the
+    // current raw list (no-op for data) so the caller still gets a normal result shape.
+    console.warn('[Annotations] delete: annotation not found; nothing to tombstone', { blueprintSetId, annotationId })
+    next = raw
+  }
   return saveOperationsBlueprintAnnotations(backup, blueprintSetId, next)
 }
 
@@ -757,6 +931,12 @@ function sanitizeScopeLayer(raw: any): BlueprintScopeLayer | null {
     pageNumber = itemRefs[0].pageNumber
   }
 
+  // Phase 5E: stable timestamp fallback + tombstone preservation (see sanitizeAnnotation).
+  const createdAt = normalizeCreatedAt(raw)
+  const updatedAt = normalizeUpdatedAt(raw, createdAt)
+  const deletedAt = isValidDateString(raw.deletedAt) ? String(raw.deletedAt) : undefined
+  const deletedBy = deletedAt && raw.deletedBy != null ? String(raw.deletedBy) : undefined
+
   return {
     id,
     name,
@@ -771,10 +951,12 @@ function sanitizeScopeLayer(raw: any): BlueprintScopeLayer | null {
     cleanupHours: coerceScopeLayerHours(raw.cleanupHours),
     crewNotes: String(raw.crewNotes || ''),
     proposalSummary: String(raw.proposalSummary || ''),
-    createdAt: String(raw.createdAt || new Date().toISOString()),
-    updatedAt: String(raw.updatedAt || new Date().toISOString()),
+    createdAt,
+    updatedAt,
     visible: raw.visible === false ? false : true,
     isolated: raw.isolated === true,
+    ...(deletedAt ? { deletedAt } : {}),
+    ...(deletedBy ? { deletedBy } : {}),
   }
 }
 
@@ -789,11 +971,20 @@ function getScopeLayersContainer(backup: any): Record<string, BlueprintScopeLaye
   return backup.blueprintSummaries.operationsBlueprintScopeLayers
 }
 
-export function getOperationsBlueprintScopeLayers(backup: any, blueprintSetId: string): BlueprintScopeLayer[] {
+/**
+ * Phase 5E: raw accessor — returns sanitized scope layers INCLUDING tombstones.
+ * Merge/save code needs to see tombstones; the UI must not.
+ */
+export function getOperationsBlueprintScopeLayersRaw(backup: any, blueprintSetId: string): BlueprintScopeLayer[] {
   const container = getScopeLayersContainer(backup || {})
   const rawList = container?.[blueprintSetId]
   if (!Array.isArray(rawList)) return []
   return rawList.map(sanitizeScopeLayer).filter(Boolean) as BlueprintScopeLayer[]
+}
+
+export function getOperationsBlueprintScopeLayers(backup: any, blueprintSetId: string): BlueprintScopeLayer[] {
+  // Public/UI accessor: hide tombstoned items.
+  return getOperationsBlueprintScopeLayersRaw(backup, blueprintSetId).filter((l) => !l.deletedAt)
 }
 
 export const SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG =
@@ -812,9 +1003,14 @@ function applySanitizedScopeLayersToBackup(
   blueprintSetId: string,
   sanitizedLayers: BlueprintScopeLayer[],
 ): any {
+  // Phase 5E: item-level, delete-safe merge onto the target's existing (raw) array for this
+  // set only. `sanitizedLayers` (incoming) already carries tombstones inferred by the save
+  // path; the union with the target keeps any tombstone present on either side. Other sets
+  // and other BackupData branches are untouched. Replaces the previous whole-array overwrite.
   const merged = JSON.parse(JSON.stringify(targetBackup || {}))
   const container = getScopeLayersContainer(merged)
-  container[blueprintSetId] = sanitizedLayers
+  const existingRaw = Array.isArray(container[blueprintSetId]) ? container[blueprintSetId] : []
+  container[blueprintSetId] = mergeBlueprintScopeLayersById(existingRaw, sanitizedLayers)
   return merged
 }
 
@@ -826,7 +1022,7 @@ export async function saveOperationsBlueprintScopeLayers(
   // Phase 5C: scope metadata only. Does NOT change merge/save/stale/baseline behavior.
   const SCOPE: DataScope = 'blueprint.workPackages'
 
-  const sanitizedLayers = (Array.isArray(scopeLayers) ? scopeLayers : [])
+  const incomingLive = (Array.isArray(scopeLayers) ? scopeLayers : [])
     .map(sanitizeScopeLayer)
     .filter(Boolean) as BlueprintScopeLayer[]
 
@@ -842,6 +1038,30 @@ export async function saveOperationsBlueprintScopeLayers(
 
   const userId = getActiveTenantUserId()
   const localBase = backup || getBackupData()
+
+  // Phase 5E: infer tombstones for layers the UI dropped. deleteScopeLayer (and any edit)
+  // passes the COMPLETE live array for this set (verified in the Phase 5E pre-edit caller
+  // check) — it filters rather than tombstoning — so any previously-live id now absent is a
+  // delete. Synthesize a tombstone for it; carry forward previously-tombstoned layers so they
+  // survive. This keeps the delete durable without editing OperationsBlueprintPdfViewer.tsx.
+  const nowIsoTombstone = new Date().toISOString()
+  const prevRawLayers = localBase ? getOperationsBlueprintScopeLayersRaw(localBase, blueprintSetId) : []
+  const incomingLiveIds = new Set(incomingLive.map((l) => l.id))
+  const inferredTombstones: BlueprintScopeLayer[] = []
+  const carriedTombstones: BlueprintScopeLayer[] = []
+  for (const prev of prevRawLayers) {
+    if (prev.deletedAt) { carriedTombstones.push(prev); continue }
+    if (!incomingLiveIds.has(prev.id)) {
+      inferredTombstones.push({
+        ...prev,
+        deletedAt: nowIsoTombstone,
+        updatedAt: nowIsoTombstone,
+        ...(userId ? { deletedBy: userId } : {}),
+      })
+    }
+  }
+  // Incoming order first (preserves UI reorder), tombstones appended (hidden from UI anyway).
+  const sanitizedLayers = [...incomingLive, ...inferredTombstones, ...carriedTombstones]
 
   const saveLocalOnly = (base: any): SaveScopeLayersResult => {
     const merged = applySanitizedScopeLayersToBackup(base, blueprintSetId, sanitizedLayers)

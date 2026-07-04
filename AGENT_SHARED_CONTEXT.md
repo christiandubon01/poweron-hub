@@ -3455,3 +3455,45 @@ Retrofitted the existing Blueprint save paths onto the Phase 5A scope registry a
 - Did not change Phase 4 Save/stale/baseline behavior.
 - Did NOT reconnect `attemptProductionMergeAndSync` or `mergeLocalChangesIntoRemote`.
 - Did not touch RFIs, Field Logs, Leads, Price Book, Team, Service Calls, or Settings.
+
+---
+
+### 2026-07-04 — Phase 5E: Blueprint Tombstones + Item-Level Delete-Safe Merge
+
+**Agent:** Claude (Opus 4.8)
+**Mode:** Scoped implementation (Phase 5E)
+**Baseline HEAD:** `3a69cf0` (Phase 5C "Tag blueprint saves with data scopes")
+**Files touched:** `src/services/blueprintLibraryService.ts`, `src/services/scopeRegistry.ts`, `AGENT_SHARED_CONTEXT.md`
+**Status:** DONE — typecheck ✅ build ✅ (NOT committed)
+
+Upgraded Blueprint annotations and work packages (scope layers) from per-set whole-array replacement + hard delete to **soft-delete tombstones + item-level, delete-safe id-merge**, so a stale same-set save from a second tab/device can no longer resurrect a deleted item. Runs entirely inside `blueprintLibraryService.ts` on top of the existing fetch-latest → patch-branch → remote-baseline save path. **No Save/stale/baseline change; `backupDataService.ts` untouched; `OperationsBlueprintPdfViewer.tsx` untouched.**
+
+**Tombstone model**
+- Added optional `deletedAt?: string` + `deletedBy?: string` to `BlueprintAnnotation` and `BlueprintScopeLayer`. Presence of `deletedAt` = deleted. Tombstones stay **inline** in the same per-set raw arrays (`operationsBlueprintAnnotations[setId][]` / `operationsBlueprintScopeLayers[setId][]`).
+- Backward compatible: old backups without the fields are unaffected; absence never deletes.
+
+**Timestamp defaulting fix (prerequisite)**
+- New pure helpers `isValidDateString`, `parseTimestampMs`, `timestampFromId`, `normalizeCreatedAt`, `normalizeUpdatedAt`. Sanitizers no longer default a missing `createdAt`/`updatedAt` to `now()` (which made legacy rows look freshly edited and could beat real deletes). Fallback chain: valid value → timestamp parsed from the id's embedded 13-digit ms epoch → stable `1970` epoch. A tombstone's `updatedAt` is bumped to at least its `deletedAt`.
+
+**Delete behavior**
+- Annotations: `deleteOperationsBlueprintAnnotation` now writes a tombstone (`deletedAt`/`deletedBy`/`updatedAt = now`) into the raw list instead of `filter`-dropping the item, then saves the full raw list.
+- Work packages: `deleteScopeLayer` in the UI still just filters the array (viewer untouched). `saveOperationsBlueprintScopeLayers` **infers** tombstones — it compares the previous raw local layers for the set against the incoming complete live array and synthesizes a tombstone for any previously-live id now missing; previously-tombstoned layers are carried forward. Safe because the pre-edit caller check confirmed every caller passes the complete live array for the set (no partial patches).
+
+**Item-level merge**
+- New pure `mergeBlueprintAnnotationsById` / `mergeBlueprintScopeLayersById` (id-keyed union). Winner per id: both live → newest `updatedAt` (exact tie → remote); tombstone vs live → tombstone wins unless the live edit is strictly newer than `deletedAt` (genuine re-edit/undelete); both tombstones → newest `deletedAt`. Tombstones are preserved in the merged raw output.
+- `applyAnnotationsToBackup` / `applySanitizedScopeLayersToBackup` now **merge** the incoming array into the target backup's existing raw array for that set (was whole-array overwrite). Only the one set / one branch is touched. Because the merge runs against the freshly fetched remote (which carries the tombstone), a stale live copy loses → **no resurrection**.
+- **Order:** merge is incoming-order-first, then remote-only ids appended. Deliberately deviates from the audit's "remote-order-first" suggestion so a single-device Work Package **reorder survives** the merge-against-own-remote round-trip (remote-first would have silently reverted reorders). Ordering never affects which version wins, so delete-safety is unchanged. No new order field added.
+
+**Tombstones hidden from UI**
+- Added raw accessors `getOperationsBlueprintAnnotationsRaw` / `getOperationsBlueprintScopeLayersRaw` (include tombstones, for merge/save). The public `getOperationsBlueprintAnnotations` / `getOperationsBlueprintScopeLayers` now filter out `deletedAt` items, so the viewer, summaries, and counts never render tombstones. `locallyDeletedIdsRef` in the viewer was left in place (harmless belt-and-suspenders) — not needed but not removed.
+
+**scopeRegistry.ts** — updated only the `blueprint.annotations` / `blueprint.workPackages` descriptors: `tombstoneField: 'deletedAt'`, `needsTombstone: false`, notes now state item-level merge is implemented and record the client-clock + no-GC limitations. `DataScope` union and all other descriptors unchanged.
+
+**Explicitly NOT done / preserved**
+- `backupDataService.ts` NOT modified; `attemptProductionMergeAndSync` / `mergeLocalChangesIntoRemote` / `mergeBlueprintSummariesObject` remain dead (not reconnected).
+- Phase 4 Save/stale/baseline, verified-save, freshness guard, monotonic baseline, same-device allowance — all unchanged.
+- `OperationsBlueprintPdfViewer.tsx` NOT modified. `V15rLayout.tsx`, snapshot/milestone services, Supabase migrations, Recovery Center — untouched.
+- Did not touch RFIs, Field Logs, Leads, Price Book, Team, Service Calls, or Settings.
+- Existing hard-deleted items remain unrecoverable (pre-5E deletes have no tombstone); resurrection protection applies to deletes made from 5E onward. Tombstones retained indefinitely — a future phase should add GC.
+
+**Lock released.**
