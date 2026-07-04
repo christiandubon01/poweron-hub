@@ -1437,35 +1437,6 @@ export function getLastKnownRemoteSavedAt(): string | null {
   return _lastKnownRemoteSavedAt
 }
 
-// [Phase 4G diagnostic — TEMPORARY, remove after root-cause] Console-only snapshot of
-// the sync-guard state. No secrets / no Supabase keys. Call window.__POWERON_SYNC_DEBUG__()
-// from the browser console. Reads current state at call time; changes no behavior.
-try {
-  const g: any = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : null)
-  if (g) {
-    g.__POWERON_SYNC_DEBUG__ = () => {
-      const uid = _activeTenantUserId
-      const local = uid ? getBackupData(uid) : getBackupData()
-      const snapshot = {
-        knownRemoteBaselineAt: _lastKnownRemoteSavedAt,
-        knownRemoteBaselineMs: getKnownRemoteBaselineMs(),
-        dataChanged: _dataChanged,
-        changedKeys: Array.from(_changedKeys),
-        activeTenantUserId: uid,
-        tenantDataReady: _tenantDataReady,
-        localLastSavedAt: local?._lastSavedAt ?? null,
-        localProjectCount: Array.isArray((local as any)?.projects) ? (local as any).projects.length : 0,
-        environment: getSaveEnvironment(),
-        origin: typeof window !== 'undefined' ? window.location.href : null,
-        now: Date.now(),
-        nowIso: new Date().toISOString(),
-      }
-      console.info('[POWERON_SYNC_DEBUG]', snapshot)
-      return snapshot
-    }
-  }
-} catch { /* diagnostics must never throw */ }
-
 function getKnownRemoteBaselineMs(): number {
   return parseBackupTimestampMs(_lastKnownRemoteSavedAt)
 }
@@ -1503,38 +1474,6 @@ function setKnownRemoteBaseline(
   const applied = candidateBaselineMs > 0 && candidateBaselineMs >= currentBaselineMs
   if (applied) {
     _lastKnownRemoteSavedAt = new Date(candidateBaselineMs).toISOString()
-  }
-
-  // [Phase 4G diagnostic — TEMPORARY, remove after root-cause] no behavior change.
-  try {
-    console.info('[POWERON_BASELINE_SET]', {
-      inputRemoteUpdatedAt: remoteUpdatedAt ?? null,
-      inputRemoteDataLastSavedAt: remoteDataLastSavedAt ?? null,
-      candidateBaselineMs,
-      currentBaselineMs,
-      computedBaselineMs: candidateBaselineMs,
-      computedBaselineAt: candidateBaselineMs > 0 ? new Date(candidateBaselineMs).toISOString() : null,
-      appliedToSession: applied,
-      callerHint: (new Error().stack?.split('\n')[2] || '').trim(),
-      now: Date.now(),
-      nowIso: new Date().toISOString(),
-    })
-  } catch { /* diagnostics must never throw */ }
-
-  // [Phase 4H diagnostic] A real timestamp older than the current baseline was refused.
-  if (candidateBaselineMs > 0 && candidateBaselineMs < currentBaselineMs) {
-    try {
-      console.info('[POWERON_BASELINE_IGNORED_OLDER]', {
-        currentBaselineMs,
-        currentBaselineAt: _lastKnownRemoteSavedAt,
-        candidateBaselineMs,
-        candidateBaselineAt: new Date(candidateBaselineMs).toISOString(),
-        inputRemoteUpdatedAt: remoteUpdatedAt ?? null,
-        inputRemoteDataLastSavedAt: remoteDataLastSavedAt ?? null,
-        callerHint: (new Error().stack?.split('\n')[2] || '').trim(),
-        now: Date.now(),
-      })
-    } catch { /* diagnostics must never throw */ }
   }
 
   return candidateBaselineMs
@@ -1709,31 +1648,6 @@ export async function checkManualSaveFreshness(
       remoteUpdatedAt: remote.remoteUpdatedAt,
       remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
     })
-    // [Phase 4G diagnostic — TEMPORARY] no behavior change.
-    try {
-      console.warn('[POWERON_SYNC_BLOCK_DEBUG]', {
-        blockPath: 'no-known-baseline',
-        message: SYNC_BLOCKED_NO_REMOTE_BASELINE_MSG,
-        userId,
-        source: null, // not passed into checkManualSaveFreshness
-        requireFreshRemote: null, // decided by caller (syncToSupabase), not visible here
-        failClosed,
-        localLastSavedAt: local?._lastSavedAt ?? null,
-        knownRemoteBaselineAt: _lastKnownRemoteSavedAt,
-        remoteUpdatedAt: remote.remoteUpdatedAt,
-        remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
-        localFreshnessMs,
-        knownRemoteBaselineMs: 0,
-        remoteFreshnessMs: remote.remoteFreshnessMs,
-        freshnessToleranceMs: FRESHNESS_TOLERANCE_MS,
-        environment: getSaveEnvironment(),
-        origin: typeof window !== 'undefined' ? window.location.href : null,
-        dataChanged: _dataChanged,
-        changedKeys: Array.from(_changedKeys),
-        now: Date.now(),
-        nowIso: new Date().toISOString(),
-      })
-    } catch { /* diagnostics must never throw */ }
     return {
       allowed: false,
       blocked: true,
@@ -1757,20 +1671,6 @@ export async function checkManualSaveFreshness(
     const remoteSavedBy = remote.remoteSavedBy ?? null
     const localAtLeastAsNewAsRemote = localFreshnessMs >= remote.remoteFreshnessMs - FRESHNESS_TOLERANCE_MS
     if (remoteSavedBy && remoteSavedBy === currentDeviceId && localAtLeastAsNewAsRemote) {
-      try {
-        console.info('[POWERON_SYNC_BLOCK_BYPASSED_SAME_DEVICE_LOCAL_NEWER]', {
-          localFreshnessMs,
-          remoteFreshnessMs: remote.remoteFreshnessMs,
-          knownRemoteBaselineMs,
-          remoteSavedBy,
-          currentDeviceId,
-          localLastSavedAt: local?._lastSavedAt ?? null,
-          remoteUpdatedAt: remote.remoteUpdatedAt,
-          remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
-          now: Date.now(),
-          nowIso: new Date().toISOString(),
-        })
-      } catch { /* diagnostics must never throw */ }
       return {
         allowed: true,
         localFreshnessMs,
@@ -1789,31 +1689,6 @@ export async function checkManualSaveFreshness(
       remoteUpdatedAt: remote.remoteUpdatedAt,
       remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
     })
-    // [Phase 4G diagnostic — TEMPORARY] no behavior change.
-    try {
-      console.warn('[POWERON_SYNC_BLOCK_DEBUG]', {
-        blockPath: 'remote-advanced-past-baseline',
-        message: REMOTE_FRESHER_THAN_LOCAL_MSG,
-        userId,
-        source: null, // not passed into checkManualSaveFreshness
-        requireFreshRemote: null, // decided by caller (syncToSupabase), not visible here
-        failClosed,
-        localLastSavedAt: local?._lastSavedAt ?? null,
-        knownRemoteBaselineAt: _lastKnownRemoteSavedAt,
-        remoteUpdatedAt: remote.remoteUpdatedAt,
-        remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
-        localFreshnessMs,
-        knownRemoteBaselineMs,
-        remoteFreshnessMs: remote.remoteFreshnessMs,
-        freshnessToleranceMs: FRESHNESS_TOLERANCE_MS,
-        environment: getSaveEnvironment(),
-        origin: typeof window !== 'undefined' ? window.location.href : null,
-        dataChanged: _dataChanged,
-        changedKeys: Array.from(_changedKeys),
-        now: Date.now(),
-        nowIso: new Date().toISOString(),
-      })
-    } catch { /* diagnostics must never throw */ }
     return {
       allowed: false,
       blocked: true,
@@ -2205,20 +2080,6 @@ export async function syncToSupabase(
     const serverUpdatedAt = writtenRow?.updated_at ? String(writtenRow.updated_at) : now
     _lastSyncMeta = { savedBy: deviceId, savedAt: now }
     setKnownRemoteBaseline(serverUpdatedAt, now)
-    // [Phase 4G diagnostic — TEMPORARY] no behavior change.
-    try {
-      console.info('[POWERON_SYNC_SUCCESS_BASELINE]', {
-        source: options.source ?? null,
-        serverUpdatedAt,
-        clientNow: now,
-        payloadLastSavedAt: (payload as any)?._lastSavedAt ?? null,
-        suppressSuccessEvent: options._suppressSuccessEvent === true,
-        knownRemoteBaselineAt: _lastKnownRemoteSavedAt,
-        changedKeys: Array.from(_changedKeys),
-        now: Date.now(),
-        nowIso: new Date().toISOString(),
-      })
-    } catch { /* diagnostics must never throw */ }
     // A real success resolves any prior stale-overwrite conflict -- let the next
     // one (if any) dispatch immediately rather than staying throttled.
     _lastConflictDispatch = null
@@ -2332,24 +2193,6 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     const remoteTime = setKnownRemoteBaseline(row.updated_at, remote._lastSavedAt)
     const local = getBackupData(userId)
     const localTime = local ? parseBackupTimestampMs(local._lastSavedAt) : 0
-
-    // [Phase 4G diagnostic — TEMPORARY] no behavior change. The remote-vs-local
-    // choice is finalized in the branches below; this logs the inputs + a hint.
-    try {
-      console.info('[POWERON_LOAD_BASELINE]', {
-        rowUpdatedAt: row.updated_at ?? null,
-        remoteLastSavedAt: remote._lastSavedAt ?? null,
-        computedBaselineAt: _lastKnownRemoteSavedAt,
-        computedBaselineMs: remoteTime,
-        localLastSavedAt: local?._lastSavedAt ?? null,
-        localTime,
-        chosenHint: remoteTime > localTime ? 'remote-newer' : (localTime > remoteTime ? 'local-newer' : 'equal'),
-        remoteProjectCount: Array.isArray((remote as any)?.projects) ? (remote as any).projects.length : 0,
-        localProjectCount: Array.isArray((local as any)?.projects) ? (local as any).projects.length : 0,
-        now: Date.now(),
-        nowIso: new Date().toISOString(),
-      })
-    } catch { /* diagnostics must never throw */ }
 
     // Login/bootstrap path (explicit user id): prefer remote, but if this browser already
     // has a newer tenant cache than Supabase (e.g. settings saved locally before periodic
@@ -3063,40 +2906,11 @@ export async function saveLiveDataVerified(
   const local = getBackupData(userId)
   if (!local) return { status: 'error', error: 'No local data to save' }
 
-  // [Phase 4G diagnostic — TEMPORARY] no behavior change.
-  try {
-    console.info('[POWERON_VERIFIED_SAVE_START]', {
-      source,
-      userId,
-      localLastSavedAt: local?._lastSavedAt ?? null,
-      knownRemoteBaselineAt: _lastKnownRemoteSavedAt,
-      projectCount: Array.isArray((local as any)?.projects) ? (local as any).projects.length : 0,
-      dataChanged: _dataChanged,
-      changedKeys: Array.from(_changedKeys),
-      now: Date.now(),
-      nowIso: new Date().toISOString(),
-    })
-  } catch { /* diagnostics must never throw */ }
-
   // c. Freshness / stale-overwrite guard (same check Phase 2 enforces). Runs in
   //    production AND localhost. Stale => block before any write, no merge.
   onPhase?.('checking-cloud')
   const freshness = await checkManualSaveFreshness(userId, { failClosed: true })
   if (!freshness.allowed) {
-    // [Phase 4G diagnostic — TEMPORARY] no behavior change.
-    try {
-      console.warn('[POWERON_VERIFIED_SAVE_STALE_BLOCKED]', {
-        source,
-        userId,
-        freshness,
-        knownRemoteBaselineAt: _lastKnownRemoteSavedAt,
-        localLastSavedAt: local?._lastSavedAt ?? null,
-        environment: getSaveEnvironment(),
-        origin: typeof window !== 'undefined' ? window.location.href : null,
-        now: Date.now(),
-        nowIso: new Date().toISOString(),
-      })
-    } catch { /* diagnostics must never throw */ }
     return { status: 'stale-blocked', error: resolveSyncGuardError(freshness) }
   }
 

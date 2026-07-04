@@ -92,9 +92,41 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Phase4D-ForceSync-Baseline-Poison-Fix (Claude Opus 4.8) | Remove redundant client-time baseline overwrite in forceSyncToCloud that re-poisoned the server baseline set by syncToSupabase | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
 | Phase4F-Verified-Save-False-Mismatch-Fix (Claude Opus 4.8) | Fix verified-save false mismatch — expected summary from post-sync payload, bounded read-back retry, timestamp-lag no longer becomes data mismatch | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
 | Phase4G-Sync-Block-Diagnostics (Claude Opus 4.8) | DIAGNOSTIC ONLY — temporary console logging around the stale/freshness guard + baseline to root-cause the persistent false stale-block. No fix, no behavior change. | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (COMMITTED a973c73) | RELEASED | 2026-07-03 |
-| Phase4H-Monotonic-Baseline-SameDevice-Allowance (Claude Opus 4.8) | Monotonic remote baseline (older realtime/load/sync rows can't move it backward) + same-device local-newer allowance in the freshness guard. Stale other-device saves still block. Phase 4G diagnostics kept. | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-04 |
+| Phase4H-Monotonic-Baseline-SameDevice-Allowance (Claude Opus 4.8) | Monotonic remote baseline (older realtime/load/sync rows can't move it backward) + same-device local-newer allowance in the freshness guard. Stale other-device saves still block. Phase 4G diagnostics kept. | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (COMMITTED 2ff28de) | RELEASED | 2026-07-04 |
+| Phase4I-Remove-Sync-Diagnostics (Claude Opus 4.8) | CLEANUP ONLY — remove temporary Phase 4G/4H [POWERON_*] console diagnostics + __POWERON_SYNC_DEBUG__ helper. Behavior unchanged. | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-04 |
 
 ## Audit & Change Log
+
+### 2026-07-04 — Phase 4I: remove temporary sync diagnostics (CLEANUP ONLY, NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Cleanup only — remove temporary Phase 4G/4H diagnostics. No behavior change.
+**Branch:** main | HEAD before edits = `2ff28de`
+**File Lock:** `src/services/backupDataService.ts`, `AGENT_SHARED_CONTEXT.md` — CLAIMED then RELEASED.
+
+**Context:** Phase 4H tested green (Save with no changes → Saved & verified; Save again → Saved & verified; small edit + Save → Saved & verified). The temporary diagnostics are no longer needed.
+
+**Removed (console-only, all wrapped in the temporary `try/catch { diagnostics must never throw }`):**
+- `[POWERON_SYNC_BLOCK_DEBUG]` (both block paths in `checkManualSaveFreshness`)
+- `[POWERON_BASELINE_SET]` (in `setKnownRemoteBaseline`)
+- `[POWERON_BASELINE_IGNORED_OLDER]` (in `setKnownRemoteBaseline`)
+- `[POWERON_SYNC_SUCCESS_BASELINE]` (in `syncToSupabase` success path)
+- `[POWERON_LOAD_BASELINE]` (in `loadFromSupabase`)
+- `[POWERON_VERIFIED_SAVE_START]` (in `saveLiveDataVerified`)
+- `[POWERON_VERIFIED_SAVE_STALE_BLOCKED]` (in `saveLiveDataVerified`)
+- `[POWERON_SYNC_BLOCK_BYPASSED_SAME_DEVICE_LOCAL_NEWER]` (in `checkManualSaveFreshness`)
+- The `__POWERON_SYNC_DEBUG__` global helper (assigned on `globalThis`) and its `[POWERON_SYNC_DEBUG]` log.
+
+**Kept (unchanged behavior):**
+- Monotonic `setKnownRemoteBaseline` — never moves backward within a tenant session (Phase 4H).
+- Same-device local-newer allowance in `checkManualSaveFreshness` (Phase 4H); real stale other-device saves still block.
+- `fetchRemoteAppStateFreshness` still returns `remoteSavedBy` (needed by the allowance) — this is real logic, not a diagnostic, so it stayed.
+- `syncToSupabase` baselines from server `updated_at` (Phase 4B); `forceSyncToCloud` does not overwrite baseline with client `_lastSavedAt` (Phase 4D); `saveLiveDataVerified` computes expected summary from the post-sync payload + read-back retry (Phase 4F).
+- Pre-existing non-diagnostic `[Sync]` console logs (`Save/sync blocked …`, `Synced tenant …`, etc.) were left in place.
+
+**NOT touched / NOT reconnected:** `attemptProductionMergeAndSync` / `mergeLocalChangesIntoRemote` stay dead. No return values, freshness comparisons, monotonic behavior, same-device allowance, or verified-Save behavior changed. No UI, no Blueprint/RFI/FieldLog/Leads/PriceBook/Team changes.
+
+**Lock released.**
 
 ### 2026-07-04 — Phase 4H: monotonic baseline + same-device local-newer allowance (NOT COMMITTED)
 
