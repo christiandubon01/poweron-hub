@@ -781,11 +781,15 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         setToastMessage('Live data saved to cloud')
         setTimeout(() => setToastMessage(null), 3000)
       } else if (result.blocked) {
-        setSyncStatus(isLocalhostDev ? 'paused' : 'synced')
+        // Phase 2 (stop-bleeding): the requireFreshRemote guard now blocks stale
+        // saves in production AND localhost (see backupDataService.forceSyncToCloud).
+        // A blocked header save means the cloud holds newer data than this session
+        // (or the pre-save safety snapshot failed) -- either way local data is safe
+        // and this is NOT a "synced" state. Show the paused state with reload
+        // guidance, not a generic sync failure.
+        setSyncStatus('paused')
         setToastMessage(
-          isLocalhostDev
-            ? (result.error || 'Localhost session is older than production cloud data. Full snapshot save blocked.')
-            : (result.error || 'Could not merge cloud changes — try again')
+          result.error || 'Cloud has newer data than this session. Reload latest before saving to cloud.'
         )
         setTimeout(() => setToastMessage(null), 6000)
       } else {
@@ -1837,8 +1841,11 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                       setToastMessage('Synced to cloud')
                       setTimeout(() => setToastMessage(null), 3000)
                     } else if (result.blocked) {
-                      // Guard blocked this manual retry too -- same 'paused' treatment,
-                      // not 'failed'. Local data is safe; only the cloud push is on hold.
+                      // Phase 2 (stop-bleeding): the stale-overwrite guard blocks
+                      // this manual retry in production AND localhost (see
+                      // backupDataService.forceSyncToCloud). Same 'paused' treatment,
+                      // not 'failed' -- local data is safe; only the cloud push is on
+                      // hold because newer remote data exists. Reload latest first.
                       setSyncStatus('paused')
                       setToastMessage('Cloud sync is paused because newer remote data exists. Reload latest before cloud syncing.')
                       setTimeout(() => setToastMessage(null), 6000)

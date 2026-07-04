@@ -85,8 +85,57 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Step13B-QA9-Production-Sync-Guard (Claude Opus 4.8) | Multi-device sync guard — localhost block only, production merge-before-save | src/services/backupDataService.ts, src/services/blueprintLibraryService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 | Step13B-QA8-Zoom-Symbol-Audit (Claude Opus 4.8) | Blueprint Viewer — zoom/symbol coordinate audit + fix | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 | Step13B-QA7-R7-Default-Annotations (Claude Code Opus) | Blueprint Viewer — default/embedded iPad annotations panel: expand naturally below document, not collapsed/capped drawer | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
+| Step13E-Emergency-Prod-Sync-Rollback (Claude Opus 4.8) | Emergency rollback — neutralize ad30ad4 production merge/freshness guard so production saves upload normally; localhost/dev stale-overwrite guard unchanged | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-03 |
+| Phase2-Stop-Bleeding-Stale-Save-Block (Claude Opus 4.8) | Re-enable stale-save freshness BLOCK on production + localhost (no auto-merge); supersedes Step 13E production ungating | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-03 |
 
 ## Audit & Change Log
+
+### 2026-07-03 — Phase 2: re-enable stale-save blocking on production + localhost (block-only, no merge; NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Sync/save freshness guard only — supersedes the Step 13E production ungating
+**Branch:** main | HEAD before edits = `8980b83`
+
+**Goal:** Stop the bleed identified in Phase 1: the uncommitted Step 13E rollback disabled production freshness checks, letting a stale tab/device silently overwrite newer cloud data. Phase 2 re-enables stale-save BLOCKING in production (and keeps it in localhost), but does NOT restore `attemptProductionMergeAndSync` — its whole-object "projects" merge could clobber nested `project.rfis[]`. Block-only: a stale session is refused and the user is told to reload latest before syncing. No automatic merge yet.
+
+**Fix — freshness guard runs in production AND localhost, everywhere:**
+- `backupDataService.ts` `syncToSupabase`: `guardEnabled` reverted to `!options.allowOverwriteNewerRemote && options.requireFreshRemote !== false` (removed the `&& getSaveEnvironment() === 'localhost'` limiter). On block it dispatches the sync-conflict and returns `{ blocked, conflict }`. `attemptProductionMergeAndSync` is NOT called (the Step 13E deletion of that inner merge block stays — it was never re-added).
+- `backupDataService.ts` `forceSyncToCloud` requireFreshRemote guard: reverted to `if (options?.requireFreshRemote)` (removed `&& getSaveEnvironment() === 'localhost'`). Stale header save blocks before overwrite. No merge fallback.
+- `backupDataService.ts` `forceSyncToCloud` pre-stamp guard: `skipPreStampGuard` reverted to `allowOverwriteNewerRemote === true || requireFreshRemote === true` (removed the `|| getSaveEnvironment() !== 'localhost'` production bypass). Production no longer skips the pre-stamp guard. No merge fallback.
+- `attemptProductionMergeAndSync`, `mergeLocalChangesIntoRemote`, `mergeArrayByIdPreferNewer`, `mergeBlueprintSummariesObject`, and the `_skipProductionMerge` option remain in place as dead/unreferenced code — NOT deleted this pass (Phase 2 is stop-bleeding only, no merge-logic rewrite).
+- `saveBackupWithRemoteBaselineSync` UNCHANGED — its remote-baseline-then-sync path (blueprint annotations) was already freshness-safe.
+
+**UI — restore accurate paused state (`V15rLayout.tsx`):**
+- `handleHeaderSaveLiveData` blocked branch: now `setSyncStatus('paused')` for both environments with reload-latest messaging (was Step 13E's `isLocalhostDev ? 'paused' : 'failed'`; pre-13E's production `'synced'` was inaccurate). A blocked header save means cloud is newer (or the safety snapshot failed) — local data is safe, not "synced" and not a generic failure.
+- Header sync-status "tap to retry" blocked branch: reverted to a single `setSyncStatus('paused')` + "Cloud sync is paused because newer remote data exists. Reload latest before cloud syncing." (removed the Step 13E `isLocalDevRetry` production→`'failed'` split).
+- The localhost header-save `window.confirm` warning and `getSaveEnvironment()`/`isLocalDevOrigin()` are unchanged.
+
+**Not done this pass (explicitly out of scope):** automatic merge/reconciliation of concurrent edits; snapshots schema; Recovery Center; any Blueprint viewer / RFI tab / Field Log / Leads / Price Book / Team / inner-tab merge-logic changes; Supabase migrations; snapshotService / milestoneBackupService. Concurrent production editors still get block-then-reload (last-writer must reload), not auto-merge — that is the intended stop-bleeding behavior.
+
+**Preserved (not touched):** RFI tab, Project/Field Logs tabs, Leads, Price Book, Team, `blueprintLibraryService.ts`, Blueprint viewer, all migrations, data models, snapshot/milestone services, untracked `*.CURRENT-BACKUP` files. typecheck (pending) build (pending).
+
+**Lock released.**
+
+### 2026-07-03 — Emergency rollback: neutralize ad30ad4 production sync guard (Step 13E, NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Sync/save guard only — RFI tab, Project/Field Logs, Blueprint viewer, blueprintLibraryService NOT touched
+**Branch:** main | HEAD before edits = `8980b83`
+
+**Problem:** Production showed "Cloud paused — saved locally just now" and RFI/project saves could be dropped. Root cause (per prior audit): ad30ad4's `attemptProductionMergeAndSync` whole-object "projects" merge (no `project.updatedAt` granularity) could silently clobber nested `project.rfis[]`, and one un-gated `setSyncStatus('paused')` call site (the header sync-status "tap to retry" button) still fired the scary paused state on production.
+
+**Fix — guard now applies to localhost/dev only, everywhere:**
+- `backupDataService.ts` `syncToSupabase`: `guardEnabled` now also requires `getSaveEnvironment() === 'localhost'`. Removed the `attemptProductionMergeAndSync` call inside (it only ever ran when the guard fired, which is now localhost-only, and the function itself already short-circuits to `null` on localhost — so the call was permanently dead there).
+- `backupDataService.ts` `forceSyncToCloud`: both guard blocks (`requireFreshRemote` branch + pre-stamp `skipPreStampGuard` branch) gated the same way — `requireFreshRemote &&`/`|| getSaveEnvironment() !== 'localhost'` — and their `attemptProductionMergeAndSync` calls removed. Production force-sync (header "Save Live Data", "tap to retry") now uploads directly, same as any other write.
+- `attemptProductionMergeAndSync` function definition, its `SyncToSupabaseOptions._skipProductionMerge` field, and `mergeArrayByIdPreferNewer`/`mergeLocalChangesIntoRemote` are left in place (unreferenced/dead) — not deleted, per emergency-rollback scope (no data-model/merge-logic rewrite this pass).
+- `V15rLayout.tsx`: the "tap to retry" button's blocked branch (previously the one un-gated `setSyncStatus('paused')` call) now checks `isLocalDevRetry` the same way `handleSyncConflict`/`handleHeaderSaveLiveData` already did — production shows `'failed'` + "Sync failed" toast instead of `'paused'` + "Cloud paused". `handleHeaderSaveLiveData`'s blocked branch changed `isLocalhostDev ? 'paused' : 'synced'` → `isLocalhostDev ? 'paused' : 'failed'` (production `blocked` on this path can now only mean the safety-snapshot step failed — mislabeling that as "synced" was inaccurate and is now `'failed'` with an accurate toast).
+- `getSaveEnvironment()`, `isLocalDevOrigin()`, and the localhost/127.0.0.1 stale-overwrite block/toast are unchanged and still fully active for localhost/dev.
+
+**Not fixed this pass (explicitly out of scope):** the nested `project.rfis[]` merge-granularity issue itself no longer matters for production (production no longer merges at all — it just uploads current local state like pre-ad30ad4), but if two production tabs/devices race on the same project concurrently, last-write-wins still applies at the whole-payload level (unchanged from pre-ad30ad4 behavior, not a regression from this fix).
+
+**Preserved (not touched):** RFI tab, Project/Field Logs tabs, `blueprintLibraryService.ts` (its own remote-merge for annotations is separate from `attemptProductionMergeAndSync` and untouched), Blueprint viewer/rendering/packages/symbols, all migrations, data models. typecheck ✅ build ✅ `git diff --check` ✅.
+
+**Lock released.**
 
 ### 2026-07-02 — Soft Guide Assist + HDMI/Data symbols + Symbols Size label scale (Step 13D, NOT COMMITTED)
 

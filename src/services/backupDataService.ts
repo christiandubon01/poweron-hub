@@ -1950,22 +1950,17 @@ export async function syncToSupabase(
     return { success: false, skipped: true, error: 'Hydration in progress' }
   }
 
+  // Phase 2 (stop-bleeding): the stale-overwrite freshness guard runs in
+  // production AND localhost. A stale session (remote advanced past this
+  // session's known baseline) is BLOCKED before it can overwrite newer cloud
+  // data. No automatic merge — attemptProductionMergeAndSync is intentionally
+  // NOT called (its whole-object merge could clobber nested project data such
+  // as RFIs). Block-only; user must reload latest before syncing.
   const guardEnabled = !options.allowOverwriteNewerRemote && options.requireFreshRemote !== false
   if (guardEnabled) {
     const failClosed = options.failClosed !== false
     const freshness = await checkManualSaveFreshness(userId, { failClosed })
     if (!freshness.allowed) {
-      if (!options._skipProductionMerge) {
-        const mergeResult = await attemptProductionMergeAndSync(userId, options)
-        if (mergeResult) {
-          if (mergeResult.success) {
-            _dataChanged = false
-            _lastSyncedAt = Date.now()
-            _changedKeys.clear()
-          }
-          return mergeResult
-        }
-      }
       const error = resolveSyncGuardError(freshness)
       const code = resolveSyncGuardCode(freshness)
       console.warn('[Sync] Cloud write blocked by stale-overwrite guard', {
@@ -2512,28 +2507,12 @@ export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promi
   const data = getBackupData()
   if (!data) return { success: false, error: 'No local data to sync' }
 
+  // Phase 2 (stop-bleeding): requireFreshRemote guard runs in production AND
+  // localhost. A stale header save is blocked before it can overwrite newer
+  // cloud data. No merge fallback (attemptProductionMergeAndSync NOT called).
   if (options?.requireFreshRemote) {
     const freshness = await checkManualSaveFreshness(_activeTenantUserId, { failClosed: true })
     if (!freshness.allowed) {
-      const mergeResult = await attemptProductionMergeAndSync(_activeTenantUserId, {
-        source: options.source || 'manual',
-      })
-      if (mergeResult?.success) {
-        _dataChanged = false
-        _lastSyncedAt = Date.now()
-        _changedKeys.clear()
-        return { success: true }
-      }
-      if (getSaveEnvironment() !== 'localhost') {
-        // Production merge failed — surface the merge/sync error, not localhost guard text.
-        if (mergeResult && !mergeResult.success) {
-          return {
-            success: false,
-            blocked: mergeResult.blocked,
-            error: mergeResult.error,
-          }
-        }
-      }
       console.warn('[sync] Force sync blocked by freshness guard', {
         source: options.source || 'manual',
         localFreshnessMs: freshness.localFreshnessMs,
@@ -2564,6 +2543,11 @@ export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promi
     }
   }
 
+  // Phase 2 (stop-bleeding): the pre-stamp stale-overwrite guard runs in
+  // production AND localhost. Production no longer bypasses it. It is only
+  // skipped when the caller explicitly opts out of freshness (header Save's
+  // requireFreshRemote already ran its own check above; snapshot/restore flows
+  // set allowOverwriteNewerRemote). No merge fallback.
   const skipPreStampGuard =
     options?.allowOverwriteNewerRemote === true ||
     options?.requireFreshRemote === true
@@ -2571,15 +2555,6 @@ export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promi
   if (!skipPreStampGuard) {
     const freshness = await checkManualSaveFreshness(_activeTenantUserId, { failClosed: true })
     if (!freshness.allowed) {
-      const mergeResult = await attemptProductionMergeAndSync(_activeTenantUserId, {
-        source: options?.source || 'manual',
-      })
-      if (mergeResult?.success) {
-        _dataChanged = false
-        _lastSyncedAt = Date.now()
-        _changedKeys.clear()
-        return { success: true }
-      }
       const error = resolveSyncGuardError(freshness)
       const code = resolveSyncGuardCode(freshness)
       console.warn('[sync] Force sync blocked by stale-overwrite guard', {
