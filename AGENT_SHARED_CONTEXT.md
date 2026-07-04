@@ -91,8 +91,32 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Phase4B-Baseline-Server-UpdatedAt (Claude Opus 4.8) | Fix false stale-block after successful write — syncToSupabase baselines from Supabase server updated_at returned by upsert, not client now | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (COMMITTED 248711f) | RELEASED | 2026-07-03 |
 | Phase4D-ForceSync-Baseline-Poison-Fix (Claude Opus 4.8) | Remove redundant client-time baseline overwrite in forceSyncToCloud that re-poisoned the server baseline set by syncToSupabase | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
 | Phase4F-Verified-Save-False-Mismatch-Fix (Claude Opus 4.8) | Fix verified-save false mismatch — expected summary from post-sync payload, bounded read-back retry, timestamp-lag no longer becomes data mismatch | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
+| Phase4G-Sync-Block-Diagnostics (Claude Opus 4.8) | DIAGNOSTIC ONLY — temporary console logging around the stale/freshness guard + baseline to root-cause the persistent false stale-block. No fix, no behavior change. | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
 
 ## Audit & Change Log
+
+### 2026-07-03 — Phase 4G: false stale-block diagnostics (DIAGNOSTIC ONLY, NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Temporary runtime diagnostics only — NO fix, NO behavior change.
+**Branch:** main | HEAD before edits = `0657442`
+**File Lock:** `src/services/backupDataService.ts`, `AGENT_SHARED_CONTEXT.md` — CLAIMED then RELEASED.
+
+**Why:** After Phase 4F, Save still shows *"Cloud sync was blocked because remote data is newer than this local session."* The stale/freshness guard is blocking before the verified-save write/read-back flow can complete. Before guessing another fix we need the actual runtime values (baseline vs remote timestamps, who set the baseline last, and from which path).
+
+**Diagnostics added (all wrapped in `try/catch` so they can never throw; console-only; no secrets / no Supabase keys):**
+- `checkManualSaveFreshness` — on BOTH remote-newer block paths, a `console.warn('[POWERON_SYNC_BLOCK_DEBUG]', {...})` with `blockPath` (`no-known-baseline` | `remote-advanced-past-baseline`), message, userId, failClosed, local/remote/baseline timestamps + ms, `freshnessToleranceMs`, environment, origin, `_dataChanged`, `changedKeys`, `Date.now()`, ISO. (`source`/`requireFreshRemote` are not passed into this fn — logged as `null` with a note.)
+- `setKnownRemoteBaseline` — `console.info('[POWERON_BASELINE_SET]', {...})` with inputs, computed baseline ms/ISO, whether it was applied, a `callerHint` from the stack, `Date.now()`, ISO. Fires on every baseline write (load, sync-success, verified-save) so we can see WHO set the baseline last.
+- `syncToSupabase` success path — `console.info('[POWERON_SYNC_SUCCESS_BASELINE]', {...})` with source, `serverUpdatedAt` (from upsert), client `now`, `payload._lastSavedAt`, `_suppressSuccessEvent`, resulting baseline, `changedKeys`.
+- `loadFromSupabase` (after baseline set) — `console.info('[POWERON_LOAD_BASELINE]', {...})` with `row.updated_at`, `remote._lastSavedAt`, computed baseline, local vs remote timestamps + a `chosenHint`, remote/local project counts.
+- `saveLiveDataVerified` — `console.info('[POWERON_VERIFIED_SAVE_START]', {...})` before the freshness check (userId, local `_lastSavedAt`, current baseline, project count, changed keys); and `console.warn('[POWERON_VERIFIED_SAVE_STALE_BLOCKED]', {...})` with the full `freshness` result object when it stale-blocks.
+- `window.__POWERON_SYNC_DEBUG__()` global helper (assigned on `globalThis`) — prints/returns known baseline, `dataChanged`, `changedKeys`, active tenant id, tenant-ready flag, local `_lastSavedAt`, local project count, environment, origin. No secrets.
+
+**Explicitly NOT done:** no guard logic changed, no thresholds/tolerances touched, no baseline rollback/advance logic changed, stale-save blocking NOT weakened, `attemptProductionMergeAndSync` / `mergeLocalChangesIntoRemote` NOT reconnected, `saveBackupWithRemoteBaselineSync` untouched, no UI, no Blueprint/RFI/FieldLog/Leads/PriceBook/Team changes.
+
+**Removal:** every insert is tagged `[Phase 4G diagnostic — TEMPORARY]` for easy grep-and-remove once the root cause is captured.
+
+**Lock released.**
 
 ### 2026-07-03 — Phase 4F: verified-save false mismatch fix (NOT COMMITTED)
 
