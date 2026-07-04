@@ -58,6 +58,7 @@ import {
   type BackupData,
   type BackupProject,
 } from '@/services/backupDataService'
+import { getLiveRFIs } from '@/services/projectScopeMerge'
 import { ProjectCard } from './ProjectCard'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
@@ -464,7 +465,7 @@ export default function V15rHome() {
     } else if (d >= 7) {
       agendaAlerts.push({ clr: '#f59e0b', txt: '🔧 Check-in: ' + p.name + ' – ' + d + 'd', id: p.id })
     }
-    ;(Array.isArray(p.rfis) ? p.rfis : []).filter((r: any) => r.status === 'critical').forEach((r: any) => {
+    getLiveRFIs(p.rfis || [], p.id).filter((r: any) => r.status === 'critical').forEach((r: any) => {
       agendaAlerts.push({ clr: '#ef4444', txt: '⚠ Critical RFI on ' + p.name + ': ' + (r.question || '').slice(0, 55) + '...', id: p.id })
     })
   })

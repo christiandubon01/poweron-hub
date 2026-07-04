@@ -17,6 +17,7 @@ import {
   fmtK,
   pct,
 } from '@/services/backupDataService'
+import { getLiveRFIs } from '@/services/projectScopeMerge'
 import { getProjectDaysSinceLastMovement } from '@/utils/v15rProjectHealth'
 import type { BackupProject } from '@/services/backupDataService'
 
@@ -134,7 +135,7 @@ export function ProjectCard({
   const h = health(p, backup)
   const o = getOverallCompletion(p, backup)
   const staleDays = getProjectDaysSinceLastMovement(p, backup)
-  const openR = (p.rfis || []).filter((r: any) => r.status !== 'answered').length
+  const openR = getLiveRFIs(p.rfis || [], p.id).filter((r: any) => r.status !== 'answered').length
   const fin = getProjectFinancials(p, backup)
   const coTotal = getProjectCOTotal(p)
   const coExposure = getProjectCOExposure(p)

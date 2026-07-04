@@ -27,7 +27,7 @@ import {
   resolveScopesForSyncInput,
   type DataScope,
 } from './scopeRegistry'
-import { getLiveChangeOrders } from './projectScopeMerge'
+import { getLiveChangeOrders, getLiveRFIs } from './projectScopeMerge'
 
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
 const STORAGE_KEY = LEGACY_STORAGE_KEY
@@ -1046,7 +1046,7 @@ export function health(p: BackupProject, d: BackupData): {
 } {
   const o = getOverallCompletion(p, d)
   const ds = daysSince(p.lastMove)
-  const openR = (p.rfis || []).filter((r: any) => r.status !== 'answered').length
+  const openR = getLiveRFIs(p.rfis || [], p.id).filter((r: any) => r.status !== 'answered').length
   // DASHBOARD-CFOT-COLLECTION-PATH-PARITY-APR22-2026-1 — read derived paid from logs,
   // not the p.paid scalar (scalar is no longer written to; logs are the source of truth).
   const paidDerived = getProjectFinancials(p, d).paid
@@ -1317,7 +1317,7 @@ export function getKPIs(d: BackupData) {
     return s + (totalBillable - collected > 0 ? totalBillable : 0)
   }, 0)
   const pipeline = projectContract + svcWithBalanceDue
-  const openRfis = projects.reduce((s, p) => s + (p.rfis || []).filter((r: any) => r.status !== 'answered').length, 0)
+  const openRfis = projects.reduce((s, p) => s + getLiveRFIs(p.rfis || [], p.id).filter((r: any) => r.status !== 'answered').length, 0)
   const totalHours = logs.reduce((s, l) => s + num(l.hrs), 0)
   const activeProjects = projects.filter(p => p.status === 'active' || p.status === 'coming').length
   return { pipeline, paid, billed, exposure, svcUnbilled, openRfis, totalHours, activeProjects }
@@ -2763,7 +2763,7 @@ export function computeVerificationSummary(
   let rfiTotalCount = 0
   for (const p of projects) {
     const rfis = (p as any)?.rfis
-    if (Array.isArray(rfis)) rfiTotalCount += rfis.length
+    if (Array.isArray(rfis)) rfiTotalCount += getLiveRFIs(rfis, (p as any)?.id).length
   }
 
   const bp = (data as any)?.blueprintSummaries

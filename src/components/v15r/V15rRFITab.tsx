@@ -1,7 +1,21 @@
 // @ts-nocheck
 import React, { useState, useCallback } from 'react'
 import { Sparkles, X } from 'lucide-react'
-import { getBackupData, saveBackupDataAndSync } from '@/services/backupDataService'
+import {
+  fetchLatestRemoteBackup,
+  getBackupData,
+  saveBackupData,
+  saveBackupDataAndSync,
+  saveBackupWithRemoteBaselineSync,
+} from '@/services/backupDataService'
+import {
+  createRFIIdentityContext,
+  createRFITombstone,
+  getLiveRFIs,
+  getRFIDisplayNumber,
+  getRFIStableId,
+  mergeProjectRFIsIntoRemote,
+} from '@/services/projectScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import { getProjectPhaseNames, normalizePhaseName, isKnownProjectPhase } from '@/utils/v15rProjectPhases'
 
@@ -46,13 +60,33 @@ function nowDateTimeInputValue(): string {
   return dateTimeInputValue(new Date().toISOString())
 }
 
-function nextRfiId(existingRfis: any[]): string {
+function nextRfiNumber(existingRfis: any[]): string {
   const maxNum = (existingRfis || []).reduce((max, rfi) => {
-    const match = String(rfi?.id || '').match(/^RFI-(\d+)$/i)
+    const match = String(rfi?.rfiNumber || rfi?.id || '').match(/^RFI-(\d+)$/i)
     if (!match) return max
     return Math.max(max, Number(match[1]) || 0)
   }, 0)
   return 'RFI-' + String(maxNum + 1).padStart(3, '0')
+}
+
+function newStableRfiId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `rfi_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+function findRFIIndexByStableId(rfis: any[], projectId: string, rfiId: string): number {
+  const arr = Array.isArray(rfis) ? rfis : []
+  const context = createRFIIdentityContext(arr, projectId)
+  return arr.findIndex(rfi => getRFIStableId(rfi, projectId, context) === rfiId)
+}
+
+function stampRFIForEdit(rfi: any, projectId: string, now: string, stableId?: string): void {
+  const context = createRFIIdentityContext([rfi], projectId)
+  rfi.rfiId = rfi.rfiId || stableId || getRFIStableId(rfi, projectId, context)
+  rfi.rfiNumber = rfi.rfiNumber || rfi.id
+  rfi.updatedAt = now
 }
 
 function dateTimeInputValue(value: unknown): string {
@@ -140,7 +174,8 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
   const p = backup.projects.find(x => x.id === projectId)
   if (!p) return <div style={{ color: 'var(--t3)' }}>Project not found</div>
 
-  const rfis = (p.rfis || []).sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')))
+  const rfis = getLiveRFIs(p.rfis || [], p.id)
+    .sort((a, b) => getRFIDisplayNumber(a).localeCompare(getRFIDisplayNumber(b)))
   const openCount = rfis.filter(r => r.status !== 'answered').length
   const phases = getProjectPhaseNames(backup)
   const customRfiLabels = Array.isArray(backup.settings?.rfiLabels)
@@ -161,6 +196,55 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
       .concat(discoveredRfiLabels)
       .filter((name: string, idx: number, arr: string[]) => arr.findIndex(x => rfiLabelKey(x) === rfiLabelKey(name)) === idx),
   ]
+
+  const persistRFIChange = async (mutate: (freshProject: any, freshBackup: any) => boolean | void) => {
+    const freshBackup = getBackupData()
+    if (!freshBackup) return
+    const freshProject = (freshBackup.projects || []).find(x => x.id === projectId)
+    if (!freshProject) return
+    pushState()
+
+    freshProject.rfis = Array.isArray(freshProject.rfis) ? freshProject.rfis : []
+    const didChange = mutate(freshProject, freshBackup)
+    if (didChange === false) return
+
+    freshBackup._lastSavedAt = new Date().toISOString()
+    saveBackupData(freshBackup)
+    forceUpdate()
+    if (onUpdate) onUpdate()
+
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      const remoteHasProject = !!(
+        remote.hasRemoteRow &&
+        remote.remoteData &&
+        (remote.remoteData.projects || []).some((rp: any) => String(rp?.id || '') === projectId)
+      )
+
+      if (remoteHasProject) {
+        const merged = mergeProjectRFIsIntoRemote(remote.remoteData, freshBackup, projectId)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          {
+            remoteUpdatedAt: remote.remoteUpdatedAt,
+            remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+          },
+          {
+            source: 'project-rfis-remote-merge',
+            changedKey: 'projects',
+            _scopes: ['project.rfis'],
+          },
+        )
+        if (onUpdate) onUpdate()
+        return
+      }
+
+      saveBackupDataAndSync(freshBackup, 'projects', { source: 'project.rfis', _scopes: ['project.rfis'] })
+    } catch (err) {
+      console.warn('[V15rRFITab] RFI remote-merge save failed; kept local and used guarded sync', err)
+      saveBackupDataAndSync(freshBackup, 'projects', { source: 'project.rfis', _scopes: ['project.rfis'] })
+    }
+  }
 
   const openAddModal = () => {
     const firstPhase = phases[0] || ''
@@ -189,62 +273,57 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
       return
     }
 
-    const freshBackup = getBackupData()
-    if (!freshBackup) return
-    const freshProject = (freshBackup.projects || []).find(x => x.id === projectId)
-    if (!freshProject) return
-    pushState()
-
-    freshProject.rfis = freshProject.rfis || []
-    const hasAnswer = !!addForm.response.trim()
-    const isCritical = addForm.label === 'Critical'
-    freshProject.rfis.push({
-      id: nextRfiId(freshProject.rfis),
-      status: hasAnswer ? 'answered' : isCritical ? 'critical' : 'open',
-      question: addForm.question,
-      directedTo: '',
-      submitted: storedTimestampValue(addForm.questionAt, ''),
-      response: addForm.response,
-      costImpact: '',
-      resolved_at: hasAnswer ? storedTimestampValue(addForm.answerAt || nowDateTimeInputValue(), '') : '',
-      stageRecorded: normalizePhaseName(addForm.stageRecorded, phases),
-      stageApplies: normalizePhaseName(addForm.stageApplies || addForm.stageRecorded, phases),
-      label: addForm.label,
-      critical: isCritical,
-      solvedBy: addForm.solvedBy,
+    void persistRFIChange((freshProject) => {
+      const liveRFIs = getLiveRFIs(freshProject.rfis || [], projectId)
+      const rfiNumber = nextRfiNumber(liveRFIs)
+      const now = new Date().toISOString()
+      const hasAnswer = !!addForm.response.trim()
+      const isCritical = addForm.label === 'Critical'
+      freshProject.rfis.push({
+        rfiId: newStableRfiId(),
+        rfiNumber,
+        id: rfiNumber,
+        status: hasAnswer ? 'answered' : isCritical ? 'critical' : 'open',
+        question: addForm.question,
+        directedTo: '',
+        submitted: storedTimestampValue(addForm.questionAt, ''),
+        createdAt: now,
+        updatedAt: now,
+        response: addForm.response,
+        costImpact: '',
+        resolved_at: hasAnswer ? storedTimestampValue(addForm.answerAt || nowDateTimeInputValue(), '') : '',
+        stageRecorded: normalizePhaseName(addForm.stageRecorded, phases),
+        stageApplies: normalizePhaseName(addForm.stageApplies || addForm.stageRecorded, phases),
+        label: addForm.label,
+        critical: isCritical,
+        solvedBy: addForm.solvedBy,
+      })
     })
-    saveBackupDataAndSync(freshBackup, 'projects')
     closeAddModal()
     forceUpdate()
     if (onUpdate) onUpdate()
   }
 
   const editRFI = (rfiId, field, value) => {
-    // Always read fresh from localStorage so we never save a stale backup
-    // (guards against the parent re-rendering with a new reference before this fires)
-    const freshBackup = getBackupData()
-    if (!freshBackup) return
-    const freshProject = (freshBackup.projects || []).find(x => x.id === projectId)
-    if (!freshProject) return
-    pushState()
-    const rfi = (freshProject.rfis || []).find(r => r.id === rfiId)
-    if (rfi) {
+    void persistRFIChange((freshProject) => {
+      const idx = findRFIIndexByStableId(freshProject.rfis || [], projectId, rfiId)
+      if (idx === -1) {
+        console.warn('[V15rRFITab] edit: RFI not found; nothing to update', rfiId)
+        return false
+      }
+      const rfi = freshProject.rfis[idx]
+      stampRFIForEdit(rfi, projectId, new Date().toISOString(), rfiId)
       if (field === 'question') rfi.question = String(value)
       else if (field === 'directedTo') rfi.directedTo = String(value)
       else if (field === 'response') rfi.response = String(value)
       else if (field === 'costImpact') rfi.costImpact = String(value)
       else if (field === 'stageRecorded') rfi.stageRecorded = normalizePhaseName(value, phases)
       else if (field === 'stageApplies') rfi.stageApplies = normalizePhaseName(value, phases)
-    }
-    saveBackupDataAndSync(freshBackup, 'projects')
-    forceUpdate()
-    // Notify the parent (V15rProjectInner) to re-read from localStorage so the
-    // updated stage values are reflected when the parent next renders.
-    if (onUpdate) onUpdate()
+    })
   }
 
   const openEditModal = (rfi: any) => {
-    setEditingId(rfi.id)
+    setEditingId(getRFIStableId(rfi, projectId))
     const qField = questionTimestampField(rfi)
     const aField = answerTimestampField(rfi)
     const respField = responseField(rfi)
@@ -266,13 +345,14 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
 
   const saveEditModal = () => {
     if (!editingId) return
-    const freshBackup = getBackupData()
-    if (!freshBackup) return
-    const freshProject = (freshBackup.projects || []).find(x => x.id === projectId)
-    if (!freshProject) return
-    pushState()
-    const rfi = (freshProject.rfis || []).find(r => r.id === editingId)
-    if (rfi) {
+    void persistRFIChange((freshProject) => {
+      const idx = findRFIIndexByStableId(freshProject.rfis || [], projectId, editingId)
+      if (idx === -1) {
+        console.warn('[V15rRFITab] save edit: RFI not found; nothing to update', editingId)
+        return false
+      }
+      const rfi = freshProject.rfis[idx]
+      stampRFIForEdit(rfi, projectId, new Date().toISOString(), editingId)
       const qField = questionTimestampField(rfi)
       const aField = answerTimestampField(rfi)
       const respField = responseField(rfi)
@@ -290,8 +370,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
       } else if (rfi.status === 'critical') {
         rfi.status = 'open'
       }
-    }
-    saveBackupDataAndSync(freshBackup, 'projects')
+    })
     closeEditModal()
     forceUpdate()
     if (onUpdate) onUpdate()
@@ -331,13 +410,14 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
   }
 
   const toggleStatus = (rfiId) => {
-    const freshBackup = getBackupData()
-    if (!freshBackup) return
-    const freshProject = (freshBackup.projects || []).find(x => x.id === projectId)
-    if (!freshProject) return
-    pushState()
-    const rfi = (freshProject.rfis || []).find(r => r.id === rfiId)
-    if (rfi) {
+    void persistRFIChange((freshProject) => {
+      const idx = findRFIIndexByStableId(freshProject.rfis || [], projectId, rfiId)
+      if (idx === -1) {
+        console.warn('[V15rRFITab] toggle status: RFI not found; nothing to update', rfiId)
+        return false
+      }
+      const rfi = freshProject.rfis[idx]
+      stampRFIForEdit(rfi, projectId, new Date().toISOString(), rfiId)
       const nextStatus = rfi.status === 'critical' ? 'open' : rfi.status === 'open' ? 'answered' : 'open'
       rfi.status = nextStatus
       if (nextStatus === 'answered' || nextStatus === 'resolved') {
@@ -345,20 +425,18 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
       } else {
         rfi.resolved_at = ''
       }
-    }
-    saveBackupDataAndSync(freshBackup, 'projects')
-    forceUpdate()
-    if (onUpdate) onUpdate()
+    })
   }
 
   const toggleCritical = (rfiId) => {
-    const freshBackup = getBackupData()
-    if (!freshBackup) return
-    const freshProject = (freshBackup.projects || []).find(x => x.id === projectId)
-    if (!freshProject) return
-    pushState()
-    const rfi = (freshProject.rfis || []).find(r => r.id === rfiId)
-    if (rfi) {
+    void persistRFIChange((freshProject) => {
+      const idx = findRFIIndexByStableId(freshProject.rfis || [], projectId, rfiId)
+      if (idx === -1) {
+        console.warn('[V15rRFITab] toggle critical: RFI not found; nothing to update', rfiId)
+        return false
+      }
+      const rfi = freshProject.rfis[idx]
+      stampRFIForEdit(rfi, projectId, new Date().toISOString(), rfiId)
       const isCritical = rfi.status === 'critical' || rfi.critical === true || getRfiLabel(rfi) === 'Critical'
       if (isCritical) {
         rfi.critical = false
@@ -369,23 +447,37 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
         rfi.label = 'Critical'
         rfi.status = 'critical'
       }
-    }
-    saveBackupDataAndSync(freshBackup, 'projects')
-    forceUpdate()
-    if (onUpdate) onUpdate()
+    })
+  }
+
+  const answerRFI = (rfiId, responseText) => {
+    void persistRFIChange((freshProject) => {
+      const idx = findRFIIndexByStableId(freshProject.rfis || [], projectId, rfiId)
+      if (idx === -1) {
+        console.warn('[V15rRFITab] answer: RFI not found; nothing to update', rfiId)
+        return false
+      }
+      const rfi = freshProject.rfis[idx]
+      stampRFIForEdit(rfi, projectId, new Date().toISOString(), rfiId)
+      rfi.response = String(responseText)
+      rfi.status = 'answered'
+      if (!rfi.resolved_at) rfi.resolved_at = new Date().toISOString().split('T')[0]
+    })
   }
 
   const delRFI = (rfiId) => {
     if (!confirm('Delete RFI?')) return
-    const freshBackup = getBackupData()
-    if (!freshBackup) return
-    const freshProject = (freshBackup.projects || []).find(x => x.id === projectId)
-    if (!freshProject) return
-    pushState()
-    freshProject.rfis = (freshProject.rfis || []).filter(r => r.id !== rfiId)
-    saveBackupDataAndSync(freshBackup, 'projects')
-    forceUpdate()
-    if (onUpdate) onUpdate()
+    void persistRFIChange((freshProject) => {
+      const arr = freshProject.rfis || []
+      const context = createRFIIdentityContext(arr, projectId)
+      const idx = arr.findIndex(rfi => getRFIStableId(rfi, projectId, context) === rfiId)
+      if (idx === -1) {
+        console.warn('[V15rRFITab] delete: RFI not found; nothing to tombstone', rfiId)
+        return false
+      }
+      arr[idx] = createRFITombstone(arr[idx], projectId, undefined, context)
+      freshProject.rfis = arr
+    })
   }
 
   const statusBadgeColor = (status) => {
@@ -539,6 +631,8 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {rfis.map(r => {
+              const stableId = getRFIStableId(r, projectId)
+              const displayNumber = getRFIDisplayNumber(r)
               const label = getRfiLabel(r)
               const isCritical = r.status === 'critical' || r.critical === true || label === 'Critical'
               const showLabelPill = !isDefaultRfiLabel(label) || isCritical
@@ -560,7 +654,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
               const cardAccent = isCritical ? '#ef4444' : isResolved ? '#10b981' : '#f59e0b'
               return (
                 <div
-                  key={r.id}
+                  key={stableId}
                   style={{
                     background: 'linear-gradient(180deg, rgba(35,39,56,0.94), rgba(29,33,45,0.94))',
                     borderRadius: '10px',
@@ -573,7 +667,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '10px', flexWrap: 'wrap' }}>
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
                       <span style={{ fontFamily: 'monospace', fontSize: '12px', color: '#e5e7eb', fontWeight: '700', letterSpacing: '0.01em' }}>
-                        {r.id || 'RFI'}
+                        {displayNumber}
                       </span>
                       <span style={{ padding: '2px 7px', backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '999px', fontSize: '9px', fontWeight: '700', letterSpacing: '0.04em' }}>
                         {displayStatus.toUpperCase()}
@@ -614,7 +708,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                         Edit
                       </button>
                       <button
-                        onClick={() => delRFI(r.id)}
+                        onClick={() => delRFI(stableId)}
                         style={{
                           padding: '4px 8px',
                           backgroundColor: 'rgba(239,68,68,0.08)',
@@ -694,8 +788,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                         onClick={() => {
                           const resp = prompt('Response:')
                           if (resp !== null) {
-                            editRFI(r.id, 'response', resp)
-                            toggleStatus(r.id)
+                            answerRFI(stableId, resp)
                           }
                         }}
                         style={{
@@ -713,7 +806,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
                       </button>
                     )}
                     <button
-                      onClick={() => toggleCritical(r.id)}
+                      onClick={() => toggleCritical(stableId)}
                       style={{
                         padding: '4px 9px',
                         backgroundColor: 'rgba(245,158,11,0.10)',

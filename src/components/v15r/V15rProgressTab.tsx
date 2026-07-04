@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { getBackupData, saveBackupDataAndSync, num, daysSince, getPhaseWeights } from '@/services/backupDataService'
+import { getLiveRFIs } from '@/services/projectScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import {
   loadInnerProjectViewPrefs,
@@ -531,7 +532,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   }
 
   const overallCompletion = weightedOverallCompletion(p, w, settingsPhases, innerViewPrefs.progress?.overrideEnabled)
-  const openRfiCount = (p.rfis || []).filter(r => r.status !== 'answered').length
+  const openRfiCount = getLiveRFIs(p.rfis || [], p.id).filter(r => r.status !== 'answered').length
 
   const today = new Date()
   today.setHours(0, 0, 0, 0)

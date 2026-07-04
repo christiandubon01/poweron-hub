@@ -3577,3 +3577,29 @@ Fixed the Change Order modal backdrop close behavior. `COModal` now tracks wheth
 Normal intentional backdrop click still closes. X/Cancel still close directly. No Change Order scoped merge, tombstone, create/edit/delete business logic, Save/stale/baseline behavior, app sync logic, dashboard calculation, or service code was changed.
 
 This pointer-down origin tracking pattern should be reused later for other hand-coded modals that close from backdrop clicks.
+
+---
+
+### 2026-07-04 - Phase 6F: Project RFI Collision-Safe IDs + Scoped Tombstone Merge
+
+**Agent:** Codex
+**Mode:** Scoped implementation (Phase 6F)
+**Baseline HEAD:** `4b75fb3` (Phase 6D "Fix change order modal drag close")
+**Files touched:** `src/services/projectScopeMerge.ts`, `src/components/v15r/V15rRFITab.tsx`, `src/services/scopeRegistry.ts`, `src/services/backupDataService.ts`, `src/components/v15r/ProjectCard.tsx`, `src/components/v15r/V15rProgressTab.tsx`, `src/components/v15r/V15rProjectsPanel.tsx`, `src/components/v15r/V15rHome.tsx`, `AGENT_SHARED_CONTEXT.md`
+**Status:** DONE - verification pending
+
+Implemented collision-safe `project.rfis` identity and scoped delete-safe merge. New Project RFIs get `rfiId` as the internal stable id and `rfiNumber` as the visible display number; legacy `id` remains preserved for display/backward compatibility. Existing legacy RFIs receive deterministic merge identities (`legacy:${projectId}:${id}` with a stable fingerprint suffix only when duplicate legacy ids exist in the same project) instead of random backfills, so devices agree on old-row identity.
+
+Added RFI timestamp/defaulting helpers in `projectScopeMerge.ts`: `updatedAt` wins; then `submitted`, `createdAt`, `created_at`, `created`, `questionAt`; then stable epoch fallback. Missing timestamps are never defaulted to now during merge. Tombstones bump `updatedAt` to at least `deletedAt`.
+
+Changed Project RFI delete from hard delete to inline tombstone (`deletedAt`, optional `deletedBy`, `updatedAt`). Added item-level `mergeRFIsByStableId` and `mergeProjectRFIsIntoRemote`: merge only `projects[target].rfis`, keep tombstones raw, tombstone wins over equal/older live rows, live can win only when strictly newer than the tombstone, both-live newest `updatedAt` wins, exact live ties prefer remote, and order is incoming-first plus remote-only append.
+
+`V15rRFITab` now renders only `getLiveRFIs(...)`, displays `rfiNumber || id`, targets actions by stable id, creates RFIs with `crypto.randomUUID()` where available, and saves through the Phase 6B-style remote-baseline path: fetch latest remote, patch only `project.rfis`, then `saveBackupWithRemoteBaselineSync(..., { changedKey: 'projects', _scopes: ['project.rfis'] })`. Fallback remains guarded `saveBackupDataAndSync(..., 'projects', { source: 'project.rfis' })`.
+
+Updated allowed v15r RFI count readers to ignore tombstones: central `health`, `getKPIs`, `computeVerificationSummary`, `ProjectCard`, `V15rProgressTab`, `V15rProjectsPanel`, and `V15rHome` critical-RFI alerts. Out-of-scope direct RFI readers still exist in `src/views/AbsoluteDashboardView.tsx`, `src/components/blueprint/ProjectPanel.tsx`, `src/services/proactiveAlertService.ts`, and `src/services/guardian/GuardianMetricsService.ts`; these were reported before editing and left untouched because this phase forbids Blueprint and limits non-tab count fixes to v15r readers.
+
+`scopeRegistry.ts` updated only for `project.rfis`: identity `rfiId`, timestamp `updatedAt`, tombstone `deletedAt`, implemented flags set false, and notes record `rfiNumber` display compatibility.
+
+Explicitly NOT changed: Change Orders, Blueprint files, Estimate/MTO, Project Logs, Payments/logs, Field Logs, Leads, Price Book, Team, Service Calls, Settings, Recovery Center, Phase 4 Save/stale/baseline behavior, `syncToSupabase` freshness guard, verified Save, `setKnownRemoteBaseline`, `attemptProductionMergeAndSync`, or `mergeLocalChangesIntoRemote`.
+
+No commit, push, deploy, manual Supabase touch, restore script, or manual localStorage write.
