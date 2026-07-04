@@ -87,9 +87,32 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Step13B-QA7-R7-Default-Annotations (Claude Code Opus) | Blueprint Viewer — default/embedded iPad annotations panel: expand naturally below document, not collapsed/capped drawer | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-01 |
 | Step13E-Emergency-Prod-Sync-Rollback (Claude Opus 4.8) | Emergency rollback — neutralize ad30ad4 production merge/freshness guard so production saves upload normally; localhost/dev stale-overwrite guard unchanged | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-03 |
 | Phase2-Stop-Bleeding-Stale-Save-Block (Claude Opus 4.8) | Re-enable stale-save freshness BLOCK on production + localhost (no auto-merge); supersedes Step 13E production ungating | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (COMMITTED b37a034) | RELEASED | 2026-07-03 |
-| Phase4-Verified-Save-Readback (Claude Opus 4.8) | Header Save now requires cloud read-back verification; baseline advances only from verified read-back; production sync-conflict UI gate fixed | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
+| Phase4-Verified-Save-Readback (Claude Opus 4.8) | Header Save now requires cloud read-back verification; baseline advances only from verified read-back; production sync-conflict UI gate fixed | src/services/backupDataService.ts, src/components/v15r/V15rLayout.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (COMMITTED 163d579) | RELEASED | 2026-07-03 |
+| Phase4B-Baseline-Server-UpdatedAt (Claude Opus 4.8) | Fix false stale-block after successful write — syncToSupabase baselines from Supabase server updated_at returned by upsert, not client now | src/services/backupDataService.ts, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ (NOT committed) | RELEASED | 2026-07-03 |
 
 ## Audit & Change Log
+
+### 2026-07-03 — Phase 4B: baseline from server updated_at (false stale-block hotfix, NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Single sync-baseline fix — no UI, no merge, no feature tabs.
+**Branch:** main | HEAD before edits = `163d579`
+
+**Bug:** After Phase 4, a header Save could write successfully (item confirmed present in a fresh Incognito window) yet still show "Cloud sync was blocked because remote data is newer than this local session." The block re-appeared on the same session/device that had just saved.
+
+**Root cause (Phase 4A audit):** `syncToSupabase` upserts `app_state` sending a client-generated `updated_at: now`, but the `app_state.updated_at` column is set server-side (`moddatetime` BEFORE-UPDATE trigger — schema-wide convention, see migrations 001/002). The stored server `updated_at` is slightly newer than the client `now` (network latency + clock skew). `syncToSupabase` then baselined the session with `setKnownRemoteBaseline(now, now)` (client `now`). The next `checkManualSaveFreshness` read the newer server `updated_at` and compared it against the older client-`now` baseline → `remoteFreshnessMs > baseline + 1s` → false `REMOTE_FRESHER_THAN_LOCAL_MSG`. `loadFromSupabase` baselines from the server `updated_at`, which is why a reload cleared it until the next write re-poisoned the baseline.
+
+**Fix — `backupDataService.ts` `syncToSupabase` only:**
+- The upsert now chains `.select('updated_at').single()` and captures the returned row.
+- `const serverUpdatedAt = writtenRow?.updated_at ? String(writtenRow.updated_at) : now` (falls back to client `now` if no row returned — no regression).
+- Baseline is now `setKnownRemoteBaseline(serverUpdatedAt, now)` instead of `setKnownRemoteBaseline(now, now)`. Since `computeRemoteFreshnessMs` takes the max, the baseline equals the server `updated_at` the next freshness check will read → no false block. Genuinely stale tabs (older baseline than a remotely-advanced row) still block — Phase 2 protection intact.
+- `payload._lastSavedAt` and `_syncMeta.savedAt` remain client `now` (unchanged). Only the baseline uses `serverUpdatedAt`.
+
+**Fixes every path through `syncToSupabase`:** background `saveBackupDataAndSync`, periodic sync, `saveAndImmediateSync`, `forceSyncToCloud`, and `saveLiveDataVerified`'s internal write.
+
+**NOT touched / NOT reconnected:** `attemptProductionMergeAndSync` and merge helpers stay dead. `saveBackupWithRemoteBaselineSync` unchanged. `saveLiveDataVerified` unchanged (its own read-back already baselines from server `updated_at`; no type change needed). No UI change (`V15rLayout.tsx` untouched). No schema/migration change.
+
+**Lock released.**
 
 ### 2026-07-03 — Phase 4: verified Save with cloud read-back (NOT COMMITTED)
 

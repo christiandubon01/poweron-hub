@@ -2010,7 +2010,7 @@ export async function syncToSupabase(
     } as BackupData, userId)
     saveBackupDataSilent(payload, userId)
 
-    const { error } = await supabase
+    const { data: writtenRow, error } = await supabase
       .from('app_state')
       .upsert({
         user_id: userId,
@@ -2018,14 +2018,25 @@ export async function syncToSupabase(
         data: payload,
         updated_at: now,
       }, { onConflict: 'user_id,state_key' })
+      .select('updated_at')
+      .single()
 
     if (error) {
       console.error('[Sync] Supabase write failed:', error.message)
       return { success: false, error: error.message }
     }
 
+    // Phase 4B: baseline from the SERVER-authoritative updated_at returned by the
+    // upsert, not the client `now`. The app_state.updated_at column is set
+    // server-side (moddatetime trigger), so it can be slightly newer than the
+    // client `now` we sent. Baselining from client `now` made the next freshness
+    // check read a newer server updated_at and false-block ("remote is newer")
+    // right after this same session's successful write. Fall back to `now` if the
+    // upsert did not return a row. Only the baseline uses serverUpdatedAt; the
+    // payload's _lastSavedAt and _syncMeta.savedAt stay client `now`.
+    const serverUpdatedAt = writtenRow?.updated_at ? String(writtenRow.updated_at) : now
     _lastSyncMeta = { savedBy: deviceId, savedAt: now }
-    setKnownRemoteBaseline(now, now)
+    setKnownRemoteBaseline(serverUpdatedAt, now)
     // A real success resolves any prior stale-overwrite conflict -- let the next
     // one (if any) dispatch immediately rather than staying throttled.
     _lastConflictDispatch = null
