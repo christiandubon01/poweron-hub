@@ -35,6 +35,7 @@ import {
   Star,
 } from 'lucide-react'
 import { getBackupData } from '@/services/backupDataService'
+import { getLiveMaterialRows } from '@/services/projectScopeMerge'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -190,7 +191,7 @@ function buildInitialRecord(projectId: string, projectName: string): Walkthrough
         completed: true,
       })
     }
-    for (const row of project.matRows || []) {
+    for (const row of getLiveMaterialRows(project.matRows || [], project.id, 'matRows')) {
       workCompleted.push({
         id: uid(),
         lineItem: row.name || 'Material item',

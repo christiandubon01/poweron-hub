@@ -1,7 +1,22 @@
 // @ts-nocheck
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { Sparkles, FileText, Search, ChevronDown, ChevronRight } from 'lucide-react'
-import { getBackupData, saveBackupDataAndSync, num, fmt } from '@/services/backupDataService'
+import {
+  fetchLatestRemoteBackup,
+  getBackupData,
+  saveBackupData,
+  saveBackupDataAndSync,
+  saveBackupWithRemoteBaselineSync,
+  num,
+  fmt,
+} from '@/services/backupDataService'
+import {
+  createMaterialIdentityContext,
+  createMaterialRowTombstone,
+  getLiveMaterialRows,
+  getMaterialStableId,
+  mergeProjectMaterialsIntoRemote,
+} from '@/services/projectScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import { exportMaterialSummaryPDF } from '@/services/mtoExportService'
 import { loadInnerProjectViewPrefs, mergeInnerProjectViewPrefs } from '@/utils/v15rViewPrefs'
@@ -11,6 +26,36 @@ interface V15rMTOTabProps {
   projectId: string
   onUpdate?: () => void
   backup?: any
+}
+
+function newMaterialStableId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `mat_${crypto.randomUUID()}`
+  return `mat_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+function findMTORowIndexByStableId(rows: any[], stableId: string, projectId?: string): number {
+  const context = createMaterialIdentityContext(rows, projectId, 'mtoRows')
+  return (Array.isArray(rows) ? rows : []).findIndex((row: any) => {
+    if (String(row?.id || '') === stableId) return true
+    return getMaterialStableId(row, projectId, 'mtoRows', context) === stableId
+  })
+}
+
+function stampMTORowForEdit(
+  row: any,
+  projectId?: string,
+  now = new Date().toISOString(),
+  stableIdOverride?: string,
+): any {
+  const context = createMaterialIdentityContext([row], projectId, 'mtoRows')
+  const stableId = stableIdOverride || getMaterialStableId(row, projectId, 'mtoRows', context)
+  return {
+    ...row,
+    materialId: row?.materialId || stableId,
+    mtoId: row?.mtoId || stableId,
+    createdAt: row?.createdAt || now,
+    updatedAt: now,
+  }
 }
 
 export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup }: V15rMTOTabProps) {
@@ -67,17 +112,70 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   if (!p) return <div style={{ color: 'var(--t3)' }}>Project not found</div>
 
   const phases = getProjectPhaseNames(backup)
-  const allRows: any[] = Array.isArray(p.mtoRows) ? p.mtoRows : []
+  const rawMTORows: any[] = Array.isArray(p.mtoRows) ? p.mtoRows : []
+  const allRows: any[] = getLiveMaterialRows(rawMTORows, p.id, 'mtoRows')
   const legacyPhases = getLegacyPhaseNames(allRows.map(r => r.phase), phases)
   const displayPhases = [...phases, ...legacyPhases]
   // Force recapture of allRows in closures on every render
 React.useEffect(() => { forceUpdate() }, [projectId])
 
   // ── Row mutations ───────────────────────────────────────────────────
-  const editMTORow = (rowId: string, field: string, value: any) => {
+  const persistMaterialChange = async (mutate: (freshProject: any, freshBackup: any) => boolean | void) => {
+    const freshBackup = getBackupData()
+    if (!freshBackup) return
+    const freshProject = (freshBackup.projects || []).find((x: any) => String(x?.id || '') === projectId)
+    if (!freshProject) return
     pushState()
-    const row = allRows.find(r => r.id === rowId)
-    if (row) {
+
+    freshProject.mtoRows = Array.isArray(freshProject.mtoRows) ? freshProject.mtoRows : []
+    const didChange = mutate(freshProject, freshBackup)
+    if (didChange === false) return
+
+    freshBackup._lastSavedAt = new Date().toISOString()
+    saveBackupData(freshBackup)
+    forceUpdate()
+    if (onUpdate) onUpdate()
+
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      const remoteHasProject = !!(
+        remote.hasRemoteRow &&
+        remote.remoteData &&
+        (remote.remoteData.projects || []).some((rp: any) => String(rp?.id || '') === projectId)
+      )
+
+      if (remoteHasProject) {
+        const merged = mergeProjectMaterialsIntoRemote(remote.remoteData, freshBackup, projectId)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          {
+            remoteUpdatedAt: remote.remoteUpdatedAt,
+            remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+          },
+          {
+            source: 'project-materials-remote-merge',
+            changedKey: 'projects',
+            _scopes: ['project.materials'],
+          },
+        )
+        if (onUpdate) onUpdate()
+        return
+      }
+
+      saveBackupDataAndSync(freshBackup, 'projects', { source: 'project.materials', _scopes: ['project.materials'] })
+    } catch (err) {
+      console.warn('[V15rMTOTab] Materials remote-merge save failed; kept local and used guarded sync', err)
+      saveBackupDataAndSync(freshBackup, 'projects', { source: 'project.materials', _scopes: ['project.materials'] })
+    }
+  }
+
+  const editMTORow = (rowId: string, field: string, value: any) => {
+    void persistMaterialChange((freshProject) => {
+      const rows: any[] = freshProject.mtoRows || []
+      const idx = findMTORowIndexByStableId(rows, rowId, projectId)
+      if (idx === -1) return false
+      const row = { ...rows[idx] }
+      if (row.deletedAt) return false
       if (field === 'qty') row.qty = num(value)
       else if (field === 'name') row.name = String(value)
       else if (field === 'placement') row.placement = String(value)
@@ -87,55 +185,70 @@ React.useEffect(() => { forceUpdate() }, [projectId])
         row.unitCost = value === '' || value === null || value === undefined ? undefined : num(value)
       }
       else if (field === 'supplierNote') row.supplierNote = String(value)
-    }
-    saveBackupDataAndSync(backup, 'projects')
+      rows[idx] = stampMTORowForEdit(row, projectId, undefined, rowId)
+    })
     forceUpdate()
   }
 
   const addMTORow = (phase: string) => {
-    pushState()
-    p.mtoRows = p.mtoRows || []
-    const newId = 'mto' + Date.now()
-    p.mtoRows.push({
-      id: newId,
-      phase,
-      matId: '',
-      name: '',
-      qty: 1,
-      detailNote: '',
-      supplierNote: '',
-      placement: '',
-      note: '',
+    const now = new Date().toISOString()
+    const stableId = newMaterialStableId()
+    const legacyId = 'mto' + Date.now()
+    void persistMaterialChange((freshProject) => {
+      freshProject.mtoRows = freshProject.mtoRows || []
+      freshProject.mtoRows.push({
+        materialId: stableId,
+        mtoId: stableId,
+        id: legacyId,
+        phase,
+        matId: '',
+        name: '',
+        qty: 1,
+        detailNote: '',
+        supplierNote: '',
+        placement: '',
+        note: '',
+        createdAt: now,
+        updatedAt: now,
+      })
     })
-    newMTORowIdRef.current = newId
-    saveBackupDataAndSync(backup, 'projects')
+    newMTORowIdRef.current = stableId
     forceUpdate()
     requestAnimationFrame(() => {
-      mtoNameInputRefs.current[newId]?.focus()
+      mtoNameInputRefs.current[stableId]?.focus()
     })
   }
 
   const delMTORow = (rowId: string) => {
-    pushState()
-    p.mtoRows = (p.mtoRows || []).filter(r => r.id !== rowId)
-    // Clean up local state for the deleted row
+    void persistMaterialChange((freshProject) => {
+      const rows: any[] = freshProject.mtoRows || []
+      const idx = findMTORowIndexByStableId(rows, rowId, projectId)
+      if (idx === -1) {
+        console.warn('[V15rMTOTab] Delete skipped; MTO row not found', rowId)
+        return false
+      }
+      const context = createMaterialIdentityContext(rows, projectId, 'mtoRows')
+      rows[idx] = createMaterialRowTombstone(rows[idx], projectId, 'mtoRows', undefined, context)
+    })
     setLocalPlacements(prev => { const n = { ...prev }; delete n[rowId]; return n })
     setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[rowId]; return n })
-    saveBackupDataAndSync(backup, 'projects')
+    setLocalUnitCosts(prev => { const n = { ...prev }; delete n[rowId]; return n })
     forceUpdate()
   }
 
   const reorderMTORow = (dragId: string, dropId: string) => {
     if (dragId === dropId) return
-    pushState()
-    const rows: any[] = p.mtoRows || []
-    const dragIdx = rows.findIndex((r: any) => r.id === dragId)
-    const dropIdx = rows.findIndex((r: any) => r.id === dropId)
-    if (dragIdx === -1 || dropIdx === -1) return
-    const [dragged] = rows.splice(dragIdx, 1)
-    rows.splice(dropIdx, 0, dragged)
-    p.mtoRows = rows
-    saveBackupDataAndSync(backup, 'projects')
+    void persistMaterialChange((freshProject) => {
+      const rawRows: any[] = freshProject.mtoRows || []
+      const liveRows = getLiveMaterialRows(rawRows, projectId, 'mtoRows')
+      const dragIdx = liveRows.findIndex((r: any) => getMaterialStableId(r, projectId, 'mtoRows') === dragId)
+      const dropIdx = liveRows.findIndex((r: any) => getMaterialStableId(r, projectId, 'mtoRows') === dropId)
+      if (dragIdx === -1 || dropIdx === -1) return false
+      const [dragged] = liveRows.splice(dragIdx, 1)
+      liveRows.splice(dropIdx, 0, stampMTORowForEdit(dragged, projectId))
+      const tombstones = rawRows.filter((r: any) => r?.deletedAt)
+      freshProject.mtoRows = [...liveRows, ...tombstones]
+    })
     forceUpdate()
   }
 
@@ -244,6 +357,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
 
   const renderRow = (r: any) => {
     const pbItem = getPBItem(r.matId)
+    const rowUiId = getMaterialStableId(r, p.id, 'mtoRows')
     // cu = row-level override if present, otherwise priceBook suggestion
     const cu = r.unitCost !== undefined && r.unitCost !== null
       ? num(r.unitCost)
@@ -253,10 +367,10 @@ React.useEffect(() => { forceUpdate() }, [projectId])
     const sellPrice = cu * (1 + markupPct)
     const lt = num(r.qty || 0) * sellPrice * (1 + waste)
     // Project-only supplier note (inline editable, project-scoped only)
-    const localSupplierNoteVal = localSupplierNotes[r.id] !== undefined
-      ? localSupplierNotes[r.id]
+    const localSupplierNoteVal = localSupplierNotes[rowUiId] !== undefined
+      ? localSupplierNotes[rowUiId]
       : (r.supplierNote || '')
-    const isEditingSupplierNote = editingSupplierNoteId === r.id
+    const isEditingSupplierNote = editingSupplierNoteId === rowUiId
     const hasSupplierNoteVal = !!(localSupplierNoteVal.trim())
     // PB supplier — valid only if not a legacy import placeholder
     const pbSupplierSrc = (!pbItem?.src || pbItem.src === 'PDF Import' || pbItem.src === 'PDF Imported')
@@ -266,27 +380,27 @@ React.useEffect(() => { forceUpdate() }, [projectId])
       ? '—'
       : pbItem.cat
     // Unit cost input — local state for smooth typing, commits on blur
-    const localCostVal = localUnitCosts[r.id] !== undefined
-      ? localUnitCosts[r.id]
+    const localCostVal = localUnitCosts[rowUiId] !== undefined
+      ? localUnitCosts[rowUiId]
       : (cu > 0 ? String(cu) : '')
 
     // ── Bug 1+2+3: local placement value ────────────────────────────
     // localVal shows the typed value; committed r.placement is the source of truth for grouping.
-    const localVal = localPlacements[r.id] !== undefined ? localPlacements[r.id] : (r.placement || '')
+    const localVal = localPlacements[rowUiId] !== undefined ? localPlacements[rowUiId] : (r.placement || '')
 
     // Commit placement to data layer (onBlur / Enter).
     // Reads from e.target.value to always have the latest DOM value.
     const commitPlacement = (domValue: string) => {
       if (domValue !== (r.placement || '')) {
-        editMTORow(r.id, 'placement', domValue)
+        editMTORow(rowUiId, 'placement', domValue)
       }
       // Remove local override; row will read from r.placement on next render
-      setLocalPlacements(prev => { const n = { ...prev }; delete n[r.id]; return n })
+      setLocalPlacements(prev => { const n = { ...prev }; delete n[rowUiId]; return n })
     }
 
     // ── Bug 4: secondary row visibility ─────────────────────────────
-    const isRowFocused = focusedRowId === r.id
-    const isRowHovered = hoveredRowId === r.id
+    const isRowFocused = focusedRowId === rowUiId
+    const isRowHovered = hoveredRowId === rowUiId
 
     // ── Google search button visibility ─────────────────────────────
     // Show when item name has text AND no price book item name matches it.
@@ -295,19 +409,19 @@ React.useEffect(() => { forceUpdate() }, [projectId])
     // Chip-based placement/note UX
     const hasPlacementVal = !!(localVal.trim())
     const hasNoteVal = !!(r.note && r.note.trim())
-    const isEditingPlacement = editingPlacementId === r.id
-    const isEditingNote = editingNoteId === r.id
+    const isEditingPlacement = editingPlacementId === rowUiId
+    const isEditingNote = editingNoteId === rowUiId
 
     return (
       <tr
-        key={r.id}
-        onMouseEnter={() => setHoveredRowId(r.id)}
+        key={rowUiId}
+        onMouseEnter={() => setHoveredRowId(rowUiId)}
         onMouseLeave={() => setHoveredRowId(null)}
-        onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverRowId(r.id) }}
+        onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverRowId(rowUiId) }}
         onDrop={e => {
           e.preventDefault()
           const fromId = dragRowIdRef.current
-          if (fromId && fromId !== r.id) reorderMTORow(fromId, r.id)
+          if (fromId && fromId !== rowUiId) reorderMTORow(fromId, rowUiId)
           setDragOverRowId(null)
         }}
         onDragLeave={e => {
@@ -317,7 +431,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
           borderBottom: '1px solid var(--bdr2)',
           userSelect: 'none',
           cursor: 'default',
-          borderTop: dragOverRowId === r.id ? '2px solid #3b82f6' : '2px solid transparent',
+          borderTop: dragOverRowId === rowUiId ? '2px solid #3b82f6' : '2px solid transparent',
           transition: 'border-top-color 0.08s',
         }}
       >
@@ -325,9 +439,9 @@ React.useEffect(() => { forceUpdate() }, [projectId])
         <td
           draggable
           onDragStart={e => {
-            dragRowIdRef.current = r.id
+            dragRowIdRef.current = rowUiId
             e.dataTransfer.effectAllowed = 'move'
-            e.dataTransfer.setData('text/plain', r.id)
+            e.dataTransfer.setData('text/plain', rowUiId)
           }}
           onDragEnd={() => {
             dragRowIdRef.current = null
@@ -352,10 +466,10 @@ React.useEffect(() => { forceUpdate() }, [projectId])
           {/* Name input — actions are in the right-side actions column */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
             <input
-              ref={el => { mtoNameInputRefs.current[r.id] = el }}
+              ref={el => { mtoNameInputRefs.current[rowUiId] = el }}
               type="text"
               value={r.name || ''}
-              onChange={e => editMTORow(r.id, 'name', e.target.value)}
+              onChange={e => editMTORow(rowUiId, 'name', e.target.value)}
               onKeyDown={e => {
                 if (e.key === 'Enter') {
                   e.preventDefault()
@@ -363,7 +477,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
                 }
               }}
               onMouseDown={e => e.stopPropagation()}
-              placeholder={newMTORowIdRef.current === r.id ? 'Item name…' : ''}
+              placeholder={newMTORowIdRef.current === rowUiId ? 'Item name…' : ''}
               style={{
                 background: 'transparent',
                 border: 'none',
@@ -380,7 +494,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
             {/* -- Placement -- */}
             {hasPlacementVal && !isEditingPlacement ? (
               <span
-                onClick={() => setEditingPlacementId(r.id)}
+                onClick={() => setEditingPlacementId(rowUiId)}
                 onMouseDown={e => e.stopPropagation()}
                 style={{
                   display: 'inline-flex',
@@ -400,8 +514,8 @@ React.useEffect(() => { forceUpdate() }, [projectId])
                 <span
                   onClick={e => {
                     e.stopPropagation()
-                    editMTORow(r.id, 'placement', '')
-                    setLocalPlacements(prev => { const n = { ...prev }; delete n[r.id]; return n })
+                    editMTORow(rowUiId, 'placement', '')
+                    setLocalPlacements(prev => { const n = { ...prev }; delete n[rowUiId]; return n })
                     setEditingPlacementId(null)
                   }}
                   onMouseDown={e => e.stopPropagation()}
@@ -422,7 +536,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
                 autoFocus
                 type="text"
                 value={localVal}
-                onChange={e => setLocalPlacements(prev => ({ ...prev, [r.id]: e.target.value }))}
+                onChange={e => setLocalPlacements(prev => ({ ...prev, [rowUiId]: e.target.value }))}
                 onBlur={e => {
                   commitPlacement(e.target.value)
                   setEditingPlacementId(null)
@@ -434,7 +548,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
                     setEditingPlacementId(null)
                   }
                   if (e.key === 'Escape') {
-                    setLocalPlacements(prev => { const n = { ...prev }; delete n[r.id]; return n })
+                    setLocalPlacements(prev => { const n = { ...prev }; delete n[rowUiId]; return n })
                     setEditingPlacementId(null)
                   }
                 }}
@@ -453,7 +567,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
               />
             ) : isRowHovered ? (
               <span
-                onClick={() => setEditingPlacementId(r.id)}
+                onClick={() => setEditingPlacementId(rowUiId)}
                 onMouseDown={e => e.stopPropagation()}
                 style={{
                   display: 'inline-block',
@@ -474,7 +588,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
             {/* -- Note -- */}
             {hasNoteVal && !isEditingNote ? (
               <span
-                onClick={() => setEditingNoteId(r.id)}
+                onClick={() => setEditingNoteId(rowUiId)}
                 onMouseDown={e => e.stopPropagation()}
                 style={{
                   display: 'inline-flex',
@@ -494,7 +608,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
                 <span
                   onClick={e => {
                     e.stopPropagation()
-                    editMTORow(r.id, 'note', '')
+                    editMTORow(rowUiId, 'note', '')
                     setEditingNoteId(null)
                   }}
                   onMouseDown={e => e.stopPropagation()}
@@ -515,7 +629,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
                 autoFocus
                 type="text"
                 value={r.note || ''}
-                onChange={e => editMTORow(r.id, 'note', e.target.value)}
+                onChange={e => editMTORow(rowUiId, 'note', e.target.value)}
                 onBlur={() => setEditingNoteId(null)}
                 onKeyDown={e => {
                   if (e.key === 'Enter') {
@@ -539,7 +653,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
               />
             ) : isRowHovered ? (
               <span
-                onClick={() => setEditingNoteId(r.id)}
+                onClick={() => setEditingNoteId(rowUiId)}
                 onMouseDown={e => e.stopPropagation()}
                 style={{
                   display: 'inline-block',
@@ -564,7 +678,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
         <td style={{ padding: '8px', fontSize: '11px' }}>
           {hasSupplierNoteVal && !isEditingSupplierNote ? (
             <span
-              onClick={() => setEditingSupplierNoteId(r.id)}
+              onClick={() => setEditingSupplierNoteId(rowUiId)}
               onMouseDown={e => e.stopPropagation()}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: '4px',
@@ -579,8 +693,8 @@ React.useEffect(() => { forceUpdate() }, [projectId])
               <span
                 onClick={e => {
                   e.stopPropagation()
-                  editMTORow(r.id, 'supplierNote', '')
-                  setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[r.id]; return n })
+                  editMTORow(rowUiId, 'supplierNote', '')
+                  setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[rowUiId]; return n })
                   setEditingSupplierNoteId(null)
                 }}
                 onMouseDown={e => e.stopPropagation()}
@@ -593,16 +707,16 @@ React.useEffect(() => { forceUpdate() }, [projectId])
               autoFocus
               type="text"
               value={localSupplierNoteVal}
-              onChange={e => setLocalSupplierNotes(prev => ({ ...prev, [r.id]: e.target.value }))}
+              onChange={e => setLocalSupplierNotes(prev => ({ ...prev, [rowUiId]: e.target.value }))}
               onBlur={e => {
-                editMTORow(r.id, 'supplierNote', e.target.value)
-                setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[r.id]; return n })
+                editMTORow(rowUiId, 'supplierNote', e.target.value)
+                setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[rowUiId]; return n })
                 setEditingSupplierNoteId(null)
               }}
               onKeyDown={e => {
                 if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                 if (e.key === 'Escape') {
-                  setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[r.id]; return n })
+                  setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[rowUiId]; return n })
                   setEditingSupplierNoteId(null)
                 }
               }}
@@ -619,7 +733,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
             <span style={{ color: 'var(--t2)' }}>{pbSupplierSrc}</span>
           ) : isRowHovered ? (
             <span
-              onClick={() => setEditingSupplierNoteId(r.id)}
+              onClick={() => setEditingSupplierNoteId(rowUiId)}
               onMouseDown={e => e.stopPropagation()}
               style={{
                 display: 'inline-block', padding: '2px 8px', borderRadius: '9999px',
@@ -638,16 +752,16 @@ React.useEffect(() => { forceUpdate() }, [projectId])
           <input
             type="number"
             value={r.qty || 0}
-            onChange={e => editMTORow(r.id, 'qty', e.target.value)}
+            onChange={e => editMTORow(rowUiId, 'qty', e.target.value)}
             onMouseDown={e => e.stopPropagation()}
             step="1"
             onKeyDown={e => {
               if (e.key === 'ArrowUp') {
                 e.preventDefault()
-                editMTORow(r.id, 'qty', Math.floor(num(r.qty || 0)) + 1)
+                editMTORow(rowUiId, 'qty', Math.floor(num(r.qty || 0)) + 1)
               } else if (e.key === 'ArrowDown') {
                 e.preventDefault()
-                editMTORow(r.id, 'qty', Math.max(0, Math.ceil(num(r.qty || 0)) - 1))
+                editMTORow(rowUiId, 'qty', Math.max(0, Math.ceil(num(r.qty || 0)) - 1))
               }
             }}
             style={{
@@ -675,14 +789,14 @@ React.useEffect(() => { forceUpdate() }, [projectId])
               onMouseDown={e => e.stopPropagation()}
               onChange={e => {
                 // Local only — smooth typing, no save until blur/Enter
-                setLocalUnitCosts(prev => ({ ...prev, [r.id]: e.target.value }))
+                setLocalUnitCosts(prev => ({ ...prev, [rowUiId]: e.target.value }))
               }}
               onBlur={e => {
                 const v = e.target.value
-                editMTORow(r.id, 'unitCost', v)
+                editMTORow(rowUiId, 'unitCost', v)
                 setLocalUnitCosts(prev => {
                   const n = { ...prev }
-                  delete n[r.id]
+                  delete n[rowUiId]
                   return n
                 })
               }}
@@ -691,7 +805,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
                 if (e.key === 'Escape') {
                   setLocalUnitCosts(prev => {
                     const n = { ...prev }
-                    delete n[r.id]
+                    delete n[rowUiId]
                     return n
                   })
                   ;(e.target as HTMLInputElement).blur()
@@ -763,7 +877,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
             </button>
             {/* Delete */}
             <button
-              onClick={() => delMTORow(r.id)}
+              onClick={() => delMTORow(rowUiId)}
               onMouseDown={e => e.stopPropagation()}
               title="Delete row"
               style={{

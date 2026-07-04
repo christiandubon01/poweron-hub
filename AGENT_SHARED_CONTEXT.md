@@ -78,6 +78,7 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 | Agent | Feature Area | Files | Mode | Status | Claimed |
 |---|---|---|---|---|---|
 | Codex-Phase6B-CO-Scoped-Merge | Project Change Orders item-level scoped merge | src/services/projectScopeMerge.ts, src/components/v15r/V15rChangeOrdersTab.tsx, src/services/scopeRegistry.ts, src/services/backupDataService.ts, src/components/v15r/V15rDashboard.tsx, AGENT_SHARED_CONTEXT.md | DONE - typecheck PASS, build PASS, localhost blocked by logged-out/demo-readonly state | RELEASED | 2026-07-04 |
+| Codex-Phase6H-Materials-Scoped-Merge | Project Materials / MTO item-level scoped merge | src/services/projectScopeMerge.ts, src/components/v15r/V15rMTOTab.tsx, src/services/scopeRegistry.ts, src/services/backupDataService.ts, src/services/mtoExportService.ts, src/components/v15r/V15rEstimateTab.tsx, AGENT_SHARED_CONTEXT.md | DONE - typecheck PASS, build PASS, diff-check PASS, localhost manual test blocked by browser policy | RELEASED | 2026-07-04 |
 | Step13D-SoftGuide-HDMI-LabelSize (Claude Opus 4.8) | Blueprint Viewer — soft (visual-only) Guide Assist, HDMI/Data symbols, Symbols Size label-scale popup | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
 | ProjectLogs-Fix-LogsKey (Claude Opus 4.8) | Project/Field Logs — mark 'logs' changed key so production merge preserves new entries | src/components/v15r/V15rProjectLogsTab.tsx, src/components/v15r/V15rFieldLogPanel.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
 | Step13C-R2-Reorder-Packages (Claude Opus 4.8) | Blueprint Viewer — drag + up/down reorder of Work Package / Scope Layer cards | src/components/blueprint/OperationsBlueprintPdfViewer.tsx, AGENT_SHARED_CONTEXT.md | DONE — typecheck ✅ build ✅ diff-check ✅ (NOT committed) | RELEASED | 2026-07-02 |
@@ -3603,3 +3604,25 @@ Updated allowed v15r RFI count readers to ignore tombstones: central `health`, `
 Explicitly NOT changed: Change Orders, Blueprint files, Estimate/MTO, Project Logs, Payments/logs, Field Logs, Leads, Price Book, Team, Service Calls, Settings, Recovery Center, Phase 4 Save/stale/baseline behavior, `syncToSupabase` freshness guard, verified Save, `setKnownRemoteBaseline`, `attemptProductionMergeAndSync`, or `mergeLocalChangesIntoRemote`.
 
 No commit, push, deploy, manual Supabase touch, restore script, or manual localStorage write.
+
+---
+
+### 2026-07-04 - Phase 6H: Project Materials / MTO Scoped Tombstone Merge
+
+**Agent:** Codex
+**Mode:** Scoped implementation (Phase 6H)
+**Baseline HEAD:** `a6ab9ef` (Phase 6F "Add scoped merge for project RFIs")
+**Files touched:** `src/services/projectScopeMerge.ts`, `src/components/v15r/V15rMTOTab.tsx`, `src/services/scopeRegistry.ts`, `src/services/backupDataService.ts`, `src/services/mtoExportService.ts`, `src/components/v15r/V15rEstimateTab.tsx`, `src/components/v15r/V15rPricingIntelligencePanel.tsx`, `src/components/vault/EstimatePanel.tsx`, `src/components/guardian/GuardianOwnerWalkthrough.tsx`, `src/services/embeddingService.ts`, `src/services/patternService.ts`, `src/agents/nexus/nexusContextBuilder.ts`, `src/services/hunter/HunterPortfolioService.ts`, `AGENT_SHARED_CONTEXT.md`
+**Status:** DONE - typecheck PASS, build PASS, diff-check PASS
+
+Implemented delete-safe, item-level scoped merge for `project.materials`. New MTO rows now receive stable internal `materialId`/`mtoId` values plus `createdAt`/`updatedAt`; legacy rows keep deterministic fallback identities (`legacy:${projectId}:${bucket}:${id}` with a stable content fingerprint when duplicate legacy ids exist in the same bucket). Missing timestamps are never defaulted to now during merge; fallback is `updatedAt`, then `createdAt`, then a timestamp parsed from timestamp-ish ids such as `mto${Date.now()}`, then stable epoch.
+
+Changed normal MTO delete from hard delete to inline tombstone (`deletedAt`, optional `deletedBy`, `updatedAt`). Added pure material helpers in `projectScopeMerge.ts`: live filtering, tombstone creation, item-level merge, and `mergeProjectMaterialsIntoRemote`, which patches only `projects[target].mtoRows` and supported legacy `matRows`. Tombstones stay in raw arrays, tombstone wins against equal/older live rows, live can win only if strictly newer than the tombstone, both-live newest `updatedAt` wins, exact ties prefer remote, and output order is incoming-first plus remote-only append.
+
+`V15rMTOTab` now renders only `getLiveMaterialRows(...)`, targets edit/delete/reorder actions by stable material identity, creates timestamped rows, and saves normal MTO row changes through the fetch-latest -> merge `project.materials` -> `saveBackupWithRemoteBaselineSync(..., { changedKey: 'projects', _scopes: ['project.materials'] })` path. The existing Add-to-Price-Book modal still writes the Price Book branch through its legacy broad save path because Phase 6H explicitly did not take ownership of Price Book writes.
+
+Updated material readers/exports to exclude tombstones: MTO PDF export, Estimate tab read-only MTO totals/counts, central legacy `matRows` financial cost, Pricing Intelligence legacy material totals, Vault estimate-risk context, Guardian owner walkthrough legacy material line items, Embedding seed context, Pattern Service line item learning, NEXUS MTO context, and Hunter portfolio MTO highlight summaries.
+
+`scopeRegistry.ts` updated only for `project.materials`: identity `materialId/mtoId`, timestamp `updatedAt`, tombstone `deletedAt`, implemented flags set false, and notes record that `project.estimate` remains future/unimplemented.
+
+Explicitly NOT implemented or changed: `project.estimate`, `laborRows`, `ohRows`, `contract`, `mileRT`, `miDays`, `laborPhaseColors`, `estimateReference`, `phaseEstimateRows`, Change Orders, RFIs, Blueprint, Project Logs, Payments/logs, Field Logs, Leads, Price Book ownership, Team, Service Calls, Settings, Recovery Center, Phase 4 Save/stale/baseline behavior, `syncToSupabase` freshness guard, verified Save, `setKnownRemoteBaseline`, `attemptProductionMergeAndSync`, or `mergeLocalChangesIntoRemote`.

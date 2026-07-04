@@ -3,8 +3,9 @@
  *
  * Phase 6B implements delete-safe, item-level scoped merge for
  * project.changeOrders. Phase 6F adds the same scoped tombstone merge pattern
- * for project.rfis. This module is intentionally pure: no React, localStorage,
- * Supabase client, or side effects.
+ * for project.rfis. Phase 6H adds project.materials / MTO row support. This
+ * module is intentionally pure: no React, localStorage, Supabase client, or
+ * side effects.
  */
 import type { BackupData, ChangeOrder } from './backupDataService'
 
@@ -432,5 +433,316 @@ export function mergeProjectRFIsIntoRemote(
   const incomingRFIs = Array.isArray(incomingProject.rfis) ? incomingProject.rfis : []
 
   remoteProject.rfis = mergeRFIsByStableId(remoteRFIs, incomingRFIs, targetId)
+  return merged
+}
+
+export type ProjectMaterialBucket = 'mtoRows' | 'matRows' | string
+
+export interface ProjectMaterialRow {
+  materialId?: string
+  mtoId?: string
+  id?: string
+  name?: string
+  desc?: string
+  description?: string
+  qty?: number
+  quantity?: number
+  unit?: string
+  price?: number
+  cost?: number
+  total?: number
+  createdAt?: string
+  updatedAt?: string
+  deletedAt?: string
+  deletedBy?: string
+  [key: string]: any
+}
+
+export type MaterialIdentityContext = {
+  duplicateLegacyKeys: ReadonlySet<string>
+}
+
+export type MergeableProjectMaterialRow = ProjectMaterialRow & {
+  materialId: string
+  updatedAt: string
+}
+
+function normalizeMaterialText(value: unknown): string {
+  return String(value ?? '').trim()
+}
+
+function normalizeMaterialBucket(bucket?: ProjectMaterialBucket): string {
+  return normalizeMaterialText(bucket || 'materials') || 'materials'
+}
+
+function timestampFromMaterialId(row: any): string | null {
+  const candidates = [
+    row?.id,
+    row?.materialId,
+    row?.mtoId,
+  ]
+
+  for (const candidate of candidates) {
+    const text = normalizeMaterialText(candidate)
+    const match = text.match(/(\d{13})/)
+    if (!match) continue
+    const ms = Number(match[1])
+    if (!Number.isFinite(ms)) continue
+    const date = new Date(ms)
+    if (!Number.isNaN(date.getTime())) return date.toISOString()
+  }
+
+  return null
+}
+
+function legacyMaterialIdentityBase(
+  row: any,
+  projectId?: string,
+  bucket?: ProjectMaterialBucket,
+): string {
+  const legacyId = normalizeMaterialText(row?.id || 'missing') || 'missing'
+  return `legacy:${normalizeProjectId(projectId)}:${normalizeMaterialBucket(bucket)}:${legacyId}`
+}
+
+function stableMaterialFingerprint(row: any): string {
+  const parts = [
+    row?.id,
+    row?.name,
+    row?.desc,
+    row?.description,
+    row?.phase,
+    row?.matId,
+    row?.qty,
+    row?.quantity,
+    row?.unit,
+    row?.unitCost,
+    row?.price,
+    row?.cost,
+    row?.total,
+    row?.placement,
+    row?.note,
+    row?.supplierNote,
+    row?.createdAt,
+  ].map(value => normalizeMaterialText(value))
+  return shortStableHash(parts.join('|'))
+}
+
+export function createMaterialIdentityContext(
+  rows: any[],
+  projectId?: string,
+  bucket?: ProjectMaterialBucket,
+): MaterialIdentityContext {
+  const counts = new Map<string, number>()
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (normalizeMaterialText(row?.materialId) || normalizeMaterialText(row?.mtoId)) continue
+    const base = legacyMaterialIdentityBase(row, projectId, bucket)
+    counts.set(base, (counts.get(base) || 0) + 1)
+  }
+
+  const duplicateLegacyKeys = new Set<string>()
+  for (const [base, count] of counts) {
+    if (count > 1) duplicateLegacyKeys.add(base)
+  }
+  return { duplicateLegacyKeys }
+}
+
+export function getMaterialStableId(
+  row: any,
+  projectId?: string,
+  bucket?: ProjectMaterialBucket,
+  duplicateContext?: MaterialIdentityContext,
+): string {
+  const materialId = normalizeMaterialText(row?.materialId)
+  if (materialId) return materialId
+
+  const mtoId = normalizeMaterialText(row?.mtoId)
+  if (mtoId) return mtoId
+
+  const base = legacyMaterialIdentityBase(row, projectId, bucket)
+  if (duplicateContext?.duplicateLegacyKeys?.has(base)) {
+    return `${base}:${stableMaterialFingerprint(row)}`
+  }
+  return base
+}
+
+export function normalizeMaterialCreatedAt(row: any): string {
+  if (isValidDateString(row?.createdAt)) return String(row.createdAt)
+  const fromId = timestampFromMaterialId(row)
+  if (fromId) return fromId
+  return EPOCH_FALLBACK_ISO
+}
+
+export function normalizeMaterialUpdatedAt(row: any): string {
+  let base: string
+  if (isValidDateString(row?.updatedAt)) base = String(row.updatedAt)
+  else if (isValidDateString(row?.createdAt)) base = String(row.createdAt)
+  else base = timestampFromMaterialId(row) || EPOCH_FALLBACK_ISO
+
+  if (isValidDateString(row?.deletedAt) && parseTimestampMs(row.deletedAt) > parseTimestampMs(base)) {
+    return String(row.deletedAt)
+  }
+
+  return base
+}
+
+export function sanitizeMaterialRowForMerge(
+  row: any,
+  projectId?: string,
+  bucket?: ProjectMaterialBucket,
+  duplicateContext?: MaterialIdentityContext,
+): MergeableProjectMaterialRow | null {
+  if (!row || typeof row !== 'object') return null
+  const materialId = getMaterialStableId(row, projectId, bucket, duplicateContext)
+  if (!materialId) return null
+  const normalizedBucket = normalizeMaterialBucket(bucket)
+  const clean: ProjectMaterialRow = {
+    ...row,
+    materialId,
+    createdAt: normalizeMaterialCreatedAt(row),
+    updatedAt: normalizeMaterialUpdatedAt(row),
+  }
+  if (normalizedBucket === 'mtoRows' && !normalizeMaterialText(clean.mtoId)) {
+    clean.mtoId = materialId
+  }
+  return clean as MergeableProjectMaterialRow
+}
+
+export function isDeletedMaterialRow(row: any): boolean {
+  return isValidDateString(row?.deletedAt)
+}
+
+export function getLiveMaterialRows(
+  rows: any[],
+  projectId?: string,
+  bucket?: ProjectMaterialBucket,
+): ProjectMaterialRow[] {
+  const context = createMaterialIdentityContext(rows, projectId, bucket)
+  const out: ProjectMaterialRow[] = []
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const clean = sanitizeMaterialRowForMerge(row, projectId, bucket, context)
+    if (!clean || isDeletedMaterialRow(clean)) continue
+    out.push(clean)
+  }
+  return out
+}
+
+export function createMaterialRowTombstone(
+  existingRow: any,
+  projectId?: string,
+  bucket?: ProjectMaterialBucket,
+  deletedBy?: string,
+  duplicateContext?: MaterialIdentityContext,
+): ProjectMaterialRow {
+  const context = duplicateContext || createMaterialIdentityContext([existingRow], projectId, bucket)
+  const clean = sanitizeMaterialRowForMerge(existingRow, projectId, bucket, context) || existingRow || {}
+  const now = new Date().toISOString()
+  const materialId = getMaterialStableId(clean, projectId, bucket, context)
+  const tombstone: ProjectMaterialRow = {
+    ...clean,
+    materialId,
+    deletedAt: now,
+    updatedAt: now,
+  }
+  if (normalizeMaterialBucket(bucket) === 'mtoRows' && !normalizeMaterialText(tombstone.mtoId)) {
+    tombstone.mtoId = materialId
+  }
+  if (deletedBy) tombstone.deletedBy = deletedBy
+  else if (clean?.deletedBy) tombstone.deletedBy = clean.deletedBy
+  return tombstone
+}
+
+function pickMaterialRowWinner(
+  remote: MergeableProjectMaterialRow,
+  incoming: MergeableProjectMaterialRow,
+): ProjectMaterialRow {
+  const remoteDeleted = isDeletedMaterialRow(remote)
+  const incomingDeleted = isDeletedMaterialRow(incoming)
+
+  if (remoteDeleted && incomingDeleted) {
+    return comparableMs(incoming.deletedAt) > comparableMs(remote.deletedAt) ? incoming : remote
+  }
+
+  if (remoteDeleted !== incomingDeleted) {
+    const tombstone = remoteDeleted ? remote : incoming
+    const live = remoteDeleted ? incoming : remote
+    return comparableMs(live.updatedAt) > comparableMs(tombstone.deletedAt) ? live : tombstone
+  }
+
+  return comparableMs(incoming.updatedAt) > comparableMs(remote.updatedAt) ? incoming : remote
+}
+
+export function mergeMaterialRowsByStableId(
+  remoteRows: any[],
+  incomingRows: any[],
+  projectId?: string,
+  bucket?: ProjectMaterialBucket,
+): ProjectMaterialRow[] {
+  const combinedContext = createMaterialIdentityContext(
+    [
+      ...(Array.isArray(remoteRows) ? remoteRows : []),
+      ...(Array.isArray(incomingRows) ? incomingRows : []),
+    ],
+    projectId,
+    bucket,
+  )
+  const remoteSanitized = (Array.isArray(remoteRows) ? remoteRows : [])
+    .map(row => sanitizeMaterialRowForMerge(row, projectId, bucket, combinedContext))
+    .filter((row): row is MergeableProjectMaterialRow => row != null)
+  const incomingSanitized = (Array.isArray(incomingRows) ? incomingRows : [])
+    .map(row => sanitizeMaterialRowForMerge(row, projectId, bucket, combinedContext))
+    .filter((row): row is MergeableProjectMaterialRow => row != null)
+
+  const remoteById = new Map<string, MergeableProjectMaterialRow>()
+  for (const row of remoteSanitized) remoteById.set(String(row.materialId), row)
+
+  const result: ProjectMaterialRow[] = []
+  const used = new Set<string>()
+
+  for (const incoming of incomingSanitized) {
+    const id = String(incoming.materialId)
+    if (used.has(id)) continue
+    used.add(id)
+    const remote = remoteById.get(id)
+    result.push(remote ? pickMaterialRowWinner(remote, incoming) : incoming)
+  }
+
+  for (const remote of remoteSanitized) {
+    const id = String(remote.materialId)
+    if (used.has(id)) continue
+    used.add(id)
+    result.push(remote)
+  }
+
+  return result
+}
+
+export function mergeProjectMaterialsIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+  projectId: string,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const targetId = String(projectId || '').trim()
+  if (!targetId) return merged
+
+  const remoteProjects = Array.isArray(merged.projects) ? merged.projects : []
+  const remoteIndex = remoteProjects.findIndex((p: any) => String(p?.id || '') === targetId)
+  if (remoteIndex === -1) return merged
+
+  const incomingProjects = Array.isArray(incomingBackup?.projects) ? incomingBackup.projects : []
+  const incomingProject: any = incomingProjects.find((p: any) => String(p?.id || '') === targetId)
+  if (!incomingProject) return merged
+
+  const remoteProject: any = remoteProjects[remoteIndex]
+  const remoteMTORows = Array.isArray(remoteProject.mtoRows) ? remoteProject.mtoRows : []
+  const incomingMTORows = Array.isArray(incomingProject.mtoRows) ? incomingProject.mtoRows : []
+  remoteProject.mtoRows = mergeMaterialRowsByStableId(remoteMTORows, incomingMTORows, targetId, 'mtoRows')
+
+  if (Array.isArray(remoteProject.matRows) || Array.isArray(incomingProject.matRows)) {
+    const remoteMatRows = Array.isArray(remoteProject.matRows) ? remoteProject.matRows : []
+    const incomingMatRows = Array.isArray(incomingProject.matRows) ? incomingProject.matRows : []
+    remoteProject.matRows = mergeMaterialRowsByStableId(remoteMatRows, incomingMatRows, targetId, 'matRows')
+  }
+
   return merged
 }

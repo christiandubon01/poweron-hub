@@ -14,6 +14,7 @@ import MileageProjectAddress, {
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 import { getLoadedHourlyRate, getBaseHourlyRate, resolveWorkerType } from './employeeCostUtils'
+import { getLiveMaterialRows } from '@/services/projectScopeMerge'
 
 const LABOR_PHASES = ['Underground', 'Site Prep', 'Rough In', 'Trim', 'Finish']
 const LABOR_PHASE_DEFAULT_COLORS: Record<string, string> = {
@@ -265,11 +266,12 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
 
   const getMTOActivePhaseBreakdown = (proj) => {
     const settingsPhases = getProjectPhaseNames(backup)
-    const legacyPhases = getLegacyPhaseNames((proj.mtoRows || []).map((r: any) => r.phase), settingsPhases)
+    const liveMTORows = getLiveMaterialRows(proj.mtoRows || [], proj.id, 'mtoRows')
+    const legacyPhases = getLegacyPhaseNames(liveMTORows.map((r: any) => r.phase), settingsPhases)
     const allPhases = [...settingsPhases, ...legacyPhases]
     const taxRate = num(backup.settings?.tax || 0) / 100
     const markupRate = num(backup.settings?.markup || 0) / 100
-    return (proj.mtoRows || [])
+    return liveMTORows
       .map(r => ({ ...r, phase: normalizePhaseName(r.phase, settingsPhases) }))
       .filter(r => allPhases.includes(r.phase))
       .reduce((acc, r) => {
@@ -3764,7 +3766,7 @@ Return ONLY valid JSON, no other text.`
             profit: t.profit,
             marginPct: t.marginPct,
             laborHours: (p?.laborRows || []).reduce((s, r) => s + num(r.hrs), 0),
-            materialLineItems: (p?.mtoRows || []).length,
+            materialLineItems: getLiveMaterialRows(p?.mtoRows || [], p?.id, 'mtoRows').length,
           }
         })()}
         isOpen={aiOpen}

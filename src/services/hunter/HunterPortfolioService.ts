@@ -24,6 +24,7 @@
  */
 
 import { supabase } from '@/lib/supabase';
+import { getLiveMaterialRows } from '@/services/projectScopeMerge';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -611,7 +612,7 @@ function generateDescriptionFromScope(projectData: any): string {
 function extractHighlightStatFromMTO(projectData: any): string {
   if (projectData.highlight_stat) return projectData.highlight_stat;
 
-  const mtoRows = projectData.mtoRows || [];
+  const mtoRows = getLiveMaterialRows(projectData.mtoRows || [], projectData.id, 'mtoRows');
   const mtoSummary = mtoRows
     .slice(0, 2)
     .map((row: any) => `${row.qty} ${row.name}`)

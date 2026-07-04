@@ -11,6 +11,7 @@
  *               src/services/backupDataService.ts, vite.config.ts,
  *               src/components/v15r/charts/SVGCharts.tsx
  */
+import { getLiveMaterialRows } from './projectScopeMerge'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -137,7 +138,7 @@ export function exportMaterialSummaryPDF(
   project: ProjectForExport,
   priceBook: PriceBookItem[] = [],
 ): void {
-  const mtoRows     = project.mtoRows || []
+  const mtoRows     = getLiveMaterialRows(project.mtoRows || [], project.id, 'mtoRows') as MTORow[]
   const totalMTORows = mtoRows.length
   const summarized  = deduplicateMTORows(mtoRows, priceBook)
   const uniqueCount = summarized.length

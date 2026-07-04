@@ -20,6 +20,7 @@
 
 import { getBackupData, getKPIs } from '@/services/backupDataService'
 import { getActiveMode } from '@/services/nexusMode'
+import { getLiveMaterialRows } from '@/services/projectScopeMerge'
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 
@@ -334,7 +335,7 @@ export function buildDeepProjectContext(): string {
     }, 0)
 
     // ── MTO analysis ────────────────────────────────────────────────────────
-    const mtoRows     = p.mtoRows || []
+    const mtoRows     = getLiveMaterialRows(p.mtoRows || [], p.id, 'mtoRows')
     const mtoTotal    = mtoRows.length
 
     let matCostKnown  = 0

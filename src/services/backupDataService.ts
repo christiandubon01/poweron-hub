@@ -27,7 +27,7 @@ import {
   resolveScopesForSyncInput,
   type DataScope,
 } from './scopeRegistry'
-import { getLiveChangeOrders, getLiveRFIs } from './projectScopeMerge'
+import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs } from './projectScopeMerge'
 
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
 const STORAGE_KEY = LEGACY_STORAGE_KEY
@@ -1032,7 +1032,7 @@ export function getProjectFinancials(p: BackupProject, d: BackupData): {
   const ar = Math.max(0, billed - paid)
   const unbilled = Math.max(0, contract - billed)
   const risk = Math.max(0, contract - paid)
-  const estMat = Array.isArray(p.matRows) ? p.matRows.reduce((s: number, r: any) => s + (num(r.cost) * num(r.qty || 1)), 0) : 0
+  const estMat = getLiveMaterialRows(p.matRows || [], p.id, 'matRows').reduce((s: number, r: any) => s + (num(r.cost) * num(r.qty || 1)), 0)
   const matCost = estMat
   const paidLogs = logs.filter(l => num(l.collected) > 0).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
   const lastCollectedAt = fin.lastCollectedAt || (paidLogs[0] ? paidLogs[0].date : '') || p.lastCollectedAt || ''

@@ -17,6 +17,7 @@ import { pushState } from '@/services/undoRedoService'
 import { useProactiveAI } from '@/hooks/useProactiveAI'
 import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
 import { callClaude, extractText } from '@/services/claudeProxy'
+import { getLiveMaterialRows } from '@/services/projectScopeMerge'
 
 interface BenchmarkRow {
   name: string
@@ -70,7 +71,7 @@ export default function V15rPricingIntelligencePanel() {
     const totalContract = projs.reduce((s, p) => s + num(p.contract), 0)
     const totalCost = projs.reduce((s, p) => {
       const lab = (p.laborRows || []).reduce((sum, r) => sum + num(r.hrs) * num(r.rate), 0)
-      const mat = (p.matRows || []).reduce((sum, r) => sum + num(r.total), 0)
+      const mat = getLiveMaterialRows(p.matRows || [], p.id, 'matRows').reduce((sum, r) => sum + num(r.total), 0)
       return s + lab + mat
     }, 0)
     const margin = totalContract > 0 ? ((totalContract - totalCost) / totalContract * 100) : 0
