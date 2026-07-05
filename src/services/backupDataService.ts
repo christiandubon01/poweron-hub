@@ -222,6 +222,10 @@ export interface BackupProject {
   archived?: boolean
   archivedAt?: string | null
   archivedReason?: string | null
+  /** Phase 6Q: project soft-delete lifecycle tombstone (project.lifecycle scope). */
+  deletedAt?: string
+  deletedBy?: string
+  updatedAt?: string
   outcome?: 'active' | 'won' | 'lost' | 'completed' | 'cancelled' | null
   lostReason?: string
   lostNotes?: string
@@ -880,6 +884,8 @@ export function isArchivedRecord(record: any): boolean {
 
 export function isActiveProject(record: any): boolean {
   if (!record || isArchivedRecord(record)) return false
+  // Phase 6Q: soft-deleted projects are never active (deletedAt tombstone or status).
+  if (record.deletedAt) return false
   const status = String(record.status || record.projectStatus || '').toLowerCase().trim()
   const outcome = String(record.outcome || '').toLowerCase().trim()
   if (['deleted', 'lost', 'rejected', 'cancelled', 'canceled', 'archived'].includes(status)) return false

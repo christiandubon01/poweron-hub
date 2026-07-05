@@ -30,7 +30,7 @@ import {
   isActiveProject,
   type BackupProject,
 } from '@/services/backupDataService'
-import { getLiveRFIs, mergeProjectLogsIntoRemote } from '@/services/projectScopeMerge'
+import { getLiveRFIs, mergeProjectLogsIntoRemote, createProjectTombstone, mergeProjectLifecycleIntoRemote, isDeletedProject } from '@/services/projectScopeMerge'
 import { getProjectDaysSinceLastMovement } from '@/utils/v15rProjectHealth'
 import { pushState } from '@/services/undoRedoService'
 import QuickBooksImportModal from './QuickBooksImportModal'
@@ -493,7 +493,9 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   const allProjects = backup.projects || []
   const projects = allProjects.filter(isActiveProject)
   const isArchivedRecord = (record: any) => !!(record && (record.archived === true || record.isArchived === true || record.archivedAt))
-  const archivedProjects = allProjects.filter(isArchivedRecord)
+  // Phase 6Q: soft-deleted projects are hidden from the Archived list too (they are
+  // not archived records — they carry a deletedAt/status='deleted' tombstone).
+  const archivedProjects = allProjects.filter(p => isArchivedRecord(p) && !isDeletedProject(p))
   const gcContacts = backup.gcContacts || []
   const accountOptions = gcContacts.map((gc: any) => ({
     id: String(gc.id || ''),
@@ -644,12 +646,63 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     setNpClientEdited(false)
   }
 
+  /**
+   * Phase 6Q: scoped, delete-safe save for the project soft-delete lifecycle. The
+   * caller has already stamped the project's deletedAt/deletedBy/status in
+   * backup.projects[] (no hard remove; logs[] untouched). Persist locally for
+   * instant UI, then fetch latest remote and patch ONLY this project's lifecycle
+   * fields (mergeProjectLifecycleIntoRemote) — all child arrays, the top-level
+   * logs[], and every other project are preserved from remote. Demo mode keeps the
+   * prior local-sync behavior. No Save/stale/baseline internals are touched.
+   */
+  async function saveProjectLifecycleScoped(affectedProjectId: string) {
+    backup._lastSavedAt = new Date().toISOString()
+    if (hasHydrated && isDemoMode) {
+      saveBackupDataAndSync(backup, 'projects')
+      window.dispatchEvent(new Event('storage'))
+      window.dispatchEvent(new Event('poweron-data-saved'))
+      forceUpdate()
+      return
+    }
+    saveBackupData(backup)
+    window.dispatchEvent(new Event('storage'))
+    window.dispatchEvent(new Event('poweron-data-saved'))
+    forceUpdate()
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const incoming = getBackupData() || backup
+        const merged = mergeProjectLifecycleIntoRemote(remote.remoteData, incoming, affectedProjectId)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+          { source: 'project-lifecycle-remote-merge', changedKey: 'projects', _scopes: ['project.lifecycle'] },
+        )
+        return
+      }
+      saveBackupDataAndSync(getBackupData() || backup, 'projects', {
+        source: 'project.lifecycle', _scopes: ['project.lifecycle'],
+      })
+    } catch (err) {
+      console.warn('[V15rProjectsPanel] Scoped project-lifecycle sync failed; local changes preserved', err)
+      saveBackupDataAndSync(getBackupData() || backup, 'projects', {
+        source: 'project.lifecycle', _scopes: ['project.lifecycle'],
+      })
+    }
+  }
+
   async function deleteProject(id: string) {
-    if (!confirm('Delete this project? This cannot be undone.')) return
+    if (!confirm('Delete this project? It will be removed from your lists. Its logs, payments, and history are preserved.')) return
     const proj = allProjects.find(p => p.id === id)
-    backup.projects = allProjects.filter(p => p.id !== id)
-    backup.logs = (backup.logs || []).filter(l => l.projId !== id)
-    persist()
+    if (!proj) return
+    pushState(backup)
+    // Phase 6Q: soft-delete — stamp deletedAt/deletedBy/status='deleted' instead of
+    // hard-removing the project or hard-filtering its logs. Child arrays (COs/RFIs/
+    // materials/estimate rows) and the top-level logs[] (incl. collected payments)
+    // are preserved; readers hide the project via isActiveProject. Save is scoped to
+    // project.lifecycle so a stale remote can't clobber unrelated project data.
+    backup.projects = allProjects.map(p => (p.id === id ? createProjectTombstone(p) : p))
+    void saveProjectLifecycleScoped(id)
     // Write won_archived disposition to linked hunter lead
     if (proj?.convertedFromLeadId) {
       try {

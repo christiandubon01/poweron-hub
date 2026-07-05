@@ -1503,3 +1503,77 @@ export function mergeProjectLogsIntoRemote(
   merged.logs = [...remoteOther, ...mergedTarget]
   return merged
 }
+
+// ── Project lifecycle: soft-delete (Phase 6Q) ──────────────────────────────────
+// Project deletion is delete-safe: instead of hard-removing the project from
+// projects[] (and hard-filtering its logs), deleteProject stamps the project with
+// deletedAt/deletedBy/status='deleted'. This module patches ONLY those lifecycle
+// fields onto the matching remote project; every child array, the top-level logs[],
+// all other projects, serviceLogs, and blueprint data are preserved untouched.
+// Child-record cascade tombstoning and a hard purge are deferred to a later phase.
+
+/** True when a project carries a soft-delete tombstone (deletedAt) or status 'deleted'. */
+export function isDeletedProject(project: any): boolean {
+  if (!project) return false
+  if (isValidDateString(project?.deletedAt)) return true
+  return String(project?.status || '').trim().toLowerCase() === 'deleted'
+}
+
+/**
+ * Return a copy of `project` marked soft-deleted. Every existing field and child
+ * array is preserved; only lifecycle metadata is added/updated. Idempotent: an
+ * existing deletedAt is kept so re-deleting doesn't reset the tombstone.
+ */
+export function createProjectTombstone(project: any, deletedBy?: string): any {
+  const now = new Date().toISOString()
+  const existingDeletedAt = isValidDateString(project?.deletedAt) ? String(project.deletedAt) : null
+  return {
+    ...project,
+    deletedAt: existingDeletedAt || now,
+    deletedBy: deletedBy || project?.deletedBy || 'system',
+    status: 'deleted',
+    updatedAt: now,
+  }
+}
+
+/**
+ * Merge project soft-delete lifecycle fields from `incomingBackup` into a fresh
+ * clone of `remoteBackup` for a single project. Patches ONLY deletedAt/deletedBy/
+ * status/updatedAt onto the matching remote project. All remote child arrays, the
+ * top-level logs[], every other project, serviceLogs, and blueprint data are left
+ * exactly as they are in the remote snapshot.
+ */
+export function mergeProjectLifecycleIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+  projectId: string,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const targetId = String(projectId || '').trim()
+  if (!targetId) return merged
+
+  const incomingProjects = Array.isArray(incomingBackup?.projects) ? incomingBackup.projects : []
+  const incomingProject: any = incomingProjects.find((p: any) => String(p?.id || '') === targetId)
+  if (!incomingProject) return merged
+
+  const remoteProjects = Array.isArray(merged.projects) ? merged.projects : []
+  const remoteIndex = remoteProjects.findIndex((p: any) => String(p?.id || '') === targetId)
+
+  if (remoteIndex === -1) {
+    // Remote has no such project (already gone / never synced). Append the incoming
+    // soft-deleted project so the tombstone still propagates, matching the additive
+    // convention used by the log/item merges (incoming-only rows are carried through).
+    if (Array.isArray(merged.projects)) merged.projects.push(incomingProject)
+    else (merged as any).projects = [incomingProject]
+    return merged
+  }
+
+  const remoteProject: any = remoteProjects[remoteIndex]
+  remoteProject.deletedAt = incomingProject.deletedAt
+  remoteProject.deletedBy = incomingProject.deletedBy
+  remoteProject.status = incomingProject.status
+  if (isValidDateString(incomingProject.updatedAt)) {
+    remoteProject.updatedAt = incomingProject.updatedAt
+  }
+  return merged
+}

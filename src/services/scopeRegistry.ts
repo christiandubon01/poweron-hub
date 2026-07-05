@@ -35,6 +35,7 @@ export type DataScope =
   | 'project.schedule'
   | 'project.notes'
   | 'project.files'
+  | 'project.lifecycle'
   | 'fieldLogs.entries'
   | 'fieldLogs.materials'
   | 'fieldLogs.photos'
@@ -235,6 +236,20 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
     strategy: 'future',
     priority: 'future',
     notes: 'No first-class attachments model exists yet; needs a data-model decision.',
+  },
+  'project.lifecycle': {
+    scope: 'project.lifecycle',
+    dataPath: 'projects[].deletedAt / deletedBy / status (soft-delete lifecycle metadata only)',
+    owner: 'V15rProjectsPanel',
+    level: 'nested',
+    identityField: 'id',
+    timestampField: 'updatedAt',
+    tombstoneField: 'deletedAt',
+    needsTimestamp: false,
+    needsTombstone: false,
+    strategy: 'field-lww',
+    priority: 'critical',
+    notes: 'Phase 6Q: project soft-delete lifecycle. deleteProject stamps deletedAt/deletedBy/status="deleted" (no hard remove from projects[], no hard-filter of logs[]). mergeProjectLifecycleIntoRemote patches ONLY these lifecycle fields onto the matching remote project; all child arrays (changeOrders/rfis/materials/estimate rows/scalars/schedule/notes), top-level logs[], other projects, serviceLogs, and blueprint data are preserved untouched. Readers hide deleted projects via isActiveProject (deletedAt or status="deleted") and the panel excludes them from the Archived list. Child-record cascade tombstoning and a hard export-gated purge are deferred to a later phase.',
   },
 
   // ── Field Logs ──
@@ -478,6 +493,7 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
     'project.materials',
     'project.schedule',
     'project.notes',
+    'project.lifecycle',
   ],
   logs: [
     'project.payments',

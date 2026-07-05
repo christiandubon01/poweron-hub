@@ -100,6 +100,27 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 ## Audit & Change Log
 
+### 2026-07-05 — Phase 6Q: Project Soft-Delete Lifecycle + Scoped Sync Safety (NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Scoped implementation — replace the hard project delete with a delete-safe soft-delete (Model A). No child-record cascade tombstoning, no service-log change, no Save/stale/baseline change, no blueprint change.
+**Branch:** main | HEAD before edits = `b7df027` (Convert remaining project log creators)
+**Files changed:** `src/services/scopeRegistry.ts`, `src/services/projectScopeMerge.ts`, `src/services/backupDataService.ts`, `src/components/v15r/V15rProjectsPanel.tsx`, `AGENT_SHARED_CONTEXT.md`
+
+**Root context:** Phase 6Q audit found `deleteProject` (the only hard-delete path) hard-removed the project from `projects[]` AND hard-filtered `logs[]` by projId (destroying collected/payment history with no tombstone), via a broad `persist('projects')` save. Converted to a scoped soft-delete.
+
+**What was implemented:**
+- **`scopeRegistry.ts`**: added `project.lifecycle` `DataScope` + descriptor (fields deletedAt/deletedBy/status; field-lww; nested; critical) and added it to the `projects` legacy changedKey mapping. No existing scope changed.
+- **`projectScopeMerge.ts`**: added `isDeletedProject(project)` (true when `deletedAt` valid or `status==='deleted'`), `createProjectTombstone(project, deletedBy?)` (returns a copy stamped deletedAt[idempotent]/deletedBy['system' default]/status='deleted'/updatedAt, preserving every field + child array), and `mergeProjectLifecycleIntoRemote(remote, incoming, projectId)` (clones remote, patches ONLY deletedAt/deletedBy/status/updatedAt onto the matching remote project; if remote lacks the project it appends the incoming soft-deleted copy to propagate the tombstone; all child arrays, top-level logs[], other projects, serviceLogs, and blueprint data untouched). No existing item merge altered.
+- **`backupDataService.ts`**: type-only added `BackupProject.deletedAt?/deletedBy?/updatedAt?`; `isActiveProject` now returns false when `record.deletedAt` is set (status='deleted' was already excluded). No sync/save/baseline logic changed.
+- **`V15rProjectsPanel.tsx`**: `deleteProject` no longer hard-removes the project or hard-filters `logs[]`. It now `pushState`s, replaces the project in `projects[]` with `createProjectTombstone(p)`, and saves through a new demo-aware `saveProjectLifecycleScoped(id)` (optimistic local → `fetchLatestRemoteBackup` → `mergeProjectLifecycleIntoRemote` → `saveBackupWithRemoteBaselineSync({ source:'project-lifecycle-remote-merge', changedKey:'projects', _scopes:['project.lifecycle'] })`; first-sync/fetch-failure fallback = `saveBackupDataAndSync(...,'projects',{_scopes:['project.lifecycle']})`). The hunter_leads `won_archived` disposition side effect is preserved. Confirm dialog reworded (history preserved). The Archived list now excludes soft-deleted projects (`isArchivedRecord(p) && !isDeletedProject(p)`); active/coming/completed already exclude them via `isActiveProject`. `archiveProject`/`restoreProject`/`markProjectLost`/`moveStatus` unchanged.
+
+**Explicitly NOT done / untouched:** child-record cascade tombstoning (COs/RFIs/materials/estimate rows ride with the retained soft-deleted project); logs[] no longer filtered on delete; hard export-gated purge + Recovery Center UI (deferred); serviceLogs / service payments / `statusEvents` / `manualPaidAdjustment`; blueprint annotations/work packages / `OperationsBlueprintPdfViewer.tsx`; existing item merges (CO/RFI/materials/estimate/logs); Home log readers; Project Logs display sorting; Phase 6P log creators; `syncToSupabase` freshness guard, verified Save, `setKnownRemoteBaseline`, `saveBackupWithRemoteBaselineSync` internals, `attemptProductionMergeAndSync`, `mergeLocalChangesIntoRemote`. Not committed; no push.
+
+**Lock released.**
+
+---
+
 ### 2026-07-04 — Phase 6P: Remaining Project-Log Creators → Scoped Merge + Payment-Creator Corruption Repair (NOT COMMITTED)
 
 **Agent:** Claude Opus 4.8
