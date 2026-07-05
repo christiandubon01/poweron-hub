@@ -41,6 +41,67 @@ function getBalanceColor(balance: number, contract: number): string {
   return '#f97316'
 }
 
+// ── Display-only log timeline ordering (Phase 6P-A) ────────────────────────────
+// Logs carry mixed date formats — ISO `YYYY-MM-DD` (project/field-panel creators)
+// and US `MM/DD/YYYY` (V15rFieldLogs). A raw string sort of mixed formats twists
+// the timeline, so we order by a parsed timestamp. This is purely a UI sort: the
+// stored logs[] array, the scoped merge, tombstone filtering, and all financial
+// totals are untouched.
+
+function logParseMs(value: any): number {
+  if (typeof value !== 'string') return Number.NaN
+  const t = value.trim()
+  if (!t) return Number.NaN
+  const ms = Date.parse(t) // handles both YYYY-MM-DD and MM/DD/YYYY
+  return Number.isNaN(ms) ? Number.NaN : ms
+}
+
+function logMsFromId(log: any): number {
+  for (const candidate of [log?.id, log?.logId]) {
+    const m = String(candidate ?? '').match(/(\d{13})/)
+    if (m) {
+      const n = Number(m[1])
+      if (Number.isFinite(n)) return n
+    }
+  }
+  return Number.NaN
+}
+
+/** Primary ordering instant: log.date first, then createdAt/updatedAt, then id/logId ms. */
+function getLogDisplayTimestamp(log: any): number {
+  const d = logParseMs(log?.date)
+  if (!Number.isNaN(d)) return d
+  const u = logParseMs(log?.updatedAt)
+  if (!Number.isNaN(u)) return u
+  const c = logParseMs(log?.createdAt)
+  if (!Number.isNaN(c)) return c
+  const i = logMsFromId(log)
+  if (!Number.isNaN(i)) return i
+  return Number.NEGATIVE_INFINITY // invalid/missing dates sort last
+}
+
+/** Fine tiebreaker used only when two logs share the same date: newest edit first. */
+function getLogTieBreaker(log: any): number {
+  const u = logParseMs(log?.updatedAt)
+  if (!Number.isNaN(u)) return u
+  const c = logParseMs(log?.createdAt)
+  if (!Number.isNaN(c)) return c
+  const i = logMsFromId(log)
+  if (!Number.isNaN(i)) return i
+  return Number.NEGATIVE_INFINITY
+}
+
+/** Newest → oldest, top to bottom. Stable; does not mutate the input array. */
+function sortProjectLogsNewestFirst(logs: any[]): any[] {
+  return [...(Array.isArray(logs) ? logs : [])].sort((a, b) => {
+    const ap = getLogDisplayTimestamp(a), bp = getLogDisplayTimestamp(b)
+    if (ap !== bp) return bp - ap
+    const at = getLogTieBreaker(a), bt = getLogTieBreaker(b)
+    if (at !== bt) return bt - at
+    return String(b.id || '').localeCompare(String(a.id || '')) // stable final tiebreak
+  })
+}
+
 function interleaveWithGaps(
   entries: any[],
   dateField: string,
@@ -99,7 +160,15 @@ function interleaveWithGaps(
   return [
     ...entries.map(e => ({ type: 'entry', data: e, sortDate: e[dateField] })),
     ...gaps.map(g => ({ type: 'gap', ...g, sortDate: g.startDate })),
-  ].sort((a, b) => String(b.sortDate).localeCompare(String(a.sortDate)))
+  ].sort((a, b) => {
+    // Order by parsed timestamp (mixed ISO/US date formats). Stable sort keeps
+    // same-day entries in the newest-first order established by the caller.
+    const am = logParseMs(a.sortDate), bm = logParseMs(b.sortDate)
+    const av = Number.isNaN(am) ? Number.NEGATIVE_INFINITY : am
+    const bv = Number.isNaN(bm) ? Number.NEGATIVE_INFINITY : bm
+    if (av !== bv) return bv - av
+    return String(b.sortDate).localeCompare(String(a.sortDate))
+  })
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -274,11 +343,9 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
 
   // Filter logs for this project only — live (non-tombstoned/archived) rows only.
   const projectLogs = getLiveProjectLogs(backup, projectId)
-  const sorted = [...projectLogs].sort((a, b) => {
-    const da = String(b.date || ''), db = String(a.date || '')
-    if (da !== db) return da.localeCompare(db)
-    return String(b.id || '').localeCompare(String(a.id || ''))
-  })
+  // Phase 6P-A: newest → oldest by parsed timestamp (handles mixed ISO/US date
+  // formats + same-date createdAt/updatedAt tiebreak). Display-only sort.
+  const sorted = sortProjectLogsNewestFirst(projectLogs)
 
   const rollCache: Record<string, any> = {}
   const getRoll = (pId: string) => {

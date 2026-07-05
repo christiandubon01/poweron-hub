@@ -14,6 +14,8 @@ import {
   getBackupData,
   saveBackupData,
   saveBackupDataAndSync,
+  fetchLatestRemoteBackup,
+  saveBackupWithRemoteBaselineSync,
   health,
   getOverallCompletion,
   getProjectFinancials,
@@ -28,7 +30,7 @@ import {
   isActiveProject,
   type BackupProject,
 } from '@/services/backupDataService'
-import { getLiveRFIs } from '@/services/projectScopeMerge'
+import { getLiveRFIs, mergeProjectLogsIntoRemote } from '@/services/projectScopeMerge'
 import { getProjectDaysSinceLastMovement } from '@/utils/v15rProjectHealth'
 import { pushState } from '@/services/undoRedoService'
 import QuickBooksImportModal from './QuickBooksImportModal'
@@ -708,6 +710,57 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
 
   // ── Collection payment handlers ───────────────────────────────────────────
 
+  function makeLogInternalId() {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `log_${crypto.randomUUID()}`
+    return `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  }
+
+  /**
+   * Phase 6P: scoped, delete-safe save for the payment-log creators below.
+   * The caller has already appended the new collected log row to backup.logs.
+   * We persist locally for instant UI, then fetch latest remote and patch ONLY
+   * this project's slice of the top-level logs[] (mergeProjectLogsIntoRemote) —
+   * every other project's logs are preserved from remote. Demo mode keeps the
+   * prior local-sync behavior (no remote merge). Mirrors the proven Phase 6N
+   * path used by V15rFieldLogPanel / V15rProjectLogsTab; no Save/stale/baseline
+   * internals are touched.
+   */
+  async function saveProjectLogCreatorScoped(affectedProjectId: string) {
+    backup._lastSavedAt = new Date().toISOString()
+    if (hasHydrated && isDemoMode) {
+      saveBackupDataAndSync(backup, 'logs')
+      window.dispatchEvent(new Event('storage'))
+      window.dispatchEvent(new Event('poweron-data-saved'))
+      forceUpdate()
+      return
+    }
+    saveBackupData(backup)
+    window.dispatchEvent(new Event('storage'))
+    window.dispatchEvent(new Event('poweron-data-saved'))
+    forceUpdate()
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const incoming = getBackupData() || backup
+        const merged = mergeProjectLogsIntoRemote(remote.remoteData, incoming, affectedProjectId)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+          { source: 'project-logs-remote-merge', changedKey: 'logs', _scopes: ['project.logs', 'project.payments'] },
+        )
+        return
+      }
+      saveBackupDataAndSync(getBackupData() || backup, 'logs', {
+        source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
+      })
+    } catch (err) {
+      console.warn('[V15rProjectsPanel] Scoped payment-log sync failed; local changes preserved', err)
+      saveBackupDataAndSync(getBackupData() || backup, 'logs', {
+        source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
+      })
+    }
+  }
+
   function handleMarkFullPayment(p: BackupProject) {
     // DASHBOARD-CFOT-COLLECTION-PATH-PARITY-APR22-2026-1
     // Writes to backup.logs stream (the single source of truth for collected amounts).
@@ -718,9 +771,14 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     const amount = Math.max(0, num(fin.contract) - num(fin.paid))
     if (amount <= 0) { setCollectProject(null); return }
     pushState()
-    const today = new Date().toISOString().slice(0, 10)
+    const now = new Date().toISOString()
+    const today = now.slice(0, 10)
+    // Phase 6P: stamp stable logId + createdAt/updatedAt; collected stays on the row.
     const entry: any = {
       id: 'log' + Date.now(),
+      logId: makeLogInternalId(),
+      createdAt: now,
+      updatedAt: now,
       projId: p.id,
       projName: p.name,
       phase: 'Payment',
@@ -737,12 +795,10 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       notes: 'Full payment received',
     }
     backup.logs = [...(backup.logs || []), entry]
-    p.lastCollectedAt = new Date().toISOString()
+    p.lastCollectedAt = now
     p.lastCollectedAmount = amount
-    saveBackupDbackup.logs = [...(backup.logs || []), entry]
-    p.lastCollectedAt = new Date().toISOString()
-    p.lastCollectedAmount = amount
-    saveBackupData(backup)
+    // Phase 6P: scoped save for this project's log slice (no broad saveBackupData).
+    void saveProjectLogCreatorScoped(p.id)
     // Write disposition_detail to linked HUNTER lead if this project came from one
     if (p.convertedFromLeadId) {
       const leadId = p.convertedFromLeadId
@@ -757,11 +813,6 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       })
     }
     setCollectProject(null)
-    forceUpdate()
-  }
-  function handleLogPartialPayment(p: BackupProject) {ata(backup)
-    setCollectProject(null)
-    forceUpdate()
   }
 
   function handleLogPartialPayment(p: BackupProject) {
@@ -770,9 +821,14 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     const amount = num(collectPartialInput)
     if (!amount || amount <= 0) return
     pushState()
-    const today = new Date().toISOString().slice(0, 10)
+    const now = new Date().toISOString()
+    const today = now.slice(0, 10)
+    // Phase 6P: stamp stable logId + createdAt/updatedAt; collected stays on the row.
     const entry: any = {
       id: 'log' + Date.now(),
+      logId: makeLogInternalId(),
+      createdAt: now,
+      updatedAt: now,
       projId: p.id,
       projName: p.name,
       phase: 'Payment',
@@ -789,9 +845,10 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       notes: 'Partial payment received',
     }
     backup.logs = [...(backup.logs || []), entry]
-    p.lastCollectedAt = new Date().toISOString()
+    p.lastCollectedAt = now
     p.lastCollectedAmount = amount
-    saveBackupData(backup)
+    // Phase 6P: scoped save for this project's log slice (no broad saveBackupData).
+    void saveProjectLogCreatorScoped(p.id)
     // Write disposition_detail to linked HUNTER lead if this project came from one
     if (p.convertedFromLeadId) {
       const leadId = p.convertedFromLeadId
@@ -808,7 +865,6 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     setCollectPartialInput('')
     setCollectLoggingPartial(false)
     setCollectProject(null)
-    forceUpdate()
   }
   // ── Group projects by bucket
 

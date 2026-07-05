@@ -100,6 +100,25 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 ## Audit & Change Log
 
+### 2026-07-04 — Phase 6P: Remaining Project-Log Creators → Scoped Merge + Payment-Creator Corruption Repair (NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Scoped implementation — convert the last three project-log CREATORS to the Phase 6N scoped `logs[]` merge path and repair committed source corruption in the payment creators. No Save/stale/baseline change, no service-log change, no new merge/service helpers, no services files edited.
+**Branch:** main | HEAD before edits = `47a21f2` (Hide tombstoned logs on home)
+**Files changed:** `src/components/v15r/V15rProjectsPanel.tsx`, `src/components/v15r/V15rFieldLogs.tsx`, `AGENT_SHARED_CONTEXT.md`
+
+**Root context:** Phase 6O audit found three creators still broad-saving / corrupted: `V15rFieldLogs.handleAddLog`, and `V15rProjectsPanel.handleMarkFullPayment` / `handleLogPartialPayment`. The latter two sat inside committed corruption: `saveBackupDbackup.logs = …` (undefined ref → runtime throw on Mark Full Payment), an orphan `handleLogPartialPayment(p){ata(backup)` fragment, and a duplicate/malformed `handleLogPartialPayment` declaration.
+
+**What was implemented:**
+- **`V15rProjectsPanel.tsx`**: Repaired the corruption — removed `saveBackupDbackup.logs = …` and the duplicated `p.lastCollected*` lines, deleted the orphan/malformed duplicate `handleLogPartialPayment` block. Now exactly one valid `handleMarkFullPayment` and one valid `handleLogPartialPayment`; no `saveBackupDbackup`, no orphan `ata(backup)`. Added a local demo-aware `saveProjectLogCreatorScoped(projectId)` (optimistic local `saveBackupData` → `fetchLatestRemoteBackup` → `mergeProjectLogsIntoRemote(remote, incoming, projId)` → `saveBackupWithRemoteBaselineSync({ source:'project-logs-remote-merge', changedKey:'logs', _scopes:['project.logs','project.payments'] })`; first-sync/fetch-failure fallback = `saveBackupDataAndSync(...,'logs',{_scopes})`; demo mode keeps prior local-sync behavior). Both payment creators now stamp `logId` (`makeLogInternalId`) + `createdAt`/`updatedAt`, keep `collected` on the same row, append to `backup.logs[]`, and persist through the scoped save (no broad `saveBackupData` for the log write). Added imports `fetchLatestRemoteBackup`, `saveBackupWithRemoteBaselineSync`, `mergeProjectLogsIntoRemote`.
+- **`V15rFieldLogs.tsx`**: `handleAddLog` now stamps `logId`/`createdAt`/`updatedAt` (preserving `id`/`projId`/`date`/`phase`/`emp`/`hrs`/`miles`/`mat`/`collected`/`notes`/`projName` from the form emitter), appends to `backup.logs[]`, and saves through a new `saveFieldLogScoped(projId)` mirroring the Phase 6N path (fetch-latest → `mergeProjectLogsIntoRemote` → `saveBackupWithRemoteBaselineSync`; fallback `saveBackupDataAndSync(...,'logs',{_scopes})`). Removed `window.location.reload()` in favor of `forceUpdate` + `storage`/`poweron-data-saved` events; modal closes via `setShowAddForm(false)`. UI/layout unchanged. Added imports `saveBackupDataAndSync`, `fetchLatestRemoteBackup`, `saveBackupWithRemoteBaselineSync`, `useCallback`, and `mergeProjectLogsIntoRemote`.
+
+**Explicitly NOT done / untouched:** `deleteProject` cascade (still hard-filters `logs` by projId — deferred to Phase 6Q); serviceLogs / service-call payments / `statusEvents`; `manualPaidAdjustment`; `V15rProjectLogsTab.tsx` / `V15rFieldLogPanel.tsx` (already compliant); dashboard/chart readers; all services files (`projectScopeMerge.ts`, `backupDataService.ts`, `scopeRegistry.ts` — read-only, not edited); `syncToSupabase` freshness guard, verified Save, `setKnownRemoteBaseline`, `saveBackupWithRemoteBaselineSync` internals, `attemptProductionMergeAndSync`, `mergeLocalChangesIntoRemote`. Not committed; no push.
+
+**Lock released.**
+
+---
+
 ### 2026-07-04 — Phase 6N: Project Logs + Payment Row Scoped Tombstone Merge (NOT COMMITTED)
 
 **Agent:** Claude Opus 4.8

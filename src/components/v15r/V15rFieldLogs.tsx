@@ -10,14 +10,18 @@
  * - Add new entry form (saves to localStorage backup)
  */
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { Plus, Filter, ExternalLink, Zap, X, Save } from 'lucide-react'
 import {
   getBackupData,
   saveBackupData,
+  saveBackupDataAndSync,
+  fetchLatestRemoteBackup,
+  saveBackupWithRemoteBaselineSync,
   type BackupData,
   type BackupLog,
 } from '@/services/backupDataService'
+import { mergeProjectLogsIntoRemote } from '@/services/projectScopeMerge'
 import ImportBackupButton from '@/components/ImportBackupButton'
 
 export default function V15rFieldLogs() {
@@ -26,6 +30,8 @@ export default function V15rFieldLogs() {
 
   const [filterProject, setFilterProject] = useState<string>('all')
   const [showAddForm, setShowAddForm] = useState(false)
+  const [, setTick] = useState(0)
+  const forceUpdate = useCallback(() => setTick(t => t + 1), [])
 
   const projects = useMemo(() => {
     const map = new Map<string, string>()
@@ -43,13 +49,66 @@ export default function V15rFieldLogs() {
   const totalMat = filtered.reduce((s, l) => s + (l.mat || 0), 0)
   const totalMiles = filtered.reduce((s, l) => s + (l.miles || 0), 0)
 
-  function handleAddLog(newLog: BackupLog) {
-    const updated: BackupData = {
-      ...backup,
-      logs: [...backup.logs, newLog],
+  function makeLogInternalId() {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `log_${crypto.randomUUID()}`
+    return `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  }
+
+  /**
+   * Phase 6P: scoped, delete-safe save for a newly created project log row.
+   * The row has already been appended to backup.logs. Persist locally for
+   * instant UI, then fetch latest remote and patch ONLY the affected project's
+   * slice of the top-level logs[] (mergeProjectLogsIntoRemote) — every other
+   * project's logs are preserved from remote. Mirrors the Phase 6N path used by
+   * V15rFieldLogPanel / V15rProjectLogsTab; no Save/stale/baseline internals touched.
+   */
+  async function saveFieldLogScoped(affectedProjectId: string) {
+    const current = getBackupData()
+    if (!current) return
+    current._lastSavedAt = new Date().toISOString()
+    saveBackupData(current)
+    window.dispatchEvent(new Event('storage'))
+    window.dispatchEvent(new Event('poweron-data-saved'))
+    forceUpdate()
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const incoming = getBackupData() || current
+        const merged = mergeProjectLogsIntoRemote(remote.remoteData, incoming, affectedProjectId)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+          { source: 'project-logs-remote-merge', changedKey: 'logs', _scopes: ['project.logs', 'project.payments'] },
+        )
+        return
+      }
+      saveBackupDataAndSync(getBackupData() || current, 'logs', {
+        source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
+      })
+    } catch (err) {
+      console.warn('[V15rFieldLogs] Scoped field-log sync failed; local changes preserved', err)
+      saveBackupDataAndSync(getBackupData() || current, 'logs', {
+        source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
+      })
     }
-    saveBackupData(updated)
-    window.location.reload()
+  }
+
+  function handleAddLog(newLog: BackupLog) {
+    const current = getBackupData()
+    if (!current) return
+    const now = new Date().toISOString()
+    // Phase 6P: stamp stable logId + createdAt/updatedAt; collected stays on the row.
+    const stamped: BackupLog = {
+      ...newLog,
+      id: (newLog as any).id || ('log' + Date.now()),
+      logId: (newLog as any).logId || makeLogInternalId(),
+      createdAt: (newLog as any).createdAt || now,
+      updatedAt: now,
+    }
+    current.logs = [...(current.logs || []), stamped]
+    // Phase 6P: scoped save (no broad saveBackupData, no full-page reload).
+    void saveFieldLogScoped(String((stamped as any).projId || ''))
+    setShowAddForm(false)
   }
 
   return (
