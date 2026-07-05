@@ -40,6 +40,12 @@ import {
   type BackupTriggerRule,
 } from '@/services/backupDataService'
 import { mergeProjectLogsIntoRemote, createLogTombstone, isDeadProjectLog } from '@/services/projectScopeMerge'
+import {
+  mergeServiceLogsIntoRemote,
+  ensureServiceLogIdentity,
+  createServiceLogTombstone,
+  isDeletedOrArchivedServiceLog,
+} from '@/services/serviceScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { processSkillSignals } from '@/services/skillSignalExtractor'
@@ -666,6 +672,49 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     forceUpdate()
   }
 
+  /**
+   * Phase 6R-A: scoped, delete-safe save for the top-level serviceLogs[] array
+   * (and the service payments embedded on those rows). The caller has already
+   * mutated backup.serviceLogs (create/edit/payment/adjustment/archive/restore/
+   * tombstone) optimistically. We persist locally for instant UI, then fetch the
+   * latest remote and patch ONLY serviceLogs[] — logs[], projects[],
+   * activeServiceCalls[], serviceEstimates[] and everything else are preserved
+   * from remote. Save/stale/baseline internals are untouched (reuses the existing
+   * remote-baseline save path, same as project logs / estimate rows).
+   */
+  async function saveServiceLogsScoped(incomingBackup: BackupData = backup) {
+    backup._lastSavedAt = new Date().toISOString()
+    saveBackupData(backup)
+    window.dispatchEvent(new Event('storage'))
+    window.dispatchEvent(new Event('poweron-data-saved'))
+    forceUpdate()
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const incoming = getBackupData() || incomingBackup
+        const merged = mergeServiceLogsIntoRemote(remote.remoteData, incoming)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+          { source: 'service-logs-remote-merge', changedKey: 'serviceLogs', _scopes: ['service.calls'] },
+        )
+        return
+      }
+      saveBackupDataAndSync(getBackupData() || incomingBackup, 'serviceLogs', {
+        source: 'service.calls', _scopes: ['service.calls'],
+      })
+    } catch (err) {
+      console.warn('[ServiceLogs] Scoped serviceLogs sync failed; local changes preserved', err)
+      saveBackupDataAndSync(getBackupData() || incomingBackup, 'serviceLogs', {
+        source: 'service.calls', _scopes: ['service.calls'],
+      })
+    }
+  }
+
+  function persistServiceLogs() {
+    void saveServiceLogsScoped()
+  }
+
   function makeLogInternalId() {
     if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `log_${crypto.randomUUID()}`
     return `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -879,8 +928,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
           detailLink: estReceiptUrl || existing.detailLink || '',
           updatedAt: new Date().toISOString(),
         }
-        backup.serviceLogs[idx] = updatedLog
-        persist()
+        backup.serviceLogs[idx] = ensureServiceLogIdentity(updatedLog)
+        persistServiceLogs()
       }
       resetEstimateForm()
       setEditSvcId(null)
@@ -1120,7 +1169,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       profit: collected - actMat - mileageCost - labCost,
     } as any
 
-    backup.serviceLogs = [...serviceLogs, logEntry]
+    // Phase 6R-A: stamp identity/timestamps so the row is scoped-merge-ready.
+    // NOTE: this writer also mutates a serviceEstimate (est.status), so it stays
+    // on the existing broad persist() until serviceEstimates is scoped in 6R-B.
+    backup.serviceLogs = [...serviceLogs, ensureServiceLogIdentity({ ...logEntry, updatedAt: new Date().toISOString() })]
     est.status = 'completed'
 
     // Calculate variance
@@ -1362,15 +1414,20 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
         ;(entry as any).statusEvents = Array.isArray(prior?.statusEvents) ? [...prior.statusEvents] : []
         const wasInvoicedEdit = !!((entry as any).statusEvents.length && (entry as any).statusEvents[(entry as any).statusEvents.length - 1].invoiced)
         stampStatusEvent(entry as any, payStatus, collected, wasInvoicedEdit)
-        backup.serviceLogs[idx] = entry
+        // Phase 6R-A: preserve prior identity/createdAt; bump updatedAt.
+        ;(entry as any).serviceLogId = prior?.serviceLogId
+        ;(entry as any).createdAt = prior?.createdAt
+        ;(entry as any).updatedAt = new Date().toISOString()
+        backup.serviceLogs[idx] = ensureServiceLogIdentity(entry)
       }
     } else {
       // New entry — seed initial statusEvent (not invoiced yet, that requires Confirm Job)
       ;(entry as any).statusEvents = []
       stampStatusEvent(entry as any, payStatus, collected, false)
-      backup.serviceLogs = [...serviceLogs, entry]
+      ;(entry as any).updatedAt = new Date().toISOString()
+      backup.serviceLogs = [...serviceLogs, ensureServiceLogIdentity(entry)]
     }
-    persist()
+    persistServiceLogs()
     if ((entry as any).accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
@@ -1453,20 +1510,26 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   function deleteSvcEntry(logId: string) {
     if (!confirm('Delete this service entry?')) return
     pushState(backup)
-    backup.serviceLogs = serviceLogs.filter(l => l.id !== logId)
-    persist()
+    // Phase 6R-A: soft-delete via tombstone instead of hard-filter, so a stale
+    // second device cannot resurrect the row and payment history (collected /
+    // payStatus / balanceDue / adjustments[] / statusEvents[]) is preserved.
+    backup.serviceLogs = serviceLogs.map(l =>
+      String(l.id) === String(logId) ? createServiceLogTombstone(l) : l
+    )
+    persistServiceLogs()
   }
 
   function archiveSvcEntry(logId: string) {
     if (!confirm('Archive this record? It will be hidden from active views but kept for history.')) return
     pushState(backup)
-    backup.serviceLogs = serviceLogs.map(l => l.id === logId ? {
+    backup.serviceLogs = serviceLogs.map(l => l.id === logId ? ensureServiceLogIdentity({
       ...l,
       archived: true,
       archivedAt: new Date().toISOString(),
       archivedReason: (l as any).archivedReason ?? null,
-    } : l)
-    persist()
+      updatedAt: new Date().toISOString(),
+    }) : l)
+    persistServiceLogs()
   }
 
   function restoreArchivedFields(record: any) {
@@ -1483,13 +1546,20 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   function restoreArchivedServiceEntry(source: string, id: string) {
     pushState(backup)
     if (source === 'service_log') {
-      backup.serviceLogs = serviceLogs.map(l => String(l.id) === String(id) ? restoreArchivedFields(l) : l)
-    } else if (source === 'active_call') {
+      // Phase 6R-A: serviceLogs restore goes through the scoped serviceLogs save.
+      backup.serviceLogs = serviceLogs.map(l => String(l.id) === String(id)
+        ? ensureServiceLogIdentity({ ...restoreArchivedFields(l), updatedAt: new Date().toISOString() })
+        : l)
+      persistServiceLogs()
+      return
+    }
+    if (source === 'active_call') {
       backup.activeServiceCalls = rawActiveServiceCalls.map(c => String(c.id) === String(id) ? restoreArchivedFields(c) : c)
     } else {
       backup.serviceEstimates = serviceEstimates.map(e => String(e.id) === String(id) ? restoreArchivedFields(e) : e)
       backup.activeServiceCalls = rawActiveServiceCalls.map(c => (String(c.id) === String(id) || String(c.fromEstimateId || '') === String(id)) ? restoreArchivedFields(c) : c)
     }
+    // activeServiceCalls / serviceEstimates stay on the existing broad save (Phase 6R-B).
     persist()
   }
 
@@ -1536,7 +1606,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       l.balanceDue = newMeta.remaining
       stampStatusEvent(l, newMeta.status, l.collected, wasInvoiced)
     }
-    persist()
+    // Phase 6R-A: stamp identity/updatedAt and route through scoped serviceLogs save.
+    if (!(l as any).serviceLogId) (l as any).serviceLogId = l.id
+    ;(l as any).updatedAt = new Date().toISOString()
+    persistServiceLogs()
   }
 
   function addServiceAdjustment(logId: string, type: 'income' | 'expense' | 'mileage') {
@@ -1568,7 +1641,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     }
     const wasInvoicedAdj = !!(Array.isArray(l.statusEvents) && l.statusEvents.length && l.statusEvents[l.statusEvents.length - 1].invoiced)
     stampStatusEvent(l, l.payStatus, l.collected, wasInvoicedAdj)
-    persist()
+    // Phase 6R-A: stamp identity/updatedAt and route through scoped serviceLogs save.
+    if (!(l as any).serviceLogId) (l as any).serviceLogId = l.id
+    ;(l as any).updatedAt = new Date().toISOString()
+    persistServiceLogs()
   }
 
   function toggleTrigger(ruleId: string, active: boolean) {

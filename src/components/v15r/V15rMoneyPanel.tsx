@@ -31,6 +31,7 @@ import {
   type BackupProject,
   type BackupServiceLog,
 } from '@/services/backupDataService'
+import { isDeletedOrArchivedServiceLog } from '@/services/serviceScopeMerge'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 import { calcPipeline } from '@/utils/pipelineCalc'
@@ -159,7 +160,9 @@ export default function V15rMoneyPanel() {
     setRecalculating(true)
 
     const allLogs = backup.logs || []
-    const allSvcLogs = backup.serviceLogs || []
+    // Phase 6R-A: exclude deleted (tombstoned) / archived service logs from the
+    // weekly derivation so they never inflate svc collected / pendingInv.
+    const allSvcLogs = (backup.serviceLogs || []).filter(l => !isDeletedOrArchivedServiceLog(l))
     const allProjects = backup.projects || []
 
     // Validation cap: total of ALL serviceLogs.collected
@@ -250,7 +253,9 @@ export default function V15rMoneyPanel() {
 
   const projects = backup.projects || []
   const logs = backup.logs || []
-  const serviceLogs = backup.serviceLogs || []
+  // Phase 6R-A: service money totals below must exclude deleted (tombstoned) and
+  // archived service logs so collected / outstanding / exposure aren't inflated.
+  const serviceLogs = (backup.serviceLogs || []).filter(l => !isDeletedOrArchivedServiceLog(l))
   const weeklyData = backup.weeklyData || []
   const settings = backup.settings || {} as any
   const mileRate = num(settings.mileRate || 0.66)

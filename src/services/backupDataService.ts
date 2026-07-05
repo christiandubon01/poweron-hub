@@ -273,6 +273,13 @@ export interface BackupServiceLog {
   lostNotes?: string
   completedAt?: string
   paidAt?: string
+  statusEvents?: any[]
+  // Phase 6R-A: scoped-merge identity, timestamps, and soft-delete tombstone.
+  serviceLogId?: string
+  createdAt?: string
+  updatedAt?: string
+  deletedAt?: string
+  deletedBy?: string
 }
 
 export interface BackupTriggerRule {
@@ -895,6 +902,8 @@ export function isActiveProject(record: any): boolean {
 
 export function isActiveServiceCall(record: any): boolean {
   if (!record || isArchivedRecord(record)) return false
+  // Phase 6R-A: soft-deleted service logs are never active (deletedAt tombstone).
+  if (record.deletedAt) return false
   const status = String(record.serviceStatus || record.estimateStatus || record.status || '').toLowerCase().trim()
   const outcome = String(record.outcome || '').toLowerCase().trim()
   if (['deleted', 'lost', 'rejected', 'cancelled', 'canceled', 'archived'].includes(status)) return false
