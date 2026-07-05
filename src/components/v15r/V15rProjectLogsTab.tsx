@@ -2,12 +2,18 @@
 import React, { useState, useCallback } from 'react'
 import {
   saveBackupDataAndSync,
+  saveBackupData,
+  getBackupData,
+  fetchLatestRemoteBackup,
+  saveBackupWithRemoteBaselineSync,
   num,
   fmt,
   buildProjectLogRollup,
+  getLiveProjectLogs,
   type BackupData,
   type BackupLog,
 } from '@/services/backupDataService'
+import { mergeProjectLogsIntoRemote, createLogTombstone } from '@/services/projectScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import { processSkillSignals } from '@/services/skillSignalExtractor'
 import { Plus, Timer, Boxes, Route, CircleDollarSign, X, ClipboardList } from 'lucide-react'
@@ -132,13 +138,51 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
   const employees = backup.employees || []
   const settings = backup.settings || {} as any
 
-  function persist() {
+  function makeLogInternalId() {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `log_${crypto.randomUUID()}`
+    return `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  }
+
+  /**
+   * Phase 6N: scoped, delete-safe save for project logs. The caller has already
+   * mutated backup.logs (add/edit/tombstone) optimistically. We persist locally
+   * for instant UI, then fetch latest remote and patch ONLY this project's slice
+   * of the top-level logs[] — other projects' logs are preserved from remote.
+   * Save/stale/baseline internals are untouched (uses the existing remote-baseline
+   * save path, same as estimate rows/scalars).
+   */
+  async function saveProjectLogsScoped() {
     backup._lastSavedAt = new Date().toISOString()
-    saveBackupDataAndSync(backup, 'logs')
+    saveBackupData(backup)
     window.dispatchEvent(new Event('storage'))
     window.dispatchEvent(new Event('poweron-data-saved'))
     forceUpdate()
     onUpdate?.()
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const incoming = getBackupData() || backup
+        const merged = mergeProjectLogsIntoRemote(remote.remoteData, incoming, projectId)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+          { source: 'project-logs-remote-merge', changedKey: 'logs', _scopes: ['project.logs', 'project.payments'] },
+        )
+        return
+      }
+      saveBackupDataAndSync(getBackupData() || backup, 'logs', {
+        source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
+      })
+    } catch (err) {
+      console.warn('[ProjectLogs] Scoped logs sync failed; local changes preserved', err)
+      saveBackupDataAndSync(getBackupData() || backup, 'logs', {
+        source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
+      })
+    }
+  }
+
+  function persist() {
+    void saveProjectLogsScoped()
   }
 
   function resetProjForm() {
@@ -156,8 +200,9 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
   function saveProjEntry() {
     if (!p) return
     pushState(backup)
-    const entry: BackupLog = {
-      id: editLogId || ('log' + Date.now()),
+    const now = new Date().toISOString()
+    const existing = editLogId ? logs.find(l => l.id === editLogId) : null
+    const fields = {
       projId: projectId,
       projName: p.name,
       phase: flPhase,
@@ -173,10 +218,26 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
       detailLink: flDetailLink,
       notes: flNotes,
     }
-    if (editLogId) {
+    if (editLogId && existing) {
+      // Edit: preserve logId/id/createdAt (+ any legacy fields), bump updatedAt.
+      const entry: BackupLog = {
+        ...existing,
+        ...fields,
+        logId: (existing as any).logId || makeLogInternalId(),
+        createdAt: (existing as any).createdAt || existing.date || now,
+        updatedAt: now,
+      }
       const idx = logs.findIndex(l => l.id === editLogId)
       if (idx >= 0) backup.logs[idx] = entry
     } else {
+      // Create: new stable logId + timestamps; collected stays on the same row.
+      const entry: BackupLog = {
+        id: 'log' + Date.now(),
+        logId: makeLogInternalId(),
+        createdAt: now,
+        updatedAt: now,
+        ...fields,
+      }
       backup.logs = [...logs, entry]
     }
     persist()
@@ -200,14 +261,19 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
   function deleteLogEntry(logId: string) {
     if (!confirm('Delete this log entry?')) return
     pushState(backup)
-    backup.logs = logs.filter(l => l.id !== logId)
+    // Phase 6N: tombstone instead of hard-delete so a stale two-device save can't
+    // resurrect the row (or its collected payment). Live filter hides it from UI.
+    const idx = logs.findIndex(l => l.id === logId)
+    if (idx >= 0) {
+      backup.logs = logs.map((l, i) => (i === idx ? createLogTombstone(l, projectId) : l))
+    }
     persist()
   }
 
   if (!p) return <div className="text-red-400 p-4">Project not found</div>
 
-  // Filter logs for this project only
-  const projectLogs = logs.filter(l => l.projId === projectId)
+  // Filter logs for this project only — live (non-tombstoned/archived) rows only.
+  const projectLogs = getLiveProjectLogs(backup, projectId)
   const sorted = [...projectLogs].sort((a, b) => {
     const da = String(b.date || ''), db = String(a.date || '')
     if (da !== db) return da.localeCompare(db)

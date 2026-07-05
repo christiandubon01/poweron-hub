@@ -29,6 +29,12 @@ import { isOnboardingComplete } from '@/services/onboarding/OnboardingService'
 
 // v15r layout shell
 import V15rLayout from '@/components/v15r/V15rLayout'
+// Phase 6N-C: Field Log is a core Business page and was intermittently getting
+// stuck on the lazy-load Suspense fallback ("Loading panel...") on first open
+// (the dynamic import() could hang/fail on the first navigation; chunkRetry then
+// left the boundary pending). Import it statically so first-open is deterministic
+// — no import()/Suspense/chunkRetry path for this panel.
+import V15rFieldLogPanel from '@/components/v15r/V15rFieldLogPanel'
 
 // ── Chunk-retry helper — reloads page on stale chunk fetch after deployment ───
 // If a lazy import fails (e.g. old chunk hash after a redeploy), reload once
@@ -44,7 +50,7 @@ function chunkRetry(importFn: () => Promise<any>) {
 const V15rHome = lazy(() => chunkRetry(() => import('@/components/v15r/V15rHome')))
 const V15rProjectsPanel = lazy(() => chunkRetry(() => import('@/components/v15r/V15rProjectsPanel')))
 const V15rProjectInner = lazy(() => chunkRetry(() => import('@/components/v15r/V15rProjectInner')))
-const V15rFieldLogPanel = lazy(() => chunkRetry(() => import('@/components/v15r/V15rFieldLogPanel')))
+// V15rFieldLogPanel is now a static import (see top) — deterministic first-open.
 const V15rMoneyPanel = lazy(() => chunkRetry(() => import('@/components/v15r/V15rMoneyPanel')))
 const V15rIncomeCalc = lazy(() => chunkRetry(() => import('@/components/v15r/V15rIncomeCalc')))
 const V15rPriceBookPanel = lazy(() => chunkRetry(() => import('@/components/v15r/V15rPriceBookPanel')))

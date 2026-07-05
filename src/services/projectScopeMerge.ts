@@ -1229,3 +1229,277 @@ export function mergeProjectEstimateScalarsIntoRemote(
   remoteProject.estimateScalarUpdatedAt = nextStamps
   return merged
 }
+
+// ── Project logs + embedded payments (Phase 6N) ────────────────────────────────
+// Top-level BackupData.logs[] rows, scoped by projId. A project "payment" is the
+// `collected` field ON a log row — there is no separate payment entity — so the
+// whole row is the merge unit and `collected` always travels with it. Delete-safe
+// (deletedAt/deletedBy tombstones); winner = newest updatedAt, tombstone beats an
+// equal-or-older live edit. Merges ONLY the target project's slice; every other
+// project's log rows are carried through from remote untouched.
+
+export interface ProjectLog {
+  logId?: string
+  id?: string
+  projId?: string
+  projectId?: string
+  projName?: string
+  phase?: string
+  date?: string
+  emp?: string
+  empId?: string
+  hrs?: number
+  miles?: number
+  mat?: number
+  collected?: number
+  store?: string
+  emergencyMatInfo?: unknown
+  detailLink?: string
+  notes?: string
+  quoted?: number
+  profit?: number
+  projectQuote?: number
+  createdAt?: string
+  updatedAt?: string
+  deletedAt?: string
+  deletedBy?: string
+  archivedAt?: string
+  status?: string
+  [key: string]: any
+}
+
+export type LogIdentityContext = {
+  duplicateLegacyKeys: ReadonlySet<string>
+}
+
+export type MergeableProjectLog = ProjectLog & {
+  logId: string
+  updatedAt: string
+}
+
+/** projId is primary; projectId (camelCase) supported defensively for legacy readers. */
+export function logProjectId(log: any): string {
+  return normalizeEstimateText(log?.projId || log?.projectId)
+}
+
+function timestampFromLogId(log: any): string | null {
+  const candidates = [log?.id, log?.logId]
+  for (const candidate of candidates) {
+    const text = normalizeEstimateText(candidate)
+    const match = text.match(/(\d{13})/)
+    if (!match) continue
+    const ms = Number(match[1])
+    if (!Number.isFinite(ms)) continue
+    const date = new Date(ms)
+    if (!Number.isNaN(date.getTime())) return date.toISOString()
+  }
+  return null
+}
+
+function legacyLogIdentityBase(log: any, projectId?: string): string {
+  const legacyId = normalizeEstimateText(log?.id || 'missing') || 'missing'
+  return `legacy:${normalizeProjectId(projectId)}:logs:${legacyId}`
+}
+
+function stableLogFingerprint(log: any): string {
+  const parts = [
+    log?.id,
+    log?.projId,
+    log?.projectId,
+    log?.date,
+    log?.empId,
+    log?.emp,
+    log?.hrs,
+    log?.miles,
+    log?.mat,
+    log?.collected,
+    log?.notes,
+    log?.phase,
+    log?.store,
+  ].map(value => normalizeEstimateText(value))
+  return shortStableHash(parts.join('|'))
+}
+
+export function createLogIdentityContext(logs: any[], projectId?: string): LogIdentityContext {
+  const counts = new Map<string, number>()
+  for (const log of Array.isArray(logs) ? logs : []) {
+    if (normalizeEstimateText(log?.logId)) continue
+    const base = legacyLogIdentityBase(log, projectId)
+    counts.set(base, (counts.get(base) || 0) + 1)
+  }
+  const duplicateLegacyKeys = new Set<string>()
+  for (const [base, count] of counts) {
+    if (count > 1) duplicateLegacyKeys.add(base)
+  }
+  return { duplicateLegacyKeys }
+}
+
+export function getLogStableId(
+  log: any,
+  projectId?: string,
+  duplicateContext?: LogIdentityContext,
+): string {
+  const existing = normalizeEstimateText(log?.logId)
+  if (existing) return existing
+  const base = legacyLogIdentityBase(log, projectId)
+  if (duplicateContext?.duplicateLegacyKeys?.has(base)) {
+    return `${base}:${stableLogFingerprint(log)}`
+  }
+  return base
+}
+
+export function normalizeLogCreatedAt(log: any): string {
+  if (isValidDateString(log?.createdAt)) return String(log.createdAt)
+  const fromId = timestampFromLogId(log)
+  if (fromId) return fromId
+  if (isValidDateString(log?.date)) return String(log.date)
+  return EPOCH_FALLBACK_ISO
+}
+
+export function normalizeLogUpdatedAt(log: any): string {
+  let base: string
+  if (isValidDateString(log?.updatedAt)) base = String(log.updatedAt)
+  else if (isValidDateString(log?.createdAt)) base = String(log.createdAt)
+  else base = timestampFromLogId(log) || (isValidDateString(log?.date) ? String(log.date) : EPOCH_FALLBACK_ISO)
+
+  if (isValidDateString(log?.deletedAt) && parseTimestampMs(log.deletedAt) > parseTimestampMs(base)) {
+    return String(log.deletedAt)
+  }
+  return base
+}
+
+export function sanitizeLogForMerge(
+  log: any,
+  projectId?: string,
+  duplicateContext?: LogIdentityContext,
+): MergeableProjectLog | null {
+  if (!log || typeof log !== 'object') return null
+  const logId = getLogStableId(log, projectId, duplicateContext)
+  if (!logId) return null
+  return {
+    ...log,
+    logId,
+    createdAt: normalizeLogCreatedAt(log),
+    updatedAt: normalizeLogUpdatedAt(log),
+  } as MergeableProjectLog
+}
+
+/** Tombstone marker for merge winner logic (needs a deletedAt timestamp). */
+export function isDeletedLog(log: any): boolean {
+  return isValidDateString(log?.deletedAt)
+}
+
+/** Broader "not live" test for UI/financial filtering (deleted OR archived OR void). */
+export function isDeadProjectLog(log: any): boolean {
+  if (!log) return true
+  if (isValidDateString(log?.deletedAt)) return true
+  if (isValidDateString(log?.archivedAt)) return true
+  if (log?.archived === true || log?.isArchived === true || log?.deleted === true || log?.isDeleted === true) return true
+  const status = String(log?.status || log?.logStatus || '').trim().toLowerCase()
+  return status === 'archived' || status === 'deleted' || status === 'void'
+}
+
+/** Live (non-tombstoned, non-archived) logs for one project, from a raw logs[] array. */
+export function getLiveProjectLogsFromArray(logs: any[], projectId?: string): ProjectLog[] {
+  const target = normalizeEstimateText(projectId)
+  const context = createLogIdentityContext(logs, projectId)
+  const out: ProjectLog[] = []
+  for (const log of Array.isArray(logs) ? logs : []) {
+    if (target && logProjectId(log) !== target) continue
+    const clean = sanitizeLogForMerge(log, projectId, context)
+    if (!clean || isDeadProjectLog(clean)) continue
+    out.push(clean)
+  }
+  return out
+}
+
+export function createLogTombstone(existingLog: any, projectId?: string, deletedBy?: string): ProjectLog {
+  const context = createLogIdentityContext([existingLog], projectId)
+  const clean = sanitizeLogForMerge(existingLog, projectId, context) || existingLog || {}
+  const now = new Date().toISOString()
+  const tombstone: ProjectLog = {
+    ...clean,
+    logId: getLogStableId(clean, projectId, context),
+    deletedAt: now,
+    updatedAt: now,
+  }
+  if (deletedBy) tombstone.deletedBy = deletedBy
+  else if (clean?.deletedBy) tombstone.deletedBy = clean.deletedBy
+  return tombstone
+}
+
+export function mergeLogsByStableId(
+  remoteLogs: any[],
+  incomingLogs: any[],
+  projectId?: string,
+): ProjectLog[] {
+  const combinedContext = createLogIdentityContext(
+    [
+      ...(Array.isArray(remoteLogs) ? remoteLogs : []),
+      ...(Array.isArray(incomingLogs) ? incomingLogs : []),
+    ],
+    projectId,
+  )
+  const remoteSanitized = (Array.isArray(remoteLogs) ? remoteLogs : [])
+    .map(log => sanitizeLogForMerge(log, projectId, combinedContext))
+    .filter((log): log is MergeableProjectLog => log != null)
+  const incomingSanitized = (Array.isArray(incomingLogs) ? incomingLogs : [])
+    .map(log => sanitizeLogForMerge(log, projectId, combinedContext))
+    .filter((log): log is MergeableProjectLog => log != null)
+
+  const remoteById = new Map<string, MergeableProjectLog>()
+  for (const log of remoteSanitized) remoteById.set(String(log.logId), log)
+
+  const result: ProjectLog[] = []
+  const used = new Set<string>()
+
+  // Incoming order first (preserves local ordering), then remote-only rows.
+  for (const incoming of incomingSanitized) {
+    const id = String(incoming.logId)
+    if (used.has(id)) continue
+    used.add(id)
+    const remote = remoteById.get(id)
+    result.push(remote ? pickEstimateRowWinner(remote, incoming) : incoming)
+  }
+  for (const remote of remoteSanitized) {
+    const id = String(remote.logId)
+    if (used.has(id)) continue
+    used.add(id)
+    result.push(remote)
+  }
+
+  return result
+}
+
+/**
+ * Merge the target project's slice of the top-level logs[] from incomingBackup
+ * into a fresh clone of remoteBackup. All logs belonging to OTHER projects are
+ * carried through from remote unchanged; only the target project's rows are
+ * reconciled row-by-row (delete-safe LWW). Nothing else in BackupData is touched.
+ */
+export function mergeProjectLogsIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+  projectId: string,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const targetId = String(projectId || '').trim()
+  if (!targetId) return merged
+
+  const remoteLogs = Array.isArray(merged.logs) ? merged.logs : []
+  const incomingLogs = Array.isArray(incomingBackup?.logs) ? incomingBackup.logs : []
+
+  const remoteTarget: any[] = []
+  const remoteOther: any[] = []
+  for (const log of remoteLogs) {
+    if (logProjectId(log) === targetId) remoteTarget.push(log)
+    else remoteOther.push(log)
+  }
+  const incomingTarget = incomingLogs.filter((log: any) => logProjectId(log) === targetId)
+
+  const mergedTarget = mergeLogsByStableId(remoteTarget, incomingTarget, targetId)
+
+  // Other projects' logs (from remote) preserved as-is; target slice replaced.
+  merged.logs = [...remoteOther, ...mergedTarget]
+  return merged
+}

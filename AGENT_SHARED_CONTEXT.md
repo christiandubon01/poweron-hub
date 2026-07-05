@@ -100,6 +100,27 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 ## Audit & Change Log
 
+### 2026-07-04 — Phase 6N: Project Logs + Payment Row Scoped Tombstone Merge (NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Scoped implementation — combined project.logs + project.payments row-level merge. No Save/stale/baseline change, no service-log change.
+**Branch:** main | HEAD before edits = `c13b3a6`
+**File Lock:** `src/services/projectScopeMerge.ts`, `src/services/backupDataService.ts`, `src/components/v15r/V15rProjectLogsTab.tsx`, `src/components/v15r/V15rFieldLogPanel.tsx`, `src/services/scopeRegistry.ts`, `AGENT_SHARED_CONTEXT.md` — CLAIMED then RELEASED.
+
+**Model decision:** did NOT split project.payments from project.logs. A project payment is the `collected` field ON a top-level `logs[]` row (no separate payment entity), so the whole row is one merge unit and `collected` always travels with it.
+
+**What was implemented:**
+- **`projectScopeMerge.ts`**: added `ProjectLog` type, `logProjectId` (projId primary, projectId fallback), log timestamp normalizers (updatedAt→createdAt→id-embedded ms→date→epoch; deletedAt supersedes; never defaults to now), identity helpers (`getLogStableId` = `logId` else legacy `legacy:<projId>:logs:<id>` + content fingerprint on legacy-id collision), `sanitizeLogForMerge`, `isDeletedLog` (tombstone marker) / `isDeadProjectLog` (deleted OR archived OR void, for UI/financial filtering), `getLiveProjectLogsFromArray`, `createLogTombstone`, `mergeLogsByStableId` (reuses `pickEstimateRowWinner`: tombstone beats equal-or-older live edit, both-live newest updatedAt wins, tie→remote), and `mergeProjectLogsIntoRemote` — splits the top-level `logs[]` into target-projId vs other, merges ONLY the target slice onto a fresh remote clone, and re-appends all other projects' logs untouched. No other BackupData branch is read/written.
+- **`backupDataService.ts`**: extended `BackupLog` with optional `logId/createdAt/updatedAt/deletedAt/deletedBy/archivedAt/status`; added `isDeletedOrArchivedProjectLog` + `getLiveProjectLogs`; **`projectLogsFor` now filters tombstoned/archived logs**, so all financial readers (`getProjectFinancials` loggedPaid/lastCollected, `buildProjectLogRollup`, pricing analytics) exclude deleted logs and their `collected` from paid/collected/ar/risk. No sync/save/baseline logic changed.
+- **`V15rProjectLogsTab.tsx`** & **`V15rFieldLogPanel.tsx`** (both write the same top-level `logs[]`): create stamps `logId/createdAt/updatedAt`; edit preserves `logId/id/createdAt` and bumps `updatedAt`; delete writes a `createLogTombstone` (no hard-delete); lists render live logs only; project-log saves route through a new `saveProjectLogsScoped(projId)` (optimistic local → fetch-latest → `mergeProjectLogsIntoRemote` → `saveBackupWithRemoteBaselineSync({ source:'project-logs-remote-merge', changedKey:'logs', _scopes:['project.logs','project.payments'] })`; first-sync/fetch-failure fallback = existing `saveBackupDataAndSync(...,'logs',{_scopes})`). FieldLogPanel scopes each save by the edited row's `projId` and keeps prior demo-mode behavior; its **service-log CRUD still uses the untouched `persist()`**.
+- **`scopeRegistry.ts`**: `project.logs`/`project.payments` notes updated (identityField `logId`, timestamp `updatedAt`, tombstone `deletedAt`, combined merge).
+
+**Explicitly NOT done / untouched:** serviceLogs / service.calls / service payment `statusEvents`; `manualPaidAdjustment`; fieldLogs.entries + team.time as separate scopes; project-delete cascade (still hard-filters `logs` by projId in `V15rProjectsPanel` — flagged as a future project-lifecycle concern, NOT converted); dashboard/chart readers (read-only); estimate/materials/RFI/CO/blueprint/leads/pricebook/team/settings; `syncToSupabase` freshness guard, verified Save, `setKnownRemoteBaseline`, `saveBackupWithRemoteBaselineSync` internals, `attemptProductionMergeAndSync`, `mergeLocalChangesIntoRemote`. `V15rFieldLogs.tsx` and `V15rProjectsPanel.tsx` log creators were NOT modified (see risks). Not committed; no push.
+
+**Lock released.**
+
+---
+
 ### 2026-07-04 — Phase 6L: Project Estimate Scalar Fields Scoped Merge (contract/mileRT/miDays) (NOT COMMITTED)
 
 **Agent:** Claude Opus 4.8

@@ -17,6 +17,9 @@ import {
   getBackupData,
   saveBackupData,
   saveBackupDataAndSync,
+  fetchLatestRemoteBackup,
+  saveBackupWithRemoteBaselineSync,
+  getLiveProjectLogs,
   loadFromSupabase,
   num,
   fmt,
@@ -36,6 +39,7 @@ import {
   type BackupProject,
   type BackupTriggerRule,
 } from '@/services/backupDataService'
+import { mergeProjectLogsIntoRemote, createLogTombstone, isDeadProjectLog } from '@/services/projectScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { processSkillSignals } from '@/services/skillSignalExtractor'
@@ -662,6 +666,56 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     forceUpdate()
   }
 
+  function makeLogInternalId() {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `log_${crypto.randomUUID()}`
+    return `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  }
+
+  /**
+   * Phase 6N: scoped, delete-safe save for PROJECT logs only (the top-level
+   * logs[] rows, scoped by projId). Service-log CRUD still uses persist().
+   * The caller has already mutated backup.logs optimistically. We persist locally
+   * for instant UI, then fetch latest remote and patch ONLY the affected project's
+   * slice — other projects' logs are preserved from remote. Demo mode keeps the
+   * exact prior local-sync behavior (no remote merge). Save/stale/baseline internals
+   * are untouched (uses the existing remote-baseline save path).
+   */
+  async function saveProjectLogsScoped(affectedProjectId: string) {
+    backup._lastSavedAt = new Date().toISOString()
+    if (hasHydrated && isDemoMode) {
+      saveBackupDataAndSync(backup, 'logs')
+      window.dispatchEvent(new Event('storage'))
+      window.dispatchEvent(new Event('poweron-data-saved'))
+      forceUpdate()
+      return
+    }
+    saveBackupData(backup)
+    window.dispatchEvent(new Event('storage'))
+    window.dispatchEvent(new Event('poweron-data-saved'))
+    forceUpdate()
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const incoming = getBackupData() || backup
+        const merged = mergeProjectLogsIntoRemote(remote.remoteData, incoming, affectedProjectId)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+          { source: 'project-logs-remote-merge', changedKey: 'logs', _scopes: ['project.logs', 'project.payments'] },
+        )
+        return
+      }
+      saveBackupDataAndSync(getBackupData() || backup, 'logs', {
+        source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
+      })
+    } catch (err) {
+      console.warn('[FieldLog] Scoped project-logs sync failed; local changes preserved', err)
+      saveBackupDataAndSync(getBackupData() || backup, 'logs', {
+        source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
+      })
+    }
+  }
+
   // ── Service Estimate CRUD (3-step workflow) ──────────────────────────────────
 
   const serviceEstimates = backup.serviceEstimates || []
@@ -1134,8 +1188,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   function saveProjEntry() {
     const proj = projects.find(p => p.id === flProj)
     pushState(backup)
-    const entry: BackupLog = {
-      id: editLogId || ('log' + Date.now()),
+    const now = new Date().toISOString()
+    const existing = editLogId ? logs.find(l => l.id === editLogId) : null
+    const fields = {
       projId: flProj,
       projName: proj ? proj.name : 'Unknown',
       phase: flPhase,
@@ -1151,13 +1206,29 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       detailLink: flDetailLink,
       notes: flNotes,
     }
-    if (editLogId) {
+    if (editLogId && existing) {
+      // Edit: preserve logId/id/createdAt (+ legacy fields), bump updatedAt.
+      const entry: BackupLog = {
+        ...existing,
+        ...fields,
+        logId: (existing as any).logId || makeLogInternalId(),
+        createdAt: (existing as any).createdAt || existing.date || now,
+        updatedAt: now,
+      }
       const idx = logs.findIndex(l => l.id === editLogId)
       if (idx >= 0) backup.logs[idx] = entry
     } else {
+      const entry: BackupLog = {
+        id: 'log' + Date.now(),
+        logId: makeLogInternalId(),
+        createdAt: now,
+        updatedAt: now,
+        ...fields,
+      }
       backup.logs = [...logs, entry]
     }
-    persist()
+    // Phase 6N: scoped save for the affected project's log slice.
+    void saveProjectLogsScoped(flProj)
     // Session 10: Passive skill signal extraction (fire-and-forget)
     if (flNotes && flNotes.trim().length > 10) {
       const signalText = `Phase: ${flPhase}. Notes: ${flNotes}`
@@ -1180,8 +1251,12 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   function deleteLogEntry(logId: string) {
     if (!confirm('Delete this log entry?')) return
     pushState(backup)
-    backup.logs = logs.filter(l => l.id !== logId)
-    persist()
+    // Phase 6N: tombstone instead of hard-delete; scoped save by the row's projId.
+    const idx = logs.findIndex(l => l.id === logId)
+    if (idx < 0) return
+    const affectedProjectId = String(logs[idx].projId || '')
+    backup.logs = logs.map((l, i) => (i === idx ? createLogTombstone(l, affectedProjectId) : l))
+    void saveProjectLogsScoped(affectedProjectId)
   }
 
   // ── Service log CRUD ───────────────────────────────────────────────────
@@ -1587,7 +1662,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
   function renderProjectLogs() {
     const activeProjectIds = new Set(projects.map(p => p.id))
-    const activeProjectLogs = logs.filter(l => activeProjectIds.has(l.projId))
+    // Phase 6N: exclude tombstoned/archived logs from the list (live rows only).
+    const liveLogs = logs.filter(l => !isDeadProjectLog(l))
+    const activeProjectLogs = liveLogs.filter(l => activeProjectIds.has(l.projId))
     const filtered = projFilter === 'all' ? activeProjectLogs : activeProjectLogs.filter(l => l.projId === projFilter)
     const sorted = [...filtered].sort((a, b) => {
       const da = String(b.date || ''), db = String(a.date || '')

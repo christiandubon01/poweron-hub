@@ -27,7 +27,7 @@ import {
   resolveScopesForSyncInput,
   type DataScope,
 } from './scopeRegistry'
-import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs } from './projectScopeMerge'
+import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog } from './projectScopeMerge'
 
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
 const STORAGE_KEY = LEGACY_STORAGE_KEY
@@ -184,6 +184,9 @@ export interface BackupLog {
   miles: number; notes: string; phase: string; store: string; profit: number
   projId: string; quoted: number; projName: string; collected: number
   detailLink: string; projectQuote: number; emergencyMatInfo: string
+  /** Phase 6N: scoped-merge identity/tombstone metadata (all optional/back-compat). */
+  logId?: string; createdAt?: string; updatedAt?: string
+  deletedAt?: string; deletedBy?: string; archivedAt?: string; status?: string
 }
 
 export interface BackupProjectPhases { [phaseName: string]: number }
@@ -1007,8 +1010,28 @@ export function getOverallCompletion(p: BackupProject, d: BackupData): number {
 }
 
 /** Get logs for a specific project */
+/**
+ * Phase 6N: a project log is "dead" (excluded from UI + financial totals) when it
+ * carries a deletedAt/archivedAt tombstone or a deleted/archived/void status.
+ * Delegates to the pure scoped-merge predicate so UI and financials agree.
+ */
+export function isDeletedOrArchivedProjectLog(log: any): boolean {
+  return isDeadProjectLog(log)
+}
+
+/**
+ * Live (non-tombstoned, non-archived) logs for a project. This is the source of
+ * truth for financial aggregation after Phase 6N — tombstoned logs (and their
+ * embedded `collected` payments) must never count toward paid/collected/ar/risk.
+ */
+export function getLiveProjectLogs(d: BackupData, projId: string): BackupLog[] {
+  return (d.logs || []).filter(l => l.projId === projId && !isDeletedOrArchivedProjectLog(l))
+}
+
 export function projectLogsFor(d: BackupData, projId: string): BackupLog[] {
-  return (d.logs || []).filter(l => l.projId === projId)
+  // Phase 6N: filter tombstoned/archived logs so all downstream financial readers
+  // (getProjectFinancials, buildProjectLogRollup, pricing analytics) exclude them.
+  return (d.logs || []).filter(l => l.projId === projId && !isDeletedOrArchivedProjectLog(l))
 }
 
 /** Ensure a project has a finance bucket */
