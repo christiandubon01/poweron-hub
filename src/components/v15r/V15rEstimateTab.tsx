@@ -41,6 +41,8 @@ import {
   getOverheadStableId,
   isDeletedEstimateRow,
   mergeProjectEstimateRowsIntoRemote,
+  mergeProjectEstimateScalarsIntoRemote,
+  ESTIMATE_SCALAR_FIELDS,
 } from '@/services/projectScopeMerge'
 
 const LABOR_PHASES = ['Underground', 'Site Prep', 'Rough In', 'Trim', 'Finish']
@@ -194,6 +196,18 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     timer: null,
     active: false,
   })
+  // ── Phase 6L: scoped save queue for estimate SCALAR fields (contract/mileRT/
+  // miDays). Mirrors the row queue: debounce → fetch-latest → per-field merge →
+  // remote-baseline save. Snapshots the latest scalar values + per-field stamps
+  // at edit time so the flush always persists the newest values.
+  const estimateScalarsSaveQueueRef = useRef<any>({
+    timer: null,
+    inFlight: false,
+    needsFlush: false,
+    seq: 0,
+    values: {},
+    stamps: {},
+  })
   // ── Local draft rows: the SOLE source of truth for the editable labor/OH
   // input values. Decoupled from the `backup` prop / getBackupData() (which
   // return freshly-parsed objects on every async save and parent re-render).
@@ -278,6 +292,8 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     return () => {
       const timer = estimateRowsSaveQueueRef.current?.timer
       if (timer) clearTimeout(timer)
+      const scalarTimer = estimateScalarsSaveQueueRef.current?.timer
+      if (scalarTimer) clearTimeout(scalarTimer)
       const undoTimer = estimateRowUndoRef.current?.timer
       if (undoTimer) clearTimeout(undoTimer)
     }
@@ -525,6 +541,127 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     queue.timer = setTimeout(() => {
       queue.timer = null
       void flushEstimateRowsSaveQueue()
+    }, Math.max(0, debounceMs))
+  }
+
+  // ── Phase 6L: scoped estimate SCALAR save path ─────────────────────────────
+  // Modeled on the row scoped-save above but patches ONLY contract/mileRT/miDays
+  // (+ their per-field estimateScalarUpdatedAt stamps). Never touches rows.
+
+  /** Stamp only the edited scalar field's per-field timestamp. */
+  const stampEstimateScalar = (project: any, field: string, timestamp: string) => {
+    if (!project) return
+    project.estimateScalarUpdatedAt = project.estimateScalarUpdatedAt || {}
+    project.estimateScalarUpdatedAt[field] = timestamp
+  }
+
+  const applyEstimateScalarsToBackup = (targetBackup: any, values: any, stamps: any) => {
+    const targetProject = (targetBackup?.projects || []).find((x: any) => x.id === projectId)
+    if (!targetProject) return false
+    for (const field of ESTIMATE_SCALAR_FIELDS) {
+      if (values && values[field] !== undefined) targetProject[field] = num(values[field])
+    }
+    targetProject.estimateScalarUpdatedAt = {
+      ...(targetProject.estimateScalarUpdatedAt || {}),
+      ...(stamps || {}),
+    }
+    return true
+  }
+
+  const persistEstimateScalarsSnapshotLocal = (values: any, stamps: any) => {
+    const localBackup = getBackupData() || backup
+    applyEstimateScalarsToBackup(localBackup, values, stamps)
+    localBackup._lastSavedAt = new Date().toISOString()
+    saveBackupData(localBackup)
+  }
+
+  const saveEstimateScalarsSnapshotRemote = async (seq: number, values: any, stamps: any) => {
+    const queue = estimateScalarsSaveQueueRef.current
+    persistEstimateScalarsSnapshotLocal(values, stamps)
+
+    const incomingBackup = getBackupData() || backup
+    applyEstimateScalarsToBackup(incomingBackup, values, stamps)
+
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (seq !== queue.seq) return
+
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const merged = mergeProjectEstimateScalarsIntoRemote(remote.remoteData, incomingBackup, projectId)
+        if (seq !== queue.seq) return
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          {
+            remoteUpdatedAt: remote.remoteUpdatedAt,
+            remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+          },
+          {
+            source: 'project-estimate-scalars-remote-merge',
+            changedKey: 'projects',
+            _scopes: ['project.estimate'],
+          },
+        )
+        return
+      }
+
+      if (seq !== queue.seq) return
+      saveBackupDataAndSync(incomingBackup, 'projects', {
+        source: 'project.estimate',
+        _scopes: ['project.estimate'],
+      })
+    } catch (err) {
+      if (seq !== queue.seq) return
+      console.warn('[Estimate] Scoped estimate scalar sync failed; local scalar changes preserved', err)
+      saveBackupDataAndSync(incomingBackup, 'projects', {
+        source: 'project.estimate',
+        _scopes: ['project.estimate'],
+      })
+    }
+  }
+
+  const flushEstimateScalarsSaveQueue = async () => {
+    const queue = estimateScalarsSaveQueueRef.current
+    if (queue.inFlight) {
+      queue.needsFlush = true
+      return
+    }
+
+    queue.inFlight = true
+    try {
+      do {
+        queue.needsFlush = false
+        const seq = queue.seq
+        const values = { ...queue.values }
+        const stamps = { ...queue.stamps }
+        await saveEstimateScalarsSnapshotRemote(seq, values, stamps)
+      } while (queue.needsFlush)
+    } finally {
+      queue.inFlight = false
+      if (queue.needsFlush) {
+        void flushEstimateScalarsSaveQueue()
+      }
+    }
+  }
+
+  // Snapshot the latest scalar values + per-field stamps from p (already mutated
+  // + stamped optimistically by the caller) and queue a debounced scoped save.
+  const saveEstimateScalarsScoped = (debounceMs = ESTIMATE_ROW_SAVE_DEBOUNCE_MS) => {
+    const queue = estimateScalarsSaveQueueRef.current
+    queue.values = {
+      contract: num(p.contract || 0),
+      mileRT: num(p.mileRT || 0),
+      miDays: num(p.miDays || 0),
+    }
+    queue.stamps = { ...((p as any).estimateScalarUpdatedAt || {}) }
+    backup._lastSavedAt = new Date().toISOString()
+
+    queue.seq += 1
+    queue.needsFlush = true
+
+    if (queue.timer) clearTimeout(queue.timer)
+    queue.timer = setTimeout(() => {
+      queue.timer = null
+      void flushEstimateScalarsSaveQueue()
     }, Math.max(0, debounceMs))
   }
 
@@ -840,9 +977,13 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
 
   const editMileage = (field, value) => {
     pushState()
+    // Optimistic local update + stamp only the edited scalar field, then queue a
+    // scoped per-field scalar merge (Phase 6L) — no broad projects save.
     if (field === 'mileRT') p.mileRT = num(value)
     else if (field === 'miDays') p.miDays = num(value)
-    saveBackupDataAndSync(backup, 'projects')
+    else return
+    stampEstimateScalar(p, field, new Date().toISOString())
+    saveEstimateScalarsScoped()
     forceUpdate()
   }
 
@@ -2977,7 +3118,8 @@ Return ONLY valid JSON, no other text.`
                 onBlur={e => {
                   pushState()
                   p.contract = num(e.target.value)
-                  saveBackupDataAndSync(backup)
+                  stampEstimateScalar(p, 'contract', new Date().toISOString())
+                  saveEstimateScalarsScoped()
                   forceUpdate()
                 }}
                 style={{
@@ -3019,7 +3161,8 @@ Return ONLY valid JSON, no other text.`
                     }}
                     onPointerUp={() => {
                       pushState()
-                      saveBackupDataAndSync(backup)
+                      stampEstimateScalar(p, 'contract', new Date().toISOString())
+                      saveEstimateScalarsScoped()
                     }}
                     style={{ width: '100%', display: 'block', cursor: 'pointer' }}
                   />
@@ -3488,7 +3631,13 @@ Return ONLY valid JSON, no other text.`
             quotedRevenue: number; overheadContribution: number
           }
           const workerMap: Record<string, WorkerBucket> = {}
-          for (const row of liveLaborRows) {
+          // Phase 6L-A: aggregate from the local DRAFT rows — the same live,
+          // tombstone-filtered source the editable labor table renders from — so
+          // the donut can never go blank while the table still shows workers, and
+          // it updates instantly on every hours/employee/allocation edit. (The
+          // Phase 6J draft refactor left this reading the prop-derived
+          // liveLaborRows, which can lag the visible draft and blank the chart.)
+          for (const row of laborDraftRows) {
             const allocs = getRowAllocations(row)
             const rowRate = num(row.rate)
             for (const a of allocs) {

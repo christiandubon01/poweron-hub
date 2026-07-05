@@ -1157,3 +1157,75 @@ export function mergeProjectEstimateRowsIntoRemote(
 
   return merged
 }
+
+// ── Project estimate SCALAR fields (Phase 6L) ──────────────────────────────────
+// Per-field last-writer-wins merge for the flat estimate scalars. Kept entirely
+// separate from the row merges above so labor/OH/material/RFI/CO logic is
+// untouched. Only the whitelisted fields plus the `estimateScalarUpdatedAt`
+// per-field timestamp map are ever read or written on the target project.
+
+export type EstimateScalarField = 'contract' | 'mileRT' | 'miDays'
+
+/** The only project fields this scalar merge is allowed to patch. */
+export const ESTIMATE_SCALAR_FIELDS: readonly EstimateScalarField[] = ['contract', 'mileRT', 'miDays']
+
+export type EstimateScalarUpdatedAt = Partial<Record<EstimateScalarField, string>>
+
+/**
+ * Merge estimate scalar fields from `incomingBackup` into a fresh clone of
+ * `remoteBackup` for a single project, per-field LWW by `estimateScalarUpdatedAt`.
+ *
+ * Rules (identical timestamp posture to the row merges):
+ *  - A valid incoming timestamp beats a missing/invalid remote timestamp.
+ *  - Incoming strictly newer than remote wins (value + timestamp copied).
+ *  - Exact tie or incoming older keeps the remote value and remote timestamp.
+ *  - Missing/invalid timestamps compare as -Infinity — never defaulted to "now".
+ *
+ * Only ESTIMATE_SCALAR_FIELDS values and the estimateScalarUpdatedAt map are
+ * touched. laborRows/ohRows/mtoRows/matRows/rfis/changeOrders/logs/schedule/
+ * notes/address and every other project branch (and every other project) are
+ * preserved exactly as they are in the remote snapshot.
+ */
+export function mergeProjectEstimateScalarsIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+  projectId: string,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const targetId = String(projectId || '').trim()
+  if (!targetId) return merged
+
+  const remoteProjects = Array.isArray(merged.projects) ? merged.projects : []
+  const remoteIndex = remoteProjects.findIndex((p: any) => String(p?.id || '') === targetId)
+  if (remoteIndex === -1) return merged
+
+  const incomingProjects = Array.isArray(incomingBackup?.projects) ? incomingBackup.projects : []
+  const incomingProject: any = incomingProjects.find((p: any) => String(p?.id || '') === targetId)
+  if (!incomingProject) return merged
+
+  const remoteProject: any = remoteProjects[remoteIndex]
+  const remoteStamps: Record<string, any> = (remoteProject.estimateScalarUpdatedAt && typeof remoteProject.estimateScalarUpdatedAt === 'object')
+    ? remoteProject.estimateScalarUpdatedAt
+    : {}
+  const incomingStamps: Record<string, any> = (incomingProject.estimateScalarUpdatedAt && typeof incomingProject.estimateScalarUpdatedAt === 'object')
+    ? incomingProject.estimateScalarUpdatedAt
+    : {}
+
+  // Start from remote metadata so unknown/legacy keys are preserved, never deleted.
+  const nextStamps: Record<string, any> = { ...remoteStamps }
+
+  for (const field of ESTIMATE_SCALAR_FIELDS) {
+    const remoteTs = comparableMs(remoteStamps[field])
+    const incomingTs = comparableMs(incomingStamps[field])
+    if (incomingTs > remoteTs) {
+      remoteProject[field] = incomingProject[field]
+      if (isValidDateString(incomingStamps[field])) {
+        nextStamps[field] = String(incomingStamps[field])
+      }
+    }
+    // tie or incoming older: keep remote value + remote timestamp (already in nextStamps)
+  }
+
+  remoteProject.estimateScalarUpdatedAt = nextStamps
+  return merged
+}

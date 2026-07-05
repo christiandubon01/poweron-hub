@@ -100,6 +100,26 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 ## Audit & Change Log
 
+### 2026-07-04 — Phase 6L: Project Estimate Scalar Fields Scoped Merge (contract/mileRT/miDays) (NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** Scoped implementation — per-field LWW scalar merge only. No Save/stale/baseline change, no row-merge change.
+**Branch:** main | HEAD before edits = `c4b4bae`
+**File Lock:** `src/services/projectScopeMerge.ts`, `src/components/v15r/V15rEstimateTab.tsx`, `src/services/scopeRegistry.ts`, `src/services/backupDataService.ts` (type only), `AGENT_SHARED_CONTEXT.md` — CLAIMED then RELEASED.
+
+**What was implemented:**
+- Implemented scoped merge for the project.estimate **scalar** fields `contract`, `mileRT`, `miDays`. Previously these saved through broad `saveBackupDataAndSync(backup)` / `saveBackupDataAndSync(backup, 'projects')` whole-project paths; they now fetch latest remote and patch only their own fields.
+- **`projectScopeMerge.ts`**: added `EstimateScalarField`, `ESTIMATE_SCALAR_FIELDS = ['contract','mileRT','miDays']`, `EstimateScalarUpdatedAt`, and `mergeProjectEstimateScalarsIntoRemote(remoteBackup, incomingBackup, projectId)`. Per-field LWW keyed by `projects[].estimateScalarUpdatedAt.<field>` using the existing `comparableMs`/`isValidDateString` helpers. Different scalar fields can merge independently; the same field resolves by newest per-field timestamp; **exact tie keeps remote**; missing/invalid timestamps compare as `-Infinity` and are **never defaulted to now**. Only whitelisted fields + `estimateScalarUpdatedAt` are written; unknown/legacy metadata keys are preserved (never deleted); no row/material/RFI/CO/blueprint/logs/other-project branch is touched.
+- **`V15rEstimateTab.tsx`**: added `mergeProjectEstimateScalarsIntoRemote`/`ESTIMATE_SCALAR_FIELDS` import, an `estimateScalarsSaveQueueRef` (debounced fetch-latest→merge→`saveBackupWithRemoteBaselineSync({ source:'project-estimate-scalars-remote-merge', changedKey:'projects', _scopes:['project.estimate'] })`; first-sync fallback = existing `saveBackupDataAndSync(incoming,'projects',{source:'project.estimate',_scopes:['project.estimate']})`), a `stampEstimateScalar(project, field, ts)` helper, and `saveEstimateScalarsScoped()`. Repointed the contract input `onBlur`, contract slider `onPointerUp`, and `editMileage` (mileRT/miDays) to stamp only the edited field + queue the scoped scalar save. UI stays optimistic (`p` mutate + `forceUpdate`); layout unchanged. Scalar-queue timer added to the unmount cleanup effect.
+- **`scopeRegistry.ts`**: `project.estimate` descriptor notes updated to document Phase 6L scalar LWW alongside the Phase 6J row merge; strategy/priority unchanged.
+- **`backupDataService.ts`**: type-only addition of `BackupProject.estimateScalarUpdatedAt?: { contract?; mileRT?; miDays?; laborPhaseColors? }`. No sync/save/baseline logic changed.
+
+**Explicitly NOT done:** `laborPhaseColors` (still on its existing debounced broad save — future Phase 6L-B), `estimateVersions` (separate top-level future scope; `saveEstimateVersion`/`restoreEstimateVersion` untouched), `estimateReference`/`phaseEstimateRows`/`lastEstimateSyncAt` (legacy/dead). No change to labor/OH row merge, Materials/MTO, RFIs, Change Orders, Blueprint, logs/payments, `syncToSupabase` freshness guard, verified Save, `setKnownRemoteBaseline`, `saveBackupWithRemoteBaselineSync` internals, `attemptProductionMergeAndSync`, or `mergeLocalChangesIntoRemote`. Not committed; no push.
+
+**Lock released.**
+
+---
+
 ### 2026-07-04 — Phase 5A: scope registry scaffolding (NOT COMMITTED)
 
 **Agent:** Claude Opus 4.8
