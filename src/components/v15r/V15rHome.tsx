@@ -55,6 +55,7 @@ import {
   isActiveProject,
   num,
   buildProjectLogRollup,
+  isDeletedOrArchivedProjectLog,
   type BackupData,
   type BackupProject,
 } from '@/services/backupDataService'
@@ -450,7 +451,10 @@ export default function V15rHome() {
     kpis = { pipeline: 0, paid: 0, billed: 0, exposure: 0, svcUnbilled: 0, openRfis: 0, totalHours: 0, activeProjects: 0 }
   }
 
-  const logs: any[] = Array.isArray(backup.logs) ? backup.logs : []
+  // Phase 6N-D: exclude tombstoned/archived project logs from all Home readers
+  // (recent-logs list, "Hours Logged" entry count, and the Projects tab count).
+  // Uses the central live-log helper so Home matches Project Logs / Field Log page.
+  const logs: any[] = (Array.isArray(backup.logs) ? backup.logs : []).filter(l => !isDeletedOrArchivedProjectLog(l))
   const serviceLogs: any[] = Array.isArray(backup.serviceLogs) ? backup.serviceLogs : []
 
   // ── Agenda alerts (auto-generated) ──────────────────────────────────────────
