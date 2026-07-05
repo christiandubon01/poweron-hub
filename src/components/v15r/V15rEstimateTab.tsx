@@ -18,6 +18,14 @@ import {
   isActiveServiceCall,
 } from '@/services/backupDataService'
 import { nonCriticalWrite } from '@/services/writeDebounce'
+import {
+  mergeServiceCallsScopeIntoRemote,
+  ensureServiceEstimateIdentity,
+  createServiceEstimateTombstone,
+  ensureActiveServiceCallIdentity,
+  createActiveServiceCallTombstone,
+  ensureServiceLogIdentity,
+} from '@/services/serviceScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import { mergeInnerProjectViewPrefs, loadInnerProjectViewPrefs, phaseExpandedFromCollapsedPhases } from '@/utils/v15rViewPrefs'
 import { getProjectPhaseNames, getLegacyPhaseNames, normalizePhaseName } from '@/utils/v15rProjectPhases'
@@ -1102,11 +1110,48 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     setEditingEstId(null)
   }
 
+  /**
+   * Phase 6R-B: scoped, delete-safe save for the service.calls scope
+   * (serviceLogs[] + serviceEstimates[] + activeServiceCalls[]). Persists locally
+   * for instant UI, then fetches latest remote and patches ONLY those three arrays
+   * via mergeServiceCallsScopeIntoRemote (serviceLogs keeps its 6R-A tombstone +
+   * ledger merge). Replaces the old broad nonCriticalWrite/saveBackupDataAndSync
+   * for these pipeline writers so hard-deleted rows can't resurrect cross-device
+   * and the estimate/active/log moves save atomically. Save/stale/baseline
+   * internals untouched.
+   */
+  async function saveServiceCallsScopedEst() {
+    backup._lastSavedAt = new Date().toISOString()
+    saveBackupData(backup)
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const incoming = getBackupData() || backup
+        const merged = mergeServiceCallsScopeIntoRemote(remote.remoteData, incoming)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+          { source: 'service-calls-remote-merge', changedKey: 'service.calls', _scopes: ['service.calls'] },
+        )
+        return
+      }
+      saveBackupDataAndSync(getBackupData() || backup, 'service.calls', { source: 'service.calls', _scopes: ['service.calls'] })
+    } catch (err) {
+      console.warn('[EstimateTab] Scoped service.calls sync failed; local changes preserved', err)
+      saveBackupDataAndSync(getBackupData() || backup, 'service.calls', { source: 'service.calls', _scopes: ['service.calls'] })
+    }
+  }
+
+  function persistServiceCallsEst() {
+    void saveServiceCallsScopedEst()
+  }
+
   function saveEstimate() {
     if (!scCust.trim()) { alert('Customer / Job Name is required.'); return }
     pushState(backup)
     if (!backup.serviceEstimates) backup.serviceEstimates = []
     const id = editingEstId || ('sest' + Date.now() + Math.random().toString(36).slice(2, 6))
+    const now = new Date().toISOString()
     const estObj = {
       id,
       customer: scCust.trim(),
@@ -1123,15 +1168,25 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       quoted: +scQuoted.toFixed(2),
       internalCost: +scInternalCost.toFixed(2),
       profit: +scProfit.toFixed(2),
-      createdAt: new Date().toISOString(),
+      createdAt: now,
     }
     if (editingEstId) {
       const idx = backup.serviceEstimates.findIndex(e => e.id === editingEstId)
-      if (idx >= 0) backup.serviceEstimates[idx] = { ...backup.serviceEstimates[idx], ...estObj }
+      if (idx >= 0) {
+        const prior = backup.serviceEstimates[idx]
+        backup.serviceEstimates[idx] = ensureServiceEstimateIdentity({
+          ...prior,
+          ...estObj,
+          serviceEstimateId: prior?.serviceEstimateId,
+          createdAt: prior?.createdAt || now,
+          updatedAt: now,
+        })
+      }
     } else {
-      backup.serviceEstimates.push(estObj)
+      backup.serviceEstimates.push(ensureServiceEstimateIdentity({ ...estObj, updatedAt: now }))
     }
-    nonCriticalWrite(backup, 'serviceEstimates')
+    // Phase 6R-B: scoped service.calls save (was broad nonCriticalWrite).
+    persistServiceCallsEst()
     resetEstForm()
     setShowEstForm(false)
     forceUpdate()
@@ -1149,8 +1204,11 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   function deleteEstimate(id) {
     if (!confirm('Delete this estimate?')) return
     pushState(backup)
-    backup.serviceEstimates = (backup.serviceEstimates || []).filter(e => e.id !== id)
-    nonCriticalWrite(backup, 'serviceEstimates')
+    // Phase 6R-B: tombstone instead of hard-filter (no cross-device resurrection).
+    backup.serviceEstimates = (backup.serviceEstimates || []).map(e =>
+      e.id === id ? createServiceEstimateTombstone(e) : e
+    )
+    persistServiceCallsEst()
     forceUpdate()
   }
 
@@ -1161,9 +1219,10 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     if (idx < 0) return
     const est = ests[idx]
     if (!backup.activeServiceCalls) backup.activeServiceCalls = []
-    backup.activeServiceCalls.push({
-      id: 'asc' + Date.now() + Math.random().toString(36).slice(2, 6),
-      fromEstimateId: est.id,
+    const now = new Date().toISOString()
+    backup.activeServiceCalls.push(ensureActiveServiceCallIdentity({
+      activeServiceCallId: 'asc' + Date.now() + Math.random().toString(36).slice(2, 6),
+      fromEstimateId: (est as any).serviceEstimateId || est.id,
       customer: est.customer,
       address: est.address,
       jtype: est.jtype,
@@ -1178,10 +1237,15 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       quoted: est.quoted,
       internalCost: est.internalCost,
       profit: est.profit,
-      movedAt: new Date().toISOString(),
-    })
-    backup.serviceEstimates = ests.filter(e => e.id !== id)
-    nonCriticalWrite(backup, 'activeServiceCalls')
+      status: 'active',
+      movedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    }))
+    // Phase 6R-B: tombstone the source estimate (was hard-filter) so it disappears
+    // from Open Estimates but cannot resurrect; its data lives on the active call.
+    backup.serviceEstimates = ests.map(e => e.id === id ? createServiceEstimateTombstone(e) : e)
+    persistServiceCallsEst()
     forceUpdate()
   }
 
@@ -1193,7 +1257,9 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     const call = calls[idx]
     if (!backup.serviceLogs) backup.serviceLogs = []
     const mileCost = num(call.estMileage || 0) * mileRate
-    backup.serviceLogs.push({
+    const now = new Date().toISOString()
+    // Phase 6R-B: identity-stamp the new service log (6R-A merge-ready) …
+    backup.serviceLogs.push(ensureServiceLogIdentity({
       id: 'svc_' + Date.now(),
       customer: call.customer || 'Unknown',
       address: call.address || '',
@@ -1208,17 +1274,23 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       notes: call.notes || '',
       mileCost: mileCost,
       fromActiveCallId: call.id,
-    })
-    backup.activeServiceCalls = calls.filter(c => c.id !== id)
-    saveBackupDataAndSync(backup, 'serviceLogs')
+      updatedAt: now,
+    }))
+    // … and tombstone the source active call (was hard-filter). One scoped save
+    // carries both sides atomically (fixes the old broad 'serviceLogs' save).
+    backup.activeServiceCalls = calls.map(c => c.id === id ? createActiveServiceCallTombstone(c) : c)
+    persistServiceCallsEst()
     forceUpdate()
   }
 
   function deleteActiveCall(id) {
     if (!confirm('Delete this active service call?')) return
     pushState(backup)
-    backup.activeServiceCalls = (backup.activeServiceCalls || []).filter(c => c.id !== id)
-    nonCriticalWrite(backup, 'activeServiceCalls')
+    // Phase 6R-B: tombstone instead of hard-filter.
+    backup.activeServiceCalls = (backup.activeServiceCalls || []).map(c =>
+      c.id === id ? createActiveServiceCallTombstone(c) : c
+    )
+    persistServiceCallsEst()
     forceUpdate()
   }
 
@@ -1638,10 +1710,12 @@ Return ONLY valid JSON, no other text.`
     })
 
     ;(backup.serviceEstimates || []).forEach((e: any) => {
+      if (e?.deletedAt) return // Phase 6R-B: tombstoned estimates are gone, not history
       if (isArchivedRecord(e)) addService(e, 'service_estimate', 'archived', serviceHistoryValue(e))
       else if (serviceIsLost(e)) addService(e, 'service_estimate', 'lost', serviceHistoryValue(e))
     })
     ;(backup.activeServiceCalls || []).forEach((c: any) => {
+      if (c?.deletedAt) return // Phase 6R-B: tombstoned active calls are gone, not history
       if (isArchivedRecord(c)) addService(c, 'active_call', 'archived', serviceHistoryValue(c))
       else if (serviceIsLost(c)) addService(c, 'active_call', 'lost', serviceHistoryValue(c))
     })
@@ -2191,9 +2265,9 @@ Return ONLY valid JSON, no other text.`
                 </button>
               </div>
               <div style={{ padding: '8px', maxHeight: '280px', overflowY: 'auto' }}>
-                {(backup.serviceEstimates || []).length === 0 ? (
+                {(backup.serviceEstimates || []).filter(e => !e?.deletedAt).length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '20px 8px', color: 'var(--t3)', fontSize: '12px' }}>No open estimates</div>
-                ) : (backup.serviceEstimates || []).map(est => (
+                ) : (backup.serviceEstimates || []).filter(e => !e?.deletedAt).map(est => (
                   <div key={est.id} style={{ backgroundColor: '#1e2130', borderRadius: '6px', padding: '10px 12px', marginBottom: '6px', borderLeft: '3px solid #3b82f6' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
                       <div>
@@ -2216,12 +2290,12 @@ Return ONLY valid JSON, no other text.`
             <div style={{ backgroundColor: '#232738', borderRadius: '8px', overflow: 'hidden' }}>
               <div style={{ backgroundColor: 'rgba(249,115,22,0.15)', padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                 <h4 style={{ color: '#f97316', fontWeight: '600', margin: 0, fontSize: '13px' }}>Active Service Calls</h4>
-                <span style={{ fontSize: '11px', color: 'var(--t3)', fontWeight: '600' }}>{(backup.activeServiceCalls || []).length} active</span>
+                <span style={{ fontSize: '11px', color: 'var(--t3)', fontWeight: '600' }}>{(backup.activeServiceCalls || []).filter(c => !c?.deletedAt).length} active</span>
               </div>
               <div style={{ padding: '8px', maxHeight: '280px', overflowY: 'auto' }}>
-                {(backup.activeServiceCalls || []).length === 0 ? (
+                {(backup.activeServiceCalls || []).filter(c => !c?.deletedAt).length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '20px 8px', color: 'var(--t3)', fontSize: '12px' }}>No active calls</div>
-                ) : (backup.activeServiceCalls || []).map(call => (
+                ) : (backup.activeServiceCalls || []).filter(c => !c?.deletedAt).map(call => (
                   <div key={call.id} style={{ backgroundColor: '#1e2130', borderRadius: '6px', padding: '10px 12px', marginBottom: '6px', borderLeft: '3px solid #f97316' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
                       <div>

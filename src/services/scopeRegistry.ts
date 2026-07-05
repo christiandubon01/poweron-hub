@@ -455,17 +455,17 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
   // ── Service calls ──
   'service.calls': {
     scope: 'service.calls',
-    dataPath: 'serviceLogs[] (Phase 6R-A) + activeServiceCalls[] + serviceEstimates[] (Phase 6R-B, deferred)',
-    owner: 'V15rServiceCallsV2 / V15rFieldLogPanel',
+    dataPath: 'serviceLogs[] (Phase 6R-A) + serviceEstimates[] + activeServiceCalls[] (Phase 6R-B)',
+    owner: 'V15rServiceCallsV2 / V15rFieldLogPanel / V15rEstimateTab',
     level: 'top-level',
-    identityField: 'serviceLogId (fallback id) for serviceLogs',
+    identityField: 'serviceLogId / serviceEstimateId / activeServiceCallId (each falls back to legacy id)',
     timestampField: 'updatedAt',
     tombstoneField: 'deletedAt',
     needsTimestamp: false,
     needsTombstone: false,
     strategy: 'id-merge',
     priority: 'high',
-    notes: 'Phase 6R-A: the top-level serviceLogs[] array now has delete-safe, item-level id-merge via serviceScopeMerge.ts (mergeServiceLogsIntoRemote). serviceLogId is the stable internal identity (falls back to legacy id, then a deterministic fingerprint); createdAt/updatedAt stamped by ensureServiceLogIdentity; deletes write deletedAt/deletedBy tombstones (deleteSvcEntry no longer hard-filters). A service "payment" is a set of FIELDS on the row (collected/payStatus/balanceDue) so it is protected together with the row; the append-only adjustments[] and statusEvents[] ledgers are unioned across both sides so payment/collection history is never dropped. V15rFieldLogPanel service-log create/edit/payment/adjustment/archive/restore/delete writers fetch latest remote and patch ONLY serviceLogs[] through the existing remote-baseline save path (Save/stale/baseline unchanged); MoneyPanel/weeklyData exclude deleted+archived service logs from totals. STILL DEFERRED (Phase 6R-B / later): activeServiceCalls[] and serviceEstimates[] item-level tombstone merge (their hard deletes and the mixed completeAndLogService/estimate writers stay on the existing broad save for now), and multiDayServiceCalls. Same client-clock and no-GC limitations as the project scopes.',
+    notes: 'Phase 6R-A: serviceLogs[] has delete-safe, item-level id-merge via serviceScopeMerge.ts (mergeServiceLogsIntoRemote). serviceLogId is the stable internal identity (falls back to legacy id, then a deterministic fingerprint); createdAt/updatedAt stamped by ensureServiceLogIdentity; deletes write deletedAt/deletedBy tombstones. A service "payment" is a set of FIELDS on the serviceLog row (collected/payStatus/balanceDue) protected together with the row; the append-only adjustments[]/statusEvents[] ledgers are unioned across both sides so payment/collection history is never dropped. Phase 6R-B: serviceEstimates[] and activeServiceCalls[] now have the same delete-safe lifecycle merge (mergeServiceEstimatesIntoRemote / mergeActiveServiceCallsIntoRemote) with serviceEstimateId / activeServiceCallId stable identities (fallback legacy id, then fingerprint), createdAt/updatedAt stamping, and deletedAt/deletedBy tombstones — their hard deletes are converted to tombstones. Mixed workflows (estimate → active call, active call → service log, estimate → completed service log) route through mergeServiceCallsScopeIntoRemote, which merges all three arrays in one remote-baseline save; this also fixes the completeAndLogService changedKey/silo mismatch (it previously mutated serviceLogs+serviceEstimates while saving under changedKey "logs"). Readers already exclude tombstones via isActiveServiceCall (deletedAt guard). serviceEstimates/activeServiceCalls do not feed MoneyPanel/Home exposure totals. STILL DEFERRED: multiDayServiceCalls (V15rServiceCallsV2 / serviceCallService.ts). Same client-clock and no-GC limitations as the project scopes.',
   },
 
   // ── Settings ──
@@ -508,6 +508,15 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
     'fieldLogs.entries',
     'fieldLogs.materials',
     'fieldLogs.payments',
+    'service.calls',
+  ],
+  serviceEstimates: [
+    'service.calls',
+  ],
+  activeServiceCalls: [
+    'service.calls',
+  ],
+  'service.calls': [
     'service.calls',
   ],
   gcContacts: [

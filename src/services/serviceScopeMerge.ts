@@ -303,3 +303,266 @@ export function mergeServiceLogsIntoRemote(
   merged.serviceLogs = mergeServiceLogsById(remoteLogs, incomingLogs) as any
   return merged
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Phase 6R-B — serviceEstimates[] + activeServiceCalls[] lifecycle scoped merge
+// ───────────────────────────────────────────────────────────────────────────────
+// These two pipeline arrays share the same lifecycle shape (stable identity,
+// createdAt/updatedAt, deletedAt/deletedBy tombstone, delete-safe LWW merge, and —
+// unlike serviceLogs — NO embedded payment ledgers). A single generic implementation
+// backs both; the named exports below are thin wrappers over it. Kept entirely
+// separate from the Phase 6R-A serviceLogs helpers above, which are untouched.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface LifecycleConfig {
+  /** Canonical internal identity field, e.g. 'serviceEstimateId'. */
+  idField: string
+  /** Prefix for the deterministic legacy fingerprint. */
+  fingerprintPrefix: string
+  /** Fields folded into the fingerprint when idField AND id are both missing. */
+  fingerprintParts: (row: any) => unknown[]
+}
+
+/** Recover a 13-digit epoch embedded in any of the row's id-ish fields. */
+function timestampFromRowIdFields(row: any, idFields: string[]): string | null {
+  for (const field of idFields) {
+    const text = normalizeText(row?.[field])
+    const match = text.match(/(\d{13})/)
+    if (!match) continue
+    const ms = Number(match[1])
+    if (!Number.isFinite(ms)) continue
+    const date = new Date(ms)
+    if (!Number.isNaN(date.getTime())) return date.toISOString()
+  }
+  return null
+}
+
+function lifecycleFingerprint(row: any, cfg: LifecycleConfig): string {
+  const parts = cfg.fingerprintParts(row).map(value => normalizeText(value))
+  return `${cfg.fingerprintPrefix}:${shortStableHash(parts.join('|'))}`
+}
+
+function getLifecycleIdentity(row: any, cfg: LifecycleConfig): string {
+  const primary = normalizeText(row?.[cfg.idField])
+  if (primary) return primary
+  const id = normalizeText(row?.id)
+  if (id) return id
+  return lifecycleFingerprint(row, cfg)
+}
+
+function normalizeLifecycleCreatedAt(row: any, cfg: LifecycleConfig): string {
+  if (isValidDateString(row?.createdAt)) return String(row.createdAt)
+  const fromId = timestampFromRowIdFields(row, [cfg.idField, 'id'])
+  if (fromId) return fromId
+  if (isValidDateString(row?.date)) return String(row.date)
+  if (isValidDateString(row?.movedAt)) return String(row.movedAt)
+  return EPOCH_FALLBACK_ISO
+}
+
+function normalizeLifecycleUpdatedAt(row: any, cfg: LifecycleConfig): string {
+  let base: string
+  if (isValidDateString(row?.updatedAt)) base = String(row.updatedAt)
+  else if (isValidDateString(row?.createdAt)) base = String(row.createdAt)
+  else base = timestampFromRowIdFields(row, [cfg.idField, 'id']) || (isValidDateString(row?.date) ? String(row.date) : EPOCH_FALLBACK_ISO)
+
+  // Treat any lifecycle activity marker as an update if it is newer than base.
+  for (const field of ['movedAt', 'lostAt', 'archivedAt']) {
+    if (isValidDateString(row?.[field]) && parseTimestampMs(row[field]) > parseTimestampMs(base)) {
+      base = String(row[field])
+    }
+  }
+  if (isValidDateString(row?.deletedAt) && parseTimestampMs(row.deletedAt) > parseTimestampMs(base)) {
+    return String(row.deletedAt)
+  }
+  return base
+}
+
+/** Guarantee stable identity + timestamps without overwriting existing ids/times. */
+function ensureLifecycleIdentity(row: any, cfg: LifecycleConfig): any {
+  if (!row || typeof row !== 'object') return row
+  const identity = getLifecycleIdentity(row, cfg)
+  const next: any = { ...row }
+  if (!normalizeText(next[cfg.idField])) next[cfg.idField] = identity
+  if (!normalizeText(next.id)) next.id = next[cfg.idField]
+  if (!isValidDateString(next.createdAt)) next.createdAt = normalizeLifecycleCreatedAt(row, cfg)
+  if (!isValidDateString(next.updatedAt)) next.updatedAt = normalizeLifecycleUpdatedAt(row, cfg)
+  return next
+}
+
+function createLifecycleTombstone(row: any, cfg: LifecycleConfig, deletedBy?: string): any {
+  const clean = ensureLifecycleIdentity(row, cfg) || {}
+  const now = new Date().toISOString()
+  const tombstone: any = {
+    ...clean,
+    deletedAt: now,
+    updatedAt: now,
+  }
+  tombstone.deletedBy = deletedBy || clean?.deletedBy || 'system'
+  return tombstone
+}
+
+function isDeletedLifecycleRow(row: any): boolean {
+  return isValidDateString(row?.deletedAt)
+}
+
+function pickLifecycleWinner(remote: any, incoming: any): any {
+  const remoteDeleted = isDeletedLifecycleRow(remote)
+  const incomingDeleted = isDeletedLifecycleRow(incoming)
+
+  if (remoteDeleted && incomingDeleted) {
+    return comparableMs(incoming.deletedAt) > comparableMs(remote.deletedAt) ? incoming : remote
+  }
+  if (remoteDeleted !== incomingDeleted) {
+    const tombstone = remoteDeleted ? remote : incoming
+    const live = remoteDeleted ? incoming : remote
+    return comparableMs(live.updatedAt) > comparableMs(tombstone.deletedAt) ? live : tombstone
+  }
+  return comparableMs(incoming.updatedAt) > comparableMs(remote.updatedAt) ? incoming : remote
+}
+
+function mergeLifecycleById(remoteRows: any[], incomingRows: any[], cfg: LifecycleConfig): any[] {
+  const remoteSanitized = (Array.isArray(remoteRows) ? remoteRows : []).map(row => ensureLifecycleIdentity(row, cfg))
+  const incomingSanitized = (Array.isArray(incomingRows) ? incomingRows : []).map(row => ensureLifecycleIdentity(row, cfg))
+
+  const remoteById = new Map<string, any>()
+  for (const row of remoteSanitized) remoteById.set(getLifecycleIdentity(row, cfg), row)
+
+  const result: any[] = []
+  const used = new Set<string>()
+
+  // Incoming order first (preserves local ordering), then remote-only rows.
+  for (const incoming of incomingSanitized) {
+    const id = getLifecycleIdentity(incoming, cfg)
+    if (used.has(id)) continue
+    used.add(id)
+    const remote = remoteById.get(id)
+    result.push(remote ? pickLifecycleWinner(remote, incoming) : incoming)
+  }
+  for (const remote of remoteSanitized) {
+    const id = getLifecycleIdentity(remote, cfg)
+    if (used.has(id)) continue
+    used.add(id)
+    result.push(remote)
+  }
+  return result
+}
+
+// ── serviceEstimates[] ─────────────────────────────────────────────────────────
+
+const SERVICE_ESTIMATE_CFG: LifecycleConfig = {
+  idField: 'serviceEstimateId',
+  fingerprintPrefix: 'legacy:svcEst',
+  fingerprintParts: row => [
+    row?.customer,
+    row?.accountId,
+    row?.address,
+    row?.date,
+    row?.quoted,
+    row?.internalCost,
+    row?.status,
+    row?.estimateStatus,
+  ],
+}
+
+export function getServiceEstimateIdentity(row: any): string {
+  return getLifecycleIdentity(row, SERVICE_ESTIMATE_CFG)
+}
+
+export function ensureServiceEstimateIdentity(row: any): any {
+  return ensureLifecycleIdentity(row, SERVICE_ESTIMATE_CFG)
+}
+
+export function createServiceEstimateTombstone(row: any, deletedBy?: string): any {
+  return createLifecycleTombstone(row, SERVICE_ESTIMATE_CFG, deletedBy)
+}
+
+export function mergeServiceEstimatesById(remoteRows: any[], incomingRows: any[]): any[] {
+  return mergeLifecycleById(remoteRows, incomingRows, SERVICE_ESTIMATE_CFG)
+}
+
+export function mergeServiceEstimatesIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const remoteRows = Array.isArray((merged as any).serviceEstimates) ? (merged as any).serviceEstimates : []
+  const incomingRows = Array.isArray((incomingBackup as any)?.serviceEstimates) ? (incomingBackup as any).serviceEstimates : []
+  ;(merged as any).serviceEstimates = mergeServiceEstimatesById(remoteRows, incomingRows)
+  return merged
+}
+
+// ── activeServiceCalls[] ─────────────────────────────────────────────────────────
+
+const ACTIVE_SERVICE_CALL_CFG: LifecycleConfig = {
+  idField: 'activeServiceCallId',
+  fingerprintPrefix: 'legacy:svcActive',
+  fingerprintParts: row => [
+    row?.customer,
+    row?.accountId,
+    row?.address,
+    row?.fromEstimateId,
+    row?.quoted,
+    row?.internalCost,
+    row?.status,
+    row?.serviceStatus,
+  ],
+}
+
+export function getActiveServiceCallIdentity(row: any): string {
+  return getLifecycleIdentity(row, ACTIVE_SERVICE_CALL_CFG)
+}
+
+export function ensureActiveServiceCallIdentity(row: any): any {
+  return ensureLifecycleIdentity(row, ACTIVE_SERVICE_CALL_CFG)
+}
+
+export function createActiveServiceCallTombstone(row: any, deletedBy?: string): any {
+  return createLifecycleTombstone(row, ACTIVE_SERVICE_CALL_CFG, deletedBy)
+}
+
+export function mergeActiveServiceCallsById(remoteRows: any[], incomingRows: any[]): any[] {
+  return mergeLifecycleById(remoteRows, incomingRows, ACTIVE_SERVICE_CALL_CFG)
+}
+
+export function mergeActiveServiceCallsIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const remoteRows = Array.isArray((merged as any).activeServiceCalls) ? (merged as any).activeServiceCalls : []
+  const incomingRows = Array.isArray((incomingBackup as any)?.activeServiceCalls) ? (incomingBackup as any).activeServiceCalls : []
+  ;(merged as any).activeServiceCalls = mergeActiveServiceCallsById(remoteRows, incomingRows)
+  return merged
+}
+
+// ── Combined service.calls scope merge (all three arrays in one clone) ───────────
+
+/**
+ * Merge every service.calls array from incomingBackup into ONE fresh clone of
+ * remoteBackup: serviceLogs[] via the Phase 6R-A row merge (tombstone + ledger
+ * union), serviceEstimates[] and activeServiceCalls[] via the 6R-B lifecycle
+ * merge. Used by the mixed workflows (estimate → active call → service log) so a
+ * single remote-baseline save carries all sides atomically. Nothing else in
+ * BackupData is touched (logs[], projects[], multiDayServiceCalls, etc. are
+ * carried through from remote unchanged).
+ */
+export function mergeServiceCallsScopeIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+
+  const remoteLogs = Array.isArray(merged.serviceLogs) ? merged.serviceLogs : []
+  const incomingLogs = Array.isArray(incomingBackup?.serviceLogs) ? incomingBackup.serviceLogs : []
+  merged.serviceLogs = mergeServiceLogsById(remoteLogs, incomingLogs) as any
+
+  const remoteEstimates = Array.isArray((merged as any).serviceEstimates) ? (merged as any).serviceEstimates : []
+  const incomingEstimates = Array.isArray((incomingBackup as any)?.serviceEstimates) ? (incomingBackup as any).serviceEstimates : []
+  ;(merged as any).serviceEstimates = mergeServiceEstimatesById(remoteEstimates, incomingEstimates)
+
+  const remoteCalls = Array.isArray((merged as any).activeServiceCalls) ? (merged as any).activeServiceCalls : []
+  const incomingCalls = Array.isArray((incomingBackup as any)?.activeServiceCalls) ? (incomingBackup as any).activeServiceCalls : []
+  ;(merged as any).activeServiceCalls = mergeActiveServiceCallsById(remoteCalls, incomingCalls)
+
+  return merged
+}

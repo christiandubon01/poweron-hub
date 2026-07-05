@@ -45,6 +45,11 @@ import {
   ensureServiceLogIdentity,
   createServiceLogTombstone,
   isDeletedOrArchivedServiceLog,
+  mergeServiceCallsScopeIntoRemote,
+  ensureServiceEstimateIdentity,
+  createServiceEstimateTombstone,
+  ensureActiveServiceCallIdentity,
+  createActiveServiceCallTombstone,
 } from '@/services/serviceScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
@@ -715,6 +720,51 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     void saveServiceLogsScoped()
   }
 
+  /**
+   * Phase 6R-B: scoped, delete-safe save for the whole service.calls scope —
+   * serviceLogs[] + serviceEstimates[] + activeServiceCalls[]. The caller has
+   * already mutated one or more of those arrays optimistically (create / edit /
+   * tombstone / status transition / cross-array move). We persist locally for
+   * instant UI, then fetch latest remote and patch ONLY those three arrays via
+   * mergeServiceCallsScopeIntoRemote (serviceLogs keeps its 6R-A tombstone+ledger
+   * merge). Everything else in BackupData is preserved from remote. Save/stale/
+   * baseline internals are untouched (reuses the existing remote-baseline path).
+   * Use this for estimate/active-call writers and the mixed move workflows so a
+   * single save carries every side atomically.
+   */
+  async function saveServiceCallsScoped(incomingBackup: BackupData = backup) {
+    backup._lastSavedAt = new Date().toISOString()
+    saveBackupData(backup)
+    window.dispatchEvent(new Event('storage'))
+    window.dispatchEvent(new Event('poweron-data-saved'))
+    forceUpdate()
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const incoming = getBackupData() || incomingBackup
+        const merged = mergeServiceCallsScopeIntoRemote(remote.remoteData, incoming)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+          { source: 'service-calls-remote-merge', changedKey: 'service.calls', _scopes: ['service.calls'] },
+        )
+        return
+      }
+      saveBackupDataAndSync(getBackupData() || incomingBackup, 'service.calls', {
+        source: 'service.calls', _scopes: ['service.calls'],
+      })
+    } catch (err) {
+      console.warn('[ServiceCalls] Scoped service.calls sync failed; local changes preserved', err)
+      saveBackupDataAndSync(getBackupData() || incomingBackup, 'service.calls', {
+        source: 'service.calls', _scopes: ['service.calls'],
+      })
+    }
+  }
+
+  function persistServiceCalls() {
+    void saveServiceCallsScoped()
+  }
+
   function makeLogInternalId() {
     if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `log_${crypto.randomUUID()}`
     return `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -781,7 +831,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       return `service_log:${String(record?.id || '')}`
     }
     const addRows = (items: any[], source: string, label: string) => {
-      items.filter(isArchivedRecord).forEach((record) => {
+      items.filter(record => isArchivedRecord(record) && !record?.deletedAt).forEach((record) => {
         const key = keyFor(record, source)
         if (seen.has(key)) return
         seen.add(key)
@@ -963,12 +1013,23 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
     if (editEstimateId) {
       const idx = serviceEstimates.findIndex(e => e.id === editEstimateId)
-      if (idx >= 0) backup.serviceEstimates[idx] = estimate
+      if (idx >= 0) {
+        // Phase 6R-B: preserve prior identity/createdAt, bump updatedAt.
+        const prior: any = backup.serviceEstimates[idx]
+        backup.serviceEstimates[idx] = ensureServiceEstimateIdentity({
+          ...prior,
+          ...estimate,
+          serviceEstimateId: prior?.serviceEstimateId,
+          createdAt: prior?.createdAt || estimate.createdAt,
+          updatedAt: new Date().toISOString(),
+        })
+      }
     } else {
       if (!Array.isArray(backup.serviceEstimates)) backup.serviceEstimates = []
-      backup.serviceEstimates = [...serviceEstimates, estimate]
+      backup.serviceEstimates = [...serviceEstimates, ensureServiceEstimateIdentity({ ...estimate, updatedAt: new Date().toISOString() })]
     }
-    persist()
+    // Phase 6R-B: route through the service.calls scoped save (was broad persist()).
+    persistServiceCalls()
     if (estimate.accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
@@ -1041,59 +1102,84 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   function deleteEstimate(estimateId: string) {
     if (!confirm('Delete this estimate?')) return
     pushState(backup)
-    backup.serviceEstimates = serviceEstimates.filter(e => e.id !== estimateId)
-    persist()
+    // Phase 6R-B: soft-delete via tombstone instead of hard-filter, so a stale
+    // second device cannot resurrect the deleted estimate.
+    backup.serviceEstimates = serviceEstimates.map(e =>
+      e.id === estimateId ? createServiceEstimateTombstone(e) : e
+    )
+    persistServiceCalls()
   }
 
   function archiveEstimate(estimateId: string) {
     if (!confirm('Archive this record? It will be hidden from active views but kept for history.')) return
     pushState(backup)
-    backup.serviceEstimates = serviceEstimates.map(e => e.id === estimateId ? {
+    const now = new Date().toISOString()
+    backup.serviceEstimates = serviceEstimates.map(e => e.id === estimateId ? ensureServiceEstimateIdentity({
       ...e,
       archived: true,
-      archivedAt: new Date().toISOString(),
+      archivedAt: now,
       archivedReason: e.archivedReason ?? null,
-    } : e)
-    backup.activeServiceCalls = rawActiveServiceCalls.map(c => (c.id === estimateId || c.fromEstimateId === estimateId) ? {
+      updatedAt: now,
+    }) : e)
+    backup.activeServiceCalls = rawActiveServiceCalls.map(c => (c.id === estimateId || c.fromEstimateId === estimateId) ? ensureActiveServiceCallIdentity({
       ...c,
       archived: true,
-      archivedAt: new Date().toISOString(),
+      archivedAt: now,
       archivedReason: c.archivedReason ?? null,
-    } : c)
-    persist()
+      updatedAt: now,
+    }) : c)
+    persistServiceCalls()
   }
 
   function markEstimateLost(estimateId: string) {
     if (!confirm('Mark this estimate as lost? It will leave active estimate queues but stay in data.')) return
     pushState(backup)
-    backup.serviceEstimates = serviceEstimates.map(e => e.id === estimateId ? {
+    const now = new Date().toISOString()
+    backup.serviceEstimates = serviceEstimates.map(e => e.id === estimateId ? ensureServiceEstimateIdentity({
       ...e,
       status: 'lost',
       serviceStatus: 'lost',
       outcome: 'lost',
-      lostAt: new Date().toISOString(),
-    } : e)
-    backup.activeServiceCalls = rawActiveServiceCalls.map(c => (c.id === estimateId || c.fromEstimateId === estimateId) ? {
+      lostAt: now,
+      updatedAt: now,
+    }) : e)
+    backup.activeServiceCalls = rawActiveServiceCalls.map(c => (c.id === estimateId || c.fromEstimateId === estimateId) ? ensureActiveServiceCallIdentity({
       ...c,
       status: 'lost',
       serviceStatus: 'lost',
       outcome: 'lost',
-      lostAt: new Date().toISOString(),
-    } : c)
-    persist()
+      lostAt: now,
+      updatedAt: now,
+    }) : c)
+    persistServiceCalls()
   }
 
   function confirmEstimateToActiveCall(estimateId: string) {
     const est = serviceEstimates.find(e => e.id === estimateId)
     if (!est) return
     pushState(backup)
+    const now = new Date().toISOString()
+    // Phase 6R-B: mark the source estimate active (stamp identity/updatedAt) and
+    // create the active call with a DISTINCT activeServiceCallId + fromEstimateId
+    // link (avoids the old same-id ambiguity across the two arrays). Display still
+    // reads the estimate's status, so UI behavior is unchanged.
     est.status = 'active'
-    const activeEntry: any = { ...est, status: 'active', accountId: (est as any).accountId || undefined }
+    ;(est as any).updatedAt = now
+    backup.serviceEstimates = serviceEstimates.map(e => e.id === estimateId ? ensureServiceEstimateIdentity(est) : e)
+    const activeEntry: any = ensureActiveServiceCallIdentity({
+      ...est,
+      status: 'active',
+      accountId: (est as any).accountId || undefined,
+      activeServiceCallId: 'asc' + Date.now() + Math.random().toString(36).slice(2, 6),
+      fromEstimateId: (est as any).serviceEstimateId || est.id,
+      createdAt: now,
+      updatedAt: now,
+    })
     if (!Array.isArray(backup.activeServiceCalls)) backup.activeServiceCalls = []
     backup.activeServiceCalls = [...rawActiveServiceCalls, activeEntry]
     // Note: per spec, Confirm Job does NOT mark as invoiced — that happens when work is performed
     // and service log is created. This is just a lead-confirmation milestone.
-    persist()
+    persistServiceCalls()
     if (activeEntry.accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
@@ -1169,11 +1255,16 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       profit: collected - actMat - mileageCost - labCost,
     } as any
 
-    // Phase 6R-A: stamp identity/timestamps so the row is scoped-merge-ready.
-    // NOTE: this writer also mutates a serviceEstimate (est.status), so it stays
-    // on the existing broad persist() until serviceEstimates is scoped in 6R-B.
-    backup.serviceLogs = [...serviceLogs, ensureServiceLogIdentity({ ...logEntry, updatedAt: new Date().toISOString() })]
+    // Phase 6R-B: identity-stamp the new service log AND mark the source estimate
+    // completed, then save BOTH through the service.calls scoped merge below. This
+    // fixes the old changedKey/silo mismatch (it used to broad-save under 'logs'
+    // while mutating serviceLogs + serviceEstimates, risking loss of the new log
+    // and the estimate completion when remote had advanced).
+    const now6rb = new Date().toISOString()
+    backup.serviceLogs = [...serviceLogs, ensureServiceLogIdentity({ ...logEntry, updatedAt: now6rb })]
     est.status = 'completed'
+    ;(est as any).updatedAt = now6rb
+    backup.serviceEstimates = serviceEstimates.map(e => e.id === est.id ? ensureServiceEstimateIdentity(est) : e)
 
     // Calculate variance
     const estMat = est.estMaterials || 0
@@ -1199,7 +1290,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       actualCost: actMat + mileageCost + labCost,
     })
 
-    persist()
+    // Phase 6R-B: one scoped save carries the new serviceLog + estimate completion.
+    persistServiceCalls()
     if ((logEntry as any).accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
@@ -1553,21 +1645,31 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       persistServiceLogs()
       return
     }
+    const now = new Date().toISOString()
     if (source === 'active_call') {
-      backup.activeServiceCalls = rawActiveServiceCalls.map(c => String(c.id) === String(id) ? restoreArchivedFields(c) : c)
+      backup.activeServiceCalls = rawActiveServiceCalls.map(c => String(c.id) === String(id)
+        ? ensureActiveServiceCallIdentity({ ...restoreArchivedFields(c), updatedAt: now })
+        : c)
     } else {
-      backup.serviceEstimates = serviceEstimates.map(e => String(e.id) === String(id) ? restoreArchivedFields(e) : e)
-      backup.activeServiceCalls = rawActiveServiceCalls.map(c => (String(c.id) === String(id) || String(c.fromEstimateId || '') === String(id)) ? restoreArchivedFields(c) : c)
+      backup.serviceEstimates = serviceEstimates.map(e => String(e.id) === String(id)
+        ? ensureServiceEstimateIdentity({ ...restoreArchivedFields(e), updatedAt: now })
+        : e)
+      backup.activeServiceCalls = rawActiveServiceCalls.map(c => (String(c.id) === String(id) || String(c.fromEstimateId || '') === String(id))
+        ? ensureActiveServiceCallIdentity({ ...restoreArchivedFields(c), updatedAt: now })
+        : c)
     }
-    // activeServiceCalls / serviceEstimates stay on the existing broad save (Phase 6R-B).
-    persist()
+    // Phase 6R-B: active-call / estimate restore now routes through the scoped save.
+    persistServiceCalls()
   }
 
   function deleteArchivedActiveServiceCall(id: string) {
     if (!confirm('Delete this archived active service call?')) return
     pushState(backup)
-    backup.activeServiceCalls = rawActiveServiceCalls.filter(c => String(c.id) !== String(id))
-    persist()
+    // Phase 6R-B: soft-delete via tombstone instead of hard-filter.
+    backup.activeServiceCalls = rawActiveServiceCalls.map(c =>
+      String(c.id) === String(id) ? createActiveServiceCallTombstone(c) : c
+    )
+    persistServiceCalls()
   }
 
   /**
