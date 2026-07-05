@@ -16,7 +16,7 @@
 import { embedAndStore, getRelatedMemories, batchEmbedAndStore, type ExtendedEntityType } from '@/services/vectorMemory'
 import { createEmbedding } from '@/lib/memory/embeddings'
 import { getBackupData } from '@/services/backupDataService'
-import { getLiveMaterialRows } from '@/services/projectScopeMerge'
+import { getLiveLaborRows, getLiveMaterialRows } from '@/services/projectScopeMerge'
 import { supabase } from '@/lib/supabase'
 
 // ── Re-export types used across the app ─────────────────────────────────────
@@ -161,7 +161,7 @@ export async function seedMemory(orgId?: string): Promise<{
   // ── Estimates (from project laborRows/matRows) ────────────────────────────
   for (const p of projects) {
     if (!p) continue
-    const laborRows = p.laborRows || []
+    const laborRows = getLiveLaborRows(p.laborRows || [], p.id)
     const matRows = p.matRows?.length
       ? getLiveMaterialRows(p.matRows || [], p.id, 'matRows')
       : getLiveMaterialRows(p.mtoRows || [], p.id, 'mtoRows')

@@ -20,7 +20,7 @@
 
 import { getBackupData, getKPIs } from '@/services/backupDataService'
 import { getActiveMode } from '@/services/nexusMode'
-import { getLiveMaterialRows } from '@/services/projectScopeMerge'
+import { getLiveLaborRows, getLiveMaterialRows } from '@/services/projectScopeMerge'
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 
@@ -323,7 +323,7 @@ export function buildDeepProjectContext(): string {
       : 'no field log entries ever'
 
     // ── Labor: quoted vs logged ─────────────────────────────────────────────
-    const laborRows   = p.laborRows || []
+    const laborRows   = getLiveLaborRows(p.laborRows || [], p.id)
     const quotedHrs   = laborRows.reduce((s: number, r: any) => s + num(r.hrs), 0)
     const loggedHrs   = projectLogs.reduce((s: number, l: any) => s + num(l.hrs), 0)
 
@@ -469,7 +469,7 @@ export function buildDeepProjectContext(): string {
         .filter((l: any) => l.projId === p.id)
         .reduce((s: number, l: any) => s + num(l.hrs), 0)
       const laborCostLogged = loggedHrs * billRate
-      const laborQuoted     = (p.laborRows || []).reduce((s: number, r: any) =>
+      const laborQuoted     = getLiveLaborRows(p.laborRows || [], p.id).reduce((s: number, r: any) =>
         s + num(r.hrs) * num(r.rate || billRate), 0)
 
       totalContract    += fin.contract

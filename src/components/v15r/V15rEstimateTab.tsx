@@ -1,7 +1,22 @@
 // @ts-nocheck
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { Sparkles, Plus, ArrowRight, Check, Trash2, X } from 'lucide-react'
-import { getBackupData, saveBackupData, saveBackupDataAndSync, num, fmt, fmtK, pct, getPhaseWeights, resolveProjectBucket, getProjectFinancials, isActiveProject, isActiveServiceCall } from '@/services/backupDataService'
+import {
+  getBackupData,
+  saveBackupData,
+  saveBackupDataAndSync,
+  saveBackupWithRemoteBaselineSync,
+  fetchLatestRemoteBackup,
+  num,
+  fmt,
+  fmtK,
+  pct,
+  getPhaseWeights,
+  resolveProjectBucket,
+  getProjectFinancials,
+  isActiveProject,
+  isActiveServiceCall,
+} from '@/services/backupDataService'
 import { nonCriticalWrite } from '@/services/writeDebounce'
 import { pushState } from '@/services/undoRedoService'
 import { mergeInnerProjectViewPrefs, loadInnerProjectViewPrefs, phaseExpandedFromCollapsedPhases } from '@/utils/v15rViewPrefs'
@@ -14,7 +29,19 @@ import MileageProjectAddress, {
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 import { getLoadedHourlyRate, getBaseHourlyRate, resolveWorkerType } from './employeeCostUtils'
-import { getLiveMaterialRows } from '@/services/projectScopeMerge'
+import {
+  createLaborIdentityContext,
+  createLaborRowTombstone,
+  createOverheadIdentityContext,
+  createOverheadRowTombstone,
+  getLaborStableId,
+  getLiveLaborRows,
+  getLiveMaterialRows,
+  getLiveOverheadRows,
+  getOverheadStableId,
+  isDeletedEstimateRow,
+  mergeProjectEstimateRowsIntoRemote,
+} from '@/services/projectScopeMerge'
 
 const LABOR_PHASES = ['Underground', 'Site Prep', 'Rough In', 'Trim', 'Finish']
 const LABOR_PHASE_DEFAULT_COLORS: Record<string, string> = {
@@ -26,6 +53,8 @@ const LABOR_PHASE_DEFAULT_COLORS: Record<string, string> = {
   Unassigned: '#64748b',
 }
 const LABOR_PHASE_COLOR_DEBOUNCE_MS = 600
+const ESTIMATE_ROW_SAVE_DEBOUNCE_MS = 250
+const ESTIMATE_ROW_UNDO_GROUP_MS = 800
 
 function normalizeLaborPhaseColor(hex: string | undefined): string {
   if (!hex || typeof hex !== 'string') return '#64748b'
@@ -153,6 +182,33 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
   const newLaborRowIdRef = useRef<string | null>(null)
   const laborTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
+  const estimateRowsSaveQueueRef = useRef<any>({
+    timer: null,
+    inFlight: false,
+    needsFlush: false,
+    seq: 0,
+    laborRows: [],
+    overheadRows: [],
+  })
+  const estimateRowUndoRef = useRef<any>({
+    timer: null,
+    active: false,
+  })
+  // ── Local draft rows: the SOLE source of truth for the editable labor/OH
+  // input values. Decoupled from the `backup` prop / getBackupData() (which
+  // return freshly-parsed objects on every async save and parent re-render).
+  // This prevents rapid spinner clicks / fast typing from being rolled back
+  // by an async persistence-triggered re-render (the dropped-input bug).
+  const [laborDraftRows, setLaborDraftRows] = useState<any[]>([])
+  const [overheadDraftRows, setOverheadDraftRows] = useState<any[]>([])
+  // Latest draft mirror for flush-time reads (queue persists from latest ref).
+  const latestEstimateRowsRef = useRef<{ laborRows: any[]; overheadRows: any[] }>({ laborRows: [], overheadRows: [] })
+  // Sync bookkeeping so the render-time draft reconciliation is idempotent.
+  const estimateDraftStructuralKeyRef = useRef<string>('__init__')
+  const estimateDraftValueKeyRef = useRef<string>('__init__')
+  // True while a labor/OH text/number input is focused — while true we never
+  // let an async re-render overwrite the focused draft value.
+  const estimateEditingRef = useRef<boolean>(false)
   const [subtab, setSubtab] = useState<'project' | 'service'>('project')
   const [aiOpen, setAiOpen] = useState(false)
 
@@ -218,6 +274,15 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     return () => { Object.values(timers).forEach(t => clearTimeout(t)) }
   }, [])
 
+  useEffect(() => {
+    return () => {
+      const timer = estimateRowsSaveQueueRef.current?.timer
+      if (timer) clearTimeout(timer)
+      const undoTimer = estimateRowUndoRef.current?.timer
+      if (undoTimer) clearTimeout(undoTimer)
+    }
+  }, [])
+
   // ── Labor donut hover state ────────────────────────────────────────────────
   const [laborDonutHoveredIdx, setLaborDonutHoveredIdx] = useState<number | null>(null)
 
@@ -264,6 +329,283 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   const p = backup.projects.find(x => x.id === projectId)
   if (!p) return <div style={{ color: 'var(--t3)' }}>Project not found</div>
 
+  const liveLaborRows = getLiveLaborRows(p.laborRows || [], p.id)
+  const liveOverheadRows = getLiveOverheadRows(p.ohRows || [], p.id)
+
+  const makeEstimateRowInternalId = (prefix: string) => {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+      return `${prefix}_${crypto.randomUUID()}`
+    }
+    return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  }
+
+  const laborRowKey = (row: any): string => String(row?.laborId || row?.id || getLaborStableId(row, p.id))
+  const overheadRowKey = (row: any): string => String(row?.overheadId || row?.id || getOverheadStableId(row, p.id))
+
+  const findLaborRowIndexByKey = (rows: any[], rowKey: string): number => {
+    const context = createLaborIdentityContext(rows || [], p.id)
+    return (rows || []).findIndex((row: any) =>
+      getLaborStableId(row, p.id, context) === rowKey ||
+      String(row?.id || '') === rowKey ||
+      String(row?.laborId || '') === rowKey
+    )
+  }
+
+  const findOverheadRowIndexByKey = (rows: any[], rowKey: string): number => {
+    const context = createOverheadIdentityContext(rows || [], p.id)
+    return (rows || []).findIndex((row: any) =>
+      getOverheadStableId(row, p.id, context) === rowKey ||
+      String(row?.id || '') === rowKey ||
+      String(row?.overheadId || '') === rowKey
+    )
+  }
+
+  const stampLaborRows = (rows: any[]): any[] => {
+    const context = createLaborIdentityContext(rows || [], p.id)
+    return (rows || []).map((row: any) => ({
+      ...row,
+      laborId: getLaborStableId(row, p.id, context),
+      createdAt: row.createdAt || new Date().toISOString(),
+      updatedAt: row.updatedAt || row.createdAt || new Date().toISOString(),
+    }))
+  }
+
+  const stampOverheadRows = (rows: any[]): any[] => {
+    const context = createOverheadIdentityContext(rows || [], p.id)
+    return (rows || []).map((row: any) => ({
+      ...row,
+      overheadId: getOverheadStableId(row, p.id, context),
+      createdAt: row.createdAt || new Date().toISOString(),
+      updatedAt: row.updatedAt || row.createdAt || new Date().toISOString(),
+    }))
+  }
+
+  const reconcileLaborReplacement = (existingRows: any[], replacementRows: any[]): any[] => {
+    const nextContext = createLaborIdentityContext(replacementRows || [], p.id)
+    const nextIds = new Set((replacementRows || []).map((row: any) => getLaborStableId(row, p.id, nextContext)))
+    const existingTombstones = (existingRows || []).filter((row: any) => isDeletedEstimateRow(row))
+    const removedTombstones = getLiveLaborRows(existingRows || [], p.id)
+      .filter((row: any) => !nextIds.has(getLaborStableId(row, p.id)))
+      .map((row: any) => createLaborRowTombstone(row, p.id))
+    return [...replacementRows, ...existingTombstones, ...removedTombstones]
+  }
+
+  const reconcileOverheadReplacement = (existingRows: any[], replacementRows: any[]): any[] => {
+    const nextContext = createOverheadIdentityContext(replacementRows || [], p.id)
+    const nextIds = new Set((replacementRows || []).map((row: any) => getOverheadStableId(row, p.id, nextContext)))
+    const existingTombstones = (existingRows || []).filter((row: any) => isDeletedEstimateRow(row))
+    const removedTombstones = getLiveOverheadRows(existingRows || [], p.id)
+      .filter((row: any) => !nextIds.has(getOverheadStableId(row, p.id)))
+      .map((row: any) => createOverheadRowTombstone(row, p.id))
+    return [...replacementRows, ...existingTombstones, ...removedTombstones]
+  }
+
+  const applyEstimateRowsToBackup = (targetBackup: any, laborRows: any[], overheadRows: any[]) => {
+    const targetProject = (targetBackup?.projects || []).find((x: any) => x.id === projectId)
+    if (!targetProject) return false
+    targetProject.laborRows = laborRows
+    targetProject.ohRows = overheadRows
+    return true
+  }
+
+  const pushEstimateRowEditState = () => {
+    const undo = estimateRowUndoRef.current
+    if (!undo.active) {
+      pushState()
+      undo.active = true
+    }
+    if (undo.timer) clearTimeout(undo.timer)
+    undo.timer = setTimeout(() => {
+      undo.active = false
+      undo.timer = null
+    }, ESTIMATE_ROW_UNDO_GROUP_MS)
+  }
+
+  const cloneEstimateRows = (rows: any[]): any[] => JSON.parse(JSON.stringify(Array.isArray(rows) ? rows : []))
+
+  const persistEstimateRowsSnapshotLocal = (localLaborRows: any[], localOverheadRows: any[]) => {
+    const localBackup = getBackupData() || backup
+    applyEstimateRowsToBackup(localBackup, cloneEstimateRows(localLaborRows), cloneEstimateRows(localOverheadRows))
+    localBackup._lastSavedAt = new Date().toISOString()
+    saveBackupData(localBackup)
+  }
+
+  const saveEstimateRowsSnapshotRemote = async (seq: number, localLaborRows: any[], localOverheadRows: any[]) => {
+    const queue = estimateRowsSaveQueueRef.current
+    persistEstimateRowsSnapshotLocal(localLaborRows, localOverheadRows)
+
+    const incomingBackup = getBackupData() || backup
+    applyEstimateRowsToBackup(incomingBackup, cloneEstimateRows(localLaborRows), cloneEstimateRows(localOverheadRows))
+
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (seq !== queue.seq) return
+
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const merged = mergeProjectEstimateRowsIntoRemote(remote.remoteData, incomingBackup, projectId)
+        if (seq !== queue.seq) return
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          {
+            remoteUpdatedAt: remote.remoteUpdatedAt,
+            remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+          },
+          {
+            source: 'project-estimate-rows-remote-merge',
+            changedKey: 'projects',
+            _scopes: ['project.estimate'],
+          },
+        )
+        if (seq !== queue.seq) {
+          persistEstimateRowsSnapshotLocal(queue.laborRows, queue.overheadRows)
+        }
+        return
+      }
+
+      if (seq !== queue.seq) return
+      saveBackupDataAndSync(incomingBackup, 'projects', {
+        source: 'project.estimate',
+        _scopes: ['project.estimate'],
+      })
+      if (seq !== queue.seq) {
+        persistEstimateRowsSnapshotLocal(queue.laborRows, queue.overheadRows)
+      }
+    } catch (err) {
+      if (seq !== queue.seq) return
+      console.warn('[Estimate] Scoped estimate row sync failed; local row changes preserved', err)
+      saveBackupDataAndSync(incomingBackup, 'projects', {
+        source: 'project.estimate',
+        _scopes: ['project.estimate'],
+      })
+      if (seq !== queue.seq) {
+        persistEstimateRowsSnapshotLocal(queue.laborRows, queue.overheadRows)
+      }
+    }
+  }
+
+  const flushEstimateRowsSaveQueue = async () => {
+    const queue = estimateRowsSaveQueueRef.current
+    if (queue.inFlight) {
+      queue.needsFlush = true
+      return
+    }
+
+    queue.inFlight = true
+    try {
+      do {
+        queue.needsFlush = false
+        const seq = queue.seq
+        const laborRows = cloneEstimateRows(queue.laborRows)
+        const overheadRows = cloneEstimateRows(queue.overheadRows)
+        await saveEstimateRowsSnapshotRemote(seq, laborRows, overheadRows)
+      } while (queue.needsFlush)
+    } finally {
+      queue.inFlight = false
+      if (queue.needsFlush) {
+        void flushEstimateRowsSaveQueue()
+      }
+    }
+  }
+
+  const saveEstimateRowsScoped = (nextLaborRows: any[], nextOverheadRows: any[], debounceMs = ESTIMATE_ROW_SAVE_DEBOUNCE_MS) => {
+    const localLaborRows = Array.isArray(nextLaborRows) ? nextLaborRows : []
+    const localOverheadRows = Array.isArray(nextOverheadRows) ? nextOverheadRows : []
+    const queue = estimateRowsSaveQueueRef.current
+
+    p.laborRows = localLaborRows
+    p.ohRows = localOverheadRows
+    backup._lastSavedAt = new Date().toISOString()
+
+    queue.seq += 1
+    queue.laborRows = cloneEstimateRows(localLaborRows)
+    queue.overheadRows = cloneEstimateRows(localOverheadRows)
+    queue.needsFlush = true
+
+    if (queue.timer) clearTimeout(queue.timer)
+    queue.timer = setTimeout(() => {
+      queue.timer = null
+      void flushEstimateRowsSaveQueue()
+    }, Math.max(0, debounceMs))
+  }
+
+  // ── Draft reconciliation (source of truth for editable inputs) ─────────────
+  // Keep latest ref in sync every render so blur/flush read current values.
+  const setLaborDraft = (updater: any) => {
+    setLaborDraftRows((prev: any[]) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      latestEstimateRowsRef.current.laborRows = next
+      return next
+    })
+  }
+  const setOverheadDraft = (updater: any) => {
+    setOverheadDraftRows((prev: any[]) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      latestEstimateRowsRef.current.overheadRows = next
+      return next
+    })
+  }
+
+  const buildEstimateStructuralKey = (labor: any[], overhead: any[]): string =>
+    `${projectId}::L::${(labor || []).map(laborRowKey).join(',')}::O::${(overhead || []).map(overheadRowKey).join(',')}`
+
+  const buildEstimateValueKey = (labor: any[], overhead: any[]): string => {
+    const l = (labor || []).map((r: any) =>
+      `${laborRowKey(r)}|${r.hrs}|${r.rate}|${r.desc}|${r.empId}|${r.phase}|${JSON.stringify(r.employees || null)}|${JSON.stringify(r.employeeAllocations || null)}`)
+    const o = (overhead || []).map((r: any) => `${overheadRowKey(r)}|${r.hrs}|${r.rate}|${r.desc}`)
+    return `${l.join(';;')}##${o.join(';;')}`
+  }
+
+  // Runs on every render. Refreshes the local draft from the persisted live
+  // rows ONLY when the row set changes structurally (add/delete/replace/project
+  // switch) OR when values change externally while no input is focused
+  // (undo/redo, employee/allocation edits). While an input IS focused, async
+  // value changes are ignored so a background save can never roll the input back.
+  {
+    const structuralKey = buildEstimateStructuralKey(liveLaborRows, liveOverheadRows)
+    const valueKey = buildEstimateValueKey(liveLaborRows, liveOverheadRows)
+    const structuralChanged = structuralKey !== estimateDraftStructuralKeyRef.current
+    const valueChanged = valueKey !== estimateDraftValueKeyRef.current
+    if (structuralChanged || (valueChanged && !estimateEditingRef.current)) {
+      const clonedLabor = cloneEstimateRows(liveLaborRows)
+      const clonedOverhead = cloneEstimateRows(liveOverheadRows)
+      latestEstimateRowsRef.current = { laborRows: clonedLabor, overheadRows: clonedOverhead }
+      setLaborDraftRows(clonedLabor)
+      setOverheadDraftRows(clonedOverhead)
+    }
+    estimateDraftStructuralKeyRef.current = structuralKey
+    estimateDraftValueKeyRef.current = valueKey
+  }
+
+  const applyLaborFieldToDraftRow = (row: any, field: string, value: any): any => {
+    const next = { ...row, updatedAt: new Date().toISOString() }
+    if (field === 'hrs') next.hrs = num(value)
+    else if (field === 'rate') next.rate = num(value)
+    else if (field === 'desc') next.desc = String(value)
+    else if (field === 'empId') next.empId = String(value)
+    else if (field === 'phase') next.phase = String(value)
+    else if (field === 'employees') { next.employees = value; next.empId = (value as string[])[0] || 'me' }
+    else if (field === 'employeeAllocations') next.employeeAllocations = value
+    return next
+  }
+
+  const applyOverheadFieldToDraftRow = (row: any, field: string, value: any): any => {
+    const next = { ...row, updatedAt: new Date().toISOString() }
+    if (field === 'hrs') next.hrs = num(value)
+    else if (field === 'rate') next.rate = num(value)
+    else if (field === 'desc') next.desc = String(value)
+    return next
+  }
+
+  // Called from focus/blur of editable labor/OH inputs.
+  const onEstimateInputFocus = () => { estimateEditingRef.current = true }
+  const onEstimateInputBlur = () => {
+    estimateEditingRef.current = false
+    // Ensure the latest edited value is flushed to persistence on blur.
+    const queue = estimateRowsSaveQueueRef.current
+    if (queue.timer) { clearTimeout(queue.timer); queue.timer = null }
+    void flushEstimateRowsSaveQueue()
+  }
+
   const getMTOActivePhaseBreakdown = (proj) => {
     const settingsPhases = getProjectPhaseNames(backup)
     const liveMTORows = getLiveMaterialRows(proj.mtoRows || [], proj.id, 'mtoRows')
@@ -303,13 +645,15 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
 
   const estTotals = () => {
     const matBreakdown = getMTOActivePhaseBreakdown(p)
-    const lab = (p.laborRows || []).reduce((s, r) => s + num(r.hrs) * num(r.rate), 0)
+    const laborRows = getLiveLaborRows(p.laborRows || [], p.id)
+    const overheadRows = getLiveOverheadRows(p.ohRows || [], p.id)
+    const lab = laborRows.reduce((s, r) => s + num(r.hrs) * num(r.rate), 0)
     const matC = matBreakdown.reduce((s, r) => s + num(r.raw), 0)
     const matSellingC = matBreakdown.reduce((s, r) => s + num(r.selling), 0)
     const taxOnMatRaw = matBreakdown.reduce((s, r) => s + num(r.tax), 0)
     const taxOnMatSelling = matBreakdown.reduce((s, r) => s + num(r.sellingTax), 0)
-    const labHrs = (p.laborRows || []).reduce((s, r) => s + num(r.hrs), 0)
-    const manualOH = (p.ohRows || []).reduce((s, r) => s + num(r.hrs) * num(r.rate), 0)
+    const labHrs = laborRows.reduce((s, r) => s + num(r.hrs), 0)
+    const manualOH = overheadRows.reduce((s, r) => s + num(r.hrs) * num(r.rate), 0)
     const opRate = num(backup.settings?.opCost || 42.45)
     const billRate = num(backup.settings?.billRate || 95)
     const opC = labHrs * opRate           // internal labor cost
@@ -360,9 +704,19 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   const cbTotal = num(p.contract) > 0 ? num(p.contract) : Math.max(t.dealCost, 1)
 
   const editLaborRow = (rowId, field, value) => {
-    pushState()
-    const row = (p.laborRows || []).find(r => r.id === rowId)
+    // 1) Instant UI: update the local draft from the PREVIOUS draft (functional,
+    //    never reads stale backup/project). This is what the input renders from.
+    setLaborDraft((prev: any[]) => prev.map((row: any) =>
+      laborRowKey(row) === rowId ? applyLaborFieldToDraftRow(row, field, value) : row))
+    // 2) Persist path: mutate p (for totals/save) + queue scoped save. Async.
+    pushEstimateRowEditState()
+    p.laborRows = p.laborRows || []
+    const rowIndex = findLaborRowIndexByKey(p.laborRows, rowId)
+    const row = rowIndex >= 0 ? p.laborRows[rowIndex] : null
     if (row) {
+      row.laborId = getLaborStableId(row, p.id, createLaborIdentityContext(p.laborRows, p.id))
+      row.createdAt = row.createdAt || new Date().toISOString()
+      row.updatedAt = new Date().toISOString()
       if (field === 'hrs') row.hrs = num(value)
       else if (field === 'rate') row.rate = num(value)
       else if (field === 'desc') row.desc = String(value)
@@ -371,73 +725,116 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       else if (field === 'employees') { row.employees = value; row.empId = (value as string[])[0] || 'me' }
       else if (field === 'employeeAllocations') row.employeeAllocations = value
     }
-    saveBackupDataAndSync(backup, 'projects')
+    void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
     forceUpdate()
   }
 
   const addLaborRow = (phase = '') => {
   pushState()
-  p.laborRows = p.laborRows || []
 
-  const id =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? `lr${crypto.randomUUID()}`
-      : `lr${Date.now()}${Math.random().toString(36).slice(2, 8)}`
+  const now = new Date().toISOString()
+  const laborId = makeEstimateRowInternalId('labor')
+  const id = `lr${Date.now()}${Math.random().toString(36).slice(2, 8)}`
 
-  p.laborRows.push({
+  const newRow = {
+    laborId,
     id,
     desc: '',
     empId: 'me',
     hrs: 0,
     rate: num(backup.settings?.billRate || 65),
     phase: phase || '',
-  })
+    createdAt: now,
+    updatedAt: now,
+  }
 
-  newLaborRowIdRef.current = id
-  saveBackupDataAndSync(backup, 'projects')
+  // 1) Optimistic: show the new row immediately from local draft state.
+  setLaborDraft((prev: any[]) => [...prev, cloneEstimateRows([newRow])[0]])
+  // 2) Persist: mutate p (with tombstones) + queue scoped save. Async.
+  p.laborRows = p.laborRows || []
+  p.laborRows.push(newRow)
+
+  newLaborRowIdRef.current = laborId
+  void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
   forceUpdate()
 
   requestAnimationFrame(() => {
-    laborTextareaRefs.current[id]?.focus()
+    laborTextareaRefs.current[laborId]?.focus()
   })
 }
 
   const delLaborRow = (rowId) => {
     pushState()
-    p.laborRows = (p.laborRows || []).filter(r => r.id !== rowId)
-    saveBackupDataAndSync(backup, 'projects')
+    // 1) Optimistic: hide the row from local draft state immediately.
+    setLaborDraft((prev: any[]) => prev.filter((row: any) => laborRowKey(row) !== rowId))
+    // 2) Persist: tombstone in p (preserves scoped-merge safety) + queue save.
+    p.laborRows = p.laborRows || []
+    const rowIndex = findLaborRowIndexByKey(p.laborRows, rowId)
+    if (rowIndex === -1) {
+      console.warn('[Estimate] labor delete skipped: row not found', rowId)
+    } else {
+      p.laborRows[rowIndex] = createLaborRowTombstone(p.laborRows[rowIndex], p.id)
+    }
+    void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
     forceUpdate()
   }
 
   const editOHRow = (rowId, field, value) => {
-    pushState()
-    const row = (p.ohRows || []).find(r => r.id === rowId)
+    // 1) Instant UI: update the local draft from the PREVIOUS draft (functional).
+    setOverheadDraft((prev: any[]) => prev.map((row: any) =>
+      overheadRowKey(row) === rowId ? applyOverheadFieldToDraftRow(row, field, value) : row))
+    // 2) Persist path: mutate p (for totals/save) + queue scoped save. Async.
+    pushEstimateRowEditState()
+    p.ohRows = p.ohRows || []
+    const rowIndex = findOverheadRowIndexByKey(p.ohRows, rowId)
+    const row = rowIndex >= 0 ? p.ohRows[rowIndex] : null
     if (row) {
+      row.overheadId = getOverheadStableId(row, p.id, createOverheadIdentityContext(p.ohRows, p.id))
+      row.createdAt = row.createdAt || new Date().toISOString()
+      row.updatedAt = new Date().toISOString()
       if (field === 'hrs') row.hrs = num(value)
       else if (field === 'rate') row.rate = num(value)
       else if (field === 'desc') row.desc = String(value)
     }
-    saveBackupDataAndSync(backup, 'projects')
+    void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
     forceUpdate()
   }
 
   const addOHRow = () => {
     pushState()
-    p.ohRows = p.ohRows || []
-    p.ohRows.push({
+    const now = new Date().toISOString()
+    const overheadId = makeEstimateRowInternalId('overhead')
+    const newRow = {
+      overheadId,
       id: 'oh' + Date.now(),
       desc: 'New item',
       hrs: 0,
       rate: num(backup.settings?.defaultOHRate || 55),
-    })
-    saveBackupDataAndSync(backup, 'projects')
+      createdAt: now,
+      updatedAt: now,
+    }
+    // 1) Optimistic: show the new row immediately from local draft state.
+    setOverheadDraft((prev: any[]) => [...prev, cloneEstimateRows([newRow])[0]])
+    // 2) Persist: mutate p (with tombstones) + queue scoped save. Async.
+    p.ohRows = p.ohRows || []
+    p.ohRows.push(newRow)
+    void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
     forceUpdate()
   }
 
   const delOHRow = (rowId) => {
     pushState()
-    p.ohRows = (p.ohRows || []).filter(r => r.id !== rowId)
-    saveBackupDataAndSync(backup, 'projects')
+    // 1) Optimistic: hide the row from local draft state immediately.
+    setOverheadDraft((prev: any[]) => prev.filter((row: any) => overheadRowKey(row) !== rowId))
+    // 2) Persist: tombstone in p (preserves scoped-merge safety) + queue save.
+    p.ohRows = p.ohRows || []
+    const rowIndex = findOverheadRowIndexByKey(p.ohRows, rowId)
+    if (rowIndex === -1) {
+      console.warn('[Estimate] overhead delete skipped: row not found', rowId)
+    } else {
+      p.ohRows[rowIndex] = createOverheadRowTombstone(p.ohRows[rowIndex], p.id)
+    }
+    void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
     forceUpdate()
   }
 
@@ -536,7 +933,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   }
 
   // Check if completely empty
-  const hasAnyData = (p.laborRows || []).length > 0 || (p.ohRows || []).length > 0 || t.matBreakdown.length > 0
+  const hasAnyData = liveLaborRows.length > 0 || liveOverheadRows.length > 0 || t.matBreakdown.length > 0
 
   // Service Call estimate helpers
   const SVC_JOB_TYPES = ['GFCI / Receptacles', 'Panel / Service', 'Troubleshoot', 'Lighting', 'EV Charger', 'Low Voltage', 'Circuit Add/Replace', 'Switches / Dimmers', 'Warranty', 'Other']
@@ -761,7 +1158,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     try {
       const { callClaude, extractText } = await import('@/services/claudeProxy')
       const totals = estTotals()
-      const laborRows = (p.laborRows || []).map(r => `${r.desc}: ${r.hrs}h @ $${r.rate}/h`)
+      const laborRows = liveLaborRows.map(r => `${r.desc}: ${r.hrs}h @ $${r.rate}/h`)
       const priceBookItems = (backup.priceBook || []).map(i => i.name || i.desc || '').filter(Boolean).slice(0, 30)
       const completedJobs = (backup.completedArchive || []).slice(0, 5).map(j => `${j.name}: $${j.contract || 0} contract`)
       const prompt = `You are VAULT, estimating AI for Power On Solutions LLC, C-10 electrical contractor (Coachella Valley, CA).
@@ -879,26 +1276,35 @@ Return ONLY valid JSON, no other text.`
   function applyQuickStartTemplate(templateId: string) {
     const tpl = QUICK_START_TEMPLATES.find(t => t.id === templateId)
     if (!tpl) return
-    if ((p.laborRows || []).length > 0 || (p.ohRows || []).length > 0) {
+    if (liveLaborRows.length > 0 || liveOverheadRows.length > 0) {
       if (!confirm(`This will replace existing labor and overhead rows with the "${tpl.label}" template. Continue?`)) return
     }
     pushState()
     const billRate = num(backup.settings?.billRate || 65)
     const ohRate = num(backup.settings?.defaultOHRate || 55)
-    p.laborRows = tpl.laborRows.map(r => ({
+    const now = new Date().toISOString()
+    const replacementLaborRows = tpl.laborRows.map(r => ({
+      laborId: makeEstimateRowInternalId('labor'),
       id: 'lr' + Date.now() + Math.random().toString(36).slice(2, 5),
       desc: r.desc,
       empId: 'me',
       hrs: r.hrs,
       rate: r.rate !== null ? r.rate : billRate,
+      createdAt: now,
+      updatedAt: now,
     }))
-    p.ohRows = tpl.ohRows.map(r => ({
+    const replacementOverheadRows = tpl.ohRows.map(r => ({
+      overheadId: makeEstimateRowInternalId('overhead'),
       id: 'oh' + Date.now() + Math.random().toString(36).slice(2, 5),
       desc: r.desc,
       hrs: r.hrs,
       rate: r.rate !== null ? r.rate : ohRate,
+      createdAt: now,
+      updatedAt: now,
     }))
-    saveBackupData(backup)
+    p.laborRows = reconcileLaborReplacement(p.laborRows || [], replacementLaborRows)
+    p.ohRows = reconcileOverheadReplacement(p.ohRows || [], replacementOverheadRows)
+    void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
     setShowQuickStart(false)
     forceUpdate()
   }
@@ -922,14 +1328,19 @@ Return ONLY valid JSON, no other text.`
     const result = computeLaborCalc()
     pushState()
     p.laborRows = p.laborRows || []
+    const now = new Date().toISOString()
+    const laborId = makeEstimateRowInternalId('labor')
     p.laborRows.push({
+      laborId,
       id: 'lr' + Date.now(),
       desc: `Labor — ${calcComplexity.charAt(0).toUpperCase() + calcComplexity.slice(1)} (${calcInput} ${calcInputType}, ${calcCrew}-person crew)`,
       empId: 'me',
       hrs: result.hours,
       rate: num(backup.settings?.billRate || 65),
+      createdAt: now,
+      updatedAt: now,
     })
-    saveBackupData(backup)
+    void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
     setShowLaborCalc(false)
     setCalcResult(null)
     forceUpdate()
@@ -947,10 +1358,10 @@ Return ONLY valid JSON, no other text.`
     versions.unshift({
       ts: Date.now(),
       total: totals.total,
-      laborCount: (p.laborRows || []).length,
-      ohCount: (p.ohRows || []).length,
-      laborRows: JSON.parse(JSON.stringify(p.laborRows || [])),
-      ohRows: JSON.parse(JSON.stringify(p.ohRows || [])),
+      laborCount: liveLaborRows.length,
+      ohCount: liveOverheadRows.length,
+      laborRows: JSON.parse(JSON.stringify(liveLaborRows)),
+      ohRows: JSON.parse(JSON.stringify(liveOverheadRows)),
     })
     // Max 5 versions
     if (versions.length > 5) versions.length = 5
@@ -965,9 +1376,11 @@ Return ONLY valid JSON, no other text.`
     if (!ver) return
     if (!confirm(`Restore snapshot from ${new Date(ver.ts).toLocaleString()}? This replaces current labor and overhead rows.`)) return
     pushState()
-    p.laborRows = JSON.parse(JSON.stringify(ver.laborRows))
-    p.ohRows = JSON.parse(JSON.stringify(ver.ohRows))
-    saveBackupData(backup)
+    const restoredLaborRows = stampLaborRows(JSON.parse(JSON.stringify(ver.laborRows || [])))
+    const restoredOverheadRows = stampOverheadRows(JSON.parse(JSON.stringify(ver.ohRows || [])))
+    p.laborRows = reconcileLaborReplacement(p.laborRows || [], restoredLaborRows)
+    p.ohRows = reconcileOverheadReplacement(p.ohRows || [], restoredOverheadRows)
+    void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
     setShowVersionHistory(false)
     forceUpdate()
   }
@@ -1343,29 +1756,40 @@ Return ONLY valid JSON, no other text.`
   }
   const updateRowMultiEmployee = (rowId: string, newEmpIds: string[]) => {
     if (newEmpIds.length === 0) return
-    pushState()
-    const row = (p.laborRows || []).find((r: any) => r.id === rowId)
+    pushEstimateRowEditState()
+    p.laborRows = p.laborRows || []
+    const rowIndex = findLaborRowIndexByKey(p.laborRows, rowId)
+    const row = rowIndex >= 0 ? p.laborRows[rowIndex] : null
     if (!row) return
     const equal = num(row.hrs) / newEmpIds.length
+    row.laborId = getLaborStableId(row, p.id, createLaborIdentityContext(p.laborRows, p.id))
+    row.createdAt = row.createdAt || new Date().toISOString()
+    row.updatedAt = new Date().toISOString()
     row.employees = newEmpIds
     row.empId = newEmpIds[0] || 'me'
     row.employeeAllocations = newEmpIds.map((id: string) => ({ empId: id, hrs: equal }))
-    saveBackupDataAndSync(backup, 'projects')
+    void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
     forceUpdate()
   }
   const updateRowAllocation = (rowId: string, empId: string, newHrs: number) => {
-    const row = (p.laborRows || []).find((r: any) => r.id === rowId)
+    pushEstimateRowEditState()
+    p.laborRows = p.laborRows || []
+    const rowIndex = findLaborRowIndexByKey(p.laborRows, rowId)
+    const row = rowIndex >= 0 ? p.laborRows[rowIndex] : null
     if (!row) return
     const allocs = getRowAllocations(row)
+    row.laborId = getLaborStableId(row, p.id, createLaborIdentityContext(p.laborRows, p.id))
+    row.createdAt = row.createdAt || new Date().toISOString()
+    row.updatedAt = new Date().toISOString()
     row.employeeAllocations = allocs.map((a: { empId: string; hrs: number }) => a.empId === empId ? { ...a, hrs: newHrs } : a)
-    saveBackupDataAndSync(backup, 'projects')
+    void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
     forceUpdate()
   }
 
-  // Build grouped labor rows
+  // Build grouped labor rows from the local DRAFT (source of truth for inputs)
   const laborGrouped: Record<string, any[]> = {}
   ;[...LABOR_PHASES, 'Unassigned'].forEach(ph => { laborGrouped[ph] = [] })
-  ;(p.laborRows || []).forEach((r: any) => {
+  ;(laborDraftRows || []).forEach((r: any) => {
     const ph = classifyLaborRow(r)
     if (!laborGrouped[ph]) laborGrouped[ph] = []
     laborGrouped[ph].push(r)
@@ -2006,18 +2430,21 @@ Return ONLY valid JSON, no other text.`
                               const teamRoster = backup.employees || []
                               const empIdValid = r.empId === 'me' || !r.empId || teamRoster.some((e: any) => e.id === r.empId)
                               const resolvedEmpId = empIdValid ? (r.empId || 'me') : 'me'
+                              const rowKey = laborRowKey(r)
                               return (
-                                <tr key={r.id} style={{ borderBottom: '1px solid var(--bdr2)' }}>
+                                <tr key={rowKey} style={{ borderBottom: '1px solid var(--bdr2)' }}>
                                   <td style={{ padding: '6px 8px' }}>
                                     <textarea
-                                      ref={el => { laborTextareaRefs.current[r.id] = el }}
+                                      ref={el => { laborTextareaRefs.current[rowKey] = el }}
                                       value={r.desc || ''}
-                                      onChange={e => editLaborRow(r.id, 'desc', e.target.value)}
+                                      onChange={e => editLaborRow(rowKey, 'desc', e.target.value)}
+                                      onFocus={onEstimateInputFocus}
+                                      onBlur={onEstimateInputBlur}
                                       onKeyDown={e => {
                                         if (e.key === 'Enter' && !e.shiftKey) {
                                           e.preventDefault()
                                           e.currentTarget.blur()
-                                          saveBackupDataAndSync(backup, 'projects')
+                                          void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
                                         }
                                       }}
                                       rows={1}
@@ -2038,7 +2465,7 @@ Return ONLY valid JSON, no other text.`
                                     <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
                                       <button
                                         type="button"
-                                        onClick={e => { e.stopPropagation(); setEmpDropdownOpenId(empDropdownOpenId === r.id ? null : r.id) }}
+                                        onClick={e => { e.stopPropagation(); setEmpDropdownOpenId(empDropdownOpenId === rowKey ? null : rowKey) }}
                                         style={{
                                           background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
                                           color: 'var(--t2)', fontSize: '12px', borderRadius: '4px',
@@ -2055,7 +2482,7 @@ Return ONLY valid JSON, no other text.`
                                         </span>
                                         <span style={{ fontSize: '9px', opacity: 0.5, flexShrink: 0 }}>▾</span>
                                       </button>
-                                      {empDropdownOpenId === r.id && (
+                                      {empDropdownOpenId === rowKey && (
                                         <div
                                           style={{
                                             position: 'absolute', top: '100%', left: 0, zIndex: 300,
@@ -2109,7 +2536,7 @@ Return ONLY valid JSON, no other text.`
                                                         ? [...rowEmps, emp.id]
                                                         : rowEmps.filter((id: string) => id !== emp.id)
                                                       if (newEmps.length === 0) return
-                                                      updateRowMultiEmployee(r.id, newEmps)
+                                                      updateRowMultiEmployee(rowKey, newEmps)
                                                     }}
                                                     style={{ accentColor: '#10b981', cursor: 'pointer', flexShrink: 0 }}
                                                   />
@@ -2121,7 +2548,7 @@ Return ONLY valid JSON, no other text.`
                                           {getRowEmployees(r).length > 1 && (
                                             <button
                                               type="button"
-                                              onClick={() => { setEmpDropdownOpenId(null); setAllocationModalRowId(r.id) }}
+                                              onClick={() => { setEmpDropdownOpenId(null); setAllocationModalRowId(rowKey) }}
                                               style={{
                                                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
                                                 width: '100%', padding: '5px 8px', marginTop: '4px',
@@ -2140,7 +2567,7 @@ Return ONLY valid JSON, no other text.`
                                   <td style={{ padding: '6px 8px', fontSize: '12px' }}>
                                     <select
                                       value={classifyLaborRow(r)}
-                                      onChange={e => editLaborRow(r.id, 'phase', e.target.value)}
+                                      onChange={e => editLaborRow(rowKey, 'phase', e.target.value)}
                                       style={{
                                         backgroundColor: '#1e2130', border: '1px solid rgba(255,255,255,0.15)',
                                         color: '#f3f4f6', fontSize: '12px', borderRadius: '4px',
@@ -2154,7 +2581,9 @@ Return ONLY valid JSON, no other text.`
                                   <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                                     <input
                                       type="number" value={r.hrs || 0}
-                                      onChange={e => editLaborRow(r.id, 'hrs', e.target.value)}
+                                      onChange={e => editLaborRow(rowKey, 'hrs', e.target.value)}
+                                      onFocus={onEstimateInputFocus}
+                                      onBlur={onEstimateInputBlur}
                                       style={{
                                         background: 'transparent', border: 'none', color: 'var(--t1)',
                                         width: '100%', textAlign: 'right', fontFamily: 'monospace', fontSize: '13px',
@@ -2164,7 +2593,9 @@ Return ONLY valid JSON, no other text.`
                                   <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                                     <input
                                       type="number" value={r.rate || 0}
-                                      onChange={e => editLaborRow(r.id, 'rate', e.target.value)}
+                                      onChange={e => editLaborRow(rowKey, 'rate', e.target.value)}
+                                      onFocus={onEstimateInputFocus}
+                                      onBlur={onEstimateInputBlur}
                                       style={{
                                         background: 'transparent', border: 'none', color: 'var(--t1)',
                                         width: '100%', textAlign: 'right', fontFamily: 'monospace', fontSize: '13px',
@@ -2179,13 +2610,13 @@ Return ONLY valid JSON, no other text.`
                                       {getRowEmployees(r).length > 1 && (
                                         <button
                                           type="button"
-                                          onClick={() => setAllocationModalRowId(r.id)}
+                                          onClick={() => setAllocationModalRowId(rowKey)}
                                           title="Labor allocation & profit"
                                           style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.2)', color: '#10b981', cursor: 'pointer', fontSize: '11px', padding: '1px 5px', borderRadius: '3px', fontWeight: '600', lineHeight: '1.4' }}
                                         >∑</button>
                                       )}
                                       <button
-                                        onClick={() => delLaborRow(r.id)}
+                                        onClick={() => delLaborRow(rowKey)}
                                         style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '16px', padding: '0' }}
                                       >×</button>
                                     </div>
@@ -2288,13 +2719,17 @@ Return ONLY valid JSON, no other text.`
                 </tr>
               </thead>
               <tbody>
-                {(p.ohRows || []).map(r => (
-                  <tr key={r.id} style={{ borderBottom: '1px solid var(--bdr2)' }}>
+                {overheadDraftRows.map(r => {
+                  const rowKey = overheadRowKey(r)
+                  return (
+                  <tr key={rowKey} style={{ borderBottom: '1px solid var(--bdr2)' }}>
                     <td style={{ padding: '8px' }}>
                       <input
                         type="text"
                         value={r.desc || ''}
-                        onChange={e => editOHRow(r.id, 'desc', e.target.value)}
+                        onChange={e => editOHRow(rowKey, 'desc', e.target.value)}
+                        onFocus={onEstimateInputFocus}
+                        onBlur={onEstimateInputBlur}
                         style={{
                           background: 'transparent',
                           border: 'none',
@@ -2308,7 +2743,9 @@ Return ONLY valid JSON, no other text.`
                       <input
                         type="number"
                         value={r.hrs || 0}
-                        onChange={e => editOHRow(r.id, 'hrs', e.target.value)}
+                        onChange={e => editOHRow(rowKey, 'hrs', e.target.value)}
+                        onFocus={onEstimateInputFocus}
+                        onBlur={onEstimateInputBlur}
                         style={{
                           background: 'transparent',
                           border: 'none',
@@ -2324,7 +2761,9 @@ Return ONLY valid JSON, no other text.`
                       <input
                         type="number"
                         value={r.rate || 0}
-                        onChange={e => editOHRow(r.id, 'rate', e.target.value)}
+                        onChange={e => editOHRow(rowKey, 'rate', e.target.value)}
+                        onFocus={onEstimateInputFocus}
+                        onBlur={onEstimateInputBlur}
                         style={{
                           background: 'transparent',
                           border: 'none',
@@ -2341,7 +2780,7 @@ Return ONLY valid JSON, no other text.`
                     </td>
                     <td style={{ padding: '8px', textAlign: 'center' }}>
                       <button
-                        onClick={() => delOHRow(r.id)}
+                        onClick={() => delOHRow(rowKey)}
                         style={{
                           background: 'none',
                           border: 'none',
@@ -2355,7 +2794,8 @@ Return ONLY valid JSON, no other text.`
                       </button>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
             <button
@@ -3048,7 +3488,7 @@ Return ONLY valid JSON, no other text.`
             quotedRevenue: number; overheadContribution: number
           }
           const workerMap: Record<string, WorkerBucket> = {}
-          for (const row of (p.laborRows || [])) {
+          for (const row of liveLaborRows) {
             const allocs = getRowAllocations(row)
             const rowRate = num(row.rate)
             for (const a of allocs) {
@@ -3369,7 +3809,7 @@ Return ONLY valid JSON, no other text.`
 
       {/* ── Labor Allocation & Profit Modal ──────────────────────────────────── */}
       {allocationModalRowId != null && (() => {
-        const row = (p.laborRows || []).find((r: any) => r.id === allocationModalRowId)
+        const row = liveLaborRows.find((r: any) => laborRowKey(r) === allocationModalRowId)
         if (!row) return null
         const rowEmps = getRowEmployees(row)
         const allocs = getRowAllocations(row)
@@ -3645,7 +4085,7 @@ Return ONLY valid JSON, no other text.`
                       max={Math.max(totalHrs, totalAllocatedHours)}
                       step={0.5}
                       value={a.hrs}
-                      onChange={e => updateRowAllocation(row.id, a.empId, num(e.target.value))}
+                      onChange={e => updateRowAllocation(laborRowKey(row), a.empId, num(e.target.value))}
                       style={{ width: '100%', accentColor: ALLOC_COLORS[i % ALLOC_COLORS.length], cursor: 'pointer' }}
                     />
                   </div>
@@ -3765,7 +4205,7 @@ Return ONLY valid JSON, no other text.`
             totalCost: t.total,
             profit: t.profit,
             marginPct: t.marginPct,
-            laborHours: (p?.laborRows || []).reduce((s, r) => s + num(r.hrs), 0),
+            laborHours: liveLaborRows.reduce((s, r) => s + num(r.hrs), 0),
             materialLineItems: getLiveMaterialRows(p?.mtoRows || [], p?.id, 'mtoRows').length,
           }
         })()}

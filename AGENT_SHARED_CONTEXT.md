@@ -3626,3 +3626,27 @@ Updated material readers/exports to exclude tombstones: MTO PDF export, Estimate
 `scopeRegistry.ts` updated only for `project.materials`: identity `materialId/mtoId`, timestamp `updatedAt`, tombstone `deletedAt`, implemented flags set false, and notes record that `project.estimate` remains future/unimplemented.
 
 Explicitly NOT implemented or changed: `project.estimate`, `laborRows`, `ohRows`, `contract`, `mileRT`, `miDays`, `laborPhaseColors`, `estimateReference`, `phaseEstimateRows`, Change Orders, RFIs, Blueprint, Project Logs, Payments/logs, Field Logs, Leads, Price Book ownership, Team, Service Calls, Settings, Recovery Center, Phase 4 Save/stale/baseline behavior, `syncToSupabase` freshness guard, verified Save, `setKnownRemoteBaseline`, `attemptProductionMergeAndSync`, or `mergeLocalChangesIntoRemote`.
+
+---
+
+### 2026-07-04 - Phase 6J: Project Estimate Labor/OH Scoped Tombstone Merge
+
+**Agent:** Codex
+**Mode:** Scoped implementation (Phase 6J)
+**Baseline HEAD:** `6ed58f5` (Phase 6H "Add scoped merge for project materials")
+**Files touched:** `src/services/projectScopeMerge.ts`, `src/components/v15r/V15rEstimateTab.tsx`, `src/services/scopeRegistry.ts`, `src/services/embeddingService.ts`, `src/services/patternService.ts`, `src/agents/chrono/jobScheduler.ts`, `src/agents/nexus/nexusContextBuilder.ts`, `src/components/vault/EstimatePanel.tsx`, `src/components/guardian/GuardianOwnerWalkthrough.tsx`, `src/components/v15r/V15rPricingIntelligencePanel.tsx`, `AGENT_SHARED_CONTEXT.md`
+**Status:** DONE - verification pending
+
+Implemented delete-safe, item-level scoped merge for `project.estimate` labor/OH rows only. New Estimate labor rows receive stable internal `laborId` plus `createdAt`/`updatedAt`; new overhead rows receive stable internal `overheadId` plus `createdAt`/`updatedAt`. Legacy row `id` remains preserved for UI/backward compatibility, and old rows receive deterministic fallback identities (`legacy:${projectId}:laborRows:${id}` / `legacy:${projectId}:ohRows:${id}`, with a stable content fingerprint for duplicate legacy ids in the same bucket). Missing timestamps are never defaulted to now during merge; fallback is `updatedAt`, then `createdAt`, then a timestamp parsed from timestamp-ish row ids, then stable epoch.
+
+Changed labor/OH deletes from hard delete to inline tombstones (`deletedAt`, optional `deletedBy`, `updatedAt`). Added pure estimate-row helpers in `projectScopeMerge.ts`: live filtering, tombstone creation, item-level labor/OH merge, and `mergeProjectEstimateRowsIntoRemote`, which patches only `projects[target].laborRows` and `projects[target].ohRows`. Tombstones stay in raw arrays, tombstone wins against equal/older live rows, live can win only if strictly newer than the tombstone, both-live newest `updatedAt` wins, exact live ties prefer remote, and output order is incoming-first plus remote-only append.
+
+`V15rEstimateTab` now renders/calculates labor/OH from live row helpers, targets row edits/deletes by stable identity, creates timestamped rows, and saves labor/OH row changes through fetch-latest -> merge `project.estimate` rows -> `saveBackupWithRemoteBaselineSync(..., { changedKey: 'projects', _scopes: ['project.estimate'] })`. Quick Start and version restore synthesize tombstones for removed live rows and preserve existing tombstones. Labor Calculator rows are timestamped and saved through the same scoped path. Estimate version metadata remains a legacy local snapshot feature; scalar estimate fields are not implemented in the scoped merge.
+
+Updated direct labor estimate readers to exclude tombstones: Estimate tab AI/totals, Embedding seed context, Pattern Service line item learning, CHRONO job duration estimate, NEXUS labor context, Vault estimate-risk context, Guardian owner walkthrough labor line items, and Pricing Intelligence labor totals.
+
+`scopeRegistry.ts` updated only for `project.estimate`: identity `laborId/overheadId`, timestamp `updatedAt`, tombstone `deletedAt`, implemented flags set false for the Phase 6J row subset, and notes explicitly state estimate scalars remain future/unimplemented and `project.materials` remains separate.
+
+Explicitly NOT implemented or changed: project estimate scalars (`contract`, `mileRT`, `miDays`, `laborPhaseColors`, `estimateReference`, `phaseEstimateRows`, `estimateVersions` merge), Materials/MTO ownership, Change Orders, RFIs, Blueprint, Project Logs, Payments/logs, Field Logs, Leads, Price Book ownership, Team, Service Calls, Settings, Recovery Center, Phase 4 Save/stale/baseline behavior, `syncToSupabase` freshness guard, verified Save, `setKnownRemoteBaseline`, `attemptProductionMergeAndSync`, or `mergeLocalChangesIntoRemote`.
+
+No commit, push, deploy, manual Supabase touch, restore script, or manual localStorage write.

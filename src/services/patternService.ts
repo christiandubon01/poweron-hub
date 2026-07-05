@@ -20,7 +20,7 @@
 import { supabase } from '@/lib/supabase'
 import { getBackupData } from '@/services/backupDataService'
 import { searchSimilar } from '@/services/embeddingService'
-import { getLiveMaterialRows } from '@/services/projectScopeMerge'
+import { getLiveLaborRows, getLiveMaterialRows } from '@/services/projectScopeMerge'
 import {
   runPatternLearning,
   getPatterns as getLocalPatterns,
@@ -106,7 +106,7 @@ async function analyzeEstimateWrite(orgId: string, data: Record<string, unknown>
 
   for (const p of projects) {
     const rows = [
-      ...(p.laborRows || []),
+      ...getLiveLaborRows(p.laborRows || [], p.id),
       ...getLiveMaterialRows(p.matRows || [], p.id, 'matRows'),
       ...getLiveMaterialRows(p.mtoRows || [], p.id, 'mtoRows'),
     ]

@@ -18,7 +18,7 @@ import { clsx } from 'clsx'
 import { useProactiveAI } from '@/hooks/useProactiveAI'
 import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
 import { getBackupData, num, fmt } from '@/services/backupDataService'
-import { getLiveMaterialRows } from '@/services/projectScopeMerge'
+import { getLiveLaborRows, getLiveMaterialRows } from '@/services/projectScopeMerge'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -100,7 +100,7 @@ export function EstimatePanel({
   const activeProjects = (backup?.projects || []).filter(p => p.status !== 'completed')
   const lowMarginProjects = activeProjects.filter(p => {
     const contract = num(p.contract)
-    const totalCost = (p.laborRows || []).reduce((s,r) => s + num(r.hrs)*num(r.rate), 0) + getLiveMaterialRows(p.matRows || [], p.id, 'matRows').reduce((s,r) => s + num(r.total), 0)
+    const totalCost = getLiveLaborRows(p.laborRows || [], p.id).reduce((s,r) => s + num(r.hrs)*num(r.rate), 0) + getLiveMaterialRows(p.matRows || [], p.id, 'matRows').reduce((s,r) => s + num(r.total), 0)
     return contract > 0 && totalCost > 0 && ((contract - totalCost) / contract * 100) < 20
   })
   const vaultContext = `Active estimates: ${activeProjects.length}. Low margin (<20%) projects: ${lowMarginProjects.length}. ${lowMarginProjects.map(p => p.name).join(', ')}. Analyze margin risk and recommend adjustments.`

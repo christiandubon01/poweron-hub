@@ -746,3 +746,414 @@ export function mergeProjectMaterialsIntoRemote(
 
   return merged
 }
+
+export interface ProjectLaborRow {
+  laborId?: string
+  id?: string
+  desc?: string
+  empId?: string
+  hrs?: number
+  rate?: number
+  phase?: string
+  employees?: unknown
+  employeeAllocations?: unknown
+  createdAt?: string
+  updatedAt?: string
+  deletedAt?: string
+  deletedBy?: string
+  [key: string]: any
+}
+
+export interface ProjectOverheadRow {
+  overheadId?: string
+  id?: string
+  desc?: string
+  hrs?: number
+  rate?: number
+  createdAt?: string
+  updatedAt?: string
+  deletedAt?: string
+  deletedBy?: string
+  [key: string]: any
+}
+
+export type EstimateRowIdentityContext = {
+  duplicateLegacyKeys: ReadonlySet<string>
+}
+
+export type MergeableProjectLaborRow = ProjectLaborRow & {
+  laborId: string
+  updatedAt: string
+}
+
+export type MergeableProjectOverheadRow = ProjectOverheadRow & {
+  overheadId: string
+  updatedAt: string
+}
+
+function normalizeEstimateText(value: unknown): string {
+  return String(value ?? '').trim()
+}
+
+function timestampFromEstimateRowId(row: any): string | null {
+  const candidates = [
+    row?.id,
+    row?.laborId,
+    row?.overheadId,
+  ]
+
+  for (const candidate of candidates) {
+    const text = normalizeEstimateText(candidate)
+    const match = text.match(/(\d{13})/)
+    if (!match) continue
+    const ms = Number(match[1])
+    if (!Number.isFinite(ms)) continue
+    const date = new Date(ms)
+    if (!Number.isNaN(date.getTime())) return date.toISOString()
+  }
+
+  return null
+}
+
+function legacyEstimateIdentityBase(
+  row: any,
+  projectId: string | undefined,
+  bucket: 'laborRows' | 'ohRows',
+): string {
+  const legacyId = normalizeEstimateText(row?.id || 'missing') || 'missing'
+  return `legacy:${normalizeProjectId(projectId)}:${bucket}:${legacyId}`
+}
+
+function stableLaborFingerprint(row: any): string {
+  const parts = [
+    row?.id,
+    row?.desc,
+    row?.empId,
+    row?.hrs,
+    row?.rate,
+    row?.phase,
+    JSON.stringify(row?.employees || null),
+    JSON.stringify(row?.employeeAllocations || null),
+    row?.createdAt,
+  ].map(value => normalizeEstimateText(value))
+  return shortStableHash(parts.join('|'))
+}
+
+function stableOverheadFingerprint(row: any): string {
+  const parts = [
+    row?.id,
+    row?.desc,
+    row?.hrs,
+    row?.rate,
+    row?.createdAt,
+  ].map(value => normalizeEstimateText(value))
+  return shortStableHash(parts.join('|'))
+}
+
+function createEstimateIdentityContext(
+  rows: any[],
+  projectId: string | undefined,
+  bucket: 'laborRows' | 'ohRows',
+  canonicalField: 'laborId' | 'overheadId',
+): EstimateRowIdentityContext {
+  const counts = new Map<string, number>()
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (normalizeEstimateText(row?.[canonicalField])) continue
+    const base = legacyEstimateIdentityBase(row, projectId, bucket)
+    counts.set(base, (counts.get(base) || 0) + 1)
+  }
+
+  const duplicateLegacyKeys = new Set<string>()
+  for (const [base, count] of counts) {
+    if (count > 1) duplicateLegacyKeys.add(base)
+  }
+  return { duplicateLegacyKeys }
+}
+
+export function createLaborIdentityContext(rows: any[], projectId?: string): EstimateRowIdentityContext {
+  return createEstimateIdentityContext(rows, projectId, 'laborRows', 'laborId')
+}
+
+export function createOverheadIdentityContext(rows: any[], projectId?: string): EstimateRowIdentityContext {
+  return createEstimateIdentityContext(rows, projectId, 'ohRows', 'overheadId')
+}
+
+export function getLaborStableId(
+  row: any,
+  projectId?: string,
+  duplicateContext?: EstimateRowIdentityContext,
+): string {
+  const existing = normalizeEstimateText(row?.laborId)
+  if (existing) return existing
+
+  const base = legacyEstimateIdentityBase(row, projectId, 'laborRows')
+  if (duplicateContext?.duplicateLegacyKeys?.has(base)) {
+    return `${base}:${stableLaborFingerprint(row)}`
+  }
+  return base
+}
+
+export function getOverheadStableId(
+  row: any,
+  projectId?: string,
+  duplicateContext?: EstimateRowIdentityContext,
+): string {
+  const existing = normalizeEstimateText(row?.overheadId)
+  if (existing) return existing
+
+  const base = legacyEstimateIdentityBase(row, projectId, 'ohRows')
+  if (duplicateContext?.duplicateLegacyKeys?.has(base)) {
+    return `${base}:${stableOverheadFingerprint(row)}`
+  }
+  return base
+}
+
+export function normalizeEstimateRowCreatedAt(row: any): string {
+  if (isValidDateString(row?.createdAt)) return String(row.createdAt)
+  return timestampFromEstimateRowId(row) || EPOCH_FALLBACK_ISO
+}
+
+export function normalizeEstimateRowUpdatedAt(row: any): string {
+  let base: string
+  if (isValidDateString(row?.updatedAt)) base = String(row.updatedAt)
+  else if (isValidDateString(row?.createdAt)) base = String(row.createdAt)
+  else base = timestampFromEstimateRowId(row) || EPOCH_FALLBACK_ISO
+
+  if (isValidDateString(row?.deletedAt) && parseTimestampMs(row.deletedAt) > parseTimestampMs(base)) {
+    return String(row.deletedAt)
+  }
+
+  return base
+}
+
+export function sanitizeLaborRowForMerge(
+  row: any,
+  projectId?: string,
+  duplicateContext?: EstimateRowIdentityContext,
+): MergeableProjectLaborRow | null {
+  if (!row || typeof row !== 'object') return null
+  const laborId = getLaborStableId(row, projectId, duplicateContext)
+  if (!laborId) return null
+  return {
+    ...row,
+    laborId,
+    createdAt: normalizeEstimateRowCreatedAt(row),
+    updatedAt: normalizeEstimateRowUpdatedAt(row),
+  } as MergeableProjectLaborRow
+}
+
+export function sanitizeOverheadRowForMerge(
+  row: any,
+  projectId?: string,
+  duplicateContext?: EstimateRowIdentityContext,
+): MergeableProjectOverheadRow | null {
+  if (!row || typeof row !== 'object') return null
+  const overheadId = getOverheadStableId(row, projectId, duplicateContext)
+  if (!overheadId) return null
+  return {
+    ...row,
+    overheadId,
+    createdAt: normalizeEstimateRowCreatedAt(row),
+    updatedAt: normalizeEstimateRowUpdatedAt(row),
+  } as MergeableProjectOverheadRow
+}
+
+export function isDeletedEstimateRow(row: any): boolean {
+  return isValidDateString(row?.deletedAt)
+}
+
+export function getLiveLaborRows(rows: any[], projectId?: string): ProjectLaborRow[] {
+  const context = createLaborIdentityContext(rows, projectId)
+  const out: ProjectLaborRow[] = []
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const clean = sanitizeLaborRowForMerge(row, projectId, context)
+    if (!clean || isDeletedEstimateRow(clean)) continue
+    out.push(clean)
+  }
+  return out
+}
+
+export function getLiveOverheadRows(rows: any[], projectId?: string): ProjectOverheadRow[] {
+  const context = createOverheadIdentityContext(rows, projectId)
+  const out: ProjectOverheadRow[] = []
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const clean = sanitizeOverheadRowForMerge(row, projectId, context)
+    if (!clean || isDeletedEstimateRow(clean)) continue
+    out.push(clean)
+  }
+  return out
+}
+
+export function createLaborRowTombstone(
+  existingRow: any,
+  projectId?: string,
+  deletedBy?: string,
+  duplicateContext?: EstimateRowIdentityContext,
+): ProjectLaborRow {
+  const context = duplicateContext || createLaborIdentityContext([existingRow], projectId)
+  const clean = sanitizeLaborRowForMerge(existingRow, projectId, context) || existingRow || {}
+  const now = new Date().toISOString()
+  const tombstone: ProjectLaborRow = {
+    ...clean,
+    laborId: getLaborStableId(clean, projectId, context),
+    deletedAt: now,
+    updatedAt: now,
+  }
+  if (deletedBy) tombstone.deletedBy = deletedBy
+  else if (clean?.deletedBy) tombstone.deletedBy = clean.deletedBy
+  return tombstone
+}
+
+export function createOverheadRowTombstone(
+  existingRow: any,
+  projectId?: string,
+  deletedBy?: string,
+  duplicateContext?: EstimateRowIdentityContext,
+): ProjectOverheadRow {
+  const context = duplicateContext || createOverheadIdentityContext([existingRow], projectId)
+  const clean = sanitizeOverheadRowForMerge(existingRow, projectId, context) || existingRow || {}
+  const now = new Date().toISOString()
+  const tombstone: ProjectOverheadRow = {
+    ...clean,
+    overheadId: getOverheadStableId(clean, projectId, context),
+    deletedAt: now,
+    updatedAt: now,
+  }
+  if (deletedBy) tombstone.deletedBy = deletedBy
+  else if (clean?.deletedBy) tombstone.deletedBy = clean.deletedBy
+  return tombstone
+}
+
+function pickEstimateRowWinner<
+  T extends { updatedAt: string; deletedAt?: string }
+>(remote: T, incoming: T): T {
+  const remoteDeleted = isDeletedEstimateRow(remote)
+  const incomingDeleted = isDeletedEstimateRow(incoming)
+
+  if (remoteDeleted && incomingDeleted) {
+    return comparableMs(incoming.deletedAt) > comparableMs(remote.deletedAt) ? incoming : remote
+  }
+
+  if (remoteDeleted !== incomingDeleted) {
+    const tombstone = remoteDeleted ? remote : incoming
+    const live = remoteDeleted ? incoming : remote
+    return comparableMs(live.updatedAt) > comparableMs(tombstone.deletedAt) ? live : tombstone
+  }
+
+  return comparableMs(incoming.updatedAt) > comparableMs(remote.updatedAt) ? incoming : remote
+}
+
+export function mergeLaborRowsByStableId(
+  remoteRows: any[],
+  incomingRows: any[],
+  projectId?: string,
+): ProjectLaborRow[] {
+  const combinedContext = createLaborIdentityContext(
+    [
+      ...(Array.isArray(remoteRows) ? remoteRows : []),
+      ...(Array.isArray(incomingRows) ? incomingRows : []),
+    ],
+    projectId,
+  )
+  const remoteSanitized = (Array.isArray(remoteRows) ? remoteRows : [])
+    .map(row => sanitizeLaborRowForMerge(row, projectId, combinedContext))
+    .filter((row): row is MergeableProjectLaborRow => row != null)
+  const incomingSanitized = (Array.isArray(incomingRows) ? incomingRows : [])
+    .map(row => sanitizeLaborRowForMerge(row, projectId, combinedContext))
+    .filter((row): row is MergeableProjectLaborRow => row != null)
+
+  const remoteById = new Map<string, MergeableProjectLaborRow>()
+  for (const row of remoteSanitized) remoteById.set(String(row.laborId), row)
+
+  const result: ProjectLaborRow[] = []
+  const used = new Set<string>()
+
+  for (const incoming of incomingSanitized) {
+    const id = String(incoming.laborId)
+    if (used.has(id)) continue
+    used.add(id)
+    const remote = remoteById.get(id)
+    result.push(remote ? pickEstimateRowWinner(remote, incoming) : incoming)
+  }
+
+  for (const remote of remoteSanitized) {
+    const id = String(remote.laborId)
+    if (used.has(id)) continue
+    used.add(id)
+    result.push(remote)
+  }
+
+  return result
+}
+
+export function mergeOverheadRowsByStableId(
+  remoteRows: any[],
+  incomingRows: any[],
+  projectId?: string,
+): ProjectOverheadRow[] {
+  const combinedContext = createOverheadIdentityContext(
+    [
+      ...(Array.isArray(remoteRows) ? remoteRows : []),
+      ...(Array.isArray(incomingRows) ? incomingRows : []),
+    ],
+    projectId,
+  )
+  const remoteSanitized = (Array.isArray(remoteRows) ? remoteRows : [])
+    .map(row => sanitizeOverheadRowForMerge(row, projectId, combinedContext))
+    .filter((row): row is MergeableProjectOverheadRow => row != null)
+  const incomingSanitized = (Array.isArray(incomingRows) ? incomingRows : [])
+    .map(row => sanitizeOverheadRowForMerge(row, projectId, combinedContext))
+    .filter((row): row is MergeableProjectOverheadRow => row != null)
+
+  const remoteById = new Map<string, MergeableProjectOverheadRow>()
+  for (const row of remoteSanitized) remoteById.set(String(row.overheadId), row)
+
+  const result: ProjectOverheadRow[] = []
+  const used = new Set<string>()
+
+  for (const incoming of incomingSanitized) {
+    const id = String(incoming.overheadId)
+    if (used.has(id)) continue
+    used.add(id)
+    const remote = remoteById.get(id)
+    result.push(remote ? pickEstimateRowWinner(remote, incoming) : incoming)
+  }
+
+  for (const remote of remoteSanitized) {
+    const id = String(remote.overheadId)
+    if (used.has(id)) continue
+    used.add(id)
+    result.push(remote)
+  }
+
+  return result
+}
+
+export function mergeProjectEstimateRowsIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+  projectId: string,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const targetId = String(projectId || '').trim()
+  if (!targetId) return merged
+
+  const remoteProjects = Array.isArray(merged.projects) ? merged.projects : []
+  const remoteIndex = remoteProjects.findIndex((p: any) => String(p?.id || '') === targetId)
+  if (remoteIndex === -1) return merged
+
+  const incomingProjects = Array.isArray(incomingBackup?.projects) ? incomingBackup.projects : []
+  const incomingProject: any = incomingProjects.find((p: any) => String(p?.id || '') === targetId)
+  if (!incomingProject) return merged
+
+  const remoteProject: any = remoteProjects[remoteIndex]
+  const remoteLaborRows = Array.isArray(remoteProject.laborRows) ? remoteProject.laborRows : []
+  const incomingLaborRows = Array.isArray(incomingProject.laborRows) ? incomingProject.laborRows : []
+  remoteProject.laborRows = mergeLaborRowsByStableId(remoteLaborRows, incomingLaborRows, targetId)
+
+  const remoteOverheadRows = Array.isArray(remoteProject.ohRows) ? remoteProject.ohRows : []
+  const incomingOverheadRows = Array.isArray(incomingProject.ohRows) ? incomingProject.ohRows : []
+  remoteProject.ohRows = mergeOverheadRowsByStableId(remoteOverheadRows, incomingOverheadRows, targetId)
+
+  return merged
+}

@@ -17,6 +17,7 @@
 
 import { supabase } from '@/lib/supabase'
 import { getBackupData } from '@/services/backupDataService'
+import { getLiveLaborRows } from '@/services/projectScopeMerge'
 import { submitProposal, runAutomatedReview } from '@/services/miroFish'
 import { publish } from '@/services/agentEventBus'
 import { logAudit } from '@/lib/memory/audit'
@@ -100,7 +101,7 @@ export async function scheduleJob(
   if (input.projectId && backup?.projects) {
     const project = backup.projects.find((p: any) => p.id === input.projectId)
     if (project?.laborRows) {
-      const totalLaborHours = project.laborRows.reduce((sum: number, row: any) => {
+      const totalLaborHours = getLiveLaborRows(project.laborRows || [], project.id).reduce((sum: number, row: any) => {
         return sum + (parseFloat(row.hours) || 0)
       }, 0)
       if (totalLaborHours > 0) jobHours = totalLaborHours

@@ -35,7 +35,7 @@ import {
   Star,
 } from 'lucide-react'
 import { getBackupData } from '@/services/backupDataService'
-import { getLiveMaterialRows } from '@/services/projectScopeMerge'
+import { getLiveLaborRows, getLiveMaterialRows } from '@/services/projectScopeMerge'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -183,7 +183,7 @@ function buildInitialRecord(projectId: string, projectName: string): Walkthrough
   // Extract work completed from estimate line items
   const workCompleted: WorkCompleted[] = []
   if (project) {
-    for (const row of project.laborRows || []) {
+    for (const row of getLiveLaborRows(project.laborRows || [], project.id)) {
       workCompleted.push({
         id: uid(),
         lineItem: row.desc || 'Labor item',
