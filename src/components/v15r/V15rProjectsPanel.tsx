@@ -114,6 +114,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   const [showQBImport, setShowQBImport] = useState(false)
   const [showNewProject, setShowNewProject] = useState(false)
   const [showArchivedProjects, setShowArchivedProjects] = useState(false)
+  const [showDeletedProjects, setShowDeletedProjects] = useState(false)
   // Local snapshot of HUNTER context from prefillFromLead, kept independent
   // of the prop so the banner persists after onPrefillUsed nulls the prop.
   const [hunterBannerCtx, setHunterBannerCtx] = useState<any>(null)
@@ -496,6 +497,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   // Phase 6Q: soft-deleted projects are hidden from the Archived list too (they are
   // not archived records — they carry a deletedAt/status='deleted' tombstone).
   const archivedProjects = allProjects.filter(p => isArchivedRecord(p) && !isDeletedProject(p))
+  // Phase 6Q-B: soft-deleted projects live in their own "Recently Deleted" section.
+  const deletedProjects = allProjects.filter(isDeletedProject)
   const gcContacts = backup.gcContacts || []
   const accountOptions = gcContacts.map((gc: any) => ({
     id: String(gc.id || ''),
@@ -748,6 +751,23 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     }
     delete (p as any).archivedAt
     persist()
+  }
+
+  // Phase 6Q-B: restore a soft-deleted project. Kept separate from restoreProject
+  // (which handles ARCHIVED projects). Clears the lifecycle tombstone and routes
+  // through the same project.lifecycle scoped save as deleteProject — no broad
+  // persist, no touch to logs[]/child scopes/serviceLogs.
+  function restoreDeletedProject(id: string) {
+    const p = allProjects.find(x => x.id === id)
+    if (!p) return
+    pushState(backup)
+    delete (p as any).deletedAt
+    delete (p as any).deletedBy
+    if (String((p as any).status || '').trim().toLowerCase() === 'deleted') {
+      ;(p as any).status = 'active'
+    }
+    ;(p as any).updatedAt = new Date().toISOString()
+    void saveProjectLifecycleScoped(id)
   }
 
   function markProjectLost(id: string) {
@@ -1255,6 +1275,73 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     )
   }
 
+  function renderDeletedProjects() {
+    if (!showDeletedProjects) return null
+    return (
+      <div className="mb-6 rounded-xl border border-red-900/30 bg-red-950/10 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs font-bold text-red-300/80 uppercase tracking-wider">
+            Recently Deleted <span className="text-gray-600 ml-1">({deletedProjects.length})</span>
+          </h3>
+          <span className="text-[10px] text-gray-500">Hidden everywhere — data &amp; logs preserved</span>
+        </div>
+        {deletedProjects.length === 0 ? (
+          <div className="text-xs text-gray-500 py-4">No recently deleted projects.</div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {deletedProjects.map(p => {
+              const dts = PROJECT_TYPE_STYLE[p.type] || PROJECT_TYPE_DEFAULT_STYLE
+              const DeletedTypeIcon = dts.icon
+              const deletedAtStr = (p as any).deletedAt ? new Date((p as any).deletedAt).toLocaleString() : null
+              return (
+                <div
+                  key={p.id}
+                  className="relative overflow-hidden rounded-2xl opacity-60 hover:opacity-80 transition-opacity duration-200"
+                  style={{
+                    background: 'linear-gradient(135deg,rgba(30,15,15,0.92) 0%,rgba(12,4,4,0.96) 100%)',
+                    border: '1px solid rgba(239,68,68,0.16)',
+                    boxShadow: '0 2px 12px rgba(0,0,0,0.35)',
+                  }}
+                >
+                  <div className="relative z-10 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2 min-w-0">
+                        <div
+                          className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center mt-0.5"
+                          style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)' }}
+                        >
+                          <DeletedTypeIcon size={12} style={{ color: '#f87171' }} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-bold text-gray-400 truncate">{p.name || 'Unnamed project'}</div>
+                          <div className="text-[10px] text-gray-600">{(p as any).client || (p as any).customer || 'No client listed'}</div>
+                        </div>
+                      </div>
+                      <span className="text-[9px] px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 font-bold border border-red-500/20 flex-shrink-0">Deleted</span>
+                    </div>
+                    <div className="mt-1.5 space-y-0.5 text-[9px] text-gray-600">
+                      {deletedAtStr && <div>Deleted: {deletedAtStr}</div>}
+                      {(p as any).deletedBy && <div>By: {(p as any).deletedBy}</div>}
+                    </div>
+                    <div className="mt-2.5 flex gap-1.5" style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.625rem' }}>
+                      <button
+                        onClick={() => restoreDeletedProject(p.id)}
+                        className="flex-1 text-[10px] px-2 py-1.5 rounded-lg font-semibold transition-colors hover:brightness-125"
+                        style={{ background: 'rgba(52,211,153,0.10)', color: '#6ee7b7', border: '1px solid rgba(52,211,153,0.18)' }}
+                      >
+                        <RotateCcw size={10} className="inline mr-1" /> Restore
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const inputCls = "w-full px-3 py-2 bg-[var(--bg-input)] border border-gray-600 rounded text-sm text-[var(--text-primary)] focus:outline-none focus:border-emerald-500"
 
   return (
@@ -1303,6 +1390,18 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
           >
             <Archive size={12} /> Archived Projects ({archivedProjects.length})
           </button>
+          {deletedProjects.length > 0 && (
+            <button
+              onClick={() => setShowDeletedProjects(v => !v)}
+              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border ${
+                showDeletedProjects
+                  ? 'bg-red-600/25 text-red-100 border-red-500/50'
+                  : 'bg-red-700/15 text-red-300 border-red-600/30'
+              }`}
+            >
+              <Trash2 size={12} /> Recently Deleted ({deletedProjects.length})
+            </button>
+          )}
           <button
             onClick={() => setShowQBImport(true)}
             className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold"
@@ -1320,6 +1419,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       {renderSection('Coming Up', coming, 'coming')}
       {renderSection('Completed', completed, 'completed')}
       {renderArchivedProjects()}
+      {renderDeletedProjects()}
 
       {projects.length === 0 && (
         <div className="p-8 text-center">

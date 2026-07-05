@@ -100,6 +100,27 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 ## Audit & Change Log
 
+### 2026-07-05 — Phase 6Q-B: Recently Deleted / Restore Project UI (NOT COMMITTED)
+
+**Agent:** Claude Opus 4.8
+**Mode:** UI-only implementation — add a restore path for the soft-deleted projects introduced in Phase 6Q. No services touched, no data-model change, no hard purge.
+**Branch:** main | HEAD before edits = `3446734` (Add scoped project soft delete)
+**Files changed:** `src/components/v15r/V15rProjectsPanel.tsx`, `AGENT_SHARED_CONTEXT.md`
+
+**Root context:** Phase 6Q soft-deletes projects (deletedAt/deletedBy/status='deleted') but they became invisible with no UI restore path; `restoreProject` only handles ARCHIVED projects and never clears the delete tombstone.
+
+**What was implemented (V15rProjectsPanel.tsx only):**
+- Added `deletedProjects = allProjects.filter(isDeletedProject)` and a `showDeletedProjects` toggle state.
+- Added a **new** `restoreDeletedProject(id)` (kept separate from the archived `restoreProject`): `pushState` → `delete deletedAt` / `delete deletedBy` → if `status==='deleted'` set `status='active'` → set `updatedAt=now` → save through the existing **`saveProjectLifecycleScoped(id)`** (project.lifecycle scoped merge, no broad persist). Every child array/field, top-level `logs[]`, collected/payment history, serviceLogs, and child scopes are untouched.
+- Added a **"Recently Deleted"** collapsible section (`renderDeletedProjects()`) rendered right after the Archived section, gated by a header toggle button that only appears when `deletedProjects.length > 0`. Each card shows name, client/customer, `deletedAt`, `deletedBy`, and a single **Restore** button (→ `restoreDeletedProject`). No Permanent-Delete/purge button.
+- Restored projects return to Active (via `isActiveProject`) and drop out of Recently Deleted. Archive and Delete remain fully separate; `archiveProject`/`restoreProject`/`deleteProject`/`moveStatus`/`markProjectLost` unchanged.
+
+**Explicitly NOT done / untouched:** permanent hard purge / export flow / Recovery Center (deferred); exact pre-delete-status restoration (restore lands in Active — prior bucket not stored by 6Q's tombstone); child-record cascade; `logs[]`; serviceLogs / service payments / `manualPaidAdjustment`; blueprint; `projectScopeMerge.ts` / `backupDataService.ts` / `scopeRegistry.ts` (read-only, not edited — the existing `mergeProjectLifecycleIntoRemote` already propagates a cleared tombstone); `syncToSupabase` freshness guard, verified Save, `setKnownRemoteBaseline`, `saveBackupWithRemoteBaselineSync` internals, `attemptProductionMergeAndSync`, `mergeLocalChangesIntoRemote`. Not committed; no push.
+
+**Lock released.**
+
+---
+
 ### 2026-07-05 — Phase 6Q: Project Soft-Delete Lifecycle + Scoped Sync Safety (NOT COMMITTED)
 
 **Agent:** Claude Opus 4.8
