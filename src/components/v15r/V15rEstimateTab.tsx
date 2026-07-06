@@ -52,6 +52,7 @@ import {
   mergeProjectEstimateScalarsIntoRemote,
   ESTIMATE_SCALAR_FIELDS,
 } from '@/services/projectScopeMerge'
+import { getLiveEmployees } from '@/services/teamScopeMerge'
 
 const LABOR_PHASES = ['Underground', 'Site Prep', 'Rough In', 'Trim', 'Finish']
 const LABOR_PHASE_DEFAULT_COLORS: Record<string, string> = {
@@ -2708,11 +2709,20 @@ Return ONLY valid JSON, no other text.`
                                           onClick={e => e.stopPropagation()}
                                         >
                                           {(() => {
+                                            // Phase 6S-C: offer only LIVE employees for new allocations,
+                                            // but keep any already-assigned deleted/inactive employee on
+                                            // this row so the estimate stays editable and does not silently
+                                            // drop labor. getRowEmployees validates against the full roster.
+                                            const rowEmpIds = getRowEmployees(r)
+                                            const liveRoster = getLiveEmployees(teamRoster)
+                                            const assignedInactive = teamRoster.filter((e: any) =>
+                                              rowEmpIds.includes(e.id) && !liveRoster.some((le: any) => le.id === e.id))
+                                            const pickerRoster = [...liveRoster, ...assignedInactive]
                                             // Deduplicate: skip 'me' sentinel if a real owner record exists in roster.
-                                            const ownerInRoster = teamRoster.some(isOwnerRecord)
+                                            const ownerInRoster = pickerRoster.some(isOwnerRecord)
                                             const baseList: any[] = ownerInRoster
-                                              ? teamRoster
-                                              : [{ id: 'me', name: 'Owner / Me' }, ...teamRoster]
+                                              ? pickerRoster
+                                              : [{ id: 'me', name: 'Owner / Me' }, ...pickerRoster]
                                             // Defensive dedup by stable id, then by normalized name.
                                             // Prevents "Owner / Me" appearing twice if roster has a
                                             // same-named record without isOwner: true.

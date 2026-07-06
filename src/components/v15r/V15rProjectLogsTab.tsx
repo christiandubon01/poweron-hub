@@ -14,6 +14,7 @@ import {
   type BackupLog,
 } from '@/services/backupDataService'
 import { mergeProjectLogsIntoRemote, createLogTombstone } from '@/services/projectScopeMerge'
+import { getLiveEmployees } from '@/services/teamScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import { processSkillSignals } from '@/services/skillSignalExtractor'
 import { Plus, Timer, Boxes, Route, CircleDollarSign, X, ClipboardList } from 'lucide-react'
@@ -204,7 +205,10 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
 
   const p = backup.projects?.find(x => x.id === projectId)
   const logs: BackupLog[] = backup.logs || []
+  // Full array kept for historical name resolution; liveEmployees drives the
+  // employee picker for new/edited logs (Phase 6S-C: hide deleted/inactive).
   const employees = backup.employees || []
+  const liveEmployees = getLiveEmployees(employees)
   const settings = backup.settings || {} as any
 
   function makeLogInternalId() {
@@ -464,7 +468,10 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
                     <label className={projectLogLabelClass}>Employee</label>
                     <select value={flEmp} onChange={e => setFlEmp(e.target.value)} className={projectLogInputClass}>
                       <option value="">Me</option>
-                      {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                      {(flEmp && !liveEmployees.some(e => e.id === flEmp)
+                        ? [...liveEmployees, ...employees.filter(e => e.id === flEmp)]
+                        : liveEmployees
+                      ).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                     </select>
                   </div>
                 </div>

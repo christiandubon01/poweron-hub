@@ -395,14 +395,17 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
   // ── Team ──
   'team.members': {
     scope: 'team.members',
-    dataPath: 'employees[]',
+    dataPath: 'BackupData.employees[]',
     owner: 'V15rTeamPanel',
     level: 'top-level',
     identityField: 'id',
-    needsTimestamp: true,
-    needsTombstone: true,
+    timestampField: 'updatedAt',
+    tombstoneField: 'deletedAt',
+    needsTimestamp: false,
+    needsTombstone: false,
     strategy: 'id-merge',
     priority: 'critical',
+    notes: 'Phase 6S-C: employees[] is now scoped and delete-safe via teamScopeMerge.ts (mergeEmployeesIntoRemote / mergeEmployeesById). id is the stable identity (falls back to employeeId, then a deterministic name/role/rate fingerprint); ensureEmployeeIdentity stamps createdAt/updatedAt without overwriting existing ids/timestamps. Deletes are TOMBSTONES (createEmployeeTombstone sets deletedAt/deletedBy/updatedAt/status="Deleted") — name/role/billRate/costRate/hourly_rate/applyMultiplier/employee_type/classification are preserved so historical logs[] and estimate labor rows keep resolving the employee (empId references are never rewritten). Merge is delete-safe LWW: both-deleted → newer deletedAt; one-deleted → tombstone beats an equal-or-older live row (live wins only if strictly newer); both-live → newer updatedAt, tie → more complete rate data, still tied → remote; a remote value is never wiped by a local blank. V15rTeamPanel CRUD (add/edit/toggleMultiplier/markComplianceAcknowledged/delete) now fetches latest remote, mergeEmployeesIntoRemote, and saves through the existing remote-baseline path (changedKey "employees", _scopes ["team.members"]); fallback saveBackupDataAndSync. Owner/me records (isOwner, id "me"/"owner"/"owner-virtual") cannot be deleted. Active dropdowns/rosters filter deleted + inactive/closed via getLiveEmployees; historical rows still display via the full raw array. A narrow pre-sync guard (mergeRemoteEmployeesIntoOutgoing) folds newer remote employees into any NON-employees broad save so stale local employees cannot overwrite a newer remote roster. team.time remains logs[] hours and is protected separately by project.logs; team.roles/team.assignments and settings.projectionScenarios/payroll remain future/deferred. Same client-clock/no-GC limitations as the other scopes.',
   },
   'team.roles': {
     scope: 'team.roles',

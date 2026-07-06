@@ -60,6 +60,7 @@ import {
   type BackupProject,
 } from '@/services/backupDataService'
 import { getLiveRFIs } from '@/services/projectScopeMerge'
+import { isDeletedOrArchivedServiceLog } from '@/services/serviceScopeMerge'
 import { ProjectCard } from './ProjectCard'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
@@ -505,7 +506,11 @@ export default function V15rHome() {
   const hasMoreLogs = allLogsReversed.length > logsVisible
 
   // ── Service jobs requiring attention (unpaid only, threshold 0.5 to avoid float dust) ──
-  const serviceJobsNeedingAttention = (serviceLogs ?? [])
+  // Phase 6S-C hotfix: exclude deleted/tombstoned/archived service logs so they
+  // don't surface here (matches the Field Log visibility filter). Rows stay in
+  // backup for sync/tombstone safety; they reappear here only if restored.
+  const visibleServiceLogs = (serviceLogs ?? []).filter((l: any) => !isDeletedOrArchivedServiceLog(l))
+  const serviceJobsNeedingAttention = visibleServiceLogs
     .map((l: any) => ({
       ...l,
       balanceDue: getServiceBalanceDue(l),

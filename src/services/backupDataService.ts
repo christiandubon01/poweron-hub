@@ -29,6 +29,7 @@ import {
 } from './scopeRegistry'
 import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog } from './projectScopeMerge'
 import { mergeRemoteWeeklyDataIntoOutgoing } from './weeklyDataScopeMerge'
+import { mergeRemoteEmployeesIntoOutgoing } from './teamScopeMerge'
 
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
 const STORAGE_KEY = LEGACY_STORAGE_KEY
@@ -303,6 +304,12 @@ export interface BackupTriggerRule {
 
 export interface BackupEmployee {
   id: string; name: string; role: string; billRate: number; costRate: number
+  // Phase 6S-C: team.members scoped-merge identity, timestamps, and soft-delete
+  // tombstone (all optional; historical logs keep resolving tombstoned employees).
+  createdAt?: string
+  updatedAt?: string
+  deletedAt?: string
+  deletedBy?: string
 }
 
 export interface BackupTemplate {
@@ -2081,6 +2088,22 @@ function isWeeklyDataSyncSource(source?: string | null): boolean {
   }
 }
 
+/**
+ * Phase 6S-C: true when a sync save is an employees/team.members save (Team CRUD).
+ * Used to SKIP the employees preservation guard for those saves so a legitimate
+ * roster edit is not merged against itself.
+ */
+function isEmployeesSyncSource(source?: string | null): boolean {
+  if (!source) return false
+  const s = String(source).toLowerCase()
+  if (s.includes('employee') || s.includes('team.members') || s.includes('team-members')) return true
+  try {
+    return resolveScopesForSyncInput(source).includes('team.members')
+  } catch {
+    return false
+  }
+}
+
 /** Sync current tenant-scoped localStorage data to Supabase app_state table.
  *  Refuses to run until the authenticated tenant has completed bootstrap. */
 export async function syncToSupabase(
@@ -2159,21 +2182,30 @@ export async function syncToSupabase(
     const data = getBackupData(userId)
     if (!data) return { success: false, skipped: true, error: 'No local tenant data to sync' }
 
-    // Phase 6S-B: narrow weeklyData preservation guard. For any save that is NOT a
-    // weeklyData save, fold newer remote weeklyData[] into the outgoing blob so a
-    // stale local weeklyData cache cannot overwrite newer remote weekly rows. Only
-    // weeklyData[] is affected (mergeRemoteWeeklyDataIntoOutgoing touches nothing
-    // else); manualOverride precedence still applies. On remote-fetch failure we
-    // warn and continue with the un-merged blob — the guard never blocks a save.
+    // Phase 6S-B / 6S-C: narrow scoped-cache preservation guards. For a save that is
+    // NOT a weeklyData save, fold newer remote weeklyData[] into the outgoing blob;
+    // for a save that is NOT an employees save, fold newer remote employees[] in.
+    // This stops a stale local weeklyData/employees cache from overwriting newer
+    // remote rows on an unrelated broad save. Only weeklyData[]/employees[] are
+    // affected (the merge helpers touch nothing else); manualOverride / tombstone
+    // precedence still applies. A single remote fetch serves both folds; on failure
+    // we warn and continue with the un-merged blob — the guard never blocks a save.
     let outgoing: BackupData = data
-    if (!isWeeklyDataSyncSource(options.source)) {
+    const skipWeeklyGuard = isWeeklyDataSyncSource(options.source)
+    const skipEmployeesGuard = isEmployeesSyncSource(options.source)
+    if (!skipWeeklyGuard || !skipEmployeesGuard) {
       try {
         const remoteSnapshot = await fetchLatestRemoteBackup(userId)
         if (remoteSnapshot?.remoteData) {
-          outgoing = mergeRemoteWeeklyDataIntoOutgoing(outgoing, remoteSnapshot.remoteData)
+          if (!skipWeeklyGuard) {
+            outgoing = mergeRemoteWeeklyDataIntoOutgoing(outgoing, remoteSnapshot.remoteData)
+          }
+          if (!skipEmployeesGuard) {
+            outgoing = mergeRemoteEmployeesIntoOutgoing(outgoing, remoteSnapshot.remoteData)
+          }
         }
-      } catch (weeklyGuardErr) {
-        console.warn('[Sync] weeklyData preservation guard skipped (remote fetch failed)', weeklyGuardErr)
+      } catch (preserveGuardErr) {
+        console.warn('[Sync] scoped preservation guard skipped (remote fetch failed)', preserveGuardErr)
       }
     }
 

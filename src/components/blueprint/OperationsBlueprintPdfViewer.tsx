@@ -744,6 +744,11 @@ interface OperationsBlueprintPdfViewerProps {
   selectedPageNumbers?: number[]
   onSelectedPagesChange?: (pages: number[]) => void
   externalPage?: number | null
+  /** Page to show when a document first loads (per-document restore). Applied
+   *  once at PDF load and clamped to the page count — unlike externalPage it is
+   *  not consumed/nulled and is never overwritten by onPageChange, so it survives
+   *  the load-time page reset. */
+  initialPage?: number
   onPageChange?: (page: number) => void
   onGenerateQuestion?: (payload: {
     annotation: BlueprintAnnotation
@@ -1541,6 +1546,7 @@ export default function OperationsBlueprintPdfViewer({
   selectedPageNumbers = [],
   onSelectedPagesChange,
   externalPage = null,
+  initialPage = 1,
   onPageChange,
   onGenerateQuestion,
 }: OperationsBlueprintPdfViewerProps) {
@@ -1674,6 +1680,10 @@ export default function OperationsBlueprintPdfViewer({
   const [currentPage, setCurrentPage] = useState(1)
   const currentPageRef = useRef(1)
   currentPageRef.current = currentPage
+  // Latest requested restore page, read synchronously by loadPdf (which is async)
+  // so the freshest per-document page is applied without re-creating the callback.
+  const initialPageRef = useRef(1)
+  initialPageRef.current = Math.max(1, Math.floor(Number(initialPage) || 1))
   const [pageInput, setPageInput] = useState('1')
   const [relativeZoom, setRelativeZoom] = useState(1)
   // State mirror of renderedZoomRef so the JSX visualScale recomputes when a
@@ -2575,8 +2585,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       pdfDocRef.current = doc
       setPdfDoc(doc)
       setNumPages(doc.numPages || 0)
-      setCurrentPage(1)
-      setPageInput('1')
+      // Restore the per-document last page (clamped to the page count) instead of
+      // always jumping to page 1. initialPageRef is not clobbered by the load-time
+      // onPageChange, so this reliably reopens where the user left off.
+      const restorePage = Math.max(1, Math.min(doc.numPages || 1, Math.floor(Number(initialPageRef.current) || 1)))
+      setCurrentPage(restorePage)
+      setPageInput(String(restorePage))
       setRelativeZoom(1)
       pendingScrollResetRef.current = true
     } catch (e: any) {

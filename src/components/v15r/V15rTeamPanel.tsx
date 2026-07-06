@@ -27,6 +27,9 @@ import { getWorkerCostProfile, calcMonthlyBreakdown, workerTypeLabel, getLoadedH
 import {
   getBackupData,
   saveBackupData,
+  saveBackupDataAndSync,
+  saveBackupWithRemoteBaselineSync,
+  fetchLatestRemoteBackup,
   num,
   fmt,
   fmtK,
@@ -34,6 +37,12 @@ import {
   type BackupLog,
   type BackupData,
 } from '@/services/backupDataService'
+import {
+  mergeEmployeesIntoRemote,
+  ensureEmployeeIdentity,
+  createEmployeeTombstone,
+  getLiveEmployees,
+} from '@/services/teamScopeMerge'
 import { calcPipeline } from '@/utils/pipelineCalc'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
@@ -1282,6 +1291,11 @@ export default function V15rTeamPanel() {
   const [showDemoInviteModal, setShowDemoInviteModal] = useState(false)
 
   const employees = (backup?.employees || []) as EnhancedEmployee[]
+  // Phase 6S-C: the full `employees` array is kept for historical resolution (log
+  // rows / cost tables must still resolve tombstoned employees by empId). The
+  // ACTIVE roster, cost projections, and cards use liveEmployees so deleted /
+  // inactive / closed employees drop out of active views but never from history.
+  const liveEmployees = getLiveEmployees(employees) as EnhancedEmployee[]
   const logs = (backup?.logs || [])
   const projects = (backup?.projects || [])
   const [, forceUpdate] = useState({})
@@ -1341,7 +1355,7 @@ export default function V15rTeamPanel() {
       }
     >()
 
-    ;(employees || []).forEach((emp) => {
+    ;(liveEmployees || []).forEach((emp) => {
       const empLogs = (logs || []).filter((l) => l.empId === emp.id)
       const totalHours = (empLogs || []).reduce((s, l) => s + (l.hrs || 0), 0)
       const monthlyHours = (empLogs || []).reduce((s, l) => {
@@ -1401,21 +1415,77 @@ export default function V15rTeamPanel() {
     return total
   }, [employeeStats, hypotheticals])
 
+  // ── Phase 6S-C: team.members remote-baseline scoped save ───────────────────
+  // Saves local first for instant UI, then fetches latest remote, merges ONLY
+  // employees[] onto it (delete-safe, tombstone/updatedAt LWW), and pushes through
+  // the existing remote-baseline path so a stale local roster can never overwrite
+  // newer remote employees and a hard delete cannot resurrect. Falls back to a
+  // plain scoped save if there is no remote row or the fetch/merge fails.
+  const saveEmployeesScoped = (incomingBackup: BackupData) => {
+    saveBackupData(incomingBackup) // optimistic local save for instant UI
+    ;(async () => {
+      try {
+        const remote = await fetchLatestRemoteBackup()
+        if (remote?.remoteData) {
+          const merged = mergeEmployeesIntoRemote(remote.remoteData, incomingBackup)
+          await saveBackupWithRemoteBaselineSync(
+            merged,
+            {
+              remoteUpdatedAt: remote.remoteUpdatedAt,
+              remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+            },
+            {
+              source: 'team-members-remote-merge',
+              changedKey: 'employees',
+              _scopes: ['team.members'],
+            },
+          )
+        } else {
+          saveBackupDataAndSync(incomingBackup, 'employees', {
+            source: 'team.members',
+            _scopes: ['team.members'],
+          })
+        }
+      } catch (err) {
+        console.warn('[TeamPanel] employees remote-baseline save failed — falling back to local scoped save', err)
+        saveBackupDataAndSync(incomingBackup, 'employees', {
+          source: 'team.members',
+          _scopes: ['team.members'],
+        })
+      }
+    })()
+  }
+
   const toggleMultiplier = (empId: string) => {
     pushState()
     const emp = backup.employees.find(e => e.id === empId) as EnhancedEmployee
     if (emp) {
       emp.applyMultiplier = emp.applyMultiplier === false ? true : false
-      saveBackupData(backup)
+      // Phase 6S-C: stamp identity/updatedAt then route through scoped save.
+      Object.assign(emp, ensureEmployeeIdentity(emp, new Date().toISOString()))
+      saveEmployeesScoped(backup)
       forceUpdate({})
     }
   }
 
   const deleteEmployee = (id: string) => {
+    // Phase 6S-C: never hard-filter — convert to a tombstone so historical logs /
+    // estimate rows keep resolving and a stale device cannot resurrect the row.
+    const emp = backup.employees?.find((e: any) => e.id === id)
+    if (!emp) return
+    // Block deleting owner/me records.
+    const rawId = String(id || '').toLowerCase().trim()
+    const rawName = String(emp.name || '').toLowerCase().trim()
+    if (emp.isOwner === true || rawId === 'me' || rawId === 'owner' || rawId === 'owner-virtual' || rawName === 'owner / me') {
+      alert('The owner record cannot be deleted.')
+      return
+    }
     if (!confirm('Delete this employee?')) return
     pushState()
-    backup.employees = backup.employees.filter(e => e.id !== id)
-    saveBackupData(backup)
+    const deletedBy = (user as any)?.email || (user as any)?.id || 'user'
+    const tombstone = createEmployeeTombstone(emp, deletedBy)
+    backup.employees = backup.employees.map((e: any) => e.id === id ? tombstone : e)
+    saveEmployeesScoped(backup)
     forceUpdate({})
   }
 
@@ -1424,7 +1494,9 @@ export default function V15rTeamPanel() {
     const emp = backup.employees?.find((e: any) => e.id === id)
     if (emp) {
       Object.assign(emp, updates)
-      saveBackupData(backup)
+      // Phase 6S-C: preserve id/createdAt, stamp updatedAt, route through scoped save.
+      Object.assign(emp, ensureEmployeeIdentity(emp, new Date().toISOString()))
+      saveEmployeesScoped(backup)
     }
     setEditingEmployee(null)
     forceUpdate({})
@@ -1447,9 +1519,11 @@ export default function V15rTeamPanel() {
       }
       setHypotheticals(prev => [...prev, newHyp])
     } else {
-      // Permanent and per_project are saved to backup
-      backup.employees = [...backup.employees, record]
-      saveBackupData(backup)
+      // Permanent and per_project are saved to backup.
+      // Phase 6S-C: stamp id/createdAt/updatedAt then route through scoped save.
+      const stamped = ensureEmployeeIdentity(record, new Date().toISOString())
+      backup.employees = [...backup.employees, stamped]
+      saveEmployeesScoped(backup)
       forceUpdate({})
 
       // Fire OHM compliance card (non-blocking — save already happened)
@@ -1458,7 +1532,7 @@ export default function V15rTeamPanel() {
         employeeType: record.employee_type,
         classification: record.classification || (record.employee_type === 'permanent' ? 'W-2' : '1099'),
         name: record.name || record.role || 'New Employee',
-        empId: record.id,
+        empId: stamped.id,
       })
     }
 
@@ -1469,7 +1543,9 @@ export default function V15rTeamPanel() {
     const emp = backup.employees?.find((e: any) => e.id === empId)
     if (emp) {
       emp.compliance_acknowledged = true
-      saveBackupData(backup)
+      // Phase 6S-C: stamp updatedAt then route through scoped save.
+      Object.assign(emp, ensureEmployeeIdentity(emp, new Date().toISOString()))
+      saveEmployeesScoped(backup)
     }
     setOhmCard(prev => ({ ...prev, show: false }))
   }
@@ -1507,8 +1583,9 @@ export default function V15rTeamPanel() {
   const getScenarios = (): any[] => {
     const saved: any[] = (backup.settings as any)?.projectionScenarios || []
     if (saved.length > 0) return saved
-    // Default: current active employees at 40 hrs/week
-    const activeEmps = employees.filter((e: any) => !e.status || e.status === 'Active')
+    // Default: current active employees at 40 hrs/week (Phase 6S-C: exclude
+    // tombstoned/inactive employees from the default roster).
+    const activeEmps = getLiveEmployees(employees).filter((e: any) => !e.status || e.status === 'Active')
     if (activeEmps.length === 0) return []
     return [{
       id: 'scen-default',
@@ -1528,7 +1605,7 @@ export default function V15rTeamPanel() {
   const addScenario = () => {
     const scens = getScenarios()
     const newId = 'scen-' + Date.now()
-    const activeEmps = employees.filter((e: any) => !e.status || e.status === 'Active')
+    const activeEmps = getLiveEmployees(employees).filter((e: any) => !e.status || e.status === 'Active')
     const newScen = {
       id: newId,
       name: 'New Scenario',
@@ -1662,10 +1739,12 @@ export default function V15rTeamPanel() {
           <div className="h-8 w-0.5 bg-gray-700"></div>
 
           {/* Real Employees + Hypotheticals Grid */}
-          {employees.filter(e => !e.isOwner).length > 0 || hypotheticals.length > 0 ? (
+          {/* Phase 6S-C hotfix: Org Pyramid uses liveEmployees so deleted/inactive
+              employees are hidden here too (they remain in backup for history). */}
+          {liveEmployees.filter(e => !e.isOwner).length > 0 || hypotheticals.length > 0 ? (
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 w-full">
               {/* Real employees (non-owner) — style by employee_type */}
-              {employees
+              {liveEmployees
                 .filter(e => !e.isOwner)
                 .map((rawEmp) => {
                   const emp = normalizeEmployee(rawEmp)
@@ -2915,7 +2994,7 @@ export default function V15rTeamPanel() {
       })()}
 
       {/* EMPLOYEE CARDS */}
-      {employees.length === 0 ? (
+      {liveEmployees.length === 0 ? (
         <div className="text-center py-16 bg-[var(--bg-card)] rounded-lg border border-gray-700">
           <p className="text-gray-400 text-lg">No employees yet</p>
           <p className="text-gray-600 text-sm mt-2">Add team members to get started</p>
@@ -2924,7 +3003,7 @@ export default function V15rTeamPanel() {
         <div>
           <h2 className="text-2xl font-bold text-gray-100 mb-4">Employee Cards</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {employees.map((rawEmp) => {
+            {liveEmployees.map((rawEmp) => {
               const emp = normalizeEmployee(rawEmp) as EnhancedEmployee
               const stats = employeeStats.get(emp.id)
               if (!stats) return null
@@ -2962,11 +3041,11 @@ export default function V15rTeamPanel() {
           </div>
 
           {/* TEAM TOTALS SUMMARY */}
-          {employees.length > 0 && (
+          {liveEmployees.length > 0 && (
             <div className="mt-6 bg-gradient-to-r from-blue-900/20 to-cyan-900/20 rounded-lg border border-blue-600/30 p-4">
               <h3 className="text-sm font-bold text-gray-200 mb-4">Team Cost Summary</h3>
               {(() => {
-                const teamTotals = (backup.employees || []).reduce((acc: any, rawEmp: any) => {
+                const teamTotals = (liveEmployees || []).reduce((acc: any, rawEmp: any) => {
                   const emp = normalizeEmployee(rawEmp)
                   const c = calcEmployeeCost(emp, backup)
                   acc.monthly += c.loadedMonthlyCost
@@ -3079,7 +3158,7 @@ export default function V15rTeamPanel() {
           labor cost. Serves as the "labor breakdown" view for project budgets.
       */}
       {(() => {
-        const perProjectEmps = (backup.employees || [])
+        const perProjectEmps = getLiveEmployees(backup.employees || [])
           .map(normalizeEmployee)
           .filter((e: any) => e.employee_type === 'per_project' && e.status !== 'Closed')
         if (perProjectEmps.length === 0) return null

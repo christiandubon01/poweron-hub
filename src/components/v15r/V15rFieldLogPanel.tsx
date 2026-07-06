@@ -40,6 +40,7 @@ import {
   type BackupTriggerRule,
 } from '@/services/backupDataService'
 import { mergeProjectLogsIntoRemote, createLogTombstone, isDeadProjectLog } from '@/services/projectScopeMerge'
+import { getLiveEmployees } from '@/services/teamScopeMerge'
 import {
   mergeServiceLogsIntoRemote,
   ensureServiceLogIdentity,
@@ -659,7 +660,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     return resolveCanonicalCustomerName(record, gcContacts)
   }
   const serviceAccountOptions = accountOptions
+  // Full array kept for historical name resolution; liveEmployees drives the
+  // employee pickers for new/edited logs (Phase 6S-C: hide deleted/inactive).
   const employees = backup.employees || []
+  const liveEmployees = getLiveEmployees(employees)
   const triggerRules = backup.triggerRules || []
   const settings = backup.settings || {} as any
   const mileRate = num(settings.mileRate || 0.66)
@@ -2006,7 +2010,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 <label className={projectLogLabelClass}>Employee</label>
                 <select value={flEmp} onChange={e => setFlEmp(e.target.value)} className={projectLogInputClass}>
                   <option value="">Me</option>
-                  {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                  {(flEmp && !liveEmployees.some(e => e.id === flEmp)
+                    ? [...liveEmployees, ...employees.filter(e => e.id === flEmp)]
+                    : liveEmployees
+                  ).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select>
               </div>
             </div>
@@ -3008,7 +3015,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     style={{ backgroundColor: 'var(--bg-input)' }}
                   >
                     <option value="">Select technician...</option>
-                    {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                    {(estTech && !liveEmployees.some(e => e.id === estTech)
+                      ? [...liveEmployees, ...employees.filter(e => e.id === estTech)]
+                      : liveEmployees
+                    ).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                   </select>
                 </div>
 

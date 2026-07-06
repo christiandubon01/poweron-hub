@@ -103,6 +103,13 @@ export default function BlueprintAI() {
     return initId ? loadBlueprintPage(initId) : 1
   })
   const [viewerJumpPage, setViewerJumpPage] = useState<number | null>(null)
+  // Per-document page handed to the viewer at PDF load so it reopens where the
+  // user left off. Captured from the saved page at selection time so the viewer's
+  // load-time onPageChange(1) can never clobber it (unlike currentViewerPage).
+  const [viewerInitialPage, setViewerInitialPage] = useState<number>(() => {
+    const initId = loadBlueprintActiveId(getOperationsBlueprintLibrary(getBackupData() || { projects: [], settings: {}, blueprintSummaries: {} }))
+    return initId ? loadBlueprintPage(initId) : 1
+  })
   const [sheetSearch, setSheetSearch] = useState('')
   const [sheetEditorOpen, setSheetEditorOpen] = useState(false)
   const [sheetEditor, setSheetEditor] = useState<{
@@ -275,16 +282,13 @@ export default function BlueprintAI() {
     if (selectedId && currentViewerPage >= 1) saveBlueprintPage(selectedId, currentViewerPage)
   }, [selectedId, currentViewerPage])
 
-  // On initial mount: if a page > 1 was restored, trigger the viewer jump.
-  // The viewer handles numPages clamping internally and re-fires when numPages loads.
-  const didMountJumpRef = useRef(false)
+  // Capture the saved page for the selected document at selection time and hand it
+  // to the viewer as initialPage. Reading here (not from currentViewerPage) keeps
+  // it immune to the viewer's load-time onPageChange(1), so the restore survives.
+  // The viewer applies + clamps it inside loadPdf, so no rAF/externalPage race.
   useEffect(() => {
-    if (didMountJumpRef.current) return
-    didMountJumpRef.current = true
-    if (currentViewerPage > 1) {
-      window.requestAnimationFrame(() => setViewerJumpPage(currentViewerPage))
-    }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    setViewerInitialPage(selectedId ? loadBlueprintPage(selectedId) : 1)
+  }, [selectedId])
 
   async function persist(next: BlueprintLibraryItem[]) {
     await saveOperationsBlueprintLibrary(backup, next)
@@ -715,15 +719,11 @@ export default function BlueprintAI() {
 
   function openLibraryItem(item: BlueprintLibraryItem) {
     setSelectedId(item.id)
-    const savedPage = loadBlueprintPage(item.id)
-    setCurrentViewerPage(savedPage)
-    // Trigger viewer jump to the saved page. rAF ensures the viewer re-receives
-    // the value even when switching between two documents with the same page number.
+    // The selectedId effect captures the saved page into viewerInitialPage, and the
+    // viewer restores + clamps it inside loadPdf — no rAF/externalPage jump needed.
+    setCurrentViewerPage(loadBlueprintPage(item.id))
     setViewerJumpPage(null)
     setLibraryModalOpen(false)
-    window.requestAnimationFrame(() => {
-      setViewerJumpPage(savedPage)
-    })
   }
 
   function jumpToSheetPage(pageNumber: number) {
@@ -1063,6 +1063,7 @@ export default function BlueprintAI() {
           blueprint={selectedItem}
           onAnnotationsChanged={() => setAnnotationRefreshToken((v) => v + 1)}
           externalPage={viewerJumpPage ?? undefined}
+          initialPage={viewerInitialPage}
           onPageChange={(page) => {
             setCurrentViewerPage(page)
             if (viewerJumpPage === page) setViewerJumpPage(null)
