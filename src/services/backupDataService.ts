@@ -852,6 +852,35 @@ function saveBackupDataSilent(data: BackupData, userId = _activeTenantUserId): v
   } catch { /* ignore */ }
 }
 
+/** Phase 6T: read session remote baseline without altering freshness guard behavior. */
+export function getKnownRemoteBaselineMs(): number {
+  return parseBackupTimestampMs(_lastKnownRemoteSavedAt)
+}
+
+/** Phase 6T: advance known remote baseline from a fetched remote row (monotonic). */
+export function updateKnownRemoteBaselineFromRemote(
+  remoteUpdatedAt?: string | null,
+  remoteDataLastSavedAt?: string | null,
+): number {
+  return setKnownRemoteBaseline(remoteUpdatedAt, remoteDataLastSavedAt)
+}
+
+/**
+ * Phase 6T: apply a remote backup into localStorage without marking dirty or syncing.
+ * Does NOT dispatch poweron-data-saved — callers decide when to notify UI listeners.
+ */
+export function applyRemoteBackupDataSilent(
+  data: BackupData,
+  userId?: string | null,
+  remoteBaseline?: { remoteUpdatedAt?: string | null; remoteDataLastSavedAt?: string | null },
+): void {
+  const uid = userId ?? _activeTenantUserId
+  saveBackupDataSilent(data, uid ?? undefined)
+  if (remoteBaseline) {
+    setKnownRemoteBaseline(remoteBaseline.remoteUpdatedAt, remoteBaseline.remoteDataLastSavedAt)
+  }
+}
+
 export function clearBackupData(userId = _activeTenantUserId): void {
   try { localStorage.removeItem(getEffectiveStorageKey(userId)) } catch { /* ignore */ }
   if (userId) {
@@ -1620,10 +1649,6 @@ function parseBackupTimestampMs(value?: string | null): number {
 
 export function getLastKnownRemoteSavedAt(): string | null {
   return _lastKnownRemoteSavedAt
-}
-
-function getKnownRemoteBaselineMs(): number {
-  return parseBackupTimestampMs(_lastKnownRemoteSavedAt)
 }
 
 function computeRemoteFreshnessMs(

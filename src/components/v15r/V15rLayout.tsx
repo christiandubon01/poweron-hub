@@ -48,6 +48,7 @@ import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, getKPIs, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, saveLiveDataVerified, getLastSyncMeta, createEmptyBackup, isActiveProject, resolveProjectBucket, type BackupData } from '@/services/backupDataService'
 // BUG 1 FIX — Realtime sync + stale-check service
 import { initRealtimeSync } from '@/services/realtimeSyncService'
+import { startLiveCloudRefresh, requestRemoteRefresh } from '@/services/liveCloudRefreshService'
 // BUG 2 FIX — Active-only pipeline formula
 import { calcActivePipeline } from '@/utils/pipelineCalc'
 import { useDemoStore } from '@/store/demoStore'
@@ -104,6 +105,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const { isDemoMode, hasHydrated } = useDemoStore()
   const [currentTime, setCurrentTime] = useState<string>('')
   const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const [remoteRefreshBanner, setRemoteRefreshBanner] = useState<'applied' | 'available' | null>(null)
+  const remoteRefreshDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1920)
   const [blueprintImmersive, setBlueprintImmersive] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(() => {
@@ -460,6 +463,62 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     })
     return () => cleanupRealtime()
   }, [authStatus, tenantDataReady, tenantUserId, authUser?.id])
+
+  // Phase 6T — live cloud refresh (focus / visibility / online / interval)
+  useEffect(() => {
+    if (authStatus !== 'authenticated') return
+    if (!tenantDataReady) return
+    if (!tenantUserId || tenantUserId !== authUser?.id) return
+
+    const stopLiveRefresh = startLiveCloudRefresh()
+    return () => stopLiveRefresh()
+  }, [authStatus, tenantDataReady, tenantUserId, authUser?.id])
+
+  // Phase 6T — banner for applied / available remote data
+  useEffect(() => {
+    const clearDismissTimer = () => {
+      if (remoteRefreshDismissTimerRef.current) {
+        clearTimeout(remoteRefreshDismissTimerRef.current)
+        remoteRefreshDismissTimerRef.current = null
+      }
+    }
+
+    const handleRemoteApplied = () => {
+      setRemoteRefreshBanner('applied')
+      clearDismissTimer()
+      const data = getBackupData()
+      if (data) {
+        setBackupData(data)
+        setKpis(getKPIs(data))
+      }
+      remoteRefreshDismissTimerRef.current = setTimeout(() => {
+        setRemoteRefreshBanner(null)
+      }, 4000)
+    }
+
+    const handleRemoteAvailable = () => {
+      setRemoteRefreshBanner('available')
+      clearDismissTimer()
+    }
+
+    window.addEventListener('poweron-remote-data-refreshed', handleRemoteApplied)
+    window.addEventListener('poweron-remote-data-available', handleRemoteAvailable)
+    return () => {
+      window.removeEventListener('poweron-remote-data-refreshed', handleRemoteApplied)
+      window.removeEventListener('poweron-remote-data-available', handleRemoteAvailable)
+      clearDismissTimer()
+    }
+  }, [])
+
+  const handleRemoteRefreshNow = () => {
+    const confirmed = window.confirm(
+      'Refresh now will reload latest cloud data and may discard unsaved edits in open forms. Continue?'
+    )
+    if (!confirmed) return
+    void requestRemoteRefresh({ forceApply: true, source: 'manual' }).then(() => {
+      setRemoteRefreshBanner(null)
+    })
+  }
 
   // Initialize Phase B event bus + agent subscriptions
   useEffect(() => {
@@ -2038,6 +2097,43 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
           )}
         </header>
         )} {/* end conditional header — not shown in visual-suite fullscreen */}
+
+        {/* Phase 6T — live remote refresh banner */}
+        {remoteRefreshBanner && activeView !== 'visual-suite' && activeView !== 'neural-world' && (
+          <div
+            className="fixed left-0 right-0 z-[60] flex items-center justify-center px-4 py-2 text-sm shadow-md"
+            style={{
+              top: showTargetBar ? '5rem' : '4rem',
+              backgroundColor: remoteRefreshBanner === 'applied' ? 'rgba(34,197,94,0.15)' : 'rgba(59,130,246,0.15)',
+              borderBottom: `1px solid ${remoteRefreshBanner === 'applied' ? 'rgba(34,197,94,0.35)' : 'rgba(59,130,246,0.35)'}`,
+              color: 'var(--t1)',
+            }}
+          >
+            {remoteRefreshBanner === 'applied' ? (
+              <span>Cloud changes loaded.</span>
+            ) : (
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <span>New cloud changes are available. Save your work or refresh to load latest.</span>
+                <button
+                  type="button"
+                  onClick={handleRemoteRefreshNow}
+                  className="px-3 py-1 rounded text-xs font-semibold"
+                  style={{ backgroundColor: 'rgba(59,130,246,0.35)', color: '#fff' }}
+                >
+                  Refresh now
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRemoteRefreshBanner(null)}
+                  className="px-3 py-1 rounded text-xs"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.08)', color: 'var(--t2)' }}
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* CONTENT AREA — B52: fullscreen when visual-suite, otherwise normal */}
         <main

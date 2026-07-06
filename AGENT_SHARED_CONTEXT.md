@@ -4141,3 +4141,20 @@ No commit, push, deploy, manual Supabase touch, restore script, or manual localS
 - Added the narrow `project.coordination` pre-sync preservation fold in `backupDataService.ts` inside the existing weeklyData/employees/project.timeline/project.progress/project.schedule guard block immediately after `getBackupData(userId)` and before payload construction. It skips true `project.coordination` saves and folds newer remote `coord` data into unrelated outgoing full-blob saves via `mergeRemoteProjectCoordinationIntoOutgoing`; it reuses the existing single remote fetch and does not block saves if the fetch fails.
 - Type-only project metadata added: optional `coordUpdatedAt` and `coordDeletedAt`; coord rows carry optional createdAt/updatedAt/deletedAt/deletedBy/status dynamically.
 - `project.timeline` unchanged from 6S-D1. `project.progress` unchanged from 6S-D2. `project.schedule` unchanged from 6S-D3. Project status/lifecycle remains deferred. Project logs/payments, project.finance, finance.weeklyData, team.members, service scopes, and blueprint scopes untouched. Sync/save/baseline internals unchanged except the narrow project.coordination preservation hook.
+
+### 2026-07-06 - Phase 6T: Live Remote Refresh / Cross-Device UI Updates
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** IMPLEMENT ONLY (minimum safe version)
+**Baseline HEAD:** `c466a43` (Phase 6S-H "Add scoped merge for multi-day service calls")
+**Files touched:** `src/services/liveCloudRefreshService.ts` (new), `src/hooks/useRemoteDataRefresh.ts` (new), `src/services/backupDataService.ts`, `src/services/realtimeSyncService.ts`, `src/components/v15r/V15rLayout.tsx`, `src/components/v15r/V15rEstimateTab.tsx`, `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`, `src/components/v15r/V15rHome.tsx`, `src/components/v15r/V15rServiceCallsV2.tsx`, `src/components/v15r/V15rDashboard.tsx`, `src/components/v15r/V15rMoneyPanel.tsx`, `AGENT_SHARED_CONTEXT.md`
+**Status:** DONE locally — static verify pending; user manually tests localhost. No commit, push, deploy, pull, rebase, reset, or branch change.
+
+- Added live remote refresh service (`liveCloudRefreshService.ts`). Detects newer remote `app_state` on window focus, `visibilitychange` to visible, `online`, and a 60s interval while visible/online.
+- Applies remote data silently via `applyRemoteBackupDataSilent` only when no dirty scopes are registered; never sets `_dataChanged`, never calls `syncToSupabase` / `saveBackupDataAndSync`.
+- Dispatches `poweron-remote-data-refreshed` when applied; `poweron-remote-data-available` when newer remote exists but dirty scopes block auto-apply. Also dispatches `poweron-data-saved` with `{ source: 'remote-refresh' }` to wake existing same-tab listeners.
+- Added dirty registry (`registerDirtyScope`, `setDirtyScope`, `hasDirtyScopes`, etc.) and `useRemoteDataRefresh` hook for tab-level dirty registration + refresh callbacks.
+- `V15rLayout` mounts live refresh service and shows banner: "Cloud changes loaded." (auto-dismiss) or "New cloud changes are available…" with Refresh now / Dismiss.
+- Wired Estimate, Blueprint viewer, Home, ServiceCallsV2. Dashboard and MoneyPanel listen as safe readers (re-render from localStorage).
+- Realtime subscribe handler delegates to `requestRemoteRefresh({ source: 'realtime' })` instead of direct `loadFromSupabase` pull; stale-check on load unchanged.
+- No scoped merge logic changed. No stale-overwrite guard changes. No verified Save changes.

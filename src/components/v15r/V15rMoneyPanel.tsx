@@ -169,6 +169,12 @@ function isActiveMoneyProject(project: any): boolean {
 
 export default function V15rMoneyPanel() {
   const { isDemoMode, hasHydrated } = useDemoMode()
+  const [, setRemoteRefreshTick] = useState(0)
+  useEffect(() => {
+    const handler = () => setRemoteRefreshTick(t => t + 1)
+    window.addEventListener('poweron-remote-data-refreshed', handler)
+    return () => window.removeEventListener('poweron-remote-data-refreshed', handler)
+  }, [])
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
   const [weeklyEdit, setWeeklyEdit] = useState<string | null>(null)
   const [aiOpen, setAiOpen] = useState(false)

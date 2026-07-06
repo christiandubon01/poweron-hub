@@ -15,6 +15,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { useRemoteDataRefresh } from '@/hooks/useRemoteDataRefresh'
 import {
   Plus,
   ChevronRight,
@@ -338,6 +339,19 @@ export default function V15rHome() {
     title: string
     projectId: string
   } | null>(null)
+
+  const isHomeDirty =
+    !!agendaCategoryModal ||
+    !!editingAlertId ||
+    addingAlert ||
+    !!editingAIAlertId
+
+  useRemoteDataRefresh({
+    scopeId: 'home',
+    label: 'Home',
+    isDirty: isHomeDirty,
+    onRemoteDataApplied: () => forceUpdate(),
+  })
 
   // ── User first name from Supabase profile ──
   const [firstName, setFirstName] = useState<string>('')

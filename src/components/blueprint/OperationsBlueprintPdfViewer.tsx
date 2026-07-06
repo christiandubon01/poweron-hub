@@ -62,6 +62,7 @@ import {
 import { getBackupData } from '@/services/backupDataService'
 import { ToolPopover, ColorRow, Stepper, LabeledSelect, ToggleRow } from './ToolPopover'
 import { useAuth } from '@/hooks/useAuth'
+import { useRemoteDataRefresh } from '@/hooks/useRemoteDataRefresh'
 import { createRFI } from '@/agents/blueprint/rfiManager'
 import { createCoordinationItem } from '@/agents/blueprint/coordinationTracker'
 import {
@@ -2614,6 +2615,25 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     void loadPdf()
     return () => { void clearDoc() }
   }, [blueprint?.id])
+
+  const isBlueprintDirty =
+    !!noteEditor ||
+    !!richTextEditor ||
+    !!draftRect ||
+    !!inkDraft ||
+    pasteModeActive ||
+    !!inlineTextEditId ||
+    !!layoutEditId
+
+  useRemoteDataRefresh({
+    scopeId: 'blueprints',
+    label: 'Blueprint viewer',
+    isDirty: isBlueprintDirty,
+    onRemoteDataApplied: () => {
+      loadAnnotations()
+      loadScopeLayers()
+    },
+  })
 
   // Measure toolbar area height so the scroll area can fill exactly the
   // remaining vertical space without a hard-coded pixel constant.

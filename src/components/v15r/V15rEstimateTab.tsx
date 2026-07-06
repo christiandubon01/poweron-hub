@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { Sparkles, Plus, ArrowRight, Check, Trash2, X } from 'lucide-react'
+import { useRemoteDataRefresh } from '@/hooks/useRemoteDataRefresh'
 import {
   getBackupData,
   saveBackupData,
@@ -195,7 +196,7 @@ interface V15rEstimateTabProps {
 
 export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBackup }: V15rEstimateTabProps) {
   // ── Data must be resolved BEFORE any useState that references it (TDZ fix) ──
-  const backup = initialBackup || getBackupData()
+  const backup = getBackupData() ?? initialBackup
 
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
@@ -240,6 +241,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   // True while a labor/OH text/number input is focused — while true we never
   // let an async re-render overwrite the focused draft value.
   const estimateEditingRef = useRef<boolean>(false)
+  const [estimateInputFocused, setEstimateInputFocused] = useState(false)
   const [subtab, setSubtab] = useState<'project' | 'service'>('project')
   const [aiOpen, setAiOpen] = useState(false)
 
@@ -307,6 +309,29 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     return () => { Object.values(timers).forEach(t => clearTimeout(t)) }
   }, [])
 
+  const [showEstForm, setShowEstForm] = useState(false)
+  const [editingEstId, setEditingEstId] = useState<string | null>(null)
+
+  const isEstimateDirty =
+    estimateInputFocused ||
+    showEstForm ||
+    !!editingEstId ||
+    healthCheckOpen ||
+    showVersionHistory ||
+    restorePreviewVersionIdx !== null ||
+    Object.keys(laborPhaseColorDraft).length > 0 ||
+    !!estimateRowsSaveQueueRef.current.inFlight
+
+  useRemoteDataRefresh({
+    scopeId: 'estimate',
+    label: 'Estimate',
+    isDirty: isEstimateDirty,
+    onRemoteDataApplied: () => {
+      forceUpdate()
+      onUpdate?.()
+    },
+  })
+
   useEffect(() => {
     return () => {
       const timer = estimateRowsSaveQueueRef.current?.timer
@@ -355,8 +380,6 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   const [scTax, setScTax] = useState(num(backup?.settings?.tax || 0))
   const [scNotes, setScNotes] = useState('')
   const [scStore, setScStore] = useState('')
-  const [showEstForm, setShowEstForm] = useState(false)
-  const [editingEstId, setEditingEstId] = useState<string | null>(null)
   /** Bumps MileageProjectMapPreview to retry geocode after Save address */
   const [mileageMapRetryNonce, setMileageMapRetryNonce] = useState(0)
   if (!backup) return <div style={{ color: 'var(--t3)' }}>No data</div>
@@ -833,9 +856,13 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   }
 
   // Called from focus/blur of editable labor/OH inputs.
-  const onEstimateInputFocus = () => { estimateEditingRef.current = true }
+  const onEstimateInputFocus = () => {
+    estimateEditingRef.current = true
+    setEstimateInputFocused(true)
+  }
   const onEstimateInputBlur = () => {
     estimateEditingRef.current = false
+    setEstimateInputFocused(false)
     // Ensure the latest edited value is flushed to persistence on blur.
     const queue = estimateRowsSaveQueueRef.current
     if (queue.timer) { clearTimeout(queue.timer); queue.timer = null }

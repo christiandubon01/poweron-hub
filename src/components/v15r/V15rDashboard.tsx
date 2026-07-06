@@ -664,6 +664,12 @@ function StartDateWarningPill({ projects }: { projects: any[] }) {
 // ── INNER DASHBOARD COMPONENT ──
 function V15rDashboardInner() {
   const { isDemoMode, hasHydrated } = useDemoMode()
+  const [, setRemoteRefreshTick] = useState(0)
+  useEffect(() => {
+    const handler = () => setRemoteRefreshTick(t => t + 1)
+    window.addEventListener('poweron-remote-data-refreshed', handler)
+    return () => window.removeEventListener('poweron-remote-data-refreshed', handler)
+  }, [])
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
   const [nexusOpen, setNexusOpen] = useState(false)
   const toIsoDate = (d: Date) =>

@@ -141,7 +141,8 @@ export function subscribeToRealtimeChanges(
               { event: '*', schema: 'public', table },
               async (payload: any) => {
                 console.log(`[RealtimeSync] Change detected on table "${table}":`, payload.eventType)
-                await pullAndRefresh(`realtime:${table}`, true)
+                const { requestRemoteRefresh } = await import('./liveCloudRefreshService')
+                await requestRemoteRefresh({ source: 'realtime' })
                 onRefresh?.(table)
               }
             )

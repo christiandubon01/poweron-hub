@@ -18,6 +18,7 @@
  */
 
 import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useRemoteDataRefresh } from '@/hooks/useRemoteDataRefresh'
 import {
   Plus, ChevronDown, ChevronUp, AlertTriangle, CheckCircle,
   TrendingUp, TrendingDown, Calendar, Package, Truck, Clock,
@@ -113,6 +114,17 @@ export default function V15rServiceCallsV2() {
   const [records, setRecords] = useState<ServiceCallRecord[]>(() => {
     if (!backup) return []
     return getLiveMultiDayServiceCalls(loadServiceCallRecords(backup)) as ServiceCallRecord[]
+  })
+
+  useRemoteDataRefresh({
+    scopeId: 'serviceCallsV2',
+    label: 'Service Calls',
+    isDirty: !!modalConfig,
+    onRemoteDataApplied: () => {
+      const fresh = demoMode ? getDemoBackupData() : getBackupData()
+      if (!fresh) return
+      setRecords(getLiveMultiDayServiceCalls(loadServiceCallRecords(fresh)) as ServiceCallRecord[])
+    },
   })
 
   // Sync records from backup on backup change
