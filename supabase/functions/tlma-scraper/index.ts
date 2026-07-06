@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { parseSearchResultsHTML } from "./parser.ts";
 import { scorePermit } from "./scoring.ts";
 import { createServiceClient, upsertLead } from "./supabase-client.ts";
-import type { TLMAPermit, HunterLeadRow, DryRunReport, LiveRunReport } from "./types.ts";
+import type { TLMAPermit, HunterLeadRow, DryRunReport, LiveRunReport, SourceStatus } from "./types.ts";
 
 // ----- CONSTANTS -----
 const PERMIT_TYPES = [
@@ -33,6 +33,51 @@ const CITIES = [
 ];
 
 const TLMA_BASE_URL = "https://publiclookup.rivco.org/";
+const TLMA_SOURCE_HOST = "publiclookup.rivco.org";
+const BLOCKED_CIRCUIT_THRESHOLD = 3;
+const BASE_REQUEST_DELAY_MS = 200;
+const BLOCKED_BACKOFF_DELAY_MS = 800;
+
+/** Safe text body hint from HTML or plain response, capped at 240 chars. */
+function stripHtmlForHint(body: string): string {
+  return body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+/** Conservative Cloudflare/WAF/browser-challenge detection. No bypass logic. */
+function isCloudflareOrWafChallenge(status: number, body: string): boolean {
+  if (status !== 403 && status !== 503) return false;
+  const lower = body.toLowerCase();
+  const patterns = [
+    "just a moment",
+    "cloudflare",
+    "cf-ray",
+    "checking your browser",
+    "attention required",
+    "browser check",
+    "challenge",
+  ];
+  return patterns.some((p) => lower.includes(p));
+}
+
+function classifyHttpFailure(
+  status: number,
+  body: string,
+): { kind: "blocked" | "http_error"; reason: string; bodyHint: string } {
+  const bodyHint = stripHtmlForHint(body);
+  if (isCloudflareOrWafChallenge(status, body)) {
+    return {
+      kind: "blocked",
+      reason:
+        "Automated access blocked by browser/WAF challenge. Manual review required.",
+      bodyHint,
+    };
+  }
+  return {
+    kind: "http_error",
+    reason: `HTTP ${status} error from public source.`,
+    bodyHint,
+  };
+}
 
 // Real Chrome on Windows headers � TLMA's WAF blocks generic / bot-shaped
 // User-Agents. We send a complete browser-shaped header set including
@@ -218,13 +263,71 @@ serve(async (req: Request) => {
     : { ...BROWSER_HEADERS };
 
   // Capture body snippet from the first HTTP error for UI diagnostics.
-  // Reading the body of every error response would be slow and noisy; we
-  // only need one to identify the block type (Cloudflare, IP block page, etc.)
   let firstErrorBodyHint = "";
 
+  // Circuit breaker + failure counters for gated-source safety
+  let blockedCount = 0;
+  let httpErrorCount = 0;
+  let consecutiveBlockedCount = 0;
+  let abortedForBlockedSource = false;
+  let blockedReason =
+    "Automated access blocked by browser/WAF challenge. Manual review required.";
+  let completedMatrixCount = 0;
+  const searchMatrixSize = PERMIT_TYPES.length * citiesToScan.length;
+  let requestDelayMs = BASE_REQUEST_DELAY_MS;
+
+  const recordHttpFailure = (
+    status: number,
+    body: string,
+    context: string,
+    options?: { countMatrix?: boolean },
+  ): "blocked" | "http_error" => {
+    const classified = classifyHttpFailure(status, body);
+    errorCount++;
+    if (options?.countMatrix !== false) {
+      completedMatrixCount++;
+    }
+
+    if (!firstErrorBodyHint && classified.bodyHint) {
+      firstErrorBodyHint = classified.bodyHint;
+    }
+
+    if (classified.kind === "blocked") {
+      blockedCount++;
+      consecutiveBlockedCount++;
+      blockedReason = classified.reason;
+      errors.push(
+        `Blocked (${status}) for ${context}: ${classified.reason}` +
+          (classified.bodyHint ? ` | body: ${classified.bodyHint}` : ""),
+      );
+      lastError = classified.reason;
+      return "blocked";
+    }
+
+    httpErrorCount++;
+    consecutiveBlockedCount = 0;
+    errors.push(
+      `HTTP ${status} for ${context}` +
+        (classified.bodyHint ? ` | body: ${classified.bodyHint}` : ""),
+    );
+    lastError = classified.reason;
+    return "http_error";
+  };
+
+  const tripBlockedCircuit = () => {
+    if (abortedForBlockedSource) return;
+    abortedForBlockedSource = true;
+    const stopMsg =
+      "Stopped scan early: publiclookup.rivco.org is blocking automated access. Manual review required.";
+    errors.push(stopMsg);
+    lastError = stopMsg;
+  };
+
   // ----- SEARCH MATRIX LOOP -----
-  for (const permitType of PERMIT_TYPES) {
+  searchLoop: for (const permitType of PERMIT_TYPES) {
     for (const city of citiesToScan) {
+      if (abortedForBlockedSource) break searchLoop;
+
       try {
         const params = new URLSearchParams({
           Page: "1",
@@ -240,18 +343,34 @@ serve(async (req: Request) => {
           headers: searchHeaders,
         });
         if (!resp.ok) {
-          let bodyHint = "";
-          if (!firstErrorBodyHint) {
-            try {
-              const raw = await resp.text();
-              const stripped = raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240);
-              firstErrorBodyHint = stripped;
-              bodyHint = ` | body: ${stripped}`;
-            } catch (_) { /* non-fatal */ }
+          let bodyText = "";
+          try {
+            bodyText = await resp.text();
+          } catch (_) { /* non-fatal */ }
+          const failureKind = recordHttpFailure(
+            resp.status,
+            bodyText,
+            `${city} / ${permitType}`,
+          );
+          if (
+            failureKind === "blocked" &&
+            consecutiveBlockedCount >= BLOCKED_CIRCUIT_THRESHOLD
+          ) {
+            tripBlockedCircuit();
+            break searchLoop;
           }
-          errors.push(`HTTP ${resp.status} for ${city} / ${permitType}${bodyHint}`);
+          if (failureKind === "blocked") {
+            requestDelayMs = BLOCKED_BACKOFF_DELAY_MS;
+          }
+          await new Promise((r) => setTimeout(r, requestDelayMs));
           continue;
         }
+
+        // Successful response — reset blocked streak and default delay
+        consecutiveBlockedCount = 0;
+        requestDelayMs = BASE_REQUEST_DELAY_MS;
+        completedMatrixCount++;
+
         const html = await resp.text();
         const parsed = parseSearchResultsHTML(html);
 
@@ -262,17 +381,32 @@ serve(async (req: Request) => {
         // Paginate: up to 5 pages per (type, city) combo
         const maxPages = Math.min(parsed.total_pages, 5);
         for (let page = 2; page <= maxPages; page++) {
+          if (abortedForBlockedSource) break;
           params.set("Page", String(page));
           const pageUrl = TLMA_BASE_URL + "?" + params.toString();
           const pageResp = await fetch(pageUrl, {
             headers: searchHeaders,
           });
           if (!pageResp.ok) {
-            errors.push(
-              `HTTP ${pageResp.status} on page ${page} for ${city} / ${permitType}`
+            let pageBody = "";
+            try {
+              pageBody = await pageResp.text();
+            } catch (_) { /* non-fatal */ }
+            const pageFailure = recordHttpFailure(
+              pageResp.status,
+              pageBody,
+              `page ${page} for ${city} / ${permitType}`,
+              { countMatrix: false },
             );
+            if (
+              pageFailure === "blocked" &&
+              consecutiveBlockedCount >= BLOCKED_CIRCUIT_THRESHOLD
+            ) {
+              tripBlockedCircuit();
+            }
             break;
           }
+          consecutiveBlockedCount = 0;
           const pageHtml = await pageResp.text();
           const pageParsed = parseSearchResultsHTML(pageHtml);
           for (const p of pageParsed.permits) {
@@ -280,13 +414,16 @@ serve(async (req: Request) => {
           }
         }
 
-        // Polite 200ms delay between (type, city) combos
-        await new Promise((r) => setTimeout(r, 200));
+        if (abortedForBlockedSource) break searchLoop;
+
+        // Polite delay between (type, city) combos
+        await new Promise((r) => setTimeout(r, requestDelayMs));
       } catch (err) {
+        errorCount++;
+        completedMatrixCount++;
         errors.push(
           `Exception for ${city} / ${permitType}: ${(err as Error).message}`
         );
-        errorCount++;
         lastError = (err as Error).message;
       }
     }
@@ -391,25 +528,50 @@ serve(async (req: Request) => {
   const report: LiveRunReport = {
     timestamp: new Date().toISOString(),
     dry_run: false,
-    search_matrix_size: PERMIT_TYPES.length * citiesToScan.length,
+    search_matrix_size: searchMatrixSize,
+    completed_matrix_count: completedMatrixCount,
     total_permits_fetched: allPermits.length,
     inserts,
     updates,
+    new_leads: inserts,
+    updated_leads: updates,
     revisions_logged: revisionsLogged,
     last_seen_touched: lastSeenTouched,
     skipped_unchanged: lastSeenTouched,
     errors,
+    blocked_count: blockedCount,
+    http_error_count: httpErrorCount,
+    blocked: blockedCount > 0,
+    aborted_for_blocked_source: abortedForBlockedSource,
+    ...(blockedCount > 0 ? { blocked_reason: blockedReason } : {}),
+    manual_review_required: blockedCount > 0 || abortedForBlockedSource,
+    source_host: TLMA_SOURCE_HOST,
+    source_status: deriveSourceStatus(
+      blockedCount,
+      abortedForBlockedSource,
+      errorCount,
+      inserts + updates,
+    ),
     ...(firstErrorBodyHint ? { first_error_body: firstErrorBodyHint } : {}),
   };
 
   // ----- RUN LOGGING (v9): final update -----
   if (logId) {
+    const leadActivity = newCount + updatedCount > 0;
     const finalStatus =
-      errorCount === 0
+      errorCount === 0 && !abortedForBlockedSource
         ? "success"
-        : newCount + updatedCount > 0
+        : leadActivity
         ? "partial"
         : "failed";
+    let errorMessage = lastError;
+    if (abortedForBlockedSource) {
+      errorMessage =
+        `Source blocked automated access after ${blockedCount} challenge response(s). Manual review required.`;
+    } else if (blockedCount > 0) {
+      errorMessage =
+        `Source returned ${blockedCount} challenge/block response(s). Manual review required.`;
+    }
     try {
       await supabase
         .from("cron_run_log")
@@ -419,7 +581,7 @@ serve(async (req: Request) => {
           new_leads: newCount,
           updated_leads: updatedCount,
           errors: errorCount,
-          error_message: lastError,
+          error_message: errorMessage,
           duration_ms: Date.now() - runStart,
           permit_types_processed: PERMIT_TYPES.length,
         })
@@ -455,6 +617,19 @@ serve(async (req: Request) => {
 });
 
 // ----- HELPERS -----
+function deriveSourceStatus(
+  blockedCount: number,
+  abortedForBlockedSource: boolean,
+  errorCount: number,
+  leadActivity: number,
+): SourceStatus {
+  if (abortedForBlockedSource && leadActivity === 0) return "blocked";
+  if (errorCount === 0) return "ok";
+  if (leadActivity > 0) return "partial";
+  if (blockedCount > 0) return "blocked";
+  return "failed";
+}
+
 function jsonResponse(status: number, body: object): Response {
   return new Response(JSON.stringify(body, null, 2), {
     status,

@@ -429,10 +429,105 @@ const handleMapLeadSelect = (leadId: string) => {
     indio: 'INDIO',
     palm_springs: 'PALM SPRINGS',
   }
+  const TLMA_PUBLIC_URL = 'https://publiclookup.rivco.org/'
+
+  type ScanResultStatus = 'complete' | 'partial' | 'blocked' | 'failed'
+  interface TlmaScanResult {
+    status: ScanResultStatus
+    title: string
+    newCount: number
+    updatedCount: number
+    matrixSize: number
+    completedCount?: number
+    blockedCount: number
+    httpErrorCount: number
+    issueCount: number
+    manualReviewRequired: boolean
+    blockedReason?: string
+    firstError?: string
+    firstErrorBody?: string
+    sourceStatus?: string
+    cityLabel?: string
+    abortedEarly?: boolean
+  }
+
   const [isScanning, setIsScanning] = useState(false)
+  const [scanResult, setScanResult] = useState<TlmaScanResult | null>(null)
+
+  const buildScanResult = (
+    result: Record<string, unknown>,
+    tlmaCity: string | null,
+  ): TlmaScanResult => {
+    const newCount = (result.new_leads ?? result.inserts ?? result.inserted ?? 0) as number
+    const updatedCount = (result.updated_leads ?? result.updates ?? result.updated ?? 0) as number
+    const errorMessages: string[] = Array.isArray(result.errors) ? result.errors as string[] : []
+    const matrixSize = typeof result.search_matrix_size === 'number'
+      ? result.search_matrix_size
+      : (tlmaCity ? 8 : 104)
+    const completedCount = typeof result.completed_matrix_count === 'number'
+      ? result.completed_matrix_count
+      : undefined
+    const blockedCount = typeof result.blocked_count === 'number' ? result.blocked_count : 0
+    const httpErrorCount = typeof result.http_error_count === 'number'
+      ? result.http_error_count
+      : Math.max(0, errorMessages.length - blockedCount)
+    const issueCount = blockedCount + httpErrorCount > 0
+      ? blockedCount + httpErrorCount
+      : errorMessages.length
+    const manualReviewRequired = Boolean(
+      result.manual_review_required ?? (blockedCount > 0 || result.aborted_for_blocked_source),
+    )
+    const abortedEarly = Boolean(result.aborted_for_blocked_source)
+    const sourceStatus = typeof result.source_status === 'string' ? result.source_status : undefined
+    const blockedReason = typeof result.blocked_reason === 'string' ? result.blocked_reason : undefined
+    const firstErrorBody = typeof result.first_error_body === 'string' ? result.first_error_body : undefined
+    const firstError = errorMessages[0]
+    const hasLeadActivity = newCount > 0 || updatedCount > 0
+    const cityLabel = tlmaCity ? ` [${tlmaCity}]` : ''
+
+    let status: ScanResultStatus = 'complete'
+    let title = `Scan complete${cityLabel}`
+
+    if (manualReviewRequired && !hasLeadActivity) {
+      status = 'blocked'
+      title = `Source blocked automated access${cityLabel}`
+    } else if (hasLeadActivity && issueCount > 0) {
+      status = 'partial'
+      title = `Scan partial${cityLabel}`
+    } else if (issueCount > 0 && !hasLeadActivity) {
+      status = abortedEarly || sourceStatus === 'blocked' ? 'blocked' : 'failed'
+      title = status === 'blocked'
+        ? `Source blocked automated access${cityLabel}`
+        : `Scan could not complete${cityLabel}`
+    } else if (issueCount > 0) {
+      status = 'partial'
+      title = `Scan partial${cityLabel}`
+    }
+
+    return {
+      status,
+      title,
+      newCount,
+      updatedCount,
+      matrixSize,
+      completedCount,
+      blockedCount,
+      httpErrorCount,
+      issueCount,
+      manualReviewRequired,
+      blockedReason,
+      firstError,
+      firstErrorBody,
+      sourceStatus,
+      cityLabel: tlmaCity ?? undefined,
+      abortedEarly,
+    }
+  }
+
   const handleScanTLMA = async () => {
     if (isScanning) return
     setIsScanning(true)
+    setScanResult(null)
     try {
       const { data: { session } } = await supabase.auth.getSession()
       const token = session?.access_token
@@ -444,8 +539,6 @@ const handleMapLeadSelect = (leadId: string) => {
       const tlmaCity = GEO_TO_TLMA_CITY[geoFilter] ?? null
       const params = new URLSearchParams({ source: 'manual' })
       if (tlmaCity) {
-        // Single-city scan: 8 combos instead of 104, 30-day window to catch
-        // recent permits that the default 7-day window would miss.
         params.set('city', tlmaCity)
         params.set('days_back', '30')
       }
@@ -458,31 +551,7 @@ const handleMapLeadSelect = (leadId: string) => {
         alert(`Scan failed: ${result.error || resp.statusText}`)
         return
       }
-      const newCount = result.new_leads ?? result.inserts ?? result.inserted ?? 0
-      const updatedCount = result.updated_leads ?? result.updates ?? result.updated ?? 0
-      const errorMessages: string[] = Array.isArray(result.errors) ? result.errors : []
-      const errorCount = errorMessages.length > 0
-        ? errorMessages.length
-        : (typeof result.errors === 'number' ? result.errors : 0)
-      const matrixSize: number = typeof result.search_matrix_size === 'number'
-        ? result.search_matrix_size
-        : (tlmaCity ? 8 : 104)
-      const allFailed = errorCount > 0 && errorCount >= matrixSize && newCount === 0 && updatedCount === 0
-      const scanStatus = allFailed ? 'Scan FAILED' : errorCount > 0 ? 'Scan partial' : 'Scan complete'
-      const cityLabel = tlmaCity ? ` [${tlmaCity}]` : ''
-      const firstErrorBody: string = typeof result.first_error_body === 'string' ? result.first_error_body : ''
-      const isBlocked = errorMessages.length > 0 && errorMessages[0].includes('403')
-      const errorHint = errorMessages.length > 0
-        ? `\n\nFirst error: ${errorMessages[0]}` +
-          (firstErrorBody ? `\nPage content: ${firstErrorBody}` : '') +
-          (isBlocked ? '\n\nThe TLMA portal may be blocking server-side requests. Check Supabase logs for the full response body.' : '') +
-          (errorMessages.length > 1 ? `\n(+${errorMessages.length - 1} more in Supabase logs)` : '')
-        : ''
-      alert(
-        `${scanStatus}${cityLabel} — ${newCount} new lead(s), ${updatedCount} updated` +
-          (errorCount ? `, ${errorCount}/${matrixSize} request(s) failed` : '') +
-          '.' + errorHint
-      )
+      setScanResult(buildScanResult(result, tlmaCity))
       await fetchLeads()
     } catch (err: any) {
       alert(`Scan error: ${err?.message ?? String(err)}`)
@@ -719,6 +788,83 @@ const handleMapLeadSelect = (leadId: string) => {
             </button>
           </div>
         </div>
+
+        {/* HUNTER-1: scan result panel — partial/blocked/manual review UX */}
+        {scanResult && (
+          <div
+            className={clsx(
+              'rounded border p-3 text-sm space-y-2',
+              scanResult.status === 'complete' && 'bg-emerald-950 border-emerald-800 text-emerald-100',
+              scanResult.status === 'partial' && 'bg-amber-950 border-amber-800 text-amber-100',
+              scanResult.status === 'blocked' && 'bg-orange-950 border-orange-800 text-orange-100',
+              scanResult.status === 'failed' && 'bg-red-950 border-red-800 text-red-100',
+            )}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-semibold">{scanResult.title}</div>
+                <div className="text-xs mt-1 opacity-90">
+                  {scanResult.newCount} new · {scanResult.updatedCount} updated
+                  {scanResult.issueCount > 0 && (
+                    <span>
+                      {' '}· {scanResult.issueCount} of {scanResult.matrixSize} request(s) blocked/failed
+                      {scanResult.completedCount != null && (
+                        <span> ({scanResult.completedCount} attempted)</span>
+                      )}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setScanResult(null)}
+                className="text-xs underline opacity-80 hover:opacity-100 shrink-0"
+              >
+                Dismiss
+              </button>
+            </div>
+
+            {scanResult.manualReviewRequired && (
+              <p className="text-xs">
+                Manual review required — the public TLMA source is blocking automated access.
+                Existing leads were not deleted.
+              </p>
+            )}
+
+            {scanResult.blockedCount > 0 && (
+              <p className="text-xs">
+                Blocked responses: {scanResult.blockedCount}
+                {scanResult.abortedEarly && ' · scan stopped early to avoid hammering the source'}
+              </p>
+            )}
+
+            {(scanResult.blockedReason || scanResult.firstError) && (
+              <p className="text-xs opacity-90">
+                {scanResult.blockedReason || scanResult.firstError}
+                {scanResult.firstErrorBody && !scanResult.blockedReason && (
+                  <span className="block mt-1 text-[11px] opacity-75">{scanResult.firstErrorBody}</span>
+                )}
+              </p>
+            )}
+
+            {scanResult.sourceStatus && (
+              <p className="text-[11px] opacity-75">Source status: {scanResult.sourceStatus}</p>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              {scanResult.manualReviewRequired && (
+                <a
+                  href={TLMA_PUBLIC_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-xs text-white border border-gray-600"
+                >
+                  Open public source
+                </a>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Metrics */}
         <div className="grid grid-cols-3 gap-3">

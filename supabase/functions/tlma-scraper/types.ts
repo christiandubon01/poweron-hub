@@ -108,13 +108,19 @@ export interface DryRunReport {
   errors: string[];
 }
 
+export type SourceStatus = "ok" | "partial" | "blocked" | "failed";
+
 export interface LiveRunReport {
   timestamp: string;
   dry_run: false;
   search_matrix_size: number;
+  completed_matrix_count?: number;
   total_permits_fetched: number;
   inserts: number;
   updates: number;
+  /** Backward-compatible aliases for HunterPanel */
+  new_leads?: number;
+  updated_leads?: number;
   revisions_logged: number;
   last_seen_touched: number;
   skipped_unchanged: number;
@@ -122,4 +128,16 @@ export interface LiveRunReport {
   /** HTML-stripped body snippet (<=240 chars) from the first HTTP error.
    *  Populated only when at least one request fails. Identifies WAF/block type. */
   first_error_body?: string;
+  /** Count of requests blocked by Cloudflare/WAF/browser challenge */
+  blocked_count?: number;
+  /** Count of generic HTTP non-OK failures (not classified as blocked) */
+  http_error_count?: number;
+  /** True when at least one request was classified as blocked */
+  blocked?: boolean;
+  /** True when scan stopped early due to repeated blocked responses */
+  aborted_for_blocked_source?: boolean;
+  blocked_reason?: string;
+  manual_review_required?: boolean;
+  source_host?: string;
+  source_status?: SourceStatus;
 }
