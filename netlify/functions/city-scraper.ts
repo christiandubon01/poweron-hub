@@ -9,9 +9,9 @@
  * HUNTER-CITY-SCRAPER-APR30-2026-1
  *
  * Diagnostic probe (no DB writes):
- *   ?action=tlma-probe[&city=INDIO&type=BNR&days_back=30]
- *   Tests whether Netlify outbound IPs can reach publiclookup.rivco.org
- *   without a Cloudflare challenge. Returns JSON result only.
+ *   ?action=tlma-probe[&city=COACHELLA&permitType=Commercial%20Buildings%20(BNR)&pageSize=10&page=1]
+ *   One safe GET to publiclookup.rivco.org to test whether Netlify can reach TLMA.
+ *   No Supabase writes, no bypass/evasion. Returns JSON probe result only.
  *
  *   ?action=palm-desert-probe[&term=el%20paseo&pageSize=5&page=1]
  *   Fetches the public Palm Desert Salesforce/Aura search bootstrap, then
@@ -843,6 +843,93 @@ async function mapWithConcurrency<T, R>(
   return results
 }
 
+function buildTlmaProbeUrl(
+  city: string,
+  permitType: string,
+  pageSize: number,
+  page: number
+) {
+  const encodedPermitType = encodeURIComponent(permitType)
+  const encodedCity = encodeURIComponent(city)
+  const query = [
+    `Page=${page}`,
+    `PageSize=${pageSize}`,
+    'SortBy=IssuedDate',
+    'SortDesc=value',
+    'Criteria.PermitNumber=',
+    `Criteria.PermitType=${encodedPermitType}`,
+    'Criteria.WorkClass=',
+    'Criteria.StreetName=',
+    `Criteria.City=${encodedCity}`,
+    'Criteria.ParcelNumber=',
+    'Criteria.ProjectName=',
+    'Criteria.Description=',
+    'Criteria.SubdivisionName=',
+    'Criteria.Tract=',
+    'Criteria.Lot=',
+    'Criteria.ContactName=',
+    'Criteria.SqFtMin=',
+    '__Invariant=Criteria.SqFtMin',
+    'Criteria.SqFtMax=',
+    '__Invariant=Criteria.SqFtMax',
+    'Criteria.AppliedDateStart=',
+    '__Invariant=Criteria.AppliedDateStart',
+    'Criteria.AppliedDateEnd=',
+    '__Invariant=Criteria.AppliedDateEnd',
+    'Criteria.IssuedDateStart=',
+    '__Invariant=Criteria.IssuedDateStart',
+    'Criteria.IssuedDateEnd=',
+    '__Invariant=Criteria.IssuedDateEnd',
+    'Criteria.FinalDateStart=',
+    '__Invariant=Criteria.FinalDateStart',
+    'Criteria.FinalDateEnd=',
+    '__Invariant=Criteria.FinalDateEnd',
+    'Criteria.ExpireDateStart=',
+    '__Invariant=Criteria.ExpireDateStart',
+    'Criteria.ExpireDateEnd=',
+    '__Invariant=Criteria.ExpireDateEnd',
+    'Criteria.SortBy=IssuedDate',
+    'Criteria.SortDesc=true',
+    `Criteria.PageSize=${pageSize}`,
+    '__Invariant=Criteria.PageSize',
+    'Criteria.SortDesc=false',
+  ].join('&')
+
+  return `https://publiclookup.rivco.org/?${query}`
+}
+
+function isTlmaProbeBlocked(httpStatus: number, bodyText: string) {
+  if (httpStatus === 403 || httpStatus === 503) return true
+  return (
+    /just a moment/i.test(bodyText) ||
+    /cloudflare/i.test(bodyText) ||
+    /cf-ray/i.test(bodyText) ||
+    /checking your browser/i.test(bodyText) ||
+    /attention required/i.test(bodyText)
+  )
+}
+
+function inspectTlmaProbeBody(bodyText: string) {
+  const tableDetected =
+    bodyText.includes('resultsScroll') || bodyText.includes('results-table')
+  let roughRowCount = 0
+  const samplePermits: string[] = []
+
+  if (tableDetected) {
+    const tbodyMatch = bodyText.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i)
+    if (tbodyMatch) {
+      roughRowCount = (tbodyMatch[1].match(/<tr\b/gi) || []).length
+      const permitMatches = tbodyMatch[1].match(/\b[A-Z]{2,4}\d{4,}\b/g) || []
+      for (const permitNumber of permitMatches) {
+        if (!samplePermits.includes(permitNumber)) samplePermits.push(permitNumber)
+        if (samplePermits.length >= 3) break
+      }
+    }
+  }
+
+  return { table_detected: tableDetected, rough_row_count: roughRowCount, sample_permits: samplePermits }
+}
+
 function palmDesertProbeResponse(base: any, overrides: any) {
   return {
     statusCode: 200,
@@ -1441,56 +1528,61 @@ exports.handler = async (event: any) => {
 
   // ── TLMA REACHABILITY PROBE ───────────────────────────────────────────
   // Diagnostic only. Makes ONE request to publiclookup.rivco.org and returns
-  // the HTTP status + Cloudflare detection result. No DB writes, no scoring.
+  // blocked/table detection. No Supabase writes, no scoring, no bypass.
   if (params.action === 'tlma-probe') {
-    const probeCity = (params.city || 'INDIO').toUpperCase()
-    const probeTypeCode = (params.type || 'BNR').toUpperCase()
-    const probeDaysBack = Math.min(Math.max(parseInt(params.days_back || '30', 10), 1), 90)
-    const permitType = TLMA_PERMIT_TYPE_MAP[probeTypeCode] || `Commercial Buildings (BNR)`
+    const probeCity = String(params.city || 'COACHELLA').trim().toUpperCase() || 'COACHELLA'
+    const permitType =
+      String(params.permitType || 'Commercial Buildings (BNR)').trim() ||
+      'Commercial Buildings (BNR)'
+    const pageSize = clampInteger(params.pageSize, 10, 1, 50)
+    const page = clampInteger(params.page, 1, 1, 100)
+    const requestUrl = buildTlmaProbeUrl(probeCity, permitType, pageSize, page)
 
-    const startDate = new Date()
-    startDate.setDate(startDate.getDate() - probeDaysBack)
-    const startDateStr = startDate.toISOString().slice(0, 10)
-
-    const urlParams = new URLSearchParams({
-      Page: '1',
-      PageSize: '10',
-      SortBy: 'AppliedDate',
-      SortDesc: 'true',
-      'Criteria.PermitType': permitType,
-      'Criteria.City': probeCity,
-      'Criteria.AppliedDateStart': startDateStr,
-    })
-    const targetUrl = 'https://publiclookup.rivco.org/?' + urlParams.toString()
+    const baseResult = {
+      source: 'tlma_publiclookup',
+      mode: 'probe',
+      city: probeCity,
+      permit_type: permitType,
+      page,
+      page_size: pageSize,
+      request_url: requestUrl,
+      http_status: null as number | null,
+      blocked: true,
+      table_detected: false,
+      rough_row_count: 0,
+      sample_permits: [] as string[],
+      body_hint: '',
+      message: 'TLMA is blocking Netlify/server access. Use browser-assisted import.',
+    }
 
     try {
-      const resp = await fetch(targetUrl, { headers: TLMA_BROWSER_HEADERS })
+      const resp = await fetch(requestUrl, {
+        headers: {
+          Accept: 'text/html,application/xhtml+xml',
+          'User-Agent': 'PowerOn-CityScraper-TLMA-Probe/1.0',
+        },
+      })
       const bodyText = await resp.text()
-      const bodySnippet = bodyText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300)
-      const isCloudflareChallenge =
-        bodyText.includes('Just a moment') ||
-        bodyText.includes('cf-browser-verification') ||
-        bodyText.includes('_cf_chl') ||
-        bodyText.includes('data-cf-settings')
-      const looksLikeTlmaTable =
-        !isCloudflareChallenge && resp.ok &&
-        bodyText.includes('<table') && /permit/i.test(bodyText)
+      const blocked = isTlmaProbeBlocked(resp.status, bodyText)
+      const bodyHint = textSnippet(bodyText, 300)
+      const metrics = blocked ? null : inspectTlmaProbeBody(bodyText)
 
       return {
         statusCode: 200,
         headers: CORS_HEADERS,
         body: JSON.stringify({
-          probe: 'tlma-reachability',
-          city: probeCity,
-          permit_type: permitType,
-          permit_type_code: probeTypeCode,
-          days_back: probeDaysBack,
-          target_url: targetUrl,
-          timestamp: new Date().toISOString(),
+          ...baseResult,
           http_status: resp.status,
-          is_cloudflare_challenge: isCloudflareChallenge,
-          looks_parseable: looksLikeTlmaTable,
-          body_snippet: bodySnippet,
+          blocked,
+          table_detected: metrics?.table_detected ?? false,
+          rough_row_count: metrics?.rough_row_count ?? 0,
+          sample_permits: metrics?.sample_permits ?? [],
+          body_hint: bodyHint,
+          message: blocked
+            ? 'TLMA is blocking Netlify/server access. Use browser-assisted import.'
+            : metrics?.table_detected
+            ? 'Netlify can reach TLMA'
+            : 'Netlify reached TLMA but no results table was detected.',
         }),
       }
     } catch (err: any) {
@@ -1498,17 +1590,9 @@ exports.handler = async (event: any) => {
         statusCode: 200,
         headers: CORS_HEADERS,
         body: JSON.stringify({
-          probe: 'tlma-reachability',
-          city: probeCity,
-          permit_type: permitType,
-          permit_type_code: probeTypeCode,
-          days_back: probeDaysBack,
-          target_url: targetUrl,
-          timestamp: new Date().toISOString(),
-          http_status: null,
-          is_cloudflare_challenge: false,
-          looks_parseable: false,
-          fetch_error: err?.message || String(err),
+          ...baseResult,
+          body_hint: err?.message || String(err),
+          message: 'TLMA probe fetch failed before a response was received.',
         }),
       }
     }

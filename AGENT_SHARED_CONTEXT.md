@@ -4205,3 +4205,48 @@ No commit, push, deploy, manual Supabase touch, restore script, or manual localS
 **Untouched:** Estimate tab, scoped merge, backupDataService, liveCloudRefreshService, calculations.
 
 **Lock released.**
+
+---
+
+### 2026-07-06 — Phase HUNTER-1: Gated Source Safety + Partial Results UX (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** IMPLEMENT ONLY — Hunter scan safety when publiclookup.rivco.org blocks automated access
+**Branch:** main @ `048be15` | NOT committed | NOT pushed | user manually tests
+
+**Edge function (`supabase/functions/tlma-scraper/index.ts`, `types.ts`):**
+- Added `stripHtmlForHint`, `isCloudflareOrWafChallenge`, and `classifyHttpFailure` helpers to detect Cloudflare/WAF/browser-challenge responses (HTTP 403/503 with "Just a moment", etc.).
+- Added circuit breaker: after 3 consecutive blocked responses, aborts remaining search matrix for the run with clear error message. No anti-bot bypass attempted.
+- Optional backoff delay (800ms) after a blocked response below threshold.
+- Extended `LiveRunReport` with `blocked_count`, `http_error_count`, `blocked`, `aborted_for_blocked_source`, `blocked_reason`, `manual_review_required`, `source_host`, `source_status`, `completed_matrix_count`, and backward-compatible `new_leads`/`updated_leads` aliases.
+- Fixed `cron_run_log` error counting: HTTP non-OK and blocked responses now increment `errorCount`; status uses success/partial/failed with human-readable `error_message` for blocked cases. No DB migration — counts in report + error_message.
+
+**HunterPanel (`src/components/hunter/HunterPanel.tsx`):**
+- Replaced scary generic "Scan FAILED" alert with inline scan result panel showing partial/blocked/complete status.
+- Shows blocked count, manual review note, first error/reason, source status, and "Open public source" link for manual review.
+- Clarifies existing leads were not deleted on blocked scans.
+
+**Deferred to HUNTER-2:** Official Riverside County open-data/API replacement, CSV/PDF import, persistent source-health DB columns.
+
+**No live scans run during implementation. No deploy.**
+
+**Lock released.**
+
+---
+
+### 2026-07-06 — Phase HUNTER-TLMA-PROBE: Netlify TLMA Reachability Probe (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** IMPLEMENT ONLY — small Netlify probe for TLMA public lookup
+**Branch:** main @ `048be15` | commit/push after verify
+
+**Added TLMA Netlify probe action to `netlify/functions/city-scraper.ts`:**
+- `?action=tlma-probe` performs one safe GET to `publiclookup.rivco.org` with the captured public lookup query shape.
+- No Supabase writes, no lead import, no bypass/evasion (no cookies, proxies, CAPTCHA solving, or session tokens).
+- Returns JSON with `blocked`, `table_detected`, `rough_row_count`, and optional `sample_permits` to decide whether TLMA can move from Supabase to Netlify or needs browser-assisted import.
+
+**Untouched:** Indio scanner, Palm Springs scanner, Palm Desert Aura paths, Supabase `tlma-scraper`, Hunter UI, lead scoring, Supabase write/upsert logic.
+
+**No live TLMA probe run during implementation. No deploy during implementation.**
+
+**Lock released.**
