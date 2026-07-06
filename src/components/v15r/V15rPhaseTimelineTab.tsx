@@ -14,7 +14,19 @@
  */
 
 import React, { useState, useCallback } from 'react'
-import { getBackupData, saveBackupDataAndSync, num } from '@/services/backupDataService'
+import {
+  getBackupData,
+  saveBackupData,
+  saveBackupDataAndSync,
+  saveBackupWithRemoteBaselineSync,
+  fetchLatestRemoteBackup,
+  num,
+} from '@/services/backupDataService'
+import {
+  mergeProjectTimelineIntoRemote,
+  ensurePhaseTimelineEntryIdentity,
+  stampProjectTimelineField,
+} from '@/services/projectScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import { getProjectPhaseNames, normalizePhaseName } from '@/utils/v15rProjectPhases'
 import {
@@ -369,6 +381,34 @@ function PhaseRow({
   )
 }
 
+// ── Phase 6S-D1: project.timeline scoped save ─────────────────────────────────
+// Fetch latest remote, merge ONLY this project's phase_timeline/deposit fields
+// against it, and save through the existing remote-baseline sync path so an
+// unrelated device's newer timeline/deposit edits are never clobbered by a
+// stale broad projects[] save. Falls back to a guarded broad save (still
+// scoped via _scopes) if there is no remote row yet or the remote fetch fails.
+async function saveProjectTimelineScoped(incomingBackup: any, projectId: string): Promise<void> {
+  incomingBackup._lastSavedAt = new Date().toISOString()
+  saveBackupData(incomingBackup)
+
+  try {
+    const remote = await fetchLatestRemoteBackup()
+    if (remote.hasRemoteRow && remote.remoteData) {
+      const merged = mergeProjectTimelineIntoRemote(remote.remoteData, incomingBackup, projectId)
+      await saveBackupWithRemoteBaselineSync(
+        merged,
+        { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+        { source: 'project-timeline-remote-merge', changedKey: 'projects', _scopes: ['project.timeline'] },
+      )
+      return
+    }
+    saveBackupDataAndSync(incomingBackup, 'projects', { source: 'project.timeline', _scopes: ['project.timeline'] })
+  } catch (err) {
+    console.warn('[PhaseTimeline] Scoped project.timeline sync failed; local changes preserved', err)
+    saveBackupDataAndSync(incomingBackup, 'projects', { source: 'project.timeline', _scopes: ['project.timeline'] })
+  }
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface V15rPhaseTimelineTabProps {
@@ -427,14 +467,15 @@ export default function V15rPhaseTimelineTab({
     const existingTimeline: PhaseTimelineEntry[] = proj.phase_timeline
       ? [...proj.phase_timeline]
       : []
-    const entryIdx = existingTimeline.findIndex(e => e.phase_name === updatedEntry.phase_name)
-    if (entryIdx === -1) existingTimeline.push(updatedEntry)
-    else existingTimeline[entryIdx] = updatedEntry
+    const stampedEntry = ensurePhaseTimelineEntryIdentity(updatedEntry, new Date().toISOString())
+    const entryIdx = existingTimeline.findIndex(e => e.phase_name === stampedEntry.phase_name)
+    if (entryIdx === -1) existingTimeline.push(stampedEntry)
+    else existingTimeline[entryIdx] = stampedEntry
 
     const updatedProjects = [...projects]
     updatedProjects[idx] = { ...proj, phase_timeline: existingTimeline }
     pushState(b)
-    saveBackupDataAndSync({ ...b, projects: updatedProjects, _lastSavedAt: new Date().toISOString() }, 'projects')
+    void saveProjectTimelineScoped({ ...b, projects: updatedProjects, _lastSavedAt: new Date().toISOString() }, projectId)
     forceUpdate()
     if (onUpdate) onUpdate()
   }
@@ -446,9 +487,11 @@ export default function V15rPhaseTimelineTab({
     const idx = projects.findIndex((p: any) => p.id === projectId)
     if (idx === -1) return
     const updatedProjects = [...projects]
-    updatedProjects[idx] = { ...projects[idx], deposit_pct: currentDepositPct }
+    const updatedProject = { ...projects[idx], deposit_pct: currentDepositPct }
+    stampProjectTimelineField(updatedProject, 'deposit_pct', new Date().toISOString())
+    updatedProjects[idx] = updatedProject
     pushState(b)
-    saveBackupDataAndSync({ ...b, projects: updatedProjects, _lastSavedAt: new Date().toISOString() }, 'projects')
+    void saveProjectTimelineScoped({ ...b, projects: updatedProjects, _lastSavedAt: new Date().toISOString() }, projectId)
     forceUpdate()
     if (onUpdate) onUpdate()
   }

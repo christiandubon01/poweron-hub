@@ -1740,3 +1740,287 @@ export function mergeAllProjectFinanceIntoRemote(
 
   return merged
 }
+
+// ── Project timeline: phase_timeline rows + deposit scalars (Phase 6S-D1) ──────
+// project.timeline protects projected cash flow / payment schedule / quote-vs-
+// actual planning data: projects[].phase_timeline[] (merged by phase_name) plus
+// the deposit_pct / phase_deposit_pct scalar fields (per-field LWW keyed by a
+// projects[].timelineUpdatedAt map). SEPARATE from project.schedule (phases/
+// plannedStart/plannedEnd/tasks) and project.progress/project.coordination,
+// which remain unimplemented. Never touches logs[]/payments, finance, estimate
+// rows/scalars, materials, RFIs, or change orders.
+
+export type ProjectTimelineFieldKey = 'deposit_pct' | 'phase_deposit_pct'
+
+/** The only projects[] scalar fields this merge is allowed to read/patch (phase_timeline is handled separately). */
+export const PROJECT_TIMELINE_FIELD_KEYS: readonly ProjectTimelineFieldKey[] = [
+  'deposit_pct',
+  'phase_deposit_pct',
+]
+
+function normalizeTimelinePhaseName(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase()
+}
+
+function stableTimelineFingerprint(entry: any): string {
+  const parts = [
+    entry?.phase_name,
+    entry?.payment_trigger_pct,
+    entry?.confirmed_start_date,
+    entry?.actual_start_date,
+    entry?.actual_end_date,
+  ].map(v => String(v ?? '').trim())
+  return shortStableHash(parts.join('|'))
+}
+
+/**
+ * Stable identity for a phase_timeline row: normalized phase_name (primary),
+ * else a legacy `id` field, else a deterministic content fingerprint. Never
+ * random, so the same logical phase resolves to the same identity on both
+ * sides of a merge.
+ */
+export function getPhaseTimelineIdentity(entry: any): string {
+  const normalizedName = normalizeTimelinePhaseName(entry?.phase_name)
+  if (normalizedName) return normalizedName
+  const legacyId = String(entry?.id ?? '').trim()
+  if (legacyId) return `id:${legacyId}`
+  return `fingerprint:${stableTimelineFingerprint(entry)}`
+}
+
+/**
+ * Ensure a phase_timeline entry has updatedAt when a timestamp is supplied.
+ * Preserves every existing field (including unknown ones) and never invents or
+ * rewrites phase_name.
+ */
+export function ensurePhaseTimelineEntryIdentity(entry: any, timestamp?: string): any {
+  if (!entry || typeof entry !== 'object') return entry
+  const next = { ...entry }
+  if (timestamp !== undefined) {
+    next.updatedAt = isValidDateString(timestamp) ? String(timestamp) : new Date().toISOString()
+  }
+  return next
+}
+
+/** Stamp project.timelineUpdatedAt[fieldName] only; preserves every other field on the project untouched. */
+export function stampProjectTimelineField(project: any, fieldName: string, timestamp?: string): any {
+  if (!project || typeof project !== 'object') return project
+  const stamps = project.timelineUpdatedAt && typeof project.timelineUpdatedAt === 'object' ? project.timelineUpdatedAt : {}
+  const ts = isValidDateString(timestamp) ? String(timestamp) : new Date().toISOString()
+  project.timelineUpdatedAt = { ...stamps, [fieldName]: ts }
+  return project
+}
+
+function isBlankTimelineValue(value: unknown): boolean {
+  return value === undefined || value === null || value === ''
+}
+
+/** Overlay `winner` onto `loser` so a winner never wipes a loser's defined field with an undefined/blank one. Unknown fields preserved. */
+function coalesceTimelineRow(winner: any, loser: any): any {
+  if (!loser || typeof loser !== 'object') return { ...winner }
+  const result: Record<string, any> = { ...loser, ...winner }
+  for (const key of Object.keys(loser)) {
+    if (isBlankTimelineValue(winner?.[key]) && !isBlankTimelineValue(loser[key])) {
+      result[key] = loser[key]
+    }
+  }
+  return result
+}
+
+/**
+ * Merge two phase_timeline arrays by phase_name identity. Rows from both sides
+ * are preserved; for a shared phase, newer `updatedAt` wins; on a tie or when
+ * both are missing, incoming wins (so an explicit project.timeline save
+ * applies) but never wipes a remote-defined field with an incoming
+ * undefined/blank one. Output order is incoming-first, then any remote-only
+ * rows appended.
+ */
+export function mergePhaseTimelineRowsByPhase(remoteRows: any[], incomingRows: any[]): any[] {
+  const remoteArr = Array.isArray(remoteRows) ? remoteRows : []
+  const incomingArr = Array.isArray(incomingRows) ? incomingRows : []
+
+  const remoteByKey = new Map<string, any>()
+  for (const row of remoteArr) remoteByKey.set(getPhaseTimelineIdentity(row), row)
+
+  const result: any[] = []
+  const used = new Set<string>()
+
+  for (const incoming of incomingArr) {
+    const key = getPhaseTimelineIdentity(incoming)
+    if (used.has(key)) continue
+    used.add(key)
+    const remote = remoteByKey.get(key)
+    if (!remote) {
+      result.push(incoming)
+      continue
+    }
+
+    const remoteTs = comparableMs(remote?.updatedAt)
+    const incomingTs = comparableMs(incoming?.updatedAt)
+    const incomingWins = incomingTs > remoteTs || incomingTs === remoteTs
+    const winner = incomingWins ? incoming : remote
+    const loser = incomingWins ? remote : incoming
+    result.push(coalesceTimelineRow(winner, loser))
+  }
+
+  for (const remote of remoteArr) {
+    const key = getPhaseTimelineIdentity(remote)
+    if (used.has(key)) continue
+    used.add(key)
+    result.push(remote)
+  }
+
+  return result
+}
+
+function hasTimelineFieldValue(value: unknown): boolean {
+  if (value === undefined || value === null) return false
+  if (typeof value === 'string' && value.trim() === '') return false
+  return true
+}
+
+function asTimelineStamps(value: any): Record<string, any> {
+  return value && typeof value === 'object' ? value : {}
+}
+
+/**
+ * Resolve deposit_pct / phase_deposit_pct on `targetProject` (already a clone)
+ * by per-field LWW between `remoteProject` and `incomingProject`. Winner rules
+ * mirror the project.finance scalar pattern: strictly-newer timelineUpdatedAt
+ * wins that field; on a timestamp tie the side that actually has a value wins
+ * (protects a remote legacy value from a local blank); a value is never wiped
+ * by an undefined winner.
+ */
+function resolveProjectTimelineFieldsLWW(targetProject: any, remoteProject: any, incomingProject: any): void {
+  const remoteStamps = asTimelineStamps(remoteProject?.timelineUpdatedAt)
+  const incomingStamps = asTimelineStamps(incomingProject?.timelineUpdatedAt)
+  const nextStamps: Record<string, any> = { ...asTimelineStamps(targetProject.timelineUpdatedAt) }
+
+  for (const field of PROJECT_TIMELINE_FIELD_KEYS) {
+    const remoteTs = comparableMs(remoteStamps[field])
+    const incomingTs = comparableMs(incomingStamps[field])
+    const remoteHasVal = hasTimelineFieldValue(remoteProject?.[field])
+    const incomingHasVal = hasTimelineFieldValue(incomingProject?.[field])
+
+    let winnerIsRemote: boolean
+    if (remoteTs > incomingTs) winnerIsRemote = true
+    else if (incomingTs > remoteTs) winnerIsRemote = false
+    else winnerIsRemote = !incomingHasVal && remoteHasVal // tie: never wipe a remote value with a local blank
+
+    if (winnerIsRemote) {
+      if (remoteHasVal) targetProject[field] = remoteProject[field]
+      if (isValidDateString(remoteStamps[field])) nextStamps[field] = String(remoteStamps[field])
+    } else {
+      if (incomingHasVal) targetProject[field] = incomingProject[field]
+      if (isValidDateString(incomingStamps[field])) nextStamps[field] = String(incomingStamps[field])
+    }
+  }
+
+  targetProject.timelineUpdatedAt = nextStamps
+}
+
+/**
+ * Single-project timeline merge (remote-based): returns a clone of
+ * `remoteBackup` with ONLY the target project's phase_timeline (merged by
+ * phase_name) and deposit scalar fields resolved against `incomingBackup`.
+ * Every other field and every other project is the remote snapshot, untouched.
+ */
+export function mergeProjectTimelineIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+  projectId: string,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const targetId = String(projectId || '').trim()
+  if (!targetId) return merged
+
+  const remoteProjects = Array.isArray(merged.projects) ? merged.projects : []
+  const remoteIndex = remoteProjects.findIndex((p: any) => String(p?.id || '') === targetId)
+  if (remoteIndex === -1) return merged
+
+  const incomingProjects = Array.isArray(incomingBackup?.projects) ? incomingBackup.projects : []
+  const incomingProject: any = incomingProjects.find((p: any) => String(p?.id || '') === targetId)
+  if (!incomingProject) return merged
+
+  const remoteProject: any = remoteProjects[remoteIndex]
+  const remoteTimeline = Array.isArray(remoteProject.phase_timeline) ? remoteProject.phase_timeline : []
+  const incomingTimeline = Array.isArray(incomingProject.phase_timeline) ? incomingProject.phase_timeline : []
+  remoteProject.phase_timeline = mergePhaseTimelineRowsByPhase(remoteTimeline, incomingTimeline)
+
+  resolveProjectTimelineFieldsLWW(remoteProject, remoteProject, incomingProject)
+  return merged
+}
+
+/**
+ * Broad-saver timeline guard (INCOMING-based): returns a clone of
+ * `incomingBackup` so every local project edit is preserved exactly, with each
+ * project's phase_timeline + deposit scalar fields reconciled against
+ * `remoteBackup`. Intended for a future broad project saver that needs to
+ * protect project.timeline the way mergeAllProjectFinanceIntoRemote protects
+ * project.finance.
+ */
+export function mergeAllProjectTimelineIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(incomingBackup)) as BackupData
+
+  const remoteById = new Map<string, any>()
+  for (const rp of Array.isArray(remoteBackup?.projects) ? remoteBackup.projects : []) {
+    const id = String(rp?.id || '').trim()
+    if (id) remoteById.set(id, rp)
+  }
+
+  for (const mp of Array.isArray(merged.projects) ? merged.projects : []) {
+    const id = String(mp?.id || '').trim()
+    if (!id) continue
+    const remoteProject = remoteById.get(id)
+    if (!remoteProject) continue // remote has no counterpart; keep incoming timeline as-is
+
+    const remoteTimeline = Array.isArray(remoteProject.phase_timeline) ? remoteProject.phase_timeline : []
+    const incomingTimeline = Array.isArray(mp.phase_timeline) ? mp.phase_timeline : []
+    mp.phase_timeline = mergePhaseTimelineRowsByPhase(remoteTimeline, incomingTimeline)
+
+    // target = incoming clone (mp); "incoming" side of the LWW is mp itself.
+    resolveProjectTimelineFieldsLWW(mp, remoteProject, mp)
+  }
+
+  return merged
+}
+
+/**
+ * Narrow pre-sync preservation fold: returns a clone of `outgoingBackup` with
+ * newer remote phase_timeline/deposit data folded in for every project that
+ * exists on both sides. Remote is passed as the "incoming" side of the row
+ * merge and the field LWW so it wins ties — this is only meant to run on a
+ * save that is NOT itself a project.timeline save, protecting a stale local
+ * timeline bucket from overwriting newer remote data. Only phase_timeline,
+ * deposit_pct, phase_deposit_pct, and timelineUpdatedAt are touched.
+ */
+export function mergeRemoteProjectTimelineIntoOutgoing(
+  outgoingBackup: BackupData,
+  remoteBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(outgoingBackup)) as BackupData
+
+  const remoteById = new Map<string, any>()
+  for (const rp of Array.isArray(remoteBackup?.projects) ? remoteBackup.projects : []) {
+    const id = String(rp?.id || '').trim()
+    if (id) remoteById.set(id, rp)
+  }
+
+  for (const op of Array.isArray(merged.projects) ? merged.projects : []) {
+    const id = String(op?.id || '').trim()
+    if (!id) continue
+    const remoteProject = remoteById.get(id)
+    if (!remoteProject) continue
+
+    const outgoingTimeline = Array.isArray(op.phase_timeline) ? op.phase_timeline : []
+    const remoteTimeline = Array.isArray(remoteProject.phase_timeline) ? remoteProject.phase_timeline : []
+    // Pass remote as "incoming" so remote wins tie/missing timestamps here.
+    op.phase_timeline = mergePhaseTimelineRowsByPhase(outgoingTimeline, remoteTimeline)
+
+    resolveProjectTimelineFieldsLWW(op, remoteProject, op)
+  }
+
+  return merged
+}

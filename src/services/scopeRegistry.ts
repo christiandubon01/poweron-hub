@@ -33,6 +33,7 @@ export type DataScope =
   | 'project.logs'
   | 'project.materials'
   | 'project.schedule'
+  | 'project.timeline'
   | 'project.notes'
   | 'project.files'
   | 'project.lifecycle'
@@ -63,6 +64,7 @@ export type ScopeMergeStrategy =
   | 'map-merge'
   | 'lww'
   | 'field-lww'
+  | 'mixed'
   | 'future'
 
 export type ScopePriority =
@@ -216,6 +218,20 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
     needsTombstone: false,
     strategy: 'field-lww',
     priority: 'high',
+  },
+  'project.timeline': {
+    scope: 'project.timeline',
+    dataPath: 'projects[].phase_timeline[] / projects[].deposit_pct / projects[].phase_deposit_pct',
+    owner: 'V15rPhaseTimelineTab',
+    level: 'nested',
+    identityField: 'phase_name (phase_timeline rows); project id + field name (deposit scalars)',
+    timestampField: 'phase_timeline[].updatedAt; timelineUpdatedAt.deposit_pct; timelineUpdatedAt.phase_deposit_pct',
+    tombstoneField: undefined,
+    needsTimestamp: false,
+    needsTombstone: false,
+    strategy: 'mixed',
+    priority: 'high',
+    notes: 'Phase 6S-D1: protects projected cash flow / payment schedule / quote-vs-actual planning data from stale broad projects[] saves. phase_timeline rows merge by phase_name via mergePhaseTimelineRowsByPhase (projectScopeMerge.ts): newer updatedAt wins; tie/missing prefers incoming (explicit project.timeline saves); a winner never wipes a loser\'s defined field with an undefined/blank one. deposit_pct and phase_deposit_pct use a per-field last-writer-wins merge keyed by projects[].timelineUpdatedAt (mirrors project.finance/project.estimate scalar pattern): strictly-newer timelineUpdatedAt wins; on a tie the side with an actual value wins so a remote legacy value is never wiped by a local blank. V15rPhaseTimelineTab.handlePhaseEntryUpdate / handleDepositSave now fetch latest remote, run mergeProjectTimelineIntoRemote, and save through saveBackupWithRemoteBaselineSync (changedKey "projects", _scopes ["project.timeline"]); fallback saveBackupDataAndSync. A narrow pre-sync preservation fold (mergeRemoteProjectTimelineIntoOutgoing) protects newer remote phase_timeline/deposit data on any non-project.timeline broad save. This is SEPARATE from project.schedule (phases/plannedStart/plannedEnd/tasks) and project.progress/project.coordination, which remain unimplemented/deferred. Project payments source of truth remains logs[].collected (project.logs/project.payments); project.finance remains separate. Same client-clock/no-GC limitations as the other project scopes.',
   },
   'project.notes': {
     scope: 'project.notes',
@@ -530,12 +546,16 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
     'project.logs',
     'project.materials',
     'project.schedule',
+    'project.timeline',
     'project.notes',
     'project.lifecycle',
     'project.finance',
   ],
   'project.finance': [
     'project.finance',
+  ],
+  'project.timeline': [
+    'project.timeline',
   ],
   logs: [
     'project.payments',
