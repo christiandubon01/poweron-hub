@@ -29,6 +29,7 @@ export type DataScope =
   | 'project.rfis'
   | 'project.changeOrders'
   | 'project.estimate'
+  | 'project.estimateVersions'
   | 'project.payments'
   | 'project.logs'
   | 'project.materials'
@@ -166,7 +167,21 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
     needsTombstone: false,
     strategy: 'id-merge',
     priority: 'critical',
-    notes: 'Phase 6J: project.estimate laborRows and ohRows have delete-safe item-level nested merge via projectScopeMerge.ts (laborId/overheadId stable identities; createdAt/updatedAt; deletedAt/deletedBy tombstones; live readers filter tombstones). Phase 6L: the flat estimate scalar fields contract, mileRT, and miDays use per-field LWW merge (mergeProjectEstimateScalarsIntoRemote) keyed by projects[].estimateScalarUpdatedAt. Phase 6L-B / 6S-E: projects[].laborPhaseColors is UI metadata for Estimate labor phase headers — per-phase LWW map merge (mergeProjectLaborPhaseColorsIntoRemote / mergeRemoteLaborPhaseColorsIntoOutgoing) keyed by projects[].laborPhaseColorUpdatedAt[phaseKey]; belongs under project.estimate, NOT project.progress and NOT global settings. progressPhaseColors is already protected by project.progress (6S-D2). settings.phaseWeights / settings.mtoPhases are deferred. Row and scalar saves fetch latest remote and patch only their own keys through the existing remote-baseline path (Save/stale/baseline unchanged). estimateReference/phaseEstimateRows (legacy/dead) and estimateVersions (separate top-level future scope) remain unimplemented. project.materials is separate under project.materials.',
+    notes: 'Phase 6J: project.estimate laborRows and ohRows have delete-safe item-level nested merge via projectScopeMerge.ts (laborId/overheadId stable identities; createdAt/updatedAt; deletedAt/deletedBy tombstones; live readers filter tombstones). Phase 6L: the flat estimate scalar fields contract, mileRT, and miDays use per-field LWW merge (mergeProjectEstimateScalarsIntoRemote) keyed by projects[].estimateScalarUpdatedAt. Phase 6L-B / 6S-E: projects[].laborPhaseColors is UI metadata for Estimate labor phase headers — per-phase LWW map merge (mergeProjectLaborPhaseColorsIntoRemote / mergeRemoteLaborPhaseColorsIntoOutgoing) keyed by projects[].laborPhaseColorUpdatedAt[phaseKey]; belongs under project.estimate, NOT project.progress and NOT global settings. progressPhaseColors is already protected by project.progress (6S-D2). settings.phaseWeights / settings.mtoPhases are deferred. Row and scalar saves fetch latest remote and patch only their own keys through the existing remote-baseline path (Save/stale/baseline unchanged). estimateReference/phaseEstimateRows (legacy/dead) remain unimplemented. project.materials is separate under project.materials.',
+  },
+  'project.estimateVersions': {
+    scope: 'project.estimateVersions',
+    dataPath: 'BackupData.estimateVersions[projectId][]',
+    owner: 'V15rEstimateTab',
+    level: 'top-level',
+    identityField: 'versionId (fallback: ts + laborCount + ohCount + total)',
+    timestampField: 'createdAt / updatedAt',
+    tombstoneField: 'deletedAt',
+    needsTimestamp: false,
+    needsTombstone: false,
+    strategy: 'id-merge',
+    priority: 'high',
+    notes: 'Phase 6S-F: top-level saved estimate version history (immutable laborRows/ohRows copies per snapshot). Metadata fields name/notes editable via scoped save; mergeEstimateVersionPair preserves payload and LWW-merges metadata by updatedAt. restoreEstimateVersion is authoritative live row rollback under project.estimate (tombstones rows not in selected snapshot). mergeEstimateVersionsIntoRemote / mergeRemoteEstimateVersionsIntoOutgoing in projectScopeMerge.ts. saveEstimateVersion / saveEstimateVersionsScoped fetch latest remote and patch only estimateVersions[projectId]. Max 5 visible non-deleted versions per project. SnapshotPanel full restore intentionally unchanged.',
   },
   'project.payments': {
     scope: 'project.payments',
@@ -603,6 +618,12 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
   ],
   'project.estimate': [
     'project.estimate',
+  ],
+  'project.estimateVersions': [
+    'project.estimateVersions',
+  ],
+  estimateVersions: [
+    'project.estimateVersions',
   ],
   logs: [
     'project.payments',

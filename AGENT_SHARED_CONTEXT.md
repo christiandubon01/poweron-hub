@@ -100,6 +100,105 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 ## Audit & Change Log
 
+### 2026-07-06 — Phase 6S-F FINAL TINY HOTFIX: Snapshot Rename Clear Persists (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** Tiny hotfix on uncommitted 6S-F — clearing a renamed snapshot title must persist across merge.
+**Branch:** main | NOT committed | NOT pushed
+
+**Changes:**
+- **`projectScopeMerge.ts`**: `mergeEstimateVersionPair` now uses `hasOwnProperty` for `name`/`notes` so the metadata-newer side wins even when value is explicit `''`; prevents older remote name from resurrecting after clear.
+- **`V15rEstimateTab.tsx`**: rename save stores `name: ''` when user clears title (no longer converts to `undefined`).
+
+**Untouched:** Restore preview modal, Rename/Restore/Delete handlers (except rename clear save), restore/delete logic, laborRows/ohRows payload, scoped save path.
+
+**Lock released.**
+
+---
+
+### 2026-07-05 — Phase 6S-F HOTFIX 3: Restore Preview Modal Full Row Details (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** Hotfix on uncommitted 6S-F — restore preview modal shows full row details.
+**Branch:** main | NOT committed | NOT pushed
+
+**Changes:**
+- **`V15rEstimateTab.tsx`**: Restore preview modal now shows full row details instead of label-only rows. Labor preview rows show Entry, Employee, Phase, Hours, Rate, Total. Changed rows show Current vs Snapshot side-by-side blocks. Removed rows show current details; restored rows show snapshot details. Overhead rows show Entry, Qty, Cost, Price, Total, and Notes when available.
+
+**Untouched:** Restore logic, tombstone logic, Rename/Restore/Delete behavior, scoped save behavior, estimateVersions merge helpers.
+
+**Lock released.**
+
+---
+
+### 2026-07-05 — Phase 6S-F HOTFIX 2B: Restore Preview Modal (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** Hotfix on uncommitted 6S-F — Restore opens preview modal before applying authoritative restore.
+**Branch:** main | NOT committed | NOT pushed
+
+**Changes:**
+- **`V15rEstimateTab.tsx`**: Restore button opens preview modal (no immediate restore); modal compares current live labor/OH rows vs snapshot with badges Will be removed / Will be restored / Will change; summary counts; Cancel + Restore Snapshot footer; only Restore Snapshot calls authoritative restore; Rename/Delete unchanged; Edit removed.
+
+**Untouched:** SnapshotPanel full snapshots; contract/mileRT/miDays; laborPhaseColors; sync/baseline core.
+
+**Lock released.**
+
+---
+
+### 2026-07-05 — Phase 6S-F HOTFIX 2: Rename / Restore / Delete Snapshot Buttons (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** Hotfix on uncommitted 6S-F — simplify snapshot actions to Rename / Restore / Delete.
+**Branch:** main | NOT committed | NOT pushed
+
+**Changes:**
+- **`V15rEstimateTab.tsx`**: removed Edit/details button; button order is Rename | Restore | Delete; Rename only updates `version.name` via `updateEstimateVersionName` (notes/payload preserved); Delete confirms then tombstones via `createEstimateVersionTombstone` + `saveEstimateVersionsScoped`; UI filters deleted via `getVisibleEstimateVersions`; restore behavior from prior hotfix unchanged.
+
+**Untouched:** SnapshotPanel full snapshots; live estimate rows; contract/mileRT/miDays; laborPhaseColors; sync/baseline core.
+
+**Lock released.**
+
+---
+
+### 2026-07-05 — Phase 6S-F HOTFIX: Authoritative Restore + Version Metadata (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** Hotfix on uncommitted 6S-F — restore must tombstone rows added after selected snapshot; add rename/edit metadata.
+**Branch:** main (no branch switch) | NOT committed | NOT pushed
+
+**Root cause:** `reconcileLaborReplacement` / `reconcileOverheadReplacement` compared row identities using replacement-only context, so live rows could miss tombstoning when stable IDs differed between snapshot copies and live `p.laborRows`. Restore also relied on debounced async row save without immediate local persist or explicit draft reset — UI draft (`laborDraftRows`) could keep rows visible after restore.
+
+**Fix:**
+- **`V15rEstimateTab.tsx`**: authoritative reconcile uses combined existing+replacement identity context; restored rows stamped `updatedAt: now` (clears `deletedAt`); live rows absent from snapshot get `createLaborRowTombstone` / `createOverheadRowTombstone` with `now`; restore resets draft refs + `setLaborDraftRows`/`setOverheadDraftRows`; `persistEstimateRowsSnapshotLocal` + `saveEstimateRowsScoped(..., 0)`; updated confirm text; `saveEstimateVersionsScoped` helper; Rename/Edit buttons via `prompt()` updating `name`/`notes` only (payload immutable); display via `getEstimateVersionDisplayLabel`.
+- **`projectScopeMerge.ts`**: `mergeEstimateVersionPair` preserves `laborRows`/`ohRows` payload, LWW-merges `name`/`notes` by `updatedAt`; exported `getEstimateVersionDisplayLabel`.
+- **`backupDataService.ts`**: `BackupEstimateVersion.name?` / `notes?` documented on type.
+
+**Untouched:** SnapshotPanel full restore; project.estimate scalar/color save paths except restore reconcile; timeline/progress/schedule/coordination/finance/service/team scopes.
+
+**Lock released.**
+
+---
+
+### 2026-07-05 — Phase 6S-F: project.estimateVersions Scoped Merge (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** Scoped implementation — protect Estimate tab saved version history from stale full-blob overwrite.
+**Branch:** main | HEAD before edits = `0d22f02` (Add scoped merge for labor phase colors)
+**Files changed:** `src/services/scopeRegistry.ts`, `src/services/projectScopeMerge.ts`, `src/services/backupDataService.ts`, `src/components/v15r/V15rEstimateTab.tsx`, `AGENT_SHARED_CONTEXT.md`
+
+**What was implemented:**
+- **`scopeRegistry.ts`**: added `project.estimateVersions` scope (id-merge, high priority); legacy changedKey mappings `project.estimateVersions` and `estimateVersions`.
+- **`backupDataService.ts`**: added `BackupEstimateVersion` type and `BackupData.estimateVersions`; added `isProjectEstimateVersionsSyncSource` and narrow pre-sync preservation fold calling `mergeRemoteEstimateVersionsIntoOutgoing` on non-project.estimateVersions saves (reuses existing remote fetch; never blocks save).
+- **`projectScopeMerge.ts`**: added `getEstimateVersionIdentity`, `ensureEstimateVersionIdentity`, `isDeletedEstimateVersion`, `createEstimateVersionTombstone`, `mergeEstimateVersionArrays`, `getVisibleEstimateVersions`, `mergeEstimateVersionsIntoRemote`, `mergeAllEstimateVersionsIntoRemote`, and `mergeRemoteEstimateVersionsIntoOutgoing` — id-merge with tombstone support; max 5 visible non-deleted versions per project.
+- **`V15rEstimateTab.tsx`**: `saveEstimateVersion` now stamps `versionId`/`createdAt`/`updatedAt`, saves locally for instant UI, then fetch-latest → `mergeEstimateVersionsIntoRemote` → `saveBackupWithRemoteBaselineSync({ changedKey: 'project.estimateVersions', _scopes: ['project.estimateVersions'] })`; fallback `saveBackupDataAndSync`. Version list uses `getVisibleEstimateVersions`. Restore confirm warns about multi-device overwrite.
+
+**Explicitly NOT done / deferred:** SnapshotPanel full restore (intentionally destructive, unchanged). `backup.snapshots` embedded snapshots. localStorage `poweron_snapshots`. `importBackupFromFile` estimateVersions import. `restoreEstimateVersion` row merge behavior unchanged except confirm text. project.estimate live rows/scalars/laborPhaseColors unchanged. project.timeline/progress/schedule/coordination untouched. project.finance untouched. finance.weeklyData untouched. team.members untouched. service scopes untouched. Sync/stale/baseline/verified-save core unchanged except narrow estimateVersions preservation hook. Not committed; no push.
+
+**Lock released.**
+
+---
+
 ### 2026-07-05 — Phase 6S-E / 6L-B: laborPhaseColors Scoped Merge Under project.estimate (NOT COMMITTED)
 
 **Agent:** Cursor Composer 2.5 Fast

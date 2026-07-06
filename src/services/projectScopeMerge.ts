@@ -7,7 +7,7 @@
  * module is intentionally pure: no React, localStorage, Supabase client, or
  * side effects.
  */
-import type { BackupData, ChangeOrder } from './backupDataService'
+import type { BackupData, BackupEstimateVersion, ChangeOrder } from './backupDataService'
 
 const EPOCH_FALLBACK_ISO = '1970-01-01T00:00:00.000Z'
 
@@ -1430,6 +1430,293 @@ export function mergeRemoteLaborPhaseColorsIntoOutgoing(
     if (!remoteProject) continue
     patchLaborPhaseColorFields(op, remoteProject, op, false)
   }
+  return merged
+}
+
+// ── Estimate version history (Phase 6S-F) ─────────────────────────────────────
+// Top-level BackupData.estimateVersions[projectId][] — immutable laborRows/ohRows
+// snapshots. Separate from project.estimate live row/scalar merge.
+
+const MAX_ESTIMATE_VERSIONS = 5
+
+function estimateVersionsMap(backup: BackupData | null | undefined): Record<string, BackupEstimateVersion[]> {
+  const raw = (backup as any)?.estimateVersions
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+}
+
+function comparableVersionMs(version: any): number {
+  const updated = comparableMs(version?.updatedAt)
+  if (updated > Number.NEGATIVE_INFINITY) return updated
+  const created = comparableMs(version?.createdAt)
+  if (created > Number.NEGATIVE_INFINITY) return created
+  const ts = Number(version?.ts)
+  return Number.isFinite(ts) ? ts : Number.NEGATIVE_INFINITY
+}
+
+function sortEstimateVersionsNewestFirst(a: BackupEstimateVersion, b: BackupEstimateVersion): number {
+  return comparableVersionMs(b) - comparableVersionMs(a)
+}
+
+export function getEstimateVersionIdentity(version: any): string {
+  const id = String(version?.versionId || '').trim()
+  if (id) return id
+  const ts = Number(version?.ts) || 0
+  const laborCount = Number(version?.laborCount) || 0
+  const ohCount = Number(version?.ohCount) || 0
+  const total = Math.round(Number(version?.total) || 0)
+  return `ev_legacy_${ts}_${laborCount}_${ohCount}_${total}`
+}
+
+export function ensureEstimateVersionIdentity(
+  version: any,
+  timestamp?: string,
+): BackupEstimateVersion {
+  const now = timestamp || new Date().toISOString()
+  const ts = Number(version?.ts)
+  const resolvedTs = Number.isFinite(ts) ? ts : (Date.parse(now) || Date.now())
+  const laborCount = Number(version?.laborCount) || 0
+  const ohCount = Number(version?.ohCount) || 0
+  const total = Number(version?.total) || 0
+  const roundedTotal = Math.round(total)
+  const versionId = String(version?.versionId || '').trim()
+    || `ev_${resolvedTs}_${laborCount}_${ohCount}_${roundedTotal}`
+
+  return {
+    ...version,
+    versionId,
+    ts: resolvedTs,
+    total,
+    laborCount,
+    ohCount,
+    laborRows: Array.isArray(version?.laborRows) ? version.laborRows : [],
+    ohRows: Array.isArray(version?.ohRows) ? version.ohRows : [],
+    createdAt: isValidDateString(version?.createdAt)
+      ? String(version.createdAt)
+      : new Date(resolvedTs).toISOString(),
+    updatedAt: isValidDateString(version?.updatedAt) ? String(version.updatedAt) : now,
+  }
+}
+
+export function isDeletedEstimateVersion(version: any): boolean {
+  if (isValidDateString(version?.deletedAt)) return true
+  return String(version?.status || '').toLowerCase().trim() === 'deleted'
+}
+
+export function createEstimateVersionTombstone(
+  version: any,
+  deletedBy?: string,
+): BackupEstimateVersion {
+  const now = new Date().toISOString()
+  const base = ensureEstimateVersionIdentity(version, now)
+  const tombstone: BackupEstimateVersion = {
+    ...base,
+    deletedAt: now,
+    updatedAt: now,
+    status: 'deleted',
+  }
+  if (deletedBy) tombstone.deletedBy = deletedBy
+  else if (base.deletedBy) tombstone.deletedBy = base.deletedBy
+  return tombstone
+}
+
+function pickEstimateVersionWinner(
+  remote: BackupEstimateVersion,
+  incoming: BackupEstimateVersion,
+  preferIncomingOnTie: boolean,
+): BackupEstimateVersion {
+  const remoteDeleted = isDeletedEstimateVersion(remote)
+  const incomingDeleted = isDeletedEstimateVersion(incoming)
+
+  if (remoteDeleted && incomingDeleted) {
+    return comparableMs(incoming.deletedAt) > comparableMs(remote.deletedAt) ? incoming : remote
+  }
+
+  if (remoteDeleted !== incomingDeleted) {
+    const tombstone = remoteDeleted ? remote : incoming
+    const live = remoteDeleted ? incoming : remote
+    return comparableVersionMs(live) > comparableMs(tombstone.deletedAt) ? live : tombstone
+  }
+
+  const remoteMs = comparableVersionMs(remote)
+  const incomingMs = comparableVersionMs(incoming)
+  if (incomingMs > remoteMs) return incoming
+  if (remoteMs > incomingMs) return remote
+  return preferIncomingOnTie ? incoming : remote
+}
+
+/** Preserve immutable snapshot payload; merge name/notes from newer updatedAt side. */
+function mergeEstimateVersionPair(
+  remote: BackupEstimateVersion,
+  incoming: BackupEstimateVersion,
+  preferIncomingOnTie: boolean,
+): BackupEstimateVersion {
+  const winner = pickEstimateVersionWinner(remote, incoming, preferIncomingOnTie)
+  const remoteMs = comparableVersionMs(remote)
+  const incomingMs = comparableVersionMs(incoming)
+  const metaNewer = incomingMs >= remoteMs ? incoming : remote
+  const metaOlder = incomingMs >= remoteMs ? remote : incoming
+
+  const payloadSource =
+    (Array.isArray(winner.laborRows) && winner.laborRows.length > 0)
+      ? winner
+      : (Array.isArray(remote.laborRows) && remote.laborRows.length > 0)
+        ? remote
+        : incoming
+
+  const resolvedName = Object.prototype.hasOwnProperty.call(metaNewer, 'name')
+    ? metaNewer.name
+    : (Object.prototype.hasOwnProperty.call(metaOlder, 'name')
+      ? metaOlder.name
+      : winner.name)
+  const resolvedNotes = Object.prototype.hasOwnProperty.call(metaNewer, 'notes')
+    ? metaNewer.notes
+    : (Object.prototype.hasOwnProperty.call(metaOlder, 'notes')
+      ? metaOlder.notes
+      : winner.notes)
+
+  return {
+    ...winner,
+    laborRows: Array.isArray(payloadSource.laborRows) ? payloadSource.laborRows : [],
+    ohRows: Array.isArray(payloadSource.ohRows) ? payloadSource.ohRows : [],
+    ts: payloadSource.ts ?? winner.ts,
+    total: payloadSource.total ?? winner.total,
+    laborCount: payloadSource.laborCount ?? winner.laborCount,
+    ohCount: payloadSource.ohCount ?? winner.ohCount,
+    name: resolvedName,
+    notes: resolvedNotes,
+  }
+}
+
+export function getEstimateVersionDisplayLabel(version: any): string {
+  const name = String(version?.name || '').trim()
+  if (name) return name
+  const ts = Number(version?.ts)
+  if (Number.isFinite(ts) && ts > 0) return new Date(ts).toLocaleString()
+  return 'Saved snapshot'
+}
+
+function applyEstimateVersionCap(versions: BackupEstimateVersion[]): BackupEstimateVersion[] {
+  const tombstones = versions.filter(isDeletedEstimateVersion)
+  const live = versions.filter(v => !isDeletedEstimateVersion(v))
+  live.sort(sortEstimateVersionsNewestFirst)
+  const cappedLive = live.slice(0, MAX_ESTIMATE_VERSIONS)
+  return [...cappedLive, ...tombstones].sort(sortEstimateVersionsNewestFirst)
+}
+
+export function mergeEstimateVersionArrays(
+  remoteVersions: any[],
+  incomingVersions: any[],
+  preferIncomingOnTie = true,
+): BackupEstimateVersion[] {
+  const remoteSanitized = (Array.isArray(remoteVersions) ? remoteVersions : [])
+    .map(v => ensureEstimateVersionIdentity(v))
+  const incomingSanitized = (Array.isArray(incomingVersions) ? incomingVersions : [])
+    .map(v => ensureEstimateVersionIdentity(v))
+
+  const remoteById = new Map<string, BackupEstimateVersion>()
+  for (const ver of remoteSanitized) remoteById.set(getEstimateVersionIdentity(ver), ver)
+
+  const result: BackupEstimateVersion[] = []
+  const used = new Set<string>()
+
+  for (const incoming of incomingSanitized) {
+    const id = getEstimateVersionIdentity(incoming)
+    if (used.has(id)) continue
+    used.add(id)
+    const remote = remoteById.get(id)
+    result.push(remote ? mergeEstimateVersionPair(remote, incoming, preferIncomingOnTie) : incoming)
+  }
+
+  for (const remote of remoteSanitized) {
+    const id = getEstimateVersionIdentity(remote)
+    if (used.has(id)) continue
+    used.add(id)
+    result.push(remote)
+  }
+
+  result.sort(sortEstimateVersionsNewestFirst)
+  return applyEstimateVersionCap(result)
+}
+
+export function getVisibleEstimateVersions(versions: any[]): BackupEstimateVersion[] {
+  return (Array.isArray(versions) ? versions : [])
+    .map(v => ensureEstimateVersionIdentity(v))
+    .filter(v => !isDeletedEstimateVersion(v))
+    .sort(sortEstimateVersionsNewestFirst)
+    .slice(0, MAX_ESTIMATE_VERSIONS)
+}
+
+export function mergeEstimateVersionsIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+  projectId: string,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const targetId = String(projectId || '').trim()
+  if (!targetId) return merged
+
+  const remoteMap = estimateVersionsMap(remoteBackup)
+  const incomingMap = estimateVersionsMap(incomingBackup)
+  const remoteVersions = Array.isArray(remoteMap[targetId]) ? remoteMap[targetId] : []
+  const incomingVersions = Array.isArray(incomingMap[targetId]) ? incomingMap[targetId] : []
+
+  if (!(merged as any).estimateVersions) (merged as any).estimateVersions = {}
+  ;(merged as any).estimateVersions[targetId] = mergeEstimateVersionArrays(
+    remoteVersions,
+    incomingVersions,
+    true,
+  )
+  return merged
+}
+
+export function mergeAllEstimateVersionsIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(incomingBackup)) as BackupData
+  const remoteMap = estimateVersionsMap(remoteBackup)
+  const incomingMap = estimateVersionsMap(incomingBackup)
+  const allProjectIds = new Set([
+    ...Object.keys(remoteMap),
+    ...Object.keys(incomingMap),
+  ])
+
+  if (!(merged as any).estimateVersions) (merged as any).estimateVersions = {}
+
+  for (const projectId of allProjectIds) {
+    const remoteVersions = Array.isArray(remoteMap[projectId]) ? remoteMap[projectId] : []
+    const incomingVersions = Array.isArray(incomingMap[projectId]) ? incomingMap[projectId] : []
+    ;(merged as any).estimateVersions[projectId] = mergeEstimateVersionArrays(
+      remoteVersions,
+      incomingVersions,
+      false,
+    )
+  }
+
+  return merged
+}
+
+export function mergeRemoteEstimateVersionsIntoOutgoing(
+  outgoingBackup: BackupData,
+  remoteBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(outgoingBackup)) as BackupData
+  const outgoingMap = estimateVersionsMap(merged)
+  const remoteMap = estimateVersionsMap(remoteBackup)
+  const allProjectIds = new Set([
+    ...Object.keys(outgoingMap),
+    ...Object.keys(remoteMap),
+  ])
+
+  const nextMap: Record<string, BackupEstimateVersion[]> = { ...outgoingMap }
+  for (const projectId of allProjectIds) {
+    const outgoingVersions = Array.isArray(outgoingMap[projectId]) ? outgoingMap[projectId] : []
+    const remoteVersions = Array.isArray(remoteMap[projectId]) ? remoteMap[projectId] : []
+    // Remote passed as incoming so remote wins non-explicit-save ties (protect remote).
+    nextMap[projectId] = mergeEstimateVersionArrays(outgoingVersions, remoteVersions, true)
+  }
+
+  ;(merged as any).estimateVersions = nextMap
   return merged
 }
 

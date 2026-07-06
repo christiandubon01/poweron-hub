@@ -51,6 +51,12 @@ import {
   mergeProjectEstimateRowsIntoRemote,
   mergeProjectEstimateScalarsIntoRemote,
   mergeProjectLaborPhaseColorsIntoRemote,
+  mergeEstimateVersionsIntoRemote,
+  ensureEstimateVersionIdentity,
+  getEstimateVersionIdentity,
+  getVisibleEstimateVersions,
+  getEstimateVersionDisplayLabel,
+  createEstimateVersionTombstone,
   stampLaborPhaseColor,
   ESTIMATE_SCALAR_FIELDS,
 } from '@/services/projectScopeMerge'
@@ -255,6 +261,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
 
   // Part 4 — Version History
   const [showVersionHistory, setShowVersionHistory] = useState(false)
+  const [restorePreviewVersionIdx, setRestorePreviewVersionIdx] = useState<number | null>(null)
 
   const [showInternalBreakdown, setShowInternalBreakdown] = useState(() => {
     const prefs = loadInnerProjectViewPrefs(projectId)
@@ -409,23 +416,51 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   }
 
   const reconcileLaborReplacement = (existingRows: any[], replacementRows: any[]): any[] => {
-    const nextContext = createLaborIdentityContext(replacementRows || [], p.id)
-    const nextIds = new Set((replacementRows || []).map((row: any) => getLaborStableId(row, p.id, nextContext)))
+    const combinedRows = [
+      ...(Array.isArray(existingRows) ? existingRows : []),
+      ...(Array.isArray(replacementRows) ? replacementRows : []),
+    ]
+    const combinedContext = createLaborIdentityContext(combinedRows, p.id)
+    const now = new Date().toISOString()
+    const nextIds = new Set((replacementRows || []).map((row: any) =>
+      getLaborStableId(row, p.id, combinedContext)))
     const existingTombstones = (existingRows || []).filter((row: any) => isDeletedEstimateRow(row))
     const removedTombstones = getLiveLaborRows(existingRows || [], p.id)
-      .filter((row: any) => !nextIds.has(getLaborStableId(row, p.id)))
-      .map((row: any) => createLaborRowTombstone(row, p.id))
-    return [...replacementRows, ...existingTombstones, ...removedTombstones]
+      .filter((row: any) => !nextIds.has(getLaborStableId(row, p.id, combinedContext)))
+      .map((row: any) => createLaborRowTombstone(row, p.id, undefined, combinedContext))
+    const authoritativeReplacement = (replacementRows || []).map((row: any) => ({
+      ...row,
+      laborId: getLaborStableId(row, p.id, combinedContext),
+      createdAt: row.createdAt || now,
+      updatedAt: now,
+      deletedAt: undefined,
+      deletedBy: undefined,
+    }))
+    return [...authoritativeReplacement, ...existingTombstones, ...removedTombstones]
   }
 
   const reconcileOverheadReplacement = (existingRows: any[], replacementRows: any[]): any[] => {
-    const nextContext = createOverheadIdentityContext(replacementRows || [], p.id)
-    const nextIds = new Set((replacementRows || []).map((row: any) => getOverheadStableId(row, p.id, nextContext)))
+    const combinedRows = [
+      ...(Array.isArray(existingRows) ? existingRows : []),
+      ...(Array.isArray(replacementRows) ? replacementRows : []),
+    ]
+    const combinedContext = createOverheadIdentityContext(combinedRows, p.id)
+    const now = new Date().toISOString()
+    const nextIds = new Set((replacementRows || []).map((row: any) =>
+      getOverheadStableId(row, p.id, combinedContext)))
     const existingTombstones = (existingRows || []).filter((row: any) => isDeletedEstimateRow(row))
     const removedTombstones = getLiveOverheadRows(existingRows || [], p.id)
-      .filter((row: any) => !nextIds.has(getOverheadStableId(row, p.id)))
-      .map((row: any) => createOverheadRowTombstone(row, p.id))
-    return [...replacementRows, ...existingTombstones, ...removedTombstones]
+      .filter((row: any) => !nextIds.has(getOverheadStableId(row, p.id, combinedContext)))
+      .map((row: any) => createOverheadRowTombstone(row, p.id, undefined, combinedContext))
+    const authoritativeReplacement = (replacementRows || []).map((row: any) => ({
+      ...row,
+      overheadId: getOverheadStableId(row, p.id, combinedContext),
+      createdAt: row.createdAt || now,
+      updatedAt: now,
+      deletedAt: undefined,
+      deletedBy: undefined,
+    }))
+    return [...authoritativeReplacement, ...existingTombstones, ...removedTombstones]
   }
 
   const applyEstimateRowsToBackup = (targetBackup: any, laborRows: any[], overheadRows: any[]) => {
@@ -1617,44 +1652,352 @@ Return ONLY valid JSON, no other text.`
 
   // ── Part 4: Version History ───────────────────────────────────────────────────
 
-  function saveEstimateVersion() {
+  async function saveEstimateVersionsScoped(incomingBackup: any, versionsForProject: any[]) {
+    if (!incomingBackup.estimateVersions) incomingBackup.estimateVersions = {}
+    incomingBackup.estimateVersions[projectId] = versionsForProject
+
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const merged = mergeEstimateVersionsIntoRemote(remote.remoteData, incomingBackup, projectId)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          {
+            remoteUpdatedAt: remote.remoteUpdatedAt,
+            remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+          },
+          {
+            source: 'project-estimateVersions-remote-merge',
+            changedKey: 'project.estimateVersions',
+            _scopes: ['project.estimateVersions'],
+          },
+        )
+      } else {
+        saveBackupDataAndSync(incomingBackup, 'project.estimateVersions', {
+          source: 'project.estimateVersions',
+          _scopes: ['project.estimateVersions'],
+        })
+      }
+    } catch (err) {
+      console.warn('[Estimate] Scoped estimateVersions sync failed; local version preserved', err)
+      saveBackupDataAndSync(incomingBackup, 'project.estimateVersions', {
+        source: 'project.estimateVersions',
+        _scopes: ['project.estimateVersions'],
+      })
+    }
+  }
+
+  async function saveEstimateVersion() {
     const totals = estTotals()
     if (!hasAnyData && totals.total === 0) { alert('Nothing to snapshot yet.'); return }
     pushState()
-    if (!backup.estimateVersions) backup.estimateVersions = {}
-    if (!backup.estimateVersions[projectId]) backup.estimateVersions[projectId] = []
-    const versions = backup.estimateVersions[projectId]
-    versions.unshift({
-      ts: Date.now(),
+
+    const now = new Date().toISOString()
+    const ts = Date.now()
+    const newVersion = ensureEstimateVersionIdentity({
+      ts,
       total: totals.total,
       laborCount: liveLaborRows.length,
       ohCount: liveOverheadRows.length,
       laborRows: JSON.parse(JSON.stringify(liveLaborRows)),
       ohRows: JSON.parse(JSON.stringify(liveOverheadRows)),
-    })
-    // Max 5 versions
-    if (versions.length > 5) versions.length = 5
-    saveBackupData(backup)
+    }, now)
+
+    const localBackup = getBackupData() || backup
+    if (!localBackup.estimateVersions) localBackup.estimateVersions = {}
+    const existingVersions = (localBackup.estimateVersions[projectId] || [])
+      .map(v => ensureEstimateVersionIdentity(v))
+    localBackup.estimateVersions[projectId] = getVisibleEstimateVersions([newVersion, ...existingVersions])
+    localBackup._lastSavedAt = now
+    saveBackupData(localBackup)
+    backup.estimateVersions = localBackup.estimateVersions
     forceUpdate()
+
+    const incomingBackup = getBackupData() || localBackup
+    if (!incomingBackup.estimateVersions) incomingBackup.estimateVersions = {}
+    incomingBackup.estimateVersions[projectId] = [newVersion, ...existingVersions]
+
+    await saveEstimateVersionsScoped(incomingBackup, [newVersion, ...existingVersions])
+
     alert('Snapshot saved ✓')
   }
 
-  function restoreEstimateVersion(versionIdx: number) {
-    const versions = (backup.estimateVersions || {})[projectId] || []
-    const ver = versions[versionIdx]
-    if (!ver) return
-    if (!confirm(`Restore snapshot from ${new Date(ver.ts).toLocaleString()}? This replaces current labor and overhead rows.`)) return
+  const formatRestoreDiffValue = (value: any): string => {
+    if (value === null || value === undefined || value === '') return '—'
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+    return String(value)
+  }
+
+  const getRestoreRowField = (row: any, keys: string[]): any => {
+    for (const key of keys) {
+      const val = row?.[key]
+      if (val !== undefined && val !== null && val !== '') return val
+    }
+    return undefined
+  }
+
+  const getRestoreRowLabel = (row: any): string => {
+    const text = getRestoreRowField(row, ['desc', 'description', 'name'])
+    return text ? String(text) : '(No description)'
+  }
+
+  const compareRestoreRowFields = (
+    currentRow: any,
+    snapshotRow: any,
+    fieldDefs: Array<{ label: string; keys: string[]; compute?: (row: any) => any }>,
+  ): Array<{ field: string; current: string; snapshot: string }> => {
+    const changes: Array<{ field: string; current: string; snapshot: string }> = []
+    for (const def of fieldDefs) {
+      const curVal = def.compute ? def.compute(currentRow) : getRestoreRowField(currentRow, def.keys)
+      const snapVal = def.compute ? def.compute(snapshotRow) : getRestoreRowField(snapshotRow, def.keys)
+      const curStr = formatRestoreDiffValue(curVal)
+      const snapStr = formatRestoreDiffValue(snapVal)
+      if (curStr !== snapStr) {
+        changes.push({ field: def.label, current: curStr, snapshot: snapStr })
+      }
+    }
+    return changes
+  }
+
+  const LABOR_RESTORE_COMPARE_FIELDS = [
+    { label: 'Description', keys: ['desc', 'description', 'name'] },
+    { label: 'Phase', keys: ['phase'] },
+    { label: 'Qty', keys: ['qty', 'quantity'] },
+    { label: 'Hours', keys: ['hrs', 'hours'] },
+    { label: 'Rate', keys: ['rate'] },
+    { label: 'Total', keys: ['total'], compute: (row: any) => num(row?.total) || (num(row?.hrs) * num(row?.rate)) },
+    { label: 'Unit', keys: ['unit'] },
+    { label: 'Notes', keys: ['notes', 'note'] },
+  ]
+
+  const OH_RESTORE_COMPARE_FIELDS = [
+    { label: 'Description', keys: ['desc', 'description', 'name'] },
+    { label: 'Qty', keys: ['qty', 'quantity'] },
+    { label: 'Cost', keys: ['cost', 'unitCost'] },
+    { label: 'Price', keys: ['price', 'rate'] },
+    { label: 'Hours', keys: ['hrs', 'hours'] },
+    { label: 'Rate', keys: ['rate'] },
+    { label: 'Total', keys: ['total'], compute: (row: any) => num(row?.total) || (num(row?.hrs) * num(row?.rate)) },
+    { label: 'Notes', keys: ['notes', 'note'] },
+  ]
+
+  const buildRestoreRowDiffs = (
+    currentRows: any[],
+    snapshotRows: any[],
+    bucket: 'labor' | 'overhead',
+  ): Array<{
+    kind: 'removed' | 'restored' | 'changed'
+    stableId: string
+    label: string
+    currentRow?: any
+    snapshotRow?: any
+    fieldChanges?: Array<{ field: string; current: string; snapshot: string }>
+  }> => {
+    const combinedRows = [...(currentRows || []), ...(snapshotRows || [])]
+    const combinedContext = bucket === 'labor'
+      ? createLaborIdentityContext(combinedRows, p.id)
+      : createOverheadIdentityContext(combinedRows, p.id)
+    const getStableId = bucket === 'labor'
+      ? (row: any) => getLaborStableId(row, p.id, combinedContext)
+      : (row: any) => getOverheadStableId(row, p.id, combinedContext)
+    const compareFields = bucket === 'labor' ? LABOR_RESTORE_COMPARE_FIELDS : OH_RESTORE_COMPARE_FIELDS
+
+    const currentMap = new Map<string, any>()
+    for (const row of currentRows || []) currentMap.set(getStableId(row), row)
+    const snapshotMap = new Map<string, any>()
+    for (const row of snapshotRows || []) snapshotMap.set(getStableId(row), row)
+
+    const diffs: Array<{
+      kind: 'removed' | 'restored' | 'changed'
+      stableId: string
+      label: string
+      currentRow?: any
+      snapshotRow?: any
+      fieldChanges?: Array<{ field: string; current: string; snapshot: string }>
+    }> = []
+
+    for (const id of new Set([...currentMap.keys(), ...snapshotMap.keys()])) {
+      const currentRow = currentMap.get(id)
+      const snapshotRow = snapshotMap.get(id)
+      if (currentRow && !snapshotRow) {
+        diffs.push({ kind: 'removed', stableId: id, label: getRestoreRowLabel(currentRow), currentRow })
+      } else if (!currentRow && snapshotRow) {
+        diffs.push({ kind: 'restored', stableId: id, label: getRestoreRowLabel(snapshotRow), snapshotRow })
+      } else if (currentRow && snapshotRow) {
+        const fieldChanges = compareRestoreRowFields(currentRow, snapshotRow, compareFields)
+        if (fieldChanges.length > 0) {
+          diffs.push({
+            kind: 'changed',
+            stableId: id,
+            label: getRestoreRowLabel(snapshotRow) || getRestoreRowLabel(currentRow),
+            currentRow,
+            snapshotRow,
+            fieldChanges,
+          })
+        }
+      }
+    }
+
+    const kindOrder = { removed: 0, restored: 1, changed: 2 }
+    diffs.sort((a, b) => kindOrder[a.kind] - kindOrder[b.kind] || a.label.localeCompare(b.label))
+    return diffs
+  }
+
+  const buildRestorePreviewDiff = (ver: any) => {
+    const snapshotLabor = Array.isArray(ver?.laborRows) ? ver.laborRows : []
+    const snapshotOverhead = Array.isArray(ver?.ohRows) ? ver.ohRows : []
+    const laborDiffs = buildRestoreRowDiffs(liveLaborRows, snapshotLabor, 'labor')
+    const ohDiffs = buildRestoreRowDiffs(liveOverheadRows, snapshotOverhead, 'overhead')
+    const countByKind = (diffs: any[], kind: string) => diffs.filter(d => d.kind === kind).length
+    return {
+      laborDiffs,
+      ohDiffs,
+      summary: {
+        laborRemoved: countByKind(laborDiffs, 'removed'),
+        laborRestored: countByKind(laborDiffs, 'restored'),
+        laborChanged: countByKind(laborDiffs, 'changed'),
+        ohRemoved: countByKind(ohDiffs, 'removed'),
+        ohRestored: countByKind(ohDiffs, 'restored'),
+        ohChanged: countByKind(ohDiffs, 'changed'),
+      },
+      hasChanges: laborDiffs.length > 0 || ohDiffs.length > 0,
+    }
+  }
+
+  const restoreDiffBadgeStyle = (kind: 'removed' | 'restored' | 'changed') => {
+    if (kind === 'removed') {
+      return { bg: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.35)', label: 'Will be removed' }
+    }
+    if (kind === 'restored') {
+      return { bg: 'rgba(16,185,129,0.15)', color: '#34d399', border: '1px solid rgba(16,185,129,0.35)', label: 'Will be restored' }
+    }
+    return { bg: 'rgba(245,158,11,0.15)', color: '#fbbf24', border: '1px solid rgba(245,158,11,0.35)', label: 'Will change' }
+  }
+
+  function openRestorePreviewModal(versionIdx: number, event?: React.MouseEvent) {
+    event?.stopPropagation()
+    const versions = getVisibleEstimateVersions((backup.estimateVersions || {})[projectId] || [])
+    if (!versions[versionIdx]) return
+    setRestorePreviewVersionIdx(versionIdx)
+  }
+
+  function closeRestorePreviewModal() {
+    setRestorePreviewVersionIdx(null)
+  }
+
+  function confirmRestoreEstimateVersion() {
+    if (restorePreviewVersionIdx === null) return
+    const versions = getVisibleEstimateVersions((backup.estimateVersions || {})[projectId] || [])
+    const ver = versions[restorePreviewVersionIdx]
+    if (!ver) {
+      closeRestorePreviewModal()
+      return
+    }
     pushState()
     const restoredLaborRows = stampLaborRows(JSON.parse(JSON.stringify(ver.laborRows || [])))
     const restoredOverheadRows = stampOverheadRows(JSON.parse(JSON.stringify(ver.ohRows || [])))
-    p.laborRows = reconcileLaborReplacement(p.laborRows || [], restoredLaborRows)
-    p.ohRows = reconcileOverheadReplacement(p.ohRows || [], restoredOverheadRows)
-    void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
-    setShowVersionHistory(false)
+    const nextLaborRows = reconcileLaborReplacement(p.laborRows || [], restoredLaborRows)
+    const nextOverheadRows = reconcileOverheadReplacement(p.ohRows || [], restoredOverheadRows)
+    p.laborRows = nextLaborRows
+    p.ohRows = nextOverheadRows
+
+    const restoredLiveLabor = getLiveLaborRows(nextLaborRows, p.id)
+    const restoredLiveOverhead = getLiveOverheadRows(nextOverheadRows, p.id)
+    latestEstimateRowsRef.current = {
+      laborRows: cloneEstimateRows(restoredLiveLabor),
+      overheadRows: cloneEstimateRows(restoredLiveOverhead),
+    }
+    setLaborDraftRows(restoredLiveLabor)
+    setOverheadDraftRows(restoredLiveOverhead)
+    estimateDraftStructuralKeyRef.current = buildEstimateStructuralKey(restoredLiveLabor, restoredLiveOverhead)
+    estimateDraftValueKeyRef.current = buildEstimateValueKey(restoredLiveLabor, restoredLiveOverhead)
+
+    persistEstimateRowsSnapshotLocal(nextLaborRows, nextOverheadRows)
+    void saveEstimateRowsScoped(nextLaborRows, nextOverheadRows, 0)
+    closeRestorePreviewModal()
     forceUpdate()
   }
 
-  const estimateVersions = ((backup.estimateVersions || {})[projectId] || [])
+  async function updateEstimateVersionName(versionIdx: number, name: string) {
+    const localBackup = getBackupData() || backup
+    const allVersions = (localBackup.estimateVersions || {})[projectId] || []
+    const visible = getVisibleEstimateVersions(allVersions)
+    const target = visible[versionIdx]
+    if (!target) return
+
+    const now = new Date().toISOString()
+    const targetId = getEstimateVersionIdentity(target)
+    const updatedVersions = allVersions.map((entry: any) => {
+      const normalized = ensureEstimateVersionIdentity(entry)
+      if (getEstimateVersionIdentity(normalized) !== targetId) return normalized
+      return ensureEstimateVersionIdentity({
+        ...normalized,
+        name,
+        notes: normalized.notes,
+        laborRows: normalized.laborRows,
+        ohRows: normalized.ohRows,
+        updatedAt: now,
+      }, now)
+    })
+
+    localBackup.estimateVersions = localBackup.estimateVersions || {}
+    localBackup.estimateVersions[projectId] = updatedVersions
+    localBackup._lastSavedAt = now
+    saveBackupData(localBackup)
+    backup.estimateVersions = localBackup.estimateVersions
+    forceUpdate()
+
+    const incomingBackup = getBackupData() || localBackup
+    incomingBackup.estimateVersions = incomingBackup.estimateVersions || {}
+    incomingBackup.estimateVersions[projectId] = updatedVersions
+    await saveEstimateVersionsScoped(incomingBackup, updatedVersions)
+  }
+
+  function renameEstimateVersion(versionIdx: number, event?: React.MouseEvent) {
+    event?.stopPropagation()
+    const versions = getVisibleEstimateVersions((backup.estimateVersions || {})[projectId] || [])
+    const ver = versions[versionIdx]
+    if (!ver) return
+    const input = prompt('Rename snapshot:', ver.name || getEstimateVersionDisplayLabel(ver))
+    if (input === null) return
+    const trimmed = input.trim()
+    void updateEstimateVersionName(versionIdx, trimmed)
+  }
+
+  async function deleteEstimateVersion(versionIdx: number, event?: React.MouseEvent) {
+    event?.stopPropagation()
+    const versions = getVisibleEstimateVersions((backup.estimateVersions || {})[projectId] || [])
+    const ver = versions[versionIdx]
+    if (!ver) return
+    const label = getEstimateVersionDisplayLabel(ver)
+    if (!confirm(
+      `Delete this estimate snapshot? This only removes the saved snapshot and does not change the current estimate.\n\n"${label}"`
+    )) return
+
+    const localBackup = getBackupData() || backup
+    const allVersions = (localBackup.estimateVersions || {})[projectId] || []
+    const targetId = getEstimateVersionIdentity(ver)
+    const tombstonedVersions = allVersions.map((entry: any) => {
+      const normalized = ensureEstimateVersionIdentity(entry)
+      if (getEstimateVersionIdentity(normalized) !== targetId) return normalized
+      return createEstimateVersionTombstone(normalized)
+    })
+
+    const now = new Date().toISOString()
+    localBackup.estimateVersions = localBackup.estimateVersions || {}
+    localBackup.estimateVersions[projectId] = tombstonedVersions
+    localBackup._lastSavedAt = now
+    saveBackupData(localBackup)
+    backup.estimateVersions = localBackup.estimateVersions
+    forceUpdate()
+
+    const incomingBackup = getBackupData() || localBackup
+    incomingBackup.estimateVersions = incomingBackup.estimateVersions || {}
+    incomingBackup.estimateVersions[projectId] = tombstonedVersions
+    await saveEstimateVersionsScoped(incomingBackup, tombstonedVersions)
+  }
+
+  const estimateVersions = getVisibleEstimateVersions((backup.estimateVersions || {})[projectId] || [])
 
   // G7: Estimate pipeline — compute Won / Pending / Lost from live data
   // ── Helper: total billable for a service log using money math (never stale payStatus) ──
@@ -2009,6 +2352,108 @@ Return ONLY valid JSON, no other text.`
     const empId = r.empId || 'me'
     return [isValidId(empId) ? empId : 'me']
   }
+
+  const formatRestorePreviewNumber = (value: any): string => {
+    const n = num(value)
+    return Number.isFinite(n) ? String(n) : '0'
+  }
+
+  const resolveRestoreLaborEmployee = (row: any): string => {
+    const direct = getRestoreRowField(row, ['employee', 'employeeName', 'assignee', 'owner'])
+    if (direct) return String(direct)
+    const emps = getRowEmployees(row)
+    if (emps.length === 1) return getEmployeeDisplayName(emps[0])
+    if (emps.length > 1) return emps.map((id: string) => getEmployeeDisplayName(id)).join(', ')
+    return '-'
+  }
+
+  const buildLaborRestorePreviewDetails = (row: any) => {
+    if (!row) return null
+    const hours = row.hours ?? row.hrs ?? row.qty ?? 0
+    const rate = row.rate ?? 0
+    const totalVal = num(row.total) || (num(hours) * num(rate))
+    return {
+      entry: getRestoreRowLabel(row),
+      employee: resolveRestoreLaborEmployee(row),
+      phase: row.phase ? String(row.phase) : '-',
+      hours: formatRestorePreviewNumber(hours),
+      rate: formatRestorePreviewNumber(rate),
+      total: formatRestorePreviewNumber(totalVal),
+    }
+  }
+
+  const buildOhRestorePreviewDetails = (row: any) => {
+    if (!row) return null
+    const qty = row.qty ?? row.quantity ?? 0
+    const cost = row.cost ?? row.unitCost ?? 0
+    const price = row.price ?? row.rate ?? 0
+    const totalVal = num(row.total) || (num(qty) * num(price)) || (num(row.hrs) * num(row.rate))
+    const notes = getRestoreRowField(row, ['notes', 'note'])
+    return {
+      entry: getRestoreRowLabel(row),
+      qty: formatRestorePreviewNumber(qty),
+      cost: formatRestorePreviewNumber(cost),
+      price: formatRestorePreviewNumber(price),
+      total: formatRestorePreviewNumber(totalVal),
+      notes: notes ? String(notes) : undefined,
+    }
+  }
+
+  const renderRestorePreviewField = (label: string, value: string, valueColor = '#d1d5db') => (
+    <div key={label}>
+      <div style={{ color: '#6b7280', fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{label}</div>
+      <div style={{ color: valueColor, fontWeight: '500', wordBreak: 'break-word' }}>{value}</div>
+    </div>
+  )
+
+  const renderLaborRestorePreviewBlock = (row: any, heading?: string, headingColor?: string) => {
+    const details = buildLaborRestorePreviewDetails(row)
+    if (!details) return null
+    return (
+      <div style={{ marginTop: heading ? '6px' : 0 }}>
+        {heading && (
+          <div style={{ fontSize: '9px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: headingColor || '#9ca3af', marginBottom: '4px' }}>
+            {heading}
+          </div>
+        )}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))', gap: '4px 8px', fontSize: '10px' }}>
+          {renderRestorePreviewField('Entry', details.entry)}
+          {renderRestorePreviewField('Employee', details.employee)}
+          {renderRestorePreviewField('Phase', details.phase)}
+          {renderRestorePreviewField('Hours', details.hours)}
+          {renderRestorePreviewField('Rate', details.rate)}
+          {renderRestorePreviewField('Total', details.total, '#a5b4fc')}
+        </div>
+      </div>
+    )
+  }
+
+  const renderOhRestorePreviewBlock = (row: any, heading?: string, headingColor?: string) => {
+    const details = buildOhRestorePreviewDetails(row)
+    if (!details) return null
+    return (
+      <div style={{ marginTop: heading ? '6px' : 0 }}>
+        {heading && (
+          <div style={{ fontSize: '9px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: headingColor || '#9ca3af', marginBottom: '4px' }}>
+            {heading}
+          </div>
+        )}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))', gap: '4px 8px', fontSize: '10px' }}>
+          {renderRestorePreviewField('Entry', details.entry)}
+          {renderRestorePreviewField('Qty', details.qty)}
+          {renderRestorePreviewField('Cost', details.cost)}
+          {renderRestorePreviewField('Price', details.price)}
+          {renderRestorePreviewField('Total', details.total, '#a5b4fc')}
+        </div>
+        {details.notes && (
+          <div style={{ marginTop: '4px', fontSize: '10px', color: '#9ca3af' }}>
+            <span style={{ color: '#6b7280', fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Notes: </span>
+            {details.notes}
+          </div>
+        )}
+      </div>
+    )
+  }
   const getRowAllocations = (r: any): { empId: string; hrs: number }[] => {
     const emps = getRowEmployees(r)
     const total = num(r.hrs)
@@ -2279,22 +2724,47 @@ Return ONLY valid JSON, no other text.`
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {estimateVersions.map((ver, idx) => (
-                <div key={ver.ts} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', backgroundColor: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: '6px' }}>
+                <div key={ver.versionId || ver.ts} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', backgroundColor: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: '6px' }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: '12px', color: '#e5e7eb', fontWeight: '600' }}>
-                      {new Date(ver.ts).toLocaleString()}
+                      {getEstimateVersionDisplayLabel(ver)}
                     </div>
-                    <div style={{ fontSize: '10px', color: '#6b7280' }}>
+                    {ver.name && (
+                      <div style={{ fontSize: '10px', color: '#6b7280' }}>
+                        {new Date(ver.ts).toLocaleString()}
+                      </div>
+                    )}
+                    {ver.notes && (
+                      <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '2px', fontStyle: 'italic' }}>
+                        {ver.notes}
+                      </div>
+                    )}
+                    <div style={{ fontSize: '10px', color: '#6b7280', marginTop: ver.notes ? '2px' : 0 }}>
                       Total: <span style={{ color: '#10b981', fontFamily: 'monospace' }}>{fmt(ver.total)}</span>
                       {' · '}{ver.laborCount} labor + {ver.ohCount} overhead rows
                     </div>
                   </div>
                   {idx === 0 && <span style={{ fontSize: '9px', color: '#818cf8', fontWeight: '700', textTransform: 'uppercase' }}>Latest</span>}
                   <button
-                    onClick={() => restoreEstimateVersion(idx)}
+                    type="button"
+                    onClick={(e) => renameEstimateVersion(idx, e)}
+                    style={{ padding: '3px 8px', backgroundColor: 'rgba(99,102,241,0.12)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.25)', borderRadius: '3px', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => openRestorePreviewModal(idx, e)}
                     style={{ padding: '3px 8px', backgroundColor: 'rgba(99,102,241,0.2)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '3px', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}
                   >
                     Restore
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => deleteEstimateVersion(idx, e)}
+                    style={{ padding: '3px 8px', backgroundColor: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.25)', borderRadius: '3px', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}
+                  >
+                    Delete
                   </button>
                 </div>
               ))}
@@ -2302,6 +2772,168 @@ Return ONLY valid JSON, no other text.`
           )}
         </div>
       )}
+
+      {/* ── Estimate Snapshot Restore Preview Modal ─────────────────────────── */}
+      {restorePreviewVersionIdx !== null && (() => {
+        const versions = getVisibleEstimateVersions((backup.estimateVersions || {})[projectId] || [])
+        const ver = versions[restorePreviewVersionIdx]
+        if (!ver) return null
+        const preview = buildRestorePreviewDiff(ver)
+        const renderDiffRows = (
+          diffs: Array<{
+            kind: 'removed' | 'restored' | 'changed'
+            stableId: string
+            label: string
+            currentRow?: any
+            snapshotRow?: any
+            fieldChanges?: Array<{ field: string; current: string; snapshot: string }>
+          }>,
+          emptyLabel: string,
+          bucket: 'labor' | 'overhead',
+        ) => {
+          if (diffs.length === 0) {
+            return <div style={{ fontSize: '11px', color: '#6b7280', fontStyle: 'italic' }}>{emptyLabel}</div>
+          }
+          const renderDetails = bucket === 'labor' ? renderLaborRestorePreviewBlock : renderOhRestorePreviewBlock
+          return diffs.map((diff) => {
+            const badge = restoreDiffBadgeStyle(diff.kind)
+            return (
+              <div
+                key={diff.stableId}
+                style={{
+                  padding: '8px 10px',
+                  backgroundColor: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  borderRadius: '6px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <span style={{
+                    fontSize: '9px',
+                    fontWeight: '700',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    backgroundColor: badge.bg,
+                    color: badge.color,
+                    border: badge.border,
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {badge.label}
+                  </span>
+                </div>
+                {diff.kind === 'removed' && renderDetails(diff.currentRow)}
+                {diff.kind === 'restored' && renderDetails(diff.snapshotRow)}
+                {diff.kind === 'changed' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {renderDetails(diff.currentRow, 'Current', '#f87171')}
+                    {renderDetails(diff.snapshotRow, 'Snapshot', '#34d399')}
+                  </div>
+                )}
+              </div>
+            )
+          })
+        }
+
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 520, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.76)', backdropFilter: 'blur(4px)' }}
+            onClick={closeRestorePreviewModal}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{
+                backgroundColor: '#0f1117',
+                border: '1px solid rgba(99,102,241,0.28)',
+                borderRadius: '12px',
+                padding: '24px',
+                width: '92%',
+                maxWidth: '720px',
+                maxHeight: '90vh',
+                overflowY: 'auto',
+                boxShadow: '0 20px 52px rgba(0,0,0,0.55), 0 0 40px rgba(99,102,241,0.06)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                <div>
+                  <div style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#818cf8', marginBottom: '4px' }}>
+                    Preview Estimate Snapshot Restore
+                  </div>
+                  <div style={{ color: '#e5e7eb', fontWeight: '600', fontSize: '15px' }}>
+                    {getEstimateVersionDisplayLabel(ver)}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
+                    {new Date(ver.ts).toLocaleString()}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeRestorePreviewModal}
+                  style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', padding: '4px' }}
+                  aria-label="Close"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div style={{ fontSize: '12px', color: '#9ca3af', lineHeight: 1.5, marginBottom: '14px', padding: '10px 12px', backgroundColor: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.18)', borderRadius: '6px' }}>
+                Review the changes below before restoring. Restoring will replace current labor and overhead rows with this snapshot. Rows added after this snapshot was saved will be removed.
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px', marginBottom: '16px' }}>
+                <div style={{ fontSize: '10px', color: '#9ca3af' }}>Labor removed: <span style={{ color: '#f87171', fontWeight: '700' }}>{preview.summary.laborRemoved}</span></div>
+                <div style={{ fontSize: '10px', color: '#9ca3af' }}>Labor restored: <span style={{ color: '#34d399', fontWeight: '700' }}>{preview.summary.laborRestored}</span></div>
+                <div style={{ fontSize: '10px', color: '#9ca3af' }}>Labor changed: <span style={{ color: '#fbbf24', fontWeight: '700' }}>{preview.summary.laborChanged}</span></div>
+                <div style={{ fontSize: '10px', color: '#9ca3af' }}>OH removed: <span style={{ color: '#f87171', fontWeight: '700' }}>{preview.summary.ohRemoved}</span></div>
+                <div style={{ fontSize: '10px', color: '#9ca3af' }}>OH restored: <span style={{ color: '#34d399', fontWeight: '700' }}>{preview.summary.ohRestored}</span></div>
+                <div style={{ fontSize: '10px', color: '#9ca3af' }}>OH changed: <span style={{ color: '#fbbf24', fontWeight: '700' }}>{preview.summary.ohChanged}</span></div>
+              </div>
+
+              {!preview.hasChanges && (
+                <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '16px', fontStyle: 'italic' }}>
+                  No labor or overhead differences found between the current estimate and this snapshot.
+                </div>
+              )}
+
+              <div style={{ marginBottom: '14px' }}>
+                <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#818cf8', marginBottom: '8px' }}>
+                  Labor changes
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {renderDiffRows(preview.laborDiffs, 'No labor row differences.', 'labor')}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#818cf8', marginBottom: '8px' }}>
+                  Overhead changes
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {renderDiffRows(preview.ohDiffs, 'No overhead row differences.', 'overhead')}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={closeRestorePreviewModal}
+                  style={{ padding: '8px 14px', backgroundColor: 'rgba(255,255,255,0.06)', color: '#9ca3af', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmRestoreEstimateVersion}
+                  style={{ padding: '8px 14px', backgroundColor: 'rgba(99,102,241,0.25)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.4)', borderRadius: '6px', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                >
+                  Restore Snapshot
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Service Call Estimate removed — available in Field Log panel */}
       {false && (

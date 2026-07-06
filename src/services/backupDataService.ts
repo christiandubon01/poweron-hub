@@ -27,7 +27,7 @@ import {
   resolveScopesForSyncInput,
   type DataScope,
 } from './scopeRegistry'
-import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog, mergeRemoteLaborPhaseColorsIntoOutgoing, mergeRemoteProjectCoordinationIntoOutgoing, mergeRemoteProjectProgressIntoOutgoing, mergeRemoteProjectScheduleIntoOutgoing, mergeRemoteProjectTimelineIntoOutgoing } from './projectScopeMerge'
+import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog, mergeRemoteEstimateVersionsIntoOutgoing, mergeRemoteLaborPhaseColorsIntoOutgoing, mergeRemoteProjectCoordinationIntoOutgoing, mergeRemoteProjectProgressIntoOutgoing, mergeRemoteProjectScheduleIntoOutgoing, mergeRemoteProjectTimelineIntoOutgoing } from './projectScopeMerge'
 import { mergeRemoteWeeklyDataIntoOutgoing } from './weeklyDataScopeMerge'
 import { mergeRemoteEmployeesIntoOutgoing } from './teamScopeMerge'
 
@@ -198,6 +198,26 @@ export interface BackupEstimateRef {
   overhead: number; subtotal: number; marginPct: number; materials: number
   directCost: number; operatingCost: number
   materialPhases: Array<{ raw: number; tax: number; count: number; phase: string; total: number }>
+}
+
+/** Saved estimate version snapshot (Phase 6S-F). Top-level estimateVersions[projectId][]. */
+export interface BackupEstimateVersion {
+  versionId?: string
+  ts: number
+  createdAt?: string
+  updatedAt?: string
+  deletedAt?: string
+  deletedBy?: string
+  /** User-facing display title; laborRows/ohRows payload remains immutable after capture. */
+  name?: string
+  /** Optional notes/details for the snapshot; metadata only. */
+  notes?: string
+  total: number
+  laborCount: number
+  ohCount: number
+  laborRows: any[]
+  ohRows: any[]
+  [key: string]: any
 }
 
 export interface BackupProject {
@@ -436,6 +456,8 @@ export interface BackupData {
   weeklyReviews: any[]
   imports: any[]
   gcalUrl?: string
+  /** Per-project saved estimate version history (Phase 6S-F). */
+  estimateVersions?: Record<string, BackupEstimateVersion[]>
   _lastSavedAt: string
   _schemaVersion: number
   /** Cross-device sync metadata — embedded by syncToSupabase() */
@@ -2205,6 +2227,25 @@ function isProjectEstimateSyncSource(options?: { source?: string | null; _scopes
   }
 }
 
+/**
+ * Phase 6S-F: true when a sync save is a project.estimateVersions save (Estimate
+ * tab version history). Used to SKIP the estimateVersions preservation guard for
+ * those saves so a legitimate version save is not merged against itself.
+ */
+function isProjectEstimateVersionsSyncSource(options?: { source?: string | null; _scopes?: DataScope[]; changedKey?: string | null } | null): boolean {
+  if (!options) return false
+  const source = options.source
+  const sourceLower = source ? String(source).toLowerCase() : ''
+  if (sourceLower.includes('project.estimateversions') || sourceLower.includes('estimateversions')) return true
+  if (options.changedKey === 'project.estimateVersions' || options.changedKey === 'estimateVersions') return true
+  if (Array.isArray(options._scopes) && options._scopes.includes('project.estimateVersions')) return true
+  try {
+    return resolveScopesForSyncInput(source ?? null).includes('project.estimateVersions')
+  } catch {
+    return false
+  }
+}
+
 /** Sync current tenant-scoped localStorage data to Supabase app_state table.
  *  Refuses to run until the authenticated tenant has completed bootstrap. */
 export async function syncToSupabase(
@@ -2283,7 +2324,7 @@ export async function syncToSupabase(
     const data = getBackupData(userId)
     if (!data) return { success: false, skipped: true, error: 'No local tenant data to sync' }
 
-    // Phase 6S-B / 6S-C / 6S-D1 / 6S-D2 / 6S-D3 / 6S-D4 / 6L-B: narrow scoped-cache
+    // Phase 6S-B / 6S-C / 6S-D1 / 6S-D2 / 6S-D3 / 6S-D4 / 6L-B / 6S-F: narrow scoped-cache
     // preservation guards. For a save that is NOT a weeklyData save, fold newer
     // remote weeklyData[] into the outgoing blob; for a save that is NOT an
     // employees save, fold newer remote employees[] in; for a save that is NOT a
@@ -2291,9 +2332,11 @@ export async function syncToSupabase(
     // a save that is NOT a project.schedule save, fold newer remote
     // plannedStart/plannedEnd/lastMove in; for a save that is NOT a
     // project.coordination save, fold newer remote coordination rows in; for a save
-    // that is NOT a project.estimate save, fold newer remote laborPhaseColors in.
+    // that is NOT a project.estimate save, fold newer remote laborPhaseColors in;
+    // for a save that is NOT a project.estimateVersions save, fold newer remote
+    // estimateVersions in.
     // This stops a stale local weeklyData/employees/timeline/schedule/coord/labor-
-    // color cache from overwriting newer remote data on an unrelated broad save.
+    // color/estimateVersions cache from overwriting newer remote data on an unrelated broad save.
     // Only the listed slices are affected (the merge helpers touch nothing else);
     // manualOverride / tombstone precedence still applies. A single remote fetch
     // serves all folds; on failure we warn and continue with the un-merged blob —
@@ -2306,7 +2349,8 @@ export async function syncToSupabase(
     const skipScheduleGuard = isProjectScheduleSyncSource(options)
     const skipCoordinationGuard = isProjectCoordinationSyncSource(options)
     const skipEstimateGuard = isProjectEstimateSyncSource(options)
-    if (!skipWeeklyGuard || !skipEmployeesGuard || !skipTimelineGuard || !skipProgressGuard || !skipScheduleGuard || !skipCoordinationGuard || !skipEstimateGuard) {
+    const skipEstimateVersionsGuard = isProjectEstimateVersionsSyncSource(options)
+    if (!skipWeeklyGuard || !skipEmployeesGuard || !skipTimelineGuard || !skipProgressGuard || !skipScheduleGuard || !skipCoordinationGuard || !skipEstimateGuard || !skipEstimateVersionsGuard) {
       try {
         const remoteSnapshot = await fetchLatestRemoteBackup(userId)
         if (remoteSnapshot?.remoteData) {
@@ -2330,6 +2374,9 @@ export async function syncToSupabase(
           }
           if (!skipEstimateGuard) {
             outgoing = mergeRemoteLaborPhaseColorsIntoOutgoing(outgoing, remoteSnapshot.remoteData)
+          }
+          if (!skipEstimateVersionsGuard) {
+            outgoing = mergeRemoteEstimateVersionsIntoOutgoing(outgoing, remoteSnapshot.remoteData)
           }
         }
       } catch (preserveGuardErr) {
