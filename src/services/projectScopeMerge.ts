@@ -2080,7 +2080,7 @@ function mergeProgressMapObject(mapName: ProjectProgressMapName, remoteProject: 
   const map: Record<string, any> = {}
   for (const key of keys) {
     const resolved = resolveProgressMapField(mapName, key, remoteProject, incomingProject)
-    const label = String(resolved.label || key)
+    const label = String(key)
     if (resolved.deleted) {
       if (resolved.deletedAt) deleted[label] = resolved.deletedAt
       continue
@@ -2477,6 +2477,183 @@ export function mergeRemoteProjectTimelineIntoOutgoing(
     op.phase_timeline = mergePhaseTimelineRowsByPhase(outgoingTimeline, remoteTimeline)
 
     resolveProjectTimelineFieldsLWW(op, remoteProject, op)
+  }
+
+  return merged
+}
+
+export type ProjectScheduleFieldKey = 'plannedStart' | 'plannedEnd' | 'lastMove'
+
+/** The only projects[] scalar fields owned by project.schedule. */
+export const PROJECT_SCHEDULE_FIELD_KEYS: readonly ProjectScheduleFieldKey[] = [
+  'plannedStart',
+  'plannedEnd',
+  'lastMove',
+]
+
+export function isProjectScheduleField(fieldName: string): fieldName is ProjectScheduleFieldKey {
+  return (PROJECT_SCHEDULE_FIELD_KEYS as readonly string[]).includes(String(fieldName || ''))
+}
+
+function asScheduleStamps(value: any): Record<string, any> {
+  return value && typeof value === 'object' ? value : {}
+}
+
+function isExplicitScheduleBlank(value: unknown): boolean {
+  return value === null || value === ''
+}
+
+function hasScheduleFieldValue(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== ''
+}
+
+function hasScheduleFieldPresence(value: unknown): boolean {
+  return value !== undefined
+}
+
+export function stampProjectScheduleField(project: any, fieldName: string, timestamp?: string): any {
+  if (!project || typeof project !== 'object') return project
+  if (!isProjectScheduleField(fieldName)) return project
+  const stamps = asScheduleStamps(project.scheduleUpdatedAt)
+  const ts = isValidDateString(timestamp) ? String(timestamp) : new Date().toISOString()
+  project.scheduleUpdatedAt = { ...stamps, [fieldName]: ts }
+  return project
+}
+
+export function stampProjectScheduleFields(project: any, fieldNames: string[], timestamp?: string): any {
+  if (!project || typeof project !== 'object') return project
+  for (const fieldName of Array.isArray(fieldNames) ? fieldNames : []) {
+    stampProjectScheduleField(project, fieldName, timestamp)
+  }
+  return project
+}
+
+function resolveProjectScheduleFieldsLWW(targetProject: any, remoteProject: any, incomingProject: any): void {
+  const remoteStamps = asScheduleStamps(remoteProject?.scheduleUpdatedAt)
+  const incomingStamps = asScheduleStamps(incomingProject?.scheduleUpdatedAt)
+  const nextStamps: Record<string, any> = {
+    ...asScheduleStamps(remoteProject?.scheduleUpdatedAt),
+    ...asScheduleStamps(incomingProject?.scheduleUpdatedAt),
+    ...asScheduleStamps(targetProject?.scheduleUpdatedAt),
+  }
+
+  for (const field of PROJECT_SCHEDULE_FIELD_KEYS) {
+    const remoteTs = comparableMs(remoteStamps[field])
+    const incomingTs = comparableMs(incomingStamps[field])
+    const remoteValue = remoteProject?.[field]
+    const incomingValue = incomingProject?.[field]
+    const remoteHasValue = hasScheduleFieldValue(remoteValue)
+    const incomingHasValue = hasScheduleFieldValue(incomingValue)
+    const remotePresent = hasScheduleFieldPresence(remoteValue)
+    const incomingPresent = hasScheduleFieldPresence(incomingValue)
+
+    let winner: 'remote' | 'incoming'
+    if (remoteTs > incomingTs) {
+      winner = 'remote'
+    } else if (incomingTs > remoteTs) {
+      winner = 'incoming'
+    } else if (incomingHasValue) {
+      winner = 'incoming'
+    } else if (remoteHasValue) {
+      winner = 'remote'
+    } else if (incomingPresent && !isExplicitScheduleBlank(incomingValue)) {
+      winner = 'incoming'
+    } else {
+      winner = 'remote'
+    }
+
+    if (winner === 'incoming') {
+      if (incomingHasValue || (incomingTs > remoteTs && isExplicitScheduleBlank(incomingValue))) {
+        targetProject[field] = incomingValue
+      } else if (remotePresent) {
+        targetProject[field] = remoteValue
+      }
+      if (isValidDateString(incomingStamps[field])) nextStamps[field] = String(incomingStamps[field])
+    } else {
+      if (remotePresent) targetProject[field] = remoteValue
+      else if (incomingPresent && incomingHasValue) targetProject[field] = incomingValue
+      if (isValidDateString(remoteStamps[field])) nextStamps[field] = String(remoteStamps[field])
+    }
+  }
+
+  targetProject.scheduleUpdatedAt = nextStamps
+}
+
+export function mergeProjectScheduleFields(remoteProject: any, incomingProject: any): any {
+  const merged = JSON.parse(JSON.stringify(remoteProject || {}))
+  resolveProjectScheduleFieldsLWW(merged, remoteProject || {}, incomingProject || {})
+  return {
+    plannedStart: merged.plannedStart,
+    plannedEnd: merged.plannedEnd,
+    lastMove: merged.lastMove,
+    scheduleUpdatedAt: merged.scheduleUpdatedAt,
+  }
+}
+
+export function mergeProjectScheduleIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+  projectId: string,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const targetId = String(projectId || '').trim()
+  if (!targetId) return merged
+
+  const remoteProjects = Array.isArray(merged.projects) ? merged.projects : []
+  const remoteIndex = remoteProjects.findIndex((p: any) => String(p?.id || '') === targetId)
+  if (remoteIndex === -1) return merged
+
+  const incomingProjects = Array.isArray(incomingBackup?.projects) ? incomingBackup.projects : []
+  const incomingProject: any = incomingProjects.find((p: any) => String(p?.id || '') === targetId)
+  if (!incomingProject) return merged
+
+  const remoteProject: any = remoteProjects[remoteIndex]
+  resolveProjectScheduleFieldsLWW(remoteProject, remoteProject, incomingProject)
+  return merged
+}
+
+export function mergeAllProjectScheduleIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(incomingBackup)) as BackupData
+
+  const remoteById = new Map<string, any>()
+  for (const rp of Array.isArray(remoteBackup?.projects) ? remoteBackup.projects : []) {
+    const id = String(rp?.id || '').trim()
+    if (id) remoteById.set(id, rp)
+  }
+
+  for (const mp of Array.isArray(merged.projects) ? merged.projects : []) {
+    const id = String(mp?.id || '').trim()
+    if (!id) continue
+    const remoteProject = remoteById.get(id)
+    if (!remoteProject) continue
+    resolveProjectScheduleFieldsLWW(mp, remoteProject, mp)
+  }
+
+  return merged
+}
+
+export function mergeRemoteProjectScheduleIntoOutgoing(
+  outgoingBackup: BackupData,
+  remoteBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(outgoingBackup)) as BackupData
+
+  const remoteById = new Map<string, any>()
+  for (const rp of Array.isArray(remoteBackup?.projects) ? remoteBackup.projects : []) {
+    const id = String(rp?.id || '').trim()
+    if (id) remoteById.set(id, rp)
+  }
+
+  for (const op of Array.isArray(merged.projects) ? merged.projects : []) {
+    const id = String(op?.id || '').trim()
+    if (!id) continue
+    const remoteProject = remoteById.get(id)
+    if (!remoteProject) continue
+    // Pass remote as incoming so remote wins timestamp ties on non-schedule saves.
+    resolveProjectScheduleFieldsLWW(op, op, remoteProject)
   }
 
   return merged

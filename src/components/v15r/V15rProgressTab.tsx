@@ -9,8 +9,10 @@ import {
   isDeletedProgressTask,
   markProgressMapFieldDeleted,
   mergeProjectProgressIntoRemote,
+  mergeProjectScheduleIntoRemote,
   normalizeProgressPhaseKey,
   stampProgressMapField,
+  stampProjectScheduleField,
 } from '@/services/projectScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import {
@@ -129,15 +131,33 @@ function computedPhaseProgressFromTasks(project: any, ph: string, phases: string
   return Math.min(100, Math.max(0, Math.round(sum / tasks.length)))
 }
 
+function getProgressPhaseStorageKey(project: any, phaseLabel: string, phases: string[]): string {
+  const canonical = normalizePhaseName(phaseLabel, phases) || String(phaseLabel || '').trim()
+  const matches = (key: string) => normalizePhaseName(key, phases) === canonical
+  const candidates = [
+    ...Object.keys(project?.phases || {}),
+    ...Object.keys(project?.progressPhaseOverrideEnabled || {}),
+    ...Object.keys(project?.progressUpdatedAt?.phases || {}),
+    ...Object.keys(project?.progressUpdatedAt?.progressPhaseOverrideEnabled || {}),
+  ]
+  return candidates.find(matches) || canonical
+}
+
 function isProgressPhaseManualOverride(
   project: any,
   ph: string,
+  phases: string[],
   lsOverride?: Record<string, boolean>,
 ): boolean {
-  if (lsOverride != null && Object.prototype.hasOwnProperty.call(lsOverride, ph)) {
-    return lsOverride[ph] === true
+  const key = getProgressPhaseStorageKey(project, ph, phases)
+  if (Object.prototype.hasOwnProperty.call(project?.progressPhaseOverrideEnabled || {}, key)) {
+    return project.progressPhaseOverrideEnabled?.[key] === true
   }
-  return project.progressPhaseOverrideEnabled?.[ph] === true
+  const prefKey = Object.keys(lsOverride || {}).find(k => normalizePhaseName(k, phases) === normalizePhaseName(key, phases))
+  if (lsOverride != null && prefKey && Object.prototype.hasOwnProperty.call(lsOverride, prefKey)) {
+    return lsOverride[prefKey] === true
+  }
+  return false
 }
 
 /** Header / rollup: manual stored value only when override toggle is explicitly on; otherwise task average */
@@ -147,9 +167,11 @@ function effectivePhaseProgressPct(
   phases: string[],
   lsOverride?: Record<string, boolean>,
 ): number {
-  if (isProgressPhaseManualOverride(project, ph, lsOverride)) {
-    const raw = (project.phases || {})[ph]
-    return Math.min(100, Math.max(0, num(raw ?? 0)))
+  const key = getProgressPhaseStorageKey(project, ph, phases)
+  if (isProgressPhaseManualOverride(project, ph, phases, lsOverride)) {
+    const raw = (project.phases || {})[key]
+    const n = Number(raw)
+    return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : 0
   }
   return computedPhaseProgressFromTasks(project, ph, phases)
 }
@@ -163,6 +185,12 @@ function phaseWeightFor(ph: string, weights: Record<string, number>, fallbackWei
 
 function formatPhaseWeight(wt: number): string {
   return Number.isInteger(wt) ? String(wt) : wt.toFixed(1).replace(/\.0$/, '')
+}
+
+function clampPhasePercent(value: any): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 0
+  return Math.min(100, Math.max(0, Math.round(n)))
 }
 
 function weightedOverallCompletion(
@@ -284,6 +312,8 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   const [phaseColorDraft, setPhaseColorDraft] = useState<Record<string, string>>({})
   const phaseColorDraftRef = useRef<Record<string, string>>({})
   const phaseColorCommitTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const [phaseOverrideDraft, setPhaseOverrideDraft] = useState<Record<string, number>>({})
+  const phaseOverrideCommitRef = useRef<{ phase: string; pct: number; at: number } | null>(null)
 
   useEffect(() => {
     const timers = phaseColorCommitTimersRef.current
@@ -317,32 +347,42 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   // survive), pushing via the existing remote-baseline path scoped to project.finance.
   // Fire-and-forget so persistProjectChange stays synchronous. No full project.schedule
   // merge here; no Save/stale/baseline internals touched.
-  const saveProjectProgressScoped = async (currentBackup: any) => {
+  const saveProjectProgressScoped = async (currentBackup: any, includeScheduleScope: boolean = false) => {
     try {
       const remote = await fetchLatestRemoteBackup()
       if (remote.hasRemoteRow && remote.remoteData) {
         const incoming = getBackupData() || currentBackup
-        const merged = mergeProjectProgressIntoRemote(remote.remoteData, incoming, projectId)
+        const progressMerged = mergeProjectProgressIntoRemote(remote.remoteData, incoming, projectId)
+        const merged = includeScheduleScope
+          ? mergeProjectScheduleIntoRemote(progressMerged, incoming, projectId)
+          : progressMerged
         await saveBackupWithRemoteBaselineSync(
           merged,
           { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
-          { source: 'project-progress-remote-merge', changedKey: 'project.progress', _scopes: ['project.progress'] },
+          {
+            source: includeScheduleScope ? 'project-progress-schedule-remote-merge' : 'project-progress-remote-merge',
+            changedKey: 'project.progress',
+            _scopes: includeScheduleScope ? ['project.progress', 'project.schedule'] : ['project.progress'],
+          },
         )
         return
       }
       saveBackupDataAndSync(getBackupData() || currentBackup, 'project.progress', {
-        source: 'project.progress', _scopes: ['project.progress'],
+        source: includeScheduleScope ? 'project.progress+project.schedule' : 'project.progress',
+        _scopes: includeScheduleScope ? ['project.progress', 'project.schedule'] : ['project.progress'],
       })
     } catch (err) {
       console.warn('[V15rProgressTab] Scoped project-progress sync failed; local changes preserved', err)
       saveBackupDataAndSync(getBackupData() || currentBackup, 'project.progress', {
-        source: 'project.progress', _scopes: ['project.progress'],
+        source: includeScheduleScope ? 'project.progress+project.schedule' : 'project.progress',
+        _scopes: includeScheduleScope ? ['project.progress', 'project.schedule'] : ['project.progress'],
       })
     }
   }
 
   const persistProjectChange = (
     mutate: (project: any, currentBackup: any) => false | void,
+    options?: { includeScheduleScope?: boolean },
   ): boolean => {
     const currentBackup = initialBackup ?? getBackupData()
     const project = currentBackup?.projects?.find((x: any) => x.id === projectId)
@@ -353,7 +393,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     saveBackupData(currentBackup)
     onUpdate?.()
     forceUpdate()
-    void saveProjectProgressScoped(currentBackup)
+    void saveProjectProgressScoped(currentBackup, !!options?.includeScheduleScope)
     return true
   }
 
@@ -495,26 +535,66 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   }
 
   const overridePhase = (ph, value) => {
+    const pct = clampPhasePercent(value)
     pushState()
     persistProjectChange(proj => {
       const ts = new Date().toISOString()
+      const key = getProgressPhaseStorageKey(proj, ph, settingsPhases)
       proj.phases = proj.phases || {}
-      proj.phases[ph] = Math.min(100, Math.max(0, num(value)))
-      proj.lastMove = new Date().toISOString()
-      stampProgressMapField(proj, 'phases', ph, ts)
+      proj.phases[key] = pct
+      if (!proj.progressPhaseOverrideEnabled) proj.progressPhaseOverrideEnabled = {}
+      proj.progressPhaseOverrideEnabled[key] = true
+      proj.lastMove = ts
+      stampProgressMapField(proj, 'phases', key, ts)
+      stampProgressMapField(proj, 'progressPhaseOverrideEnabled', key, ts)
+      stampProjectScheduleField(proj, 'lastMove', ts)
+    }, { includeScheduleScope: true })
+    setPhaseOverrideDraft(d => {
+      if (d[ph] === undefined) return d
+      const next = { ...d }
+      delete next[ph]
+      return next
     })
+    mergeInnerProjectViewPrefs(projectId, {
+      progress: { overrideEnabled: { [getProgressPhaseStorageKey(p, ph, settingsPhases)]: true } },
+    })
+  }
+
+  const draftOverridePhase = (ph: string, value: any) => {
+    const pct = clampPhasePercent(value)
+    setPhaseOverrideDraft(d => (d[ph] === pct ? d : { ...d, [ph]: pct }))
+  }
+
+  const commitOverridePhaseDraft = (ph: string, fallbackValue: any) => {
+    const draftValue = phaseOverrideDraft[ph]
+    const pct = clampPhasePercent(draftValue !== undefined ? draftValue : fallbackValue)
+    const last = phaseOverrideCommitRef.current
+    const now = Date.now()
+    if (last && last.phase === ph && last.pct === pct && now - last.at < 300) return
+    phaseOverrideCommitRef.current = { phase: ph, pct, at: now }
+    overridePhase(ph, pct)
   }
 
   const setPhaseProgressOverrideEnabled = (ph: string, enabled: boolean) => {
     pushState()
+    const prefKey = getProgressPhaseStorageKey(p, ph, settingsPhases)
+    if (!enabled) {
+      setPhaseOverrideDraft(d => {
+        if (d[ph] === undefined) return d
+        const next = { ...d }
+        delete next[ph]
+        return next
+      })
+    }
     persistProjectChange(proj => {
       const ts = new Date().toISOString()
+      const key = getProgressPhaseStorageKey(proj, ph, settingsPhases)
       if (!proj.progressPhaseOverrideEnabled) proj.progressPhaseOverrideEnabled = {}
-      proj.progressPhaseOverrideEnabled[ph] = !!enabled
-      stampProgressMapField(proj, 'progressPhaseOverrideEnabled', ph, ts)
+      proj.progressPhaseOverrideEnabled[key] = !!enabled
+      stampProgressMapField(proj, 'progressPhaseOverrideEnabled', key, ts)
     })
     mergeInnerProjectViewPrefs(projectId, {
-      progress: { overrideEnabled: { [ph]: !!enabled } },
+      progress: { overrideEnabled: { [prefKey]: !!enabled } },
     })
   }
 
@@ -864,18 +944,23 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
           const phaseHrs = tasks.reduce((s: number, t: any) => s + num(t?.hrs ?? 0), 0)
           const clrSaved = resolvePhaseHeaderColor(ph, p.progressPhaseColors)
           const clrDisplay = normalizeColorPickerValue(phaseColorDraft[ph] ?? clrSaved)
-          const phaseEffectivePct = effectivePhaseProgressPct(
+          const overrideOn = isProgressPhaseManualOverride(
             p,
             ph,
             settingsPhases,
             innerViewPrefs.progress?.overrideEnabled,
           )
-          const overrideOn = isProgressPhaseManualOverride(
-            p,
-            ph,
-            innerViewPrefs.progress?.overrideEnabled,
-          )
-          const storedManualPct = Math.min(100, Math.max(0, num((p.phases || {})[ph] ?? 0)))
+          const phaseStorageKey = getProgressPhaseStorageKey(p, ph, settingsPhases)
+          const storedManualPct = clampPhasePercent((p.phases || {})[phaseStorageKey] ?? 0)
+          const displayedManualPct = phaseOverrideDraft[ph] !== undefined ? phaseOverrideDraft[ph] : storedManualPct
+          const phaseEffectivePct = overrideOn
+            ? displayedManualPct
+            : effectivePhaseProgressPct(
+                p,
+                ph,
+                settingsPhases,
+                innerViewPrefs.progress?.overrideEnabled,
+              )
           const isCustom = Array.isArray(p.customPhases)
             && p.customPhases.some((customPh: string) => normalizeProgressPhaseKey(customPh) === normalizeProgressPhaseKey(ph))
           const isOpen = phaseExpanded[ph] !== false
@@ -1240,16 +1325,36 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
                         min={0}
                         max={100}
                         step={1}
-                        value={storedManualPct}
-                        onChange={e => overridePhase(ph, e.target.value)}
+                        value={displayedManualPct}
+                        onChange={e => draftOverridePhase(ph, e.target.value)}
+                        onPointerUp={e => {
+                          e.stopPropagation()
+                          commitOverridePhaseDraft(ph, e.currentTarget.value)
+                        }}
+                        onMouseUp={e => {
+                          e.stopPropagation()
+                          commitOverridePhaseDraft(ph, e.currentTarget.value)
+                        }}
+                        onTouchEnd={e => {
+                          e.stopPropagation()
+                          commitOverridePhaseDraft(ph, (e.currentTarget as HTMLInputElement).value)
+                        }}
+                        onBlur={e => commitOverridePhaseDraft(ph, e.currentTarget.value)}
                         style={{ flex: '1 1 120px', minWidth: '100px', maxWidth: '200px', accentColor: clrSaved }}
                       />
                       <input
                         type="number"
                         min={0}
                         max={100}
-                        value={storedManualPct}
-                        onChange={e => overridePhase(ph, e.target.value)}
+                        value={displayedManualPct}
+                        onChange={e => draftOverridePhase(ph, e.target.value)}
+                        onBlur={e => commitOverridePhaseDraft(ph, e.currentTarget.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            commitOverridePhaseDraft(ph, e.currentTarget.value)
+                          }
+                        }}
                         style={{
                           width: '52px',
                           padding: '4px 6px',

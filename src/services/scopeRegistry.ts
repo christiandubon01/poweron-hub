@@ -211,15 +211,17 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
   },
   'project.schedule': {
     scope: 'project.schedule',
-    dataPath: 'projects[].plannedStart/plannedEnd/lastMove (future)',
+    dataPath: 'projects[].plannedStart / projects[].plannedEnd / projects[].lastMove',
     owner: 'V15rProjectsPanel / V15rProgressTab',
     level: 'nested',
-    identityField: 'project id',
-    needsTimestamp: true,
+    identityField: 'project id + schedule field name',
+    timestampField: 'scheduleUpdatedAt.plannedStart / scheduleUpdatedAt.plannedEnd / scheduleUpdatedAt.lastMove',
+    tombstoneField: undefined,
+    needsTimestamp: false,
     needsTombstone: false,
     strategy: 'field-lww',
     priority: 'high',
-    notes: 'Deferred after Phase 6S-D2. project.progress now owns projects[].phases/tasks/customPhases/progressPhaseColors/progressPhaseOverrideEnabled. project.timeline separately owns phase_timeline/deposit fields.',
+    notes: 'Phase 6S-D3: protects workflow-critical project schedule scalars plannedStart, plannedEnd, and lastMove via per-field LWW timestamps in projects[].scheduleUpdatedAt. Separate from project.timeline (phase_timeline/deposit fields) and project.progress (phases/tasks/custom phase maps). V15rProjectsPanel stamps plannedStart/plannedEnd/lastMove writers and broad mixed project saves resolve schedule fields with mergeAllProjectScheduleIntoRemote; V15rProgressTab stamps lastMove when phase override movement changes and saves progress+schedule together. A narrow pre-sync fold preserves newer remote schedule fields on any non-project.schedule save. project.coordination and project status/lifecycle remain separate/deferred.',
   },
   'project.progress': {
     scope: 'project.progress',
@@ -576,6 +578,9 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
   ],
   'project.progress': [
     'project.progress',
+  ],
+  'project.schedule': [
+    'project.schedule',
   ],
   logs: [
     'project.payments',

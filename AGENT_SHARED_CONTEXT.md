@@ -3882,3 +3882,43 @@ No commit, push, deploy, manual Supabase touch, restore script, or manual localS
 - Converted `V15rProgressTab` progress saves from the old broad projects/project.finance remote save to optimistic local save followed by `mergeProjectProgressIntoRemote(...)` and `saveBackupWithRemoteBaselineSync(..., { changedKey: "project.progress", _scopes: ["project.progress"] })`; fallback uses `saveBackupDataAndSync(..., "project.progress", { source: "project.progress", _scopes: ["project.progress"] })`.
 - Added the narrow `project.progress` pre-sync preservation fold in `backupDataService.ts` inside the existing weeklyData/employees/project.timeline guard block immediately after `getBackupData(userId)` and before payload construction. It skips true `project.progress` saves and folds newer remote progress fields into unrelated outgoing full-blob saves via `mergeRemoteProjectProgressIntoOutgoing`.
 - `project.timeline` unchanged from 6S-D1. `project.schedule` plannedStart/plannedEnd/lastMove remains deferred. `project.coordination` remains deferred. Project logs/payments, project.finance, finance.weeklyData, team.members, service scopes, and blueprint scopes untouched. Sync/save/baseline internals unchanged except the narrow project.progress preservation hook.
+
+### 2026-07-05 - Phase 6S-D3: project.schedule Field-LWW Merge
+
+**Agent:** Codex
+**Mode:** Scoped implementation (Phase 6S-D3)
+**Baseline HEAD:** `23423c4` (Phase 6S-D2 "Add scoped merge for project progress")
+**Files touched:** `src/services/scopeRegistry.ts`, `src/services/projectScopeMerge.ts`, `src/services/backupDataService.ts`, `src/components/v15r/V15rProjectsPanel.tsx`, `src/components/v15r/V15rProgressTab.tsx`, `AGENT_SHARED_CONTEXT.md`
+**Status:** DONE locally - typecheck PASS, build PASS, diff-check PASS; localhost manual test BLOCKED because dev server startup needs sandbox escalation and approval was denied. No commit, push, deploy, pull, rebase, reset, or branch change.
+
+- Added `project.schedule` scope for `projects[].plannedStart`, `projects[].plannedEnd`, and `projects[].lastMove` with per-field LWW metadata at `projects[].scheduleUpdatedAt.<field>`. Scope is separate from `project.timeline` and `project.progress`.
+- Added schedule merge helpers in `projectScopeMerge.ts`: `PROJECT_SCHEDULE_FIELD_KEYS`, `isProjectScheduleField`, `stampProjectScheduleField`, `stampProjectScheduleFields`, `mergeProjectScheduleFields`, `mergeProjectScheduleIntoRemote`, `mergeAllProjectScheduleIntoRemote`, and `mergeRemoteProjectScheduleIntoOutgoing`. Only plannedStart/plannedEnd/lastMove/scheduleUpdatedAt are patched; phase_timeline, progress fields, logs, COs, RFIs, materials, estimate rows, lifecycle, finance, weeklyData, employees, and service data are untouched.
+- Added `BackupProject.scheduleUpdatedAt?: Partial<Record<'plannedStart' | 'plannedEnd' | 'lastMove', string>>` as a type-only metadata field.
+- Added the narrow `project.schedule` pre-sync preservation fold in `backupDataService.ts` inside the existing weeklyData/employees/project.timeline/project.progress guard block immediately after `getBackupData(userId)` and before payload construction. It skips true `project.schedule` saves and folds newer remote plannedStart/plannedEnd/lastMove into unrelated outgoing full-blob saves via `mergeRemoteProjectScheduleIntoOutgoing`; it reuses the existing single remote fetch and does not block saves if the fetch fails.
+- `V15rProjectsPanel` now stamps schedule metadata when creating a project and when Edit Project changes plannedStart/plannedEnd/lastMove. Mixed project edits keep the existing broad project behavior but use a combined project.finance + project.schedule remote-baseline merge when schedule fields changed.
+- `V15rProgressTab` had a `lastMove` writer in `overridePhase`; it now stamps `scheduleUpdatedAt.lastMove` and routes that save through a combined project.progress + project.schedule remote-baseline merge. Other progress behavior is unchanged.
+- `project.timeline` unchanged from 6S-D1. `project.progress` unchanged except minimal lastMove/schedule coordination. `project.coordination`, project status/lifecycle scope work, project logs/payments, project.finance, finance.weeklyData, team.members, service scopes, and blueprint scopes are untouched. Sync/save/baseline internals unchanged except the narrow project.schedule preservation hook.
+
+### 2026-07-05 - Phase 6S-D3 Hotfix: Progress Override Slider Reset
+
+**Agent:** Codex
+**Mode:** Hotfix only
+**Files touched:** `src/components/v15r/V15rProgressTab.tsx`, `AGENT_SHARED_CONTEXT.md`
+**Status:** DONE locally - typecheck PASS, build PASS, diff-check PASS; localhost manual test BLOCKED because Vite dev-server startup needs sandbox escalation and approval was denied. No commit, push, deploy, pull, rebase, reset, or branch change.
+
+- Fixed Progress tab manual phase override regression where slider/number changes could save the percent but leave `progressPhaseOverrideEnabled[phase]` false, causing the displayed value to recompute from tasks and appear to jump/reset to 0%.
+- `overridePhase` now clamps percent with explicit finite-number handling so 0 and 100 are valid, writes `projects[].phases[phase]`, forces `projects[].progressPhaseOverrideEnabled[phase] = true`, stamps both `progressUpdatedAt.phases[phase]` and `progressUpdatedAt.progressPhaseOverrideEnabled[phase]`, and keeps the Phase 6S-D3 `scheduleUpdatedAt.lastMove` stamp.
+- The override slider/number input now uses an in-memory draft for smooth drag/edit feedback and persists on drag end / blur / Enter instead of remote-saving on every tiny `onChange`. Duplicate release events are de-duped briefly.
+- Project progress scoped save and combined project.progress + project.schedule save path remain intact. project.timeline and other protected scopes untouched.
+
+### 2026-07-05 - Phase 6S-D3 Hotfix 2: Progress Override Persistence
+
+**Agent:** Codex
+**Mode:** Repair only
+**Files touched:** `src/components/v15r/V15rProgressTab.tsx`, `src/services/projectScopeMerge.ts`, `AGENT_SHARED_CONTEXT.md`
+**Status:** DONE locally - typecheck PASS, build PASS, diff-check PASS; localhost manual test BLOCKED because Vite dev-server startup needs sandbox escalation and approval was denied. No commit, push, deploy, pull, rebase, reset, or branch change.
+
+- Root cause: `mergeProgressMapObject` used the progress value as the output label for non-custom progress maps. A manual override like `phases.Trim = 50` could merge into `phases["50"] = 50`, and `progressPhaseOverrideEnabled.Trim = true` into `progressPhaseOverrideEnabled["true"] = true`, so the UI later read `phases[phase]` as missing and returned to 0%.
+- Fixed the project.progress merge so non-custom maps keep the phase key as the output key; 0 and 100 remain valid values because merge blank checks only treat `undefined`/`null`/empty string as blank.
+- Added a local `getProgressPhaseStorageKey` helper in `V15rProgressTab` so display reads, `phases` writes, `progressPhaseOverrideEnabled` writes, and both progressUpdatedAt stamps use the same canonical phase key. The persisted project override map is now authoritative over stale local view prefs when it has an explicit value.
+- Existing project.progress scoped save remains optimistic local first, then remote-baseline merge. Combined project.progress + project.schedule save order remains progress merge first, schedule merge second. project.timeline and other protected scopes untouched.

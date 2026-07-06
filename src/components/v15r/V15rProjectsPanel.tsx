@@ -30,7 +30,7 @@ import {
   isActiveProject,
   type BackupProject,
 } from '@/services/backupDataService'
-import { getLiveRFIs, mergeProjectLogsIntoRemote, createProjectTombstone, mergeProjectLifecycleIntoRemote, isDeletedProject, mergeAllProjectFinanceIntoRemote } from '@/services/projectScopeMerge'
+import { getLiveRFIs, mergeProjectLogsIntoRemote, createProjectTombstone, mergeProjectLifecycleIntoRemote, isDeletedProject, mergeAllProjectFinanceIntoRemote, mergeAllProjectScheduleIntoRemote, stampProjectScheduleFields } from '@/services/projectScopeMerge'
 import { getProjectDaysSinceLastMovement } from '@/utils/v15rProjectHealth'
 import { pushState } from '@/services/undoRedoService'
 import QuickBooksImportModal from './QuickBooksImportModal'
@@ -316,13 +316,18 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       plannedStart: npStartDate || undefined,
       plannedEnd: npPlannedEnd || undefined,
     }
+    stampProjectScheduleFields(
+      newProj,
+      ['lastMove', 'plannedStart', ...(npPlannedEnd ? ['plannedEnd'] : [])],
+      new Date().toISOString(),
+    )
     // If converted from a lead, add conversion tracking fields
     if (prefillFromLead?.leadId) {
       newProj.convertedFromLeadId = prefillFromLead.leadId
       newProj.convertedFromLeadType = prefillFromLead.leadType || 'unknown'
     }
     backup.projects = [...(backup.projects || []), newProj]
-    saveBackupDataAndSync(backup)
+    persist('projects', true)
     if (newProj.accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
@@ -406,6 +411,9 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     pushState(backup)
     const p = (backup.projects || []).find((x: any) => x.id === editProjectId)
     if (!p) return
+    const prevPlannedStart = p.plannedStart
+    const prevPlannedEnd = p.plannedEnd
+    const prevLastMove = p.lastMove
     p.name = epName.trim()
     ;(p as any).client = epClient.trim()
     ;(p as any).accountId = epAccountId || undefined
@@ -417,6 +425,13 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     // DASHBOARD-START-DATE-GATE-AND-PERSIST-APR22-2026-1 — "Start Date" input writes to plannedStart.
     p.plannedStart = epStartDate || undefined
     p.plannedEnd = epPlannedEnd || undefined
+    const scheduleFieldsChanged: string[] = []
+    if (prevPlannedStart !== p.plannedStart) scheduleFieldsChanged.push('plannedStart')
+    if (prevPlannedEnd !== p.plannedEnd) scheduleFieldsChanged.push('plannedEnd')
+    if (prevLastMove !== p.lastMove) scheduleFieldsChanged.push('lastMove')
+    if (scheduleFieldsChanged.length) {
+      stampProjectScheduleFields(p, scheduleFieldsChanged, new Date().toISOString())
+    }
 
     const nextAddr = epAddress.trim()
     const prevAddr = String((p as any).address || '').trim()
@@ -449,7 +464,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     }
     ;(p as any).address = nextAddr
 
-    saveBackupDataAndSync(backup)
+    persist('projects', scheduleFieldsChanged.length > 0)
     if ((p as any).accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
@@ -506,7 +521,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   }))
   syncAllProjectFinanceBuckets(backup)
 
-  function persist(changedKey: string = 'projects') {
+  function persist(changedKey: string = 'projects', includeScheduleScope: boolean = false) {
     backup._lastSavedAt = new Date().toISOString()
     // Phase 6S-A: broad projects[] save. Persist locally for instant UI, then push
     // through a finance-preserving remote-baseline merge so a stale local finance
@@ -514,7 +529,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     // Non-finance project edits (status/archive/name/etc.) are preserved in full.
     saveBackupData(backup)
     forceUpdate()
-    void saveProjectsFinanceScoped(changedKey)
+    void saveProjectsFinanceScoped(changedKey, includeScheduleScope)
   }
 
   /**
@@ -525,7 +540,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
    * the existing remote-baseline path scoped to project.finance. Demo mode keeps
    * the prior local-sync behavior. No Save/stale/baseline internals are touched.
    */
-  async function saveProjectsFinanceScoped(changedKey: string = 'projects') {
+  async function saveProjectsFinanceScoped(changedKey: string = 'projects', includeScheduleScope: boolean = false) {
     if (hasHydrated && isDemoMode) {
       saveBackupDataAndSync(backup, changedKey)
       window.dispatchEvent(new Event('storage'))
@@ -539,21 +554,30 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       const remote = await fetchLatestRemoteBackup()
       if (remote.hasRemoteRow && remote.remoteData) {
         const incoming = getBackupData() || backup
-        const merged = mergeAllProjectFinanceIntoRemote(remote.remoteData, incoming)
+        const financeMerged = mergeAllProjectFinanceIntoRemote(remote.remoteData, incoming)
+        const merged = includeScheduleScope
+          ? mergeAllProjectScheduleIntoRemote(remote.remoteData, financeMerged)
+          : financeMerged
         await saveBackupWithRemoteBaselineSync(
           merged,
           { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
-          { source: 'project-finance-remote-merge', changedKey: 'projects', _scopes: ['project.finance'] },
+          {
+            source: includeScheduleScope ? 'project-finance-schedule-remote-merge' : 'project-finance-remote-merge',
+            changedKey: 'projects',
+            _scopes: includeScheduleScope ? ['project.finance', 'project.schedule'] : ['project.finance'],
+          },
         )
         return
       }
       saveBackupDataAndSync(getBackupData() || backup, 'projects', {
-        source: 'project.finance', _scopes: ['project.finance'],
+        source: includeScheduleScope ? 'project.finance+project.schedule' : 'project.finance',
+        _scopes: includeScheduleScope ? ['project.finance', 'project.schedule'] : ['project.finance'],
       })
     } catch (err) {
       console.warn('[V15rProjectsPanel] Scoped project-finance sync failed; local changes preserved', err)
       saveBackupDataAndSync(getBackupData() || backup, 'projects', {
-        source: 'project.finance', _scopes: ['project.finance'],
+        source: includeScheduleScope ? 'project.finance+project.schedule' : 'project.finance',
+        _scopes: includeScheduleScope ? ['project.finance', 'project.schedule'] : ['project.finance'],
       })
     }
   }

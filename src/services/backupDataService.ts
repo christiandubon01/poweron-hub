@@ -27,7 +27,7 @@ import {
   resolveScopesForSyncInput,
   type DataScope,
 } from './scopeRegistry'
-import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog, mergeRemoteProjectProgressIntoOutgoing, mergeRemoteProjectTimelineIntoOutgoing } from './projectScopeMerge'
+import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog, mergeRemoteProjectProgressIntoOutgoing, mergeRemoteProjectScheduleIntoOutgoing, mergeRemoteProjectTimelineIntoOutgoing } from './projectScopeMerge'
 import { mergeRemoteWeeklyDataIntoOutgoing } from './weeklyDataScopeMerge'
 import { mergeRemoteEmployeesIntoOutgoing } from './teamScopeMerge'
 
@@ -216,6 +216,8 @@ export interface BackupProject {
   financeUpdatedAt?: Partial<Record<string, string>>
   /** Phase 6S-D1: per-field LWW timestamps for scoped project.timeline merge (deposit_pct/phase_deposit_pct). phase_timeline rows carry their own optional updatedAt. */
   timelineUpdatedAt?: Partial<Record<string, string>>
+  /** Phase 6S-D3: per-field LWW timestamps for scoped project.schedule merge (plannedStart/plannedEnd/lastMove). */
+  scheduleUpdatedAt?: Partial<Record<'plannedStart' | 'plannedEnd' | 'lastMove', string>>
   /** Phase 6S-D2: per-phase/task timestamps for scoped project.progress merge. */
   progressUpdatedAt?: {
     phases?: Record<string, string>
@@ -2155,6 +2157,18 @@ function isProjectProgressSyncSource(options?: { source?: string | null; _scopes
   }
 }
 
+function isProjectScheduleSyncSource(options?: { source?: string | null; _scopes?: DataScope[] } | null): boolean {
+  if (!options) return false
+  const source = options.source
+  if (source && String(source).toLowerCase().includes('project.schedule')) return true
+  if (Array.isArray(options._scopes) && options._scopes.includes('project.schedule')) return true
+  try {
+    return resolveScopesForSyncInput(source ?? null).includes('project.schedule')
+  } catch {
+    return false
+  }
+}
+
 /** Sync current tenant-scoped localStorage data to Supabase app_state table.
  *  Refuses to run until the authenticated tenant has completed bootstrap. */
 export async function syncToSupabase(
@@ -2233,14 +2247,16 @@ export async function syncToSupabase(
     const data = getBackupData(userId)
     if (!data) return { success: false, skipped: true, error: 'No local tenant data to sync' }
 
-    // Phase 6S-B / 6S-C / 6S-D1: narrow scoped-cache preservation guards. For a save
+    // Phase 6S-B / 6S-C / 6S-D1 / 6S-D2 / 6S-D3: narrow scoped-cache preservation guards. For a save
     // that is NOT a weeklyData save, fold newer remote weeklyData[] into the
     // outgoing blob; for a save that is NOT an employees save, fold newer remote
     // employees[] in; for a save that is NOT a project.timeline save, fold newer
-    // remote phase_timeline/deposit data in. This stops a stale local
-    // weeklyData/employees/timeline cache from overwriting newer remote data on an
-    // unrelated broad save. Only weeklyData[]/employees[]/projects[].phase_timeline
-    // + deposit_pct + phase_deposit_pct + timelineUpdatedAt are affected (the merge
+    // remote phase_timeline/deposit data in; for a save that is NOT a
+    // project.schedule save, fold newer remote plannedStart/plannedEnd/lastMove
+    // in. This stops a stale local weeklyData/employees/timeline/schedule cache
+    // from overwriting newer remote data on an unrelated broad save. Only
+    // weeklyData[]/employees[]/projects[].phase_timeline + deposit_pct +
+    // phase_deposit_pct + timelineUpdatedAt + schedule fields are affected (the merge
     // helpers touch nothing else); manualOverride / tombstone precedence still
     // applies. A single remote fetch serves all folds; on failure we warn and
     // continue with the un-merged blob — the guard never blocks a save.
@@ -2249,7 +2265,8 @@ export async function syncToSupabase(
     const skipEmployeesGuard = isEmployeesSyncSource(options.source)
     const skipTimelineGuard = isProjectTimelineSyncSource(options)
     const skipProgressGuard = isProjectProgressSyncSource(options)
-    if (!skipWeeklyGuard || !skipEmployeesGuard || !skipTimelineGuard || !skipProgressGuard) {
+    const skipScheduleGuard = isProjectScheduleSyncSource(options)
+    if (!skipWeeklyGuard || !skipEmployeesGuard || !skipTimelineGuard || !skipProgressGuard || !skipScheduleGuard) {
       try {
         const remoteSnapshot = await fetchLatestRemoteBackup(userId)
         if (remoteSnapshot?.remoteData) {
@@ -2264,6 +2281,9 @@ export async function syncToSupabase(
           }
           if (!skipProgressGuard) {
             outgoing = mergeRemoteProjectProgressIntoOutgoing(outgoing, remoteSnapshot.remoteData)
+          }
+          if (!skipScheduleGuard) {
+            outgoing = mergeRemoteProjectScheduleIntoOutgoing(outgoing, remoteSnapshot.remoteData)
           }
         }
       } catch (preserveGuardErr) {
