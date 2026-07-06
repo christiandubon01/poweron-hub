@@ -13,6 +13,10 @@
  *   One safe GET to publiclookup.rivco.org to test whether Netlify can reach TLMA.
  *   No Supabase writes, no bypass/evasion. Returns JSON probe result only.
  *
+ *   ?action=tlma-import  (POST JSON { rows: [...] })
+ *   Browser-assisted TLMA import. Accepts parsed table rows from authenticated
+ *   app users and upserts hunter_leads. No outbound TLMA fetch.
+ *
  *   ?action=palm-desert-probe[&term=el%20paseo&pageSize=5&page=1]
  *   Fetches the public Palm Desert Salesforce/Aura search bootstrap, then
  *   calls the public Permit search action. No browser session or DB writes.
@@ -822,6 +826,154 @@ async function importPalmDesertLeads(
   }
 }
 
+function tlmaBrowserLeadRow(row: any, now: string) {
+  return {
+    tenant_id: HUNTER_TENANT_ID,
+    user_id: HUNTER_USER_ID,
+    source: 'tlma_riverside',
+    source_tag: row.source_tag || 'tlma_browser_import',
+    lead_type: row.lead_type || 'commercial',
+    contact_name: row.contact_name || null,
+    company_name: row.company_name || null,
+    contact_company: row.contact_company || null,
+    contact_type_label: row.contact_type_label || null,
+    phone: row.phone || null,
+    email: null,
+    address: row.address || null,
+    city: row.city || null,
+    description: row.description || null,
+    estimated_value: null,
+    score: typeof row.score === 'number' ? row.score : 0,
+    score_tier: row.score_tier || 'expansion',
+    score_factors: row.score_factors || {},
+    status: row.status === 'archived' ? 'archived' : 'new',
+    permit_number: row.permit_number,
+    permit_url: row.permit_url || row.portal_url || null,
+    permit_type_code: row.permit_type_code || null,
+    permit_type_label: row.permit_type_label || null,
+    work_class_code: null,
+    permit_status: row.permit_status || null,
+    total_sqft: row.total_sqft ?? null,
+    sqft_breakdown: row.sqft_breakdown ?? null,
+    applied_date: row.applied_date || null,
+    issued_date: row.issued_date || null,
+    finalized_date: row.finalized_date || null,
+    expired_date: row.expired_date || null,
+    source_city: row.source_city || row.city || null,
+    portal_url: row.portal_url || row.permit_url || null,
+    run_source: 'manual',
+    last_seen_at: now,
+    last_updated: now,
+  }
+}
+
+async function importTlmaBrowserLeads(supabase: any, rows: any[]) {
+  let rowsInserted = 0
+  let rowsUpdated = 0
+  let rowsSkipped = 0
+  const errors: any[] = []
+  const now = new Date().toISOString()
+
+  const importable = rows.filter(row => {
+    if (row?.permit_number) return true
+    rowsSkipped += 1
+    errors.push({ error: 'Missing permit_number; row skipped.' })
+    return false
+  })
+
+  for (let offset = 0; offset < importable.length; offset += 100) {
+    const batch = importable.slice(offset, offset + 100)
+    const permitNumbers = batch.map(row => row.permit_number)
+    const { data: existingRows, error: lookupError } = await supabase
+      .from('hunter_leads')
+      .select('id, permit_number')
+      .eq('tenant_id', HUNTER_TENANT_ID)
+      .eq('source', 'tlma_riverside')
+      .in('permit_number', permitNumbers)
+
+    if (lookupError) {
+      rowsSkipped += batch.length
+      errors.push({
+        batch_offset: offset,
+        error: `Existing-lead lookup failed: ${lookupError.message || String(lookupError)}`,
+      })
+      continue
+    }
+
+    const existingByPermit = new Map(
+      (existingRows || []).map((row: any) => [row.permit_number, row.id])
+    )
+
+    for (const row of batch) {
+      const leadRow = tlmaBrowserLeadRow(row, now)
+      const existingId = existingByPermit.get(row.permit_number)
+      if (existingId) {
+        const { error } = await supabase
+          .from('hunter_leads')
+          .update(leadRow)
+          .eq('id', existingId)
+          .eq('tenant_id', HUNTER_TENANT_ID)
+          .eq('source', 'tlma_riverside')
+        if (error) {
+          rowsSkipped += 1
+          errors.push({
+            permit_number: row.permit_number,
+            error: error.message || String(error),
+          })
+        } else {
+          rowsUpdated += 1
+        }
+      } else {
+        const { error } = await supabase
+          .from('hunter_leads')
+          .insert({
+            ...leadRow,
+            discovered_at: now,
+          })
+        if (error) {
+          rowsSkipped += 1
+          errors.push({
+            permit_number: row.permit_number,
+            error: error.message || String(error),
+          })
+        } else {
+          rowsInserted += 1
+        }
+      }
+    }
+  }
+
+  return {
+    rows_inserted: rowsInserted,
+    rows_updated: rowsUpdated,
+    rows_skipped: rowsSkipped,
+    errors,
+  }
+}
+
+async function verifyAuthenticatedUser(event: any) {
+  const authHeader =
+    event.headers?.authorization ||
+    event.headers?.Authorization ||
+    ''
+  const token = String(authHeader).replace(/^Bearer\s+/i, '').trim()
+  if (!token) return null
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || ''
+  const anonKey =
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    ''
+  if (!supabaseUrl || !anonKey) return null
+
+  const authClient = createClient(supabaseUrl, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const { data, error } = await authClient.auth.getUser(token)
+  if (error || !data?.user) return null
+  return data.user
+}
+
 async function mapWithConcurrency<T, R>(
   values: T[],
   concurrency: number,
@@ -1598,6 +1750,85 @@ exports.handler = async (event: any) => {
     }
   }
   // ── END TLMA PROBE ───────────────────────────────────────────────────────
+
+  // ── TLMA BROWSER-ASSISTED IMPORT ────────────────────────────────────────
+  // Accepts parsed table rows from the app. No outbound TLMA fetch.
+  if (params.action === 'tlma-import') {
+    if (event.httpMethod !== 'POST') {
+      return {
+        statusCode: 405,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({ error: 'tlma-import requires POST with JSON body { rows: [...] }' }),
+      }
+    }
+
+    const user = await verifyAuthenticatedUser(event)
+    if (!user) {
+      return {
+        statusCode: 401,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({ error: 'Authentication required for TLMA import.' }),
+      }
+    }
+
+    let payload: any = {}
+    try {
+      payload = event.body ? JSON.parse(event.body) : {}
+    } catch {
+      return {
+        statusCode: 400,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({ error: 'Invalid JSON body.' }),
+      }
+    }
+
+    const rows = Array.isArray(payload.rows) ? payload.rows : []
+    if (!rows.length) {
+      return {
+        statusCode: 400,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({ error: 'No TLMA rows provided. Expected { rows: [...] }.' }),
+      }
+    }
+    if (rows.length > 500) {
+      return {
+        statusCode: 400,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({ error: 'TLMA import capped at 500 rows per request.' }),
+      }
+    }
+
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || ''
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+    if (!supabaseUrl || !supabaseKey) {
+      return {
+        statusCode: 500,
+        headers: CORS_HEADERS,
+        body: JSON.stringify({ error: 'Supabase env vars not configured.' }),
+      }
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseKey)
+    const importResult = await importTlmaBrowserLeads(supabase, rows)
+
+    return {
+      statusCode: 200,
+      headers: CORS_HEADERS,
+      body: JSON.stringify({
+        source: 'tlma_riverside',
+        mode: 'browser_import',
+        rows_received: rows.length,
+        rows_inserted: importResult.rows_inserted,
+        rows_updated: importResult.rows_updated,
+        rows_skipped: importResult.rows_skipped,
+        error_count: importResult.errors.length,
+        errors: importResult.errors.slice(0, 20),
+        message: 'Existing leads were not deleted.',
+        timestamp: new Date().toISOString(),
+      }),
+    }
+  }
+  // ── END TLMA IMPORT ─────────────────────────────────────────────────────
 
   const city = (params.city || '').toLowerCase()
   const dryRun = params.dry_run === 'true'

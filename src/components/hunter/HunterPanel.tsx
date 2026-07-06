@@ -13,7 +13,7 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react'
-import { ChevronDown, Settings, RotateCcw, Zap, BookOpen, MoreVertical, Plus, Loader2, MapIcon, ChevronUp } from 'lucide-react'
+import { ChevronDown, Settings, RotateCcw, Zap, BookOpen, MoreVertical, Plus, Loader2, MapIcon, ChevronUp, ExternalLink, ClipboardPaste, X } from 'lucide-react'
 import HunterMap from './HunterMap'
 import { supabase } from '@/lib/supabase'
 import clsx from 'clsx'
@@ -23,6 +23,8 @@ import PortalInbox from './PortalInbox'
 import YelpAdPanel from './YelpAdPanel'
 import { useHunterStore } from '@/store/hunterStore'
 import type { HunterLead as StoreHunterLead } from '@/services/hunter/HunterTypes'
+import { buildTlmaSearchUrl, parseTlmaTableHtml, type ParsedTlmaPermit, DEFAULT_TLMA_SEARCH_FILTERS, TLMA_SEARCH_CITIES, TLMA_SEARCH_PERMIT_TYPES, TLMA_PAGE_SIZE_OPTIONS, type TlmaSearchFilters } from '@/services/hunter/tlmaTableParser'
+import { buildTlmaImportRows, previewTlmaImportRows } from '@/services/hunter/tlmaLeadMapper'
 
 export interface HunterPanelProps {
   leads?: HunterLead[]
@@ -428,8 +430,8 @@ const handleMapLeadSelect = (leadId: string) => {
     palm_desert: 'PALM DESERT',
     indio: 'INDIO',
     palm_springs: 'PALM SPRINGS',
+    tlma: 'COACHELLA',
   }
-  const TLMA_PUBLIC_URL = 'https://publiclookup.rivco.org/'
 
   type ScanResultStatus = 'complete' | 'partial' | 'blocked' | 'failed'
   interface TlmaScanResult {
@@ -453,6 +455,230 @@ const handleMapLeadSelect = (leadId: string) => {
 
   const [isScanning, setIsScanning] = useState(false)
   const [scanResult, setScanResult] = useState<TlmaScanResult | null>(null)
+
+  const [tlmaSearchFilters, setTlmaSearchFilters] = useState<TlmaSearchFilters>(() => ({
+    ...DEFAULT_TLMA_SEARCH_FILTERS,
+  }))
+  const tlmaSearchUrl = useMemo(
+    () => buildTlmaSearchUrl(tlmaSearchFilters),
+    [tlmaSearchFilters],
+  )
+
+  useEffect(() => {
+    const mapped = GEO_TO_TLMA_CITY[geoFilter]
+    if (mapped && geoFilter !== 'all' && geoFilter !== 'tlma') {
+      setTlmaSearchFilters(prev => ({ ...prev, city: mapped }))
+    }
+  }, [geoFilter])
+
+  const updateTlmaSearchFilter = (patch: Partial<TlmaSearchFilters>) => {
+    setTlmaSearchFilters(prev => ({ ...prev, ...patch }))
+  }
+
+  const [isTlmaPasteOpen, setIsTlmaPasteOpen] = useState(false)
+  const [tlmaPasteHtml, setTlmaPasteHtml] = useState('')
+  const [tlmaParsePreview, setTlmaParsePreview] = useState<{
+    total_rows: number
+    rows_with_permit_numbers: number
+    permits: ParsedTlmaPermit[]
+    warnings: string[]
+  } | null>(null)
+  const [tlmaImportResult, setTlmaImportResult] = useState<{
+    rows_inserted: number
+    rows_updated: number
+    rows_skipped: number
+    error_count: number
+    message?: string
+  } | null>(null)
+  const [isTlmaParsing, setIsTlmaParsing] = useState(false)
+  const [isTlmaImporting, setIsTlmaImporting] = useState(false)
+
+  const handleOpenTlmaSearch = () => {
+    window.open(tlmaSearchUrl, '_blank', 'noopener,noreferrer')
+  }
+
+  const handleParseTlmaPaste = () => {
+    setIsTlmaParsing(true)
+    setTlmaImportResult(null)
+    try {
+      const parsed = parseTlmaTableHtml(tlmaPasteHtml)
+      setTlmaParsePreview(parsed)
+    } finally {
+      setIsTlmaParsing(false)
+    }
+  }
+
+  const handleImportTlmaPaste = async () => {
+    if (!tlmaParsePreview?.permits.length || isTlmaImporting) return
+    setIsTlmaImporting(true)
+    setTlmaImportResult(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+      if (!token) {
+        alert('Not authenticated. Please refresh and sign in again.')
+        return
+      }
+      const rows = buildTlmaImportRows(tlmaParsePreview.permits)
+      const resp = await fetch('/.netlify/functions/city-scraper?action=tlma-import', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ rows }),
+      })
+      const result = await resp.json().catch(() => ({}))
+      if (!resp.ok) {
+        alert(`TLMA import failed: ${result.error || resp.statusText}`)
+        return
+      }
+      setTlmaImportResult({
+        rows_inserted: result.rows_inserted ?? 0,
+        rows_updated: result.rows_updated ?? 0,
+        rows_skipped: result.rows_skipped ?? 0,
+        error_count: result.error_count ?? 0,
+        message: result.message,
+      })
+      await fetchLeads()
+    } catch (err: any) {
+      alert(`TLMA import error: ${err?.message ?? String(err)}`)
+    } finally {
+      setIsTlmaImporting(false)
+    }
+  }
+
+  const closeTlmaPasteModal = () => {
+    setIsTlmaPasteOpen(false)
+    setTlmaPasteHtml('')
+    setTlmaParsePreview(null)
+    setTlmaImportResult(null)
+  }
+
+  const tlmaPreviewRows = useMemo(
+    () => (tlmaParsePreview?.permits?.length ? previewTlmaImportRows(tlmaParsePreview.permits, 5) : []),
+    [tlmaParsePreview],
+  )
+
+  const renderTlmaSearchBuilder = (showOpenButton = true) => (
+    <div className="rounded border border-gray-800 bg-gray-900/70 p-3 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-gray-200">TLMA Search Builder</div>
+          <p className="text-xs text-gray-500 mt-1">
+            Use TLMA Search Builder to open a broader county search, then copy the result table and import it.
+          </p>
+        </div>
+        {showOpenButton && (
+          <button
+            type="button"
+            onClick={handleOpenTlmaSearch}
+            className="shrink-0 flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded transition-colors"
+          >
+            <ExternalLink size={14} />
+            Open TLMA Search
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+        <label className="text-xs text-gray-400 space-y-1">
+          <span>City</span>
+          <select
+            value={tlmaSearchFilters.city ?? ''}
+            onChange={(e) => updateTlmaSearchFilter({ city: e.target.value })}
+            className="w-full px-2 py-1.5 bg-gray-950 text-gray-200 text-sm rounded border border-gray-700"
+          >
+            {TLMA_SEARCH_CITIES.map(option => (
+              <option key={option.label} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="text-xs text-gray-400 space-y-1">
+          <span>Permit Type</span>
+          <select
+            value={tlmaSearchFilters.permitType ?? ''}
+            onChange={(e) => updateTlmaSearchFilter({ permitType: e.target.value })}
+            className="w-full px-2 py-1.5 bg-gray-950 text-gray-200 text-sm rounded border border-gray-700"
+          >
+            {TLMA_SEARCH_PERMIT_TYPES.map(option => (
+              <option key={option.label} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="text-xs text-gray-400 space-y-1">
+          <span>Page Size</span>
+          <select
+            value={String(tlmaSearchFilters.pageSize ?? 100)}
+            onChange={(e) => updateTlmaSearchFilter({ pageSize: Number(e.target.value) })}
+            className="w-full px-2 py-1.5 bg-gray-950 text-gray-200 text-sm rounded border border-gray-700"
+          >
+            {TLMA_PAGE_SIZE_OPTIONS.map(size => (
+              <option key={size} value={size}>{size}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="text-xs text-gray-400 space-y-1">
+          <span>Page</span>
+          <input
+            type="number"
+            min={1}
+            value={tlmaSearchFilters.page ?? 1}
+            onChange={(e) => updateTlmaSearchFilter({ page: Math.max(1, Number(e.target.value) || 1) })}
+            className="w-full px-2 py-1.5 bg-gray-950 text-gray-200 text-sm rounded border border-gray-700"
+          />
+        </label>
+
+        <label className="text-xs text-gray-400 space-y-1">
+          <span>Applied From</span>
+          <input
+            type="date"
+            value={tlmaSearchFilters.appliedDateStart ?? ''}
+            onChange={(e) => updateTlmaSearchFilter({ appliedDateStart: e.target.value })}
+            className="w-full px-2 py-1.5 bg-gray-950 text-gray-200 text-sm rounded border border-gray-700"
+          />
+        </label>
+
+        <label className="text-xs text-gray-400 space-y-1">
+          <span>Applied To</span>
+          <input
+            type="date"
+            value={tlmaSearchFilters.appliedDateEnd ?? ''}
+            onChange={(e) => updateTlmaSearchFilter({ appliedDateEnd: e.target.value })}
+            className="w-full px-2 py-1.5 bg-gray-950 text-gray-200 text-sm rounded border border-gray-700"
+          />
+        </label>
+
+        <label className="text-xs text-gray-400 space-y-1">
+          <span>Issued From</span>
+          <input
+            type="date"
+            value={tlmaSearchFilters.issuedDateStart ?? ''}
+            onChange={(e) => updateTlmaSearchFilter({ issuedDateStart: e.target.value })}
+            className="w-full px-2 py-1.5 bg-gray-950 text-gray-200 text-sm rounded border border-gray-700"
+          />
+        </label>
+
+        <label className="text-xs text-gray-400 space-y-1">
+          <span>Issued To</span>
+          <input
+            type="date"
+            value={tlmaSearchFilters.issuedDateEnd ?? ''}
+            onChange={(e) => updateTlmaSearchFilter({ issuedDateEnd: e.target.value })}
+            className="w-full px-2 py-1.5 bg-gray-950 text-gray-200 text-sm rounded border border-gray-700"
+          />
+        </label>
+      </div>
+
+      <p className="text-[11px] text-gray-500">
+        TLMA only imports the page you copy. For more results, go to page 2, copy the table again, and import.
+        Existing permits are updated, not duplicated.
+      </p>
+    </div>
+  )
 
   const buildScanResult = (
     result: Record<string, unknown>,
@@ -755,6 +981,22 @@ const handleMapLeadSelect = (leadId: string) => {
               {isScanning ? 'Scanning…' : 'Scan Now'}
             </button>
             <button
+              onClick={handleOpenTlmaSearch}
+              className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded transition-colors"
+              title="Open TLMA search with current Search Builder filters"
+            >
+              <ExternalLink size={14} />
+              Open TLMA Search
+            </button>
+            <button
+              onClick={() => setIsTlmaPasteOpen(true)}
+              className="flex items-center gap-2 px-3 py-2 bg-indigo-700 hover:bg-indigo-600 text-white text-sm rounded transition-colors"
+              title="Paste copied TLMA results table HTML"
+            >
+              <ClipboardPaste size={14} />
+              Paste TLMA Table
+            </button>
+            <button
               onClick={onViewStudyQueue}
               className="flex items-center gap-2 px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded transition-colors"
               title="View Study Queue for deferred lessons"
@@ -789,31 +1031,40 @@ const handleMapLeadSelect = (leadId: string) => {
           </div>
         </div>
 
-        {/* HUNTER-1: scan result panel — partial/blocked/manual review UX */}
+        {renderTlmaSearchBuilder(false)}
+
+        <p className="text-xs text-gray-500">
+          TLMA blocks server auto-scan. Browser import only — no server fetch.
+        </p>
+
+        {/* HUNTER-1/HUNTER-2: scan result panel — partial/blocked/manual review UX */}
         {scanResult && (
           <div
             className={clsx(
               'rounded border p-3 text-sm space-y-2',
               scanResult.status === 'complete' && 'bg-emerald-950 border-emerald-800 text-emerald-100',
               scanResult.status === 'partial' && 'bg-amber-950 border-amber-800 text-amber-100',
-              scanResult.status === 'blocked' && 'bg-orange-950 border-orange-800 text-orange-100',
+              scanResult.status === 'blocked' && 'bg-orange-950/70 border-orange-800/80 text-orange-100',
               scanResult.status === 'failed' && 'bg-red-950 border-red-800 text-red-100',
             )}
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="font-semibold">{scanResult.title}</div>
-                <div className="text-xs mt-1 opacity-90">
-                  {scanResult.newCount} new · {scanResult.updatedCount} updated
-                  {scanResult.issueCount > 0 && (
-                    <span>
-                      {' '}· {scanResult.issueCount} of {scanResult.matrixSize} request(s) blocked/failed
-                      {scanResult.completedCount != null && (
-                        <span> ({scanResult.completedCount} attempted)</span>
-                      )}
-                    </span>
-                  )}
+                <div className="font-semibold">
+                  {scanResult.status === 'blocked'
+                    ? 'TLMA auto-scan is blocked by the public source. Use browser import.'
+                    : scanResult.title}
                 </div>
+                {(scanResult.status === 'complete' || scanResult.status === 'partial') && (
+                  <div className="text-xs mt-1 opacity-90">
+                    {scanResult.newCount} new · {scanResult.updatedCount} updated
+                    {scanResult.issueCount > 0 && (
+                      <span>
+                        {' '}· {scanResult.issueCount} of {scanResult.matrixSize} request(s) blocked/failed
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               <button
                 type="button"
@@ -824,45 +1075,48 @@ const handleMapLeadSelect = (leadId: string) => {
               </button>
             </div>
 
-            {scanResult.manualReviewRequired && (
-              <p className="text-xs">
-                Manual review required — the public TLMA source is blocking automated access.
-                Existing leads were not deleted.
-              </p>
-            )}
-
-            {scanResult.blockedCount > 0 && (
-              <p className="text-xs">
-                Blocked responses: {scanResult.blockedCount}
-                {scanResult.abortedEarly && ' · scan stopped early to avoid hammering the source'}
-              </p>
-            )}
-
-            {(scanResult.blockedReason || scanResult.firstError) && (
-              <p className="text-xs opacity-90">
-                {scanResult.blockedReason || scanResult.firstError}
-                {scanResult.firstErrorBody && !scanResult.blockedReason && (
-                  <span className="block mt-1 text-[11px] opacity-75">{scanResult.firstErrorBody}</span>
-                )}
-              </p>
-            )}
-
-            {scanResult.sourceStatus && (
-              <p className="text-[11px] opacity-75">Source status: {scanResult.sourceStatus}</p>
-            )}
-
-            <div className="flex gap-2 pt-1">
-              {scanResult.manualReviewRequired && (
-                <a
-                  href={TLMA_PUBLIC_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
+            {scanResult.status === 'blocked' ? (
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleOpenTlmaSearch}
                   className="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-xs text-white border border-gray-600"
                 >
-                  Open public source
-                </a>
-              )}
-            </div>
+                  Open TLMA Search
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsTlmaPasteOpen(true)}
+                  className="px-2.5 py-1 rounded bg-indigo-800 hover:bg-indigo-700 text-xs text-white border border-indigo-600"
+                >
+                  Paste TLMA Table
+                </button>
+              </div>
+            ) : (
+              <>
+                {scanResult.manualReviewRequired && (
+                  <p className="text-xs">
+                    Manual review required. Existing leads were not deleted.
+                  </p>
+                )}
+                {scanResult.status !== 'complete' && (
+                  <details className="text-xs opacity-90">
+                    <summary className="cursor-pointer">Diagnostics</summary>
+                    <div className="mt-2 space-y-1">
+                      {scanResult.blockedCount > 0 && (
+                        <p>Blocked responses: {scanResult.blockedCount}</p>
+                      )}
+                      {(scanResult.blockedReason || scanResult.firstError) && (
+                        <p>{scanResult.blockedReason || scanResult.firstError}</p>
+                      )}
+                      {scanResult.sourceStatus && (
+                        <p>Source status: {scanResult.sourceStatus}</p>
+                      )}
+                    </div>
+                  </details>
+                )}
+              </>
+            )}
           </div>
         )}
 
@@ -1494,6 +1748,103 @@ const handleMapLeadSelect = (leadId: string) => {
         onClose={() => setIsAddLeadOpen(false)}
         onSuccess={handleAddLeadSuccess}
       />
+
+      {isTlmaPasteOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-lg border border-gray-700 bg-gray-950 shadow-xl">
+            <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Paste TLMA result table HTML</h2>
+                <p className="text-xs text-gray-400 mt-1">
+                  Open TLMA in your browser, copy the results table outerHTML, then paste below.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeTlmaPasteModal}
+                className="p-1 text-gray-400 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              {renderTlmaSearchBuilder(true)}
+
+              <textarea
+                value={tlmaPasteHtml}
+                onChange={(e) => {
+                  setTlmaPasteHtml(e.target.value)
+                  setTlmaParsePreview(null)
+                  setTlmaImportResult(null)
+                }}
+                placeholder='Paste HTML containing #resultsScroll table or table.results-table…'
+                className="w-full h-40 px-3 py-2 bg-gray-900 border border-gray-700 rounded text-sm text-gray-100 font-mono"
+              />
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleParseTlmaPaste}
+                  disabled={!tlmaPasteHtml.trim() || isTlmaParsing}
+                  className="px-3 py-2 bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white text-sm rounded"
+                >
+                  {isTlmaParsing ? 'Parsing…' : 'Parse'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleImportTlmaPaste}
+                  disabled={!tlmaParsePreview?.permits.length || isTlmaImporting}
+                  className="px-3 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm rounded"
+                >
+                  {isTlmaImporting ? 'Importing…' : 'Import Leads'}
+                </button>
+              </div>
+
+              {tlmaParsePreview && (
+                <div className="rounded border border-gray-800 bg-gray-900 p-3 text-sm space-y-2">
+                  <div className="text-gray-200">
+                    Parsed {tlmaParsePreview.total_rows} row(s) · {tlmaParsePreview.rows_with_permit_numbers} with permit numbers
+                  </div>
+                  {tlmaParsePreview.warnings.map((warning) => (
+                    <p key={warning} className="text-xs text-amber-300">{warning}</p>
+                  ))}
+                  {tlmaParsePreview.permits.length === 0 ? (
+                    <p className="text-xs text-gray-400">No importable permits found.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs text-gray-400">First permits preview:</p>
+                      <ul className="space-y-1 text-xs text-gray-300">
+                        {tlmaPreviewRows.map((row) => (
+                          <li key={row.permit_number} className="border border-gray-800 rounded px-2 py-1">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span className="font-medium text-white">{row.permit_number}</span>
+                              <span className="text-yellow-300">{row.score} · {row.score_tier}</span>
+                              <span>{row.city || 'Unknown city'}</span>
+                              <span>{row.permit_type || 'Unknown type'}</span>
+                              <span>{row.status || 'Unknown status'}</span>
+                            </div>
+                            {row.address && <div className="text-gray-400 mt-0.5">{row.address}</div>}
+                            {row.description && <div className="text-gray-500 mt-0.5">{row.description.slice(0, 120)}</div>}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {tlmaImportResult && (
+                <div className="rounded border border-emerald-800 bg-emerald-950/40 p-3 text-sm text-emerald-100 space-y-1">
+                  <div className="font-medium">Import complete</div>
+                  <div>{tlmaImportResult.rows_inserted} new · {tlmaImportResult.rows_updated} updated · {tlmaImportResult.rows_skipped} skipped · {tlmaImportResult.error_count} errors</div>
+                  <div className="text-xs">{tlmaImportResult.message || 'Existing leads were not deleted.'}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

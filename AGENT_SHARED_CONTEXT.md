@@ -4250,3 +4250,50 @@ No commit, push, deploy, manual Supabase touch, restore script, or manual localS
 **No live TLMA probe run during implementation. No deploy during implementation.**
 
 **Lock released.**
+
+---
+
+### 2026-07-06 — Phase HUNTER-2: TLMA Browser-Assisted Table Import (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** IMPLEMENT ONLY — browser-assisted TLMA import when server auto-fetch is blocked
+**Branch:** main @ `f794598` | NOT committed | NOT pushed | NOT deployed
+
+**HunterPanel (`src/components/hunter/HunterPanel.tsx`):**
+- Added compact TLMA import controls near Scan Now: Open TLMA Search, Paste TLMA Table, and helper note.
+- Paste modal parses pasted `#resultsScroll` / `results-table` HTML, previews rows, and imports via Netlify.
+- Simplified blocked auto-scan UX: plain message + browser import actions; raw diagnostics hidden under details.
+
+**Parser/mapper (`src/services/hunter/tlmaTableParser.ts`, `tlmaLeadMapper.ts`):**
+- Browser `DOMParser` extracts permit rows by header text with column-order fallback.
+- Maps TLMA fields (permit number, status, dates, contact, sqft, print URL, etc.) and applies TLMA scoring before import.
+
+**Netlify (`netlify/functions/city-scraper.ts`):**
+- Added isolated `?action=tlma-import` POST handler (auth required, service-role upsert only).
+- Accepts parsed rows JSON from authenticated app; no outbound TLMA fetch.
+
+**No Cloudflare bypass, cookies, tokens, or server TLMA auto-scan added. Supabase/Netlify TLMA auto-fetch remains blocked by design.**
+
+**Untouched:** Indio scanner, Palm Springs scanner, Palm Desert Aura paths, Supabase `tlma-scraper` Edge Function.
+
+**Lock released.**
+
+---
+
+### 2026-07-06 — Phase HUNTER-2B: TLMA Search Builder Expansion (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** IMPLEMENT ONLY — broaden TLMA browser import search scope
+**Branch:** main @ `f794598` | NOT committed | NOT pushed | NOT deployed
+
+**HunterPanel + parser/mapper:**
+- Replaced narrow Coachella-only default with TLMA Search Builder controls (city, permit type, page size, page, optional applied/issued date ranges).
+- Default lead-hunting search: Any City + Commercial Buildings (BNR) + PageSize 100 + IssuedDate desc.
+- Preview now shows city, permit type, status, address, description, and score.
+- Added page workflow note: import only copies the current TLMA page; page 2+ requires another paste/import.
+
+**Scoring:** Expanded high-opportunity keyword list (electric, panel, meter, lighting, tenant improvement, commercial, EV, solar, generator, switchgear, Title 24, low voltage, sign, kitchen, restaurant, retail, shell, buildout).
+
+**Still browser-assisted only:** no Cloudflare bypass, no server TLMA fetch. City scanners untouched.
+
+**Lock released.**
