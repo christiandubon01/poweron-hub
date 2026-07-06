@@ -235,6 +235,8 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   const [overheadDraftRows, setOverheadDraftRows] = useState<any[]>([])
   // Latest draft mirror for flush-time reads (queue persists from latest ref).
   const latestEstimateRowsRef = useRef<{ laborRows: any[]; overheadRows: any[] }>({ laborRows: [], overheadRows: [] })
+  const flushEstimateRowsSaveQueueRef = useRef<(() => Promise<void>) | null>(null)
+  const flushEstimateScalarsSaveQueueRef = useRef<(() => Promise<void>) | null>(null)
   // Sync bookkeeping so the render-time draft reconciliation is idempotent.
   const estimateDraftStructuralKeyRef = useRef<string>('__init__')
   const estimateDraftValueKeyRef = useRef<string>('__init__')
@@ -242,6 +244,9 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   // let an async re-render overwrite the focused draft value.
   const estimateEditingRef = useRef<boolean>(false)
   const [estimateInputFocused, setEstimateInputFocused] = useState(false)
+  // Phase 6U: local scalar drafts for contract/mileRT/miDays (typing reliability).
+  const scalarDraftRef = useRef<{ contract?: string; mileRT?: string; miDays?: string }>({})
+  const scalarDraftStructuralKeyRef = useRef<string>('__init__')
   const [subtab, setSubtab] = useState<'project' | 'service'>('project')
   const [aiOpen, setAiOpen] = useState(false)
 
@@ -312,15 +317,24 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   const [showEstForm, setShowEstForm] = useState(false)
   const [editingEstId, setEditingEstId] = useState<string | null>(null)
 
+  const estimateRowsQueue = estimateRowsSaveQueueRef.current
+  const estimateScalarsQueue = estimateScalarsSaveQueueRef.current
   const isEstimateDirty =
     estimateInputFocused ||
+    estimateEditingRef.current ||
+    !!estimateRowsQueue.timer ||
+    !!estimateRowsQueue.inFlight ||
+    !!estimateRowsQueue.needsFlush ||
+    !!estimateScalarsQueue.timer ||
+    !!estimateScalarsQueue.inFlight ||
+    !!estimateScalarsQueue.needsFlush ||
     showEstForm ||
     !!editingEstId ||
     healthCheckOpen ||
     showVersionHistory ||
     restorePreviewVersionIdx !== null ||
     Object.keys(laborPhaseColorDraft).length > 0 ||
-    !!estimateRowsSaveQueueRef.current.inFlight
+    Object.keys(laborPhaseColorTimers.current).length > 0
 
   useRemoteDataRefresh({
     scopeId: 'estimate',
@@ -334,10 +348,29 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
 
   useEffect(() => {
     return () => {
-      const timer = estimateRowsSaveQueueRef.current?.timer
-      if (timer) clearTimeout(timer)
-      const scalarTimer = estimateScalarsSaveQueueRef.current?.timer
-      if (scalarTimer) clearTimeout(scalarTimer)
+      const rowQueue = estimateRowsSaveQueueRef.current
+      if (rowQueue?.timer) {
+        clearTimeout(rowQueue.timer)
+        rowQueue.timer = null
+        const latest = latestEstimateRowsRef.current
+        rowQueue.laborRows = JSON.parse(JSON.stringify(Array.isArray(latest.laborRows) ? latest.laborRows : []))
+        rowQueue.overheadRows = JSON.parse(JSON.stringify(Array.isArray(latest.overheadRows) ? latest.overheadRows : []))
+        rowQueue.needsFlush = true
+      }
+      if (rowQueue?.needsFlush && flushEstimateRowsSaveQueueRef.current) {
+        void flushEstimateRowsSaveQueueRef.current()
+      }
+
+      const scalarQueue = estimateScalarsSaveQueueRef.current
+      if (scalarQueue?.timer) {
+        clearTimeout(scalarQueue.timer)
+        scalarQueue.timer = null
+        scalarQueue.needsFlush = true
+      }
+      if (scalarQueue?.needsFlush && flushEstimateScalarsSaveQueueRef.current) {
+        void flushEstimateScalarsSaveQueueRef.current()
+      }
+
       const undoTimer = estimateRowUndoRef.current?.timer
       if (undoTimer) clearTimeout(undoTimer)
     }
@@ -516,12 +549,16 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     saveBackupData(localBackup)
   }
 
-  const saveEstimateRowsSnapshotRemote = async (seq: number, localLaborRows: any[], localOverheadRows: any[]) => {
+  const saveEstimateRowsSnapshotRemote = async (seq: number) => {
     const queue = estimateRowsSaveQueueRef.current
-    persistEstimateRowsSnapshotLocal(localLaborRows, localOverheadRows)
+    if (seq !== queue.seq) return
+
+    const laborRows = cloneEstimateRows(queue.laborRows)
+    const overheadRows = cloneEstimateRows(queue.overheadRows)
+    persistEstimateRowsSnapshotLocal(laborRows, overheadRows)
 
     const incomingBackup = getBackupData() || backup
-    applyEstimateRowsToBackup(incomingBackup, cloneEstimateRows(localLaborRows), cloneEstimateRows(localOverheadRows))
+    applyEstimateRowsToBackup(incomingBackup, laborRows, overheadRows)
 
     try {
       const remote = await fetchLatestRemoteBackup()
@@ -581,9 +618,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       do {
         queue.needsFlush = false
         const seq = queue.seq
-        const laborRows = cloneEstimateRows(queue.laborRows)
-        const overheadRows = cloneEstimateRows(queue.overheadRows)
-        await saveEstimateRowsSnapshotRemote(seq, laborRows, overheadRows)
+        await saveEstimateRowsSnapshotRemote(seq)
       } while (queue.needsFlush)
     } finally {
       queue.inFlight = false
@@ -592,10 +627,15 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       }
     }
   }
+  flushEstimateRowsSaveQueueRef.current = flushEstimateRowsSaveQueue
 
-  const saveEstimateRowsScoped = (nextLaborRows: any[], nextOverheadRows: any[], debounceMs = ESTIMATE_ROW_SAVE_DEBOUNCE_MS) => {
-    const localLaborRows = Array.isArray(nextLaborRows) ? nextLaborRows : []
-    const localOverheadRows = Array.isArray(nextOverheadRows) ? nextOverheadRows : []
+  const saveEstimateRowsScoped = (nextLaborRows?: any[], nextOverheadRows?: any[], debounceMs = ESTIMATE_ROW_SAVE_DEBOUNCE_MS) => {
+    const localLaborRows = cloneEstimateRows(
+      Array.isArray(nextLaborRows) ? nextLaborRows : latestEstimateRowsRef.current.laborRows,
+    )
+    const localOverheadRows = cloneEstimateRows(
+      Array.isArray(nextOverheadRows) ? nextOverheadRows : latestEstimateRowsRef.current.overheadRows,
+    )
     const queue = estimateRowsSaveQueueRef.current
 
     p.laborRows = localLaborRows
@@ -603,8 +643,8 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     backup._lastSavedAt = new Date().toISOString()
 
     queue.seq += 1
-    queue.laborRows = cloneEstimateRows(localLaborRows)
-    queue.overheadRows = cloneEstimateRows(localOverheadRows)
+    queue.laborRows = localLaborRows
+    queue.overheadRows = localOverheadRows
     queue.needsFlush = true
 
     if (queue.timer) clearTimeout(queue.timer)
@@ -645,8 +685,24 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     saveBackupData(localBackup)
   }
 
-  const saveEstimateScalarsSnapshotRemote = async (seq: number, values: any, stamps: any) => {
+  const getLatestEstimateScalarValues = () => ({
+    contract: scalarDraftRef.current.contract !== undefined
+      ? num(scalarDraftRef.current.contract)
+      : num(p.contract || 0),
+    mileRT: scalarDraftRef.current.mileRT !== undefined
+      ? num(scalarDraftRef.current.mileRT)
+      : num(p.mileRT || 0),
+    miDays: scalarDraftRef.current.miDays !== undefined
+      ? num(scalarDraftRef.current.miDays)
+      : num(p.miDays || 0),
+  })
+
+  const saveEstimateScalarsSnapshotRemote = async (seq: number) => {
     const queue = estimateScalarsSaveQueueRef.current
+    if (seq !== queue.seq) return
+
+    const values = { ...queue.values }
+    const stamps = { ...queue.stamps }
     persistEstimateScalarsSnapshotLocal(values, stamps)
 
     const incomingBackup = getBackupData() || backup
@@ -701,9 +757,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       do {
         queue.needsFlush = false
         const seq = queue.seq
-        const values = { ...queue.values }
-        const stamps = { ...queue.stamps }
-        await saveEstimateScalarsSnapshotRemote(seq, values, stamps)
+        await saveEstimateScalarsSnapshotRemote(seq)
       } while (queue.needsFlush)
     } finally {
       queue.inFlight = false
@@ -712,17 +766,18 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       }
     }
   }
+  flushEstimateScalarsSaveQueueRef.current = flushEstimateScalarsSaveQueue
 
   // Snapshot the latest scalar values + per-field stamps from p (already mutated
   // + stamped optimistically by the caller) and queue a debounced scoped save.
   const saveEstimateScalarsScoped = (debounceMs = ESTIMATE_ROW_SAVE_DEBOUNCE_MS) => {
     const queue = estimateScalarsSaveQueueRef.current
-    queue.values = {
-      contract: num(p.contract || 0),
-      mileRT: num(p.mileRT || 0),
-      miDays: num(p.miDays || 0),
-    }
+    const latestValues = getLatestEstimateScalarValues()
+    queue.values = latestValues
     queue.stamps = { ...((p as any).estimateScalarUpdatedAt || {}) }
+    p.contract = latestValues.contract
+    p.mileRT = latestValues.mileRT
+    p.miDays = latestValues.miDays
     backup._lastSavedAt = new Date().toISOString()
 
     queue.seq += 1
@@ -733,6 +788,23 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       queue.timer = null
       void flushEstimateScalarsSaveQueue()
     }, Math.max(0, debounceMs))
+  }
+
+  const flushEstimateScalarsImmediate = () => {
+    const queue = estimateScalarsSaveQueueRef.current
+    if (queue.timer) {
+      clearTimeout(queue.timer)
+      queue.timer = null
+    }
+    const latestValues = getLatestEstimateScalarValues()
+    queue.values = latestValues
+    queue.stamps = { ...((p as any).estimateScalarUpdatedAt || {}) }
+    p.contract = latestValues.contract
+    p.mileRT = latestValues.mileRT
+    p.miDays = latestValues.miDays
+    queue.seq += 1
+    queue.needsFlush = true
+    void flushEstimateScalarsSaveQueue()
   }
 
   // ── Phase 6L-B: scoped labor phase COLOR save path ─────────────────────────
@@ -814,6 +886,18 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     return `${l.join(';;')}##${o.join(';;')}`
   }
 
+  const canReconcileEstimateDraft = (): boolean => {
+    if (estimateInputFocused || estimateEditingRef.current) return false
+    const rowQueue = estimateRowsSaveQueueRef.current
+    if (rowQueue.timer || rowQueue.inFlight || rowQueue.needsFlush) return false
+    const scalarQueue = estimateScalarsSaveQueueRef.current
+    if (scalarQueue.timer || scalarQueue.inFlight || scalarQueue.needsFlush) return false
+    return true
+  }
+
+  const buildScalarDraftKey = (): string =>
+    `${projectId}::${p.contract ?? ''}::${p.mileRT ?? ''}::${p.miDays ?? ''}`
+
   // Runs on every render. Refreshes the local draft from the persisted live
   // rows ONLY when the row set changes structurally (add/delete/replace/project
   // switch) OR when values change externally while no input is focused
@@ -824,7 +908,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     const valueKey = buildEstimateValueKey(liveLaborRows, liveOverheadRows)
     const structuralChanged = structuralKey !== estimateDraftStructuralKeyRef.current
     const valueChanged = valueKey !== estimateDraftValueKeyRef.current
-    if (structuralChanged || (valueChanged && !estimateEditingRef.current)) {
+    if (structuralChanged || (valueChanged && canReconcileEstimateDraft())) {
       const clonedLabor = cloneEstimateRows(liveLaborRows)
       const clonedOverhead = cloneEstimateRows(liveOverheadRows)
       latestEstimateRowsRef.current = { laborRows: clonedLabor, overheadRows: clonedOverhead }
@@ -833,6 +917,12 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     }
     estimateDraftStructuralKeyRef.current = structuralKey
     estimateDraftValueKeyRef.current = valueKey
+
+    const scalarKey = buildScalarDraftKey()
+    if (scalarKey !== scalarDraftStructuralKeyRef.current && canReconcileEstimateDraft()) {
+      scalarDraftRef.current = {}
+    }
+    scalarDraftStructuralKeyRef.current = scalarKey
   }
 
   const applyLaborFieldToDraftRow = (row: any, field: string, value: any): any => {
@@ -861,12 +951,48 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     setEstimateInputFocused(true)
   }
   const onEstimateInputBlur = () => {
-    estimateEditingRef.current = false
     setEstimateInputFocused(false)
-    // Ensure the latest edited value is flushed to persistence on blur.
     const queue = estimateRowsSaveQueueRef.current
-    if (queue.timer) { clearTimeout(queue.timer); queue.timer = null }
-    void flushEstimateRowsSaveQueue()
+    if (queue.timer) {
+      clearTimeout(queue.timer)
+      queue.timer = null
+    }
+    queue.laborRows = cloneEstimateRows(latestEstimateRowsRef.current.laborRows)
+    queue.overheadRows = cloneEstimateRows(latestEstimateRowsRef.current.overheadRows)
+    queue.seq += 1
+    queue.needsFlush = true
+    void (async () => {
+      try {
+        await flushEstimateRowsSaveQueue()
+      } finally {
+        estimateEditingRef.current = false
+      }
+    })()
+  }
+
+  const getScalarInputValue = (field: 'contract' | 'mileRT' | 'miDays', fallback: number): number | string => {
+    if (scalarDraftRef.current[field] !== undefined) return scalarDraftRef.current[field] as string
+    return fallback
+  }
+
+  const onScalarInputChange = (field: 'contract' | 'mileRT' | 'miDays', rawValue: string) => {
+    scalarDraftRef.current[field] = rawValue
+    if (field === 'contract') p.contract = num(rawValue)
+    else if (field === 'mileRT') p.mileRT = num(rawValue)
+    else if (field === 'miDays') p.miDays = num(rawValue)
+    forceUpdate()
+  }
+
+  const onScalarInputBlur = (field: 'contract' | 'mileRT' | 'miDays', rawValue: string) => {
+    pushState()
+    scalarDraftRef.current[field] = rawValue
+    if (field === 'contract') p.contract = num(rawValue)
+    else if (field === 'mileRT') p.mileRT = num(rawValue)
+    else if (field === 'miDays') p.miDays = num(rawValue)
+    stampEstimateScalar(p, field, new Date().toISOString())
+    delete scalarDraftRef.current[field]
+    flushEstimateScalarsImmediate()
+    forceUpdate()
   }
 
   const getMTOActivePhaseBreakdown = (proj) => {
@@ -971,24 +1097,10 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     //    never reads stale backup/project). This is what the input renders from.
     setLaborDraft((prev: any[]) => prev.map((row: any) =>
       laborRowKey(row) === rowId ? applyLaborFieldToDraftRow(row, field, value) : row))
-    // 2) Persist path: mutate p (for totals/save) + queue scoped save. Async.
+    // 2) Persist path: sync p from latest draft ref + queue scoped save.
     pushEstimateRowEditState()
-    p.laborRows = p.laborRows || []
-    const rowIndex = findLaborRowIndexByKey(p.laborRows, rowId)
-    const row = rowIndex >= 0 ? p.laborRows[rowIndex] : null
-    if (row) {
-      row.laborId = getLaborStableId(row, p.id, createLaborIdentityContext(p.laborRows, p.id))
-      row.createdAt = row.createdAt || new Date().toISOString()
-      row.updatedAt = new Date().toISOString()
-      if (field === 'hrs') row.hrs = num(value)
-      else if (field === 'rate') row.rate = num(value)
-      else if (field === 'desc') row.desc = String(value)
-      else if (field === 'empId') row.empId = String(value)
-      else if (field === 'phase') row.phase = String(value)
-      else if (field === 'employees') { row.employees = value; row.empId = (value as string[])[0] || 'me' }
-      else if (field === 'employeeAllocations') row.employeeAllocations = value
-    }
-    void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
+    p.laborRows = cloneEstimateRows(latestEstimateRowsRef.current.laborRows)
+    saveEstimateRowsScoped()
     forceUpdate()
   }
 
@@ -1046,20 +1158,10 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     // 1) Instant UI: update the local draft from the PREVIOUS draft (functional).
     setOverheadDraft((prev: any[]) => prev.map((row: any) =>
       overheadRowKey(row) === rowId ? applyOverheadFieldToDraftRow(row, field, value) : row))
-    // 2) Persist path: mutate p (for totals/save) + queue scoped save. Async.
+    // 2) Persist path: sync p from latest draft ref + queue scoped save.
     pushEstimateRowEditState()
-    p.ohRows = p.ohRows || []
-    const rowIndex = findOverheadRowIndexByKey(p.ohRows, rowId)
-    const row = rowIndex >= 0 ? p.ohRows[rowIndex] : null
-    if (row) {
-      row.overheadId = getOverheadStableId(row, p.id, createOverheadIdentityContext(p.ohRows, p.id))
-      row.createdAt = row.createdAt || new Date().toISOString()
-      row.updatedAt = new Date().toISOString()
-      if (field === 'hrs') row.hrs = num(value)
-      else if (field === 'rate') row.rate = num(value)
-      else if (field === 'desc') row.desc = String(value)
-    }
-    void saveEstimateRowsScoped(p.laborRows || [], p.ohRows || [])
+    p.ohRows = cloneEstimateRows(latestEstimateRowsRef.current.overheadRows)
+    saveEstimateRowsScoped()
     forceUpdate()
   }
 
@@ -1102,15 +1204,9 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   }
 
   const editMileage = (field, value) => {
-    pushState()
-    // Optimistic local update + stamp only the edited scalar field, then queue a
-    // scoped per-field scalar merge (Phase 6L) — no broad projects save.
-    if (field === 'mileRT') p.mileRT = num(value)
-    else if (field === 'miDays') p.miDays = num(value)
-    else return
+    onScalarInputChange(field, String(value))
     stampEstimateScalar(p, field, new Date().toISOString())
     saveEstimateScalarsScoped()
-    forceUpdate()
   }
 
   /** Job site address: same persisted project fields as Edit Project modal — no local-only copy */
@@ -3769,8 +3865,9 @@ Return ONLY valid JSON, no other text.`
                   </label>
                   <input
                     type="number"
-                    value={p.mileRT || 30}
+                    value={getScalarInputValue('mileRT', num(p.mileRT || 30))}
                     onChange={e => editMileage('mileRT', e.target.value)}
+                    onBlur={e => onScalarInputBlur('mileRT', e.target.value)}
                     style={{
                       width: '100%',
                       padding: '6px',
@@ -3788,8 +3885,9 @@ Return ONLY valid JSON, no other text.`
                   </label>
                   <input
                     type="number"
-                    value={p.miDays || 12}
+                    value={getScalarInputValue('miDays', num(p.miDays || 12))}
                     onChange={e => editMileage('miDays', e.target.value)}
+                    onBlur={e => onScalarInputBlur('miDays', e.target.value)}
                     style={{
                       width: '100%',
                       padding: '6px',
@@ -3904,18 +4002,9 @@ Return ONLY valid JSON, no other text.`
               <span style={{ color: '#6ee7b7', fontSize: '12px', fontWeight: '700' }}>$</span>
               <input
                 type="number"
-                value={num(p.contract || 0)}
-                onChange={e => {
-                  p.contract = num(e.target.value)
-                  forceUpdate()
-                }}
-                onBlur={e => {
-                  pushState()
-                  p.contract = num(e.target.value)
-                  stampEstimateScalar(p, 'contract', new Date().toISOString())
-                  saveEstimateScalarsScoped()
-                  forceUpdate()
-                }}
+                value={getScalarInputValue('contract', num(p.contract || 0))}
+                onChange={e => onScalarInputChange('contract', e.target.value)}
+                onBlur={e => onScalarInputBlur('contract', e.target.value)}
                 style={{
                   background: 'transparent',
                   border: 'none',
@@ -3948,15 +4037,12 @@ Return ONLY valid JSON, no other text.`
                     min={0}
                     max={100000}
                     step={500}
-                    value={Math.min(Math.max(num(p.contract || 0), 0), 100000)}
-                    onChange={e => {
-                      p.contract = num(e.target.value)
-                      forceUpdate()
-                    }}
+                    value={Math.min(Math.max(num(getScalarInputValue('contract', num(p.contract || 0))), 0), 100000)}
+                    onChange={e => onScalarInputChange('contract', e.target.value)}
                     onPointerUp={() => {
                       pushState()
                       stampEstimateScalar(p, 'contract', new Date().toISOString())
-                      saveEstimateScalarsScoped()
+                      flushEstimateScalarsImmediate()
                     }}
                     style={{ width: '100%', display: 'block', cursor: 'pointer' }}
                   />

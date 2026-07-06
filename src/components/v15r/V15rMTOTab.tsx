@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { Sparkles, FileText, Search, ChevronDown, ChevronRight } from 'lucide-react'
+import { useRemoteDataRefresh } from '@/hooks/useRemoteDataRefresh'
 import {
   fetchLatestRemoteBackup,
   getBackupData,
@@ -58,6 +59,14 @@ function stampMTORowForEdit(
   }
 }
 
+const MTO_ROW_SAVE_DEBOUNCE_MS = 300
+
+function cloneMtoDraftMap(
+  draft: Record<string, { name?: string; qty?: string; note?: string }>,
+): Record<string, { name?: string; qty?: string; note?: string }> {
+  return JSON.parse(JSON.stringify(draft || {}))
+}
+
 export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup }: V15rMTOTabProps) {
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
@@ -76,6 +85,20 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const [localPlacements, setLocalPlacements] = useState<Record<string, string>>({})
   const [localUnitCosts, setLocalUnitCosts] = useState<Record<string, string>>({})
   const [localSupplierNotes, setLocalSupplierNotes] = useState<Record<string, string>>({})
+
+  // Phase 6U hotfix: draft-first name/qty/note — React state + ref mirror (matches Estimate pattern).
+  const [mtoRowDrafts, setMtoRowDrafts] = useState<Record<string, { name?: string; qty?: string; note?: string }>>({})
+  const latestMtoDraftRef = useRef<Record<string, { name?: string; qty?: string; note?: string }>>({})
+  const mtoEditingRef = useRef(false)
+  const mtoSaveQueueRef = useRef({
+    timer: null as ReturnType<typeof setTimeout> | null,
+    inFlight: false,
+    needsFlush: false,
+    seq: 0,
+  })
+  const flushMtoSaveQueueRef = useRef<(() => Promise<void>) | null>(null)
+  const mtoStructuralKeyRef = useRef('__init__')
+  const [mtoInputFocused, setMtoInputFocused] = useState(false)
 
   // ── Row focus / hover tracking (Bug 4) ─────────────────────────────
   const [focusedRowId, setFocusedRowId] = useState<string | null>(null)
@@ -103,6 +126,44 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const [pbFormPackSize, setPbFormPackSize] = useState<number>(1)
   const [pbFormUnit, setPbFormUnit] = useState('EA')
 
+  const mtoSaveQueue = mtoSaveQueueRef.current
+  const isMtoDirty =
+    mtoInputFocused ||
+    mtoEditingRef.current ||
+    !!mtoSaveQueue.timer ||
+    !!mtoSaveQueue.inFlight ||
+    !!mtoSaveQueue.needsFlush ||
+    editingPlacementId !== null ||
+    editingNoteId !== null ||
+    editingSupplierNoteId !== null ||
+    pbModalRowId !== null
+
+  useRemoteDataRefresh({
+    scopeId: 'mto',
+    label: 'Material Takeoff',
+    isDirty: isMtoDirty,
+    onRemoteDataApplied: () => {
+      latestMtoDraftRef.current = {}
+      setMtoRowDrafts({})
+      forceUpdate()
+      onUpdate?.()
+    },
+  })
+
+  useEffect(() => {
+    return () => {
+      const queue = mtoSaveQueueRef.current
+      if (queue.timer) {
+        clearTimeout(queue.timer)
+        queue.timer = null
+        queue.needsFlush = true
+      }
+      if (queue.needsFlush && flushMtoSaveQueueRef.current) {
+        void flushMtoSaveQueueRef.current()
+      }
+    }
+  }, [])
+
 
   // ── Data ────────────────────────────────────────────────────────────
   const backup = getBackupData()
@@ -116,16 +177,20 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const allRows: any[] = getLiveMaterialRows(rawMTORows, p.id, 'mtoRows')
   const legacyPhases = getLegacyPhaseNames(allRows.map(r => r.phase), phases)
   const displayPhases = [...phases, ...legacyPhases]
-  // Force recapture of allRows in closures on every render
-React.useEffect(() => { forceUpdate() }, [projectId])
+
+  const getMtoRowUiId = (row: any): string =>
+    String(getMaterialStableId(row, p.id, 'mtoRows'))
 
   // ── Row mutations ───────────────────────────────────────────────────
-  const persistMaterialChange = async (mutate: (freshProject: any, freshBackup: any) => boolean | void) => {
+  const persistMaterialChange = async (
+    mutate: (freshProject: any, freshBackup: any) => boolean | void,
+    options?: { skipPushState?: boolean; skipUiRefresh?: boolean },
+  ) => {
     const freshBackup = getBackupData()
     if (!freshBackup) return
     const freshProject = (freshBackup.projects || []).find((x: any) => String(x?.id || '') === projectId)
     if (!freshProject) return
-    pushState()
+    if (!options?.skipPushState) pushState()
 
     freshProject.mtoRows = Array.isArray(freshProject.mtoRows) ? freshProject.mtoRows : []
     const didChange = mutate(freshProject, freshBackup)
@@ -133,8 +198,10 @@ React.useEffect(() => { forceUpdate() }, [projectId])
 
     freshBackup._lastSavedAt = new Date().toISOString()
     saveBackupData(freshBackup)
-    forceUpdate()
-    if (onUpdate) onUpdate()
+    if (!options?.skipUiRefresh) {
+      forceUpdate()
+      if (onUpdate) onUpdate()
+    }
 
     try {
       const remote = await fetchLatestRemoteBackup()
@@ -158,7 +225,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
             _scopes: ['project.materials'],
           },
         )
-        if (onUpdate) onUpdate()
+        if (!options?.skipUiRefresh && onUpdate) onUpdate()
         return
       }
 
@@ -169,7 +236,163 @@ React.useEffect(() => { forceUpdate() }, [projectId])
     }
   }
 
-  const editMTORow = (rowId: string, field: string, value: any) => {
+  const getMtoDraftValue = (rowUiId: string, field: 'name' | 'qty' | 'note', fallback: any) => {
+    const draft = mtoRowDrafts[rowUiId] ?? latestMtoDraftRef.current[rowUiId]
+    if (draft && draft[field] !== undefined) return draft[field]
+    return fallback
+  }
+
+  const buildMtoStructuralKey = (rows: any[]): string =>
+    `${projectId}::${(rows || []).map(r => getMtoRowUiId(r)).join(',')}`
+
+  const canReconcileMtoDraft = (): boolean => {
+    if (mtoInputFocused || mtoEditingRef.current) return false
+    if (editingPlacementId || editingNoteId || editingSupplierNoteId || pbModalRowId) return false
+    const queue = mtoSaveQueueRef.current
+    if (queue.timer || queue.inFlight || queue.needsFlush) return false
+    return true
+  }
+
+  {
+    const structuralKey = buildMtoStructuralKey(allRows)
+    if (structuralKey !== mtoStructuralKeyRef.current && canReconcileMtoDraft()) {
+      const liveIds = new Set(allRows.map(r => getMtoRowUiId(r)))
+      setMtoRowDrafts(prev => {
+        const nextDraft: Record<string, { name?: string; qty?: string; note?: string }> = {}
+        for (const [rowId, draft] of Object.entries(prev)) {
+          if (liveIds.has(rowId)) nextDraft[rowId] = draft
+        }
+        latestMtoDraftRef.current = nextDraft
+        return nextDraft
+      })
+    }
+    mtoStructuralKeyRef.current = structuralKey
+  }
+
+  const applyMtoDraftsToRows = (rows: any[]): any[] => {
+    const context = createMaterialIdentityContext(rows, projectId, 'mtoRows')
+    return (rows || []).map((row: any) => {
+      const rowUiId = getMaterialStableId(row, projectId, 'mtoRows', context)
+      const draft = latestMtoDraftRef.current[rowUiId]
+      if (!draft) return row
+      const updated = { ...row }
+      if (draft.name !== undefined) updated.name = String(draft.name)
+      if (draft.qty !== undefined) updated.qty = num(draft.qty)
+      if (draft.note !== undefined) updated.note = String(draft.note)
+      return stampMTORowForEdit(updated, projectId, undefined, rowUiId)
+    })
+  }
+
+  const saveMtoDraftSnapshotRemote = async (seq: number) => {
+    const queue = mtoSaveQueueRef.current
+    if (seq !== queue.seq) return
+
+    const draftSnapshot = cloneMtoDraftMap(latestMtoDraftRef.current)
+    if (Object.keys(draftSnapshot).length === 0) return
+
+    await persistMaterialChange((freshProject) => {
+      freshProject.mtoRows = applyMtoDraftsToRows(freshProject.mtoRows || [])
+    }, { skipPushState: true, skipUiRefresh: true })
+
+    if (seq !== queue.seq) return
+    // Keep drafts while typing — do not clear ref/state here; blur flush clears when safe.
+  }
+
+  const flushMtoSaveQueue = async () => {
+    const queue = mtoSaveQueueRef.current
+    if (queue.inFlight) {
+      queue.needsFlush = true
+      return
+    }
+
+    queue.inFlight = true
+    try {
+      do {
+        queue.needsFlush = false
+        const seq = queue.seq
+        await saveMtoDraftSnapshotRemote(seq)
+      } while (queue.needsFlush)
+    } finally {
+      queue.inFlight = false
+      if (queue.needsFlush) {
+        void flushMtoSaveQueue()
+      }
+    }
+  }
+  flushMtoSaveQueueRef.current = flushMtoSaveQueue
+
+  const queueMtoDraftSave = () => {
+    const queue = mtoSaveQueueRef.current
+    queue.seq += 1
+    queue.needsFlush = true
+    if (queue.timer) clearTimeout(queue.timer)
+    queue.timer = setTimeout(() => {
+      queue.timer = null
+      void flushMtoSaveQueue()
+    }, MTO_ROW_SAVE_DEBOUNCE_MS)
+  }
+
+  const flushMtoDraftImmediate = async () => {
+    const queue = mtoSaveQueueRef.current
+    if (queue.timer) {
+      clearTimeout(queue.timer)
+      queue.timer = null
+    }
+    queue.seq += 1
+    queue.needsFlush = true
+    await flushMtoSaveQueue()
+  }
+
+  const isMtoDraftInputFocused = (): boolean =>
+    !!document.activeElement?.closest?.('[data-mto-draft-input]')
+
+  const updateMtoRowDraft = (rowId: string, field: 'name' | 'qty' | 'note', value: string) => {
+    setMtoRowDrafts(prev => {
+      const next = {
+        ...prev,
+        [rowId]: { ...(prev[rowId] || {}), [field]: value },
+      }
+      latestMtoDraftRef.current = next
+      return next
+    })
+    queueMtoDraftSave()
+  }
+
+  const onMtoInputFocus = () => {
+    mtoEditingRef.current = true
+    setMtoInputFocused(true)
+  }
+
+  const onMtoInputBlur = () => {
+    requestAnimationFrame(() => {
+      if (isMtoDraftInputFocused()) return
+      void (async () => {
+        try {
+          await flushMtoDraftImmediate()
+        } finally {
+          if (!isMtoDraftInputFocused()) {
+            mtoEditingRef.current = false
+            setMtoInputFocused(false)
+            latestMtoDraftRef.current = {}
+            setMtoRowDrafts({})
+            forceUpdate()
+            onUpdate?.()
+          }
+        }
+      })()
+    })
+  }
+
+  const commitMtoRowFieldImmediate = (rowId: string, field: 'name' | 'qty' | 'note', value: any) => {
+    setMtoRowDrafts(prev => {
+      const rowDraft = { ...(prev[rowId] || {}) }
+      delete rowDraft[field]
+      const next = { ...prev }
+      if (Object.keys(rowDraft).length === 0) delete next[rowId]
+      else next[rowId] = rowDraft
+      latestMtoDraftRef.current = next
+      return next
+    })
     void persistMaterialChange((freshProject) => {
       const rows: any[] = freshProject.mtoRows || []
       const idx = findMTORowIndexByStableId(rows, rowId, projectId)
@@ -178,16 +401,33 @@ React.useEffect(() => { forceUpdate() }, [projectId])
       if (row.deletedAt) return false
       if (field === 'qty') row.qty = num(value)
       else if (field === 'name') row.name = String(value)
-      else if (field === 'placement') row.placement = String(value)
       else if (field === 'note') row.note = String(value)
+      else return false
+      rows[idx] = stampMTORowForEdit(row, projectId, undefined, rowId)
+      freshProject.mtoRows = rows
+    })
+  }
+
+  const editMTORow = (rowId: string, field: string, value: any) => {
+    if (field === 'name' || field === 'qty' || field === 'note') {
+      updateMtoRowDraft(rowId, field, String(value))
+      return
+    }
+    void persistMaterialChange((freshProject) => {
+      const rows: any[] = freshProject.mtoRows || []
+      const idx = findMTORowIndexByStableId(rows, rowId, projectId)
+      if (idx === -1) return false
+      const row = { ...rows[idx] }
+      if (row.deletedAt) return false
+      if (field === 'placement') row.placement = String(value)
       else if (field === 'unitCost') {
-        // Empty string = clear override (fall back to priceBook suggestion)
         row.unitCost = value === '' || value === null || value === undefined ? undefined : num(value)
       }
       else if (field === 'supplierNote') row.supplierNote = String(value)
+      else return false
       rows[idx] = stampMTORowForEdit(row, projectId, undefined, rowId)
+      freshProject.mtoRows = rows
     })
-    forceUpdate()
   }
 
   const addMTORow = (phase: string) => {
@@ -233,6 +473,13 @@ React.useEffect(() => { forceUpdate() }, [projectId])
     setLocalPlacements(prev => { const n = { ...prev }; delete n[rowId]; return n })
     setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[rowId]; return n })
     setLocalUnitCosts(prev => { const n = { ...prev }; delete n[rowId]; return n })
+    delete latestMtoDraftRef.current[rowId]
+    setMtoRowDrafts(prev => {
+      const next = { ...prev }
+      delete next[rowId]
+      latestMtoDraftRef.current = next
+      return next
+    })
     forceUpdate()
   }
 
@@ -365,7 +612,7 @@ React.useEffect(() => { forceUpdate() }, [projectId])
     const waste = num(pbItem?.waste || 0)
     const markupPct = num(backup.settings?.markup || 0) / 100
     const sellPrice = cu * (1 + markupPct)
-    const lt = num(r.qty || 0) * sellPrice * (1 + waste)
+    const lt = num(getMtoDraftValue(rowUiId, 'qty', r.qty || 0)) * sellPrice * (1 + waste)
     // Project-only supplier note (inline editable, project-scoped only)
     const localSupplierNoteVal = localSupplierNotes[rowUiId] !== undefined
       ? localSupplierNotes[rowUiId]
@@ -402,13 +649,17 @@ React.useEffect(() => { forceUpdate() }, [projectId])
     const isRowFocused = focusedRowId === rowUiId
     const isRowHovered = hoveredRowId === rowUiId
 
+    const displayName = String(getMtoDraftValue(rowUiId, 'name', r.name || '') || '')
+    const displayNote = String(getMtoDraftValue(rowUiId, 'note', r.note || '') || '')
+    const displayQty = getMtoDraftValue(rowUiId, 'qty', r.qty || 0)
+
     // ── Google search button visibility ─────────────────────────────
     // Show when item name has text AND no price book item name matches it.
-    const nameHasText = !!(r.name && r.name.trim())
-    const showSearchBtn = nameHasText && !hasPBNameMatch(r.name)
+    const nameHasText = !!displayName.trim()
+    const showSearchBtn = nameHasText && !hasPBNameMatch(displayName)
     // Chip-based placement/note UX
     const hasPlacementVal = !!(localVal.trim())
-    const hasNoteVal = !!(r.note && r.note.trim())
+    const hasNoteVal = !!displayNote.trim()
     const isEditingPlacement = editingPlacementId === rowUiId
     const isEditingNote = editingNoteId === rowUiId
 
@@ -468,8 +719,11 @@ React.useEffect(() => { forceUpdate() }, [projectId])
             <input
               ref={el => { mtoNameInputRefs.current[rowUiId] = el }}
               type="text"
-              value={r.name || ''}
-              onChange={e => editMTORow(rowUiId, 'name', e.target.value)}
+              data-mto-draft-input
+              value={displayName}
+              onChange={e => updateMtoRowDraft(rowUiId, 'name', e.target.value)}
+              onFocus={onMtoInputFocus}
+              onBlur={onMtoInputBlur}
               onKeyDown={e => {
                 if (e.key === 'Enter') {
                   e.preventDefault()
@@ -604,11 +858,11 @@ React.useEffect(() => { forceUpdate() }, [projectId])
                   lineHeight: '1.5',
                 }}
               >
-                {r.note}
+                {displayNote}
                 <span
                   onClick={e => {
                     e.stopPropagation()
-                    editMTORow(rowUiId, 'note', '')
+                    commitMtoRowFieldImmediate(rowUiId, 'note', '')
                     setEditingNoteId(null)
                   }}
                   onMouseDown={e => e.stopPropagation()}
@@ -628,12 +882,18 @@ React.useEffect(() => { forceUpdate() }, [projectId])
               <input
                 autoFocus
                 type="text"
-                value={r.note || ''}
-                onChange={e => editMTORow(rowUiId, 'note', e.target.value)}
-                onBlur={() => setEditingNoteId(null)}
+                data-mto-draft-input
+                value={displayNote}
+                onChange={e => updateMtoRowDraft(rowUiId, 'note', e.target.value)}
+                onFocus={onMtoInputFocus}
+                onBlur={() => {
+                  onMtoInputBlur()
+                  setEditingNoteId(null)
+                }}
                 onKeyDown={e => {
                   if (e.key === 'Enter') {
                     e.preventDefault()
+                    onMtoInputBlur()
                     setEditingNoteId(null)
                   }
                   if (e.key === 'Escape') setEditingNoteId(null)
@@ -751,17 +1011,20 @@ React.useEffect(() => { forceUpdate() }, [projectId])
         <td style={{ padding: '8px', textAlign: 'right' }}>
           <input
             type="number"
-            value={r.qty || 0}
-            onChange={e => editMTORow(rowUiId, 'qty', e.target.value)}
+            data-mto-draft-input
+            value={displayQty}
+            onChange={e => updateMtoRowDraft(rowUiId, 'qty', e.target.value)}
+            onFocus={onMtoInputFocus}
+            onBlur={onMtoInputBlur}
             onMouseDown={e => e.stopPropagation()}
             step="1"
             onKeyDown={e => {
               if (e.key === 'ArrowUp') {
                 e.preventDefault()
-                editMTORow(rowUiId, 'qty', Math.floor(num(r.qty || 0)) + 1)
+                updateMtoRowDraft(rowUiId, 'qty', String(Math.floor(num(displayQty || 0)) + 1))
               } else if (e.key === 'ArrowDown') {
                 e.preventDefault()
-                editMTORow(rowUiId, 'qty', Math.max(0, Math.ceil(num(r.qty || 0)) - 1))
+                updateMtoRowDraft(rowUiId, 'qty', String(Math.max(0, Math.ceil(num(displayQty || 0)) - 1)))
               }
             }}
             style={{

@@ -4158,3 +4158,50 @@ No commit, push, deploy, manual Supabase touch, restore script, or manual localS
 - Wired Estimate, Blueprint viewer, Home, ServiceCallsV2. Dashboard and MoneyPanel listen as safe readers (re-render from localStorage).
 - Realtime subscribe handler delegates to `requestRemoteRefresh({ source: 'realtime' })` instead of direct `loadFromSupabase` pull; stale-check on load unchanged.
 - No scoped merge logic changed. No stale-overwrite guard changes. No verified Save changes.
+
+---
+
+### 2026-07-06 — Phase 6U: Estimate + Material Takeoff Typing Reliability (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** IMPLEMENT ONLY — component-level input reliability fix
+**Branch:** main @ `5db1463` | NOT committed | NOT pushed | user manually tests localhost
+
+**Estimate (`V15rEstimateTab.tsx`):**
+- Row saves now read from `latestEstimateRowsRef` / save queue snapshot, not stale `p.laborRows`/`p.ohRows` closures.
+- Blur keeps `estimateEditingRef` true until row flush completes; reconciliation blocked while debounce/in-flight/pending flush.
+- `saveEstimateRowsSnapshotRemote` checks seq before local persist; older async saves cannot write stale localStorage.
+- Unmount/tab-switch clears debounce timers and flushes latest row + scalar drafts via ref-stored flush callbacks.
+- Expanded Phase 6T dirty detection: focused input, editing ref, row/scalar debounce timer, in-flight, needsFlush, phase color timers.
+- Added local scalar draft ref for contract/mileRT/miDays with blur-immediate flush.
+
+**MTO (`V15rMTOTab.tsx`):**
+- name/qty/note now draft-first with `latestMtoDraftRef` + 300ms debounced scoped save (seq guard).
+- Removed per-keystroke `persistMaterialChange` + `forceUpdate` for name/qty/note.
+- Blur/unmount flush latest draft immediately.
+- Registered `useRemoteDataRefresh` scopeId `mto`; remote apply refreshes when not dirty.
+- Preserved localPlacements/localUnitCosts/localSupplierNotes commit-on-blur pattern.
+
+**Untouched:** `projectScopeMerge.ts`, `scopeRegistry.ts`, `backupDataService` save/stale/baseline/verified-save core, `liveCloudRefreshService` core, calculations, scoped merge paths.
+
+**Lock released.**
+
+---
+
+### 2026-07-06 — Phase 6U Hotfix: MTO Typing Matches Estimate Draft Pattern (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** Hotfix on uncommitted 6U — MTO typing reliability only
+
+**Root cause:** MTO drafts lived in ref-only storage with tick-bump re-renders; debounced save deleted drafts while still focused and called `forceUpdate`/`onUpdate` on every keystroke cycle via `persistMaterialChange`.
+
+**Fix (`V15rMTOTab.tsx`):**
+- `mtoRowDrafts` React state + `latestMtoDraftRef` mirror (Estimate-style).
+- Keypress updates state/ref only; no `forceUpdate`, no direct `persistMaterialChange`.
+- Debounced draft saves use `skipUiRefresh: true`; drafts not cleared until blur flush completes.
+- Blur uses rAF + `[data-mto-draft-input]` guard; keeps `mtoEditingRef` until flush done; tab name→qty safe.
+- Expanded dirty/reconcile guards include `mtoEditingRef`, modals, pending queue.
+
+**Untouched:** Estimate tab, scoped merge, backupDataService, liveCloudRefreshService, calculations.
+
+**Lock released.**
