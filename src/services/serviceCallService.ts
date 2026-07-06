@@ -11,6 +11,7 @@
  */
 
 import { num } from './backupDataService'
+import { stampMultiDayServiceCall } from './serviceScopeMerge'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -375,7 +376,11 @@ export function loadServiceCallRecords(backupData: any): ServiceCallRecord[] {
 
 /**
  * Persist multi-day service call records back into the backup data object.
+ * Stamps stable ids and createdAt/updatedAt on each record before writing.
  */
 export function saveServiceCallRecords(backupData: any, records: ServiceCallRecord[]): void {
-  backupData[MULTIDAY_SVC_KEY] = records
+  const now = new Date().toISOString()
+  backupData[MULTIDAY_SVC_KEY] = (Array.isArray(records) ? records : []).map(record =>
+    stampMultiDayServiceCall(record, now) as ServiceCallRecord,
+  )
 }

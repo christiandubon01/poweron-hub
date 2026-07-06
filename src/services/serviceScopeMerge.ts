@@ -17,7 +17,7 @@
  * payment/collection history is never dropped by a concurrent edit.
  *
  * Phase 6R-A intentionally does NOT touch: logs[], projects[], activeServiceCalls[],
- * serviceEstimates[], or multiDayServiceCalls (deferred to 6R-B / later).
+ * serviceEstimates[], or multiDayServiceCalls (now Phase 6R-C / service.multiDayCalls).
  */
 import type { BackupData } from './backupDataService'
 
@@ -564,5 +564,202 @@ export function mergeServiceCallsScopeIntoRemote(
   const incomingCalls = Array.isArray((incomingBackup as any)?.activeServiceCalls) ? (incomingBackup as any).activeServiceCalls : []
   ;(merged as any).activeServiceCalls = mergeActiveServiceCallsById(remoteCalls, incomingCalls)
 
+  return merged
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Phase 6R-C — multiDayServiceCalls[] scoped merge (ServiceCallsV2)
+// ───────────────────────────────────────────────────────────────────────────────
+// Separate from service.calls (serviceLogs/serviceEstimates/activeServiceCalls).
+// Kept in this module alongside other service-side merge helpers.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const MULTIDAY_SVC_KEY = 'multiDayServiceCalls'
+
+function multiDayCallFingerprint(call: any): string {
+  const firstDayDate = Array.isArray(call?.days) && call.days.length > 0
+    ? call.days[0]?.date
+    : ''
+  const parts = [
+    call?.customer,
+    call?.address,
+    call?.title,
+    call?.name,
+    call?.jtype,
+    firstDayDate,
+    call?.createdAt,
+    call?.created_at,
+  ].map(value => normalizeText(value))
+  return `legacy:multiDaySvc:${shortStableHash(parts.join('|'))}`
+}
+
+/** Stable identity for a multi-day service call record. */
+export function getMultiDayServiceCallId(call: any): string {
+  const id = normalizeText(call?.id)
+  if (id) return id
+  const serviceCallId = normalizeText(call?.serviceCallId)
+  if (serviceCallId) return serviceCallId
+  const service_call_id = normalizeText(call?.service_call_id)
+  if (service_call_id) return service_call_id
+  const callId = normalizeText(call?.callId)
+  if (callId) return callId
+  return multiDayCallFingerprint(call)
+}
+
+function normalizeMultiDayCreatedAt(call: any): string {
+  if (isValidDateString(call?.createdAt)) return String(call.createdAt)
+  if (isValidDateString(call?.created_at)) return String(call.created_at)
+  const fromId = timestampFromRowIdFields(call, ['service_call_id', 'serviceCallId', 'id', 'callId'])
+  if (fromId) return fromId
+  const firstDayDate = Array.isArray(call?.days) && call.days.length > 0 ? call.days[0]?.date : ''
+  if (isValidDateString(firstDayDate)) return String(firstDayDate)
+  return EPOCH_FALLBACK_ISO
+}
+
+function normalizeMultiDayUpdatedAt(call: any): string {
+  let base: string
+  if (isValidDateString(call?.updatedAt)) base = String(call.updatedAt)
+  else if (isValidDateString(call?.createdAt)) base = String(call.createdAt)
+  else if (isValidDateString(call?.created_at)) base = String(call.created_at)
+  else base = timestampFromRowIdFields(call, ['service_call_id', 'serviceCallId', 'id', 'callId']) || normalizeMultiDayCreatedAt(call)
+
+  if (isValidDateString(call?.deletedAt) && parseTimestampMs(call.deletedAt) > parseTimestampMs(base)) {
+    return String(call.deletedAt)
+  }
+  return base
+}
+
+/**
+ * Preserve all fields; ensure stable service_call_id + timestamps.
+ * Existing ids/timestamps are never overwritten.
+ */
+export function stampMultiDayServiceCall(call: any, timestamp?: string): any {
+  if (!call || typeof call !== 'object') return call
+  const identity = getMultiDayServiceCallId(call)
+  const now = timestamp || new Date().toISOString()
+  const next: any = { ...call }
+  if (!normalizeText(next.service_call_id)) next.service_call_id = identity
+  if (!normalizeText(next.serviceCallId)) next.serviceCallId = next.service_call_id
+  if (!normalizeText(next.id)) next.id = next.service_call_id
+  if (!normalizeText(next.callId)) next.callId = next.service_call_id
+  if (!isValidDateString(next.createdAt) && !isValidDateString(next.created_at)) {
+    next.createdAt = normalizeMultiDayCreatedAt(call)
+    next.created_at = next.createdAt.slice(0, 10)
+  } else if (!isValidDateString(next.createdAt) && isValidDateString(next.created_at)) {
+    next.createdAt = String(next.created_at)
+  } else if (isValidDateString(next.createdAt) && !isValidDateString(next.created_at)) {
+    next.created_at = String(next.createdAt).slice(0, 10)
+  }
+  if (!isValidDateString(next.updatedAt)) {
+    next.updatedAt = normalizeMultiDayUpdatedAt(next)
+  } else if (timestamp) {
+    next.updatedAt = now
+  }
+  return next
+}
+
+export function createMultiDayServiceCallTombstone(call: any, deletedBy?: string): any {
+  const clean = stampMultiDayServiceCall(call) || {}
+  const now = new Date().toISOString()
+  const tombstone: any = {
+    ...clean,
+    deletedAt: now,
+    updatedAt: now,
+    isDeleted: true,
+    status: 'deleted',
+  }
+  tombstone.deletedBy = deletedBy || clean?.deletedBy || 'system'
+  return tombstone
+}
+
+export function isDeletedMultiDayServiceCall(call: any): boolean {
+  if (!call) return true
+  if (isValidDateString(call?.deletedAt)) return true
+  if (call?.isDeleted === true) return true
+  if (call?.archived === true || isValidDateString(call?.archivedAt)) return true
+  const status = normalizeText(call?.status).toLowerCase()
+  return ['deleted', 'cancelled', 'canceled', 'archived'].includes(status)
+}
+
+/** Live (non-deleted) multi-day service calls for active UI. */
+export function getLiveMultiDayServiceCalls(calls: any[]): any[] {
+  return (Array.isArray(calls) ? calls : []).filter(call => !isDeletedMultiDayServiceCall(call))
+}
+
+function isDeletedMultiDayRow(call: any): boolean {
+  return isValidDateString(call?.deletedAt)
+}
+
+function pickMultiDayCallWinner(remote: any, incoming: any): any {
+  const remoteDeleted = isDeletedMultiDayRow(remote)
+  const incomingDeleted = isDeletedMultiDayRow(incoming)
+
+  if (remoteDeleted && incomingDeleted) {
+    return comparableMs(incoming.deletedAt) > comparableMs(remote.deletedAt) ? incoming : remote
+  }
+  if (remoteDeleted !== incomingDeleted) {
+    const tombstone = remoteDeleted ? remote : incoming
+    const live = remoteDeleted ? incoming : remote
+    return comparableMs(live.updatedAt) > comparableMs(tombstone.deletedAt) ? live : tombstone
+  }
+  return comparableMs(incoming.updatedAt) > comparableMs(remote.updatedAt) ? incoming : remote
+}
+
+/** Merge two multiDayServiceCalls[] arrays by stable id (delete-safe LWW). */
+export function mergeMultiDayServiceCallRecords(
+  remoteCalls: any[],
+  incomingCalls: any[],
+): any[] {
+  const remoteSanitized = (Array.isArray(remoteCalls) ? remoteCalls : []).map(call => stampMultiDayServiceCall(call))
+  const incomingSanitized = (Array.isArray(incomingCalls) ? incomingCalls : []).map(call => stampMultiDayServiceCall(call))
+
+  const remoteById = new Map<string, any>()
+  for (const call of remoteSanitized) remoteById.set(getMultiDayServiceCallId(call), call)
+
+  const result: any[] = []
+  const used = new Set<string>()
+
+  for (const incoming of incomingSanitized) {
+    const id = getMultiDayServiceCallId(incoming)
+    if (used.has(id)) continue
+    used.add(id)
+    const remote = remoteById.get(id)
+    result.push(remote ? pickMultiDayCallWinner(remote, incoming) : incoming)
+  }
+  for (const remote of remoteSanitized) {
+    const id = getMultiDayServiceCallId(remote)
+    if (used.has(id)) continue
+    used.add(id)
+    result.push(remote)
+  }
+
+  return result
+}
+
+/** Merge multiDayServiceCalls from incomingBackup into a clone of remoteBackup. */
+export function mergeMultiDayServiceCallsIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const remoteCalls = Array.isArray((merged as any)[MULTIDAY_SVC_KEY]) ? (merged as any)[MULTIDAY_SVC_KEY] : []
+  const incomingCalls = Array.isArray((incomingBackup as any)?.[MULTIDAY_SVC_KEY]) ? (incomingBackup as any)[MULTIDAY_SVC_KEY] : []
+  ;(merged as any)[MULTIDAY_SVC_KEY] = mergeMultiDayServiceCallRecords(remoteCalls, incomingCalls)
+  return merged
+}
+
+/**
+ * Fold remote multiDayServiceCalls into outgoing when the current save is NOT
+ * service.multiDayCalls. Remote wins ties so stale local data cannot overwrite
+ * newer remote records.
+ */
+export function mergeRemoteMultiDayServiceCallsIntoOutgoing(
+  outgoingBackup: BackupData,
+  remoteBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(outgoingBackup)) as BackupData
+  const outgoingCalls = Array.isArray((merged as any)[MULTIDAY_SVC_KEY]) ? (merged as any)[MULTIDAY_SVC_KEY] : []
+  const remoteCalls = Array.isArray((remoteBackup as any)?.[MULTIDAY_SVC_KEY]) ? (remoteBackup as any)[MULTIDAY_SVC_KEY] : []
+  ;(merged as any)[MULTIDAY_SVC_KEY] = mergeMultiDayServiceCallRecords(outgoingCalls, remoteCalls)
   return merged
 }

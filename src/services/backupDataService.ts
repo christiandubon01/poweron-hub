@@ -30,6 +30,7 @@ import {
 import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog, mergeHomeAgendaAlertsIntoRemote, mergeRemoteEstimateVersionsIntoOutgoing, mergeRemoteHomeAgendaAlertsIntoOutgoing, mergeRemoteLaborPhaseColorsIntoOutgoing, mergeRemoteProjectCoordinationIntoOutgoing, mergeRemoteProjectProgressIntoOutgoing, mergeRemoteProjectScheduleIntoOutgoing, mergeRemoteProjectTimelineIntoOutgoing } from './projectScopeMerge'
 import { mergeRemoteWeeklyDataIntoOutgoing } from './weeklyDataScopeMerge'
 import { mergeRemoteEmployeesIntoOutgoing } from './teamScopeMerge'
+import { mergeRemoteMultiDayServiceCallsIntoOutgoing } from './serviceScopeMerge'
 
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
 const STORAGE_KEY = LEGACY_STORAGE_KEY
@@ -456,6 +457,33 @@ export interface FieldObservationCard {
   ai_reasoning?: string | null
 }
 
+/** Phase 6R-C: flexible multi-day service call record shape (ServiceCallsV2). */
+export interface BackupMultiDayServiceCall {
+  id?: string
+  serviceCallId?: string
+  service_call_id?: string
+  callId?: string
+  title?: string
+  name?: string
+  customer?: string
+  address?: string
+  status?: string
+  createdAt?: string
+  updatedAt?: string
+  deletedAt?: string
+  deletedBy?: string
+  isDeleted?: boolean
+  archived?: boolean
+  archivedAt?: string
+  created_at?: string
+  legacy_id?: string
+  jtype?: string
+  days?: any[]
+  scope_creep_flag?: boolean
+  scope_creep_note?: string
+  [key: string]: any
+}
+
 export interface BackupData {
   logs: BackupLog[]
   projects: BackupProject[]
@@ -478,6 +506,8 @@ export interface BackupData {
   blueprintSummaries: Record<string, any>
   activeServiceCalls: any[]
   serviceEstimates: any[]
+  /** Multi-day service call records (ServiceCallsV2). Phase 6R-C scoped merge. */
+  multiDayServiceCalls?: BackupMultiDayServiceCall[]
   taskSchedule: any[]
   dailyJobs: any[]
   weeklyReviews: any[]
@@ -2302,6 +2332,35 @@ function isHomeAgendaAlertsSyncSource(options?: { source?: string | null; _scope
   }
 }
 
+/**
+ * Phase 6R-C: true when a sync save is a service.multiDayCalls save (ServiceCallsV2
+ * multi-day service calls). Used to SKIP the multiDayServiceCalls preservation
+ * guard for those saves so a legitimate multi-day call save is not merged against
+ * itself.
+ */
+function isServiceMultiDayCallsSyncSource(options?: { source?: string | null; _scopes?: DataScope[]; changedKey?: string | null } | null): boolean {
+  if (!options) return false
+  const source = options.source
+  const sourceLower = source ? String(source).toLowerCase() : ''
+  if (
+    sourceLower.includes('service.multidaycalls')
+    || sourceLower.includes('service-multidaycalls')
+    || sourceLower.includes('multidayservicecalls')
+    || sourceLower.includes('servicecallsv2')
+  ) return true
+  if (
+    options.changedKey === 'service.multiDayCalls'
+    || options.changedKey === 'multiDayServiceCalls'
+    || options.changedKey === 'ServiceCallsV2'
+  ) return true
+  if (Array.isArray(options._scopes) && options._scopes.includes('service.multiDayCalls')) return true
+  try {
+    return resolveScopesForSyncInput(source ?? options.changedKey ?? null).includes('service.multiDayCalls')
+  } catch {
+    return false
+  }
+}
+
 /** Sync current tenant-scoped localStorage data to Supabase app_state table.
  *  Refuses to run until the authenticated tenant has completed bootstrap. */
 export async function syncToSupabase(
@@ -2380,7 +2439,7 @@ export async function syncToSupabase(
     const data = getBackupData(userId)
     if (!data) return { success: false, skipped: true, error: 'No local tenant data to sync' }
 
-    // Phase 6S-B / 6S-C / 6S-D1 / 6S-D2 / 6S-D3 / 6S-D4 / 6L-B / 6S-F / 6S-G: narrow scoped-cache
+    // Phase 6S-B / 6S-C / 6S-D1 / 6S-D2 / 6S-D3 / 6S-D4 / 6L-B / 6S-F / 6S-G / 6R-C: narrow scoped-cache
     // preservation guards. For a save that is NOT a weeklyData save, fold newer
     // remote weeklyData[] into the outgoing blob; for a save that is NOT an
     // employees save, fold newer remote employees[] in; for a save that is NOT a
@@ -2391,7 +2450,8 @@ export async function syncToSupabase(
     // that is NOT a project.estimate save, fold newer remote laborPhaseColors in;
     // for a save that is NOT a project.estimateVersions save, fold newer remote
     // estimateVersions in; for a save that is NOT a home.agendaAlerts save, fold
-    // newer remote agendaSections/customAlerts in.
+    // newer remote agendaSections/customAlerts in; for a save that is NOT a
+    // service.multiDayCalls save, fold newer remote multiDayServiceCalls in.
     // This stops a stale local weeklyData/employees/timeline/schedule/coord/labor-
     // color/estimateVersions cache from overwriting newer remote data on an unrelated broad save.
     // Only the listed slices are affected (the merge helpers touch nothing else);
@@ -2408,7 +2468,8 @@ export async function syncToSupabase(
     const skipEstimateGuard = isProjectEstimateSyncSource(options)
     const skipEstimateVersionsGuard = isProjectEstimateVersionsSyncSource(options)
     const skipHomeAgendaAlertsGuard = isHomeAgendaAlertsSyncSource(options)
-    if (!skipWeeklyGuard || !skipEmployeesGuard || !skipTimelineGuard || !skipProgressGuard || !skipScheduleGuard || !skipCoordinationGuard || !skipEstimateGuard || !skipEstimateVersionsGuard || !skipHomeAgendaAlertsGuard) {
+    const skipMultiDayCallsGuard = isServiceMultiDayCallsSyncSource(options)
+    if (!skipWeeklyGuard || !skipEmployeesGuard || !skipTimelineGuard || !skipProgressGuard || !skipScheduleGuard || !skipCoordinationGuard || !skipEstimateGuard || !skipEstimateVersionsGuard || !skipHomeAgendaAlertsGuard || !skipMultiDayCallsGuard) {
       try {
         const remoteSnapshot = await fetchLatestRemoteBackup(userId)
         if (remoteSnapshot?.remoteData) {
@@ -2438,6 +2499,9 @@ export async function syncToSupabase(
           }
           if (!skipHomeAgendaAlertsGuard) {
             outgoing = mergeRemoteHomeAgendaAlertsIntoOutgoing(outgoing, remoteSnapshot.remoteData)
+          }
+          if (!skipMultiDayCallsGuard) {
+            outgoing = mergeRemoteMultiDayServiceCallsIntoOutgoing(outgoing, remoteSnapshot.remoteData)
           }
         }
       } catch (preserveGuardErr) {

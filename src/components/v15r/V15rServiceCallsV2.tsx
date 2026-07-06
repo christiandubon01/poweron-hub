@@ -26,8 +26,12 @@ import {
 import {
   getBackupData,
   saveBackupData,
+  saveBackupDataAndSync,
+  fetchLatestRemoteBackup,
+  saveBackupWithRemoteBaselineSync,
   num,
   resolveCanonicalCustomerName,
+  type BackupData,
   type BackupServiceLog,
 } from '@/services/backupDataService'
 import {
@@ -37,8 +41,11 @@ import {
   loadServiceCallRecords,
   saveServiceCallRecords,
   migrateServiceLog,
-  MULTIDAY_SVC_KEY,
 } from '@/services/serviceCallService'
+import {
+  getLiveMultiDayServiceCalls,
+  mergeMultiDayServiceCallsIntoRemote,
+} from '@/services/serviceScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
@@ -60,6 +67,36 @@ function fmtPct(n: number): string {
 const TABS = ['Multi-Day Calls', 'Legacy Log'] as const
 type TabId = typeof TABS[number]
 
+async function saveMultiDayServiceCallsScoped(incomingBackup: BackupData): Promise<void> {
+  const mergeSource = 'service-multiDayCalls-remote-merge'
+  try {
+    const remote = await fetchLatestRemoteBackup()
+    if (remote.hasRemoteRow && remote.remoteData) {
+      const merged = mergeMultiDayServiceCallsIntoRemote(remote.remoteData, incomingBackup)
+      await saveBackupWithRemoteBaselineSync(
+        merged,
+        { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+        {
+          source: mergeSource,
+          changedKey: 'service.multiDayCalls',
+          _scopes: ['service.multiDayCalls'],
+        },
+      )
+      return
+    }
+    await saveBackupDataAndSync(incomingBackup, 'service.multiDayCalls', {
+      source: 'service.multiDayCalls',
+      _scopes: ['service.multiDayCalls'],
+    })
+  } catch (err) {
+    console.warn('[saveMultiDayServiceCallsScoped] Scoped sync failed; local changes preserved', err)
+    await saveBackupDataAndSync(incomingBackup, 'service.multiDayCalls', {
+      source: 'service.multiDayCalls',
+      _scopes: ['service.multiDayCalls'],
+    })
+  }
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function V15rServiceCallsV2() {
@@ -75,13 +112,13 @@ export default function V15rServiceCallsV2() {
   // ── Load multi-day records ──────────────────────────────────────────────────
   const [records, setRecords] = useState<ServiceCallRecord[]>(() => {
     if (!backup) return []
-    return loadServiceCallRecords(backup)
+    return getLiveMultiDayServiceCalls(loadServiceCallRecords(backup)) as ServiceCallRecord[]
   })
 
   // Sync records from backup on backup change
   useEffect(() => {
     if (!backup) return
-    setRecords(loadServiceCallRecords(backup))
+    setRecords(getLiveMultiDayServiceCalls(loadServiceCallRecords(backup)) as ServiceCallRecord[])
   }, [backup])
 
   // Legacy service logs for the legacy tab
@@ -98,7 +135,8 @@ export default function V15rServiceCallsV2() {
     pushState()
     saveServiceCallRecords(backup, updated)
     saveBackupData(backup)
-    setRecords(updated)
+    setRecords(getLiveMultiDayServiceCalls(updated) as ServiceCallRecord[])
+    void saveMultiDayServiceCallsScoped(backup)
   }, [backup])
 
   // ── Modal handlers ─────────────────────────────────────────────────────────

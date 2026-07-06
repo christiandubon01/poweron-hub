@@ -100,6 +100,55 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 ## Audit & Change Log
 
+### 2026-07-06 — Phase 6R-C UI Hotfix 2: Field Log Action Row Layout + Red Delete (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** UI hotfix 2 on uncommitted 6R-C — same-row action layout for service log cards.
+**Branch:** main | NOT committed | NOT pushed
+
+**Changes:**
+- **`V15rFieldLogPanel.tsx`**: moved Edit / Archive / Delete into the bottom action row on the far right (same height as Paid / +Expense / +Mileage / +Income / Convert to Estimate); Delete now uses red danger styling (`bg-red-500/15 border-red-500/30 text-red-300`).
+
+**Untouched:** Service calculations; 6R-C scoped merge; adjustment description rendering; click handlers.
+
+**Lock released.**
+
+---
+
+### 2026-07-06 — Phase 6R-C UI Hotfix: Field Log Service Call Layout + Adjustment Descriptions (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** UI hotfix on uncommitted 6R-C — Field Log service call card layout + adjustment description display.
+**Branch:** main | NOT committed | NOT pushed
+
+**Changes:**
+- **`V15rFieldLogPanel.tsx`**: moved Edit / Archive / Delete to the right-side totals column (below quote/lab/mat/mi totals) on service log entries, Open Estimates, and Active Service Calls; financial workflow buttons (Paid, +Expense, +Mileage, +Income, Convert to Estimate, Confirm Job, Mark Lost, Log as Complete) remain on the lower-left action row. Expense/Mileage/Income adjustment line items in the ledger rollup now render saved `desc` (with fallback to description/note/notes/memo/label/title).
+
+**Untouched:** 6R-C scoped merge/sync behavior; calculations; adjustment save shape (`adjustments[].desc` already persisted).
+
+**Lock released.**
+
+---
+
+### 2026-07-06 — Phase 6R-C: service.multiDayCalls Scoped Merge (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** Scoped implementation — protect multiDayServiceCalls / ServiceCallsV2 from stale broad-save overwrite.
+**Branch:** main | Baseline HEAD = `9ef7f75` (Add scoped merge for home agenda alerts) | NOT committed | NOT pushed
+
+**Changes:**
+- **`scopeRegistry.ts`**: added `service.multiDayCalls` scope for `BackupData.multiDayServiceCalls[]` (id-merge with tombstones, high priority); legacy changedKey mappings `service.multiDayCalls`, `multiDayServiceCalls`, `ServiceCallsV2`. Existing `service.calls` scope untouched.
+- **`backupDataService.ts`**: added `BackupMultiDayServiceCall` type + `multiDayServiceCalls?` on `BackupData`; added `isServiceMultiDayCallsSyncSource` and narrow pre-sync preservation fold calling `mergeRemoteMultiDayServiceCallsIntoOutgoing` on non-service.multiDayCalls saves.
+- **`serviceScopeMerge.ts`**: added multi-day service call merge helpers — getMultiDayServiceCallId, stampMultiDayServiceCall, createMultiDayServiceCallTombstone, isDeletedMultiDayServiceCall, getLiveMultiDayServiceCalls, mergeMultiDayServiceCallRecords, mergeMultiDayServiceCallsIntoRemote, mergeRemoteMultiDayServiceCallsIntoOutgoing.
+- **`serviceCallService.ts`**: `saveServiceCallRecords` now stamps stable ids + createdAt/updatedAt before writing.
+- **`V15rServiceCallsV2.tsx`**: persist converted to optimistic local save + `saveMultiDayServiceCallsScoped` (fetch latest remote → mergeMultiDayServiceCallsIntoRemote → saveBackupWithRemoteBaselineSync); active UI reads via getLiveMultiDayServiceCalls.
+
+**Untouched:** service.calls (serviceLogs/serviceEstimates/activeServiceCalls); project scopes; home.agendaAlerts; estimate scopes; team/weekly/blueprint scopes; sync/save/baseline core except narrow multiDayServiceCalls preservation hook.
+
+**Lock released.**
+
+---
+
 ### 2026-07-06 — Phase 6S-G Follow-up Hotfix: Guardian customAlerts Scoped Save (NOT COMMITTED)
 
 **Agent:** Cursor Composer 2.5 Fast

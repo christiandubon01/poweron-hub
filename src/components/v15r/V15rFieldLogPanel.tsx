@@ -82,6 +82,21 @@ function isArchivedRecord(record: any): boolean {
   return !!(record && (record.archived === true || record.isArchived === true || record.archivedAt))
 }
 
+/** Resolve a saved adjustment description for display (render-only). */
+function getAdjustmentDescription(adj: any): string {
+  for (const field of ['description', 'desc', 'note', 'notes', 'memo', 'label', 'title']) {
+    const text = String(adj?.[field] ?? '').trim()
+    if (text) return text
+  }
+  return ''
+}
+
+function getAdjustmentTypeLabel(adj: any): 'Income' | 'Mileage' | 'Expense' {
+  if (adj?.type === 'income') return 'Income'
+  if (adj?.type === 'mileage' || adj?.category === 'mileage') return 'Mileage'
+  return 'Expense'
+}
+
 // ── Service balance & rollup ─────────────────────────────────────────────────
 
 function getServiceRollup(l: any): any {
@@ -3246,7 +3261,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     data-service-estimate-id={est.id}
                     className={`bg-[var(--bg-input)] rounded p-3 space-y-2 ${sourceHighlightId === String(est.id) ? 'ring-2 ring-cyan-400/70' : ''}`}
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-start justify-between gap-3">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-xs font-semibold text-gray-200">{canonicalCustomerName(est)}</span>
@@ -3258,41 +3273,44 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                         </div>
                         {est.address && <div className="text-[10px] text-gray-500 mt-1">{est.address}</div>}
                       </div>
-                      <div className="text-right mr-3">
+                      <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
                         <div className="font-mono text-blue-400 font-bold text-sm">{fmt(est.totalQuote)}</div>
+                        <div className="flex flex-wrap gap-1.5 justify-end">
+                          <button
+                            onClick={() => beginEstimateEdit(est.id)}
+                            className="text-[10px] px-2.5 py-1 rounded-md font-semibold bg-slate-700/50 text-slate-300 hover:bg-slate-600/60 border border-slate-600/40 hover:border-slate-500 transition-colors"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => archiveEstimate(est.id)}
+                            className="text-[10px] px-2.5 py-1 rounded-md font-semibold bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 border border-slate-700/40 hover:border-slate-600 transition-colors"
+                          >
+                            Archive
+                          </button>
+                          <button
+                            onClick={() => deleteEstimate(est.id)}
+                            className="text-[10px] px-2.5 py-1 rounded-md font-semibold text-slate-500 hover:text-red-400 hover:bg-red-950/30 border border-transparent hover:border-red-900/40 transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex flex-wrap gap-1.5 flex-shrink-0">
-                        <button
-                          onClick={() => confirmEstimateToActiveCall(est.id)}
-                          className="text-[10px] px-2.5 py-1 rounded-md font-semibold bg-emerald-800/50 text-emerald-200 hover:bg-emerald-700/60 border border-emerald-700/60 hover:border-emerald-500 transition-colors"
-                        >
-                          Confirm Job
-                        </button>
-                        <button
-                          onClick={() => beginEstimateEdit(est.id)}
-                          className="text-[10px] px-2.5 py-1 rounded-md font-semibold bg-slate-700/50 text-slate-300 hover:bg-slate-600/60 border border-slate-600/40 hover:border-slate-500 transition-colors"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => markEstimateLost(est.id)}
-                          className="text-[10px] px-2.5 py-1 rounded-md font-semibold bg-amber-900/30 text-amber-300 hover:bg-amber-800/40 border border-amber-700/40 hover:border-amber-600 transition-colors"
-                        >
-                          Mark Lost
-                        </button>
-                        <button
-                          onClick={() => archiveEstimate(est.id)}
-                          className="text-[10px] px-2.5 py-1 rounded-md font-semibold bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 border border-slate-700/40 hover:border-slate-600 transition-colors"
-                        >
-                          Archive
-                        </button>
-                        <button
-                          onClick={() => deleteEstimate(est.id)}
-                          className="text-[10px] px-2.5 py-1 rounded-md font-semibold text-slate-500 hover:text-red-400 hover:bg-red-950/30 border border-transparent hover:border-red-900/40 transition-colors"
-                        >
-                          Delete
-                        </button>
-                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        onClick={() => confirmEstimateToActiveCall(est.id)}
+                        className="text-[10px] px-2.5 py-1 rounded-md font-semibold bg-emerald-800/50 text-emerald-200 hover:bg-emerald-700/60 border border-emerald-700/60 hover:border-emerald-500 transition-colors"
+                      >
+                        Confirm Job
+                      </button>
+                      <button
+                        onClick={() => markEstimateLost(est.id)}
+                        className="text-[10px] px-2.5 py-1 rounded-md font-semibold bg-amber-900/30 text-amber-300 hover:bg-amber-800/40 border border-amber-700/40 hover:border-amber-600 transition-colors"
+                      >
+                        Mark Lost
+                      </button>
                     </div>
 
                     {/* Customer Tracker — only for estimates linked to a portal service call */}
@@ -3324,7 +3342,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     data-service-estimate-id={est.id}
                     className={`bg-[var(--bg-input)] rounded p-3 space-y-2 ${sourceHighlightId === String(est.id) ? 'ring-2 ring-cyan-400/70' : ''}`}
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-start justify-between gap-3">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-xs font-semibold text-gray-200">{canonicalCustomerName(est)}</span>
@@ -3336,8 +3354,24 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                         </div>
                         {est.address && <div className="text-[10px] text-gray-500 mt-1">{est.address}</div>}
                       </div>
-                      <div className="text-right mr-3">
+                      <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
                         <div className="font-mono text-emerald-400 font-bold text-sm">{fmt(est.totalQuote)}</div>
+                        {completingEstimateId !== est.id && (
+                          <div className="flex flex-wrap gap-1.5 justify-end">
+                            <button
+                              onClick={() => archiveEstimate(est.id)}
+                              className="px-3 py-1.5 rounded-md bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 text-xs font-semibold border border-slate-700/40 hover:border-slate-600 transition-colors"
+                            >
+                              Archive
+                            </button>
+                            <button
+                              onClick={() => deleteEstimate(est.id)}
+                              className="px-3 py-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-950/30 text-xs font-semibold border border-transparent hover:border-red-900/40 transition-colors"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -3465,18 +3499,6 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                           className="flex-1 px-3 py-1.5 rounded-md bg-emerald-800/50 text-emerald-200 hover:bg-emerald-700/60 text-xs font-semibold border border-emerald-700/60 hover:border-emerald-500 transition-colors"
                         >
                           Log as Complete
-                        </button>
-                        <button
-                          onClick={() => archiveEstimate(est.id)}
-                          className="px-3 py-1.5 rounded-md bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 text-xs font-semibold border border-slate-700/40 hover:border-slate-600 transition-colors"
-                        >
-                          Archive
-                        </button>
-                        <button
-                          onClick={() => deleteEstimate(est.id)}
-                          className="px-3 py-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-950/30 text-xs font-semibold border border-transparent hover:border-red-900/40 transition-colors"
-                        >
-                          Delete
                         </button>
                       </div>
                     )}
@@ -3769,6 +3791,26 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                       <span className="text-gray-500">Base Quote:</span>
                       <span className="font-mono text-gray-300 font-semibold">{fmt(roll.baseQuoted)}</span>
                     </div>
+                    {roll.adjustments.length > 0 && roll.adjustments.map((adj: any, adjIdx: number) => {
+                      const typeLabel = getAdjustmentTypeLabel(adj)
+                      const desc = getAdjustmentDescription(adj)
+                      const amountColor = typeLabel === 'Income' ? '#10b981' : typeLabel === 'Mileage' ? '#60a5fa' : '#f97316'
+                      return (
+                        <div key={adj.id || `adj-${adjIdx}`} className="flex justify-between gap-2">
+                          <span className="text-gray-500 min-w-0">
+                            + {typeLabel}
+                            {desc && (
+                              <span className="text-gray-400 block sm:inline sm:ml-1 truncate" title={desc}>
+                                {desc}
+                              </span>
+                            )}
+                          </span>
+                          <span className="font-mono font-semibold shrink-0" style={{ color: amountColor }}>
+                            {fmt(num(adj.amount))}
+                          </span>
+                        </div>
+                      )
+                    })}
                     <div className="flex justify-between font-bold border-t border-gray-700 pt-1.5" style={{ color: '#f7f8ef', fontSize: '11px' }}>
                       <span>Total Billable:</span>
                       <span className="font-mono">{fmt(roll.totalBillable)}</span>
@@ -3788,45 +3830,49 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   </div>
 
                   {/* Action buttons row */}
-                  <div className="flex gap-1 flex-wrap">
-                    {/* Mark Paid in Full - always visible */}
-                    {meta.status !== 'Y' ? (
-                      <button onClick={() => quickSetSvcPayment(l.id, 'Y')} className="text-[9px] px-2 py-1 rounded bg-emerald-600 text-white font-bold">✓ Mark Paid in Full</button>
-                    ) : (
-                      <span className="text-[9px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 font-bold">Paid ✓</span>
-                    )}
-                    {/* Ledger adjustment buttons - ALWAYS functional */}
-                    <button onClick={() => addServiceAdjustment(l.id, 'expense')} className="text-[9px] px-2 py-1 rounded bg-orange-700/50 text-orange-300 hover:bg-orange-600/50">+ Expense</button>
-                    <button onClick={() => addServiceAdjustment(l.id, 'mileage')} className="text-[9px] px-2 py-1 rounded bg-orange-700/50 text-orange-300 hover:bg-orange-600/50">+ Mileage</button>
-                    <button onClick={() => addServiceAdjustment(l.id, 'income')} className="text-[9px] px-2 py-1 rounded bg-emerald-700/50 text-emerald-300 hover:bg-emerald-600/50">+ Income</button>
-                    <button onClick={() => beginSvcEditInModal(l.id)} className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-300">Edit</button>
-                    <button onClick={() => archiveSvcEntry(l.id)} className="text-[9px] px-2 py-1 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-600/60">Archive</button>
-                    <button onClick={() => deleteSvcEntry(l.id)} className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-400 hover:text-red-400">Delete</button>
-                    {/* G8: Convert to Estimate — pre-fills the service estimate form */}
-                    <button
-                      onClick={() => {
-                        // Pre-populate the service estimate form above from this service call
-                        setEstCust(canonicalCustomerName(l))
-                        setEstAccountId((l as any).accountId || '')
-                        setEstCustEdited(false)
-                        setEstAddr(l.address || l.addr || '')
-                        setEstJobType(l.jtype || JOB_TYPES[0])
-                        setEstNotes(l.notes || '')
-                        setEstHours(String(num(l.hrs || 0) || ''))
-                        setEstMaterials(String(num(l.mat || 0) || ''))
-                        setEstMiles(String(num(l.miles || l.mileRT || 0) || ''))
-                        setEditEstimateId(null)
-                        setShowEstimateForm(true)
-                        // Scroll form into view
-                        setTimeout(() => {
-                          const formEl = document.querySelector('[data-estimate-form]')
-                          if (formEl) formEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                        }, 100)
-                      }}
-                      className="text-[9px] px-2 py-1 rounded bg-blue-600/30 text-blue-400 border border-blue-600/30 hover:bg-blue-600/40 min-h-[28px]"
-                    >
-                      📋 Convert to Estimate
-                    </button>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {/* Mark Paid in Full - always visible */}
+                      {meta.status !== 'Y' ? (
+                        <button onClick={() => quickSetSvcPayment(l.id, 'Y')} className="text-[9px] px-2 py-1 rounded bg-emerald-600 text-white font-bold">✓ Mark Paid in Full</button>
+                      ) : (
+                        <span className="text-[9px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 font-bold">Paid ✓</span>
+                      )}
+                      {/* Ledger adjustment buttons - ALWAYS functional */}
+                      <button onClick={() => addServiceAdjustment(l.id, 'expense')} className="text-[9px] px-2 py-1 rounded bg-orange-700/50 text-orange-300 hover:bg-orange-600/50">+ Expense</button>
+                      <button onClick={() => addServiceAdjustment(l.id, 'mileage')} className="text-[9px] px-2 py-1 rounded bg-orange-700/50 text-orange-300 hover:bg-orange-600/50">+ Mileage</button>
+                      <button onClick={() => addServiceAdjustment(l.id, 'income')} className="text-[9px] px-2 py-1 rounded bg-emerald-700/50 text-emerald-300 hover:bg-emerald-600/50">+ Income</button>
+                      {/* G8: Convert to Estimate — pre-fills the service estimate form */}
+                      <button
+                        onClick={() => {
+                          // Pre-populate the service estimate form above from this service call
+                          setEstCust(canonicalCustomerName(l))
+                          setEstAccountId((l as any).accountId || '')
+                          setEstCustEdited(false)
+                          setEstAddr(l.address || l.addr || '')
+                          setEstJobType(l.jtype || JOB_TYPES[0])
+                          setEstNotes(l.notes || '')
+                          setEstHours(String(num(l.hrs || 0) || ''))
+                          setEstMaterials(String(num(l.mat || 0) || ''))
+                          setEstMiles(String(num(l.miles || l.mileRT || 0) || ''))
+                          setEditEstimateId(null)
+                          setShowEstimateForm(true)
+                          // Scroll form into view
+                          setTimeout(() => {
+                            const formEl = document.querySelector('[data-estimate-form]')
+                            if (formEl) formEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                          }, 100)
+                        }}
+                        className="text-[9px] px-2 py-1 rounded bg-blue-600/30 text-blue-400 border border-blue-600/30 hover:bg-blue-600/40 min-h-[28px]"
+                      >
+                        📋 Convert to Estimate
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-1 justify-end flex-shrink-0">
+                      <button onClick={() => beginSvcEditInModal(l.id)} className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-300 hover:bg-gray-600/50">Edit</button>
+                      <button onClick={() => archiveSvcEntry(l.id)} className="text-[9px] px-2 py-1 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-600/60">Archive</button>
+                      <button onClick={() => deleteSvcEntry(l.id)} className="text-[9px] px-2 py-1 rounded border bg-red-500/15 border-red-500/30 text-red-300 hover:bg-red-500/25 hover:text-red-200">Delete</button>
+                    </div>
                   </div>
                 </div>
               )

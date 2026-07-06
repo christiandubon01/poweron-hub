@@ -60,6 +60,7 @@ export type DataScope =
   | 'priceBook.laborRates'
   | 'priceBook.materials'
   | 'service.calls'
+  | 'service.multiDayCalls'
   | 'home.agendaAlerts'
   | 'settings'
 
@@ -565,7 +566,21 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
     needsTombstone: false,
     strategy: 'id-merge',
     priority: 'high',
-    notes: 'Phase 6R-A: serviceLogs[] has delete-safe, item-level id-merge via serviceScopeMerge.ts (mergeServiceLogsIntoRemote). serviceLogId is the stable internal identity (falls back to legacy id, then a deterministic fingerprint); createdAt/updatedAt stamped by ensureServiceLogIdentity; deletes write deletedAt/deletedBy tombstones. A service "payment" is a set of FIELDS on the serviceLog row (collected/payStatus/balanceDue) protected together with the row; the append-only adjustments[]/statusEvents[] ledgers are unioned across both sides so payment/collection history is never dropped. Phase 6R-B: serviceEstimates[] and activeServiceCalls[] now have the same delete-safe lifecycle merge (mergeServiceEstimatesIntoRemote / mergeActiveServiceCallsIntoRemote) with serviceEstimateId / activeServiceCallId stable identities (fallback legacy id, then fingerprint), createdAt/updatedAt stamping, and deletedAt/deletedBy tombstones — their hard deletes are converted to tombstones. Mixed workflows (estimate → active call, active call → service log, estimate → completed service log) route through mergeServiceCallsScopeIntoRemote, which merges all three arrays in one remote-baseline save; this also fixes the completeAndLogService changedKey/silo mismatch (it previously mutated serviceLogs+serviceEstimates while saving under changedKey "logs"). Readers already exclude tombstones via isActiveServiceCall (deletedAt guard). serviceEstimates/activeServiceCalls do not feed MoneyPanel/Home exposure totals. STILL DEFERRED: multiDayServiceCalls (V15rServiceCallsV2 / serviceCallService.ts). Same client-clock and no-GC limitations as the project scopes.',
+    notes: 'Phase 6R-A: serviceLogs[] has delete-safe, item-level id-merge via serviceScopeMerge.ts (mergeServiceLogsIntoRemote). serviceLogId is the stable internal identity (falls back to legacy id, then a deterministic fingerprint); createdAt/updatedAt stamped by ensureServiceLogIdentity; deletes write deletedAt/deletedBy tombstones. A service "payment" is a set of FIELDS on the serviceLog row (collected/payStatus/balanceDue) protected together with the row; the append-only adjustments[]/statusEvents[] ledgers are unioned across both sides so payment/collection history is never dropped. Phase 6R-B: serviceEstimates[] and activeServiceCalls[] now have the same delete-safe lifecycle merge (mergeServiceEstimatesIntoRemote / mergeActiveServiceCallsIntoRemote) with serviceEstimateId / activeServiceCallId stable identities (fallback legacy id, then fingerprint), createdAt/updatedAt stamping, and deletedAt/deletedBy tombstones — their hard deletes are converted to tombstones. Mixed workflows (estimate → active call, active call → service log, estimate → completed service log) route through mergeServiceCallsScopeIntoRemote, which merges all three arrays in one remote-baseline save; this also fixes the completeAndLogService changedKey/silo mismatch (it previously mutated serviceLogs+serviceEstimates while saving under changedKey "logs"). Readers already exclude tombstones via isActiveServiceCall (deletedAt guard). serviceEstimates/activeServiceCalls do not feed MoneyPanel/Home exposure totals. multiDayServiceCalls is a SEPARATE scope (service.multiDayCalls, Phase 6R-C). Same client-clock and no-GC limitations as the project scopes.',
+  },
+  'service.multiDayCalls': {
+    scope: 'service.multiDayCalls',
+    dataPath: 'BackupData.multiDayServiceCalls[]',
+    owner: 'V15rServiceCallsV2 / serviceCallService',
+    level: 'top-level',
+    identityField: 'service_call_id (fallback: id / serviceCallId / callId)',
+    timestampField: 'updatedAt',
+    tombstoneField: 'deletedAt',
+    needsTimestamp: false,
+    needsTombstone: false,
+    strategy: 'id-merge',
+    priority: 'high',
+    notes: 'Phase 6R-C: multiDayServiceCalls / ServiceCallsV2 has delete-safe item-level id-merge via serviceScopeMerge.ts (mergeMultiDayServiceCallsIntoRemote). service_call_id is the stable identity (falls back to id/serviceCallId/callId, then a deterministic fingerprint); stampMultiDayServiceCall stamps createdAt/updatedAt; deletes write deletedAt/deletedBy tombstones retained in raw backup while V15rServiceCallsV2 filters via getLiveMultiDayServiceCalls. Separate from service.calls (serviceLogs/serviceEstimates/activeServiceCalls). V15rServiceCallsV2 saves fetch latest remote and patch only multiDayServiceCalls through the existing remote-baseline path. A narrow pre-sync fold preserves newer remote multiDayServiceCalls on any non-service.multiDayCalls save.',
   },
 
   // ── Home agenda / custom alerts ──
@@ -671,6 +686,15 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
   ],
   'service.calls': [
     'service.calls',
+  ],
+  'service.multiDayCalls': [
+    'service.multiDayCalls',
+  ],
+  multiDayServiceCalls: [
+    'service.multiDayCalls',
+  ],
+  ServiceCallsV2: [
+    'service.multiDayCalls',
   ],
   gcContacts: [
     'leads.accounts',
