@@ -210,6 +210,8 @@ export interface BackupProject {
   lastEstimateSyncAt?: string; completionPromptSig?: string; completionDeclinedSig?: string
   /** Phase 6L: per-field LWW timestamps for scoped estimate scalar merge (contract/mileRT/miDays). */
   estimateScalarUpdatedAt?: { contract?: string; mileRT?: string; miDays?: string; laborPhaseColors?: string }
+  /** Phase 6S-A: per-field LWW timestamps for scoped project.finance merge (manualPaidAdjustment/lastCollectedAt/billedOverride/contractOverride/matCostOverride). */
+  financeUpdatedAt?: Partial<Record<string, string>>
   plannedStart?: string; plannedEnd?: string
   /** Progress tab header accent colors per phase name (project-local, optional) */
   progressPhaseColors?: Record<string, string>

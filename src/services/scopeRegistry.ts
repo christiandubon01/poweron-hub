@@ -36,6 +36,7 @@ export type DataScope =
   | 'project.notes'
   | 'project.files'
   | 'project.lifecycle'
+  | 'project.finance'
   | 'fieldLogs.entries'
   | 'fieldLogs.materials'
   | 'fieldLogs.photos'
@@ -250,6 +251,20 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
     strategy: 'field-lww',
     priority: 'critical',
     notes: 'Phase 6Q: project soft-delete lifecycle. deleteProject stamps deletedAt/deletedBy/status="deleted" (no hard remove from projects[], no hard-filter of logs[]). mergeProjectLifecycleIntoRemote patches ONLY these lifecycle fields onto the matching remote project; all child arrays (changeOrders/rfis/materials/estimate rows/scalars/schedule/notes), top-level logs[], other projects, serviceLogs, and blueprint data are preserved untouched. Readers hide deleted projects via isActiveProject (deletedAt or status="deleted") and the panel excludes them from the Archived list. Child-record cascade tombstoning and a hard export-gated purge are deferred to a later phase.',
+  },
+  'project.finance': {
+    scope: 'project.finance',
+    dataPath: 'projects[].finance (manualPaidAdjustment / lastCollectedAt / billedOverride / contractOverride / matCostOverride)',
+    owner: 'V15rProjectsPanel / V15rProgressTab / getProjectFinancials',
+    level: 'nested',
+    identityField: 'project id + finance field name',
+    timestampField: 'financeUpdatedAt.<field>',
+    tombstoneField: undefined,
+    needsTimestamp: false,
+    needsTombstone: false,
+    strategy: 'field-lww',
+    priority: 'critical',
+    notes: 'Phase 6S-A: money-critical projects[].finance fields (manualPaidAdjustment feeds getProjectFinancials paid → AR/exposure/risk → Dashboard/MoneyPanel/Home/NEXUS; billedOverride/contractOverride/matCostOverride/lastCollectedAt are the other override scalars) now have a per-field last-writer-wins merge keyed by a projects[].financeUpdatedAt per-field timestamp map (mergeProjectFinanceIntoRemote for a single project; mergeAllProjectFinanceIntoRemote for broad savers). The broad-saver helper is INCOMING-based: it returns a clone of the local backup (so every local project edit — status/archive/name/progress — is preserved exactly) with each project\'s finance scalar fields resolved against remote so a stale local finance bucket can NEVER overwrite a newer remote value, and a remote legacy/imported value that predates timestamps is never wiped by a local blank (tie → remote value kept). V15rProjectsPanel.persist and V15rProgressTab.persistProjectChange save locally for instant UI, then fetch latest remote, mergeAllProjectFinanceIntoRemote, and push through the existing saveBackupWithRemoteBaselineSync path (changedKey "projects", _scopes ["project.finance"]); fallback saveBackupDataAndSync. Scope excludes logs[] (project.logs/project.payments own logs[].collected), service payments, estimate rows/scalars, and project lifecycle. Same client-clock/no-GC limitations as the other project scopes.',
   },
 
   // ── Field Logs ──
@@ -497,6 +512,10 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
     'project.schedule',
     'project.notes',
     'project.lifecycle',
+    'project.finance',
+  ],
+  'project.finance': [
+    'project.finance',
   ],
   logs: [
     'project.payments',

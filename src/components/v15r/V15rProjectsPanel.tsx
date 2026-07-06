@@ -30,7 +30,7 @@ import {
   isActiveProject,
   type BackupProject,
 } from '@/services/backupDataService'
-import { getLiveRFIs, mergeProjectLogsIntoRemote, createProjectTombstone, mergeProjectLifecycleIntoRemote, isDeletedProject } from '@/services/projectScopeMerge'
+import { getLiveRFIs, mergeProjectLogsIntoRemote, createProjectTombstone, mergeProjectLifecycleIntoRemote, isDeletedProject, mergeAllProjectFinanceIntoRemote } from '@/services/projectScopeMerge'
 import { getProjectDaysSinceLastMovement } from '@/utils/v15rProjectHealth'
 import { pushState } from '@/services/undoRedoService'
 import QuickBooksImportModal from './QuickBooksImportModal'
@@ -508,8 +508,54 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
 
   function persist(changedKey: string = 'projects') {
     backup._lastSavedAt = new Date().toISOString()
-    saveBackupDataAndSync(backup, changedKey)
+    // Phase 6S-A: broad projects[] save. Persist locally for instant UI, then push
+    // through a finance-preserving remote-baseline merge so a stale local finance
+    // bucket can't clobber a newer remote manualPaidAdjustment / override value.
+    // Non-finance project edits (status/archive/name/etc.) are preserved in full.
+    saveBackupData(backup)
     forceUpdate()
+    void saveProjectsFinanceScoped(changedKey)
+  }
+
+  /**
+   * Phase 6S-A: finance-preserving broad projects save. The caller has already
+   * mutated backup.projects[] and saved locally. Fetch latest remote, fold every
+   * project's remote finance scalars back in by field-LWW (mergeAllProjectFinance-
+   * IntoRemote — INCOMING-based, so all local project edits survive), and push via
+   * the existing remote-baseline path scoped to project.finance. Demo mode keeps
+   * the prior local-sync behavior. No Save/stale/baseline internals are touched.
+   */
+  async function saveProjectsFinanceScoped(changedKey: string = 'projects') {
+    if (hasHydrated && isDemoMode) {
+      saveBackupDataAndSync(backup, changedKey)
+      window.dispatchEvent(new Event('storage'))
+      window.dispatchEvent(new Event('poweron-data-saved'))
+      forceUpdate()
+      return
+    }
+    window.dispatchEvent(new Event('storage'))
+    window.dispatchEvent(new Event('poweron-data-saved'))
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const incoming = getBackupData() || backup
+        const merged = mergeAllProjectFinanceIntoRemote(remote.remoteData, incoming)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+          { source: 'project-finance-remote-merge', changedKey: 'projects', _scopes: ['project.finance'] },
+        )
+        return
+      }
+      saveBackupDataAndSync(getBackupData() || backup, 'projects', {
+        source: 'project.finance', _scopes: ['project.finance'],
+      })
+    } catch (err) {
+      console.warn('[V15rProjectsPanel] Scoped project-finance sync failed; local changes preserved', err)
+      saveBackupDataAndSync(getBackupData() || backup, 'projects', {
+        source: 'project.finance', _scopes: ['project.finance'],
+      })
+    }
   }
 
   function handleSelectProjectAccount(accountId: string, forceFill: boolean = false) {

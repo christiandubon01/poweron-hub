@@ -1577,3 +1577,166 @@ export function mergeProjectLifecycleIntoRemote(
   }
   return merged
 }
+
+// ── Project finance scalar fields (Phase 6S-A) ─────────────────────────────────
+// Money-critical values live on the untyped projects[].finance bucket. A broad
+// projects[] save from an unrelated tab can carry a STALE finance bucket and
+// clobber a newer remote value (e.g. manualPaidAdjustment set on another device,
+// which feeds getProjectFinancials paid → AR/exposure/risk → Dashboard/MoneyPanel/
+// Home). This section adds a per-field last-writer-wins merge keyed by a
+// projects[].financeUpdatedAt map. It NEVER touches logs[] (project.logs owns
+// logs[].collected), service payments, estimate rows/scalars, or project lifecycle.
+// Only FINANCE_SCALAR_FIELDS values and the financeUpdatedAt map are read/written.
+
+export type FinanceScalarField =
+  | 'manualPaidAdjustment'
+  | 'lastCollectedAt'
+  | 'billedOverride'
+  | 'contractOverride'
+  | 'matCostOverride'
+
+/** The only projects[].finance fields this merge is allowed to read/patch. */
+export const FINANCE_SCALAR_FIELDS: readonly FinanceScalarField[] = [
+  'manualPaidAdjustment',
+  'lastCollectedAt',
+  'billedOverride',
+  'contractOverride',
+  'matCostOverride',
+]
+
+export type FinanceUpdatedAt = Partial<Record<string, string>>
+
+function asFinanceObject(value: any): Record<string, any> {
+  return value && typeof value === 'object' ? value : {}
+}
+
+/** A finance field counts as "present" only when it holds a real, non-blank value. */
+function hasFinanceValue(value: unknown): boolean {
+  if (value === undefined || value === null) return false
+  if (typeof value === 'string' && value.trim() === '') return false
+  return true
+}
+
+/**
+ * Stamp a single finance field's LWW timestamp on a project (mutates and returns
+ * the same project, matching the tombstone/estimate-scalar helper style). Ensures
+ * the financeUpdatedAt map exists and only ever writes financeUpdatedAt[fieldName].
+ * Provided for a future finance-editing UI; the current broad savers never mutate
+ * finance themselves, so protection is purely defensive (remote-wins LWW).
+ */
+export function stampProjectFinanceField(project: any, fieldName: string, timestamp?: string): any {
+  if (!project || typeof project !== 'object') return project
+  const stamps = asFinanceObject(project.financeUpdatedAt)
+  const ts = isValidDateString(timestamp) ? String(timestamp) : new Date().toISOString()
+  project.financeUpdatedAt = { ...stamps, [fieldName]: ts }
+  return project
+}
+
+/**
+ * Resolve one project's finance scalar fields by per-field LWW, writing the winner
+ * onto `targetProject` (already a clone). Winner rules:
+ *  - Strictly-newer financeUpdatedAt wins that field (value + timestamp copied).
+ *  - On a timestamp tie (commonly BOTH missing → legacy/imported data), the side
+ *    that actually has a value wins; if both/neither, the incoming/target value is
+ *    kept. This protects a remote legacy finance value from a local blank.
+ *  - A value is NEVER wiped: if the winner has no value, the target keeps whatever
+ *    it already had (no delete of a finance value with a stale undefined).
+ * Only FINANCE_SCALAR_FIELDS + financeUpdatedAt are touched; every other finance
+ * key (contract/paid/billed/exposure/etc.) on the target is preserved untouched.
+ */
+function resolveProjectFinanceLWW(targetProject: any, remoteProject: any, incomingProject: any): void {
+  const remoteFin = asFinanceObject(remoteProject?.finance)
+  const incomingFin = asFinanceObject(incomingProject?.finance)
+  const remoteStamps = asFinanceObject(remoteProject?.financeUpdatedAt)
+  const incomingStamps = asFinanceObject(incomingProject?.financeUpdatedAt)
+
+  // Base off the target's own current values so unrelated finance keys survive.
+  const nextFinance: Record<string, any> = { ...asFinanceObject(targetProject.finance) }
+  const nextStamps: Record<string, any> = { ...asFinanceObject(targetProject.financeUpdatedAt) }
+
+  for (const field of FINANCE_SCALAR_FIELDS) {
+    const remoteTs = comparableMs(remoteStamps[field])
+    const incomingTs = comparableMs(incomingStamps[field])
+    const remoteHasVal = hasFinanceValue(remoteFin[field])
+    const incomingHasVal = hasFinanceValue(incomingFin[field])
+
+    let winnerIsRemote: boolean
+    if (remoteTs > incomingTs) winnerIsRemote = true
+    else if (incomingTs > remoteTs) winnerIsRemote = false
+    else winnerIsRemote = !incomingHasVal && remoteHasVal // tie: never wipe a remote value with a local blank
+
+    if (winnerIsRemote) {
+      if (remoteHasVal) nextFinance[field] = remoteFin[field]
+      if (isValidDateString(remoteStamps[field])) nextStamps[field] = String(remoteStamps[field])
+    } else {
+      if (incomingHasVal) nextFinance[field] = incomingFin[field]
+      if (isValidDateString(incomingStamps[field])) nextStamps[field] = String(incomingStamps[field])
+    }
+  }
+
+  targetProject.finance = nextFinance
+  targetProject.financeUpdatedAt = nextStamps
+}
+
+/**
+ * Single-project finance merge (remote-based, faithful to the estimate-scalar
+ * pattern): returns a clone of `remoteBackup` with ONLY the target project's
+ * finance scalar fields resolved by LWW against `incomingBackup`. Suitable for a
+ * save site where ONLY finance changed. Every other field and every other project
+ * is the remote snapshot, untouched.
+ */
+export function mergeProjectFinanceIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+  projectId: string,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const targetId = String(projectId || '').trim()
+  if (!targetId) return merged
+
+  const remoteProjects = Array.isArray(merged.projects) ? merged.projects : []
+  const remoteIndex = remoteProjects.findIndex((p: any) => String(p?.id || '') === targetId)
+  if (remoteIndex === -1) return merged
+
+  const incomingProjects = Array.isArray(incomingBackup?.projects) ? incomingBackup.projects : []
+  const incomingProject: any = incomingProjects.find((p: any) => String(p?.id || '') === targetId)
+  if (!incomingProject) return merged
+
+  const remoteProject: any = remoteProjects[remoteIndex]
+  resolveProjectFinanceLWW(remoteProject, remoteProject, incomingProject)
+  return merged
+}
+
+/**
+ * Broad-saver finance guard (INCOMING-based): returns a clone of `incomingBackup`
+ * so EVERY local project edit — status/archive/name/progress/logs/etc. — is
+ * preserved exactly as today's broad save would push it, with each project's
+ * finance scalar fields reconciled against `remoteBackup` by per-field LWW. This
+ * is what V15rProjectsPanel/V15rProgressTab use so a stale local finance bucket can
+ * never overwrite a newer remote finance value, and a remote legacy/imported value
+ * (no financeUpdatedAt yet) is never wiped by a local blank. Only finance +
+ * financeUpdatedAt are reconciled; all other data comes straight from incoming.
+ */
+export function mergeAllProjectFinanceIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(incomingBackup)) as BackupData
+
+  const remoteById = new Map<string, any>()
+  for (const rp of Array.isArray(remoteBackup?.projects) ? remoteBackup.projects : []) {
+    const id = String(rp?.id || '').trim()
+    if (id) remoteById.set(id, rp)
+  }
+
+  for (const mp of Array.isArray(merged.projects) ? merged.projects : []) {
+    const id = String(mp?.id || '').trim()
+    if (!id) continue
+    const remoteProject = remoteById.get(id)
+    if (!remoteProject) continue // remote has no counterpart; keep incoming finance as-is
+    // target = incoming clone (mp); "incoming" side of the LWW is mp itself.
+    resolveProjectFinanceLWW(mp, remoteProject, mp)
+  }
+
+  return merged
+}

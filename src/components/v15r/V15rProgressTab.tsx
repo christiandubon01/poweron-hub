@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState, useCallback, useRef, useEffect } from 'react'
-import { getBackupData, saveBackupDataAndSync, num, daysSince, getPhaseWeights } from '@/services/backupDataService'
-import { getLiveRFIs } from '@/services/projectScopeMerge'
+import { getBackupData, saveBackupData, saveBackupDataAndSync, fetchLatestRemoteBackup, saveBackupWithRemoteBaselineSync, num, daysSince, getPhaseWeights } from '@/services/backupDataService'
+import { getLiveRFIs, mergeAllProjectFinanceIntoRemote } from '@/services/projectScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import {
   loadInnerProjectViewPrefs,
@@ -283,6 +283,37 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   const lastMovementDate = movementDates[0] || null
   const daysSinceMove = lastMovementDate ? daysSince(lastMovementDate.toISOString()) : null
 
+  // Phase 6S-A: finance-preserving broad projects save for the Progress tab. Persist
+  // locally for instant UI (done by the caller), then fetch latest remote and fold
+  // every project's remote finance scalars back in by field-LWW (mergeAllProject-
+  // FinanceIntoRemote — INCOMING-based, so all local progress/schedule/phase edits
+  // survive), pushing via the existing remote-baseline path scoped to project.finance.
+  // Fire-and-forget so persistProjectChange stays synchronous. No full project.schedule
+  // merge here; no Save/stale/baseline internals touched.
+  const saveProjectsFinanceScoped = async (currentBackup: any) => {
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const incoming = getBackupData() || currentBackup
+        const merged = mergeAllProjectFinanceIntoRemote(remote.remoteData, incoming)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+          { source: 'project-finance-remote-merge', changedKey: 'projects', _scopes: ['project.finance'] },
+        )
+        return
+      }
+      saveBackupDataAndSync(getBackupData() || currentBackup, 'projects', {
+        source: 'project.finance', _scopes: ['project.finance'],
+      })
+    } catch (err) {
+      console.warn('[V15rProgressTab] Scoped project-finance sync failed; local changes preserved', err)
+      saveBackupDataAndSync(getBackupData() || currentBackup, 'projects', {
+        source: 'project.finance', _scopes: ['project.finance'],
+      })
+    }
+  }
+
   const persistProjectChange = (
     mutate: (project: any, currentBackup: any) => false | void,
   ): boolean => {
@@ -291,9 +322,11 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     if (!currentBackup || !project) return false
     const result = mutate(project, currentBackup)
     if (result === false) return false
-    saveBackupDataAndSync(currentBackup, 'projects')
+    currentBackup._lastSavedAt = new Date().toISOString()
+    saveBackupData(currentBackup)
     onUpdate?.()
     forceUpdate()
+    void saveProjectsFinanceScoped(currentBackup)
     return true
   }
 
