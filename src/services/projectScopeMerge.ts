@@ -1750,6 +1750,463 @@ export function mergeAllProjectFinanceIntoRemote(
 // which remain unimplemented. Never touches logs[]/payments, finance, estimate
 // rows/scalars, materials, RFIs, or change orders.
 
+export type ProjectProgressMapName =
+  | 'phases'
+  | 'customPhases'
+  | 'progressPhaseColors'
+  | 'progressPhaseOverrideEnabled'
+
+const PROJECT_PROGRESS_MAP_NAMES: readonly ProjectProgressMapName[] = [
+  'phases',
+  'customPhases',
+  'progressPhaseColors',
+  'progressPhaseOverrideEnabled',
+]
+
+function asProgressObject(value: any): Record<string, any> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+}
+
+function isBlankProgressValue(value: unknown): boolean {
+  return value === undefined || value === null || value === ''
+}
+
+export function normalizeProgressPhaseKey(key: unknown): string {
+  return String(key ?? '').trim().toLowerCase()
+}
+
+function getProgressMapUpdatedAt(project: any, mapName: string, phaseKey: string): string | undefined {
+  const normalized = normalizeProgressPhaseKey(phaseKey)
+  const stamps = asProgressObject(asProgressObject(project?.progressUpdatedAt)[mapName])
+  for (const [key, value] of Object.entries(stamps)) {
+    if (normalizeProgressPhaseKey(key) === normalized && isValidDateString(value)) return String(value)
+  }
+  return undefined
+}
+
+function getProgressMapDeletedAt(project: any, mapName: string, phaseKey: string): string | undefined {
+  const normalized = normalizeProgressPhaseKey(phaseKey)
+  const deleted = asProgressObject(asProgressObject(project?.progressDeletedAt)[mapName])
+  for (const [key, value] of Object.entries(deleted)) {
+    if (normalizeProgressPhaseKey(key) === normalized && isValidDateString(value)) return String(value)
+  }
+  return undefined
+}
+
+function setNestedProgressStamp(project: any, rootName: 'progressUpdatedAt' | 'progressDeletedAt', mapName: string, phaseKey: string, timestamp: string): void {
+  if (!project || typeof project !== 'object') return
+  const root = asProgressObject(project[rootName])
+  const bucket = asProgressObject(root[mapName])
+  project[rootName] = { ...root, [mapName]: { ...bucket, [phaseKey]: timestamp } }
+}
+
+export function stampProgressMapField(project: any, mapName: ProjectProgressMapName | string, phaseKey: string, timestamp?: string): any {
+  const phase = String(phaseKey ?? '').trim()
+  if (!project || typeof project !== 'object' || !phase) return project
+  const ts = isValidDateString(timestamp) ? String(timestamp) : new Date().toISOString()
+  setNestedProgressStamp(project, 'progressUpdatedAt', mapName, phase, ts)
+  return project
+}
+
+export function markProgressMapFieldDeleted(project: any, mapName: ProjectProgressMapName | string, phaseKey: string, deletedBy?: string): any {
+  const phase = String(phaseKey ?? '').trim()
+  if (!project || typeof project !== 'object' || !phase) return project
+  const ts = new Date().toISOString()
+  setNestedProgressStamp(project, 'progressDeletedAt', mapName, phase, ts)
+  setNestedProgressStamp(project, 'progressUpdatedAt', mapName, phase, ts)
+  if (deletedBy) {
+    const deletedByRoot = asProgressObject(project.progressDeletedBy)
+    const bucket = asProgressObject(deletedByRoot[mapName])
+    project.progressDeletedBy = { ...deletedByRoot, [mapName]: { ...bucket, [phase]: deletedBy } }
+  }
+  return project
+}
+
+export interface ProjectProgressTask {
+  id?: string
+  desc?: string
+  hrs?: number
+  pct?: number
+  phase?: string
+  createdAt?: string
+  updatedAt?: string
+  deletedAt?: string
+  deletedBy?: string
+  status?: string
+  [key: string]: any
+}
+
+export type MergeableProgressTask = ProjectProgressTask & {
+  id: string
+  createdAt: string
+  updatedAt: string
+}
+
+function progressTaskFingerprint(task: any): string {
+  const parts = [
+    task?.id,
+    task?.desc,
+    task?.hrs,
+    task?.pct,
+    task?.phase,
+    task?.createdAt,
+    task?.updatedAt,
+  ].map(value => String(value ?? '').trim())
+  return shortStableHash(parts.join('|'))
+}
+
+function normalizeProgressTaskCreatedAt(task: any): string {
+  if (isValidDateString(task?.createdAt)) return String(task.createdAt)
+  if (isValidDateString(task?.updatedAt)) return String(task.updatedAt)
+  return EPOCH_FALLBACK_ISO
+}
+
+function normalizeProgressTaskUpdatedAt(task: any): string {
+  let base = EPOCH_FALLBACK_ISO
+  if (isValidDateString(task?.updatedAt)) base = String(task.updatedAt)
+  else if (isValidDateString(task?.createdAt)) base = String(task.createdAt)
+
+  if (isValidDateString(task?.deletedAt) && parseTimestampMs(task.deletedAt) > parseTimestampMs(base)) {
+    return String(task.deletedAt)
+  }
+  return base
+}
+
+export function isDeletedProgressTask(task: any): boolean {
+  return isValidDateString(task?.deletedAt) || String(task?.status || '').trim().toLowerCase() === 'deleted'
+}
+
+export function ensureProgressTaskIdentity(task: any, timestamp?: string): MergeableProgressTask {
+  const source = task && typeof task === 'object' ? task : {}
+  const id = String(source.id || source.taskId || '').trim() || `legacy:${progressTaskFingerprint(source)}`
+  const ts = isValidDateString(timestamp) ? String(timestamp) : undefined
+  return {
+    ...source,
+    id,
+    createdAt: isValidDateString(source.createdAt) ? String(source.createdAt) : (ts || normalizeProgressTaskCreatedAt(source)),
+    updatedAt: ts || normalizeProgressTaskUpdatedAt(source),
+  } as MergeableProgressTask
+}
+
+export function createProgressTaskTombstone(task: any, deletedBy?: string): ProjectProgressTask {
+  const now = new Date().toISOString()
+  const clean = ensureProgressTaskIdentity(task || {}, now)
+  const tombstone: ProjectProgressTask = {
+    ...clean,
+    deletedAt: now,
+    updatedAt: now,
+    status: 'deleted',
+  }
+  if (deletedBy) tombstone.deletedBy = deletedBy
+  else if (task?.deletedBy) tombstone.deletedBy = task.deletedBy
+  else tombstone.deletedBy = 'system'
+  return tombstone
+}
+
+function coalesceProgressRow(winner: any, loser: any): any {
+  if (!loser || typeof loser !== 'object') return { ...winner }
+  const result: Record<string, any> = { ...loser, ...winner }
+  for (const key of Object.keys(loser)) {
+    if (isBlankProgressValue(winner?.[key]) && !isBlankProgressValue(loser[key])) result[key] = loser[key]
+  }
+  return result
+}
+
+function pickProgressTaskWinner(remote: MergeableProgressTask, incoming: MergeableProgressTask): ProjectProgressTask {
+  const remoteDeleted = isDeletedProgressTask(remote)
+  const incomingDeleted = isDeletedProgressTask(incoming)
+
+  if (remoteDeleted && incomingDeleted) {
+    const incomingWins = comparableMs(incoming.deletedAt || incoming.updatedAt) >= comparableMs(remote.deletedAt || remote.updatedAt)
+    return coalesceProgressRow(incomingWins ? incoming : remote, incomingWins ? remote : incoming)
+  }
+
+  if (remoteDeleted !== incomingDeleted) {
+    const tombstone = remoteDeleted ? remote : incoming
+    const live = remoteDeleted ? incoming : remote
+    const liveWins = comparableMs(live.updatedAt) > comparableMs(tombstone.deletedAt || tombstone.updatedAt)
+    return coalesceProgressRow(liveWins ? live : tombstone, liveWins ? tombstone : live)
+  }
+
+  const incomingWins = comparableMs(incoming.updatedAt) >= comparableMs(remote.updatedAt)
+  return coalesceProgressRow(incomingWins ? incoming : remote, incomingWins ? remote : incoming)
+}
+
+function mergeProgressTaskRowsById(remoteRows: any[], incomingRows: any[]): ProjectProgressTask[] {
+  const remoteArr = (Array.isArray(remoteRows) ? remoteRows : []).map(row => ensureProgressTaskIdentity(row))
+  const incomingArr = (Array.isArray(incomingRows) ? incomingRows : []).map(row => ensureProgressTaskIdentity(row))
+  const remoteById = new Map<string, MergeableProgressTask>()
+  for (const row of remoteArr) remoteById.set(String(row.id), row)
+
+  const result: ProjectProgressTask[] = []
+  const used = new Set<string>()
+  for (const incoming of incomingArr) {
+    const id = String(incoming.id)
+    if (used.has(id)) continue
+    used.add(id)
+    const remote = remoteById.get(id)
+    result.push(remote ? pickProgressTaskWinner(remote, incoming) : incoming)
+  }
+  for (const remote of remoteArr) {
+    const id = String(remote.id)
+    if (used.has(id)) continue
+    used.add(id)
+    result.push(remote)
+  }
+  return result
+}
+
+export function getLiveProgressTasks(tasksForPhase: any[]): ProjectProgressTask[] {
+  return (Array.isArray(tasksForPhase) ? tasksForPhase : [])
+    .map(row => ensureProgressTaskIdentity(row))
+    .filter(row => !isDeletedProgressTask(row))
+}
+
+function taskBucketEntries(tasks: any): Array<[string, any[]]> {
+  const obj = asProgressObject(tasks)
+  return Object.entries(obj).map(([key, rows]) => [key, Array.isArray(rows) ? rows : []])
+}
+
+export function mergeProgressTaskArrays(remoteTasks: any, incomingTasks: any): Record<string, ProjectProgressTask[]> {
+  const remoteEntries = taskBucketEntries(remoteTasks)
+  const incomingEntries = taskBucketEntries(incomingTasks)
+  const remoteByNorm = new Map<string, [string, any[]]>()
+  const incomingByNorm = new Map<string, [string, any[]]>()
+  for (const entry of remoteEntries) remoteByNorm.set(normalizeProgressPhaseKey(entry[0]), entry)
+  for (const entry of incomingEntries) incomingByNorm.set(normalizeProgressPhaseKey(entry[0]), entry)
+
+  const result: Record<string, ProjectProgressTask[]> = {}
+  const used = new Set<string>()
+  for (const [norm, [incomingKey, incomingRows]] of incomingByNorm) {
+    used.add(norm)
+    const remoteEntry = remoteByNorm.get(norm)
+    result[incomingKey] = mergeProgressTaskRowsById(remoteEntry?.[1] || [], incomingRows)
+  }
+  for (const [norm, [remoteKey, remoteRows]] of remoteByNorm) {
+    if (used.has(norm)) continue
+    result[remoteKey] = mergeProgressTaskRowsById(remoteRows, [])
+  }
+  return result
+}
+
+function getProgressObjectValue(project: any, mapName: string, phaseKey: string): any {
+  const normalized = normalizeProgressPhaseKey(phaseKey)
+  const map = asProgressObject(project?.[mapName])
+  for (const [key, value] of Object.entries(map)) {
+    if (normalizeProgressPhaseKey(key) === normalized) return value
+  }
+  return undefined
+}
+
+function getCustomPhaseLabel(project: any, phaseKey: string): string | undefined {
+  const normalized = normalizeProgressPhaseKey(phaseKey)
+  const phases = Array.isArray(project?.customPhases) ? project.customPhases : []
+  const found = phases.find((ph: any) => normalizeProgressPhaseKey(ph) === normalized)
+  return found == null ? undefined : String(found)
+}
+
+function collectProgressPhaseKeys(remoteProject: any, incomingProject: any, mapName: string): string[] {
+  const keys: string[] = []
+  const add = (key: unknown) => {
+    const label = String(key ?? '').trim()
+    const norm = normalizeProgressPhaseKey(label)
+    if (!norm || keys.some(existing => normalizeProgressPhaseKey(existing) === norm)) return
+    keys.push(label)
+  }
+
+  if (mapName === 'customPhases') {
+    for (const ph of Array.isArray(remoteProject?.customPhases) ? remoteProject.customPhases : []) add(ph)
+    for (const ph of Array.isArray(incomingProject?.customPhases) ? incomingProject.customPhases : []) add(ph)
+  } else {
+    for (const key of Object.keys(asProgressObject(remoteProject?.[mapName]))) add(key)
+    for (const key of Object.keys(asProgressObject(incomingProject?.[mapName]))) add(key)
+  }
+  for (const key of Object.keys(asProgressObject(asProgressObject(remoteProject?.progressUpdatedAt)[mapName]))) add(key)
+  for (const key of Object.keys(asProgressObject(asProgressObject(incomingProject?.progressUpdatedAt)[mapName]))) add(key)
+  for (const key of Object.keys(asProgressObject(asProgressObject(remoteProject?.progressDeletedAt)[mapName]))) add(key)
+  for (const key of Object.keys(asProgressObject(asProgressObject(incomingProject?.progressDeletedAt)[mapName]))) add(key)
+  return keys
+}
+
+function resolveProgressMapField(mapName: string, phaseKey: string, remoteProject: any, incomingProject: any): any {
+  const remoteValue = mapName === 'customPhases' ? getCustomPhaseLabel(remoteProject, phaseKey) : getProgressObjectValue(remoteProject, mapName, phaseKey)
+  const incomingValue = mapName === 'customPhases' ? getCustomPhaseLabel(incomingProject, phaseKey) : getProgressObjectValue(incomingProject, mapName, phaseKey)
+  const remoteHas = !isBlankProgressValue(remoteValue)
+  const incomingHas = !isBlankProgressValue(incomingValue)
+  const remoteLiveTs = comparableMs(getProgressMapUpdatedAt(remoteProject, mapName, phaseKey))
+  const incomingLiveTs = comparableMs(getProgressMapUpdatedAt(incomingProject, mapName, phaseKey))
+  const remoteDelAt = getProgressMapDeletedAt(remoteProject, mapName, phaseKey)
+  const incomingDelAt = getProgressMapDeletedAt(incomingProject, mapName, phaseKey)
+  const remoteDelTs = comparableMs(remoteDelAt)
+  const incomingDelTs = comparableMs(incomingDelAt)
+  const liveTs = Math.max(remoteHas ? remoteLiveTs : Number.NEGATIVE_INFINITY, incomingHas ? incomingLiveTs : Number.NEGATIVE_INFINITY)
+  const deleteTs = Math.max(remoteDelTs, incomingDelTs)
+
+  if (deleteTs !== Number.NEGATIVE_INFINITY && deleteTs >= liveTs) {
+    return { deleted: true, label: String(incomingValue || remoteValue || phaseKey), deletedAt: incomingDelTs >= remoteDelTs ? incomingDelAt : remoteDelAt }
+  }
+
+  let incomingWins: boolean
+  if (incomingLiveTs > remoteLiveTs) incomingWins = true
+  else if (remoteLiveTs > incomingLiveTs) incomingWins = false
+  else incomingWins = incomingHas || !remoteHas
+  const winner = incomingWins ? incomingValue : remoteValue
+  const loser = incomingWins ? remoteValue : incomingValue
+  const value = !isBlankProgressValue(winner) ? winner : loser
+  const stamp = incomingWins ? getProgressMapUpdatedAt(incomingProject, mapName, phaseKey) : getProgressMapUpdatedAt(remoteProject, mapName, phaseKey)
+  return { deleted: false, value, label: String(value || incomingValue || remoteValue || phaseKey), updatedAt: stamp }
+}
+
+function mergeProgressMapObject(mapName: ProjectProgressMapName, remoteProject: any, incomingProject: any): any {
+  const keys = collectProgressPhaseKeys(remoteProject, incomingProject, mapName)
+  const stamps: Record<string, string> = {}
+  const deleted: Record<string, string> = {}
+  if (mapName === 'customPhases') {
+    const phases: string[] = []
+    for (const key of keys) {
+      const resolved = resolveProgressMapField(mapName, key, remoteProject, incomingProject)
+      if (resolved.deleted) {
+        if (resolved.deletedAt) deleted[resolved.label || key] = resolved.deletedAt
+        continue
+      }
+      if (isBlankProgressValue(resolved.value)) continue
+      const label = String(resolved.label || resolved.value || key)
+      if (!phases.some(existing => normalizeProgressPhaseKey(existing) === normalizeProgressPhaseKey(label))) phases.push(label)
+      if (resolved.updatedAt) stamps[label] = resolved.updatedAt
+    }
+    return { value: phases, stamps, deleted }
+  }
+
+  const map: Record<string, any> = {}
+  for (const key of keys) {
+    const resolved = resolveProgressMapField(mapName, key, remoteProject, incomingProject)
+    const label = String(resolved.label || key)
+    if (resolved.deleted) {
+      if (resolved.deletedAt) deleted[label] = resolved.deletedAt
+      continue
+    }
+    if (isBlankProgressValue(resolved.value)) continue
+    map[label] = resolved.value
+    if (resolved.updatedAt) stamps[label] = resolved.updatedAt
+  }
+  return { value: map, stamps, deleted }
+}
+
+export function mergeProgressMaps(remoteProject: any, incomingProject: any): any {
+  const progressUpdatedAt: Record<string, Record<string, string>> = {}
+  const progressDeletedAt: Record<string, Record<string, string>> = {}
+  const merged: any = {}
+  for (const mapName of PROJECT_PROGRESS_MAP_NAMES) {
+    const result = mergeProgressMapObject(mapName, remoteProject, incomingProject)
+    merged[mapName] = result.value
+    if (Object.keys(result.stamps).length) progressUpdatedAt[mapName] = result.stamps
+    if (Object.keys(result.deleted).length) progressDeletedAt[mapName] = result.deleted
+  }
+  return {
+    phases: merged.phases || {},
+    customPhases: merged.customPhases || [],
+    progressPhaseColors: merged.progressPhaseColors || {},
+    progressPhaseOverrideEnabled: merged.progressPhaseOverrideEnabled || {},
+    progressUpdatedAt,
+    progressDeletedAt,
+  }
+}
+
+function mergeProgressTimestampBucket(remoteProject: any, incomingProject: any, rootName: 'progressUpdatedAt' | 'progressDeletedAt', mapName: string): Record<string, string> {
+  const remoteBucket = asProgressObject(asProgressObject(remoteProject?.[rootName])[mapName])
+  const incomingBucket = asProgressObject(asProgressObject(incomingProject?.[rootName])[mapName])
+  const keys: string[] = []
+  const add = (key: string) => {
+    const norm = normalizeProgressPhaseKey(key)
+    if (!norm || keys.some(existing => normalizeProgressPhaseKey(existing) === norm)) return
+    keys.push(key)
+  }
+  Object.keys(remoteBucket).forEach(add)
+  Object.keys(incomingBucket).forEach(add)
+
+  const result: Record<string, string> = {}
+  for (const key of keys) {
+    const remoteKey = Object.keys(remoteBucket).find(k => normalizeProgressPhaseKey(k) === normalizeProgressPhaseKey(key))
+    const incomingKey = Object.keys(incomingBucket).find(k => normalizeProgressPhaseKey(k) === normalizeProgressPhaseKey(key))
+    const remoteValue = remoteKey ? remoteBucket[remoteKey] : undefined
+    const incomingValue = incomingKey ? incomingBucket[incomingKey] : undefined
+    if (comparableMs(incomingValue) >= comparableMs(remoteValue)) {
+      if (isValidDateString(incomingValue)) result[incomingKey || key] = String(incomingValue)
+    } else if (isValidDateString(remoteValue)) {
+      result[remoteKey || key] = String(remoteValue)
+    }
+  }
+  return result
+}
+
+function patchProjectProgressFields(targetProject: any, remoteProject: any, incomingProject: any): void {
+  const maps = mergeProgressMaps(remoteProject, incomingProject)
+  const taskUpdatedAt = mergeProgressTimestampBucket(remoteProject, incomingProject, 'progressUpdatedAt', 'tasks')
+  const taskDeletedAt = mergeProgressTimestampBucket(remoteProject, incomingProject, 'progressDeletedAt', 'tasks')
+  targetProject.phases = maps.phases
+  targetProject.tasks = mergeProgressTaskArrays(remoteProject?.tasks, incomingProject?.tasks)
+  targetProject.customPhases = maps.customPhases
+  targetProject.progressPhaseColors = maps.progressPhaseColors
+  targetProject.progressPhaseOverrideEnabled = maps.progressPhaseOverrideEnabled
+  targetProject.progressUpdatedAt = {
+    ...asProgressObject(targetProject.progressUpdatedAt),
+    ...maps.progressUpdatedAt,
+    tasks: taskUpdatedAt,
+  }
+  targetProject.progressDeletedAt = {
+    ...asProgressObject(targetProject.progressDeletedAt),
+    ...maps.progressDeletedAt,
+    tasks: taskDeletedAt,
+  }
+}
+
+export function mergeProjectProgressIntoRemote(remoteBackup: BackupData, incomingBackup: BackupData, projectId: string): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const targetId = String(projectId || '').trim()
+  if (!targetId) return merged
+  const remoteProjects = Array.isArray(merged.projects) ? merged.projects : []
+  const remoteIndex = remoteProjects.findIndex((p: any) => String(p?.id || '') === targetId)
+  if (remoteIndex === -1) return merged
+  const incomingProjects = Array.isArray(incomingBackup?.projects) ? incomingBackup.projects : []
+  const incomingProject: any = incomingProjects.find((p: any) => String(p?.id || '') === targetId)
+  if (!incomingProject) return merged
+  const remoteProject: any = remoteProjects[remoteIndex]
+  patchProjectProgressFields(remoteProject, remoteProject, incomingProject)
+  return merged
+}
+
+export function mergeAllProjectProgressIntoRemote(remoteBackup: BackupData, incomingBackup: BackupData): BackupData {
+  const merged = JSON.parse(JSON.stringify(incomingBackup)) as BackupData
+  const remoteById = new Map<string, any>()
+  for (const rp of Array.isArray(remoteBackup?.projects) ? remoteBackup.projects : []) {
+    const id = String(rp?.id || '').trim()
+    if (id) remoteById.set(id, rp)
+  }
+  for (const mp of Array.isArray(merged.projects) ? merged.projects : []) {
+    const id = String(mp?.id || '').trim()
+    const remoteProject = id ? remoteById.get(id) : null
+    if (!remoteProject) continue
+    patchProjectProgressFields(mp, remoteProject, mp)
+  }
+  return merged
+}
+
+export function mergeRemoteProjectProgressIntoOutgoing(outgoingBackup: BackupData, remoteBackup: BackupData): BackupData {
+  const merged = JSON.parse(JSON.stringify(outgoingBackup)) as BackupData
+  const remoteById = new Map<string, any>()
+  for (const rp of Array.isArray(remoteBackup?.projects) ? remoteBackup.projects : []) {
+    const id = String(rp?.id || '').trim()
+    if (id) remoteById.set(id, rp)
+  }
+  for (const op of Array.isArray(merged.projects) ? merged.projects : []) {
+    const id = String(op?.id || '').trim()
+    const remoteProject = id ? remoteById.get(id) : null
+    if (!remoteProject) continue
+    patchProjectProgressFields(op, op, remoteProject)
+  }
+  return merged
+}
+
 export type ProjectTimelineFieldKey = 'deposit_pct' | 'phase_deposit_pct'
 
 /** The only projects[] scalar fields this merge is allowed to read/patch (phase_timeline is handled separately). */

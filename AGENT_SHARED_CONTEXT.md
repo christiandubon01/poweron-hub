@@ -3866,3 +3866,19 @@ serviceLogs 6R-A merge remains fully intact (untouched helpers + ledger union). 
 - **Deferred (explicitly NOT implemented this phase):** `project.progress`, `project.schedule` date merge, `project.coordination`, task tombstones, custom phase tombstones, `progressPhaseColors` merge, `V15rProgressTab` conversion, `V15rCoordinationTab` conversion, `V15rProjectsPanel` planned-date conversion, `revenueTimelineService` rewrite, dashboard reader migration, project logs/payments changes, `project.finance` changes, `finance.weeklyData` changes, `team.members` changes, service changes, blueprint changes. Sync/save/baseline internals (`syncToSupabase` freshness guard, verified Save, `setKnownRemoteBaseline`, `saveBackupWithRemoteBaselineSync` internals, `attemptProductionMergeAndSync`, `mergeLocalChangesIntoRemote`) unchanged except the narrow project.timeline preservation fold added to the existing guard block. Same client-clock/no-GC limitations as the other project scopes.
 
 No commit, push, deploy, manual Supabase touch, restore script, or manual localStorage write.
+
+### 2026-07-05 - Phase 6S-D2: project.progress Scoped Merge
+
+**Agent:** Codex
+**Mode:** Scoped implementation (Phase 6S-D2)
+**Baseline HEAD:** `9481cb4` (Phase 6S-D1 "Add scoped merge for project timeline")
+**Files touched:** `src/services/scopeRegistry.ts`, `src/services/projectScopeMerge.ts`, `src/services/backupDataService.ts`, `src/components/v15r/V15rProgressTab.tsx`, `AGENT_SHARED_CONTEXT.md`
+**Status:** DONE locally - typecheck PASS, build PASS, diff-check PASS; localhost manual test BLOCKED because the dev server could not start under sandbox access rules and escalated dev-server approval was denied. No commit, push, or deploy
+
+- Added `project.progress` scope, separate from `project.timeline` and deferred `project.schedule` planned-date work. It covers `projects[].phases`, `projects[].tasks`, `projects[].customPhases`, `projects[].progressPhaseColors`, and `projects[].progressPhaseOverrideEnabled`.
+- Added progress merge helpers in `projectScopeMerge.ts`: task identity/tombstone helpers, live task filtering, task bucket merge by stable task `id`, phase-key normalization, progress map stamping/deletion metadata, single-project progress merge, all-project progress merge, and non-progress outgoing preservation fold.
+- Task deletes are now tombstones (`deletedAt`/`deletedBy`/`updatedAt`/`status: "deleted"`) instead of hard filters. Live Progress UI filters tombstoned tasks while raw backup data retains them for merge safety.
+- Progress map fields now use `projects[].progressUpdatedAt.<mapName>[phaseKey]`; custom/map deletes use `projects[].progressDeletedAt.<mapName>[phaseKey]` so stale devices cannot resurrect removed custom phase metadata.
+- Converted `V15rProgressTab` progress saves from the old broad projects/project.finance remote save to optimistic local save followed by `mergeProjectProgressIntoRemote(...)` and `saveBackupWithRemoteBaselineSync(..., { changedKey: "project.progress", _scopes: ["project.progress"] })`; fallback uses `saveBackupDataAndSync(..., "project.progress", { source: "project.progress", _scopes: ["project.progress"] })`.
+- Added the narrow `project.progress` pre-sync preservation fold in `backupDataService.ts` inside the existing weeklyData/employees/project.timeline guard block immediately after `getBackupData(userId)` and before payload construction. It skips true `project.progress` saves and folds newer remote progress fields into unrelated outgoing full-blob saves via `mergeRemoteProjectProgressIntoOutgoing`.
+- `project.timeline` unchanged from 6S-D1. `project.schedule` plannedStart/plannedEnd/lastMove remains deferred. `project.coordination` remains deferred. Project logs/payments, project.finance, finance.weeklyData, team.members, service scopes, and blueprint scopes untouched. Sync/save/baseline internals unchanged except the narrow project.progress preservation hook.

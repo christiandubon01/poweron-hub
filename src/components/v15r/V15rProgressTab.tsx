@@ -1,7 +1,17 @@
 // @ts-nocheck
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { getBackupData, saveBackupData, saveBackupDataAndSync, fetchLatestRemoteBackup, saveBackupWithRemoteBaselineSync, num, daysSince, getPhaseWeights } from '@/services/backupDataService'
-import { getLiveRFIs, mergeAllProjectFinanceIntoRemote } from '@/services/projectScopeMerge'
+import {
+  createProgressTaskTombstone,
+  ensureProgressTaskIdentity,
+  getLiveProgressTasks,
+  getLiveRFIs,
+  isDeletedProgressTask,
+  markProgressMapFieldDeleted,
+  mergeProjectProgressIntoRemote,
+  normalizeProgressPhaseKey,
+  stampProgressMapField,
+} from '@/services/projectScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import {
   loadInnerProjectViewPrefs,
@@ -88,11 +98,28 @@ function tasksForPhase(project: any, ph: string, phases: string[]): any[] {
   const buckets = project?.tasks || {}
   return Object.entries(buckets).flatMap(([key, rows]: [string, any]) => {
     if (normalizePhaseName(key, phases) !== ph) return []
-    return (Array.isArray(rows) ? rows : []).map((task: any) => ({
+    return getLiveProgressTasks(Array.isArray(rows) ? rows : []).map((task: any) => ({
       ...task,
       __phaseKey: key,
     }))
   })
+}
+
+function isProgressCustomPhaseDeleted(project: any, ph: string): boolean {
+  const target = normalizeProgressPhaseKey(ph)
+  const deleted = project?.progressDeletedAt?.customPhases || {}
+  const updated = project?.progressUpdatedAt?.customPhases || {}
+  const deletedAt = Object.entries(deleted).reduce((latest, [key, value]: [string, any]) => {
+    if (normalizeProgressPhaseKey(key) !== target) return latest
+    const ms = Date.parse(String(value || ''))
+    return Number.isNaN(ms) ? latest : Math.max(latest, ms)
+  }, Number.NEGATIVE_INFINITY)
+  const updatedAt = Object.entries(updated).reduce((latest, [key, value]: [string, any]) => {
+    if (normalizeProgressPhaseKey(key) !== target) return latest
+    const ms = Date.parse(String(value || ''))
+    return Number.isNaN(ms) ? latest : Math.max(latest, ms)
+  }, Number.NEGATIVE_INFINITY)
+  return deletedAt !== Number.NEGATIVE_INFINITY && deletedAt >= updatedAt
 }
 
 function computedPhaseProgressFromTasks(project: any, ph: string, phases: string[]): number {
@@ -290,26 +317,26 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   // survive), pushing via the existing remote-baseline path scoped to project.finance.
   // Fire-and-forget so persistProjectChange stays synchronous. No full project.schedule
   // merge here; no Save/stale/baseline internals touched.
-  const saveProjectsFinanceScoped = async (currentBackup: any) => {
+  const saveProjectProgressScoped = async (currentBackup: any) => {
     try {
       const remote = await fetchLatestRemoteBackup()
       if (remote.hasRemoteRow && remote.remoteData) {
         const incoming = getBackupData() || currentBackup
-        const merged = mergeAllProjectFinanceIntoRemote(remote.remoteData, incoming)
+        const merged = mergeProjectProgressIntoRemote(remote.remoteData, incoming, projectId)
         await saveBackupWithRemoteBaselineSync(
           merged,
           { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
-          { source: 'project-finance-remote-merge', changedKey: 'projects', _scopes: ['project.finance'] },
+          { source: 'project-progress-remote-merge', changedKey: 'project.progress', _scopes: ['project.progress'] },
         )
         return
       }
-      saveBackupDataAndSync(getBackupData() || currentBackup, 'projects', {
-        source: 'project.finance', _scopes: ['project.finance'],
+      saveBackupDataAndSync(getBackupData() || currentBackup, 'project.progress', {
+        source: 'project.progress', _scopes: ['project.progress'],
       })
     } catch (err) {
-      console.warn('[V15rProgressTab] Scoped project-finance sync failed; local changes preserved', err)
-      saveBackupDataAndSync(getBackupData() || currentBackup, 'projects', {
-        source: 'project.finance', _scopes: ['project.finance'],
+      console.warn('[V15rProgressTab] Scoped project-progress sync failed; local changes preserved', err)
+      saveBackupDataAndSync(getBackupData() || currentBackup, 'project.progress', {
+        source: 'project.progress', _scopes: ['project.progress'],
       })
     }
   }
@@ -326,12 +353,13 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     saveBackupData(currentBackup)
     onUpdate?.()
     forceUpdate()
-    void saveProjectsFinanceScoped(currentBackup)
+    void saveProjectProgressScoped(currentBackup)
     return true
   }
 
-  const missingPhaseFallbackWeight = settingsPhases.length > 0 ? 100 / settingsPhases.length : 0
-  const settingsPhaseEntries: [string, number][] = settingsPhases.map(ph => [
+  const activeSettingsPhases = settingsPhases.filter(ph => !isProgressCustomPhaseDeleted(p, ph))
+  const missingPhaseFallbackWeight = activeSettingsPhases.length > 0 ? 100 / activeSettingsPhases.length : 0
+  const settingsPhaseEntries: [string, number][] = activeSettingsPhases.map(ph => [
     ph,
     phaseWeightFor(ph, w, missingPhaseFallbackWeight),
   ])
@@ -340,7 +368,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     ...Object.keys(p.tasks || {}),
     ...Object.keys(p.phases || {}),
     ...(p.customPhases || []),
-  ], settingsPhases)
+  ], settingsPhases).filter(ph => !isProgressCustomPhaseDeleted(p, ph))
   const orderedPhaseEntries = [
     ...settingsPhaseEntries.map(([ph, wt]) => [ph, wt, false] as [string, number, boolean]),
     ...legacyProgressPhases.map(ph => [ph, 0, true] as [string, number, boolean]),
@@ -361,11 +389,13 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     const hex = normalizeColorPickerValue(rawHex)
     pushState()
     persistProjectChange(proj => {
+      const ts = new Date().toISOString()
       const prev = proj.progressPhaseColors?.[ph]
       const prevNorm = prev ? normalizeColorPickerValue(prev) : null
       if (prevNorm === hex) return false
       if (!proj.progressPhaseColors) proj.progressPhaseColors = {}
       proj.progressPhaseColors[ph] = hex
+      stampProgressMapField(proj, 'progressPhaseColors', ph, ts)
     })
   }
 
@@ -424,26 +454,31 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
   const editTask = (ph, taskId, field, value) => {
     pushState()
     persistProjectChange(proj => {
+      const ts = new Date().toISOString()
       const tasks = (proj.tasks || {})[ph] || []
       const task = tasks.find(t => t.id === taskId)
       if (!task) return false
       if (field === 'desc') task.desc = String(value)
       else if (field === 'hrs') task.hrs = num(value)
       else if (field === 'pct') task.pct = Math.min(100, Math.max(0, num(value)))
+      Object.assign(task, ensureProgressTaskIdentity(task, ts))
+      stampProgressMapField(proj, 'tasks', ph, ts)
     })
   }
 
   const addTask = (ph) => {
     pushState()
     persistProjectChange(proj => {
+      const ts = new Date().toISOString()
       if (!proj.tasks) proj.tasks = {}
       if (!proj.tasks[ph]) proj.tasks[ph] = []
-      proj.tasks[ph].push({
+      proj.tasks[ph].push(ensureProgressTaskIdentity({
         id: 'tsk' + Date.now(),
         desc: 'New task',
         hrs: 0,
         pct: 0,
-      })
+      }, ts))
+      stampProgressMapField(proj, 'tasks', ph, ts)
     })
   }
 
@@ -451,24 +486,32 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     pushState()
     persistProjectChange(proj => {
       if (!proj.tasks?.[ph]) return false
-      proj.tasks[ph] = proj.tasks[ph].filter(t => t.id !== taskId)
+      const idx = proj.tasks[ph].findIndex(t => t.id === taskId)
+      if (idx === -1) return false
+      const tombstone = createProgressTaskTombstone(proj.tasks[ph][idx])
+      proj.tasks[ph] = proj.tasks[ph].map((t, i) => (i === idx ? tombstone : t))
+      stampProgressMapField(proj, 'tasks', ph, tombstone.updatedAt)
     })
   }
 
   const overridePhase = (ph, value) => {
     pushState()
     persistProjectChange(proj => {
+      const ts = new Date().toISOString()
       proj.phases = proj.phases || {}
       proj.phases[ph] = Math.min(100, Math.max(0, num(value)))
       proj.lastMove = new Date().toISOString()
+      stampProgressMapField(proj, 'phases', ph, ts)
     })
   }
 
   const setPhaseProgressOverrideEnabled = (ph: string, enabled: boolean) => {
     pushState()
     persistProjectChange(proj => {
+      const ts = new Date().toISOString()
       if (!proj.progressPhaseOverrideEnabled) proj.progressPhaseOverrideEnabled = {}
       proj.progressPhaseOverrideEnabled[ph] = !!enabled
+      stampProgressMapField(proj, 'progressPhaseOverrideEnabled', ph, ts)
     })
     mergeInnerProjectViewPrefs(projectId, {
       progress: { overrideEnabled: { [ph]: !!enabled } },
@@ -484,6 +527,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     }
     pushState()
     persistProjectChange((proj, currentBackup) => {
+      const ts = new Date().toISOString()
       if (!currentBackup.settings) currentBackup.settings = {}
       if (!currentBackup.settings.phaseWeights) currentBackup.settings.phaseWeights = {}
       if (!currentBackup.settings.mtoPhases) currentBackup.settings.mtoPhases = []
@@ -491,17 +535,25 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
       currentBackup.settings.phaseWeights[trimmed] = 0
       if (!proj.phases) proj.phases = {}
       if (!proj.tasks) proj.tasks = {}
+      if (!proj.customPhases) proj.customPhases = []
       if (!proj.progressPhaseOverrideEnabled) proj.progressPhaseOverrideEnabled = {}
+      if (!proj.customPhases.some((x: string) => normalizeProgressPhaseKey(x) === normalizeProgressPhaseKey(trimmed))) {
+        proj.customPhases.push(trimmed)
+      }
       proj.progressPhaseOverrideEnabled[trimmed] = false
       proj.phases[trimmed] = 0
       if (!proj.tasks[trimmed]) proj.tasks[trimmed] = []
+      stampProgressMapField(proj, 'customPhases', trimmed, ts)
+      stampProgressMapField(proj, 'phases', trimmed, ts)
+      stampProgressMapField(proj, 'tasks', trimmed, ts)
+      stampProgressMapField(proj, 'progressPhaseOverrideEnabled', trimmed, ts)
     })
     setNewPhaseName('')
     setAddingPhase(false)
   }
 
   const deleteCustomPhase = (ph: string) => {
-    const tasks = (p.tasks || {})[ph] || []
+    const tasks = getLiveProgressTasks((p.tasks || {})[ph] || [])
     if (tasks.length > 0) {
       const ok = window.confirm(
         `Phase "${ph}" has ${tasks.length} task${tasks.length !== 1 ? 's' : ''}. Delete the phase and all its tasks?`
@@ -510,11 +562,22 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     }
     pushState()
     persistProjectChange(proj => {
-      if (proj.customPhases) proj.customPhases = proj.customPhases.filter(x => x !== ph)
+      if (proj.customPhases) {
+        proj.customPhases = proj.customPhases.filter(x => normalizeProgressPhaseKey(x) !== normalizeProgressPhaseKey(ph))
+      }
+      if (proj.tasks?.[ph]) {
+        proj.tasks[ph] = proj.tasks[ph].map(task => (
+          isProgressCustomPhaseDeleted(proj, ph) ? task : createProgressTaskTombstone(task)
+        ))
+      }
       if (proj.phases) delete proj.phases[ph]
-      if (proj.tasks) delete proj.tasks[ph]
       if (proj.progressPhaseColors) delete proj.progressPhaseColors[ph]
       if (proj.progressPhaseOverrideEnabled) delete proj.progressPhaseOverrideEnabled[ph]
+      markProgressMapFieldDeleted(proj, 'customPhases', ph)
+      markProgressMapFieldDeleted(proj, 'phases', ph)
+      markProgressMapFieldDeleted(proj, 'tasks', ph)
+      markProgressMapFieldDeleted(proj, 'progressPhaseColors', ph)
+      markProgressMapFieldDeleted(proj, 'progressPhaseOverrideEnabled', ph)
     })
     removeProgressPhaseViewKeys(projectId, ph)
   }
@@ -540,7 +603,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
       setDragActive(null)
       return
     }
-    const tasks = [...((p.tasks || {})[ph] || [])]
+    const tasks = getLiveProgressTasks((p.tasks || {})[ph] || [])
     const fromIdx = tasks.findIndex(t => t.id === info.id)
     const toIdx = tasks.findIndex(t => t.id === dropTaskId)
     if (fromIdx === -1 || toIdx === -1) {
@@ -552,8 +615,15 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     const [moved] = tasks.splice(fromIdx, 1)
     tasks.splice(toIdx, 0, moved)
     persistProjectChange(proj => {
+      const ts = new Date().toISOString()
       if (!proj.tasks) proj.tasks = {}
-      proj.tasks[ph] = tasks
+      const existingRows = Array.isArray(proj.tasks[ph]) ? proj.tasks[ph] : []
+      const tombstones = existingRows.filter(task => isDeletedProgressTask(task))
+      proj.tasks[ph] = [
+        ...tasks.map(task => ensureProgressTaskIdentity(task, ts)),
+        ...tombstones,
+      ]
+      stampProgressMapField(proj, 'tasks', ph, ts)
     })
     dragInfo.current = null
     setDragActive(null)
@@ -564,7 +634,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     setDragActive(null)
   }
 
-  const overallCompletion = weightedOverallCompletion(p, w, settingsPhases, innerViewPrefs.progress?.overrideEnabled)
+  const overallCompletion = weightedOverallCompletion(p, w, activeSettingsPhases, innerViewPrefs.progress?.overrideEnabled)
   const openRfiCount = getLiveRFIs(p.rfis || [], p.id).filter(r => r.status !== 'answered').length
 
   const today = new Date()
@@ -806,7 +876,8 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
             innerViewPrefs.progress?.overrideEnabled,
           )
           const storedManualPct = Math.min(100, Math.max(0, num((p.phases || {})[ph] ?? 0)))
-          const isCustom = false
+          const isCustom = Array.isArray(p.customPhases)
+            && p.customPhases.some((customPh: string) => normalizeProgressPhaseKey(customPh) === normalizeProgressPhaseKey(ph))
           const isOpen = phaseExpanded[ph] !== false
 
           return (

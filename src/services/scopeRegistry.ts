@@ -33,6 +33,7 @@ export type DataScope =
   | 'project.logs'
   | 'project.materials'
   | 'project.schedule'
+  | 'project.progress'
   | 'project.timeline'
   | 'project.notes'
   | 'project.files'
@@ -210,14 +211,29 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
   },
   'project.schedule': {
     scope: 'project.schedule',
-    dataPath: 'projects[].phases/plannedStart/plannedEnd/tasks',
-    owner: 'V15rProgressTab / V15rPhaseTimelineTab',
+    dataPath: 'projects[].plannedStart/plannedEnd/lastMove (future)',
+    owner: 'V15rProjectsPanel / V15rProgressTab',
     level: 'nested',
     identityField: 'project id',
     needsTimestamp: true,
     needsTombstone: false,
     strategy: 'field-lww',
     priority: 'high',
+    notes: 'Deferred after Phase 6S-D2. project.progress now owns projects[].phases/tasks/customPhases/progressPhaseColors/progressPhaseOverrideEnabled. project.timeline separately owns phase_timeline/deposit fields.',
+  },
+  'project.progress': {
+    scope: 'project.progress',
+    dataPath: 'projects[].phases / projects[].tasks / projects[].customPhases / projects[].progressPhaseColors / projects[].progressPhaseOverrideEnabled',
+    owner: 'V15rProgressTab',
+    level: 'nested',
+    identityField: 'project id; phase key for maps; task id for task rows',
+    timestampField: 'task.updatedAt; progressUpdatedAt.<mapName>[phaseKey]',
+    tombstoneField: 'task.deletedAt; progressDeletedAt.customPhases[phaseKey]',
+    needsTimestamp: false,
+    needsTombstone: false,
+    strategy: 'mixed',
+    priority: 'high',
+    notes: 'Phase 6S-D2: project.progress is separate from project.timeline and deferred project.schedule date handling. Tasks merge by stable id with deletedAt/deletedBy tombstones and UI live filtering. phases/customPhases/progressPhaseColors/progressPhaseOverrideEnabled merge by normalized phase key using progressUpdatedAt timestamp maps; custom phase deletes use progressDeletedAt.customPhases so stale devices cannot resurrect removed custom phases. V15rProgressTab saves fetch latest remote, patch only project.progress fields, and save via the existing remote-baseline path. A narrow pre-sync fold preserves newer remote project.progress fields on any non-project.progress save. Project payments/logs, project.finance, project.timeline, weeklyData, team.members, service, and blueprint scopes remain untouched.',
   },
   'project.timeline': {
     scope: 'project.timeline',
@@ -546,6 +562,7 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
     'project.logs',
     'project.materials',
     'project.schedule',
+    'project.progress',
     'project.timeline',
     'project.notes',
     'project.lifecycle',
@@ -556,6 +573,9 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
   ],
   'project.timeline': [
     'project.timeline',
+  ],
+  'project.progress': [
+    'project.progress',
   ],
   logs: [
     'project.payments',

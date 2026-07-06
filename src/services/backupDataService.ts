@@ -27,7 +27,7 @@ import {
   resolveScopesForSyncInput,
   type DataScope,
 } from './scopeRegistry'
-import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog, mergeRemoteProjectTimelineIntoOutgoing } from './projectScopeMerge'
+import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog, mergeRemoteProjectProgressIntoOutgoing, mergeRemoteProjectTimelineIntoOutgoing } from './projectScopeMerge'
 import { mergeRemoteWeeklyDataIntoOutgoing } from './weeklyDataScopeMerge'
 import { mergeRemoteEmployeesIntoOutgoing } from './teamScopeMerge'
 
@@ -216,6 +216,20 @@ export interface BackupProject {
   financeUpdatedAt?: Partial<Record<string, string>>
   /** Phase 6S-D1: per-field LWW timestamps for scoped project.timeline merge (deposit_pct/phase_deposit_pct). phase_timeline rows carry their own optional updatedAt. */
   timelineUpdatedAt?: Partial<Record<string, string>>
+  /** Phase 6S-D2: per-phase/task timestamps for scoped project.progress merge. */
+  progressUpdatedAt?: {
+    phases?: Record<string, string>
+    tasks?: Record<string, string>
+    customPhases?: Record<string, string>
+    progressPhaseColors?: Record<string, string>
+    progressPhaseOverrideEnabled?: Record<string, string>
+  }
+  /** Phase 6S-D2: delete metadata for scoped project.progress map/phase removals. Task rows carry their own deletedAt. */
+  progressDeletedAt?: {
+    phases?: Record<string, string>
+    tasks?: Record<string, string>
+    customPhases?: Record<string, string>
+  }
   /** Phase 6S-D1: projected cash flow / payment schedule / quote-vs-actual timeline rows (project.timeline scope), keyed by phase_name. */
   phase_timeline?: any[]
   deposit_pct?: number
@@ -2129,6 +2143,18 @@ function isProjectTimelineSyncSource(options?: { source?: string | null; _scopes
   }
 }
 
+function isProjectProgressSyncSource(options?: { source?: string | null; _scopes?: DataScope[] } | null): boolean {
+  if (!options) return false
+  const source = options.source
+  if (source && String(source).toLowerCase().includes('project.progress')) return true
+  if (Array.isArray(options._scopes) && options._scopes.includes('project.progress')) return true
+  try {
+    return resolveScopesForSyncInput(source ?? null).includes('project.progress')
+  } catch {
+    return false
+  }
+}
+
 /** Sync current tenant-scoped localStorage data to Supabase app_state table.
  *  Refuses to run until the authenticated tenant has completed bootstrap. */
 export async function syncToSupabase(
@@ -2222,7 +2248,8 @@ export async function syncToSupabase(
     const skipWeeklyGuard = isWeeklyDataSyncSource(options.source)
     const skipEmployeesGuard = isEmployeesSyncSource(options.source)
     const skipTimelineGuard = isProjectTimelineSyncSource(options)
-    if (!skipWeeklyGuard || !skipEmployeesGuard || !skipTimelineGuard) {
+    const skipProgressGuard = isProjectProgressSyncSource(options)
+    if (!skipWeeklyGuard || !skipEmployeesGuard || !skipTimelineGuard || !skipProgressGuard) {
       try {
         const remoteSnapshot = await fetchLatestRemoteBackup(userId)
         if (remoteSnapshot?.remoteData) {
@@ -2234,6 +2261,9 @@ export async function syncToSupabase(
           }
           if (!skipTimelineGuard) {
             outgoing = mergeRemoteProjectTimelineIntoOutgoing(outgoing, remoteSnapshot.remoteData)
+          }
+          if (!skipProgressGuard) {
+            outgoing = mergeRemoteProjectProgressIntoOutgoing(outgoing, remoteSnapshot.remoteData)
           }
         }
       } catch (preserveGuardErr) {
