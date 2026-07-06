@@ -3413,3 +3413,290 @@ export function mergeRemoteProjectScheduleIntoOutgoing(
 
   return merged
 }
+
+// ── Home agenda sections / custom alerts (Phase 6S-G) ─────────────────────────
+
+function isBlankHomeValue(value: unknown): boolean {
+  return value === undefined || value === null || value === ''
+}
+
+function coalesceHomeRecord(winner: any, loser: any): any {
+  if (!loser || typeof loser !== 'object') return { ...winner }
+  const result: Record<string, any> = { ...loser, ...winner }
+  for (const key of Object.keys(loser)) {
+    if (isBlankHomeValue(winner?.[key]) && !isBlankHomeValue(loser[key])) result[key] = loser[key]
+  }
+  return result
+}
+
+export function normalizeHomeId(value: unknown, prefix: string, fallbackParts: string[]): string {
+  const existing = String(value || '').trim()
+  if (existing) return existing
+  const stable = fallbackParts.map(p => String(p || '').trim()).filter(Boolean).join('_')
+  if (stable) {
+    const slug = stable.replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 80)
+    return `${prefix}${slug}`
+  }
+  return `${prefix}${Date.now()}`
+}
+
+function getHomeAgendaSectionIdentity(section: any): string {
+  const id = String(section?.id || '').trim()
+  if (id) return id
+  return normalizeHomeId('', 'ag_', [section?.title, section?.name, section?.createdAt])
+}
+
+function getHomeAgendaItemIdentity(item: any, sectionId: string): string {
+  const id = String(item?.id || '').trim()
+  if (id) return id
+  return normalizeHomeId('', 'agt_', [sectionId, item?.text, item?.title, item?.name, item?.createdAt])
+}
+
+function getCustomAlertIdentity(alert: any): string {
+  const id = String(alert?.id || '').trim()
+  if (id) return id
+  return normalizeHomeId('', 'cal_', [alert?.title, alert?.message, alert?.linkedProjectId, alert?.projectId, alert?.createdAt])
+}
+
+export function isDeletedHomeRecord(record: any): boolean {
+  if (record?.isDeleted === true) return true
+  if (isValidDateString(record?.deletedAt)) return true
+  return String(record?.status || '').toLowerCase().trim() === 'deleted'
+}
+
+export function stampHomeAgendaItem(item: any, sectionId: string, timestamp?: string): any {
+  const now = timestamp || new Date().toISOString()
+  const id = getHomeAgendaItemIdentity(item, sectionId)
+  return {
+    ...item,
+    id,
+    text: String(item?.text ?? item?.title ?? item?.name ?? ''),
+    status: String(item?.status || 'pending'),
+    createdAt: isValidDateString(item?.createdAt) ? String(item.createdAt) : now,
+    updatedAt: isValidDateString(item?.updatedAt) ? String(item.updatedAt) : now,
+  }
+}
+
+export function stampHomeAgendaSection(section: any, timestamp?: string): any {
+  const now = timestamp || new Date().toISOString()
+  const id = getHomeAgendaSectionIdentity(section)
+  const rawTasks = Array.isArray(section?.tasks)
+    ? section.tasks
+    : (Array.isArray(section?.items) ? section.items : [])
+  const tasks = rawTasks.map((item: any) => stampHomeAgendaItem(item, id, timestamp))
+  return {
+    ...section,
+    id,
+    title: String(section?.title ?? section?.name ?? 'Category'),
+    projectId: String(section?.projectId || ''),
+    tasks,
+    createdAt: isValidDateString(section?.createdAt) ? String(section.createdAt) : now,
+    updatedAt: isValidDateString(section?.updatedAt) ? String(section.updatedAt) : now,
+  }
+}
+
+export function stampCustomAlert(alert: any, timestamp?: string): any {
+  const now = timestamp || new Date().toISOString()
+  const id = getCustomAlertIdentity(alert)
+  return {
+    ...alert,
+    id,
+    title: String(alert?.title ?? alert?.message ?? ''),
+    createdAt: isValidDateString(alert?.createdAt) ? String(alert.createdAt) : now,
+    updatedAt: isValidDateString(alert?.updatedAt) ? String(alert.updatedAt) : now,
+  }
+}
+
+export function createHomeAgendaSectionTombstone(section: any, deletedBy?: string): any {
+  const now = new Date().toISOString()
+  const base = stampHomeAgendaSection(section, now)
+  return {
+    ...base,
+    deletedAt: now,
+    updatedAt: now,
+    deletedBy: deletedBy || base?.deletedBy || 'system',
+    status: 'deleted',
+  }
+}
+
+export function createHomeAgendaItemTombstone(item: any, sectionId: string, deletedBy?: string): any {
+  const now = new Date().toISOString()
+  const base = stampHomeAgendaItem(item, sectionId, now)
+  return {
+    ...base,
+    deletedAt: now,
+    updatedAt: now,
+    deletedBy: deletedBy || base?.deletedBy || 'system',
+    status: 'deleted',
+  }
+}
+
+export function createCustomAlertTombstone(alert: any, deletedBy?: string): any {
+  const now = new Date().toISOString()
+  const base = stampCustomAlert(alert, now)
+  return {
+    ...base,
+    deletedAt: now,
+    updatedAt: now,
+    deletedBy: deletedBy || base?.deletedBy || 'system',
+    status: 'deleted',
+  }
+}
+
+export function getLiveAgendaSections(sections: any[]): any[] {
+  return (Array.isArray(sections) ? sections : [])
+    .map(section => stampHomeAgendaSection(section))
+    .filter(section => !isDeletedHomeRecord(section))
+    .map(section => ({
+      ...section,
+      tasks: (Array.isArray(section.tasks) ? section.tasks : [])
+        .map((item: any) => stampHomeAgendaItem(item, section.id))
+        .filter((item: any) => !isDeletedHomeRecord(item)),
+    }))
+}
+
+export function getLiveCustomAlerts(alerts: any[]): any[] {
+  return (Array.isArray(alerts) ? alerts : [])
+    .map(alert => stampCustomAlert(alert))
+    .filter(alert => !isDeletedHomeRecord(alert))
+}
+
+function pickHomeRecordWinner(remote: any, incoming: any): any {
+  const remoteDeleted = isDeletedHomeRecord(remote)
+  const incomingDeleted = isDeletedHomeRecord(incoming)
+
+  if (remoteDeleted && incomingDeleted) {
+    const incomingWins = comparableMs(incoming.deletedAt || incoming.updatedAt) >= comparableMs(remote.deletedAt || remote.updatedAt)
+    return coalesceHomeRecord(incomingWins ? incoming : remote, incomingWins ? remote : incoming)
+  }
+
+  if (remoteDeleted !== incomingDeleted) {
+    const tombstone = remoteDeleted ? remote : incoming
+    const live = remoteDeleted ? incoming : remote
+    const liveWins = comparableMs(live.updatedAt) > comparableMs(tombstone.deletedAt || tombstone.updatedAt)
+    return coalesceHomeRecord(liveWins ? live : tombstone, liveWins ? tombstone : live)
+  }
+
+  const incomingWins = comparableMs(incoming.updatedAt) >= comparableMs(remote.updatedAt)
+  return coalesceHomeRecord(incomingWins ? incoming : remote, incomingWins ? remote : incoming)
+}
+
+export function mergeAgendaItemArrays(remoteItems: any[], incomingItems: any[], sectionId: string): any[] {
+  const remoteArr = (Array.isArray(remoteItems) ? remoteItems : [])
+    .map(item => stampHomeAgendaItem(item, sectionId))
+  const incomingArr = (Array.isArray(incomingItems) ? incomingItems : [])
+    .map(item => stampHomeAgendaItem(item, sectionId))
+
+  const remoteById = new Map<string, any>()
+  for (const item of remoteArr) remoteById.set(String(item.id), item)
+
+  const result: any[] = []
+  const used = new Set<string>()
+  for (const incoming of incomingArr) {
+    const id = String(incoming.id)
+    if (used.has(id)) continue
+    used.add(id)
+    const remote = remoteById.get(id)
+    result.push(remote ? pickHomeRecordWinner(remote, incoming) : incoming)
+  }
+  for (const remote of remoteArr) {
+    const id = String(remote.id)
+    if (used.has(id)) continue
+    used.add(id)
+    result.push(remote)
+  }
+  return result
+}
+
+export function mergeAgendaSections(remoteSections: any[], incomingSections: any[]): any[] {
+  const remoteArr = (Array.isArray(remoteSections) ? remoteSections : [])
+    .map(section => stampHomeAgendaSection(section))
+  const incomingArr = (Array.isArray(incomingSections) ? incomingSections : [])
+    .map(section => stampHomeAgendaSection(section))
+
+  const remoteById = new Map<string, any>()
+  for (const section of remoteArr) remoteById.set(String(section.id), section)
+
+  const result: any[] = []
+  const used = new Set<string>()
+  for (const incoming of incomingArr) {
+    const id = String(incoming.id)
+    if (used.has(id)) continue
+    used.add(id)
+    const remote = remoteById.get(id)
+    if (!remote) {
+      result.push(incoming)
+      continue
+    }
+    const winner = pickHomeRecordWinner(remote, incoming)
+    result.push({
+      ...winner,
+      tasks: mergeAgendaItemArrays(remote.tasks || [], incoming.tasks || [], id),
+    })
+  }
+  for (const remote of remoteArr) {
+    const id = String(remote.id)
+    if (used.has(id)) continue
+    used.add(id)
+    result.push(remote)
+  }
+  return result
+}
+
+export function mergeCustomAlerts(remoteAlerts: any[], incomingAlerts: any[]): any[] {
+  const remoteArr = (Array.isArray(remoteAlerts) ? remoteAlerts : [])
+    .map(alert => stampCustomAlert(alert))
+  const incomingArr = (Array.isArray(incomingAlerts) ? incomingAlerts : [])
+    .map(alert => stampCustomAlert(alert))
+
+  const remoteById = new Map<string, any>()
+  for (const alert of remoteArr) remoteById.set(String(alert.id), alert)
+
+  const result: any[] = []
+  const used = new Set<string>()
+  for (const incoming of incomingArr) {
+    const id = String(incoming.id)
+    if (used.has(id)) continue
+    used.add(id)
+    const remote = remoteById.get(id)
+    result.push(remote ? pickHomeRecordWinner(remote, incoming) : incoming)
+  }
+  for (const remote of remoteArr) {
+    const id = String(remote.id)
+    if (used.has(id)) continue
+    used.add(id)
+    result.push(remote)
+  }
+  return result
+}
+
+export function mergeHomeAgendaAlertsIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  merged.agendaSections = mergeAgendaSections(
+    Array.isArray(merged.agendaSections) ? merged.agendaSections : [],
+    Array.isArray(incomingBackup?.agendaSections) ? incomingBackup.agendaSections : [],
+  )
+  merged.customAlerts = mergeCustomAlerts(
+    Array.isArray(merged.customAlerts) ? merged.customAlerts : [],
+    Array.isArray(incomingBackup?.customAlerts) ? incomingBackup.customAlerts : [],
+  )
+  return merged
+}
+
+export function mergeRemoteHomeAgendaAlertsIntoOutgoing(
+  outgoingBackup: BackupData,
+  remoteBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(outgoingBackup)) as BackupData
+  const outgoingSections = Array.isArray(merged.agendaSections) ? merged.agendaSections : []
+  const remoteSections = Array.isArray(remoteBackup?.agendaSections) ? remoteBackup.agendaSections : []
+  merged.agendaSections = mergeAgendaSections(outgoingSections, remoteSections)
+
+  const outgoingAlerts = Array.isArray(merged.customAlerts) ? merged.customAlerts : []
+  const remoteAlerts = Array.isArray(remoteBackup?.customAlerts) ? remoteBackup.customAlerts : []
+  merged.customAlerts = mergeCustomAlerts(outgoingAlerts, remoteAlerts)
+  return merged
+}

@@ -27,7 +27,7 @@ import {
   resolveScopesForSyncInput,
   type DataScope,
 } from './scopeRegistry'
-import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog, mergeRemoteEstimateVersionsIntoOutgoing, mergeRemoteLaborPhaseColorsIntoOutgoing, mergeRemoteProjectCoordinationIntoOutgoing, mergeRemoteProjectProgressIntoOutgoing, mergeRemoteProjectScheduleIntoOutgoing, mergeRemoteProjectTimelineIntoOutgoing } from './projectScopeMerge'
+import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog, mergeHomeAgendaAlertsIntoRemote, mergeRemoteEstimateVersionsIntoOutgoing, mergeRemoteHomeAgendaAlertsIntoOutgoing, mergeRemoteLaborPhaseColorsIntoOutgoing, mergeRemoteProjectCoordinationIntoOutgoing, mergeRemoteProjectProgressIntoOutgoing, mergeRemoteProjectScheduleIntoOutgoing, mergeRemoteProjectTimelineIntoOutgoing } from './projectScopeMerge'
 import { mergeRemoteWeeklyDataIntoOutgoing } from './weeklyDataScopeMerge'
 import { mergeRemoteEmployeesIntoOutgoing } from './teamScopeMerge'
 
@@ -395,12 +395,39 @@ export interface BackupSettings {
 }
 
 export interface BackupAgendaSection {
-  id: string; title: string; projectId: string
-  tasks: Array<{ id: string; text: string; status: string }>
+  id?: string
+  title?: string
+  name?: string
+  projectId?: string
+  items?: any[]
+  tasks?: Array<{ id?: string; text?: string; status?: string; createdAt?: string; updatedAt?: string; deletedAt?: string; deletedBy?: string; [key: string]: any }>
+  createdAt?: string
+  updatedAt?: string
+  deletedAt?: string
+  deletedBy?: string
+  status?: string
+  [key: string]: any
 }
 
 export interface BackupCustomAlert {
-  id: string; title: string; description: string; action: string; isAI: boolean; manuallyEdited?: boolean
+  id?: string
+  title?: string
+  description?: string
+  message?: string
+  action?: string
+  isAI?: boolean
+  manuallyEdited?: boolean
+  dismissed?: boolean
+  scheduledAt?: string
+  linkedProjectId?: string
+  projectId?: string
+  severity?: string
+  createdAt?: string
+  updatedAt?: string
+  deletedAt?: string
+  deletedBy?: string
+  status?: string
+  [key: string]: any
 }
 
 export interface FieldObservationCard {
@@ -2246,6 +2273,35 @@ function isProjectEstimateVersionsSyncSource(options?: { source?: string | null;
   }
 }
 
+/**
+ * Phase 6S-G: true when a sync save is a home.agendaAlerts save (Home agenda
+ * sections / custom alerts). Used to SKIP the home.agendaAlerts preservation
+ * guard for those saves so a legitimate Home agenda/alert save is not merged
+ * against itself.
+ */
+function isHomeAgendaAlertsSyncSource(options?: { source?: string | null; _scopes?: DataScope[]; changedKey?: string | null } | null): boolean {
+  if (!options) return false
+  const source = options.source
+  const sourceLower = source ? String(source).toLowerCase() : ''
+  if (
+    sourceLower.includes('home.agendaalerts')
+    || sourceLower.includes('home-agenda-alerts')
+    || sourceLower.includes('agendasections')
+    || sourceLower.includes('customalerts')
+  ) return true
+  if (
+    options.changedKey === 'home.agendaAlerts'
+    || options.changedKey === 'agendaSections'
+    || options.changedKey === 'customAlerts'
+  ) return true
+  if (Array.isArray(options._scopes) && options._scopes.includes('home.agendaAlerts')) return true
+  try {
+    return resolveScopesForSyncInput(source ?? null).includes('home.agendaAlerts')
+  } catch {
+    return false
+  }
+}
+
 /** Sync current tenant-scoped localStorage data to Supabase app_state table.
  *  Refuses to run until the authenticated tenant has completed bootstrap. */
 export async function syncToSupabase(
@@ -2324,7 +2380,7 @@ export async function syncToSupabase(
     const data = getBackupData(userId)
     if (!data) return { success: false, skipped: true, error: 'No local tenant data to sync' }
 
-    // Phase 6S-B / 6S-C / 6S-D1 / 6S-D2 / 6S-D3 / 6S-D4 / 6L-B / 6S-F: narrow scoped-cache
+    // Phase 6S-B / 6S-C / 6S-D1 / 6S-D2 / 6S-D3 / 6S-D4 / 6L-B / 6S-F / 6S-G: narrow scoped-cache
     // preservation guards. For a save that is NOT a weeklyData save, fold newer
     // remote weeklyData[] into the outgoing blob; for a save that is NOT an
     // employees save, fold newer remote employees[] in; for a save that is NOT a
@@ -2334,7 +2390,8 @@ export async function syncToSupabase(
     // project.coordination save, fold newer remote coordination rows in; for a save
     // that is NOT a project.estimate save, fold newer remote laborPhaseColors in;
     // for a save that is NOT a project.estimateVersions save, fold newer remote
-    // estimateVersions in.
+    // estimateVersions in; for a save that is NOT a home.agendaAlerts save, fold
+    // newer remote agendaSections/customAlerts in.
     // This stops a stale local weeklyData/employees/timeline/schedule/coord/labor-
     // color/estimateVersions cache from overwriting newer remote data on an unrelated broad save.
     // Only the listed slices are affected (the merge helpers touch nothing else);
@@ -2350,7 +2407,8 @@ export async function syncToSupabase(
     const skipCoordinationGuard = isProjectCoordinationSyncSource(options)
     const skipEstimateGuard = isProjectEstimateSyncSource(options)
     const skipEstimateVersionsGuard = isProjectEstimateVersionsSyncSource(options)
-    if (!skipWeeklyGuard || !skipEmployeesGuard || !skipTimelineGuard || !skipProgressGuard || !skipScheduleGuard || !skipCoordinationGuard || !skipEstimateGuard || !skipEstimateVersionsGuard) {
+    const skipHomeAgendaAlertsGuard = isHomeAgendaAlertsSyncSource(options)
+    if (!skipWeeklyGuard || !skipEmployeesGuard || !skipTimelineGuard || !skipProgressGuard || !skipScheduleGuard || !skipCoordinationGuard || !skipEstimateGuard || !skipEstimateVersionsGuard || !skipHomeAgendaAlertsGuard) {
       try {
         const remoteSnapshot = await fetchLatestRemoteBackup(userId)
         if (remoteSnapshot?.remoteData) {
@@ -2377,6 +2435,9 @@ export async function syncToSupabase(
           }
           if (!skipEstimateVersionsGuard) {
             outgoing = mergeRemoteEstimateVersionsIntoOutgoing(outgoing, remoteSnapshot.remoteData)
+          }
+          if (!skipHomeAgendaAlertsGuard) {
+            outgoing = mergeRemoteHomeAgendaAlertsIntoOutgoing(outgoing, remoteSnapshot.remoteData)
           }
         }
       } catch (preserveGuardErr) {
@@ -2695,6 +2756,48 @@ export async function fetchLatestRemoteBackup(userId = _activeTenantUserId): Pro
     }
   }
   return fetchRemoteAppStateRow(userId)
+}
+
+/**
+ * Phase 6S-G: scoped remote-baseline save for Home agendaSections/customAlerts.
+ * Shared by V15rHome and Guardian alert routing.
+ */
+export async function saveHomeAgendaAlertsScoped(
+  incomingBackup?: BackupData | null,
+  options?: { source?: string },
+): Promise<void> {
+  const mergeSource = options?.source || 'home-agenda-alerts-remote-merge'
+  try {
+    const remote = await fetchLatestRemoteBackup()
+    const incoming = getBackupData() || incomingBackup
+    if (!incoming) return
+    if (remote.hasRemoteRow && remote.remoteData) {
+      const merged = mergeHomeAgendaAlertsIntoRemote(remote.remoteData, incoming)
+      await saveBackupWithRemoteBaselineSync(
+        merged,
+        { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+        {
+          source: mergeSource,
+          changedKey: 'home.agendaAlerts',
+          _scopes: ['home.agendaAlerts'],
+        },
+      )
+      return
+    }
+    saveBackupDataAndSync(incoming, 'home.agendaAlerts', {
+      source: 'home.agendaAlerts',
+      _scopes: ['home.agendaAlerts'],
+    })
+  } catch (err) {
+    console.warn('[saveHomeAgendaAlertsScoped] Scoped sync failed; local changes preserved', err)
+    const incoming = getBackupData() || incomingBackup
+    if (incoming) {
+      saveBackupDataAndSync(incoming, 'home.agendaAlerts', {
+        source: 'home.agendaAlerts',
+        _scopes: ['home.agendaAlerts'],
+      })
+    }
+  }
 }
 
 // ── ISSUE 2 Fix: Critical change keys that bypass debounce ──────────────────

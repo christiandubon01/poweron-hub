@@ -42,6 +42,7 @@ import {
   getBackupData,
   saveBackupData,
   saveBackupDataAndSync,
+  saveHomeAgendaAlertsScoped,
   getKPIs,
   health,
   daysSince,
@@ -58,7 +59,7 @@ import {
   type BackupData,
   type BackupProject,
 } from '@/services/backupDataService'
-import { getLiveRFIs } from '@/services/projectScopeMerge'
+import { getLiveRFIs, createCustomAlertTombstone, createHomeAgendaItemTombstone, createHomeAgendaSectionTombstone, getLiveAgendaSections, getLiveCustomAlerts, stampCustomAlert, stampHomeAgendaItem, stampHomeAgendaSection } from '@/services/projectScopeMerge'
 import { isDeletedOrArchivedServiceLog } from '@/services/serviceScopeMerge'
 import { ProjectCard } from './ProjectCard'
 import { useDemoMode } from '@/store/demoStore'
@@ -474,7 +475,7 @@ export default function V15rHome() {
     })
   })
 
-  const rawCustomAlerts = Array.isArray(backup.customAlerts) ? backup.customAlerts : []
+  const rawCustomAlerts = getLiveCustomAlerts(backup.customAlerts || [])
   const activeAlertProjectIds = new Set(alertSourceProjects.map(p => String(p.id)))
   const projectIds = new Set(projects.map(p => String(p.id)))
   const loadedCustomAlerts = rawCustomAlerts
@@ -528,7 +529,18 @@ export default function V15rHome() {
     .length
   const pipelineCompositionLabel = `${pipelineProjectCount} active project${pipelineProjectCount === 1 ? '' : 's'} + ${openServiceCallCount} open service call${openServiceCallCount === 1 ? '' : 's'}`
 
+  const liveAgendaSections = getLiveAgendaSections(backup.agendaSections || [])
+
   // ── Agenda CRUD handlers ─────────────────────────────────────────────────────
+
+  function persistHomeAgendaAlerts() {
+    backup._lastSavedAt = new Date().toISOString()
+    saveBackupData(backup)
+    window.dispatchEvent(new Event('storage'))
+    window.dispatchEvent(new Event('poweron-data-saved'))
+    forceUpdate()
+    void saveHomeAgendaAlertsScoped(backup)
+  }
 
   function persist() {
     backup._lastSavedAt = new Date().toISOString()
@@ -560,24 +572,35 @@ export default function V15rHome() {
     const title = agendaCategoryModal.title.trim()
     if (!title) return
     pushState(backup)
+    const now = new Date().toISOString()
     const projectId = agendaCategoryModal.projectId || ''
+    if (!Array.isArray(backup.agendaSections)) backup.agendaSections = []
     if (agendaCategoryModal.mode === 'add') {
-      ;(backup.agendaSections || []).push({ id: 'ag' + Date.now(), title, projectId, tasks: [] })
+      backup.agendaSections.push(stampHomeAgendaSection({
+        id: 'ag' + Date.now(),
+        title,
+        projectId,
+        tasks: [],
+      }, now))
     } else if (agendaCategoryModal.secId) {
-      const sec = (backup.agendaSections || []).find(s => s.id === agendaCategoryModal.secId)
+      const sec = backup.agendaSections.find(s => s.id === agendaCategoryModal.secId)
       if (!sec) return
       sec.title = title
       sec.projectId = projectId
+      sec.updatedAt = now
+      stampHomeAgendaSection(sec, now)
     }
-    persist()
+    persistHomeAgendaAlerts()
     setAgendaCategoryModal(null)
   }
 
   function removeAgendaCategory(secId: string) {
     if (!confirm('Delete this category and all its tasks?')) return
     pushState(backup)
-    backup.agendaSections = (backup.agendaSections || []).filter(s => s.id !== secId)
-    persist()
+    backup.agendaSections = (backup.agendaSections || []).map(s =>
+      s.id === secId ? createHomeAgendaSectionTombstone(s) : s
+    )
+    persistHomeAgendaAlerts()
   }
 
   function addAgendaTask(secId: string) {
@@ -586,13 +609,11 @@ export default function V15rHome() {
     const text = prompt('Task:')
     if (!text) return
     pushState(backup)
-    // BUG FIX: ensure sec.tasks is initialized as a real array attached to sec,
-    // not a throw-away (sec.tasks || []). Previously the push went into a temp
-    // array that was never assigned back, so the second task in rapid succession
-    // would be lost.
+    const now = new Date().toISOString()
     if (!Array.isArray(sec.tasks)) sec.tasks = []
-    sec.tasks.push({ id: 'agt' + Date.now(), text, status: 'pending' })
-    persist()
+    sec.tasks.push(stampHomeAgendaItem({ id: 'agt' + Date.now(), text, status: 'pending' }, secId, now))
+    sec.updatedAt = now
+    persistHomeAgendaAlerts()
   }
 
   function cycleAgendaTaskStatus(secId: string, taskId: string) {
@@ -601,9 +622,12 @@ export default function V15rHome() {
     const task = (sec.tasks || []).find((t: any) => t.id === taskId)
     if (!task) return
     pushState(backup)
+    const now = new Date().toISOString()
     const idx = STATUS_CYCLE.indexOf(task.status)
     task.status = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length]
-    persist()
+    task.updatedAt = now
+    sec.updatedAt = now
+    persistHomeAgendaAlerts()
   }
 
   function editAgendaTask(secId: string, taskId: string) {
@@ -614,15 +638,18 @@ export default function V15rHome() {
     const text = prompt('Edit task:', task.text)
     if (text === null) return
     pushState(backup)
+    const now = new Date().toISOString()
     task.text = text
-    persist()
+    task.updatedAt = now
+    sec.updatedAt = now
+    persistHomeAgendaAlerts()
   }
 
   function moveAgendaTask(secId: string, taskId: string) {
     const sections = backup.agendaSections || []
     const fromSec = sections.find(s => s.id === secId)
     if (!fromSec) return
-    const otherSections = sections.filter(s => s.id !== secId)
+    const otherSections = sections.filter(s => s.id !== secId && !s.deletedAt && s.status !== 'deleted')
     if (!otherSections.length) { alert('No other categories to move to.'); return }
     const targetTitle = prompt('Move to category:\n' + otherSections.map((s, i) => (i + 1) + '. ' + s.title).join('\n'))
     if (!targetTitle) return
@@ -632,17 +659,25 @@ export default function V15rHome() {
     const taskIdx = (fromSec.tasks || []).findIndex((t: any) => t.id === taskId)
     if (taskIdx < 0) return
     pushState(backup)
+    const now = new Date().toISOString()
     const [task] = fromSec.tasks.splice(taskIdx, 1)
-    ;(target.tasks || []).push(task)
-    persist()
+    if (!Array.isArray(target.tasks)) target.tasks = []
+    target.tasks.push({ ...task, updatedAt: now })
+    fromSec.updatedAt = now
+    target.updatedAt = now
+    persistHomeAgendaAlerts()
   }
 
   function removeAgendaTask(secId: string, taskId: string) {
     const sec = (backup.agendaSections || []).find(s => s.id === secId)
     if (!sec) return
     pushState(backup)
-    sec.tasks = (sec.tasks || []).filter((t: any) => t.id !== taskId)
-    persist()
+    const now = new Date().toISOString()
+    sec.tasks = (sec.tasks || []).map((t: any) =>
+      t.id === taskId ? createHomeAgendaItemTombstone(t, secId) : t
+    )
+    sec.updatedAt = now
+    persistHomeAgendaAlerts()
   }
 
   function markServiceJobCollected(logId: string) {
@@ -668,6 +703,7 @@ export default function V15rHome() {
   function saveAlert(alertId: string | null, data: {title: string, description: string, action: string, scheduledAt?: string, linkedProjectId?: string}, isAI: boolean) {
     if (!data.title.trim()) { alert('Alert title is required'); return }
     pushState(backup)
+    const now = new Date().toISOString()
     if (!backup.customAlerts) backup.customAlerts = []
     if (alertId) {
       const existingAlert = backup.customAlerts.find(a => a.id === alertId)
@@ -677,10 +713,12 @@ export default function V15rHome() {
         existingAlert.action = data.action
         existingAlert.scheduledAt = data.scheduledAt || ''
         existingAlert.linkedProjectId = data.linkedProjectId || ''
+        existingAlert.updatedAt = now
         if (existingAlert.isAI) existingAlert.manuallyEdited = true
+        stampCustomAlert(existingAlert, now)
       }
     } else {
-      backup.customAlerts.push({
+      backup.customAlerts.push(stampCustomAlert({
         id: 'cal' + Date.now(),
         title: data.title,
         description: data.description,
@@ -688,10 +726,10 @@ export default function V15rHome() {
         isAI: isAI,
         scheduledAt: data.scheduledAt || '',
         linkedProjectId: data.linkedProjectId || '',
-      })
+      }, now))
     }
     if (data.scheduledAt) console.log('[OneSignal] Push notification scheduled for:', data.scheduledAt)
-    persist()
+    persistHomeAgendaAlerts()
     setEditingAlertId(null)
     setAddingAlert(false)
     setEditingAlertData({title: '', description: '', action: '', scheduledAt: '', linkedProjectId: ''})
@@ -699,16 +737,25 @@ export default function V15rHome() {
 
   function dismissAlert(alertId: string) {
     pushState(backup)
-    if (backup.customAlerts) backup.customAlerts = backup.customAlerts.filter(a => a.id !== alertId)
-    persist()
+    if (!backup.customAlerts) backup.customAlerts = []
+    backup.customAlerts = backup.customAlerts.map(a =>
+      a.id === alertId ? createCustomAlertTombstone(a) : a
+    )
+    persistHomeAgendaAlerts()
   }
 
   function deleteAIAlert(alertItem: { id?: string; txt?: string }) {
     const linkedProjectId = alertItem.id || ''
     pushState(backup)
+    const now = new Date().toISOString()
     if (!backup.customAlerts) backup.customAlerts = []
-    backup.customAlerts = backup.customAlerts.filter((a: any) => !(a.isAI && a.linkedProjectId === linkedProjectId))
-    backup.customAlerts.push({
+    backup.customAlerts = (backup.customAlerts || []).map((a: any) => {
+      if (a.isAI && a.linkedProjectId === linkedProjectId && !a.dismissed) {
+        return createCustomAlertTombstone(a)
+      }
+      return a
+    }).filter((a: any) => !(a.isAI && a.dismissed && a.linkedProjectId === linkedProjectId))
+    backup.customAlerts.push(stampCustomAlert({
       id: 'aidismiss_' + Date.now() + '_' + linkedProjectId,
       title: alertItem.txt || 'Dismissed AI alert',
       description: '',
@@ -718,12 +765,12 @@ export default function V15rHome() {
       dismissed: true,
       scheduledAt: '',
       linkedProjectId,
-    })
+    }, now))
     if (editingAIAlertId) {
       setEditingAIAlertId(null)
       setEditAIAlertText('')
     }
-    persist()
+    persistHomeAgendaAlerts()
   }
 
   function startEditAlert(alertItem: any) {
@@ -1120,24 +1167,52 @@ export default function V15rHome() {
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           pushState(backup)
+                          const now = new Date().toISOString()
                           if (!backup.customAlerts) backup.customAlerts = []
                           const existing = backup.customAlerts.find(ca => ca.isAI && ca.manuallyEdited && ca.linkedProjectId === (a.id || ''))
-                          if (existing) { existing.title = editAIAlertText } else {
-                            backup.customAlerts.push({ id: 'ai2c_' + Date.now() + '_' + i, title: editAIAlertText, description: '', action: '', isAI: true, manuallyEdited: true, scheduledAt: '', linkedProjectId: a.id || '' })
+                          if (existing) {
+                            existing.title = editAIAlertText
+                            existing.updatedAt = now
+                            stampCustomAlert(existing, now)
+                          } else {
+                            backup.customAlerts.push(stampCustomAlert({
+                              id: 'ai2c_' + Date.now() + '_' + i,
+                              title: editAIAlertText,
+                              description: '',
+                              action: '',
+                              isAI: true,
+                              manuallyEdited: true,
+                              scheduledAt: '',
+                              linkedProjectId: a.id || '',
+                            }, now))
                           }
-                          persist(); forceUpdate(); setEditingAIAlertId(null); setEditAIAlertText('')
+                          persistHomeAgendaAlerts(); setEditingAIAlertId(null); setEditAIAlertText('')
                         }
                       }}
                       onBlur={() => {
                         if (editingAIAlertId !== aiAlertId) return
                         if (editAIAlertText.trim()) {
                           pushState(backup)
+                          const now = new Date().toISOString()
                           if (!backup.customAlerts) backup.customAlerts = []
                           const existing = backup.customAlerts.find(ca => ca.isAI && ca.manuallyEdited && ca.linkedProjectId === (a.id || ''))
-                          if (existing) { existing.title = editAIAlertText } else {
-                            backup.customAlerts.push({ id: 'ai2c_' + Date.now() + '_' + i, title: editAIAlertText, description: '', action: '', isAI: true, manuallyEdited: true, scheduledAt: '', linkedProjectId: a.id || '' })
+                          if (existing) {
+                            existing.title = editAIAlertText
+                            existing.updatedAt = now
+                            stampCustomAlert(existing, now)
+                          } else {
+                            backup.customAlerts.push(stampCustomAlert({
+                              id: 'ai2c_' + Date.now() + '_' + i,
+                              title: editAIAlertText,
+                              description: '',
+                              action: '',
+                              isAI: true,
+                              manuallyEdited: true,
+                              scheduledAt: '',
+                              linkedProjectId: a.id || '',
+                            }, now))
                           }
-                          persist(); forceUpdate()
+                          persistHomeAgendaAlerts()
                         }
                         setEditingAIAlertId(null); setEditAIAlertText('')
                       }}
@@ -1262,9 +1337,9 @@ export default function V15rHome() {
             <Plus size={10} /> Sub-Category
           </button>
         </div>
-        {(backup.agendaSections || []).length > 0 ? (
+        {liveAgendaSections.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {(backup.agendaSections || []).map(sec => {
+            {liveAgendaSections.map(sec => {
               const AgendaIcon = getAgendaSectionIcon(sec.title, sec.projectId)
               return (
                 <div key={sec.id} className="relative overflow-hidden rounded-xl border border-cyan-400/[0.18] bg-gradient-to-br from-slate-950 via-gray-950 to-black p-4 shadow-[0_14px_34px_rgba(8,145,178,0.08),inset_0_1px_0_rgba(255,255,255,0.05)]">

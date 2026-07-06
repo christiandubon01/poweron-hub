@@ -100,6 +100,41 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 ## Audit & Change Log
 
+### 2026-07-06 — Phase 6S-G Follow-up Hotfix: Guardian customAlerts Scoped Save (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** Hotfix on uncommitted 6S-G — convert remaining Guardian customAlerts writer to home.agendaAlerts scoped save.
+**Branch:** main | NOT committed | NOT pushed
+
+**Changes:**
+- **`backupDataService.ts`**: extracted shared `saveHomeAgendaAlertsScoped(incomingBackup, { source })` for V15rHome + Guardian.
+- **`src/agents/guardian/index.ts`**: `routeGuardianAlerts` now stamps alerts via `stampCustomAlert` and saves through `saveHomeAgendaAlertsScoped(..., { source: 'home-agenda-alerts-guardian-remote-merge' })` with `changedKey: 'home.agendaAlerts'`.
+- **`V15rHome.tsx`**: reuses shared `saveHomeAgendaAlertsScoped` helper (behavior unchanged).
+
+**Untouched:** Computed Nexus alerts (render-time only); GuardianMetricsService (read-only); V15rHome agenda/custom alert CRUD semantics; AI dismiss suppression behavior.
+
+**Lock released.**
+
+---
+
+### 2026-07-06 — Phase 6S-G: home.agendaAlerts Scoped Merge (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** Scoped implementation — protect Home agenda sections and custom alerts from stale full-blob overwrite.
+**Branch:** main | Baseline HEAD = `a1d419c` (Add scoped merge for estimate versions) | NOT committed | NOT pushed
+
+**Changes:**
+- **`scopeRegistry.ts`**: added `home.agendaAlerts` scope for `BackupData.agendaSections[]` + `BackupData.customAlerts[]` (id-merge with tombstones, medium priority); legacy changedKey mappings `home.agendaAlerts`, `agendaSections`, `customAlerts`.
+- **`backupDataService.ts`**: extended `BackupAgendaSection` / `BackupCustomAlert` types with optional id/timestamp/tombstone metadata; added `isHomeAgendaAlertsSyncSource` and narrow pre-sync preservation fold calling `mergeRemoteHomeAgendaAlertsIntoOutgoing` on non-home.agendaAlerts saves (reuses existing remote fetch; never blocks save).
+- **`projectScopeMerge.ts`**: added Home agenda/custom alert merge helpers — normalizeHomeId, stamp helpers, tombstone creators, getLiveAgendaSections/getLiveCustomAlerts, mergeAgendaItemArrays/mergeAgendaSections/mergeCustomAlerts, mergeHomeAgendaAlertsIntoRemote, mergeRemoteHomeAgendaAlertsIntoOutgoing.
+- **`V15rHome.tsx`**: agenda/custom alert writers converted to optimistic local save + `saveHomeAgendaAlertsScoped` (fetch latest remote → mergeHomeAgendaAlertsIntoRemote → saveBackupWithRemoteBaselineSync); deletes use tombstones; UI reads via getLiveAgendaSections/getLiveCustomAlerts.
+
+**Untouched:** Home Job Health deleted-project filter; Service Jobs Requiring Attention filter; auto-generated Nexus agenda alerts (project/service derived); project.timeline/progress/schedule/coordination; project.estimate/project.estimateVersions; project.finance; finance.weeklyData; team.members; service scopes; sync/save/baseline core except narrow home.agendaAlerts preservation hook.
+
+**Lock released.**
+
+---
+
 ### 2026-07-06 — Phase 6S-F FINAL TINY HOTFIX: Snapshot Rename Clear Persists (NOT COMMITTED)
 
 **Agent:** Cursor Composer 2.5 Fast

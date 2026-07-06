@@ -60,6 +60,7 @@ export type DataScope =
   | 'priceBook.laborRates'
   | 'priceBook.materials'
   | 'service.calls'
+  | 'home.agendaAlerts'
   | 'settings'
 
 export type ScopeMergeStrategy =
@@ -567,6 +568,22 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
     notes: 'Phase 6R-A: serviceLogs[] has delete-safe, item-level id-merge via serviceScopeMerge.ts (mergeServiceLogsIntoRemote). serviceLogId is the stable internal identity (falls back to legacy id, then a deterministic fingerprint); createdAt/updatedAt stamped by ensureServiceLogIdentity; deletes write deletedAt/deletedBy tombstones. A service "payment" is a set of FIELDS on the serviceLog row (collected/payStatus/balanceDue) protected together with the row; the append-only adjustments[]/statusEvents[] ledgers are unioned across both sides so payment/collection history is never dropped. Phase 6R-B: serviceEstimates[] and activeServiceCalls[] now have the same delete-safe lifecycle merge (mergeServiceEstimatesIntoRemote / mergeActiveServiceCallsIntoRemote) with serviceEstimateId / activeServiceCallId stable identities (fallback legacy id, then fingerprint), createdAt/updatedAt stamping, and deletedAt/deletedBy tombstones — their hard deletes are converted to tombstones. Mixed workflows (estimate → active call, active call → service log, estimate → completed service log) route through mergeServiceCallsScopeIntoRemote, which merges all three arrays in one remote-baseline save; this also fixes the completeAndLogService changedKey/silo mismatch (it previously mutated serviceLogs+serviceEstimates while saving under changedKey "logs"). Readers already exclude tombstones via isActiveServiceCall (deletedAt guard). serviceEstimates/activeServiceCalls do not feed MoneyPanel/Home exposure totals. STILL DEFERRED: multiDayServiceCalls (V15rServiceCallsV2 / serviceCallService.ts). Same client-clock and no-GC limitations as the project scopes.',
   },
 
+  // ── Home agenda / custom alerts ──
+  'home.agendaAlerts': {
+    scope: 'home.agendaAlerts',
+    dataPath: 'BackupData.agendaSections[] + BackupData.customAlerts[]',
+    owner: 'V15rHome',
+    level: 'top-level',
+    identityField: 'agenda section id; agenda task id; custom alert id',
+    timestampField: 'createdAt / updatedAt',
+    tombstoneField: 'deletedAt',
+    needsTimestamp: false,
+    needsTombstone: false,
+    strategy: 'id-merge',
+    priority: 'medium',
+    notes: 'Phase 6S-G: Home agenda sub-categories/tasks and Nexus custom alerts merge by stable id with createdAt/updatedAt metadata; deletes are tombstones (deletedAt/deletedBy/status="deleted") retained in raw backup while V15rHome filters them via getLiveAgendaSections/getLiveCustomAlerts. Does not affect Home Job Health project cards or Service Jobs Requiring Attention. mergeHomeAgendaAlertsIntoRemote / mergeRemoteHomeAgendaAlertsIntoOutgoing in projectScopeMerge.ts. V15rHome writers fetch latest remote and patch only agendaSections/customAlerts. A narrow pre-sync fold preserves newer remote Home agenda/custom alerts on any non-home.agendaAlerts save.',
+  },
+
   // ── Settings ──
   settings: {
     scope: 'settings',
@@ -624,6 +641,15 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
   ],
   estimateVersions: [
     'project.estimateVersions',
+  ],
+  'home.agendaAlerts': [
+    'home.agendaAlerts',
+  ],
+  agendaSections: [
+    'home.agendaAlerts',
+  ],
+  customAlerts: [
+    'home.agendaAlerts',
   ],
   logs: [
     'project.payments',

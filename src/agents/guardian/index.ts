@@ -15,7 +15,8 @@
  */
 
 import { supabase } from '@/lib/supabase'
-import { getBackupData, saveBackupData } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, saveHomeAgendaAlertsScoped } from '@/services/backupDataService'
+import { stampCustomAlert } from '@/services/projectScopeMerge'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -568,6 +569,7 @@ export function routeGuardianAlerts(flags: ActivityFlag[]): void {
     )
 
     let added = 0
+    const now = new Date().toISOString()
     for (const flag of flags) {
       if (existingIds.has(flag.entryId)) continue
 
@@ -579,7 +581,7 @@ export function routeGuardianAlerts(flags: ActivityFlag[]): void {
         OUT_OF_HOURS: 'After-Hours Entry',
       }
 
-      backup.customAlerts.push({
+      backup.customAlerts.push(stampCustomAlert({
         id: `guardian_${flag.entryId}_${flag.anomalyType}`,
         title: `${severityLabel} GUARDIAN: ${typeLabel[flag.anomalyType]}`,
         description: flag.reason,
@@ -589,15 +591,17 @@ export function routeGuardianAlerts(flags: ActivityFlag[]): void {
         guardianEntryId: flag.entryId,
         guardianAnomalyType: flag.anomalyType,
         severity: flag.severity,
-        createdAt: new Date().toISOString(),
-      } as any)
+        createdAt: now,
+      }, now))
 
       existingIds.add(flag.entryId)
       added++
     }
 
     if (added > 0) {
+      backup._lastSavedAt = now
       saveBackupData(backup)
+      void saveHomeAgendaAlertsScoped(backup, { source: 'home-agenda-alerts-guardian-remote-merge' })
       console.log(`[GUARDIAN] Routed ${added} new alert${added !== 1 ? 's' : ''} to Home panel.`)
     }
   } catch (err) {
