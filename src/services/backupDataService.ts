@@ -28,6 +28,7 @@ import {
   type DataScope,
 } from './scopeRegistry'
 import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog } from './projectScopeMerge'
+import { mergeRemoteWeeklyDataIntoOutgoing } from './weeklyDataScopeMerge'
 
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
 const STORAGE_KEY = LEGACY_STORAGE_KEY
@@ -258,6 +259,16 @@ export interface BackupPriceBookItem {
 export interface BackupWeeklyData {
   wk: number; svc: number; proj: number; accum: number; start: string
   _empty: boolean; unbilled: number; pendingInv: number; totalExposure: number
+  // Phase 6S-B: finance.weeklyData scoped-merge metadata (all optional).
+  // manualOverride rows win over derived recalculation rows for the same wk.
+  manualOverride?: boolean
+  derivedAt?: string
+  weeklyUpdatedAt?: string
+  // Optional exposure projection fields used dynamically by the CFOT/pulse charts.
+  serviceExposure?: number | null
+  activeExposure?: number | null
+  projectedTotalExposure?: number | null
+  isProjection?: boolean
 }
 
 export interface BackupServiceLog {
@@ -2055,6 +2066,21 @@ export function setHydrating(val: boolean): void {
 }
 export function isHydrating(): boolean { return _isHydrating }
 
+/**
+ * Phase 6S-B: true when a sync save is a weeklyData save (the MoneyPanel recalc /
+ * finance.weeklyData scope). Used to SKIP the weeklyData preservation guard for
+ * those saves so a legitimate weekly recalc is not merged against itself.
+ */
+function isWeeklyDataSyncSource(source?: string | null): boolean {
+  if (!source) return false
+  if (String(source).toLowerCase().includes('weeklydata')) return true
+  try {
+    return resolveScopesForSyncInput(source).includes('finance.weeklyData')
+  } catch {
+    return false
+  }
+}
+
 /** Sync current tenant-scoped localStorage data to Supabase app_state table.
  *  Refuses to run until the authenticated tenant has completed bootstrap. */
 export async function syncToSupabase(
@@ -2133,11 +2159,29 @@ export async function syncToSupabase(
     const data = getBackupData(userId)
     if (!data) return { success: false, skipped: true, error: 'No local tenant data to sync' }
 
+    // Phase 6S-B: narrow weeklyData preservation guard. For any save that is NOT a
+    // weeklyData save, fold newer remote weeklyData[] into the outgoing blob so a
+    // stale local weeklyData cache cannot overwrite newer remote weekly rows. Only
+    // weeklyData[] is affected (mergeRemoteWeeklyDataIntoOutgoing touches nothing
+    // else); manualOverride precedence still applies. On remote-fetch failure we
+    // warn and continue with the un-merged blob — the guard never blocks a save.
+    let outgoing: BackupData = data
+    if (!isWeeklyDataSyncSource(options.source)) {
+      try {
+        const remoteSnapshot = await fetchLatestRemoteBackup(userId)
+        if (remoteSnapshot?.remoteData) {
+          outgoing = mergeRemoteWeeklyDataIntoOutgoing(outgoing, remoteSnapshot.remoteData)
+        }
+      } catch (weeklyGuardErr) {
+        console.warn('[Sync] weeklyData preservation guard skipped (remote fetch failed)', weeklyGuardErr)
+      }
+    }
+
     const now = new Date().toISOString()
     const deviceId = getDeviceId()
 
     const payload = attachTenantOwner({
-      ...(data as any),
+      ...(outgoing as any),
       _lastSavedAt: now,
       _syncMeta: { savedBy: deviceId, savedAt: now },
     } as BackupData, userId)

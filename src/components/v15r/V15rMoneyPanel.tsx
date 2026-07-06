@@ -19,6 +19,8 @@ import {
   getBackupData,
   saveBackupData,
   saveBackupDataAndSync,
+  saveBackupWithRemoteBaselineSync,
+  fetchLatestRemoteBackup,
   getProjectFinancials,
   resolveProjectBucket,
   num,
@@ -32,6 +34,8 @@ import {
   type BackupServiceLog,
 } from '@/services/backupDataService'
 import { isDeletedOrArchivedServiceLog } from '@/services/serviceScopeMerge'
+import { isDeadProjectLog } from '@/services/projectScopeMerge'
+import { mergeWeeklyDataIntoRemote } from '@/services/weeklyDataScopeMerge'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 import { calcPipeline } from '@/utils/pipelineCalc'
@@ -52,7 +56,9 @@ class ChartErrorBoundary extends React.Component {
 // ── Business Health Chart Component (Recharts) ──────────────────────────────
 function BusinessHealthChart({ backup }: { backup: BackupData }) {
   // recharts imported at top of file
-  const projects = backup.projects || []
+  // Phase 6S-B hotfix: exclude archived + soft-deleted projects from the Money tab
+  // revenue-breakdown chart totals (display-only filter; data untouched).
+  const projects = (backup.projects || []).filter(isActiveMoneyProject)
   const settings = backup.settings || {} as any
 
   // Calculate revenue breakdown
@@ -144,6 +150,23 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
+/**
+ * Phase 6S-B hotfix: hide ARCHIVED and soft-DELETED projects from every Money tab
+ * project-derived bucket/list/table (Business Roll-Up totals, Exposure Framework,
+ * Cash Waterfall, project pipeline). Display/calculation-input filter ONLY — the
+ * projects stay in backup data untouched so they can be restored/reactivated
+ * elsewhere. Returns false for deletedAt / status==='deleted' / archived /
+ * archivedAt / status==='archived'; true for normal active/open projects.
+ */
+function isActiveMoneyProject(project: any): boolean {
+  if (!project) return false
+  if (project.deletedAt) return false
+  if (project.archived || project.archivedAt) return false
+  const status = String(project.status || project.projectStatus || '').toLowerCase().trim()
+  if (status === 'deleted' || status === 'archived') return false
+  return true
+}
+
 export default function V15rMoneyPanel() {
   const { isDemoMode, hasHydrated } = useDemoMode()
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
@@ -152,14 +175,24 @@ export default function V15rMoneyPanel() {
   const [showWeeklyGaps, setShowWeeklyGaps] = useState(true)
   const [recalculating, setRecalculating] = useState(false)
 
-  // ISSUE 3: Recalculate weekly data from actual project/service log data
-  function recalcWeeklyFromData() {
+  // ISSUE 3: Recalculate weekly data from actual project/service log data.
+  // Phase 6S-B: converted to a finance.weeklyData scoped save. Derived rows are
+  // stamped with derivedAt/weeklyUpdatedAt, manualOverride rows are preserved
+  // verbatim (but still fold their stored contribution into the running accum so
+  // later weeks stay cumulative-correct), tombstoned project/service logs are
+  // excluded, and the recalculated weeklyData is merged onto a freshly-fetched
+  // remote snapshot before a remote-baseline sync so a stale broad save cannot
+  // clobber newer remote weekly rows and manual rows always win.
+  async function recalcWeeklyFromData() {
     if (!backup) return
     const wdArr = backup.weeklyData || []
     if (wdArr.length === 0) return
     setRecalculating(true)
 
-    const allLogs = backup.logs || []
+    const nowIso = new Date().toISOString()
+    // Phase 6S-B: exclude deleted (tombstoned) / archived PROJECT logs from the
+    // weekly derivation so they never inflate proj collected.
+    const allLogs = (backup.logs || []).filter(l => !isDeadProjectLog(l))
     // Phase 6R-A: exclude deleted (tombstoned) / archived service logs from the
     // weekly derivation so they never inflate svc collected / pendingInv.
     const allSvcLogs = (backup.serviceLogs || []).filter(l => !isDeletedOrArchivedServiceLog(l))
@@ -170,12 +203,17 @@ export default function V15rMoneyPanel() {
     const today = new Date()
 
     let accum = 0
-    for (const w of wdArr) {
-      // Skip manually overridden weeks
-      if (w.manualOverride) continue
+    const recalced = wdArr.map((w: any) => {
+      // Preserve manually overridden weeks verbatim, but still fold their stored
+      // proj/svc contribution into the running accum so subsequent derived weeks
+      // accumulate correctly (previously these weeks broke the accumulation).
+      if (w.manualOverride) {
+        accum += num(w.proj) + num(w.svc)
+        return { ...w }
+      }
 
       const weekStart = w.start ? new Date(w.start) : null
-      if (!weekStart) continue
+      if (!weekStart) return { ...w }
       const weekEnd = new Date(weekStart.getTime() + 7 * 86400000)
 
       // proj: SUM of payments from project field logs ONLY (backup.logs)
@@ -216,10 +254,7 @@ export default function V15rMoneyPanel() {
         svcCollected = 0
       }
 
-      w.proj = projCollected
-      w.svc = svcCollected
       accum += projCollected + svcCollected
-      w.accum = accum
 
       // unbilled: SUM of ACTIVE projects only (not completed, not cancelled)
       const activeProjects = allProjects.filter(p =>
@@ -228,16 +263,58 @@ export default function V15rMoneyPanel() {
       const activeUnbilled = activeProjects.reduce((s, p) =>
         s + Math.max(0, num(p.contract) - num(p.billed)), 0
       )
-      w.unbilled = activeUnbilled
 
       // pendingInv: SUM of serviceLogs where collected=0 and quoted>0
       const pending = allSvcLogs
         .filter(l => num(l.collected) === 0 && num(l.quoted) > 0)
         .reduce((s, l) => s + num(l.quoted), 0)
-      w.pendingInv = pending
+
+      return {
+        ...w,
+        proj: projCollected,
+        svc: svcCollected,
+        accum,
+        unbilled: activeUnbilled,
+        pendingInv: pending,
+        derivedAt: nowIso,
+        weeklyUpdatedAt: nowIso,
+      }
+    })
+
+    const localBackup: BackupData = { ...backup, weeklyData: recalced }
+
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (remote?.remoteData) {
+        // Merge our recalculated weeklyData onto the freshly-fetched remote blob
+        // (manualOverride rows in remote win; derived recalc rows apply).
+        const merged = mergeWeeklyDataIntoRemote(remote.remoteData, localBackup)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          {
+            remoteUpdatedAt: remote.remoteUpdatedAt,
+            remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+          },
+          {
+            source: 'finance-weeklyData-remote-merge',
+            changedKey: 'weeklyData',
+            _scopes: ['finance.weeklyData'],
+          },
+        )
+      } else {
+        saveBackupDataAndSync(localBackup, 'weeklyData', {
+          source: 'finance.weeklyData',
+          _scopes: ['finance.weeklyData'],
+        })
+      }
+    } catch (err) {
+      console.warn('[MoneyPanel] weeklyData remote-baseline save failed — falling back to local scoped save', err)
+      saveBackupDataAndSync(localBackup, 'weeklyData', {
+        source: 'finance.weeklyData',
+        _scopes: ['finance.weeklyData'],
+      })
     }
 
-    saveBackupDataAndSync(backup, 'weeklyData')
     setRecalculating(false)
     // Force re-render
     window.location.reload()
@@ -265,7 +342,12 @@ export default function V15rMoneyPanel() {
   syncAllProjectFinanceBuckets(backup)
 
   // ── Per-project financials ─────────────────────────────────────────────
-  const projectMoney = projects.map(p => {
+  // Phase 6S-B hotfix: exclude archived + soft-deleted projects from ALL Money
+  // tab project-derived sections (Roll-Up totals, Exposure Framework, Cash
+  // Waterfall). projectMoney is the single source every project bucket/list/table
+  // below is built from, so filtering here hides them everywhere at once.
+  const moneyProjects = projects.filter(isActiveMoneyProject)
+  const projectMoney = moneyProjects.map(p => {
     const m = getProjectFinancials(p, backup)
     return { p, ...m }
   })
@@ -332,7 +414,7 @@ export default function V15rMoneyPanel() {
 
   // ── 8 HEADER KPIs (Per-Business Summary) ────────────────────────────────────
   // 1. Total Pipeline = active + coming-up project contracts + remaining service balance
-  const totalPipeline = calcPipeline(projects) + Math.max(0, svcQuoted - svcCollected)
+  const totalPipeline = calcPipeline(moneyProjects) + Math.max(0, svcQuoted - svcCollected)
 
   // 2. Total Collected = sum of project paid + service collected
   const totalCollected = projectPaid + svcCollected

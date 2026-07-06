@@ -37,6 +37,7 @@ export type DataScope =
   | 'project.files'
   | 'project.lifecycle'
   | 'project.finance'
+  | 'finance.weeklyData'
   | 'fieldLogs.entries'
   | 'fieldLogs.materials'
   | 'fieldLogs.photos'
@@ -265,6 +266,22 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
     strategy: 'field-lww',
     priority: 'critical',
     notes: 'Phase 6S-A: money-critical projects[].finance fields (manualPaidAdjustment feeds getProjectFinancials paid → AR/exposure/risk → Dashboard/MoneyPanel/Home/NEXUS; billedOverride/contractOverride/matCostOverride/lastCollectedAt are the other override scalars) now have a per-field last-writer-wins merge keyed by a projects[].financeUpdatedAt per-field timestamp map (mergeProjectFinanceIntoRemote for a single project; mergeAllProjectFinanceIntoRemote for broad savers). The broad-saver helper is INCOMING-based: it returns a clone of the local backup (so every local project edit — status/archive/name/progress — is preserved exactly) with each project\'s finance scalar fields resolved against remote so a stale local finance bucket can NEVER overwrite a newer remote value, and a remote legacy/imported value that predates timestamps is never wiped by a local blank (tie → remote value kept). V15rProjectsPanel.persist and V15rProgressTab.persistProjectChange save locally for instant UI, then fetch latest remote, mergeAllProjectFinanceIntoRemote, and push through the existing saveBackupWithRemoteBaselineSync path (changedKey "projects", _scopes ["project.finance"]); fallback saveBackupDataAndSync. Scope excludes logs[] (project.logs/project.payments own logs[].collected), service payments, estimate rows/scalars, and project lifecycle. Same client-clock/no-GC limitations as the other project scopes.',
+  },
+
+  // ── Finance (derived weekly cache) ──
+  'finance.weeklyData': {
+    scope: 'finance.weeklyData',
+    dataPath: 'BackupData.weeklyData[]',
+    owner: 'V15rMoneyPanel (recalcWeeklyFromData) / import merge',
+    level: 'top-level',
+    identityField: 'wk',
+    timestampField: 'weeklyUpdatedAt / derivedAt',
+    tombstoneField: undefined,
+    needsTimestamp: false,
+    needsTombstone: false,
+    strategy: 'id-merge',
+    priority: 'critical',
+    notes: 'Phase 6S-B: weeklyData[] is a PERSISTED DERIVED financial cache / imported historical weekly-row store that drives MoneyPanel, Cash Flow, Business Overview, and the pulse fallback charts. It is NOT project.payments — the source of truth for project payments remains logs[].collected (project.logs / project.payments). Rows are keyed by wk and merged item-level by wk via weeklyDataScopeMerge.ts (mergeWeeklyRowsByWk / mergeWeeklyDataIntoRemote). manualOverride === true rows WIN over non-manual derived recalculation rows for the same wk; two manual rows resolve by newer weeklyUpdatedAt (tie/missing → remote, never overwrite manual data); two derived rows resolve by newer derivedAt/weeklyUpdatedAt (tie/missing → incoming so an explicit recalc applies). Optional per-row metadata: manualOverride/derivedAt/weeklyUpdatedAt. MoneyPanel recalcWeeklyFromData now fetches latest remote, mergeWeeklyDataIntoRemote, and saves through the existing remote-baseline path (changedKey "weeklyData", _scopes ["finance.weeklyData"]); fallback saveBackupDataAndSync. A narrow pre-sync preservation guard (mergeRemoteWeeklyDataIntoOutgoing) folds newer remote weeklyData into any NON-weeklyData broad save so stale local weeklyData cannot overwrite newer remote weekly rows. Dashboard/BusinessOverview/CashFlow reader migration deferred; no reader migration in this phase. Same client-clock/no-GC limitations as the other scopes.',
   },
 
   // ── Field Logs ──
@@ -563,7 +580,7 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
     'priceBook.laborRates',
   ],
   weeklyData: [
-    'project.payments',
+    'finance.weeklyData',
   ],
   blueprintSummaries: [
     'blueprint.annotations',
