@@ -1,7 +1,19 @@
 // @ts-nocheck
 import React, { useState, useCallback, useEffect } from 'react'
 import { Sparkles, ChevronDown, BookOpen, X } from 'lucide-react'
-import { getBackupData, saveBackupData, saveBackupDataAndSync } from '@/services/backupDataService'
+import {
+  fetchLatestRemoteBackup,
+  getBackupData,
+  saveBackupData,
+  saveBackupDataAndSync,
+  saveBackupWithRemoteBaselineSync,
+} from '@/services/backupDataService'
+import {
+  createCoordItemTombstone,
+  ensureCoordItemIdentity,
+  getLiveCoordItems,
+  mergeProjectCoordinationIntoRemote,
+} from '@/services/projectScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import { getJournalEntriesForProject, type JournalEntry } from '@/services/voiceJournalService'
 
@@ -38,6 +50,50 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
 
   const p = backup.projects.find(x => x.id === projectId)
   if (!p) return <div style={{ color: 'var(--t3)' }}>Project not found</div>
+
+  const saveProjectCoordinationScoped = async (currentBackup: any) => {
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const incoming = getBackupData() || currentBackup
+        const merged = mergeProjectCoordinationIntoRemote(remote.remoteData, incoming, projectId)
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+          {
+            source: 'project-coordination-remote-merge',
+            changedKey: 'project.coordination',
+            _scopes: ['project.coordination'],
+          },
+        )
+        return
+      }
+      saveBackupDataAndSync(getBackupData() || currentBackup, 'project.coordination', {
+        source: 'project.coordination',
+        _scopes: ['project.coordination'],
+      })
+    } catch (err) {
+      console.warn('[V15rCoordinationTab] Scoped project-coordination sync failed; local changes preserved', err)
+      saveBackupDataAndSync(getBackupData() || currentBackup, 'project.coordination', {
+        source: 'project.coordination',
+        _scopes: ['project.coordination'],
+      })
+    }
+  }
+
+  const persistCoordinationChange = (mutate: (project: any, currentBackup: any) => false | void): boolean => {
+    const currentBackup = getBackupData()
+    const currentProject = currentBackup?.projects?.find((x: any) => x.id === projectId)
+    if (!currentBackup || !currentProject) return false
+    const result = mutate(currentProject, currentBackup)
+    if (result === false) return false
+    currentBackup._lastSavedAt = new Date().toISOString()
+    saveBackupData(currentBackup)
+    forceUpdate()
+    if (onUpdate) onUpdate()
+    void saveProjectCoordinationScoped(currentBackup)
+    return true
+  }
 
   // Load journal links for this project whenever projectId changes
   // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -84,44 +140,43 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
     const text = addingText.trim()
     if (!text) { setAddingSection(null); return }
     pushState()
-    const freshBackup = getBackupData()
-    const freshP = freshBackup?.projects?.find(x => x.id === projectId)
-    if (!freshP) { setAddingSection(null); return }
-    if (!freshP.coord) freshP.coord = {}
-    if (!freshP.coord[key]) freshP.coord[key] = []
-    freshP.coord[key].push({
-      id: "ci" + Date.now(),
-      text: String(text),
-      status: "pending",
+    const saved = persistCoordinationChange((freshP) => {
+      if (!freshP.coord) freshP.coord = {}
+      if (!freshP.coord[key]) freshP.coord[key] = []
+      freshP.coord[key].push(ensureCoordItemIdentity({
+        id: "ci" + Date.now(),
+        text: String(text),
+        status: "pending",
+        section: key,
+      }, new Date().toISOString()))
     })
-    saveBackupDataAndSync(freshBackup)
+    if (!saved) { setAddingSection(null); return }
     setAddingSection(null)
     setAddingText("")
-    forceUpdate()
   }
 
   const editItem = (key, itemId, field, value) => {
     pushState()
-    const items = (p.coord || {})[key] || []
-    const item = items.find(i => i.id === itemId)
-    if (item) {
+    persistCoordinationChange((freshP) => {
+      const items = (freshP.coord || {})[key] || []
+      const index = items.findIndex(i => i.id === itemId)
+      const item = index >= 0 ? items[index] : null
+      if (!item) return false
       if (field === 'text') item.text = String(value)
       else if (field === 'status') item.status = String(value)
-    }
-    saveBackupData(backup)
-    forceUpdate()
+      else return false
+      items[index] = ensureCoordItemIdentity(item, new Date().toISOString())
+    })
   }
 
   const delItem = (key, itemId) => {
     pushState()
-    const freshBackup = getBackupData()
-    const freshP = freshBackup?.projects?.find(x => x.id === projectId)
-    if (!freshP) return
-    if (freshP.coord && freshP.coord[key]) {
-      freshP.coord[key] = freshP.coord[key].filter(i => i.id !== itemId)
-    }
-    saveBackupDataAndSync(freshBackup)
-    forceUpdate()
+    persistCoordinationChange((freshP) => {
+      if (!freshP.coord || !freshP.coord[key]) return false
+      freshP.coord[key] = freshP.coord[key].map(i => (
+        i.id === itemId ? createCoordItemTombstone(i) : i
+      ))
+    })
   }
 
   const openEditCoordModal = (key, item) => {
@@ -142,22 +197,20 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
 
   const saveEditCoordModal = () => {
     if (!editingCoordKey || !editingCoordId) return
-    const freshBackup = getBackupData()
-    const freshP = freshBackup?.projects?.find(x => x.id === projectId)
-    if (!freshP) return
     pushState()
-    const items = (freshP.coord || {})[editingCoordKey] || []
-    const item = items.find(i => i.id === editingCoordId)
-    if (item) {
+    const saved = persistCoordinationChange((freshP) => {
+      const items = (freshP.coord || {})[editingCoordKey] || []
+      const index = items.findIndex(i => i.id === editingCoordId)
+      const item = index >= 0 ? items[index] : null
+      if (!item) return false
       item.text = editCoordForm.text
       item.status = editCoordForm.status
       item.response = editCoordForm.response
       item.solvedBy = editCoordForm.solvedBy
-    }
-    saveBackupDataAndSync(freshBackup)
+      items[index] = ensureCoordItemIdentity(item, new Date().toISOString())
+    })
+    if (!saved) return
     closeEditCoordModal()
-    forceUpdate()
-    if (onUpdate) onUpdate()
   }
 
   return (
@@ -165,7 +218,7 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {coordSections.map(section => {
-            const items = (p.coord || {})[section.key] || []
+            const items = getLiveCoordItems((p.coord || {})[section.key] || [])
             const isOpen = openSections.has(section.key)
 
             return (

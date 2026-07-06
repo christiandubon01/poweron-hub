@@ -2482,6 +2482,271 @@ export function mergeRemoteProjectTimelineIntoOutgoing(
   return merged
 }
 
+export interface ProjectCoordItem {
+  id?: string
+  text?: string
+  status?: string
+  response?: string
+  solvedBy?: string
+  section?: string
+  createdAt?: string
+  updatedAt?: string
+  deletedAt?: string
+  deletedBy?: string
+  [key: string]: any
+}
+
+export type MergeableProjectCoordItem = ProjectCoordItem & {
+  id: string
+  createdAt: string
+  updatedAt: string
+}
+
+export function normalizeCoordSectionKey(sectionKey: unknown): string {
+  return String(sectionKey ?? '').trim().toLowerCase()
+}
+
+function coordText(value: unknown): string {
+  return String(value ?? '').trim()
+}
+
+function coordItemFingerprint(item: any): string {
+  const parts = [
+    item?.id,
+    item?.text,
+    item?.status,
+    item?.response,
+    item?.solvedBy,
+    item?.section,
+    item?.createdAt,
+    item?.updatedAt,
+  ].map(value => coordText(value))
+  return shortStableHash(parts.join('|'))
+}
+
+export function getCoordItemIdentity(item: any): string {
+  const id = coordText(item?.id)
+  if (id) return id
+  return `legacy:coord:${coordItemFingerprint(item)}`
+}
+
+function normalizeCoordCreatedAt(item: any): string {
+  if (isValidDateString(item?.createdAt)) return String(item.createdAt)
+  if (isValidDateString(item?.updatedAt)) return String(item.updatedAt)
+  return EPOCH_FALLBACK_ISO
+}
+
+function normalizeCoordUpdatedAt(item: any): string {
+  let base = EPOCH_FALLBACK_ISO
+  if (isValidDateString(item?.updatedAt)) base = String(item.updatedAt)
+  else if (isValidDateString(item?.createdAt)) base = String(item.createdAt)
+
+  if (isValidDateString(item?.deletedAt) && parseTimestampMs(item.deletedAt) > parseTimestampMs(base)) {
+    return String(item.deletedAt)
+  }
+
+  return base
+}
+
+export function ensureCoordItemIdentity(item: any, timestamp?: string): MergeableProjectCoordItem {
+  const source = item && typeof item === 'object' ? item : {}
+  const ts = isValidDateString(timestamp) ? String(timestamp) : undefined
+  const id = coordText(source.id) || getCoordItemIdentity(source)
+  return {
+    ...source,
+    id,
+    createdAt: isValidDateString(source.createdAt) ? String(source.createdAt) : (ts || normalizeCoordCreatedAt(source)),
+    updatedAt: ts || normalizeCoordUpdatedAt(source),
+  } as MergeableProjectCoordItem
+}
+
+export function isDeletedCoordItem(item: any): boolean {
+  return isValidDateString(item?.deletedAt) || coordText(item?.status).toLowerCase() === 'deleted'
+}
+
+export function createCoordItemTombstone(item: any, deletedBy?: string): ProjectCoordItem {
+  const now = new Date().toISOString()
+  const clean = ensureCoordItemIdentity(item || {}, now)
+  const tombstone: ProjectCoordItem = {
+    ...clean,
+    deletedAt: now,
+    updatedAt: now,
+    status: 'deleted',
+  }
+  tombstone.deletedBy = deletedBy || clean?.deletedBy || 'system'
+  return tombstone
+}
+
+export function getLiveCoordItems(items: any[]): ProjectCoordItem[] {
+  return (Array.isArray(items) ? items : [])
+    .map(item => ensureCoordItemIdentity(item))
+    .filter(item => !isDeletedCoordItem(item))
+}
+
+function isBlankCoordValue(value: unknown): boolean {
+  return value === undefined || value === null || value === ''
+}
+
+function coalesceCoordItem(winner: any, loser: any): any {
+  if (!loser || typeof loser !== 'object') return { ...winner }
+  const result: Record<string, any> = { ...loser, ...winner }
+  for (const key of Object.keys(loser)) {
+    if (isBlankCoordValue(winner?.[key]) && !isBlankCoordValue(loser[key])) result[key] = loser[key]
+  }
+  return result
+}
+
+function pickCoordItemWinner(remote: MergeableProjectCoordItem, incoming: MergeableProjectCoordItem): ProjectCoordItem {
+  const remoteDeleted = isDeletedCoordItem(remote)
+  const incomingDeleted = isDeletedCoordItem(incoming)
+
+  if (remoteDeleted && incomingDeleted) {
+    const incomingWins = comparableMs(incoming.deletedAt || incoming.updatedAt) >= comparableMs(remote.deletedAt || remote.updatedAt)
+    return coalesceCoordItem(incomingWins ? incoming : remote, incomingWins ? remote : incoming)
+  }
+
+  if (remoteDeleted !== incomingDeleted) {
+    const tombstone = remoteDeleted ? remote : incoming
+    const live = remoteDeleted ? incoming : remote
+    const liveWins = comparableMs(live.updatedAt) > comparableMs(tombstone.deletedAt || tombstone.updatedAt)
+    return coalesceCoordItem(liveWins ? live : tombstone, liveWins ? tombstone : live)
+  }
+
+  const incomingWins = comparableMs(incoming.updatedAt) >= comparableMs(remote.updatedAt)
+  return coalesceCoordItem(incomingWins ? incoming : remote, incomingWins ? remote : incoming)
+}
+
+export function mergeCoordItemArrays(remoteItems: any[], incomingItems: any[]): ProjectCoordItem[] {
+  const remoteArr = (Array.isArray(remoteItems) ? remoteItems : []).map(item => ensureCoordItemIdentity(item))
+  const incomingArr = (Array.isArray(incomingItems) ? incomingItems : []).map(item => ensureCoordItemIdentity(item))
+  const remoteById = new Map<string, MergeableProjectCoordItem>()
+  for (const item of remoteArr) remoteById.set(String(item.id), item)
+
+  const result: ProjectCoordItem[] = []
+  const used = new Set<string>()
+  for (const incoming of incomingArr) {
+    const id = String(incoming.id)
+    if (used.has(id)) continue
+    used.add(id)
+    const remote = remoteById.get(id)
+    result.push(remote ? pickCoordItemWinner(remote, incoming) : incoming)
+  }
+  for (const remote of remoteArr) {
+    const id = String(remote.id)
+    if (used.has(id)) continue
+    used.add(id)
+    result.push(remote)
+  }
+  return result
+}
+
+function asCoordMap(value: any): Record<string, any> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+}
+
+export function mergeProjectCoordMaps(remoteCoord: any, incomingCoord: any): Record<string, ProjectCoordItem[]> {
+  const remoteObj = asCoordMap(remoteCoord)
+  const incomingObj = asCoordMap(incomingCoord)
+  const remoteByNorm = new Map<string, [string, any[]]>()
+  const incomingByNorm = new Map<string, [string, any[]]>()
+
+  for (const [section, rows] of Object.entries(remoteObj)) {
+    const norm = normalizeCoordSectionKey(section)
+    if (!norm) continue
+    remoteByNorm.set(norm, [section, Array.isArray(rows) ? rows : []])
+  }
+  for (const [section, rows] of Object.entries(incomingObj)) {
+    const norm = normalizeCoordSectionKey(section)
+    if (!norm) continue
+    incomingByNorm.set(norm, [section, Array.isArray(rows) ? rows : []])
+  }
+
+  const result: Record<string, ProjectCoordItem[]> = {}
+  const used = new Set<string>()
+  for (const [norm, [incomingSection, incomingRows]] of incomingByNorm) {
+    used.add(norm)
+    const remoteEntry = remoteByNorm.get(norm)
+    result[incomingSection] = mergeCoordItemArrays(remoteEntry?.[1] || [], incomingRows)
+  }
+  for (const [norm, [remoteSection, remoteRows]] of remoteByNorm) {
+    if (used.has(norm)) continue
+    result[remoteSection] = mergeCoordItemArrays(remoteRows, [])
+  }
+  return result
+}
+
+function patchProjectCoordinationFields(targetProject: any, remoteProject: any, incomingProject: any): void {
+  targetProject.coord = mergeProjectCoordMaps(remoteProject?.coord, incomingProject?.coord)
+  if (remoteProject?.coordUpdatedAt || incomingProject?.coordUpdatedAt || targetProject?.coordUpdatedAt) {
+    targetProject.coordUpdatedAt = {
+      ...asCoordMap(remoteProject?.coordUpdatedAt),
+      ...asCoordMap(incomingProject?.coordUpdatedAt),
+      ...asCoordMap(targetProject?.coordUpdatedAt),
+    }
+  }
+  if (remoteProject?.coordDeletedAt || incomingProject?.coordDeletedAt || targetProject?.coordDeletedAt) {
+    targetProject.coordDeletedAt = {
+      ...asCoordMap(remoteProject?.coordDeletedAt),
+      ...asCoordMap(incomingProject?.coordDeletedAt),
+      ...asCoordMap(targetProject?.coordDeletedAt),
+    }
+  }
+}
+
+export function mergeProjectCoordinationIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+  projectId: string,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const targetId = String(projectId || '').trim()
+  if (!targetId) return merged
+
+  const remoteProjects = Array.isArray(merged.projects) ? merged.projects : []
+  const remoteIndex = remoteProjects.findIndex((p: any) => String(p?.id || '') === targetId)
+  if (remoteIndex === -1) return merged
+
+  const incomingProjects = Array.isArray(incomingBackup?.projects) ? incomingBackup.projects : []
+  const incomingProject: any = incomingProjects.find((p: any) => String(p?.id || '') === targetId)
+  if (!incomingProject) return merged
+
+  const remoteProject: any = remoteProjects[remoteIndex]
+  patchProjectCoordinationFields(remoteProject, remoteProject, incomingProject)
+  return merged
+}
+
+export function mergeAllProjectCoordinationIntoRemote(remoteBackup: BackupData, incomingBackup: BackupData): BackupData {
+  const merged = JSON.parse(JSON.stringify(incomingBackup)) as BackupData
+  const remoteById = new Map<string, any>()
+  for (const rp of Array.isArray(remoteBackup?.projects) ? remoteBackup.projects : []) {
+    const id = String(rp?.id || '').trim()
+    if (id) remoteById.set(id, rp)
+  }
+  for (const mp of Array.isArray(merged.projects) ? merged.projects : []) {
+    const id = String(mp?.id || '').trim()
+    const remoteProject = id ? remoteById.get(id) : null
+    if (!remoteProject) continue
+    patchProjectCoordinationFields(mp, remoteProject, mp)
+  }
+  return merged
+}
+
+export function mergeRemoteProjectCoordinationIntoOutgoing(outgoingBackup: BackupData, remoteBackup: BackupData): BackupData {
+  const merged = JSON.parse(JSON.stringify(outgoingBackup)) as BackupData
+  const remoteById = new Map<string, any>()
+  for (const rp of Array.isArray(remoteBackup?.projects) ? remoteBackup.projects : []) {
+    const id = String(rp?.id || '').trim()
+    if (id) remoteById.set(id, rp)
+  }
+  for (const op of Array.isArray(merged.projects) ? merged.projects : []) {
+    const id = String(op?.id || '').trim()
+    const remoteProject = id ? remoteById.get(id) : null
+    if (!remoteProject) continue
+    patchProjectCoordinationFields(op, op, remoteProject)
+  }
+  return merged
+}
+
 export type ProjectScheduleFieldKey = 'plannedStart' | 'plannedEnd' | 'lastMove'
 
 /** The only projects[] scalar fields owned by project.schedule. */

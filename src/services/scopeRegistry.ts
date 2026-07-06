@@ -32,6 +32,7 @@ export type DataScope =
   | 'project.payments'
   | 'project.logs'
   | 'project.materials'
+  | 'project.coordination'
   | 'project.schedule'
   | 'project.progress'
   | 'project.timeline'
@@ -208,6 +209,20 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
     strategy: 'id-merge',
     priority: 'high',
     notes: 'Phase 6H: project.materials has delete-safe item-level nested merge via projectScopeMerge.ts. mtoRows get materialId/mtoId stable internal identity, createdAt/updatedAt timestamps, and deletedAt/deletedBy tombstones; legacy matRows are supported by the same live filtering/merge helpers when present. V15rMTOTab saves fetch latest remote and patch only projects[id].mtoRows/matRows through the existing remote-baseline path. project.estimate remains future/unimplemented.',
+  },
+  'project.coordination': {
+    scope: 'project.coordination',
+    dataPath: 'projects[].coord[section][]',
+    owner: 'V15rCoordinationTab',
+    level: 'nested',
+    identityField: 'project id + coord section key + coord item id',
+    timestampField: 'coord item updatedAt',
+    tombstoneField: 'coord item deletedAt',
+    needsTimestamp: false,
+    needsTombstone: false,
+    strategy: 'id-merge',
+    priority: 'high',
+    notes: 'Phase 6S-D4: project.coordination protects workflow/planning coordination data in projects[].coord. Section buckets merge by normalized section key; rows merge by stable item id with createdAt/updatedAt metadata, and deletes are tombstones (deletedAt/deletedBy/status="deleted") retained in raw backup data while the Coordination UI filters them from active views/counts. Separate from project.timeline (6S-D1), project.progress (6S-D2), and project.schedule (6S-D3). Coordination is not the payment/log source of truth; project payments/logs remain logs[]. A narrow pre-sync fold preserves newer remote coordination rows on any non-project.coordination save.',
   },
   'project.schedule': {
     scope: 'project.schedule',
@@ -563,6 +578,7 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
     'project.payments',
     'project.logs',
     'project.materials',
+    'project.coordination',
     'project.schedule',
     'project.progress',
     'project.timeline',
@@ -581,6 +597,9 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
   ],
   'project.schedule': [
     'project.schedule',
+  ],
+  'project.coordination': [
+    'project.coordination',
   ],
   logs: [
     'project.payments',
