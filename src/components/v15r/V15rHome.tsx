@@ -50,7 +50,6 @@ import {
   ensureAgendaState,
   getAgendaProjectName,
   resolveProjectBucket,
-  isArchivedRecord,
   isActiveServiceCall,
   isActiveProject,
   num,
@@ -518,7 +517,7 @@ export default function V15rHome() {
     .filter((l: any) => l.balanceDue > 0.5)
     .sort((a: any, b: any) => b.balanceDue - a.balanceDue)
 
-  const activeJobHealthProjects = projects.filter(p => !isArchivedRecord(p) && resolveProjectBucket(p) === 'active')
+  const activeJobHealthProjects = projects.filter(p => isActiveProject(p) && resolveProjectBucket(p) === 'active')
   const agendaPickerProjects = projects
     .filter(p => isActiveProject(p) && p.name && p.name !== 'undefined')
     .slice()
