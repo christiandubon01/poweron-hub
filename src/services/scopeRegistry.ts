@@ -156,17 +156,17 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
   },
   'project.estimate': {
     scope: 'project.estimate',
-    dataPath: 'projects[].laborRows/ohRows (Phase 6J rows); projects[].contract/mileRT/miDays scalars (Phase 6L)',
+    dataPath: 'projects[].laborRows/ohRows (Phase 6J rows); projects[].contract/mileRT/miDays scalars (Phase 6L); projects[].laborPhaseColors (Phase 6L-B)',
     owner: 'V15rEstimateTab',
     level: 'nested',
-    identityField: 'laborId/overheadId (rows); project id + field (scalars)',
-    timestampField: 'updatedAt (rows); estimateScalarUpdatedAt.<field> (scalars)',
+    identityField: 'laborId/overheadId (rows); project id + field (scalars); phase key (laborPhaseColors)',
+    timestampField: 'updatedAt (rows); estimateScalarUpdatedAt.<field> (scalars); laborPhaseColorUpdatedAt[phaseKey] (laborPhaseColors)',
     tombstoneField: 'deletedAt (rows only)',
     needsTimestamp: false,
     needsTombstone: false,
     strategy: 'id-merge',
     priority: 'critical',
-    notes: 'Phase 6J: project.estimate laborRows and ohRows have delete-safe item-level nested merge via projectScopeMerge.ts (laborId/overheadId stable identities; createdAt/updatedAt; deletedAt/deletedBy tombstones; live readers filter tombstones). Phase 6L: the flat estimate scalar fields contract, mileRT, and miDays now use a per-field last-writer-wins merge (mergeProjectEstimateScalarsIntoRemote) keyed by a projects[].estimateScalarUpdatedAt per-field timestamp map. Different scalar fields edited on different devices merge independently; the same field resolves by newest per-field timestamp; an exact tie keeps remote; missing/legacy timestamps compare as -Infinity and never default to now. Both row and scalar saves fetch latest remote and patch only their own keys through the existing remote-baseline path (Save/stale/baseline unchanged). Still future/unimplemented: laborPhaseColors (UI metadata, Phase 6L-B or later) and estimateReference/phaseEstimateRows (legacy/dead). estimateVersions is a separate top-level (backup.estimateVersions[projectId]) future scope, not part of this nested project scope. project.materials is separate and already implemented under project.materials.',
+    notes: 'Phase 6J: project.estimate laborRows and ohRows have delete-safe item-level nested merge via projectScopeMerge.ts (laborId/overheadId stable identities; createdAt/updatedAt; deletedAt/deletedBy tombstones; live readers filter tombstones). Phase 6L: the flat estimate scalar fields contract, mileRT, and miDays use per-field LWW merge (mergeProjectEstimateScalarsIntoRemote) keyed by projects[].estimateScalarUpdatedAt. Phase 6L-B / 6S-E: projects[].laborPhaseColors is UI metadata for Estimate labor phase headers — per-phase LWW map merge (mergeProjectLaborPhaseColorsIntoRemote / mergeRemoteLaborPhaseColorsIntoOutgoing) keyed by projects[].laborPhaseColorUpdatedAt[phaseKey]; belongs under project.estimate, NOT project.progress and NOT global settings. progressPhaseColors is already protected by project.progress (6S-D2). settings.phaseWeights / settings.mtoPhases are deferred. Row and scalar saves fetch latest remote and patch only their own keys through the existing remote-baseline path (Save/stale/baseline unchanged). estimateReference/phaseEstimateRows (legacy/dead) and estimateVersions (separate top-level future scope) remain unimplemented. project.materials is separate under project.materials.',
   },
   'project.payments': {
     scope: 'project.payments',
@@ -600,6 +600,9 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
   ],
   'project.coordination': [
     'project.coordination',
+  ],
+  'project.estimate': [
+    'project.estimate',
   ],
   logs: [
     'project.payments',

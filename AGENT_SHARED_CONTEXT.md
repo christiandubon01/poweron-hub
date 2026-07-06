@@ -100,6 +100,25 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 ## Audit & Change Log
 
+### 2026-07-05 — Phase 6S-E / 6L-B: laborPhaseColors Scoped Merge Under project.estimate (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** Scoped implementation — protect Estimate tab labor phase header colors from stale broad project saves. UI metadata only.
+**Branch:** main | HEAD before edits = `6c00ba4` (Hide deleted projects from home job health)
+**Files changed:** `src/services/scopeRegistry.ts`, `src/services/projectScopeMerge.ts`, `src/services/backupDataService.ts`, `src/components/v15r/V15rEstimateTab.tsx`, `AGENT_SHARED_CONTEXT.md`
+
+**What was implemented:**
+- **`projectScopeMerge.ts`**: added `normalizeLaborPhaseColorKey`, `stampLaborPhaseColor`, `mergeLaborPhaseColorMaps`, `mergeProjectLaborPhaseColorsIntoRemote`, `mergeAllProjectLaborPhaseColorsIntoRemote`, and `mergeRemoteLaborPhaseColorsIntoOutgoing` — per-phase LWW keyed by `projects[].laborPhaseColorUpdatedAt[phaseKey]`; newer timestamp wins; tie prefers incoming on explicit estimate saves / remote on broad-save preservation; never wipes a remote defined color with incoming blank; no tombstones.
+- **`backupDataService.ts`**: type-only `BackupProject.laborPhaseColors` + `laborPhaseColorUpdatedAt`; removed unused `estimateScalarUpdatedAt.laborPhaseColors` placeholder; added `isProjectEstimateSyncSource` and narrow pre-sync preservation fold calling `mergeRemoteLaborPhaseColorsIntoOutgoing` on non-project.estimate saves (reuses existing remote fetch; never blocks save).
+- **`scopeRegistry.ts`**: extended `project.estimate` descriptor for laborPhaseColors; added `'project.estimate'` legacy changedKey mapping.
+- **`V15rEstimateTab.tsx`**: `scheduleLaborPhaseColorCommit` / `flushLaborPhaseColor` now stamp `laborPhaseColorUpdatedAt` and save via fetch-latest → `mergeProjectLaborPhaseColorsIntoRemote` → `saveBackupWithRemoteBaselineSync({ changedKey: 'project.estimate', _scopes: ['project.estimate'] })`; fallback `saveBackupDataAndSync(..., 'project.estimate', ...)`. Debounce preserved. No broad `saveBackupDataAndSync(backup, 'projects')` for color commits.
+
+**Explicitly NOT done / untouched:** `progressPhaseColors` (already protected by project.progress / 6S-D2). `settings.phaseWeights` / `settings.mtoPhases` merge. Global settings singleton merge. Home `agendaSections` / `customAlerts`. `estimateVersions`. project.timeline / project.progress / project.schedule / project.coordination implementations. project.finance. finance.weeklyData. team.members. service scopes. Sync/stale/baseline/verified-save core unchanged except the narrow laborPhaseColors preservation hook. Not committed; no push.
+
+**Lock released.**
+
+---
+
 ### 2026-07-05 — Phase 6Q-B: Recently Deleted / Restore Project UI (NOT COMMITTED)
 
 **Agent:** Claude Opus 4.8

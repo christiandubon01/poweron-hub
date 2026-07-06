@@ -50,6 +50,8 @@ import {
   isDeletedEstimateRow,
   mergeProjectEstimateRowsIntoRemote,
   mergeProjectEstimateScalarsIntoRemote,
+  mergeProjectLaborPhaseColorsIntoRemote,
+  stampLaborPhaseColor,
   ESTIMATE_SCALAR_FIELDS,
 } from '@/services/projectScopeMerge'
 import { getLiveEmployees } from '@/services/teamScopeMerge'
@@ -285,6 +287,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   const [laborPhaseColorDraft, setLaborPhaseColorDraft] = useState<Record<string, string>>({})
   const laborPhaseColorDraftRef = useRef<Record<string, string>>({})
   const laborPhaseColorTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const laborPhaseColorSaveSeqRef = useRef(0)
 
   useEffect(() => {
     setLaborPhaseExpanded(
@@ -672,6 +675,58 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       queue.timer = null
       void flushEstimateScalarsSaveQueue()
     }, Math.max(0, debounceMs))
+  }
+
+  // ── Phase 6L-B: scoped labor phase COLOR save path ─────────────────────────
+  const saveLaborPhaseColorsRemote = async (seq: number) => {
+    const incomingBackup = getBackupData() || backup
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (seq !== laborPhaseColorSaveSeqRef.current) return
+
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const merged = mergeProjectLaborPhaseColorsIntoRemote(remote.remoteData, incomingBackup, projectId)
+        if (seq !== laborPhaseColorSaveSeqRef.current) return
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          {
+            remoteUpdatedAt: remote.remoteUpdatedAt,
+            remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+          },
+          {
+            source: 'project-estimate-labor-phase-colors',
+            changedKey: 'project.estimate',
+            _scopes: ['project.estimate'],
+          },
+        )
+        return
+      }
+
+      if (seq !== laborPhaseColorSaveSeqRef.current) return
+      saveBackupDataAndSync(incomingBackup, 'project.estimate', {
+        source: 'project.estimate.laborPhaseColors',
+        _scopes: ['project.estimate'],
+      })
+    } catch (err) {
+      if (seq !== laborPhaseColorSaveSeqRef.current) return
+      console.warn('[Estimate] Scoped labor phase color sync failed; local color changes preserved', err)
+      saveBackupDataAndSync(incomingBackup, 'project.estimate', {
+        source: 'project.estimate.laborPhaseColors',
+        _scopes: ['project.estimate'],
+      })
+    }
+  }
+
+  const commitLaborPhaseColor = (ph: string, hex: string) => {
+    const ts = new Date().toISOString()
+    ;(p as any).laborPhaseColors = (p as any).laborPhaseColors || {}
+    ;(p as any).laborPhaseColors[ph] = hex
+    stampLaborPhaseColor(p, ph, ts)
+    backup._lastSavedAt = new Date().toISOString()
+    saveBackupData(backup)
+    laborPhaseColorSaveSeqRef.current += 1
+    const seq = laborPhaseColorSaveSeqRef.current
+    void saveLaborPhaseColorsRemote(seq)
   }
 
   // ── Draft reconciliation (source of truth for editable inputs) ─────────────
@@ -1871,9 +1926,7 @@ Return ONLY valid JSON, no other text.`
     laborPhaseColorTimers.current[ph] = setTimeout(() => {
       const final = laborPhaseColorDraftRef.current[ph] || hex
       pushState()
-      ;(p as any).laborPhaseColors = (p as any).laborPhaseColors || {}
-      ;(p as any).laborPhaseColors[ph] = final
-      saveBackupDataAndSync(backup, 'projects')
+      commitLaborPhaseColor(ph, final)
       delete laborPhaseColorTimers.current[ph]
       delete laborPhaseColorDraftRef.current[ph]
       setLaborPhaseColorDraft(d => { const n = { ...d }; delete n[ph]; return n })
@@ -1886,9 +1939,7 @@ Return ONLY valid JSON, no other text.`
     const hex = laborPhaseColorDraftRef.current[ph]
     if (hex !== undefined) {
       pushState()
-      ;(p as any).laborPhaseColors = (p as any).laborPhaseColors || {}
-      ;(p as any).laborPhaseColors[ph] = hex
-      saveBackupDataAndSync(backup, 'projects')
+      commitLaborPhaseColor(ph, hex)
       delete laborPhaseColorDraftRef.current[ph]
       setLaborPhaseColorDraft(d => { const n = { ...d }; delete n[ph]; return n })
     }

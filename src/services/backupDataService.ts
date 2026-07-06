@@ -27,7 +27,7 @@ import {
   resolveScopesForSyncInput,
   type DataScope,
 } from './scopeRegistry'
-import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog, mergeRemoteProjectCoordinationIntoOutgoing, mergeRemoteProjectProgressIntoOutgoing, mergeRemoteProjectScheduleIntoOutgoing, mergeRemoteProjectTimelineIntoOutgoing } from './projectScopeMerge'
+import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog, mergeRemoteLaborPhaseColorsIntoOutgoing, mergeRemoteProjectCoordinationIntoOutgoing, mergeRemoteProjectProgressIntoOutgoing, mergeRemoteProjectScheduleIntoOutgoing, mergeRemoteProjectTimelineIntoOutgoing } from './projectScopeMerge'
 import { mergeRemoteWeeklyDataIntoOutgoing } from './weeklyDataScopeMerge'
 import { mergeRemoteEmployeesIntoOutgoing } from './teamScopeMerge'
 
@@ -211,7 +211,10 @@ export interface BackupProject {
   estimateReference?: BackupEstimateRef; phaseEstimateRows?: any[]
   lastEstimateSyncAt?: string; completionPromptSig?: string; completionDeclinedSig?: string
   /** Phase 6L: per-field LWW timestamps for scoped estimate scalar merge (contract/mileRT/miDays). */
-  estimateScalarUpdatedAt?: { contract?: string; mileRT?: string; miDays?: string; laborPhaseColors?: string }
+  estimateScalarUpdatedAt?: { contract?: string; mileRT?: string; miDays?: string }
+  /** Phase 6L-B: per-phase LWW timestamps for scoped estimate labor phase color merge. */
+  laborPhaseColors?: Record<string, string>
+  laborPhaseColorUpdatedAt?: Record<string, string>
   /** Phase 6S-A: per-field LWW timestamps for scoped project.finance merge (manualPaidAdjustment/lastCollectedAt/billedOverride/contractOverride/matCostOverride). */
   financeUpdatedAt?: Partial<Record<string, string>>
   /** Phase 6S-D1: per-field LWW timestamps for scoped project.timeline merge (deposit_pct/phase_deposit_pct). phase_timeline rows carry their own optional updatedAt. */
@@ -2184,6 +2187,24 @@ function isProjectCoordinationSyncSource(options?: { source?: string | null; _sc
   }
 }
 
+/**
+ * Phase 6L-B: true when a sync save is a project.estimate save (estimate rows,
+ * scalars, or labor phase colors). Used to SKIP the laborPhaseColors preservation
+ * guard for those saves so a legitimate estimate edit is not merged against itself.
+ */
+function isProjectEstimateSyncSource(options?: { source?: string | null; _scopes?: DataScope[] } | null): boolean {
+  if (!options) return false
+  const source = options.source
+  const sourceLower = source ? String(source).toLowerCase() : ''
+  if (sourceLower.includes('project.estimate') || sourceLower.includes('project-estimate')) return true
+  if (Array.isArray(options._scopes) && options._scopes.includes('project.estimate')) return true
+  try {
+    return resolveScopesForSyncInput(source ?? null).includes('project.estimate')
+  } catch {
+    return false
+  }
+}
+
 /** Sync current tenant-scoped localStorage data to Supabase app_state table.
  *  Refuses to run until the authenticated tenant has completed bootstrap. */
 export async function syncToSupabase(
@@ -2262,20 +2283,21 @@ export async function syncToSupabase(
     const data = getBackupData(userId)
     if (!data) return { success: false, skipped: true, error: 'No local tenant data to sync' }
 
-    // Phase 6S-B / 6S-C / 6S-D1 / 6S-D2 / 6S-D3 / 6S-D4: narrow scoped-cache preservation guards. For a save
-    // that is NOT a weeklyData save, fold newer remote weeklyData[] into the
-    // outgoing blob; for a save that is NOT an employees save, fold newer remote
-    // employees[] in; for a save that is NOT a project.timeline save, fold newer
-    // remote phase_timeline/deposit data in; for a save that is NOT a
-    // project.schedule save, fold newer remote plannedStart/plannedEnd/lastMove
-    // in; for a save that is NOT a project.coordination save, fold newer remote
-    // coordination rows in. This stops a stale local weeklyData/employees/timeline/schedule/coord cache
-    // from overwriting newer remote data on an unrelated broad save. Only
-    // weeklyData[]/employees[]/projects[].phase_timeline + deposit_pct +
-    // phase_deposit_pct + timelineUpdatedAt + schedule fields + coord fields are affected (the merge
-    // helpers touch nothing else); manualOverride / tombstone precedence still
-    // applies. A single remote fetch serves all folds; on failure we warn and
-    // continue with the un-merged blob — the guard never blocks a save.
+    // Phase 6S-B / 6S-C / 6S-D1 / 6S-D2 / 6S-D3 / 6S-D4 / 6L-B: narrow scoped-cache
+    // preservation guards. For a save that is NOT a weeklyData save, fold newer
+    // remote weeklyData[] into the outgoing blob; for a save that is NOT an
+    // employees save, fold newer remote employees[] in; for a save that is NOT a
+    // project.timeline save, fold newer remote phase_timeline/deposit data in; for
+    // a save that is NOT a project.schedule save, fold newer remote
+    // plannedStart/plannedEnd/lastMove in; for a save that is NOT a
+    // project.coordination save, fold newer remote coordination rows in; for a save
+    // that is NOT a project.estimate save, fold newer remote laborPhaseColors in.
+    // This stops a stale local weeklyData/employees/timeline/schedule/coord/labor-
+    // color cache from overwriting newer remote data on an unrelated broad save.
+    // Only the listed slices are affected (the merge helpers touch nothing else);
+    // manualOverride / tombstone precedence still applies. A single remote fetch
+    // serves all folds; on failure we warn and continue with the un-merged blob —
+    // the guard never blocks a save.
     let outgoing: BackupData = data
     const skipWeeklyGuard = isWeeklyDataSyncSource(options.source)
     const skipEmployeesGuard = isEmployeesSyncSource(options.source)
@@ -2283,7 +2305,8 @@ export async function syncToSupabase(
     const skipProgressGuard = isProjectProgressSyncSource(options)
     const skipScheduleGuard = isProjectScheduleSyncSource(options)
     const skipCoordinationGuard = isProjectCoordinationSyncSource(options)
-    if (!skipWeeklyGuard || !skipEmployeesGuard || !skipTimelineGuard || !skipProgressGuard || !skipScheduleGuard || !skipCoordinationGuard) {
+    const skipEstimateGuard = isProjectEstimateSyncSource(options)
+    if (!skipWeeklyGuard || !skipEmployeesGuard || !skipTimelineGuard || !skipProgressGuard || !skipScheduleGuard || !skipCoordinationGuard || !skipEstimateGuard) {
       try {
         const remoteSnapshot = await fetchLatestRemoteBackup(userId)
         if (remoteSnapshot?.remoteData) {
@@ -2304,6 +2327,9 @@ export async function syncToSupabase(
           }
           if (!skipCoordinationGuard) {
             outgoing = mergeRemoteProjectCoordinationIntoOutgoing(outgoing, remoteSnapshot.remoteData)
+          }
+          if (!skipEstimateGuard) {
+            outgoing = mergeRemoteLaborPhaseColorsIntoOutgoing(outgoing, remoteSnapshot.remoteData)
           }
         }
       } catch (preserveGuardErr) {

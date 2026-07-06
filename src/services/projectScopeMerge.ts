@@ -1230,6 +1230,209 @@ export function mergeProjectEstimateScalarsIntoRemote(
   return merged
 }
 
+// ── Project estimate labor phase colors (Phase 6L-B / 6S-E) ───────────────────
+// UI metadata for Estimate labor phase headers. Per-phase LWW keyed by
+// projects[].laborPhaseColorUpdatedAt[phaseKey]. Kept separate from estimate
+// scalar/row merges; never touches progressPhaseColors (project.progress scope).
+
+export function normalizeLaborPhaseColorKey(phaseKey: unknown): string {
+  return String(phaseKey ?? '').trim().toLowerCase()
+}
+
+function isBlankLaborPhaseColor(value: unknown): boolean {
+  return value === undefined || value === null || String(value).trim() === ''
+}
+
+function getLaborPhaseColorValue(project: any, phaseKey: string): string | undefined {
+  const normalized = normalizeLaborPhaseColorKey(phaseKey)
+  const map = project?.laborPhaseColors && typeof project.laborPhaseColors === 'object'
+    ? project.laborPhaseColors
+    : {}
+  for (const [key, value] of Object.entries(map)) {
+    if (normalizeLaborPhaseColorKey(key) === normalized && !isBlankLaborPhaseColor(value)) {
+      return String(value)
+    }
+  }
+  return undefined
+}
+
+function getLaborPhaseColorUpdatedAt(project: any, phaseKey: string): string | undefined {
+  const normalized = normalizeLaborPhaseColorKey(phaseKey)
+  const stamps = project?.laborPhaseColorUpdatedAt && typeof project.laborPhaseColorUpdatedAt === 'object'
+    ? project.laborPhaseColorUpdatedAt
+    : {}
+  for (const [key, value] of Object.entries(stamps)) {
+    if (normalizeLaborPhaseColorKey(key) === normalized && isValidDateString(value)) {
+      return String(value)
+    }
+  }
+  return undefined
+}
+
+/** Stamp only the edited labor phase color timestamp. Preserves every other field. */
+export function stampLaborPhaseColor(project: any, phaseKey: string, timestamp?: string): any {
+  const phase = String(phaseKey ?? '').trim()
+  if (!project || typeof project !== 'object' || !phase) return project
+  const ts = isValidDateString(timestamp) ? String(timestamp) : new Date().toISOString()
+  project.laborPhaseColorUpdatedAt = {
+    ...(project.laborPhaseColorUpdatedAt && typeof project.laborPhaseColorUpdatedAt === 'object'
+      ? project.laborPhaseColorUpdatedAt
+      : {}),
+    [phase]: ts,
+  }
+  return project
+}
+
+function collectLaborPhaseColorKeys(remoteProject: any, incomingProject: any): string[] {
+  const keys: string[] = []
+  const add = (key: unknown) => {
+    const label = String(key ?? '').trim()
+    const norm = normalizeLaborPhaseColorKey(label)
+    if (!norm || keys.some(existing => normalizeLaborPhaseColorKey(existing) === norm)) return
+    keys.push(label)
+  }
+  const addFromProject = (project: any) => {
+    const colors = project?.laborPhaseColors && typeof project.laborPhaseColors === 'object'
+      ? project.laborPhaseColors
+      : {}
+    const stamps = project?.laborPhaseColorUpdatedAt && typeof project.laborPhaseColorUpdatedAt === 'object'
+      ? project.laborPhaseColorUpdatedAt
+      : {}
+    Object.keys(colors).forEach(add)
+    Object.keys(stamps).forEach(add)
+  }
+  addFromProject(remoteProject)
+  addFromProject(incomingProject)
+  return keys
+}
+
+function resolveLaborPhaseColorField(
+  phaseKey: string,
+  remoteProject: any,
+  incomingProject: any,
+  preferIncomingOnTie: boolean,
+): { value?: string; label: string; updatedAt?: string } {
+  const remoteValue = getLaborPhaseColorValue(remoteProject, phaseKey)
+  const incomingValue = getLaborPhaseColorValue(incomingProject, phaseKey)
+  const remoteHas = !isBlankLaborPhaseColor(remoteValue)
+  const incomingHas = !isBlankLaborPhaseColor(incomingValue)
+  const remoteTs = comparableMs(getLaborPhaseColorUpdatedAt(remoteProject, phaseKey))
+  const incomingTs = comparableMs(getLaborPhaseColorUpdatedAt(incomingProject, phaseKey))
+
+  let incomingWins: boolean
+  if (incomingTs > remoteTs) incomingWins = true
+  else if (remoteTs > incomingTs) incomingWins = false
+  else incomingWins = preferIncomingOnTie ? (incomingHas || !remoteHas) : (remoteHas || !incomingHas)
+
+  // Never wipe a remote defined color with an incoming blank.
+  if (incomingWins && !incomingHas && remoteHas) incomingWins = false
+
+  const winner = incomingWins ? incomingValue : remoteValue
+  const loser = incomingWins ? remoteValue : incomingValue
+  const value = !isBlankLaborPhaseColor(winner)
+    ? winner
+    : (!isBlankLaborPhaseColor(loser) ? loser : undefined)
+  const stamp = incomingWins
+    ? getLaborPhaseColorUpdatedAt(incomingProject, phaseKey)
+    : getLaborPhaseColorUpdatedAt(remoteProject, phaseKey)
+  return { value, label: String(phaseKey).trim(), updatedAt: stamp }
+}
+
+export function mergeLaborPhaseColorMaps(
+  remoteProject: any,
+  incomingProject: any,
+  preferIncomingOnTie = true,
+): { colors: Record<string, string>; updatedAt: Record<string, string> } {
+  const keys = collectLaborPhaseColorKeys(remoteProject, incomingProject)
+  const colors: Record<string, string> = {}
+  const updatedAt: Record<string, string> = {}
+  for (const key of keys) {
+    const resolved = resolveLaborPhaseColorField(key, remoteProject, incomingProject, preferIncomingOnTie)
+    if (isBlankLaborPhaseColor(resolved.value)) continue
+    colors[resolved.label] = resolved.value!
+    if (resolved.updatedAt) updatedAt[resolved.label] = resolved.updatedAt
+  }
+  return { colors, updatedAt }
+}
+
+function patchLaborPhaseColorFields(
+  targetProject: any,
+  remoteProject: any,
+  incomingProject: any,
+  preferIncomingOnTie = true,
+): void {
+  const merged = mergeLaborPhaseColorMaps(remoteProject, incomingProject, preferIncomingOnTie)
+  targetProject.laborPhaseColors = merged.colors
+  targetProject.laborPhaseColorUpdatedAt = {
+    ...(targetProject.laborPhaseColorUpdatedAt && typeof targetProject.laborPhaseColorUpdatedAt === 'object'
+      ? targetProject.laborPhaseColorUpdatedAt
+      : {}),
+    ...merged.updatedAt,
+  }
+}
+
+export function mergeProjectLaborPhaseColorsIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+  projectId: string,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(remoteBackup)) as BackupData
+  const targetId = String(projectId || '').trim()
+  if (!targetId) return merged
+
+  const remoteProjects = Array.isArray(merged.projects) ? merged.projects : []
+  const remoteIndex = remoteProjects.findIndex((p: any) => String(p?.id || '') === targetId)
+  if (remoteIndex === -1) return merged
+
+  const incomingProjects = Array.isArray(incomingBackup?.projects) ? incomingBackup.projects : []
+  const incomingProject: any = incomingProjects.find((p: any) => String(p?.id || '') === targetId)
+  if (!incomingProject) return merged
+
+  const remoteProject: any = remoteProjects[remoteIndex]
+  patchLaborPhaseColorFields(remoteProject, remoteProject, incomingProject, true)
+  return merged
+}
+
+export function mergeAllProjectLaborPhaseColorsIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(incomingBackup)) as BackupData
+  const remoteById = new Map<string, any>()
+  for (const rp of Array.isArray(remoteBackup?.projects) ? remoteBackup.projects : []) {
+    const id = String(rp?.id || '').trim()
+    if (id) remoteById.set(id, rp)
+  }
+  for (const mp of Array.isArray(merged.projects) ? merged.projects : []) {
+    const id = String(mp?.id || '').trim()
+    if (!id) continue
+    const remoteProject = remoteById.get(id)
+    if (!remoteProject) continue
+    patchLaborPhaseColorFields(mp, remoteProject, mp, false)
+  }
+  return merged
+}
+
+export function mergeRemoteLaborPhaseColorsIntoOutgoing(
+  outgoingBackup: BackupData,
+  remoteBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(outgoingBackup)) as BackupData
+  const remoteById = new Map<string, any>()
+  for (const rp of Array.isArray(remoteBackup?.projects) ? remoteBackup.projects : []) {
+    const id = String(rp?.id || '').trim()
+    if (id) remoteById.set(id, rp)
+  }
+  for (const op of Array.isArray(merged.projects) ? merged.projects : []) {
+    const id = String(op?.id || '').trim()
+    if (!id) continue
+    const remoteProject = remoteById.get(id)
+    if (!remoteProject) continue
+    patchLaborPhaseColorFields(op, remoteProject, op, false)
+  }
+  return merged
+}
+
 // ── Project logs + embedded payments (Phase 6N) ────────────────────────────────
 // Top-level BackupData.logs[] rows, scoped by projId. A project "payment" is the
 // `collected` field ON a log row — there is no separate payment entity — so the
