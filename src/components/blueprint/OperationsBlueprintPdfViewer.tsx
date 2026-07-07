@@ -3878,7 +3878,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       }
       normArea = Math.abs(normArea) / 2
       const realArea = normArea / (scaleForPage! * scaleForPage!)
-      label = `${realArea.toFixed(2)} ${calForPage!.realWorldUnit}Ã‚Â²`
+      label = `${realArea.toFixed(2)} ${calForPage!.realWorldUnit}\u00b2`
       meta = { points, label, normArea, realWorldArea: realArea, unit: calForPage!.realWorldUnit, style: measurementStyle }
     } else if (type === 'measure-perimeter' && points.length >= 2) {
       let normPerim = 0
@@ -7100,7 +7100,7 @@ const annotationPanelSizeClass =
                   )}
                   {calibrationSource === 'ambiguous' && detectedResult && (
                     <div className="mt-1 flex flex-col gap-1">
-                      <div className="text-[10px] text-orange-300/70">Multiple scales found Ã¢â‚¬â€ pick one or calibrate manually:</div>
+                      <div className="text-[10px] text-orange-300/70">Multiple scales found — pick one or calibrate manually:</div>
                       {detectedResult.candidates.map((c, i) => (
                         <button key={i} type="button"
                           onClick={() => setSavedCalibrations(prev => ({
@@ -7118,7 +7118,7 @@ const annotationPanelSizeClass =
                 <button
                   onClick={() => { setToolMode('calibrate'); setOpenPopover(null) }}
                   className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'calibrate' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                ><Crosshair size={12} /> Calibrate Ã¢â‚¬â€ draw known distance</button>
+                ><Crosshair size={12} /> Calibrate known distance</button>
 
                 {/* Measure tools */}
                 <button
@@ -8296,7 +8296,7 @@ const annotationPanelSizeClass =
                           onClick={(e) => e.stopPropagation()}
                         >
                           <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-sky-400">
-                            Calibrate Ã¢â‚¬â€ real-world distance
+                            Enter known distance
                           </div>
                           <div className="flex gap-2">
                             <input
