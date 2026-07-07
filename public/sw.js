@@ -6,9 +6,9 @@
 //   - API/AI calls: network-first, graceful offline error
 //   - Supabase data GETs: stale-while-revalidate
 
-const CACHE_NAME = 'poweron-v3'
-const APP_SHELL_CACHE = 'poweron-shell-v3'
-const DATA_CACHE = 'poweron-data-v3'
+const CACHE_NAME = 'poweron-v4'
+const APP_SHELL_CACHE = 'poweron-shell-v4'
+const DATA_CACHE = 'poweron-data-v4'
 
 // Patterns for network-first (AI + API calls)
 const API_PATTERNS = [/\/api\//, /claude\.ai/, /anthropic\.com/, /netlify\/functions\//]

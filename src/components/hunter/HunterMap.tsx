@@ -64,6 +64,34 @@ function pinSymbol(color: string, score: number = 0): google.maps.Symbol {
   }
 }
 
+function svgMarkerUrl(svg: string): string | null {
+  try {
+    if (!svg.trim().startsWith('<svg')) return null
+    return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg)
+  } catch {
+    return null
+  }
+}
+
+function escapeSvgText(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+function generatedSvgIcon(
+  svg: string,
+  scaledSize: google.maps.Size,
+  anchor: google.maps.Point,
+  fallback: google.maps.Symbol
+): google.maps.Icon | google.maps.Symbol {
+  const url = svgMarkerUrl(svg)
+  return url ? { url, scaledSize, anchor } : fallback
+}
+
 function eliteGlowSymbol(): google.maps.Symbol {
   return {
     path: 'M 0,0 C -2,-20 -10,-22 -10,-30 A 10,10 0 1,1 10,-30 C 10,-22 2,-20 0,0 z',
@@ -90,22 +118,20 @@ function buildEliteFrame(flameOffset: number) {
     '<stop offset="40%" stop-color="#c0003c"/>',
     '<stop offset="100%" stop-color="#6b0020"/>',
     '</radialGradient>',
-    '<filter id="glow"><feGaussianBlur stdDeviation="2.5" result="blur"/>',
-    '<feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>',
     '</defs>',
     // Outer flame
     '<ellipse cx="20" cy="50" rx="' + rx1 + '" ry="' + ry1 + '" fill="#f97316" opacity="' + f1.toFixed(2) + '"/>',
     '<ellipse cx="20" cy="46" rx="9" ry="12" fill="#fbbf24" opacity="' + f2.toFixed(2) + '"/>',
     '<ellipse cx="20" cy="42" rx="5" ry="8" fill="#fef08a" opacity="' + (f1 * 0.6).toFixed(2) + '"/>',
     // Pin body
-    '<path d="M20 4 C9.5 4 1 12.5 1 23 C1 36.5 20 52 20 52 C20 52 39 36.5 39 23 C39 12.5 30.5 4 20 4 Z" fill="url(#ruby)" filter="url(#glow)" stroke="#ff6b8a" stroke-width="1.5"/>',
-    '<ellipse cx="14" cy="17" rx="5" ry="7" fill="rgba(255,255,255,0.15)" transform="rotate(-20,14,17)"/>',
-    '<ellipse cx="13" cy="15" rx="2.5" ry="4" fill="rgba(255,255,255,0.25)" transform="rotate(-20,13,15)"/>',
-    '<circle cx="20" cy="23" r="6" fill="rgba(255,100,130,0.4)" stroke="rgba(255,200,210,0.6)" stroke-width="1"/>',
-    '<circle cx="20" cy="23" r="3" fill="rgba(255,200,210,0.7)"/>',
+    '<path d="M20 4 C9.5 4 1 12.5 1 23 C1 36.5 20 52 20 52 C20 52 39 36.5 39 23 C39 12.5 30.5 4 20 4 Z" fill="url(#ruby)" stroke="#ff6b8a" stroke-width="1.5"/>',
+    '<ellipse cx="14" cy="17" rx="5" ry="7" fill="#ffffff" opacity="0.15" transform="rotate(-20,14,17)"/>',
+    '<ellipse cx="13" cy="15" rx="2.5" ry="4" fill="#ffffff" opacity="0.25" transform="rotate(-20,13,15)"/>',
+    '<circle cx="20" cy="23" r="6" fill="#ff6482" opacity="0.4" stroke="#ffc8d2" stroke-opacity="0.6" stroke-width="1"/>',
+    '<circle cx="20" cy="23" r="3" fill="#ffc8d2" opacity="0.7"/>',
     '</svg>',
   ].join('')
-  return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg)
+  return svgMarkerUrl(svg) ?? ''
 }
 // Pre-cache 12 flame frames
 for (let i = 0; i < 12; i++) {
@@ -131,40 +157,39 @@ function buildPortalFrame(offset: number) {
     '<stop offset="35%" stop-color="#2563eb"/>',
     '<stop offset="100%" stop-color="#0f172a"/>',
     '</radialGradient>',
-    '<filter id="eglow"><feGaussianBlur stdDeviation="2" result="blur"/>',
-    '<feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>',
     '</defs>',
     // Pin body
-    '<path d="M20 4 C9.5 4 1 12.5 1 23 C1 36.5 20 52 20 52 C20 52 39 36.5 39 23 C39 12.5 30.5 4 20 4 Z" fill="url(#elec)" filter="url(#eglow)" stroke="#60a5fa" stroke-width="1.5"/>',
+    '<path d="M20 4 C9.5 4 1 12.5 1 23 C1 36.5 20 52 20 52 C20 52 39 36.5 39 23 C39 12.5 30.5 4 20 4 Z" fill="url(#elec)" stroke="#60a5fa" stroke-width="1.5"/>',
     // Shimmer highlight
-    '<ellipse cx="13" cy="14" rx="5" ry="8" fill="rgba(255,255,255,0.18)" transform="rotate(-25,13,14)"/>',
-    '<ellipse cx="12" cy="12" rx="2.5" ry="4.5" fill="rgba(255,255,255,0.3)" transform="rotate(-25,12,12)"/>',
+    '<ellipse cx="13" cy="14" rx="5" ry="8" fill="#ffffff" opacity="0.18" transform="rotate(-25,13,14)"/>',
+    '<ellipse cx="12" cy="12" rx="2.5" ry="4.5" fill="#ffffff" opacity="0.3" transform="rotate(-25,12,12)"/>',
     // Animated electric arc dots
     '<circle cx="' + x1 + '" cy="' + y1 + '" r="2" fill="#93c5fd" opacity="0.9"/>',
     '<circle cx="' + x2 + '" cy="' + y2 + '" r="1.5" fill="#60a5fa" opacity="0.7"/>',
     '<circle cx="' + x3 + '" cy="' + y3 + '" r="1" fill="#bfdbfe" opacity="0.5"/>',
     // Inner core
-    '<circle cx="20" cy="23" r="6" fill="rgba(37,99,235,0.4)" stroke="rgba(147,197,253,0.7)" stroke-width="1"/>',
-    '<circle cx="20" cy="23" r="3" fill="rgba(191,219,254,0.8)"/>',
-    // Lightning bolt
-    '<text x="20" y="27" text-anchor="middle" font-size="9" fill="#ffffff" font-family="Arial" font-weight="bold" opacity="0.9">&#9889;</text>',
+    '<circle cx="20" cy="23" r="6" fill="#2563eb" opacity="0.4" stroke="#93c5fd" stroke-opacity="0.7" stroke-width="1"/>',
+    '<circle cx="20" cy="23" r="3" fill="#bfdbfe" opacity="0.8"/>',
+    '<path d="M22 12 L15 24 H20 L17 34 L27 20 H21 Z" fill="#ffffff" opacity="0.9"/>',
     '</svg>',
   ].join('')
-  return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg)
+  return svgMarkerUrl(svg) ?? ''
 }
 for (let i = 0; i < 12; i++) {
   portalFrameCache.push(buildPortalFrame((i / 12) * Math.PI * 2))
 }
 
-function portalPinIcon() {
-  return {
-    url: portalFrameCache[0],
-    scaledSize: new google.maps.Size(40, 56),
-    anchor: new google.maps.Point(20, 52),
-  }
+function portalPinIcon(score: number) {
+  return portalFrameCache[0]
+    ? {
+      url: portalFrameCache[0],
+      scaledSize: new google.maps.Size(40, 56),
+      anchor: new google.maps.Point(20, 52),
+    }
+    : pinSymbol(pinColorForScore(score), score)
 }
 
-function elitePinIcon() {
+function elitePinIcon(score: number) {
   const svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="56" viewBox="0 0 40 56">',
     '<defs>',
@@ -178,29 +203,26 @@ function elitePinIcon() {
     '<stop offset="50%" stop-color="#f97316" stop-opacity="0.5"/>',
     '<stop offset="100%" stop-color="#ef4444" stop-opacity="0"/>',
     '</radialGradient>',
-    '<filter id="glow">',
-    '<feGaussianBlur stdDeviation="2" result="blur"/>',
-    '<feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>',
-    '</filter>',
     '</defs>',
     // Flame layer behind pin
     '<ellipse cx="20" cy="44" rx="14" ry="18" fill="url(#flame)" opacity="0.7"/>',
     '<ellipse cx="20" cy="38" rx="9" ry="14" fill="url(#flame)" opacity="0.5"/>',
     // Pin body with ruby gradient
-    '<path d="M20 4 C9.5 4 1 12.5 1 23 C1 36.5 20 52 20 52 C20 52 39 36.5 39 23 C39 12.5 30.5 4 20 4 Z" fill="url(#ruby)" filter="url(#glow)" stroke="#ff6b8a" stroke-width="1.5"/>',
+    '<path d="M20 4 C9.5 4 1 12.5 1 23 C1 36.5 20 52 20 52 C20 52 39 36.5 39 23 C39 12.5 30.5 4 20 4 Z" fill="url(#ruby)" stroke="#ff6b8a" stroke-width="1.5"/>',
     // Inner texture highlights
-    '<ellipse cx="14" cy="17" rx="5" ry="7" fill="rgba(255,255,255,0.15)" transform="rotate(-20,14,17)"/>',
-    '<ellipse cx="13" cy="15" rx="2.5" ry="4" fill="rgba(255,255,255,0.25)" transform="rotate(-20,13,15)"/>',
+    '<ellipse cx="14" cy="17" rx="5" ry="7" fill="#ffffff" opacity="0.15" transform="rotate(-20,14,17)"/>',
+    '<ellipse cx="13" cy="15" rx="2.5" ry="4" fill="#ffffff" opacity="0.25" transform="rotate(-20,13,15)"/>',
     // Inner glow dot
-    '<circle cx="20" cy="23" r="6" fill="rgba(255,100,130,0.4)" stroke="rgba(255,200,210,0.6)" stroke-width="1"/>',
-    '<circle cx="20" cy="23" r="3" fill="rgba(255,200,210,0.7)"/>',
+    '<circle cx="20" cy="23" r="6" fill="#ff6482" opacity="0.4" stroke="#ffc8d2" stroke-opacity="0.6" stroke-width="1"/>',
+    '<circle cx="20" cy="23" r="3" fill="#ffc8d2" opacity="0.7"/>',
     '</svg>',
   ].join('')
-  return {
-    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
-    scaledSize: new google.maps.Size(40, 56),
-    anchor: new google.maps.Point(20, 52),
-  }
+  return generatedSvgIcon(
+    svg,
+    new google.maps.Size(40, 56),
+    new google.maps.Point(20, 52),
+    pinSymbol(pinColorForScore(score), score)
+  )
 }
 
 function homeBaseSymbol(): google.maps.Symbol {
@@ -307,7 +329,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
           const svg = [
             '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">',
             '<g transform="rotate(' + heading + ', 24, 24)">',
-            '<circle cx="24" cy="24" r="22" fill="rgba(96,165,250,0.15)" stroke="#60a5fa" stroke-width="1.5"/>',
+            '<circle cx="24" cy="24" r="22" fill="#60a5fa" opacity="0.15" stroke="#60a5fa" stroke-width="1.5"/>',
             '<rect x="10" y="18" width="28" height="14" rx="3" fill="#1e3a8a" stroke="#60a5fa" stroke-width="1.5"/>',
             '<rect x="26" y="14" width="12" height="10" rx="2" fill="#1e40af" stroke="#93c5fd" stroke-width="1.2"/>',
             '<rect x="27" y="15" width="10" height="6" rx="1" fill="#bfdbfe" opacity="0.6"/>',
@@ -315,7 +337,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
             '<circle cx="33" cy="33" r="3.5" fill="#0f172a" stroke="#60a5fa" stroke-width="1.5"/>',
             '<circle cx="15" cy="33" r="1.5" fill="#60a5fa"/>',
             '<circle cx="33" cy="33" r="1.5" fill="#60a5fa"/>',
-            '<text x="19" y="29" text-anchor="middle" font-size="12" fill="#facc15" font-family="Arial" font-weight="bold">&#9889;</text>',
+            '<path d="M20 20 L14 29 H19 L16 36 L25 25 H20 Z" fill="#facc15"/>',
             '<circle cx="38" cy="19" r="2" fill="#fef08a" opacity="0.9"/>',
             '<circle cx="38" cy="27" r="2" fill="#fef08a" opacity="0.9"/>',
             '<line x1="8" y1="21" x2="2" y2="21" stroke="#60a5fa" stroke-width="1.5" opacity="0.6"/>',
@@ -323,17 +345,36 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
             '<line x1="8" y1="27" x2="2" y2="27" stroke="#60a5fa" stroke-width="1.5" opacity="0.6"/>',
             '</g></svg>',
           ].join('')
-          return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg)
+          return svgMarkerUrl(svg)
         }
 
         // Pre-cache truck icons at 36 headings (every 10 degrees) to eliminate flicker
-        const truckIconCache: Record<number, string> = {}
-        const getTruckIcon = (heading: number): string => {
+        const truckIconCache: Record<number, string | null> = {}
+        const getTruckIcon = (heading: number): string | null => {
           const snapped = Math.round(heading / 10) * 10
-          if (!truckIconCache[snapped]) truckIconCache[snapped] = makeTruckIcon(snapped)
+          if (!(snapped in truckIconCache)) truckIconCache[snapped] = makeTruckIcon(snapped)
           return truckIconCache[snapped]
         }
         for (let h = 0; h < 360; h += 10) getTruckIcon(h)
+        const truckFallbackSymbol = (): google.maps.Symbol => ({
+          path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+          fillColor: '#1e40af',
+          fillOpacity: 1,
+          strokeColor: '#60a5fa',
+          strokeWeight: 2,
+          scale: 6,
+          anchor: new google.maps.Point(0, 2),
+        })
+        const truckMarkerIcon = (heading: number): google.maps.Icon | google.maps.Symbol => {
+          const url = getTruckIcon(heading)
+          return url
+            ? {
+              url,
+              scaledSize: new google.maps.Size(48, 48),
+              anchor: new google.maps.Point(24, 24),
+            }
+            : truckFallbackSymbol()
+        }
 
         // Calculate heading between two points
         const getHeading = (from: google.maps.LatLng, to: google.maps.LatLng): number => {
@@ -375,32 +416,38 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         const dotMarker = new google.maps.Marker({
           position: fullPath[0],
           map: mapRef.current!,
-          icon: {
-            url: getTruckIcon(0),
-            scaledSize: new google.maps.Size(48, 48),
-            anchor: new google.maps.Point(24, 24),
-          },
+          icon: truckMarkerIcon(0),
           zIndex: 999,
         })
 
         // Rubber burn effect — smoke puff at sharp corners
         const rubberMarkers: google.maps.Marker[] = []
         const addRubberBurn = (pos: google.maps.LatLng) => {
+          const smokeSvg = [
+            '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">',
+            '<circle cx="20" cy="20" r="16" fill="#646464" opacity="0.5"/>',
+            '<circle cx="14" cy="16" r="8" fill="#505050" opacity="0.4"/>',
+            '<circle cx="26" cy="18" r="10" fill="#3c3c3c" opacity="0.35"/>',
+            '<circle cx="22" cy="25" r="6" fill="#9ca3af" opacity="0.35"/>',
+            '</svg>',
+          ].join('')
           const smoke = new google.maps.Marker({
             position: pos,
             map: mapRef.current!,
-            icon: {
-              url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
-                '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">' +
-                '<circle cx="20" cy="20" r="16" fill="rgba(100,100,100,0.5)"/>' +
-                '<circle cx="14" cy="16" r="8" fill="rgba(80,80,80,0.4)"/>' +
-                '<circle cx="26" cy="18" r="10" fill="rgba(60,60,60,0.35)"/>' +
-                '<text x="20" y="25" text-anchor="middle" font-size="14" opacity="0.8">&#128168;</text>' +
-                '</svg>'
-              ),
-              scaledSize: new google.maps.Size(40, 40),
-              anchor: new google.maps.Point(20, 20),
-            },
+            icon: generatedSvgIcon(
+              smokeSvg,
+              new google.maps.Size(40, 40),
+              new google.maps.Point(20, 20),
+              {
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: 14,
+                fillColor: '#646464',
+                fillOpacity: 0.35,
+                strokeColor: '#9ca3af',
+                strokeWeight: 1,
+                strokeOpacity: 0.35,
+              }
+            ),
             zIndex: 997,
           })
           rubberMarkers.push(smoke)
@@ -427,19 +474,28 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         let msgArrivalShown = false
 
         const showMilestoneMsg = (text: string, pos: google.maps.LatLng, color: string) => {
+          const markerSvg = [
+            '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="36" viewBox="0 0 160 36">',
+            '<rect x="0" y="0" width="160" height="36" rx="8" fill="#040818" opacity="0.95" stroke="' + color + '" stroke-width="2"/>',
+            '<text x="80" y="23" text-anchor="middle" font-size="13" font-weight="bold" fill="' + color + '" font-family="monospace">' + escapeSvgText(text) + '</text>',
+            '</svg>',
+          ].join('')
           const marker = new google.maps.Marker({
             position: pos,
             map: mapRef.current!,
-            icon: {
-              url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
-                '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="36" viewBox="0 0 160 36">' +
-                '<rect x="0" y="0" width="160" height="36" rx="8" fill="rgba(4,8,24,0.95)" stroke="' + color + '" stroke-width="2"/>' +
-                '<text x="80" y="23" text-anchor="middle" font-size="13" font-weight="bold" fill="' + color + '" font-family="monospace">' + text + '</text>' +
-                '</svg>'
-              ),
-              scaledSize: new google.maps.Size(160, 36),
-              anchor: new google.maps.Point(80, 90),
-            },
+            icon: generatedSvgIcon(
+              markerSvg,
+              new google.maps.Size(160, 36),
+              new google.maps.Point(80, 90),
+              {
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: 8,
+                fillColor: color,
+                fillOpacity: 0.85,
+                strokeColor: '#040818',
+                strokeWeight: 2,
+              }
+            ),
             zIndex: 1001,
           })
           setTimeout(() => marker.setMap(null), 4000)
@@ -468,18 +524,18 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
           const progress = step2 / fullPath.length
           if (progress >= 0.25 && !msg25shown) {
             msg25shown = true
-            showMilestoneMsg('⛽ Gas / Red Bull?', fullPath[step2], '#fb923c')
+            showMilestoneMsg('Gas / Red Bull?', fullPath[step2], '#fb923c')
           }
           if (progress >= 0.50 && !msg50shown) {
             msg50shown = true
-            showMilestoneMsg('🔧 Material?', fullPath[step2], '#c084fc')
+            showMilestoneMsg('Material?', fullPath[step2], '#c084fc')
           }
           if (progress >= 0.98 && !msgArrivalShown) {
             msgArrivalShown = true
-            showMilestoneMsg('&#9889; Power On &#x1F4B0;', fullPath[step2], '#facc15')
+            showMilestoneMsg('Power On', fullPath[step2], '#facc15')
           }
           if (progress >= 0.98 && !msg50shown) {
-            showMilestoneMsg('⚡ Power On 💰', fullPath[step2], '#facc15')
+            showMilestoneMsg('Power On', fullPath[step2], '#facc15')
           }
 
           // Rubber burn on sharp corners
@@ -520,11 +576,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
           if (Math.abs(smoothHeading - lastH) > 8) {
             // Google Maps heading: 0=North(up), 90=East(right)
             // SVG truck faces right by default → add 90 to align North=up
-            dotMarker.setIcon({
-              url: getTruckIcon(Math.round(smoothHeading + 90) % 360),
-              scaledSize: new google.maps.Size(48, 48),
-              anchor: new google.maps.Point(24, 24),
-            })
+            dotMarker.setIcon(truckMarkerIcon(Math.round(smoothHeading + 90) % 360))
             ;(dotMarker as any)._lastH = smoothHeading
           }
 
@@ -753,7 +805,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         position: { lat, lng },
         map: mapRef.current!,
         title,
-        icon: score >= 85 ? elitePinIcon() : isPortal ? portalPinIcon() : pinSymbol(pinColorForScore(score), score),
+        icon: score >= 85 ? elitePinIcon(score) : isPortal ? portalPinIcon(score) : pinSymbol(pinColorForScore(score), score),
         zIndex: score >= 85 ? 600 : isPortal ? 550 : 500,
         optimized: false,
       })
@@ -767,11 +819,15 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         let frameIdx = 0
         const animateFlame = () => {
           frameIdx = (frameIdx + 1) % 12
-          m.setIcon({
-            url: eliteFrameCache[frameIdx],
-            scaledSize: new google.maps.Size(40, 64),
-            anchor: new google.maps.Point(20, 52),
-          })
+          const frameUrl = eliteFrameCache[frameIdx]
+          m.setIcon(frameUrl
+            ? {
+              url: frameUrl,
+              scaledSize: new google.maps.Size(40, 64),
+              anchor: new google.maps.Point(20, 52),
+            }
+            : pinSymbol(pinColorForScore(score), score)
+          )
           requestAnimationFrame(animateFlame)
         }
         requestAnimationFrame(animateFlame)
@@ -781,11 +837,15 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         let frameIdx = Math.floor(Math.random() * 12)
         const animatePortal = () => {
           frameIdx = (frameIdx + 1) % 12
-          m.setIcon({
-            url: portalFrameCache[frameIdx],
-            scaledSize: new google.maps.Size(40, 56),
-            anchor: new google.maps.Point(20, 52),
-          })
+          const frameUrl = portalFrameCache[frameIdx]
+          m.setIcon(frameUrl
+            ? {
+              url: frameUrl,
+              scaledSize: new google.maps.Size(40, 56),
+              anchor: new google.maps.Point(20, 52),
+            }
+            : pinSymbol(pinColorForScore(score), score)
+          )
           requestAnimationFrame(animatePortal)
         }
         requestAnimationFrame(animatePortal)
