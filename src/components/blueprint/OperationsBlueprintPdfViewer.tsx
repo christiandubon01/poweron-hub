@@ -653,6 +653,13 @@ function getShapeKindLabel(kind: any, meta: Record<string, any> = {}) {
 type CalibrationUnit = 'ft' | 'm' | 'in' | 'cm' | 'mm'
 type CalibrationStatus = 'none' | 'pending' | 'saved'
 
+type CalibrationKind = 'auto-scale' | 'selected-scale' | 'manual-known-distance' | 'legacy'
+
+interface PageSizeInches {
+  pageWidthInches: number
+  pageHeightInches: number
+}
+
 interface CalibrationData {
   pageNumber: number
   // Euclidean distance in normalised page-coords (0-1 Ãƒâ€" page width)
@@ -660,6 +667,160 @@ interface CalibrationData {
   realWorldValue: number
   realWorldUnit: CalibrationUnit
   savedAt: string
+  pageWidthInches?: number
+  pageHeightInches?: number
+  sheetDistanceInches?: number
+  unitsPerSheetInch?: number
+  calibrationKind?: CalibrationKind
+}
+
+function getPageSizeInchesFromPts(pageWidthPts: number, pageHeightPts: number): PageSizeInches {
+  return {
+    pageWidthInches: pageWidthPts / 72,
+    pageHeightInches: pageHeightPts / 72,
+  }
+}
+
+function getLegacyScaleForPage(cal: CalibrationData): number {
+  return cal.normDistance / Math.max(0.001, cal.realWorldValue)
+}
+
+function resolveUnitsPerSheetInch(cal: CalibrationData, pageSize: PageSizeInches | null): number | null {
+  if (cal.unitsPerSheetInch != null && Number.isFinite(cal.unitsPerSheetInch) && cal.unitsPerSheetInch > 0) {
+    return cal.unitsPerSheetInch
+  }
+  if (cal.sheetDistanceInches != null && cal.sheetDistanceInches > 0) {
+    return cal.realWorldValue / cal.sheetDistanceInches
+  }
+  if (pageSize && Math.abs(cal.normDistance - 1.0) < 0.0001 && pageSize.pageWidthInches > 0) {
+    return cal.realWorldValue / pageSize.pageWidthInches
+  }
+  return null
+}
+
+function getNormSegmentSheetDistanceInches(
+  p1: { x: number; y: number },
+  p2: { x: number; y: number },
+  pageSize: PageSizeInches,
+): number {
+  const dxSheetInches = (p2.x - p1.x) * pageSize.pageWidthInches
+  const dySheetInches = (p2.y - p1.y) * pageSize.pageHeightInches
+  return Math.hypot(dxSheetInches, dySheetInches)
+}
+
+function buildScaleCalibration(
+  pageNumber: number,
+  realWidthFeet: number,
+  pageSize: PageSizeInches | null,
+  savedAt: string,
+  kind: 'auto-scale' | 'selected-scale',
+): CalibrationData {
+  const cal: CalibrationData = {
+    pageNumber,
+    normDistance: 1.0,
+    realWorldValue: realWidthFeet,
+    realWorldUnit: 'ft',
+    savedAt,
+    calibrationKind: kind,
+  }
+  if (pageSize && pageSize.pageWidthInches > 0) {
+    cal.pageWidthInches = pageSize.pageWidthInches
+    cal.pageHeightInches = pageSize.pageHeightInches
+    cal.sheetDistanceInches = pageSize.pageWidthInches
+    cal.unitsPerSheetInch = realWidthFeet / pageSize.pageWidthInches
+  }
+  return cal
+}
+
+function buildManualKnownDistanceCalibration(
+  pageNumber: number,
+  p1: { x: number; y: number },
+  p2: { x: number; y: number },
+  realWorldValue: number,
+  realWorldUnit: CalibrationUnit,
+  pageSize: PageSizeInches | null,
+): CalibrationData {
+  const normDist = Math.hypot(p2.x - p1.x, p2.y - p1.y)
+  const cal: CalibrationData = {
+    pageNumber,
+    normDistance: normDist,
+    realWorldValue,
+    realWorldUnit,
+    savedAt: new Date().toISOString(),
+    calibrationKind: 'manual-known-distance',
+  }
+  if (pageSize && normDist > 0) {
+    const sheetDistanceInches = getNormSegmentSheetDistanceInches(p1, p2, pageSize)
+    cal.pageWidthInches = pageSize.pageWidthInches
+    cal.pageHeightInches = pageSize.pageHeightInches
+    cal.sheetDistanceInches = sheetDistanceInches
+    cal.unitsPerSheetInch = realWorldValue / sheetDistanceInches
+  }
+  return cal
+}
+
+function buildAutoCalibrationForPage(
+  pageNumber: number,
+  detectedResult: DetectedScaleResult | null,
+  pageSize: PageSizeInches | null,
+): CalibrationData | null {
+  if (!detectedResult || detectedResult.ambiguous || detectedResult.candidates.length !== 1) return null
+  const c = detectedResult.candidates[0]
+  return buildScaleCalibration(pageNumber, c.realWidthFeet, pageSize, detectedResult.detectedAt, 'auto-scale')
+}
+
+function convertMeasuredDistance(
+  p1: { x: number; y: number },
+  p2: { x: number; y: number },
+  cal: CalibrationData,
+  pageSize: PageSizeInches | null,
+): number {
+  const unitsPerSheetInch = resolveUnitsPerSheetInch(cal, pageSize)
+  if (pageSize && unitsPerSheetInch != null) {
+    return getNormSegmentSheetDistanceInches(p1, p2, pageSize) * unitsPerSheetInch
+  }
+  const normDist = Math.hypot(p2.x - p1.x, p2.y - p1.y)
+  return normDist / getLegacyScaleForPage(cal)
+}
+
+function convertMeasuredPolylineLength(
+  points: Array<{ x: number; y: number }>,
+  cal: CalibrationData,
+  pageSize: PageSizeInches | null,
+): number {
+  const unitsPerSheetInch = resolveUnitsPerSheetInch(cal, pageSize)
+  if (pageSize && unitsPerSheetInch != null) {
+    let sheetLen = 0
+    for (let i = 1; i < points.length; i++) {
+      sheetLen += getNormSegmentSheetDistanceInches(points[i - 1], points[i], pageSize)
+    }
+    return sheetLen * unitsPerSheetInch
+  }
+  let normLen = 0
+  for (let i = 1; i < points.length; i++) {
+    normLen += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
+  }
+  return normLen / getLegacyScaleForPage(cal)
+}
+
+function convertMeasuredPolygonArea(
+  points: Array<{ x: number; y: number }>,
+  cal: CalibrationData,
+  pageSize: PageSizeInches | null,
+): number {
+  let normArea = 0
+  for (let i = 0; i < points.length; i++) {
+    const j = (i + 1) % points.length
+    normArea += points[i].x * points[j].y - points[j].x * points[i].y
+  }
+  normArea = Math.abs(normArea) / 2
+  const unitsPerSheetInch = resolveUnitsPerSheetInch(cal, pageSize)
+  if (pageSize && unitsPerSheetInch != null) {
+    const sheetAreaSquareInches = normArea * pageSize.pageWidthInches * pageSize.pageHeightInches
+    return sheetAreaSquareInches * unitsPerSheetInch * unitsPerSheetInch
+  }
+  const scaleForPage = getLegacyScaleForPage(cal)
+  return normArea / (scaleForPage * scaleForPage)
 }
 
 // Parses common construction-style length input for the Calibrate manual-length field.
@@ -717,6 +878,105 @@ interface DetectedScaleResult {
   candidates: DetectedScaleCandidate[]
   ambiguous: boolean
   detectedAt: string
+}
+
+type ScaleScanPageReason =
+  | 'matched'
+  | 'ambiguous'
+  | 'nts'
+  | 'no-text'
+  | 'text-no-scale-token'
+  | 'scale-token-no-match'
+  | 'not-scanned'
+
+interface ScaleScanPageDiagnostic {
+  pageNumber: number
+  textItemCount: number
+  hasText: boolean
+  hasScaleWord: boolean
+  hasQuarterToken: boolean
+  hasNts: boolean
+  matched: boolean
+  ambiguous: boolean
+  reason: ScaleScanPageReason
+  normalizedSample: string
+}
+
+interface ScaleScanDiagnosticsSummary {
+  totalPages: number
+  pagesScanned: number
+  pagesWithText: number
+  pagesWithScaleWord: number
+  pagesWithQuarterScaleToken: number
+  pagesMatched: number
+  pagesAmbiguous: number
+  pagesNts: number
+  pagesNoText: number
+  pagesTextNoMatch: number
+  pageByNumber: Record<number, ScaleScanPageDiagnostic>
+}
+
+const SCALE_SCAN_TEXT_SAMPLE_MAX = 250
+
+const EMPTY_SCALE_SCAN_DIAGNOSTICS: ScaleScanDiagnosticsSummary = {
+  totalPages: 0,
+  pagesScanned: 0,
+  pagesWithText: 0,
+  pagesWithScaleWord: 0,
+  pagesWithQuarterScaleToken: 0,
+  pagesMatched: 0,
+  pagesAmbiguous: 0,
+  pagesNts: 0,
+  pagesNoText: 0,
+  pagesTextNoMatch: 0,
+  pageByNumber: {},
+}
+
+function classifyScaleScanPageReason(
+  hasText: boolean,
+  hasNts: boolean,
+  result: DetectedScaleResult | null,
+  hasScaleWord: boolean,
+  hasQuarterToken: boolean,
+): ScaleScanPageReason {
+  if (result?.ambiguous) return 'ambiguous'
+  if (result && result.candidates.length === 1) return 'matched'
+  if (hasNts) return 'nts'
+  if (!hasText) return 'no-text'
+  if (!hasScaleWord && !hasQuarterToken) return 'text-no-scale-token'
+  return 'scale-token-no-match'
+}
+
+function buildScaleScanDiagnosticsSummary(
+  pageByNumber: Record<number, ScaleScanPageDiagnostic>,
+  totalPages: number,
+): ScaleScanDiagnosticsSummary {
+  const pages = Object.values(pageByNumber)
+  return {
+    totalPages,
+    pagesScanned: pages.length,
+    pagesWithText: pages.filter((p) => p.hasText).length,
+    pagesWithScaleWord: pages.filter((p) => p.hasScaleWord).length,
+    pagesWithQuarterScaleToken: pages.filter((p) => p.hasQuarterToken).length,
+    pagesMatched: pages.filter((p) => p.matched).length,
+    pagesAmbiguous: pages.filter((p) => p.ambiguous).length,
+    pagesNts: pages.filter((p) => p.hasNts).length,
+    pagesNoText: pages.filter((p) => !p.hasText).length,
+    pagesTextNoMatch: pages.filter((p) => p.hasText && !p.matched && !p.ambiguous).length,
+    pageByNumber,
+  }
+}
+
+function getScaleScanPageReasonLabel(reason: ScaleScanPageReason): string {
+  switch (reason) {
+    case 'matched': return 'matched'
+    case 'ambiguous': return 'ambiguous scale candidates'
+    case 'nts': return 'N.T.S. / not to scale'
+    case 'no-text': return 'no text layer found'
+    case 'text-no-scale-token': return 'text found, no SCALE/1/4 token'
+    case 'scale-token-no-match': return 'text found, no scale match'
+    default: return 'not scanned yet'
+  }
 }
 
 interface MeasurementStyle {
@@ -1352,6 +1612,129 @@ function getMeasurePatternDef(patternId: string, pattern: string, color: string,
   }
 }
 
+const DETECTED_SCALES_STORAGE_VERSION = 2
+
+function getDetectedScalesStorageKey(blueprintId: string) {
+  return `blueprint_detected_scales_v${DETECTED_SCALES_STORAGE_VERSION}_${blueprintId}`
+}
+
+/** Join PDF text-layer items and normalize common quote/whitespace variants for scale parsing. */
+function normalizeBlueprintPdfText(textItems: string[]): string {
+  return textItems
+    .map((s) => String(s || '').trim())
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\u2044/g, '/')
+    .replace(/[\u2018\u2019\u2032\u0060]/g, "'")
+    .replace(/[\u201C\u201D\u2033\u2036]/g, '"')
+    .replace(/[\u2013\u2014\u2212]/g, '-')
+    .replace(/\u00B0/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+/** Compact parser-friendly variant — collapses fragmented CAD/PDF scale extraction. */
+function buildBlueprintScaleParserText(displayText: string): string {
+  return displayText
+    .replace(/\u00BC/g, '1/4')
+    .replace(/\u00BD/g, '1/2')
+    .replace(/\u00BE/g, '3/4')
+    .replace(/(\d+)\s*\/\s*(\d+)/g, '$1/$2')
+    .replace(/(\d+\/\d+)\s+(?:"|''|in(?:ch(?:es)?)?)\b/gi, '$1"')
+    .replace(/(?<!\d\/)(\d{1,2})\s+(?:"|''|in(?:ch(?:es)?)?)\b/gi, '$1"')
+    .replace(/\b1\s*['′]\s*-\s*0\b/gi, "1'-0")
+    .replace(/\b1\s*['′]\s+0\b/gi, "1'-0")
+    .replace(/\b1\s*-\s*0\b/g, "1'-0")
+    .replace(/\b1\s*['′]\b(?!\s*[-\d])/gi, "1'")
+    .replace(/\s*=\s*/g, '=')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+function isNotToScaleMarker(text: string): boolean {
+  return /\bN\.?\s*T\.?\s*S\.?\b/i.test(text)
+    || /\bNTS\b/i.test(text)
+    || /\bNOT\s+TO\s+SCALE\b/i.test(text)
+}
+
+function pushScaleCandidate(
+  candidates: DetectedScaleCandidate[],
+  parsedScale: string,
+  realWidthFeet: number,
+  confidence: number,
+  sourceText: string,
+) {
+  const rw = realWidthFeet
+  if (!candidates.some((c) => Math.abs(c.realWidthFeet - rw) / Math.max(0.001, rw) < 0.05)) {
+    candidates.push({ parsedScale: parsedScale.trim(), realWidthFeet: rw, confidence, sourceText: sourceText.trim() })
+  }
+}
+
+function collectBlueprintScaleCandidates(text: string, paperWidthInches: number): DetectedScaleCandidate[] {
+  const candidates: DetectedScaleCandidate[] = []
+  if (!text) return candidates
+
+  const inchUnit = '(?:"|\'\'|in(?:ch(?:es)?)?)?'
+  const oneFoot = `(?:1\\s*['′]\\s*-\\s*0|1\\s*-\\s*0|1\\s*['′]\\s+0)\\s*${inchUnit}|1\\s*(?:ft|feet|foot)\\b`
+  const oneFootShort = `1\\s*['′](?!\\s*[-\\d])|1\\s*(?:ft|feet|foot)\\b`
+
+  let m: RegExpExecArray | null
+
+  const fracFeetInchesRe = new RegExp(`(\\d+)\\s*\\/\\s*(\\d+)\\s*${inchUnit}?\\s*=\\s*(?:${oneFoot})`, 'gi')
+  while ((m = fracFeetInchesRe.exec(text)) !== null) {
+    if (isNotToScaleMarker(m[0])) continue
+    const num = parseInt(m[1], 10)
+    const den = parseInt(m[2], 10)
+    if (num > 0 && den > 0) {
+      const S = den / num
+      pushScaleCandidate(candidates, m[0], paperWidthInches * S, 0.95, m[0])
+    }
+  }
+
+  const fracFeetOnlyRe = new RegExp(`(\\d+)\\s*\\/\\s*(\\d+)\\s*${inchUnit}?\\s*=\\s*(?:${oneFootShort})`, 'gi')
+  while ((m = fracFeetOnlyRe.exec(text)) !== null) {
+    if (isNotToScaleMarker(m[0])) continue
+    const num = parseInt(m[1], 10)
+    const den = parseInt(m[2], 10)
+    if (num > 0 && den > 0) {
+      const S = den / num
+      pushScaleCandidate(candidates, m[0], paperWidthInches * S, 0.9, m[0])
+    }
+  }
+
+  const intFeetInchesRe = new RegExp(`(?<!\\d\\/)(\\d{1,2})\\s*${inchUnit}\\s*=\\s*(?:${oneFoot})`, 'gi')
+  while ((m = intFeetInchesRe.exec(text)) !== null) {
+    if (isNotToScaleMarker(m[0])) continue
+    const num = parseInt(m[1], 10)
+    if (num > 0 && num <= 24) {
+      const S = 1 / num
+      pushScaleCandidate(candidates, m[0], paperWidthInches * S, 0.85, m[0])
+    }
+  }
+
+  const intFeetOnlyRe = new RegExp(`(?<!\\d\\/)(\\d{1,2})\\s*${inchUnit}\\s*=\\s*(?:${oneFootShort})`, 'gi')
+  while ((m = intFeetOnlyRe.exec(text)) !== null) {
+    if (isNotToScaleMarker(m[0])) continue
+    const num = parseInt(m[1], 10)
+    if (num > 0 && num <= 24) {
+      const S = 1 / num
+      pushScaleCandidate(candidates, m[0], paperWidthInches * S, 0.8, m[0])
+    }
+  }
+
+  const ratioRe = /(?:scale\s*[=:]?\s*)?1\s*:\s*(\d+)/gi
+  while ((m = ratioRe.exec(text)) !== null) {
+    if (isNotToScaleMarker(m[0])) continue
+    const ratio = parseInt(m[1], 10)
+    if (ratio >= 5 && ratio <= 10000) {
+      const rw = paperWidthInches * (ratio / 12)
+      pushScaleCandidate(candidates, m[0], rw, 0.75, m[0])
+    }
+  }
+
+  return candidates
+}
+
 // Best-effort blueprint scale text detection from PDF text items.
 // Returns null if no recognisable scale found.
 function detectBlueprintScaleText(
@@ -1359,44 +1742,17 @@ function detectBlueprintScaleText(
   pageWidthPts: number,
   pageNumber: number,
 ): DetectedScaleResult | null {
-  const joined = textItems.join(' ')
+  const joined = normalizeBlueprintPdfText(textItems)
+  if (!joined) return null
+
   const paperWidthInches = pageWidthPts / 72
+  const parserText = buildBlueprintScaleParserText(joined)
+  const parseSources = parserText === joined ? [joined] : [joined, parserText]
+
   const candidates: DetectedScaleCandidate[] = []
-
-  // Fractional inch = 1 foot: e.g. "1/4" = 1'-0"", "3/16" = 1'-0""
-  const fracRe = /(\d+)\s*\/\s*(\d+)\s*["""]?\s*=\s*1\s*[-'''`]\s*0\s*["""]?/g
-  let m: RegExpExecArray | null
-  while ((m = fracRe.exec(joined)) !== null) {
-    const num = parseInt(m[1], 10), den = parseInt(m[2], 10)
-    if (num > 0 && den > 0) {
-      const S = den / num   // feet per paper inch (e.g. 4 for 1/4")
-      candidates.push({ parsedScale: m[0].trim(), realWidthFeet: paperWidthInches * S, confidence: 0.95, sourceText: m[0] })
-    }
-  }
-
-  // Integer inch = 1 foot: e.g. "1" = 1'-0"", "2" = 1'-0""
-  const intRe = /(?<!\d)(\d+)\s*["""]?\s*=\s*1\s*[-'''`]\s*0\s*["""]?/g
-  while ((m = intRe.exec(joined)) !== null) {
-    const num = parseInt(m[1], 10)
-    if (num > 0) {
-      const S = 1 / num   // feet per paper inch (e.g. 0.5 for 2")
-      const rw = paperWidthInches * S
-      if (!candidates.some(c => Math.abs(c.realWidthFeet - rw) / Math.max(0.001, rw) < 0.05)) {
-        candidates.push({ parsedScale: m[0].trim(), realWidthFeet: rw, confidence: 0.85, sourceText: m[0] })
-      }
-    }
-  }
-
-  // Ratio form: "Scale 1:48", "1:100"
-  const ratioRe = /(?:scale\s*[=:]?\s*)?1\s*:\s*(\d+)/gi
-  while ((m = ratioRe.exec(joined)) !== null) {
-    const ratio = parseInt(m[1], 10)
-    if (ratio >= 5 && ratio <= 10000) {
-      // 1:ratio Ã¢â€ â€™ 1 paper inch = ratio real inches = ratio/12 feet
-      const rw = paperWidthInches * (ratio / 12)
-      if (!candidates.some(c => Math.abs(c.realWidthFeet - rw) / Math.max(0.001, rw) < 0.05)) {
-        candidates.push({ parsedScale: m[0].trim(), realWidthFeet: rw, confidence: 0.75, sourceText: m[0] })
-      }
+  for (const source of parseSources) {
+    for (const c of collectBlueprintScaleCandidates(source, paperWidthInches)) {
+      pushScaleCandidate(candidates, c.parsedScale, c.realWidthFeet, c.confidence, c.sourceText)
     }
   }
 
@@ -1405,11 +1761,29 @@ function detectBlueprintScaleText(
   // Deduplicate within 5% relative tolerance
   const deduped: DetectedScaleCandidate[] = []
   for (const c of candidates) {
-    if (!deduped.some(d => Math.abs(d.realWidthFeet - c.realWidthFeet) / Math.max(0.001, c.realWidthFeet) < 0.05)) {
+    if (!deduped.some((d) => Math.abs(d.realWidthFeet - c.realWidthFeet) / Math.max(0.001, c.realWidthFeet) < 0.05)) {
       deduped.push(c)
     }
   }
   return { pageNumber, candidates: deduped, ambiguous: deduped.length > 1, detectedAt: new Date().toISOString() }
+}
+
+function buildNormTextItems(rawItems: any[], pageW: number, pageH: number) {
+  return rawItems
+    .filter((it: any) => it.str?.trim())
+    .map((it: any) => {
+      const tx: number = it.transform?.[4] ?? 0
+      const ty: number = it.transform?.[5] ?? 0
+      const iw: number = Math.abs(it.width ?? 0)
+      const ih: number = Math.abs(it.transform?.[3] ?? 12)
+      return {
+        x: tx / Math.max(1, pageW),
+        y: 1 - (ty + ih) / Math.max(1, pageH),
+        w: iw / Math.max(1, pageW),
+        h: ih / Math.max(1, pageH),
+      }
+    })
+    .filter((it: any) => it.w > 0.001 && it.h > 0.001)
 }
 
 function normalizePoints(points: Array<{ x: number; y: number }>, width: number, height: number) {
@@ -1919,8 +2293,29 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Auto-detected scale results Ã¢â‚¬â€ keyed by pageNumber Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const [detectedScales, setDetectedScales] = useState<Record<number, DetectedScaleResult>>({})
-  // Tracks which pages have already been scanned so we don't repeat work.
+  // Tracks pages successfully scanned this session (failed pages stay eligible for rescan).
   const scannedPagesRef = useRef<Set<number>>(new Set())
+  const scaleScanRunRef = useRef(0)
+  const [scaleScanStatus, setScaleScanStatus] = useState<'idle' | 'scanning' | 'complete'>('idle')
+  const [scaleScanProgress, setScaleScanProgress] = useState({ done: 0, total: 0 })
+  const [scaleRescanNonce, setScaleRescanNonce] = useState(0)
+  const [scaleScanDiagnostics, setScaleScanDiagnostics] = useState<ScaleScanDiagnosticsSummary>(EMPTY_SCALE_SCAN_DIAGNOSTICS)
+
+  // PDF page physical size in inches — keyed by 1-based page number.
+  const [pageSizeInchesCache, setPageSizeInchesCache] = useState<Record<number, PageSizeInches>>({})
+  const pageSizeInchesCacheRef = useRef<Record<number, PageSizeInches>>({})
+
+  const getPageSizeInches = useCallback((pageNumber: number): PageSizeInches | null => {
+    const cached = pageSizeInchesCacheRef.current[pageNumber] ?? pageSizeInchesCache[pageNumber]
+    return cached?.pageWidthInches > 0 && cached?.pageHeightInches > 0 ? cached : null
+  }, [pageSizeInchesCache])
+
+  const cachePageSizeInches = useCallback((pageNumber: number, pageWidthPts: number, pageHeightPts: number) => {
+    if (!Number.isFinite(pageWidthPts) || !Number.isFinite(pageHeightPts) || pageWidthPts <= 0 || pageHeightPts <= 0) return
+    const next = getPageSizeInchesFromPts(pageWidthPts, pageHeightPts)
+    pageSizeInchesCacheRef.current = { ...pageSizeInchesCacheRef.current, [pageNumber]: next }
+    setPageSizeInchesCache((prev) => ({ ...prev, [pageNumber]: next }))
+  }, [])
 
   // Normalized PDF text item positions keyed by page number — used for text-aware textHighlight quads
   type TextItemNorm = { x: number; y: number; w: number; h: number }
@@ -1930,11 +2325,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // Ã¢â€â‚¬Ã¢â€â‚¬ Derived calibration for current page Ã¢â‚¬â€ precedence: manual > auto > none Ã¢â€â‚¬
   const savedCalibration: CalibrationData | null = savedCalibrations[currentPage] ?? null
   const detectedResult: DetectedScaleResult | null = detectedScales[currentPage] ?? null
-  const autoCalibration: CalibrationData | null = (() => {
-    if (!detectedResult || detectedResult.ambiguous || detectedResult.candidates.length !== 1) return null
-    const c = detectedResult.candidates[0]
-    return { pageNumber: currentPage, normDistance: 1.0, realWorldValue: c.realWidthFeet, realWorldUnit: 'ft' as CalibrationUnit, savedAt: detectedResult.detectedAt }
-  })()
+  const autoCalibration: CalibrationData | null = buildAutoCalibrationForPage(
+    currentPage,
+    detectedResult,
+    getPageSizeInches(currentPage),
+  )
   const activeCalibration: CalibrationData | null = savedCalibration ?? autoCalibration
   const detectedScale: number | null = activeCalibration
     ? activeCalibration.normDistance / Math.max(0.001, activeCalibration.realWorldValue)
@@ -2682,6 +3077,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         if (!pdfDoc || typeof pdfDoc.getPage !== 'function') return
         const page = await pdfDoc.getPage(Math.max(1, Math.min(Number(pdfDoc.numPages || numPages || 1), clampedPage)))
         const baseViewport = page.getViewport({ scale: 1 })
+        cachePageSizeInches(clampedPage, baseViewport.width, baseViewport.height)
         const measuredWidth = viewportWidth || scrollAreaRef.current?.clientWidth || 0
         const measuredHeight = scrollAreaRef.current?.clientHeight || 0
         const availableWidth = Math.max(120, measuredWidth - 26)
@@ -3781,20 +4177,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     if (isCircuit) {
       const manualCal = savedCalibrations[currentPage] ?? null
       const detRes = detectedScales[currentPage] ?? null
-      const autoCal: CalibrationData | null = (!detRes || detRes.ambiguous || detRes.candidates.length !== 1)
-        ? null
-        : (() => {
-            const c = detRes.candidates[0]
-            return { pageNumber: currentPage, normDistance: 1.0, realWorldValue: c.realWidthFeet, realWorldUnit: 'ft' as CalibrationUnit, savedAt: detRes.detectedAt }
-          })()
+      const autoCal = buildAutoCalibrationForPage(currentPage, detRes, getPageSizeInches(currentPage))
       const calForPage = manualCal ?? autoCal
-      const scaleForPage = calForPage ? calForPage.normDistance / Math.max(0.001, calForPage.realWorldValue) : null
-      if (calForPage && scaleForPage) {
-        let normLen = 0
-        for (let i = 1; i < points.length; i++) {
-          normLen += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
-        }
-        totalDistance = normLen / scaleForPage
+      const pageSize = getPageSizeInches(currentPage)
+      if (calForPage) {
+        totalDistance = convertMeasuredPolylineLength(points, calForPage, pageSize)
         distanceUnit = calForPage.realWorldUnit
         distanceLabel = `Total: ${totalDistance.toFixed(2)} ${distanceUnit}`
       } else {
@@ -3831,7 +4218,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setFocusedAnnotationId(ann.id)
     setToolMode('select')
     void persistAnnotation(ann)
-  }, [blueprint, currentPage, shapeKind, shapeOptions, persistAnnotation, savedCalibrations, detectedScales, showTransientSyncNotice])
+  }, [blueprint, currentPage, shapeKind, shapeOptions, persistAnnotation, savedCalibrations, detectedScales, showTransientSyncNotice, getPageSizeInches])
 
   useEffect(() => {
     if (!measurePendingCommit) return
@@ -3841,16 +4228,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // Manual calibration takes precedence over auto-detected.
     const manualCal = savedCalibrations[pageNumber] ?? null
     const detRes = detectedScales[pageNumber] ?? null
-    const autoCal: CalibrationData | null = (() => {
-      if (!detRes || detRes.ambiguous || detRes.candidates.length !== 1) return null
-      const c = detRes.candidates[0]
-      return { pageNumber, normDistance: 1.0, realWorldValue: c.realWidthFeet, realWorldUnit: 'ft' as CalibrationUnit, savedAt: detRes.detectedAt }
-    })()
+    const autoCal = buildAutoCalibrationForPage(pageNumber, detRes, getPageSizeInches(pageNumber))
     const calForPage = manualCal ?? autoCal
-    const scaleForPage = calForPage
-      ? calForPage.normDistance / Math.max(0.001, calForPage.realWorldValue)
-      : null
-    const hasCalibration = !!(calForPage && scaleForPage)
+    const pageSize = getPageSizeInches(pageNumber)
+    const hasCalibration = !!calForPage
     // Multi-point measure (measure-perimeter) still finalizes and keeps its path
     // visible without calibration -- it just can't show a real-world distance yet.
     // Single-point distance/area measures keep the prior behavior: discard silently
@@ -3867,7 +4248,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     let meta: Record<string, any> = {}
     if (type === 'measure-distance' && points.length >= 2) {
       const normDist = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y)
-      const realDist = normDist / scaleForPage!
+      const realDist = convertMeasuredDistance(points[0], points[1], calForPage!, pageSize)
       label = `${realDist.toFixed(2)} ${calForPage!.realWorldUnit}`
       meta = { points, label, normDistance: normDist, realWorldDistance: realDist, unit: calForPage!.realWorldUnit, style: measurementStyle }
     } else if (type === 'measure-area' && points.length >= 3) {
@@ -3877,7 +4258,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         normArea += points[i].x * points[j].y - points[j].x * points[i].y
       }
       normArea = Math.abs(normArea) / 2
-      const realArea = normArea / (scaleForPage! * scaleForPage!)
+      const realArea = convertMeasuredPolygonArea(points, calForPage!, pageSize)
       label = `${realArea.toFixed(2)} ${calForPage!.realWorldUnit}\u00b2`
       meta = { points, label, normArea, realWorldArea: realArea, unit: calForPage!.realWorldUnit, style: measurementStyle }
     } else if (type === 'measure-perimeter' && points.length >= 2) {
@@ -3886,7 +4267,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         normPerim += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
       }
       if (hasCalibration) {
-        const realPerim = normPerim / scaleForPage!
+        const realPerim = convertMeasuredPolylineLength(points, calForPage!, pageSize)
         label = `Total: ${realPerim.toFixed(2)} ${calForPage!.realWorldUnit}`
         meta = {
           points, label, normPerimeter: normPerim, realWorldPerimeter: realPerim,
@@ -3925,7 +4306,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     void persistAnnotation(ann)
     setFocusedAnnotationId(ann.id)
     setToolMode('select')
-  }, [measurePendingCommit, blueprint, persistAnnotation, savedCalibrations, detectedScales, toolColors, measurementStyle, showTransientSyncNotice])
+  }, [measurePendingCommit, blueprint, persistAnnotation, savedCalibrations, detectedScales, toolColors, measurementStyle, showTransientSyncNotice, getPageSizeInches])
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Persist manual calibrations to localStorage Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   useEffect(() => {
@@ -3936,17 +4317,35 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // Ã¢â€â‚¬Ã¢â€â‚¬ Persist detected scales to localStorage Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   useEffect(() => {
     if (!blueprint?.id) return
-    try { localStorage.setItem(`blueprint_detected_scales_${blueprint.id}`, JSON.stringify(detectedScales)) } catch {}
+    try { localStorage.setItem(getDetectedScalesStorageKey(blueprint.id), JSON.stringify(detectedScales)) } catch {}
   }, [detectedScales, blueprint?.id])
+
+  const handleRescanScales = useCallback(() => {
+    if (!blueprint?.id) return
+    try { localStorage.removeItem(getDetectedScalesStorageKey(blueprint.id)) } catch {}
+    scannedPagesRef.current = new Set()
+    setDetectedScales({})
+    pageSizeInchesCacheRef.current = {}
+    setPageSizeInchesCache({})
+    setScaleScanDiagnostics(EMPTY_SCALE_SCAN_DIAGNOSTICS)
+    setScaleScanStatus('idle')
+    setScaleScanProgress({ done: 0, total: 0 })
+    setScaleRescanNonce((n) => n + 1)
+  }, [blueprint?.id])
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Rehydrate calibration and detection state when blueprint changes Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   useEffect(() => {
     if (!blueprint?.id) return
     scannedPagesRef.current = new Set()
+    setScaleScanStatus('idle')
+    setScaleScanProgress({ done: 0, total: 0 })
+    setScaleScanDiagnostics(EMPTY_SCALE_SCAN_DIAGNOSTICS)
+    pageSizeInchesCacheRef.current = {}
+    setPageSizeInchesCache({})
     try {
       const cal = localStorage.getItem(`blueprint_calibrations_${blueprint.id}`)
       setSavedCalibrations(cal ? JSON.parse(cal) : {})
-      const det = localStorage.getItem(`blueprint_detected_scales_${blueprint.id}`)
+      const det = localStorage.getItem(getDetectedScalesStorageKey(blueprint.id))
       setDetectedScales(det ? JSON.parse(det) : {})
     } catch {
       setSavedCalibrations({})
@@ -3955,49 +4354,94 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   }, [blueprint?.id])
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Auto-detect blueprint scale from PDF text content Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-  // Runs once per page per blueprint session. Does not overwrite manual calibration.
+  // Scans every page after the PDF loads. Does not overwrite manual calibration.
   useEffect(() => {
-    if (!pdfDoc || !currentPage) return
-    if (scannedPagesRef.current.has(currentPage)) return
-    scannedPagesRef.current.add(currentPage)
-    void (async () => {
-      try {
-        const doc = getLoadedPdfDoc()
-        if (!doc) return
-        const safePageNumber = getSafePdfPageNumber(currentPage)
-        const page = await doc.getPage(safePageNumber)
-        const pageW: number = page.view?.[2] ?? 612
-        const pageH: number = page.view?.[3] ?? 792
-        const textContent = await page.getTextContent()
-        const rawItems: any[] = textContent.items || []
-        const strItems: string[] = rawItems.map((it: any) => it.str || '')
-        const result = detectBlueprintScaleText(strItems, pageW, safePageNumber)
-        if (result) setDetectedScales(prev => ({ ...prev, [safePageNumber]: result }))
+    if (!pdfDoc || !numPages) return
+    const doc = getLoadedPdfDoc()
+    if (!doc) return
 
-        // Cache normalized text item positions for text-aware textHighlight quads.
-        // PDF coordinate system: origin bottom-left, Y-axis UP → flip to screen space (Y down).
-        const normItems = rawItems
-          .filter((it: any) => it.str?.trim())
-          .map((it: any) => {
-            const tx: number = it.transform?.[4] ?? 0
-            const ty: number = it.transform?.[5] ?? 0
-            const iw: number = Math.abs(it.width ?? 0)
-            // Font height: use the font size from the transform matrix (|transform[3]|) with a fallback
-            const ih: number = Math.abs(it.transform?.[3] ?? 12)
-            // PDF Y is the baseline; convert to top-left screen coords
-            return {
-              x: tx / Math.max(1, pageW),
-              y: 1 - (ty + ih) / Math.max(1, pageH),
-              w: iw / Math.max(1, pageW),
-              h: ih / Math.max(1, pageH),
-            }
-          })
-          .filter((it: any) => it.w > 0.001 && it.h > 0.001)
-        textItemsCacheRef.current[safePageNumber] = normItems
-        setTextItemsCache(prev => ({ ...prev, [safePageNumber]: normItems }))
-      } catch {}
+    const runId = ++scaleScanRunRef.current
+    const totalPages = Math.max(1, numPages)
+    let cancelled = false
+
+    setScaleScanStatus('scanning')
+    setScaleScanProgress({ done: 0, total: totalPages })
+    setScaleScanDiagnostics({ ...EMPTY_SCALE_SCAN_DIAGNOSTICS, totalPages })
+
+    void (async () => {
+      const scaleUpdates: Record<number, DetectedScaleResult> = {}
+      const textUpdates: Record<number, TextItemNorm[]> = {}
+      const pageDiagnostics: Record<number, ScaleScanPageDiagnostic> = {}
+      const pageSizeUpdates: Record<number, PageSizeInches> = {}
+
+      for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+        if (cancelled || runId !== scaleScanRunRef.current) return
+        try {
+          const safePageNumber = getSafePdfPageNumber(pageNum)
+          const page = await doc.getPage(safePageNumber)
+          const pageW: number = page.view?.[2] ?? 612
+          const pageH: number = page.view?.[3] ?? 792
+          const scanViewport = page.getViewport({ scale: 1 })
+          pageSizeUpdates[safePageNumber] = getPageSizeInchesFromPts(scanViewport.width, scanViewport.height)
+          const textContent = await page.getTextContent()
+          const rawItems: any[] = textContent.items || []
+          const strItems: string[] = rawItems.map((it: any) => it.str || '')
+          const normalizedText = normalizeBlueprintPdfText(strItems)
+          const textItemCount = rawItems.length
+          const hasText = textItemCount > 0 && normalizedText.length > 0
+          const hasScaleWord = /scale/i.test(normalizedText)
+          const hasQuarterToken = normalizedText.includes('1/4') || normalizedText.includes('\u00BC')
+          const hasNts = isNotToScaleMarker(normalizedText)
+          const result = detectBlueprintScaleText(strItems, pageW, safePageNumber)
+          const matched = !!result && !result.ambiguous && result.candidates.length === 1
+          const ambiguous = !!result?.ambiguous
+          const reason = classifyScaleScanPageReason(hasText, hasNts, result, hasScaleWord, hasQuarterToken)
+
+          pageDiagnostics[safePageNumber] = {
+            pageNumber: safePageNumber,
+            textItemCount,
+            hasText,
+            hasScaleWord,
+            hasQuarterToken,
+            hasNts,
+            matched,
+            ambiguous,
+            reason,
+            normalizedSample: normalizedText.slice(0, SCALE_SCAN_TEXT_SAMPLE_MAX),
+          }
+
+          if (result) {
+            scaleUpdates[safePageNumber] = result
+            scannedPagesRef.current.add(safePageNumber)
+          }
+          textUpdates[safePageNumber] = buildNormTextItems(rawItems, pageW, pageH)
+        } catch {
+          // Leave page unscanned so Rescan can retry it.
+        }
+
+        if (cancelled || runId !== scaleScanRunRef.current) return
+        setScaleScanProgress({ done: pageNum, total: totalPages })
+        if (pageNum % 3 === 0) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0))
+        }
+      }
+
+      if (cancelled || runId !== scaleScanRunRef.current) return
+      setDetectedScales(scaleUpdates)
+      setScaleScanDiagnostics(buildScaleScanDiagnosticsSummary(pageDiagnostics, totalPages))
+      if (Object.keys(pageSizeUpdates).length > 0) {
+        pageSizeInchesCacheRef.current = { ...pageSizeInchesCacheRef.current, ...pageSizeUpdates }
+        setPageSizeInchesCache((prev) => ({ ...prev, ...pageSizeUpdates }))
+      }
+      if (Object.keys(textUpdates).length > 0) {
+        textItemsCacheRef.current = { ...textItemsCacheRef.current, ...textUpdates }
+        setTextItemsCache((prev) => ({ ...prev, ...textUpdates }))
+      }
+      setScaleScanStatus('complete')
     })()
-  }, [pdfDoc, currentPage, getLoadedPdfDoc, getSafePdfPageNumber])
+
+    return () => { cancelled = true }
+  }, [pdfDoc, numPages, getLoadedPdfDoc, getSafePdfPageNumber, scaleRescanNonce])
 
   const removeAnnotation = useCallback(async (annotationId: string) => {
     if (!blueprint?.id) return
@@ -5550,13 +5994,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const allPts = measureCursorPx && displaySize.w > 0 && displaySize.h > 0
       ? [...measureDraftPoints, { x: measureCursorPx.x / displaySize.w, y: measureCursorPx.y / displaySize.h }]
       : measureDraftPoints
-    let normLen = 0
-    for (let i = 1; i < allPts.length; i++) {
-      normLen += Math.hypot(allPts[i].x - allPts[i - 1].x, allPts[i].y - allPts[i - 1].y)
-    }
     return {
       pointCount: measureDraftPoints.length,
-      realLength: detectedScale ? normLen / detectedScale : null,
+      realLength: activeCalibration
+        ? convertMeasuredPolylineLength(allPts, activeCalibration, getPageSizeInches(currentPage))
+        : null,
       unit: activeCalibration?.realWorldUnit ?? 'ft',
     }
   })()
@@ -7105,13 +7547,34 @@ const annotationPanelSizeClass =
                         <button key={i} type="button"
                           onClick={() => setSavedCalibrations(prev => ({
                             ...prev,
-                            [currentPage]: { pageNumber: currentPage, normDistance: 1.0, realWorldValue: c.realWidthFeet, realWorldUnit: 'ft', savedAt: new Date().toISOString() },
+                            [currentPage]: buildScaleCalibration(
+                              currentPage,
+                              c.realWidthFeet,
+                              getPageSizeInches(currentPage),
+                              new Date().toISOString(),
+                              'selected-scale',
+                            ),
                           }))}
                           className="text-left text-[10px] px-2 py-0.5 rounded border border-orange-700/60 text-orange-300 hover:bg-orange-900/20 truncate"
                         >{c.parsedScale}</button>
                       ))}
                     </div>
                   )}
+                  {scaleScanStatus === 'scanning' && (
+                    <div className="mt-0.5 text-[10px] text-gray-500">
+                      Scanning scales… {scaleScanProgress.done}/{scaleScanProgress.total}
+                    </div>
+                  )}
+                  {scaleScanStatus === 'complete' && scaleScanProgress.total > 0 && (
+                    <div className="mt-0.5 text-[10px] text-gray-600">
+                      Scale scan complete — {scaleScanDiagnostics.pagesMatched} of {scaleScanProgress.total} pages matched
+                    </div>
+                  )}
+                  <div className="mt-0.5 text-[10px] text-gray-500">
+                    Current page scale scan: {getScaleScanPageReasonLabel(
+                      scaleScanDiagnostics.pageByNumber[currentPage]?.reason ?? 'not-scanned'
+                    )}
+                  </div>
                 </div>
 
                 {/* Calibrate tool */}
@@ -7158,6 +7621,41 @@ const annotationPanelSizeClass =
                     className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-gray-700 text-gray-400 hover:text-red-300 hover:border-red-700`}
                   >Clear Calibration</button>
                 )}
+
+                <button
+                  type="button"
+                  onClick={handleRescanScales}
+                  disabled={scaleScanStatus === 'scanning'}
+                  className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600 disabled:opacity-50`}
+                >Rescan scales</button>
+
+                <details className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} rounded-md border border-gray-800 bg-gray-900/30 px-2 py-1.5 text-[10px] text-gray-500`}>
+                  <summary className="cursor-pointer text-gray-400 hover:text-gray-300 select-none">Scale scan details</summary>
+                  <div className="mt-1.5 space-y-0.5 leading-snug">
+                    <div>Scanned: {scaleScanDiagnostics.pagesScanned} / {scaleScanDiagnostics.totalPages || scaleScanProgress.total || numPages || 0}</div>
+                    <div>Text layer found: {scaleScanDiagnostics.pagesWithText}</div>
+                    <div>Contains &quot;SCALE&quot;: {scaleScanDiagnostics.pagesWithScaleWord}</div>
+                    <div>Contains &quot;1/4&quot;: {scaleScanDiagnostics.pagesWithQuarterScaleToken}</div>
+                    <div>Matched: {scaleScanDiagnostics.pagesMatched}</div>
+                    <div>Ambiguous: {scaleScanDiagnostics.pagesAmbiguous}</div>
+                    <div>N.T.S.: {scaleScanDiagnostics.pagesNts}</div>
+                    <div>No text: {scaleScanDiagnostics.pagesNoText}</div>
+                    <div>Text but no match: {scaleScanDiagnostics.pagesTextNoMatch}</div>
+                    {scaleScanDiagnostics.pageByNumber[currentPage] && (
+                      <div className="mt-1 pt-1 border-t border-gray-800 space-y-0.5">
+                        <div className="text-gray-400">Page {currentPage}</div>
+                        <div>Text items: {scaleScanDiagnostics.pageByNumber[currentPage].textItemCount}</div>
+                        <div>Contains SCALE: {scaleScanDiagnostics.pageByNumber[currentPage].hasScaleWord ? 'yes' : 'no'}</div>
+                        <div>Contains 1/4: {scaleScanDiagnostics.pageByNumber[currentPage].hasQuarterToken ? 'yes' : 'no'}</div>
+                        {scaleScanDiagnostics.pageByNumber[currentPage].normalizedSample && (
+                          <div className="break-all text-gray-600">
+                            Sample: {scaleScanDiagnostics.pageByNumber[currentPage].normalizedSample}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </details>
 
                 <p className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} text-[11px] text-gray-500 leading-snug`}>
                   Calibrate first, then draw measurements. Calibration is per-page.
@@ -8311,10 +8809,16 @@ const annotationPanelSizeClass =
                                 if (e.key === 'Enter') {
                                   const parsed = parseCalibrationLength(calibrateInput.value, calibrateInput.unit)
                                   if (!parsed) return
-                                  const normDist = Math.hypot(calibrateInput.p2.x - calibrateInput.p1.x, calibrateInput.p2.y - calibrateInput.p1.y)
                                   setSavedCalibrations((prev) => ({
                                     ...prev,
-                                    [currentPage]: { pageNumber: currentPage, normDistance: normDist, realWorldValue: parsed.value, realWorldUnit: parsed.unit, savedAt: new Date().toISOString() },
+                                    [currentPage]: buildManualKnownDistanceCalibration(
+                                      currentPage,
+                                      calibrateInput.p1,
+                                      calibrateInput.p2,
+                                      parsed.value,
+                                      parsed.unit,
+                                      getPageSizeInches(currentPage),
+                                    ),
                                   }))
                                   setPendingCalibration(null)
                                   setCalibrateInput(null)
@@ -8344,10 +8848,16 @@ const annotationPanelSizeClass =
                               onClick={() => {
                                 const parsed = parseCalibrationLength(calibrateInput.value, calibrateInput.unit)
                                 if (!parsed) return
-                                const normDist = Math.hypot(calibrateInput.p2.x - calibrateInput.p1.x, calibrateInput.p2.y - calibrateInput.p1.y)
                                 setSavedCalibrations((prev) => ({
                                   ...prev,
-                                  [currentPage]: { pageNumber: currentPage, normDistance: normDist, realWorldValue: parsed.value, realWorldUnit: parsed.unit, savedAt: new Date().toISOString() },
+                                  [currentPage]: buildManualKnownDistanceCalibration(
+                                    currentPage,
+                                    calibrateInput.p1,
+                                    calibrateInput.p2,
+                                    parsed.value,
+                                    parsed.unit,
+                                    getPageSizeInches(currentPage),
+                                  ),
                                 }))
                                 setPendingCalibration(null)
                                 setCalibrateInput(null)
