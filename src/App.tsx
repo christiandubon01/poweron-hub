@@ -36,6 +36,13 @@ const CrewPortal = lazy(() =>
     .catch((): any => { window.location.reload(); return { default: () => null } })
 )
 
+const EmployeePortal = lazy(() =>
+  import('@/components/employee/EmployeePortal')
+    .then(m => ({ default: m.EmployeePortal }))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .catch((): any => { window.location.reload(); return { default: () => null } })
+)
+
 // INT-1 — Customer Portal: public-facing route at /portal (no auth required)
 const CustomerPortalPage = lazy(() =>
   import('@/views/CustomerPortalView')
@@ -98,6 +105,13 @@ function AuthenticatedRoot() {
       return (
         <Suspense fallback={<FullPageSpinner />}>
           <CrewPortal />
+        </Suspense>
+      )
+
+    case 'employee':
+      return (
+        <Suspense fallback={<FullPageSpinner />}>
+          <EmployeePortal />
         </Suspense>
       )
 
