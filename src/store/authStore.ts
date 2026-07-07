@@ -26,21 +26,54 @@ import { hasBackupData, createEmptyBackup, saveBackupData, syncToSupabase as syn
 import { logAction } from '@/services/security/AgentSafetySystem'
 
 // ── Role system ───────────────────────────────────────────────────────────────
-// owner   → the business owner; sees the full app (V15rLayout + all panels)
-// crew    → a field crew member; sees only CrewPortal (simplified field log UI)
-// client  → a client; sees ClientPortal (read-only project status — future)
-export type UserRole = 'owner' | 'crew' | 'client'
+// owner    → the business owner; sees the full app (V15rLayout + all panels)
+// crew     → a field crew member; sees only CrewPortal (simplified field log UI)
+// employee → time-tracking employee; sees EmployeePortal (separate from AppShell)
+// client   → a client; sees ClientPortal (read-only project status — future)
+export type UserRole = 'owner' | 'crew' | 'employee' | 'client'
 
 const ROLE_STORAGE_KEY = 'poweron-hub-role'
 const OWNER_ID_STORAGE_KEY = 'poweron-hub-owner-id'
+const EMPLOYEE_PROFILE_ID_KEY = 'poweron-hub-employee-profile-id'
+const EMPLOYER_ORG_ID_KEY = 'poweron-hub-employer-org-id'
+
+interface ResolvedPortalRole {
+  role: UserRole
+  ownerId: string | null
+  employeeProfileId: string | null
+  employerOrgId: string | null
+}
+
+function hasTimeTrackingAccess(portalAccess: unknown): boolean {
+  if (!portalAccess || typeof portalAccess !== 'object') return false
+  const flags = portalAccess as Record<string, unknown>
+  return flags.time_tracking === true || flags.time_tracking === 'true'
+}
+
+function persistResolvedRole(resolved: ResolvedPortalRole): void {
+  localStorage.setItem(ROLE_STORAGE_KEY, resolved.role)
+  localStorage.setItem(OWNER_ID_STORAGE_KEY, resolved.ownerId ?? '')
+  if (resolved.employeeProfileId) {
+    localStorage.setItem(EMPLOYEE_PROFILE_ID_KEY, resolved.employeeProfileId)
+  } else {
+    localStorage.removeItem(EMPLOYEE_PROFILE_ID_KEY)
+  }
+  if (resolved.employerOrgId) {
+    localStorage.setItem(EMPLOYER_ORG_ID_KEY, resolved.employerOrgId)
+  } else {
+    localStorage.removeItem(EMPLOYER_ORG_ID_KEY)
+  }
+}
 
 /**
- * Determine the user's role by checking the crew_members table.
- * If a matching active row with user_id = auth.uid() exists → crew.
- * Otherwise → owner.
- * Stores result in localStorage for fast re-load.
+ * Determine portal role:
+ *   1. crew_members active match → crew
+ *   2. employee_profiles active + time_tracking → employee
+ *   3. fallback → owner
+ *
+ * Employee employer org is employee_profiles.org_id (not profiles.org_id).
  */
-async function resolveUserRole(userId: string): Promise<{ role: UserRole; ownerId: string | null }> {
+async function resolveUserRole(userId: string): Promise<ResolvedPortalRole> {
   try {
     const { data, error } = await supabase
       .from('crew_members')
@@ -50,27 +83,63 @@ async function resolveUserRole(userId: string): Promise<{ role: UserRole; ownerI
       .maybeSingle()
 
     if (!error && data) {
-      const role: UserRole = 'crew'
-      const ownerId = data.owner_id ?? null
-      localStorage.setItem(ROLE_STORAGE_KEY, role)
-      localStorage.setItem(OWNER_ID_STORAGE_KEY, ownerId ?? '')
-      return { role, ownerId }
+      const resolved: ResolvedPortalRole = {
+        role: 'crew',
+        ownerId: data.owner_id ?? null,
+        employeeProfileId: null,
+        employerOrgId: null,
+      }
+      persistResolvedRole(resolved)
+      return resolved
     }
   } catch (e) {
     console.warn('[Auth] resolveUserRole: crew check failed (non-blocking):', e)
   }
 
-  // Default: owner
-  localStorage.setItem(ROLE_STORAGE_KEY, 'owner')
-  localStorage.setItem(OWNER_ID_STORAGE_KEY, userId)
-  return { role: 'owner', ownerId: userId }
+  try {
+    const { data: employeeRows, error: employeeError } = await supabase
+      .from('employee_profiles')
+      .select('id, org_id, role, portal_access')
+      .eq('user_id', userId)
+      .eq('active', true)
+
+    if (!employeeError && employeeRows?.length) {
+      const match = employeeRows.find((row) => hasTimeTrackingAccess(row.portal_access))
+      if (match) {
+        const resolved: ResolvedPortalRole = {
+          role: 'employee',
+          ownerId: null,
+          employeeProfileId: match.id,
+          employerOrgId: match.org_id,
+        }
+        persistResolvedRole(resolved)
+        return resolved
+      }
+    }
+  } catch (e) {
+    console.warn('[Auth] resolveUserRole: employee check failed (non-blocking):', e)
+  }
+
+  const resolved: ResolvedPortalRole = {
+    role: 'owner',
+    ownerId: userId,
+    employeeProfileId: null,
+    employerOrgId: null,
+  }
+  persistResolvedRole(resolved)
+  return resolved
 }
 
 /** Fast load from localStorage — used when app session already valid. */
-function loadRoleFromStorage(userId: string): { role: UserRole; ownerId: string | null } {
+function loadRoleFromStorage(userId: string): ResolvedPortalRole {
   const role = (localStorage.getItem(ROLE_STORAGE_KEY) ?? 'owner') as UserRole
   const ownerId = localStorage.getItem(OWNER_ID_STORAGE_KEY) || userId
-  return { role, ownerId }
+  return {
+    role,
+    ownerId,
+    employeeProfileId: localStorage.getItem(EMPLOYEE_PROFILE_ID_KEY) || null,
+    employerOrgId: localStorage.getItem(EMPLOYER_ORG_ID_KEY) || null,
+  }
 }
 
 /** Seed empty backup for brand-new users who have never imported data.
@@ -160,12 +229,15 @@ interface AuthState {
   tenantDataReady: boolean
   tenantUserId:   string | null
 
-  // ── Role fields (V3 Session 5) ────────────────────────────────────────────
+  // ── Role fields (V3 Session 5 + TIME-2C employee portal) ───────────────────
   // role:    Determines which portal the user sees after auth.
   // ownerId: For crew members = the owner's user_id.
   //          For owners = their own user_id.
+  //          For employees = null (employer org is employerOrgId).
   role:     UserRole
   ownerId:  string | null
+  employeeProfileId: string | null
+  employerOrgId:     string | null
 
   // Actions
   initialize:         () => Promise<void>
@@ -243,6 +315,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   error:         null,
   role:          'owner',
   ownerId:       null,
+  employeeProfileId: null,
+  employerOrgId:     null,
   tenantDataReady: false,
   tenantUserId:  null,
 
@@ -338,13 +412,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const appSession = await withTimeout(validateAppSession(), 5000, null)
       if (appSession) {
         // Re-use cached role from localStorage; re-resolve in background occasionally
-        const { role, ownerId } = loadRoleFromStorage(user.id)
-        set({ status: 'hydrating_user_data', user, profile, appSession, role, ownerId })
+        const { role, ownerId, employeeProfileId, employerOrgId } = loadRoleFromStorage(user.id)
+        set({ status: 'hydrating_user_data', user, profile, appSession, role, ownerId, employeeProfileId, employerOrgId })
         await bootstrapAuthenticatedUser(user.id)
         set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
-        // Fire background re-verify in case crew membership changed
-        resolveUserRole(user.id).then(({ role: r, ownerId: o }) => {
-          set({ role: r, ownerId: o })
+        // Fire background re-verify in case crew/employee membership changed
+        resolveUserRole(user.id).then((resolved) => {
+          set({
+            role: resolved.role,
+            ownerId: resolved.ownerId,
+            employeeProfileId: resolved.employeeProfileId,
+            employerOrgId: resolved.employerOrgId,
+          })
         }).catch(() => {})
         return
       }
@@ -352,7 +431,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // 4. If user just authenticated via password, skip PIN verification.
       // PIN is only required for lock/resume flows, not full password login.
       if (sessionStorage.getItem('poweron_password_authed') === '1') {
-        const { role, ownerId } = await resolveUserRole(user.id)
+        const { role, ownerId, employeeProfileId, employerOrgId } = await resolveUserRole(user.id)
         let appSession = null
         try {
           await withTimeout(
@@ -371,6 +450,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           appSession,
           role,
           ownerId,
+          employeeProfileId,
+          employerOrgId,
           error: null,
         })
 
@@ -395,7 +476,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       // 6. password_only → skip PIN verification
       if (profile.passcode_hash === 'password_only') {
-        const { role, ownerId } = await resolveUserRole(user.id)
+        const { role, ownerId, employeeProfileId, employerOrgId } = await resolveUserRole(user.id)
         let session = null
         try {
           session = await withTimeout(
@@ -403,7 +484,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             5000, null
           )
         } catch {}
-        set({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId })
+        set({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId, employeeProfileId, employerOrgId })
         await bootstrapAuthenticatedUser(user.id)
         set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
         return
@@ -515,15 +596,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .then(() => {})
           .catch(() => {})
 
-        // Resolve role (owner vs crew) — determines which portal to show
-        const { role, ownerId } = await withTimeout(
+        // Resolve portal role (owner / crew / employee)
+        const { role, ownerId, employeeProfileId, employerOrgId } = await withTimeout(
           resolveUserRole(user.id),
           5000,
-          { role: 'owner' as UserRole, ownerId: user.id }
+          { role: 'owner' as UserRole, ownerId: user.id, employeeProfileId: null, employerOrgId: null }
         )
 
         const session = await withTimeout(validateAppSession(), 3000, null)
-        set({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId })
+        set({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId, employeeProfileId, employerOrgId })
         await bootstrapAuthenticatedUser(user.id)
         set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
 
@@ -595,15 +676,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         // Fire-and-forget audit
         logLogin(user.id, { method: 'passcode_setup' }).catch(() => {})
 
-        // Resolve portal role (owner vs crew)
-        const { role: userRole, ownerId } = await withTimeout(
+        // Resolve portal role (owner / crew / employee)
+        const { role: userRole, ownerId, employeeProfileId, employerOrgId } = await withTimeout(
           resolveUserRole(user.id),
           5000,
-          { role: 'owner' as UserRole, ownerId: user.id }
+          { role: 'owner' as UserRole, ownerId: user.id, employeeProfileId: null, employerOrgId: null }
         )
 
         const session = await withTimeout(validateAppSession(), 3000, null)
-        set({ status: 'hydrating_user_data', user, profile: refreshedProfile, appSession: session, role: userRole, ownerId })
+        set({ status: 'hydrating_user_data', user, profile: refreshedProfile, appSession: session, role: userRole, ownerId, employeeProfileId, employerOrgId })
         await bootstrapAuthenticatedUser(user.id)
         set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
       }
@@ -637,12 +718,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .update({ last_login_at: new Date().toISOString() })
           .eq('id', user.id)
         // Resolve role after biometric auth
-        const { role, ownerId } = await withTimeout(
+        const { role, ownerId, employeeProfileId, employerOrgId } = await withTimeout(
           resolveUserRole(user.id),
           5000,
-          { role: 'owner' as UserRole, ownerId: user.id }
+          { role: 'owner' as UserRole, ownerId: user.id, employeeProfileId: null, employerOrgId: null }
         )
-        set({ status: 'hydrating_user_data', user, profile, appSession: await validateAppSession(), role, ownerId })
+        set({ status: 'hydrating_user_data', user, profile, appSession: await validateAppSession(), role, ownerId, employeeProfileId, employerOrgId })
         await bootstrapAuthenticatedUser(user.id)
         set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
 
@@ -718,6 +799,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     await supabase.auth.signOut()
     localStorage.removeItem(ROLE_STORAGE_KEY)
     localStorage.removeItem(OWNER_ID_STORAGE_KEY)
+    localStorage.removeItem(EMPLOYEE_PROFILE_ID_KEY)
+    localStorage.removeItem(EMPLOYER_ORG_ID_KEY)
     localStorage.removeItem('poweron_alerts_cache')
     localStorage.removeItem('poweron_backup_data')
     localStorage.removeItem('poweron_v2')
@@ -733,6 +816,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       error:           null,
       role:            'owner',
       ownerId:         null,
+      employeeProfileId: null,
+      employerOrgId:     null,
       tenantDataReady: false,
       tenantUserId:    null,
     })

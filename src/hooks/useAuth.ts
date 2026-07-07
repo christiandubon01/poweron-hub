@@ -22,11 +22,13 @@ export function useAuth() {
     lockExpiresAt: store.lockExpiresAt,
     error:         store.error,
 
-    // ── Role (V3 Session 5) ───────────────────────────────────────────────
-    // role:    'owner' | 'crew' | 'client' — determines which portal to render
-    // ownerId: the owner's user_id (for crew: their owner; for owner: themselves)
+    // ── Role (V3 Session 5 + TIME-2C) ─────────────────────────────────────
+    // role:    'owner' | 'crew' | 'employee' | 'client' — portal routing
+    // ownerId: crew owner user_id; owner = self; employee = null
     role:          store.role as UserRole,
     ownerId:       store.ownerId,
+    employeeProfileId: store.employeeProfileId,
+    employerOrgId:     store.employerOrgId,
 
     // ── Derived booleans ──────────────────────────────────────────────────
     isLoading:        store.status === 'loading',
@@ -37,9 +39,10 @@ export function useAuth() {
     showBiometric:    store.status === 'biometric_prompt',
 
     // ── Role helpers ──────────────────────────────────────────────────────
-    isOwnerRole:   store.role === 'owner',
-    isCrewRole:    store.role === 'crew',
-    isClientRole:  store.role === 'client',
+    isOwnerRole:    store.role === 'owner',
+    isCrewRole:     store.role === 'crew',
+    isEmployeeRole: store.role === 'employee',
+    isClientRole:   store.role === 'client',
     // Profile-level role helpers (admin/field within the org structure)
     isOwner:   store.profile?.role === 'owner',
     isAdmin:   store.profile?.role === 'admin' || store.profile?.role === 'owner',
