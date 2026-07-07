@@ -60,15 +60,39 @@ export async function geocodeAddressViaEdge(
   }
 }
 
+export interface GeocodingBackfillFailureSample {
+  address?: string;
+  error?: string;
+}
+
+export interface GeocodingBackfillResult {
+  processed: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  remaining: number;
+  hint?: string;
+  errors?: GeocodingBackfillFailureSample[];
+}
+
+const EMPTY_BACKFILL_RESULT: GeocodingBackfillResult = {
+  processed: 0,
+  succeeded: 0,
+  failed: 0,
+  skipped: 0,
+  remaining: 0,
+};
+
 /**
  * Trigger geocoding backfill for all pending/failed leads for a tenant.
- * Returns { processed, succeeded, failed, skipped, remaining } counts.
+ * Returns { processed, succeeded, failed, skipped, remaining, hint?, errors? }.
  *
- * Used by HomeBaseSettings after the operator saves their home base address.
+ * Used by HomeBaseSettings after the operator saves their home base address,
+ * and by HunterPanel's "Fix Geo" button.
  */
 export async function triggerGeocodingBackfill(
   tenantId: string
-): Promise<{ processed: number; succeeded: number; failed: number; skipped: number; remaining: number }> {
+): Promise<GeocodingBackfillResult> {
   try {
     const token = await getAuthToken();
     const params = new URLSearchParams({ tenant_id: tenantId });
@@ -84,7 +108,7 @@ export async function triggerGeocodingBackfill(
     );
 
     if (!resp.ok) {
-      return { processed: 0, succeeded: 0, failed: 0, skipped: 0, remaining: 0 };
+      return { ...EMPTY_BACKFILL_RESULT };
     }
 
     const data = await resp.json();
@@ -94,9 +118,11 @@ export async function triggerGeocodingBackfill(
       failed: data.failed ?? 0,
       skipped: data.skipped ?? 0,
       remaining: data.remaining ?? 0,
+      hint: typeof data.hint === 'string' ? data.hint : undefined,
+      errors: Array.isArray(data.errors) ? data.errors : undefined,
     };
   } catch (err) {
     console.error('[GeocodingClient] triggerGeocodingBackfill error:', err);
-    return { processed: 0, succeeded: 0, failed: 0, skipped: 0, remaining: 0 };
+    return { ...EMPTY_BACKFILL_RESULT };
   }
 }

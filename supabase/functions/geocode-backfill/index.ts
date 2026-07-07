@@ -74,6 +74,8 @@ serve(async (req: Request) => {
     let succeeded = 0;
     let failed = 0;
     let skipped = 0;
+    const failureSamples: { address: string; error: string }[] = [];
+    const MAX_FAILURE_SAMPLES = 3;
 
     // 3. Process each lead
     for (const lead of toProcess) {
@@ -121,6 +123,13 @@ serve(async (req: Request) => {
           .update({ geocoding_status: "failed" })
           .eq("id", lead.id);
         failed++;
+
+        if (failureSamples.length < MAX_FAILURE_SAMPLES) {
+          failureSamples.push({
+            address: addressText,
+            error: geocodeResult.error || geocodeResult.status,
+          });
+        }
       }
 
       // Polite 100ms delay between geocoding calls
@@ -134,15 +143,27 @@ serve(async (req: Request) => {
       .eq("tenant_id", tenantId)
       .in("geocoding_status", ["pending", "failed"]);
 
+    const deniedOrKeyIssue = failureSamples.some((sample) =>
+      /REQUEST_DENIED|API key/i.test(sample.error)
+    );
+
+    let hint: string;
+    if (deniedOrKeyIssue) {
+      hint = "Google geocoding key may be restricted or denied (REQUEST_DENIED). Check the GOOGLE_MAPS_API_KEY Supabase secret and the key's restrictions/billing in Google Cloud Console.";
+    } else if ((remaining ?? 0) > 0) {
+      hint = "Re-invoke this function to process the next batch.";
+    } else {
+      hint = "All leads processed.";
+    }
+
     const result = {
       processed: toProcess.length,
       succeeded,
       failed,
       skipped,
       remaining: remaining ?? 0,
-      hint: (remaining ?? 0) > 0
-        ? "Re-invoke this function to process the next batch."
-        : "All leads processed.",
+      hint,
+      errors: failureSamples.length > 0 ? failureSamples : undefined,
     };
 
     return new Response(JSON.stringify(result), {

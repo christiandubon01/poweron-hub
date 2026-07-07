@@ -25,6 +25,9 @@ import { useHunterStore } from '@/store/hunterStore'
 import type { HunterLead as StoreHunterLead } from '@/services/hunter/HunterTypes'
 import { buildTlmaSearchUrl, parseTlmaTableHtml, type ParsedTlmaPermit, DEFAULT_TLMA_SEARCH_FILTERS, TLMA_SEARCH_CITIES, TLMA_SEARCH_PERMIT_TYPES, TLMA_PAGE_SIZE_OPTIONS, type TlmaSearchFilters } from '@/services/hunter/tlmaTableParser'
 import { buildTlmaImportRows, previewTlmaImportRows } from '@/services/hunter/tlmaLeadMapper'
+import { looksLikeTlmaTableHtml } from '@/services/hunter/tlmaBookmarklet'
+import TlmaBookmarkletHelper from './TlmaBookmarkletHelper'
+import { isCoachellaValleyCity } from '@/services/hunter/coachellaValleyCities'
 
 export interface HunterPanelProps {
   leads?: HunterLead[]
@@ -38,6 +41,45 @@ export interface HunterPanelProps {
 
 type SortOption = 'score' | 'date' | 'value' | 'distance' | 'nearest'
 type ScoreTier = 'elite' | 'strong' | 'qualified' | 'expansion' | 'archived'
+// HUNTER-5B: Timeline list-sort. Independent of the map-only geo filter and the
+// Score sort — when set to anything but 'none', it takes priority over sortBy
+// for the lead list ordering only (map pins are unaffected).
+type TimelineSort = 'none' | 'permit_newest' | 'permit_oldest' | 'portal_newest' | 'portal_oldest'
+// HUNTER-5B: Distance Radius presets — reuse existing distanceFilterEnabled /
+// maxDistanceMiles state (fed by Fix Geo's Home Base geocoding), just simplify
+// the control to fixed presets instead of a raw slider.
+const RADIUS_PRESETS: Array<{ label: string; miles: number | null }> = [
+  { label: 'Any', miles: null },
+  { label: '5 mi', miles: 5 },
+  { label: '10 mi', miles: 10 },
+  { label: '25 mi', miles: 25 },
+  { label: '50 mi', miles: 50 },
+  { label: '100 mi', miles: 100 },
+]
+
+// HUNTER-5D: Zone control — list-only lead organization, independent of the
+// Filter/Timeline/Score controls and of the geo/source filter. Never affects
+// HunterMap (still fed by geoFilteredLeads only). Radius options use the
+// existing distanceFromBaseMiles field from Fix Geo/Home Base geocoding —
+// no new origin, no geocoding triggered here.
+type ZoneOption = 'focus_cv' | 'radius_50' | 'radius_75' | 'radius_100' | 'all_imported' | 'pending_geo'
+const ZONE_OPTIONS: Array<{ value: ZoneOption; label: string }> = [
+  { value: 'focus_cv', label: 'Focus: Coachella Valley' },
+  { value: 'radius_50', label: 'Radius: 50 mi' },
+  { value: 'radius_75', label: 'Radius: 75 mi' },
+  { value: 'radius_100', label: 'Radius: 100 mi' },
+  { value: 'all_imported', label: 'All Imported' },
+  { value: 'pending_geo', label: 'Pending Geo' },
+]
+const ZONE_RADIUS_MILES: Partial<Record<ZoneOption, number>> = {
+  radius_50: 50,
+  radius_75: 75,
+  radius_100: 100,
+}
+function isPendingGeoLead(lead: any): boolean {
+  const d = lead.distanceFromBaseMiles ?? lead.distance
+  return d == null || lead.geocodingStatus === 'pending' || lead.geocoding_status === 'pending'
+}
 
 interface FilterState {
   jobType: string
@@ -167,6 +209,17 @@ function translateStoreToPanel(storeLead: StoreHunterLead): any {
     disposition: (storeLead as any).disposition ?? undefined,
     disposition_detail: (storeLead as any).disposition_detail ?? undefined,
     disposition_at: (storeLead as any).disposition_at ?? undefined,
+    // HUNTER-5B: Timeline sort fields. Mapped from existing store columns only —
+    // no schema changes, no DB writes.
+    // Permit Date: issued_date, else applied_date, else created_at/discovered_at.
+    permitIssuedDate: (storeLead as any).issued_date
+      ?? (storeLead as any).applied_date
+      ?? storeLead.created_at
+      ?? storeLead.discovered_at
+      ?? undefined,
+    permitAppliedDate: (storeLead as any).applied_date ?? undefined,
+    // Added to Portal: discovered_at, else created_at.
+    dateAddedToPortal: storeLead.discovered_at ?? storeLead.created_at ?? undefined,
   }
 }
 
@@ -334,6 +387,9 @@ export function HunterPanel({
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
   const [sortBy, setSortBy] = useState<SortOption>('score')
   const [showFilters, setShowFilters] = useState(false)
+  // HUNTER-5B: Timeline list sort — 'none' means Score sort (sortBy) applies as before.
+  const [timelineSort, setTimelineSort] = useState<TimelineSort>('none')
+  const [showTimeline, setShowTimeline] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
   // HUNTER-MAP-VIEW-APR28-2026-1
 const [mapExpanded, setMapExpandedRaw] = useState(() => {
@@ -378,6 +434,17 @@ const handleMapLeadSelect = (leadId: string) => {
     try { localStorage.setItem('hunter_geo_filter', f) } catch {}
     setGeoFilterRaw(f)
   }
+
+  // HUNTER-5D: Zone control — persisted like geoFilter, defaults to the
+  // Coachella Valley focus view.
+  const [zone, setZoneRaw] = useState<ZoneOption>(() => {
+    try { return (localStorage.getItem('hunter_zone') as ZoneOption) ?? 'focus_cv' } catch { return 'focus_cv' }
+  })
+  const setZone = (z: ZoneOption) => {
+    try { localStorage.setItem('hunter_zone', z) } catch {}
+    setZoneRaw(z)
+  }
+  const [showZoneMenu, setShowZoneMenu] = useState(false)
 
   // HUNTER-B6-MANUAL-ADD-LEAD-APR23-2026-1
   // Modal open/close state and inline success banner state. Banner clears
@@ -492,6 +559,17 @@ const handleMapLeadSelect = (leadId: string) => {
   } | null>(null)
   const [isTlmaParsing, setIsTlmaParsing] = useState(false)
   const [isTlmaImporting, setIsTlmaImporting] = useState(false)
+  const [tlmaClipboardStatus, setTlmaClipboardStatus] = useState<string | null>(null)
+  const [isFixingGeo, setIsFixingGeo] = useState(false)
+  const [geoFixResult, setGeoFixResult] = useState<{
+    processed: number
+    succeeded: number
+    failed: number
+    skipped: number
+    remaining: number
+    hint?: string
+    errors?: { address?: string; error?: string }[]
+  } | null>(null)
 
   const handleOpenTlmaSearch = () => {
     window.open(tlmaSearchUrl, '_blank', 'noopener,noreferrer')
@@ -500,9 +578,46 @@ const handleMapLeadSelect = (leadId: string) => {
   const handleParseTlmaPaste = () => {
     setIsTlmaParsing(true)
     setTlmaImportResult(null)
+    setTlmaClipboardStatus(null)
     try {
       const parsed = parseTlmaTableHtml(tlmaPasteHtml)
       setTlmaParsePreview(parsed)
+    } finally {
+      setIsTlmaParsing(false)
+    }
+  }
+
+  const handleImportFromClipboard = async () => {
+    setIsTlmaParsing(true)
+    setTlmaImportResult(null)
+    setTlmaClipboardStatus(null)
+    try {
+      if (!navigator.clipboard?.readText) {
+        setTlmaClipboardStatus('Browser blocked clipboard read. Use Paste TLMA Table instead.')
+        return
+      }
+      const text = await navigator.clipboard.readText()
+      if (!text.trim()) {
+        setTlmaClipboardStatus('Clipboard is empty. Click the bookmarklet on the TLMA results page first.')
+        return
+      }
+      if (!looksLikeTlmaTableHtml(text)) {
+        setTlmaClipboardStatus(
+          'Clipboard does not look like a TLMA results table. Click the bookmarklet from the TLMA results page first.',
+        )
+        return
+      }
+      const parsed = parseTlmaTableHtml(text)
+      setTlmaParsePreview(parsed)
+      if (parsed.permits.length > 0) {
+        setTlmaClipboardStatus(`Parsed ${parsed.permits.length} TLMA permits from clipboard.`)
+      } else if (parsed.warnings[0]) {
+        setTlmaClipboardStatus(parsed.warnings[0])
+      } else {
+        setTlmaClipboardStatus('No importable permits found in clipboard.')
+      }
+    } catch {
+      setTlmaClipboardStatus('Browser blocked clipboard read. Use Paste TLMA Table instead.')
     } finally {
       setIsTlmaParsing(false)
     }
@@ -553,12 +668,59 @@ const handleMapLeadSelect = (leadId: string) => {
     setTlmaPasteHtml('')
     setTlmaParsePreview(null)
     setTlmaImportResult(null)
+    setTlmaClipboardStatus(null)
   }
 
   const tlmaPreviewRows = useMemo(
     () => (tlmaParsePreview?.permits?.length ? previewTlmaImportRows(tlmaParsePreview.permits, 5) : []),
     [tlmaParsePreview],
   )
+
+  const renderTlmaImportPreview = () => {
+    if (!tlmaParsePreview) return null
+    return (
+      <div className="rounded border border-gray-800 bg-gray-900 p-3 text-sm space-y-2">
+        <div className="text-gray-200">
+          Parsed {tlmaParsePreview.total_rows} row(s) · {tlmaParsePreview.rows_with_permit_numbers} with permit numbers
+        </div>
+        {tlmaParsePreview.warnings.map((warning) => (
+          <p key={warning} className="text-xs text-amber-300">{warning}</p>
+        ))}
+        {tlmaParsePreview.permits.length === 0 ? (
+          <p className="text-xs text-gray-400">No importable permits found.</p>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-gray-400">First permits preview:</p>
+            <ul className="space-y-1 text-xs text-gray-300">
+              {tlmaPreviewRows.map((row) => (
+                <li key={row.permit_number} className="border border-gray-800 rounded px-2 py-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="font-medium text-white">{row.permit_number}</span>
+                    <span className="text-yellow-300">{row.score} · {row.score_tier}</span>
+                    <span>{row.city || 'Unknown city'}</span>
+                    <span>{row.permit_type || 'Unknown type'}</span>
+                    <span>{row.status || 'Unknown status'}</span>
+                  </div>
+                  {row.address && <div className="text-gray-400 mt-0.5">{row.address}</div>}
+                  {row.description && <div className="text-gray-500 mt-0.5">{row.description.slice(0, 120)}</div>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="flex flex-wrap gap-2 pt-1">
+          <button
+            type="button"
+            onClick={handleImportTlmaPaste}
+            disabled={!tlmaParsePreview.permits.length || isTlmaImporting}
+            className="px-3 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm rounded"
+          >
+            {isTlmaImporting ? 'Importing…' : 'Import Leads'}
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   const renderTlmaSearchBuilder = (showOpenButton = true) => (
     <div className="rounded border border-gray-800 bg-gray-900/70 p-3 space-y-3">
@@ -801,6 +963,37 @@ const handleMapLeadSelect = (leadId: string) => {
     }
   }, [leads, geoFilter])
 
+  // HUNTER-5D: Zone filtering applied on top of geoFilteredLeads, before the
+  // Filter panel and Timeline/Score sort. Radius options use the existing
+  // distanceFromBaseMiles/distance field only — leads with unknown distance
+  // never silently pass a numeric radius; they belong in Pending Geo instead.
+  // HunterMap is untouched (still reads geoFilteredLeads directly).
+  const zoneFilteredLeads = useMemo(() => {
+    switch (zone) {
+      case 'focus_cv':
+        return geoFilteredLeads.filter((l: any) => isCoachellaValleyCity(l.city))
+      case 'radius_50':
+      case 'radius_75':
+      case 'radius_100': {
+        const miles = ZONE_RADIUS_MILES[zone]!
+        return geoFilteredLeads.filter((l: any) => {
+          const d = l.distanceFromBaseMiles ?? l.distance
+          return d != null && d <= miles
+        })
+      }
+      case 'pending_geo':
+        return geoFilteredLeads.filter(isPendingGeoLead)
+      case 'all_imported':
+      default:
+        return geoFilteredLeads
+    }
+  }, [geoFilteredLeads, zone])
+
+  const pendingGeoCount = useMemo(
+    () => geoFilteredLeads.filter(isPendingGeoLead).length,
+    [geoFilteredLeads],
+  )
+
   // Real computation for leadsDiscoveredToday if not provided as prop.
   // "Today" = leads whose dateDiscovered renders a string matching today's format.
   // Until B4 unifies types we rely on the translator's formatted string — close enough.
@@ -811,7 +1004,7 @@ const handleMapLeadSelect = (leadId: string) => {
 
   // Filter and sort leads
   const filteredAndSortedLeads = useMemo(() => {
-    let result = geoFilteredLeads.filter((lead) => {
+    let result = zoneFilteredLeads.filter((lead) => {
       // Score tier filter — bypass for archived-status leads so they
       // always reach the isArchivedLead bucket regardless of score.
       const leadStatus = (lead as any).status
@@ -860,7 +1053,26 @@ const handleMapLeadSelect = (leadId: string) => {
       })
     }
 
-    // Sort
+    // Sort — Timeline sort (when active) takes priority over Score sort (sortBy).
+    // Timeline affects list order only; it never touches HunterMap/geoFilteredLeads.
+    if (timelineSort !== 'none') {
+      result.sort((a: any, b: any) => {
+        switch (timelineSort) {
+          case 'permit_newest':
+            return new Date(b.permitIssuedDate || 0).getTime() - new Date(a.permitIssuedDate || 0).getTime()
+          case 'permit_oldest':
+            return new Date(a.permitIssuedDate || 0).getTime() - new Date(b.permitIssuedDate || 0).getTime()
+          case 'portal_newest':
+            return new Date(b.dateAddedToPortal || 0).getTime() - new Date(a.dateAddedToPortal || 0).getTime()
+          case 'portal_oldest':
+            return new Date(a.dateAddedToPortal || 0).getTime() - new Date(b.dateAddedToPortal || 0).getTime()
+          default:
+            return 0
+        }
+      })
+      return result
+    }
+
     result.sort((a, b) => {
       switch (sortBy) {
         case 'score':
@@ -886,7 +1098,7 @@ const handleMapLeadSelect = (leadId: string) => {
     })
 
     return result
-  }, [geoFilteredLeads, filters, sortBy])
+  }, [zoneFilteredLeads, filters, sortBy, timelineSort, distanceFilterEnabled, maxDistanceMiles])
 
   // Tier thresholds per canonical HUNTER scoring: elite 85+, strong 75-84,
   // qualified 60-74, expansion 40-59, archived <40.
@@ -1006,20 +1218,27 @@ const handleMapLeadSelect = (leadId: string) => {
             </button>
             <button
               onClick={async () => {
-                const { supabase: sb } = await import('@/lib/supabase')
-                const { data: { user } } = await sb.auth.getUser()
-                if (!user) return
-                const { data: t } = await (sb as any).from('user_tenants').select('tenant_id').eq('user_id', user.id).limit(1).single()
-                if (!t?.tenant_id) return
-                const { triggerGeocodingBackfill } = await import('@/services/geocoding/GeocodingClient')
-                const result = await triggerGeocodingBackfill(t.tenant_id)
-                alert(`Geocoding retry: ${result.succeeded} succeeded, ${result.failed} failed, ${result.remaining} remaining`)
-                fetchLeads()
+                setIsFixingGeo(true)
+                setGeoFixResult(null)
+                try {
+                  const { supabase: sb } = await import('@/lib/supabase')
+                  const { data: { user } } = await sb.auth.getUser()
+                  if (!user) return
+                  const { data: t } = await (sb as any).from('user_tenants').select('tenant_id').eq('user_id', user.id).limit(1).single()
+                  if (!t?.tenant_id) return
+                  const { triggerGeocodingBackfill } = await import('@/services/geocoding/GeocodingClient')
+                  const result = await triggerGeocodingBackfill(t.tenant_id)
+                  setGeoFixResult(result)
+                  fetchLeads()
+                } finally {
+                  setIsFixingGeo(false)
+                }
               }}
-              className="flex items-center gap-2 px-3 py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-sm rounded transition-colors"
-              title="Retry geocoding for all failed leads"
+              disabled={isFixingGeo}
+              className="flex items-center gap-2 px-3 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm rounded transition-colors"
+              title="Retry geocoding for all pending/failed leads"
             >
-              <RotateCcw size={14} />
+              {isFixingGeo ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
               Fix Geo
             </button>
             <button
@@ -1031,7 +1250,78 @@ const handleMapLeadSelect = (leadId: string) => {
           </div>
         </div>
 
+        {geoFixResult && (
+          <div
+            className={clsx(
+              'rounded border p-3 text-sm space-y-2',
+              geoFixResult.failed > 0
+                ? 'bg-amber-950 border-amber-800 text-amber-100'
+                : 'bg-emerald-950 border-emerald-800 text-emerald-100',
+            )}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="font-semibold">Fix Geo result</div>
+              <button
+                type="button"
+                onClick={() => setGeoFixResult(null)}
+                className="text-xs underline opacity-80 hover:opacity-100 shrink-0"
+              >
+                Dismiss
+              </button>
+            </div>
+            <div className="text-xs opacity-90">
+              {geoFixResult.processed} processed · {geoFixResult.succeeded} succeeded ·{' '}
+              {geoFixResult.failed} failed · {geoFixResult.skipped} skipped ·{' '}
+              {geoFixResult.remaining} remaining
+            </div>
+            {geoFixResult.failed > 0 && /REQUEST_DENIED|API key/i.test(geoFixResult.hint || '') && (
+              <p className="text-xs">
+                Google geocoding key may be restricted or denied. Check Supabase
+                GOOGLE_MAPS_API_KEY / Google Cloud Geocoding API settings.
+              </p>
+            )}
+            {geoFixResult.skipped > 0 && (
+              <p className="text-xs">
+                Some leads were skipped because address/city was missing.
+              </p>
+            )}
+            {geoFixResult.hint && (
+              <p className="text-xs opacity-80">{geoFixResult.hint}</p>
+            )}
+            {geoFixResult.errors && geoFixResult.errors.length > 0 && (
+              <details className="text-xs opacity-90">
+                <summary className="cursor-pointer">Sample failures ({geoFixResult.errors.length})</summary>
+                <div className="mt-2 space-y-1">
+                  {geoFixResult.errors.map((e, i) => (
+                    <p key={i}>{e.address || '(no address)'} — {e.error || 'unknown error'}</p>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        )}
+
         {renderTlmaSearchBuilder(false)}
+
+        <TlmaBookmarkletHelper
+          onImportFromClipboard={handleImportFromClipboard}
+          onManualPaste={() => setIsTlmaPasteOpen(true)}
+          isImporting={isTlmaParsing}
+          clipboardStatus={tlmaClipboardStatus}
+        />
+
+        {renderTlmaImportPreview()}
+
+        {tlmaImportResult && (
+          <div className="rounded border border-emerald-800 bg-emerald-950/40 p-3 text-sm text-emerald-100 space-y-1">
+            <div className="font-medium">Import complete</div>
+            <div>
+              {tlmaImportResult.rows_inserted} new · {tlmaImportResult.rows_updated} updated ·{' '}
+              {tlmaImportResult.rows_skipped} skipped · {tlmaImportResult.error_count} errors
+            </div>
+            <div className="text-xs">{tlmaImportResult.message || 'Existing leads were not deleted.'}</div>
+          </div>
+        )}
 
         <p className="text-xs text-gray-500">
           TLMA blocks server auto-scan. Browser import only — no server fetch.
@@ -1151,27 +1441,6 @@ const handleMapLeadSelect = (leadId: string) => {
               <MapIcon size={13} className="text-emerald-500" />
               <span className="font-medium">Lead Map</span>
               <span className="text-gray-500">— pin click opens lead</span>
-              <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1 ml-2">
-                <button
-                  onClick={() => setShowFilters(!showFilters)}
-                  className="flex items-center gap-1 px-2 py-0.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded border border-gray-700 transition-colors"
-                >
-                  <Settings size={11} />
-                  Filter
-                  <ChevronDown size={11} className={clsx('transition-transform', showFilters && 'rotate-180')} />
-                </button>
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as SortOption)}
-                  className="px-2 py-0.5 bg-gray-800 text-gray-300 rounded border border-gray-700 hover:border-gray-600 focus:outline-none text-xs"
-                >
-                  <option value="score">Score</option>
-                  <option value="date">Date</option>
-                  <option value="value">Value</option>
-                  <option value="distance">Distance</option>
-                  <option value="nearest">Nearest</option>
-                </select>
-              </div>
             </div>
             <div className="flex items-center gap-2">
               <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
@@ -1194,96 +1463,6 @@ const handleMapLeadSelect = (leadId: string) => {
               {mapExpanded ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
             </div>
           </button>
-          {showFilters && (
-            <div className="bg-gray-900 border-b border-gray-800 px-3 py-2 flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <select
-                  value={filters.scoreTier}
-                  onChange={(e) => setFilters({ ...filters, scoreTier: e.target.value as any })}
-                  className="px-2 py-1 bg-gray-800 text-gray-300 text-xs rounded border border-gray-700 focus:outline-none"
-                >
-                  <option value="all">All Tiers</option>
-                  <option value="elite">Elite (85+)</option>
-                  <option value="strong">Strong (75-84)</option>
-                  <option value="qualified">Qualified (60-74)</option>
-                  <option value="expansion">Expansion (40-59)</option>
-                </select>
-                <select
-                  value={filters.jobType}
-                  onChange={(e) => setFilters({ ...filters, jobType: e.target.value })}
-                  className="px-2 py-1 bg-gray-800 text-gray-300 text-xs rounded border border-gray-700 focus:outline-none"
-                >
-                  <option value="all">All Types</option>
-                  <option value="electrical">Electrical</option>
-                  <option value="solar">Solar</option>
-                  <option value="maintenance">Maintenance</option>
-                </select>
-                <button
-                  type="button"
-                  onClick={() => setFilters({ ...filters, urgencyOnly: !filters.urgencyOnly })}
-                  className={clsx(
-                    'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition',
-                    filters.urgencyOnly
-                      ? 'bg-orange-500/20 border-orange-500/50 text-orange-300'
-                      : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
-                  )}
-                >
-                  <span className={clsx('w-1.5 h-1.5 rounded-full', filters.urgencyOnly ? 'bg-orange-400' : 'bg-gray-600')} />
-                  Urgent only (75+)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowArchived(!showArchived)}
-                  className={clsx(
-                    'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition',
-                    showArchived
-                      ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
-                      : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
-                  )}
-                >
-                  <span className={clsx('w-1.5 h-1.5 rounded-full', showArchived ? 'bg-emerald-400' : 'bg-gray-600')} />
-                  Show archived
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !distanceFilterEnabled
-                    setDistanceFilterEnabled(next)
-                    if (next && maxDistanceMiles === null) setMaxDistanceMiles(50)
-                  }}
-                  className={clsx(
-                    'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition',
-                    distanceFilterEnabled
-                      ? 'bg-blue-500/20 border-blue-500/50 text-blue-300'
-                      : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
-                  )}
-                >
-                  <span className={clsx('w-1.5 h-1.5 rounded-full', distanceFilterEnabled ? 'bg-blue-400' : 'bg-gray-600')} />
-                  {distanceFilterEnabled && maxDistanceMiles != null ? `Within ${maxDistanceMiles} mi` : 'Within X miles'}
-                </button>
-                {distanceFilterEnabled && (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="5"
-                      max="100"
-                      step="5"
-                      value={maxDistanceMiles ?? 50}
-                      onChange={(e) => setMaxDistanceMiles(parseInt(e.target.value))}
-                      className="w-24"
-                    />
-                    <span className="text-xs text-gray-400">{maxDistanceMiles} mi</span>
-                  </div>
-                )}
-                <button
-                  onClick={() => { setFilters(DEFAULT_FILTERS); setDistanceFilterEnabled(false); setMaxDistanceMiles(null) }}
-                  className="text-xs text-gray-500 hover:text-gray-300 underline ml-1"
-                >
-                  Reset
-                </button>
-              </div>
-            </div>
-          )}
           {mapExpanded && (
             <div style={{ height: '50vh', minHeight: 320 }}>
               <HunterMap
@@ -1543,12 +1722,207 @@ const handleMapLeadSelect = (leadId: string) => {
             )}
 
             {/* Top Leads (Elite + Strong + Qualified) */}
-            {topLeads.length > 0 && (
-              <div>
-                <h2 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
+            {/* HUNTER-4B: Filter/Score controls moved here from Lead Map header —
+                same height as the section title, far right. Behavior unchanged:
+                Filter still toggles the same filter panel/state; Score still
+                updates sortBy. Neither affects HunterMap (still geoFilter-only). */}
+            <div>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <h2 className="text-sm font-bold text-white flex items-center gap-2">
                   <span className="inline-block w-2 h-2 rounded-full bg-yellow-500"></span>
                   Top Leads ({topLeads.length})
                 </h2>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* HUNTER-5D: Zone — list-only organization control, independent
+                      of Filter/Timeline/Score. Defaults to Focus: Coachella Valley.
+                      Never affects HunterMap or geo/source pills. */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowZoneMenu(!showZoneMenu)}
+                      className={clsx(
+                        'flex items-center gap-1.5 min-h-[36px] px-3 py-2 rounded border transition-colors text-sm font-medium',
+                        zone !== 'all_imported'
+                          ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-200'
+                          : 'bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white border-gray-700'
+                      )}
+                    >
+                      Zone: {ZONE_OPTIONS.find((o) => o.value === zone)?.label ?? 'Focus: Coachella Valley'}
+                      <ChevronDown size={14} className={clsx('transition-transform', showZoneMenu && 'rotate-180')} />
+                    </button>
+                    {showZoneMenu && (
+                      <div className="absolute left-0 mt-1 w-64 bg-gray-900 border border-gray-800 rounded shadow-lg z-10 py-1">
+                        {ZONE_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => { setZone(opt.value); setShowZoneMenu(false) }}
+                            className={clsx(
+                              'w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800',
+                              zone === opt.value ? 'text-cyan-300' : 'text-gray-300'
+                            )}
+                          >
+                            {opt.label}
+                            {opt.value === 'pending_geo' && pendingGeoCount > 0 && (
+                              <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/30 text-amber-200">
+                                {pendingGeoCount}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setShowFilters(!showFilters)}
+                    className="flex items-center gap-1.5 min-h-[36px] px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded border border-gray-700 transition-colors text-sm font-medium"
+                  >
+                    <Settings size={14} />
+                    Filter
+                    <ChevronDown size={14} className={clsx('transition-transform', showFilters && 'rotate-180')} />
+                  </button>
+                  {/* HUNTER-5B: Timeline — list-only sort by permit date / added-to-portal
+                      date. Never affects HunterMap; never hardcodes a date range. */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowTimeline(!showTimeline)}
+                      className={clsx(
+                        'flex items-center gap-1.5 min-h-[36px] px-3 py-2 rounded border transition-colors text-sm font-medium',
+                        timelineSort !== 'none'
+                          ? 'bg-blue-500/20 border-blue-500/50 text-blue-300'
+                          : 'bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white border-gray-700'
+                      )}
+                    >
+                      Timeline
+                      {timelineSort !== 'none' && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/30 text-blue-200">
+                          active
+                        </span>
+                      )}
+                      <ChevronDown size={14} className={clsx('transition-transform', showTimeline && 'rotate-180')} />
+                    </button>
+                    {showTimeline && (
+                      <div className="absolute right-0 mt-1 w-56 bg-gray-900 border border-gray-800 rounded shadow-lg z-10 py-1">
+                        {([
+                          { value: 'permit_newest', label: 'Permit Date: Newest first' },
+                          { value: 'permit_oldest', label: 'Permit Date: Oldest first' },
+                          { value: 'portal_newest', label: 'Added to Portal: Newest first' },
+                          { value: 'portal_oldest', label: 'Added to Portal: Oldest first' },
+                        ] as Array<{ value: TimelineSort; label: string }>).map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => { setTimelineSort(opt.value); setShowTimeline(false) }}
+                            className={clsx(
+                              'w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800',
+                              timelineSort === opt.value ? 'text-blue-300' : 'text-gray-300'
+                            )}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                        <div className="border-t border-gray-800 my-1" />
+                        <button
+                          type="button"
+                          onClick={() => { setTimelineSort('none'); setShowTimeline(false) }}
+                          className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:text-gray-300 hover:bg-gray-800"
+                        >
+                          Clear Timeline Sort
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <label className="flex items-center gap-1.5 min-h-[36px] px-3 py-2 bg-gray-800 rounded border border-gray-700 text-sm text-gray-300">
+                    <span className="text-gray-400">Score</span>
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as SortOption)}
+                      className="bg-transparent text-gray-100 focus:outline-none text-sm"
+                    >
+                      <option value="score">Score</option>
+                      <option value="date">Date</option>
+                      <option value="value">Value</option>
+                      <option value="distance">Distance</option>
+                      <option value="nearest">Nearest</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              {/* HUNTER-5D: Zone helper copy — clarifies Home Base dependency and
+                  which views need Fix Geo. List-only; no map or data changes. */}
+              <p className="text-[11px] text-gray-500 mb-2">
+                Zone uses your saved HUNTER Home Base from Fix Geo. Pending Geo leads need Fix Geo before radius views are accurate.
+                {zone === 'focus_cv' && ' City-based focus. No geocode required.'}
+                {(zone === 'radius_50' || zone === 'radius_75' || zone === 'radius_100') && ' Distance from HUNTER Home Base. Pending geocode leads are separated.'}
+              </p>
+              {zone === 'pending_geo' && zoneFilteredLeads.length > 0 && (
+                <p className="text-[11px] text-amber-300 mb-2">
+                  Run Fix Geo from Settings / HUNTER Home Base to calculate distance.
+                </p>
+              )}
+              {showFilters && (
+                <div className="bg-gray-900 border border-gray-800 rounded px-3 py-2 flex flex-wrap items-center gap-2 mb-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <select
+                      value={filters.scoreTier}
+                      onChange={(e) => setFilters({ ...filters, scoreTier: e.target.value as any })}
+                      className="px-2 py-1 bg-gray-800 text-gray-300 text-xs rounded border border-gray-700 focus:outline-none"
+                    >
+                      <option value="all">All Tiers</option>
+                      <option value="elite">Elite (85+)</option>
+                      <option value="strong">Strong (75-84)</option>
+                      <option value="qualified">Qualified (60-74)</option>
+                      <option value="expansion">Expansion (40-59)</option>
+                    </select>
+                    <select
+                      value={filters.jobType}
+                      onChange={(e) => setFilters({ ...filters, jobType: e.target.value })}
+                      className="px-2 py-1 bg-gray-800 text-gray-300 text-xs rounded border border-gray-700 focus:outline-none"
+                    >
+                      <option value="all">All Types</option>
+                      <option value="residential">Residential</option>
+                      <option value="commercial">Commercial</option>
+                      <option value="electrical">Electrical</option>
+                      <option value="solar">Solar</option>
+                      <option value="maintenance">Maintenance</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setFilters({ ...filters, urgencyOnly: !filters.urgencyOnly })}
+                      className={clsx(
+                        'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition',
+                        filters.urgencyOnly
+                          ? 'bg-orange-500/20 border-orange-500/50 text-orange-300'
+                          : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
+                      )}
+                    >
+                      <span className={clsx('w-1.5 h-1.5 rounded-full', filters.urgencyOnly ? 'bg-orange-400' : 'bg-gray-600')} />
+                      Urgent only (75+)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowArchived(!showArchived)}
+                      className={clsx(
+                        'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition',
+                        showArchived
+                          ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                          : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
+                      )}
+                    >
+                      <span className={clsx('w-1.5 h-1.5 rounded-full', showArchived ? 'bg-emerald-400' : 'bg-gray-600')} />
+                      Show archived
+                    </button>
+                    {/* HUNTER-5D: Radius presets moved to the Zone control above —
+                        removed here to avoid duplicate/conflicting radius UI. */}
+                    <button
+                      onClick={() => { setFilters(DEFAULT_FILTERS); setTimelineSort('none') }}
+                      className="text-xs text-gray-500 hover:text-gray-300 underline ml-1"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+              )}
+              {topLeads.length > 0 && (
                 <div className="space-y-2">
                   {topLeads.map((lead) => (
                     <HunterLeadCard
@@ -1569,8 +1943,8 @@ const handleMapLeadSelect = (leadId: string) => {
                     />
                   ))}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             {/* Expansion Opportunities */}
             {expansionLeads.length > 0 && (
@@ -1777,6 +2151,7 @@ const handleMapLeadSelect = (leadId: string) => {
                   setTlmaPasteHtml(e.target.value)
                   setTlmaParsePreview(null)
                   setTlmaImportResult(null)
+                  setTlmaClipboardStatus(null)
                 }}
                 placeholder='Paste HTML containing #resultsScroll table or table.results-table…'
                 className="w-full h-40 px-3 py-2 bg-gray-900 border border-gray-700 rounded text-sm text-gray-100 font-mono"
@@ -1791,48 +2166,9 @@ const handleMapLeadSelect = (leadId: string) => {
                 >
                   {isTlmaParsing ? 'Parsing…' : 'Parse'}
                 </button>
-                <button
-                  type="button"
-                  onClick={handleImportTlmaPaste}
-                  disabled={!tlmaParsePreview?.permits.length || isTlmaImporting}
-                  className="px-3 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm rounded"
-                >
-                  {isTlmaImporting ? 'Importing…' : 'Import Leads'}
-                </button>
               </div>
 
-              {tlmaParsePreview && (
-                <div className="rounded border border-gray-800 bg-gray-900 p-3 text-sm space-y-2">
-                  <div className="text-gray-200">
-                    Parsed {tlmaParsePreview.total_rows} row(s) · {tlmaParsePreview.rows_with_permit_numbers} with permit numbers
-                  </div>
-                  {tlmaParsePreview.warnings.map((warning) => (
-                    <p key={warning} className="text-xs text-amber-300">{warning}</p>
-                  ))}
-                  {tlmaParsePreview.permits.length === 0 ? (
-                    <p className="text-xs text-gray-400">No importable permits found.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      <p className="text-xs text-gray-400">First permits preview:</p>
-                      <ul className="space-y-1 text-xs text-gray-300">
-                        {tlmaPreviewRows.map((row) => (
-                          <li key={row.permit_number} className="border border-gray-800 rounded px-2 py-1">
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                              <span className="font-medium text-white">{row.permit_number}</span>
-                              <span className="text-yellow-300">{row.score} · {row.score_tier}</span>
-                              <span>{row.city || 'Unknown city'}</span>
-                              <span>{row.permit_type || 'Unknown type'}</span>
-                              <span>{row.status || 'Unknown status'}</span>
-                            </div>
-                            {row.address && <div className="text-gray-400 mt-0.5">{row.address}</div>}
-                            {row.description && <div className="text-gray-500 mt-0.5">{row.description.slice(0, 120)}</div>}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              )}
+              {renderTlmaImportPreview()}
 
               {tlmaImportResult && (
                 <div className="rounded border border-emerald-800 bg-emerald-950/40 p-3 text-sm text-emerald-100 space-y-1">

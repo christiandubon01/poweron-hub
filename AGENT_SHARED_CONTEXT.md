@@ -4297,3 +4297,75 @@ No commit, push, deploy, manual Supabase touch, restore script, or manual localS
 **Still browser-assisted only:** no Cloudflare bypass, no server TLMA fetch. City scanners untouched.
 
 **Lock released.**
+
+---
+
+### 2026-07-06 — Phase HUNTER-3B: TLMA Bookmarklet + Clipboard Import (NOT COMMITTED)
+
+**Agent:** Cursor Composer 2.5 Fast
+**Mode:** IMPLEMENT ONLY — browser bookmarklet helper + clipboard import
+**Branch:** main @ `4ae99c0` | NOT committed | NOT pushed | NOT deployed
+
+**HUNTER-3B added TLMA bookmarklet helper and Import From Clipboard:**
+- `TlmaBookmarkletHelper` section in Hunter TLMA import area with drag-to-bookmarks link and copyable bookmarklet code.
+- Bookmarklet reads only visible `#resultsScroll` / `table.results-table` DOM from user's browser; copies `outerHTML` to clipboard; shows success alert.
+- **Import From Clipboard** uses `navigator.clipboard.readText()`, validates TLMA table HTML, passes to existing `parseTlmaTableHtml()`, shows same preview, user clicks **Import Leads** to save.
+- **Manual Paste** fallback opens existing paste modal (DevTools outerHTML path unchanged).
+
+**No server TLMA fetch. No cookies/tokens/bypass. No Playwright/Selenium/extension.**
+
+**Import path unchanged:** browser parse → `buildTlmaImportRows()` → POST `/.netlify/functions/city-scraper?action=tlma-import` (existing permits update, new insert, nothing deleted).
+
+**Untouched:** Indio scanner, Palm Springs scanner, Palm Desert city scanner behavior, Supabase `tlma-scraper` Edge Function.
+
+**Lock released.**
+
+---
+
+### 2026-07-06 — Phase HUNTER-4B: Move Filter/Score Controls to Top Leads Header (NOT COMMITTED)
+
+**Mode:** IMPLEMENT ONLY — small UI layout fix in `HunterPanel.tsx`
+
+- HUNTER-4B moved Filter/Score controls from Lead Map header to Top Leads header.
+- Made controls easier to click.
+- No import/scoring/filtering/map behavior changed.
+
+---
+
+### 2026-07-06 — Phase HUNTER-5B: Types, Radius Presets, Timeline Sort (NOT COMMITTED)
+
+**Mode:** IMPLEMENT ONLY — `HunterPanel.tsx` only (no store/schema changes needed)
+
+- HUNTER-5B added Residential/Commercial type filters.
+- HUNTER-5B added radius preset controls using existing `distanceFromBaseMiles` / Fix Geo Home Base flow.
+- HUNTER-5B added Timeline list sorting by permit date and added-to-portal date.
+- No TLMA import/scoring/map/scanner behavior changed.
+- No data deleted.
+- TLMA data/import untouched.
+
+---
+
+### 2026-07-06 — Phase HUNTER-5D: Zone Focus + Correct Radius Pending Geo Behavior (NOT COMMITTED)
+
+**Mode:** IMPLEMENT ONLY — `HunterPanel.tsx` + new `coachellaValleyCities.ts` only
+
+- HUNTER-5D added Zone control for Coachella Valley Focus, 50/75/100 mi radius, All Imported, and Pending Geo.
+- Fixed radius behavior so unknown-distance leads no longer silently pass numeric radius filters.
+- Radius still uses existing distanceFromBaseMiles from Fix Geo/Home Base.
+- No import/scoring/scanner/map behavior changed.
+- Map radius rings deferred to a future phase.
+
+---
+
+### 2026-07-06 — Phase HUNTER-5G: Fix Geo Diagnostics + TLMA Address Geocode Formatting (NOT COMMITTED)
+
+**Mode:** IMPLEMENT ONLY — `HunterPanel.tsx`, `GeocodingClient.ts`, `geocode-backfill/index.ts`, `tlma-scraper/geocoding.ts` only
+
+**Context:** HUNTER-5F audit found Fix Geo returning "0 succeeded, 10 failed, 184 remaining" with no way to see why. Two root causes identified: (1) a previously-documented Google `REQUEST_DENIED` key issue (see 2026-06-24 Palm Desert entry) that was never fixed for the general/TLMA geocoding path, and (2) TLMA browser-imported leads store `address` as an already-combined `"street, city, CA"` string, but `buildAddressForGeocoding` treated it as a bare street name and re-appended city/state, producing duplicated strings like `"44-123 Monroe St, Indio, CA, Indio, Riverside County, CA"`.
+
+**Changes made:**
+- HUNTER-5G improved Fix Geo diagnostics: `GeocodingClient.triggerGeocodingBackfill` now returns `processed`, `skipped`, `hint`, and up to 3 sample `errors` (address + error code, no tokens) in addition to `succeeded`/`failed`/`remaining`. `geocode-backfill/index.ts` now collects up to 3 failure samples and returns a smarter `hint` that calls out `REQUEST_DENIED`/API-key issues specifically when detected. `HunterPanel.tsx`'s Fix Geo button no longer uses a bare `alert()` — it shows a dismissible result panel (same visual pattern as the existing TLMA scan-result panel) with counts, a REQUEST_DENIED-specific warning, a skipped-address warning, and a collapsible "Sample failures" detail list.
+- HUNTER-5G fixed TLMA duplicate city/state geocode address formatting: `buildAddressForGeocoding` in `tlma-scraper/geocoding.ts` now detects an already-embedded state (`", CA"` suffix) and/or city name in the input address and avoids re-appending them, instead normalizing to a single `"street, city, Riverside County, CA"` form. Bare street-name inputs (the pre-existing `tlma-scraper` Edge Function ingestion path) still get city + county + state appended exactly as before — behavior for that path is unchanged.
+- No import/scoring/map/Zone behavior changed.
+- No Supabase data writes were run by the agent (audit/implementation was static-only; user will test manually).
+- Google API key/config may still need an infrastructure-level fix (Google Cloud Console key restrictions/billing) if `REQUEST_DENIED` persists after these changes — this phase only makes that failure diagnosable, it does not and cannot fix the key itself.

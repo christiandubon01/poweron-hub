@@ -89,16 +89,56 @@ export function haversineDistanceMiles(
   return Math.round(R * c * 100) / 100; // 2 decimal places
 }
 
+function normalizeAddressSpacing(text: string): string {
+  return text
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/(,\s*)+/g, ', ')
+    .replace(/^,\s*/, '')
+    .replace(/,\s*$/, '')
+    .trim();
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
- * Build a clean address string for geocoding from a TLMA permit's fields.
- * TLMA gives us street_name and city; we add ", Riverside County, CA" for
- * accuracy in unincorporated areas.
+ * Build a clean address string for geocoding from a TLMA lead's fields.
+ * TLMA gives us either a bare street name or an already-combined
+ * "street, city, CA" string (the browser/paste import path pre-joins
+ * city + state), plus a separate city. We normalize both shapes to a
+ * single "street, city, Riverside County, CA" string without duplicating
+ * the city or state if they're already embedded in the address.
  */
 export function buildAddressForGeocoding(
-  streetName: string | null,
+  address: string | null,
   city: string | null
 ): string | null {
-  if (!streetName || streetName.trim() === '') return null;
-  const cityPart = city && city.trim() ? `, ${city}, ` : ', ';
-  return `${streetName.trim()}${cityPart}Riverside County, CA`;
+  if (!address || address.trim() === '') return null;
+
+  let text = address.trim();
+  const cityName = city && city.trim() ? city.trim() : null;
+
+  // Strip a trailing ", CA" if the address already ends with the state,
+  // so it isn't duplicated when we re-append county + state below.
+  const trailingStateMatch = text.match(/,?\s*CA\.?$/i);
+  if (trailingStateMatch) {
+    text = text.slice(0, text.length - trailingStateMatch[0].length).trim();
+  }
+
+  const hasCounty = /riverside county/i.test(text);
+  const hasCity = cityName
+    ? new RegExp(`(^|,)\\s*${escapeRegExp(cityName)}\\s*(,|$)`, 'i').test(text)
+    : false;
+
+  let result = text;
+  if (cityName && !hasCity) {
+    result = `${result}, ${cityName}`;
+  }
+  if (!hasCounty) {
+    result = `${result}, Riverside County`;
+  }
+  result = `${result}, CA`;
+
+  return normalizeAddressSpacing(result);
 }
