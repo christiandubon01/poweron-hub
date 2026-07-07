@@ -36,6 +36,12 @@ interface HomeBase {
   formatted_address: string
 }
 
+interface LeadMarkerEntry {
+  id: string | null
+  marker: google.maps.Marker
+  isLeadPin: boolean
+}
+
 function pinColorForScore(score: number): string {
   if (score >= 85) return '#34d399'        // Elite - emerald
   if (score >= 75) return '#10b981'        // Strong - green
@@ -213,7 +219,8 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
 
   const [homeBase, setHomeBase] = useState<HomeBase | null>(null)
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null)
-  const markersRef = useRef<google.maps.Marker[]>([])
+  const [focusedMapLeadId, setFocusedMapLeadId] = useState<string | null>(null)
+  const markersRef = useRef<LeadMarkerEntry[]>([])
   const [routeLeadId, setRouteLeadId] = useState<string | null>(null)
   const routeLeadIdRef = useRef<string | null>(null)
   const [routeLoading, setRouteLoading] = useState(false)
@@ -229,6 +236,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
     }
     polylineRef.current = []
     setRouteLeadId(null)
+    setFocusedMapLeadId(null)
     routeLeadIdRef.current = null
   }, [])
 
@@ -698,21 +706,8 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
     })
   }, [isLoaded, ungeocodedPortalLeads])
 
-  useEffect(() => {
-    if (!mapRef.current || !isLoaded) return
-    markersRef.current.forEach(m => m.setMap(null))
-    markersRef.current = []
-    if (homeBase) {
-      const hm = new google.maps.Marker({
-        position: { lat: homeBase.lat, lng: homeBase.lng },
-        map: mapRef.current,
-        title: 'Home base',
-        icon: homeBaseSymbol(),
-        zIndex: 1000,
-      })
-      markersRef.current.push(hm)
-    }
-    const allPins = [
+  const allPins = useMemo(
+    () => [
       ...geocodedLeads.map((lead: any) => ({
         id: lead.id,
         lat: lead.latitude ?? lead.lat,
@@ -729,7 +724,30 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         title: lead.contactName ?? lead.contact_name ?? 'Portal Lead',
         isPortal: true,
       })),
-    ]
+    ],
+    [geocodedLeads, portalPins]
+  )
+
+  useEffect(() => {
+    if (focusedMapLeadId && !allPins.some((pin) => pin.id === focusedMapLeadId)) {
+      setFocusedMapLeadId(null)
+    }
+  }, [allPins, focusedMapLeadId])
+
+  useEffect(() => {
+    if (!mapRef.current || !isLoaded) return
+    markersRef.current.forEach(({ marker }) => marker.setMap(null))
+    markersRef.current = []
+    if (homeBase) {
+      const hm = new google.maps.Marker({
+        position: { lat: homeBase.lat, lng: homeBase.lng },
+        map: mapRef.current,
+        title: 'Home base',
+        icon: homeBaseSymbol(),
+        zIndex: 1000,
+      })
+      markersRef.current.push({ id: null, marker: hm, isLeadPin: false })
+    }
     allPins.forEach(({ id, lat, lng, score, title, isPortal }) => {
       const m = new google.maps.Marker({
         position: { lat, lng },
@@ -739,8 +757,11 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         zIndex: score >= 85 ? 600 : isPortal ? 550 : 500,
         optimized: false,
       })
-      m.addListener('click', () => setSelectedLeadId(id))
-      markersRef.current.push(m)
+      m.addListener('click', () => {
+        setSelectedLeadId(id)
+        setFocusedMapLeadId((current) => current && current !== id ? null : current)
+      })
+      markersRef.current.push({ id, marker: m, isLeadPin: true })
       // Animate flame for elite pins
       if (score >= 85) {
         let frameIdx = 0
@@ -770,7 +791,19 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         requestAnimationFrame(animatePortal)
       }
     })
-  }, [isLoaded, homeBase, geocodedLeads, portalPins])
+  }, [isLoaded, homeBase, allPins])
+
+  useEffect(() => {
+    markersRef.current.forEach(({ id, marker, isLeadPin }) => {
+      if (!isLeadPin) return
+      marker.setOpacity(!focusedMapLeadId || id === focusedMapLeadId ? 1 : 0.2)
+    })
+  }, [allPins, focusedMapLeadId])
+
+  const closeLeadPopup = useCallback(() => {
+    setSelectedLeadId(null)
+    setFocusedMapLeadId(null)
+  }, [])
 
   const center = homeBase ?? FALLBACK_CENTER
 
@@ -810,6 +843,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         center={center}
         zoom={10}
         onLoad={map => { mapRef.current = map }}
+        onClick={closeLeadPopup}
         options={{
         streetViewControl: false,
         mapTypeControl: false,
@@ -828,7 +862,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
       {selectedLead && (
         <InfoWindowF
           position={{ lat: (selectedLead as any).latitude ?? (selectedLead as any).lat, lng: (selectedLead as any).longitude ?? (selectedLead as any).lng }}
-          onCloseClick={() => setSelectedLeadId(null)}
+          onCloseClick={closeLeadPopup}
         >
           <div style={{ minWidth: 200, color: '#0f1117' }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>
@@ -850,7 +884,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
             )}
             <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
               <button
-                onClick={() => { onLeadSelect((selectedLead as any).id); setSelectedLeadId(null) }}
+                onClick={() => { onLeadSelect((selectedLead as any).id); closeLeadPopup() }}
                 style={{ background: '#10b981', color: 'white', padding: '4px 10px', fontSize: 12, borderRadius: 4, border: 'none', cursor: 'pointer', fontWeight: 500 }}
               >
                 Open lead
@@ -868,7 +902,9 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
                     const lat = (selectedLead as any).latitude ?? (selectedLead as any).lat
                     const lng = (selectedLead as any).longitude ?? (selectedLead as any).lng
                     if (lat && lng) {
-                      drawRoute(lat, lng, (selectedLead as any).id)
+                      const leadId = (selectedLead as any).id
+                      drawRoute(lat, lng, leadId)
+                      setFocusedMapLeadId(leadId)
                       setSelectedLeadId(null)
                     }
                   }}

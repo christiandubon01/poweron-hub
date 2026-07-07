@@ -41,8 +41,8 @@ export interface HunterPanelProps {
 
 type SortOption = 'score' | 'date' | 'value' | 'distance' | 'nearest'
 type ScoreTier = 'elite' | 'strong' | 'qualified' | 'expansion' | 'archived'
-// HUNTER-5B: Timeline list-sort. Independent of the map-only geo filter and the
-// Score sort — when set to anything but 'none', it takes priority over sortBy
+// HUNTER-5B: Timeline list-sort. Independent of the shared map/list filter
+// pipeline — when set to anything but 'none', it takes priority over sortBy
 // for the lead list ordering only (map pins are unaffected).
 type TimelineSort = 'none' | 'permit_newest' | 'permit_oldest' | 'portal_newest' | 'portal_oldest'
 // HUNTER-5B: Distance Radius presets — reuse existing distanceFilterEnabled /
@@ -57,11 +57,9 @@ const RADIUS_PRESETS: Array<{ label: string; miles: number | null }> = [
   { label: '100 mi', miles: 100 },
 ]
 
-// HUNTER-5D: Zone control — list-only lead organization, independent of the
-// Filter/Timeline/Score controls and of the geo/source filter. Never affects
-// HunterMap (still fed by geoFilteredLeads only). Radius options use the
-// existing distanceFromBaseMiles field from Fix Geo/Home Base geocoding —
-// no new origin, no geocoding triggered here.
+// HUNTER-5D: Zone control — shared lead organization for Top Leads and Lead
+// Map. Radius options use the existing distanceFromBaseMiles field from Fix
+// Geo/Home Base geocoding — no new origin, no geocoding triggered here.
 type ZoneOption = 'focus_cv' | 'radius_50' | 'radius_75' | 'radius_100' | 'all_imported' | 'pending_geo'
 const ZONE_OPTIONS: Array<{ value: ZoneOption; label: string }> = [
   { value: 'focus_cv', label: 'Focus: Coachella Valley' },
@@ -543,6 +541,7 @@ const handleMapLeadSelect = (leadId: string) => {
   }
 
   const [isTlmaPasteOpen, setIsTlmaPasteOpen] = useState(false)
+  const [showTlmaMethodModal, setShowTlmaMethodModal] = useState(false)
   const [tlmaPasteHtml, setTlmaPasteHtml] = useState('')
   const [tlmaParsePreview, setTlmaParsePreview] = useState<{
     total_rows: number
@@ -669,6 +668,11 @@ const handleMapLeadSelect = (leadId: string) => {
     setTlmaParsePreview(null)
     setTlmaImportResult(null)
     setTlmaClipboardStatus(null)
+  }
+
+  const closeTlmaMethodModal = () => {
+    setShowTlmaMethodModal(false)
+    closeTlmaPasteModal()
   }
 
   const tlmaPreviewRows = useMemo(
@@ -967,7 +971,6 @@ const handleMapLeadSelect = (leadId: string) => {
   // Filter panel and Timeline/Score sort. Radius options use the existing
   // distanceFromBaseMiles/distance field only — leads with unknown distance
   // never silently pass a numeric radius; they belong in Pending Geo instead.
-  // HunterMap is untouched (still reads geoFilteredLeads directly).
   const zoneFilteredLeads = useMemo(() => {
     switch (zone) {
       case 'focus_cv':
@@ -1002,8 +1005,9 @@ const handleMapLeadSelect = (leadId: string) => {
     ?? leads.filter((l) => l.dateDiscovered === todayString).length
   const [showMoreMenu, setShowMoreMenu] = useState(false)
 
-  // Filter and sort leads
-  const filteredAndSortedLeads = useMemo(() => {
+  // Canonical filtered dataset shared by Top Leads and Lead Map. Timeline and
+  // score/distance sort are applied only in filteredAndSortedLeads below.
+  const canonicalFilteredLeads = useMemo(() => {
     let result = zoneFilteredLeads.filter((lead) => {
       // Score tier filter — bypass for archived-status leads so they
       // always reach the isArchivedLead bucket regardless of score.
@@ -1053,8 +1057,14 @@ const handleMapLeadSelect = (leadId: string) => {
       })
     }
 
-    // Sort — Timeline sort (when active) takes priority over Score sort (sortBy).
-    // Timeline affects list order only; it never touches HunterMap/geoFilteredLeads.
+    return result
+  }, [zoneFilteredLeads, filters, distanceFilterEnabled, maxDistanceMiles])
+
+  // Sort — Timeline sort (when active) takes priority over Score sort (sortBy).
+  // Timeline affects list order only; it never touches HunterMap.
+  const filteredAndSortedLeads = useMemo(() => {
+    const result = [...canonicalFilteredLeads]
+
     if (timelineSort !== 'none') {
       result.sort((a: any, b: any) => {
         switch (timelineSort) {
@@ -1098,7 +1108,7 @@ const handleMapLeadSelect = (leadId: string) => {
     })
 
     return result
-  }, [zoneFilteredLeads, filters, sortBy, timelineSort, distanceFilterEnabled, maxDistanceMiles])
+  }, [canonicalFilteredLeads, sortBy, timelineSort])
 
   // Tier thresholds per canonical HUNTER scoring: elite 85+, strong 75-84,
   // qualified 60-74, expansion 40-59, archived <40.
@@ -1193,20 +1203,12 @@ const handleMapLeadSelect = (leadId: string) => {
               {isScanning ? 'Scanning…' : 'Scan Now'}
             </button>
             <button
-              onClick={handleOpenTlmaSearch}
+              onClick={() => setShowTlmaMethodModal(true)}
               className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded transition-colors"
-              title="Open TLMA search with current Search Builder filters"
-            >
-              <ExternalLink size={14} />
-              Open TLMA Search
-            </button>
-            <button
-              onClick={() => setIsTlmaPasteOpen(true)}
-              className="flex items-center gap-2 px-3 py-2 bg-indigo-700 hover:bg-indigo-600 text-white text-sm rounded transition-colors"
-              title="Paste copied TLMA results table HTML"
+              title="Open TLMA search, copy table data, or import from clipboard"
             >
               <ClipboardPaste size={14} />
-              Paste TLMA Table
+              TLMA Method
             </button>
             <button
               onClick={onViewStudyQueue}
@@ -1301,18 +1303,18 @@ const handleMapLeadSelect = (leadId: string) => {
           </div>
         )}
 
-        {renderTlmaSearchBuilder(false)}
+        {false && renderTlmaSearchBuilder(false)}
 
-        <TlmaBookmarkletHelper
+        {false && <TlmaBookmarkletHelper
           onImportFromClipboard={handleImportFromClipboard}
           onManualPaste={() => setIsTlmaPasteOpen(true)}
           isImporting={isTlmaParsing}
           clipboardStatus={tlmaClipboardStatus}
-        />
+        />}
 
-        {renderTlmaImportPreview()}
+        {false && renderTlmaImportPreview()}
 
-        {tlmaImportResult && (
+        {false && tlmaImportResult && (
           <div className="rounded border border-emerald-800 bg-emerald-950/40 p-3 text-sm text-emerald-100 space-y-1">
             <div className="font-medium">Import complete</div>
             <div>
@@ -1466,7 +1468,7 @@ const handleMapLeadSelect = (leadId: string) => {
           {mapExpanded && (
             <div style={{ height: '50vh', minHeight: 320 }}>
               <HunterMap
-              leads={geoFilteredLeads}
+              leads={canonicalFilteredLeads}
               onLeadSelect={handleMapLeadSelect}
             />
             </div>
@@ -1723,9 +1725,8 @@ const handleMapLeadSelect = (leadId: string) => {
 
             {/* Top Leads (Elite + Strong + Qualified) */}
             {/* HUNTER-4B: Filter/Score controls moved here from Lead Map header —
-                same height as the section title, far right. Behavior unchanged:
-                Filter still toggles the same filter panel/state; Score still
-                updates sortBy. Neither affects HunterMap (still geoFilter-only). */}
+                same height as the section title, far right. Filter feeds the
+                shared canonical dataset; Score updates list sorting only. */}
             <div>
               <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                 <h2 className="text-sm font-bold text-white flex items-center gap-2">
@@ -1733,9 +1734,8 @@ const handleMapLeadSelect = (leadId: string) => {
                   Top Leads ({topLeads.length})
                 </h2>
                 <div className="flex items-center gap-2 flex-wrap">
-                  {/* HUNTER-5D: Zone — list-only organization control, independent
-                      of Filter/Timeline/Score. Defaults to Focus: Coachella Valley.
-                      Never affects HunterMap or geo/source pills. */}
+                  {/* HUNTER-5D: Zone — shared map/list organization control.
+                      Defaults to Focus: Coachella Valley. */}
                   <div className="relative">
                     <button
                       onClick={() => setShowZoneMenu(!showZoneMenu)}
@@ -1781,7 +1781,7 @@ const handleMapLeadSelect = (leadId: string) => {
                     <ChevronDown size={14} className={clsx('transition-transform', showFilters && 'rotate-180')} />
                   </button>
                   {/* HUNTER-5B: Timeline — list-only sort by permit date / added-to-portal
-                      date. Never affects HunterMap; never hardcodes a date range. */}
+                      date. Never changes the map pin set; never hardcodes a date range. */}
                   <div className="relative">
                     <button
                       onClick={() => setShowTimeline(!showTimeline)}
@@ -2123,19 +2123,19 @@ const handleMapLeadSelect = (leadId: string) => {
         onSuccess={handleAddLeadSuccess}
       />
 
-      {isTlmaPasteOpen && (
+      {showTlmaMethodModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-          <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-lg border border-gray-700 bg-gray-950 shadow-xl">
+          <div className="w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-lg border border-gray-700 bg-gray-950 shadow-xl">
             <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
               <div>
-                <h2 className="text-lg font-semibold text-white">Paste TLMA result table HTML</h2>
+                <h2 className="text-lg font-semibold text-white">TLMA Method</h2>
                 <p className="text-xs text-gray-400 mt-1">
-                  Open TLMA in your browser, copy the results table outerHTML, then paste below.
+                  Search TLMA, copy table data, or import from clipboard.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={closeTlmaPasteModal}
+                onClick={closeTlmaMethodModal}
                 className="p-1 text-gray-400 hover:text-white"
               >
                 <X size={18} />
@@ -2143,8 +2143,52 @@ const handleMapLeadSelect = (leadId: string) => {
             </div>
 
             <div className="p-4 space-y-4">
+              <section className="space-y-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-white">Search Builder</h3>
+                  <p className="text-xs text-gray-500">Build and open the same TLMA county search as before.</p>
+                </div>
+              </section>
+
               {renderTlmaSearchBuilder(true)}
 
+              <section className="rounded border border-gray-800 bg-gray-900/60 p-3 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-white">Import Tools</h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Paste copied TLMA table HTML, or import table HTML from your clipboard.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsTlmaPasteOpen(true)}
+                    className="shrink-0 inline-flex items-center gap-2 px-3 py-2 bg-indigo-700 hover:bg-indigo-600 text-white text-sm rounded"
+                  >
+                    <ClipboardPaste size={14} />
+                    Paste TLMA Table
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleImportFromClipboard}
+                    disabled={isTlmaParsing}
+                    className="inline-flex items-center gap-2 px-3 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm rounded"
+                  >
+                    {isTlmaParsing ? 'Reading clipboard...' : 'Import From Clipboard'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsTlmaPasteOpen(true)}
+                    className="text-xs text-gray-400 hover:text-gray-200 underline"
+                  >
+                    Manual Paste
+                  </button>
+                </div>
+                {isTlmaPasteOpen && (
+                  <div className="space-y-3">
               <textarea
                 value={tlmaPasteHtml}
                 onChange={(e) => {
@@ -2167,6 +2211,28 @@ const handleMapLeadSelect = (leadId: string) => {
                   {isTlmaParsing ? 'Parsing…' : 'Parse'}
                 </button>
               </div>
+                  </div>
+                )}
+
+                {tlmaClipboardStatus && (
+                  <p className="text-xs text-gray-300 border border-gray-800 rounded px-2 py-1.5 bg-gray-950/80">
+                    {tlmaClipboardStatus}
+                  </p>
+                )}
+              </section>
+
+              <section className="space-y-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-white">Bookmarklet Helper</h3>
+                  <p className="text-xs text-gray-500">Install the helper once, then use it on the TLMA results page.</p>
+                </div>
+                <TlmaBookmarkletHelper
+                  onImportFromClipboard={handleImportFromClipboard}
+                  onManualPaste={() => setIsTlmaPasteOpen(true)}
+                  isImporting={isTlmaParsing}
+                  clipboardStatus={null}
+                />
+              </section>
 
               {renderTlmaImportPreview()}
 
