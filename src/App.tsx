@@ -4,6 +4,7 @@
  * Responsibilities:
  *   1. Wrap everything in BrowserRouter for react-router-dom
  *   2. Route /invite/:token → InviteAccept (no auth required)
+ *   2b. Route /employee/invite/:token → EmployeeInviteAccept (no auth required)
  *   3. Route /* → LoginFlow (auth gate)
  *   4. After auth, render portal based on role:
  *        owner  → existing <AppShell /> (V15rLayout + all panels)
@@ -44,6 +45,12 @@ const CustomerPortalPage = lazy(() =>
 const InviteAccept = lazy(() =>
   import('@/components/crew/InviteAccept')
     .then(m => ({ default: m.InviteAccept }))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .catch((): any => { window.location.reload(); return { default: () => null } })
+)
+const EmployeeInviteAccept = lazy(() =>
+  import('@/components/employee/EmployeeInviteAccept')
+    .then(m => ({ default: m.EmployeeInviteAccept }))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .catch((): any => { window.location.reload(); return { default: () => null } })
 )
@@ -415,6 +422,16 @@ export default function App() {
             element={
               <Suspense fallback={<FullPageSpinner />}>
                 <InviteAccept />
+              </Suspense>
+            }
+          />
+
+          {/* Employee invite accept — no auth required (TIME-2B) */}
+          <Route
+            path="/employee/invite/:token"
+            element={
+              <Suspense fallback={<FullPageSpinner />}>
+                <EmployeeInviteAccept />
               </Suspense>
             }
           />
