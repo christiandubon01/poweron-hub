@@ -8,6 +8,7 @@ import {
   saveBackupData,
   saveBackupDataAndSync,
   saveBackupWithRemoteBaselineSync,
+  getLiveProjectLogs,
   num,
   fmt,
 } from '@/services/backupDataService'
@@ -32,6 +33,19 @@ interface V15rMTOTabProps {
 function newMaterialStableId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `mat_${crypto.randomUUID()}`
   return `mat_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+function currentPurchaseMs(log: any): number {
+  for (const value of [log?.date, log?.updatedAt, log?.createdAt]) {
+    const ms = Date.parse(String(value || '').trim())
+    if (!Number.isNaN(ms)) return ms
+  }
+  const idMs = String(log?.id || log?.logId || '').match(/(\d{13})/)
+  return idMs ? Number(idMs[1]) : Number.NEGATIVE_INFINITY
+}
+
+function currentPurchaseAmount(log: any): number {
+  return num(log?.mat || log?.materialCost)
 }
 
 function findMTORowIndexByStableId(rows: any[], stableId: string, projectId?: string): number {
@@ -125,6 +139,7 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const [pbFormCost, setPbFormCost] = useState<number>(0)
   const [pbFormPackSize, setPbFormPackSize] = useState<number>(1)
   const [pbFormUnit, setPbFormUnit] = useState('EA')
+  const [showCurrentPurchasesModal, setShowCurrentPurchasesModal] = useState(false)
 
   const mtoSaveQueue = mtoSaveQueueRef.current
   const isMtoDirty =
@@ -177,6 +192,10 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const allRows: any[] = getLiveMaterialRows(rawMTORows, p.id, 'mtoRows')
   const legacyPhases = getLegacyPhaseNames(allRows.map(r => r.phase), phases)
   const displayPhases = [...phases, ...legacyPhases]
+  const currentPurchaseEntries = getLiveProjectLogs(backup, projectId)
+    .filter((log: any) => currentPurchaseAmount(log) > 0)
+    .sort((a: any, b: any) => currentPurchaseMs(b) - currentPurchaseMs(a))
+  const currentPurchaseTotal = currentPurchaseEntries.reduce((sum: number, log: any) => sum + currentPurchaseAmount(log), 0)
 
   const getMtoRowUiId = (row: any): string =>
     String(getMaterialStableId(row, p.id, 'mtoRows'))
@@ -583,6 +602,19 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   }
 
   const formatItemCount = (count: number) => `${count} ${count === 1 ? 'item' : 'items'}`
+
+  const renderCurrentPurchaseDetail = (label: string, value: any, options?: { mono?: boolean }) => {
+    const text = String(value || '').trim()
+    if (!text) return null
+    return (
+      <div style={{ minWidth: 0 }}>
+        <div style={{ color: 'var(--t3)', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase' }}>{label}</div>
+        <div style={{ color: 'var(--t1)', fontSize: '12px', fontFamily: options?.mono ? 'monospace' : 'inherit', overflowWrap: 'anywhere' }}>
+          {text}
+        </div>
+      </div>
+    )
+  }
 
   // ── Sub-renderers ───────────────────────────────────────────────────
   const renderTableHead = () => (
@@ -1393,6 +1425,24 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
       style={{ backgroundColor: '#1a1d27', padding: '0' }}
     >
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+          <button
+            type="button"
+            onClick={() => setShowCurrentPurchasesModal(true)}
+            style={{
+              padding: '8px 14px',
+              backgroundColor: 'rgba(14,165,233,0.15)',
+              color: '#38bdf8',
+              border: '1px solid rgba(14,165,233,0.35)',
+              borderRadius: '6px',
+              fontSize: '13px',
+              fontWeight: '700',
+              cursor: 'pointer',
+            }}
+          >
+            Current Purchases ({currentPurchaseEntries.length})
+          </button>
+        </div>
 
         {/* EMPTY STATE */}
         {!hasAnyRows && (
@@ -1450,6 +1500,222 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
             Material Summary PDF
           </button>
         </div>
+
+        {/* CURRENT PURCHASES MODAL */}
+        {showCurrentPurchasesModal && (
+          <div
+            onClick={e => { if (e.target === e.currentTarget) setShowCurrentPurchasesModal(false) }}
+            style={{
+              position: 'fixed',
+              top: 0, left: 0, right: 0, bottom: 0,
+              backgroundColor: 'rgba(2,6,23,0.72)',
+              backdropFilter: 'blur(8px)',
+              zIndex: 60,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '18px',
+            }}
+          >
+            <div
+              style={{
+                background: 'linear-gradient(180deg, rgba(45,49,72,0.98), rgba(26,29,39,0.98))',
+                borderRadius: '12px',
+                padding: '0',
+                maxWidth: '820px',
+                width: '94%',
+                maxHeight: '86vh',
+                border: '1px solid rgba(148,163,184,0.18)',
+                boxShadow: '0 24px 70px rgba(0,0,0,0.58), 0 0 0 1px rgba(255,255,255,0.03) inset',
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+              onMouseDown={e => e.stopPropagation()}
+            >
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: '16px',
+                alignItems: 'flex-start',
+                padding: '22px 24px 16px',
+                borderBottom: '1px solid rgba(255,255,255,0.08)',
+                background: 'linear-gradient(135deg, rgba(14,165,233,0.14), rgba(16,185,129,0.06) 48%, rgba(15,23,42,0.16))',
+              }}>
+                <div>
+                  <h3 style={{ color: '#e0f2fe', margin: '0 0 4px 0', fontSize: '18px', fontWeight: '850' }}>
+                    Current Purchases
+                  </h3>
+                  <p style={{ color: 'var(--t3)', margin: 0, fontSize: '12px' }}>
+                    Material purchases logged for this project.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowCurrentPurchasesModal(false)}
+                  style={{
+                    background: 'rgba(15,23,42,0.34)',
+                    border: '1px solid rgba(255,255,255,0.16)',
+                    color: '#cbd5e1',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '15px',
+                    lineHeight: '1',
+                    padding: '7px 10px',
+                  }}
+                >
+                  x
+                </button>
+              </div>
+
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: '12px',
+                padding: '12px 14px',
+                backgroundColor: 'rgba(15,23,42,0.36)',
+                border: '1px solid rgba(148,163,184,0.12)',
+                borderRadius: '8px',
+                margin: '16px 24px 14px',
+                flexWrap: 'wrap',
+              }}>
+                <span style={{ color: 'var(--t2)', fontSize: '12px', fontWeight: '700' }}>
+                  Entries: <span style={{ color: 'var(--t1)', fontFamily: 'monospace' }}>{currentPurchaseEntries.length}</span>
+                </span>
+                <span style={{ color: 'var(--t2)', fontSize: '12px', fontWeight: '700' }}>
+                  Total material purchases: <span style={{ color: '#10b981', fontFamily: 'monospace' }}>{fmt(currentPurchaseTotal)}</span>
+                </span>
+              </div>
+
+              <div style={{ overflowY: 'auto', padding: '0 20px 22px 24px' }}>
+                {currentPurchaseEntries.length === 0 ? (
+                  <div style={{
+                    color: 'var(--t3)',
+                    textAlign: 'center',
+                    padding: '38px 16px',
+                    backgroundColor: 'rgba(15,23,42,0.32)',
+                    border: '1px dashed rgba(148,163,184,0.22)',
+                    borderRadius: '10px',
+                    fontSize: '13px',
+                  }}>
+                    <div style={{ color: 'var(--t1)', fontWeight: '800', marginBottom: '5px' }}>No material purchases logged yet.</div>
+                    <div>Material entries from Project Logs will appear here.</div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {currentPurchaseEntries.map((log: any, idx: number) => {
+                      const amount = currentPurchaseAmount(log)
+                      const employee = log.emp || log.owner || log.ownerName || log.me || 'Me'
+                      const emergencyOrApproval = [
+                        log.emergencyMatInfo,
+                        log.po,
+                        log.poNumber,
+                        log.purchaseOrder,
+                        log.approvalInfo,
+                        log.approvedBy,
+                        log.approvalAt,
+                      ].filter(Boolean).join(' | ')
+                      return (
+                        <div
+                          key={log.id || log.logId || `${log.date || 'purchase'}-${idx}`}
+                          style={{
+                            background: 'linear-gradient(180deg, rgba(15,23,42,0.42), rgba(15,23,42,0.24))',
+                            border: '1px solid rgba(148,163,184,0.14)',
+                            borderRadius: '10px',
+                            padding: '14px',
+                            boxShadow: '0 12px 30px rgba(0,0,0,0.18)',
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start', marginBottom: '10px', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                              <span style={{ color: '#f8fafc', fontWeight: '850', fontSize: '14px' }}>{log.date || 'No date'}</span>
+                              {log.phase && (
+                                <span style={{
+                                  color: '#bae6fd',
+                                  fontSize: '11px',
+                                  fontWeight: '700',
+                                  padding: '3px 8px',
+                                  borderRadius: '999px',
+                                  background: 'rgba(14,165,233,0.12)',
+                                  border: '1px solid rgba(14,165,233,0.24)',
+                                }}>{log.phase}</span>
+                              )}
+                            </div>
+                            <span style={{ color: '#34d399', fontFamily: 'monospace', fontSize: '16px', fontWeight: '850', textShadow: '0 0 18px rgba(16,185,129,0.18)' }}>
+                              {fmt(amount)}
+                            </span>
+                          </div>
+
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                            gap: '10px 14px',
+                            padding: '10px',
+                            backgroundColor: 'rgba(255,255,255,0.035)',
+                            border: '1px solid rgba(255,255,255,0.06)',
+                            borderRadius: '8px',
+                          }}>
+                            {renderCurrentPurchaseDetail('Employee', employee)}
+                            {renderCurrentPurchaseDetail('Store / Vendor', log.store)}
+                            {renderCurrentPurchaseDetail('Labor Hours', num(log.hrs) > 0 ? num(log.hrs) : '')}
+                            {renderCurrentPurchaseDetail('Mileage', num(log.miles) > 0 ? num(log.miles) : '')}
+                            {renderCurrentPurchaseDetail('Collected', num(log.collected) > 0 ? fmt(num(log.collected)) : '', { mono: true })}
+                          </div>
+
+                          {(log.notes || emergencyOrApproval || log.detailLink) && (
+                            <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                              {log.notes && (
+                                <div>
+                                  <div style={{ color: 'var(--t3)', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', marginBottom: '4px' }}>Work Performed / Notes</div>
+                                  <div style={{ color: '#f8fafc', fontSize: '13px', lineHeight: '1.55', overflowWrap: 'anywhere' }}>{log.notes}</div>
+                                </div>
+                              )}
+                              {emergencyOrApproval && (
+                                <div style={{
+                                  backgroundColor: 'rgba(245,158,11,0.08)',
+                                  border: '1px solid rgba(245,158,11,0.18)',
+                                  borderRadius: '8px',
+                                  padding: '9px 10px',
+                                }}>
+                                  {renderCurrentPurchaseDetail('Emergency / PO / Approval', emergencyOrApproval)}
+                                </div>
+                              )}
+                              {log.detailLink && (
+                                <div>
+                                  <div style={{ color: 'var(--t3)', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', marginBottom: '6px' }}>Detail Link</div>
+                                  <a
+                                    href={log.detailLink}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      padding: '7px 11px',
+                                      backgroundColor: 'rgba(14,165,233,0.16)',
+                                      border: '1px solid rgba(14,165,233,0.34)',
+                                      borderRadius: '7px',
+                                      color: '#7dd3fc',
+                                      fontSize: '12px',
+                                      fontWeight: '800',
+                                      textDecoration: 'none',
+                                    }}
+                                  >
+                                    Open Receipt / Detail
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ADD TO PRICE BOOK MODAL */}
         {pbModalRowId && (() => {
