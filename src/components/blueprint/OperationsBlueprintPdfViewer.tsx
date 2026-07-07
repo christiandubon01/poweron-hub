@@ -823,6 +823,44 @@ function convertMeasuredPolygonArea(
   return normArea / (scaleForPage * scaleForPage)
 }
 
+// BLUEPRINT-6P — architectural feet/inches formatter for length measurement labels.
+// For 'ft'/'in' it converts a decimal length to true feet-inches with a reduced fraction,
+// rounded to the nearest 1/16" (with correct carry, e.g. 11 15/16" -> 1'-0"). Metric and any
+// unknown unit fall back to the prior decimal formatting so those measurements stay safe.
+// This ONLY affects display strings — the underlying measurement math is untouched.
+//   10.25 ft -> 10'-3"   ·   9.8333 ft -> 9'-10"   ·   1.375 in -> 1-3/8"   ·   0.25 in -> 1/4"
+function formatArchitecturalLength(value: number, unit: string): string {
+  const u = String(unit || '').toLowerCase()
+  if (!Number.isFinite(value)) return `0 ${unit}`
+  // Non-imperial units keep decimal formatting.
+  if (u !== 'ft' && u !== 'in') return `${value.toFixed(2)} ${unit}`
+
+  const sign = value < 0 ? '-' : ''
+  const abs = Math.abs(value)
+  // Work in sixteenths of an inch, rounding first so carry propagates cleanly.
+  const totalInches = u === 'ft' ? abs * 12 : abs
+  const sixteenths = Math.round(totalInches * 16)
+  const wholeInches = Math.floor(sixteenths / 16)
+  const remSixteenths = sixteenths % 16
+  const gcd = (x: number, y: number): number => (y === 0 ? x : gcd(y, x % y))
+  const g = remSixteenths > 0 ? gcd(remSixteenths, 16) : 1
+  const fracStr = remSixteenths > 0 ? `${remSixteenths / g}/${16 / g}` : ''
+
+  if (u === 'in') {
+    // Keep inches unit (no feet rollover): 1-3/8", 3/4", 12".
+    if (wholeInches > 0 && fracStr) return `${sign}${wholeInches}-${fracStr}"`
+    if (wholeInches > 0) return `${sign}${wholeInches}"`
+    if (fracStr) return `${sign}${fracStr}"`
+    return `0"`
+  }
+
+  // Feet unit → architectural feet-inches (always shows the feet field, e.g. 0'-6").
+  const feet = Math.floor(wholeInches / 12)
+  const inches = wholeInches % 12
+  const inchStr = fracStr ? `${inches} ${fracStr}` : `${inches}`
+  return `${sign}${feet}'-${inchStr}"`
+}
+
 // Parses common construction-style length input for the Calibrate manual-length field.
 // Accepts plain numbers (uses the selected unit dropdown as fallback), explicit unit
 // suffixes ("10 ft", "126 in"), and feet-inches notation ("10'", "10' 6\"", "10'-6\"").
@@ -979,6 +1017,11 @@ function getScaleScanPageReasonLabel(reason: ScaleScanPageReason): string {
   }
 }
 
+// BLUEPRINT-6M — line/stroke pattern for the distance measurement line. This is a
+// STROKE dash pattern (applied via SVG strokeDasharray), NOT an area fill hatch — a
+// distance measurement is a single straight line with no enclosed area.
+type MeasurementLinePattern = 'solid' | 'dashed' | 'dotted' | 'dash-dot' | 'long-dash'
+
 interface MeasurementStyle {
   endpointStyle: 'dot' | 'arrow' | 'bar' | 'none'
   lineThickness: number
@@ -987,6 +1030,8 @@ interface MeasurementStyle {
   fillColor: string
   fillOpacity: number
   fillPattern: 'none' | 'solid' | 'diagonal' | 'cross' | 'crosshatch' | 'dots' | 'horizontal'
+  // Optional so annotations saved before BLUEPRINT-6M default to 'solid'.
+  linePattern?: MeasurementLinePattern
 }
 
 const DEFAULT_MEASUREMENT_STYLE: MeasurementStyle = {
@@ -997,6 +1042,20 @@ const DEFAULT_MEASUREMENT_STYLE: MeasurementStyle = {
   fillColor: '#38bdf8',
   fillOpacity: 0.15,
   fillPattern: 'none',
+  linePattern: 'solid',
+}
+
+// BLUEPRINT-6M — maps a distance-line pattern to an SVG strokeDasharray value.
+// 'solid' (and any unknown/legacy value) yields undefined = a continuous line.
+function measureLineDashArray(pattern: string | undefined): string | undefined {
+  switch (pattern) {
+    case 'dashed': return '8 6'
+    case 'dotted': return '2 5'
+    case 'dash-dot': return '8 4 2 4'
+    case 'long-dash': return '14 6'
+    case 'solid':
+    default: return undefined
+  }
 }
 
 interface OperationsBlueprintPdfViewerProps {
@@ -1842,6 +1901,30 @@ function annotationLabel(annotation: BlueprintAnnotation) {
   return String(annotation.type || 'annotation')
 }
 
+// BLUEPRINT-6Q — compact measured value shown after the Distance/Perimeter title in the
+// annotations panel (e.g. "Distance — 10'-3"", "Perimeter — Total: 32'-6""). Prefers the live
+// real-world value + unit, re-formatted with the architectural feet/inches helper, and falls
+// back to the stored meta.label (which already carries a "Total:" prefix for perimeter, so we
+// never double it). Returns '' for area and any non-length annotation — area is unchanged.
+function measurementPanelValue(annotation: BlueprintAnnotation): string {
+  const meta = getAnnotationMeta(annotation)
+  const unit = meta.unit || 'ft'
+  if (annotation.type === 'measure-distance') {
+    if (typeof meta.realWorldDistance === 'number' && Number.isFinite(meta.realWorldDistance)) {
+      return formatArchitecturalLength(meta.realWorldDistance, unit)
+    }
+    return typeof meta.label === 'string' ? meta.label : ''
+  }
+  if (annotation.type === 'measure-perimeter') {
+    if (typeof meta.realWorldPerimeter === 'number' && Number.isFinite(meta.realWorldPerimeter)) {
+      return `Total: ${formatArchitecturalLength(meta.realWorldPerimeter, unit)}`
+    }
+    // meta.label already reads "Total: …" (or an uncalibrated hint) — reuse it as-is.
+    return typeof meta.label === 'string' ? meta.label : ''
+  }
+  return ''
+}
+
 // Mirrors the exact color-resolution priority used by the canvas renderer
 // (see the `a.type === 'shape'` branch: `meta.borderColor || (a.color || default)`)
 // so the annotations-list dot always matches what the user sees drawn on the
@@ -2262,6 +2345,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // Ã¢â€â‚¬Ã¢â€â‚¬ Measurement calibration state Ã¢â‚¬â€ page-specific Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   // savedCalibrations: committed calibrations keyed by pageNumber
   const [savedCalibrations, setSavedCalibrations] = useState<Record<number, CalibrationData>>({})
+  // Ref mirrors so drag-time recalculation (measure-distance endpoint editing) reads the
+  // freshest calibration without depending on the pointer-handler useCallback closures.
+  const savedCalibrationsRef = useRef<Record<number, CalibrationData>>({})
+  savedCalibrationsRef.current = savedCalibrations
   // pendingCalibration: drawn but not yet committed (recalibration replaces this)
   const [pendingCalibration, setPendingCalibration] = useState<CalibrationData | null>(null)
   // measurementStyle: shared style options for all measure annotation types
@@ -2271,6 +2358,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [measureDraftPoints, setMeasureDraftPoints] = useState<Array<{ x: number; y: number }>>([])
   const measureDraftRef = useRef<Array<{ x: number; y: number }>>([])
   const [measureCursorPx, setMeasureCursorPx] = useState<{ x: number; y: number } | null>(null)
+  const measureDistanceDragRef = useRef<{
+    active: boolean
+    pointerId: number | null
+    startX: number
+    startY: number
+    moved: boolean
+  }>({ active: false, pointerId: null, startX: 0, startY: 0, moved: false })
   const lastMeasureClickRef = useRef<{ time: number; nx: number; ny: number }>({ time: 0, nx: 0, ny: 0 })
   const [calibrateInput, setCalibrateInput] = useState<{
     p1: { x: number; y: number }
@@ -2293,6 +2387,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Auto-detected scale results Ã¢â‚¬â€ keyed by pageNumber Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const [detectedScales, setDetectedScales] = useState<Record<number, DetectedScaleResult>>({})
+  const detectedScalesRef = useRef<Record<number, DetectedScaleResult>>({})
+  detectedScalesRef.current = detectedScales
   // Tracks pages successfully scanned this session (failed pages stay eligible for rescan).
   const scannedPagesRef = useRef<Set<number>>(new Set())
   const scaleScanRunRef = useRef(0)
@@ -2471,6 +2567,36 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     startAbsY: number
     otherAbsX: number
     otherAbsY: number
+  } | null>(null)
+
+  // BLUEPRINT-6L — dedicated drag ref for measure-distance endpoint editing. Kept separate
+  // from endpointDragRef (which drives line/arrow lineAbs endpoints) because measure-distance
+  // stores its geometry in meta.points and must recalculate the real-world value on drag.
+  const measureEndpointDragRef = useRef<{
+    annotationId: string
+    endpoint: 0 | 1
+    pointerId: number
+  } | null>(null)
+
+  // BLUEPRINT-6M — whole-line move for measure-distance. Dragging the line body/label
+  // shifts BOTH endpoints by the same page-normalized delta, preserving segment length
+  // and angle. Separate from measureEndpointDragRef (single-endpoint edit) and from the
+  // generic layout drag (box-based shapes) because distance geometry lives in meta.points.
+  const measureLineDragRef = useRef<{
+    annotationId: string
+    pointerId: number
+    startClientX: number
+    startClientY: number
+    startPoints: Array<{ x: number; y: number }>
+  } | null>(null)
+
+  // BLUEPRINT-6N — per-point (per-"axle") drag for measure-perimeter Move mode. Dragging a
+  // handle moves only meta.points[pointIndex]; the polyline total + segment labels recompute
+  // live. Distinct from the distance refs (which handle a 2-point line and whole-line move).
+  const measurePointDragRef = useRef<{
+    annotationId: string
+    pointIndex: number
+    pointerId: number
   } | null>(null)
 
   const [barDragOffset, setBarDragOffset] = useState<{ x: number; y: number } | null>(null)
@@ -2700,6 +2826,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         measureDraftRef.current = []
         setMeasureDraftPoints([])
         setMeasureCursorPx(null)
+        measureDistanceDragRef.current = { active: false, pointerId: null, startX: 0, startY: 0, moved: false }
         setCalibrateInput(null)
         lastMeasureClickRef.current = { time: 0, nx: 0, ny: 0 }
         lineFirstPointRef.current = null
@@ -2710,7 +2837,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         setPathCursorPx(null)
         clearAlignmentGuides()
       }
-      if (e.key === 'Enter' && effectiveTool === 'measure-perimeter' && !calibrateInput) {
+      // BLUEPRINT-6N — finalize the Multi-Point / Perimeter draft. Enter (existing) and
+      // Space (new) both commit when at least 2 points are placed. Space is guarded against
+      // firing while typing in a field, and its default page-scroll is suppressed on finalize.
+      const finishPerimeter = () => {
         const pts = [...measureDraftRef.current]
         if (pts.length >= 2) {
           setMeasurePendingCommit({ type: 'measure-perimeter', points: pts, pageNumber: currentPageRef.current })
@@ -2718,6 +2848,18 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
           setMeasureDraftPoints([])
           setMeasureCursorPx(null)
           lastMeasureClickRef.current = { time: 0, nx: 0, ny: 0 }
+        }
+      }
+      if (effectiveTool === 'measure-perimeter' && !calibrateInput) {
+        if (e.key === 'Enter') {
+          finishPerimeter()
+        } else if (e.key === ' ' || e.code === 'Space') {
+          const el = document.activeElement as HTMLElement | null
+          const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+          if (!typing) {
+            e.preventDefault()
+            finishPerimeter()
+          }
         }
       }
     }
@@ -2758,6 +2900,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     measureDraftRef.current = []
     setMeasureDraftPoints([])
     setMeasureCursorPx(null)
+    measureDistanceDragRef.current = { active: false, pointerId: null, startX: 0, startY: 0, moved: false }
     setCalibrateInput(null)
     lastMeasureClickRef.current = { time: 0, nx: 0, ny: 0 }
     clearAlignmentGuides()
@@ -4249,7 +4392,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     if (type === 'measure-distance' && points.length >= 2) {
       const normDist = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y)
       const realDist = convertMeasuredDistance(points[0], points[1], calForPage!, pageSize)
-      label = `${realDist.toFixed(2)} ${calForPage!.realWorldUnit}`
+      label = formatArchitecturalLength(realDist, calForPage!.realWorldUnit)
       meta = { points, label, normDistance: normDist, realWorldDistance: realDist, unit: calForPage!.realWorldUnit, style: measurementStyle }
     } else if (type === 'measure-area' && points.length >= 3) {
       let normArea = 0
@@ -4268,7 +4411,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       }
       if (hasCalibration) {
         const realPerim = convertMeasuredPolylineLength(points, calForPage!, pageSize)
-        label = `Total: ${realPerim.toFixed(2)} ${calForPage!.realWorldUnit}`
+        label = `Total: ${formatArchitecturalLength(realPerim, calForPage!.realWorldUnit)}`
         meta = {
           points, label, normPerimeter: normPerim, realWorldPerimeter: realPerim,
           totalDistance: realPerim, unit: calForPage!.realWorldUnit, style: measurementStyle,
@@ -4521,6 +4664,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // canvas draw handlers instead of selecting/blocking on the item underneath. Circuit Path
   // additionally relies on this to click directly on symbols so its center-snap logic runs.
   if (effectiveTool === 'shape' && (shapeKind === 'arch-line' || shapeKind === 'polyline' || shapeKind === 'circuit-path')) return
+
+  // BLUEPRINT-6L — while a measure or calibrate tool is active the user is drawing a NEW
+  // measurement; a tap on an existing measurement line must fall through to the draw handlers
+  // (never select). Selection of saved measurements only happens in View/Select mode.
+  if (effectiveTool === 'measure-distance' || effectiveTool === 'measure-area' || effectiveTool === 'measure-perimeter' || effectiveTool === 'calibrate') return
 
   e.preventDefault()
   e.stopPropagation()
@@ -4894,6 +5042,51 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     endpointDragRef.current = drag
     setEndpointDrag(drag)
+    setFocusedAnnotationId(annotation.id)
+    setLayoutEditId(annotation.id)
+    try { overlayRef.current?.setPointerCapture(e.pointerId) } catch {}
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+  // BLUEPRINT-6L — begin dragging one endpoint of a measure-distance line. The pointer is
+  // captured on the overlay so handlePointerMove / handlePointerUp drive the live update and
+  // final persist (same capture pattern as startAnnotationEndpointDrag).
+  const startMeasureEndpointDrag = useCallback((e: React.PointerEvent<SVGElement>, annotation: BlueprintAnnotation, endpoint: 0 | 1) => {
+    measureEndpointDragRef.current = { annotationId: annotation.id, endpoint, pointerId: e.pointerId }
+    setFocusedAnnotationId(annotation.id)
+    setLayoutEditId(annotation.id)
+    try { overlayRef.current?.setPointerCapture(e.pointerId) } catch {}
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+  // BLUEPRINT-6M — begin a whole-line move for a measure-distance line. Captures the two
+  // starting endpoints so handlePointerMove can translate them together by the pointer
+  // delta (rigid move: length + angle preserved). Same capture pattern as endpoint drag.
+  const startMeasureLineDrag = useCallback((e: React.PointerEvent<SVGElement>, annotation: BlueprintAnnotation) => {
+    const meta = getAnnotationMeta(annotation)
+    const startPoints = Array.isArray(meta.points) ? meta.points.map((p: any) => ({ x: p.x, y: p.y })) : []
+    if (startPoints.length < 2) return
+    measureLineDragRef.current = {
+      annotationId: annotation.id,
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startPoints,
+    }
+    setFocusedAnnotationId(annotation.id)
+    setLayoutEditId(annotation.id)
+    try { overlayRef.current?.setPointerCapture(e.pointerId) } catch {}
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+  // BLUEPRINT-6N — begin dragging a single perimeter point/axle. handlePointerMove updates
+  // only that vertex and recomputes the polyline total; handlePointerUp persists. Captured
+  // to the overlay like the distance endpoint/line drags.
+  const startMeasurePointDrag = useCallback((e: React.PointerEvent<SVGElement>, annotation: BlueprintAnnotation, pointIndex: number) => {
+    measurePointDragRef.current = { annotationId: annotation.id, pointIndex, pointerId: e.pointerId }
     setFocusedAnnotationId(annotation.id)
     setLayoutEditId(annotation.id)
     try { overlayRef.current?.setPointerCapture(e.pointerId) } catch {}
@@ -5338,9 +5531,32 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         }
       }
       lastMeasureClickRef.current = { time: Date.now(), nx: n.x, ny: n.y }
+      // Touch drag-release for distance second point — begin placement on pointerdown, commit on pointerup.
+      if (effectiveTool === 'measure-distance' && measureDraftRef.current.length === 1 && e.pointerType === 'touch') {
+        measureDistanceDragRef.current = {
+          active: true,
+          pointerId: e.pointerId,
+          startX: x,
+          startY: y,
+          moved: false,
+        }
+        setMeasureCursorPx({
+          x: x / Math.max(1, rect.width) * displaySize.w,
+          y: y / Math.max(1, rect.height) * displaySize.h,
+        })
+        try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
+        e.preventDefault()
+        return
+      }
       const next = [...measureDraftRef.current, n]
       measureDraftRef.current = next
       setMeasureDraftPoints([...next])
+      // BLUEPRINT-6N — snap the live cursor to the point just placed so the perimeter rubber-band
+      // segment starts from the NEW point (zero-length) and then follows the pointer, instead of
+      // pointing at the previous stale cursor location (the diagonal-across-screen bug on tap-place).
+      if (effectiveTool === 'measure-perimeter') {
+        setMeasureCursorPx({ x: n.x * displaySize.w, y: n.y * displaySize.h })
+      }
       if (effectiveTool === 'calibrate' && next.length === 2) {
         // Keep measureDraftPoints so the placed line stays visible while input is open
         setCalibrateInput({ p1: next[0], p2: next[1], value: '', unit: 'ft' })
@@ -5423,7 +5639,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
       e.preventDefault()
     }
-  }, [effectiveTool, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind, clearAlignmentGuides, findNearestAnnotationCenterNorm])
+  }, [effectiveTool, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind, clearAlignmentGuides, findNearestAnnotationCenterNorm, displaySize.w, displaySize.h])
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const mousePan = mousePanRef.current
@@ -5537,6 +5753,134 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       return
     }
 
+    // BLUEPRINT-6L — measure-distance endpoint drag: move endpoint to the cursor and
+    // recalculate the real-world distance live using the BLUEPRINT-6I aspect-aware math.
+    const meDrag = measureEndpointDragRef.current
+    if (meDrag && meDrag.pointerId === e.pointerId && overlayRef.current) {
+      const overlayRect = overlayRef.current.getBoundingClientRect()
+      const nx = clampNorm((e.clientX - overlayRect.left) / Math.max(1, overlayRect.width))
+      const ny = clampNorm((e.clientY - overlayRect.top) / Math.max(1, overlayRect.height))
+      setAllAnnotations((prev) => prev.map((ann) => {
+        if (ann.id !== meDrag.annotationId) return ann
+        const m = getAnnotationMeta(ann)
+        const pts = Array.isArray(m.points) ? m.points.map((p: any) => ({ x: p.x, y: p.y })) : []
+        if (pts.length < 2) return ann
+        pts[meDrag.endpoint] = { x: nx, y: ny }
+        const manualCal = savedCalibrationsRef.current[ann.pageNumber] ?? null
+        const detRes = detectedScalesRef.current[ann.pageNumber] ?? null
+        const pageSize = getPageSizeInches(ann.pageNumber)
+        const autoCal = buildAutoCalibrationForPage(ann.pageNumber, detRes, pageSize)
+        const calForPage = manualCal ?? autoCal
+        const normDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
+        const nextMeta: Record<string, any> = { ...m, points: pts, normDistance: normDist }
+        if (calForPage) {
+          const realDist = convertMeasuredDistance(pts[0], pts[1], calForPage, pageSize)
+          nextMeta.realWorldDistance = realDist
+          nextMeta.unit = calForPage.realWorldUnit
+          nextMeta.label = formatArchitecturalLength(realDist, calForPage.realWorldUnit)
+        }
+        const bounds = clampRectToPage(getPointsBounds(pts))
+        return withAnnotationMeta({ ...ann, rect: bounds, updatedAt: new Date().toISOString() }, nextMeta) as BlueprintAnnotation
+      }))
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+
+    // BLUEPRINT-6M — measure-distance whole-line move: shift both endpoints by the same
+    // page-normalized delta (rigid move — segment length and angle unchanged). The delta
+    // is clamped so neither endpoint leaves the page. Distance does not change, but the
+    // label/normDistance are recalculated with the aspect-aware helper for consistency.
+    const mlDrag = measureLineDragRef.current
+    if (mlDrag && mlDrag.pointerId === e.pointerId && overlayRef.current) {
+      const overlayRect = overlayRef.current.getBoundingClientRect()
+      let adjDx = (e.clientX - mlDrag.startClientX) / Math.max(1, overlayRect.width)
+      let adjDy = (e.clientY - mlDrag.startClientY) / Math.max(1, overlayRect.height)
+      for (const p of mlDrag.startPoints) {
+        adjDx = Math.max(-p.x, Math.min(1 - p.x, adjDx))
+        adjDy = Math.max(-p.y, Math.min(1 - p.y, adjDy))
+      }
+      const pts = mlDrag.startPoints.map((p) => ({ x: p.x + adjDx, y: p.y + adjDy }))
+      setAllAnnotations((prev) => prev.map((ann) => {
+        if (ann.id !== mlDrag.annotationId) return ann
+        const m = getAnnotationMeta(ann)
+        if (pts.length < 2) return ann
+        const manualCal = savedCalibrationsRef.current[ann.pageNumber] ?? null
+        const detRes = detectedScalesRef.current[ann.pageNumber] ?? null
+        const pageSize = getPageSizeInches(ann.pageNumber)
+        const autoCal = buildAutoCalibrationForPage(ann.pageNumber, detRes, pageSize)
+        const calForPage = manualCal ?? autoCal
+        // BLUEPRINT-6O — a rigid whole-object move keeps every segment length, so the total is
+        // unchanged; we still recompute with the aspect-aware helper for consistency. Perimeter
+        // and distance store their geometry differently, so recalc the matching meta fields.
+        let nextMeta: Record<string, any>
+        if (ann.type === 'measure-perimeter') {
+          let normPerim = 0
+          for (let i = 1; i < pts.length; i++) normPerim += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)
+          nextMeta = { ...m, points: pts, normPerimeter: normPerim }
+          if (calForPage) {
+            const realPerim = convertMeasuredPolylineLength(pts, calForPage, pageSize)
+            nextMeta.realWorldPerimeter = realPerim
+            nextMeta.totalDistance = realPerim
+            nextMeta.unit = calForPage.realWorldUnit
+            nextMeta.label = `Total: ${formatArchitecturalLength(realPerim, calForPage.realWorldUnit)}`
+            nextMeta.calibrated = true
+          }
+        } else {
+          const normDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
+          nextMeta = { ...m, points: pts, normDistance: normDist }
+          if (calForPage) {
+            const realDist = convertMeasuredDistance(pts[0], pts[1], calForPage, pageSize)
+            nextMeta.realWorldDistance = realDist
+            nextMeta.unit = calForPage.realWorldUnit
+            nextMeta.label = formatArchitecturalLength(realDist, calForPage.realWorldUnit)
+          }
+        }
+        const bounds = clampRectToPage(getPointsBounds(pts))
+        return withAnnotationMeta({ ...ann, rect: bounds, updatedAt: new Date().toISOString() }, nextMeta) as BlueprintAnnotation
+      }))
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+
+    // BLUEPRINT-6N — measure-perimeter point/axle drag: move a single vertex to the cursor and
+    // recompute the whole-path total live with BLUEPRINT-6I aspect-aware math. Segment labels
+    // recompute automatically since they derive from meta.points at render.
+    const mpDrag = measurePointDragRef.current
+    if (mpDrag && mpDrag.pointerId === e.pointerId && overlayRef.current) {
+      const overlayRect = overlayRef.current.getBoundingClientRect()
+      const nx = clampNorm((e.clientX - overlayRect.left) / Math.max(1, overlayRect.width))
+      const ny = clampNorm((e.clientY - overlayRect.top) / Math.max(1, overlayRect.height))
+      setAllAnnotations((prev) => prev.map((ann) => {
+        if (ann.id !== mpDrag.annotationId) return ann
+        const m = getAnnotationMeta(ann)
+        const pts = Array.isArray(m.points) ? m.points.map((p: any) => ({ x: p.x, y: p.y })) : []
+        if (mpDrag.pointIndex < 0 || mpDrag.pointIndex >= pts.length) return ann
+        pts[mpDrag.pointIndex] = { x: nx, y: ny }
+        const manualCal = savedCalibrationsRef.current[ann.pageNumber] ?? null
+        const detRes = detectedScalesRef.current[ann.pageNumber] ?? null
+        const pageSize = getPageSizeInches(ann.pageNumber)
+        const calForPage = manualCal ?? buildAutoCalibrationForPage(ann.pageNumber, detRes, pageSize)
+        let normPerim = 0
+        for (let i = 1; i < pts.length; i++) normPerim += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)
+        const nextMeta: Record<string, any> = { ...m, points: pts, normPerimeter: normPerim }
+        if (calForPage) {
+          const realPerim = convertMeasuredPolylineLength(pts, calForPage, pageSize)
+          nextMeta.realWorldPerimeter = realPerim
+          nextMeta.totalDistance = realPerim
+          nextMeta.unit = calForPage.realWorldUnit
+          nextMeta.label = `Total: ${formatArchitecturalLength(realPerim, calForPage.realWorldUnit)}`
+          nextMeta.calibrated = true
+        }
+        const bounds = clampRectToPage(getPointsBounds(pts))
+        return withAnnotationMeta({ ...ann, rect: bounds, updatedAt: new Date().toISOString() }, nextMeta) as BlueprintAnnotation
+      }))
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+
     const acDrag = archControlDragRef.current
     if (acDrag && acDrag.pointerId === e.pointerId && overlayRef.current) {
       const overlayRect = overlayRef.current.getBoundingClientRect()
@@ -5571,6 +5915,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
 
     if (effectiveTool === 'calibrate' || effectiveTool === 'measure-distance' || effectiveTool === 'measure-area' || effectiveTool === 'measure-perimeter') {
+      const distDrag = measureDistanceDragRef.current
+      if (distDrag.active && distDrag.pointerId === e.pointerId && effectiveTool === 'measure-distance') {
+        if (!distDrag.moved && (Math.abs(x - distDrag.startX) > 2 || Math.abs(y - distDrag.startY) > 2)) {
+          distDrag.moved = true
+        }
+        e.preventDefault()
+      }
       if (measureDraftRef.current.length > 0) {
         setMeasureCursorPx({
           x: x / Math.max(1, rect.width) * displaySize.w,
@@ -5709,11 +6060,75 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         return
       }
     }
+
+    const distDragUp = measureDistanceDragRef.current
+    if (
+      distDragUp.active &&
+      distDragUp.pointerId === e.pointerId &&
+      effectiveTool === 'measure-distance' &&
+      measureDraftRef.current.length === 1 &&
+      overlayRef.current
+    ) {
+      measureDistanceDragRef.current = { active: false, pointerId: null, startX: 0, startY: 0, moved: false }
+      try { (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId) } catch { }
+      const overlayRect = overlayRef.current.getBoundingClientRect()
+      const releaseX = e.clientX - overlayRect.left
+      const releaseY = e.clientY - overlayRect.top
+      const p2 = toNorm(releaseX, releaseY, overlayRect.width, overlayRect.height)
+      const p1 = measureDraftRef.current[0]
+      const normDist = Math.hypot(p2.x - p1.x, p2.y - p1.y)
+      if (normDist >= 0.003) {
+        setMeasurePendingCommit({ type: 'measure-distance', points: [p1, p2], pageNumber: currentPageRef.current })
+      }
+      measureDraftRef.current = []
+      setMeasureDraftPoints([])
+      setMeasureCursorPx(null)
+      lastMeasureClickRef.current = { time: 0, nx: 0, ny: 0 }
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+
     const epDragUp = endpointDragRef.current
     if (epDragUp && epDragUp.pointerId === e.pointerId) {
       endpointDragRef.current = null
       setEndpointDrag(null)
       const ann = allAnnotationsRef.current.find((a) => a.id === epDragUp.annotationId)
+      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+
+    // BLUEPRINT-6L — commit the edited measure-distance geometry (points, normDistance,
+    // realWorldDistance, label and bounds were updated live in handlePointerMove).
+    const meDragUp = measureEndpointDragRef.current
+    if (meDragUp && meDragUp.pointerId === e.pointerId) {
+      measureEndpointDragRef.current = null
+      const ann = allAnnotationsRef.current.find((a) => a.id === meDragUp.annotationId)
+      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+
+    // BLUEPRINT-6M — commit the moved measure-distance line (points/label/bounds were
+    // updated live in handlePointerMove) through the same persist path as endpoint edits.
+    const mlDragUp = measureLineDragRef.current
+    if (mlDragUp && mlDragUp.pointerId === e.pointerId) {
+      measureLineDragRef.current = null
+      const ann = allAnnotationsRef.current.find((a) => a.id === mlDragUp.annotationId)
+      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+
+    // BLUEPRINT-6N — commit the moved perimeter point (points/total/label/bounds updated live).
+    const mpDragUp = measurePointDragRef.current
+    if (mpDragUp && mpDragUp.pointerId === e.pointerId) {
+      measurePointDragRef.current = null
+      const ann = allAnnotationsRef.current.find((a) => a.id === mpDragUp.annotationId)
       if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
       e.preventDefault()
       e.stopPropagation()
@@ -5952,6 +6367,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         }
       }
       endTouchPointer(e.pointerId)
+      measureDistanceDragRef.current = { active: false, pointerId: null, startX: 0, startY: 0, moved: false }
       dragStartRef.current = null
       inkDraftRef.current = null
       setDragStart(null)
@@ -5960,6 +6376,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     endpointDragRef.current = null
     setEndpointDrag(null)
+    // BLUEPRINT-6M — clear the whole-line move ref on cancel so a stuck drag can't linger.
+    if (measureLineDragRef.current?.pointerId === e.pointerId) measureLineDragRef.current = null
+    // BLUEPRINT-6N — clear the perimeter point-drag ref on cancel.
+    if (measurePointDragRef.current?.pointerId === e.pointerId) measurePointDragRef.current = null
     archControlDragRef.current = null
     setArchControlDrag(null)
     if (layoutDragRef.current?.pointerId === e.pointerId) {
@@ -6001,6 +6421,49 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         : null,
       unit: activeCalibration?.realWorldUnit ?? 'ft',
     }
+  })()
+
+  // Distance measurement live preview — rubber-band endpoint + centered label while placing point 2.
+  const measureDistanceLivePreview = (() => {
+    if (effectiveTool !== 'measure-distance' || measureDraftPoints.length !== 1 || !measureCursorPx || displaySize.w <= 0) return null
+    const p1 = measureDraftPoints[0]
+    const p2 = { x: measureCursorPx.x / displaySize.w, y: measureCursorPx.y / displaySize.h }
+    const midpointPx = {
+      px: (p1.x * displaySize.w + measureCursorPx.x) / 2,
+      py: (p1.y * displaySize.h + measureCursorPx.y) / 2,
+    }
+    if (!activeCalibration) {
+      return { label: 'Calibrate first', midpointPx, calibrated: false }
+    }
+    const realDist = convertMeasuredDistance(p1, p2, activeCalibration, getPageSizeInches(currentPage))
+    const unit = activeCalibration.realWorldUnit ?? 'ft'
+    return { label: formatArchitecturalLength(realDist, unit), midpointPx, calibrated: true }
+  })()
+
+  // BLUEPRINT-6N — Multi-Point / Perimeter live segment labels while drafting: a per-segment
+  // length at each segment midpoint (aspect-aware), including the live rubber-band segment from
+  // the last placed point to the cursor. The bottom pill remains the primary running total.
+  const measurePerimeterLivePreview = (() => {
+    if (effectiveTool !== 'measure-perimeter' || measureDraftPoints.length < 1 || displaySize.w <= 0) return null
+    const pageSize = getPageSizeInches(currentPage)
+    const unit = activeCalibration?.realWorldUnit ?? 'ft'
+    const segLabel = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+      activeCalibration ? formatArchitecturalLength(convertMeasuredDistance(a, b, activeCalibration, pageSize), unit) : null
+    const segments: Array<{ midPx: { px: number; py: number }; label: string }> = []
+    // Completed segments between already-placed points.
+    for (let i = 1; i < measureDraftPoints.length; i++) {
+      const a = measureDraftPoints[i - 1], b = measureDraftPoints[i]
+      const label = segLabel(a, b)
+      if (label) segments.push({ midPx: { px: (a.x + b.x) / 2 * displaySize.w, py: (a.y + b.y) / 2 * displaySize.h }, label })
+    }
+    // Live rubber-band segment from the last placed point to the cursor.
+    if (measureCursorPx) {
+      const a = measureDraftPoints[measureDraftPoints.length - 1]
+      const b = { x: measureCursorPx.x / displaySize.w, y: measureCursorPx.y / displaySize.h }
+      const label = segLabel(a, b)
+      if (label) segments.push({ midPx: { px: (a.x * displaySize.w + measureCursorPx.x) / 2, py: (a.y * displaySize.h + measureCursorPx.y) / 2 }, label })
+    }
+    return { segments }
   })()
 
   const livePinchZoom = pinchPreviewZoom ?? relativeZoom
@@ -6204,7 +6667,14 @@ const annotationPanelSizeClass =
 
   const persistEditAnnotation = (changes: Partial<BlueprintAnnotation>) => {
     if (!editingAnnotation) return
-    void persistAnnotation({ ...editingAnnotation, ...changes, updatedAt: new Date().toISOString() })
+    const editId = editingAnnotation.id
+    // BLUEPRINT-6M — read the latest in-flight annotation (not the stale closure) and apply
+    // the change optimistically to local state first, so top-level edits like color swap
+    // instantly instead of waiting for the persist round-trip. Mirrors persistEditAnnotationMeta.
+    const latest = allAnnotationsRef.current.find((ann) => ann.id === editId) ?? editingAnnotation
+    const updated = { ...latest, ...changes, updatedAt: new Date().toISOString() } as BlueprintAnnotation
+    setAllAnnotations((prev) => prev.map((ann) => ann.id === editId ? updated : ann))
+    void persistAnnotation(updated)
   }
 
   const persistEditAnnotationMeta = (metaChanges: Record<string, any>) => {
@@ -6611,6 +7081,68 @@ const annotationPanelSizeClass =
     }
 
     // Ã¢â€â‚¬Ã¢â€â‚¬ 8. CALLOUT Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    // ── DISTANCE + MULTI-POINT/PERIMETER MEASUREMENT (BLUEPRINT-6L/6N) ────
+    // Both are open stroked paths with no enclosed area, so hatch/fill patterns do
+    // not apply — we expose line color/width, endpoint style, and a stroke line
+    // pattern, all of which the measurement renderer supports. Area is not handled here.
+    if (tool === 'measure-distance' || tool === 'measure-perimeter') {
+      const toolColorKey = tool as 'measure-distance' | 'measure-perimeter'
+      const mStyle = isEdit ? (eMeta.style ?? {}) : measurementStyle
+      const color = isEdit
+        ? (editingAnnotation?.color ?? mStyle.lineColor ?? toolColors[toolColorKey])
+        : (measurementStyle.lineColor ?? toolColors[toolColorKey])
+      const lineWidth = mStyle.lineThickness ?? 2
+      const endStyle = mStyle.endpointStyle ?? 'dot'
+      const linePattern = mStyle.linePattern ?? 'solid'
+      const patchStyle = (patch: Record<string, any>) => {
+        if (isEdit) {
+          const latest = allAnnotationsRef.current.find((ann) => ann.id === editingAnnotation?.id) ?? editingAnnotation
+          const curStyle = (latest ? getAnnotationMeta(latest).style : null) || {}
+          persistEditAnnotationMeta({ style: { ...curStyle, ...patch } })
+        } else {
+          setMeasurementStyle((p) => ({ ...p, ...patch }))
+        }
+      }
+      return {
+        title: tool === 'measure-perimeter' ? 'Multi-Point Measurement' : 'Distance Measurement',
+        primary: (
+          <>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Line Color</div>
+            <ColorRow value={color} onChange={(c) => {
+              // BLUEPRINT-6M — persistEditAnnotation now applies the change optimistically,
+              // so the color swap is instant instead of waiting for the persist round-trip.
+              if (isEdit) persistEditAnnotation({ color: c })
+              else setMeasurementStyle((p) => ({ ...p, lineColor: c }))
+            }} />
+            <Stepper label="Line Width" value={lineWidth} min={1} max={12} step={0.5} unit="px"
+              onChange={(v) => patchStyle({ lineThickness: v })} />
+          </>
+        ),
+        additional: (
+          <>
+            <LabeledSelect label="Endpoints" value={endStyle}
+              options={[
+                { label: 'Dot', value: 'dot' },
+                { label: 'Arrow', value: 'arrow' },
+                { label: 'Bar', value: 'bar' },
+                { label: 'None', value: 'none' },
+              ]}
+              onChange={(v) => patchStyle({ endpointStyle: v })} />
+            {/* BLUEPRINT-6M — line/stroke pattern (dash), directly below the endpoint control. */}
+            <LabeledSelect label="Line pattern" value={linePattern}
+              options={[
+                { label: 'Solid', value: 'solid' },
+                { label: 'Dashed', value: 'dashed' },
+                { label: 'Dotted', value: 'dotted' },
+                { label: 'Dash-dot', value: 'dash-dot' },
+                { label: 'Long dash', value: 'long-dash' },
+              ]}
+              onChange={(v) => patchStyle({ linePattern: v })} />
+          </>
+        ),
+      }
+    }
+
     if (tool === 'callout') {
       const color = isEdit ? (editingAnnotation?.color ?? toolColors.callout) : toolColors.callout
       const tsMeta = isEdit ? (eMeta.textStyle ?? {}) : {}
@@ -6871,7 +7403,7 @@ const annotationPanelSizeClass =
           <div className="pointer-events-auto flex items-center gap-3 rounded-full border border-orange-500/50 bg-[#0f1624]/95 px-4 py-2 shadow-2xl">
             <span className="text-xs text-orange-200">
               {measurePathLiveTotal?.realLength != null
-                ? `Total: ${measurePathLiveTotal.realLength.toFixed(2)} ${measurePathLiveTotal.unit}`
+                ? `Total: ${formatArchitecturalLength(measurePathLiveTotal.realLength, measurePathLiveTotal.unit)}`
                 : `${measureDraftPoints.length} point${measureDraftPoints.length === 1 ? '' : 's'} — not calibrated`}
             </span>
             <button
@@ -7957,6 +8489,10 @@ const annotationPanelSizeClass =
                           // draw handlers.
                           if (effectiveTool === 'shape' && (shapeKind === 'arch-line' || shapeKind === 'polyline' || shapeKind === 'circuit-path')) return
 
+                          // BLUEPRINT-6L — measure/calibrate tools are in draw mode: let taps on
+                          // existing measurements pass through to the canvas draw handlers.
+                          if (effectiveTool === 'measure-distance' || effectiveTool === 'measure-area' || effectiveTool === 'measure-perimeter' || effectiveTool === 'calibrate') return
+
                           e.preventDefault()
                           e.stopPropagation()
 
@@ -8442,9 +8978,49 @@ const annotationPanelSizeClass =
                           const fillCol: string = mStyle.fillColor || col
                           const fillOp: number = mStyle.fillOpacity ?? 0.15
                           const lineW: number = mStyle.lineThickness || 2
+                          // BLUEPRINT-6M/6N — stroke dash pattern for measure-distance and measure-perimeter
+                          // (area keeps its fill hatch; its stroke stays solid). Legacy annotations default to solid.
+                          const lineDash: string | undefined = (a.type === 'measure-distance' || a.type === 'measure-perimeter') ? measureLineDashArray(mStyle.linePattern) : undefined
                           const pxPts = pts.map((p: any) => ({ px: clampNorm(p.x) * displaySize.w, py: clampNorm(p.y) * displaySize.h }))
                           const midPx = pxPts.reduce((acc, p) => ({ px: acc.px + p.px / pxPts.length, py: acc.py + p.py / pxPts.length }), { px: 0, py: 0 })
+                          const distanceLabelMidPx = a.type === 'measure-distance' && pxPts.length === 2
+                            ? { px: (pxPts[0].px + pxPts[1].px) / 2, py: (pxPts[0].py + pxPts[1].py) / 2 }
+                            : midPx
                           const lastPt = pts[pts.length - 1]
+                          // BLUEPRINT-6N/6P — per-segment length labels + a separate total for saved perimeter
+                          // paths, using the annotation page's calibration (saved first, then auto-detected) +
+                          // aspect-aware math, formatted as architectural feet/inches. The total is re-derived at
+                          // render (not read from meta.label) so legacy decimal annotations also show ft/in, and
+                          // is anchored BELOW the path bounds so it never overlaps the segment labels.
+                          const perimeterLabelData = (() => {
+                            const empty = { segments: [] as Array<{ midPx: { px: number; py: number }; label: string }>, total: null as null | { anchor: { px: number; py: number }; text: string } }
+                            if (a.type !== 'measure-perimeter' || pxPts.length < 2) return empty
+                            const manualCal = savedCalibrationsRef.current[a.pageNumber] ?? null
+                            const detRes = detectedScalesRef.current[a.pageNumber] ?? null
+                            const segPageSize = getPageSizeInches(a.pageNumber)
+                            const segCal = manualCal ?? buildAutoCalibrationForPage(a.pageNumber, detRes, segPageSize)
+                            // Below-path anchor: horizontal center of the point bounds, offset ~26px under the
+                            // lowest point, clamped inside the page so it stays visible near the bottom edge.
+                            const minX = Math.min(...pxPts.map((p) => p.px)), maxX = Math.max(...pxPts.map((p) => p.px))
+                            const maxY = Math.max(...pxPts.map((p) => p.py))
+                            const anchor = { px: (minX + maxX) / 2, py: Math.min(maxY + 26, Math.max(12, displaySize.h - 12)) }
+                            if (!segCal) {
+                              // Uncalibrated: fall back to whatever is stored (e.g. the "Calibrate…" hint).
+                              return { segments: [], total: lbl ? { anchor, text: lbl } : null }
+                            }
+                            const unit = segCal.realWorldUnit ?? 'ft'
+                            const segments: Array<{ midPx: { px: number; py: number }; label: string }> = []
+                            for (let i = 1; i < pts.length; i++) {
+                              const d = convertMeasuredDistance(pts[i - 1], pts[i], segCal, segPageSize)
+                              segments.push({
+                                midPx: { px: (pxPts[i - 1].px + pxPts[i].px) / 2, py: (pxPts[i - 1].py + pxPts[i].py) / 2 },
+                                label: formatArchitecturalLength(d, unit),
+                              })
+                            }
+                            const realPerim = convertMeasuredPolylineLength(pts, segCal, segPageSize)
+                            return { segments, total: { anchor, text: `Total: ${formatArchitecturalLength(realPerim, unit)}` } }
+                          })()
+                          const perimeterSegmentLabels = perimeterLabelData.segments
                           const patId = `mfill-${a.id}`
                           const usePattern = a.type === 'measure-area' && fillPat !== 'none' && fillPat !== 'solid'
                           const areaFill = a.type !== 'measure-area' ? 'none'
@@ -8486,22 +9062,72 @@ const annotationPanelSizeClass =
                                   )}
                                 </defs>
                                 {a.type === 'measure-distance' ? (
-                                  <line x1={pxPts[0].px} y1={pxPts[0].py} x2={pxPts[1].px} y2={pxPts[1].py} stroke={col} strokeWidth={lineW} opacity={0.9} strokeLinecap="round" markerStart={arrowMarkStart} markerEnd={arrowMarkEnd} style={{ pointerEvents: 'none' }} />
+                                  <line x1={pxPts[0].px} y1={pxPts[0].py} x2={pxPts[1].px} y2={pxPts[1].py} stroke={col} strokeWidth={lineW} strokeDasharray={lineDash} opacity={0.9} strokeLinecap="round" markerStart={arrowMarkStart} markerEnd={arrowMarkEnd} style={{ pointerEvents: 'none' }} />
                                 ) : a.type === 'measure-perimeter' ? (
                                   // Multi-Point Measure is an OPEN path -- do not close point N back to point 1
                                   // (a <polygon> would implicitly draw that closing segment). Use <polyline>.
-                                  <polyline points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke={col} strokeWidth={lineW} opacity={0.9} strokeLinejoin="round" markerStart={arrowMarkStart} markerEnd={arrowMarkEnd} style={{ pointerEvents: 'none' }} />
+                                  <polyline points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke={col} strokeWidth={lineW} strokeDasharray={lineDash} opacity={0.9} strokeLinejoin="round" markerStart={arrowMarkStart} markerEnd={arrowMarkEnd} style={{ pointerEvents: 'none' }} />
                                 ) : (
                                   <polygon points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill={areaFill} stroke={col} strokeWidth={lineW} opacity={0.9} strokeLinejoin="round" style={{ pointerEvents: 'none' }} />
                                 )}
                                 {renderEndpoints()}
-                                {lbl && (
+                                {/* Distance = centered on the line; Area = centroid. Perimeter's total is drawn
+                                    separately below (BLUEPRINT-6P) so it never overlaps the segment labels. */}
+                                {lbl && a.type !== 'measure-perimeter' && (
+                                  a.type === 'measure-distance' ? (
+                                    <>
+                                      <rect x={distanceLabelMidPx.px - (lbl.length * 3.5 + 5)} y={distanceLabelMidPx.py - 8} width={lbl.length * 7 + 10} height={16} rx={3} fill="#0a0d16" opacity={0.88} style={{ pointerEvents: 'none' }} />
+                                      <text x={distanceLabelMidPx.px} y={distanceLabelMidPx.py} fontSize={11} fill={col} fontFamily="monospace" dominantBaseline="middle" textAnchor="middle" style={{ pointerEvents: 'none' }}>{lbl}</text>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <rect x={midPx.px - 2} y={midPx.py - 10} width={lbl.length * 7 + 10} height={16} rx={3} fill="#0a0d16" opacity={0.88} style={{ pointerEvents: 'none' }} />
+                                      <text x={midPx.px + 3} y={midPx.py} fontSize={11} fill={col} fontFamily="monospace" dominantBaseline="middle" textAnchor="start" style={{ pointerEvents: 'none' }}>{lbl}</text>
+                                    </>
+                                  )
+                                )}
+                                {/* BLUEPRINT-6N — per-segment length labels between each perimeter point/axle,
+                                    centered on each segment midpoint, in the line color. */}
+                                {perimeterSegmentLabels.map((seg, si) => (
+                                  <g key={`seglbl-${si}`} style={{ pointerEvents: 'none' }}>
+                                    <rect x={seg.midPx.px - (seg.label.length * 3.5 + 5)} y={seg.midPx.py - 8} width={seg.label.length * 7 + 10} height={16} rx={3} fill="#0a0d16" opacity={0.85} />
+                                    <text x={seg.midPx.px} y={seg.midPx.py} fontSize={10} fill={col} fontFamily="monospace" dominantBaseline="middle" textAnchor="middle">{seg.label}</text>
+                                  </g>
+                                ))}
+                                {/* BLUEPRINT-6P — perimeter TOTAL label: distinct accent color (amber), centered
+                                    below the path bounds so it is visually separate from the segment labels. */}
+                                {perimeterLabelData.total && (
+                                  <g style={{ pointerEvents: 'none' }}>
+                                    <rect x={perimeterLabelData.total.anchor.px - (perimeterLabelData.total.text.length * 3.6 + 6)} y={perimeterLabelData.total.anchor.py - 9} width={perimeterLabelData.total.text.length * 7.2 + 12} height={18} rx={4} fill="#1c1206" stroke="#f59e0b" strokeWidth={1} opacity={0.95} />
+                                    <text x={perimeterLabelData.total.anchor.px} y={perimeterLabelData.total.anchor.py} fontSize={11} fill="#fbbf24" fontFamily="monospace" fontWeight={700} dominantBaseline="middle" textAnchor="middle">{perimeterLabelData.total.text}</text>
+                                  </g>
+                                )}
+                                {/* BLUEPRINT-6L — transparent hit target carries data-annotation-id so
+                                    the line is selectable directly from the document (pointerdown-capture
+                                    and click both resolve to this element, giving a tight anchor rect for
+                                    the floating action bar near the line instead of the full-page wrapper). */}
+                                {/* BLUEPRINT-6M/6O — in Move mode the line/path body drags the WHOLE object
+                                    (all points shift together): distance = both endpoints, perimeter = every
+                                    point/axle. Outside Move mode it stays a selection hit target. The point
+                                    handles render AFTER this element so tapping a point captures point-drag,
+                                    while tapping the body between points captures whole-object move. */}
+                                {isLayoutEditing && (a.type === 'measure-distance' || a.type === 'measure-perimeter') && pxPts.length >= 2 ? (
+                                  <polyline data-annotation-id={a.id} points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke="transparent" strokeWidth={16} style={{ pointerEvents: 'stroke', cursor: 'move', touchAction: 'none' }} onPointerDown={(e) => startMeasureLineDrag(e as any, a)} />
+                                ) : (
+                                  <polyline data-annotation-id={a.id} points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke="transparent" strokeWidth={16} style={{ pointerEvents: 'stroke', cursor: 'pointer', touchAction: 'none' }} onPointerDown={selectAnnotation as any} onClick={selectAnnotation as any} />
+                                )}
+                                {/* BLUEPRINT-6L — Move mode: draggable endpoint handles for distance lines only. */}
+                                {isLayoutEditing && a.type === 'measure-distance' && pxPts.length === 2 && (
                                   <>
-                                    <rect x={midPx.px - 2} y={midPx.py - 10} width={lbl.length * 7 + 10} height={16} rx={3} fill="#0a0d16" opacity={0.88} style={{ pointerEvents: 'none' }} />
-                                    <text x={midPx.px + 3} y={midPx.py} fontSize={11} fill={col} fontFamily="monospace" dominantBaseline="middle" textAnchor="start" style={{ pointerEvents: 'none' }}>{lbl}</text>
+                                    <circle cx={pxPts[0].px} cy={pxPts[0].py} r={7} fill="#3b82f6" stroke="#ffffff" strokeWidth={2} style={{ pointerEvents: 'all', cursor: 'crosshair', touchAction: 'none' }} onPointerDown={(e) => startMeasureEndpointDrag(e, a, 0)} />
+                                    <circle cx={pxPts[1].px} cy={pxPts[1].py} r={7} fill="#22c55e" stroke="#ffffff" strokeWidth={2} style={{ pointerEvents: 'all', cursor: 'crosshair', touchAction: 'none' }} onPointerDown={(e) => startMeasureEndpointDrag(e, a, 1)} />
                                   </>
                                 )}
-                                <polyline points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke="transparent" strokeWidth={16} style={{ pointerEvents: 'stroke', cursor: 'pointer' }} onClick={selectAnnotation as any} />
+                                {/* BLUEPRINT-6N — Move mode: a draggable handle at every perimeter point/axle.
+                                    Dragging one updates only that vertex; the total + segment labels recompute. */}
+                                {isLayoutEditing && a.type === 'measure-perimeter' && pxPts.length >= 2 && pxPts.map((p, i) => (
+                                  <circle key={`axle-${i}`} cx={p.px} cy={p.py} r={7} fill={i === 0 ? '#3b82f6' : i === pxPts.length - 1 ? '#22c55e' : '#f59e0b'} stroke="#ffffff" strokeWidth={2} style={{ pointerEvents: 'all', cursor: 'crosshair', touchAction: 'none' }} onPointerDown={(e) => startMeasurePointDrag(e, a, i)} />
+                                ))}
                               </svg>
                             </div>
                           )
@@ -8699,6 +9325,56 @@ const annotationPanelSizeClass =
                                     stroke={col} strokeWidth={1.5} strokeDasharray="4,3" opacity={0.55}
                                   />
                                 )}
+                                {effectiveTool === 'measure-distance' && measureDistanceLivePreview && !calibrateInput && (
+                                  <>
+                                    <rect
+                                      x={measureDistanceLivePreview.midpointPx.px - (measureDistanceLivePreview.label.length * 3.5 + 5)}
+                                      y={measureDistanceLivePreview.midpointPx.py - 8}
+                                      width={measureDistanceLivePreview.label.length * 7 + 10}
+                                      height={16}
+                                      rx={3}
+                                      fill="#0a0d16"
+                                      opacity={0.88}
+                                    />
+                                    <text
+                                      x={measureDistanceLivePreview.midpointPx.px}
+                                      y={measureDistanceLivePreview.midpointPx.py}
+                                      fontSize={11}
+                                      fill={col}
+                                      fontFamily="monospace"
+                                      dominantBaseline="middle"
+                                      textAnchor="middle"
+                                    >
+                                      {measureDistanceLivePreview.label}
+                                    </text>
+                                  </>
+                                )}
+                                {/* BLUEPRINT-6N — live per-segment length labels while drafting a perimeter. */}
+                                {effectiveTool === 'measure-perimeter' && measurePerimeterLivePreview && !calibrateInput &&
+                                  measurePerimeterLivePreview.segments.map((seg, si) => (
+                                    <g key={`pseg-${si}`}>
+                                      <rect
+                                        x={seg.midPx.px - (seg.label.length * 3.5 + 5)}
+                                        y={seg.midPx.py - 8}
+                                        width={seg.label.length * 7 + 10}
+                                        height={16}
+                                        rx={3}
+                                        fill="#0a0d16"
+                                        opacity={0.88}
+                                      />
+                                      <text
+                                        x={seg.midPx.px}
+                                        y={seg.midPx.py}
+                                        fontSize={11}
+                                        fill={col}
+                                        fontFamily="monospace"
+                                        dominantBaseline="middle"
+                                        textAnchor="middle"
+                                      >
+                                        {seg.label}
+                                      </text>
+                                    </g>
+                                  ))}
                               </>
                             )
                           })()}
@@ -9369,6 +10045,8 @@ const annotationPanelSizeClass =
                           <div className="flex items-center gap-2 min-w-0">
                             <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: getAnnotationDisplayColor(a) }} />
                             <span className={`${isPackageSelected ? 'text-sky-100' : 'text-gray-400'} truncate`}>{a.text?.trim() ? shortText(a.text, 28) : annotationLabel(a)}</span>
+                            {/* BLUEPRINT-6Q — Distance/Perimeter measured value after the title (accent, non-truncating so the number stays visible). */}
+                            {(() => { const mv = measurementPanelValue(a); return mv ? <span className="flex-shrink-0 whitespace-nowrap text-[11px] text-sky-300/80">— {mv}</span> : null })()}
                             {isPackageSelected && <span className="rounded-full bg-sky-400/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-200">Selected</span>}
                           </div>
                         </button>
@@ -9925,8 +10603,11 @@ const annotationPanelSizeClass =
         const focusedAnn = allAnnotations.find(ann => ann.id === focusedAnnotationId)
         if (!focusedAnn) return null
         const isLayoutEditingFocused = layoutEditId === focusedAnnotationId
-        const fCanMove = focusedAnn.type === 'callout' || focusedAnn.type === 'generate' || focusedAnn.type === 'textBox' || focusedAnn.type === 'shape' || focusedAnn.type === 'highlight' || focusedAnn.type === 'textHighlight' || focusedAnn.type === 'underline' || focusedAnn.type === 'note'
-        const fCanStyle = focusedAnn.type === 'highlight' || focusedAnn.type === 'textHighlight' || focusedAnn.type === 'underline' || focusedAnn.type === 'shape' || focusedAnn.type === 'pen' || focusedAnn.type === 'marker' || focusedAnn.type === 'callout' || focusedAnn.type === 'generate' || focusedAnn.type === 'textBox'
+        // BLUEPRINT-6L/6N — measure-distance moves (endpoint editing) and styles like other shapes;
+        // BLUEPRINT-6N adds measure-perimeter (Move = per-point/axle editing, Edit = color/width/pattern).
+        // measure-area is intentionally left unchanged.
+        const fCanMove = focusedAnn.type === 'callout' || focusedAnn.type === 'generate' || focusedAnn.type === 'textBox' || focusedAnn.type === 'shape' || focusedAnn.type === 'highlight' || focusedAnn.type === 'textHighlight' || focusedAnn.type === 'underline' || focusedAnn.type === 'note' || focusedAnn.type === 'measure-distance' || focusedAnn.type === 'measure-perimeter'
+        const fCanStyle = focusedAnn.type === 'highlight' || focusedAnn.type === 'textHighlight' || focusedAnn.type === 'underline' || focusedAnn.type === 'shape' || focusedAnn.type === 'pen' || focusedAnn.type === 'marker' || focusedAnn.type === 'callout' || focusedAnn.type === 'generate' || focusedAnn.type === 'textBox' || focusedAnn.type === 'measure-distance' || focusedAnn.type === 'measure-perimeter'
         const fCanRotate = focusedAnn.type === 'shape' && isRotatableElectricalShapeKind(getAnnotationMeta(focusedAnn).shapeKind)
         const focusedEl =
           (overlayRef.current?.querySelector(`[data-annotation-anchor-id="${focusedAnnotationId}"]`) as HTMLElement | null) ||
