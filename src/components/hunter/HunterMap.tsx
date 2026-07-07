@@ -64,20 +64,6 @@ function pinSymbol(color: string, score: number = 0): google.maps.Symbol {
   }
 }
 
-function leadPinSymbol(score: number, isPortal: boolean): google.maps.Symbol {
-  const symbol = pinSymbol(pinColorForScore(score), score)
-  if (isPortal && score < 85) {
-    return {
-      ...symbol,
-      strokeColor: '#60a5fa',
-      strokeWeight: Math.max(symbol.strokeWeight ?? 2, 3),
-      scale: Math.max(symbol.scale ?? 1, 1.18),
-      fillOpacity: Math.max(symbol.fillOpacity ?? 0.85, 0.9),
-    }
-  }
-  return symbol
-}
-
 function svgMarkerUrl(svg: string): string | null {
   try {
     if (!svg.trim().startsWith('<svg')) return null
@@ -104,6 +90,139 @@ function generatedSvgIcon(
 ): google.maps.Icon | google.maps.Symbol {
   const url = svgMarkerUrl(svg)
   return url ? { url, scaledSize, anchor } : fallback
+}
+
+function eliteGlowSymbol(): google.maps.Symbol {
+  return {
+    path: 'M 0,0 C -2,-20 -10,-22 -10,-30 A 10,10 0 1,1 10,-30 C 10,-22 2,-20 0,0 z',
+    fillColor: '#f59e0b',
+    fillOpacity: 0.12,
+    strokeColor: '#fbbf24',
+    strokeWeight: 5,
+    scale: 1.7,
+    anchor: new google.maps.Point(0, 0),
+  }
+}
+
+const eliteFrameCache: string[] = []
+function buildEliteFrame(flameOffset: number) {
+  const f1 = 0.6 + Math.sin(flameOffset) * 0.3
+  const f2 = 0.4 + Math.cos(flameOffset * 1.3) * 0.25
+  const rx1 = 13 + Math.sin(flameOffset * 0.7) * 2
+  const ry1 = 16 + Math.cos(flameOffset * 0.9) * 3
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="64" viewBox="0 0 40 64">',
+    '<defs>',
+    '<radialGradient id="ruby" cx="35%" cy="30%" r="65%">',
+    '<stop offset="0%" stop-color="#ff6b8a"/>',
+    '<stop offset="40%" stop-color="#c0003c"/>',
+    '<stop offset="100%" stop-color="#6b0020"/>',
+    '</radialGradient>',
+    '</defs>',
+    // Outer flame
+    '<ellipse cx="20" cy="50" rx="' + rx1 + '" ry="' + ry1 + '" fill="#f97316" opacity="' + f1.toFixed(2) + '"/>',
+    '<ellipse cx="20" cy="46" rx="9" ry="12" fill="#fbbf24" opacity="' + f2.toFixed(2) + '"/>',
+    '<ellipse cx="20" cy="42" rx="5" ry="8" fill="#fef08a" opacity="' + (f1 * 0.6).toFixed(2) + '"/>',
+    // Pin body
+    '<path d="M20 4 C9.5 4 1 12.5 1 23 C1 36.5 20 52 20 52 C20 52 39 36.5 39 23 C39 12.5 30.5 4 20 4 Z" fill="url(#ruby)" stroke="#ff6b8a" stroke-width="1.5"/>',
+    '<ellipse cx="14" cy="17" rx="5" ry="7" fill="#ffffff" opacity="0.15" transform="rotate(-20,14,17)"/>',
+    '<ellipse cx="13" cy="15" rx="2.5" ry="4" fill="#ffffff" opacity="0.25" transform="rotate(-20,13,15)"/>',
+    '<circle cx="20" cy="23" r="6" fill="#ff6482" opacity="0.4" stroke="#ffc8d2" stroke-opacity="0.6" stroke-width="1"/>',
+    '<circle cx="20" cy="23" r="3" fill="#ffc8d2" opacity="0.7"/>',
+    '</svg>',
+  ].join('')
+  return svgMarkerUrl(svg) ?? ''
+}
+// Pre-cache 12 flame frames
+for (let i = 0; i < 12; i++) {
+  eliteFrameCache.push(buildEliteFrame((i / 12) * Math.PI * 2))
+}
+
+const portalFrameCache: string[] = []
+function buildPortalFrame(offset: number) {
+  const arc1 = offset
+  const arc2 = offset + Math.PI * 0.7
+  const arc3 = offset + Math.PI * 1.4
+  const x1 = (20 + 22 * Math.cos(arc1)).toFixed(1)
+  const y1 = (23 + 22 * Math.sin(arc1)).toFixed(1)
+  const x2 = (20 + 22 * Math.cos(arc2)).toFixed(1)
+  const y2 = (23 + 22 * Math.sin(arc2)).toFixed(1)
+  const x3 = (20 + 22 * Math.cos(arc3)).toFixed(1)
+  const y3 = (23 + 22 * Math.sin(arc3)).toFixed(1)
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="56" viewBox="0 0 40 56">',
+    '<defs>',
+    '<radialGradient id="elec" cx="35%" cy="25%" r="70%">',
+    '<stop offset="0%" stop-color="#bfdbfe"/>',
+    '<stop offset="35%" stop-color="#2563eb"/>',
+    '<stop offset="100%" stop-color="#0f172a"/>',
+    '</radialGradient>',
+    '</defs>',
+    // Pin body
+    '<path d="M20 4 C9.5 4 1 12.5 1 23 C1 36.5 20 52 20 52 C20 52 39 36.5 39 23 C39 12.5 30.5 4 20 4 Z" fill="url(#elec)" stroke="#60a5fa" stroke-width="1.5"/>',
+    // Shimmer highlight
+    '<ellipse cx="13" cy="14" rx="5" ry="8" fill="#ffffff" opacity="0.18" transform="rotate(-25,13,14)"/>',
+    '<ellipse cx="12" cy="12" rx="2.5" ry="4.5" fill="#ffffff" opacity="0.3" transform="rotate(-25,12,12)"/>',
+    // Animated electric arc dots
+    '<circle cx="' + x1 + '" cy="' + y1 + '" r="2" fill="#93c5fd" opacity="0.9"/>',
+    '<circle cx="' + x2 + '" cy="' + y2 + '" r="1.5" fill="#60a5fa" opacity="0.7"/>',
+    '<circle cx="' + x3 + '" cy="' + y3 + '" r="1" fill="#bfdbfe" opacity="0.5"/>',
+    // Inner core
+    '<circle cx="20" cy="23" r="6" fill="#2563eb" opacity="0.4" stroke="#93c5fd" stroke-opacity="0.7" stroke-width="1"/>',
+    '<circle cx="20" cy="23" r="3" fill="#bfdbfe" opacity="0.8"/>',
+    '<path d="M22 12 L15 24 H20 L17 34 L27 20 H21 Z" fill="#ffffff" opacity="0.9"/>',
+    '</svg>',
+  ].join('')
+  return svgMarkerUrl(svg) ?? ''
+}
+for (let i = 0; i < 12; i++) {
+  portalFrameCache.push(buildPortalFrame((i / 12) * Math.PI * 2))
+}
+
+function portalPinIcon(score: number) {
+  return portalFrameCache[0]
+    ? {
+      url: portalFrameCache[0],
+      scaledSize: new google.maps.Size(40, 56),
+      anchor: new google.maps.Point(20, 52),
+    }
+    : pinSymbol(pinColorForScore(score), score)
+}
+
+function elitePinIcon(score: number) {
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="56" viewBox="0 0 40 56">',
+    '<defs>',
+    '<radialGradient id="ruby" cx="35%" cy="30%" r="65%">',
+    '<stop offset="0%" stop-color="#ff6b8a"/>',
+    '<stop offset="40%" stop-color="#c0003c"/>',
+    '<stop offset="100%" stop-color="#6b0020"/>',
+    '</radialGradient>',
+    '<radialGradient id="flame" cx="50%" cy="80%" r="60%">',
+    '<stop offset="0%" stop-color="#fbbf24" stop-opacity="0.9"/>',
+    '<stop offset="50%" stop-color="#f97316" stop-opacity="0.5"/>',
+    '<stop offset="100%" stop-color="#ef4444" stop-opacity="0"/>',
+    '</radialGradient>',
+    '</defs>',
+    // Flame layer behind pin
+    '<ellipse cx="20" cy="44" rx="14" ry="18" fill="url(#flame)" opacity="0.7"/>',
+    '<ellipse cx="20" cy="38" rx="9" ry="14" fill="url(#flame)" opacity="0.5"/>',
+    // Pin body with ruby gradient
+    '<path d="M20 4 C9.5 4 1 12.5 1 23 C1 36.5 20 52 20 52 C20 52 39 36.5 39 23 C39 12.5 30.5 4 20 4 Z" fill="url(#ruby)" stroke="#ff6b8a" stroke-width="1.5"/>',
+    // Inner texture highlights
+    '<ellipse cx="14" cy="17" rx="5" ry="7" fill="#ffffff" opacity="0.15" transform="rotate(-20,14,17)"/>',
+    '<ellipse cx="13" cy="15" rx="2.5" ry="4" fill="#ffffff" opacity="0.25" transform="rotate(-20,13,15)"/>',
+    // Inner glow dot
+    '<circle cx="20" cy="23" r="6" fill="#ff6482" opacity="0.4" stroke="#ffc8d2" stroke-opacity="0.6" stroke-width="1"/>',
+    '<circle cx="20" cy="23" r="3" fill="#ffc8d2" opacity="0.7"/>',
+    '</svg>',
+  ].join('')
+  return generatedSvgIcon(
+    svg,
+    new google.maps.Size(40, 56),
+    new google.maps.Point(20, 52),
+    pinSymbol(pinColorForScore(score), score)
+  )
 }
 
 function homeBaseSymbol(): google.maps.Symbol {
@@ -686,7 +805,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         position: { lat, lng },
         map: mapRef.current!,
         title,
-        icon: leadPinSymbol(score, isPortal),
+        icon: score >= 85 ? elitePinIcon(score) : isPortal ? portalPinIcon(score) : pinSymbol(pinColorForScore(score), score),
         zIndex: score >= 85 ? 600 : isPortal ? 550 : 500,
         optimized: false,
       })
@@ -695,6 +814,42 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         setFocusedMapLeadId((current) => current && current !== id ? null : current)
       })
       markersRef.current.push({ id, marker: m, isLeadPin: true })
+      // Animate flame for elite pins
+      if (score >= 85) {
+        let frameIdx = 0
+        const animateFlame = () => {
+          frameIdx = (frameIdx + 1) % 12
+          const frameUrl = eliteFrameCache[frameIdx]
+          m.setIcon(frameUrl
+            ? {
+              url: frameUrl,
+              scaledSize: new google.maps.Size(40, 64),
+              anchor: new google.maps.Point(20, 52),
+            }
+            : pinSymbol(pinColorForScore(score), score)
+          )
+          requestAnimationFrame(animateFlame)
+        }
+        requestAnimationFrame(animateFlame)
+      }
+      // Animate electric arc for portal pins
+      if (isPortal && score < 85) {
+        let frameIdx = Math.floor(Math.random() * 12)
+        const animatePortal = () => {
+          frameIdx = (frameIdx + 1) % 12
+          const frameUrl = portalFrameCache[frameIdx]
+          m.setIcon(frameUrl
+            ? {
+              url: frameUrl,
+              scaledSize: new google.maps.Size(40, 56),
+              anchor: new google.maps.Point(20, 52),
+            }
+            : pinSymbol(pinColorForScore(score), score)
+          )
+          requestAnimationFrame(animatePortal)
+        }
+        requestAnimationFrame(animatePortal)
+      }
     })
   }, [isLoaded, homeBase, allPins])
 
