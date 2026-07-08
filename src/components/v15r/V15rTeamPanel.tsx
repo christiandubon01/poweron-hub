@@ -21,6 +21,7 @@ import { ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis, Cart
 import { Users, Sparkles, AlertCircle, Plus, Trash2, Edit2, TrendingUp, Zap, X, UserPlus } from 'lucide-react'
 import AddTeamMemberModal from './AddTeamMemberModal'
 import DemoInvite from '@/components/admin/DemoInvite'
+import EmployeeInviteModal from '@/components/admin/EmployeeInviteModal'
 import OhmComplianceCard from './OhmComplianceCard'
 import { normalizeEmployee } from './employeeTypes'
 import { getWorkerCostProfile, calcMonthlyBreakdown, workerTypeLabel, getLoadedHourlyRate, resolveWorkerType, buildSavePayload } from './employeeCostUtils'
@@ -1287,8 +1288,9 @@ export default function V15rTeamPanel() {
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
   if (!backup) return <NoData />
 
-  const { isOwner, user } = useAuth()
+  const { isOwner, isAdmin, user } = useAuth()
   const [showDemoInviteModal, setShowDemoInviteModal] = useState(false)
+  const [showEmployeeInviteModal, setShowEmployeeInviteModal] = useState(false)
 
   const employees = (backup?.employees || []) as EnhancedEmployee[]
   // Phase 6S-C: the full `employees` array is kept for historical resolution (log
@@ -1710,6 +1712,16 @@ export default function V15rTeamPanel() {
             <TrendingUp className="w-4 h-4" />
             Team Cost Settings
           </button>
+          {isAdmin && (
+            <button
+              onClick={() => setShowEmployeeInviteModal(true)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-sm font-semibold transition shadow"
+              style={{ minHeight: '44px' }}
+            >
+              <UserPlus className="w-4 h-4" />
+              Invite Employee
+            </button>
+          )}
           {isOwner && (
             <button
               onClick={() => setShowDemoInviteModal(true)}
@@ -3215,6 +3227,13 @@ export default function V15rTeamPanel() {
         <DemoInvite
           onClose={() => setShowDemoInviteModal(false)}
           inviterUserId={user.id}
+        />
+      )}
+
+      {/* ── EMPLOYEE INVITE MODAL (admin only) ─────────────────────────────── */}
+      {showEmployeeInviteModal && isAdmin && (
+        <EmployeeInviteModal
+          onClose={() => setShowEmployeeInviteModal(false)}
         />
       )}
 
