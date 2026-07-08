@@ -31,6 +31,11 @@ import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog
 import { mergeRemoteWeeklyDataIntoOutgoing } from './weeklyDataScopeMerge'
 import { mergeRemoteEmployeesIntoOutgoing } from './teamScopeMerge'
 import { mergeRemoteMultiDayServiceCallsIntoOutgoing } from './serviceScopeMerge'
+// Phase 6S-H (emergency guard): reuse the same tombstone-safe id-mergers the direct
+// blueprint save path uses, so a stale unrelated whole-app save cannot clobber newer
+// remote blueprint annotations / scope layers. blueprintLibraryService only imports
+// backupDataService dynamically, so this static edge introduces no module cycle.
+import { mergeBlueprintAnnotationsById, mergeBlueprintScopeLayersById } from './blueprintLibraryService'
 
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
 const STORAGE_KEY = LEGACY_STORAGE_KEY
@@ -2386,6 +2391,99 @@ function isServiceMultiDayCallsSyncSource(options?: { source?: string | null; _s
   }
 }
 
+/**
+ * Phase 6S-H (emergency guard): true when a sync save is a DIRECT blueprint save
+ * (annotations or work packages / scope layers). Used to SKIP the blueprintSummaries
+ * preservation fold for those saves — the direct blueprint save path in
+ * blueprintLibraryService already fetched latest remote and id-merged its own slice,
+ * so folding again is redundant and could fight an intentional just-made edit/delete.
+ */
+function isBlueprintSyncSource(options?: { source?: string | null; _scopes?: DataScope[]; changedKey?: string | null } | null): boolean {
+  if (!options) return false
+  const sourceLower = options.source ? String(options.source).toLowerCase() : ''
+  if (
+    sourceLower.includes('blueprintsummaries')
+    || sourceLower.includes('operationsblueprintannotations')
+    || sourceLower.includes('operationsblueprintscopelayers')
+    || sourceLower.includes('blueprint.annotations')
+    || sourceLower.includes('blueprint.workpackages')
+    || sourceLower.includes('annotation')
+    || sourceLower.includes('scope-layers')
+  ) return true
+  const changedKeyLower = options.changedKey ? String(options.changedKey).toLowerCase() : ''
+  if (
+    changedKeyLower === 'blueprintsummaries'
+    || changedKeyLower === 'operationsblueprintannotations'
+    || changedKeyLower === 'operationsblueprintscopelayers'
+    || changedKeyLower === 'blueprint.annotations'
+    || changedKeyLower === 'blueprint.workpackages'
+  ) return true
+  if (Array.isArray(options._scopes) && (options._scopes.includes('blueprint.annotations') || options._scopes.includes('blueprint.workPackages'))) return true
+  try {
+    const scopes = resolveScopesForSyncInput(options.source ?? options.changedKey ?? null)
+    return scopes.includes('blueprint.annotations') || scopes.includes('blueprint.workPackages')
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Phase 6S-H (emergency guard): fold newer remote blueprint annotations / scope
+ * layers into the outgoing blob before the full-object Supabase upsert, so a stale
+ * unrelated whole-app save (an Estimate/MTO/Money tab pushing an old BackupData)
+ * cannot erase blueprint data it never saw. Item-level, tombstone-safe merge per
+ * blueprintSetId (reuses the exact mergers the direct blueprint save path uses):
+ * remote is the base, outgoing is the incoming side, so a remote item that the
+ * outgoing blob is merely missing is PRESERVED (never deleted), and true conflicts
+ * resolve by newest updatedAt with delete-safety. Touches ONLY
+ * blueprintSummaries.operationsBlueprintAnnotations and .operationsBlueprintScopeLayers;
+ * every other key (including operationsBlueprintLibrary) is left exactly as-is. Never
+ * throws — on any error it returns the un-merged outgoing blob so the save proceeds.
+ */
+function mergeRemoteBlueprintSummariesIntoOutgoing(outgoing: BackupData, remoteData: any): BackupData {
+  try {
+    const remoteBp = (remoteData as any)?.blueprintSummaries
+    if (!remoteBp || typeof remoteBp !== 'object' || Array.isArray(remoteBp)) return outgoing
+
+    const merged: any = { ...(outgoing as any) }
+    const outBp = (merged.blueprintSummaries && typeof merged.blueprintSummaries === 'object' && !Array.isArray(merged.blueprintSummaries))
+      ? { ...merged.blueprintSummaries }
+      : {}
+
+    const isMap = (v: any): v is Record<string, any[]> => !!v && typeof v === 'object' && !Array.isArray(v)
+
+    // Annotations: Record<blueprintSetId, BlueprintAnnotation[]>
+    if (isMap(remoteBp.operationsBlueprintAnnotations)) {
+      const remoteAnn = remoteBp.operationsBlueprintAnnotations as Record<string, any[]>
+      const outAnn = isMap(outBp.operationsBlueprintAnnotations) ? { ...(outBp.operationsBlueprintAnnotations as Record<string, any[]>) } : {}
+      for (const setId of new Set([...Object.keys(remoteAnn), ...Object.keys(outAnn)])) {
+        const remoteList = Array.isArray(remoteAnn[setId]) ? remoteAnn[setId] : []
+        const outList = Array.isArray(outAnn[setId]) ? outAnn[setId] : []
+        outAnn[setId] = mergeBlueprintAnnotationsById(remoteList, outList)
+      }
+      outBp.operationsBlueprintAnnotations = outAnn
+    }
+
+    // Scope layers / work packages: Record<blueprintSetId, BlueprintScopeLayer[]>
+    if (isMap(remoteBp.operationsBlueprintScopeLayers)) {
+      const remoteLayers = remoteBp.operationsBlueprintScopeLayers as Record<string, any[]>
+      const outLayers = isMap(outBp.operationsBlueprintScopeLayers) ? { ...(outBp.operationsBlueprintScopeLayers as Record<string, any[]>) } : {}
+      for (const setId of new Set([...Object.keys(remoteLayers), ...Object.keys(outLayers)])) {
+        const remoteList = Array.isArray(remoteLayers[setId]) ? remoteLayers[setId] : []
+        const outList = Array.isArray(outLayers[setId]) ? outLayers[setId] : []
+        outLayers[setId] = mergeBlueprintScopeLayersById(remoteList, outList)
+      }
+      outBp.operationsBlueprintScopeLayers = outLayers
+    }
+
+    merged.blueprintSummaries = outBp
+    return merged as BackupData
+  } catch (err) {
+    console.warn('[Sync] blueprint preservation fold skipped', err)
+    return outgoing
+  }
+}
+
 /** Sync current tenant-scoped localStorage data to Supabase app_state table.
  *  Refuses to run until the authenticated tenant has completed bootstrap. */
 export async function syncToSupabase(
@@ -2494,7 +2592,11 @@ export async function syncToSupabase(
     const skipEstimateVersionsGuard = isProjectEstimateVersionsSyncSource(options)
     const skipHomeAgendaAlertsGuard = isHomeAgendaAlertsSyncSource(options)
     const skipMultiDayCallsGuard = isServiceMultiDayCallsSyncSource(options)
-    if (!skipWeeklyGuard || !skipEmployeesGuard || !skipTimelineGuard || !skipProgressGuard || !skipScheduleGuard || !skipCoordinationGuard || !skipEstimateGuard || !skipEstimateVersionsGuard || !skipHomeAgendaAlertsGuard || !skipMultiDayCallsGuard) {
+    // Phase 6S-H: blueprintSummaries preservation. Runs for every save that is NOT a
+    // direct blueprint save so a stale unrelated whole-app push cannot clobber newer
+    // remote blueprint annotations / scope layers (fills the gap the scoped folds missed).
+    const skipBlueprintGuard = isBlueprintSyncSource(options)
+    if (!skipWeeklyGuard || !skipEmployeesGuard || !skipTimelineGuard || !skipProgressGuard || !skipScheduleGuard || !skipCoordinationGuard || !skipEstimateGuard || !skipEstimateVersionsGuard || !skipHomeAgendaAlertsGuard || !skipMultiDayCallsGuard || !skipBlueprintGuard) {
       try {
         const remoteSnapshot = await fetchLatestRemoteBackup(userId)
         if (remoteSnapshot?.remoteData) {
@@ -2527,6 +2629,9 @@ export async function syncToSupabase(
           }
           if (!skipMultiDayCallsGuard) {
             outgoing = mergeRemoteMultiDayServiceCallsIntoOutgoing(outgoing, remoteSnapshot.remoteData)
+          }
+          if (!skipBlueprintGuard) {
+            outgoing = mergeRemoteBlueprintSummariesIntoOutgoing(outgoing, remoteSnapshot.remoteData)
           }
         }
       } catch (preserveGuardErr) {
