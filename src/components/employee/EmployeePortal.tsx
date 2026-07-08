@@ -10,6 +10,7 @@ import React, { useEffect, useState } from 'react'
 import { Zap, LogOut, Clock, LayoutDashboard, Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
+import EmployeeTimeClock from '@/components/employee/EmployeeTimeClock'
 
 interface EmployeeProfileSummary {
   display_name: string
@@ -136,7 +137,7 @@ export function EmployeePortal() {
           <div className="bg-green-600 text-white rounded-2xl p-4 shadow-sm">
             <Clock className="w-5 h-5 mb-2 opacity-90" />
             <p className="text-sm font-bold">Time Tracking</p>
-            <p className="text-xs opacity-80 mt-0.5">Coming next</p>
+            <p className="text-xs opacity-80 mt-0.5">Clock in/out</p>
           </div>
           <div className="bg-white border border-gray-200 rounded-2xl p-4 text-gray-400">
             <LayoutDashboard className="w-5 h-5 mb-2" />
@@ -145,13 +146,8 @@ export function EmployeePortal() {
           </div>
         </nav>
 
-        {/* Placeholder card */}
-        <div className="bg-white border border-green-200 rounded-2xl p-5 shadow-sm">
-          <h2 className="text-base font-bold text-gray-900 mb-2">Time Tracking setup is ready</h2>
-          <p className="text-sm text-gray-600 leading-relaxed">
-            Your employee invite is linked. Clock in/out interface comes next.
-          </p>
-        </div>
+        {/* Time Clock */}
+        <EmployeeTimeClock />
       </main>
     </div>
   )
