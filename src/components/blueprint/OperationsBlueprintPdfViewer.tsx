@@ -2503,6 +2503,18 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [symbolLabelTextColor, setSymbolLabelTextColor] = useState('#22d3ee')
   const [symbolLabelBorderColor, setSymbolLabelBorderColor] = useState('#22d3ee')
   const [symbolLabelFillColor, setSymbolLabelFillColor] = useState('#0b1020')
+  // ── Measurement label controls (Measure bucket) — visual-only, local UI state.
+  // Deliberately SEPARATE from the electrical symbol label controls above. Toggling
+  // visibility or changing size never mutates annotation data and never triggers a save.
+  const [measurementLabelsVisible, setMeasurementLabelsVisible] = useState(true)
+  // Scales measurement LABEL text/badges only (not lines, endpoints, or symbols).
+  // 0.75x–5.0x, default 1.0. Local render-only; not persisted to meta or the cloud.
+  const [measurementLabelScale, setMeasurementLabelScale] = useState(1)
+  const [isMeasurementSizePanelOpen, setIsMeasurementSizePanelOpen] = useState(false)
+  // Color for NEW distance / area / multi-point measurements. Kept in sync with
+  // measurementStyle.lineColor and the measure toolColors so the committed ann.color and
+  // the create popover agree. Does NOT bulk-edit existing annotations.
+  const [measurementColor, setMeasurementColor] = useState('#38bdf8')
   const [alignmentGuidesEnabled, setAlignmentGuidesEnabled] = useState(false)
   const [activeAlignmentGuides, setActiveAlignmentGuides] = useState<AlignmentGuideLine[]>([])
   // Copied annotation/shape design awaiting paste (Fix 1). Strips id/timestamps/page
@@ -7112,7 +7124,12 @@ const annotationPanelSizeClass =
               // BLUEPRINT-6M — persistEditAnnotation now applies the change optimistically,
               // so the color swap is instant instead of waiting for the persist round-trip.
               if (isEdit) persistEditAnnotation({ color: c })
-              else setMeasurementStyle((p) => ({ ...p, lineColor: c }))
+              else {
+                // Keep measurementStyle.lineColor and the measure toolColors in sync so the
+                // committed ann.color (read from toolColors) matches the popover selection.
+                setMeasurementStyle((p) => ({ ...p, lineColor: c }))
+                setToolColors((prev) => ({ ...prev, [toolColorKey]: c }))
+              }
             }} />
             <Stepper label="Line Width" value={lineWidth} min={1} max={12} step={0.5} unit="px"
               onChange={(v) => patchStyle({ lineThickness: v })} />
@@ -8154,6 +8171,66 @@ const annotationPanelSizeClass =
                   >Clear Calibration</button>
                 )}
 
+                {/* ── Measurement Labels (visual-only): hide/show, size, and color for NEW
+                    measurements. Separate from electrical symbol label controls. None of
+                    these persist or trigger an annotation save. ── */}
+                <div className={`${useDesktopThreePaneLayout ? 'col-span-2' : 'w-full'} rounded-md border border-gray-800 bg-gray-900/30 px-2 py-2 space-y-1.5`}>
+                  <div className="text-[10px] uppercase tracking-wide text-gray-500">Measurement Labels</div>
+                  <button
+                    type="button"
+                    onClick={() => setMeasurementLabelsVisible((v) => !v)}
+                    className={`w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border ${measurementLabelsVisible ? 'border-gray-700 text-gray-300 hover:text-white' : 'border-amber-500 text-amber-300 bg-amber-900/20'}`}
+                    title={measurementLabelsVisible ? 'Hide measurement labels (lines and endpoints stay visible)' : 'Show measurement labels'}
+                  >
+                    {measurementLabelsVisible ? <EyeOff size={12} /> : <Eye size={12} />}
+                    {measurementLabelsVisible ? 'Hide Labels' : 'Show Labels'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsMeasurementSizePanelOpen((v) => !v)}
+                    className={`w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border ${isMeasurementSizePanelOpen ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                    title="Adjust measurement LABEL text size (does not resize lines, endpoints, or symbols)"
+                  >
+                    <Type size={12} /> Measurement Labels Size ({Math.round(measurementLabelScale * 100)}%)
+                  </button>
+                  {isMeasurementSizePanelOpen && (
+                    <div className="px-0.5 pt-0.5">
+                      <input
+                        type="range"
+                        min={0.75}
+                        max={5}
+                        step={0.05}
+                        value={measurementLabelScale}
+                        onChange={(e) => setMeasurementLabelScale(Number(e.target.value))}
+                        className="w-full accent-cyan-400"
+                        aria-label="Measurement label size"
+                      />
+                      <div className="flex items-center justify-between text-[10px] text-gray-500">
+                        <span>75%</span>
+                        <span className="text-gray-300">{Math.round(measurementLabelScale * 100)}%</span>
+                        <span>500%</span>
+                      </div>
+                    </div>
+                  )}
+                  <label className="w-full inline-flex items-center justify-between gap-2 h-8 px-2 rounded-md border border-gray-700 text-xs text-gray-300">
+                    <span>Measurement Color</span>
+                    <input
+                      type="color"
+                      value={measurementColor}
+                      onChange={(e) => {
+                        const c = e.target.value
+                        // Scoped to measurement tools only; affects NEW measurements. Existing
+                        // annotations are not touched (they change only via the edit popover).
+                        setMeasurementColor(c)
+                        setMeasurementStyle((p) => ({ ...p, lineColor: c }))
+                        setToolColors((prev) => ({ ...prev, 'measure-distance': c, 'measure-area': c, 'measure-perimeter': c }))
+                      }}
+                      className="h-5 w-8 cursor-pointer rounded border border-gray-600 bg-transparent p-0"
+                      title="Color for NEW distance / multi-point measurements"
+                    />
+                  </label>
+                </div>
+
                 <button
                   type="button"
                   onClick={handleRescanScales}
@@ -9073,33 +9150,33 @@ const annotationPanelSizeClass =
                                 {renderEndpoints()}
                                 {/* Distance = centered on the line; Area = centroid. Perimeter's total is drawn
                                     separately below (BLUEPRINT-6P) so it never overlaps the segment labels. */}
-                                {lbl && a.type !== 'measure-perimeter' && (
+                                {measurementLabelsVisible && lbl && a.type !== 'measure-perimeter' && (
                                   a.type === 'measure-distance' ? (
                                     <>
-                                      <rect x={distanceLabelMidPx.px - (lbl.length * 3.5 + 5)} y={distanceLabelMidPx.py - 8} width={lbl.length * 7 + 10} height={16} rx={3} fill="#0a0d16" opacity={0.88} style={{ pointerEvents: 'none' }} />
-                                      <text x={distanceLabelMidPx.px} y={distanceLabelMidPx.py} fontSize={11} fill={col} fontFamily="monospace" dominantBaseline="middle" textAnchor="middle" style={{ pointerEvents: 'none' }}>{lbl}</text>
+                                      <rect x={distanceLabelMidPx.px - (lbl.length * 3.5 + 5) * measurementLabelScale} y={distanceLabelMidPx.py - 8 * measurementLabelScale} width={(lbl.length * 7 + 10) * measurementLabelScale} height={16 * measurementLabelScale} rx={3} fill="#0a0d16" opacity={0.88} style={{ pointerEvents: 'none' }} />
+                                      <text x={distanceLabelMidPx.px} y={distanceLabelMidPx.py} fontSize={11 * measurementLabelScale} fill={col} fontFamily="monospace" dominantBaseline="middle" textAnchor="middle" style={{ pointerEvents: 'none' }}>{lbl}</text>
                                     </>
                                   ) : (
                                     <>
-                                      <rect x={midPx.px - 2} y={midPx.py - 10} width={lbl.length * 7 + 10} height={16} rx={3} fill="#0a0d16" opacity={0.88} style={{ pointerEvents: 'none' }} />
-                                      <text x={midPx.px + 3} y={midPx.py} fontSize={11} fill={col} fontFamily="monospace" dominantBaseline="middle" textAnchor="start" style={{ pointerEvents: 'none' }}>{lbl}</text>
+                                      <rect x={midPx.px - 2 * measurementLabelScale} y={midPx.py - 10 * measurementLabelScale} width={(lbl.length * 7 + 10) * measurementLabelScale} height={16 * measurementLabelScale} rx={3} fill="#0a0d16" opacity={0.88} style={{ pointerEvents: 'none' }} />
+                                      <text x={midPx.px + 3 * measurementLabelScale} y={midPx.py} fontSize={11 * measurementLabelScale} fill={col} fontFamily="monospace" dominantBaseline="middle" textAnchor="start" style={{ pointerEvents: 'none' }}>{lbl}</text>
                                     </>
                                   )
                                 )}
                                 {/* BLUEPRINT-6N — per-segment length labels between each perimeter point/axle,
                                     centered on each segment midpoint, in the line color. */}
-                                {perimeterSegmentLabels.map((seg, si) => (
+                                {measurementLabelsVisible && perimeterSegmentLabels.map((seg, si) => (
                                   <g key={`seglbl-${si}`} style={{ pointerEvents: 'none' }}>
-                                    <rect x={seg.midPx.px - (seg.label.length * 3.5 + 5)} y={seg.midPx.py - 8} width={seg.label.length * 7 + 10} height={16} rx={3} fill="#0a0d16" opacity={0.85} />
-                                    <text x={seg.midPx.px} y={seg.midPx.py} fontSize={10} fill={col} fontFamily="monospace" dominantBaseline="middle" textAnchor="middle">{seg.label}</text>
+                                    <rect x={seg.midPx.px - (seg.label.length * 3.5 + 5) * measurementLabelScale} y={seg.midPx.py - 8 * measurementLabelScale} width={(seg.label.length * 7 + 10) * measurementLabelScale} height={16 * measurementLabelScale} rx={3} fill="#0a0d16" opacity={0.85} />
+                                    <text x={seg.midPx.px} y={seg.midPx.py} fontSize={10 * measurementLabelScale} fill={col} fontFamily="monospace" dominantBaseline="middle" textAnchor="middle">{seg.label}</text>
                                   </g>
                                 ))}
                                 {/* BLUEPRINT-6P — perimeter TOTAL label: distinct accent color (amber), centered
                                     below the path bounds so it is visually separate from the segment labels. */}
-                                {perimeterLabelData.total && (
+                                {measurementLabelsVisible && perimeterLabelData.total && (
                                   <g style={{ pointerEvents: 'none' }}>
-                                    <rect x={perimeterLabelData.total.anchor.px - (perimeterLabelData.total.text.length * 3.6 + 6)} y={perimeterLabelData.total.anchor.py - 9} width={perimeterLabelData.total.text.length * 7.2 + 12} height={18} rx={4} fill="#1c1206" stroke="#f59e0b" strokeWidth={1} opacity={0.95} />
-                                    <text x={perimeterLabelData.total.anchor.px} y={perimeterLabelData.total.anchor.py} fontSize={11} fill="#fbbf24" fontFamily="monospace" fontWeight={700} dominantBaseline="middle" textAnchor="middle">{perimeterLabelData.total.text}</text>
+                                    <rect x={perimeterLabelData.total.anchor.px - (perimeterLabelData.total.text.length * 3.6 + 6) * measurementLabelScale} y={perimeterLabelData.total.anchor.py - 9 * measurementLabelScale} width={(perimeterLabelData.total.text.length * 7.2 + 12) * measurementLabelScale} height={18 * measurementLabelScale} rx={4} fill="#1c1206" stroke="#f59e0b" strokeWidth={1} opacity={0.95} />
+                                    <text x={perimeterLabelData.total.anchor.px} y={perimeterLabelData.total.anchor.py} fontSize={11 * measurementLabelScale} fill="#fbbf24" fontFamily="monospace" fontWeight={700} dominantBaseline="middle" textAnchor="middle">{perimeterLabelData.total.text}</text>
                                   </g>
                                 )}
                                 {/* BLUEPRINT-6L — transparent hit target carries data-annotation-id so
@@ -9325,13 +9402,13 @@ const annotationPanelSizeClass =
                                     stroke={col} strokeWidth={1.5} strokeDasharray="4,3" opacity={0.55}
                                   />
                                 )}
-                                {effectiveTool === 'measure-distance' && measureDistanceLivePreview && !calibrateInput && (
+                                {measurementLabelsVisible && effectiveTool === 'measure-distance' && measureDistanceLivePreview && !calibrateInput && (
                                   <>
                                     <rect
-                                      x={measureDistanceLivePreview.midpointPx.px - (measureDistanceLivePreview.label.length * 3.5 + 5)}
-                                      y={measureDistanceLivePreview.midpointPx.py - 8}
-                                      width={measureDistanceLivePreview.label.length * 7 + 10}
-                                      height={16}
+                                      x={measureDistanceLivePreview.midpointPx.px - (measureDistanceLivePreview.label.length * 3.5 + 5) * measurementLabelScale}
+                                      y={measureDistanceLivePreview.midpointPx.py - 8 * measurementLabelScale}
+                                      width={(measureDistanceLivePreview.label.length * 7 + 10) * measurementLabelScale}
+                                      height={16 * measurementLabelScale}
                                       rx={3}
                                       fill="#0a0d16"
                                       opacity={0.88}
@@ -9339,7 +9416,7 @@ const annotationPanelSizeClass =
                                     <text
                                       x={measureDistanceLivePreview.midpointPx.px}
                                       y={measureDistanceLivePreview.midpointPx.py}
-                                      fontSize={11}
+                                      fontSize={11 * measurementLabelScale}
                                       fill={col}
                                       fontFamily="monospace"
                                       dominantBaseline="middle"
@@ -9350,14 +9427,14 @@ const annotationPanelSizeClass =
                                   </>
                                 )}
                                 {/* BLUEPRINT-6N — live per-segment length labels while drafting a perimeter. */}
-                                {effectiveTool === 'measure-perimeter' && measurePerimeterLivePreview && !calibrateInput &&
+                                {measurementLabelsVisible && effectiveTool === 'measure-perimeter' && measurePerimeterLivePreview && !calibrateInput &&
                                   measurePerimeterLivePreview.segments.map((seg, si) => (
                                     <g key={`pseg-${si}`}>
                                       <rect
-                                        x={seg.midPx.px - (seg.label.length * 3.5 + 5)}
-                                        y={seg.midPx.py - 8}
-                                        width={seg.label.length * 7 + 10}
-                                        height={16}
+                                        x={seg.midPx.px - (seg.label.length * 3.5 + 5) * measurementLabelScale}
+                                        y={seg.midPx.py - 8 * measurementLabelScale}
+                                        width={(seg.label.length * 7 + 10) * measurementLabelScale}
+                                        height={16 * measurementLabelScale}
                                         rx={3}
                                         fill="#0a0d16"
                                         opacity={0.88}
@@ -9365,7 +9442,7 @@ const annotationPanelSizeClass =
                                       <text
                                         x={seg.midPx.px}
                                         y={seg.midPx.py}
-                                        fontSize={11}
+                                        fontSize={11 * measurementLabelScale}
                                         fill={col}
                                         fontFamily="monospace"
                                         dominantBaseline="middle"
