@@ -1086,6 +1086,25 @@ function toNorm(x: number, y: number, w: number, h: number) {
   }
 }
 
+// Guide Assist straight-line snap for measurements. Given an anchor and a raw point (both
+// in normalized page coords) plus the page pixel size, lock the raw point to the nearest
+// axis from the anchor — horizontal or vertical, whichever the movement is closer to in
+// ACTUAL pixels (normalized x/y have different pixel scales, so weight by pageW/pageH).
+// Operates purely on already-mapped page coords; it never touches pointer/overlay/zoom
+// mapping. Returns the raw point unchanged when the movement is degenerate.
+function snapMeasurePointToAxis(
+  anchor: { x: number; y: number },
+  raw: { x: number; y: number },
+  pageW: number,
+  pageH: number,
+): { x: number; y: number } {
+  const adx = Math.abs(raw.x - anchor.x) * Math.max(1, pageW)
+  const ady = Math.abs(raw.y - anchor.y) * Math.max(1, pageH)
+  if (adx === 0 && ady === 0) return raw
+  // Closer to horizontal → lock Y to the anchor; otherwise lock X to the anchor.
+  return adx >= ady ? { x: raw.x, y: anchor.y } : { x: anchor.x, y: raw.y }
+}
+
 /** Map overlay visual pixels → capped-raster page pixels (single annotation coordinate space). */
 function overlayPxToPagePx(
   vx: number,
@@ -5560,14 +5579,22 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         e.preventDefault()
         return
       }
-      const next = [...measureDraftRef.current, n]
+      // Guide Assist: when ON, lock the point being committed to a clean straight axis from
+      // the previous draft point (measure-distance / perimeter / area only). When OFF, the raw
+      // mapped point `n` is used exactly as before. Snapping happens on the already-mapped page
+      // point — pointer/overlay/zoom mapping is untouched.
+      const measureAnchor = measureDraftRef.current.length > 0 ? measureDraftRef.current[measureDraftRef.current.length - 1] : null
+      const commitPoint = (alignmentGuidesEnabled && measureAnchor && (effectiveTool === 'measure-distance' || effectiveTool === 'measure-perimeter' || effectiveTool === 'measure-area'))
+        ? snapMeasurePointToAxis(measureAnchor, n, displaySize.w, displaySize.h)
+        : n
+      const next = [...measureDraftRef.current, commitPoint]
       measureDraftRef.current = next
       setMeasureDraftPoints([...next])
       // BLUEPRINT-6N — snap the live cursor to the point just placed so the perimeter rubber-band
       // segment starts from the NEW point (zero-length) and then follows the pointer, instead of
       // pointing at the previous stale cursor location (the diagonal-across-screen bug on tap-place).
       if (effectiveTool === 'measure-perimeter') {
-        setMeasureCursorPx({ x: n.x * displaySize.w, y: n.y * displaySize.h })
+        setMeasureCursorPx({ x: commitPoint.x * displaySize.w, y: commitPoint.y * displaySize.h })
       }
       if (effectiveTool === 'calibrate' && next.length === 2) {
         // Keep measureDraftPoints so the placed line stays visible while input is open
@@ -5651,7 +5678,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { }
       e.preventDefault()
     }
-  }, [effectiveTool, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind, clearAlignmentGuides, findNearestAnnotationCenterNorm, displaySize.w, displaySize.h])
+  }, [effectiveTool, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind, clearAlignmentGuides, findNearestAnnotationCenterNorm, displaySize.w, displaySize.h, alignmentGuidesEnabled])
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const mousePan = mousePanRef.current
@@ -5935,10 +5962,20 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         e.preventDefault()
       }
       if (measureDraftRef.current.length > 0) {
-        setMeasureCursorPx({
-          x: x / Math.max(1, rect.width) * displaySize.w,
-          y: y / Math.max(1, rect.height) * displaySize.h,
-        })
+        // Guide Assist: snap the live rubber-band endpoint to a clean straight axis from the
+        // last placed point so the preview shows exactly what a click will commit. OFF path is
+        // byte-identical to before (raw mapped cursor).
+        if (alignmentGuidesEnabled && (effectiveTool === 'measure-distance' || effectiveTool === 'measure-perimeter' || effectiveTool === 'measure-area')) {
+          const rawN = { x: x / Math.max(1, rect.width), y: y / Math.max(1, rect.height) }
+          const anchor = measureDraftRef.current[measureDraftRef.current.length - 1]
+          const cursorN = snapMeasurePointToAxis(anchor, rawN, displaySize.w, displaySize.h)
+          setMeasureCursorPx({ x: cursorN.x * displaySize.w, y: cursorN.y * displaySize.h })
+        } else {
+          setMeasureCursorPx({
+            x: x / Math.max(1, rect.width) * displaySize.w,
+            y: y / Math.max(1, rect.height) * displaySize.h,
+          })
+        }
       }
       return
     }
@@ -6033,7 +6070,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // Keep dragStartRef in sync but do NOT call setDraftRect here Ã¢â‚¬â€
     // the DOM refs above give zero-lag visual feedback without any React re-renders.
     dragStartRef.current = activeDragStart
-  }, [effectiveTool, dragStart, inkDraft, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind, clearAlignmentGuides, updatePlacementGuideLines])
+  }, [effectiveTool, dragStart, inkDraft, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind, clearAlignmentGuides, updatePlacementGuideLines, alignmentGuidesEnabled, displaySize.w, displaySize.h])
 
   const handlePointerUp = useCallback(async (e: React.PointerEvent<HTMLDivElement>) => {
     // Snapshot the last live guide match before clearing — used to center-snap a newly
@@ -6086,8 +6123,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       const overlayRect = overlayRef.current.getBoundingClientRect()
       const releaseX = e.clientX - overlayRect.left
       const releaseY = e.clientY - overlayRect.top
-      const p2 = toNorm(releaseX, releaseY, overlayRect.width, overlayRect.height)
+      const rawP2 = toNorm(releaseX, releaseY, overlayRect.width, overlayRect.height)
       const p1 = measureDraftRef.current[0]
+      // Guide Assist: lock the distance endpoint to a straight axis from the first point when ON.
+      const p2 = alignmentGuidesEnabled
+        ? snapMeasurePointToAxis(p1, rawP2, displaySizeRef.current.w || displaySize.w, displaySizeRef.current.h || displaySize.h)
+        : rawP2
       const normDist = Math.hypot(p2.x - p1.x, p2.y - p1.y)
       if (normDist >= 0.003) {
         setMeasurePendingCommit({ type: 'measure-distance', points: [p1, p2], pageNumber: currentPageRef.current })
@@ -6356,7 +6397,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       setFocusedAnnotationId(ann.id)
       setToolMode('select')
     }
-  }, [effectiveTool, dragStart, inkDraft, blueprint, currentPage, persistAnnotation, toolColors, isEditorOpen, endTouchPointer, openCreateRichTextEditor, shapeKind, shapeOptions, drawOptions, markerOptions, clearAlignmentGuides])
+  }, [effectiveTool, dragStart, inkDraft, blueprint, currentPage, persistAnnotation, toolColors, isEditorOpen, endTouchPointer, openCreateRichTextEditor, shapeKind, shapeOptions, drawOptions, markerOptions, clearAlignmentGuides, alignmentGuidesEnabled, displaySize.w, displaySize.h])
 
   const handlePointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     clearAlignmentGuides()
