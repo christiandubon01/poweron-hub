@@ -19,7 +19,7 @@
 const crypto = require('crypto')
 
 const RESEND_API_URL = 'https://api.resend.com/emails'
-const DEFAULT_FROM   = 'Power On Solutions <noreply@poweronsolutions.com>'
+const DEFAULT_FROM   = 'Power On Solutions <no-reply@poweronsolutionsllc.com>'
 const APP_BASE_URL   = 'https://incomparable-croissant-a86c81.netlify.app'
 
 const VALID_ROLES = new Set(['employee', 'foreman'])
