@@ -2083,6 +2083,12 @@ export default function OperationsBlueprintPdfViewer({
   const lineFirstPointRef = useRef<{ x: number; y: number } | null>(null)
   // Tracks how many annotation mutations are in-flight so loadAnnotations() fires only when the queue drains.
   const pendingAnnotationMutationsRef = useRef(0)
+  // BLUEPRINT-6Q — render-visible mirror of the in-flight save counter. Feeds isBlueprintDirty so
+  // the live/realtime cloud refresh (which silently OVERWRITES local storage with the remote
+  // snapshot) is suppressed while an annotation save is still committing. Without this, the
+  // realtime event fired by our own push (~1-2s after placement) could apply a remote snapshot
+  // that predates the new annotation and wipe it off the canvas.
+  const [hasPendingAnnotationSaves, setHasPendingAnnotationSaves] = useState(false)
   const pendingScrollResetRef = useRef(false)
   const relativeZoomRef = useRef(1)
   // The relative zoom the CURRENT canvas raster actually represents. Below the
@@ -3197,7 +3203,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     !!inkDraft ||
     pasteModeActive ||
     !!inlineTextEditId ||
-    !!layoutEditId
+    !!layoutEditId ||
+    // BLUEPRINT-6Q — keep the scope dirty while an annotation save is committing so a
+    // realtime/live refresh can't overwrite local storage and drop the new annotation.
+    hasPendingAnnotationSaves
 
   useRemoteDataRefresh({
     scopeId: 'blueprints',
@@ -4117,6 +4126,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const persistAnnotation = useCallback(async (annotation: BlueprintAnnotation) => {
     // Increment before queuing so the counter is accurate when mutations overlap.
     pendingAnnotationMutationsRef.current += 1
+    // BLUEPRINT-6Q — mark the blueprint scope dirty for the duration of the save so the
+    // live/realtime cloud refresh can't silently overwrite local storage and wipe the
+    // just-created annotation while its push is still in flight.
+    setHasPendingAnnotationSaves(true)
     const op = async () => {
       try {
         const backup = getBackupData()
@@ -4144,6 +4157,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         // optimistic setAllAnnotations updates that the UI had already applied, causing
         // the opacity/color to snap back to the pre-click value mid-sequence.
         if (pendingAnnotationMutationsRef.current === 0) {
+          // BLUEPRINT-6Q — clear the dirty-scope guard only after the whole queue drains
+          // (the last save's push has resolved and local storage holds the annotation).
+          setHasPendingAnnotationSaves(false)
           loadAnnotations()
         }
       }
