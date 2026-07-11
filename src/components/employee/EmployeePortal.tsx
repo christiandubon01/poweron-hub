@@ -7,6 +7,7 @@
  */
 
 import React, { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Zap, LogOut, Clock, CalendarRange, ClipboardList, ListChecks, Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
@@ -43,9 +44,18 @@ function ComingSoonCard({ title, message }: { title: string; message: string }) 
 
 export function EmployeePortal() {
   const { user, signOut, employeeProfileId, employerOrgId } = useAuth()
+  const navigate = useNavigate()
   const [profileSummary, setProfileSummary] = useState<EmployeeProfileSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeSection, setActiveSection] = useState<EmployeePortalSection>('clock')
+
+  // Employee logout returns to the dedicated employee login page — not the
+  // contractor/admin LoginFlow landing page. signOut() clears auth but does not
+  // navigate, so without this the app would fall back to the owner landing at '/'.
+  const handleSignOut = async () => {
+    await signOut()
+    navigate('/employee/login', { replace: true })
+  }
 
   useEffect(() => {
     let mounted = true
@@ -126,7 +136,7 @@ export function EmployeePortal() {
         </div>
         <button
           type="button"
-          onClick={() => signOut()}
+          onClick={handleSignOut}
           className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-800 px-2 py-1.5 rounded-lg"
         >
           <LogOut size={14} />

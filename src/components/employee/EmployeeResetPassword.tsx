@@ -87,7 +87,9 @@ export function EmployeeResetPassword() {
     }
   }
 
-  const returnTo = inviteToken ? `/employee/invite/${inviteToken}` : '/'
+  // With an invite token, return to the invite so the user can accept it.
+  // Otherwise return to the dedicated employee login page (not the owner landing).
+  const returnTo = inviteToken ? `/employee/invite/${inviteToken}` : '/employee/login'
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-6 py-12">
@@ -118,13 +120,15 @@ export function EmployeeResetPassword() {
             </div>
             <h1 className="text-xl font-bold text-gray-900 mb-2">Password Updated</h1>
             <p className="text-sm text-gray-500 mb-6">
-              Your password has been changed. Return to your invite to sign in and accept it.
+              {inviteToken
+                ? 'Your password has been changed. Return to your invite to sign in and accept it.'
+                : 'Your password has been changed. Return to the employee login to sign in.'}
             </p>
             <Link
               to={returnTo}
               className="inline-flex items-center justify-center gap-2 w-full px-6 py-3 bg-green-600 text-white text-sm font-semibold rounded-xl"
             >
-              {inviteToken ? 'Return to employee invite' : 'Continue'}
+              {inviteToken ? 'Return to employee invite' : 'Return to employee login'}
               <ArrowRight size={14} />
             </Link>
           </div>
@@ -209,7 +213,7 @@ export function EmployeeResetPassword() {
 
             <div className="mt-4 text-center">
               <Link to={returnTo} className="text-xs font-semibold text-gray-400 hover:text-gray-700">
-                {inviteToken ? 'Back to employee invite' : 'Back to sign in'}
+                {inviteToken ? 'Back to employee invite' : 'Back to employee login'}
               </Link>
             </div>
           </div>

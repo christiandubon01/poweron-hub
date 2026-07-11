@@ -67,6 +67,12 @@ const EmployeeResetPassword = lazy(() =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .catch((): any => { window.location.reload(); return { default: () => null } })
 )
+const EmployeeLogin = lazy(() =>
+  import('@/components/employee/EmployeeLogin')
+    .then(m => ({ default: m.EmployeeLogin }))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .catch((): any => { window.location.reload(); return { default: () => null } })
+)
 const PortalTrackPage = lazy(() =>
   import('@/views/PortalTrackView')
     .catch((): any => { window.location.reload(); return { default: () => null } })
@@ -462,6 +468,16 @@ export default function App() {
             element={
               <Suspense fallback={<FullPageSpinner />}>
                 <EmployeeResetPassword />
+              </Suspense>
+            }
+          />
+
+          {/* Employee login — public / auth-safe, separate from contractor/admin LoginFlow */}
+          <Route
+            path="/employee/login"
+            element={
+              <Suspense fallback={<FullPageSpinner />}>
+                <EmployeeLogin />
               </Suspense>
             }
           />
