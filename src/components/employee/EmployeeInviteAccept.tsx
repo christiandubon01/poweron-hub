@@ -101,7 +101,6 @@ type PagePhase =
   | 'loading'
   | 'invalid'
   | 'ready'
-  | 'email_pending'
   | 'accepted'
   | 'error'
 
@@ -155,7 +154,11 @@ export function EmployeeInviteAccept() {
   const [showPassword, setShowPassword] = useState(false)
   const [isNewAccount, setIsNewAccount] = useState(true)
   const [authError, setAuthError] = useState<string | null>(null)
+  const [authInfo, setAuthInfo] = useState<string | null>(null)
   const [authLoading, setAuthLoading] = useState(false)
+
+  const [resetLoading, setResetLoading] = useState(false)
+  const [resetMessage, setResetMessage] = useState<string | null>(null)
 
   const [acceptLoading, setAcceptLoading] = useState(false)
   const [acceptError, setAcceptError] = useState<string | null>(null)
@@ -226,13 +229,30 @@ export function EmployeeInviteAccept() {
     }
   }, [])
 
+  // ── Switch to Sign In mode, preserving the invited email ───────────────────
+  const switchToSignIn = useCallback((info: string) => {
+    setIsNewAccount(false)
+    setPassword('')
+    setAuthError(null)
+    setResetMessage(null)
+    setAuthInfo(info)
+  }, [])
+
   // ── Sign up / sign in (does not auto-accept) ───────────────────────────────
+  //
+  // Create Account no longer parks the user on a "Check Your Email" screen.
+  // On success (or when the email already has an account) we drop the user onto
+  // the Sign In form with a helpful message so they can sign in immediately.
+  // If sign-up returns an active session (email confirmation disabled), we
+  // continue straight into the accept flow.
   async function handleAuth(e: React.FormEvent) {
     e.preventDefault()
     if (!email.trim() || !password.trim() || !token) return
 
     setAuthLoading(true)
     setAuthError(null)
+    setAuthInfo(null)
+    setResetMessage(null)
 
     try {
       if (isNewAccount) {
@@ -243,30 +263,79 @@ export function EmployeeInviteAccept() {
             emailRedirectTo: `${window.location.origin}/employee/invite/${token}`,
           },
         })
-        if (error) throw error
-        if (!data.user) {
-          setPhase('email_pending')
+
+        if (error) {
+          // An existing account is not a failure here — guide them to sign in.
+          if (/already registered|already exists|already been registered/i.test(error.message)) {
+            switchToSignIn(
+              'This email already has an account. Sign in below to accept your invite. If you forgot your password, use Reset Password.',
+            )
+            return
+          }
+          throw error
+        }
+
+        // Email confirmation disabled → signed in immediately; continue to accept.
+        if (data.session) {
+          setSessionUser(data.session.user)
           return
         }
-        if (!data.session) {
-          setPhase('email_pending')
-          return
-        }
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
-          password,
-        })
-        if (error) throw error
+
+        // No session yet (confirmation pending, or existing-email obfuscation).
+        // Return to Sign In instead of a dead-end "check your email" screen.
+        switchToSignIn(
+          'Account created or already exists. Sign in below to accept your invite. If you forgot your password, use Reset Password.',
+        )
+        return
+      }
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      })
+      if (error) {
+        setAuthError('Could not sign in. Check your password or use Reset Password.')
+        return
       }
 
       const { data: { session } } = await supabase.auth.getSession()
       setSessionUser(session?.user ?? null)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Authentication failed. Please try again.'
+      const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.'
       setAuthError(message)
     } finally {
       setAuthLoading(false)
+    }
+  }
+
+  // ── Reset password (Sign In mode) ──────────────────────────────────────────
+  // Sends a Supabase recovery email that redirects to /employee/reset-password,
+  // preserving the invite token so the user can return and sign in afterwards.
+  async function handleResetPassword() {
+    if (!token) return
+    setAuthError(null)
+    setResetMessage(null)
+
+    const target = (email.trim() || invite?.email?.trim() || '').toLowerCase()
+    if (!target) {
+      setAuthError('Enter your email address above, then tap Reset Password.')
+      return
+    }
+
+    setResetLoading(true)
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(target, {
+        redirectTo: `${window.location.origin}/employee/reset-password?invite=${token}`,
+      })
+      if (error) throw error
+      setResetMessage(
+        'Password reset email sent. Open it, set a new password, then return to this invite link to sign in.',
+      )
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Could not send the reset email. Please try again.'
+      setAuthError(message)
+    } finally {
+      setResetLoading(false)
     }
   }
 
@@ -330,18 +399,6 @@ export function EmployeeInviteAccept() {
           icon={<AlertCircle className="w-7 h-7 text-red-500" />}
           title="Something Went Wrong"
           body="Could not load this invite. Please try the link again or contact your employer."
-        />
-      </PageShell>
-    )
-  }
-
-  if (phase === 'email_pending') {
-    return (
-      <PageShell>
-        <StatusCard
-          icon={<Mail className="w-7 h-7 text-green-600" />}
-          title="Check Your Email"
-          body={`We sent a confirmation link to ${email}. After verifying, return to this invite link to accept.`}
         />
       </PageShell>
     )
@@ -518,7 +575,7 @@ export function EmployeeInviteAccept() {
           <div className="flex bg-gray-200 rounded-xl p-1 mb-6">
             <button
               type="button"
-              onClick={() => { setIsNewAccount(true); setAuthError(null) }}
+              onClick={() => { setIsNewAccount(true); setAuthError(null); setAuthInfo(null); setResetMessage(null) }}
               className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${
                 isNewAccount ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
               }`}
@@ -527,7 +584,7 @@ export function EmployeeInviteAccept() {
             </button>
             <button
               type="button"
-              onClick={() => { setIsNewAccount(false); setAuthError(null) }}
+              onClick={() => { setIsNewAccount(false); setAuthError(null); setResetMessage(null) }}
               className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${
                 !isNewAccount ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
               }`}
@@ -535,6 +592,20 @@ export function EmployeeInviteAccept() {
               Sign In
             </button>
           </div>
+
+          {authInfo && (
+            <div className="flex items-start gap-2 p-3 mb-4 bg-green-50 border border-green-200 rounded-xl">
+              <CheckCircle size={14} className="text-green-600 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-green-800">{authInfo}</p>
+            </div>
+          )}
+
+          {resetMessage && (
+            <div className="flex items-start gap-2 p-3 mb-4 bg-blue-50 border border-blue-200 rounded-xl">
+              <Mail size={14} className="text-blue-600 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-800">{resetMessage}</p>
+            </div>
+          )}
 
           <form onSubmit={handleAuth} className="space-y-4">
             <div>
@@ -609,6 +680,24 @@ export function EmployeeInviteAccept() {
               )}
             </button>
           </form>
+
+          {!isNewAccount && (
+            <button
+              type="button"
+              onClick={handleResetPassword}
+              disabled={resetLoading}
+              className="w-full mt-3 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold text-gray-500 hover:text-gray-800 disabled:opacity-50"
+            >
+              {resetLoading ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Sending reset email…
+                </>
+              ) : (
+                'Forgot password? Reset it'
+              )}
+            </button>
+          )}
         </>
       )}
     </PageShell>
