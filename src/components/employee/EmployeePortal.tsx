@@ -7,10 +7,11 @@
  */
 
 import React, { useEffect, useState } from 'react'
-import { Zap, LogOut, Clock, LayoutDashboard, Loader2 } from 'lucide-react'
+import { Zap, LogOut, Clock, CalendarRange, ClipboardList, ListChecks, Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import EmployeeTimeClock from '@/components/employee/EmployeeTimeClock'
+import EmployeeMyTimePanel from '@/components/employee/EmployeeMyTimePanel'
 
 interface EmployeeProfileSummary {
   display_name: string
@@ -18,10 +19,33 @@ interface EmployeeProfileSummary {
   org_name: string | null
 }
 
+type EmployeePortalSection = 'clock' | 'my-time' | 'assignments' | 'schedule'
+
+const SECTIONS: { key: EmployeePortalSection; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { key: 'clock',       label: 'Clock',       icon: Clock },
+  { key: 'my-time',     label: 'My Time',     icon: ListChecks },
+  { key: 'assignments', label: 'Assignments', icon: ClipboardList },
+  { key: 'schedule',    label: 'Schedule',    icon: CalendarRange },
+]
+
+// Read-only placeholder for sections whose data model isn't ready yet (TIME-5).
+function ComingSoonCard({ title, message }: { title: string; message: string }) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm text-center">
+      <p className="text-base font-bold text-gray-900">{title}</p>
+      <p className="text-sm text-gray-500 mt-2 leading-relaxed">{message}</p>
+      <span className="inline-block mt-4 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+        Coming soon
+      </span>
+    </div>
+  )
+}
+
 export function EmployeePortal() {
   const { user, signOut, employeeProfileId, employerOrgId } = useAuth()
   const [profileSummary, setProfileSummary] = useState<EmployeeProfileSummary | null>(null)
   const [loading, setLoading] = useState(true)
+  const [activeSection, setActiveSection] = useState<EmployeePortalSection>('clock')
 
   useEffect(() => {
     let mounted = true
@@ -132,22 +156,44 @@ export function EmployeePortal() {
           )}
         </div>
 
-        {/* Nav placeholder */}
-        <nav className="grid grid-cols-2 gap-3">
-          <div className="bg-green-600 text-white rounded-2xl p-4 shadow-sm">
-            <Clock className="w-5 h-5 mb-2 opacity-90" />
-            <p className="text-sm font-bold">Time Tracking</p>
-            <p className="text-xs opacity-80 mt-0.5">Clock in/out</p>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-2xl p-4 text-gray-400">
-            <LayoutDashboard className="w-5 h-5 mb-2" />
-            <p className="text-sm font-semibold text-gray-500">Dashboard</p>
-            <p className="text-xs mt-0.5">Coming soon</p>
-          </div>
+        {/* Section switcher */}
+        <nav className="grid grid-cols-4 gap-2">
+          {SECTIONS.map(({ key, label, icon: Icon }) => {
+            const active = activeSection === key
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setActiveSection(key)}
+                aria-pressed={active}
+                className={`flex flex-col items-center gap-1 rounded-2xl px-2 py-3 border transition ${
+                  active
+                    ? 'bg-green-600 border-green-600 text-white shadow-sm'
+                    : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                <Icon className="w-5 h-5" />
+                <span className="text-[11px] font-semibold leading-tight">{label}</span>
+              </button>
+            )
+          })}
         </nav>
 
-        {/* Time Clock */}
-        <EmployeeTimeClock />
+        {/* Active section */}
+        {activeSection === 'clock' && <EmployeeTimeClock />}
+        {activeSection === 'my-time' && <EmployeeMyTimePanel />}
+        {activeSection === 'assignments' && (
+          <ComingSoonCard
+            title="Assignments"
+            message="Assignments are coming soon. Project/task assignment needs a dedicated employee assignment model."
+          />
+        )}
+        {activeSection === 'schedule' && (
+          <ComingSoonCard
+            title="Schedule"
+            message="Schedule is coming soon. Current schedule tables are not safely mapped to employee portal profiles yet."
+          />
+        )}
       </main>
     </div>
   )
