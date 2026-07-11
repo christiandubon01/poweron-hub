@@ -8,11 +8,12 @@
 
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Zap, LogOut, Clock, CalendarRange, ClipboardList, ListChecks, Loader2 } from 'lucide-react'
+import { LogOut, Clock, CalendarRange, ClipboardList, ListChecks, Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import EmployeeTimeClock from '@/components/employee/EmployeeTimeClock'
 import EmployeeMyTimePanel from '@/components/employee/EmployeeMyTimePanel'
+import EmployeePortalBrandHeader from '@/components/employee/EmployeePortalBrandHeader'
 
 interface EmployeeProfileSummary {
   display_name: string
@@ -125,15 +126,7 @@ export function EmployeePortal() {
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between sticky top-0 z-10">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-9 h-9 rounded-xl bg-green-100 border border-green-200 flex items-center justify-center flex-shrink-0">
-            <Zap className="w-4 h-4 text-green-600" fill="currentColor" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-bold text-gray-900 leading-tight truncate">Power On Solutions</p>
-            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-mono">Employee Portal</p>
-          </div>
-        </div>
+        <EmployeePortalBrandHeader />
         <button
           type="button"
           onClick={handleSignOut}
