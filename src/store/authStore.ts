@@ -468,6 +468,41 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return
       }
 
+      // 4b. Portal role gate — crew/employee/client bypass the owner PIN.
+      //     The passcode/PIN flow secures the owner AppShell only. Non-owner
+      //     portals (EmployeePortal, CrewPortal, ClientPortal) must never be
+      //     forced through PIN setup or unlock, even though the invited user
+      //     has a personal profiles row without a passcode_hash. Owners fall
+      //     through to the passcode flow below unchanged.
+      const portalRole = await withTimeout(
+        resolveUserRole(user.id),
+        5000,
+        { role: 'owner' as UserRole, ownerId: user.id, employeeProfileId: null, employerOrgId: null }
+      )
+      if (portalRole.role !== 'owner') {
+        let roleSession = null
+        try {
+          await withTimeout(
+            createAppSession({ userId: user.id, orgId: profile.org_id, role: profile.role, deviceInfo: getDeviceInfo() }),
+            5000, 'timeout'
+          )
+          roleSession = await withTimeout(validateAppSession(), 3000, null)
+        } catch {}
+        set({
+          status: 'hydrating_user_data',
+          user,
+          profile,
+          appSession: roleSession,
+          role: portalRole.role,
+          ownerId: portalRole.ownerId,
+          employeeProfileId: portalRole.employeeProfileId,
+          employerOrgId: portalRole.employerOrgId,
+        })
+        await bootstrapAuthenticatedUser(user.id)
+        set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
+        return
+      }
+
       // 5. No passcode set at all → go to setup
       if (!profile.passcode_hash) {
         set({ status: 'needs_passcode_setup', user, profile })

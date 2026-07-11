@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 import type { User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
+import { useAuthStore } from '@/store/authStore'
 import {
   validateEmployeeInviteToken,
   acceptEmployeeInvite,
@@ -349,6 +350,12 @@ export function EmployeeInviteAccept() {
     try {
       const result = await acceptEmployeeInvite(token)
       if (result.success) {
+        // The employee_profiles row is now linked to this auth user. Re-run the
+        // auth state machine so it re-resolves the portal role to 'employee'
+        // (the pre-accept resolution saw no linked profile and fell back to
+        // owner, which would otherwise route Continue into the owner PIN gate).
+        // Fire-and-forget: it settles while the user reads the success screen.
+        void useAuthStore.getState().initialize()
         setPhase('accepted')
         return
       }
