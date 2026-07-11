@@ -2206,6 +2206,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
    *  Set-based so multiple work packages can be made visible at once (multi-package
    *  visibility filter). Empty set = no filter = show all annotations. */
   const [isolatedScopeLayerIds, setIsolatedScopeLayerIds] = useState<Set<string>>(new Set())
+  /** Local UI only — "Hide from General View" mode. Each work package id in this set has its
+   *  selected annotations hidden while in General View (no package scoped/isolated). Independent
+   *  per card; multiple packages can be hidden at once. Session-only, never written to annotation
+   *  data or the cloud. Scoped/isolate view overrides this (see hiddenAnnotationIdSet precedence). */
+  const [hiddenWorkPackageIds, setHiddenWorkPackageIds] = useState<Set<string>>(new Set())
   /** Local UI only — when off (default), the Work Package panel shows only packages whose
    *  pageNumber matches the current page plus unscoped packages; when on, shows every package. */
   const [scopeLayerShowAllPages, setScopeLayerShowAllPages] = useState(false)
@@ -3696,15 +3701,43 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     isolatedAnnotationIdSetRef.current = isolatedAnnotationIdSet
   }, [isolatedAnnotationIdSet])
 
+  // "Hide from General View" filter — union of selected annotation ids across every package
+  // currently marked hidden. Only meaningful in General View: when any package is scoped/
+  // isolated, scoped view wins and this returns null (so a hidden package can still be inspected
+  // by scoping it). Never mutates annotation data — it only filters what renders.
+  const hiddenAnnotationIdSet = useMemo(() => {
+    if (isolatedScopeLayers.length > 0) return null       // scoped view overrides hidden filter
+    // "Hide from General View" is a VIEWING filter only — it must never block package EDITING.
+    // While the user is actively building/editing package membership (Package Pick on, or the
+    // create/edit Work Package modal open), suspend the hidden filter so every annotation stays
+    // visible and clickable on the canvas and can be added to / removed from a package. Package
+    // membership data is read from the full annotation source (allAnnotations) elsewhere; this
+    // only restores the ability to SEE and pick those annotations on the plan.
+    if (isPackagePickMode || scopeLayerModal.open) return null
+    if (hiddenWorkPackageIds.size === 0) return null
+    const ids = new Set<string>()
+    scopeLayers.forEach((layer) => {
+      if (!hiddenWorkPackageIds.has(layer.id)) return
+      ;(layer.selectedAnnotationIds || []).forEach((id) => {
+        const clean = String(id).trim()
+        if (clean) ids.add(clean)
+      })
+    })
+    return ids.size > 0 ? ids : null
+  }, [isolatedScopeLayers.length, isPackagePickMode, scopeLayerModal.open, hiddenWorkPackageIds, scopeLayers])
+
   const canvasPageAnnotations = useMemo(() => {
-    if (!isolatedAnnotationIdSet) return pageAnnotations
-    return pageAnnotations.filter((annotation) => isolatedAnnotationIdSet.has(annotation.id))
-  }, [pageAnnotations, isolatedAnnotationIdSet])
+    // Precedence: scoped/isolate view (show only those ids) → else hide hidden-package ids → else all.
+    if (isolatedAnnotationIdSet) return pageAnnotations.filter((annotation) => isolatedAnnotationIdSet.has(annotation.id))
+    if (hiddenAnnotationIdSet) return pageAnnotations.filter((annotation) => !hiddenAnnotationIdSet.has(annotation.id))
+    return pageAnnotations
+  }, [pageAnnotations, isolatedAnnotationIdSet, hiddenAnnotationIdSet])
 
   const isAnnotationVisibleOnCanvas = useCallback((annotationId: string) => {
-    if (!isolatedAnnotationIdSet) return true
-    return isolatedAnnotationIdSet.has(annotationId)
-  }, [isolatedAnnotationIdSet])
+    if (isolatedAnnotationIdSet) return isolatedAnnotationIdSet.has(annotationId)
+    if (hiddenAnnotationIdSet) return !hiddenAnnotationIdSet.has(annotationId)
+    return true
+  }, [isolatedAnnotationIdSet, hiddenAnnotationIdSet])
 
   const activeScopeLayerSelectionIds = scopeLayerModal.open ? scopeLayerDraftIds : Array.from(selectedForPackageIds)
   const selectedPackageAnnotations = useMemo(
@@ -3723,6 +3756,30 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     [selectedPackageItemRefs]
   )
   const selectedPackageCount = selectedForPackageIds.size
+
+  // ── Edit/Create Work Package: which Package-Pick selections can still be added ──
+  // Source of truth is selectedForPackageIds — the EXACT same set that powers the
+  // "Package Pick: N selected" banner. We resolve those ids against the FULL annotation
+  // source (allAnnotations), never a render-filtered list (canvasPageAnnotations /
+  // hidden-scoped arrays), so hidden or scoped annotations stay addable. Ids already in
+  // the modal draft are excluded so duplicates are never offered. This single memo drives
+  // both the "Add selected items" button's enabled state and its click handler, so the
+  // banner count and the button can never disagree.
+  const addablePickedAnnotationIds = useMemo(() => {
+    if (!scopeLayerModal.open) return [] as string[]
+    if (selectedForPackageIds.size === 0) return [] as string[]
+    const draftSet = new Set(scopeLayerDraftIds.map((id) => String(id).trim()))
+    const validIds = new Set(allAnnotations.map((annotation) => String(annotation.id).trim()))
+    const addable: string[] = []
+    selectedForPackageIds.forEach((raw) => {
+      const id = String(raw).trim()
+      if (!id) return
+      if (!validIds.has(id)) return   // must resolve to a real annotation in the full source
+      if (draftSet.has(id)) return    // already in this package's draft → skip duplicate
+      addable.push(id)
+    })
+    return addable
+  }, [scopeLayerModal.open, selectedForPackageIds, scopeLayerDraftIds, allAnnotations])
 
   useEffect(() => {
     setSelectedForPackageIds((prev) => {
@@ -3776,14 +3833,20 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setScopeLayerDraftIds((prev) => prev.filter((id) => id !== annotationId))
   }, [])
 
-  // Work Package edit — merge the current package-pick selection into the draft, avoiding duplicates.
+  // Work Package edit — append the current Package-Pick selection into the draft. Reads the
+  // derived addablePickedAnnotationIds (from selectedForPackageIds, resolved against the full
+  // annotation source) so it never depends on canvas visibility, preserves every existing draft
+  // item untouched, and appends only picks that are not already in the package (no duplicates).
+  // Does not close the modal, clear the pick selection, or mutate saved data — Save persists.
   const addPickedItemsToScopeDraft = useCallback(() => {
+    if (addablePickedAnnotationIds.length === 0) return
     setScopeLayerDraftIds((prev) => {
-      const merged = new Set(prev)
-      selectedForPackageIds.forEach((id) => merged.add(id))
-      return Array.from(merged)
+      const existing = new Set(prev)
+      const additions = addablePickedAnnotationIds.filter((id) => !existing.has(id))
+      if (additions.length === 0) return prev
+      return [...prev, ...additions]
     })
-  }, [selectedForPackageIds])
+  }, [addablePickedAnnotationIds])
 
   const resetScopeLayerForm = useCallback(() => {
     setScopeLayerForm({
@@ -3917,6 +3980,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       next.delete(layerId)
       return next
     })
+    setHiddenWorkPackageIds((prev) => {
+      if (!prev.has(layerId)) return prev
+      const next = new Set(prev)
+      next.delete(layerId)
+      return next
+    })
     const nextLayers = scopeLayers.filter((layer) => layer.id !== layerId)
     setScopeLayers(nextLayers)
     const saved = await persistScopeLayers(nextLayers)
@@ -3940,6 +4009,21 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   const clearScopeLayerVisibilityFilter = useCallback(() => {
     setIsolatedScopeLayerIds(new Set())
+  }, [])
+
+  // "Hide from General View" toggle — per package, independent of the isolate/scoped filter.
+  // Visual-only session state; never touches annotation data or package membership.
+  const toggleScopeLayerHidden = useCallback((layerId: string) => {
+    setHiddenWorkPackageIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(layerId)) next.delete(layerId)
+      else next.add(layerId)
+      return next
+    })
+  }, [])
+
+  const clearHiddenScopeLayers = useCallback(() => {
+    setHiddenWorkPackageIds(new Set())
   }, [])
 
   // ── Work Package / Scope Layer reordering ──
@@ -9977,6 +10061,22 @@ const annotationPanelSizeClass =
                           </button>
                         </div>
                       )}
+                      {hiddenWorkPackageIds.size > 0 && (
+                        <div className="mt-1.5 flex items-center justify-between gap-2 rounded border border-rose-500/40 bg-rose-950/25 px-2 py-1 text-[10px] font-medium text-rose-200">
+                          <span>
+                            Hiding {hiddenWorkPackageIds.size} {hiddenWorkPackageIds.size === 1 ? 'package' : 'packages'} from general view
+                            {isPackageVisibilityFilterActive && <> — <span className="italic text-rose-300/80">paused while scoped</span></>}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={clearHiddenScopeLayers}
+                            className="rounded border border-rose-400/50 bg-rose-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-rose-100 hover:bg-rose-500/25"
+                            title="Clear all hidden packages and show their annotations in general view"
+                          >
+                            Clear Hidden
+                          </button>
+                        </div>
+                      )}
                     </div>
                     {pageFilteredScopeLayers.length === 0 && (
                       <div className="px-3 pb-3 text-[10px] text-gray-500 italic">No work packages on this page. Turn on "Show All Pages" to see packages from other pages.</div>
@@ -9987,6 +10087,7 @@ const annotationPanelSizeClass =
                         const totalHours = getBlueprintScopeLayerLaborTotal(layer)
                         const summary = buildBlueprintScopeItemSummary(layer.itemRefs)
                         const isLayerIsolated = isolatedScopeLayerIds.has(layer.id)
+                        const isLayerHidden = hiddenWorkPackageIds.has(layer.id)
                         const isDragging = draggingScopeLayerId === layer.id
                         const isDropTarget = dragOverScopeLayerId === layer.id && draggingScopeLayerId !== layer.id
                         const isFirstLayer = layerIndex === 0
@@ -10023,7 +10124,10 @@ const annotationPanelSizeClass =
                                     <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: layer.color || DEFAULT_SCOPE_LAYER_COLOR }} />
                                     <div className="truncate text-xs font-semibold text-gray-100">{layer.name}</div>
                                     {isLayerIsolated && (
-                                      <span className="rounded-full border border-amber-400/40 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200">Visible</span>
+                                      <span className="rounded-full border border-amber-400/40 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200">{isLayerHidden ? 'Scoped View' : 'Visible'}</span>
+                                    )}
+                                    {isLayerHidden && !isLayerIsolated && (
+                                      <span className="rounded-full border border-rose-400/40 bg-rose-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-rose-200">Hidden</span>
                                     )}
                                   </div>
                                   <div className="mt-1 text-[10px] text-gray-400">
@@ -10065,6 +10169,14 @@ const annotationPanelSizeClass =
                                   title={isLayerIsolated ? 'Remove this package from the visible set' : 'Show this package on canvas (add to visible set)'}
                                 >
                                   <Eye size={10} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleScopeLayerHidden(layer.id)}
+                                  className={`rounded border px-1 py-0.5 text-[10px] ${isLayerHidden ? 'border-rose-400/50 bg-rose-500/15 text-rose-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+                                  title={isLayerHidden ? 'Show this package annotations in general view' : 'Hide this package annotations from general view'}
+                                >
+                                  <EyeOff size={10} />
                                 </button>
                                 <button
                                   type="button"
@@ -10333,6 +10445,7 @@ const annotationPanelSizeClass =
                           const totalHours = getBlueprintScopeLayerLaborTotal(layer)
                           const summary = buildBlueprintScopeItemSummary(layer.itemRefs)
                           const isLayerIsolated = isolatedScopeLayerIds.has(layer.id)
+                          const isLayerHidden = hiddenWorkPackageIds.has(layer.id)
                           const distinctPageCount = getBlueprintScopeLayerDistinctPageCount(layer)
                           const pageBadgeLabel = layer.pageNumber != null ? `Page ${layer.pageNumber}` : 'Unscoped'
                           return (
@@ -10343,7 +10456,10 @@ const annotationPanelSizeClass =
                                     <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: layer.color || DEFAULT_SCOPE_LAYER_COLOR }} />
                                     <div className="truncate text-xs font-semibold text-gray-100">{layer.name}</div>
                                     {isLayerIsolated && (
-                                      <span className="rounded-full border border-amber-400/40 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200">Isolated</span>
+                                      <span className="rounded-full border border-amber-400/40 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200">{isLayerHidden ? 'Scoped View' : 'Isolated'}</span>
+                                    )}
+                                    {isLayerHidden && !isLayerIsolated && (
+                                      <span className="rounded-full border border-rose-400/40 bg-rose-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-rose-200">Hidden</span>
                                     )}
                                   </div>
                                   <div className="mt-1 text-[10px] text-gray-500">
@@ -10364,6 +10480,14 @@ const annotationPanelSizeClass =
                                     title={isLayerIsolated ? 'Show all annotations' : 'Isolate this package on canvas'}
                                   >
                                     <Eye size={10} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleScopeLayerHidden(layer.id)}
+                                    className={`rounded border px-1 py-0.5 text-[10px] ${isLayerHidden ? 'border-rose-400/50 bg-rose-500/15 text-rose-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+                                    title={isLayerHidden ? 'Show this package annotations in general view' : 'Hide this package annotations from general view'}
+                                  >
+                                    <EyeOff size={10} />
                                   </button>
                                   <button
                                     type="button"
@@ -10426,8 +10550,19 @@ const annotationPanelSizeClass =
       )}
 
       {scopeLayerModal.open && createPortal(
-        <div className="fixed inset-0 z-[100001] flex items-center justify-center bg-black/60 px-4" onMouseDown={(e) => e.stopPropagation()}>
-          <div className="w-full max-w-2xl rounded-xl border border-gray-700 bg-[#111827] p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        // While Package Pick mode is on, let pointer events fall THROUGH the dimmed backdrop to the
+        // canvas so the user can keep tapping annotations into selectedForPackageIds with the Edit
+        // modal open (in pick mode a canvas tap only toggles selection — no move/edit/geometry
+        // change). The modal card re-enables pointer events so its form stays fully interactive.
+        // Outside pick mode the backdrop blocks canvas interaction exactly as before.
+        <div
+          className={`fixed inset-0 z-[100001] flex items-center justify-center bg-black/60 px-4 ${isPackagePickMode ? 'pointer-events-none' : ''}`}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div
+            className={`w-full max-w-2xl rounded-xl border border-gray-700 bg-[#111827] p-4 shadow-2xl ${isPackagePickMode ? 'pointer-events-auto' : ''}`}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="mb-3 flex items-start justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-gray-100">
@@ -10535,21 +10670,19 @@ const annotationPanelSizeClass =
                     ))}
                   </div>
                 )}
-                {/* Add items collected in Package Pick mode (skips items already in the package). */}
-                {(() => {
-                  const toAddCount = Array.from(selectedForPackageIds).filter((id) => !scopeLayerDraftIds.includes(id)).length
-                  return (
-                    <button
-                      type="button"
-                      onClick={addPickedItemsToScopeDraft}
-                      disabled={toAddCount === 0}
-                      className="mt-2 w-full rounded border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:border-gray-700 disabled:bg-gray-900/40 disabled:text-gray-600"
-                      title="Add items selected with Package Pick to this work package"
-                    >
-                      Add selected items{toAddCount > 0 ? ` (${toAddCount})` : ''}
-                    </button>
-                  )
-                })()}
+                {/* Add items collected in Package Pick mode (skips items already in the package).
+                    Enabled whenever Package Pick has at least one selected annotation that is not
+                    already in this package — driven by the same selectedForPackageIds source as the
+                    "Package Pick: N selected" banner, resolved against the full annotation list. */}
+                <button
+                  type="button"
+                  onClick={addPickedItemsToScopeDraft}
+                  disabled={addablePickedAnnotationIds.length === 0}
+                  className="mt-2 w-full rounded border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:border-gray-700 disabled:bg-gray-900/40 disabled:text-gray-600"
+                  title="Add items selected with Package Pick to this work package"
+                >
+                  Add selected items{addablePickedAnnotationIds.length > 0 ? ` (${addablePickedAnnotationIds.length})` : ''}
+                </button>
                 <div className="mt-2 max-h-48 overflow-auto border-t border-gray-800 pt-2">
                   {selectedPackageItemRefs.length === 0 && (
                     <div className="py-2 text-[10px] italic text-gray-600">No items yet. Turn on Package Pick, tap items on the canvas, then Add selected items.</div>
