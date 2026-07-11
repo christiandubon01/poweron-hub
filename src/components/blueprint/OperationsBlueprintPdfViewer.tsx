@@ -6856,6 +6856,19 @@ const annotationPanelSizeClass =
     setAllAnnotations((prev) => prev.map((ann) => (ann.id === editingAnnotation.id ? nextAnnotation : ann)))
   }
 
+  // BLUEPRINT-6P — freshest-read helpers for text-style edits. The edit popover handlers
+  // must build patches on the LATEST in-flight annotation (allAnnotationsRef.current), not
+  // the render-closure copy, so rapid multi-field edits deep-merge instead of clobbering a
+  // just-applied field. Returns null / {} when nothing is being edited.
+  const getLatestEditingAnnotation = (): BlueprintAnnotation | null => {
+    if (!editingAnnotation) return null
+    return allAnnotationsRef.current.find((ann) => ann.id === editingAnnotation.id) ?? editingAnnotation
+  }
+  const getLatestEditingTextStyle = (): Record<string, any> => {
+    const latest = getLatestEditingAnnotation()
+    return latest ? (getAnnotationMeta(latest).textStyle ?? {}) : {}
+  }
+
   // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Per-tool popover content Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const FONT_FAMILIES = [
     { label: 'Helvetica', value: 'Helvetica' },
@@ -6963,8 +6976,13 @@ const annotationPanelSizeClass =
       const ts = isEdit ? { ...textStyle, ...tsMeta } : textStyle
       const updateTs = (patch: Partial<typeof textStyle>) => {
         if (isEdit) {
-          const currentStyle = editingAnnotation ? (getAnnotationMeta(editingAnnotation).textStyle ?? {}) : tsMeta
-          updateEditingTextBoxLocally({ textStyle: { ...currentStyle, ...patch } })
+          // BLUEPRINT-6P — persist textBox style edits through the real save path so
+          // text color / font / size / bold survive reloads. Previously this called
+          // updateEditingTextBoxLocally, which only touched React state and was wiped
+          // by the next loadAnnotations() drain or a page reload. Deep-merge onto the
+          // freshest textStyle so a rapid follow-up edit never drops a prior field.
+          const nextTextStyle = { ...getLatestEditingTextStyle(), ...patch }
+          persistEditAnnotationMeta({ textStyle: nextTextStyle })
           return
         }
         setTextStyle((p) => ({ ...p, ...patch }))
@@ -7290,7 +7308,10 @@ const annotationPanelSizeClass =
       const tsMeta = isEdit ? (eMeta.textStyle ?? {}) : {}
       const ts = isEdit ? { ...textStyle, ...tsMeta } : textStyle
       const updateTs = (patch: Partial<typeof textStyle>) => {
-        if (isEdit) persistEditAnnotationMeta({ textStyle: { ...tsMeta, ...patch } })
+        // BLUEPRINT-6P — read the freshest textStyle from allAnnotationsRef (not the
+        // render-closure tsMeta) so a rapid multi-field edit deep-merges instead of
+        // reverting to a stale base and dropping a just-applied field.
+        if (isEdit) persistEditAnnotationMeta({ textStyle: { ...getLatestEditingTextStyle(), ...patch } })
         else setTextStyle((p) => ({ ...p, ...patch }))
       }
       const boxFillVal = ts.boxFill ?? 'transparent'
@@ -7335,7 +7356,10 @@ const annotationPanelSizeClass =
       const tsMeta = isEdit ? (eMeta.textStyle ?? {}) : {}
       const ts = isEdit ? { ...textStyle, ...tsMeta } : textStyle
       const updateTs = (patch: Partial<typeof textStyle>) => {
-        if (isEdit) persistEditAnnotationMeta({ textStyle: { ...tsMeta, ...patch } })
+        // BLUEPRINT-6P — read the freshest textStyle from allAnnotationsRef (not the
+        // render-closure tsMeta) so a rapid multi-field edit deep-merges instead of
+        // reverting to a stale base and dropping a just-applied field.
+        if (isEdit) persistEditAnnotationMeta({ textStyle: { ...getLatestEditingTextStyle(), ...patch } })
         else setTextStyle((p) => ({ ...p, ...patch }))
       }
       const qType = isEdit ? (eMeta.questionType ?? generateQuestionType) : generateQuestionType
