@@ -22,6 +22,7 @@ import { Users, Sparkles, AlertCircle, Plus, Trash2, Edit2, TrendingUp, Zap, X, 
 import AddTeamMemberModal from './AddTeamMemberModal'
 import DemoInvite from '@/components/admin/DemoInvite'
 import EmployeeInviteModal from '@/components/admin/EmployeeInviteModal'
+import AdminTimecardsPanel from '@/components/admin/AdminTimecardsPanel'
 import OhmComplianceCard from './OhmComplianceCard'
 import { normalizeEmployee } from './employeeTypes'
 import { getWorkerCostProfile, calcMonthlyBreakdown, workerTypeLabel, getLoadedHourlyRate, resolveWorkerType, buildSavePayload } from './employeeCostUtils'
@@ -1734,6 +1735,9 @@ export default function V15rTeamPanel() {
           )}
         </div>
       </div>
+
+      {/* ADMIN TIMECARDS OVERVIEW (read-only) */}
+      {isAdmin && <AdminTimecardsPanel />}
 
       {/* INTERACTIVE ORG PYRAMID */}
       <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">

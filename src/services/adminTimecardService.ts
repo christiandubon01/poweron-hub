@@ -1,0 +1,264 @@
+/**
+ * adminTimecardService.ts — Owner/admin read-only timecard visibility (TIME-4)
+ *
+ * READ ONLY. SELECT queries only. This service never writes: no record_time_punch,
+ * no write RPC, no insert/update/delete/upsert. Org scoping is enforced by RLS
+ * (owner/admin SELECT policies on employee_profiles / time_punch_events /
+ * time_entries in migration 081). No backupDataService, no localStorage.
+ *
+ * Public API:
+ *   getActiveEmployeeProfiles()                    — active portal profiles for the org
+ *   getAdminTimecardsForDate(workDate)             — merged rows + summary for a date
+ *   getEmployeePunchesForDate(profileId, workDate) — punch history for one employee
+ *   getOpenPriorDayEntries(beforeDate)             — open entries before a date
+ */
+
+import { supabase } from '@/lib/supabase'
+import {
+  deriveClockPhase,
+  type ClockPhase,
+  type TimePunchEvent,
+  type TimeEntry,
+} from '@/services/employeeTimeService'
+
+// Re-export getTenantWorkDate so the panel has a single import surface.
+export { getTenantWorkDate } from '@/services/employeeTimeService'
+export type { ClockPhase, TimePunchEvent, TimeEntry } from '@/services/employeeTimeService'
+
+// Time tables aren't in the generated db types yet — cast the query builder.
+const from = supabase.from as any
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface AdminEmployeeProfile {
+  id: string
+  user_id: string | null
+  org_id: string
+  display_name: string
+  email: string | null
+  role: string
+  employment_type: string
+  active: boolean
+  portal_access: Record<string, unknown> | null
+  accepted_at: string | null
+}
+
+export interface AdminTimecardRow {
+  profile: AdminEmployeeProfile
+  entry: TimeEntry | null
+  punches: TimePunchEvent[]
+  phase: ClockPhase
+  isPendingInvite: boolean
+}
+
+export interface AdminTimecardSummary {
+  clockedInCount: number
+  onLunchCount: number
+  completedCount: number
+  notClockedInCount: number
+  pendingInviteCount: number
+  totalEmployees: number
+}
+
+export interface AdminTimecardsForDate {
+  workDate: string
+  rows: AdminTimecardRow[]
+  summary: AdminTimecardSummary
+}
+
+interface Result<T> {
+  success: boolean
+  data?: T
+  error?: string
+}
+
+const PROFILE_COLS =
+  'id, user_id, org_id, display_name, email, role, employment_type, active, portal_access, accepted_at'
+const ENTRY_COLS =
+  'id, org_id, employee_user_id, employee_profile_id, work_date, clock_in_at, lunch_out_at, lunch_in_at, clock_out_at, total_minutes, lunch_minutes, paid_minutes, status'
+const PUNCH_COLS =
+  'id, org_id, employee_user_id, employee_profile_id, work_date, punch_type, punched_at, source, is_void'
+
+// ── A. getActiveEmployeeProfiles ────────────────────────────────────────────────
+
+export async function getActiveEmployeeProfiles(): Promise<Result<AdminEmployeeProfile[]>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) {
+      return { success: false, error: 'Not authenticated' }
+    }
+
+    // RLS restricts rows to the caller's org for owner/admin.
+    const { data, error } = await from('employee_profiles')
+      .select(PROFILE_COLS)
+      .eq('active', true)
+      .order('display_name', { ascending: true })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: (data ?? []) as AdminEmployeeProfile[] }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.getActiveEmployeeProfiles] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── B. getAdminTimecardsForDate ─────────────────────────────────────────────────
+
+export async function getAdminTimecardsForDate(
+  workDate: string,
+): Promise<Result<AdminTimecardsForDate>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) {
+      return { success: false, error: 'Not authenticated' }
+    }
+
+    const profilesResult = await getActiveEmployeeProfiles()
+    if (!profilesResult.success || !profilesResult.data) {
+      return { success: false, error: profilesResult.error || 'Could not load employees' }
+    }
+    const profiles = profilesResult.data
+
+    const { data: entryData, error: entryError } = await from('time_entries')
+      .select(ENTRY_COLS)
+      .eq('work_date', workDate)
+
+    if (entryError) {
+      return { success: false, error: entryError.message }
+    }
+
+    const { data: punchData, error: punchError } = await from('time_punch_events')
+      .select(PUNCH_COLS)
+      .eq('work_date', workDate)
+      .eq('is_void', false)
+      .order('punched_at', { ascending: true })
+
+    if (punchError) {
+      return { success: false, error: punchError.message }
+    }
+
+    const entries = (entryData ?? []) as TimeEntry[]
+    const punches = (punchData ?? []) as TimePunchEvent[]
+
+    // Merge client-side by employee_profile_id.
+    const entryByProfile = new Map<string, TimeEntry>()
+    for (const e of entries) entryByProfile.set(e.employee_profile_id, e)
+
+    const punchesByProfile = new Map<string, TimePunchEvent[]>()
+    for (const p of punches) {
+      const list = punchesByProfile.get(p.employee_profile_id) ?? []
+      list.push(p)
+      punchesByProfile.set(p.employee_profile_id, list)
+    }
+
+    const rows: AdminTimecardRow[] = profiles.map(profile => {
+      const rowPunches = punchesByProfile.get(profile.id) ?? []
+      const entry = entryByProfile.get(profile.id) ?? null
+      const phase = deriveClockPhase(rowPunches)
+      const isPendingInvite = !profile.user_id
+      return { profile, entry, punches: rowPunches, phase, isPendingInvite }
+    })
+
+    const summary: AdminTimecardSummary = {
+      clockedInCount:     0,
+      onLunchCount:       0,
+      completedCount:     0,
+      notClockedInCount:  0,
+      pendingInviteCount: 0,
+      totalEmployees:     rows.length,
+    }
+
+    for (const row of rows) {
+      if (row.isPendingInvite) {
+        summary.pendingInviteCount++
+        continue
+      }
+      switch (row.phase) {
+        case 'working':
+        case 'back_from_lunch':
+          summary.clockedInCount++
+          break
+        case 'on_lunch':
+          summary.onLunchCount++
+          break
+        case 'done':
+          summary.completedCount++
+          break
+        case 'off_clock':
+        default:
+          summary.notClockedInCount++
+          break
+      }
+    }
+
+    return { success: true, data: { workDate, rows, summary } }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.getAdminTimecardsForDate] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── C. getEmployeePunchesForDate ────────────────────────────────────────────────
+
+export async function getEmployeePunchesForDate(
+  employeeProfileId: string,
+  workDate: string,
+): Promise<Result<TimePunchEvent[]>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) {
+      return { success: false, error: 'Not authenticated' }
+    }
+
+    const { data, error } = await from('time_punch_events')
+      .select(PUNCH_COLS)
+      .eq('employee_profile_id', employeeProfileId)
+      .eq('work_date', workDate)
+      .eq('is_void', false)
+      .order('punched_at', { ascending: true })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: (data ?? []) as TimePunchEvent[] }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.getEmployeePunchesForDate] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── D. getOpenPriorDayEntries (optional, read-only) ─────────────────────────────
+
+export async function getOpenPriorDayEntries(
+  beforeDate: string,
+): Promise<Result<TimeEntry[]>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) {
+      return { success: false, error: 'Not authenticated' }
+    }
+
+    const { data, error } = await from('time_entries')
+      .select(ENTRY_COLS)
+      .eq('status', 'open')
+      .lt('work_date', beforeDate)
+      .order('work_date', { ascending: true })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: (data ?? []) as TimeEntry[] }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.getOpenPriorDayEntries] Error:', err)
+    return { success: false, error: message }
+  }
+}
