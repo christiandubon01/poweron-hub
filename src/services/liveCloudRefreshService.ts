@@ -11,6 +11,7 @@ import {
   fetchLatestRemoteBackup,
   getActiveTenantUserId,
   getKnownRemoteBaselineMs,
+  hasPendingLocalSave,
   isSupabaseConfigured,
   isTenantDataReady,
   type BackupData,
@@ -124,6 +125,12 @@ export async function requestRemoteRefresh(options?: {
       if (remoteFreshnessMs <= knownBaselineMs) return null
 
       const dirtyScopeIds = getDirtyScopes()
+      // ROOT-SYNC: global pending-write guard. Feature-specific dirty scopes only
+      // covered modules that registered one (blueprint, service calls, home, …).
+      // Any module's local save that has not yet been confirmed pushed to Supabase
+      // now defers the remote apply the same way, so a background refresh can never
+      // overwrite an in-flight local save (project logs, projects, anything).
+      const pendingLocalSave = hasPendingLocalSave()
       const detailBase: Omit<RemoteRefreshEventDetail, 'applied'> = {
         source,
         remoteUpdatedAt: remote.remoteUpdatedAt,
@@ -133,17 +140,18 @@ export async function requestRemoteRefresh(options?: {
 
       const remoteKey = remoteFreshnessKey(remote.remoteUpdatedAt, remote.remoteDataLastSavedAt)
 
-      if (!forceApply && dirtyScopeIds.length > 0) {
+      if (!forceApply && (dirtyScopeIds.length > 0 || pendingLocalSave)) {
+        const reason = dirtyScopeIds.length > 0 ? 'dirty-scopes' : 'pending-local-save'
         if (_lastNotifiedRemoteKey !== remoteKey) {
           _lastNotifiedRemoteKey = remoteKey
           const detail: RemoteRefreshEventDetail = {
             ...detailBase,
             applied: false,
-            reason: 'dirty-scopes',
+            reason,
           }
           dispatchRemoteEvent('poweron-remote-data-available', detail)
         }
-        return { ...detailBase, applied: false, reason: 'dirty-scopes' }
+        return { ...detailBase, applied: false, reason }
       }
 
       applyRemoteBackupDataSilent(remote.remoteData as BackupData, userId, {

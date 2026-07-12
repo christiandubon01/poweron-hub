@@ -110,9 +110,18 @@ function getDeviceId(): string {
   }
 }
 
-/** Last sync metadata from Supabase (set during loadFromSupabase) */
-let _lastSyncMeta: { savedBy: string; savedAt: string } | null = null
-export function getLastSyncMeta(): { savedBy: string; savedAt: string } | null {
+/**
+ * Last sync metadata from Supabase.
+ * ROOT-SYNC: `direction` records what actually happened so the header can be honest:
+ *   'pushed'  — THIS device successfully wrote its data to the cloud row.
+ *   'applied' — a remote snapshot (saved by `savedBy`, possibly another device) was
+ *               applied into this device's local cache.
+ * Previously this was set from the remote row even when nothing was applied or pushed,
+ * which made the header claim "Synced by Android" while local work sat unpushed.
+ */
+export type LastSyncDirection = 'pushed' | 'applied'
+let _lastSyncMeta: { savedBy: string; savedAt: string; direction?: LastSyncDirection } | null = null
+export function getLastSyncMeta(): { savedBy: string; savedAt: string; direction?: LastSyncDirection } | null {
   return _lastSyncMeta
 }
 
@@ -152,6 +161,18 @@ export function markChanged(...keys: string[]) {
     setKeyTimestamp(k)
   })
   _dataChanged = true
+}
+
+/**
+ * ROOT-SYNC: true while local edits exist that have not yet been confirmed pushed
+ * to Supabase. This is the module-global pending-write signal (set by every
+ * saveBackupData in a ready tenant, cleared only after a successful cloud sync).
+ * Remote-apply paths use it as a universal dirty guard so a background refresh can
+ * never overwrite a local save that is still waiting to reach the cloud — for ANY
+ * module, not just the ones that registered a feature-specific dirty scope.
+ */
+export function hasPendingLocalSave(): boolean {
+  return _dataChanged || _changedKeys.size > 0
 }
 
 /** Start periodic sync timer — call from V15rLayout on mount */
@@ -874,15 +895,22 @@ export function updateKnownRemoteBaselineFromRemote(
  * Phase 6T: apply a remote backup into localStorage without marking dirty or syncing.
  * Does NOT dispatch poweron-data-saved — callers decide when to notify UI listeners.
  *
- * BLUEPRINT-6S: the live/realtime refresh previously whole-overwrote localStorage with the
- * remote snapshot. When that snapshot came from another device (e.g. "Synced by Android") and
- * predated a just-placed desktop annotation, the overwrite silently wiped the annotation. We
- * now id-merge the local blueprintSummaries into the incoming remote snapshot with the same
- * prefer-newer-updatedAt / tombstone-safe helper used by the multi-device push path, so:
- *   • locally-newer blueprint annotations survive the remote apply,
- *   • remotely-newer annotations still apply,
+ * ROOT-SYNC (generalizes BLUEPRINT-6S): remote applies previously whole-overwrote
+ * localStorage with the remote snapshot, merging ONLY blueprintSummaries. Any other
+ * branch with local rows not yet pushed to the cloud (project logs, projects,
+ * service logs, …) was silently wiped whenever a remote snapshot — possibly carrying
+ * OLDER data under a fresh updated_at, e.g. "Synced by Android" — was applied. Every
+ * id-bearing array branch now gets the same prefer-newer-updatedAt / tombstone-safe
+ * id merge the blueprint fix introduced, so:
+ *   • locally-newer records survive the remote apply (nothing local is lost),
+ *   • remotely-newer records still apply,
  *   • newer deletedAt tombstones still win.
- * Every non-blueprint branch of the backup still comes from the remote snapshot unchanged.
+ * Non-array branches (settings, calcRefs, …) still come from the remote snapshot
+ * unchanged. This is the single shared apply path used by live refresh, realtime,
+ * and loadFromSupabase, so the protection covers every module at the root.
+ *
+ * Also records _lastSyncMeta with direction 'applied' so the header reports
+ * "Loaded from <device>" instead of the misleading "Synced by <device>".
  */
 export function applyRemoteBackupDataSilent(
   data: BackupData,
@@ -894,19 +922,23 @@ export function applyRemoteBackupDataSilent(
   try {
     const local = getBackupData(uid ?? undefined)
     if (local && data && typeof data === 'object') {
-      toSave = {
-        ...data,
-        blueprintSummaries: mergeBlueprintSummariesObject(
-          (data as any).blueprintSummaries,
-          (local as any).blueprintSummaries,
-        ),
-      }
+      toSave = mergeLocalRecordsIntoRemoteSnapshot(data, local)
     }
   } catch {
     // Any failure falls back to the raw remote apply — never block the refresh.
     toSave = data
   }
   saveBackupDataSilent(toSave, uid ?? undefined)
+  try {
+    const appliedMeta = (data as any)?._syncMeta as { savedBy?: string; savedAt?: string } | undefined
+    if (appliedMeta?.savedBy) {
+      _lastSyncMeta = {
+        savedBy: String(appliedMeta.savedBy),
+        savedAt: String((data as any)?._lastSavedAt || appliedMeta.savedAt || ''),
+        direction: 'applied',
+      }
+    }
+  } catch { /* metadata is best-effort */ }
   if (remoteBaseline) {
     setKnownRemoteBaseline(remoteBaseline.remoteUpdatedAt, remoteBaseline.remoteDataLastSavedAt)
   }
@@ -1988,6 +2020,87 @@ function mergeArrayByIdPreferNewer<T extends MergeableRecord>(remoteList: T[], l
   return [...byId.values(), ...noId]
 }
 
+/**
+ * ROOT-SYNC: the id-bearing top-level arrays that every remote apply / merge path
+ * protects with an id + updatedAt merge (same list the push-side
+ * mergeLocalChangesIntoRemote has always used). weeklyData and blueprintSummaries
+ * are excluded here because they have their own dedicated merge helpers.
+ */
+const MERGEABLE_ARRAY_KEYS = new Set([
+  'serviceLogs', 'serviceLeads', 'logs', 'projects', 'gcContacts', 'employees',
+  'templates', 'triggerRules', 'agendaSections', 'completedArchive',
+  'activeServiceCalls', 'serviceEstimates', 'taskSchedule', 'dailyJobs',
+  'weeklyReviews', 'imports', 'customers', 'priceBook',
+])
+
+/**
+ * ROOT-SYNC: apply-side variant of mergeArrayByIdPreferNewer. Identical id semantics
+ * (remote order retained, prefer newer updatedAt, local wins timestamp ties so a
+ * just-saved local record survives), but items WITHOUT an id are deduped by JSON
+ * identity. The apply path runs on every live refresh, so without dedupe identical
+ * legacy no-id rows present on both sides would duplicate on each apply.
+ */
+function mergeArrayBranchPreferNewer(remoteList: any[], localList: any[]): any[] {
+  const byId = new Map<string, any>()
+  const noId: any[] = []
+  const noIdSeen = new Set<string>()
+  const addNoId = (item: any) => {
+    let sig: string
+    try { sig = JSON.stringify(item) } catch { sig = String(item) }
+    if (noIdSeen.has(sig)) return
+    noIdSeen.add(sig)
+    noId.push(item)
+  }
+  for (const item of remoteList) {
+    const id = String(item?.id ?? '').trim()
+    if (id) byId.set(id, item)
+    else addNoId(item)
+  }
+  for (const item of localList) {
+    const id = String(item?.id ?? '').trim()
+    if (!id) {
+      addNoId(item)
+      continue
+    }
+    const existing = byId.get(id)
+    if (!existing) {
+      byId.set(id, item)
+      continue
+    }
+    const localMs = parseBackupTimestampMs(item?.updatedAt)
+    const remoteMs = parseBackupTimestampMs(existing?.updatedAt)
+    byId.set(id, localMs >= remoteMs ? item : existing)
+  }
+  return [...byId.values(), ...noId]
+}
+
+/**
+ * ROOT-SYNC: merge local record-bearing branches into an incoming remote snapshot.
+ * This is the generalization of the blueprint-only merge that previously guarded
+ * applyRemoteBackupDataSilent: EVERY id-bearing array (logs, projects, serviceLogs,
+ * employees, priceBook, …) now survives a remote apply the same way blueprint
+ * annotations do — locally-newer rows are kept, remotely-newer rows still apply,
+ * and newer deletedAt tombstones still win via updatedAt. Non-array branches
+ * (settings, calcRefs, projectDashboards, scalars) continue to come from the
+ * remote snapshot unchanged, exactly as before.
+ */
+function mergeLocalRecordsIntoRemoteSnapshot(remote: BackupData, local: BackupData): BackupData {
+  const merged: BackupData = {
+    ...(remote as any),
+    blueprintSummaries: mergeBlueprintSummariesObject(
+      (remote as any).blueprintSummaries,
+      (local as any).blueprintSummaries,
+    ),
+  }
+  for (const key of MERGEABLE_ARRAY_KEYS) {
+    const localVal = (local as any)[key]
+    if (!Array.isArray(localVal) || localVal.length === 0) continue
+    const remoteVal = Array.isArray((remote as any)[key]) ? (remote as any)[key] : []
+    ;(merged as any)[key] = mergeArrayBranchPreferNewer(remoteVal, localVal)
+  }
+  return merged
+}
+
 function mergeBlueprintSummariesObject(remoteRaw: any, localRaw: any): Record<string, unknown> {
   const remote = remoteRaw && typeof remoteRaw === 'object' ? remoteRaw : {}
   const local = localRaw && typeof localRaw === 'object' ? localRaw : {}
@@ -2023,12 +2136,7 @@ function mergeLocalChangesIntoRemote(
   changedKeys: Set<string>,
 ): BackupData {
   const merged = JSON.parse(JSON.stringify(remote)) as BackupData
-  const arrayKeys = new Set([
-    'serviceLogs', 'serviceLeads', 'logs', 'projects', 'gcContacts', 'employees',
-    'templates', 'triggerRules', 'agendaSections', 'completedArchive',
-    'activeServiceCalls', 'serviceEstimates', 'taskSchedule', 'dailyJobs',
-    'weeklyReviews', 'imports', 'customers', 'priceBook',
-  ])
+  const arrayKeys = MERGEABLE_ARRAY_KEYS
   const objectKeys = new Set(['settings', 'calcRefs', 'projectDashboards'])
 
   for (const key of changedKeys) {
@@ -2700,7 +2808,7 @@ export async function syncToSupabase(
     // upsert did not return a row. Only the baseline uses serverUpdatedAt; the
     // payload's _lastSavedAt and _syncMeta.savedAt stay client `now`.
     const serverUpdatedAt = writtenRow?.updated_at ? String(writtenRow.updated_at) : now
-    _lastSyncMeta = { savedBy: deviceId, savedAt: now }
+    _lastSyncMeta = { savedBy: deviceId, savedAt: now, direction: 'pushed' }
     setKnownRemoteBaseline(serverUpdatedAt, now)
     // A real success resolves any prior stale-overwrite conflict -- let the next
     // one (if any) dispatch immediately rather than staying throttled.
@@ -2808,9 +2916,13 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
 
     const remote = attachTenantOwner(row.data as BackupData, userId)
 
+    // ROOT-SYNC: _lastSyncMeta is NO LONGER set here unconditionally. It previously
+    // took the remote row's savedBy on every load — even on keep-local paths where
+    // nothing was applied — so the header claimed "Synced by Android" from stale
+    // metadata while local work sat unpushed. applyRemoteBackupDataSilent now records
+    // it (direction 'applied') only when the remote snapshot is actually applied.
     const remoteMeta = (remote as any)._syncMeta as { savedBy?: string; savedAt?: string } | undefined
     const remoteDevice = remoteMeta?.savedBy || 'unknown'
-    _lastSyncMeta = { savedBy: remoteDevice, savedAt: remote._lastSavedAt || row.updated_at || '' }
 
     const remoteTime = setKnownRemoteBaseline(row.updated_at, remote._lastSavedAt)
     const local = getBackupData(userId)
@@ -2826,7 +2938,9 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
         await hydrateRelationshipAccountsIntoLocalProjection(userId)
         return { success: true, merged: false, fromDevice: remoteDevice, status: 'loaded_remote' }
       }
-      saveBackupDataSilent(remote, userId)
+      // ROOT-SYNC: merged apply — locally-newer id-bearing records survive the load
+      // instead of being whole-overwritten by the remote snapshot.
+      applyRemoteBackupDataSilent(remote, userId)
       markTenantDataReady(userId)
       await hydrateRelationshipAccountsIntoLocalProjection(userId)
       console.log(`[Sync] Bootstrap loaded tenant ${userId} from Supabase (saved by ${remoteDevice})`)
@@ -2838,7 +2952,7 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     console.log(`[Sync] Remote timestamp: ${remote._lastSavedAt || 'none'} (${remoteTime}), saved by: ${remoteDevice}`)
 
     if (!local) {
-      saveBackupDataSilent(remote, userId)
+      applyRemoteBackupDataSilent(remote, userId)
       markTenantDataReady(userId)
       await hydrateRelationshipAccountsIntoLocalProjection(userId)
       console.log('[Sync] No local tenant data – Loading: remote')
@@ -2850,7 +2964,9 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
         console.log(`[Sync] forceRemote skipped — remote is from this device (${thisDevice})`)
         return { success: true, merged: false }
       }
-      saveBackupDataSilent(remote, userId)
+      // ROOT-SYNC: merged apply — a remote row with a newer updated_at but older DATA
+      // (the stale-Android-snapshot case) can no longer wipe locally-newer records.
+      applyRemoteBackupDataSilent(remote, userId)
       markTenantDataReady(userId)
       await hydrateRelationshipAccountsIntoLocalProjection(userId)
       console.log(`[Sync] Loading remote tenant data (saved by ${remoteDevice})`)
@@ -2868,6 +2984,8 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
 
     markTenantDataReady(userId)
     await hydrateRelationshipAccountsIntoLocalProjection(userId)
+    // Local and cloud carry the same stamp — genuinely in sync with the row's writer.
+    _lastSyncMeta = { savedBy: remoteDevice, savedAt: remote._lastSavedAt || row.updated_at || '', direction: 'applied' }
     console.log('[Sync] Timestamps match — no sync needed')
     return { success: true, merged: false }
   } catch (err: any) {

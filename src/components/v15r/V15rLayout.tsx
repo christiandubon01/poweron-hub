@@ -292,6 +292,9 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed' | 'paused'>('idle')
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
   const [lastSyncDevice, setLastSyncDevice] = useState<string>('')
+  // ROOT-SYNC: 'pushed' = this device wrote to the cloud; 'applied' = a remote
+  // snapshot (possibly from another device) was loaded into this device.
+  const [lastSyncDirection, setLastSyncDirection] = useState<'pushed' | 'applied'>('pushed')
   // Step 13B-QA5-R: last shown sync-conflict message + when, for toast dedupe/throttle.
   const lastSyncConflictRef = useRef<{ message: string; shownAt: number } | null>(null)
   // H3: online/offline state
@@ -363,13 +366,19 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     // Start the debounced periodic sync only after the authenticated tenant is hydrated.
     const stopSync = startPeriodicSync()
 
-    // Status polling — UI only, no Supabase push
+    // Status polling — UI only, no Supabase push.
+    // ROOT-SYNC: this poll previously force-set 'synced' whenever ANY sync metadata
+    // existed (even metadata copied from a remote row saved by another device), which
+    // masked a blocked/paused cloud push as "Synced by Android" every 30s. It now
+    // never overrides an active paused/failed/syncing state, and it reports the
+    // metadata's own timestamp instead of the current wall clock.
     const interval = setInterval(() => {
       const meta = getLastSyncMeta()
       if (meta?.savedBy) {
-        setSyncStatus('synced')
-        setLastSyncTime(new Date().toLocaleTimeString())
+        setSyncStatus(prev => (prev === 'paused' || prev === 'failed' || prev === 'syncing') ? prev : 'synced')
+        setLastSyncTime(meta.savedAt ? new Date(meta.savedAt).toLocaleTimeString() : new Date().toLocaleTimeString())
         setLastSyncDevice(meta.savedBy.split('_')[0] || '')
+        setLastSyncDirection(meta.direction === 'applied' ? 'applied' : 'pushed')
       }
     }, 30000)
 
@@ -423,6 +432,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       const detail = (event as CustomEvent<{ savedBy?: string; savedAt?: string }>).detail
       setLastSyncTime(detail?.savedAt ? new Date(detail.savedAt).toLocaleTimeString() : new Date().toLocaleTimeString())
       if (detail?.savedBy) setLastSyncDevice(detail.savedBy.split('_')[0] || '')
+      setLastSyncDirection('pushed')
       // Only dismiss the toast if it's still showing the exact paused-explanation
       // text we suppressed -- never clobber an unrelated toast that happens to be
       // visible at the same moment.
@@ -1958,7 +1968,9 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                   : 'text-gray-400'
                 }`}>
                   {syncStatus === 'synced' && lastSyncTime
-                    ? `Synced${lastSyncDevice ? ` by ${lastSyncDevice}` : ''} · ${lastSyncTime}`
+                    ? (lastSyncDirection === 'applied' && lastSyncDevice
+                      ? `Loaded from ${lastSyncDevice} · ${lastSyncTime}`
+                      : `Synced${lastSyncDevice ? ` by ${lastSyncDevice}` : ''} · ${lastSyncTime}`)
                     : syncStatus === 'syncing' ? 'Pending sync...'
                     : syncStatus === 'failed' ? 'Sync failed — tap to retry'
                     : syncStatus === 'paused' ? `Cloud paused — saved locally ${getRelativeTime(lastSaved)}`
