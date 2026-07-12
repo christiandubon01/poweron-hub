@@ -873,6 +873,16 @@ export function updateKnownRemoteBaselineFromRemote(
 /**
  * Phase 6T: apply a remote backup into localStorage without marking dirty or syncing.
  * Does NOT dispatch poweron-data-saved — callers decide when to notify UI listeners.
+ *
+ * BLUEPRINT-6S: the live/realtime refresh previously whole-overwrote localStorage with the
+ * remote snapshot. When that snapshot came from another device (e.g. "Synced by Android") and
+ * predated a just-placed desktop annotation, the overwrite silently wiped the annotation. We
+ * now id-merge the local blueprintSummaries into the incoming remote snapshot with the same
+ * prefer-newer-updatedAt / tombstone-safe helper used by the multi-device push path, so:
+ *   • locally-newer blueprint annotations survive the remote apply,
+ *   • remotely-newer annotations still apply,
+ *   • newer deletedAt tombstones still win.
+ * Every non-blueprint branch of the backup still comes from the remote snapshot unchanged.
  */
 export function applyRemoteBackupDataSilent(
   data: BackupData,
@@ -880,7 +890,23 @@ export function applyRemoteBackupDataSilent(
   remoteBaseline?: { remoteUpdatedAt?: string | null; remoteDataLastSavedAt?: string | null },
 ): void {
   const uid = userId ?? _activeTenantUserId
-  saveBackupDataSilent(data, uid ?? undefined)
+  let toSave: BackupData = data
+  try {
+    const local = getBackupData(uid ?? undefined)
+    if (local && data && typeof data === 'object') {
+      toSave = {
+        ...data,
+        blueprintSummaries: mergeBlueprintSummariesObject(
+          (data as any).blueprintSummaries,
+          (local as any).blueprintSummaries,
+        ),
+      }
+    }
+  } catch {
+    // Any failure falls back to the raw remote apply — never block the refresh.
+    toSave = data
+  }
+  saveBackupDataSilent(toSave, uid ?? undefined)
   if (remoteBaseline) {
     setKnownRemoteBaseline(remoteBaseline.remoteUpdatedAt, remoteBaseline.remoteDataLastSavedAt)
   }
