@@ -2,27 +2,24 @@
  * liveCloudRefreshService.ts — Phase 6T
  *
  * Dirty-safe live remote refresh: detect newer cloud app_state on focus,
- * visibility, online, and a light interval; silently apply to localStorage
- * only when no dirty scopes are registered. Never writes to cloud.
+ * visibility, online, and a light interval.
+ *
+ * EMERGENCY CONTAINMENT (2026-07-12): automatic sources (focus / visibility /
+ * online / interval / realtime) MUST NOT apply remote backup into localStorage.
+ * They may only detect that remote data is available and notify the UI.
+ * Explicit manual forceApply (user confirmed "Refresh now") remains the only
+ * path that may write remote into local state.
  */
 
 import {
   applyRemoteBackupDataSilent,
   fetchLatestRemoteBackup,
   getActiveTenantUserId,
-  getBackupData,
   getKnownRemoteBaselineMs,
-  hasPendingLocalSave,
   isSupabaseConfigured,
   isTenantDataReady,
   type BackupData,
 } from './backupDataService'
-
-function parseTsMs(value?: string | null): number {
-  if (!value) return 0
-  const t = new Date(value).getTime()
-  return Number.isFinite(t) ? t : 0
-}
 
 export type LiveRefreshSource = 'focus' | 'visibility' | 'online' | 'interval' | 'manual' | 'realtime'
 
@@ -37,6 +34,15 @@ export interface RemoteRefreshEventDetail {
 
 const REFRESH_INTERVAL_MS = 60_000
 const MIN_CHECK_INTERVAL_MS = 5_000
+
+/** Sources that must never auto-write remote into localStorage. */
+const AUTOMATIC_SOURCES = new Set<LiveRefreshSource>([
+  'focus',
+  'visibility',
+  'online',
+  'interval',
+  'realtime',
+])
 
 const dirtyScopes = new Map<string, { label?: string }>()
 
@@ -100,6 +106,23 @@ export function hasDirtyScopes(): boolean {
   return dirtyScopes.size > 0
 }
 
+function notifyRemoteAvailable(
+  detailBase: Omit<RemoteRefreshEventDetail, 'applied'>,
+  remoteKey: string,
+  reason: string,
+): RemoteRefreshEventDetail {
+  const detail: RemoteRefreshEventDetail = {
+    ...detailBase,
+    applied: false,
+    reason,
+  }
+  if (_lastNotifiedRemoteKey !== remoteKey) {
+    _lastNotifiedRemoteKey = remoteKey
+    dispatchRemoteEvent('poweron-remote-data-available', detail)
+  }
+  return detail
+}
+
 export async function requestRemoteRefresh(options?: {
   forceApply?: boolean
   source?: LiveRefreshSource
@@ -132,12 +155,6 @@ export async function requestRemoteRefresh(options?: {
       if (remoteFreshnessMs <= knownBaselineMs) return null
 
       const dirtyScopeIds = getDirtyScopes()
-      // ROOT-SYNC: global pending-write guard. Feature-specific dirty scopes only
-      // covered modules that registered one (blueprint, service calls, home, …).
-      // Any module's local save that has not yet been confirmed pushed to Supabase
-      // now defers the remote apply the same way, so a background refresh can never
-      // overwrite an in-flight local save (project logs, projects, anything).
-      const pendingLocalSave = hasPendingLocalSave()
       const detailBase: Omit<RemoteRefreshEventDetail, 'applied'> = {
         source,
         remoteUpdatedAt: remote.remoteUpdatedAt,
@@ -147,42 +164,13 @@ export async function requestRemoteRefresh(options?: {
 
       const remoteKey = remoteFreshnessKey(remote.remoteUpdatedAt, remote.remoteDataLastSavedAt)
 
-      if (!forceApply && (dirtyScopeIds.length > 0 || pendingLocalSave)) {
-        const reason = dirtyScopeIds.length > 0 ? 'dirty-scopes' : 'pending-local-save'
-        if (_lastNotifiedRemoteKey !== remoteKey) {
-          _lastNotifiedRemoteKey = remoteKey
-          const detail: RemoteRefreshEventDetail = {
-            ...detailBase,
-            applied: false,
-            reason,
-          }
-          dispatchRemoteEvent('poweron-remote-data-available', detail)
-        }
-        return { ...detailBase, applied: false, reason }
-      }
-
-      // Stale-device guard (matches loadFromSupabase keep-local): a remote row can carry a
-      // fresher updated_at over OLDER payload data (e.g. "Android" label). Never apply that
-      // over locally-newer Blueprint annotations / other unpushed work.
-      if (!forceApply) {
-        const local = getBackupData(userId)
-        const localDataMs = parseTsMs(local?._lastSavedAt)
-        const remoteDataMs = parseTsMs(remote.remoteDataLastSavedAt)
-        if (local && localDataMs > remoteDataMs) {
-          if (_lastNotifiedRemoteKey !== remoteKey) {
-            _lastNotifiedRemoteKey = remoteKey
-            dispatchRemoteEvent('poweron-remote-data-available', {
-              ...detailBase,
-              applied: false,
-              reason: 'local-data-newer',
-            })
-          }
-          console.warn(
-            `[LiveCloudRefresh] Skipping stale remote apply (${source}) — local data newer than remote payload`,
-            { localDataMs, remoteDataMs, remoteFreshnessMs },
-          )
-          return { ...detailBase, applied: false, reason: 'local-data-newer' }
-        }
+      // EMERGENCY CONTAINMENT: never auto-apply. Detect + notify only.
+      // Manual forceApply (user confirmed Refresh now) is the sole write path.
+      if (!forceApply || AUTOMATIC_SOURCES.has(source)) {
+        console.warn(
+          `[LiveCloudRefresh] Auto-apply contained (${source}) — remote available, local backup untouched`,
+        )
+        return notifyRemoteAvailable(detailBase, remoteKey, 'auto-apply-contained')
       }
 
       const applyResult = applyRemoteBackupDataSilent(remote.remoteData as BackupData, userId, {
@@ -191,19 +179,8 @@ export async function requestRemoteRefresh(options?: {
       }, { snapshotReason: `Live refresh (${source})` })
 
       if (!applyResult.applied) {
-        // ROOT-SYNC FIX #3: the merge could not be proven safe, so local data was
-        // kept and nothing was written — baseline and sync meta did not advance.
-        // Report the remote as available (banner) instead of applied/synced.
-        if (_lastNotifiedRemoteKey !== remoteKey) {
-          _lastNotifiedRemoteKey = remoteKey
-          dispatchRemoteEvent('poweron-remote-data-available', {
-            ...detailBase,
-            applied: false,
-            reason: 'merge-failed',
-          })
-        }
-        console.warn(`[LiveCloudRefresh] Remote apply merge failed (${source}) — local data kept`)
-        return { ...detailBase, applied: false, reason: 'merge-failed' }
+        console.warn(`[LiveCloudRefresh] Manual remote apply merge failed (${source}) — local data kept`)
+        return notifyRemoteAvailable(detailBase, remoteKey, 'merge-failed')
       }
 
       _lastNotifiedRemoteKey = remoteKey
@@ -211,14 +188,14 @@ export async function requestRemoteRefresh(options?: {
       const detail: RemoteRefreshEventDetail = {
         ...detailBase,
         applied: true,
-        dirtyScopes: forceApply ? dirtyScopeIds : [],
-        reason: forceApply && dirtyScopeIds.length > 0 ? 'force-applied' : undefined,
+        dirtyScopes: dirtyScopeIds,
+        reason: dirtyScopeIds.length > 0 ? 'force-applied' : undefined,
       }
 
       dispatchRemoteEvent('poweron-remote-data-refreshed', detail)
-      dispatchRemoteEvent('poweron-data-saved', { detail: { source: 'remote-refresh' } } as any)
+      // Do NOT dispatch poweron:sync-success — apply is "loaded", not "synced by this device".
 
-      console.log(`[LiveCloudRefresh] Applied remote data (${source})`)
+      console.log(`[LiveCloudRefresh] Applied remote data (${source}) — manual forceApply only`)
       return detail
     } catch (err) {
       console.warn('[LiveCloudRefresh] Refresh check failed:', err)
@@ -255,7 +232,7 @@ export function startLiveCloudRefresh(): () => void {
     scheduleRefresh('interval')
   }, REFRESH_INTERVAL_MS)
 
-  console.log('[LiveCloudRefresh] Started')
+  console.log('[LiveCloudRefresh] Started (auto-apply contained)')
   return () => stopLiveCloudRefresh()
 }
 

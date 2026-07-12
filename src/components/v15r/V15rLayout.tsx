@@ -367,18 +367,24 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     const stopSync = startPeriodicSync()
 
     // Status polling — UI only, no Supabase push.
-    // ROOT-SYNC: this poll previously force-set 'synced' whenever ANY sync metadata
-    // existed (even metadata copied from a remote row saved by another device), which
-    // masked a blocked/paused cloud push as "Synced by Android" every 30s. It now
-    // never overrides an active paused/failed/syncing state, and it reports the
-    // metadata's own timestamp instead of the current wall clock.
+    // EMERGENCY CONTAINMENT: never promote another device's "applied" meta into a green
+    // "Synced by <device>" claim. Only this device's successful push counts as synced.
+    // Applied (loaded) meta must not overwrite an active paused state from containment.
     const interval = setInterval(() => {
       const meta = getLastSyncMeta()
-      if (meta?.savedBy) {
+      if (!meta?.savedBy) return
+      if (meta.direction === 'applied') {
         setSyncStatus(prev => (prev === 'paused' || prev === 'failed' || prev === 'syncing') ? prev : 'synced')
-        setLastSyncTime(meta.savedAt ? new Date(meta.savedAt).toLocaleTimeString() : new Date().toLocaleTimeString())
+        if (meta.savedAt) setLastSyncTime(new Date(meta.savedAt).toLocaleTimeString())
         setLastSyncDevice(meta.savedBy.split('_')[0] || '')
-        setLastSyncDirection(meta.direction === 'applied' ? 'applied' : 'pushed')
+        setLastSyncDirection('applied')
+        return
+      }
+      if (meta.direction === 'pushed') {
+        setSyncStatus(prev => (prev === 'paused' || prev === 'failed' || prev === 'syncing') ? prev : 'synced')
+        if (meta.savedAt) setLastSyncTime(new Date(meta.savedAt).toLocaleTimeString())
+        setLastSyncDevice(meta.savedBy.split('_')[0] || '')
+        setLastSyncDirection('pushed')
       }
     }, 30000)
 
@@ -494,20 +500,28 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     }
 
     const handleRemoteApplied = () => {
+      // Manual force-apply only reaches here under containment. Show loaded, not synced.
       setRemoteRefreshBanner('applied')
+      setLastSyncDirection('applied')
       clearDismissTimer()
       const data = getBackupData()
       if (data) {
         setBackupData(data)
         setKpis(getKPIs(data))
       }
+      const meta = getLastSyncMeta()
+      if (meta?.savedBy) setLastSyncDevice(meta.savedBy.split('_')[0] || '')
+      if (meta?.savedAt) setLastSyncTime(new Date(meta.savedAt).toLocaleTimeString())
       remoteRefreshDismissTimerRef.current = setTimeout(() => {
         setRemoteRefreshBanner(null)
       }, 4000)
     }
 
     const handleRemoteAvailable = () => {
+      // EMERGENCY CONTAINMENT: skipped auto-apply — protect local work, truthful paused status.
+      // Must NOT claim "Synced by Android" or set wall-clock sync time.
       setRemoteRefreshBanner('available')
+      setSyncStatus('paused')
       clearDismissTimer()
     }
 
@@ -522,11 +536,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
   const handleRemoteRefreshNow = () => {
     const confirmed = window.confirm(
-      'Refresh now will reload latest cloud data and may discard unsaved edits in open forms. Continue?'
+      'Refresh now will reload latest cloud data and may discard local Blueprint annotations, estimates, and other unsaved edits. Continue only if you intend to replace local work with cloud data.'
     )
     if (!confirmed) return
-    void requestRemoteRefresh({ forceApply: true, source: 'manual' }).then(() => {
-      setRemoteRefreshBanner(null)
+    void requestRemoteRefresh({ forceApply: true, source: 'manual' }).then((detail) => {
+      setRemoteRefreshBanner(detail?.applied ? 'applied' : 'available')
+      if (!detail?.applied) setSyncStatus('paused')
     })
   }
 
@@ -2125,7 +2140,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
               <span>Cloud changes loaded.</span>
             ) : (
               <div className="flex flex-wrap items-center justify-center gap-3">
-                <span>New cloud changes are available. Save your work or refresh to load latest.</span>
+                <span>Remote changes available — sync paused to protect local work.</span>
                 <button
                   type="button"
                   onClick={handleRemoteRefreshNow}

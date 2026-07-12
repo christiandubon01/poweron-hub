@@ -2336,36 +2336,13 @@ async function attemptProductionMergeAndSync(
       : new Set<string>())
 
   if (changedKeys.size === 0) {
-    // ROOT-SYNC FIX #3: this branch previously RAW-adopted the remote snapshot
-    // (saveBackupDataSilent(remote.remoteData)) — a whole-replace of local with
-    // no merge — and then reported it as a merged sync-success. It now goes
-    // through the safe apply gate: snapshot first, local records survive the
-    // merge, local wins on merge failure, and the baseline only advances when
-    // the remote was actually applied.
-    const adoptResult = applyRemoteBackupDataSilent(
-      remote.remoteData,
-      userId,
-      { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
-      { snapshotReason: 'Sync adopt (no tracked local changes)' },
-    )
-    if (!adoptResult.applied) {
-      dispatchRemoteAvailableEvent('merge-failed', 'sync')
-      console.warn('[Sync] Sync adopt merge failed — local backup kept, remote treated as available')
-      return { success: false, blocked: true, error: 'Remote adopt merge failed — local data kept' }
-    }
-    _dataChanged = false
-    _lastSyncedAt = Date.now()
-    _lastConflictDispatch = null
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('poweron:sync-success', {
-        detail: {
-          savedBy: ((remote.remoteData as any)?._syncMeta as any)?.savedBy,
-          savedAt: remote.remoteDataLastSavedAt || remote.remoteUpdatedAt,
-          merged: true,
-        },
-      }))
-    }
-    return { success: true, skipped: true }
+    // EMERGENCY CONTAINMENT: never auto-adopt remote into localStorage, and never
+    // fire poweron:sync-success with another device's savedBy (that showed
+    // "Synced by Android" after a no-op adopt). Function is currently unused by
+    // syncToSupabase; this keeps it safe if re-enabled.
+    dispatchRemoteAvailableEvent('sync-adopt-contained', 'sync')
+    console.warn('[Sync] Sync adopt contained — remote available, local backup untouched')
+    return { success: false, blocked: true, error: 'Remote adopt contained — local data kept' }
   }
 
   // ROOT-SYNC FIX #3: mergeLocalChangesIntoRemote starts from a remote clone and
@@ -3161,69 +3138,25 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     console.log(`[Sync] Local timestamp: ${local?._lastSavedAt || 'none'} (${localTime})`)
     console.log(`[Sync] Remote timestamp: ${remote._lastSavedAt || 'none'} (${remoteTime}), saved by: ${remoteDevice}`)
 
-    if (!local) {
-      applyRemoteBackupDataSilent(remote, userId, undefined, { snapshotReason: 'Remote pull' })
-      markTenantDataReady(userId)
-      await hydrateRelationshipAccountsIntoLocalProjection(userId)
-      console.log('[Sync] No local tenant data – Loading: remote')
-      return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
+    // EMERGENCY CONTAINMENT (2026-07-12): mid-session loadFromSupabase (no explicit
+    // bootstrap userId) must NEVER apply remote into localStorage. Panel refresh,
+    // stale-check, and any non-login caller used to wipe Blueprint annotations,
+    // estimate notes, and other local branches under an Android-labeled row.
+    // Login/bootstrap (explicitUserId) already returned above.
+    if (local && (forceRemote || remoteTime > localTime)) {
+      console.warn(
+        `[Sync] Mid-session remote pull contained — remote available (saved by ${remoteDevice}), local backup untouched`,
+      )
+      dispatchRemoteAvailableEvent(forceRemote ? 'force-remote-contained' : 'mid-session-pull-contained', 'pull')
+    } else if (!local) {
+      console.warn('[Sync] Mid-session pull with no local cache contained — refusing automatic remote seed')
+      dispatchRemoteAvailableEvent('mid-session-empty-contained', 'pull')
+    } else {
+      console.log('[Sync] Mid-session pull — local kept, no apply')
     }
-
-    if (forceRemote || remoteTime > localTime) {
-      if (forceRemote && remoteDevice === thisDevice && localTime > remoteTime) {
-        console.log(`[Sync] forceRemote skipped — remote is from this device (${thisDevice})`)
-        return { success: true, merged: false }
-      }
-      // ROOT-SYNC FIX #3: the same keep-local guards as bootstrap now cover panel,
-      // stale-check, and realtime pulls. A remote row that is "newer" only by
-      // updated_at over an OLDER payload, or a pull racing an unpushed local save,
-      // keeps local and reports the remote as available instead of applying.
-      if (!forceRemote) {
-        const remoteDataTime = parseBackupTimestampMs(remote._lastSavedAt)
-        const keepLocalReason = localTime > remoteDataTime ? 'local-data-newer'
-          : hasPendingLocalSave() ? 'pending-local-save'
-          : null
-        if (keepLocalReason) {
-          console.log(`[Sync] Pull: keeping local tenant cache (${keepLocalReason}; local ${localTime}, remote row ${remoteTime}, remote data ${remoteDataTime})`)
-          dispatchRemoteAvailableEvent(keepLocalReason, 'pull')
-          markTenantDataReady(userId)
-          await hydrateRelationshipAccountsIntoLocalProjection(userId)
-          return { success: true, merged: false, fromDevice: remoteDevice }
-        }
-      }
-      // ROOT-SYNC: merged apply — a remote row with a newer updated_at but older DATA
-      // (the stale-Android-snapshot case) can no longer wipe locally-newer records.
-      // ROOT-SYNC FIX #3: snapshots before apply, keeps local on merge failure.
-      const pullResult = applyRemoteBackupDataSilent(remote, userId, undefined, { snapshotReason: 'Remote pull' })
-      if (!pullResult.applied) {
-        dispatchRemoteAvailableEvent('merge-failed', 'pull')
-        markTenantDataReady(userId)
-        await hydrateRelationshipAccountsIntoLocalProjection(userId)
-        console.warn(`[Sync] Pull: remote apply merge failed — local backup kept, remote treated as available (saved by ${remoteDevice})`)
-        return { success: true, merged: false, fromDevice: remoteDevice }
-      }
-      markTenantDataReady(userId)
-      await hydrateRelationshipAccountsIntoLocalProjection(userId)
-      console.log(`[Sync] Loading remote tenant data (saved by ${remoteDevice})`)
-      return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
-    }
-
-    // Local-newer auto-push was the contamination path. Keep local in memory/cache;
-    // do not push from load. User actions or explicit Save to Cloud will sync.
-    if (localTime > remoteTime) {
-      console.log('[Sync] Local tenant cache is newer — keeping local, not pushing during load')
-      markTenantDataReady(userId)
-      await hydrateRelationshipAccountsIntoLocalProjection(userId)
-      return { success: true, merged: false }
-    }
-
     markTenantDataReady(userId)
     await hydrateRelationshipAccountsIntoLocalProjection(userId)
-    // Local and cloud carry the same stamp — genuinely in sync with the row's writer.
-    // Do NOT rewrite _lastSyncMeta here: nothing was pushed or applied. Overwriting with
-    // the remote device label made the header claim "Synced by Android" on a no-op load.
-    console.log('[Sync] Timestamps match — no sync needed')
-    return { success: true, merged: false }
+    return { success: true, merged: false, fromDevice: remoteDevice }
   } catch (err: any) {
     console.error('[Sync] Supabase load error:', err)
     return { success: false, merged: false, status: 'failed', error: err?.message || 'Unknown error' }
