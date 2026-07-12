@@ -971,9 +971,14 @@ export function applyRemoteBackupDataSilent(
   try {
     const appliedMeta = (data as any)?._syncMeta as { savedBy?: string; savedAt?: string } | undefined
     if (appliedMeta?.savedBy) {
+      // Prefer payload timestamps; fall back to the remote row baseline so the header
+      // never substitutes wall-clock "now" for a missing savedAt (which looked like a
+      // fresh "Synced by Android" event when applying a stale labeled row).
+      const savedAt =
+        String((data as any)?._lastSavedAt || appliedMeta.savedAt || remoteBaseline?.remoteDataLastSavedAt || remoteBaseline?.remoteUpdatedAt || '')
       _lastSyncMeta = {
         savedBy: String(appliedMeta.savedBy),
-        savedAt: String((data as any)?._lastSavedAt || appliedMeta.savedAt || ''),
+        savedAt,
         direction: 'applied',
       }
     }
@@ -3215,7 +3220,8 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     markTenantDataReady(userId)
     await hydrateRelationshipAccountsIntoLocalProjection(userId)
     // Local and cloud carry the same stamp — genuinely in sync with the row's writer.
-    _lastSyncMeta = { savedBy: remoteDevice, savedAt: remote._lastSavedAt || row.updated_at || '', direction: 'applied' }
+    // Do NOT rewrite _lastSyncMeta here: nothing was pushed or applied. Overwriting with
+    // the remote device label made the header claim "Synced by Android" on a no-op load.
     console.log('[Sync] Timestamps match — no sync needed')
     return { success: true, merged: false }
   } catch (err: any) {

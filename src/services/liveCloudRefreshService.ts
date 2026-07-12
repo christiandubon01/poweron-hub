@@ -10,12 +10,19 @@ import {
   applyRemoteBackupDataSilent,
   fetchLatestRemoteBackup,
   getActiveTenantUserId,
+  getBackupData,
   getKnownRemoteBaselineMs,
   hasPendingLocalSave,
   isSupabaseConfigured,
   isTenantDataReady,
   type BackupData,
 } from './backupDataService'
+
+function parseTsMs(value?: string | null): number {
+  if (!value) return 0
+  const t = new Date(value).getTime()
+  return Number.isFinite(t) ? t : 0
+}
 
 export type LiveRefreshSource = 'focus' | 'visibility' | 'online' | 'interval' | 'manual' | 'realtime'
 
@@ -152,6 +159,30 @@ export async function requestRemoteRefresh(options?: {
           dispatchRemoteEvent('poweron-remote-data-available', detail)
         }
         return { ...detailBase, applied: false, reason }
+      }
+
+      // Stale-device guard (matches loadFromSupabase keep-local): a remote row can carry a
+      // fresher updated_at over OLDER payload data (e.g. "Android" label). Never apply that
+      // over locally-newer Blueprint annotations / other unpushed work.
+      if (!forceApply) {
+        const local = getBackupData(userId)
+        const localDataMs = parseTsMs(local?._lastSavedAt)
+        const remoteDataMs = parseTsMs(remote.remoteDataLastSavedAt)
+        if (local && localDataMs > remoteDataMs) {
+          if (_lastNotifiedRemoteKey !== remoteKey) {
+            _lastNotifiedRemoteKey = remoteKey
+            dispatchRemoteEvent('poweron-remote-data-available', {
+              ...detailBase,
+              applied: false,
+              reason: 'local-data-newer',
+            })
+          }
+          console.warn(
+            `[LiveCloudRefresh] Skipping stale remote apply (${source}) — local data newer than remote payload`,
+            { localDataMs, remoteDataMs, remoteFreshnessMs },
+          )
+          return { ...detailBase, applied: false, reason: 'local-data-newer' }
+        }
       }
 
       const applyResult = applyRemoteBackupDataSilent(remote.remoteData as BackupData, userId, {

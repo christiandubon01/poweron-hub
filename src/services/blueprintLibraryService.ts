@@ -736,49 +736,49 @@ export async function saveOperationsBlueprintAnnotations(
 
   const userId = getActiveTenantUserId()
   const localBase = backup || getBackupData()
-
-  const saveLocalOnly = (base: any): SaveBlueprintAnnotationsResult => {
-    const merged = applyAnnotationsToBackup(base, blueprintSetId, sanitized)
-    merged._lastSavedAt = new Date().toISOString()
-    saveBackupData(merged)
-    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
-    try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
-    return {
-      localSaved: true,
-      cloudSynced: false,
-      warning: isLocalDevOrigin()
-        ? 'Annotations saved locally. Localhost cloud sync blocked while remote is newer.'
-        : 'Annotations saved locally. Cloud sync will retry shortly.',
-    }
+  if (!localBase) {
+    return { localSaved: false, cloudSynced: false, error: 'No local backup data available.' }
   }
 
+  // LOCAL-FIRST: write annotations to localStorage BEFORE any remote await.
+  // Otherwise a live/realtime refresh can apply a stale Android-labeled row while the
+  // new annotation exists only in React state — merge cannot preserve what is not in
+  // the backup yet, and loadAnnotations() later wipes the optimistic UI.
+  const localMerged = applyAnnotationsToBackup(localBase, blueprintSetId, sanitized)
+  localMerged._lastSavedAt = new Date().toISOString()
+  saveBackupData(localMerged)
+  try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+  try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+
+  const localOnlyWarning = (detail?: string): SaveBlueprintAnnotationsResult => ({
+    localSaved: true,
+    cloudSynced: false,
+    warning: isLocalDevOrigin()
+      ? (detail
+        ? `Annotations saved locally. Cloud sync blocked: ${detail}`
+        : 'Annotations saved locally. Localhost cloud sync blocked while remote is newer.')
+      : (detail
+        ? `Annotations saved locally. Cloud sync will retry shortly. (${detail})`
+        : 'Annotations saved locally. Cloud sync will retry shortly.'),
+  })
+
   if (!isSupabaseConfigured()) {
-    if (!localBase) {
-      return { localSaved: false, cloudSynced: false, error: 'No local backup data available.' }
-    }
-    const merged = applyAnnotationsToBackup(localBase, blueprintSetId, sanitized)
-    merged._lastSavedAt = new Date().toISOString()
-    saveBackupData(merged)
-    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
-    try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
-    return { localSaved: true, cloudSynced: false }
+    return localOnlyWarning('Supabase not configured')
   }
 
   const remote = await fetchLatestRemoteBackup(userId || undefined)
 
   if (remote.error) {
     console.warn('[Annotations] Remote fetch failed — local-only save', remote.error)
-    if (!localBase) {
-      return { localSaved: false, cloudSynced: false, error: 'No local backup data available.' }
-    }
-    return saveLocalOnly(localBase)
+    return localOnlyWarning(remote.error)
   }
 
+  // Re-read local after the await so concurrent applies/merges are included in the push.
+  const latestLocal = getBackupData() || localMerged
+  const latestList = getOperationsBlueprintAnnotationsRaw(latestLocal, blueprintSetId)
+
   if (!remote.hasRemoteRow || !remote.remoteData) {
-    if (!localBase) {
-      return { localSaved: false, cloudSynced: false, error: 'No local backup data available.' }
-    }
-    const merged = applyAnnotationsToBackup(localBase, blueprintSetId, sanitized)
+    const merged = applyAnnotationsToBackup(latestLocal, blueprintSetId, latestList)
     const result = await saveBackupDataAndSyncNow(merged, 'blueprintSummaries', { source: 'annotations-first-sync', _scopes: [SCOPE] })
     if (result.success) {
       try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
@@ -788,12 +788,12 @@ export async function saveOperationsBlueprintAnnotations(
     return {
       localSaved: true,
       cloudSynced: false,
-      warning: result.error,
+      warning: result.error || 'Annotations saved locally. Cloud sync did not complete.',
       error: result.error,
     }
   }
 
-  const mergedFromRemote = applyAnnotationsToBackup(remote.remoteData, blueprintSetId, sanitized)
+  const mergedFromRemote = applyAnnotationsToBackup(remote.remoteData, blueprintSetId, latestList)
   const result = await saveBackupWithRemoteBaselineSync(
     mergedFromRemote,
     {
@@ -814,13 +814,14 @@ export async function saveOperationsBlueprintAnnotations(
     return {
       localSaved: true,
       cloudSynced: false,
-      warning: result.error,
+      warning: result.error || 'Annotations saved locally. Cloud sync paused because remote is newer.',
     }
   }
 
   return {
-    localSaved: result.localSaved,
+    localSaved: result.localSaved !== false,
     cloudSynced: false,
+    warning: result.error || 'Annotations saved locally. Cloud sync did not complete.',
     error: result.error || 'Failed to sync blueprint annotations.',
   }
 }

@@ -60,6 +60,7 @@ import {
   upsertOperationsBlueprintAnnotation,
 } from '@/services/blueprintLibraryService'
 import { getBackupData } from '@/services/backupDataService'
+import { setDirtyScope } from '@/services/liveCloudRefreshService'
 import { ToolPopover, ColorRow, Stepper, LabeledSelect, ToggleRow } from './ToolPopover'
 import { useAuth } from '@/hooks/useAuth'
 import { useRemoteDataRefresh } from '@/hooks/useRemoteDataRefresh'
@@ -4155,6 +4156,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // live/realtime cloud refresh can't silently overwrite local storage and wipe the
     // just-created annotation while its push is still in flight.
     setHasPendingAnnotationSaves(true)
+    // Register dirty scope synchronously — React state→effect for useRemoteDataRefresh
+    // lags one frame, which left a window where realtime could apply a stale remote row
+    // before local-first persist + hasPendingLocalSave were visible to the guard.
+    setDirtyScope('blueprints', true, 'Blueprint annotation save')
     // BLUEPRINT-6R — synchronous start stamp for the remote-apply reload guard (runs before
     // any state update propagates, so it protects the immediate realtime-refresh race).
     lastAnnotationSaveStartedAtRef.current = Date.now()
@@ -4165,7 +4170,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         const saveResult = await upsertOperationsBlueprintAnnotation(backup, annotation)
         if (saveResult.cloudSynced) {
           clearStaleSyncMessages()
-        } else if (saveResult.localSaved && saveResult.warning) {
+        } else if (saveResult.localSaved) {
+          // Always surface local-only — never silently claim success when cloud push
+          // failed, was blocked, or returned without a warning payload.
           showSyncPausedNoticeOnce()
         } else if (!saveResult.localSaved) {
           throw new Error(saveResult.error || 'Failed to save annotation.')
@@ -4189,9 +4196,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         // optimistic setAllAnnotations updates that the UI had already applied, causing
         // the opacity/color to snap back to the pre-click value mid-sequence.
         if (pendingAnnotationMutationsRef.current === 0) {
-          // BLUEPRINT-6Q/6R — clear the dirty-scope guard and stamp the finish time only after
-          // the whole queue drains (the last save's push has resolved). The finish stamp keeps
-          // the remote-apply reload guard active for a short grace window afterward.
+          // BLUEPRINT-6Q/6R — clear the React dirty flag after the queue drains. Do NOT
+          // call setDirtyScope(false) here: open editors (note/text/draft) may still need
+          // the guard, and useRemoteDataRefresh clears the scope when isDirty is false.
           setHasPendingAnnotationSaves(false)
           lastAnnotationSaveFinishedAtRef.current = Date.now()
           const hadError = annotationSaveErrorRef.current
