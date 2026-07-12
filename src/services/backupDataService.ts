@@ -816,7 +816,11 @@ export function getBackupData(userId = _activeTenantUserId): BackupData | null {
   }
 }
 
-export function saveBackupData(data: BackupData, userId = _activeTenantUserId): void {
+export function saveBackupData(
+  data: BackupData,
+  userId = _activeTenantUserId,
+  options?: { notify?: boolean },
+): void {
   try {
     const owned = userId ? attachTenantOwner(data, userId) : data
     const key = getEffectiveStorageKey(userId)
@@ -837,10 +841,14 @@ export function saveBackupData(data: BackupData, userId = _activeTenantUserId): 
     console.error('[backupDataService] Failed to save:', err)
   }
 
-  try {
-    window.dispatchEvent(new CustomEvent('poweron-data-saved'))
-  } catch {
-    /* ignore */
+  // Callers that need a post-write readback (e.g. blueprint annotations) pass
+  // { notify: false } and dispatch poweron-data-saved only after confirming the write.
+  if (options?.notify !== false) {
+    try {
+      window.dispatchEvent(new CustomEvent('poweron-data-saved'))
+    } catch {
+      /* ignore */
+    }
   }
 
   // Do not mirror tenant data into poweron_v2; that key is browser-global and

@@ -295,6 +295,10 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   // ROOT-SYNC: 'pushed' = this device wrote to the cloud; 'applied' = a remote
   // snapshot (possibly from another device) was loaded into this device.
   const [lastSyncDirection, setLastSyncDirection] = useState<'pushed' | 'applied'>('pushed')
+
+  const formatSyncDeviceName = (savedBy?: string) =>
+    String(savedBy || '').replace(/_/g, ' ').trim()
+
   // Step 13B-QA5-R: last shown sync-conflict message + when, for toast dedupe/throttle.
   const lastSyncConflictRef = useRef<{ message: string; shownAt: number } | null>(null)
   // H3: online/offline state
@@ -374,16 +378,17 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       const meta = getLastSyncMeta()
       if (!meta?.savedBy) return
       if (meta.direction === 'applied') {
-        setSyncStatus(prev => (prev === 'paused' || prev === 'failed' || prev === 'syncing') ? prev : 'synced')
+        // Applied = remote loaded/available — never green "Synced by …".
+        // Leave syncStatus unchanged (paused/failed/syncing/idle/synced-from-real-push).
         if (meta.savedAt) setLastSyncTime(new Date(meta.savedAt).toLocaleTimeString())
-        setLastSyncDevice(meta.savedBy.split('_')[0] || '')
+        setLastSyncDevice(formatSyncDeviceName(meta.savedBy))
         setLastSyncDirection('applied')
         return
       }
       if (meta.direction === 'pushed') {
         setSyncStatus(prev => (prev === 'paused' || prev === 'failed' || prev === 'syncing') ? prev : 'synced')
         if (meta.savedAt) setLastSyncTime(new Date(meta.savedAt).toLocaleTimeString())
-        setLastSyncDevice(meta.savedBy.split('_')[0] || '')
+        setLastSyncDevice(formatSyncDeviceName(meta.savedBy))
         setLastSyncDirection('pushed')
       }
     }, 30000)
@@ -437,7 +442,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       setSyncStatus('synced')
       const detail = (event as CustomEvent<{ savedBy?: string; savedAt?: string }>).detail
       setLastSyncTime(detail?.savedAt ? new Date(detail.savedAt).toLocaleTimeString() : new Date().toLocaleTimeString())
-      if (detail?.savedBy) setLastSyncDevice(detail.savedBy.split('_')[0] || '')
+      if (detail?.savedBy) setLastSyncDevice(formatSyncDeviceName(detail.savedBy))
       setLastSyncDirection('pushed')
       // Only dismiss the toast if it's still showing the exact paused-explanation
       // text we suppressed -- never clobber an unrelated toast that happens to be
@@ -510,7 +515,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         setKpis(getKPIs(data))
       }
       const meta = getLastSyncMeta()
-      if (meta?.savedBy) setLastSyncDevice(meta.savedBy.split('_')[0] || '')
+      if (meta?.savedBy) setLastSyncDevice(formatSyncDeviceName(meta.savedBy))
       if (meta?.savedAt) setLastSyncTime(new Date(meta.savedAt).toLocaleTimeString())
       remoteRefreshDismissTimerRef.current = setTimeout(() => {
         setRemoteRefreshBanner(null)
@@ -1983,13 +1988,17 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                   : 'text-gray-400'
                 }`}>
                   {syncStatus === 'synced' && lastSyncTime
-                    ? (lastSyncDirection === 'applied' && lastSyncDevice
-                      ? `Loaded from ${lastSyncDevice} · ${lastSyncTime}`
-                      : `Synced${lastSyncDevice ? ` by ${lastSyncDevice}` : ''} · ${lastSyncTime}`)
+                    ? (lastSyncDirection === 'pushed'
+                      ? `Synced${lastSyncDevice ? ` by ${lastSyncDevice}` : ''} · ${lastSyncTime}`
+                      : lastSyncDevice
+                        ? `Loaded from ${lastSyncDevice} · ${lastSyncTime}`
+                        : `Saved · ${lastSyncTime}`)
                     : syncStatus === 'syncing' ? 'Pending sync...'
                     : syncStatus === 'failed' ? 'Sync failed — tap to retry'
                     : syncStatus === 'paused' ? `Cloud paused — saved locally ${getRelativeTime(lastSaved)}`
-                    : `Saved ${getRelativeTime(lastSaved)}`}
+                    : lastSyncDirection === 'applied' && lastSyncDevice && lastSyncTime
+                      ? `Loaded from ${lastSyncDevice} · ${lastSyncTime}`
+                      : `Saved ${getRelativeTime(lastSaved)}`}
                 </span>
               </button>
 

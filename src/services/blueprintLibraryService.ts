@@ -735,9 +735,28 @@ export async function saveOperationsBlueprintAnnotations(
   } = await import('@/services/backupDataService')
 
   const userId = getActiveTenantUserId()
-  const localBase = backup || getBackupData()
+  // Prefer latest local backup so a stale caller snapshot cannot overwrite newer local branches.
+  const localBase = getBackupData() || backup
   if (!localBase) {
     return { localSaved: false, cloudSynced: false, error: 'No local backup data available.' }
+  }
+
+  const notifyLocalAnnotationsSaved = () => {
+    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+    try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+  }
+
+  const confirmLocalAnnotationIds = (expected: BlueprintAnnotation[]): boolean => {
+    const readBack = getBackupData()
+    if (!readBack) return false
+    const raw = getOperationsBlueprintAnnotationsRaw(readBack, blueprintSetId)
+    const byId = new Map(raw.map((a) => [a.id, a]))
+    for (const ann of expected) {
+      const id = String(ann?.id || '').trim()
+      if (!id) continue
+      if (!byId.has(id)) return false
+    }
+    return true
   }
 
   // LOCAL-FIRST: write annotations to localStorage BEFORE any remote await.
@@ -746,9 +765,17 @@ export async function saveOperationsBlueprintAnnotations(
   // the backup yet, and loadAnnotations() later wipes the optimistic UI.
   const localMerged = applyAnnotationsToBackup(localBase, blueprintSetId, sanitized)
   localMerged._lastSavedAt = new Date().toISOString()
-  saveBackupData(localMerged)
-  try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
-  try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+  // Suppress notify until readback confirms the annotation ids landed in the correct set.
+  saveBackupData(localMerged, userId || undefined, { notify: false })
+
+  if (!confirmLocalAnnotationIds(sanitized)) {
+    return {
+      localSaved: false,
+      cloudSynced: false,
+      error: 'Local annotation save could not be verified in backup.',
+    }
+  }
+  notifyLocalAnnotationsSaved()
 
   const localOnlyWarning = (detail?: string): SaveBlueprintAnnotationsResult => ({
     localSaved: true,
@@ -770,6 +797,7 @@ export async function saveOperationsBlueprintAnnotations(
 
   if (remote.error) {
     console.warn('[Annotations] Remote fetch failed — local-only save', remote.error)
+    // Local write already confirmed + notified; cloud failure must not force a stale reload.
     return localOnlyWarning(remote.error)
   }
 
@@ -781,8 +809,7 @@ export async function saveOperationsBlueprintAnnotations(
     const merged = applyAnnotationsToBackup(latestLocal, blueprintSetId, latestList)
     const result = await saveBackupDataAndSyncNow(merged, 'blueprintSummaries', { source: 'annotations-first-sync', _scopes: [SCOPE] })
     if (result.success) {
-      try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
-      try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+      notifyLocalAnnotationsSaved()
       return { localSaved: true, cloudSynced: true }
     }
     return {
@@ -804,12 +831,13 @@ export async function saveOperationsBlueprintAnnotations(
   )
 
   if (result.success) {
-    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
-    try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+    notifyLocalAnnotationsSaved()
     return { localSaved: true, cloudSynced: true }
   }
 
   if (result.blocked || result.conflict) {
+    // Local remains valid; do not dispatch a save event that would reload from a
+    // remote-newer blocked path's unmerged snapshot.
     try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
     return {
       localSaved: true,

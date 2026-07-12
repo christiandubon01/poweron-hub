@@ -1903,6 +1903,70 @@ function estimateTextBoxSize(
   }
 }
 
+/** Protect in-flight / just-saved annotations from a stale backup reload. */
+function mergeVisibleAnnotationsWithLocalPending(
+  loadedAnnotations: BlueprintAnnotation[],
+  currentAnnotations: BlueprintAnnotation[],
+): BlueprintAnnotation[] {
+  const parseMs = (value?: string) => {
+    const ms = Date.parse(String(value || ''))
+    return Number.isFinite(ms) ? ms : 0
+  }
+
+  const byId = new Map<string, BlueprintAnnotation>()
+  for (const ann of Array.isArray(loadedAnnotations) ? loadedAnnotations : []) {
+    const id = String(ann?.id || '').trim()
+    if (!id) continue
+    byId.set(id, ann)
+  }
+
+  for (const local of Array.isArray(currentAnnotations) ? currentAnnotations : []) {
+    const id = String(local?.id || '').trim()
+    if (!id) continue
+    const loaded = byId.get(id)
+    if (!loaded) {
+      // Local-only id missing from loaded snapshot — keep it.
+      byId.set(id, local)
+      continue
+    }
+
+    const localUpdatedMs = parseMs(local.updatedAt)
+    const loadedUpdatedMs = parseMs(loaded.updatedAt)
+    const loadedDeletedMs = parseMs((loaded as BlueprintAnnotation & { deletedAt?: string }).deletedAt)
+    // Explicit newer tombstone wins over local live edit.
+    if (loadedDeletedMs > 0 && loadedDeletedMs > localUpdatedMs) {
+      byId.delete(id)
+      continue
+    }
+    // Local/current wins when updatedAt is newer or equal.
+    if (localUpdatedMs >= loadedUpdatedMs) {
+      byId.set(id, local)
+    }
+  }
+
+  const out: BlueprintAnnotation[] = []
+  const seen = new Set<string>()
+  for (const ann of Array.isArray(loadedAnnotations) ? loadedAnnotations : []) {
+    const id = String(ann?.id || '').trim()
+    if (!id || seen.has(id)) continue
+    const winner = byId.get(id)
+    if (!winner) continue
+    if ((winner as BlueprintAnnotation & { deletedAt?: string }).deletedAt) continue
+    out.push(winner)
+    seen.add(id)
+  }
+  for (const local of Array.isArray(currentAnnotations) ? currentAnnotations : []) {
+    const id = String(local?.id || '').trim()
+    if (!id || seen.has(id)) continue
+    const winner = byId.get(id)
+    if (!winner) continue
+    if ((winner as BlueprintAnnotation & { deletedAt?: string }).deletedAt) continue
+    out.push(winner)
+    seen.add(id)
+  }
+  return out
+}
+
 function annotationLabel(annotation: BlueprintAnnotation) {
   if (annotation.type === 'textBox') return 'Insert Text'
   if (annotation.type === 'callout') return 'Callout'
@@ -3047,8 +3111,20 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     try {
       const backup = getBackupData()
       const items = getOperationsBlueprintAnnotations(backup || {}, blueprint.id)
-      const pending = locallyDeletedIdsRef.current
-      setAllAnnotations((Array.isArray(items) ? items : []).filter(item => !pending.has(item.id)))
+      const pendingDeletes = locallyDeletedIdsRef.current
+      let loaded = (Array.isArray(items) ? items : []).filter((item) => !pendingDeletes.has(item.id))
+      // While a save is pending or within the grace window, never replace the in-memory
+      // list with a stale loaded snapshot that is missing locally-created / locally-newer
+      // annotations. Merge by id; local wins on newer-or-equal updatedAt.
+      const now = Date.now()
+      const savePending = pendingAnnotationMutationsRef.current > 0
+      const recentlyStarted = now - lastAnnotationSaveStartedAtRef.current < 10000
+      const recentlyFinished = now - lastAnnotationSaveFinishedAtRef.current < 5000
+      if (savePending || recentlyStarted || recentlyFinished) {
+        loaded = mergeVisibleAnnotationsWithLocalPending(loaded, allAnnotationsRef.current)
+          .filter((item) => !pendingDeletes.has(item.id))
+      }
+      setAllAnnotations(loaded)
     } catch {
       setAllAnnotations([])
     }
