@@ -154,10 +154,26 @@ export async function requestRemoteRefresh(options?: {
         return { ...detailBase, applied: false, reason }
       }
 
-      applyRemoteBackupDataSilent(remote.remoteData as BackupData, userId, {
+      const applyResult = applyRemoteBackupDataSilent(remote.remoteData as BackupData, userId, {
         remoteUpdatedAt: remote.remoteUpdatedAt,
         remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
-      })
+      }, { snapshotReason: `Live refresh (${source})` })
+
+      if (!applyResult.applied) {
+        // ROOT-SYNC FIX #3: the merge could not be proven safe, so local data was
+        // kept and nothing was written — baseline and sync meta did not advance.
+        // Report the remote as available (banner) instead of applied/synced.
+        if (_lastNotifiedRemoteKey !== remoteKey) {
+          _lastNotifiedRemoteKey = remoteKey
+          dispatchRemoteEvent('poweron-remote-data-available', {
+            ...detailBase,
+            applied: false,
+            reason: 'merge-failed',
+          })
+        }
+        console.warn(`[LiveCloudRefresh] Remote apply merge failed (${source}) — local data kept`)
+        return { ...detailBase, applied: false, reason: 'merge-failed' }
+      }
 
       _lastNotifiedRemoteKey = remoteKey
 
