@@ -2089,6 +2089,16 @@ export default function OperationsBlueprintPdfViewer({
   // realtime event fired by our own push (~1-2s after placement) could apply a remote snapshot
   // that predates the new annotation and wipe it off the canvas.
   const [hasPendingAnnotationSaves, setHasPendingAnnotationSaves] = useState(false)
+  // BLUEPRINT-6R — synchronous ref-based guards. State/effect propagation of the dirty
+  // scope is too slow to beat the realtime refresh fired by our own annotation push, so the
+  // remote-apply reload path is gated directly on these refs (updated synchronously inside
+  // persistAnnotation). Timestamps add a short grace window covering the moment right after a
+  // save settles, when a racing remote snapshot can still predate the new annotation.
+  const lastAnnotationSaveStartedAtRef = useRef(0)
+  const lastAnnotationSaveFinishedAtRef = useRef(0)
+  // Set when any queued save in the current batch failed, so the drain does not reload from an
+  // unchanged backup and wipe the optimistic annotation.
+  const annotationSaveErrorRef = useRef(false)
   const pendingScrollResetRef = useRef(false)
   const relativeZoomRef = useRef(1)
   // The relative zoom the CURRENT canvas raster actually represents. Below the
@@ -3213,6 +3223,21 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     label: 'Blueprint viewer',
     isDirty: isBlueprintDirty,
     onRemoteDataApplied: () => {
+      // BLUEPRINT-6R — a live/realtime refresh just OVERWROTE local storage with a remote
+      // snapshot. If an annotation save is in flight or only just settled, that snapshot can
+      // predate the new annotation; reloading from it now would wipe the just-placed
+      // annotation off the canvas. This is the race the dirty-scope guard alone can lose,
+      // because state→effect propagation trails the realtime event from our own push. Keep the
+      // current in-memory annotations and let the next post-settle load reconcile. Scope layers
+      // are not part of this race, so refresh them normally.
+      const now = Date.now()
+      const savePending = pendingAnnotationMutationsRef.current > 0
+      const recentlyStarted = now - lastAnnotationSaveStartedAtRef.current < 10000
+      const recentlyFinished = now - lastAnnotationSaveFinishedAtRef.current < 5000
+      if (savePending || recentlyStarted || recentlyFinished) {
+        loadScopeLayers()
+        return
+      }
       loadAnnotations()
       loadScopeLayers()
     },
@@ -4130,6 +4155,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // live/realtime cloud refresh can't silently overwrite local storage and wipe the
     // just-created annotation while its push is still in flight.
     setHasPendingAnnotationSaves(true)
+    // BLUEPRINT-6R — synchronous start stamp for the remote-apply reload guard (runs before
+    // any state update propagates, so it protects the immediate realtime-refresh race).
+    lastAnnotationSaveStartedAtRef.current = Date.now()
     const op = async () => {
       try {
         const backup = getBackupData()
@@ -4144,10 +4172,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         }
         onAnnotationsChanged?.()
       } catch (e: any) {
+        // BLUEPRINT-6R — record the failure so the drain below does NOT reload from the
+        // unchanged backup and wipe the optimistic annotation the user just placed.
+        annotationSaveErrorRef.current = true
         const msg = e?.message || 'Failed to save annotation.'
         if (isSyncBlockedMessage(msg)) {
           showSyncPausedNoticeOnce()
         } else {
+          console.error('[Blueprint] Annotation save failed — keeping optimistic annotation:', msg)
           setError(msg)
         }
       } finally {
@@ -4157,10 +4189,18 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         // optimistic setAllAnnotations updates that the UI had already applied, causing
         // the opacity/color to snap back to the pre-click value mid-sequence.
         if (pendingAnnotationMutationsRef.current === 0) {
-          // BLUEPRINT-6Q — clear the dirty-scope guard only after the whole queue drains
-          // (the last save's push has resolved and local storage holds the annotation).
+          // BLUEPRINT-6Q/6R — clear the dirty-scope guard and stamp the finish time only after
+          // the whole queue drains (the last save's push has resolved). The finish stamp keeps
+          // the remote-apply reload guard active for a short grace window afterward.
           setHasPendingAnnotationSaves(false)
-          loadAnnotations()
+          lastAnnotationSaveFinishedAtRef.current = Date.now()
+          const hadError = annotationSaveErrorRef.current
+          annotationSaveErrorRef.current = false
+          // Reconcile from the backup only on success. On failure the backup never received the
+          // new annotation, so reloading would silently delete the user's just-placed work.
+          if (!hadError) {
+            loadAnnotations()
+          }
         }
       }
     }
