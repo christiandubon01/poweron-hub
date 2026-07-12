@@ -4407,6 +4407,32 @@ No commit, push, deploy, manual Supabase touch, restore script, or manual localS
 
 ---
 
+### 2026-07-11 — Codex Package Pick Visibility Preservation (IN PROGRESS)
+
+**Agent:** Codex 5.5
+**Branch:** main | NOT committed | NOT pushed
+
+**File lock claimed:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+
+- Auditing canvas render/pick filtering against hidden and isolated work-package state.
+- Fix will preserve package visibility during Package Pick without changing package metadata/editing or persistence paths.
+
+**Completed:**
+- Removed the explicit Package Pick/package-modal bypass that returned `null` from `hiddenAnnotationIdSet` and made hidden annotations render again.
+- Package Pick canvas toggles, annotation-list checkboxes, and modal additions now require `isAnnotationVisibleOnCanvas`; temporary picks are pruned if a hidden/scoped filter makes them invisible while Pick mode is active.
+- Existing package contents and metadata still resolve from `allAnnotations`, preserving edit/remove/count behavior even when those contents are not currently visible on canvas.
+- Added the compact helper text: "Picking visible annotations only."
+- Hidden and isolated state setters/toggles are unchanged and are never cleared by Package Pick.
+
+**Static verification:**
+- `npm.cmd run typecheck` — PASS
+- `npm.cmd run build` — PASS (existing Vite warnings only)
+- `git diff --check` — PASS
+
+**Lock released:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
 ### 2026-07-11 — Codex Blueprint Quick Access Presets (IN PROGRESS)
 
 **Agent:** Codex 5.5
