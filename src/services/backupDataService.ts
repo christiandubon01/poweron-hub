@@ -2130,6 +2130,102 @@ function mergeBlueprintSummariesObject(remoteRaw: any, localRaw: any): Record<st
   return merged
 }
 
+/**
+ * ROOT-SYNC FIX #1 (scoped-save local preservation).
+ *
+ * Scoped saves (project logs, MTO, RFI, change orders, progress, agenda,
+ * weekly recalc, multi-day calls, blueprint annotations/work packages) build
+ * their outgoing payload as `remote snapshot clone + one patched slice` and
+ * hand it to saveBackupWithRemoteBaselineSync. Saving that payload verbatim
+ * to localStorage silently dropped every OTHER local branch that had not
+ * reached the cloud yet (an earlier blocked/failed push, offline edits, a
+ * module whose sync was still in flight) — the app's own save path erased
+ * unpushed local work.
+ *
+ * This merge inverts the base: the CURRENT LOCAL backup is the base and every
+ * local branch survives exactly, while the incoming remote-based blob can only
+ * CONTRIBUTE records:
+ *   • id-bearing array branches (MERGEABLE_ARRAY_KEYS): id merge preferring
+ *     newer updatedAt — local wins ties, newer deletedAt tombstones still win,
+ *     remotely-newer records still apply;
+ *   • blueprintSummaries: the dedicated annotations/scope-layers id+tombstone
+ *     merges (non-id blueprint keys keep the local value);
+ *   • slices excluded from MERGEABLE_ARRAY_KEYS because they carry their own
+ *     merge metadata (weeklyData, multi-day calls, estimate versions,
+ *     agenda/alerts, labor phase colors, project timeline/progress/schedule/
+ *     coordination): folded in with their dedicated LWW/tombstone helpers so a
+ *     scoped change that exists only in the incoming blob (e.g. the Money
+ *     panel weekly recalc, blueprint saves that don't pre-save locally) still
+ *     lands;
+ *   • everything else (settings, calcRefs, projectDashboards, scalars): the
+ *     LOCAL value is kept unconditionally — a remote clone must never replace
+ *     local branches during a scoped save.
+ */
+function mergeScopedIncomingIntoLocal(local: BackupData, incoming: BackupData): BackupData {
+  let merged: BackupData = {
+    ...(local as any),
+    blueprintSummaries: mergeBlueprintSummariesObject(
+      (incoming as any).blueprintSummaries,
+      (local as any).blueprintSummaries,
+    ),
+  }
+  for (const key of MERGEABLE_ARRAY_KEYS) {
+    const incomingVal = (incoming as any)[key]
+    if (!Array.isArray(incomingVal) || incomingVal.length === 0) continue
+    const localVal = Array.isArray((local as any)[key]) ? (local as any)[key] : []
+    ;(merged as any)[key] = mergeArrayBranchPreferNewer(incomingVal, localVal)
+  }
+  // Metadata-aware slices: fold the incoming side in with their own rules.
+  merged = mergeRemoteWeeklyDataIntoOutgoing(merged, incoming)
+  merged = mergeRemoteMultiDayServiceCallsIntoOutgoing(merged, incoming)
+  merged = mergeRemoteEstimateVersionsIntoOutgoing(merged, incoming)
+  merged = mergeRemoteHomeAgendaAlertsIntoOutgoing(merged, incoming)
+  merged = mergeRemoteLaborPhaseColorsIntoOutgoing(merged, incoming)
+  merged = mergeRemoteProjectTimelineIntoOutgoing(merged, incoming)
+  merged = mergeRemoteProjectProgressIntoOutgoing(merged, incoming)
+  merged = mergeRemoteProjectScheduleIntoOutgoing(merged, incoming)
+  merged = mergeRemoteProjectCoordinationIntoOutgoing(merged, incoming)
+  // Blueprint scope layers use a local-wins spread inside
+  // mergeBlueprintSummariesObject; this fold adds the per-item id+tombstone
+  // merge for both annotations and scope layers so an incoming blueprint edit
+  // that was never pre-saved locally still lands. Never throws.
+  merged = mergeRemoteBlueprintSummariesIntoOutgoing(merged, incoming)
+  return merged
+}
+
+/**
+ * Dev-only safety net for the fix above: report when a scoped save's incoming
+ * blob is MISSING id-bearing records that exist locally — i.e. the pre-fix
+ * behavior would have replaced the local cache and dropped them. No-op in
+ * production; never throws; never blocks the save.
+ */
+function warnIfScopedSaveDropsLocalRecords(local: BackupData, incoming: BackupData, source?: string): void {
+  try {
+    if (!import.meta.env.DEV) return
+    const missingByBranch: string[] = []
+    for (const key of MERGEABLE_ARRAY_KEYS) {
+      const localArr = (local as any)[key]
+      if (!Array.isArray(localArr) || localArr.length === 0) continue
+      const incomingArr = Array.isArray((incoming as any)[key]) ? (incoming as any)[key] : []
+      const incomingIds = new Set(
+        incomingArr.map((r: any) => String(r?.id ?? '').trim()).filter(Boolean),
+      )
+      let missing = 0
+      for (const r of localArr) {
+        const id = String(r?.id ?? '').trim()
+        if (id && !incomingIds.has(id)) missing++
+      }
+      if (missing > 0) missingByBranch.push(`${key}:${missing}`)
+    }
+    if (missingByBranch.length > 0) {
+      console.warn(
+        '[Sync] Scoped save payload lacks local records — preserved by local-base merge',
+        { source: source || 'scoped-save', missing: missingByBranch },
+      )
+    }
+  } catch { /* dev-only diagnostics must never affect the save */ }
+}
+
 function mergeLocalChangesIntoRemote(
   remote: BackupData,
   local: BackupData,
@@ -3047,6 +3143,12 @@ export type SaveBackupWithRemoteBaselineResult = SyncToSupabaseResult & {
  * Save a backup built from a freshly fetched remote snapshot + scoped patch.
  * Updates the session remote baseline to the fetched row before guarded sync so
  * the write is treated as continuing from latest remote, not stale local.
+ *
+ * ROOT-SYNC FIX #1: the incoming remote-based blob no longer replaces the
+ * local cache. The current local backup is re-read and used as the merge BASE
+ * (mergeScopedIncomingIntoLocal), so a scoped save can never drop unpushed
+ * local work in other branches. If the cloud push below is then blocked or
+ * fails, localStorage still holds every local branch plus the scoped change.
  */
 export async function saveBackupWithRemoteBaselineSync(
   mergedBackup: BackupData,
@@ -3055,11 +3157,30 @@ export async function saveBackupWithRemoteBaselineSync(
 ): Promise<SaveBackupWithRemoteBaselineResult> {
   setKnownRemoteBaseline(remoteBaseline.remoteUpdatedAt, remoteBaseline.remoteDataLastSavedAt)
 
-  mergedBackup._lastSavedAt = new Date().toISOString()
   const { changedKey, ...syncOnlyOptions } = syncOptions || {}
+
+  let toSave: BackupData = mergedBackup
+  try {
+    const local = getBackupData()
+    if (local) {
+      warnIfScopedSaveDropsLocalRecords(local, mergedBackup, syncOnlyOptions?.source)
+      toSave = mergeScopedIncomingIntoLocal(local, mergedBackup)
+    }
+  } catch (err) {
+    // The preservation merge must never become a loss vector itself. With a
+    // local cache present, keep LOCAL (every scoped caller persists its edit
+    // locally before reaching this path); only fall back to the incoming
+    // remote-based blob when no local cache exists at all.
+    let localFallback: BackupData | null = null
+    try { localFallback = getBackupData() } catch { /* keep incoming */ }
+    toSave = localFallback || mergedBackup
+    console.warn('[Sync] Scoped-save local-preserve merge failed — keeping local cache as-is', err)
+  }
+
+  toSave._lastSavedAt = new Date().toISOString()
   markChanged(changedKey || 'blueprintSummaries')
   _dataChanged = true
-  saveBackupData(mergedBackup)
+  saveBackupData(toSave)
 
   const result = await syncToSupabase(_activeTenantUserId, {
     ...syncOnlyOptions,
