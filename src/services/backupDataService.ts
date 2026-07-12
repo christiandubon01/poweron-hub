@@ -912,19 +912,42 @@ export function updateKnownRemoteBaselineFromRemote(
  * Also records _lastSyncMeta with direction 'applied' so the header reports
  * "Loaded from <device>" instead of the misleading "Synced by <device>".
  */
+export interface ApplyRemoteBackupResult {
+  /** False when nothing was written — the existing local backup was kept. */
+  applied: boolean
+  /** True when the local-preserving merge threw before the write. */
+  mergeFailed: boolean
+}
+
 export function applyRemoteBackupDataSilent(
   data: BackupData,
   userId?: string | null,
   remoteBaseline?: { remoteUpdatedAt?: string | null; remoteDataLastSavedAt?: string | null },
-): void {
+  options?: {
+    /**
+     * ROOT-SYNC FIX #2: behavior when mergeLocalRecordsIntoRemoteSnapshot throws.
+     * 'apply-remote' (default) keeps the legacy raw-remote fallback used by live
+     * refresh / realtime. 'keep-local' — required for login/bootstrap — leaves the
+     * existing local backup untouched instead: a merge that cannot be proven safe
+     * must never turn into a whole-replace of local work.
+     */
+    onMergeFailure?: 'apply-remote' | 'keep-local'
+  },
+): ApplyRemoteBackupResult {
   const uid = userId ?? _activeTenantUserId
   let toSave: BackupData = data
+  let mergeFailed = false
   try {
     const local = getBackupData(uid ?? undefined)
     if (local && data && typeof data === 'object') {
       toSave = mergeLocalRecordsIntoRemoteSnapshot(data, local)
     }
-  } catch {
+  } catch (err) {
+    mergeFailed = true
+    if (options?.onMergeFailure === 'keep-local') {
+      console.error('[Sync] Remote apply merge failed — keeping local backup, remote NOT applied', err)
+      return { applied: false, mergeFailed: true }
+    }
     // Any failure falls back to the raw remote apply — never block the refresh.
     toSave = data
   }
@@ -942,6 +965,21 @@ export function applyRemoteBackupDataSilent(
   if (remoteBaseline) {
     setKnownRemoteBaseline(remoteBaseline.remoteUpdatedAt, remoteBaseline.remoteDataLastSavedAt)
   }
+  return { applied: true, mergeFailed }
+}
+
+/**
+ * ROOT-SYNC FIX #2: when login/bootstrap keeps local data instead of applying a
+ * fresher-looking remote row, surface the existing "cloud data available" banner
+ * (V15rLayout listens for poweron-remote-data-available) instead of silently
+ * swallowing the remote snapshot.
+ */
+function dispatchBootstrapRemoteAvailable(reason: string): void {
+  try {
+    window.dispatchEvent(new CustomEvent('poweron-remote-data-available', {
+      detail: { source: 'bootstrap', applied: false, reason, dirtyScopes: [] },
+    }))
+  } catch { /* window unavailable (SSR/tests) */ }
 }
 
 export function clearBackupData(userId = _activeTenantUserId): void {
@@ -3002,6 +3040,15 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     }
 
     if (!row || !row.data) {
+      // ROOT-SYNC FIX #2: a missing remote row must never erase an existing local
+      // backup — seeding the empty cache is for genuinely fresh tenants only.
+      const existingLocal = getBackupData(userId)
+      if (existingLocal) {
+        console.log('[Sync] No remote data found — existing local backup kept (empty seed skipped)')
+        markTenantDataReady(userId)
+        await hydrateRelationshipAccountsIntoLocalProjection(userId)
+        return { success: true, merged: false }
+      }
       console.log('[Sync] No remote data found — seeding tenant-local empty cache only')
       const empty = attachTenantOwner(createEmptyBackup(), userId)
       saveBackupDataSilent(empty, userId)
@@ -3028,15 +3075,39 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     // has a newer tenant cache than Supabase (e.g. settings saved locally before periodic
     // sync ran), keep local — same rule as the non-bootstrap merge below.
     if (explicitUserId) {
-      if (local && localTime > remoteTime) {
-        console.log(`[Sync] Bootstrap: local tenant cache newer than remote — keeping local (${localTime} > ${remoteTime})`)
+      // ROOT-SYNC FIX #2: also compare against the remote DATA timestamp. A remote row
+      // can carry a fresh updated_at over an OLDER payload (stale-device snapshot);
+      // remoteTime alone (max of both) let that row past the keep-local guard, and the
+      // merged apply then replaced non-array branches (settings, weeklyData, calcRefs,
+      // projectDashboards, …) with stale remote values. Local also wins while unpushed
+      // work exists — unlock/resume re-runs bootstrap mid-session with pending saves.
+      const remoteDataTime = parseBackupTimestampMs(remote._lastSavedAt)
+      const keepLocalReason = !local ? null
+        : localTime > remoteTime ? 'local-newer'
+        : localTime > remoteDataTime ? 'local-data-newer'
+        : hasPendingLocalSave() ? 'pending-local-save'
+        : null
+      if (local && keepLocalReason) {
+        console.log(`[Sync] Bootstrap: keeping local tenant cache (${keepLocalReason}; local ${localTime}, remote row ${remoteTime}, remote data ${remoteDataTime})`)
+        if (remoteTime > localTime) dispatchBootstrapRemoteAvailable(keepLocalReason)
         markTenantDataReady(userId)
         await hydrateRelationshipAccountsIntoLocalProjection(userId)
         return { success: true, merged: false, fromDevice: remoteDevice, status: 'loaded_remote' }
       }
       // ROOT-SYNC: merged apply — locally-newer id-bearing records survive the load
       // instead of being whole-overwritten by the remote snapshot.
-      applyRemoteBackupDataSilent(remote, userId)
+      // ROOT-SYNC FIX #2: snapshot the pre-apply local state first, and never fall
+      // back to a raw remote overwrite if the merge fails — local wins instead and
+      // the remote stays available (banner) rather than applied.
+      if (local) createLocalSafetySnapshot('Bootstrap: before remote apply', userId)
+      const applyResult = applyRemoteBackupDataSilent(remote, userId, undefined, { onMergeFailure: 'keep-local' })
+      if (!applyResult.applied) {
+        dispatchBootstrapRemoteAvailable('merge-failed')
+        markTenantDataReady(userId)
+        await hydrateRelationshipAccountsIntoLocalProjection(userId)
+        console.warn(`[Sync] Bootstrap: remote apply merge failed — local backup kept, remote treated as available (saved by ${remoteDevice})`)
+        return { success: true, merged: false, fromDevice: remoteDevice, status: 'loaded_remote' }
+      }
       markTenantDataReady(userId)
       await hydrateRelationshipAccountsIntoLocalProjection(userId)
       console.log(`[Sync] Bootstrap loaded tenant ${userId} from Supabase (saved by ${remoteDevice})`)
@@ -4080,6 +4151,35 @@ export function createSnapshot(changeSummary: string): DataSnapshot | null {
     return snapshot
   } catch (err) {
     console.error('[Snapshot] Failed to create:', err)
+    return null
+  }
+}
+
+/**
+ * ROOT-SYNC FIX #2: local-only safety snapshot taken right before a login/bootstrap
+ * remote apply touches localStorage. Deliberately does NOT push to Supabase —
+ * bootstrap is read-only against the cloud — and bypasses the auto-snapshot rate
+ * limiter so the pre-apply state is always captured.
+ */
+export function createLocalSafetySnapshot(changeSummary: string, userId = _activeTenantUserId): DataSnapshot | null {
+  try {
+    const backup = getBackupData(userId)
+    if (!backup) return null
+
+    const snapshot: DataSnapshot = {
+      id: `snap_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: Date.now(),
+      device: getDeviceIdForSnapshot(),
+      changeSummary,
+      data: JSON.parse(JSON.stringify(backup)),
+    }
+
+    const snapshots = getSnapshots()
+    snapshots.unshift(snapshot)
+    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshots.slice(0, MAX_SNAPSHOTS)))
+    return snapshot
+  } catch (err) {
+    console.error('[Snapshot] Local safety snapshot failed:', err)
     return null
   }
 }
