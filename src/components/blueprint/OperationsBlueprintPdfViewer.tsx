@@ -4046,9 +4046,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // by scoping it). Never mutates annotation data — it only filters what renders.
   const hiddenAnnotationIdSet = useMemo(() => {
     if (isolatedScopeLayers.length > 0) return null       // scoped view overrides hidden filter
-    // Package Pick and the package modal must use the same view filter as the canvas. Existing
-    // package contents still resolve from allAnnotations below, but hidden annotations never
-    // reappear or become pickable merely because membership editing is active.
+    // "Hide from General View" is a VIEWING filter only — it must never block package EDITING.
+    // While the user is actively building/editing package membership (Package Pick on, or the
+    // create/edit Work Package modal open), suspend the hidden filter so every annotation stays
+    // visible and clickable on the canvas and can be added to / removed from a package. Package
+    // membership data is read from the full annotation source (allAnnotations) elsewhere; this
+    // only restores the ability to SEE and pick those annotations on the plan.
+    if (isPackagePickMode || scopeLayerModal.open) return null
     if (hiddenWorkPackageIds.size === 0) return null
     const ids = new Set<string>()
     scopeLayers.forEach((layer) => {
@@ -4059,7 +4063,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       })
     })
     return ids.size > 0 ? ids : null
-  }, [isolatedScopeLayers.length, hiddenWorkPackageIds, scopeLayers])
+  }, [isolatedScopeLayers.length, isPackagePickMode, scopeLayerModal.open, hiddenWorkPackageIds, scopeLayers])
 
   const canvasPageAnnotations = useMemo(() => {
     // Precedence: scoped/isolate view (show only those ids) → else hide hidden-package ids → else all.
@@ -4095,9 +4099,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // ── Edit/Create Work Package: which Package-Pick selections can still be added ──
   // Source of truth is selectedForPackageIds — the EXACT same set that powers the
   // "Package Pick: N selected" banner. We resolve those ids against the FULL annotation
-  // source (allAnnotations) for metadata, then require each new pick to pass the current canvas
-  // visibility filter. Existing modal/package contents remain available even when hidden. Ids
-  // already in the modal draft are excluded so duplicates are never offered. This single memo drives
+  // source (allAnnotations), never a render-filtered list (canvasPageAnnotations /
+  // hidden-scoped arrays), so hidden or scoped annotations stay addable. Ids already in
+  // the modal draft are excluded so duplicates are never offered. This single memo drives
   // both the "Add selected items" button's enabled state and its click handler, so the
   // banner count and the button can never disagree.
   const addablePickedAnnotationIds = useMemo(() => {
@@ -4110,12 +4114,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       const id = String(raw).trim()
       if (!id) return
       if (!validIds.has(id)) return   // must resolve to a real annotation in the full source
-      if (!isAnnotationVisibleOnCanvas(id)) return // Package Pick adds visible annotations only
       if (draftSet.has(id)) return    // already in this package's draft → skip duplicate
       addable.push(id)
     })
     return addable
-  }, [scopeLayerModal.open, selectedForPackageIds, scopeLayerDraftIds, allAnnotations, isAnnotationVisibleOnCanvas])
+  }, [scopeLayerModal.open, selectedForPackageIds, scopeLayerDraftIds, allAnnotations])
 
   useEffect(() => {
     setSelectedForPackageIds((prev) => {
@@ -4126,51 +4129,39 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     })
   }, [allAnnotations])
 
-  // Package Pick is a visible-canvas operation. If the user enables/changes a hidden or scoped
-  // filter while picking, drop only picks that are no longer visible; package visibility state
-  // and existing saved package membership are untouched.
   useEffect(() => {
-    if (!isPackagePickMode) return
-    setSelectedForPackageIds((prev) => {
-      const next = new Set(Array.from(prev).filter((id) => isAnnotationVisibleOnCanvas(id)))
-      return next.size === prev.size ? prev : next
-    })
-  }, [isPackagePickMode, isAnnotationVisibleOnCanvas])
-
-  useEffect(() => {
-    if (focusedAnnotationId && !isAnnotationVisibleOnCanvas(focusedAnnotationId)) {
+    if (!isolatedAnnotationIdSet) return
+    if (focusedAnnotationId && !isolatedAnnotationIdSet.has(focusedAnnotationId)) {
       setFocusedAnnotationId(null)
       setFocusedAnnotationRect(null)
       setLayoutEditId(null)
       setOpenPopover(null)
       setBarDragOffset(null)
     }
-    if (layoutEditId && !isAnnotationVisibleOnCanvas(layoutEditId)) {
+    if (layoutEditId && !isolatedAnnotationIdSet.has(layoutEditId)) {
       setLayoutEditId(null)
     }
-  }, [isAnnotationVisibleOnCanvas, focusedAnnotationId, layoutEditId])
+  }, [isolatedAnnotationIdSet, focusedAnnotationId, layoutEditId])
 
   const togglePackageSelection = useCallback((annotationId: string, checked: boolean) => {
-    if (checked && !isAnnotationVisibleOnCanvas(annotationId)) return
     setSelectedForPackageIds((prev) => {
       const next = new Set(prev)
       if (checked) next.add(annotationId)
       else next.delete(annotationId)
       return next
     })
-  }, [isAnnotationVisibleOnCanvas])
+  }, [])
 
   // Package Pick canvas toggle — flips a single annotation in/out of the package-pick set.
   // Never mutates annotation geometry; only the local selection set changes.
   const togglePackagePickId = useCallback((annotationId: string) => {
-    if (!isAnnotationVisibleOnCanvas(annotationId)) return
     setSelectedForPackageIds((prev) => {
       const next = new Set(prev)
       if (next.has(annotationId)) next.delete(annotationId)
       else next.add(annotationId)
       return next
     })
-  }, [isAnnotationVisibleOnCanvas])
+  }, [])
 
   const clearPackagePickSelection = useCallback(() => {
     setSelectedForPackageIds(new Set())
@@ -4183,8 +4174,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   // Work Package edit — append the current Package-Pick selection into the draft. Reads the
   // derived addablePickedAnnotationIds (from selectedForPackageIds, resolved against the full
-  // annotation source for metadata and checked against current canvas visibility), preserves every
-  // existing draft item untouched, and appends only visible picks not already in the package.
+  // annotation source) so it never depends on canvas visibility, preserves every existing draft
+  // item untouched, and appends only picks that are not already in the package (no duplicates).
   // Does not close the modal, clear the pick selection, or mutate saved data — Save persists.
   const addPickedItemsToScopeDraft = useCallback(() => {
     if (addablePickedAnnotationIds.length === 0) return
@@ -10518,7 +10509,7 @@ const annotationPanelSizeClass =
                         </button>
                       )}
                       {isPackagePickMode && (
-                        <span className="text-[9px] text-emerald-300/70">Picking visible annotations only · Tap canvas items to add/remove · Left Ctrl or Esc to exit</span>
+                        <span className="text-[9px] text-emerald-300/70">Tap items on the canvas to add/remove · Left Ctrl or Esc to exit</span>
                       )}
                     </div>
                   </div>
@@ -10739,7 +10730,6 @@ const annotationPanelSizeClass =
 
                   const AnnotationRow = ({ a }: { a: BlueprintAnnotation }) => {
                     const isPackageSelected = selectedForPackageIds.has(a.id)
-                    const isVisibleForPick = isAnnotationVisibleOnCanvas(a.id)
                     return (
                       <div
                         key={a.id}
@@ -10754,16 +10744,14 @@ const annotationPanelSizeClass =
                         <input
                           type="checkbox"
                           checked={isPackageSelected}
-                          disabled={!isVisibleForPick}
                           onChange={(e) => togglePackageSelection(a.id, e.currentTarget.checked)}
                           onClick={(e) => e.stopPropagation()}
-                          className="h-4 w-4 flex-shrink-0 cursor-pointer rounded border-gray-500 bg-gray-950 accent-sky-400 disabled:cursor-not-allowed disabled:opacity-35"
-                          title={isVisibleForPick ? 'Add to work package' : 'Hidden by the current work package visibility filter'}
+                          className="h-4 w-4 flex-shrink-0 cursor-pointer rounded border-gray-500 bg-gray-950 accent-sky-400"
+                          title="Add to work package"
                         />
                         <button
                           type="button"
                           onClick={(e) => {
-                            if (isPackagePickMode && !isVisibleForPick) return
                             setFocusedAnnotationId(a.id)
                             setLayoutEditId(null)
                             if (a.type === 'note') { openEditNoteEditor(a); return }
@@ -10796,7 +10784,6 @@ const annotationPanelSizeClass =
                   const GeneratedRow = ({ a }: { a: BlueprintAnnotation }) => {
                     const meta = getAnnotationMeta(a)
                     const isPackageSelected = selectedForPackageIds.has(a.id)
-                    const isVisibleForPick = isAnnotationVisibleOnCanvas(a.id)
                     return (
                       <div
                         className={`mx-2 my-0.5 rounded-md border px-2 py-1.5 text-xs transition-colors ${
@@ -10811,16 +10798,14 @@ const annotationPanelSizeClass =
                           <input
                             type="checkbox"
                             checked={isPackageSelected}
-                            disabled={!isVisibleForPick}
                             onChange={(e) => togglePackageSelection(a.id, e.currentTarget.checked)}
                             onClick={(e) => e.stopPropagation()}
-                            className="mt-0.5 h-4 w-4 flex-shrink-0 cursor-pointer rounded border-gray-500 bg-gray-950 accent-sky-400 disabled:cursor-not-allowed disabled:opacity-35"
-                            title={isVisibleForPick ? 'Add to work package' : 'Hidden by the current work package visibility filter'}
+                            className="mt-0.5 h-4 w-4 flex-shrink-0 cursor-pointer rounded border-gray-500 bg-gray-950 accent-sky-400"
+                            title="Add to work package"
                           />
                           <button
                             className="min-w-0 flex-1 text-left"
                             onClick={(e) => {
-                              if (isPackagePickMode && !isVisibleForPick) return
                               setFocusedAnnotationId(a.id)
                               setLayoutEditId(null)
                               const toolKey = annotationTypeToToolKey(a.type)
