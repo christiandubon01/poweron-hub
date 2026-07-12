@@ -115,6 +115,20 @@ Created 2026-06-19 (file did not previously exist). Read this before touching fi
 
 ---
 
+### 2026-07-11 — Codex Blueprint Left Control Panel Redesign (IN PROGRESS)
+
+**Agent:** Codex 5.5
+**Mode:** IMPLEMENTATION — static verification only
+**Branch:** main | NOT committed | NOT pushed
+
+**File lock claimed:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+
+- Reorganizing the left blueprint toolbar into dedicated navigation and view-control rows.
+- Adding a lightweight, ordered PDF page thumbnail index to the page-number control.
+- Increasing refresh and lower action-button touch targets without changing viewer logic.
+
+---
+
 ### 2026-07-06 — Phase 6R-C UI Hotfix: Field Log Service Call Layout + Adjustment Descriptions (NOT COMMITTED)
 
 **Agent:** Cursor Composer 2.5 Fast
@@ -4368,4 +4382,76 @@ No commit, push, deploy, manual Supabase touch, restore script, or manual localS
 - HUNTER-5G fixed TLMA duplicate city/state geocode address formatting: `buildAddressForGeocoding` in `tlma-scraper/geocoding.ts` now detects an already-embedded state (`", CA"` suffix) and/or city name in the input address and avoids re-appending them, instead normalizing to a single `"street, city, Riverside County, CA"` form. Bare street-name inputs (the pre-existing `tlma-scraper` Edge Function ingestion path) still get city + county + state appended exactly as before — behavior for that path is unchanged.
 - No import/scoring/map/Zone behavior changed.
 - No Supabase data writes were run by the agent (audit/implementation was static-only; user will test manually).
+
+---
+
+### 2026-07-11 — Codex Blueprint Left Control Panel Redesign (COMPLETE, NOT COMMITTED)
+
+**Agent:** Codex 5.5
+**Branch:** main | NOT committed | NOT pushed
+
+**Changed:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+
+- Desktop left control row 1 now contains only previous, next, integrated page index, and add-to-selection controls with larger targets.
+- Row 2 retains zoom, fit, lock, and fullscreen behavior with larger, clearer controls.
+- Added an ordered visual page index whose small PDF canvas thumbnails render lazily as entries approach the scroll viewport; selecting an entry uses the existing current-page navigation path.
+- Enlarged the document refresh target and blueprint action/tool buttons while preserving panel widths and all existing handlers.
+- No save, annotation persistence, work package, measurement, backup, sync, or routing behavior changed.
+
+**Static verification:**
+- `npm.cmd run typecheck` — PASS
+- `npm.cmd run build` — PASS (existing Vite chunk/dynamic-import warnings only)
+- `git diff --check` — PASS
+
+**Lock released:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-07-11 — Codex Blueprint Quick Access Presets (IN PROGRESS)
+
+**Agent:** Codex 5.5
+**Branch:** main | NOT committed | NOT pushed
+
+**File lock claimed:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+
+- Adding 10 local-only configurable tool preset slots below the desktop left toolbar.
+- Presets will apply existing tool/style state only; annotation creation and persistence paths remain unchanged.
+
+**Completed:**
+- Added a 10-slot Quick Access grid below the existing desktop left-side tool buttons, including empty-slot configuration and configured-slot color/icon/label summaries.
+- Added a gear-opened settings modal with all 10 slots, rename, tool/category and variation selection, relevant shape/electrical, pen/marker, highlight/underline, text/callout, and measurement style controls, Save Preset, and Clear Slot.
+- Presets use only `poweron_blueprint_quick_access_presets_v1` in localStorage; no backup, sync, or Supabase path is involved.
+- Applying a preset only updates the viewer's existing active tool and style state for the next placement. It does not create, modify, persist, or delete annotations.
+
+**Static verification:**
+- `npm.cmd run typecheck` — PASS
+- `npm.cmd run build` — PASS (existing Vite warnings only)
+- `git diff --check` — PASS
+
+**Lock released:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
+
+---
+
+### 2026-07-11 — Codex Blueprint Page Index Re-anchor (IN PROGRESS)
+
+**Agent:** Codex 5.5
+**Branch:** main | NOT committed | NOT pushed
+
+**File lock claimed:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx`
+
+- Moving the existing visual page index below the document Page row while retaining its top-row trigger and shared state.
+- Increasing PDF thumbnail preview dimensions by approximately 20%.
+
+**Completed:**
+- The single page index now expands in-flow immediately below the document Page row and can be toggled from either that row or the original top-row index control.
+- Thumbnail render bounds increased from 140x96 to 168x116 pixels (approximately 20%), with taller cards and a single-column scroll list that stays within the resizable left pane.
+- Ordered pages, lazy rendering, close behavior, current-page highlight, and click-to-jump behavior are unchanged.
+- Top row remains previous, next, page index, and add-to-selection only.
+
+**Static verification:**
+- `npm.cmd run typecheck` — PASS
+- `npm.cmd run build` — PASS (existing Vite warnings only)
+- `git diff --check` — PASS
+
+**Lock released:** `src/components/blueprint/OperationsBlueprintPdfViewer.tsx` is free for other agents.
 - Google API key/config may still need an infrastructure-level fix (Google Cloud Console key restrictions/billing) if `REQUEST_DENIED` persists after these changes — this phase only makes that failure diagnosable, it does not and cannot fix the key itself.

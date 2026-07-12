@@ -25,7 +25,6 @@ import {
   Maximize2,
   Minimize2,
   Unlock,
-  Minus,
   MousePointer2,
   Move,
   Pencil,
@@ -33,7 +32,7 @@ import {
   RefreshCw,
   RotateCw,
   Ruler,
-  Search,
+  Settings,
   Shapes,
   Sparkles,
   Square,
@@ -542,6 +541,90 @@ const GENERIC_SHAPE_KIND_OPTIONS: Array<{ label: string; value: ShapeKind }> = [
   { label: 'Cross', value: 'cross' },
   { label: 'Pentagon', value: 'pentagon' },
 ]
+
+const QUICK_ACCESS_STORAGE_KEY = 'poweron_blueprint_quick_access_presets_v1'
+const QUICK_ACCESS_SLOT_COUNT = 10
+type QuickAccessTool = Extract<ToolMode,
+  | 'highlight'
+  | 'textHighlight'
+  | 'underline'
+  | 'textBox'
+  | 'note'
+  | 'callout'
+  | 'pen'
+  | 'marker'
+  | 'shape'
+  | 'measure-distance'
+  | 'measure-area'
+  | 'measure-perimeter'
+>
+type QuickAccessPreset = {
+  id: string
+  label: string
+  toolType: QuickAccessTool
+  toolVariant?: ShapeKind
+  color?: string
+  highlightOpacity?: number
+  underlineThickness?: number
+  drawOptions?: { thickness: number; opacity: number }
+  markerOptions?: { thickness: number; opacity: number }
+  shapeOptions?: {
+    borderColor: string
+    borderThickness: number
+    borderStyle: BorderStyle
+    hatchPattern: HatchPattern
+    fillColor: string
+    fillOpacity: number
+    opacity: number
+  }
+  textStyle?: Record<string, any>
+  measurementStyle?: Record<string, any>
+  createdAt: string
+  updatedAt: string
+}
+
+const QUICK_ACCESS_TOOL_OPTIONS: Array<{ value: QuickAccessTool; label: string }> = [
+  { value: 'shape', label: 'Drawing / Shape / Electrical Symbol' },
+  { value: 'pen', label: 'Pen' },
+  { value: 'marker', label: 'Marker' },
+  { value: 'highlight', label: 'Highlight Area' },
+  { value: 'textHighlight', label: 'Text Highlight' },
+  { value: 'underline', label: 'Underline' },
+  { value: 'textBox', label: 'Text Box' },
+  { value: 'callout', label: 'Callout' },
+  { value: 'note', label: 'Note' },
+  { value: 'measure-distance', label: 'Measure Distance' },
+  { value: 'measure-area', label: 'Measure Area' },
+  { value: 'measure-perimeter', label: 'Measure Perimeter' },
+]
+const QUICK_ACCESS_TOOL_SET = new Set(QUICK_ACCESS_TOOL_OPTIONS.map((option) => option.value))
+
+function loadQuickAccessPresets(): Array<QuickAccessPreset | null> {
+  const empty = Array.from({ length: QUICK_ACCESS_SLOT_COUNT }, () => null as QuickAccessPreset | null)
+  if (typeof window === 'undefined') return empty
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(QUICK_ACCESS_STORAGE_KEY) || '[]')
+    if (!Array.isArray(parsed)) return empty
+    return empty.map((_, index) => {
+      const preset = parsed[index]
+      if (!preset || typeof preset !== 'object' || !QUICK_ACCESS_TOOL_SET.has(preset.toolType)) return null
+      return {
+        ...preset,
+        id: typeof preset.id === 'string' ? preset.id : `quick-access-${index + 1}`,
+        label: typeof preset.label === 'string' && preset.label.trim() ? preset.label.trim() : `Slot ${index + 1}`,
+      } as QuickAccessPreset
+    })
+  } catch {
+    return empty
+  }
+}
+
+function saveQuickAccessPresets(presets: Array<QuickAccessPreset | null>) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(QUICK_ACCESS_STORAGE_KEY, JSON.stringify(presets.slice(0, QUICK_ACCESS_SLOT_COUNT)))
+  } catch { /* local preferences are best-effort */ }
+}
 
 function isSyncBlockedMessage(message: string | null | undefined) {
   if (!message) return false
@@ -2017,6 +2100,100 @@ function handleFullscreenToggle(
   }
 }
 
+function BlueprintPageThumbnail({
+  pdfDoc,
+  pageNumber,
+  isActive,
+  onSelect,
+}: {
+  pdfDoc: any
+  pageNumber: number
+  isActive: boolean
+  onSelect: () => void
+}) {
+  const hostRef = useRef<HTMLButtonElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [shouldRender, setShouldRender] = useState(isActive)
+  const [previewReady, setPreviewReady] = useState(false)
+
+  useEffect(() => {
+    if (shouldRender || !hostRef.current || typeof IntersectionObserver === 'undefined') {
+      setShouldRender(true)
+      return
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShouldRender(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin: '160px' },
+    )
+    observer.observe(hostRef.current)
+    return () => observer.disconnect()
+  }, [shouldRender])
+
+  useEffect(() => {
+    if (!shouldRender || !pdfDoc || !canvasRef.current) return
+    let cancelled = false
+    let renderTask: any = null
+
+    void (async () => {
+      try {
+        const page = await pdfDoc.getPage(pageNumber)
+        if (cancelled || !canvasRef.current) return
+        const baseViewport = page.getViewport({ scale: 1 })
+        const scale = Math.min(168 / baseViewport.width, 116 / baseViewport.height)
+        const viewport = page.getViewport({ scale: Math.max(0.1, scale) })
+        const canvas = canvasRef.current
+        const context = canvas.getContext('2d')
+        if (!context) return
+        canvas.width = Math.max(1, Math.ceil(viewport.width))
+        canvas.height = Math.max(1, Math.ceil(viewport.height))
+        renderTask = page.render({ canvasContext: context, viewport })
+        await renderTask.promise
+        if (!cancelled) setPreviewReady(true)
+      } catch (previewError: any) {
+        if (!cancelled && previewError?.name !== 'RenderingCancelledException') {
+          setPreviewReady(false)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      try { renderTask?.cancel?.() } catch { /* preview already finished */ }
+    }
+  }, [pdfDoc, pageNumber, shouldRender])
+
+  return (
+    <button
+      ref={hostRef}
+      type="button"
+      onClick={onSelect}
+      className={`group flex min-h-[158px] flex-col items-center gap-2.5 rounded-lg border p-2.5 text-left transition-colors ${
+        isActive
+          ? 'border-blue-500 bg-blue-900/30 text-blue-100'
+          : 'border-gray-700 bg-gray-900/50 text-gray-300 hover:border-gray-500 hover:bg-gray-800/70 hover:text-white'
+      }`}
+      aria-current={isActive ? 'page' : undefined}
+      title={`Go to page ${pageNumber}`}
+    >
+      <span className="relative flex h-[116px] w-full items-center justify-center overflow-hidden rounded bg-white/95 shadow-inner">
+        {!previewReady && <Loader2 size={16} className="absolute animate-spin text-gray-500" />}
+        <canvas
+          ref={canvasRef}
+          className={`max-h-[116px] max-w-full transition-opacity ${previewReady ? 'opacity-100' : 'opacity-0'}`}
+          aria-hidden="true"
+        />
+      </span>
+      <span className="text-xs font-semibold tabular-nums">Page {pageNumber}</span>
+    </button>
+  )
+}
+
 export default function OperationsBlueprintPdfViewer({
   blueprint,
   onAnnotationsChanged,
@@ -2178,6 +2355,9 @@ export default function OperationsBlueprintPdfViewer({
   const initialPageRef = useRef(1)
   initialPageRef.current = Math.max(1, Math.floor(Number(initialPage) || 1))
   const [pageInput, setPageInput] = useState('1')
+  const [pageIndexOpen, setPageIndexOpen] = useState(false)
+  const pageIndexRef = useRef<HTMLDivElement>(null)
+  const pageIndexTriggerRef = useRef<HTMLDivElement>(null)
   const [relativeZoom, setRelativeZoom] = useState(1)
   // State mirror of renderedZoomRef so the JSX visualScale recomputes when a
   // freshly committed raster changes what zoom the canvas represents.
@@ -2193,6 +2373,26 @@ export default function OperationsBlueprintPdfViewer({
   // containerReady: true once the scroll area has a non-zero height.
   // Prevents Fit-to-Full-Page from running before the DOM is sized.
   const [containerReady, setContainerReady] = useState(false)
+  useEffect(() => {
+    if (!pageIndexOpen) return
+    const closePageIndex = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node
+      if (!pageIndexRef.current?.contains(target) && !pageIndexTriggerRef.current?.contains(target)) {
+        setPageIndexOpen(false)
+      }
+    }
+    const closePageIndexOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPageIndexOpen(false)
+    }
+    document.addEventListener('mousedown', closePageIndex)
+    document.addEventListener('touchstart', closePageIndex, { passive: true })
+    document.addEventListener('keydown', closePageIndexOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closePageIndex)
+      document.removeEventListener('touchstart', closePageIndex)
+      document.removeEventListener('keydown', closePageIndexOnEscape)
+    }
+  }, [pageIndexOpen])
   const getLoadedPdfDoc = useCallback(() => {
   const doc = pdfDocRef.current || pdfDoc
   return doc && typeof doc.getPage === 'function' ? doc : null
@@ -2714,6 +2914,111 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     opacity: 100, // 10-100 for stepper, % display
   })
   const [generateQuestionType, setGenerateQuestionType] = useState<GenerateQuestionType>('coordination')
+  const [quickAccessPresets, setQuickAccessPresets] = useState<Array<QuickAccessPreset | null>>(loadQuickAccessPresets)
+  const [quickAccessModalSlot, setQuickAccessModalSlot] = useState<number | null>(null)
+  const [quickAccessDraft, setQuickAccessDraft] = useState<QuickAccessPreset | null>(null)
+
+  const buildQuickAccessDraft = (slotIndex: number, preset?: QuickAccessPreset | null): QuickAccessPreset => {
+    if (preset) return JSON.parse(JSON.stringify(preset))
+    const activeTool = QUICK_ACCESS_TOOL_SET.has(toolMode as QuickAccessTool)
+      ? toolMode as QuickAccessTool
+      : 'shape'
+    const now = new Date().toISOString()
+    return {
+      id: `quick-access-${slotIndex + 1}`,
+      label: `Slot ${slotIndex + 1}`,
+      toolType: activeTool,
+      toolVariant: shapeKind,
+      color: toolColors[activeTool as ToolKey] || toolColors.shape,
+      highlightOpacity,
+      underlineThickness,
+      drawOptions: { ...drawOptions },
+      markerOptions: { ...markerOptions },
+      shapeOptions: { ...shapeOptions },
+      textStyle: { ...textStyle },
+      measurementStyle: { ...measurementStyle },
+      createdAt: now,
+      updatedAt: now,
+    }
+  }
+
+  const openQuickAccessSettings = (slotIndex = 0) => {
+    const safeIndex = Math.max(0, Math.min(QUICK_ACCESS_SLOT_COUNT - 1, slotIndex))
+    setQuickAccessModalSlot(safeIndex)
+    setQuickAccessDraft(buildQuickAccessDraft(safeIndex, quickAccessPresets[safeIndex]))
+  }
+
+  const selectQuickAccessSlotForEdit = (slotIndex: number) => {
+    setQuickAccessModalSlot(slotIndex)
+    setQuickAccessDraft(buildQuickAccessDraft(slotIndex, quickAccessPresets[slotIndex]))
+  }
+
+  const persistQuickAccessDraft = () => {
+    if (quickAccessModalSlot == null || !quickAccessDraft) return
+    const now = new Date().toISOString()
+    const nextPreset: QuickAccessPreset = {
+      ...quickAccessDraft,
+      id: quickAccessDraft.id || `quick-access-${quickAccessModalSlot + 1}`,
+      label: quickAccessDraft.label.trim() || `Slot ${quickAccessModalSlot + 1}`,
+      createdAt: quickAccessPresets[quickAccessModalSlot]?.createdAt || quickAccessDraft.createdAt || now,
+      updatedAt: now,
+    }
+    setQuickAccessPresets((previous) => {
+      const next = [...previous]
+      next[quickAccessModalSlot] = nextPreset
+      saveQuickAccessPresets(next)
+      return next
+    })
+    setQuickAccessDraft(nextPreset)
+  }
+
+  const clearQuickAccessSlot = (slotIndex: number) => {
+    setQuickAccessPresets((previous) => {
+      const next = [...previous]
+      next[slotIndex] = null
+      saveQuickAccessPresets(next)
+      return next
+    })
+    if (quickAccessModalSlot === slotIndex) setQuickAccessDraft(buildQuickAccessDraft(slotIndex, null))
+  }
+
+  const applyQuickAccessPreset = (preset: QuickAccessPreset) => {
+    if (!QUICK_ACCESS_TOOL_SET.has(preset.toolType)) return
+    setOpenPopover(null)
+    setToolMode(preset.toolType)
+    setToolbarBucket(
+      preset.toolType === 'shape' || preset.toolType === 'pen' || preset.toolType === 'marker'
+        ? 'draw'
+        : preset.toolType.startsWith('measure-')
+          ? 'measure'
+          : 'annotate'
+    )
+    if (preset.color) setToolColors((previous) => ({ ...previous, [preset.toolType]: preset.color }))
+    if (preset.toolType === 'shape') {
+      if (preset.toolVariant) setShapeKind(preset.toolVariant)
+      if (preset.shapeOptions) setShapeOptions((previous) => ({ ...previous, ...preset.shapeOptions }))
+    }
+    if (preset.toolType === 'pen' && preset.drawOptions) setDrawOptions((previous) => ({ ...previous, ...preset.drawOptions }))
+    if (preset.toolType === 'marker' && preset.markerOptions) setMarkerOptions((previous) => ({ ...previous, ...preset.markerOptions }))
+    if ((preset.toolType === 'highlight' || preset.toolType === 'textHighlight') && Number.isFinite(preset.highlightOpacity)) setHighlightOpacity(preset.highlightOpacity!)
+    if (preset.toolType === 'underline' && Number.isFinite(preset.underlineThickness)) setUnderlineThickness(preset.underlineThickness!)
+    if (preset.toolType === 'textBox' || preset.toolType === 'callout') {
+      if (preset.textStyle) setTextStyle((previous) => ({ ...previous, ...preset.textStyle, ...(preset.color ? { color: preset.color } : {}) }))
+    }
+    if (preset.toolType.startsWith('measure-') && preset.measurementStyle) {
+      setMeasurementStyle((previous) => ({ ...previous, ...preset.measurementStyle, ...(preset.color ? { lineColor: preset.color } : {}) }))
+      if (preset.color) setMeasurementColor(preset.color)
+    }
+  }
+
+  const quickAccessIcon = (preset: QuickAccessPreset) => {
+    if (preset.toolType === 'shape') return isElectricalShapeKind(preset.toolVariant) ? <Circle size={13} /> : <Shapes size={13} />
+    if (preset.toolType.startsWith('measure-')) return <Ruler size={13} />
+    if (preset.toolType === 'pen') return <PenLine size={13} />
+    if (preset.toolType === 'marker' || preset.toolType.toLowerCase().includes('highlight')) return <Highlighter size={13} />
+    if (preset.toolType === 'note') return <StickyNote size={13} />
+    return <Type size={13} />
+  }
 
   const hasStoragePath = !!blueprint?.storagePath?.trim()
   const canRender = !!pdfDoc && numPages > 0
@@ -7535,6 +7840,9 @@ const annotationPanelSizeClass =
           flex-shrink: 0 !important;
           white-space: nowrap;
         }
+        .bv-left-toolbar button {
+          min-height: 2.5rem;
+        }
         /* Step 13B-QA7-R6: fullscreen overlay scroll thumb. Overlay only —
            adds no layout width, so document size never changes and there is
            no hover reflow. Widens on hover/active for an easier grab target. */
@@ -7955,7 +8263,7 @@ const annotationPanelSizeClass =
             } : undefined}
           >
             {useDesktopThreePaneLayout && (
-              <div className="col-start-1 row-start-2 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-3">
+              <div ref={pageIndexRef} className="col-start-1 row-start-2 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-3">
                 {/* Document Title & Info */}
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -7967,18 +8275,68 @@ const annotationPanelSizeClass =
                   </div>
                   <button
                     onClick={() => void loadPdf()}
-                    className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2.5 py-1.5 text-xs text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
+                    className="shrink-0 inline-flex h-10 w-10 items-center justify-center rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
                     title="Refresh PDF link"
+                    aria-label="Refresh PDF link"
                   >
-                    <RefreshCw size={13} />
+                    <RefreshCw size={15} />
                   </button>
                 </div>
 
                 {/* Page & Annotation Info */}
-                <div className="flex items-center justify-between gap-2 rounded-lg border border-gray-700/50 bg-gray-900/40 px-3 py-2">
+                <button
+                  type="button"
+                  disabled={!canRender}
+                  onClick={() => setPageIndexOpen((open) => !open)}
+                  className={`flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-50 ${pageIndexOpen ? 'border-blue-500/60 bg-blue-900/20' : 'border-gray-700/50 bg-gray-900/40 hover:border-gray-600 hover:bg-gray-900/70'}`}
+                  title="Open visual page index"
+                  aria-haspopup="dialog"
+                  aria-expanded={pageIndexOpen}
+                >
                   <span className="text-xs text-gray-400">Page</span>
-                  <span className="text-sm font-semibold text-gray-200">{pageLabel}</span>
-                </div>
+                  <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-200">
+                    {pageLabel}
+                    <ChevronDown size={14} className={pageIndexOpen ? 'rotate-180 text-blue-300 transition-transform' : 'text-gray-500 transition-transform'} />
+                  </span>
+                </button>
+
+                {pageIndexOpen && (
+                  <div
+                    role="dialog"
+                    aria-label="Document page index"
+                    className="rounded-xl border border-gray-700 bg-[#111621] p-3 shadow-xl"
+                  >
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-100">Pages</p>
+                        <p className="text-[11px] text-gray-500">Select a preview to jump</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPageIndexOpen(false)}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white"
+                        aria-label="Close page index"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                    <div className="grid max-h-[min(62vh,560px)] grid-cols-1 gap-3 overflow-y-auto pr-1">
+                      {Array.from({ length: numPages || 0 }, (_, index) => index + 1).map((pageNumber) => (
+                        <BlueprintPageThumbnail
+                          key={pageNumber}
+                          pdfDoc={pdfDocRef.current || pdfDoc}
+                          pageNumber={pageNumber}
+                          isActive={pageNumber === currentPage}
+                          onSelect={() => {
+                            setCurrentPage(pageNumber)
+                            setPageInput(String(pageNumber))
+                            setPageIndexOpen(false)
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Annotation Count & URL Status */}
                 {!!signedUrl && (
@@ -8009,7 +8367,7 @@ const annotationPanelSizeClass =
           <div
             ref={toolbarAreaRef}
             className={useDesktopThreePaneLayout
-              ? 'col-start-1 row-start-3 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2'
+              ? 'bv-left-toolbar col-start-1 row-start-3 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2'
               : 'px-3 sm:px-4 py-1 border-b border-gray-800 space-y-1 flex-shrink-0'}
           >
             {/* â"€â"€â"€â"€ Tablet: Compact single-row segmented bucket selector â"€â"€â"€â"€ */}
@@ -8476,89 +8834,139 @@ const annotationPanelSizeClass =
                 </p>
               </div>
             )}
+
+            {useDesktopThreePaneLayout && (
+              <div className="mt-3 border-t border-gray-800 pt-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-semibold text-gray-100">Quick Access</div>
+                    <div className="text-[10px] text-gray-500">Tool presets for the next placement</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openQuickAccessSettings(quickAccessPresets.findIndex(Boolean) >= 0 ? quickAccessPresets.findIndex(Boolean) : 0)}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-700 text-gray-400 transition-colors hover:border-gray-500 hover:text-white"
+                    title="Quick Access settings"
+                    aria-label="Quick Access settings"
+                  >
+                    <Settings size={15} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {quickAccessPresets.map((preset, index) => (
+                    <button
+                      key={`quick-access-slot-${index + 1}`}
+                      type="button"
+                      onClick={() => preset ? applyQuickAccessPreset(preset) : openQuickAccessSettings(index)}
+                      className={`relative flex min-h-11 min-w-0 items-center gap-2 rounded-md border px-2 py-2 text-left transition-colors ${preset ? 'border-gray-700 bg-gray-900/40 text-gray-200 hover:border-blue-500/60 hover:bg-blue-900/15' : 'border-dashed border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'}`}
+                      title={preset ? `Activate ${preset.label}` : `Configure Slot ${index + 1}`}
+                    >
+                      {preset ? (
+                        <>
+                          <span className="shrink-0 text-gray-400">{quickAccessIcon(preset)}</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[9px] uppercase tracking-wide text-gray-500">Slot {index + 1}</span>
+                            <span className="block truncate text-[11px] font-medium">{preset.label}</span>
+                          </span>
+                          {preset.color && (
+                            <span className="h-3 w-3 shrink-0 rounded-full border border-white/30" style={{ backgroundColor: preset.color }} />
+                          )}
+                        </>
+                      ) : (
+                        <span className="truncate text-[11px]">+ Slot {index + 1}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {useDesktopThreePaneLayout && (
           <div className="col-start-1 row-start-1 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-3">
-            {/* Page Navigation Group */}
+            {/* Row 1: page navigation, visual page index, and page selection only. */}
             <div className="flex items-center gap-2">
-              {/* Prev/Next */}
-              <div className="inline-flex items-center gap-1.5 bg-gray-900/40 rounded-lg border border-gray-700/50 p-1">
-                <button
-                  disabled={!canRender || currentPage <= 1 || isRendering}
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
-                  title="Previous page"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <button
-                  disabled={!canRender || currentPage >= numPages || isRendering}
-                  onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
-                  title="Next page"
-                >
-                  <ChevronRight size={14} />
-                </button>
+              <button
+                disabled={!canRender || currentPage <= 1 || isRendering}
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-gray-700 bg-gray-900/40 text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:opacity-40"
+                title="Previous page"
+                aria-label="Previous page"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <button
+                disabled={!canRender || currentPage >= numPages || isRendering}
+                onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-gray-700 bg-gray-900/40 text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:opacity-40"
+                title="Next page"
+                aria-label="Next page"
+              >
+                <ChevronRight size={18} />
+              </button>
+
+              <div ref={pageIndexTriggerRef} className="min-w-0 flex-1">
+                <div className="flex h-10 items-center rounded-lg border border-gray-700 bg-gray-900/40 focus-within:border-blue-500/70">
+                  <input
+                    value={pageInput}
+                    onChange={(e) => setPageInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { jumpToPage(); setPageIndexOpen(false) } }}
+                    className="min-w-0 w-full bg-transparent px-2 text-center text-sm font-semibold tabular-nums text-gray-100 outline-none"
+                    placeholder="1"
+                    title="Enter page number"
+                    aria-label="Page number"
+                  />
+                  <span className="shrink-0 text-xs text-gray-500">/ {numPages || 1}</span>
+                  <button
+                    type="button"
+                    disabled={!canRender}
+                    onClick={() => setPageIndexOpen((open) => !open)}
+                    className="inline-flex h-full w-9 shrink-0 items-center justify-center rounded-r-lg text-gray-400 transition-colors hover:bg-white/5 hover:text-white disabled:opacity-40"
+                    title="Open visual page index"
+                    aria-label="Open visual page index"
+                    aria-haspopup="dialog"
+                    aria-expanded={pageIndexOpen}
+                  >
+                    <ChevronDown size={16} className={pageIndexOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                  </button>
+                </div>
+
               </div>
 
-              {/* Page Jump Input */}
-              <div className="inline-flex items-center gap-1">
-                <input
-                  value={pageInput}
-                  onChange={(e) => setPageInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') jumpToPage() }}
-                  className="w-12 rounded border border-gray-700 bg-gray-900/40 text-gray-100 text-xs px-2 py-1.5 text-center font-medium"
-                  placeholder="1"
-                  title="Enter page number"
-                />
-                <button
-                  disabled={!canRender}
-                  onClick={jumpToPage}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 disabled:opacity-50 transition-colors"
-                  title="Go to page"
-                >
-                  <Search size={12} />
-                </button>
-              </div>
-
-              {/* Page Counter */}
-              <span className="text-xs text-gray-400">/ {pageLabel.split(' ').pop()}</span>
-
-              {/* Selection & Fit */}
-              <div className="ml-auto inline-flex items-center gap-1.5">
-                <button
-                  disabled={!canRender}
-                  onClick={toggleCurrentPageSelection}
-                  className={`inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border transition-colors ${isCurrentPageSelected ? 'border-amber-500/60 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'}`}
-                  title={isCurrentPageSelected ? 'Remove from selection' : 'Add to selection'}
-                >
-                  <Minus size={12} />
-                </button>
-                <span className="text-xs text-gray-400 min-w-fit">+{selectedPageNumbers.length}</span>
-              </div>
+              <button
+                disabled={!canRender}
+                onClick={toggleCurrentPageSelection}
+                className={`inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-colors ${isCurrentPageSelected ? 'border-amber-500/60 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:border-gray-500 hover:text-white'}`}
+                title={isCurrentPageSelected ? 'Remove from selection' : 'Add to selection'}
+              >
+                {isCurrentPageSelected ? <Check size={14} /> : <span className="text-base leading-none">+</span>}
+                <span>{isCurrentPageSelected ? 'Selected' : 'Add'}</span>
+                <span className="text-[10px] text-gray-500">{selectedPageNumbers.length}</span>
+              </button>
             </div>
 
-            {/* View Controls Group */}
+            {/* Row 2: zoom, fit, lock, and fullscreen only. */}
             <div className="flex items-center gap-2">
               {/* Zoom & View */}
-              <div className="inline-flex items-center gap-1.5 bg-gray-900/40 rounded-lg border border-gray-700/50 p-1">
+              <div className="inline-flex h-11 min-w-0 flex-1 items-center justify-between rounded-lg border border-gray-700/50 bg-gray-900/40 p-1">
                 <button
                   disabled={!canRender || relativeZoom <= MIN_RELATIVE_ZOOM}
                   onClick={() => applyRelativeZoomDelta(-0.1)}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40 transition-colors"
                   title="Zoom out"
+                  aria-label="Zoom out"
                 >
-                  <ZoomOut size={14} />
+                  <ZoomOut size={16} />
                 </button>
-                <span className="text-xs text-gray-400 w-9 text-center font-medium">{Math.round(clampRelativeZoom(relativeZoom) * 100)}%</span>
+                <span className="px-1 text-xs font-semibold tabular-nums text-gray-300">{Math.round(clampRelativeZoom(relativeZoom) * 100)}%</span>
                 <button
                   disabled={!canRender || relativeZoom >= maxRelativeZoom}
                   onClick={() => applyRelativeZoomDelta(0.1)}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40 transition-colors"
                   title="Zoom in"
+                  aria-label="Zoom in"
                 >
-                  <ZoomIn size={14} />
+                  <ZoomIn size={16} />
                 </button>
               </div>
 
@@ -8568,18 +8976,20 @@ const annotationPanelSizeClass =
                   pendingScrollResetRef.current = true
                   setRelativeZoom(1)
                 }}
-                className="inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30 transition-colors"
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-blue-500/60 bg-blue-900/20 text-blue-300 transition-colors hover:border-blue-500 hover:bg-blue-900/30"
                 title="Fit page to view"
+                aria-label="Fit page to view"
               >
-                <ArrowUpRight size={13} />
+                <ArrowUpRight size={16} />
               </button>
 
               <button
                 onClick={() => setLockView((v) => !v)}
-                className={`inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border transition-colors ${lockView ? 'border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'}`}
+                className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border transition-colors ${lockView ? 'border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'}`}
                 title={lockView ? 'Unlock view' : 'Lock view'}
+                aria-label={lockView ? 'Unlock view' : 'Lock view'}
               >
-                {lockView ? <Lock size={14} /> : <Unlock size={14} />}
+                {lockView ? <Lock size={16} /> : <Unlock size={16} />}
               </button>
 
               {/* Fullscreen button: explicit fullscreen toggle.
@@ -8598,11 +9008,11 @@ const annotationPanelSizeClass =
                     setIsTabletImmersiveFullscreen,
                   )
                 }}
-                className={`inline-flex items-center text-xs rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 transition-colors ${useDesktopThreePaneLayout ? 'gap-1.5 px-3 py-2 font-medium' : 'justify-center px-2.5 py-1.5'}`}
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-gray-700 text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
                 title={isFullScreenView || isTabletImmersiveFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+                aria-label={isFullScreenView || isTabletImmersiveFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
               >
-                {isFullScreenView || isTabletImmersiveFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                {useDesktopThreePaneLayout && (isFullScreenView ? 'Exit Full Screen' : 'Full Screen')}
+                {isFullScreenView || isTabletImmersiveFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
               </button>
             </div>
           </div>
@@ -10627,6 +11037,337 @@ const annotationPanelSizeClass =
         >
           {_popoverContent.primary}
         </ToolPopover>
+      )}
+
+      {quickAccessModalSlot != null && quickAccessDraft && createPortal(
+        <div
+          className="fixed inset-0 z-[100060] flex items-center justify-center bg-black/70 p-4"
+          onMouseDown={() => { setQuickAccessModalSlot(null); setQuickAccessDraft(null) }}
+        >
+          <div
+            className="flex max-h-[90dvh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-gray-700 bg-[#111827] shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-100">Quick Access Settings</h3>
+                <p className="mt-0.5 text-xs text-gray-500">Configure local presets for the next blueprint tool placement.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setQuickAccessModalSlot(null); setQuickAccessDraft(null) }}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white"
+                aria-label="Close Quick Access settings"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="grid min-h-0 flex-1 md:grid-cols-[220px_minmax(0,1fr)]">
+              <div className="overflow-y-auto border-b border-gray-800 p-3 md:border-b-0 md:border-r">
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">10 preset slots</div>
+                <div className="grid grid-cols-2 gap-1.5 md:grid-cols-1">
+                  {quickAccessPresets.map((preset, index) => (
+                    <button
+                      key={`quick-access-editor-slot-${index + 1}`}
+                      type="button"
+                      onClick={() => selectQuickAccessSlotForEdit(index)}
+                      className={`flex min-h-10 items-center gap-2 rounded-md border px-2 py-1.5 text-left ${quickAccessModalSlot === index ? 'border-blue-500 bg-blue-900/25 text-blue-100' : 'border-gray-700 text-gray-300 hover:border-gray-500 hover:bg-white/5'}`}
+                    >
+                      <span className="w-5 shrink-0 text-[10px] font-semibold text-gray-500">{index + 1}</span>
+                      <span className="min-w-0 flex-1 truncate text-xs">{preset?.label || `+ Slot ${index + 1}`}</span>
+                      {preset?.color && <span className="h-2.5 w-2.5 shrink-0 rounded-full border border-white/30" style={{ backgroundColor: preset.color }} />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="min-h-0 overflow-y-auto p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-gray-100">Edit Slot {quickAccessModalSlot + 1}</div>
+                  <span className="rounded-full border border-gray-700 bg-gray-900/50 px-2 py-1 text-[10px] text-gray-500">local only</span>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block text-xs text-gray-400 sm:col-span-2">
+                    Preset label
+                    <input
+                      value={quickAccessDraft.label}
+                      onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, label: event.target.value }) : previous)}
+                      className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
+                      placeholder={`Slot ${quickAccessModalSlot + 1}`}
+                    />
+                  </label>
+
+                  <label className="block text-xs text-gray-400 sm:col-span-2">
+                    Tool / category
+                    <select
+                      value={quickAccessDraft.toolType}
+                      onChange={(event) => {
+                        const toolType = event.target.value as QuickAccessTool
+                        setQuickAccessDraft((previous) => previous ? ({
+                          ...previous,
+                          toolType,
+                          color: toolColors[toolType as ToolKey] || previous.color,
+                        }) : previous)
+                      }}
+                      className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
+                    >
+                      {QUICK_ACCESS_TOOL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </label>
+
+                  {quickAccessDraft.toolType === 'shape' && (
+                    <label className="block text-xs text-gray-400 sm:col-span-2">
+                      Shape / electrical symbol variation
+                      <select
+                        value={quickAccessDraft.toolVariant || 'square'}
+                        onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, toolVariant: event.target.value as ShapeKind }) : previous)}
+                        className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
+                      >
+                        <optgroup label="Shapes">
+                          {GENERIC_SHAPE_KIND_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </optgroup>
+                        <optgroup label="Can Lights">
+                          {CAN_LIGHT_TOOL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </optgroup>
+                        <optgroup label="Electrical Symbols">
+                          {ELECTRICAL_SYMBOL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </optgroup>
+                      </select>
+                    </label>
+                  )}
+
+                  <label className="block text-xs text-gray-400">
+                    Primary color
+                    <input
+                      type="color"
+                      value={quickAccessDraft.color || '#facc15'}
+                      onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, color: event.target.value }) : previous)}
+                      className="mt-1 h-10 w-full rounded-md border border-gray-700 bg-gray-950/60 p-1"
+                    />
+                  </label>
+
+                  {quickAccessDraft.toolType === 'shape' && quickAccessDraft.shapeOptions && (
+                    <>
+                      <label className="block text-xs text-gray-400">
+                        Border color
+                        <input type="color" value={quickAccessDraft.shapeOptions.borderColor}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, shapeOptions: { ...previous.shapeOptions!, borderColor: event.target.value } }) : previous)}
+                          className="mt-1 h-10 w-full rounded-md border border-gray-700 bg-gray-950/60 p-1" />
+                      </label>
+                      <label className="block text-xs text-gray-400">
+                        Fill color
+                        <input type="color" value={quickAccessDraft.shapeOptions.fillColor === 'transparent' ? '#111827' : quickAccessDraft.shapeOptions.fillColor}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, shapeOptions: { ...previous.shapeOptions!, fillColor: event.target.value } }) : previous)}
+                          className="mt-1 h-10 w-full rounded-md border border-gray-700 bg-gray-950/60 p-1" />
+                      </label>
+                      <label className="block text-xs text-gray-400">
+                        Border width
+                        <input type="number" min="0.5" max="20" step="0.5" value={quickAccessDraft.shapeOptions.borderThickness}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, shapeOptions: { ...previous.shapeOptions!, borderThickness: Number(event.target.value) } }) : previous)}
+                          className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100" />
+                      </label>
+                      <label className="block text-xs text-gray-400">
+                        Border style
+                        <select value={quickAccessDraft.shapeOptions.borderStyle}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, shapeOptions: { ...previous.shapeOptions!, borderStyle: event.target.value as BorderStyle } }) : previous)}
+                          className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100">
+                          <option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option>
+                        </select>
+                      </label>
+                      <label className="block text-xs text-gray-400">
+                        Fill opacity ({Math.round(quickAccessDraft.shapeOptions.fillOpacity * 100)}%)
+                        <input type="range" min="0" max="1" step="0.05" value={quickAccessDraft.shapeOptions.fillOpacity}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, shapeOptions: { ...previous.shapeOptions!, fillOpacity: Number(event.target.value) } }) : previous)}
+                          className="mt-2 w-full accent-blue-500" />
+                      </label>
+                      <label className="block text-xs text-gray-400">
+                        Hatch
+                        <select value={quickAccessDraft.shapeOptions.hatchPattern}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, shapeOptions: { ...previous.shapeOptions!, hatchPattern: event.target.value as HatchPattern } }) : previous)}
+                          className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100">
+                          <option value="none">None</option><option value="diagonal">Diagonal</option><option value="cross">Cross</option><option value="dots">Dots</option>
+                        </select>
+                      </label>
+                    </>
+                  )}
+
+                  {(quickAccessDraft.toolType === 'pen' || quickAccessDraft.toolType === 'marker') && (
+                    <>
+                      <label className="block text-xs text-gray-400">
+                        Line width
+                        <input type="number" min="1" max="40" step="1"
+                          value={quickAccessDraft.toolType === 'pen' ? quickAccessDraft.drawOptions?.thickness : quickAccessDraft.markerOptions?.thickness}
+                          onChange={(event) => {
+                            const thickness = Number(event.target.value)
+                            setQuickAccessDraft((previous) => !previous ? previous : previous.toolType === 'pen'
+                              ? ({ ...previous, drawOptions: { ...(previous.drawOptions || drawOptions), thickness } })
+                              : ({ ...previous, markerOptions: { ...(previous.markerOptions || markerOptions), thickness } }))
+                          }}
+                          className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100" />
+                      </label>
+                      <label className="block text-xs text-gray-400">
+                        Opacity
+                        <input type="range" min="0.1" max="1" step="0.05"
+                          value={quickAccessDraft.toolType === 'pen' ? quickAccessDraft.drawOptions?.opacity : quickAccessDraft.markerOptions?.opacity}
+                          onChange={(event) => {
+                            const opacity = Number(event.target.value)
+                            setQuickAccessDraft((previous) => !previous ? previous : previous.toolType === 'pen'
+                              ? ({ ...previous, drawOptions: { ...(previous.drawOptions || drawOptions), opacity } })
+                              : ({ ...previous, markerOptions: { ...(previous.markerOptions || markerOptions), opacity } }))
+                          }}
+                          className="mt-2 w-full accent-blue-500" />
+                      </label>
+                    </>
+                  )}
+
+                  {(quickAccessDraft.toolType === 'highlight' || quickAccessDraft.toolType === 'textHighlight') && (
+                    <label className="block text-xs text-gray-400 sm:col-span-2">
+                      Highlight opacity ({quickAccessDraft.highlightOpacity ?? 35}%)
+                      <input type="range" min="10" max="100" step="5" value={quickAccessDraft.highlightOpacity ?? 35}
+                        onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, highlightOpacity: Number(event.target.value) }) : previous)}
+                        className="mt-2 w-full accent-yellow-400" />
+                    </label>
+                  )}
+
+                  {quickAccessDraft.toolType === 'underline' && (
+                    <label className="block text-xs text-gray-400 sm:col-span-2">
+                      Underline width
+                      <input type="number" min="1" max="12" step="1" value={quickAccessDraft.underlineThickness ?? 2}
+                        onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, underlineThickness: Number(event.target.value) }) : previous)}
+                        className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100" />
+                    </label>
+                  )}
+
+                  {(quickAccessDraft.toolType === 'textBox' || quickAccessDraft.toolType === 'callout') && quickAccessDraft.textStyle && (
+                    <>
+                      <label className="block text-xs text-gray-400">
+                        Font
+                        <select value={quickAccessDraft.textStyle.fontFamily || 'Helvetica'}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, textStyle: { ...previous.textStyle, fontFamily: event.target.value } }) : previous)}
+                          className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100">
+                          <option value="Helvetica">Helvetica</option><option value="Arial">Arial</option><option value="Times New Roman">Times New Roman</option><option value="Courier New">Courier New</option>
+                        </select>
+                      </label>
+                      <label className="block text-xs text-gray-400">
+                        Font size
+                        <input type="number" min="6" max="144" step="1" value={quickAccessDraft.textStyle.fontSize || 14}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, textStyle: { ...previous.textStyle, fontSize: Number(event.target.value) } }) : previous)}
+                          className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100" />
+                      </label>
+                      <label className="block text-xs text-gray-400">
+                        Box fill
+                        <input type="color" value={quickAccessDraft.textStyle.boxFill === 'transparent' ? '#ffffff' : (quickAccessDraft.textStyle.boxFill || '#ffffff')}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, textStyle: { ...previous.textStyle, boxFill: event.target.value } }) : previous)}
+                          className="mt-1 h-10 w-full rounded-md border border-gray-700 bg-gray-950/60 p-1" />
+                      </label>
+                      <label className="block text-xs text-gray-400">
+                        Border width
+                        <input type="number" min="0" max="20" step="0.5" value={quickAccessDraft.textStyle.borderWidth ?? 1}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, textStyle: { ...previous.textStyle, borderWidth: Number(event.target.value) } }) : previous)}
+                          className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100" />
+                      </label>
+                      <label className="block text-xs text-gray-400 sm:col-span-2">
+                        Alignment
+                        <select value={quickAccessDraft.textStyle.align || 'left'}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, textStyle: { ...previous.textStyle, align: event.target.value } }) : previous)}
+                          className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100">
+                          <option value="left">Left</option><option value="center">Center</option><option value="right">Right</option>
+                        </select>
+                      </label>
+                      <label className="flex items-center gap-2 rounded-md border border-gray-700 px-3 py-2 text-xs text-gray-300">
+                        <input type="checkbox" checked={!!quickAccessDraft.textStyle.bold}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, textStyle: { ...previous.textStyle, bold: event.target.checked } }) : previous)} /> Bold
+                      </label>
+                      <label className="flex items-center gap-2 rounded-md border border-gray-700 px-3 py-2 text-xs text-gray-300">
+                        <input type="checkbox" checked={!!quickAccessDraft.textStyle.italic}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, textStyle: { ...previous.textStyle, italic: event.target.checked } }) : previous)} /> Italic
+                      </label>
+                    </>
+                  )}
+
+                  {quickAccessDraft.toolType.startsWith('measure-') && quickAccessDraft.measurementStyle && (
+                    <>
+                      <label className="block text-xs text-gray-400">
+                        Line width
+                        <input type="number" min="1" max="12" step="0.5" value={quickAccessDraft.measurementStyle.lineThickness || 2}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, measurementStyle: { ...previous.measurementStyle, lineThickness: Number(event.target.value) } }) : previous)}
+                          className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100" />
+                      </label>
+                      <label className="block text-xs text-gray-400">
+                        Line pattern
+                        <select value={quickAccessDraft.measurementStyle.linePattern || 'solid'}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, measurementStyle: { ...previous.measurementStyle, linePattern: event.target.value } }) : previous)}
+                          className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100">
+                          <option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option><option value="dash-dot">Dash-dot</option><option value="long-dash">Long dash</option>
+                        </select>
+                      </label>
+                      <label className="block text-xs text-gray-400">
+                        Endpoint style
+                        <select value={quickAccessDraft.measurementStyle.endpointStyle || 'dot'}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, measurementStyle: { ...previous.measurementStyle, endpointStyle: event.target.value } }) : previous)}
+                          className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100">
+                          <option value="dot">Dot</option><option value="arrow">Arrow</option><option value="bar">Bar</option><option value="none">None</option>
+                        </select>
+                      </label>
+                      <label className="block text-xs text-gray-400">
+                        Text size
+                        <input type="number" min="8" max="48" step="1" value={quickAccessDraft.measurementStyle.textSize || 12}
+                          onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, measurementStyle: { ...previous.measurementStyle, textSize: Number(event.target.value) } }) : previous)}
+                          className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100" />
+                      </label>
+                      {quickAccessDraft.toolType === 'measure-area' && (
+                        <>
+                          <label className="block text-xs text-gray-400">
+                            Area fill color
+                            <input type="color" value={quickAccessDraft.measurementStyle.fillColor || '#38bdf8'}
+                              onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, measurementStyle: { ...previous.measurementStyle, fillColor: event.target.value } }) : previous)}
+                              className="mt-1 h-10 w-full rounded-md border border-gray-700 bg-gray-950/60 p-1" />
+                          </label>
+                          <label className="block text-xs text-gray-400">
+                            Fill opacity ({Math.round((quickAccessDraft.measurementStyle.fillOpacity ?? 0.15) * 100)}%)
+                            <input type="range" min="0" max="1" step="0.05" value={quickAccessDraft.measurementStyle.fillOpacity ?? 0.15}
+                              onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, measurementStyle: { ...previous.measurementStyle, fillOpacity: Number(event.target.value) } }) : previous)}
+                              className="mt-2 w-full accent-blue-500" />
+                          </label>
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-gray-800 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => clearQuickAccessSlot(quickAccessModalSlot)}
+                    disabled={!quickAccessPresets[quickAccessModalSlot]}
+                    className="rounded-md border border-red-900/60 px-3 py-2 text-xs font-medium text-red-300 hover:bg-red-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Clear Slot
+                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setQuickAccessModalSlot(null); setQuickAccessDraft(null) }}
+                      className="rounded-md border border-gray-700 px-3 py-2 text-xs text-gray-300 hover:bg-white/5"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={persistQuickAccessDraft}
+                      className="rounded-md bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-500"
+                    >
+                      Save Preset
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>,
+        viewerPortalTarget
       )}
 
       {scopeLayerModal.open && createPortal(
