@@ -2,13 +2,8 @@
  * liveCloudRefreshService.ts — Phase 6T
  *
  * Dirty-safe live remote refresh: detect newer cloud app_state on focus,
- * visibility, online, and a light interval.
- *
- * EMERGENCY CONTAINMENT (2026-07-12): automatic sources (focus / visibility /
- * online / interval / realtime) MUST NOT apply remote backup into localStorage.
- * They may only detect that remote data is available and notify the UI.
- * Explicit manual forceApply (user confirmed "Refresh now") remains the only
- * path that may write remote into local state.
+ * visibility, online, and a light interval; apply through the shared
+ * record-preserving merge when no local save or dirty editor is active.
  */
 
 import {
@@ -16,6 +11,7 @@ import {
   fetchLatestRemoteBackup,
   getActiveTenantUserId,
   getKnownRemoteBaselineMs,
+  hasPendingLocalSave,
   isSupabaseConfigured,
   isTenantDataReady,
   type BackupData,
@@ -34,15 +30,6 @@ export interface RemoteRefreshEventDetail {
 
 const REFRESH_INTERVAL_MS = 60_000
 const MIN_CHECK_INTERVAL_MS = 5_000
-
-/** Sources that must never auto-write remote into localStorage. */
-const AUTOMATIC_SOURCES = new Set<LiveRefreshSource>([
-  'focus',
-  'visibility',
-  'online',
-  'interval',
-  'realtime',
-])
 
 const dirtyScopes = new Map<string, { label?: string }>()
 
@@ -71,6 +58,19 @@ function remoteFreshnessKey(remoteUpdatedAt: string | null, remoteDataLastSavedA
 function dispatchRemoteEvent(name: string, detail: RemoteRefreshEventDetail): void {
   try {
     window.dispatchEvent(new CustomEvent(name, { detail }))
+  } catch {
+    /* ignore SSR */
+  }
+}
+
+function dispatchSyncError(
+  detailBase: Omit<RemoteRefreshEventDetail, 'applied'>,
+  error: string,
+): void {
+  try {
+    window.dispatchEvent(new CustomEvent('poweron:sync-error', {
+      detail: { ...detailBase, applied: false, reason: 'merge-failed', error },
+    }))
   } catch {
     /* ignore SSR */
   }
@@ -155,6 +155,7 @@ export async function requestRemoteRefresh(options?: {
       if (remoteFreshnessMs <= knownBaselineMs) return null
 
       const dirtyScopeIds = getDirtyScopes()
+      const pendingLocalSave = hasPendingLocalSave()
       const detailBase: Omit<RemoteRefreshEventDetail, 'applied'> = {
         source,
         remoteUpdatedAt: remote.remoteUpdatedAt,
@@ -164,13 +165,13 @@ export async function requestRemoteRefresh(options?: {
 
       const remoteKey = remoteFreshnessKey(remote.remoteUpdatedAt, remote.remoteDataLastSavedAt)
 
-      // EMERGENCY CONTAINMENT: never auto-apply. Detect + notify only.
-      // Manual forceApply (user confirmed Refresh now) is the sole write path.
-      if (!forceApply || AUTOMATIC_SOURCES.has(source)) {
-        console.warn(
-          `[LiveCloudRefresh] Auto-apply contained (${source}) — remote available, local backup untouched`,
-        )
-        return notifyRemoteAvailable(detailBase, remoteKey, 'auto-apply-contained')
+      // Never apply while a local save is pending, including a manual refresh.
+      // Automatic refreshes also defer while an editor has unsaved in-memory work.
+      if (pendingLocalSave) {
+        return notifyRemoteAvailable(detailBase, remoteKey, 'pending-local-save')
+      }
+      if (!forceApply && dirtyScopeIds.length > 0) {
+        return notifyRemoteAvailable(detailBase, remoteKey, 'dirty-scopes')
       }
 
       const applyResult = applyRemoteBackupDataSilent(remote.remoteData as BackupData, userId, {
@@ -179,8 +180,11 @@ export async function requestRemoteRefresh(options?: {
       }, { snapshotReason: `Live refresh (${source})` })
 
       if (!applyResult.applied) {
-        console.warn(`[LiveCloudRefresh] Manual remote apply merge failed (${source}) — local data kept`)
-        return notifyRemoteAvailable(detailBase, remoteKey, 'merge-failed')
+        const error = 'Remote update could not be merged safely. Local data was kept.'
+        console.error(`[LiveCloudRefresh] Remote apply merge failed (${source}) — local data kept`)
+        const detail = notifyRemoteAvailable(detailBase, remoteKey, 'merge-failed')
+        dispatchSyncError(detailBase, error)
+        return detail
       }
 
       _lastNotifiedRemoteKey = remoteKey
@@ -193,9 +197,16 @@ export async function requestRemoteRefresh(options?: {
       }
 
       dispatchRemoteEvent('poweron-remote-data-refreshed', detail)
+      try {
+        window.dispatchEvent(new CustomEvent('poweron-data-saved', {
+          detail: { source: 'remote-refresh' },
+        }))
+      } catch {
+        /* ignore SSR */
+      }
       // Do NOT dispatch poweron:sync-success — apply is "loaded", not "synced by this device".
 
-      console.log(`[LiveCloudRefresh] Applied remote data (${source}) — manual forceApply only`)
+      console.log(`[LiveCloudRefresh] Applied remote data (${source})`)
       return detail
     } catch (err) {
       console.warn('[LiveCloudRefresh] Refresh check failed:', err)
@@ -232,7 +243,7 @@ export function startLiveCloudRefresh(): () => void {
     scheduleRefresh('interval')
   }, REFRESH_INTERVAL_MS)
 
-  console.log('[LiveCloudRefresh] Started (auto-apply contained)')
+  console.log('[LiveCloudRefresh] Started')
   return () => stopLiveCloudRefresh()
 }
 

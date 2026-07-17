@@ -48,7 +48,7 @@ import { useAuthStore } from '@/store/authStore'
 import { getBackupData, saveBackupData, getKPIs, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, saveLiveDataVerified, getLastSyncMeta, createEmptyBackup, isActiveProject, resolveProjectBucket, type BackupData } from '@/services/backupDataService'
 // BUG 1 FIX — Realtime sync + stale-check service
 import { initRealtimeSync } from '@/services/realtimeSyncService'
-import { startLiveCloudRefresh, requestRemoteRefresh } from '@/services/liveCloudRefreshService'
+import { startLiveCloudRefresh } from '@/services/liveCloudRefreshService'
 // BUG 2 FIX — Active-only pipeline formula
 import { calcActivePipeline } from '@/utils/pipelineCalc'
 import { useDemoStore } from '@/store/demoStore'
@@ -105,7 +105,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const { isDemoMode, hasHydrated } = useDemoStore()
   const [currentTime, setCurrentTime] = useState<string>('')
   const [toastMessage, setToastMessage] = useState<string | null>(null)
-  const [remoteRefreshBanner, setRemoteRefreshBanner] = useState<'applied' | 'available' | null>(null)
+  const [remoteRefreshBanner, setRemoteRefreshBanner] = useState<'applied' | null>(null)
   const remoteRefreshDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1920)
   const [blueprintImmersive, setBlueprintImmersive] = useState(false)
@@ -286,10 +286,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     if (!previewAllowedViews) return items
     return items.filter(item => previewAllowedViews.has(item.view))
   }
-  // 'paused' = the stale-overwrite safety guard blocked a sync (remote data is newer /
-  // freshness unverified) -- a working safety feature, not a network/auth failure.
-  // 'failed' is reserved for genuine sync errors (network, auth, unknown Supabase error).
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed' | 'paused'>('idle')
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed'>('idle')
   const [localSaveFailed, setLocalSaveFailed] = useState<string | null>(null)
   const [showSaveFailedModal, setShowSaveFailedModal] = useState(false)
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
@@ -299,10 +296,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const [lastSyncDirection, setLastSyncDirection] = useState<'pushed' | 'applied'>('pushed')
 
   const formatSyncDeviceName = (savedBy?: string) =>
-    String(savedBy || '').replace(/_/g, ' ').trim()
-
-  // Step 13B-QA5-R: last shown sync-conflict message + when, for toast dedupe/throttle.
-  const lastSyncConflictRef = useRef<{ message: string; shownAt: number } | null>(null)
+    String(savedBy || '').split('_')[0].trim()
   // H3: online/offline state
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true)
   // Session 14: offline queue count from service worker
@@ -337,9 +331,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
     // Listen for same-tab saves dispatched by saveBackupData (e.g. status changes, deletions)
     // so the pipeline KPI in the header updates in real time without a page reload.
-    const handleDataSaved = () => {
-      setLocalSaveFailed(null)
-      setShowSaveFailedModal(false)
+    const handleDataSaved = (event: Event) => {
+      const detail = (event as CustomEvent<{ source?: string }>).detail
+      if (detail?.source !== 'remote-refresh') {
+        setLocalSaveFailed(null)
+        setShowSaveFailedModal(false)
+      }
       refresh()
     }
     const handleStorageWriteFailed = (event: Event) => {
@@ -385,23 +382,18 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     const stopSync = startPeriodicSync()
 
     // Status polling — UI only, no Supabase push.
-    // EMERGENCY CONTAINMENT: never promote another device's "applied" meta into a green
-    // "Synced by <device>" claim. Only this device's successful push counts as synced.
-    // Applied (loaded) meta must not overwrite an active paused state from containment.
     const interval = setInterval(() => {
       const meta = getLastSyncMeta()
       if (!meta?.savedBy) return
       if (meta.direction === 'applied') {
-        // Applied = remote loaded/available — never green "Synced by …".
-        // Leave syncStatus unchanged (paused/failed/syncing/idle/synced-from-real-push).
-        if (meta.savedAt) setLastSyncTime(new Date(meta.savedAt).toLocaleTimeString())
+        setLastSyncTime(meta.savedAt ? new Date(meta.savedAt).toLocaleTimeString() : '')
         setLastSyncDevice(formatSyncDeviceName(meta.savedBy))
         setLastSyncDirection('applied')
         return
       }
       if (meta.direction === 'pushed') {
-        setSyncStatus(prev => (prev === 'paused' || prev === 'failed' || prev === 'syncing') ? prev : 'synced')
-        if (meta.savedAt) setLastSyncTime(new Date(meta.savedAt).toLocaleTimeString())
+        setSyncStatus(prev => (prev === 'failed' || prev === 'syncing') ? prev : 'synced')
+        setLastSyncTime(meta.savedAt ? new Date(meta.savedAt).toLocaleTimeString() : '')
         setLastSyncDevice(formatSyncDeviceName(meta.savedBy))
         setLastSyncDirection('pushed')
       }
@@ -410,73 +402,26 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     return () => { stopSync(); clearInterval(interval) }
   }, [authStatus, tenantDataReady, tenantUserId, authUser?.id])
 
-  // S3 — surface stale-overwrite sync conflicts in header status/toast
-  // Step 13B-QA5-R: dedupe/throttle so the same unresolved conflict doesn't
-  // re-toast on every periodic sync retry (was popping up every ~13s while
-  // remote stayed newer). Save safety guards themselves are unchanged — this
-  // only affects how often the identical warning is re-shown to the user.
+  // Surface real cloud sync outcomes in the header.
   useEffect(() => {
-    const SYNC_CONFLICT_SUPPRESS_MS = 20 * 60 * 1000 // 20 minutes
-    // Step 13B-QA5-R4: the quiet, once-per-conflict explanation shown to the user.
-    // dispatchSyncConflict only ever fires from the stale-overwrite safety guard
-    // (remote-newer / no-verified-baseline / freshness-unknown) -- it is never used
-    // for a real network/auth sync failure -- so one calm, generic explanation
-    // covers all of its call sites without needing to parse the raw guard message.
-    const SYNC_PAUSED_TOAST_MSG = 'Cloud sync is paused because newer remote data exists. Reload latest before cloud syncing.'
-    const handleSyncConflict = (event: Event) => {
-      const detail = (event as CustomEvent<{ error?: string; source?: string; conflictCode?: 'remote-newer' | 'no-baseline' | 'unknown' }>).detail
-      const message = detail?.error || 'Cloud sync blocked — remote data is newer'
-      // Phase 4: the Phase 2 stale-overwrite guard now blocks in production AND
-      // localhost, so background/periodic production blocks legitimately dispatch
-      // this event. The old localhost-only early-return (which assumed a production
-      // merge would silently retry) hid those blocks from the user. Surface the
-      // paused state in both environments now — no production merge exists anymore.
-      // Step 13B-QA5-R4 Part 1: dispatchSyncConflict now tags every event with a
-      // reliable conflictCode ('remote-newer' | 'no-baseline' | 'unknown') instead of
-      // relying on message-string matching. All three codes originate from the same
-      // stale-overwrite safety guard (never a network/auth failure), so all three get
-      // the calm 'paused' treatment -- the code is kept in the payload for any future
-      // listener that wants to react differently, but every branch here is identical
-      // today by design.
-      setSyncStatus('paused')
-      const prev = lastSyncConflictRef.current
-      const isDuplicate = !!prev && prev.message === message && (Date.now() - prev.shownAt) < SYNC_CONFLICT_SUPPRESS_MS
-      if (isDuplicate) return
-      lastSyncConflictRef.current = { message, shownAt: Date.now() }
-      setToastMessage(SYNC_PAUSED_TOAST_MSG)
+    const handleSyncErrorEvent = (event: Event) => {
+      const detail = (event as CustomEvent<{ error?: string; source?: string }>).detail
+      setSyncStatus('failed')
+      setToastMessage(detail?.error || 'Cloud sync failed')
       setTimeout(() => setToastMessage(null), 6000)
     }
-    // Step 13B-QA5-R3: a real cloud sync succeeding must immediately clear any
-    // stale "failed"/"blocked" header status and its toast -- previously this
-    // listener only cleared the dedupe ref, leaving syncStatus stuck on 'failed'
-    // until the unrelated 30s status-poll interval happened to catch up.
     const handleSyncSuccessEvent = (event: Event) => {
-      const wasConflicted = !!lastSyncConflictRef.current
-      lastSyncConflictRef.current = null
       setSyncStatus('synced')
       const detail = (event as CustomEvent<{ savedBy?: string; savedAt?: string }>).detail
-      setLastSyncTime(detail?.savedAt ? new Date(detail.savedAt).toLocaleTimeString() : new Date().toLocaleTimeString())
-      if (detail?.savedBy) setLastSyncDevice(formatSyncDeviceName(detail.savedBy))
+      setLastSyncTime(detail?.savedAt ? new Date(detail.savedAt).toLocaleTimeString() : '')
+      setLastSyncDevice(detail?.savedBy ? formatSyncDeviceName(detail.savedBy) : '')
       setLastSyncDirection('pushed')
-      // Only dismiss the toast if it's still showing the exact paused-explanation
-      // text we suppressed -- never clobber an unrelated toast that happens to be
-      // visible at the same moment.
-      if (wasConflicted) {
-        setToastMessage((current) => (current === SYNC_PAUSED_TOAST_MSG ? null : current))
-      }
     }
-    // A local-only save ('poweron:data-saved', not yet dispatched anywhere in this
-    // codebase today) is not proof of a successful cloud sync -- only clear the
-    // dedupe ref so the next real conflict can surface again, without touching
-    // syncStatus/toast.
-    const clearSyncConflictSuppression = () => { lastSyncConflictRef.current = null }
-    window.addEventListener('poweron:sync-conflict', handleSyncConflict)
+    window.addEventListener('poweron:sync-error', handleSyncErrorEvent)
     window.addEventListener('poweron:sync-success', handleSyncSuccessEvent)
-    window.addEventListener('poweron:data-saved', clearSyncConflictSuppression)
     return () => {
-      window.removeEventListener('poweron:sync-conflict', handleSyncConflict)
+      window.removeEventListener('poweron:sync-error', handleSyncErrorEvent)
       window.removeEventListener('poweron:sync-success', handleSyncSuccessEvent)
-      window.removeEventListener('poweron:data-saved', clearSyncConflictSuppression)
     }
   }, [])
 
@@ -509,7 +454,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     return () => stopLiveRefresh()
   }, [authStatus, tenantDataReady, tenantUserId, authUser?.id])
 
-  // Phase 6T — banner for applied / available remote data
+  // Phase 6T — banner for applied remote data
   useEffect(() => {
     const clearDismissTimer = () => {
       if (remoteRefreshDismissTimerRef.current) {
@@ -519,8 +464,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     }
 
     const handleRemoteApplied = () => {
-      // Manual force-apply only reaches here under containment. Show loaded, not synced.
       setRemoteRefreshBanner('applied')
+      setSyncStatus('idle')
       setLastSyncDirection('applied')
       clearDismissTimer()
       const data = getBackupData()
@@ -529,40 +474,19 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         setKpis(getKPIs(data))
       }
       const meta = getLastSyncMeta()
-      if (meta?.savedBy) setLastSyncDevice(formatSyncDeviceName(meta.savedBy))
-      if (meta?.savedAt) setLastSyncTime(new Date(meta.savedAt).toLocaleTimeString())
+      setLastSyncDevice(meta?.savedBy ? formatSyncDeviceName(meta.savedBy) : '')
+      setLastSyncTime(meta?.savedAt ? new Date(meta.savedAt).toLocaleTimeString() : '')
       remoteRefreshDismissTimerRef.current = setTimeout(() => {
         setRemoteRefreshBanner(null)
       }, 4000)
     }
 
-    const handleRemoteAvailable = () => {
-      // EMERGENCY CONTAINMENT: skipped auto-apply — protect local work, truthful paused status.
-      // Must NOT claim "Synced by Android" or set wall-clock sync time.
-      setRemoteRefreshBanner('available')
-      setSyncStatus('paused')
-      clearDismissTimer()
-    }
-
     window.addEventListener('poweron-remote-data-refreshed', handleRemoteApplied)
-    window.addEventListener('poweron-remote-data-available', handleRemoteAvailable)
     return () => {
       window.removeEventListener('poweron-remote-data-refreshed', handleRemoteApplied)
-      window.removeEventListener('poweron-remote-data-available', handleRemoteAvailable)
       clearDismissTimer()
     }
   }, [])
-
-  const handleRemoteRefreshNow = () => {
-    const confirmed = window.confirm(
-      'Refresh now will reload latest cloud data and may discard local Blueprint annotations, estimates, and other unsaved edits. Continue only if you intend to replace local work with cloud data.'
-    )
-    if (!confirmed) return
-    void requestRemoteRefresh({ forceApply: true, source: 'manual' }).then((detail) => {
-      setRemoteRefreshBanner(detail?.applied ? 'applied' : 'available')
-      if (!detail?.applied) setSyncStatus('paused')
-    })
-  }
 
   // Initialize Phase B event bus + agent subscriptions
   useEffect(() => {
@@ -889,16 +813,13 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
       switch (result.status) {
         case 'saved-verified':
           setSyncStatus('synced')
-          setLastSyncTime(new Date().toLocaleTimeString())
           setToastMessage('Saved and verified')
           setTimeout(() => setToastMessage(null), 3000)
           break
         case 'stale-blocked':
-          // Cloud is newer than this session — Phase 2 guard blocked the write.
-          // Local data is safe; this is not a failure and not a success.
-          setSyncStatus('paused')
+          setSyncStatus('failed')
           setToastMessage(
-            result.error || 'Cloud has newer data — reload latest before saving'
+            result.error || 'Cloud sync failed — remote data could not be merged'
           )
           setTimeout(() => setToastMessage(null), 6000)
           break
@@ -936,7 +857,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
   // Gracefully handle missing backup — render full layout with defaults instead of blocking
   const settings = backupData?.settings || {} as any
-  const lastSaved = backupData?._lastSavedAt || new Date().toISOString()
+  const lastSaved = backupData?._lastSavedAt || ''
   const _rawKpis = kpis || { pipeline: 0, paid: 0, billed: 0, exposure: 0, svcUnbilled: 0, openRfis: 0, totalHours: 0, activeProjects: 0 }
 
   // BUG 2 FIX — Override pipeline with active-only formula (+ open service balances).
@@ -1960,22 +1881,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 title={
                   localSaveFailed ? 'Save failed — not saved'
                   : syncStatus === 'failed' ? 'Tap to retry sync'
-                  : syncStatus === 'paused' ? 'Cloud sync paused — tap for details'
                   : syncStatus === 'synced' ? 'Synced to cloud'
                   : 'Sync pending...'
                 }
                 onClick={async () => {
                   if (localSaveFailed) {
                     setShowSaveFailedModal(true)
-                    return
-                  }
-                  // Step 13B-QA5-R4: 'paused' means the stale-overwrite safety guard is
-                  // correctly blocking a write because remote data is newer / unverified.
-                  // Tapping must NOT blindly retry the same blocked sync forever -- that
-                  // would just re-trigger the guard. Show reload guidance instead.
-                  if (syncStatus === 'paused') {
-                    setToastMessage('Cloud sync is paused because newer remote data exists. Reload latest before cloud syncing.')
-                    setTimeout(() => setToastMessage(null), 5000)
                     return
                   }
                   if (syncStatus === 'failed' || syncStatus === 'idle') {
@@ -1988,17 +1899,11 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                     const result = await forceSyncToCloud({ source: 'sync-retry' })
                     if (result.success) {
                       setSyncStatus('synced')
-                      setLastSyncTime(new Date().toLocaleTimeString())
                       setToastMessage('Synced to cloud')
                       setTimeout(() => setToastMessage(null), 3000)
                     } else if (result.blocked) {
-                      // Phase 2 (stop-bleeding): the stale-overwrite guard blocks
-                      // this manual retry in production AND localhost (see
-                      // backupDataService.forceSyncToCloud). Same 'paused' treatment,
-                      // not 'failed' -- local data is safe; only the cloud push is on
-                      // hold because newer remote data exists. Reload latest first.
-                      setSyncStatus('paused')
-                      setToastMessage('Cloud sync is paused because newer remote data exists. Reload latest before cloud syncing.')
+                      setSyncStatus('failed')
+                      setToastMessage('Sync failed — ' + (result.error || 'remote data could not be merged'))
                       setTimeout(() => setToastMessage(null), 6000)
                     } else {
                       setSyncStatus('failed')
@@ -2013,7 +1918,6 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                   syncStatus === 'synced' ? 'bg-green-500' :
                   syncStatus === 'syncing' ? 'bg-yellow-500 animate-pulse' :
                   syncStatus === 'failed' ? 'bg-red-500' :
-                  syncStatus === 'paused' ? 'bg-orange-400' :
                   'bg-gray-500'
                 }`} />
                 {/* Sync label — hidden on mobile to prevent overflow */}
@@ -2021,22 +1925,16 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                   localSaveFailed ? 'text-red-400'
                   : syncStatus === 'failed' ? 'text-red-400'
                   : syncStatus === 'syncing' ? 'text-yellow-400'
-                  : syncStatus === 'paused' ? 'text-amber-400'
                   : 'text-gray-400'
                 }`}>
                   {localSaveFailed ? 'Save failed — not saved'
-                    : syncStatus === 'synced' && lastSyncTime
-                    ? (lastSyncDirection === 'pushed'
-                      ? `Synced${lastSyncDevice ? ` by ${lastSyncDevice}` : ''} · ${lastSyncTime}`
-                      : lastSyncDevice
-                        ? `Loaded from ${lastSyncDevice} · ${lastSyncTime}`
-                        : `Saved · ${lastSyncTime}`)
                     : syncStatus === 'syncing' ? 'Pending sync...'
                     : syncStatus === 'failed' ? 'Sync failed — tap to retry'
-                    : syncStatus === 'paused' ? `Cloud paused — saved locally ${getRelativeTime(lastSaved)}`
-                    : lastSyncDirection === 'applied' && lastSyncDevice && lastSyncTime
-                      ? `Loaded from ${lastSyncDevice} · ${lastSyncTime}`
-                      : `Saved ${getRelativeTime(lastSaved)}`}
+                    : lastSyncDirection === 'applied' && lastSyncDevice
+                      ? `Loaded from ${lastSyncDevice}${lastSyncTime ? ` · ${lastSyncTime}` : ''}`
+                    : syncStatus === 'synced' && lastSyncDirection === 'pushed' && lastSyncDevice
+                      ? `Synced by ${lastSyncDevice}${lastSyncTime ? ` · ${lastSyncTime}` : ''}`
+                    : lastSaved ? `Saved ${getRelativeTime(lastSaved)}` : 'Saved'}
                 </span>
               </button>
 
@@ -2178,34 +2076,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
             className="fixed left-0 right-0 z-[60] flex items-center justify-center px-4 py-2 text-sm shadow-md"
             style={{
               top: showTargetBar ? '5rem' : '4rem',
-              backgroundColor: remoteRefreshBanner === 'applied' ? 'rgba(34,197,94,0.15)' : 'rgba(59,130,246,0.15)',
-              borderBottom: `1px solid ${remoteRefreshBanner === 'applied' ? 'rgba(34,197,94,0.35)' : 'rgba(59,130,246,0.35)'}`,
+              backgroundColor: 'rgba(34,197,94,0.15)',
+              borderBottom: '1px solid rgba(34,197,94,0.35)',
               color: 'var(--t1)',
             }}
           >
-            {remoteRefreshBanner === 'applied' ? (
-              <span>Cloud changes loaded.</span>
-            ) : (
-              <div className="flex flex-wrap items-center justify-center gap-3">
-                <span>Remote changes available — sync paused to protect local work.</span>
-                <button
-                  type="button"
-                  onClick={handleRemoteRefreshNow}
-                  className="px-3 py-1 rounded text-xs font-semibold"
-                  style={{ backgroundColor: 'rgba(59,130,246,0.35)', color: '#fff' }}
-                >
-                  Refresh now
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRemoteRefreshBanner(null)}
-                  className="px-3 py-1 rounded text-xs"
-                  style={{ backgroundColor: 'rgba(255,255,255,0.08)', color: 'var(--t2)' }}
-                >
-                  Dismiss
-                </button>
-              </div>
-            )}
+            <span>Cloud changes loaded.</span>
           </div>
         )}
 

@@ -3,10 +3,9 @@
  *
  * BUG 1 FIX — Data sync across devices.
  *
- * EMERGENCY CONTAINMENT (2026-07-12): mid-session stale checks and realtime
- * events must NOT apply remote backup into localStorage. They route through
- * liveCloudRefreshService.requestRemoteRefresh which only notifies that
- * remote data is available unless the user explicitly force-applies.
+ * Mid-session stale checks and realtime events route through
+ * liveCloudRefreshService.requestRemoteRefresh, which applies newer remote data
+ * through the shared record-preserving merge when local work is not pending.
  *
  * Usage (from V15rLayout.tsx):
  *   const cleanup = initRealtimeSync()
@@ -15,7 +14,7 @@
 
 import { isSupabaseConfigured, getBackupData } from './backupDataService'
 
-/** If local data is older than this on app load, check for newer remote (notify only). */
+/** If local data is older than this on app load, check for and apply newer remote data. */
 const STALE_THRESHOLD_MS = 30_000
 
 /** Tables to watch via Supabase Realtime (domain-level tables + full-state key). */
@@ -41,23 +40,21 @@ export function isLocalDataStale(): boolean {
 }
 
 /**
- * EMERGENCY CONTAINMENT: check remote freshness only — never apply into localStorage.
- * Routes through requestRemoteRefresh without forceApply.
+ * Check for and safely apply a newer remote snapshot through the shared refresh path.
  */
-async function checkRemoteAvailableOnly(source: 'interval' | 'realtime'): Promise<void> {
+async function refreshFromRemote(source: 'interval' | 'realtime'): Promise<void> {
   if (!isSupabaseConfigured()) return
   try {
     const { requestRemoteRefresh } = await import('./liveCloudRefreshService')
     await requestRemoteRefresh({ source })
   } catch (err) {
-    console.warn(`[RealtimeSync] Remote availability check failed (${source}):`, err)
+    console.warn(`[RealtimeSync] Remote refresh failed (${source}):`, err)
   }
 }
 
 /**
  * Check if local data is stale on app startup.
- * EMERGENCY CONTAINMENT: if stale, notify that remote may be available — do NOT
- * pull/apply remote into localStorage (that wiped Blueprint annotations / estimates).
+ * If stale, apply a newer remote snapshot through the record-preserving path.
  */
 export async function checkAndRefreshIfStale(): Promise<boolean> {
   if (!isSupabaseConfigured()) return false
@@ -65,16 +62,15 @@ export async function checkAndRefreshIfStale(): Promise<boolean> {
     console.log('[RealtimeSync] Local data is fresh — no stale check needed')
     return false
   }
-  console.warn('[RealtimeSync] Local data is stale (>30s) — checking remote availability only (auto-apply contained)')
-  await checkRemoteAvailableOnly('interval')
+  console.log('[RealtimeSync] Local data is stale (>30s) — checking for newer remote data')
+  await refreshFromRemote('interval')
   return true
 }
 
 /**
  * Subscribe to Supabase Realtime channels for cross-device change detection.
  *
- * EMERGENCY CONTAINMENT: on change, only run a contained refresh check (notify
- * available). Does not write remote backup into localStorage.
+ * On change, run the shared record-preserving remote refresh path.
  */
 export function subscribeToRealtimeChanges(
   onRefresh?: (table: string) => void
@@ -101,7 +97,7 @@ export function subscribeToRealtimeChanges(
               { event: '*', schema: 'public', table },
               async (payload: any) => {
                 console.log(`[RealtimeSync] Change detected on table "${table}":`, payload.eventType)
-                await checkRemoteAvailableOnly('realtime')
+                await refreshFromRemote('realtime')
                 onRefresh?.(table)
               }
             )
@@ -120,7 +116,7 @@ export function subscribeToRealtimeChanges(
       }
 
       _realtimeInitialized = true
-      console.log(`[RealtimeSync] Subscribed to ${_activeChannels.length} realtime channel(s) (auto-apply contained)`)
+      console.log(`[RealtimeSync] Subscribed to ${_activeChannels.length} realtime channel(s)`)
     } catch (err) {
       console.warn('[RealtimeSync] Failed to set up realtime subscriptions:', err)
     }
@@ -148,8 +144,8 @@ function unsubscribeAll(): void {
  * initRealtimeSync — call this once from V15rLayout on mount (after initial load).
  *
  * Steps:
- *   1. If local looks stale, check remote availability (no auto-apply).
- *   2. Subscribe to Supabase Realtime channels (notify-only on change).
+ *   1. If local looks stale, apply newer remote data through the shared merge path.
+ *   2. Subscribe to Supabase Realtime channels and refresh on change.
  */
 export function initRealtimeSync(onRefresh?: (table: string) => void): () => void {
   checkAndRefreshIfStale().catch(err =>

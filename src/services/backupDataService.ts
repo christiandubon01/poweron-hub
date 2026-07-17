@@ -146,23 +146,28 @@ function getEffectiveStorageKey(userId = _activeTenantUserId): string {
 const DEVICE_ID_KEY = 'poweron_device_id'
 
 function getDeviceId(): string {
+  let label = 'Unknown'
+  let generatedId = ''
   try {
-    let id = localStorage.getItem(DEVICE_ID_KEY)
-    if (id) return id
-    // Auto-detect device name from user agent
     const ua = navigator.userAgent || ''
-    let label = 'Unknown'
     if (/iPhone/.test(ua)) label = 'iPhone'
-    else if (/iPad/.test(ua)) label = 'iPad'
+    else if (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) label = 'iPad'
     else if (/Android/.test(ua)) label = 'Android'
     else if (/Windows/.test(ua)) label = 'Windows'
     else if (/Mac/.test(ua)) label = 'Mac'
     else if (/Linux/.test(ua)) label = 'Linux'
-    id = `${label}_${Date.now().toString(36)}`
+
+    let id = localStorage.getItem(DEVICE_ID_KEY)
+    if (id && id.split('_', 1)[0] === label) return id
+
+    generatedId = `${label}_${Array.from({ length: 8 }, () => Math.floor(Math.random() * 36).toString(36)).join('')}`
+    const oldId = id
+    id = generatedId
     localStorage.setItem(DEVICE_ID_KEY, id)
+    if (oldId) console.info(`device identity healed ${oldId} -> ${id}`)
     return id
   } catch {
-    return 'unknown'
+    return generatedId || `${label}_${Array.from({ length: 8 }, () => Math.floor(Math.random() * 36).toString(36)).join('')}`
   }
 }
 
@@ -1055,6 +1060,8 @@ export function applyRemoteBackupDataSilent(
         savedAt,
         direction: 'applied',
       }
+    } else {
+      _lastSyncMeta = null
     }
   } catch { /* metadata is best-effort */ }
   if (remoteBaseline) {
@@ -1777,6 +1784,9 @@ export const SYNC_BLOCKED_REMOTE_NEWER_MSG =
 export const SYNC_BLOCKED_NO_REMOTE_BASELINE_MSG =
   'Cloud sync was blocked because this session could not prove it loaded the latest remote data. Reload before syncing.'
 
+const REMOTE_MERGE_FAILED_MSG =
+  'Could not safely merge newer cloud data. Sync failed; local work was preserved.'
+
 /** Shown only on localhost/dev when a stale full snapshot would overwrite newer cloud data. */
 export const LOCALHOST_STALE_SNAPSHOT_BLOCKED_MSG =
   'Localhost session is older than production cloud data. Full snapshot save blocked to prevent overwriting newer cloud data.'
@@ -1787,9 +1797,9 @@ const FRESHNESS_TOLERANCE_MS = 1000
 export type SyncToSupabaseOptions = {
   /** Caller label for logging (e.g. periodic-sync, snapshot-restore). */
   source?: string
-  /** When true, fetch remote and block if remote is newer than local. Default: true unless allowOverwriteNewerRemote. */
+  /** When true, fetch remote and merge any advanced row before pushing. Default: true unless allowOverwriteNewerRemote. */
   requireFreshRemote?: boolean
-  /** When true, block sync if remote freshness cannot be verified. Default: true for guarded syncs. */
+  /** When true, stop sync if remote freshness cannot be verified. Default: true for guarded syncs. */
   failClosed?: boolean
   /** Explicit restore/intentional overwrite — bypasses stale-overwrite guard. */
   allowOverwriteNewerRemote?: boolean
@@ -1818,7 +1828,7 @@ export type SyncToSupabaseResult = {
 }
 
 export type ForceSyncToCloudOptions = {
-  /** When true, fetch remote app_state and block if remote is newer than local. */
+  /** When true, fetch remote app_state and merge any advanced row before pushing. */
   requireFreshRemote?: boolean
   /** Caller label for logging (e.g. header-save). */
   source?: string
@@ -1889,6 +1899,7 @@ async function fetchRemoteAppStateFreshness(userId: string): Promise<{
   remoteUpdatedAt: string | null
   remoteDataLastSavedAt: string | null
   remoteFreshnessMs: number
+  remoteData?: BackupData | null
   /** Phase 4H: device id (_syncMeta.savedBy) that last wrote the remote row, if known. */
   remoteSavedBy?: string | null
   error?: string
@@ -1898,6 +1909,7 @@ async function fetchRemoteAppStateFreshness(userId: string): Promise<{
     remoteUpdatedAt: string | null
     remoteDataLastSavedAt: string | null
     remoteFreshnessMs: number
+    remoteData?: BackupData | null
     remoteSavedBy?: string | null
     error?: string
   }> => {
@@ -1950,6 +1962,7 @@ async function fetchRemoteAppStateFreshness(userId: string): Promise<{
         remoteUpdatedAt,
         remoteDataLastSavedAt,
         remoteFreshnessMs,
+        remoteData: row.data as BackupData,
         remoteSavedBy,
       }
     } catch (err: any) {
@@ -1969,6 +1982,7 @@ async function fetchRemoteAppStateFreshness(userId: string): Promise<{
     remoteUpdatedAt: string | null
     remoteDataLastSavedAt: string | null
     remoteFreshnessMs: number
+    remoteData?: BackupData | null
     remoteSavedBy?: string | null
     error?: string
   }>((resolve) => {
@@ -2006,6 +2020,8 @@ export async function checkManualSaveFreshness(
   remoteFreshnessMs: number
   knownRemoteBaselineMs: number
   hasRemoteRow: boolean
+  mergedData?: BackupData
+  mergeFailed?: boolean
 }> {
   const local = userId ? getBackupData(userId) : getBackupData()
   const localFreshnessMs = parseBackupTimestampMs(local?._lastSavedAt)
@@ -2047,21 +2063,51 @@ export async function checkManualSaveFreshness(
     return { allowed: true, localFreshnessMs, remoteFreshnessMs: 0, knownRemoteBaselineMs, hasRemoteRow: false }
   }
 
-  if (knownRemoteBaselineMs <= 0) {
-    console.warn('[Sync] Save/sync blocked — remote row exists but session has no known remote baseline', {
-      remoteFreshnessMs: remote.remoteFreshnessMs,
-      remoteUpdatedAt: remote.remoteUpdatedAt,
-      remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
-    })
-    return {
-      allowed: false,
-      blocked: true,
-      error: SYNC_BLOCKED_NO_REMOTE_BASELINE_MSG,
-      localFreshnessMs,
-      remoteFreshnessMs: remote.remoteFreshnessMs,
-      knownRemoteBaselineMs: 0,
-      hasRemoteRow: true,
+  const mergeRemoteIntoOutgoing = () => {
+    if (!local || !remote.remoteData) {
+      console.error('[Sync] Could not merge remote data into outgoing save because one side is missing')
+      return {
+        allowed: false,
+        error: REMOTE_MERGE_FAILED_MSG,
+        localFreshnessMs,
+        remoteFreshnessMs: remote.remoteFreshnessMs,
+        knownRemoteBaselineMs,
+        hasRemoteRow: true,
+        mergeFailed: true,
+      }
     }
+
+    try {
+      const mergedData = mergeScopedIncomingIntoLocal(local, remote.remoteData)
+      console.info('[Sync] Remote advanced; merged remote records into outgoing save', {
+        localFreshnessMs,
+        knownRemoteBaselineMs,
+        remoteFreshnessMs: remote.remoteFreshnessMs,
+      })
+      return {
+        allowed: true,
+        localFreshnessMs,
+        remoteFreshnessMs: remote.remoteFreshnessMs,
+        knownRemoteBaselineMs,
+        hasRemoteRow: true,
+        mergedData,
+      }
+    } catch (err) {
+      console.error('[Sync] Remote/outgoing merge failed; cloud write will not continue', err)
+      return {
+        allowed: false,
+        error: REMOTE_MERGE_FAILED_MSG,
+        localFreshnessMs,
+        remoteFreshnessMs: remote.remoteFreshnessMs,
+        knownRemoteBaselineMs,
+        hasRemoteRow: true,
+        mergeFailed: true,
+      }
+    }
+  }
+
+  if (knownRemoteBaselineMs <= 0) {
+    return mergeRemoteIntoOutgoing()
   }
 
   if (remote.remoteFreshnessMs > knownRemoteBaselineMs + FRESHNESS_TOLERANCE_MS) {
@@ -2085,24 +2131,7 @@ export async function checkManualSaveFreshness(
       }
     }
 
-    console.warn('[Sync] Save/sync blocked — remote advanced since session baseline', {
-      localFreshnessMs,
-      knownRemoteBaselineMs,
-      remoteFreshnessMs: remote.remoteFreshnessMs,
-      knownRemoteBaselineAt: _lastKnownRemoteSavedAt,
-      localLastSavedAt: local?._lastSavedAt,
-      remoteUpdatedAt: remote.remoteUpdatedAt,
-      remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
-    })
-    return {
-      allowed: false,
-      blocked: true,
-      error: REMOTE_FRESHER_THAN_LOCAL_MSG,
-      localFreshnessMs,
-      remoteFreshnessMs: remote.remoteFreshnessMs,
-      knownRemoteBaselineMs,
-      hasRemoteRow: true,
-    }
+    return mergeRemoteIntoOutgoing()
   }
 
   return {
@@ -2486,11 +2515,9 @@ function resolveSyncGuardCode(freshness: {
   return 'unknown'
 }
 
-// Step 13B-QA5-R4 Part 5: source-level dedupe for identical unresolved stale-overwrite
-// conflicts. Without this, an active periodic-sync loop (every SYNC_INTERVAL_MS while
-// local edits keep coming in and remote stays newer) re-dispatches the exact same guard
-// block every ~13s. Suppress repeats of the identical message for 20 minutes (matching
-// the UI-side toast throttle window) -- a genuinely different conflict message is never
+// Source-level dedupe for identical unresolved sync-guard failures. Without this,
+// an active periodic-sync loop can re-dispatch the exact same error every ~13s.
+// Suppress repeats of the identical message for 20 minutes -- a different message is never
 // suppressed, since the dedupe key is the exact message string. Cleared on the next
 // successful sync (see syncToSupabase's poweron:sync-success dispatch below) so a real
 // resolution is picked up immediately rather than waiting out the window.
@@ -2504,6 +2531,16 @@ function dispatchSyncConflict(error: string, source?: string, code?: SyncConflic
   _lastConflictDispatch = { message: error, at: Date.now() }
   window.dispatchEvent(new CustomEvent('poweron:sync-conflict', {
     detail: { error, source: source || 'sync', conflictCode: code || 'unknown' },
+  }))
+}
+
+function dispatchSyncError(error: string, source?: string): void {
+  if (typeof window === 'undefined') return
+  const prev = _lastConflictDispatch
+  if (prev && prev.message === error && Date.now() - prev.at < CONFLICT_DISPATCH_DEDUPE_MS) return
+  _lastConflictDispatch = { message: error, at: Date.now() }
+  window.dispatchEvent(new CustomEvent('poweron:sync-error', {
+    detail: { error, source: source || 'sync' },
   }))
 }
 
@@ -2879,36 +2916,28 @@ export async function syncToSupabase(
     return { success: false, skipped: true, error: 'Hydration in progress' }
   }
 
-  // Phase 2 (stop-bleeding): the stale-overwrite freshness guard runs in
-  // production AND localhost. A stale session (remote advanced past this
-  // session's known baseline) is BLOCKED before it can overwrite newer cloud
-  // data. No automatic merge — attemptProductionMergeAndSync is intentionally
-  // NOT called (its whole-object merge could clobber nested project data such
-  // as RFIs). Block-only; user must reload latest before syncing.
+  // A remote row that advanced past this session's baseline is merged into the
+  // outgoing payload before the write. The record-preserving merge keeps rows
+  // and tombstones from both sides; a merge failure stops the write visibly.
+  let freshnessMergedData: BackupData | null = null
   const guardEnabled = !options.allowOverwriteNewerRemote && options.requireFreshRemote !== false
   if (guardEnabled) {
     const failClosed = options.failClosed !== false
     const freshness = await checkManualSaveFreshness(userId, { failClosed })
     if (!freshness.allowed) {
-      const error = resolveSyncGuardError(freshness)
-      const code = resolveSyncGuardCode(freshness)
-      console.warn('[Sync] Cloud write blocked by stale-overwrite guard', {
+      const error = freshness.error || resolveSyncGuardError(freshness)
+      console.warn('[Sync] Cloud write stopped by freshness/merge guard', {
         source: options.source || 'sync',
         localFreshnessMs: freshness.localFreshnessMs,
         knownRemoteBaselineMs: freshness.knownRemoteBaselineMs,
         remoteFreshnessMs: freshness.remoteFreshnessMs,
         error,
-        code,
         environment: getSaveEnvironment(),
       })
-      dispatchSyncConflict(error, options.source, code)
-      return {
-        success: false,
-        blocked: true,
-        conflict: true,
-        error,
-      }
+      dispatchSyncError(error, options.source)
+      return { success: false, error }
     }
+    if (freshness.mergedData) freshnessMergedData = freshness.mergedData
   }
 
   try {
@@ -2920,7 +2949,7 @@ export async function syncToSupabase(
       return { success: false, skipped: true, error: 'Authenticated user mismatch' }
     }
 
-    const data = getBackupData(userId)
+    const data = freshnessMergedData || getBackupData(userId)
     if (!data) return { success: false, skipped: true, error: 'No local tenant data to sync' }
 
     // Phase 6S-B / 6S-C / 6S-D1 / 6S-D2 / 6S-D3 / 6S-D4 / 6L-B / 6S-F / 6S-G / 6R-C: narrow scoped-cache
@@ -3037,13 +3066,13 @@ export async function syncToSupabase(
     const serverUpdatedAt = writtenRow?.updated_at ? String(writtenRow.updated_at) : now
     _lastSyncMeta = { savedBy: deviceId, savedAt: now, direction: 'pushed' }
     setKnownRemoteBaseline(serverUpdatedAt, now)
-    // A real success resolves any prior stale-overwrite conflict -- let the next
+    // A real success resolves any prior sync-guard failure -- let the next
     // one (if any) dispatch immediately rather than staying throttled.
     _lastConflictDispatch = null
     console.log(`[Sync] Synced tenant ${userId} to Supabase at ${now} by ${deviceId}`, options.source ? `(${options.source})` : '')
     if (typeof window !== 'undefined' && !options._suppressSuccessEvent) {
-      // Lets UI listeners (e.g. header sync-conflict toast dedupe) know a real
-      // cloud sync succeeded, so any suppressed stale-overwrite warning can clear.
+      // Lets UI listeners know a real cloud sync succeeded, so any suppressed
+      // sync error can clear.
       // Phase 4: the verified-save path suppresses this and re-dispatches only
       // after a successful cloud read-back, so success is never shown on write-ACK.
       window.dispatchEvent(new CustomEvent('poweron:sync-success', { detail: { savedBy: deviceId, savedAt: now } }))
@@ -3114,7 +3143,9 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
       return { success: false, merged: false, status: 'failed', error: 'Authenticated user mismatch' }
     }
 
-    setActiveTenantUser(userId)
+    const sameTenant = _activeTenantUserId === userId
+    const preApplyKnownRemoteBaselineMs = sameTenant ? getKnownRemoteBaselineMs() : 0
+    if (!sameTenant) setActiveTenantUser(userId)
 
     const { data: row, error } = await supabase
       .from('app_state')
@@ -3160,45 +3191,32 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     const remoteMeta = (remote as any)._syncMeta as { savedBy?: string; savedAt?: string } | undefined
     const remoteDevice = remoteMeta?.savedBy || 'unknown'
 
-    const remoteTime = setKnownRemoteBaseline(row.updated_at, remote._lastSavedAt)
+    const remoteBaseline = {
+      remoteUpdatedAt: row.updated_at ? String(row.updated_at) : null,
+      remoteDataLastSavedAt: remote._lastSavedAt,
+    }
+    const remoteTime = computeRemoteFreshnessMs(remoteBaseline.remoteUpdatedAt, remoteBaseline.remoteDataLastSavedAt)
     const local = getBackupData(userId)
     const localTime = local ? parseBackupTimestampMs(local._lastSavedAt) : 0
 
-    // Login/bootstrap path (explicit user id): prefer remote, but if this browser already
-    // has a newer tenant cache than Supabase (e.g. settings saved locally before periodic
-    // sync ran), keep local — same rule as the non-bootstrap merge below.
+    // Login/bootstrap uses the same record-preserving remote apply as live refresh.
+    // Only an active pending local save defers it; a deferral does not advance the
+    // remote baseline, so a later refresh can still apply the row.
     if (explicitUserId) {
-      // ROOT-SYNC FIX #2: also compare against the remote DATA timestamp. A remote row
-      // can carry a fresh updated_at over an OLDER payload (stale-device snapshot);
-      // remoteTime alone (max of both) let that row past the keep-local guard, and the
-      // merged apply then replaced non-array branches (settings, weeklyData, calcRefs,
-      // projectDashboards, …) with stale remote values. Local also wins while unpushed
-      // work exists — unlock/resume re-runs bootstrap mid-session with pending saves.
-      const remoteDataTime = parseBackupTimestampMs(remote._lastSavedAt)
-      const keepLocalReason = !local ? null
-        : localTime > remoteTime ? 'local-newer'
-        : localTime > remoteDataTime ? 'local-data-newer'
-        : hasPendingLocalSave() ? 'pending-local-save'
-        : null
-      if (local && keepLocalReason) {
-        console.log(`[Sync] Bootstrap: keeping local tenant cache (${keepLocalReason}; local ${localTime}, remote row ${remoteTime}, remote data ${remoteDataTime})`)
-        if (remoteTime > localTime) dispatchRemoteAvailableEvent(keepLocalReason)
+      if (local && hasPendingLocalSave()) {
+        console.log('[Sync] Bootstrap remote apply deferred — local save is pending')
         markTenantDataReady(userId)
         await hydrateRelationshipAccountsIntoLocalProjection(userId)
-        return { success: true, merged: false, fromDevice: remoteDevice, status: 'loaded_remote' }
+        return { success: true, merged: false, fromDevice: remoteDevice }
       }
-      // ROOT-SYNC: merged apply — locally-newer id-bearing records survive the load
-      // instead of being whole-overwritten by the remote snapshot.
-      // ROOT-SYNC FIX #2/#3: the apply itself snapshots the pre-apply local state
-      // and never falls back to a raw remote overwrite if the merge fails — local
-      // wins instead and the remote stays available (banner) rather than applied.
-      const applyResult = applyRemoteBackupDataSilent(remote, userId, undefined, { snapshotReason: 'Bootstrap' })
+
+      const applyResult = applyRemoteBackupDataSilent(remote, userId, remoteBaseline, { snapshotReason: 'Bootstrap' })
       if (!applyResult.applied) {
-        dispatchRemoteAvailableEvent('merge-failed')
+        dispatchSyncError(REMOTE_MERGE_FAILED_MSG, 'bootstrap')
         markTenantDataReady(userId)
         await hydrateRelationshipAccountsIntoLocalProjection(userId)
-        console.warn(`[Sync] Bootstrap: remote apply merge failed — local backup kept, remote treated as available (saved by ${remoteDevice})`)
-        return { success: true, merged: false, fromDevice: remoteDevice, status: 'loaded_remote' }
+        console.warn(`[Sync] Bootstrap: remote apply merge failed — local backup kept (saved by ${remoteDevice})`)
+        return { success: false, merged: false, fromDevice: remoteDevice, status: 'failed', error: REMOTE_MERGE_FAILED_MSG }
       }
       markTenantDataReady(userId)
       await hydrateRelationshipAccountsIntoLocalProjection(userId)
@@ -3210,22 +3228,33 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     console.log(`[Sync] Local timestamp: ${local?._lastSavedAt || 'none'} (${localTime})`)
     console.log(`[Sync] Remote timestamp: ${remote._lastSavedAt || 'none'} (${remoteTime}), saved by: ${remoteDevice}`)
 
-    // EMERGENCY CONTAINMENT (2026-07-12): mid-session loadFromSupabase (no explicit
-    // bootstrap userId) must NEVER apply remote into localStorage. Panel refresh,
-    // stale-check, and any non-login caller used to wipe Blueprint annotations,
-    // estimate notes, and other local branches under an Android-labeled row.
-    // Login/bootstrap (explicitUserId) already returned above.
-    if (local && (forceRemote || remoteTime > localTime)) {
-      console.warn(
-        `[Sync] Mid-session remote pull contained — remote available (saved by ${remoteDevice}), local backup untouched`,
-      )
-      dispatchRemoteAvailableEvent(forceRemote ? 'force-remote-contained' : 'mid-session-pull-contained', 'pull')
-    } else if (!local) {
-      console.warn('[Sync] Mid-session pull with no local cache contained — refusing automatic remote seed')
-      dispatchRemoteAvailableEvent('mid-session-empty-contained', 'pull')
-    } else {
-      console.log('[Sync] Mid-session pull — local kept, no apply')
+    const shouldApplyRemote =
+      !local || forceRemote || remoteTime > preApplyKnownRemoteBaselineMs
+    if (shouldApplyRemote && local && hasPendingLocalSave()) {
+      console.log('[Sync] Mid-session remote apply deferred — local save is pending')
+      markTenantDataReady(userId)
+      await hydrateRelationshipAccountsIntoLocalProjection(userId)
+      return { success: true, merged: false, fromDevice: remoteDevice }
     }
+
+    if (shouldApplyRemote) {
+      const applyResult = applyRemoteBackupDataSilent(remote, userId, remoteBaseline, {
+        snapshotReason: forceRemote ? 'Forced remote refresh' : 'Cloud refresh',
+      })
+      if (!applyResult.applied) {
+        dispatchSyncError(REMOTE_MERGE_FAILED_MSG, 'pull')
+        markTenantDataReady(userId)
+        await hydrateRelationshipAccountsIntoLocalProjection(userId)
+        console.warn(`[Sync] Mid-session remote apply merge failed — local backup kept (saved by ${remoteDevice})`)
+        return { success: false, merged: false, fromDevice: remoteDevice, status: 'failed', error: REMOTE_MERGE_FAILED_MSG }
+      }
+      markTenantDataReady(userId)
+      await hydrateRelationshipAccountsIntoLocalProjection(userId)
+      console.log(`[Sync] Mid-session remote applied (saved by ${remoteDevice})`)
+      return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
+    }
+
+    console.log('[Sync] Mid-session pull — remote has not advanced; local kept')
     markTenantDataReady(userId)
     await hydrateRelationshipAccountsIntoLocalProjection(userId)
     return { success: true, merged: false, fromDevice: remoteDevice }
@@ -3286,8 +3315,8 @@ export type SaveBackupWithRemoteBaselineResult = SyncToSupabaseResult & {
 
 /**
  * Save a backup built from a freshly fetched remote snapshot + scoped patch.
- * Updates the session remote baseline to the fetched row before guarded sync so
- * the write is treated as continuing from latest remote, not stale local.
+ * Guarded sync rechecks remote freshness; the session baseline advances only
+ * after the cloud write succeeds.
  *
  * ROOT-SYNC FIX #1: the incoming remote-based blob no longer replaces the
  * local cache. The current local backup is re-read and used as the merge BASE
@@ -3300,8 +3329,6 @@ export async function saveBackupWithRemoteBaselineSync(
   remoteBaseline: { remoteUpdatedAt?: string | null; remoteDataLastSavedAt?: string | null },
   syncOptions?: SyncToSupabaseOptions & { changedKey?: string },
 ): Promise<SaveBackupWithRemoteBaselineResult> {
-  setKnownRemoteBaseline(remoteBaseline.remoteUpdatedAt, remoteBaseline.remoteDataLastSavedAt)
-
   const { changedKey, ...syncOnlyOptions } = syncOptions || {}
 
   let toSave: BackupData = mergedBackup
@@ -3312,14 +3339,9 @@ export async function saveBackupWithRemoteBaselineSync(
       toSave = mergeScopedIncomingIntoLocal(local, mergedBackup)
     }
   } catch (err) {
-    // The preservation merge must never become a loss vector itself. With a
-    // local cache present, keep LOCAL (every scoped caller persists its edit
-    // locally before reaching this path); only fall back to the incoming
-    // remote-based blob when no local cache exists at all.
-    let localFallback: BackupData | null = null
-    try { localFallback = getBackupData() } catch { /* keep incoming */ }
-    toSave = localFallback || mergedBackup
-    console.warn('[Sync] Scoped-save local-preserve merge failed — keeping local cache as-is', err)
+    console.error('[Sync] Scoped-save local-preserve merge failed — cloud write stopped', err)
+    dispatchSyncError(REMOTE_MERGE_FAILED_MSG, syncOnlyOptions?.source)
+    return { success: false, localSaved: true, error: REMOTE_MERGE_FAILED_MSG }
   }
 
   toSave._lastSavedAt = new Date().toISOString()
@@ -3336,8 +3358,11 @@ export async function saveBackupWithRemoteBaselineSync(
     _dataChanged = false
     _lastSyncedAt = Date.now()
     _changedKeys.clear()
-  } else if (result.blocked || result.conflict) {
-    console.warn('[sync] Remote-baseline merge sync blocked — local merged backup preserved', result.error)
+  } else {
+    if (result.blocked || result.conflict) {
+      console.warn('[sync] Remote-baseline merge sync blocked — local merged backup preserved', result.error)
+    }
+    dispatchSyncError(result.error || 'Cloud sync failed', syncOnlyOptions?.source)
   }
 
   return { ...result, localSaved: true }
@@ -3618,28 +3643,26 @@ export async function createHeaderSaveSafetySnapshot(): Promise<{
  * Returns result so UI can show success/failure.
  */
 export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promise<ForceSyncToCloudResult> {
-  const data = getBackupData()
+  let data = getBackupData()
   if (!data) return { success: false, error: 'No local data to sync' }
 
-  // Phase 2 (stop-bleeding): requireFreshRemote guard runs in production AND
-  // localhost. A stale header save is blocked before it can overwrite newer
-  // cloud data. No merge fallback (attemptProductionMergeAndSync NOT called).
+  // Header saves merge any advanced remote records into the outgoing payload
+  // before creating the safety snapshot and writing.
   if (options?.requireFreshRemote) {
     const freshness = await checkManualSaveFreshness(_activeTenantUserId, { failClosed: true })
     if (!freshness.allowed) {
-      console.warn('[sync] Force sync blocked by freshness guard', {
+      const error = freshness.error || resolveSyncGuardError(freshness)
+      console.warn('[sync] Force sync stopped by freshness/merge guard', {
         source: options.source || 'manual',
         localFreshnessMs: freshness.localFreshnessMs,
         knownRemoteBaselineMs: freshness.knownRemoteBaselineMs,
         remoteFreshnessMs: freshness.remoteFreshnessMs,
-        error: freshness.error,
+        error,
       })
-      return {
-        success: false,
-        blocked: true,
-        error: resolveSyncGuardError(freshness),
-      }
+      dispatchSyncError(error, options.source)
+      return { success: false, error }
     }
+    if (freshness.mergedData) data = freshness.mergedData
   }
 
   if (options?.createSafetySnapshot) {
@@ -3657,11 +3680,9 @@ export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promi
     }
   }
 
-  // Phase 2 (stop-bleeding): the pre-stamp stale-overwrite guard runs in
-  // production AND localhost. Production no longer bypasses it. It is only
-  // skipped when the caller explicitly opts out of freshness (header Save's
-  // requireFreshRemote already ran its own check above; snapshot/restore flows
-  // set allowOverwriteNewerRemote). No merge fallback.
+  // The pre-stamp guard adopts the same record-preserving merged payload. It is
+  // skipped only when a prior explicit guard or recovery overwrite already owns
+  // the decision.
   const skipPreStampGuard =
     options?.allowOverwriteNewerRemote === true ||
     options?.requireFreshRemote === true
@@ -3669,23 +3690,18 @@ export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promi
   if (!skipPreStampGuard) {
     const freshness = await checkManualSaveFreshness(_activeTenantUserId, { failClosed: true })
     if (!freshness.allowed) {
-      const error = resolveSyncGuardError(freshness)
-      const code = resolveSyncGuardCode(freshness)
-      console.warn('[sync] Force sync blocked by stale-overwrite guard', {
+      const error = freshness.error || resolveSyncGuardError(freshness)
+      console.warn('[sync] Force sync stopped by freshness/merge guard', {
         source: options?.source || 'manual',
         localFreshnessMs: freshness.localFreshnessMs,
         knownRemoteBaselineMs: freshness.knownRemoteBaselineMs,
         remoteFreshnessMs: freshness.remoteFreshnessMs,
         error,
-        code,
       })
-      dispatchSyncConflict(error, options?.source, code)
-      return {
-        success: false,
-        blocked: true,
-        error,
-      }
+      dispatchSyncError(error, options?.source)
+      return { success: false, error }
     }
+    if (freshness.mergedData) data = freshness.mergedData
   }
 
   // Update timestamp only after freshness guard and safety snapshot pass (or when not required).
@@ -3736,8 +3752,8 @@ export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promi
 // ── Phase 4: Verified Save (cloud read-back) ─────────────────────────────────
 // The header Save button must mean "cloud was read back and verified", not just
 // "write request finished". These helpers + saveLiveDataVerified() implement that
-// truth contract. No merge logic is used — Phase 2 stale-save blocking is preserved
-// and attemptProductionMergeAndSync is NOT called.
+// truth contract. Advanced remote records are folded into the outgoing payload
+// before the verified write; attemptProductionMergeAndSync is NOT called.
 
 /**
  * Cheap, count-based fingerprint of the critical data in a BackupData blob.
@@ -3939,7 +3955,7 @@ export interface SaveLiveDataVerifiedOptions {
 /**
  * Header Save truth contract (Phase 4):
  * 1. read current local backup + compute expected summary
- * 2. freshness/stale check (Phase 2 guard) — stale => blocked, no write
+ * 2. freshness check — merge advanced remote records into the outgoing payload
  * 3. before-save safety snapshot — failure => blocked, no write
  * 4. write to cloud (existing guarded upsert; success event suppressed)
  * 5. read the cloud row back
@@ -3947,9 +3963,9 @@ export interface SaveLiveDataVerifiedOptions {
  * 7. advance baseline ONLY from the verified read-back row
  * 8. success ONLY after verification
  *
- * Never calls attemptProductionMergeAndSync. Never merges. On any non-verified
- * outcome the session baseline is restored to its pre-write value so a later save
- * cannot slip through the stale guard on an unproven write.
+ * Never calls attemptProductionMergeAndSync. On any non-verified outcome the
+ * session baseline is restored to its pre-write value so a later save cannot
+ * treat an unproven write as current.
  */
 export async function saveLiveDataVerified(
   options?: SaveLiveDataVerifiedOptions,
@@ -3962,16 +3978,19 @@ export async function saveLiveDataVerified(
   if (!userId) return { status: 'error', error: 'No active tenant user' }
 
   // a. Read current local backup for this tenant.
-  const local = getBackupData(userId)
+  let local = getBackupData(userId)
   if (!local) return { status: 'error', error: 'No local data to save' }
 
-  // c. Freshness / stale-overwrite guard (same check Phase 2 enforces). Runs in
-  //    production AND localhost. Stale => block before any write, no merge.
+  // c. Freshness guard. If remote advanced, merge its records and tombstones
+  //    into the outgoing payload before any write.
   onPhase?.('checking-cloud')
   const freshness = await checkManualSaveFreshness(userId, { failClosed: true })
   if (!freshness.allowed) {
-    return { status: 'stale-blocked', error: resolveSyncGuardError(freshness) }
+    const error = freshness.error || resolveSyncGuardError(freshness)
+    dispatchSyncError(error, source)
+    return { status: 'error', error }
   }
+  if (freshness.mergedData) local = freshness.mergedData
 
   // e. Before-save safety snapshot. Failure blocks the write.
   onPhase?.('creating-snapshot')
