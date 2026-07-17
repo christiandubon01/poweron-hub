@@ -62,6 +62,8 @@ export interface BlueprintLibraryItem {
   createdAt: string
   updatedAt: string
   archivedAt: string | null
+  deletedAt?: string
+  deletedBy?: string
 }
 
 export interface BlueprintAnnotationPoint {
@@ -255,9 +257,13 @@ export async function createBlueprintLibraryItem(params: {
   }
 }
 
-export function getOperationsBlueprintLibrary(backup: any): BlueprintLibraryItem[] {
+export function getOperationsBlueprintLibraryRaw(backup: any): BlueprintLibraryItem[] {
   const items = backup?.blueprintSummaries?.operationsBlueprintLibrary
-  return Array.isArray(items) ? items : []
+  return mergeOperationsBlueprintLibraryById([], Array.isArray(items) ? items : [])
+}
+
+export function getOperationsBlueprintLibrary(backup: any): BlueprintLibraryItem[] {
+  return getLiveBlueprintSetRecords(getOperationsBlueprintLibraryRaw(backup)) as BlueprintLibraryItem[]
 }
 
 export function getBlueprintSheetIndex(blueprint: any): BlueprintSheetIndexItem[] {
@@ -295,7 +301,8 @@ export async function saveOperationsBlueprintLibrary(backup: any, items: Bluepri
   if (!backup.blueprintSummaries || typeof backup.blueprintSummaries !== 'object') {
     backup.blueprintSummaries = {}
   }
-  backup.blueprintSummaries.operationsBlueprintLibrary = items
+  const existingRaw = getOperationsBlueprintLibraryRaw(backup)
+  backup.blueprintSummaries.operationsBlueprintLibrary = mergeOperationsBlueprintLibraryById(existingRaw, items)
   backup._lastSavedAt = new Date().toISOString()
   const { saveBackupDataAndSyncNow } = await import('@/services/backupDataService')
   const result = await saveBackupDataAndSyncNow(backup, 'blueprintSummaries')
@@ -307,8 +314,21 @@ export async function saveOperationsBlueprintLibrary(backup: any, items: Bluepri
 }
 
 export async function deleteOperationsBlueprintSet(backup: any, blueprintSetId: string): Promise<void> {
-  const list = getOperationsBlueprintLibrary(backup)
-  const nextLibrary = list.filter((x) => x.id !== blueprintSetId)
+  const list = getOperationsBlueprintLibraryRaw(backup)
+  let deletedBy: string | null = null
+  try {
+    const { data } = await supabase.auth.getUser()
+    deletedBy = data?.user?.id || null
+  } catch { /* deletedBy is best-effort */ }
+  const nextLibrary = list.map((item) => {
+    if (item.id !== blueprintSetId) return item
+    const tombstone = createBlueprintSetTombstone(item, deletedBy)
+    return {
+      ...tombstone,
+      status: 'archived' as BlueprintLibraryStatus,
+      archivedAt: tombstone.deletedAt || tombstone.updatedAt,
+    }
+  })
 
   if (!backup.blueprintSummaries || typeof backup.blueprintSummaries !== 'object') {
     backup.blueprintSummaries = {}
@@ -587,6 +607,66 @@ function mergeItemsById<T extends TombstonedItem>(remoteItems: T[], incomingItem
     emitted.add(id)
   }
   return [...out, ...incomingNoId, ...remoteNoId]
+}
+
+function sanitizeBlueprintSetRecord(raw: any): TombstonedItem & Record<string, any> | null {
+  if (!raw || typeof raw !== 'object') return null
+  const id = String(raw.id || '').trim()
+  if (!id) return null
+  const createdAt = isValidDateString(raw.createdAt)
+    ? String(raw.createdAt)
+    : (isValidDateString(raw.uploadDate) ? String(raw.uploadDate) : normalizeCreatedAt(raw))
+  const updatedAt = normalizeUpdatedAt(raw, createdAt)
+  const deletedAt = isValidDateString(raw.deletedAt) ? String(raw.deletedAt) : undefined
+  const deletedBy = deletedAt && raw.deletedBy != null ? String(raw.deletedBy) : undefined
+  return {
+    ...raw,
+    id,
+    createdAt,
+    updatedAt,
+    ...(deletedAt ? { deletedAt } : {}),
+    ...(deletedBy ? { deletedBy } : {}),
+  }
+}
+
+/** Shared delete-safe record union for Operations and legacy project blueprint lists. */
+export function mergeBlueprintSetRecordsById<T extends Record<string, any>>(
+  remoteItems: T[],
+  incomingItems: T[],
+): T[] {
+  const remote = (Array.isArray(remoteItems) ? remoteItems : [])
+    .map(sanitizeBlueprintSetRecord)
+    .filter(Boolean) as Array<TombstonedItem & T>
+  const incoming = (Array.isArray(incomingItems) ? incomingItems : [])
+    .map(sanitizeBlueprintSetRecord)
+    .filter(Boolean) as Array<TombstonedItem & T>
+  return mergeItemsById(remote, incoming) as T[]
+}
+
+export function getLiveBlueprintSetRecords<T extends Record<string, any>>(items: T[]): T[] {
+  return (Array.isArray(items) ? items : [])
+    .map(sanitizeBlueprintSetRecord)
+    .filter((item): item is TombstonedItem & T => !!item && !item.deletedAt) as T[]
+}
+
+export function createBlueprintSetTombstone<T extends Record<string, any>>(
+  existing: T,
+  deletedBy?: string | null,
+): T {
+  const now = new Date().toISOString()
+  return {
+    ...existing,
+    deletedAt: now,
+    updatedAt: now,
+    ...(deletedBy ? { deletedBy } : {}),
+  }
+}
+
+export function mergeOperationsBlueprintLibraryById(
+  remoteItems: any[],
+  incomingItems: any[],
+): BlueprintLibraryItem[] {
+  return mergeBlueprintSetRecordsById(remoteItems, incomingItems) as BlueprintLibraryItem[]
 }
 
 export function mergeBlueprintAnnotationsById(

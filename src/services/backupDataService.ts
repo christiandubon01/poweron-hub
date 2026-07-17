@@ -35,7 +35,7 @@ import { mergeRemoteMultiDayServiceCallsIntoOutgoing } from './serviceScopeMerge
 // blueprint save path uses, so a stale unrelated whole-app save cannot clobber newer
 // remote blueprint annotations / scope layers. blueprintLibraryService only imports
 // backupDataService dynamically, so this static edge introduces no module cycle.
-import { mergeBlueprintAnnotationsById, mergeBlueprintScopeLayersById } from './blueprintLibraryService'
+import { mergeBlueprintAnnotationsById, mergeBlueprintScopeLayersById, mergeBlueprintSetRecordsById, mergeOperationsBlueprintLibraryById } from './blueprintLibraryService'
 import { idbDelete, idbGet, idbSet } from './idbStorage'
 
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
@@ -2235,6 +2235,52 @@ function mergeArrayBranchPreferNewer(remoteList: any[], localList: any[]): any[]
   return [...byId.values(), ...noId]
 }
 
+function mergeProjectsByIdPreservingBlueprints(
+  remoteList: any[],
+  incomingList: any[],
+  mergeProjects: (remoteItems: any[], incomingItems: any[]) => any[],
+): any[] {
+  const mergedProjects = mergeProjects(remoteList, incomingList)
+  const remoteById = new Map(
+    (Array.isArray(remoteList) ? remoteList : [])
+      .map((project: any) => [String(project?.id || '').trim(), project] as const)
+      .filter(([id]) => !!id),
+  )
+  const incomingById = new Map(
+    (Array.isArray(incomingList) ? incomingList : [])
+      .map((project: any) => [String(project?.id || '').trim(), project] as const)
+      .filter(([id]) => !!id),
+  )
+
+  return mergedProjects.map((project: any) => {
+    const id = String(project?.id || '').trim()
+    if (!id) return project
+    const remote = remoteById.get(id)
+    const incoming = incomingById.get(id)
+    const remoteBlueprints = Array.isArray(remote?.blueprints) ? remote.blueprints : []
+    const incomingBlueprints = Array.isArray(incoming?.blueprints) ? incoming.blueprints : []
+    if (remoteBlueprints.length === 0 && incomingBlueprints.length === 0) return project
+    return {
+      ...project,
+      blueprints: mergeBlueprintSetRecordsById(remoteBlueprints, incomingBlueprints),
+    }
+  })
+}
+
+function mergeProjectsByIdPreferNewer(remoteList: any[], incomingList: any[]): any[] {
+  return mergeProjectsByIdPreservingBlueprints(remoteList, incomingList, mergeArrayByIdPreferNewer)
+}
+
+function mergeProjectBranchesPreferNewer(remoteList: any[], incomingList: any[]): any[] {
+  return mergeProjectsByIdPreservingBlueprints(remoteList, incomingList, mergeArrayBranchPreferNewer)
+}
+
+function isIdBearingRecordArray(value: unknown): value is Array<Record<string, any>> {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((item) => !!item && typeof item === 'object' && !!String(item.id || '').trim())
+}
+
 /**
  * ROOT-SYNC: merge local record-bearing branches into an incoming remote snapshot.
  * This is the generalization of the blueprint-only merge that previously guarded
@@ -2257,7 +2303,9 @@ function mergeLocalRecordsIntoRemoteSnapshot(remote: BackupData, local: BackupDa
     const localVal = (local as any)[key]
     if (!Array.isArray(localVal) || localVal.length === 0) continue
     const remoteVal = Array.isArray((remote as any)[key]) ? (remote as any)[key] : []
-    ;(merged as any)[key] = mergeArrayBranchPreferNewer(remoteVal, localVal)
+    ;(merged as any)[key] = key === 'projects'
+      ? mergeProjectBranchesPreferNewer(remoteVal, localVal)
+      : mergeArrayBranchPreferNewer(remoteVal, localVal)
   }
   return merged
 }
@@ -2284,6 +2332,14 @@ function mergeBlueprintSummariesObject(remoteRaw: any, localRaw: any): Record<st
       const remoteLayers = (merged[key] && typeof merged[key] === 'object') ? merged[key] as Record<string, unknown> : {}
       const localLayers = (localVal && typeof localVal === 'object') ? localVal as Record<string, unknown> : {}
       merged[key] = { ...remoteLayers, ...localLayers }
+    } else if (key === 'operationsBlueprintLibrary') {
+      const remoteLibrary = Array.isArray(merged[key]) ? merged[key] as any[] : []
+      const localLibrary = Array.isArray(localVal) ? localVal as any[] : []
+      merged[key] = mergeOperationsBlueprintLibraryById(remoteLibrary, localLibrary)
+    } else if (isIdBearingRecordArray(merged[key]) || isIdBearingRecordArray(localVal)) {
+      const remoteRecords = Array.isArray(merged[key]) ? merged[key] as any[] : []
+      const localRecords = Array.isArray(localVal) ? localVal as any[] : []
+      merged[key] = mergeBlueprintSetRecordsById(remoteRecords, localRecords)
     } else {
       merged[key] = localVal
     }
@@ -2334,7 +2390,9 @@ function mergeScopedIncomingIntoLocal(local: BackupData, incoming: BackupData): 
     const incomingVal = (incoming as any)[key]
     if (!Array.isArray(incomingVal) || incomingVal.length === 0) continue
     const localVal = Array.isArray((local as any)[key]) ? (local as any)[key] : []
-    ;(merged as any)[key] = mergeArrayBranchPreferNewer(incomingVal, localVal)
+    ;(merged as any)[key] = key === 'projects'
+      ? mergeProjectBranchesPreferNewer(incomingVal, localVal)
+      : mergeArrayBranchPreferNewer(incomingVal, localVal)
   }
   // Metadata-aware slices: fold the incoming side in with their own rules.
   merged = mergeRemoteWeeklyDataIntoOutgoing(merged, incoming)
@@ -2403,7 +2461,9 @@ function mergeLocalChangesIntoRemote(
       ;(merged as any)[key] = mergeBlueprintSummariesObject((remote as any)[key], localVal)
     } else if (arrayKeys.has(key) && Array.isArray(localVal)) {
       const remoteArr = Array.isArray((remote as any)[key]) ? (remote as any)[key] : []
-      ;(merged as any)[key] = mergeArrayByIdPreferNewer(remoteArr, localVal)
+      ;(merged as any)[key] = key === 'projects'
+        ? mergeProjectsByIdPreferNewer(remoteArr, localVal)
+        : mergeArrayByIdPreferNewer(remoteArr, localVal)
     } else if (objectKeys.has(key) && localVal && typeof localVal === 'object' && !Array.isArray(localVal)) {
       ;(merged as any)[key] = { ...((remote as any)[key] || {}), ...localVal }
     } else {
@@ -2826,16 +2886,15 @@ function isBlueprintSyncSource(options?: { source?: string | null; _scopes?: Dat
 }
 
 /**
- * Phase 6S-H (emergency guard): fold newer remote blueprint annotations / scope
+ * Phase 6S-H/BP1: fold newer remote blueprint library records, annotations, and scope
  * layers into the outgoing blob before the full-object Supabase upsert, so a stale
  * unrelated whole-app save (an Estimate/MTO/Money tab pushing an old BackupData)
  * cannot erase blueprint data it never saw. Item-level, tombstone-safe merge per
  * blueprintSetId (reuses the exact mergers the direct blueprint save path uses):
  * remote is the base, outgoing is the incoming side, so a remote item that the
  * outgoing blob is merely missing is PRESERVED (never deleted), and true conflicts
- * resolve by newest updatedAt with delete-safety. Touches ONLY
- * blueprintSummaries.operationsBlueprintAnnotations and .operationsBlueprintScopeLayers;
- * every other key (including operationsBlueprintLibrary) is left exactly as-is. Never
+ * resolve by newest updatedAt with delete-safety. Touches ONLY the Operations blueprint
+ * library, annotations, and scope layers. Never
  * throws — on any error it returns the un-merged outgoing blob so the save proceeds.
  */
 function mergeRemoteBlueprintSummariesIntoOutgoing(outgoing: BackupData, remoteData: any): BackupData {
@@ -2849,6 +2908,12 @@ function mergeRemoteBlueprintSummariesIntoOutgoing(outgoing: BackupData, remoteD
       : {}
 
     const isMap = (v: any): v is Record<string, any[]> => !!v && typeof v === 'object' && !Array.isArray(v)
+
+    const remoteLibrary = Array.isArray(remoteBp.operationsBlueprintLibrary) ? remoteBp.operationsBlueprintLibrary : []
+    const outLibrary = Array.isArray(outBp.operationsBlueprintLibrary) ? outBp.operationsBlueprintLibrary : []
+    if (remoteLibrary.length > 0 || outLibrary.length > 0) {
+      outBp.operationsBlueprintLibrary = mergeOperationsBlueprintLibraryById(remoteLibrary, outLibrary)
+    }
 
     // Annotations: Record<blueprintSetId, BlueprintAnnotation[]>
     if (isMap(remoteBp.operationsBlueprintAnnotations)) {
@@ -2880,6 +2945,30 @@ function mergeRemoteBlueprintSummariesIntoOutgoing(outgoing: BackupData, remoteD
     console.warn('[Sync] blueprint preservation fold skipped', err)
     return outgoing
   }
+}
+
+function mergeRemoteProjectBlueprintListsIntoOutgoing(outgoing: BackupData, remoteData: any): BackupData {
+  const remoteProjects = Array.isArray(remoteData?.projects) ? remoteData.projects : []
+  const outgoingProjects = Array.isArray(outgoing?.projects) ? outgoing.projects : []
+  if (remoteProjects.length === 0 || outgoingProjects.length === 0) return outgoing
+
+  const remoteById = new Map(
+    remoteProjects
+      .map((project: any) => [String(project?.id || '').trim(), project] as const)
+      .filter(([id]: [string, any]) => !!id),
+  )
+  const mergedProjects = outgoingProjects.map((project: any) => {
+    const remote = remoteById.get(String(project?.id || '').trim())
+    if (!remote) return project
+    const remoteBlueprints = Array.isArray(remote.blueprints) ? remote.blueprints : []
+    const outgoingBlueprints = Array.isArray(project.blueprints) ? project.blueprints : []
+    if (remoteBlueprints.length === 0 && outgoingBlueprints.length === 0) return project
+    return {
+      ...project,
+      blueprints: mergeBlueprintSetRecordsById(remoteBlueprints, outgoingBlueprints),
+    }
+  })
+  return { ...(outgoing as any), projects: mergedProjects } as BackupData
 }
 
 /** Sync current tenant-scoped localStorage data to Supabase app_state table.
@@ -2990,6 +3079,7 @@ export async function syncToSupabase(
       try {
         const remoteSnapshot = await fetchLatestRemoteBackup(userId)
         if (remoteSnapshot?.remoteData) {
+          outgoing = mergeRemoteProjectBlueprintListsIntoOutgoing(outgoing, remoteSnapshot.remoteData)
           if (!skipWeeklyGuard) {
             outgoing = mergeRemoteWeeklyDataIntoOutgoing(outgoing, remoteSnapshot.remoteData)
           }
@@ -3020,9 +3110,9 @@ export async function syncToSupabase(
           if (!skipMultiDayCallsGuard) {
             outgoing = mergeRemoteMultiDayServiceCallsIntoOutgoing(outgoing, remoteSnapshot.remoteData)
           }
-          if (!skipBlueprintGuard) {
-            outgoing = mergeRemoteBlueprintSummariesIntoOutgoing(outgoing, remoteSnapshot.remoteData)
-          }
+          // BP1: record unions are safe for direct and unrelated saves alike. Always
+          // preserve remote library tombstones/records before the whole-blob upsert.
+          outgoing = mergeRemoteBlueprintSummariesIntoOutgoing(outgoing, remoteSnapshot.remoteData)
         }
       } catch (preserveGuardErr) {
         console.warn('[Sync] scoped preservation guard skipped (remote fetch failed)', preserveGuardErr)

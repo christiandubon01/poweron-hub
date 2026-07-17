@@ -19,6 +19,11 @@ import { callClaude, extractText } from '@/services/claudeProxy'
 import { extractBlueprintText, type BlueprintExtract } from '@/services/blueprintExtractor'
 import { supabase } from '@/lib/supabase'
 import { getBackupData } from '@/services/backupDataService'
+import {
+  createBlueprintSetTombstone,
+  getLiveBlueprintSetRecords,
+  mergeBlueprintSetRecordsById,
+} from '@/services/blueprintLibraryService'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +40,10 @@ interface BlueprintFile {
   electricalFlags?: string[]
   analyzed: boolean
   fileSize?: number
+  createdAt?: string
+  updatedAt?: string
+  deletedAt?: string
+  deletedBy?: string
 }
 
 interface OHMFinding {
@@ -147,8 +156,8 @@ export default function V15rBlueprintsTab({ projectId, onUpdate, backup: initial
 
   // ── State ──────────────────────────────────────────────────────────────────
   const [blueprints, setBlueprints] = useState<BlueprintFile[]>(() => {
-    // Load from project metadata if available
-    return project?.blueprints || []
+    // Merge/save code retains tombstones; UI state contains live records only.
+    return getLiveBlueprintSetRecords(project?.blueprints || []) as BlueprintFile[]
   })
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -209,22 +218,22 @@ export default function V15rBlueprintsTab({ projectId, onUpdate, backup: initial
       const orgId = backup?.settings?.orgId || 'local'
       const storagePath = `${orgId}/${projectId}/blueprints/${bpId}_${file.name}`
 
-      let uploadedPath = storagePath
       let extractedText = ''
       let pageCount: number | null = null
       let electricalFlags: string[] = []
 
-      // Try Supabase Storage upload
+      // A blueprint record is valid only after its PDF exists in Storage.
       try {
         const { error: storageError } = await supabase.storage
           .from('blueprints')
           .upload(storagePath, file, { contentType: 'application/pdf', upsert: false })
 
         if (storageError) {
-          console.warn('[Blueprints] Storage upload failed, using local-only mode:', storageError.message)
+          throw new Error(storageError.message || 'Supabase Storage upload failed.')
         }
-      } catch (e) {
-        console.warn('[Blueprints] Supabase storage not available, continuing offline')
+      } catch (e: any) {
+        setUploadError(`Failed to upload ${file.name}: ${e?.message || 'Supabase Storage is unavailable.'}`)
+        continue
       }
 
       // Extract text using pdfjs
@@ -251,26 +260,31 @@ export default function V15rBlueprintsTab({ projectId, onUpdate, backup: initial
         console.warn('[Blueprints] Text extraction failed:', e)
       }
 
+      const now = new Date().toISOString()
       const bp: BlueprintFile = {
         id: bpId,
         filename: file.name,
         label: selectedLabel,
         uploadDate: new Date().toISOString().split('T')[0],
         pageCount,
-        storagePath: uploadedPath,
+        storagePath,
         extractedText,
         electricalFlags,
         analyzed: false,
         fileSize: file.size,
+        createdAt: now,
+        updatedAt: now,
       }
       newBlueprints.push(bp)
     }
 
     // Persist to project metadata
-    const updatedBlueprints = [...blueprints, ...newBlueprints]
+    const rawBlueprints = Array.isArray(project?.blueprints) ? project.blueprints : []
+    const updatedRawBlueprints = mergeBlueprintSetRecordsById(rawBlueprints, newBlueprints) as BlueprintFile[]
+    const updatedBlueprints = getLiveBlueprintSetRecords(updatedRawBlueprints) as BlueprintFile[]
     if (project) {
       const previousBlueprints = project.blueprints
-      project.blueprints = updatedBlueprints
+      project.blueprints = updatedRawBlueprints
       try {
         const { saveBackupData } = await import('@/services/backupDataService')
         saveBackupData(backup)
@@ -302,10 +316,19 @@ export default function V15rBlueprintsTab({ projectId, onUpdate, backup: initial
   }
 
   const removeBlueprint = async (id: string) => {
-    const updated = blueprints.filter(b => b.id !== id)
+    const rawBlueprints = Array.isArray(project?.blueprints) ? project.blueprints : []
+    let deletedBy: string | null = null
+    try {
+      const { data } = await supabase.auth.getUser()
+      deletedBy = data?.user?.id || null
+    } catch { /* deletedBy is best-effort */ }
+    const updatedRaw = rawBlueprints.map((bp: BlueprintFile) =>
+      bp.id === id ? createBlueprintSetTombstone(bp, deletedBy) : bp
+    )
+    const updated = getLiveBlueprintSetRecords(updatedRaw) as BlueprintFile[]
     if (project) {
       const previousBlueprints = project.blueprints
-      project.blueprints = updated
+      project.blueprints = updatedRaw
       try {
         const { saveBackupData } = await import('@/services/backupDataService')
         saveBackupData(backup)
@@ -490,14 +513,15 @@ Format clearly with section headers. Be specific with numbers and NEC citations.
 
       // Mark blueprint as analyzed
       const updated = blueprints.map(b =>
-        b.id === activeBlueprint.id ? { ...b, analyzed: true } : b
+        b.id === activeBlueprint.id ? { ...b, analyzed: true, updatedAt: new Date().toISOString() } : b
       )
-      setBlueprints(updated)
       if (project) {
-        project.blueprints = updated
+        const rawBlueprints = Array.isArray(project.blueprints) ? project.blueprints : []
+        project.blueprints = mergeBlueprintSetRecordsById(rawBlueprints, updated)
         const { saveBackupData } = await import('@/services/backupDataService')
         saveBackupData(backup)
       }
+      setBlueprints(getLiveBlueprintSetRecords(project?.blueprints || updated) as BlueprintFile[])
 
       setChatMessages(prev => [...prev, {
         role: 'ohm',
