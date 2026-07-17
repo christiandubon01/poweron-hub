@@ -144,6 +144,20 @@ export default function BlueprintAI() {
   const fileRef = useRef<HTMLInputElement>(null)
   const vrState = useBlueprintVRGeneration()
 
+  useEffect(() => {
+    const handleRemoteDataRefreshed = () => {
+      const freshBackup = getBackupData() || backup
+      const freshLibrary = getOperationsBlueprintLibrary(freshBackup)
+      setLibrary(freshLibrary)
+      setSelectedId((current) => {
+        if (current && freshLibrary.some((item) => item.id === current)) return current
+        return freshLibrary.find((item) => item.status === 'active')?.id || freshLibrary[0]?.id || ''
+      })
+    }
+    window.addEventListener('poweron-remote-data-refreshed', handleRemoteDataRefreshed)
+    return () => window.removeEventListener('poweron-remote-data-refreshed', handleRemoteDataRefreshed)
+  }, [backup])
+
   const selectedItem = library.find(x => x.id === selectedId) || null
   const totals = useMemo(() => {
     const uploaded = library.length

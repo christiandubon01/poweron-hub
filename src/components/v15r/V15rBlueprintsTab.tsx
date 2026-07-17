@@ -10,7 +10,7 @@
  * - PO Development mode: "Learn with OHM" teaching dialogue
  * - GC/Architect professional email generator
  */
-import React, { useState, useRef, useCallback } from 'react'
+import React, { useState, useRef, useCallback, useEffect } from 'react'
 import {
   Upload, FileText, Zap, BookOpen, Mail, ChevronDown, ChevronUp,
   Loader2, CheckCircle, AlertTriangle, X, Eye, Send
@@ -192,6 +192,16 @@ export default function V15rBlueprintsTab({ projectId, onUpdate, backup: initial
   const [uploadExpanded, setUploadExpanded] = useState(true)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const handleRemoteDataRefreshed = () => {
+      const freshBackup = getBackupData()
+      const freshProject = freshBackup?.projects?.find((item: any) => item.id === projectId)
+      setBlueprints(getLiveBlueprintSetRecords(freshProject?.blueprints || []) as BlueprintFile[])
+    }
+    window.addEventListener('poweron-remote-data-refreshed', handleRemoteDataRefreshed)
+    return () => window.removeEventListener('poweron-remote-data-refreshed', handleRemoteDataRefreshed)
+  }, [projectId])
 
   // ── File Upload ────────────────────────────────────────────────────────────
 
