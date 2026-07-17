@@ -197,19 +197,23 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
       .filter((name: string, idx: number, arr: string[]) => arr.findIndex(x => rfiLabelKey(x) === rfiLabelKey(name)) === idx),
   ]
 
-  const persistRFIChange = async (mutate: (freshProject: any, freshBackup: any) => boolean | void) => {
+  const persistRFIChange = async (mutate: (freshProject: any, freshBackup: any) => boolean | void): Promise<boolean> => {
     const freshBackup = getBackupData()
-    if (!freshBackup) return
+    if (!freshBackup) return false
     const freshProject = (freshBackup.projects || []).find(x => x.id === projectId)
-    if (!freshProject) return
+    if (!freshProject) return false
     pushState()
 
     freshProject.rfis = Array.isArray(freshProject.rfis) ? freshProject.rfis : []
     const didChange = mutate(freshProject, freshBackup)
-    if (didChange === false) return
+    if (didChange === false) return false
 
     freshBackup._lastSavedAt = new Date().toISOString()
-    saveBackupData(freshBackup)
+    try {
+      saveBackupData(freshBackup)
+    } catch {
+      return false
+    }
     forceUpdate()
     if (onUpdate) onUpdate()
 
@@ -236,13 +240,21 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
           },
         )
         if (onUpdate) onUpdate()
-        return
+        return true
       }
 
       saveBackupDataAndSync(freshBackup, 'projects', { source: 'project.rfis', _scopes: ['project.rfis'] })
+      return true
     } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
       console.warn('[V15rRFITab] RFI remote-merge save failed; kept local and used guarded sync', err)
-      saveBackupDataAndSync(freshBackup, 'projects', { source: 'project.rfis', _scopes: ['project.rfis'] })
+      try {
+        saveBackupDataAndSync(freshBackup, 'projects', { source: 'project.rfis', _scopes: ['project.rfis'] })
+        return true
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return false
+        throw fallbackErr
+      }
     }
   }
 
@@ -267,13 +279,13 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
     setAddWarning('')
   }
 
-  const createRFI = () => {
+  const createRFI = async () => {
     if (!addForm.question.trim()) {
       setAddWarning('Question is required to create an RFI.')
       return
     }
 
-    void persistRFIChange((freshProject) => {
+    const saved = await persistRFIChange((freshProject) => {
       const liveRFIs = getLiveRFIs(freshProject.rfis || [], projectId)
       const rfiNumber = nextRfiNumber(liveRFIs)
       const now = new Date().toISOString()
@@ -299,6 +311,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
         solvedBy: addForm.solvedBy,
       })
     })
+    if (!saved) return
     closeAddModal()
     forceUpdate()
     if (onUpdate) onUpdate()
@@ -343,9 +356,9 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
     setEditingId(null)
   }
 
-  const saveEditModal = () => {
+  const saveEditModal = async () => {
     if (!editingId) return
-    void persistRFIChange((freshProject) => {
+    const saved = await persistRFIChange((freshProject) => {
       const idx = findRFIIndexByStableId(freshProject.rfis || [], projectId, editingId)
       if (idx === -1) {
         console.warn('[V15rRFITab] save edit: RFI not found; nothing to update', editingId)
@@ -371,6 +384,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
         rfi.status = 'open'
       }
     })
+    if (!saved) return
     closeEditModal()
     forceUpdate()
     if (onUpdate) onUpdate()

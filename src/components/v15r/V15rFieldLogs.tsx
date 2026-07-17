@@ -62,38 +62,47 @@ export default function V15rFieldLogs() {
    * project's logs are preserved from remote. Mirrors the Phase 6N path used by
    * V15rFieldLogPanel / V15rProjectLogsTab; no Save/stale/baseline internals touched.
    */
-  async function saveFieldLogScoped(affectedProjectId: string) {
-    const current = getBackupData()
-    if (!current) return
+  async function saveFieldLogScoped(affectedProjectId: string, current: BackupData): Promise<boolean> {
     current._lastSavedAt = new Date().toISOString()
-    saveBackupData(current)
+    try {
+      saveBackupData(current)
+    } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
+      throw err
+    }
     window.dispatchEvent(new Event('storage'))
     window.dispatchEvent(new Event('poweron-data-saved'))
     forceUpdate()
     try {
       const remote = await fetchLatestRemoteBackup()
       if (remote.hasRemoteRow && remote.remoteData) {
-        const incoming = getBackupData() || current
-        const merged = mergeProjectLogsIntoRemote(remote.remoteData, incoming, affectedProjectId)
+        const merged = mergeProjectLogsIntoRemote(remote.remoteData, current, affectedProjectId)
         await saveBackupWithRemoteBaselineSync(
           merged,
           { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
           { source: 'project-logs-remote-merge', changedKey: 'logs', _scopes: ['project.logs', 'project.payments'] },
         )
-        return
+        return true
       }
       saveBackupDataAndSync(getBackupData() || current, 'logs', {
         source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
       })
     } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
       console.warn('[V15rFieldLogs] Scoped field-log sync failed; local changes preserved', err)
-      saveBackupDataAndSync(getBackupData() || current, 'logs', {
-        source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
-      })
+      try {
+        saveBackupDataAndSync(getBackupData() || current, 'logs', {
+          source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
+        })
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return false
+        throw fallbackErr
+      }
     }
+    return true
   }
 
-  function handleAddLog(newLog: BackupLog) {
+  async function handleAddLog(newLog: BackupLog) {
     const current = getBackupData()
     if (!current) return
     const now = new Date().toISOString()
@@ -107,7 +116,8 @@ export default function V15rFieldLogs() {
     }
     current.logs = [...(current.logs || []), stamped]
     // Phase 6P: scoped save (no broad saveBackupData, no full-page reload).
-    void saveFieldLogScoped(String((stamped as any).projId || ''))
+    const saved = await saveFieldLogScoped(String((stamped as any).projId || ''), current)
+    if (!saved) return
     setShowAddForm(false)
   }
 

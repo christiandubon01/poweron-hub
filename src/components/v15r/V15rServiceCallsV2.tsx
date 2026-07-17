@@ -90,11 +90,17 @@ async function saveMultiDayServiceCallsScoped(incomingBackup: BackupData): Promi
       _scopes: ['service.multiDayCalls'],
     })
   } catch (err) {
+    if ((err as Error)?.name === 'BackupStorageWriteError') return
     console.warn('[saveMultiDayServiceCallsScoped] Scoped sync failed; local changes preserved', err)
-    await saveBackupDataAndSync(incomingBackup, 'service.multiDayCalls', {
-      source: 'service.multiDayCalls',
-      _scopes: ['service.multiDayCalls'],
-    })
+    try {
+      await saveBackupDataAndSync(incomingBackup, 'service.multiDayCalls', {
+        source: 'service.multiDayCalls',
+        _scopes: ['service.multiDayCalls'],
+      })
+    } catch (fallbackErr) {
+      if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return
+      throw fallbackErr
+    }
   }
 }
 

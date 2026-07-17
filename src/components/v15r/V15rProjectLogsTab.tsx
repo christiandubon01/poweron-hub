@@ -224,9 +224,14 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
    * Save/stale/baseline internals are untouched (uses the existing remote-baseline
    * save path, same as estimate rows/scalars).
    */
-  async function saveProjectLogsScoped() {
+  async function saveProjectLogsScoped(): Promise<boolean> {
     backup._lastSavedAt = new Date().toISOString()
-    saveBackupData(backup)
+    try {
+      saveBackupData(backup)
+    } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
+      throw err
+    }
     window.dispatchEvent(new Event('storage'))
     window.dispatchEvent(new Event('poweron-data-saved'))
     forceUpdate()
@@ -241,21 +246,28 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
           { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
           { source: 'project-logs-remote-merge', changedKey: 'logs', _scopes: ['project.logs', 'project.payments'] },
         )
-        return
+        return true
       }
       saveBackupDataAndSync(getBackupData() || backup, 'logs', {
         source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
       })
     } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
       console.warn('[ProjectLogs] Scoped logs sync failed; local changes preserved', err)
-      saveBackupDataAndSync(getBackupData() || backup, 'logs', {
-        source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
-      })
+      try {
+        saveBackupDataAndSync(getBackupData() || backup, 'logs', {
+          source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
+        })
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return false
+        throw fallbackErr
+      }
     }
+    return true
   }
 
-  function persist() {
-    void saveProjectLogsScoped()
+  function persist(): Promise<boolean> {
+    return saveProjectLogsScoped()
   }
 
   function resetProjForm() {
@@ -270,7 +282,7 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
     setShowProjForm(true)
   }
 
-  function saveProjEntry() {
+  async function saveProjEntry() {
     if (!p) return
     pushState(backup)
     const now = new Date().toISOString()
@@ -313,7 +325,8 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
       }
       backup.logs = [...logs, entry]
     }
-    persist()
+    const saved = await persist()
+    if (!saved) return
     if (flNotes && flNotes.trim().length > 10) {
       processSkillSignals(`Phase: ${flPhase}. Notes: ${flNotes}`, 'field_log')
     }

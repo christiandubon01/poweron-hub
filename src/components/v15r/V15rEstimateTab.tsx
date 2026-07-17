@@ -76,6 +76,9 @@ const LABOR_PHASE_COLOR_DEBOUNCE_MS = 600
 const ESTIMATE_ROW_SAVE_DEBOUNCE_MS = 250
 const ESTIMATE_ROW_UNDO_GROUP_MS = 800
 
+const isBackupStorageWriteError = (error: unknown): boolean =>
+  !!error && typeof error === 'object' && (error as { name?: string }).name === 'BackupStorageWriteError'
+
 function normalizeLaborPhaseColor(hex: string | undefined): string {
   if (!hex || typeof hex !== 'string') return '#64748b'
   let s = hex.trim()
@@ -542,11 +545,18 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
 
   const cloneEstimateRows = (rows: any[]): any[] => JSON.parse(JSON.stringify(Array.isArray(rows) ? rows : []))
 
-  const persistEstimateRowsSnapshotLocal = (localLaborRows: any[], localOverheadRows: any[]) => {
+  const persistEstimateRowsSnapshotLocal = (localLaborRows: any[], localOverheadRows: any[]): boolean => {
     const localBackup = getBackupData() || backup
     applyEstimateRowsToBackup(localBackup, cloneEstimateRows(localLaborRows), cloneEstimateRows(localOverheadRows))
     localBackup._lastSavedAt = new Date().toISOString()
-    saveBackupData(localBackup)
+    try {
+      saveBackupData(localBackup)
+      return true
+    } catch (err) {
+      if (!isBackupStorageWriteError(err)) throw err
+      estimateRowsSaveQueueRef.current.needsFlush = false
+      return false
+    }
   }
 
   const saveEstimateRowsSnapshotRemote = async (seq: number) => {
@@ -555,7 +565,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
 
     const laborRows = cloneEstimateRows(queue.laborRows)
     const overheadRows = cloneEstimateRows(queue.overheadRows)
-    persistEstimateRowsSnapshotLocal(laborRows, overheadRows)
+    if (!persistEstimateRowsSnapshotLocal(laborRows, overheadRows)) return false
 
     const incomingBackup = getBackupData() || backup
     applyEstimateRowsToBackup(incomingBackup, laborRows, overheadRows)
@@ -594,14 +604,24 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
         persistEstimateRowsSnapshotLocal(queue.laborRows, queue.overheadRows)
       }
     } catch (err) {
+      if (isBackupStorageWriteError(err)) {
+        queue.needsFlush = false
+        return false
+      }
       if (seq !== queue.seq) return
       console.warn('[Estimate] Scoped estimate row sync failed; local row changes preserved', err)
-      saveBackupDataAndSync(incomingBackup, 'projects', {
-        source: 'project.estimate',
-        _scopes: ['project.estimate'],
-      })
-      if (seq !== queue.seq) {
-        persistEstimateRowsSnapshotLocal(queue.laborRows, queue.overheadRows)
+      try {
+        saveBackupDataAndSync(incomingBackup, 'projects', {
+          source: 'project.estimate',
+          _scopes: ['project.estimate'],
+        })
+        if (seq !== queue.seq) {
+          persistEstimateRowsSnapshotLocal(queue.laborRows, queue.overheadRows)
+        }
+      } catch (fallbackErr) {
+        if (!isBackupStorageWriteError(fallbackErr)) throw fallbackErr
+        queue.needsFlush = false
+        return false
       }
     }
   }
@@ -618,7 +638,11 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       do {
         queue.needsFlush = false
         const seq = queue.seq
-        await saveEstimateRowsSnapshotRemote(seq)
+        const saved = await saveEstimateRowsSnapshotRemote(seq)
+        if (saved === false) {
+          queue.needsFlush = false
+          break
+        }
       } while (queue.needsFlush)
     } finally {
       queue.inFlight = false
@@ -678,11 +702,18 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     return true
   }
 
-  const persistEstimateScalarsSnapshotLocal = (values: any, stamps: any) => {
+  const persistEstimateScalarsSnapshotLocal = (values: any, stamps: any): boolean => {
     const localBackup = getBackupData() || backup
     applyEstimateScalarsToBackup(localBackup, values, stamps)
     localBackup._lastSavedAt = new Date().toISOString()
-    saveBackupData(localBackup)
+    try {
+      saveBackupData(localBackup)
+      return true
+    } catch (err) {
+      if (!isBackupStorageWriteError(err)) throw err
+      estimateScalarsSaveQueueRef.current.needsFlush = false
+      return false
+    }
   }
 
   const getLatestEstimateScalarValues = () => ({
@@ -703,7 +734,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
 
     const values = { ...queue.values }
     const stamps = { ...queue.stamps }
-    persistEstimateScalarsSnapshotLocal(values, stamps)
+    if (!persistEstimateScalarsSnapshotLocal(values, stamps)) return false
 
     const incomingBackup = getBackupData() || backup
     applyEstimateScalarsToBackup(incomingBackup, values, stamps)
@@ -736,12 +767,22 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
         _scopes: ['project.estimate'],
       })
     } catch (err) {
+      if (isBackupStorageWriteError(err)) {
+        queue.needsFlush = false
+        return false
+      }
       if (seq !== queue.seq) return
       console.warn('[Estimate] Scoped estimate scalar sync failed; local scalar changes preserved', err)
-      saveBackupDataAndSync(incomingBackup, 'projects', {
-        source: 'project.estimate',
-        _scopes: ['project.estimate'],
-      })
+      try {
+        saveBackupDataAndSync(incomingBackup, 'projects', {
+          source: 'project.estimate',
+          _scopes: ['project.estimate'],
+        })
+      } catch (fallbackErr) {
+        if (!isBackupStorageWriteError(fallbackErr)) throw fallbackErr
+        queue.needsFlush = false
+        return false
+      }
     }
   }
 
@@ -757,7 +798,11 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       do {
         queue.needsFlush = false
         const seq = queue.seq
-        await saveEstimateScalarsSnapshotRemote(seq)
+        const saved = await saveEstimateScalarsSnapshotRemote(seq)
+        if (saved === false) {
+          queue.needsFlush = false
+          break
+        }
       } while (queue.needsFlush)
     } finally {
       queue.inFlight = false
@@ -838,12 +883,17 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
         _scopes: ['project.estimate'],
       })
     } catch (err) {
+      if (isBackupStorageWriteError(err)) return
       if (seq !== laborPhaseColorSaveSeqRef.current) return
       console.warn('[Estimate] Scoped labor phase color sync failed; local color changes preserved', err)
-      saveBackupDataAndSync(incomingBackup, 'project.estimate', {
-        source: 'project.estimate.laborPhaseColors',
-        _scopes: ['project.estimate'],
-      })
+      try {
+        saveBackupDataAndSync(incomingBackup, 'project.estimate', {
+          source: 'project.estimate.laborPhaseColors',
+          _scopes: ['project.estimate'],
+        })
+      } catch (fallbackErr) {
+        if (!isBackupStorageWriteError(fallbackErr)) throw fallbackErr
+      }
     }
   }
 
@@ -1334,9 +1384,14 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
    * and the estimate/active/log moves save atomically. Save/stale/baseline
    * internals untouched.
    */
-  async function saveServiceCallsScopedEst() {
+  async function saveServiceCallsScopedEst(): Promise<boolean> {
     backup._lastSavedAt = new Date().toISOString()
-    saveBackupData(backup)
+    try {
+      saveBackupData(backup)
+    } catch (err) {
+      if (isBackupStorageWriteError(err)) return false
+      throw err
+    }
     try {
       const remote = await fetchLatestRemoteBackup()
       if (remote.hasRemoteRow && remote.remoteData) {
@@ -1347,20 +1402,28 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
           { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
           { source: 'service-calls-remote-merge', changedKey: 'service.calls', _scopes: ['service.calls'] },
         )
-        return
+        return true
       }
       saveBackupDataAndSync(getBackupData() || backup, 'service.calls', { source: 'service.calls', _scopes: ['service.calls'] })
+      return true
     } catch (err) {
+      if (isBackupStorageWriteError(err)) return false
       console.warn('[EstimateTab] Scoped service.calls sync failed; local changes preserved', err)
-      saveBackupDataAndSync(getBackupData() || backup, 'service.calls', { source: 'service.calls', _scopes: ['service.calls'] })
+      try {
+        saveBackupDataAndSync(getBackupData() || backup, 'service.calls', { source: 'service.calls', _scopes: ['service.calls'] })
+        return true
+      } catch (fallbackErr) {
+        if (!isBackupStorageWriteError(fallbackErr)) throw fallbackErr
+        return false
+      }
     }
   }
 
-  function persistServiceCallsEst() {
-    void saveServiceCallsScopedEst()
+  function persistServiceCallsEst(): Promise<boolean> {
+    return saveServiceCallsScopedEst()
   }
 
-  function saveEstimate() {
+  async function saveEstimate() {
     if (!scCust.trim()) { alert('Customer / Job Name is required.'); return }
     pushState(backup)
     if (!backup.serviceEstimates) backup.serviceEstimates = []
@@ -1400,7 +1463,8 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
       backup.serviceEstimates.push(ensureServiceEstimateIdentity({ ...estObj, updatedAt: now }))
     }
     // Phase 6R-B: scoped service.calls save (was broad nonCriticalWrite).
-    persistServiceCallsEst()
+    const saved = await persistServiceCallsEst()
+    if (!saved) return
     resetEstForm()
     setShowEstForm(false)
     forceUpdate()
@@ -1801,12 +1865,20 @@ Return ONLY valid JSON, no other text.`
           _scopes: ['project.estimateVersions'],
         })
       }
+      return true
     } catch (err) {
+      if (isBackupStorageWriteError(err)) return false
       console.warn('[Estimate] Scoped estimateVersions sync failed; local version preserved', err)
-      saveBackupDataAndSync(incomingBackup, 'project.estimateVersions', {
-        source: 'project.estimateVersions',
-        _scopes: ['project.estimateVersions'],
-      })
+      try {
+        saveBackupDataAndSync(incomingBackup, 'project.estimateVersions', {
+          source: 'project.estimateVersions',
+          _scopes: ['project.estimateVersions'],
+        })
+        return true
+      } catch (fallbackErr) {
+        if (isBackupStorageWriteError(fallbackErr)) return false
+        throw fallbackErr
+      }
     }
   }
 
@@ -1832,7 +1904,12 @@ Return ONLY valid JSON, no other text.`
       .map(v => ensureEstimateVersionIdentity(v))
     localBackup.estimateVersions[projectId] = getVisibleEstimateVersions([newVersion, ...existingVersions])
     localBackup._lastSavedAt = now
-    saveBackupData(localBackup)
+    try {
+      saveBackupData(localBackup)
+    } catch (err) {
+      if (isBackupStorageWriteError(err)) return
+      throw err
+    }
     backup.estimateVersions = localBackup.estimateVersions
     forceUpdate()
 
@@ -1840,7 +1917,8 @@ Return ONLY valid JSON, no other text.`
     if (!incomingBackup.estimateVersions) incomingBackup.estimateVersions = {}
     incomingBackup.estimateVersions[projectId] = [newVersion, ...existingVersions]
 
-    await saveEstimateVersionsScoped(incomingBackup, [newVersion, ...existingVersions])
+    const saved = await saveEstimateVersionsScoped(incomingBackup, [newVersion, ...existingVersions])
+    if (!saved) return
 
     alert('Snapshot saved ✓')
   }
@@ -2035,7 +2113,7 @@ Return ONLY valid JSON, no other text.`
     estimateDraftStructuralKeyRef.current = buildEstimateStructuralKey(restoredLiveLabor, restoredLiveOverhead)
     estimateDraftValueKeyRef.current = buildEstimateValueKey(restoredLiveLabor, restoredLiveOverhead)
 
-    persistEstimateRowsSnapshotLocal(nextLaborRows, nextOverheadRows)
+    if (!persistEstimateRowsSnapshotLocal(nextLaborRows, nextOverheadRows)) return
     void saveEstimateRowsScoped(nextLaborRows, nextOverheadRows, 0)
     closeRestorePreviewModal()
     forceUpdate()
@@ -2066,7 +2144,12 @@ Return ONLY valid JSON, no other text.`
     localBackup.estimateVersions = localBackup.estimateVersions || {}
     localBackup.estimateVersions[projectId] = updatedVersions
     localBackup._lastSavedAt = now
-    saveBackupData(localBackup)
+    try {
+      saveBackupData(localBackup)
+    } catch (err) {
+      if (isBackupStorageWriteError(err)) return
+      throw err
+    }
     backup.estimateVersions = localBackup.estimateVersions
     forceUpdate()
 
@@ -2110,7 +2193,12 @@ Return ONLY valid JSON, no other text.`
     localBackup.estimateVersions = localBackup.estimateVersions || {}
     localBackup.estimateVersions[projectId] = tombstonedVersions
     localBackup._lastSavedAt = now
-    saveBackupData(localBackup)
+    try {
+      saveBackupData(localBackup)
+    } catch (err) {
+      if (isBackupStorageWriteError(err)) return
+      throw err
+    }
     backup.estimateVersions = localBackup.estimateVersions
     forceUpdate()
 

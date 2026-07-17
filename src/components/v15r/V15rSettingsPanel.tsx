@@ -1480,7 +1480,11 @@ const persist = useCallback((mutatedData?: BackupData) => {
 
   // Load snapshots on mount
   useEffect(() => {
-    setVersionSnapshots(getSnapshots())
+    let cancelled = false
+    void getSnapshots().then((snapshots) => {
+      if (!cancelled) setVersionSnapshots(snapshots)
+    })
+    return () => { cancelled = true }
   }, [])
 
   const handleSaveSnapshot = useCallback(() => {

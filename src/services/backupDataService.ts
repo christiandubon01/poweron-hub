@@ -36,13 +36,24 @@ import { mergeRemoteMultiDayServiceCallsIntoOutgoing } from './serviceScopeMerge
 // remote blueprint annotations / scope layers. blueprintLibraryService only imports
 // backupDataService dynamically, so this static edge introduces no module cycle.
 import { mergeBlueprintAnnotationsById, mergeBlueprintScopeLayersById } from './blueprintLibraryService'
+import { idbDelete, idbGet, idbSet } from './idbStorage'
 
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
 const STORAGE_KEY = LEGACY_STORAGE_KEY
 
+export class BackupStorageWriteError extends Error {
+  cause: unknown
+
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause || 'Storage write failed'))
+    this.name = 'BackupStorageWriteError'
+    this.cause = cause
+  }
+}
+
 // ── Tenant-scoped local cache ────────────────────────────────────────────────
 // Live authenticated app data must never be read from a browser-global key.
-// The generic legacy key is only kept as a compatibility mirror/migration source.
+// The generic legacy key is retained only for unauthenticated compatibility and tenant migration.
 let _activeTenantUserId: string | null = null
 let _tenantDataReady = false
 
@@ -50,10 +61,55 @@ function getTenantStorageKey(userId: string): string {
   return `poweron_backup_data_${userId}`
 }
 
+function parsesAsBackupJson(raw: string | null, userId?: string): boolean {
+  if (!raw) return false
+  try {
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false
+    if (!Array.isArray(parsed.logs) || !Array.isArray(parsed.projects)) return false
+    if (!parsed.settings || typeof parsed.settings !== 'object' || Array.isArray(parsed.settings)) return false
+    return !userId || !parsed._tenantUserId || parsed._tenantUserId === userId
+  } catch {
+    return false
+  }
+}
+
+function migrateLegacyBackupForTenant(userId: string): void {
+  try {
+    const cacheOwner = getCacheOwner()
+    const legacyRaw = localStorage.getItem(LEGACY_STORAGE_KEY)
+    if (!legacyRaw) return
+
+    const tenantKey = getTenantStorageKey(userId)
+    const tenantRaw = localStorage.getItem(tenantKey)
+    if (!parsesAsBackupJson(tenantRaw, userId)) {
+      if (cacheOwner && cacheOwner !== userId) {
+        console.warn('[backupDataService] Legacy backup migration skipped for account switch')
+        return
+      }
+      if (!parsesAsBackupJson(legacyRaw, userId)) return
+      localStorage.setItem(tenantKey, legacyRaw)
+      const readback = localStorage.getItem(tenantKey)
+      if (readback !== legacyRaw || !parsesAsBackupJson(readback, userId)) {
+        console.warn('[backupDataService] Legacy backup migration readback failed; legacy key retained')
+        return
+      }
+    }
+
+    localStorage.removeItem(LEGACY_STORAGE_KEY)
+    if (localStorage.getItem(LEGACY_STORAGE_KEY) === null) {
+      console.info('[backupDataService] Retired legacy poweron_backup_data key')
+    }
+  } catch (err) {
+    console.warn('[backupDataService] Legacy backup migration failed; legacy key retained', err)
+  }
+}
+
 export function setActiveTenantUser(userId: string): void {
   _activeTenantUserId = userId
   _tenantDataReady = false
   _lastKnownRemoteSavedAt = null
+  migrateLegacyBackupForTenant(userId)
 }
 
 export function markTenantDataReady(userId: string): void {
@@ -202,7 +258,11 @@ export function debouncedSave(data: BackupData, changedKey?: string) {
   if (_saveDebounceTimer) clearTimeout(_saveDebounceTimer)
   _saveDebounceTimer = setTimeout(() => {
     data._lastSavedAt = new Date().toISOString()
-    saveBackupData(data)
+    try {
+      saveBackupData(data)
+    } catch (err) {
+      if ((err as Error)?.name !== 'BackupStorageWriteError') throw err
+    }
   }, SAVE_DEBOUNCE_MS)
 }
 
@@ -826,10 +886,6 @@ export function saveBackupData(
     const key = getEffectiveStorageKey(userId)
     localStorage.setItem(key, JSON.stringify(owned))
 
-    // Keep legacy key as display compatibility only for the active tenant. Reads
-    // during authenticated sessions still use the tenant key, not this key.
-    if (userId) localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(owned))
-
     // Global save trigger:
     // Any normal user-facing save inside a fully hydrated tenant marks data dirty
     // so startPeriodicSync() can push it to Supabase.
@@ -838,7 +894,18 @@ export function saveBackupData(
       _dataChanged = true
     }
   } catch (err) {
-    console.error('[backupDataService] Failed to save:', err)
+    const failure = err instanceof BackupStorageWriteError ? err : new BackupStorageWriteError(err)
+    console.error('[backupDataService] Failed to save:', failure)
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('poweron:storage-write-failed', {
+          detail: { error: failure.message },
+        }))
+      }
+    } catch {
+      /* failure still rethrows below */
+    }
+    throw failure
   }
 
   // Callers that need a post-write readback (e.g. blueprint annotations) pass
@@ -882,7 +949,6 @@ function saveBackupDataSilent(data: BackupData, userId = _activeTenantUserId): v
     const owned = userId ? attachTenantOwner(data, userId) : data
     const key = getEffectiveStorageKey(userId)
     localStorage.setItem(key, JSON.stringify(owned))
-    if (userId) localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(owned))
   } catch { /* ignore */ }
 }
 
@@ -1013,10 +1079,8 @@ function dispatchRemoteAvailableEvent(reason: string, source = 'bootstrap'): voi
 }
 
 export function clearBackupData(userId = _activeTenantUserId): void {
-  try { localStorage.removeItem(getEffectiveStorageKey(userId)) } catch { /* ignore */ }
-  if (userId) {
-    try { localStorage.removeItem(LEGACY_STORAGE_KEY) } catch { /* ignore */ }
-  }
+  if (!userId) return
+  try { localStorage.removeItem(getTenantStorageKey(userId)) } catch { /* ignore */ }
 }
 
 // ── Import merge summary type ────────────────────────────────────────────────
@@ -3178,9 +3242,9 @@ export function saveBackupDataAndSync(
   syncOptions?: SyncToSupabaseOptions,
 ): void {
   data._lastSavedAt = new Date().toISOString()
+  saveBackupData(data)
   if (changedKey) markChanged(changedKey)
   _dataChanged = true
-  saveBackupData(data)
   const resolvedOptions = resolveSyncOptionsForChangedKey(changedKey, syncOptions)
   syncToSupabase(_activeTenantUserId, resolvedOptions).catch(err => console.warn('[sync] Background sync failed:', err))
   maybeAutoSnapshot('Data saved')
@@ -3192,9 +3256,9 @@ export async function saveBackupDataAndSyncNow(
   syncOptions?: SyncToSupabaseOptions,
 ): Promise<SyncToSupabaseResult> {
   data._lastSavedAt = new Date().toISOString()
+  saveBackupData(data)
   if (changedKey) markChanged(changedKey)
   _dataChanged = true
-  saveBackupData(data)
 
   const resolvedOptions = resolveSyncOptionsForChangedKey(changedKey, syncOptions)
   const result = await syncToSupabase(_activeTenantUserId, resolvedOptions)
@@ -3329,6 +3393,7 @@ export async function saveHomeAgendaAlertsScoped(
       _scopes: ['home.agendaAlerts'],
     })
   } catch (err) {
+    if ((err as Error)?.name === 'BackupStorageWriteError') return
     console.warn('[saveHomeAgendaAlertsScoped] Scoped sync failed; local changes preserved', err)
     const incoming = getBackupData() || incomingBackup
     if (incoming) {
@@ -3625,7 +3690,14 @@ export async function forceSyncToCloud(options?: ForceSyncToCloudOptions): Promi
 
   // Update timestamp only after freshness guard and safety snapshot pass (or when not required).
   data._lastSavedAt = new Date().toISOString()
-  saveBackupData(data)
+  try {
+    saveBackupData(data)
+  } catch (err) {
+    if ((err as Error)?.name === 'BackupStorageWriteError') {
+      return { success: false, error: (err as Error).message }
+    }
+    throw err
+  }
 
   console.log('[sync] Force sync to cloud initiated', options?.source ? `(${options.source})` : '')
   const syncOptions: SyncToSupabaseOptions = {
@@ -4099,6 +4171,130 @@ export interface DataSnapshot {
 
 const SNAPSHOT_KEY = 'poweron_snapshots'
 const MAX_SNAPSHOTS = 30
+let snapshotMigrationPromise: Promise<void> | null = null
+let snapshotStorageMode: 'indexeddb' | 'localstorage' | null = null
+let snapshotStorageGeneration = 0
+let snapshotCleanupCount = 0
+let snapshotMutationQueue: Promise<void> = Promise.resolve()
+
+function runSnapshotMutation<T>(mutation: () => Promise<T>): Promise<T> {
+  const result = snapshotMutationQueue.then(mutation)
+  snapshotMutationQueue = result.then(() => undefined, () => undefined)
+  return result
+}
+
+async function migrateSnapshotsToIndexedDb(): Promise<void> {
+  if (typeof localStorage === 'undefined') return
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_KEY)
+    if (!raw) return
+    await idbSet(SNAPSHOT_KEY, raw)
+    const readback = await idbGet<string>(SNAPSHOT_KEY)
+    if (typeof readback !== 'string' || readback.length !== raw.length) {
+      snapshotStorageMode = 'localstorage'
+      console.warn('[Snapshot] IndexedDB migration verification failed; localStorage retained')
+      return
+    }
+    localStorage.removeItem(SNAPSHOT_KEY)
+    snapshotStorageMode = 'indexeddb'
+    console.info('[Snapshot] Migrated poweron_snapshots to IndexedDB')
+  } catch (err) {
+    snapshotStorageMode = 'localstorage'
+    console.warn('[Snapshot] IndexedDB unavailable; localStorage snapshots retained', err)
+  }
+}
+
+function ensureSnapshotStorageMigrated(): Promise<void> {
+  if (!snapshotMigrationPromise) {
+    snapshotMigrationPromise = migrateSnapshotsToIndexedDb()
+  }
+  return snapshotMigrationPromise
+}
+
+async function readSnapshotRaw(): Promise<string | null> {
+  await ensureSnapshotStorageMigrated()
+  if (snapshotStorageMode === 'localstorage') {
+    return localStorage.getItem(SNAPSHOT_KEY)
+  }
+  try {
+    const raw = await idbGet<string>(SNAPSHOT_KEY)
+    if (typeof raw === 'string') return raw
+    const fallback = localStorage.getItem(SNAPSHOT_KEY)
+    if (fallback !== null) snapshotStorageMode = 'localstorage'
+    return fallback
+  } catch (err) {
+    console.warn('[Snapshot] IndexedDB read unavailable; using localStorage fallback', err)
+    try {
+      const fallback = localStorage.getItem(SNAPSHOT_KEY)
+      if (fallback === null) throw err
+      snapshotStorageMode = 'localstorage'
+      return fallback
+    } catch { throw err }
+  }
+}
+
+async function writeSnapshotList(snapshots: DataSnapshot[]): Promise<boolean> {
+  const raw = JSON.stringify(snapshots)
+  await ensureSnapshotStorageMigrated()
+  if (snapshotStorageMode === 'localstorage') {
+    try {
+      localStorage.setItem(SNAPSHOT_KEY, raw)
+      return true
+    } catch (err) {
+      console.warn('[Snapshot] localStorage fallback write failed', err)
+      return false
+    }
+  }
+  try {
+    await idbSet(SNAPSHOT_KEY, raw)
+    snapshotStorageMode = 'indexeddb'
+    return true
+  } catch (err) {
+    console.warn('[Snapshot] IndexedDB write unavailable; using localStorage fallback', err)
+    try {
+      localStorage.setItem(SNAPSHOT_KEY, raw)
+      snapshotStorageMode = 'localstorage'
+      return true
+    } catch (fallbackErr) {
+      console.warn('[Snapshot] localStorage fallback write failed', fallbackErr)
+      return false
+    }
+  }
+}
+
+export async function clearLocalSnapshots(): Promise<boolean> {
+  snapshotStorageGeneration += 1
+  snapshotCleanupCount += 1
+  try {
+    return await runSnapshotMutation(async () => {
+      try {
+        await ensureSnapshotStorageMigrated()
+      } catch (err) {
+        console.warn('[Snapshot] Snapshot migration unavailable during cleanup', err)
+        return false
+      }
+      let indexedDbCleared = true
+      try {
+        await idbDelete(SNAPSHOT_KEY)
+      } catch (err) {
+        indexedDbCleared = false
+        console.warn('[Snapshot] IndexedDB cleanup unavailable', err)
+      }
+      let localStorageCleared = true
+      try {
+        localStorage.removeItem(SNAPSHOT_KEY)
+        localStorageCleared = localStorage.getItem(SNAPSHOT_KEY) === null
+      } catch {
+        localStorageCleared = false
+      }
+      const cleared = indexedDbCleared && localStorageCleared
+      if (cleared) snapshotStorageMode = 'indexeddb'
+      return cleared
+    })
+  } finally {
+    snapshotCleanupCount -= 1
+  }
+}
 
 // ── Snapshot rate limiter for auto-snapshots ────────────────────────────────
 let _lastSnapshotTime = 0
@@ -4112,11 +4308,7 @@ function maybeAutoSnapshot(changeSummary: string): void {
   }
   _lastSnapshotTime = now
   console.log('[Snapshot] maybeAutoSnapshot triggered:', changeSummary)
-  try {
-    createSnapshot(`Auto: ${changeSummary}`)
-  } catch {
-    // Non-critical
-  }
+  void createSnapshot(`Auto: ${changeSummary}`).catch(() => {})
 }
 
 function getDeviceIdForSnapshot(): string {
@@ -4128,14 +4320,19 @@ function getDeviceIdForSnapshot(): string {
   return 'Unknown'
 }
 
-export function getSnapshots(): DataSnapshot[] {
-  try {
-    const raw = localStorage.getItem(SNAPSHOT_KEY)
-    return raw ? JSON.parse(raw) : []
-  } catch { return [] }
+async function readSnapshotList(): Promise<DataSnapshot[]> {
+  const raw = await readSnapshotRaw()
+  const parsed = raw ? JSON.parse(raw) : []
+  return Array.isArray(parsed) ? parsed : []
 }
 
-export function createSnapshot(changeSummary: string): DataSnapshot | null {
+export async function getSnapshots(): Promise<DataSnapshot[]> {
+  try { return await readSnapshotList() } catch { return [] }
+}
+
+export async function createSnapshot(changeSummary: string): Promise<DataSnapshot | null> {
+  const generation = snapshotStorageGeneration
+  if (snapshotCleanupCount > 0) return null
   try {
     const backup = getBackupData()
     if (!backup) return null
@@ -4148,17 +4345,22 @@ export function createSnapshot(changeSummary: string): DataSnapshot | null {
       data: JSON.parse(JSON.stringify(backup)),
     }
 
-    const snapshots = getSnapshots()
-    snapshots.unshift(snapshot)
+    return await runSnapshotMutation(async () => {
+      if (snapshotCleanupCount > 0 || generation !== snapshotStorageGeneration) return null
+      const snapshots = await readSnapshotList()
+      if (snapshotCleanupCount > 0 || generation !== snapshotStorageGeneration) return null
+      snapshots.unshift(snapshot)
 
-    // Trim to max
-    const trimmed = snapshots.slice(0, MAX_SNAPSHOTS)
-    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(trimmed))
+      // Trim to max
+      const trimmed = snapshots.slice(0, MAX_SNAPSHOTS)
+      if (!await writeSnapshotList(trimmed)) return null
+      if (snapshotCleanupCount > 0 || generation !== snapshotStorageGeneration) return null
 
-    // Also save to Supabase (fire and forget)
-    saveSnapshotToSupabase(snapshot)
+      // Also save to Supabase (fire and forget)
+      void saveSnapshotToSupabase(snapshot, generation)
 
-    return snapshot
+      return snapshot
+    })
   } catch (err) {
     console.error('[Snapshot] Failed to create:', err)
     return null
@@ -4171,7 +4373,9 @@ export function createSnapshot(changeSummary: string): DataSnapshot | null {
  * bootstrap is read-only against the cloud — and bypasses the auto-snapshot rate
  * limiter so the pre-apply state is always captured.
  */
-export function createLocalSafetySnapshot(changeSummary: string, userId = _activeTenantUserId): DataSnapshot | null {
+export async function createLocalSafetySnapshot(changeSummary: string, userId = _activeTenantUserId): Promise<DataSnapshot | null> {
+  const generation = snapshotStorageGeneration
+  if (snapshotCleanupCount > 0) return null
   try {
     const backup = getBackupData(userId)
     if (!backup) return null
@@ -4184,23 +4388,30 @@ export function createLocalSafetySnapshot(changeSummary: string, userId = _activ
       data: JSON.parse(JSON.stringify(backup)),
     }
 
-    const snapshots = getSnapshots()
-    snapshots.unshift(snapshot)
-    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshots.slice(0, MAX_SNAPSHOTS)))
-    return snapshot
+    return await runSnapshotMutation(async () => {
+      if (snapshotCleanupCount > 0 || generation !== snapshotStorageGeneration) return null
+      const snapshots = await readSnapshotList()
+      if (snapshotCleanupCount > 0 || generation !== snapshotStorageGeneration) return null
+      snapshots.unshift(snapshot)
+      if (!await writeSnapshotList(snapshots.slice(0, MAX_SNAPSHOTS))) return null
+      if (snapshotCleanupCount > 0 || generation !== snapshotStorageGeneration) return null
+      return snapshot
+    })
   } catch (err) {
     console.error('[Snapshot] Local safety snapshot failed:', err)
     return null
   }
 }
 
-async function saveSnapshotToSupabase(snapshot: DataSnapshot): Promise<void> {
+async function saveSnapshotToSupabase(snapshot: DataSnapshot, generation: number): Promise<void> {
   try {
+    if (snapshotCleanupCount > 0 || generation !== snapshotStorageGeneration) return
     const { supabase } = await import('@/lib/supabase')
     // Store full snapshot list under 'poweron_snapshots' key so all devices sync
-    const allSnapshots = getSnapshots()
+    const allSnapshots = await readSnapshotList()
+    if (snapshotCleanupCount > 0 || generation !== snapshotStorageGeneration) return
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    if (!user || snapshotCleanupCount > 0 || generation !== snapshotStorageGeneration) return
 
     await supabase
       .from('app_state')
@@ -4217,14 +4428,18 @@ async function saveSnapshotToSupabase(snapshot: DataSnapshot): Promise<void> {
   }
 }
 
-export function restoreSnapshot(snapshotId: string): boolean {
+export async function restoreSnapshot(snapshotId: string): Promise<boolean> {
+  const generation = snapshotStorageGeneration
+  if (snapshotCleanupCount > 0) return false
   try {
-    const snapshots = getSnapshots()
+    const snapshots = await readSnapshotList()
+    if (snapshotCleanupCount > 0 || generation !== snapshotStorageGeneration) return false
     const snapshot = snapshots.find(s => s.id === snapshotId)
     if (!snapshot) return false
 
     // Create a pre-restore snapshot first
-    createSnapshot('Auto-backup before restore')
+    await createSnapshot('Auto-backup before restore')
+    if (snapshotCleanupCount > 0 || generation !== snapshotStorageGeneration) return false
 
     // Restore the data
     saveBackupData(snapshot.data as any)
@@ -4235,7 +4450,21 @@ export function restoreSnapshot(snapshotId: string): boolean {
   }
 }
 
-export function deleteSnapshot(snapshotId: string): void {
-  const snapshots = getSnapshots().filter(s => s.id !== snapshotId)
-  localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(snapshots))
+export async function deleteSnapshot(snapshotId: string): Promise<void> {
+  const generation = snapshotStorageGeneration
+  if (snapshotCleanupCount > 0) return
+  try {
+    await runSnapshotMutation(async () => {
+      if (snapshotCleanupCount > 0 || generation !== snapshotStorageGeneration) return
+      const snapshots = (await readSnapshotList()).filter(s => s.id !== snapshotId)
+      if (snapshotCleanupCount > 0 || generation !== snapshotStorageGeneration) return
+      await writeSnapshotList(snapshots)
+    })
+  } catch (err) {
+    console.warn('[Snapshot] Delete failed; snapshot history retained', err)
+  }
+}
+
+if (typeof window !== 'undefined') {
+  void ensureSnapshotStorageMigrated()
 }

@@ -1450,11 +1450,17 @@ export default function V15rTeamPanel() {
           })
         }
       } catch (err) {
+        if ((err as Error)?.name === 'BackupStorageWriteError') return
         console.warn('[TeamPanel] employees remote-baseline save failed — falling back to local scoped save', err)
-        saveBackupDataAndSync(incomingBackup, 'employees', {
-          source: 'team.members',
-          _scopes: ['team.members'],
-        })
+        try {
+          saveBackupDataAndSync(incomingBackup, 'employees', {
+            source: 'team.members',
+            _scopes: ['team.members'],
+          })
+        } catch (fallbackErr) {
+          if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return
+          throw fallbackErr
+        }
       }
     })()
   }

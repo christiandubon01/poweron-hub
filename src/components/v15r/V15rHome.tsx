@@ -151,7 +151,7 @@ function getServiceRollup(log: any): any {
 
   let settings: any = {}
   try {
-    const bd = JSON.parse(localStorage.getItem('poweron_backup_data') || '{}')
+    const bd = getBackupData() || {}
     settings = bd.settings || {}
   } catch {}
   const opCost = num(settings.opCost) || 43

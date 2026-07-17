@@ -116,7 +116,7 @@ function PhaseRow({
   projectLogs: any[]
   historicalAvgs: Record<string, number>
   phases: string[]
-  onSave: (updated: PhaseTimelineEntry) => void
+  onSave: (updated: PhaseTimelineEntry) => Promise<boolean>
 }) {
   const [expanded, setExpanded] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -139,9 +139,9 @@ function PhaseRow({
     ? estimateWeekRange(timeline, idx, historicalAvgs)
     : null
 
-  const handleSave = () => {
-    onSave(draft)
-    setEditing(false)
+  const handleSave = async () => {
+    const saved = await onSave(draft)
+    if (saved) setEditing(false)
   }
 
   const inputStyle = {
@@ -387,9 +387,14 @@ function PhaseRow({
 // unrelated device's newer timeline/deposit edits are never clobbered by a
 // stale broad projects[] save. Falls back to a guarded broad save (still
 // scoped via _scopes) if there is no remote row yet or the remote fetch fails.
-async function saveProjectTimelineScoped(incomingBackup: any, projectId: string): Promise<void> {
+async function saveProjectTimelineScoped(incomingBackup: any, projectId: string): Promise<boolean> {
   incomingBackup._lastSavedAt = new Date().toISOString()
-  saveBackupData(incomingBackup)
+  try {
+    saveBackupData(incomingBackup)
+  } catch (err) {
+    if ((err as Error)?.name === 'BackupStorageWriteError') return false
+    throw err
+  }
 
   try {
     const remote = await fetchLatestRemoteBackup()
@@ -400,13 +405,20 @@ async function saveProjectTimelineScoped(incomingBackup: any, projectId: string)
         { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
         { source: 'project-timeline-remote-merge', changedKey: 'projects', _scopes: ['project.timeline'] },
       )
-      return
+      return true
     }
     saveBackupDataAndSync(incomingBackup, 'projects', { source: 'project.timeline', _scopes: ['project.timeline'] })
   } catch (err) {
+    if ((err as Error)?.name === 'BackupStorageWriteError') return false
     console.warn('[PhaseTimeline] Scoped project.timeline sync failed; local changes preserved', err)
-    saveBackupDataAndSync(incomingBackup, 'projects', { source: 'project.timeline', _scopes: ['project.timeline'] })
+    try {
+      saveBackupDataAndSync(incomingBackup, 'projects', { source: 'project.timeline', _scopes: ['project.timeline'] })
+    } catch (fallbackErr) {
+      if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return false
+      throw fallbackErr
+    }
   }
+  return true
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -456,12 +468,12 @@ export default function V15rPhaseTimelineTab({
 
   const currentDepositPct = depositPct ?? num(project.deposit_pct ?? 10)
 
-  const handlePhaseEntryUpdate = (updatedEntry: PhaseTimelineEntry) => {
+  const handlePhaseEntryUpdate = async (updatedEntry: PhaseTimelineEntry): Promise<boolean> => {
     const b = getBackupData()
-    if (!b) return
+    if (!b) return false
     const projects = b.projects || []
     const idx = projects.findIndex((p: any) => p.id === projectId)
-    if (idx === -1) return
+    if (idx === -1) return false
 
     const proj = projects[idx]
     const existingTimeline: PhaseTimelineEntry[] = proj.phase_timeline
@@ -475,12 +487,14 @@ export default function V15rPhaseTimelineTab({
     const updatedProjects = [...projects]
     updatedProjects[idx] = { ...proj, phase_timeline: existingTimeline }
     pushState(b)
-    void saveProjectTimelineScoped({ ...b, projects: updatedProjects, _lastSavedAt: new Date().toISOString() }, projectId)
+    const saved = await saveProjectTimelineScoped({ ...b, projects: updatedProjects, _lastSavedAt: new Date().toISOString() }, projectId)
+    if (!saved) return false
     forceUpdate()
     if (onUpdate) onUpdate()
+    return true
   }
 
-  const handleDepositSave = () => {
+  const handleDepositSave = async () => {
     const b = getBackupData()
     if (!b) return
     const projects = b.projects || []
@@ -491,7 +505,8 @@ export default function V15rPhaseTimelineTab({
     stampProjectTimelineField(updatedProject, 'deposit_pct', new Date().toISOString())
     updatedProjects[idx] = updatedProject
     pushState(b)
-    void saveProjectTimelineScoped({ ...b, projects: updatedProjects, _lastSavedAt: new Date().toISOString() }, projectId)
+    const saved = await saveProjectTimelineScoped({ ...b, projects: updatedProjects, _lastSavedAt: new Date().toISOString() }, projectId)
+    if (!saved) return
     forceUpdate()
     if (onUpdate) onUpdate()
   }

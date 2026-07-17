@@ -290,6 +290,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   // freshness unverified) -- a working safety feature, not a network/auth failure.
   // 'failed' is reserved for genuine sync errors (network, auth, unknown Supabase error).
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed' | 'paused'>('idle')
+  const [localSaveFailed, setLocalSaveFailed] = useState<string | null>(null)
+  const [showSaveFailedModal, setShowSaveFailedModal] = useState(false)
   const [lastSyncTime, setLastSyncTime] = useState<string>('')
   const [lastSyncDevice, setLastSyncDevice] = useState<string>('')
   // ROOT-SYNC: 'pushed' = this device wrote to the cloud; 'applied' = a remote
@@ -335,13 +337,25 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
     // Listen for same-tab saves dispatched by saveBackupData (e.g. status changes, deletions)
     // so the pipeline KPI in the header updates in real time without a page reload.
-    const handleDataSaved = () => refresh()
+    const handleDataSaved = () => {
+      setLocalSaveFailed(null)
+      setShowSaveFailedModal(false)
+      refresh()
+    }
+    const handleStorageWriteFailed = (event: Event) => {
+      const detail = (event as CustomEvent<{ error?: string }>).detail
+      setLocalSaveFailed(detail?.error || 'Storage write failed')
+      setSyncStatus('failed')
+      setShowSaveFailedModal(true)
+    }
     window.addEventListener('poweron-data-saved', handleDataSaved)
+    window.addEventListener('poweron:storage-write-failed', handleStorageWriteFailed)
 
     // Clean up listeners on unmount
     return () => {
       window.removeEventListener('storage', handleStorageChange)
       window.removeEventListener('poweron-data-saved', handleDataSaved)
+      window.removeEventListener('poweron:storage-write-failed', handleStorageWriteFailed)
     }
   }, [])
 
@@ -1137,6 +1151,22 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
           <span>{offlineToastMsg}</span>
         </div>
       )}
+      {showSaveFailedModal && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 p-4" role="alertdialog" aria-modal="true" aria-labelledby="save-failed-title">
+          <div className="w-full max-w-md rounded-2xl border border-red-500 bg-red-950 p-6 shadow-2xl">
+            <h2 id="save-failed-title" className="text-lg font-black text-red-100">SAVE FAILED — YOUR WORK IS NOT SAVED</h2>
+            <p className="mt-3 text-sm text-red-200">The latest change could not be written to this browser. Keep this page open and free storage before trying again.</p>
+            {localSaveFailed && <p className="mt-3 break-words text-xs text-red-300">{localSaveFailed}</p>}
+            <button
+              type="button"
+              onClick={() => setShowSaveFailedModal(false)}
+              className="mt-6 w-full rounded-lg bg-red-600 px-4 py-3 text-sm font-bold text-white hover:bg-red-500"
+            >
+              Acknowledge
+            </button>
+          </div>
+        </div>
+      )}
       {/* MOBILE/TABLET OVERLAY BACKDROP */}
       {isOverlay && sidebarOpen && (
         <div
@@ -1928,12 +1958,17 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
               <button
                 className="flex items-center gap-2 hover:opacity-80 transition-opacity"
                 title={
-                  syncStatus === 'failed' ? 'Tap to retry sync'
+                  localSaveFailed ? 'Save failed — not saved'
+                  : syncStatus === 'failed' ? 'Tap to retry sync'
                   : syncStatus === 'paused' ? 'Cloud sync paused — tap for details'
                   : syncStatus === 'synced' ? 'Synced to cloud'
                   : 'Sync pending...'
                 }
                 onClick={async () => {
+                  if (localSaveFailed) {
+                    setShowSaveFailedModal(true)
+                    return
+                  }
                   // Step 13B-QA5-R4: 'paused' means the stale-overwrite safety guard is
                   // correctly blocking a write because remote data is newer / unverified.
                   // Tapping must NOT blindly retry the same blocked sync forever -- that
@@ -1974,6 +2009,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 }}
               >
                 <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                  localSaveFailed ? 'bg-red-500' :
                   syncStatus === 'synced' ? 'bg-green-500' :
                   syncStatus === 'syncing' ? 'bg-yellow-500 animate-pulse' :
                   syncStatus === 'failed' ? 'bg-red-500' :
@@ -1982,12 +2018,14 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 }`} />
                 {/* Sync label — hidden on mobile to prevent overflow */}
                 <span className={`text-xs flex-shrink-0 hidden md:inline ${
-                  syncStatus === 'failed' ? 'text-red-400'
+                  localSaveFailed ? 'text-red-400'
+                  : syncStatus === 'failed' ? 'text-red-400'
                   : syncStatus === 'syncing' ? 'text-yellow-400'
                   : syncStatus === 'paused' ? 'text-amber-400'
                   : 'text-gray-400'
                 }`}>
-                  {syncStatus === 'synced' && lastSyncTime
+                  {localSaveFailed ? 'Save failed — not saved'
+                    : syncStatus === 'synced' && lastSyncTime
                     ? (lastSyncDirection === 'pushed'
                       ? `Synced${lastSyncDevice ? ` by ${lastSyncDevice}` : ''} · ${lastSyncTime}`
                       : lastSyncDevice
@@ -2549,7 +2587,12 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
-      saveBackupData(backup)
+      try {
+        saveBackupData(backup)
+      } catch (err) {
+        if ((err as Error)?.name === 'BackupStorageWriteError') return
+        throw err
+      }
       setToastMessage('Saved to ' + saveDomain)
       setTimeout(() => setToastMessage(null), 3000)
       setText('')

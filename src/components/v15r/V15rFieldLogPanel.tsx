@@ -108,11 +108,11 @@ function getServiceRollup(l: any): any {
   const baseQuoted = num(l?.quoted)
   const totalBillable = baseQuoted + addIncome
 
-  // Read current Settings fresh from localStorage — stored l.opCost / l.mileCost are unreliable
+  // Read current Settings fresh from the tenant-aware backup — stored l.opCost / l.mileCost are unreliable
   // (persist() bug corrupted those values historically; compute from raw hrs/miles instead)
   let settings: any = {}
   try {
-    const bd = JSON.parse(localStorage.getItem('poweron_backup_data') || '{}')
+    const bd = getBackupData() || {}
     settings = bd.settings || {}
   } catch { /* fall through to defaults */ }
   const opCost = num(settings.opCost) || 43
@@ -706,9 +706,14 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
    * from remote. Save/stale/baseline internals are untouched (reuses the existing
    * remote-baseline save path, same as project logs / estimate rows).
    */
-  async function saveServiceLogsScoped(incomingBackup: BackupData = backup) {
+  async function saveServiceLogsScoped(incomingBackup: BackupData = backup): Promise<boolean> {
     backup._lastSavedAt = new Date().toISOString()
-    saveBackupData(backup)
+    try {
+      saveBackupData(backup)
+    } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
+      throw err
+    }
     window.dispatchEvent(new Event('storage'))
     window.dispatchEvent(new Event('poweron-data-saved'))
     forceUpdate()
@@ -722,21 +727,28 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
           { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
           { source: 'service-logs-remote-merge', changedKey: 'serviceLogs', _scopes: ['service.calls'] },
         )
-        return
+        return true
       }
       saveBackupDataAndSync(getBackupData() || incomingBackup, 'serviceLogs', {
         source: 'service.calls', _scopes: ['service.calls'],
       })
     } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
       console.warn('[ServiceLogs] Scoped serviceLogs sync failed; local changes preserved', err)
-      saveBackupDataAndSync(getBackupData() || incomingBackup, 'serviceLogs', {
-        source: 'service.calls', _scopes: ['service.calls'],
-      })
+      try {
+        saveBackupDataAndSync(getBackupData() || incomingBackup, 'serviceLogs', {
+          source: 'service.calls', _scopes: ['service.calls'],
+        })
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return false
+        throw fallbackErr
+      }
     }
+    return true
   }
 
-  function persistServiceLogs() {
-    void saveServiceLogsScoped()
+  function persistServiceLogs(): Promise<boolean> {
+    return saveServiceLogsScoped()
   }
 
   /**
@@ -751,9 +763,14 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
    * Use this for estimate/active-call writers and the mixed move workflows so a
    * single save carries every side atomically.
    */
-  async function saveServiceCallsScoped(incomingBackup: BackupData = backup) {
+  async function saveServiceCallsScoped(incomingBackup: BackupData = backup): Promise<boolean> {
     backup._lastSavedAt = new Date().toISOString()
-    saveBackupData(backup)
+    try {
+      saveBackupData(backup)
+    } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
+      throw err
+    }
     window.dispatchEvent(new Event('storage'))
     window.dispatchEvent(new Event('poweron-data-saved'))
     forceUpdate()
@@ -767,21 +784,28 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
           { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
           { source: 'service-calls-remote-merge', changedKey: 'service.calls', _scopes: ['service.calls'] },
         )
-        return
+        return true
       }
       saveBackupDataAndSync(getBackupData() || incomingBackup, 'service.calls', {
         source: 'service.calls', _scopes: ['service.calls'],
       })
     } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
       console.warn('[ServiceCalls] Scoped service.calls sync failed; local changes preserved', err)
-      saveBackupDataAndSync(getBackupData() || incomingBackup, 'service.calls', {
-        source: 'service.calls', _scopes: ['service.calls'],
-      })
+      try {
+        saveBackupDataAndSync(getBackupData() || incomingBackup, 'service.calls', {
+          source: 'service.calls', _scopes: ['service.calls'],
+        })
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return false
+        throw fallbackErr
+      }
     }
+    return true
   }
 
-  function persistServiceCalls() {
-    void saveServiceCallsScoped()
+  function persistServiceCalls(): Promise<boolean> {
+    return saveServiceCallsScoped()
   }
 
   function makeLogInternalId() {
@@ -798,16 +822,26 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
    * exact prior local-sync behavior (no remote merge). Save/stale/baseline internals
    * are untouched (uses the existing remote-baseline save path).
    */
-  async function saveProjectLogsScoped(affectedProjectId: string) {
+  async function saveProjectLogsScoped(affectedProjectId: string): Promise<boolean> {
     backup._lastSavedAt = new Date().toISOString()
     if (hasHydrated && isDemoMode) {
-      saveBackupDataAndSync(backup, 'logs')
+      try {
+        saveBackupDataAndSync(backup, 'logs')
+      } catch (err) {
+        if ((err as Error)?.name === 'BackupStorageWriteError') return false
+        throw err
+      }
       window.dispatchEvent(new Event('storage'))
       window.dispatchEvent(new Event('poweron-data-saved'))
       forceUpdate()
-      return
+      return true
     }
-    saveBackupData(backup)
+    try {
+      saveBackupData(backup)
+    } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
+      throw err
+    }
     window.dispatchEvent(new Event('storage'))
     window.dispatchEvent(new Event('poweron-data-saved'))
     forceUpdate()
@@ -821,17 +855,24 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
           { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
           { source: 'project-logs-remote-merge', changedKey: 'logs', _scopes: ['project.logs', 'project.payments'] },
         )
-        return
+        return true
       }
       saveBackupDataAndSync(getBackupData() || backup, 'logs', {
         source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
       })
     } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
       console.warn('[FieldLog] Scoped project-logs sync failed; local changes preserved', err)
-      saveBackupDataAndSync(getBackupData() || backup, 'logs', {
-        source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
-      })
+      try {
+        saveBackupDataAndSync(getBackupData() || backup, 'logs', {
+          source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
+        })
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return false
+        throw fallbackErr
+      }
     }
+    return true
   }
 
   // ── Service Estimate CRUD (3-step workflow) ──────────────────────────────────
@@ -956,7 +997,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setEstCustEdited(false)
   }
 
-  function saveServiceEstimate() {
+  async function saveServiceEstimate() {
     const estHrs = parseFloat(estHours) || 0
     const estMat = parseFloat(estMaterials) || 0
     const estMi = parseFloat(estMiles) || 0
@@ -998,7 +1039,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
           updatedAt: new Date().toISOString(),
         }
         backup.serviceLogs[idx] = ensureServiceLogIdentity(updatedLog)
-        persistServiceLogs()
+        const saved = await persistServiceLogs()
+        if (!saved) return
       }
       resetEstimateForm()
       setEditSvcId(null)
@@ -1048,7 +1090,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       backup.serviceEstimates = [...serviceEstimates, ensureServiceEstimateIdentity({ ...estimate, updatedAt: new Date().toISOString() })]
     }
     // Phase 6R-B: route through the service.calls scoped save (was broad persist()).
-    persistServiceCalls()
+    const saved = await persistServiceCalls()
+    if (!saved) return
     if (estimate.accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
@@ -1173,7 +1216,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     persistServiceCalls()
   }
 
-  function confirmEstimateToActiveCall(estimateId: string) {
+  async function confirmEstimateToActiveCall(estimateId: string) {
     const est = serviceEstimates.find(e => e.id === estimateId)
     if (!est) return
     pushState(backup)
@@ -1198,7 +1241,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     backup.activeServiceCalls = [...rawActiveServiceCalls, activeEntry]
     // Note: per spec, Confirm Job does NOT mark as invoiced — that happens when work is performed
     // and service log is created. This is just a lead-confirmation milestone.
-    persistServiceCalls()
+    const saved = await persistServiceCalls()
+    if (!saved) return
     if (activeEntry.accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
@@ -1238,7 +1282,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setCompletionVariance(null)
   }
 
-  function completeAndLogService() {
+  async function completeAndLogService() {
     const est = serviceEstimates.find(e => e.id === completingEstimateId)
     if (!est) return
 
@@ -1310,7 +1354,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     })
 
     // Phase 6R-B: one scoped save carries the new serviceLog + estimate completion.
-    persistServiceCalls()
+    const saved = await persistServiceCalls()
+    if (!saved) return
     if ((logEntry as any).accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
@@ -1348,7 +1393,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setEditLogId(null); setShowProjForm(false)
   }
 
-  function saveProjEntry() {
+  async function saveProjEntry() {
     const proj = projects.find(p => p.id === flProj)
     pushState(backup)
     const now = new Date().toISOString()
@@ -1391,7 +1436,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       backup.logs = [...logs, entry]
     }
     // Phase 6N: scoped save for the affected project's log slice.
-    void saveProjectLogsScoped(flProj)
+    const saved = await saveProjectLogsScoped(flProj)
+    if (!saved) return
     // Session 10: Passive skill signal extraction (fire-and-forget)
     if (flNotes && flNotes.trim().length > 10) {
       const signalText = `Phase: ${flPhase}. Notes: ${flNotes}`
@@ -1481,7 +1527,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     }
   }
 
-  function saveSvcEntry() {
+  async function saveSvcEntry() {
     const hrs = parseFloat(slHrs) || 0
     const mi = parseInt(slMi) || 0
     const quoted = parseFloat(slQuoted) || 0
@@ -1538,7 +1584,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       ;(entry as any).updatedAt = new Date().toISOString()
       backup.serviceLogs = [...serviceLogs, ensureServiceLogIdentity(entry)]
     }
-    persistServiceLogs()
+    const saved = await persistServiceLogs()
+    if (!saved) return
     if ((entry as any).accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,

@@ -372,11 +372,17 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
         _scopes: includeScheduleScope ? ['project.progress', 'project.schedule'] : ['project.progress'],
       })
     } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return
       console.warn('[V15rProgressTab] Scoped project-progress sync failed; local changes preserved', err)
-      saveBackupDataAndSync(getBackupData() || currentBackup, 'project.progress', {
-        source: includeScheduleScope ? 'project.progress+project.schedule' : 'project.progress',
-        _scopes: includeScheduleScope ? ['project.progress', 'project.schedule'] : ['project.progress'],
-      })
+      try {
+        saveBackupDataAndSync(getBackupData() || currentBackup, 'project.progress', {
+          source: includeScheduleScope ? 'project.progress+project.schedule' : 'project.progress',
+          _scopes: includeScheduleScope ? ['project.progress', 'project.schedule'] : ['project.progress'],
+        })
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return
+        throw fallbackErr
+      }
     }
   }
 
@@ -390,7 +396,11 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
     const result = mutate(project, currentBackup)
     if (result === false) return false
     currentBackup._lastSavedAt = new Date().toISOString()
-    saveBackupData(currentBackup)
+    try {
+      saveBackupData(currentBackup)
+    } catch {
+      return false
+    }
     onUpdate?.()
     forceUpdate()
     void saveProjectProgressScoped(currentBackup, !!options?.includeScheduleScope)

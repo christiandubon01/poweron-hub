@@ -314,11 +314,23 @@ export default function V15rMoneyPanel() {
         })
       }
     } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') {
+        setRecalculating(false)
+        return
+      }
       console.warn('[MoneyPanel] weeklyData remote-baseline save failed — falling back to local scoped save', err)
-      saveBackupDataAndSync(localBackup, 'weeklyData', {
-        source: 'finance.weeklyData',
-        _scopes: ['finance.weeklyData'],
-      })
+      try {
+        saveBackupDataAndSync(localBackup, 'weeklyData', {
+          source: 'finance.weeklyData',
+          _scopes: ['finance.weeklyData'],
+        })
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') {
+          setRecalculating(false)
+          return
+        }
+        throw fallbackErr
+      }
     }
 
     setRecalculating(false)

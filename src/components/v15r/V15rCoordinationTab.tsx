@@ -73,11 +73,17 @@ export default function V15rCoordinationTab({ projectId, onUpdate, backup: initi
         _scopes: ['project.coordination'],
       })
     } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return
       console.warn('[V15rCoordinationTab] Scoped project-coordination sync failed; local changes preserved', err)
-      saveBackupDataAndSync(getBackupData() || currentBackup, 'project.coordination', {
-        source: 'project.coordination',
-        _scopes: ['project.coordination'],
-      })
+      try {
+        saveBackupDataAndSync(getBackupData() || currentBackup, 'project.coordination', {
+          source: 'project.coordination',
+          _scopes: ['project.coordination'],
+        })
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return
+        throw fallbackErr
+      }
     }
   }
 

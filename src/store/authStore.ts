@@ -22,7 +22,7 @@ import type { BiometricCapabilities } from '@/lib/auth/biometric'
 import { createAppSession, destroyAppSession, validateAppSession, getDeviceInfo } from '@/lib/auth/session'
 import type { AppSession } from '@/lib/auth/session'
 import { logLogin, logAudit } from '@/lib/memory/audit'
-import { hasBackupData, createEmptyBackup, saveBackupData, syncToSupabase as syncBackupToSupabase, loadFromSupabase, setHydrating, getCacheOwner, setCacheOwner, clearCacheOwner, setActiveTenantUser, markTenantDataReady, clearActiveTenantUser } from '@/services/backupDataService'
+import { hasBackupData, createEmptyBackup, saveBackupData, syncToSupabase as syncBackupToSupabase, loadFromSupabase, setHydrating, getCacheOwner, setCacheOwner, clearCacheOwner, setActiveTenantUser, markTenantDataReady, clearActiveTenantUser, clearLocalSnapshots } from '@/services/backupDataService'
 import { logAction } from '@/services/security/AgentSafetySystem'
 
 // ── Role system ───────────────────────────────────────────────────────────────
@@ -165,13 +165,16 @@ async function seedEmptyBackupIfNeeded(userId: string): Promise<void> {
 async function bootstrapAuthenticatedUser(userId: string): Promise<void> {
   setHydrating(true)
   setActiveTenantUser(userId)
+  let preserveCacheOwner = false
   try {
     // Legacy owner tag is kept only as a diagnostic/compatibility marker.
     const cacheOwner = getCacheOwner()
     if (cacheOwner && cacheOwner !== userId) {
-      localStorage.removeItem('poweron_backup_data')
       localStorage.removeItem('poweron_v2')
-      localStorage.removeItem('poweron_snapshots')
+      if (!await clearLocalSnapshots()) {
+        preserveCacheOwner = true
+        throw new Error('Unable to clear the previous account snapshot history')
+      }
       clearCacheOwner()
     }
     setCacheOwner(userId)
@@ -188,7 +191,7 @@ async function bootstrapAuthenticatedUser(userId: string): Promise<void> {
   } catch (err) {
     console.error('[Auth] bootstrapAuthenticatedUser failed:', err)
     clearActiveTenantUser()
-    clearCacheOwner()
+    if (!preserveCacheOwner) clearCacheOwner()
     throw err
   } finally {
     setHydrating(false)
@@ -837,10 +840,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     localStorage.removeItem(EMPLOYEE_PROFILE_ID_KEY)
     localStorage.removeItem(EMPLOYER_ORG_ID_KEY)
     localStorage.removeItem('poweron_alerts_cache')
-    localStorage.removeItem('poweron_backup_data')
     localStorage.removeItem('poweron_v2')
-    localStorage.removeItem('poweron_snapshots')
-    clearCacheOwner()
+    const snapshotsCleared = await clearLocalSnapshots()
+    if (snapshotsCleared) clearCacheOwner()
+    else console.warn('[Auth] Snapshot cleanup pending; previous cache owner retained')
     set({
       status:          'unauthenticated',
       user:            null,

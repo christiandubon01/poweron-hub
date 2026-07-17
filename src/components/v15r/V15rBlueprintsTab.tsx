@@ -268,13 +268,21 @@ export default function V15rBlueprintsTab({ projectId, onUpdate, backup: initial
 
     // Persist to project metadata
     const updatedBlueprints = [...blueprints, ...newBlueprints]
-    setBlueprints(updatedBlueprints)
     if (project) {
+      const previousBlueprints = project.blueprints
       project.blueprints = updatedBlueprints
-      const { saveBackupData } = await import('@/services/backupDataService')
-      saveBackupData(backup)
+      try {
+        const { saveBackupData } = await import('@/services/backupDataService')
+        saveBackupData(backup)
+      } catch (err) {
+        project.blueprints = previousBlueprints
+        setUploading(false)
+        if ((err as Error)?.name === 'BackupStorageWriteError') return
+        throw err
+      }
     }
 
+    setBlueprints(updatedBlueprints)
     setUploading(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [blueprints, project, projectId, backup, selectedLabel])
@@ -293,13 +301,21 @@ export default function V15rBlueprintsTab({ projectId, onUpdate, backup: initial
     })
   }
 
-  const removeBlueprint = (id: string) => {
+  const removeBlueprint = async (id: string) => {
     const updated = blueprints.filter(b => b.id !== id)
-    setBlueprints(updated)
     if (project) {
+      const previousBlueprints = project.blueprints
       project.blueprints = updated
-      import('@/services/backupDataService').then(({ saveBackupData }) => saveBackupData(backup))
+      try {
+        const { saveBackupData } = await import('@/services/backupDataService')
+        saveBackupData(backup)
+      } catch (err) {
+        project.blueprints = previousBlueprints
+        if ((err as Error)?.name === 'BackupStorageWriteError') return
+        throw err
+      }
     }
+    setBlueprints(updated)
     if (activeBlueprint?.id === id) {
       setActiveBlueprint(null)
       setFindings(null)

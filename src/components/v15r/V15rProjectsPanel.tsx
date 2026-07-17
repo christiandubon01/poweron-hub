@@ -574,11 +574,17 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
         _scopes: includeScheduleScope ? ['project.finance', 'project.schedule'] : ['project.finance'],
       })
     } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return
       console.warn('[V15rProjectsPanel] Scoped project-finance sync failed; local changes preserved', err)
-      saveBackupDataAndSync(getBackupData() || backup, 'projects', {
-        source: includeScheduleScope ? 'project.finance+project.schedule' : 'project.finance',
-        _scopes: includeScheduleScope ? ['project.finance', 'project.schedule'] : ['project.finance'],
-      })
+      try {
+        saveBackupDataAndSync(getBackupData() || backup, 'projects', {
+          source: includeScheduleScope ? 'project.finance+project.schedule' : 'project.finance',
+          _scopes: includeScheduleScope ? ['project.finance', 'project.schedule'] : ['project.finance'],
+        })
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return
+        throw fallbackErr
+      }
     }
   }
 
@@ -728,16 +734,25 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
    * logs[], and every other project are preserved from remote. Demo mode keeps the
    * prior local-sync behavior. No Save/stale/baseline internals are touched.
    */
-  async function saveProjectLifecycleScoped(affectedProjectId: string) {
+  async function saveProjectLifecycleScoped(affectedProjectId: string): Promise<boolean> {
     backup._lastSavedAt = new Date().toISOString()
     if (hasHydrated && isDemoMode) {
-      saveBackupDataAndSync(backup, 'projects')
+      try {
+        saveBackupDataAndSync(backup, 'projects')
+      } catch (err) {
+        if ((err as Error)?.name === 'BackupStorageWriteError') return false
+        throw err
+      }
       window.dispatchEvent(new Event('storage'))
       window.dispatchEvent(new Event('poweron-data-saved'))
       forceUpdate()
-      return
+      return true
     }
-    saveBackupData(backup)
+    try {
+      saveBackupData(backup)
+    } catch {
+      return false
+    }
     window.dispatchEvent(new Event('storage'))
     window.dispatchEvent(new Event('poweron-data-saved'))
     forceUpdate()
@@ -751,16 +766,24 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
           { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
           { source: 'project-lifecycle-remote-merge', changedKey: 'projects', _scopes: ['project.lifecycle'] },
         )
-        return
+        return true
       }
       saveBackupDataAndSync(getBackupData() || backup, 'projects', {
         source: 'project.lifecycle', _scopes: ['project.lifecycle'],
       })
+      return true
     } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
       console.warn('[V15rProjectsPanel] Scoped project-lifecycle sync failed; local changes preserved', err)
-      saveBackupDataAndSync(getBackupData() || backup, 'projects', {
-        source: 'project.lifecycle', _scopes: ['project.lifecycle'],
-      })
+      try {
+        saveBackupDataAndSync(getBackupData() || backup, 'projects', {
+          source: 'project.lifecycle', _scopes: ['project.lifecycle'],
+        })
+        return true
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return false
+        throw fallbackErr
+      }
     }
   }
 
@@ -775,7 +798,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     // are preserved; readers hide the project via isActiveProject. Save is scoped to
     // project.lifecycle so a stale remote can't clobber unrelated project data.
     backup.projects = allProjects.map(p => (p.id === id ? createProjectTombstone(p) : p))
-    void saveProjectLifecycleScoped(id)
+    const saved = await saveProjectLifecycleScoped(id)
+    if (!saved) return
     // Write won_archived disposition to linked hunter lead
     if (proj?.convertedFromLeadId) {
       try {
@@ -868,16 +892,25 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
    * path used by V15rFieldLogPanel / V15rProjectLogsTab; no Save/stale/baseline
    * internals are touched.
    */
-  async function saveProjectLogCreatorScoped(affectedProjectId: string) {
+  async function saveProjectLogCreatorScoped(affectedProjectId: string): Promise<boolean> {
     backup._lastSavedAt = new Date().toISOString()
     if (hasHydrated && isDemoMode) {
-      saveBackupDataAndSync(backup, 'logs')
+      try {
+        saveBackupDataAndSync(backup, 'logs')
+      } catch (err) {
+        if ((err as Error)?.name === 'BackupStorageWriteError') return false
+        throw err
+      }
       window.dispatchEvent(new Event('storage'))
       window.dispatchEvent(new Event('poweron-data-saved'))
       forceUpdate()
-      return
+      return true
     }
-    saveBackupData(backup)
+    try {
+      saveBackupData(backup)
+    } catch {
+      return false
+    }
     window.dispatchEvent(new Event('storage'))
     window.dispatchEvent(new Event('poweron-data-saved'))
     forceUpdate()
@@ -891,20 +924,28 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
           { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
           { source: 'project-logs-remote-merge', changedKey: 'logs', _scopes: ['project.logs', 'project.payments'] },
         )
-        return
+        return true
       }
       saveBackupDataAndSync(getBackupData() || backup, 'logs', {
         source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
       })
+      return true
     } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
       console.warn('[V15rProjectsPanel] Scoped payment-log sync failed; local changes preserved', err)
-      saveBackupDataAndSync(getBackupData() || backup, 'logs', {
-        source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
-      })
+      try {
+        saveBackupDataAndSync(getBackupData() || backup, 'logs', {
+          source: 'project.logs', _scopes: ['project.logs', 'project.payments'],
+        })
+        return true
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return false
+        throw fallbackErr
+      }
     }
   }
 
-  function handleMarkFullPayment(p: BackupProject) {
+  async function handleMarkFullPayment(p: BackupProject) {
     // DASHBOARD-CFOT-COLLECTION-PATH-PARITY-APR22-2026-1
     // Writes to backup.logs stream (the single source of truth for collected amounts).
     // Drops the p.paid scalar write — getProjectFinancials derives paid from logs,
@@ -941,7 +982,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     p.lastCollectedAt = now
     p.lastCollectedAmount = amount
     // Phase 6P: scoped save for this project's log slice (no broad saveBackupData).
-    void saveProjectLogCreatorScoped(p.id)
+    const saved = await saveProjectLogCreatorScoped(p.id)
+    if (!saved) return
     // Write disposition_detail to linked HUNTER lead if this project came from one
     if (p.convertedFromLeadId) {
       const leadId = p.convertedFromLeadId
@@ -958,7 +1000,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     setCollectProject(null)
   }
 
-  function handleLogPartialPayment(p: BackupProject) {
+  async function handleLogPartialPayment(p: BackupProject) {
     // DASHBOARD-CFOT-COLLECTION-PATH-PARITY-APR22-2026-1
     // Writes partial payment to backup.logs stream. See handleMarkFullPayment for rationale.
     const amount = num(collectPartialInput)
@@ -991,7 +1033,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     p.lastCollectedAt = now
     p.lastCollectedAmount = amount
     // Phase 6P: scoped save for this project's log slice (no broad saveBackupData).
-    void saveProjectLogCreatorScoped(p.id)
+    const saved = await saveProjectLogCreatorScoped(p.id)
+    if (!saved) return
     // Write disposition_detail to linked HUNTER lead if this project came from one
     if (p.convertedFromLeadId) {
       const leadId = p.convertedFromLeadId

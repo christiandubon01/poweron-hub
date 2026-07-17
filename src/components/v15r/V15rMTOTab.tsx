@@ -107,10 +107,11 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
   const mtoSaveQueueRef = useRef({
     timer: null as ReturnType<typeof setTimeout> | null,
     inFlight: false,
+    flushPromise: null as Promise<boolean> | null,
     needsFlush: false,
     seq: 0,
   })
-  const flushMtoSaveQueueRef = useRef<(() => Promise<void>) | null>(null)
+  const flushMtoSaveQueueRef = useRef<(() => Promise<boolean>) | null>(null)
   const mtoStructuralKeyRef = useRef('__init__')
   const [mtoInputFocused, setMtoInputFocused] = useState(false)
 
@@ -206,17 +207,22 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
     options?: { skipPushState?: boolean; skipUiRefresh?: boolean },
   ) => {
     const freshBackup = getBackupData()
-    if (!freshBackup) return
+    if (!freshBackup) return false
     const freshProject = (freshBackup.projects || []).find((x: any) => String(x?.id || '') === projectId)
-    if (!freshProject) return
+    if (!freshProject) return false
     if (!options?.skipPushState) pushState()
 
     freshProject.mtoRows = Array.isArray(freshProject.mtoRows) ? freshProject.mtoRows : []
     const didChange = mutate(freshProject, freshBackup)
-    if (didChange === false) return
+    if (didChange === false) return false
 
     freshBackup._lastSavedAt = new Date().toISOString()
-    saveBackupData(freshBackup)
+    try {
+      saveBackupData(freshBackup)
+    } catch {
+      mtoSaveQueueRef.current.needsFlush = false
+      return false
+    }
     if (!options?.skipUiRefresh) {
       forceUpdate()
       if (onUpdate) onUpdate()
@@ -245,13 +251,25 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
           },
         )
         if (!options?.skipUiRefresh && onUpdate) onUpdate()
-        return
+        return true
       }
 
       saveBackupDataAndSync(freshBackup, 'projects', { source: 'project.materials', _scopes: ['project.materials'] })
+      return true
     } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') {
+        mtoSaveQueueRef.current.needsFlush = false
+        return false
+      }
       console.warn('[V15rMTOTab] Materials remote-merge save failed; kept local and used guarded sync', err)
-      saveBackupDataAndSync(freshBackup, 'projects', { source: 'project.materials', _scopes: ['project.materials'] })
+      try {
+        saveBackupDataAndSync(freshBackup, 'projects', { source: 'project.materials', _scopes: ['project.materials'] })
+        return true
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name !== 'BackupStorageWriteError') throw fallbackErr
+        mtoSaveQueueRef.current.needsFlush = false
+        return false
+      }
     }
   }
 
@@ -302,41 +320,50 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
     })
   }
 
-  const saveMtoDraftSnapshotRemote = async (seq: number) => {
+  const saveMtoDraftSnapshotRemote = async (seq: number): Promise<boolean> => {
     const queue = mtoSaveQueueRef.current
-    if (seq !== queue.seq) return
+    if (seq !== queue.seq) return true
 
     const draftSnapshot = cloneMtoDraftMap(latestMtoDraftRef.current)
-    if (Object.keys(draftSnapshot).length === 0) return
+    if (Object.keys(draftSnapshot).length === 0) return true
 
-    await persistMaterialChange((freshProject) => {
+    const saved = await persistMaterialChange((freshProject) => {
       freshProject.mtoRows = applyMtoDraftsToRows(freshProject.mtoRows || [])
     }, { skipPushState: true, skipUiRefresh: true })
+    if (!saved) return false
 
-    if (seq !== queue.seq) return
+    if (seq !== queue.seq) return true
     // Keep drafts while typing — do not clear ref/state here; blur flush clears when safe.
+    return true
   }
 
-  const flushMtoSaveQueue = async () => {
+  const flushMtoSaveQueue = (): Promise<boolean> => {
     const queue = mtoSaveQueueRef.current
-    if (queue.inFlight) {
+    if (queue.flushPromise) {
       queue.needsFlush = true
-      return
+      return queue.flushPromise
     }
 
-    queue.inFlight = true
-    try {
-      do {
-        queue.needsFlush = false
-        const seq = queue.seq
-        await saveMtoDraftSnapshotRemote(seq)
-      } while (queue.needsFlush)
-    } finally {
-      queue.inFlight = false
-      if (queue.needsFlush) {
-        void flushMtoSaveQueue()
+    queue.flushPromise = (async () => {
+      queue.inFlight = true
+      let saved = true
+      try {
+        do {
+          queue.needsFlush = false
+          const seq = queue.seq
+          saved = await saveMtoDraftSnapshotRemote(seq)
+          if (!saved) {
+            queue.needsFlush = false
+            break
+          }
+        } while (queue.needsFlush)
+      } finally {
+        queue.inFlight = false
+        queue.flushPromise = null
       }
-    }
+      return saved
+    })()
+    return queue.flushPromise
   }
   flushMtoSaveQueueRef.current = flushMtoSaveQueue
 
@@ -351,7 +378,7 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
     }, MTO_ROW_SAVE_DEBOUNCE_MS)
   }
 
-  const flushMtoDraftImmediate = async () => {
+  const flushMtoDraftImmediate = async (): Promise<boolean> => {
     const queue = mtoSaveQueueRef.current
     if (queue.timer) {
       clearTimeout(queue.timer)
@@ -359,7 +386,7 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
     }
     queue.seq += 1
     queue.needsFlush = true
-    await flushMtoSaveQueue()
+    return flushMtoSaveQueue()
   }
 
   const isMtoDraftInputFocused = (): boolean =>
@@ -386,33 +413,21 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
     requestAnimationFrame(() => {
       if (isMtoDraftInputFocused()) return
       void (async () => {
-        try {
-          await flushMtoDraftImmediate()
-        } finally {
-          if (!isMtoDraftInputFocused()) {
-            mtoEditingRef.current = false
-            setMtoInputFocused(false)
-            latestMtoDraftRef.current = {}
-            setMtoRowDrafts({})
-            forceUpdate()
-            onUpdate?.()
-          }
+        const saved = await flushMtoDraftImmediate()
+        if (saved && !isMtoDraftInputFocused()) {
+          mtoEditingRef.current = false
+          setMtoInputFocused(false)
+          latestMtoDraftRef.current = {}
+          setMtoRowDrafts({})
+          forceUpdate()
+          onUpdate?.()
         }
       })()
     })
   }
 
-  const commitMtoRowFieldImmediate = (rowId: string, field: 'name' | 'qty' | 'note', value: any) => {
-    setMtoRowDrafts(prev => {
-      const rowDraft = { ...(prev[rowId] || {}) }
-      delete rowDraft[field]
-      const next = { ...prev }
-      if (Object.keys(rowDraft).length === 0) delete next[rowId]
-      else next[rowId] = rowDraft
-      latestMtoDraftRef.current = next
-      return next
-    })
-    void persistMaterialChange((freshProject) => {
+  const commitMtoRowFieldImmediate = async (rowId: string, field: 'name' | 'qty' | 'note', value: any) => {
+    const saved = await persistMaterialChange((freshProject) => {
       const rows: any[] = freshProject.mtoRows || []
       const idx = findMTORowIndexByStableId(rows, rowId, projectId)
       if (idx === -1) return false
@@ -425,14 +440,26 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
       rows[idx] = stampMTORowForEdit(row, projectId, undefined, rowId)
       freshProject.mtoRows = rows
     })
+    if (!saved) return false
+
+    setMtoRowDrafts(prev => {
+      const rowDraft = { ...(prev[rowId] || {}) }
+      delete rowDraft[field]
+      const next = { ...prev }
+      if (Object.keys(rowDraft).length === 0) delete next[rowId]
+      else next[rowId] = rowDraft
+      latestMtoDraftRef.current = next
+      return next
+    })
+    return true
   }
 
-  const editMTORow = (rowId: string, field: string, value: any) => {
+  const editMTORow = async (rowId: string, field: string, value: any): Promise<boolean> => {
     if (field === 'name' || field === 'qty' || field === 'note') {
       updateMtoRowDraft(rowId, field, String(value))
-      return
+      return true
     }
-    void persistMaterialChange((freshProject) => {
+    return persistMaterialChange((freshProject) => {
       const rows: any[] = freshProject.mtoRows || []
       const idx = findMTORowIndexByStableId(rows, rowId, projectId)
       if (idx === -1) return false
@@ -478,8 +505,8 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
     })
   }
 
-  const delMTORow = (rowId: string) => {
-    void persistMaterialChange((freshProject) => {
+  const delMTORow = async (rowId: string) => {
+    const saved = await persistMaterialChange((freshProject) => {
       const rows: any[] = freshProject.mtoRows || []
       const idx = findMTORowIndexByStableId(rows, rowId, projectId)
       if (idx === -1) {
@@ -489,6 +516,7 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
       const context = createMaterialIdentityContext(rows, projectId, 'mtoRows')
       rows[idx] = createMaterialRowTombstone(rows[idx], projectId, 'mtoRows', undefined, context)
     })
+    if (!saved) return
     setLocalPlacements(prev => { const n = { ...prev }; delete n[rowId]; return n })
     setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[rowId]; return n })
     setLocalUnitCosts(prev => { const n = { ...prev }; delete n[rowId]; return n })
@@ -669,9 +697,10 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
 
     // Commit placement to data layer (onBlur / Enter).
     // Reads from e.target.value to always have the latest DOM value.
-    const commitPlacement = (domValue: string) => {
+    const commitPlacement = async (domValue: string) => {
       if (domValue !== (r.placement || '')) {
-        editMTORow(rowUiId, 'placement', domValue)
+        const saved = await editMTORow(rowUiId, 'placement', domValue)
+        if (!saved) return
       }
       // Remove local override; row will read from r.placement on next render
       setLocalPlacements(prev => { const n = { ...prev }; delete n[rowUiId]; return n })
@@ -798,9 +827,9 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
               >
                 {localVal}
                 <span
-                  onClick={e => {
+                  onClick={async e => {
                     e.stopPropagation()
-                    editMTORow(rowUiId, 'placement', '')
+                    if (!await editMTORow(rowUiId, 'placement', '')) return
                     setLocalPlacements(prev => { const n = { ...prev }; delete n[rowUiId]; return n })
                     setEditingPlacementId(null)
                   }}
@@ -824,13 +853,13 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
                 value={localVal}
                 onChange={e => setLocalPlacements(prev => ({ ...prev, [rowUiId]: e.target.value }))}
                 onBlur={e => {
-                  commitPlacement(e.target.value)
+                  void commitPlacement(e.target.value)
                   setEditingPlacementId(null)
                 }}
                 onKeyDown={e => {
                   if (e.key === 'Enter') {
                     e.preventDefault()
-                    commitPlacement((e.target as HTMLInputElement).value)
+                    void commitPlacement((e.target as HTMLInputElement).value)
                     setEditingPlacementId(null)
                   }
                   if (e.key === 'Escape') {
@@ -892,9 +921,9 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
               >
                 {displayNote}
                 <span
-                  onClick={e => {
+                  onClick={async e => {
                     e.stopPropagation()
-                    commitMtoRowFieldImmediate(rowUiId, 'note', '')
+                    if (!await commitMtoRowFieldImmediate(rowUiId, 'note', '')) return
                     setEditingNoteId(null)
                   }}
                   onMouseDown={e => e.stopPropagation()}
@@ -983,9 +1012,9 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
             >
               {localSupplierNoteVal}
               <span
-                onClick={e => {
+                onClick={async e => {
                   e.stopPropagation()
-                  editMTORow(rowUiId, 'supplierNote', '')
+                  if (!await editMTORow(rowUiId, 'supplierNote', '')) return
                   setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[rowUiId]; return n })
                   setEditingSupplierNoteId(null)
                 }}
@@ -1000,8 +1029,8 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
               type="text"
               value={localSupplierNoteVal}
               onChange={e => setLocalSupplierNotes(prev => ({ ...prev, [rowUiId]: e.target.value }))}
-              onBlur={e => {
-                editMTORow(rowUiId, 'supplierNote', e.target.value)
+              onBlur={async e => {
+                if (!await editMTORow(rowUiId, 'supplierNote', e.target.value)) return
                 setLocalSupplierNotes(prev => { const n = { ...prev }; delete n[rowUiId]; return n })
                 setEditingSupplierNoteId(null)
               }}
@@ -1086,9 +1115,9 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
                 // Local only — smooth typing, no save until blur/Enter
                 setLocalUnitCosts(prev => ({ ...prev, [rowUiId]: e.target.value }))
               }}
-              onBlur={e => {
+              onBlur={async e => {
                 const v = e.target.value
-                editMTORow(rowUiId, 'unitCost', v)
+                if (!await editMTORow(rowUiId, 'unitCost', v)) return
                 setLocalUnitCosts(prev => {
                   const n = { ...prev }
                   delete n[rowUiId]
@@ -1172,7 +1201,7 @@ export default function V15rMTOTab({ projectId, onUpdate, backup: initialBackup 
             </button>
             {/* Delete */}
             <button
-              onClick={() => delMTORow(rowUiId)}
+              onClick={() => void delMTORow(rowUiId)}
               onMouseDown={e => e.stopPropagation()}
               title="Delete row"
               style={{

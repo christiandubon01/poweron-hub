@@ -355,16 +355,21 @@ export default function V15rChangeOrdersTab({ projectId, onUpdate, backup: backu
 
   // ── Persistence helpers ───────────────────────────────────────────────────
 
-  async function persist(mutate: (proj: any) => void) {
+  async function persist(mutate: (proj: any) => void): Promise<boolean> {
     const fresh = getBackupData()
-    if (!fresh) return
+    if (!fresh) return false
     const proj = (fresh.projects || []).find((x: any) => x.id === projectId)
-    if (!proj) return
+    if (!proj) return false
     pushState()
     mutate(proj)
     setLocalRawChangeOrders(cloneChangeOrders(proj.changeOrders || []))
     fresh._lastSavedAt = new Date().toISOString()
-    saveBackupData(fresh)
+    try {
+      saveBackupData(fresh)
+    } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
+      throw err
+    }
     if (onUpdate) onUpdate()
 
     try {
@@ -392,19 +397,26 @@ export default function V15rChangeOrdersTab({ projectId, onUpdate, backup: backu
           },
         )
         if (onUpdate) onUpdate()
-        return
+        return true
       }
 
       saveBackupDataAndSync(fresh, 'projects', { source: 'project.changeOrders' })
     } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return false
       console.warn('[V15rChangeOrdersTab] Change Order remote-merge save failed; kept local and used guarded sync', err)
-      saveBackupDataAndSync(fresh, 'projects', { source: 'project.changeOrders' })
+      try {
+        saveBackupDataAndSync(fresh, 'projects', { source: 'project.changeOrders' })
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return false
+        throw fallbackErr
+      }
     }
+    return true
   }
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
-  function createCO() {
+  async function createCO() {
     if (!addForm.title.trim()) return
     const now = isoNow()
     const newCO: ChangeOrder = {
@@ -423,10 +435,11 @@ export default function V15rChangeOrdersTab({ projectId, onUpdate, backup: backu
       status: addForm.status,
       updatedAt: now,
     }
-    persist(proj => {
+    const saved = await persist(proj => {
       if (!proj.changeOrders) proj.changeOrders = []
       proj.changeOrders.unshift(newCO)
     })
+    if (!saved) return
     setShowAdd(false)
     setAddForm(blankForm())
   }
@@ -449,9 +462,9 @@ export default function V15rChangeOrdersTab({ projectId, onUpdate, backup: backu
     setEditingId(co.id)
   }
 
-  function saveEdit() {
+  async function saveEdit() {
     if (!editForm.title.trim() || !editingId) return
-    persist(proj => {
+    const saved = await persist(proj => {
       const co = (proj.changeOrders || []).find((c: ChangeOrder) => c.id === editingId)
       if (!co) return
       co.title = editForm.title.trim()
@@ -468,11 +481,12 @@ export default function V15rChangeOrdersTab({ projectId, onUpdate, backup: backu
       co.status = editForm.status
       co.updatedAt = isoNow()
     })
+    if (!saved) return
     setEditingId(null)
   }
 
-  function deleteCO(id: string) {
-    persist(proj => {
+  async function deleteCO(id: string) {
+    const saved = await persist(proj => {
       const arr: ChangeOrder[] = proj.changeOrders || []
       const idx = arr.findIndex((c: ChangeOrder) => c.id === id)
       if (idx === -1) {
@@ -482,6 +496,7 @@ export default function V15rChangeOrdersTab({ projectId, onUpdate, backup: backu
       arr[idx] = createChangeOrderTombstone(arr[idx])
       proj.changeOrders = arr
     })
+    if (!saved) return
     setDeleteId(null)
   }
 

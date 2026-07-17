@@ -38,7 +38,8 @@
           var theme = localStorage.getItem('poweron_theme');
           // Fallback: parse from backup data if dedicated key not set
           if (!theme) {
-            var raw = localStorage.getItem('poweron_backup_data');
+            var cacheOwner = localStorage.getItem('poweron_cache_owner');
+            var raw = cacheOwner ? localStorage.getItem('poweron_backup_data_' + cacheOwner) : null;
             if (raw) {
               var data = JSON.parse(raw);
               theme = data && data.settings && data.settings.theme;

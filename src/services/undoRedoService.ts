@@ -59,16 +59,15 @@ export function undo(): boolean {
     if (state.undoStack.length === 0) return false
 
     const current = getBackupData()
-    if (current) {
-      const currentJson = JSON.stringify(current)
-      state.redoStack.push(currentJson)
-    }
+    const currentJson = current ? JSON.stringify(current) : null
 
-    const previous = state.undoStack.pop()
+    const previous = state.undoStack[state.undoStack.length - 1]
     if (!previous) return false
 
     const restored = JSON.parse(previous) as BackupData
     saveBackupData(restored)
+    state.undoStack.pop()
+    if (currentJson) state.redoStack.push(currentJson)
     state.lastPushedState = previous
 
     return true
@@ -83,16 +82,15 @@ export function redo(): boolean {
     if (state.redoStack.length === 0) return false
 
     const current = getBackupData()
-    if (current) {
-      const currentJson = JSON.stringify(current)
-      state.undoStack.push(currentJson)
-    }
+    const currentJson = current ? JSON.stringify(current) : null
 
-    const next = state.redoStack.pop()
+    const next = state.redoStack[state.redoStack.length - 1]
     if (!next) return false
 
     const restored = JSON.parse(next) as BackupData
     saveBackupData(restored)
+    state.redoStack.pop()
+    if (currentJson) state.undoStack.push(currentJson)
     state.lastPushedState = next
 
     return true

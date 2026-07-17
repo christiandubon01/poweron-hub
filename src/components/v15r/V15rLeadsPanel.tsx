@@ -1545,7 +1545,7 @@ export default function V15rLeadsPanel() {
 
   try {
     Object.keys(localStorage)
-      .filter((key) => key === 'poweron_backup_data' || key.startsWith('poweron_backup_data_'))
+      .filter((key) => key.startsWith('poweron_backup_data_'))
       .forEach((key) => {
         const raw = localStorage.getItem(key)
         if (!raw) return
@@ -1577,7 +1577,13 @@ export default function V15rLeadsPanel() {
     console.warn('[Leads] failed to sanitize local relationship cache', err)
   }
 
-  const syncResult = await saveBackupDataAndSyncNow(backup, 'gcContacts')
+  let syncResult
+  try {
+    syncResult = await saveBackupDataAndSyncNow(backup, 'gcContacts')
+  } catch (err) {
+    if ((err as Error)?.name === 'BackupStorageWriteError') return
+    throw err
+  }
 
   window.dispatchEvent(new Event('storage'))
   window.dispatchEvent(new Event('poweron-data-saved'))
