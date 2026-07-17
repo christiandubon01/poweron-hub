@@ -145,7 +145,7 @@ function getEffectiveStorageKey(userId = _activeTenantUserId): string {
 // ── Device ID System ─────────────────────────────────────────────────────────
 const DEVICE_ID_KEY = 'poweron_device_id'
 
-function getDeviceId(): string {
+export function getDeviceId(): string {
   let label = 'Unknown'
   let generatedId = ''
   try {
@@ -2291,7 +2291,7 @@ function isIdBearingRecordArray(value: unknown): value is Array<Record<string, a
  * (settings, calcRefs, projectDashboards, scalars) continue to come from the
  * remote snapshot unchanged, exactly as before.
  */
-function mergeLocalRecordsIntoRemoteSnapshot(remote: BackupData, local: BackupData): BackupData {
+export function mergeLocalRecordsIntoRemoteSnapshot(remote: BackupData, local: BackupData): BackupData {
   const merged: BackupData = {
     ...(remote as any),
     blueprintSummaries: mergeBlueprintSummariesObject(
@@ -2897,7 +2897,7 @@ function isBlueprintSyncSource(options?: { source?: string | null; _scopes?: Dat
  * library, annotations, and scope layers. Never
  * throws — on any error it returns the un-merged outgoing blob so the save proceeds.
  */
-function mergeRemoteBlueprintSummariesIntoOutgoing(outgoing: BackupData, remoteData: any): BackupData {
+export function mergeRemoteBlueprintSummariesIntoOutgoing(outgoing: BackupData, remoteData: any): BackupData {
   try {
     const remoteBp = (remoteData as any)?.blueprintSummaries
     if (!remoteBp || typeof remoteBp !== 'object' || Array.isArray(remoteBp)) return outgoing
@@ -2947,7 +2947,7 @@ function mergeRemoteBlueprintSummariesIntoOutgoing(outgoing: BackupData, remoteD
   }
 }
 
-function mergeRemoteProjectBlueprintListsIntoOutgoing(outgoing: BackupData, remoteData: any): BackupData {
+export function mergeRemoteProjectBlueprintListsIntoOutgoing(outgoing: BackupData, remoteData: any): BackupData {
   const remoteProjects = Array.isArray(remoteData?.projects) ? remoteData.projects : []
   const outgoingProjects = Array.isArray(outgoing?.projects) ? outgoing.projects : []
   if (remoteProjects.length === 0 || outgoingProjects.length === 0) return outgoing
