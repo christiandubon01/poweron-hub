@@ -25,7 +25,6 @@ import {
   Maximize2,
   Minimize2,
   Unlock,
-  Minus,
   MousePointer2,
   Move,
   Pencil,
@@ -33,7 +32,6 @@ import {
   RefreshCw,
   RotateCw,
   Ruler,
-  Search,
   Shapes,
   Sparkles,
   Square,
@@ -1967,6 +1965,100 @@ function mergeVisibleAnnotationsWithLocalPending(
   return out
 }
 
+function BlueprintPageThumbnail({
+  pdfDoc,
+  pageNumber,
+  isActive,
+  onSelect,
+}: {
+  pdfDoc: any
+  pageNumber: number
+  isActive: boolean
+  onSelect: () => void
+}) {
+  const hostRef = useRef<HTMLButtonElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [shouldRender, setShouldRender] = useState(isActive)
+  const [previewReady, setPreviewReady] = useState(false)
+
+  useEffect(() => {
+    if (shouldRender || !hostRef.current || typeof IntersectionObserver === 'undefined') {
+      setShouldRender(true)
+      return
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShouldRender(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin: '160px' },
+    )
+    observer.observe(hostRef.current)
+    return () => observer.disconnect()
+  }, [shouldRender])
+
+  useEffect(() => {
+    if (!shouldRender || !pdfDoc || !canvasRef.current) return
+    let cancelled = false
+    let renderTask: any = null
+
+    void (async () => {
+      try {
+        const page = await pdfDoc.getPage(pageNumber)
+        if (cancelled || !canvasRef.current) return
+        const baseViewport = page.getViewport({ scale: 1 })
+        const scale = Math.min(168 / baseViewport.width, 116 / baseViewport.height)
+        const viewport = page.getViewport({ scale: Math.max(0.1, scale) })
+        const canvas = canvasRef.current
+        const context = canvas.getContext('2d')
+        if (!context) return
+        canvas.width = Math.max(1, Math.ceil(viewport.width))
+        canvas.height = Math.max(1, Math.ceil(viewport.height))
+        renderTask = page.render({ canvasContext: context, viewport })
+        await renderTask.promise
+        if (!cancelled) setPreviewReady(true)
+      } catch (previewError: any) {
+        if (!cancelled && previewError?.name !== 'RenderingCancelledException') {
+          setPreviewReady(false)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      try { renderTask?.cancel?.() } catch { /* preview already finished */ }
+    }
+  }, [pdfDoc, pageNumber, shouldRender])
+
+  return (
+    <button
+      ref={hostRef}
+      type="button"
+      onClick={onSelect}
+      className={`group flex min-h-[158px] flex-col items-center gap-2.5 rounded-lg border p-2.5 text-left transition-colors ${
+        isActive
+          ? 'border-blue-500 bg-blue-900/30 text-blue-100'
+          : 'border-gray-700 bg-gray-900/50 text-gray-300 hover:border-gray-500 hover:bg-gray-800/70 hover:text-white'
+      }`}
+      aria-current={isActive ? 'page' : undefined}
+      title={`Go to page ${pageNumber}`}
+    >
+      <span className="relative flex h-[116px] w-full items-center justify-center overflow-hidden rounded bg-white/95 shadow-inner">
+        {!previewReady && <Loader2 size={16} className="absolute animate-spin text-gray-500" />}
+        <canvas
+          ref={canvasRef}
+          className={`max-h-[116px] max-w-full transition-opacity ${previewReady ? 'opacity-100' : 'opacity-0'}`}
+          aria-hidden="true"
+        />
+      </span>
+      <span className="text-xs font-semibold tabular-nums">Page {pageNumber}</span>
+    </button>
+  )
+}
+
 function annotationLabel(annotation: BlueprintAnnotation) {
   if (annotation.type === 'textBox') return 'Insert Text'
   if (annotation.type === 'callout') return 'Callout'
@@ -2243,6 +2335,9 @@ export default function OperationsBlueprintPdfViewer({
   const initialPageRef = useRef(1)
   initialPageRef.current = Math.max(1, Math.floor(Number(initialPage) || 1))
   const [pageInput, setPageInput] = useState('1')
+  const [pageIndexOpen, setPageIndexOpen] = useState(false)
+  const pageIndexRef = useRef<HTMLDivElement>(null)
+  const pageIndexTriggerRef = useRef<HTMLDivElement>(null)
   const [relativeZoom, setRelativeZoom] = useState(1)
   // State mirror of renderedZoomRef so the JSX visualScale recomputes when a
   // freshly committed raster changes what zoom the canvas represents.
@@ -2258,6 +2353,26 @@ export default function OperationsBlueprintPdfViewer({
   // containerReady: true once the scroll area has a non-zero height.
   // Prevents Fit-to-Full-Page from running before the DOM is sized.
   const [containerReady, setContainerReady] = useState(false)
+  useEffect(() => {
+    if (!pageIndexOpen) return
+    const closePageIndex = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node
+      if (!pageIndexRef.current?.contains(target) && !pageIndexTriggerRef.current?.contains(target)) {
+        setPageIndexOpen(false)
+      }
+    }
+    const closePageIndexOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPageIndexOpen(false)
+    }
+    document.addEventListener('mousedown', closePageIndex)
+    document.addEventListener('touchstart', closePageIndex, { passive: true })
+    document.addEventListener('keydown', closePageIndexOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closePageIndex)
+      document.removeEventListener('touchstart', closePageIndex)
+      document.removeEventListener('keydown', closePageIndexOnEscape)
+    }
+  }, [pageIndexOpen])
   const getLoadedPdfDoc = useCallback(() => {
   const doc = pdfDocRef.current || pdfDoc
   return doc && typeof doc.getPage === 'function' ? doc : null
@@ -7618,6 +7733,9 @@ const annotationPanelSizeClass =
           flex-shrink: 0 !important;
           white-space: nowrap;
         }
+        .bv-left-toolbar button {
+          min-height: 2.5rem;
+        }
         /* Step 13B-QA7-R6: fullscreen overlay scroll thumb. Overlay only —
            adds no layout width, so document size never changes and there is
            no hover reflow. Widens on hover/active for an easier grab target. */
@@ -8038,7 +8156,7 @@ const annotationPanelSizeClass =
             } : undefined}
           >
             {useDesktopThreePaneLayout && (
-              <div className="col-start-1 row-start-2 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-3">
+              <div ref={pageIndexRef} className="col-start-1 row-start-2 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-3">
                 {/* Document Title & Info */}
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -8058,10 +8176,59 @@ const annotationPanelSizeClass =
                 </div>
 
                 {/* Page & Annotation Info */}
-                <div className="flex items-center justify-between gap-2 rounded-lg border border-gray-700/50 bg-gray-900/40 px-3 py-2">
+                <button
+                  type="button"
+                  disabled={!canRender}
+                  onClick={() => setPageIndexOpen((open) => !open)}
+                  className={`flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-50 ${pageIndexOpen ? 'border-blue-500/60 bg-blue-900/20' : 'border-gray-700/50 bg-gray-900/40 hover:border-gray-600 hover:bg-gray-900/70'}`}
+                  title="Open visual page index"
+                  aria-haspopup="dialog"
+                  aria-expanded={pageIndexOpen}
+                >
                   <span className="text-xs text-gray-400">Page</span>
-                  <span className="text-sm font-semibold text-gray-200">{pageLabel}</span>
-                </div>
+                  <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-200">
+                    {pageLabel}
+                    <ChevronDown size={14} className={pageIndexOpen ? 'rotate-180 text-blue-300 transition-transform' : 'text-gray-500 transition-transform'} />
+                  </span>
+                </button>
+
+                {pageIndexOpen && (
+                  <div
+                    role="dialog"
+                    aria-label="Document page index"
+                    className="rounded-xl border border-gray-700 bg-[#111621] p-3 shadow-xl"
+                  >
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-100">Pages</p>
+                        <p className="text-[11px] text-gray-500">Select a preview to jump</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPageIndexOpen(false)}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white"
+                        aria-label="Close page index"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                    <div className="grid max-h-[min(62vh,560px)] grid-cols-1 gap-3 overflow-y-auto pr-1">
+                      {Array.from({ length: numPages || 0 }, (_, index) => index + 1).map((pageNumber) => (
+                        <BlueprintPageThumbnail
+                          key={pageNumber}
+                          pdfDoc={pdfDocRef.current || pdfDoc}
+                          pageNumber={pageNumber}
+                          isActive={pageNumber === currentPage}
+                          onSelect={() => {
+                            setCurrentPage(pageNumber)
+                            setPageInput(String(pageNumber))
+                            setPageIndexOpen(false)
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Annotation Count & URL Status */}
                 {!!signedUrl && (
@@ -8092,7 +8259,7 @@ const annotationPanelSizeClass =
           <div
             ref={toolbarAreaRef}
             className={useDesktopThreePaneLayout
-              ? 'col-start-1 row-start-3 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2'
+              ? 'bv-left-toolbar col-start-1 row-start-3 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2'
               : 'px-3 sm:px-4 py-1 border-b border-gray-800 space-y-1 flex-shrink-0'}
           >
             {/* â"€â"€â"€â"€ Tablet: Compact single-row segmented bucket selector â"€â"€â"€â"€ */}
@@ -8563,85 +8730,88 @@ const annotationPanelSizeClass =
 
           {useDesktopThreePaneLayout && (
           <div className="col-start-1 row-start-1 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-3">
-            {/* Page Navigation Group */}
+            {/* Row 1: page navigation, visual page index, and page selection only. */}
             <div className="flex items-center gap-2">
-              {/* Prev/Next */}
-              <div className="inline-flex items-center gap-1.5 bg-gray-900/40 rounded-lg border border-gray-700/50 p-1">
-                <button
-                  disabled={!canRender || currentPage <= 1 || isRendering}
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
-                  title="Previous page"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <button
-                  disabled={!canRender || currentPage >= numPages || isRendering}
-                  onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
-                  title="Next page"
-                >
-                  <ChevronRight size={14} />
-                </button>
+              <button
+                disabled={!canRender || currentPage <= 1 || isRendering}
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-gray-700 bg-gray-900/40 text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:opacity-40"
+                title="Previous page"
+                aria-label="Previous page"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <button
+                disabled={!canRender || currentPage >= numPages || isRendering}
+                onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))}
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-gray-700 bg-gray-900/40 text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:opacity-40"
+                title="Next page"
+                aria-label="Next page"
+              >
+                <ChevronRight size={18} />
+              </button>
+
+              <div ref={pageIndexTriggerRef} className="min-w-0 flex-1">
+                <div className="flex h-10 items-center rounded-lg border border-gray-700 bg-gray-900/40 focus-within:border-blue-500/70">
+                  <input
+                    value={pageInput}
+                    onChange={(e) => setPageInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { jumpToPage(); setPageIndexOpen(false) } }}
+                    className="min-w-0 w-full bg-transparent px-2 text-center text-sm font-semibold tabular-nums text-gray-100 outline-none"
+                    placeholder="1"
+                    title="Enter page number"
+                    aria-label="Page number"
+                  />
+                  <span className="shrink-0 text-xs text-gray-500">/ {numPages || 1}</span>
+                  <button
+                    type="button"
+                    disabled={!canRender}
+                    onClick={() => setPageIndexOpen((open) => !open)}
+                    className="inline-flex h-full w-9 shrink-0 items-center justify-center rounded-r-lg text-gray-400 transition-colors hover:bg-white/5 hover:text-white disabled:opacity-40"
+                    title="Open visual page index"
+                    aria-label="Open visual page index"
+                    aria-haspopup="dialog"
+                    aria-expanded={pageIndexOpen}
+                  >
+                    <ChevronDown size={16} className={pageIndexOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                  </button>
+                </div>
               </div>
 
-              {/* Page Jump Input */}
-              <div className="inline-flex items-center gap-1">
-                <input
-                  value={pageInput}
-                  onChange={(e) => setPageInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') jumpToPage() }}
-                  className="w-12 rounded border border-gray-700 bg-gray-900/40 text-gray-100 text-xs px-2 py-1.5 text-center font-medium"
-                  placeholder="1"
-                  title="Enter page number"
-                />
-                <button
-                  disabled={!canRender}
-                  onClick={jumpToPage}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 disabled:opacity-50 transition-colors"
-                  title="Go to page"
-                >
-                  <Search size={12} />
-                </button>
-              </div>
-
-              {/* Page Counter */}
-              <span className="text-xs text-gray-400">/ {pageLabel.split(' ').pop()}</span>
-
-              {/* Selection & Fit */}
-              <div className="ml-auto inline-flex items-center gap-1.5">
-                <button
-                  disabled={!canRender}
-                  onClick={toggleCurrentPageSelection}
-                  className={`inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border transition-colors ${isCurrentPageSelected ? 'border-amber-500/60 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'}`}
-                  title={isCurrentPageSelected ? 'Remove from selection' : 'Add to selection'}
-                >
-                  <Minus size={12} />
-                </button>
-                <span className="text-xs text-gray-400 min-w-fit">+{selectedPageNumbers.length}</span>
-              </div>
+              <button
+                disabled={!canRender}
+                onClick={toggleCurrentPageSelection}
+                className={`inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-colors ${isCurrentPageSelected ? 'border-amber-500/60 text-amber-300 bg-amber-900/20' : 'border-gray-700 text-gray-300 hover:border-gray-500 hover:text-white'}`}
+                title={isCurrentPageSelected ? 'Remove from selection' : 'Add to selection'}
+              >
+                {isCurrentPageSelected ? <Check size={14} /> : <span className="text-base leading-none">+</span>}
+                <span>{isCurrentPageSelected ? 'Selected' : 'Add'}</span>
+                <span className="text-[10px] text-gray-500">{selectedPageNumbers.length}</span>
+              </button>
             </div>
 
-            {/* View Controls Group */}
+            {/* Row 2: zoom, fit, lock, and fullscreen only. */}
             <div className="flex items-center gap-2">
               {/* Zoom & View */}
-              <div className="inline-flex items-center gap-1.5 bg-gray-900/40 rounded-lg border border-gray-700/50 p-1">
+              <div className="inline-flex h-11 min-w-0 flex-1 items-center justify-between rounded-lg border border-gray-700/50 bg-gray-900/40 p-1">
                 <button
                   disabled={!canRender || relativeZoom <= MIN_RELATIVE_ZOOM}
                   onClick={() => applyRelativeZoomDelta(-0.1)}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40 transition-colors"
                   title="Zoom out"
+                  aria-label="Zoom out"
                 >
-                  <ZoomOut size={14} />
+                  <ZoomOut size={16} />
                 </button>
-                <span className="text-xs text-gray-400 w-9 text-center font-medium">{Math.round(clampRelativeZoom(relativeZoom) * 100)}%</span>
+                <span className="px-1 text-xs font-semibold tabular-nums text-gray-300">{Math.round(clampRelativeZoom(relativeZoom) * 100)}%</span>
                 <button
                   disabled={!canRender || relativeZoom >= maxRelativeZoom}
                   onClick={() => applyRelativeZoomDelta(0.1)}
-                  className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50 transition-colors"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-transparent text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-40 transition-colors"
                   title="Zoom in"
+                  aria-label="Zoom in"
                 >
-                  <ZoomIn size={14} />
+                  <ZoomIn size={16} />
                 </button>
               </div>
 
@@ -8651,18 +8821,20 @@ const annotationPanelSizeClass =
                   pendingScrollResetRef.current = true
                   setRelativeZoom(1)
                 }}
-                className="inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30 transition-colors"
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-blue-500/60 bg-blue-900/20 text-blue-300 transition-colors hover:border-blue-500 hover:bg-blue-900/30"
                 title="Fit page to view"
+                aria-label="Fit page to view"
               >
-                <ArrowUpRight size={13} />
+                <ArrowUpRight size={16} />
               </button>
 
               <button
                 onClick={() => setLockView((v) => !v)}
-                className={`inline-flex items-center justify-center text-xs px-2.5 py-1.5 rounded-md border transition-colors ${lockView ? 'border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'}`}
+                className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border transition-colors ${lockView ? 'border-blue-500/60 text-blue-300 bg-blue-900/20 hover:border-blue-500 hover:bg-blue-900/30' : 'border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'}`}
                 title={lockView ? 'Unlock view' : 'Lock view'}
+                aria-label={lockView ? 'Unlock view' : 'Lock view'}
               >
-                {lockView ? <Lock size={14} /> : <Unlock size={14} />}
+                {lockView ? <Lock size={16} /> : <Unlock size={16} />}
               </button>
 
               {/* Fullscreen button: explicit fullscreen toggle.
@@ -8681,11 +8853,11 @@ const annotationPanelSizeClass =
                     setIsTabletImmersiveFullscreen,
                   )
                 }}
-                className={`inline-flex items-center text-xs rounded-md border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 transition-colors ${useDesktopThreePaneLayout ? 'gap-1.5 px-3 py-2 font-medium' : 'justify-center px-2.5 py-1.5'}`}
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-gray-700 text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
                 title={isFullScreenView || isTabletImmersiveFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+                aria-label={isFullScreenView || isTabletImmersiveFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
               >
-                {isFullScreenView || isTabletImmersiveFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                {useDesktopThreePaneLayout && (isFullScreenView ? 'Exit Full Screen' : 'Full Screen')}
+                {isFullScreenView || isTabletImmersiveFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
               </button>
             </div>
           </div>
