@@ -3,6 +3,7 @@
  */
 
 import { getBlueprintSignedUrl } from '@/services/blueprintLibraryService'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 export interface BlueprintVisionBoundsFeet {
   x: number
@@ -130,7 +131,7 @@ export async function hashFile(buffer: ArrayBuffer): Promise<string> {
 async function postVision<T>(body: Record<string, unknown>): Promise<T> {
   const res = await fetch(VISION_FN, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authedJsonHeaders(),
     body: JSON.stringify(body),
   })
 

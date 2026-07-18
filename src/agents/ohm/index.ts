@@ -23,6 +23,7 @@ import {
   queryTradeKnowledge,
   formatTradeKnowledgeContext,
 } from '@/services/tradeKnowledgeService'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ── Phase F: fire-and-forget embedding + pattern learning helper ─────────────
 function fireAndForgetMemory(orgId: string, entityType: string, entityId: string, content: string, metadata?: Record<string, unknown>) {
@@ -146,7 +147,7 @@ User Question: "${req.userMessage}"
     // Use Claude to answer with code context
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 2000,

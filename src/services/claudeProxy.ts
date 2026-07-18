@@ -7,6 +7,8 @@
  * This centralizes all Anthropic API access in the app.
  */
 
+import { authedJsonHeaders } from '@/services/authedFetch'
+
 var PROXY_URL = '/.netlify/functions/claude'
 var DIRECT_URL = 'https://api.anthropic.com/v1/messages'
 var DEFAULT_MODEL = 'claude-sonnet-4-20250514'
@@ -39,7 +41,7 @@ export async function callClaude(req: ClaudeRequest): Promise<ClaudeResponse> {
 
     const response = await fetch(PROXY_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify(proxyPayload),
       signal,
     })

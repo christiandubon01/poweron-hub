@@ -13,6 +13,7 @@
  */
 
 import { BLUEPRINT_SYSTEM_PROMPT } from './systemPrompt'
+import { authedJsonHeaders } from '@/services/authedFetch'
 export { BLUEPRINT_SYSTEM_PROMPT }
 
 // ── BlueprintAI view helper (sync) ──────────────────────────────────────────
@@ -802,7 +803,7 @@ async function handleQuery(req: BlueprintRequest): Promise<BlueprintResponse> {
 
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1500,

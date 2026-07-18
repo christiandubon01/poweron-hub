@@ -10,6 +10,7 @@
  */
 
 import { supabase } from '@/lib/supabase'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -296,9 +297,7 @@ Return ONLY a comma-separated list of keywords (no explanation). Examples: wire 
 
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-      },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify(requestBody),
     })
 

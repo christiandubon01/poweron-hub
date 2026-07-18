@@ -26,6 +26,7 @@ import { autoSnapshot } from '@/services/snapshotService'
 import { storeEmbedding } from '@/services/embeddingService'
 import { analyzeAfterWrite } from '@/services/patternService'
 import { logActivity } from '@/services/activityLog'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ── Phase F: fire-and-forget embedding + pattern learning helper ─────────────
 function fireAndForgetMemory(orgId: string, entityType: string, entityId: string, content: string, metadata?: Record<string, unknown>) {
@@ -130,7 +131,7 @@ Return ONLY valid JSON with these fields. If any required field is missing, incl
   try {
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1000,

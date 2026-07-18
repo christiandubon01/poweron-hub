@@ -10,15 +10,45 @@
  * This keeps the API key off the client and avoids CORS issues.
  */
 
+import { createClient } from '@supabase/supabase-js'
+
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 const DEFAULT_MAX_TOKENS = 1024
+
+/**
+ * SEC1 — Verify the caller's Supabase JWT.
+ * Returns the authenticated user, or null if the token is missing/invalid.
+ * Mirrors verifyAuthenticatedUser() in city-scraper.ts.
+ */
+async function verifyAuthenticatedUser(event: any) {
+  const authHeader =
+    event.headers?.authorization ||
+    event.headers?.Authorization ||
+    ''
+  const token = String(authHeader).replace(/^Bearer\s+/i, '').trim()
+  if (!token) return null
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || ''
+  const anonKey =
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    ''
+  if (!supabaseUrl || !anonKey) return null
+
+  const authClient = createClient(supabaseUrl, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const { data, error } = await authClient.auth.getUser(token)
+  if (error || !data?.user) return null
+  return data.user
+}
 
 exports.handler = async (event: any, _context: any) => {
   // CORS headers
   const headers = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Content-Type': 'application/json',
   }
 
@@ -33,6 +63,16 @@ exports.handler = async (event: any, _context: any) => {
       statusCode: 405,
       headers,
       body: JSON.stringify({ error: 'Method not allowed' }),
+    }
+  }
+
+  // SEC1: reject unauthenticated callers before any paid Anthropic call.
+  const user = await verifyAuthenticatedUser(event)
+  if (!user) {
+    return {
+      statusCode: 401,
+      headers,
+      body: JSON.stringify({ error: 'Authentication required.' }),
     }
   }
 

@@ -9,6 +9,8 @@
  * Returns structured migration report with features, status, risks, and recommended approach.
  */
 
+import { authedJsonHeaders } from '@/services/authedFetch'
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface MigrationFeature {
@@ -132,7 +134,7 @@ export async function analyzeCode(
 
   const response = await fetch('/.netlify/functions/claude', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authedJsonHeaders(),
     body: JSON.stringify({
       model:      'claude-sonnet-4-20250514',
       max_tokens: 3000,

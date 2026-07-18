@@ -8,7 +8,7 @@ import { SCOPE_REGISTRY, type DataScope } from '@/services/scopeRegistry'
 // only — console.warn, never throws, never blocks a save, no-op in production.
 ;(function assertBlueprintScopeDescriptors() {
   try {
-    if (!import.meta.env?.DEV) return
+    if (!import.meta.env.DEV) return
     const ann = SCOPE_REGISTRY['blueprint.annotations']?.dataPath || ''
     const wp = SCOPE_REGISTRY['blueprint.workPackages']?.dataPath || ''
     if (!ann.includes('operationsBlueprintAnnotations')) {

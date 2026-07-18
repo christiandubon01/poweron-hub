@@ -26,6 +26,7 @@ import {
   clearBuffer,
 } from '@/services/voice/conversationBuffer'
 import { difficultyHint, ARCHETYPES, type ArchetypeId } from './practiceArchetypes'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -223,7 +224,7 @@ export async function getCharacterResponse(
     // Call Claude via netlify function
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify({
       system: systemPrompt,
       messages,

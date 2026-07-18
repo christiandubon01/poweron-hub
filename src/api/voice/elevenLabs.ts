@@ -6,6 +6,8 @@
  * Requires VITE_ELEVEN_LABS_API_KEY in .env
  */
 
+import { authedJsonHeaders } from '@/services/authedFetch'
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface ElevenLabsVoice {
@@ -127,7 +129,7 @@ export async function synthesizeWithElevenLabs(request: TTSRequest): Promise<TTS
   // speak.ts reads voice_id (snake_case) from body and calls ElevenLabs server-side.
   const response = await fetch('/.netlify/functions/speak', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authedJsonHeaders(),
     body: JSON.stringify({
       text,
       voice_id: voiceId || DEFAULT_VOICE_ID,

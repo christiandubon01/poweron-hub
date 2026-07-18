@@ -46,6 +46,7 @@ import {
   type ScheduleJobInput as SvcScheduleJobInput,
 } from '@/services/chronoService'
 import { logActivity } from '@/services/activityLog'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -573,7 +574,7 @@ async function generateScheduleSummary(orgId: string, date: string): Promise<str
 
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 500,

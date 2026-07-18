@@ -10,6 +10,7 @@
 
 import { supabase } from '@/lib/supabase'
 import { LEDGER_SYSTEM_PROMPT } from './systemPrompt'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -297,7 +298,7 @@ Be specific with amounts and dates. Focus on actions the business can take immed
   try {
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 2000,

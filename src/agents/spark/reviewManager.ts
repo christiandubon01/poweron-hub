@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 export interface Review {
   id: string
@@ -55,7 +56,7 @@ export async function draftReviewResponse(
 
   const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 300,

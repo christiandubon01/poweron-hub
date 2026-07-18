@@ -6,6 +6,8 @@
  * effort/risk assessments.
  */
 
+import { authedJsonHeaders } from '@/services/authedFetch'
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface IntegrationOption {
@@ -241,7 +243,7 @@ export async function analyzeIdea(
 
   const response = await fetch('/.netlify/functions/claude', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authedJsonHeaders(),
     body: JSON.stringify({
       model:      'claude-sonnet-4-20250514',
       max_tokens: 2048,

@@ -12,6 +12,7 @@
 import { supabase } from '@/lib/supabase'
 import { OHM_SYSTEM_PROMPT } from './systemPrompt'
 import { getJurisdictionRules } from './codeSearch'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -466,7 +467,7 @@ Be specific, professional, and actionable.`
 
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 2000,

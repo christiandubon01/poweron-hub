@@ -13,6 +13,7 @@
 
 import { supabase } from '@/lib/supabase'
 import { publish } from '@/services/agentEventBus'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -279,9 +280,7 @@ Keep the response to 3-4 paragraphs. Start directly with the greeting, no preamb
     // Call Claude API through proxy
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify({
         prompt,
         maxTokens: 300,

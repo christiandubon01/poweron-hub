@@ -17,6 +17,7 @@ import { analyzeTrends } from './trendAnalyzer'
 import { logAudit } from '@/lib/memory/audit'
 import { getBackupData } from '@/services/backupDataService'
 import { subscribe, type AgentMessage } from '@/services/agentBus'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ── Local Backup Weekly Context ──────────────────────────────────────────────
 
@@ -189,7 +190,7 @@ Be direct, data-driven, and actionable.`
 
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 500,
@@ -232,7 +233,7 @@ Be direct and actionable.`
 
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 500,
@@ -275,7 +276,7 @@ Be direct and specific about timing.`
 
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 500,
@@ -318,7 +319,7 @@ Be insightful and forward-looking.`
 
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 500,

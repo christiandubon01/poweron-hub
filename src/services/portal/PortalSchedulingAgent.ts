@@ -24,6 +24,7 @@
 import { supabase } from '@/lib/supabase'
 import { send as busSend } from '@/services/agentBus'
 import { publish as eventPublish } from '@/services/agentEventBus'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -537,7 +538,7 @@ RULES:
   try {
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify({
         model: 'claude-haiku-4-5',
         system: systemPrompt,

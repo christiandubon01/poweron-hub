@@ -20,6 +20,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import { Brain, RefreshCw, ChevronDown, ChevronUp, Clock, Zap, ShieldAlert } from 'lucide-react'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ─── Agent Seed Data ───────────────────────────────────────────────────────────
 
@@ -131,7 +132,7 @@ function AgentCard({ agent }: { agent: AgentRecord }) {
       // Call Claude via Netlify proxy
       const resp = await fetch('/.netlify/functions/claude', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await authedJsonHeaders(),
         body: JSON.stringify({
           model: 'claude-sonnet-4-6',
           max_tokens: 250,

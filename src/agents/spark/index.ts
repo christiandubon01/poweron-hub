@@ -38,6 +38,7 @@ import { subscribe as agentBusSubscribe } from '@/services/agentBus'
 import type { AgentMessage } from '@/services/agentBus'
 import { publish } from '@/services/agentEventBus'
 import { logActivity } from '@/services/activityLog'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // Types
 export type SparkAction =
@@ -398,7 +399,7 @@ async function generateSparkSummary(topic: string, data: unknown): Promise<strin
 
     const response = await fetch('/.netlify/functions/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 300,

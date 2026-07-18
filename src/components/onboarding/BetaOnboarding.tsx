@@ -30,6 +30,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { getTemplate } from '@/config/templates/index'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ── NEXUS Voices (10 curated) ─────────────────────────────────────────────────
 
@@ -219,7 +220,7 @@ export default function BetaOnboarding({ onComplete }: BetaOnboardingProps) {
     try {
       const res = await fetch('/.netlify/functions/speak', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await authedJsonHeaders(),
         body: JSON.stringify({ voiceId: voice.id, text: SAMPLE_PHRASE }),
       })
       if (res.ok) {

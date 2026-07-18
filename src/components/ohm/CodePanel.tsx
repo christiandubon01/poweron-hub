@@ -35,6 +35,7 @@ import {
   type TradeKnowledgeEntry,
   type TradeKnowledgeMatch,
 } from '@/services/tradeKnowledgeService'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -219,9 +220,7 @@ ${tradeContext ? tradeContext + '\n\n' : ''}Provide:
 
       const response = await fetch('/.netlify/functions/claude', {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
+        headers: await authedJsonHeaders(),
         body: JSON.stringify(proxyBody),
       })
 

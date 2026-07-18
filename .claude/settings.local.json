@@ -4,7 +4,18 @@
       "Bash",
       "Read",
       "Write",
-      "Edit"
+      "Edit",
+      "Bash(xargs wc -l)",
+      "Bash(grep -nE \"price|tier|PRICE|Tier|\\\\\\\\\\\\$[0-9]\" src/views/BillingView.tsx)",
+      "PowerShell(npm.cmd run test 2>&1)",
+      "PowerShell(npm.cmd run typecheck 2>&1)",
+      "PowerShell(npm.cmd run build 2>&1)",
+      "Bash(grep -oE \".{0,180}VITE_ANTHROPIC_API_KEY\" dist/assets/hunterStore-DyXWe-Un.js)",
+      "Bash(node -e \"console.log\\(require\\('./node_modules/zustand/package.json'\\).version\\)\")",
+      "Bash(grep -v \":0$\")",
+      "Bash(node -e ' *)",
+      "PowerShell(Write-Output \"===== git diff --check =====\"; $out = git diff --check 2>$null; if \\([string]::IsNullOrWhiteSpace\\($out\\)\\) { Write-Output \"  CLEAN - no whitespace errors\" } else { $out })",
+      "PowerShell(Write-Output \"===== git diff --stat =====\"; git diff --stat 2>$null | Select-Object -Last 8; Write-Output \"`n===== git status --short =====\"; git status --short 2>$null; Write-Output \"`n===== staged? \\(should be empty\\) =====\"; $s = git diff --cached --name-only 2>$null; if \\([string]::IsNullOrWhiteSpace\\($s\\)\\) { Write-Output \"  nothing staged\" } else { $s })"
     ]
   }
 }

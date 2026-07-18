@@ -62,6 +62,7 @@ import {
   type HardwareEntry,
   type HardwareIndexData,
 } from '@/services/solarTraining/SolarEstimateSettings'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ── Settings Hub visibility persistence (Phase R1) ──────────────────────────
 const SETTINGS_HUB_VISIBILITY_KEY = 'poweron_settings_hub_visibility_v1'
@@ -804,7 +805,7 @@ function NexusVoiceSelector() {
     try {
       const res = await fetch('/.netlify/functions/speak', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await authedJsonHeaders(),
         body: JSON.stringify({ voiceId: voice.id, text: sampleText }),
       })
       if (res.ok) {

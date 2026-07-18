@@ -9,14 +9,44 @@
  * Requires ANTHROPIC_API_KEY environment variable.
  */
 
+import { createClient } from '@supabase/supabase-js'
+
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
 const MODEL = 'claude-sonnet-4-5'
 const REQUEST_TIMEOUT_MS = 90_000
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Content-Type': 'application/json',
+}
+
+/**
+ * SEC1 — Verify the caller's Supabase JWT.
+ * Returns the authenticated user, or null if the token is missing/invalid.
+ * Mirrors verifyAuthenticatedUser() in city-scraper.ts.
+ */
+async function verifyAuthenticatedUser(event: any) {
+  const authHeader =
+    event.headers?.authorization ||
+    event.headers?.Authorization ||
+    ''
+  const token = String(authHeader).replace(/^Bearer\s+/i, '').trim()
+  if (!token) return null
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || ''
+  const anonKey =
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    ''
+  if (!supabaseUrl || !anonKey) return null
+
+  const authClient = createClient(supabaseUrl, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const { data, error } = await authClient.auth.getUser(token)
+  if (error || !data?.user) return null
+  return data.user
 }
 
 const CLASSIFY_SYSTEM =
@@ -189,6 +219,16 @@ exports.handler = async (event: any) => {
       statusCode: 405,
       headers: CORS_HEADERS,
       body: JSON.stringify({ success: false, error: 'Method not allowed' }),
+    }
+  }
+
+  // SEC1: reject unauthenticated callers before any paid vision call.
+  const user = await verifyAuthenticatedUser(event)
+  if (!user) {
+    return {
+      statusCode: 401,
+      headers: CORS_HEADERS,
+      body: JSON.stringify({ success: false, error: 'Authentication required.' }),
     }
   }
 
