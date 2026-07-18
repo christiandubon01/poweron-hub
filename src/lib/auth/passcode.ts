@@ -8,15 +8,26 @@
  *      in profiles.passcode_hash.
  *   3. On every subsequent app open (after the Supabase JWT is still valid),
  *      the passcode screen appears instead of the email login.
- *   4. Correct passcode → Redis session created → dashboard loads.
- *   5. 5 failed attempts → 15-min lockout stored in Redis → owner notified.
+ *   4. Correct passcode → session created → dashboard loads.
+ *   5. 5 failed attempts → 15-min lockout → owner notified.
  *
- * Uses Web Crypto API (PBKDF2 + SHA-256) instead of bcryptjs to avoid
- * Node "crypto" module incompatibility with Vite/browser environments.
+ * SEC2: verification moved server-side, to
+ * /.netlify/functions/session-store (intent `passcode.verify`).
+ *
+ * Comparing the hash in the browser and then reporting the verdict made the
+ * lockout advisory — the attempt counter only incremented if the client chose
+ * to say it had failed, and the attacker here already holds a valid Supabase
+ * JWT (the passcode is a second factor, not the login). The server now runs
+ * PBKDF2 and increments the counter before it answers, so an ignored response
+ * still burns an attempt.
+ *
+ * Hashing a *new* passcode stays here: the browser legitimately knows the
+ * passcode at that point, and the stored format is unchanged, so hashes written
+ * by this file verify byte-identically on the server.
  */
 
 import { supabase } from '@/lib/supabase'
-import { rGet, rSet, rIncr, rDel, rExpire, redisKeys, TTL } from '@/lib/redis'
+import { sessionStoreCall } from '@/lib/auth/sessionStoreClient'
 import { logAudit } from '@/lib/memory/audit'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -24,7 +35,6 @@ const PBKDF2_ITERATIONS = 100_000
 const SALT_BYTES        = 16
 const HASH_BYTES        = 32
 const MAX_ATTEMPTS      = 5
-const LOCK_DURATION_SEC = TTL.PASSCODE_LOCK  // 15 minutes
 
 // ── Timeout helper ──────────────────────────────────────────────────────────
 function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -37,14 +47,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
 // ── Web Crypto hashing (PBKDF2 + SHA-256) ───────────────────────────────────
 function toHex(buf: ArrayBuffer): string {
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
-}
-
-function fromHex(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  }
-  return bytes
 }
 
 async function hashPasscode(passcode: string): Promise<string> {
@@ -65,28 +67,7 @@ async function hashPasscode(passcode: string): Promise<string> {
   return `pbkdf2:${PBKDF2_ITERATIONS}:${toHex(salt.buffer)}:${toHex(derived)}`
 }
 
-async function verifyHash(passcode: string, stored: string): Promise<boolean> {
-  const parts = stored.split(':')
-  if (parts[0] !== 'pbkdf2' || parts.length !== 4) return false
-
-  const iterations = parseInt(parts[1], 10)
-  const salt = fromHex(parts[2])
-  const expectedHash = parts[3]
-
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(passcode),
-    'PBKDF2',
-    false,
-    ['deriveBits']
-  )
-  const derived = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
-    keyMaterial,
-    HASH_BYTES * 8
-  )
-  return toHex(derived) === expectedHash
-}
+// Verification lives on the server — see netlify/functions/session-store.ts.
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export interface PasscodeStatus {
@@ -130,9 +111,9 @@ export async function setPasscode(
 
     if (error) throw error
 
-    // Clear any existing lockout when passcode is reset
-    await rDel(redisKeys.passcodeLock(userId))
-    await rDel(redisKeys.failedAttempts(userId))
+    // Clear any existing lockout when passcode is reset.
+    // Server-scoped to the caller — userId is not sent.
+    await sessionStoreCall('passcode.clearLock')
 
     await logAudit({
       action:      'update',
@@ -158,39 +139,27 @@ export async function verifyPasscode(
   passcode: string
 ): Promise<VerifyPasscodeResult> {
   try {
-    // 1. Check if account is currently locked (timeout 3s, fallback: not locked)
-    const lockData = await withTimeout(
-      rGet<{ expiresAt: string }>(redisKeys.passcodeLock(userId)),
-      3000,
+    // The server checks the lockout, compares the hash and increments the
+    // failure counter in one call. Timeout 10s covers PBKDF2 + a cold start.
+    const result = await withTimeout(
+      sessionStoreCall<{
+        success:            boolean
+        locked?:            boolean
+        justLocked?:        boolean
+        lockExpiresAt?:     string
+        attemptsRemaining?: number
+      }>('passcode.verify', { passcode }),
+      10000,
       null
     )
-    if (lockData) {
-      const expiresAt = new Date(lockData.expiresAt)
-      if (expiresAt > new Date()) {
-        return { success: false, locked: true, lockExpiresAt: expiresAt, attemptsUsed: MAX_ATTEMPTS }
-      }
-      // Lock expired — clear it (fire-and-forget)
-      rDel(redisKeys.passcodeLock(userId)).catch(() => {})
-      rDel(redisKeys.failedAttempts(userId)).catch(() => {})
-    }
 
-    // 2. Fetch the stored hash from Supabase (the source of truth)
-    const { data: profile, error } = await supabase
-      .from('profiles')
-      .select('passcode_hash')
-      .eq('id', userId)
-      .single()
-
-    if (error || !profile?.passcode_hash) {
+    if (!result) {
+      // Store unreachable. Same posture as an unavailable Redis before SEC2:
+      // fail open so a store outage cannot lock everyone out of the app.
       return { success: false, locked: false, attemptsRemaining: MAX_ATTEMPTS }
     }
 
-    // 3. Compare
-    const isMatch = await verifyHash(passcode, profile.passcode_hash)
-
-    if (isMatch) {
-      // Success — clear failed attempt counter (fire-and-forget, don't block)
-      rDel(redisKeys.failedAttempts(userId)).catch(() => {})
+    if (result.success) {
       logAudit({
         action:      'login',
         entity_type: 'profiles',
@@ -200,36 +169,31 @@ export async function verifyPasscode(
       return { success: true }
     }
 
-    // 4. Failed — increment attempt counter (timeout 3s, fallback: 1)
-    const attempts = await withTimeout(
-      rIncr(redisKeys.failedAttempts(userId), LOCK_DURATION_SEC),
-      3000,
-      null
-    ) ?? 1
+    if (result.locked) {
+      const expiresAt = result.lockExpiresAt
+        ? new Date(result.lockExpiresAt)
+        : new Date()
 
-    if (attempts >= MAX_ATTEMPTS) {
-      // Lock the account
-      const expiresAt = new Date(Date.now() + LOCK_DURATION_SEC * 1000)
-      // Fire-and-forget Redis writes — don't block
-      rSet(redisKeys.passcodeLock(userId), { expiresAt: expiresAt.toISOString() }, LOCK_DURATION_SEC).catch(() => {})
-      rDel(redisKeys.failedAttempts(userId)).catch(() => {})
+      // Only on the transition into lockout — otherwise every further attempt
+      // during the 15 minutes would re-audit and re-notify the owner.
+      if (result.justLocked) {
+        logAudit({
+          action:      'lock',
+          entity_type: 'profiles',
+          entity_id:   userId,
+          description: `Account locked after ${MAX_ATTEMPTS} failed passcode attempts`,
+        }).catch(() => {})
 
-      logAudit({
-        action:      'lock',
-        entity_type: 'profiles',
-        entity_id:   userId,
-        description: `Account locked after ${MAX_ATTEMPTS} failed passcode attempts`,
-      }).catch(() => {})
-
-      supabase.from('notifications').insert({
-        org_id:   orgId,
-        user_id:  userId,
-        type:     'alert',
-        title:    'Account Locked',
-        body:     `${MAX_ATTEMPTS} failed passcode attempts. Account locked for 15 minutes.`,
-        channel:  'in_app',
-        data:     { lock_expires_at: expiresAt.toISOString() },
-      } as never).then(() => {}).catch(() => {})
+        supabase.from('notifications').insert({
+          org_id:   orgId,
+          user_id:  userId,
+          type:     'alert',
+          title:    'Account Locked',
+          body:     `${MAX_ATTEMPTS} failed passcode attempts. Account locked for 15 minutes.`,
+          channel:  'in_app',
+          data:     { lock_expires_at: expiresAt.toISOString() },
+        } as never).then(() => {}).catch(() => {})
+      }
 
       return { success: false, locked: true, lockExpiresAt: expiresAt, attemptsUsed: MAX_ATTEMPTS }
     }
@@ -237,7 +201,7 @@ export async function verifyPasscode(
     return {
       success:           false,
       locked:            false,
-      attemptsRemaining: MAX_ATTEMPTS - attempts,
+      attemptsRemaining: result.attemptsRemaining ?? MAX_ATTEMPTS,
     }
   } catch (err) {
     console.error('[Passcode] verifyPasscode error', err)
@@ -251,26 +215,30 @@ export async function verifyPasscode(
  */
 export async function getPasscodeStatus(userId: string): Promise<PasscodeStatus> {
   try {
-    // Supabase is the source of truth for passcode_hash — always required.
-    // Redis calls get a 3s timeout and null fallback so we never hang.
-    const [profile, lockData, attempts] = await Promise.all([
-      supabase.from('profiles').select('passcode_hash').eq('id', userId).single(),
-      withTimeout(rGet<{ expiresAt: string }>(redisKeys.passcodeLock(userId)), 3000, null),
-      withTimeout(rGet<number>(redisKeys.failedAttempts(userId)), 3000, null),
-    ])
+    // The server reads passcode_hash plus both counters under the caller's RLS.
+    // 3s timeout with a null fallback so we never hang the auth flow.
+    const status = await withTimeout(
+      sessionStoreCall<{
+        isSet:             boolean
+        isLocked:          boolean
+        attemptsRemaining: number
+        lockExpiresAt:     string | null
+      }>('passcode.status'),
+      3000,
+      null
+    )
 
-    const isLocked    = !!lockData && new Date(lockData.expiresAt) > new Date()
-    const usedAttempts = (typeof attempts === 'number' ? attempts : 0)
+    if (!status) throw new Error('session-store unreachable')
 
     return {
-      isSet:             !!profile.data?.passcode_hash,
-      isLocked,
-      attemptsRemaining: Math.max(0, MAX_ATTEMPTS - usedAttempts),
-      lockExpiresAt:     isLocked && lockData ? new Date(lockData.expiresAt) : null,
+      isSet:             status.isSet,
+      isLocked:          status.isLocked,
+      attemptsRemaining: status.attemptsRemaining,
+      lockExpiresAt:     status.lockExpiresAt ? new Date(status.lockExpiresAt) : null,
     }
   } catch (err) {
     console.error('[Passcode] getPasscodeStatus error — falling back to Supabase only', err)
-    // Fallback: check Supabase directly, assume no lock (Redis is down)
+    // Fallback: check Supabase directly, assume no lock (store is down)
     try {
       const { data: profile } = await supabase
         .from('profiles')
@@ -297,13 +265,16 @@ export async function getPasscodeStatus(userId: string): Promise<PasscodeStatus>
 }
 
 /**
- * Admin unlock — called by org owner to manually clear a lockout.
+ * Admin unlock — clear a lockout.
+ *
+ * Currently unused (no call sites). SEC2 NOTE: the server scopes every intent
+ * to the JWT caller, so this clears *the caller's own* lockout — `userId` is
+ * only used for the audit entry. Unlocking a different user needs a new
+ * server-side intent with an explicit owner/admin check; do not wire this into
+ * an admin UI as-is.
  */
 export async function adminUnlockUser(userId: string): Promise<void> {
-  await Promise.all([
-    rDel(redisKeys.passcodeLock(userId)),
-    rDel(redisKeys.failedAttempts(userId)),
-  ])
+  await sessionStoreCall('passcode.clearLock')
   await logAudit({
     action:      'unlock',
     entity_type: 'profiles',
@@ -312,11 +283,11 @@ export async function adminUnlockUser(userId: string): Promise<void> {
   })
 }
 
-// Refresh lock TTL — call this when showing the locked screen to keep
-// the expiry accurate for display (the Redis TTL is the source of truth)
-export async function refreshLockExpiry(userId: string): Promise<Date | null> {
-  const data = await rGet<{ expiresAt: string }>(redisKeys.passcodeLock(userId))
-  if (!data) return null
-  await rExpire(redisKeys.passcodeLock(userId), LOCK_DURATION_SEC)
-  return new Date(data.expiresAt)
+// Current lock expiry — call this when showing the locked screen to keep the
+// expiry accurate for display (the server-side TTL is the source of truth).
+// Currently unused (no call sites). Scoped to the caller, as above.
+export async function refreshLockExpiry(_userId: string): Promise<Date | null> {
+  const status = await sessionStoreCall<{ lockExpiresAt: string | null }>('passcode.status')
+  if (!status?.lockExpiresAt) return null
+  return new Date(status.lockExpiresAt)
 }

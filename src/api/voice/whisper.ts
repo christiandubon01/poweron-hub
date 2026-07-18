@@ -4,7 +4,13 @@
  * Uses Netlify proxy (/.netlify/functions/whisper) to call OpenAI Whisper API.
  * Falls back to direct API call with VITE_OPENAI_API_KEY if proxy unavailable.
  * Supports audio preprocessing for job-site noise environments.
+ *
+ * SEC2: the proxy requires a Supabase JWT. 401/403 is terminal — it must not
+ * trigger the direct-API fallback, which would report an auth failure as
+ * "proxy unavailable".
  */
+
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -114,7 +120,7 @@ export async function transcribeWithWhisper(
 
     const proxyRes = await fetch(PROXY_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await authedJsonHeaders(),
       body: JSON.stringify(proxyBody),
     })
 
@@ -125,8 +131,14 @@ export async function transcribeWithWhisper(
       return result
     }
 
+    // SEC2: an auth failure is terminal, not a reason to fall back.
+    if (proxyRes.status === 401 || proxyRes.status === 403) {
+      throw new Error('Transcription requires you to be signed in. Please sign in and try again.')
+    }
+
     console.warn(`[Whisper] Proxy returned ${proxyRes.status}, falling back to direct API...`)
   } catch (proxyErr) {
+    if (proxyErr instanceof Error && proxyErr.message.includes('signed in')) throw proxyErr
     console.warn('[Whisper] Proxy unavailable, falling back to direct API...', proxyErr)
   }
 

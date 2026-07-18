@@ -17,6 +17,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { Mic, MicOff, Square, ChevronDown, ChevronRight, X, Zap, ShieldAlert } from 'lucide-react'
+import { authedJsonHeaders } from '@/services/authedFetch'
 import { useNexusStore } from '@/store/nexusStore'
 import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
@@ -43,9 +44,12 @@ async function transcribeAudioBlobNexus(blob: Blob): Promise<string> {
   const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('ogg') ? 'ogg' : 'webm'
   const res = await fetch('/.netlify/functions/whisper', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authedJsonHeaders(),
     body: JSON.stringify({ audio: base64, filename: `nexus.${ext}`, language: 'en' }),
   })
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('Transcription requires you to be signed in.')
+  }
   if (!res.ok) throw new Error(`Whisper error ${res.status}`)
   const data = await res.json()
   return (data.text || '').trim()

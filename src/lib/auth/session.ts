@@ -14,10 +14,11 @@
  *   4. Sign out / inactivity → destroyAppSession() → delete from Redis
  */
 
-import { rSet, rGet, rDel, rExpire, redisKeys, TTL } from '@/lib/redis'
-// NOTE: getOrgSubscription is imported dynamically inside createAppSession()
-// to avoid pulling the entire stripe→subscriptionTiers chain into the auth
-// initialization chunk, which causes TDZ crashes in Vite production builds.
+// SEC2: session records live in Redis behind /.netlify/functions/session-store.
+// The server stamps userId/orgId/role/tier from the caller's profile row and
+// refuses any session record that belongs to a different user, so nothing here
+// needs the Upstash token — or the stripe chain that used to resolve the tier.
+import { sessionStoreCall } from '@/lib/auth/sessionStoreClient'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,7 +48,13 @@ const SESSION_STORAGE_KEY = 'poweron-session-id'
 
 /**
  * Create a new app session after successful passcode or biometric auth.
- * Returns the sessionId stored in sessionStorage.
+ * Returns the sessionId stored in sessionStorage, or '' if the store was
+ * unreachable (the caller must not block login on this — same as before, when a
+ * failed Redis write was swallowed).
+ *
+ * `userId`, `orgId` and `role` are still accepted so callers stay unchanged,
+ * but they are no longer sent: the server reads them from the caller's own
+ * profile row, so a client cannot mint a session for another org or role.
  */
 export async function createAppSession(params: {
   userId:   string
@@ -55,37 +62,19 @@ export async function createAppSession(params: {
   role:     string
   deviceInfo: DeviceInfo
 }): Promise<string> {
-  const sessionId = crypto.randomUUID()
+  const res = await sessionStoreCall<{ sessionId: string | null }>('session.create', {
+    deviceInfo: params.deviceInfo,
+  })
 
-  // Load subscription tier on login so it's available throughout the session.
-  // Dynamic import to avoid pulling stripe→subscriptionTiers into the auth chunk
-  // (prevents Vite production TDZ crash).
-  let tier = 'free'
-  try {
-    const { getOrgSubscription } = await import('@/services/stripe')
-    const sub = await getOrgSubscription(params.orgId)
-    tier = sub.isActive ? sub.tierSlug : 'free'
-  } catch {
-    console.warn('[session] Could not load subscription tier, defaulting to free')
+  if (!res?.sessionId) {
+    console.warn('[session] Could not create app session — store unreachable')
+    return ''
   }
-
-  const session: AppSession = {
-    sessionId,
-    userId:       params.userId,
-    orgId:        params.orgId,
-    role:         params.role,
-    tier,
-    deviceInfo:   params.deviceInfo,
-    createdAt:    Date.now(),
-    lastActiveAt: Date.now(),
-  }
-
-  await rSet(redisKeys.session(sessionId), session, TTL.SESSION)
 
   // Persist sessionId in sessionStorage (tab-scoped)
-  sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId)
+  sessionStorage.setItem(SESSION_STORAGE_KEY, res.sessionId)
 
-  return sessionId
+  return res.sessionId
 }
 
 /**
@@ -97,19 +86,14 @@ export async function validateAppSession(): Promise<AppSession | null> {
   const sessionId = sessionStorage.getItem(SESSION_STORAGE_KEY)
   if (!sessionId) return null
 
-  const session = await rGet<AppSession>(redisKeys.session(sessionId))
-  if (!session) {
-    // Redis returned null — could be a network hiccup or cold start.
-    // Do NOT remove the session ID — treat as unknown, not expired.
-    // The user will be asked to re-authenticate only if Redis confirms expiry.
-    return null
-  }
+  // The server refreshes the TTL and lastActiveAt as part of this call.
+  const res = await sessionStoreCall<{ session: AppSession | null }>('session.validate', {
+    sessionId,
+  })
 
-  // Refresh TTL and update lastActiveAt
-  const updated: AppSession = { ...session, lastActiveAt: Date.now() }
-  await rSet(redisKeys.session(sessionId), updated, TTL.SESSION)
-
-  return updated
+  // null — could be a network hiccup, a cold start, or genuine expiry.
+  // Do NOT remove the session ID — treat as unknown, not expired.
+  return res?.session ?? null
 }
 
 /**
@@ -118,16 +102,22 @@ export async function validateAppSession(): Promise<AppSession | null> {
 export async function getAppSession(): Promise<AppSession | null> {
   const sessionId = sessionStorage.getItem(SESSION_STORAGE_KEY)
   if (!sessionId) return null
-  return rGet<AppSession>(redisKeys.session(sessionId))
+  const res = await sessionStoreCall<{ session: AppSession | null }>('session.get', {
+    sessionId,
+  })
+  return res?.session ?? null
 }
 
 /**
  * Destroy the current session (sign out, lock, or inactivity timeout).
+ *
+ * Called before supabase.auth.signOut(), so the JWT the store needs is still
+ * valid. The local key is cleared even if the server call fails.
  */
 export async function destroyAppSession(): Promise<void> {
   const sessionId = sessionStorage.getItem(SESSION_STORAGE_KEY)
   if (sessionId) {
-    await rDel(redisKeys.session(sessionId))
+    await sessionStoreCall('session.destroy', { sessionId })
   }
   sessionStorage.removeItem(SESSION_STORAGE_KEY)
 }

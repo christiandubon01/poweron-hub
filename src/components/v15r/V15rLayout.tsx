@@ -45,6 +45,7 @@ import {
   Cpu,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
+import { authedJsonHeaders } from '@/services/authedFetch'
 import { getBackupData, saveBackupData, getKPIs, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, saveLiveDataVerified, getLastSyncMeta, createEmptyBackup, isActiveProject, resolveProjectBucket, type BackupData } from '@/services/backupDataService'
 // BUG 1 FIX — Realtime sync + stale-check service
 import { initRealtimeSync } from '@/services/realtimeSyncService'
@@ -2323,9 +2324,12 @@ function QuickCaptureButton({ backupData, onNav, setToastMessage }: { backupData
 
             const res = await fetch('/.netlify/functions/whisper', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: await authedJsonHeaders(),
               body: JSON.stringify({ audio: base64, filename: `capture.${ext}`, language: 'en' }),
             })
+            if (res.status === 401 || res.status === 403) {
+              throw new Error('Transcription requires you to be signed in.')
+            }
             if (!res.ok) throw new Error(`Whisper error ${res.status}`)
             const data = await res.json()
             const transcriptText = (data.text || '').trim()

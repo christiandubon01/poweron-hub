@@ -25,6 +25,7 @@
  */
 
 import { useSparkStore, SparkMode, SparkAnalysisResult, SparkSessionRecord } from '../../store/sparkStore'
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 const CHUNK_DURATION_MS = 10000 // 10 seconds per chunk
 const SILENCE_TIMEOUT_MS = 90000 // 90 seconds silence → debrief
@@ -248,15 +249,17 @@ export class SparkEngine {
     try {
       const response = await fetch(WHISPER_PROXY_URL, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: await authedJsonHeaders(),
         body: JSON.stringify({
           audio: base64Audio,
           language: 'en',
           prompt: 'PowerOn electrical contractor business operations',
         }),
       })
+
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('Transcription requires you to be signed in.')
+      }
 
       if (!response.ok) {
         throw new Error(`Whisper error: ${response.statusText}`)
