@@ -7,7 +7,13 @@
  *
  * Schema: { id, timestamp, audioBlob, transcript, category, synced, createdAt }
  * Uses only the native IndexedDB API — no external library dependency.
+ *
+ * SEC2: the Whisper proxy now requires a Supabase JWT. Retries that run while
+ * signed out fail with 401 and the capture simply stays unsynced, to be retried
+ * after the next sign-in — the recording itself is never dropped.
  */
+
+import { authedJsonHeaders } from '@/services/authedFetch'
 
 const DB_NAME = 'poweron_offline_captures'
 const STORE_NAME = 'captures'
@@ -122,9 +128,13 @@ async function transcribeBlob(blob: Blob): Promise<string> {
   const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('ogg') ? 'ogg' : 'webm'
   const res = await fetch('/.netlify/functions/whisper', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authedJsonHeaders(),
     body: JSON.stringify({ audio: base64, filename: `capture.${ext}`, language: 'en' }),
   })
+  if (res.status === 401 || res.status === 403) {
+    // Not signed in — leave the capture unsynced and retry after next sign-in.
+    throw new Error('Whisper 401 — sign-in required')
+  }
   if (!res.ok) throw new Error(`Whisper ${res.status}`)
   const data = await res.json()
   return (data.text || '').trim()

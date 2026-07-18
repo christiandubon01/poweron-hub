@@ -12,6 +12,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react'
 import { callClaude, extractText } from '@/services/claudeProxy'
+import { authedJsonHeaders } from '@/services/authedFetch'
 import { getRecentJournal, getWeeklyJournalEntries, saveJournalEntry, type JournalEntry } from '@/services/voiceJournalService'
 import { applyVoiceNoiseFilter, type NoiseFilterResult } from '@/services/voice'
 import {
@@ -96,9 +97,12 @@ async function transcribeAudioBlob(blob: Blob): Promise<string> {
   const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('ogg') ? 'ogg' : 'webm'
   const res = await fetch('/.netlify/functions/whisper', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authedJsonHeaders(),
     body: JSON.stringify({ audio: base64, filename: `capture.${ext}`, language: 'en' }),
   })
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('Transcription requires you to be signed in.')
+  }
   if (!res.ok) throw new Error(`Whisper error ${res.status}`)
   const data = await res.json()
   return (data.text || '').trim()

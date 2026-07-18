@@ -17,16 +17,24 @@ export default defineConfig({
   // Vite serialises the ENTIRE env object — every VITE_ var, including these
   // secrets — into any chunk containing a zustand store.
   //
-  // These four keys are only read on DEV-guarded local fallback paths
+  // The first four keys are only read on DEV-guarded local fallback paths
   // (claudeProxy.ts, whisper.ts, elevenLabs.ts); production always goes through
   // the server-side Netlify functions. Forcing them to undefined at build time
   // keeps those dev paths working locally while ensuring the production bundle
   // never carries the values. Does not touch .env or any key value.
+  //
+  // SEC2 — the two Upstash entries are read by NO client code at all now
+  // (src/lib/redis.ts no longer builds a browser Redis client). They are listed
+  // purely to neutralise the whole-env serialisation above: without them, Vite
+  // still inlines the token from .env into every zustand chunk even though
+  // nothing imports it. Verified against dist/ after each build.
   define: {
     'import.meta.env.VITE_ANTHROPIC_API_KEY': 'undefined',
     'import.meta.env.VITE_OPENAI_API_KEY': 'undefined',
     'import.meta.env.VITE_ELEVENLABS_API_KEY': 'undefined',
     'import.meta.env.VITE_ELEVEN_LABS_API_KEY': 'undefined',
+    'import.meta.env.VITE_UPSTASH_REDIS_TOKEN': 'undefined',
+    'import.meta.env.VITE_UPSTASH_REDIS_URL': 'undefined',
   },
   resolve: {
     alias: {
@@ -61,10 +69,12 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
+        // SEC2: 'redis-vendor' removed — @upstash/redis is no longer imported
+        // by any client module (it now runs only inside the session-store
+        // Netlify function), so the entry would generate an empty chunk.
         manualChunks: {
           'react-vendor': ['react', 'react-dom', 'react-router-dom'],
           'supabase-vendor': ['@supabase/supabase-js'],
-          'redis-vendor': ['@upstash/redis'],
         },
       },
     },

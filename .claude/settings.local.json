@@ -15,7 +15,14 @@
       "Bash(grep -v \":0$\")",
       "Bash(node -e ' *)",
       "PowerShell(Write-Output \"===== git diff --check =====\"; $out = git diff --check 2>$null; if \\([string]::IsNullOrWhiteSpace\\($out\\)\\) { Write-Output \"  CLEAN - no whitespace errors\" } else { $out })",
-      "PowerShell(Write-Output \"===== git diff --stat =====\"; git diff --stat 2>$null | Select-Object -Last 8; Write-Output \"`n===== git status --short =====\"; git status --short 2>$null; Write-Output \"`n===== staged? \\(should be empty\\) =====\"; $s = git diff --cached --name-only 2>$null; if \\([string]::IsNullOrWhiteSpace\\($s\\)\\) { Write-Output \"  nothing staged\" } else { $s })"
+      "PowerShell(Write-Output \"===== git diff --stat =====\"; git diff --stat 2>$null | Select-Object -Last 8; Write-Output \"`n===== git status --short =====\"; git status --short 2>$null; Write-Output \"`n===== staged? \\(should be empty\\) =====\"; $s = git diff --cached --name-only 2>$null; if \\([string]::IsNullOrWhiteSpace\\($s\\)\\) { Write-Output \"  nothing staged\" } else { $s })",
+      "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\(JSON.stringify\\(p.scripts,null,2\\)\\)\")",
+      "Bash(node -e \"const p=require\\('./package.json'\\);console.log\\('@supabase/supabase-js:',p.dependencies['@supabase/supabase-js']\\)\")",
+      "Bash(node pbkdf2-parity.mjs)",
+      "Bash(grep -o \"VITE_ANTHROPIC_API_KEY:[^,]\\\\{0,20\\\\}\" dist/assets/hunterStore-D7_gDG_b.js)",
+      "Bash(grep -o \"VITE_OPENAI_API_KEY:[^,]\\\\{0,20\\\\}\" dist/assets/hunterStore-D7_gDG_b.js)",
+      "Bash(grep -o \"VITE_ELEVENLABS_API_KEY:[^,]\\\\{0,20\\\\}\" dist/assets/hunterStore-D7_gDG_b.js)",
+      "Bash(npm.cmd run *)"
     ]
   }
 }

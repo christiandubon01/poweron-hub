@@ -10,6 +10,8 @@
  * with Netlify's Node 18 runtime.
  */
 
+import { createClient } from '@supabase/supabase-js'
+
 const https = require('https')
 
 const WHISPER_HOST = 'api.openai.com'
@@ -19,10 +21,38 @@ const WHISPER_PATH = '/v1/audio/transcriptions'
 const _key = process.env.OPENAI_API_KEY || ''
 console.log(`[whisper-proxy] Cold start. OPENAI_API_KEY present: ${!!_key}, prefix: ${_key.slice(0, 8)}...`)
 
+/**
+ * SEC2 — Verify the caller's Supabase JWT.
+ * Returns the authenticated user, or null if the token is missing/invalid.
+ * Mirrors verifyAuthenticatedUser() in speak.ts (SEC1).
+ */
+async function verifyAuthenticatedUser(event: any) {
+  const authHeader =
+    event.headers?.authorization ||
+    event.headers?.Authorization ||
+    ''
+  const token = String(authHeader).replace(/^Bearer\s+/i, '').trim()
+  if (!token) return null
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || ''
+  const anonKey =
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    ''
+  if (!supabaseUrl || !anonKey) return null
+
+  const authClient = createClient(supabaseUrl, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const { data, error } = await authClient.auth.getUser(token)
+  if (error || !data?.user) return null
+  return data.user
+}
+
 exports.handler = async (event: any, _context: any) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Content-Type': 'application/json',
   }
 
@@ -32,6 +62,16 @@ exports.handler = async (event: any, _context: any) => {
 
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) }
+  }
+
+  // SEC2: reject unauthenticated callers before any paid OpenAI call.
+  const user = await verifyAuthenticatedUser(event)
+  if (!user) {
+    return {
+      statusCode: 401,
+      headers,
+      body: JSON.stringify({ error: 'Authentication required.' }),
+    }
   }
 
   const apiKey = process.env.OPENAI_API_KEY

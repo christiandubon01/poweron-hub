@@ -1,34 +1,26 @@
-import { Redis } from '@upstash/redis'
-
-const redisUrl   = import.meta.env.VITE_UPSTASH_REDIS_URL   as string | undefined
-const redisToken = import.meta.env.VITE_UPSTASH_REDIS_TOKEN as string | undefined
-
-// ── Redis client (Upstash serverless) ────────────────────────────────────────
-// Used for:
-//   Layer 1 memory: active agent context (TTL 4h)
-//   Session state:  post-passcode session tokens (TTL 24h)
-//   Real-time flags: LEDGER overdue, CHRONO conflicts (TTL 12h)
-//   NEXUS threads:  conversation history per org (TTL 2h)
-//   Rate limiting:  per-agent, per-org (TTL 60s)
+// ── Redis: server-side only as of SEC2 ───────────────────────────────────────
 //
-// In environments without Redis configured (dev / test), all operations
-// are no-ops that return null. This prevents crashing the dev server
-// before Upstash is wired up.
+// This module used to construct an Upstash client in the browser from
+// VITE_UPSTASH_REDIS_URL / VITE_UPSTASH_REDIS_TOKEN. That token is a full
+// read/write REST credential and shipped inside the public bundle, so anyone
+// could read or overwrite sessions and passcode lockout counters.
+//
+// All live Redis access now goes through /.netlify/functions/session-store,
+// which holds the token in process.env and derives every key from the caller's
+// verified JWT. See src/lib/auth/sessionStoreClient.ts.
+//
+// The key schema and TTL tables below are kept as the shared reference for the
+// key names the server builds.
+//
+// The rXxx() wrappers remain only so the two legacy modules that still import
+// them keep compiling — src/services/cacheService.ts and
+// src/lib/memory/redis-context.ts, neither of which is imported anywhere in the
+// app. They are no-ops that return exactly what they already returned in any
+// environment without Upstash credentials configured (null / false), which is
+// the documented "degrade gracefully" behaviour of both callers. If either
+// module is ever revived, give it a session-store intent instead of restoring a
+// browser-side Redis client.
 // ─────────────────────────────────────────────────────────────────────────────
-
-let _redis: Redis | null = null
-
-function getRedis(): Redis | null {
-  if (_redis) return _redis
-  if (!redisUrl || !redisToken) {
-    if (import.meta.env.DEV) {
-      console.warn('[Redis] VITE_UPSTASH_REDIS_URL / TOKEN not set — Redis is disabled in dev')
-    }
-    return null
-  }
-  _redis = new Redis({ url: redisUrl, token: redisToken })
-  return _redis
-}
 
 // ── Key schema ───────────────────────────────────────────────────────────────
 // All keys follow a consistent namespaced pattern for easy wildcard scanning.
@@ -72,75 +64,29 @@ export const TTL = {
   PASSCODE_LOCK:  15 * 60,        // 15 minutes
 } as const
 
-// ── Type-safe wrappers ───────────────────────────────────────────────────────
+// ── Legacy no-op wrappers (see header) ───────────────────────────────────────
 
-/** Set a JSON value with TTL. Returns false if Redis unavailable. */
-export async function rSet<T>(key: string, value: T, ttlSeconds: number): Promise<boolean> {
-  const r = getRedis()
-  if (!r) return false
-  try {
-    await r.setex(key, ttlSeconds, JSON.stringify(value))
-    return true
-  } catch (err) {
-    console.error('[Redis] rSet error', key, err)
-    return false
-  }
+/** No-op. Redis writes moved server-side in SEC2. */
+export async function rSet<T>(_key: string, _value: T, _ttlSeconds: number): Promise<boolean> {
+  return false
 }
 
-/** Get and parse a JSON value. Returns null if missing or Redis unavailable. */
-export async function rGet<T>(key: string): Promise<T | null> {
-  const r = getRedis()
-  if (!r) return null
-  try {
-    const raw = await r.get<string>(key)
-    if (raw === null || raw === undefined) return null
-    return typeof raw === 'string' ? JSON.parse(raw) as T : raw as T
-  } catch (err) {
-    console.error('[Redis] rGet error', key, err)
-    return null
-  }
+/** No-op. Redis reads moved server-side in SEC2. */
+export async function rGet<T>(_key: string): Promise<T | null> {
+  return null
 }
 
-/** Delete a key. Returns false if Redis unavailable. */
-export async function rDel(key: string): Promise<boolean> {
-  const r = getRedis()
-  if (!r) return false
-  try {
-    await r.del(key)
-    return true
-  } catch (err) {
-    console.error('[Redis] rDel error', key, err)
-    return false
-  }
+/** No-op. Redis deletes moved server-side in SEC2. */
+export async function rDel(_key: string): Promise<boolean> {
+  return false
 }
 
-/** Increment a counter with optional TTL. Returns new value or null. */
-export async function rIncr(key: string, ttlSeconds?: number): Promise<number | null> {
-  const r = getRedis()
-  if (!r) return null
-  try {
-    const val = await r.incr(key)
-    if (ttlSeconds && val === 1) {
-      await r.expire(key, ttlSeconds)
-    }
-    return val
-  } catch (err) {
-    console.error('[Redis] rIncr error', key, err)
-    return null
-  }
+/** No-op. Counter increments moved server-side in SEC2. */
+export async function rIncr(_key: string, _ttlSeconds?: number): Promise<number | null> {
+  return null
 }
 
-/** Refresh TTL on an existing key. */
-export async function rExpire(key: string, ttlSeconds: number): Promise<boolean> {
-  const r = getRedis()
-  if (!r) return false
-  try {
-    await r.expire(key, ttlSeconds)
-    return true
-  } catch (err) {
-    console.error('[Redis] rExpire error', key, err)
-    return false
-  }
+/** No-op. TTL refreshes moved server-side in SEC2. */
+export async function rExpire(_key: string, _ttlSeconds: number): Promise<boolean> {
+  return false
 }
-
-export { getRedis }
