@@ -288,6 +288,8 @@ type ShapeKind =
   | 'electrical-receptacle-240v'
   | 'electrical-timer-control'
   | 'electrical-photocell'
+  | 'electrical-ceiling-occupancy-sensor'
+  | 'electrical-wall-occupancy-sensor'
   | 'electrical-smoke-alarm'
   | 'electrical-co-alarm'
   | 'electrical-hdmi'
@@ -311,6 +313,8 @@ type ElectricalSymbolKind = Extract<ShapeKind,
   | 'electrical-receptacle-240v'
   | 'electrical-timer-control'
   | 'electrical-photocell'
+  | 'electrical-ceiling-occupancy-sensor'
+  | 'electrical-wall-occupancy-sensor'
   | 'electrical-smoke-alarm'
   | 'electrical-co-alarm'
   | 'electrical-hdmi'
@@ -483,6 +487,28 @@ const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, ElectricalSymbolM
     defaultPhase: 'electrical',
     materialKey: 'photocell',
     laborKey: 'photocell',
+    isElectricalSymbol: true,
+  },
+  'electrical-ceiling-occupancy-sensor': {
+    symbolKind: 'electrical-ceiling-occupancy-sensor',
+    displayName: 'Ceiling Occupancy Sensor',
+    shortLabel: 'OS-C',
+    category: 'control',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'switch',
+    laborKey: 'switch',
+    isElectricalSymbol: true,
+  },
+  'electrical-wall-occupancy-sensor': {
+    symbolKind: 'electrical-wall-occupancy-sensor',
+    displayName: 'Wall Occupancy Sensor',
+    shortLabel: 'OS-W',
+    category: 'control',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'switch',
+    laborKey: 'switch',
     isElectricalSymbol: true,
   },
   'electrical-smoke-alarm': {
@@ -1340,6 +1366,7 @@ const ROTATABLE_ELECTRICAL_SHAPE_KINDS = new Set<ShapeKind>([
   'electrical-gfci',
   'electrical-photocell',
   'electrical-timer-control',
+  'electrical-wall-occupancy-sensor',
 ])
 
 function isRotatableElectricalShapeKind(shapeKind: any): shapeKind is ShapeKind {
@@ -1539,6 +1566,8 @@ const ELECTRICAL_SYMBOL_VISUAL_BOUNDS: Partial<Record<ElectricalSymbolKind, { x:
   'electrical-sconce': { x: 15, y: 15, w: 47, h: 68 },
   'electrical-photocell': { x: 14, y: 11, w: 78, h: 68 },
   'electrical-timer-control': { x: 13, y: 13, w: 68, h: 64 },
+  'electrical-ceiling-occupancy-sensor': { x: 20, y: 17, w: 56, h: 56 },
+  'electrical-wall-occupancy-sensor': { x: 26, y: 15, w: 44, h: 60 },
 }
 
 function getElectricalSymbolVisualBounds(kind: ShapeKind) {
@@ -1740,6 +1769,28 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
       </>
     )
     label = externalLabel(photocellLabel)
+  } else if (kind === 'electrical-ceiling-occupancy-sensor') {
+    const sensorLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'OS-C'
+    body = (
+      <>
+        <circle cx="48" cy="45" r="28" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <path d="M48 26 A19 19 0 0 1 64.5 35.5 M64.5 54.5 A19 19 0 0 1 48 64 M31.5 54.5 A19 19 0 0 1 31.5 35.5" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.78" />
+        <circle cx="48" cy="45" r="7" fill={borderColor} />
+        <circle cx="48" cy="45" r="3" fill={symbolFill} />
+      </>
+    )
+    label = externalLabel(sensorLabel)
+  } else if (kind === 'electrical-wall-occupancy-sensor') {
+    const sensorLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'OS-W'
+    body = (
+      <>
+        <rect x="26" y="15" width="44" height="60" rx="5" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <path d="M34 34 Q48 23 62 34 Q48 45 34 34 Z" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinejoin="round" />
+        <circle cx="48" cy="34" r="4" fill={borderColor} />
+        <path d="M39 52 Q48 59 57 52 M35 57 Q48 68 61 57" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.78" />
+      </>
+    )
+    label = externalLabel(sensorLabel)
   } else if (kind === 'electrical-smoke-alarm') {
     const smokeLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'SA'
     // Ceiling-mounted smoke detector: circular detector base + inner ring, with stacked wavy
