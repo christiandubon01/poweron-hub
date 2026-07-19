@@ -222,6 +222,10 @@ const ALIGNMENT_GUIDE_THRESHOLD_NORM = 0.03
 // Circuit/Switch-Leg Path: max distance (page-normalized) a click can be from an existing
 // annotation's center and still snap to it, rather than using the raw click point.
 const CIRCUIT_PATH_SNAP_RADIUS_NORM = 0.03
+// KEYNUDGE: distance an arrow-key press moves the selected annotation, page-normalized.
+// Deliberately far below every snap/threshold constant above (0.03) so the keyboard is a
+// fine-tune tool, not a second placement gesture — ~1px on a 1000px-wide rendered page.
+const NUDGE_STEP_NORM = 0.001
 // Circuit Arc Path (CIRCUITARC): default perpendicular bulge applied to each segment at
 // creation time, as a fraction of that segment's length. Deliberately gentler than Arch
 // Line's 0.5 -- that factor reads fine on a single span but compounds into a scalloped
@@ -749,6 +753,34 @@ function getShapeKindLabel(kind: any, meta: Record<string, any> = {}) {
 // press-drag-release. They share draft state, the rubber band, and the hit-test bypass.
 function isMultiPointShapeKind(kind: any): boolean {
   return kind === 'polyline' || kind === 'circuit-path' || kind === 'circuit-arc'
+}
+
+// Geometry a move has to carry along with the bounding box. Line endpoints, the arch control
+// point, multi-point path points and Circuit Arc control points are all stored in ABSOLUTE
+// page-normalized coordinates, so translating only the box would detach them from the shape.
+// Captured once at the start of a mouse drag and re-read per keypress for a keyboard nudge.
+type AnnotationMoveGeometry = {
+  lineAbs: { x1: number; y1: number; x2: number; y2: number } | null
+  archCtrl: { x: number; y: number } | null
+  points: Array<{ x: number; y: number }> | null
+  arcCtrls: Array<{ x: number; y: number }> | null
+}
+
+const EMPTY_MOVE_GEOMETRY: AnnotationMoveGeometry = { lineAbs: null, archCtrl: null, points: null, arcCtrls: null }
+
+function getAnnotationMoveGeometry(meta: Record<string, any>): AnnotationMoveGeometry {
+  const isLineLike = meta.shapeKind === 'line' || meta.shapeKind === 'arrow' || meta.shapeKind === 'arch-line'
+  const isPathLike = isMultiPointShapeKind(meta.shapeKind)
+  return {
+    lineAbs: (isLineLike && meta.lineAbsX1 != null && meta.lineAbsY1 != null && meta.lineAbsX2 != null && meta.lineAbsY2 != null)
+      ? { x1: meta.lineAbsX1, y1: meta.lineAbsY1, x2: meta.lineAbsX2, y2: meta.lineAbsY2 }
+      : null,
+    archCtrl: (isLineLike && meta.archCtrlX != null && meta.archCtrlY != null)
+      ? { x: meta.archCtrlX, y: meta.archCtrlY }
+      : null,
+    points: (isPathLike && Array.isArray(meta.points)) ? meta.points.map((p: any) => ({ x: p.x, y: p.y })) : null,
+    arcCtrls: (isPathLike && Array.isArray(meta.arcCtrls)) ? meta.arcCtrls.map((p: any) => ({ x: p.x, y: p.y })) : null,
+  }
 }
 
 // Multi-point kinds that snap each click to a nearby fixture/symbol center.
@@ -2002,6 +2034,21 @@ function getPointsBounds(points: Array<{ x: number; y: number }>) {
 // point through the *same* transform as its endpoints reproduces the curve exactly at
 // any point count. A perpendicular-offset scalar would instead be skewed per segment,
 // by an amount that varies with each segment's orientation relative to the path bbox.
+
+// A renderer must never emit path/polyline coordinate data containing NaN or Infinity.
+// Chrome discards the malformed command and draws nothing visible, but WebKit/Safari has
+// historically painted broken geometry as a filled region rather than failing silently —
+// so a single bad value shows up as a solid block on iPad and as nothing on desktop.
+// Non-finite points reach here the same way non-finite control points do (a partial write
+// or a cross-device merge), which getCircuitArcControl already defends against; this is the
+// matching guard for the points array and the rect the transform divides by.
+function hasFinitePointGeometry(
+  points: Array<{ x: number; y: number }>,
+  rect: { x: number; y: number; w: number; h: number },
+) {
+  if (![rect.x, rect.y, rect.w, rect.h].every((v) => Number.isFinite(v))) return false
+  return points.length > 0 && points.every((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y))
+}
 
 // Reads the control point for segment i, falling back to the segment midpoint (which
 // makes the quadratic degenerate to a straight line) when arcCtrls is short, missing,
@@ -5703,11 +5750,124 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }))
   }, [])
 
+  // Single source of truth for "this placed annotation moved to a new bounding box". Both the
+  // mouse-drag move handler and the keyboard nudge go through here, so the absolute-geometry
+  // carry rules (line endpoints, arch control point, path points, arc control points) can
+  // never drift apart between the two input methods. `safeBox` must already be clamped.
+  const applyAnnotationMove = useCallback((
+    annotationId: string,
+    startBox: { x: number; y: number; w: number; h: number },
+    geom: AnnotationMoveGeometry,
+    safeBox: { x: number; y: number; w: number; h: number },
+  ) => {
+    const moveDx = safeBox.x - startBox.x
+    const moveDy = safeBox.y - startBox.y
+    if (geom.lineAbs) {
+      const x1 = clampNorm(geom.lineAbs.x1 + moveDx)
+      const y1 = clampNorm(geom.lineAbs.y1 + moveDy)
+      const x2 = clampNorm(geom.lineAbs.x2 + moveDx)
+      const y2 = clampNorm(geom.lineAbs.y2 + moveDy)
+      const bw = Math.max(safeBox.w, 0.0001)
+      const bh = Math.max(safeBox.h, 0.0001)
+      setAllAnnotations((prev) => prev.map((ann) => {
+        if (ann.id !== annotationId) return ann
+        const m = getAnnotationMeta(ann)
+        const nextMeta: Record<string, any> = {
+          ...m,
+          lineAbsX1: x1,
+          lineAbsY1: y1,
+          lineAbsX2: x2,
+          lineAbsY2: y2,
+          // Keep relative endpoint fields as a compatibility fallback.
+          lineX1: (x1 - safeBox.x) / bw,
+          lineY1: (y1 - safeBox.y) / bh,
+          lineX2: (x2 - safeBox.x) / bw,
+          lineY2: (y2 - safeBox.y) / bh,
+        }
+        if (geom.archCtrl) {
+          nextMeta.archCtrlX = clampNorm(geom.archCtrl.x + moveDx)
+          nextMeta.archCtrlY = clampNorm(geom.archCtrl.y + moveDy)
+        }
+        return withAnnotationMeta({ ...ann, rect: safeBox, updatedAt: new Date().toISOString() }, nextMeta) as BlueprintAnnotation
+      }))
+      return
+    }
+    if (geom.points) {
+      const nextPoints = geom.points.map((p) => ({ x: clampNorm(p.x + moveDx), y: clampNorm(p.y + moveDy) }))
+      const nextArcCtrls = geom.arcCtrls
+        ? geom.arcCtrls.map((p) => ({ x: clampNorm(p.x + moveDx), y: clampNorm(p.y + moveDy) }))
+        : null
+      // Derive the rect from the moved geometry rather than from the translated box. The points
+      // and control points above are clamped INDIVIDUALLY, so at a page edge they stop while the
+      // box keeps travelling — leaving a rect that no longer encloses the curve it is the
+      // page→local divisor for. Matches how creation and curvature-handle drags build the rect.
+      const nextRect = clampRectToPage(getPointsBounds(nextArcCtrls ? [...nextPoints, ...nextArcCtrls] : nextPoints))
+      setAllAnnotations((prev) => prev.map((ann) => {
+        if (ann.id !== annotationId) return ann
+        const m = getAnnotationMeta(ann)
+        return withAnnotationMeta(
+          { ...ann, rect: nextRect, updatedAt: new Date().toISOString() },
+          { ...m, points: nextPoints, ...(nextArcCtrls ? { arcCtrls: nextArcCtrls } : {}) },
+        ) as BlueprintAnnotation
+      }))
+      return
+    }
+    updateAnnotationLayout(annotationId, safeBox)
+  }, [updateAnnotationLayout])
+
   const commitAnnotationLayout = useCallback(async (annotationId: string) => {
     const ann = allAnnotationsRef.current.find((item) => item.id === annotationId)
     if (!ann) return
     await persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
   }, [persistAnnotation])
+
+  // KEYNUDGE — arrow-key fine positioning. Mouse drag is for large moves; the keyboard is for
+  // the last couple of pixels. Goes through applyAnnotationMove (the same path a drag uses), so
+  // a whole multi-point path translates as one shape rather than a single point moving.
+  // Repeated presses are coalesced into one save by the debounce below.
+  const nudgeCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const nudgeAnnotation = useCallback((annotationId: string, dxNorm: number, dyNorm: number) => {
+    const annotation = allAnnotationsRef.current.find((item) => item.id === annotationId)
+    if (!annotation) return
+    const meta = getAnnotationMeta(annotation)
+    const startBox = clampRectToPage(meta.box || annotation.rect || { x: 0.02, y: 0.02, w: DEFAULT_TEXT_BOX.w, h: DEFAULT_TEXT_BOX.h })
+    const safeBox = clampRectToPage({ ...startBox, x: startBox.x + dxNorm, y: startBox.y + dyNorm })
+    applyAnnotationMove(annotationId, startBox, getAnnotationMoveGeometry(meta), safeBox)
+    // Deferred so the persist reads the post-render annotation from allAnnotationsRef, and so
+    // holding an arrow key writes once at the end instead of on every key repeat.
+    if (nudgeCommitTimerRef.current) clearTimeout(nudgeCommitTimerRef.current)
+    nudgeCommitTimerRef.current = setTimeout(() => {
+      nudgeCommitTimerRef.current = null
+      void commitAnnotationLayout(annotationId)
+    }, 300)
+  }, [applyAnnotationMove, commitAnnotationLayout])
+
+  useEffect(() => () => { if (nudgeCommitTimerRef.current) clearTimeout(nudgeCommitTimerRef.current) }, [])
+
+  useEffect(() => {
+    if (!focusedAnnotationId) return
+    const onKey = (e: KeyboardEvent) => {
+      const delta = e.key === 'ArrowUp' ? { x: 0, y: -1 }
+        : e.key === 'ArrowDown' ? { x: 0, y: 1 }
+        : e.key === 'ArrowLeft' ? { x: -1, y: 0 }
+        : e.key === 'ArrowRight' ? { x: 1, y: 0 }
+        : null
+      if (!delta) return
+      // Leave browser/OS shortcuts (and any future modifier bindings) alone.
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
+      const el = document.activeElement as HTMLElement | null
+      const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+      if (typing) return
+      if (isEditorOpen || inlineTextEditId) return
+      if (!annotationsVisible || !isAnnotationVisibleOnCanvas(focusedAnnotationId)) return
+      // Stop the page from scrolling under the nudge.
+      e.preventDefault()
+      nudgeAnnotation(focusedAnnotationId, delta.x * NUDGE_STEP_NORM, delta.y * NUDGE_STEP_NORM)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [focusedAnnotationId, isEditorOpen, inlineTextEditId, annotationsVisible, isAnnotationVisibleOnCanvas, nudgeAnnotation])
 
   const startAnnotationLayoutDrag = useCallback((e: React.PointerEvent<HTMLElement>, annotation: BlueprintAnnotation, mode: 'move' | 'resize') => {
     const meta = getAnnotationMeta(annotation)
@@ -5717,22 +5877,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // Step 12C — moving a line-like shape with free absolute endpoints must shift
     // those endpoints by the same delta, since rendering no longer derives them
     // from `box`.
-    const isLineLike = mode === 'move' && (meta.shapeKind === 'line' || meta.shapeKind === 'arrow' || meta.shapeKind === 'arch-line')
-    const startLineAbs = (isLineLike && meta.lineAbsX1 != null && meta.lineAbsY1 != null && meta.lineAbsX2 != null && meta.lineAbsY2 != null)
-      ? { x1: meta.lineAbsX1, y1: meta.lineAbsY1, x2: meta.lineAbsX2, y2: meta.lineAbsY2 }
-      : null
-    const startArchCtrl = (isLineLike && meta.archCtrlX != null && meta.archCtrlY != null)
-      ? { x: meta.archCtrlX, y: meta.archCtrlY }
-      : null
-    // Multi-point Polyline / Circuit Path / Circuit Arc shapes store their geometry as an
-    // absolute page-normalized points array (meta.points) rather than box-relative fractions —
-    // moving the shape must translate every point by the same delta, mirroring the
-    // line-like absolute-endpoint handling above.
-    const isPathLike = mode === 'move' && isMultiPointShapeKind(meta.shapeKind)
-    const startPoints = (isPathLike && Array.isArray(meta.points)) ? meta.points.map((p: any) => ({ x: p.x, y: p.y })) : null
-    // Circuit Arc control points are absolute too, so they must ride along with the move
-    // or the curves detach from the path they belong to.
-    const startArcCtrls = (isPathLike && Array.isArray(meta.arcCtrls)) ? meta.arcCtrls.map((p: any) => ({ x: p.x, y: p.y })) : null
+    // Absolute geometry (line endpoints, arch control point, multi-point path points, Circuit
+    // Arc control points) is captured up front and translated by the same delta as the box —
+    // see getAnnotationMoveGeometry. Resize does not carry it, hence the mode gate.
+    const startGeom = mode === 'move' ? getAnnotationMoveGeometry(meta) : EMPTY_MOVE_GEOMETRY
+    const startLineAbs = startGeom.lineAbs
+    const startArchCtrl = startGeom.archCtrl
+    const startPoints = startGeom.points
+    const startArcCtrls = startGeom.arcCtrls
     const drag = {
       annotationId: annotation.id,
       mode,
@@ -5877,73 +6029,15 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const next = drag.mode === 'resize'
       ? { ...start, w: start.w + dx, h: start.h + dy }
       : { ...start, x: start.x + dx, y: start.y + dy }
-    if (drag.mode === 'move' && drag.startLineAbs) {
-      const rawSafeBox = clampRectToPage(next)
-      const safeBox = updateMoveGuideLines(rawSafeBox, drag.annotationId) || rawSafeBox
-      const moveDx = safeBox.x - start.x
-      const moveDy = safeBox.y - start.y
-      const x1 = clampNorm(drag.startLineAbs.x1 + moveDx)
-      const y1 = clampNorm(drag.startLineAbs.y1 + moveDy)
-      const x2 = clampNorm(drag.startLineAbs.x2 + moveDx)
-      const y2 = clampNorm(drag.startLineAbs.y2 + moveDy)
-      const bw = Math.max(safeBox.w, 0.0001)
-      const bh = Math.max(safeBox.h, 0.0001)
-      setAllAnnotations((prev) => prev.map((ann) => {
-        if (ann.id !== drag.annotationId) return ann
-        const m = getAnnotationMeta(ann)
-        const nextMeta: Record<string, any> = {
-          ...m,
-          lineAbsX1: x1,
-          lineAbsY1: y1,
-          lineAbsX2: x2,
-          lineAbsY2: y2,
-          // Keep relative endpoint fields as a compatibility fallback.
-          lineX1: (x1 - safeBox.x) / bw,
-          lineY1: (y1 - safeBox.y) / bh,
-          lineX2: (x2 - safeBox.x) / bw,
-          lineY2: (y2 - safeBox.y) / bh,
-        }
-        if (drag.startArchCtrl) {
-          nextMeta.archCtrlX = clampNorm(drag.startArchCtrl.x + moveDx)
-          nextMeta.archCtrlY = clampNorm(drag.startArchCtrl.y + moveDy)
-        }
-        return withAnnotationMeta({ ...ann, rect: safeBox, updatedAt: new Date().toISOString() }, nextMeta) as BlueprintAnnotation
-      }))
-      e.preventDefault()
-      e.stopPropagation()
-      return
-    }
-    if (drag.mode === 'move' && drag.startPoints) {
-      const rawSafeBox = clampRectToPage(next)
-      const safeBox = updateMoveGuideLines(rawSafeBox, drag.annotationId) || rawSafeBox
-      const moveDx = safeBox.x - start.x
-      const moveDy = safeBox.y - start.y
-      const nextPoints = drag.startPoints.map((p: { x: number; y: number }) => ({
-        x: clampNorm(p.x + moveDx),
-        y: clampNorm(p.y + moveDy),
-      }))
-      const nextArcCtrls = drag.startArcCtrls
-        ? drag.startArcCtrls.map((p: { x: number; y: number }) => ({
-            x: clampNorm(p.x + moveDx),
-            y: clampNorm(p.y + moveDy),
-          }))
-        : null
-      setAllAnnotations((prev) => prev.map((ann) => {
-        if (ann.id !== drag.annotationId) return ann
-        const m = getAnnotationMeta(ann)
-        return withAnnotationMeta(
-          { ...ann, rect: safeBox, updatedAt: new Date().toISOString() },
-          { ...m, points: nextPoints, ...(nextArcCtrls ? { arcCtrls: nextArcCtrls } : {}) },
-        ) as BlueprintAnnotation
-      }))
-      e.preventDefault()
-      e.stopPropagation()
-      return
-    }
     if (drag.mode === 'move') {
-      const rawNext = clampRectToPage(next)
-      const guideRect = updateMoveGuideLines(rawNext, drag.annotationId) || rawNext
-      updateAnnotationLayout(drag.annotationId, guideRect)
+      const rawSafeBox = clampRectToPage(next)
+      const safeBox = updateMoveGuideLines(rawSafeBox, drag.annotationId) || rawSafeBox
+      applyAnnotationMove(
+        drag.annotationId,
+        start,
+        { lineAbs: drag.startLineAbs, archCtrl: drag.startArchCtrl, points: drag.startPoints, arcCtrls: drag.startArcCtrls },
+        safeBox,
+      )
       e.preventDefault()
       e.stopPropagation()
       return
@@ -5951,7 +6045,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     updateAnnotationLayout(drag.annotationId, next)
     e.preventDefault()
     e.stopPropagation()
-  }, [layoutDrag, updateAnnotationLayout, updateMoveGuideLines])
+  }, [layoutDrag, updateAnnotationLayout, updateMoveGuideLines, applyAnnotationMove])
 
   const handleAnnotationLayoutPointerUp = useCallback((e: React.PointerEvent<HTMLElement>) => {
     const drag = layoutDragRef.current || layoutDrag
@@ -9630,7 +9724,8 @@ const annotationPanelSizeClass =
                           const fillOpacity = meta.fillOpacity ?? LEGACY_SHAPE_FILL_OPACITY
                           const hatchPattern = meta.hatchPattern || 'none'
                           if (kind === 'line' || kind === 'arrow') {
-                            const lineRect = a.rect || { x: 0, y: 0, w: 0.0001, h: 0.0001 }
+                            // Clamped rect, matching the layout box — see circuit-arc below.
+                            const lineRect = rect
                             const hasAbs = meta.lineAbsX1 != null && meta.lineAbsY1 != null && meta.lineAbsX2 != null && meta.lineAbsY2 != null
                             // Step 12C: edited lines render from absolute page-normalized
                             // endpoints. Legacy lines fall back to relative endpoints.
@@ -9659,7 +9754,8 @@ const annotationPanelSizeClass =
                             )
                           }
                           if (kind === 'arch-line') {
-                            const arect = a.rect || { x: 0, y: 0, w: 0.0001, h: 0.0001 }
+                            // Clamped rect, matching the layout box — see circuit-arc below.
+                            const arect = rect
                             const hasAbs = meta.lineAbsX1 != null && meta.lineAbsY1 != null && meta.lineAbsX2 != null && meta.lineAbsY2 != null
                             const alx1f = hasAbs ? (Number(meta.lineAbsX1) - arect.x) / Math.max(arect.w, 0.0001) : (meta.lineX1 ?? 0)
                             const aly1f = hasAbs ? (Number(meta.lineAbsY1) - arect.y) / Math.max(arect.h, 0.0001) : (meta.lineY1 ?? 0)
@@ -9699,8 +9795,14 @@ const annotationPanelSizeClass =
                             // transform; because a quadratic Bezier is affine-invariant, the
                             // curve stays exact under this viewBox's non-uniform scale at any
                             // point count. See the geometry helpers near getPointsBounds.
-                            const crect = a.rect || { x: 0, y: 0, w: 0.0001, h: 0.0001 }
-                            const points: Array<{ x: number; y: number }> = Array.isArray(meta.points) ? meta.points : []
+                            // Must divide by the SAME clamped rect the layout box above is sized
+                            // from. Reading the raw a.rect let a near-flat run (a straight ceiling
+                            // row, where the stored height rounds toward zero) divide by a height
+                            // far smaller than the box's floored 0.01, blowing the local viewBox
+                            // coordinates up by orders of magnitude on an overflow-visible SVG.
+                            const crect = rect
+                            const rawPoints: Array<{ x: number; y: number }> = Array.isArray(meta.points) ? meta.points : []
+                            const points = hasFinitePointGeometry(rawPoints, crect) ? rawPoints : []
                             const cw = Math.max(crect.w, 0.0001)
                             const ch = Math.max(crect.h, 0.0001)
                             const toLocal = (p: { x: number; y: number }) => ({
@@ -9763,8 +9865,10 @@ const annotationPanelSizeClass =
                             )
                           }
                           if (kind === 'polyline' || kind === 'circuit-path') {
-                            const prect = a.rect || { x: 0, y: 0, w: 0.0001, h: 0.0001 }
-                            const points: Array<{ x: number; y: number }> = Array.isArray(meta.points) ? meta.points : []
+                            // Same clamped-rect and finite-geometry rules as circuit-arc below.
+                            const prect = rect
+                            const rawPoints: Array<{ x: number; y: number }> = Array.isArray(meta.points) ? meta.points : []
+                            const points = hasFinitePointGeometry(rawPoints, prect) ? rawPoints : []
                             const pw = Math.max(prect.w, 0.0001)
                             const ph = Math.max(prect.h, 0.0001)
                             const localPts = points.map((p) => ({
