@@ -8970,6 +8970,16 @@ const annotationPanelSizeClass =
                     className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' && shapeKind === 'circuit-arc' ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                     title="Like Circuit Path, but each run is drawn as a curve with its own draggable curvature handle"
                   ><Spline size={12} /> Circuit Arc</button>
+                  <button
+                    type="button"
+                    onClick={() => setShowCircuitMeasurementLabels((v) => !v)}
+                    aria-pressed={showCircuitMeasurementLabels}
+                    className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${showCircuitMeasurementLabels ? 'border-gray-700 text-gray-300 hover:text-white' : 'border-amber-500 text-amber-300 bg-amber-900/20'}`}
+                    title={showCircuitMeasurementLabels ? 'Hide Circuit Path and Circuit Arc measurement labels' : 'Show Circuit Path and Circuit Arc measurement labels'}
+                  >
+                    {showCircuitMeasurementLabels ? <Eye size={12} /> : <EyeOff size={12} />}
+                    Circuit Labels {showCircuitMeasurementLabels ? 'On' : 'Off'}
+                  </button>
                 </div>
                 <div className="space-y-1.5">
                   <div className="text-[10px] uppercase tracking-wide text-gray-500">Electrical Symbols</div>
@@ -9080,16 +9090,6 @@ const annotationPanelSizeClass =
                 >
                   {lightingEffectsVisible ? <EyeOff size={12} /> : <Eye size={12} />}
                   {lightingEffectsVisible ? 'Hide Lighting Effects' : 'Show Lighting Effects'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowCircuitMeasurementLabels((v) => !v)}
-                  aria-pressed={showCircuitMeasurementLabels}
-                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${showCircuitMeasurementLabels ? 'border-gray-700 text-gray-300 hover:text-white' : 'border-amber-500 text-amber-300 bg-amber-900/20'}`}
-                  title={showCircuitMeasurementLabels ? 'Hide Circuit Path and Circuit Arc measurement labels' : 'Show Circuit Path and Circuit Arc measurement labels'}
-                >
-                  {showCircuitMeasurementLabels ? <Eye size={12} /> : <EyeOff size={12} />}
-                  Circuit Labels {showCircuitMeasurementLabels ? 'On' : 'Off'}
                 </button>
                 <button
                   onClick={() => {
