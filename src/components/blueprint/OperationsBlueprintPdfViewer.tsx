@@ -1343,6 +1343,11 @@ function getRectCenterNorm(rect: { x: number; y: number; w: number; h: number })
   return { x: clampNorm(safe.x + safe.w / 2), y: clampNorm(safe.y + safe.h / 2) }
 }
 
+// Minimum rect size clampRectToPage will accept — used to express a single point (e.g. a
+// Circuit Arc curvature handle) as a rect whose center IS that point, so it can be fed to
+// the center-based Guide Assist machinery without introducing an offset.
+const GUIDE_POINT_RECT_NORM = 0.01
+
 function calculateAlignmentGuides(
   draftRect: { x: number; y: number; w: number; h: number },
   candidates: BlueprintAnnotation[],
@@ -5051,6 +5056,33 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     void persistAnnotation(ann)
   }, [blueprint, currentPage, shapeKind, shapeOptions, persistAnnotation, savedCalibrations, detectedScales, showTransientSyncNotice, getPageSizeInches, displaySize.w, displaySize.h])
 
+  // ── Spacebar finishes a multi-point shape draft (CIRCUITSPACE) ──────────────
+  // Additive third finish gesture for Polyline / Circuit Path / Circuit Arc, mirroring the
+  // Multi-Point Measure tool's Space handler. The Stop/Cancel pill and Escape are unchanged.
+  //
+  // This lives in its own effect AFTER finalizePathDraft rather than joining the measurement
+  // keyboard effect above: finalizePathDraft is a const declared later in the component, and
+  // referencing it from that effect's dependency array would be evaluated during render and
+  // hit the temporal dead zone (the same hazard already flagged on the measure-commit effect).
+  useEffect(() => {
+    if (effectiveTool !== 'shape' || !isMultiPointShapeKind(shapeKind)) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== ' ' && e.code !== 'Space') return
+      const el = document.activeElement as HTMLElement | null
+      const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+      if (typing) return
+      // Mirrors the Stop pill's disabled={pathDraftPoints.length < 2}: under 2 points the
+      // gesture is inert rather than silently discarding the draft, so Space and Stop agree.
+      if (pathDraftRef.current.length < 2) return
+      // Suppresses page scroll AND native Space-activation of whatever button still holds
+      // focus (the toolbar button or the Stop pill), which would otherwise double-fire.
+      e.preventDefault()
+      finalizePathDraft()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [effectiveTool, shapeKind, finalizePathDraft])
+
   // Recomputes a Circuit Arc's true arc length after its curvature changed, so the label
   // tracks the curve rather than the chords it was first created from. Returns the
   // annotation unchanged when it is not a circuit-arc or the page has no calibration.
@@ -6367,9 +6399,19 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // switch cancels) — never an implicit double-click or point-count cap.
     if (effectiveTool === 'shape' && isMultiPointShapeKind(shapeKind)) {
       const n = toNorm(x, y, rect.width, rect.height)
-      const point = isCircuitShapeKind(shapeKind)
-        ? (findNearestAnnotationCenterNorm(n, CIRCUIT_PATH_SNAP_RADIUS_NORM) || n)
-        : n
+      // Fixture snap takes precedence over Guide Assist. Circuit Path/Arc exist to run
+      // fixture to fixture, so a click landing on a symbol must use that symbol's exact
+      // center; Guide Assist's axis lock is the fallback for open space where there is
+      // nothing more specific to snap to. When Guide Assist is OFF this is byte-identical
+      // to the previous behavior (fixture center, else the raw mapped point).
+      const fixtureCenter = isCircuitShapeKind(shapeKind)
+        ? findNearestAnnotationCenterNorm(n, CIRCUIT_PATH_SNAP_RADIUS_NORM)
+        : null
+      const pathAnchor = pathDraftRef.current.length > 0 ? pathDraftRef.current[pathDraftRef.current.length - 1] : null
+      const point = fixtureCenter
+        ?? ((alignmentGuidesEnabled && pathAnchor)
+          ? snapMeasurePointToAxis(pathAnchor, n, displaySize.w, displaySize.h)
+          : n)
       const next = [...pathDraftRef.current, point]
       pathDraftRef.current = next
       setPathDraftPoints([...next])
@@ -6651,6 +6693,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       // point — but written only at segIndex, so sibling segments keep their curvature.
       const nhx = clampNorm((e.clientX - overlayRect.left) / Math.max(1, overlayRect.width))
       const nhy = clampNorm((e.clientY - overlayRect.top) / Math.max(1, overlayRect.height))
+      // CIRCUITTOOLS2 — Guide Assist during curvature-handle drags. The guide machinery
+      // compares rect CENTERS, so the handle is fed in as a minimum-size rect centred on it
+      // (clampRectToPage floors w/h at 0.01, hence the half-size offset). Lines only: the
+      // return value is deliberately discarded so the control point stays free-form.
+      updateMoveGuideLines(
+        { x: nhx - GUIDE_POINT_RECT_NORM / 2, y: nhy - GUIDE_POINT_RECT_NORM / 2, w: GUIDE_POINT_RECT_NORM, h: GUIDE_POINT_RECT_NORM },
+        caDrag.annotationId,
+      )
       setAllAnnotations((prev) => prev.map((ann) => {
         if (ann.id !== caDrag.annotationId) return ann
         const m = getAnnotationMeta(ann)
@@ -6719,10 +6769,23 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
     if (effectiveTool === 'shape' && isMultiPointShapeKind(shapeKind)) {
       if (pathDraftRef.current.length > 0) {
-        setPathCursorPx({
-          x: x / Math.max(1, rect.width) * displaySize.w,
-          y: y / Math.max(1, rect.height) * displaySize.h,
-        })
+        // Guide Assist: preview the rubber-band endpoint through the SAME precedence the
+        // click will use (fixture center first, then axis lock), so what is drawn is exactly
+        // what a click commits. OFF path is byte-identical to before (raw mapped cursor).
+        if (alignmentGuidesEnabled) {
+          const rawN = { x: x / Math.max(1, rect.width), y: y / Math.max(1, rect.height) }
+          const fixtureCenter = isCircuitShapeKind(shapeKind)
+            ? findNearestAnnotationCenterNorm(rawN, CIRCUIT_PATH_SNAP_RADIUS_NORM)
+            : null
+          const anchor = pathDraftRef.current[pathDraftRef.current.length - 1]
+          const cursorN = fixtureCenter ?? snapMeasurePointToAxis(anchor, rawN, displaySize.w, displaySize.h)
+          setPathCursorPx({ x: cursorN.x * displaySize.w, y: cursorN.y * displaySize.h })
+        } else {
+          setPathCursorPx({
+            x: x / Math.max(1, rect.width) * displaySize.w,
+            y: y / Math.max(1, rect.height) * displaySize.h,
+          })
+        }
       }
       return
     }
@@ -6807,7 +6870,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // Keep dragStartRef in sync but do NOT call setDraftRect here Ã¢â‚¬â€
     // the DOM refs above give zero-lag visual feedback without any React re-renders.
     dragStartRef.current = activeDragStart
-  }, [effectiveTool, dragStart, inkDraft, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind, clearAlignmentGuides, updatePlacementGuideLines, alignmentGuidesEnabled, displaySize.w, displaySize.h])
+  }, [effectiveTool, dragStart, inkDraft, isEditorOpen, handleTwoFingerGesture, lockView, shapeKind, clearAlignmentGuides, updatePlacementGuideLines, updateMoveGuideLines, alignmentGuidesEnabled, findNearestAnnotationCenterNorm, displaySize.w, displaySize.h])
 
   const handlePointerUp = useCallback(async (e: React.PointerEvent<HTMLDivElement>) => {
     // Snapshot the last live guide match before clearing — used to center-snap a newly
@@ -8218,6 +8281,7 @@ const annotationPanelSizeClass =
               type="button"
               onClick={finalizePathDraft}
               disabled={pathDraftPoints.length < 2}
+              title="Or press Spacebar"
               className="inline-flex items-center gap-1.5 rounded-full bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Check size={12} /> {shapeKind === 'circuit-arc' ? 'Stop Circuit Arc' : shapeKind === 'circuit-path' ? 'Stop Circuit Path' : 'Stop Drawing'}
