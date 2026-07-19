@@ -2940,6 +2940,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [lightingEffectsVisible, setLightingEffectsVisible] = useState(true)
   // Visual-only toggle for electrical symbol corner labels/badges.
   const [electricalSymbolLabelsVisible, setElectricalSymbolLabelsVisible] = useState(true)
+  // Visual-only toggle for Circuit Path and Circuit Arc measurement labels.
+  const [showCircuitMeasurementLabels, setShowCircuitMeasurementLabels] = useState(true)
   // Symbols Size control — scales symbol LABEL text only (not the glyph/box/geometry). Local UI
   // state (0.75x–5.0x, default 1.0). The draggable popup and its position are also local UI only.
   const [symbolLabelScale, setSymbolLabelScale] = useState(1)
@@ -9080,6 +9082,16 @@ const annotationPanelSizeClass =
                   {lightingEffectsVisible ? 'Hide Lighting Effects' : 'Show Lighting Effects'}
                 </button>
                 <button
+                  type="button"
+                  onClick={() => setShowCircuitMeasurementLabels((v) => !v)}
+                  aria-pressed={showCircuitMeasurementLabels}
+                  className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${showCircuitMeasurementLabels ? 'border-gray-700 text-gray-300 hover:text-white' : 'border-amber-500 text-amber-300 bg-amber-900/20'}`}
+                  title={showCircuitMeasurementLabels ? 'Hide Circuit Path and Circuit Arc measurement labels' : 'Show Circuit Path and Circuit Arc measurement labels'}
+                >
+                  {showCircuitMeasurementLabels ? <Eye size={12} /> : <EyeOff size={12} />}
+                  Circuit Labels {showCircuitMeasurementLabels ? 'On' : 'Off'}
+                </button>
+                <button
                   onClick={() => {
                     setAlignmentGuidesEnabled((v) => {
                       const next = !v
@@ -9834,14 +9846,26 @@ const annotationPanelSizeClass =
                                       vectorEffect="non-scaling-stroke"
                                     />
                                   )}
-                                  {localPts.map((p, i) => (
-                                    <circle key={i} cx={p.vx} cy={p.vy} r={1.4} fill={borderColor} opacity={fillOpacity} vectorEffect="non-scaling-stroke" />
-                                  ))}
                                 </svg>
+                                {localPts.map((p, i) => (
+                                  <div
+                                    key={i}
+                                    className="absolute rounded-full pointer-events-none"
+                                    style={{
+                                      left: `${p.vx}%`,
+                                      top: `${p.vy}%`,
+                                      width: 3,
+                                      height: 3,
+                                      transform: 'translate(-50%, -50%)',
+                                      backgroundColor: borderColor,
+                                      opacity: fillOpacity * 0.7,
+                                    }}
+                                  />
+                                ))}
                                 {/* Total-distance label — plain HTML for the same reason as Circuit
                                     Path's: the SVG above uses preserveAspectRatio="none" and would
                                     non-uniformly stretch any text drawn inside it. */}
-                                {meta.distanceLabel && localPts.length > 0 && (
+                                {showCircuitMeasurementLabels && meta.distanceLabel && localPts.length > 0 && (
                                   <div
                                     className="absolute rounded px-1.5 py-0.5 text-[10px] font-mono pointer-events-none"
                                     style={{
@@ -9891,15 +9915,27 @@ const annotationPanelSizeClass =
                                     opacity={fillOpacity}
                                     vectorEffect="non-scaling-stroke"
                                   />
-                                  {isCircuit && localPts.map((p, i) => (
-                                    <circle key={i} cx={p.vx} cy={p.vy} r={1.4} fill={borderColor} opacity={fillOpacity} vectorEffect="non-scaling-stroke" />
-                                  ))}
                                 </svg>
+                                {isCircuit && localPts.map((p, i) => (
+                                  <div
+                                    key={i}
+                                    className="absolute rounded-full pointer-events-none"
+                                    style={{
+                                      left: `${p.vx}%`,
+                                      top: `${p.vy}%`,
+                                      width: 3,
+                                      height: 3,
+                                      transform: 'translate(-50%, -50%)',
+                                      backgroundColor: borderColor,
+                                      opacity: fillOpacity * 0.7,
+                                    }}
+                                  />
+                                ))}
                                 {/* Circuit Path total-distance label (Step 13B-QA5-R Part 3/4).
                                     Rendered as plain HTML positioned by percentage -- NOT inside the
                                     0-100 viewBox SVG above, which uses preserveAspectRatio="none" and
                                     would non-uniformly stretch/distort any text drawn inside it. */}
-                                {isCircuit && meta.distanceLabel && localPts.length > 0 && (
+                                {showCircuitMeasurementLabels && isCircuit && meta.distanceLabel && localPts.length > 0 && (
                                   <div
                                     className="absolute rounded px-1.5 py-0.5 text-[10px] font-mono pointer-events-none"
                                     style={{
@@ -9955,7 +9991,9 @@ const annotationPanelSizeClass =
                             // Can-light symbol: outer trim ring + crosshair + aperture circle + size label.
                             // If blueprint calibration is active, the user sizes the marker to match scale via drag.
                             // Without calibration the symbol is still clear — 4" vs 6" distinguished by aperture radius + label.
-                            const aperture = kind === 'can-light-4' ? 20 : 26
+                            const trimRadius = 24
+                            const aperture = kind === 'can-light-4' ? 10 : 13
+                            const ringStrokeWidth = Math.max(0.8, borderThickness * 0.65)
                             const label = kind === 'can-light-4' ? '4"' : '6"'
                             const glowMetrics = getLightOutputGlowMetrics(kind, meta)
                             const glowId = `canlight-glow-${a.id}`
@@ -9970,13 +10008,13 @@ const annotationPanelSizeClass =
                                 >
                                   {renderLightOutputGlowSvg(glowId, glowMetrics, lightingEffectsVisible)}
                                   {/* Outer trim ring */}
-                                  <circle cx="50" cy="50" r="46" fill="none" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} opacity={fillOpacity} />
+                                  <circle cx="50" cy="50" r={trimRadius} fill="none" stroke={borderColor} strokeWidth={ringStrokeWidth} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} opacity={fillOpacity} />
                                   {/* Crosshair — horizontal */}
                                   <line x1="4" y1="50" x2="96" y2="50" stroke={borderColor} strokeWidth={Math.max(0.8, borderThickness * 0.55)} opacity={fillOpacity * 0.65} />
                                   {/* Crosshair — vertical */}
                                   <line x1="50" y1="4" x2="50" y2="96" stroke={borderColor} strokeWidth={Math.max(0.8, borderThickness * 0.55)} opacity={fillOpacity * 0.65} />
                                   {/* Aperture circle — filled by fillColor so the color swatch is reflected */}
-                                  <circle cx="50" cy="50" r={aperture} fill={fillColor === 'transparent' ? 'none' : hexWithAlpha(fillColor, Math.max(fillOpacity, 0.6))} stroke={borderColor} strokeWidth={borderThickness} />
+                                  <circle cx="50" cy="50" r={aperture} fill={fillColor === 'transparent' ? 'none' : hexWithAlpha(fillColor, Math.max(fillOpacity, 0.6))} stroke={borderColor} strokeWidth={ringStrokeWidth} />
                                   {/* Size label centered inside aperture */}
                                   <text x="50" y="55" textAnchor="middle" fontSize="16" fontWeight="700" fontFamily="monospace" fill={borderColor} opacity={fillOpacity}>{label}</text>
                                 </svg>
