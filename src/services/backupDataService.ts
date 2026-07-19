@@ -3862,6 +3862,8 @@ export interface VerificationSummary {
   rfiTotalCount: number
   blueprintAnnotationSetCount: number
   blueprintWorkPackageSetCount: number
+  blueprintAnimationSceneCount: number
+  blueprintAnimationSceneFingerprint: string
   lastSavedAt: string | null
   tenantUserId: string | null
 }
@@ -3886,6 +3888,36 @@ export function computeVerificationSummary(
   const annObj = ann && typeof ann === 'object' ? ann : {}
   const wp = bpObj.operationsBlueprintScopeLayers
   const wpObj = wp && typeof wp === 'object' ? wp : {}
+  const animationScenes: Array<{ setId: string; packageId: string; scene: unknown; revisionMarker: number | null }> = []
+  Object.keys(wpObj).sort().forEach((setId) => {
+    const layers = Array.isArray(wpObj[setId]) ? wpObj[setId] : []
+    layers.forEach((layer: any) => {
+      if (layer?.animationScene == null && layer?.animationSceneRevision == null) return
+      animationScenes.push({
+        setId,
+        packageId: String(layer?.id || ''),
+        scene: layer?.animationScene ?? null,
+        revisionMarker: Number.isInteger(Number(layer?.animationSceneRevision))
+          ? Number(layer.animationSceneRevision)
+          : null,
+      })
+    })
+  })
+  animationScenes.sort((a, b) => `${a.setId}:${a.packageId}`.localeCompare(`${b.setId}:${b.packageId}`))
+  const canonicalize = (value: any): any => {
+    if (Array.isArray(value)) return value.map(canonicalize)
+    if (!value || typeof value !== 'object') return value
+    return Object.keys(value).sort().reduce((out: Record<string, any>, key) => {
+      out[key] = canonicalize(value[key])
+      return out
+    }, {})
+  }
+  const scenePayload = JSON.stringify(canonicalize(animationScenes))
+  let sceneHash = 0x811c9dc5
+  for (let index = 0; index < scenePayload.length; index += 1) {
+    sceneHash ^= scenePayload.charCodeAt(index)
+    sceneHash = Math.imul(sceneHash, 0x01000193)
+  }
 
   return {
     projectsCount: projects.length,
@@ -3894,6 +3926,8 @@ export function computeVerificationSummary(
     rfiTotalCount,
     blueprintAnnotationSetCount: Object.keys(annObj).length,
     blueprintWorkPackageSetCount: Object.keys(wpObj).length,
+    blueprintAnimationSceneCount: animationScenes.filter((entry) => entry.scene != null).length,
+    blueprintAnimationSceneFingerprint: (sceneHash >>> 0).toString(16).padStart(8, '0'),
     lastSavedAt: (data as any)?._lastSavedAt ?? null,
     tenantUserId: userId ?? (data as any)?._tenantUserId ?? null,
   }
@@ -3919,15 +3953,17 @@ export function compareVerificationSummary(
 ): VerificationComparison {
   const mismatches: string[] = []
 
-  const countKeys: (keyof VerificationSummary)[] = [
+  const criticalKeys: (keyof VerificationSummary)[] = [
     'projectsCount',
     'logsCount',
     'serviceLogsCount',
     'rfiTotalCount',
     'blueprintAnnotationSetCount',
     'blueprintWorkPackageSetCount',
+    'blueprintAnimationSceneCount',
+    'blueprintAnimationSceneFingerprint',
   ]
-  for (const key of countKeys) {
+  for (const key of criticalKeys) {
     if (expected[key] !== actual[key]) {
       mismatches.push(`${key}: expected ${expected[key]}, cloud has ${actual[key]}`)
     }

@@ -71,6 +71,11 @@ import {
   registerBlueprintPdfRuntimeProvider,
   unregisterBlueprintPdfRuntimeProvider,
 } from '@/features/blueprint-vr/blueprintPdfTraceRuntimeBridge'
+import {
+  ensureCircuitTopologyIds,
+  regenerateCircuitTopologyIds,
+  translateNormalizedPoints,
+} from '@/features/blueprint-animation/routeGeometry'
 
 let _pdfjsLib: typeof import('pdfjs-dist') | null = null
 async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
@@ -1336,6 +1341,19 @@ function getAnnotationMeta(annotation: any) {
 
 function withAnnotationMeta(annotation: any, meta: Record<string, any>) {
   return { ...annotation, meta: { ...getAnnotationMeta(annotation), ...meta }, metadata: { ...getAnnotationMeta(annotation), ...meta } }
+}
+
+// Stable circuit topology is materialized only for new circuits or at an explicit save/edit
+// boundary. Merely loading a legacy circuit remains read-only and does not rewrite the blueprint.
+function withEnsuredCircuitTopologyIds(annotation: BlueprintAnnotation): BlueprintAnnotation {
+  const meta = getAnnotationMeta(annotation)
+  if (!isCircuitShapeKind(meta.shapeKind) || !Array.isArray(meta.points)) return annotation
+  const topology = ensureCircuitTopologyIds(meta)
+  if (!topology.changed) return annotation
+  return withAnnotationMeta(annotation, {
+    pointIds: topology.pointIds,
+    segmentIds: topology.segmentIds,
+  }) as BlueprintAnnotation
 }
 
 // Light-output symbol detection — used for glare/glow overlay and Light Output controls.
@@ -4752,6 +4770,17 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   }, [onSelectedPagesChange, selectedPageNumbers, currentPage])
 
   const persistAnnotation = useCallback(async (annotation: BlueprintAnnotation) => {
+    const annotationToPersist = withEnsuredCircuitTopologyIds(annotation)
+    if (annotationToPersist !== annotation) {
+      // Keep the optimistic copy aligned with the queued save so overlapping explicit edits
+      // cannot mint another topology before the persisted annotation is reloaded.
+      allAnnotationsRef.current = allAnnotationsRef.current.map((item) => (
+        item.id === annotationToPersist.id ? annotationToPersist : item
+      ))
+      setAllAnnotations((prev) => prev.map((item) => (
+        item.id === annotationToPersist.id ? annotationToPersist : item
+      )))
+    }
     // Increment before queuing so the counter is accurate when mutations overlap.
     pendingAnnotationMutationsRef.current += 1
     // BLUEPRINT-6Q — mark the blueprint scope dirty for the duration of the save so the
@@ -4769,7 +4798,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       try {
         const backup = getBackupData()
         if (!backup) return
-        const saveResult = await upsertOperationsBlueprintAnnotation(backup, annotation)
+        const saveResult = await upsertOperationsBlueprintAnnotation(backup, annotationToPersist)
         if (saveResult.cloudSynced) {
           clearStaleSyncMessages()
         } else if (saveResult.localSaved) {
@@ -4886,10 +4915,18 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const nextMeta: Record<string, any> = { ...(tpl.meta || {}) }
     if (Array.isArray(nextMeta.points)) {
       // pen/marker freehand points are page-normalized — shift by the same delta.
-      nextMeta.points = nextMeta.points.map((p: any) => ({
-        x: clampNorm((Number(p?.x) || 0) + dx),
-        y: clampNorm((Number(p?.y) || 0) + dy),
-      }))
+      nextMeta.points = translateNormalizedPoints(nextMeta.points, dx, dy)
+    }
+    if (nextMeta.shapeKind === 'circuit-arc' && Array.isArray(nextMeta.arcCtrls)) {
+      // Arc controls use the same absolute page-normalized coordinate system as points.
+      // Moving both arrays preserves the copied curve instead of bending it toward the source.
+      nextMeta.arcCtrls = translateNormalizedPoints(nextMeta.arcCtrls, dx, dy)
+    }
+    if (isCircuitShapeKind(nextMeta.shapeKind) && Array.isArray(nextMeta.points)) {
+      // The copy is a distinct circuit topology even though its design and geometry are cloned.
+      const topology = regenerateCircuitTopologyIds(nextMeta.points)
+      nextMeta.pointIds = topology.pointIds
+      nextMeta.segmentIds = topology.segmentIds
     }
     if (nextMeta.lineAbsX1 !== undefined && nextMeta.lineAbsY1 !== undefined && nextMeta.lineAbsX2 !== undefined && nextMeta.lineAbsY2 !== undefined) {
       // Step 12C — edited line-like shapes may store endpoints as absolute
@@ -5090,6 +5127,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const now = new Date().toISOString()
     const isArc = shapeKind === 'circuit-arc'
     const isCircuit = isCircuitShapeKind(shapeKind)
+    const topology = isCircuit ? regenerateCircuitTopologyIds(points) : null
 
     // Circuit Arc: seed one Bezier control point per segment so the path renders as
     // curves immediately; each is independently draggable afterwards.
@@ -5128,6 +5166,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const meta = {
       shapeKind,
       points,
+      ...(topology ? { pointIds: topology.pointIds, segmentIds: topology.segmentIds } : {}),
       ...(arcCtrls ? { arcCtrls } : {}),
       pathType: isArc ? 'circuit-arc' : isCircuit ? 'circuit' : 'polyline',
       closed: false,

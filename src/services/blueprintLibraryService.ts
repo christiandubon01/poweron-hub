@@ -2,6 +2,14 @@
 import { supabase } from '@/lib/supabase'
 import { getPageCount } from '@/services/blueprintExtractor'
 import { SCOPE_REGISTRY, type DataScope } from '@/services/scopeRegistry'
+import {
+  parseBlueprintAnimationScene,
+  sanitizeBlueprintAnimationSceneForStorage,
+} from '@/features/blueprint-animation/sceneSchema'
+import type {
+  BlueprintScopeAnimationScene,
+  BlueprintScopeAnimationSceneV1,
+} from '@/features/blueprint-animation/types'
 
 // Phase 5C: dev-only assertion that the registry descriptors still point at the
 // concrete BackupData container keys these save paths write. Metadata sanity check
@@ -124,6 +132,9 @@ export interface BlueprintScopeLayer {
   updatedAt: string
   visible: boolean
   isolated: boolean
+  animationScene?: BlueprintScopeAnimationScene
+  /** Last explicit scene save revision, retained when the scene is intentionally removed. */
+  animationSceneRevision?: number
   // Phase 5E: soft-delete tombstone (see BlueprintAnnotation.deletedAt).
   deletedAt?: string
   deletedBy?: string
@@ -684,7 +695,69 @@ export function mergeBlueprintScopeLayersById(
 ): BlueprintScopeLayer[] {
   const remote = (Array.isArray(remoteItems) ? remoteItems : []).map(sanitizeScopeLayer).filter(Boolean) as BlueprintScopeLayer[]
   const incoming = (Array.isArray(incomingItems) ? incomingItems : []).map(sanitizeScopeLayer).filter(Boolean) as BlueprintScopeLayer[]
-  return mergeItemsById(remote as TombstonedItem[], incoming as TombstonedItem[]) as unknown as BlueprintScopeLayer[]
+  const merged = mergeItemsById(remote as TombstonedItem[], incoming as TombstonedItem[]) as unknown as BlueprintScopeLayer[]
+  const remoteById = new Map(remote.map((layer) => [layer.id, layer]))
+  const incomingById = new Map(incoming.map((layer) => [layer.id, layer]))
+
+  return merged.map((layer) => {
+    if (layer.deletedAt) return layer
+    const remoteLayer = remoteById.get(layer.id)
+    const incomingLayer = incomingById.get(layer.id)
+    const remoteScene = remoteLayer?.animationScene
+    const incomingScene = incomingLayer?.animationScene
+    const remoteRevision = Math.max(
+      0,
+      Math.floor(Number(remoteLayer?.animationSceneRevision) || 0),
+      remoteScene?.schemaVersion === 1 ? Math.floor(Number((remoteScene as BlueprintScopeAnimationSceneV1).revision) || 0) : 0,
+    )
+    const incomingRevision = Math.max(
+      0,
+      Math.floor(Number(incomingLayer?.animationSceneRevision) || 0),
+      incomingScene?.schemaVersion === 1 ? Math.floor(Number((incomingScene as BlueprintScopeAnimationSceneV1).revision) || 0) : 0,
+    )
+    let animationScene: BlueprintScopeAnimationScene | undefined
+
+    const remoteUnsupported = !!remoteScene && remoteScene.schemaVersion !== 1
+    const incomingUnsupported = !!incomingScene && incomingScene.schemaVersion !== 1
+    if (remoteUnsupported || incomingUnsupported) {
+      // Unsupported scenes are opaque and read-only. Never let a schema-v1 or absent value
+      // downgrade one; if both are future schemas, retain the higher version (remote on ties).
+      if (remoteScene && incomingScene) {
+        animationScene = Number(incomingScene.schemaVersion) > Number(remoteScene.schemaVersion)
+          ? incomingScene
+          : remoteScene
+      } else {
+        animationScene = incomingScene || remoteScene
+      }
+    } else if (remoteRevision !== incomingRevision) {
+      // A newer revision marker with no scene represents an intentional scene removal.
+      animationScene = incomingRevision > remoteRevision ? incomingScene : remoteScene
+    } else if (remoteScene && incomingScene) {
+      const remoteParsed = parseBlueprintAnimationScene(remoteScene)
+      const incomingParsed = parseBlueprintAnimationScene(incomingScene)
+      if (remoteParsed.status === 'supported' && incomingParsed.status === 'supported') {
+        // Scene revisions, not package metadata timestamps, own nested-scene concurrency.
+        // Equal revisions prefer remote deterministically because legitimate scene edits increment.
+        animationScene = incomingParsed.scene.revision > remoteParsed.scene.revision
+          ? incomingScene
+          : remoteScene
+      } else {
+        animationScene = remoteScene
+      }
+    } else {
+      // Equal explicit revisions are concurrent; remote wins deterministically. A metadata-only
+      // omission has revision zero and is handled by the unequal-revision branch above.
+      animationScene = remoteScene
+    }
+
+    const next = { ...layer }
+    if (animationScene) next.animationScene = animationScene
+    else delete (next as any).animationScene
+    const latestRevision = Math.max(remoteRevision, incomingRevision)
+    if (latestRevision > 0) next.animationSceneRevision = latestRevision
+    else delete (next as any).animationSceneRevision
+    return next
+  })
 }
 
 function normalizeRect(rect?: BlueprintAnnotationRect): BlueprintAnnotationRect | undefined {
@@ -1045,6 +1118,11 @@ function sanitizeScopeLayer(raw: any): BlueprintScopeLayer | null {
   const updatedAt = normalizeUpdatedAt(raw, createdAt)
   const deletedAt = isValidDateString(raw.deletedAt) ? String(raw.deletedAt) : undefined
   const deletedBy = deletedAt && raw.deletedBy != null ? String(raw.deletedBy) : undefined
+  const animationScene = sanitizeBlueprintAnimationSceneForStorage(raw.animationScene)
+  const animationSceneRevision = Number.isInteger(Number(raw.animationSceneRevision))
+    && Number(raw.animationSceneRevision) > 0
+    ? Number(raw.animationSceneRevision)
+    : undefined
 
   return {
     id,
@@ -1064,6 +1142,8 @@ function sanitizeScopeLayer(raw: any): BlueprintScopeLayer | null {
     updatedAt,
     visible: raw.visible === false ? false : true,
     isolated: raw.isolated === true,
+    ...(animationScene ? { animationScene } : {}),
+    ...(animationSceneRevision ? { animationSceneRevision } : {}),
     ...(deletedAt ? { deletedAt } : {}),
     ...(deletedBy ? { deletedBy } : {}),
   }
@@ -1256,4 +1336,340 @@ export async function saveOperationsBlueprintScopeLayers(
     warning: SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
     error: result.error,
   }
+}
+
+export type BlueprintAnimationSceneUpdater = (
+  currentScene: BlueprintScopeAnimationSceneV1 | undefined,
+) => BlueprintScopeAnimationSceneV1 | null
+
+export type SaveBlueprintAnimationSceneConflictReason =
+  | 'scope-layer-missing'
+  | 'scope-layer-deleted'
+  | 'unsupported-current-scene'
+  | 'invalid-next-scene'
+  | 'stale-local-revision'
+  | 'stale-remote-revision'
+  | 'remote-conflict-unresolved'
+
+export type SaveBlueprintAnimationSceneResult =
+  | {
+      success: true
+      conflict: false
+      localSaved: boolean
+      cloudSynced: boolean
+      scene: BlueprintScopeAnimationSceneV1 | undefined
+      scopeLayer: BlueprintScopeLayer
+    }
+  | {
+      success: false
+      conflict: true
+      localSaved: boolean
+      cloudSynced: false
+      reason: SaveBlueprintAnimationSceneConflictReason
+      message: string
+      expectedBaseRevision: number
+      currentScene: BlueprintScopeAnimationScene | undefined
+      callerDraft: BlueprintScopeAnimationSceneV1 | null
+    }
+
+export interface SaveOperationsBlueprintScopeLayerAnimationSceneInput {
+  backup?: any
+  blueprintSetId: string
+  scopeLayerId: string
+  nextScene: BlueprintScopeAnimationSceneV1 | null | BlueprintAnimationSceneUpdater
+  expectedBaseRevision: number
+  now?: string
+}
+
+function getSupportedScene(layer: BlueprintScopeLayer | undefined): BlueprintScopeAnimationSceneV1 | undefined {
+  const parsed = parseBlueprintAnimationScene(layer?.animationScene)
+  return parsed.status === 'supported' ? parsed.scene : undefined
+}
+
+function getSceneRevision(layer: BlueprintScopeLayer | undefined): number {
+  const scene = getSupportedScene(layer)
+  return Math.max(
+    scene ? Math.max(1, Math.floor(Number(scene.revision) || 1)) : 0,
+    Math.max(0, Math.floor(Number(layer?.animationSceneRevision) || 0)),
+  )
+}
+
+function getScopeLayerById(backup: any, blueprintSetId: string, scopeLayerId: string): BlueprintScopeLayer | undefined {
+  return getOperationsBlueprintScopeLayersRaw(backup || {}, blueprintSetId)
+    .find((layer) => layer.id === scopeLayerId)
+}
+
+function cloneScene<T extends BlueprintScopeAnimationSceneV1 | null | undefined>(scene: T): T {
+  return scene == null ? scene : JSON.parse(JSON.stringify(scene))
+}
+
+function canonicalSceneJson(value: unknown): string {
+  const canonicalize = (entry: any): any => {
+    if (Array.isArray(entry)) return entry.map(canonicalize)
+    if (!entry || typeof entry !== 'object') return entry
+    return Object.keys(entry).sort().reduce((out: Record<string, unknown>, key) => {
+      out[key] = canonicalize(entry[key])
+      return out
+    }, {})
+  }
+  return JSON.stringify(canonicalize(value))
+}
+
+function buildSceneDraft(
+  nextScene: BlueprintScopeAnimationSceneV1 | null | BlueprintAnimationSceneUpdater,
+  currentScene: BlueprintScopeAnimationSceneV1 | undefined,
+): { draft: BlueprintScopeAnimationSceneV1 | null; invalid: boolean } {
+  const rawDraft = typeof nextScene === 'function'
+    ? nextScene(cloneScene(currentScene))
+    : cloneScene(nextScene)
+  if (rawDraft == null) return { draft: null, invalid: false }
+  const parsed = parseBlueprintAnimationScene(rawDraft)
+  return parsed.status === 'supported'
+    ? { draft: parsed.scene, invalid: false }
+    : { draft: null, invalid: true }
+}
+
+function applyAnimationSceneLayerToBackup(
+  backup: any,
+  blueprintSetId: string,
+  updatedLayer: BlueprintScopeLayer,
+): any {
+  const next = JSON.parse(JSON.stringify(backup || {}))
+  const container = getScopeLayersContainer(next)
+  const existing = Array.isArray(container[blueprintSetId]) ? container[blueprintSetId] : []
+  container[blueprintSetId] = mergeBlueprintScopeLayersById(existing, [updatedLayer])
+  const appliedLayer = container[blueprintSetId].find((layer: BlueprintScopeLayer) => layer.id === updatedLayer.id)
+  if (appliedLayer) {
+    if (updatedLayer.animationScene) appliedLayer.animationScene = cloneScene(updatedLayer.animationScene)
+    else delete appliedLayer.animationScene
+    if (updatedLayer.animationSceneRevision) appliedLayer.animationSceneRevision = updatedLayer.animationSceneRevision
+    else delete appliedLayer.animationSceneRevision
+  }
+  return next
+}
+
+function sceneConflict(
+  reason: SaveBlueprintAnimationSceneConflictReason,
+  message: string,
+  expectedBaseRevision: number,
+  currentScene: BlueprintScopeAnimationScene | undefined,
+  callerDraft: BlueprintScopeAnimationSceneV1 | null,
+  localSaved = false,
+): SaveBlueprintAnimationSceneResult {
+  return {
+    success: false,
+    conflict: true,
+    localSaved,
+    cloudSynced: false,
+    reason,
+    message,
+    expectedBaseRevision,
+    currentScene: currentScene ? JSON.parse(JSON.stringify(currentScene)) : undefined,
+    callerDraft: cloneScene(callerDraft),
+  }
+}
+
+/**
+ * Conflict-aware package animation-scene save. This is deliberately separate from the package
+ * editor's whole-array save: it checks scene revision against local and freshly fetched remote
+ * state, then writes through the existing remote-baseline guard.
+ */
+export async function saveOperationsBlueprintScopeLayerAnimationScene(
+  input: SaveOperationsBlueprintScopeLayerAnimationSceneInput,
+): Promise<SaveBlueprintAnimationSceneResult> {
+  const {
+    getBackupData,
+    getActiveTenantUserId,
+    isSupabaseConfigured,
+    saveBackupData,
+    saveBackupDataAndSyncNow,
+    saveBackupWithRemoteBaselineSync,
+    fetchLatestRemoteBackup,
+  } = await import('@/services/backupDataService')
+
+  const expectedRevision = Math.max(0, Math.floor(Number(input.expectedBaseRevision) || 0))
+  const localBase = input.backup || getBackupData()
+  const localLayer = getScopeLayerById(localBase, input.blueprintSetId, input.scopeLayerId)
+  if (!localLayer) {
+    return sceneConflict('scope-layer-missing', 'The work package no longer exists.', expectedRevision, undefined, null)
+  }
+  if (localLayer.deletedAt) {
+    return sceneConflict('scope-layer-deleted', 'The work package was deleted.', expectedRevision, localLayer.animationScene, null)
+  }
+  const localParse = parseBlueprintAnimationScene(localLayer.animationScene)
+  if (localParse.status === 'unsupported-version') {
+    return sceneConflict('unsupported-current-scene', 'The work package scene uses an unsupported schema version.', expectedRevision, localParse.scene, null)
+  }
+  const localScene = localParse.status === 'supported' ? localParse.scene : undefined
+  const draftResult = buildSceneDraft(input.nextScene, localScene)
+  const callerDraft = draftResult.draft
+  if (draftResult.invalid) {
+    return sceneConflict('invalid-next-scene', 'The animation scene draft is malformed or unsupported.', expectedRevision, localScene, null)
+  }
+  const localRevision = getSceneRevision(localLayer)
+  if (localRevision > expectedRevision || localRevision < expectedRevision) {
+    return sceneConflict('stale-local-revision', `Expected scene revision ${expectedRevision}, but local revision is ${localRevision}.`, expectedRevision, localScene, callerDraft)
+  }
+
+  const userId = getActiveTenantUserId()
+  let remoteSnapshot: Awaited<ReturnType<typeof fetchLatestRemoteBackup>> | null = null
+  let remoteLayer: BlueprintScopeLayer | undefined
+  if (isSupabaseConfigured()) {
+    remoteSnapshot = await fetchLatestRemoteBackup(userId || undefined)
+    if (remoteSnapshot.error) {
+      return sceneConflict('remote-conflict-unresolved', `Remote scene revision could not be verified: ${remoteSnapshot.error}`, expectedRevision, localScene, callerDraft)
+    }
+    if (remoteSnapshot.hasRemoteRow && remoteSnapshot.remoteData) {
+      remoteLayer = getScopeLayerById(remoteSnapshot.remoteData, input.blueprintSetId, input.scopeLayerId)
+      if (remoteLayer?.deletedAt) {
+        return sceneConflict('scope-layer-deleted', 'The work package was deleted remotely.', expectedRevision, remoteLayer.animationScene, callerDraft)
+      }
+      const remoteParse = parseBlueprintAnimationScene(remoteLayer?.animationScene)
+      if (remoteParse.status === 'unsupported-version') {
+        return sceneConflict('unsupported-current-scene', 'The remote work package scene uses an unsupported schema version.', expectedRevision, remoteParse.scene, callerDraft)
+      }
+      const remoteRevision = getSceneRevision(remoteLayer)
+      if (remoteRevision > expectedRevision) {
+        return sceneConflict('stale-remote-revision', `Expected scene revision ${expectedRevision}, but remote revision is ${remoteRevision}.`, expectedRevision, remoteLayer?.animationScene, callerDraft)
+      }
+    }
+  }
+
+  const baseLayers = remoteSnapshot?.remoteData
+    ? mergeBlueprintScopeLayersById(
+        getOperationsBlueprintScopeLayersRaw(remoteSnapshot.remoteData, input.blueprintSetId),
+        getOperationsBlueprintScopeLayersRaw(localBase, input.blueprintSetId),
+      )
+    : getOperationsBlueprintScopeLayersRaw(localBase, input.blueprintSetId)
+  const baseLayer = baseLayers.find((layer) => layer.id === input.scopeLayerId) || localLayer
+  const currentScene = getSupportedScene(baseLayer)
+  const now = input.now || new Date().toISOString()
+  const savedScene = callerDraft
+    ? {
+        ...cloneScene(callerDraft),
+        schemaVersion: 1 as const,
+        revision: expectedRevision + 1,
+        createdAt: currentScene?.createdAt || callerDraft.createdAt || now,
+        updatedAt: now,
+      }
+    : undefined
+  const updatedLayer: BlueprintScopeLayer = {
+    ...baseLayer,
+    ...(savedScene ? { animationScene: savedScene } : {}),
+    animationSceneRevision: expectedRevision + 1,
+    updatedAt: now,
+  }
+  if (!savedScene) delete (updatedLayer as any).animationScene
+
+  const verifyRemoteWrite = async (): Promise<SaveBlueprintAnimationSceneResult> => {
+    const verification = await fetchLatestRemoteBackup(userId || undefined)
+    if (verification.error || !verification.hasRemoteRow || !verification.remoteData) {
+      return sceneConflict('remote-conflict-unresolved', verification.error || 'The remote scene write could not be read back.', expectedRevision, currentScene, callerDraft, true)
+    }
+    const verifiedLayer = getScopeLayerById(verification.remoteData, input.blueprintSetId, input.scopeLayerId)
+    if (!verifiedLayer) {
+      return sceneConflict('remote-conflict-unresolved', 'The saved work package was missing during remote read-back.', expectedRevision, undefined, callerDraft, true)
+    }
+    if (verifiedLayer.deletedAt) {
+      return sceneConflict('scope-layer-deleted', 'The work package was deleted before the scene save could be verified.', expectedRevision, verifiedLayer.animationScene, callerDraft, true)
+    }
+    const verifiedParse = parseBlueprintAnimationScene(verifiedLayer.animationScene)
+    if (verifiedParse.status === 'unsupported-version') {
+      return sceneConflict('unsupported-current-scene', 'The saved work package now uses an unsupported scene schema.', expectedRevision, verifiedParse.scene, callerDraft, true)
+    }
+    const targetRevision = expectedRevision + 1
+    const verifiedRevision = getSceneRevision(verifiedLayer)
+    if (verifiedRevision > targetRevision) {
+      return sceneConflict('stale-remote-revision', `The remote scene advanced to revision ${verifiedRevision} before read-back completed.`, expectedRevision, verifiedLayer.animationScene, callerDraft, true)
+    }
+    const verifiedScene = verifiedParse.status === 'supported' ? verifiedParse.scene : undefined
+    const contentMatches = savedScene
+      ? !!verifiedScene && canonicalSceneJson(verifiedScene) === canonicalSceneJson(savedScene)
+      : !verifiedScene
+    if (verifiedRevision !== targetRevision || !contentMatches) {
+      return sceneConflict('remote-conflict-unresolved', 'The remote scene did not match the caller draft during read-back verification.', expectedRevision, verifiedLayer.animationScene, callerDraft, true)
+    }
+    const successResult: SaveBlueprintAnimationSceneResult = {
+      success: true,
+      conflict: false,
+      localSaved: true,
+      cloudSynced: true,
+      scene: verifiedScene,
+      scopeLayer: verifiedLayer,
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('poweron:sync-success', {
+        detail: {
+          savedBy: (verification.remoteData as any)?._syncMeta?.savedBy,
+          savedAt: verification.remoteDataLastSavedAt || verification.remoteUpdatedAt,
+          verified: true,
+        },
+      }))
+    }
+    return successResult
+  }
+
+  if (!isSupabaseConfigured()) {
+    const savedBackup = applyAnimationSceneLayerToBackup(localBase, input.blueprintSetId, updatedLayer)
+    savedBackup._lastSavedAt = now
+    saveBackupData(savedBackup)
+    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+    try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+    return { success: true, conflict: false, localSaved: true, cloudSynced: false, scene: savedScene, scopeLayer: updatedLayer }
+  }
+
+  if (!remoteSnapshot?.hasRemoteRow || !remoteSnapshot.remoteData) {
+    const savedBackup = applyAnimationSceneLayerToBackup(localBase, input.blueprintSetId, updatedLayer)
+    const result = await saveBackupDataAndSyncNow(savedBackup, 'blueprintSummaries', {
+      source: 'scope-layer-animation-scene-first-sync',
+      _scopes: ['blueprint.workPackages'],
+      _suppressSuccessEvent: true,
+    })
+    if (result.success) {
+      return verifyRemoteWrite()
+    }
+    return sceneConflict('remote-conflict-unresolved', result.error || 'The remote scene save could not be verified.', expectedRevision, currentScene, callerDraft, true)
+  }
+
+  // Second preflight narrows the non-atomic window: if the row changed after the initial scene
+  // revision read, stop before the generic scoped merge can fold a conflicting scene together.
+  const preflight = await fetchLatestRemoteBackup(userId || undefined)
+  if (preflight.error || !preflight.hasRemoteRow || !preflight.remoteData) {
+    return sceneConflict('remote-conflict-unresolved', preflight.error || 'The remote scene baseline could not be re-verified before saving.', expectedRevision, remoteLayer?.animationScene || currentScene, callerDraft)
+  }
+  if (
+    preflight.remoteUpdatedAt !== remoteSnapshot.remoteUpdatedAt
+    || preflight.remoteDataLastSavedAt !== remoteSnapshot.remoteDataLastSavedAt
+  ) {
+    const preflightLayer = getScopeLayerById(preflight.remoteData, input.blueprintSetId, input.scopeLayerId)
+    const preflightRevision = getSceneRevision(preflightLayer)
+    const reason = preflightRevision > expectedRevision ? 'stale-remote-revision' : 'remote-conflict-unresolved'
+    return sceneConflict(
+      reason,
+      preflightRevision > expectedRevision
+        ? `Expected scene revision ${expectedRevision}, but remote revision advanced to ${preflightRevision}.`
+        : 'The remote package changed during the scene save preflight.',
+      expectedRevision,
+      preflightLayer?.animationScene,
+      callerDraft,
+    )
+  }
+
+  const remoteBasedBackup = applyAnimationSceneLayerToBackup(preflight.remoteData, input.blueprintSetId, updatedLayer)
+  const result = await saveBackupWithRemoteBaselineSync(
+    remoteBasedBackup,
+    {
+      remoteUpdatedAt: preflight.remoteUpdatedAt,
+      remoteDataLastSavedAt: preflight.remoteDataLastSavedAt,
+    },
+    {
+      source: 'scope-layer-animation-scene-remote-merge',
+      _scopes: ['blueprint.workPackages'],
+      _suppressSuccessEvent: true,
+    },
+  )
+  if (!result.success) {
+    return sceneConflict('remote-conflict-unresolved', result.error || 'The remote baseline changed before the scene save completed.', expectedRevision, remoteLayer?.animationScene || currentScene, callerDraft, result.localSaved)
+  }
+  return verifyRemoteWrite()
 }

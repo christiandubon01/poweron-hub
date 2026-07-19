@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const supabaseState = vi.hoisted(() => ({
   capturedPayload: null as any,
   remoteData: null as any,
+  remoteReadSequence: [] as Array<{ data: any; updatedAt: string }>,
+  remoteReadIndex: 0,
+  remoteReadCount: 0,
+  remoteWriteError: null as string | null,
   userId: 'user-1',
 }))
 
@@ -12,15 +16,24 @@ vi.mock('@/lib/supabase', () => {
   builder.eq = vi.fn(() => builder)
   builder.upsert = vi.fn((row: any) => {
     supabaseState.capturedPayload = row.data
+    if (!supabaseState.remoteWriteError) supabaseState.remoteData = row.data
     return builder
   })
-  builder.maybeSingle = vi.fn(async () => ({
-    data: supabaseState.remoteData
-      ? { data: supabaseState.remoteData, updated_at: '2026-07-17T10:00:00.000Z', user_id: supabaseState.userId }
+  builder.maybeSingle = vi.fn(async () => {
+    supabaseState.remoteReadCount += 1
+    const sequenced = supabaseState.remoteReadSequence.length > 0
+      ? supabaseState.remoteReadSequence[Math.min(supabaseState.remoteReadIndex++, supabaseState.remoteReadSequence.length - 1)]
+      : null
+    const remoteData = sequenced?.data ?? supabaseState.remoteData
+    return ({
+    data: remoteData
+      ? { data: remoteData, updated_at: sequenced?.updatedAt ?? '2026-07-17T10:00:00.000Z', user_id: supabaseState.userId }
       : null,
     error: null,
-  }))
-  builder.single = vi.fn(async () => ({ data: { updated_at: '2026-07-17T10:00:01.000Z' }, error: null }))
+  })})
+  builder.single = vi.fn(async () => supabaseState.remoteWriteError
+    ? { data: null, error: { message: supabaseState.remoteWriteError } }
+    : { data: { updated_at: '2026-07-17T10:00:01.000Z' }, error: null })
 
   return {
     supabase: {
@@ -33,6 +46,9 @@ vi.mock('@/lib/supabase', () => {
 import {
   BackupStorageWriteError,
   clearActiveTenantUser,
+  compareVerificationSummary,
+  computeVerificationSummary,
+  getBackupData,
   getDeviceId,
   markTenantDataReady,
   mergeLocalRecordsIntoRemoteSnapshot,
@@ -43,9 +59,13 @@ import {
   syncToSupabase,
 } from '@/services/backupDataService'
 import {
+  getOperationsBlueprintScopeLayers,
   getLiveBlueprintSetRecords,
+  mergeBlueprintScopeLayersById,
   mergeBlueprintSetRecordsById,
+  saveOperationsBlueprintScopeLayerAnimationScene,
 } from '@/services/blueprintLibraryService'
+import { createDefaultBlueprintAnimationScene } from '@/features/blueprint-animation/sceneSchema'
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>()
@@ -83,6 +103,34 @@ function annotation(id: string, blueprintSetId: string, updatedAt = NEW): any {
   })
 }
 
+function scopeLayer(id = 'package-1', updatedAt = NEW, extra: Record<string, unknown> = {}): any {
+  return record(id, updatedAt, {
+    name: 'Lighting Package',
+    description: 'Keep me',
+    color: '#38bdf8',
+    selectedAnnotationIds: ['annotation-1'],
+    itemRefs: [{ annotationId: 'annotation-1', pageNumber: 1, label: 'Fixture' }],
+    roughInHours: 2,
+    trimHours: 1,
+    testingHours: 0.5,
+    cleanupHours: 0.25,
+    crewNotes: 'Preserve notes',
+    proposalSummary: 'Preserve summary',
+    visible: true,
+    isolated: false,
+    ...extra,
+  })
+}
+
+function animationScene(revision = 1, extra: Record<string, unknown> = {}): any {
+  return {
+    ...createDefaultBlueprintAnimationScene({ id: 'scene-1', now: OLD }),
+    revision,
+    updatedAt: revision > 1 ? NEWER : NEW,
+    ...extra,
+  }
+}
+
 beforeEach(() => {
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new MemoryStorage() })
   Object.defineProperty(globalThis, 'window', { configurable: true, value: new EventTarget() })
@@ -90,6 +138,10 @@ beforeEach(() => {
   vi.spyOn(Math, 'random').mockReturnValue(0.25)
   supabaseState.capturedPayload = null
   supabaseState.remoteData = null
+  supabaseState.remoteReadSequence = []
+  supabaseState.remoteReadIndex = 0
+  supabaseState.remoteReadCount = 0
+  supabaseState.remoteWriteError = null
   supabaseState.userId = 'user-1'
   clearActiveTenantUser()
 })
@@ -221,5 +273,262 @@ describe('outgoing device stamp', () => {
     expect(result.success).toBe(true)
     expect(supabaseState.capturedPayload._syncMeta.savedBy).toBe(getDeviceId())
     expect(supabaseState.capturedPayload._syncMeta.savedBy).not.toBe('Android_remote')
+  })
+})
+
+describe('blueprint animation scene preservation', () => {
+  it('preserves supported and unsupported scenes through package sanitization and merge', () => {
+    const supported = scopeLayer('package-supported', NEW, { animationScene: animationScene(1) })
+    const futureScene = { schemaVersion: 7, id: 'future-scene', futureField: { keep: true } }
+    const future = scopeLayer('package-future', NEW, { animationScene: futureScene })
+    const merged = mergeBlueprintScopeLayersById([], [supported, future])
+    expect((merged[0].animationScene as any).revision).toBe(1)
+    expect(merged[1].animationScene).toEqual(futureScene)
+
+    const backup = { blueprintSummaries: { operationsBlueprintScopeLayers: { 'set-1': merged } } }
+    expect(getOperationsBlueprintScopeLayers(backup, 'set-1').map((layer) => layer.animationScene)).toEqual([
+      supported.animationScene,
+      futureScene,
+    ])
+
+    const metadataOnlyEdit = scopeLayer('package-supported', NEWER, { crewNotes: 'New metadata, old scene omitted' })
+    const sceneSafeMerge = mergeBlueprintScopeLayersById([supported], [metadataOnlyEdit])
+    expect(sceneSafeMerge[0].crewNotes).toBe('New metadata, old scene omitted')
+    expect((sceneSafeMerge[0].animationScene as any).revision).toBe(1)
+  })
+
+  it('preserves scenes through apply-push-apply package merges', () => {
+    const local = { blueprintSummaries: { operationsBlueprintScopeLayers: { 'set-1': [scopeLayer('package-1', NEW, { animationScene: animationScene(1) })] } } } as any
+    const remote = { blueprintSummaries: { operationsBlueprintScopeLayers: { 'set-1': [scopeLayer('package-1', OLD)] } } } as any
+    const applied = mergeLocalRecordsIntoRemoteSnapshot(remote, local)
+    const outgoing = mergeRemoteBlueprintSummariesIntoOutgoing(applied, remote)
+    const reapplied = mergeLocalRecordsIntoRemoteSnapshot(remote, outgoing)
+    expect((reapplied as any).blueprintSummaries.operationsBlueprintScopeLayers['set-1'][0].animationScene.revision).toBe(1)
+  })
+
+  it('verified-save fingerprint detects a scene dropped from an existing package', () => {
+    const withScene = { blueprintSummaries: { operationsBlueprintScopeLayers: { 'set-1': [scopeLayer('package-1', NEW, { animationScene: animationScene(1) })] } }, _lastSavedAt: NEW } as any
+    const withoutScene = { blueprintSummaries: { operationsBlueprintScopeLayers: { 'set-1': [scopeLayer('package-1', NEW)] } }, _lastSavedAt: NEW } as any
+    const expected = computeVerificationSummary(withScene)
+    const actual = computeVerificationSummary(withoutScene)
+    expect(expected.blueprintWorkPackageSetCount).toBe(actual.blueprintWorkPackageSetCount)
+    expect(expected.blueprintAnimationSceneCount).toBe(1)
+    expect(compareVerificationSummary(expected, actual)).toMatchObject({ verified: false })
+
+    const removedWithMarker = { blueprintSummaries: { operationsBlueprintScopeLayers: { 'set-1': [scopeLayer('package-1', NEW, { animationSceneRevision: 2 })] } }, _lastSavedAt: NEW } as any
+    const removedWithoutMarker = { blueprintSummaries: { operationsBlueprintScopeLayers: { 'set-1': [scopeLayer('package-1', NEW)] } }, _lastSavedAt: NEW } as any
+    expect(computeVerificationSummary(removedWithMarker).blueprintAnimationSceneCount).toBe(0)
+    expect(compareVerificationSummary(
+      computeVerificationSummary(removedWithMarker),
+      computeVerificationSummary(removedWithoutMarker),
+    )).toMatchObject({ verified: false })
+  })
+})
+
+describe('revision-aware animation scene save', () => {
+  async function captureSyncSuccessEvents<T>(run: () => Promise<T>): Promise<{
+    result: T
+    events: Array<{ detail: any; remoteReadCount: number }>
+    finalRemoteReadCount: number
+  }> {
+    const events: Array<{ detail: any; remoteReadCount: number }> = []
+    const listener = (event: Event) => {
+      events.push({
+        detail: (event as CustomEvent).detail,
+        remoteReadCount: supabaseState.remoteReadCount,
+      })
+    }
+    window.addEventListener('poweron:sync-success', listener)
+    try {
+      const result = await run()
+      return { result, events, finalRemoteReadCount: supabaseState.remoteReadCount }
+    } finally {
+      window.removeEventListener('poweron:sync-success', listener)
+    }
+  }
+
+  function seedSceneSave(localLayer: any, remoteLayer = localLayer): void {
+    const local = { projects: [], settings: {}, blueprintSummaries: { operationsBlueprintScopeLayers: { 'set-1': [localLayer] } } } as any
+    const remote = { projects: [], settings: {}, blueprintSummaries: { operationsBlueprintScopeLayers: { 'set-1': [remoteLayer] } } } as any
+    setActiveTenantUser(supabaseState.userId)
+    markTenantDataReady(supabaseState.userId)
+    saveBackupData(local, supabaseState.userId)
+    supabaseState.remoteData = remote
+  }
+
+  it('emits one verified success event only after first-sync read-back succeeds', async () => {
+    seedSceneSave(scopeLayer())
+    supabaseState.remoteData = null
+    const captured = await captureSyncSuccessEvents(() => saveOperationsBlueprintScopeLayerAnimationScene({
+      blueprintSetId: 'set-1', scopeLayerId: 'package-1', expectedBaseRevision: 0,
+      nextScene: animationScene(1), now: NEWER,
+    }))
+    expect(captured.result).toMatchObject({ success: true, cloudSynced: true, scene: { revision: 1 } })
+    expect(captured.events).toHaveLength(1)
+    expect(captured.events[0]).toMatchObject({
+      detail: { verified: true },
+      remoteReadCount: captured.finalRemoteReadCount,
+    })
+    expect(captured.events[0].remoteReadCount).toBeGreaterThanOrEqual(2)
+  })
+
+  it('emits one verified success event for an existing scene update', async () => {
+    const revisionOne = scopeLayer('package-1', NEW, { animationScene: animationScene(1) })
+    seedSceneSave(revisionOne)
+    const captured = await captureSyncSuccessEvents(() => saveOperationsBlueprintScopeLayerAnimationScene({
+      blueprintSetId: 'set-1', scopeLayerId: 'package-1', expectedBaseRevision: 1,
+      nextScene: animationScene(1, { id: 'updated-scene' }), now: NEWER,
+    }))
+    expect(captured.result).toMatchObject({ success: true, scene: { revision: 2, id: 'updated-scene' } })
+    expect(captured.events).toHaveLength(1)
+    expect(captured.events[0]).toMatchObject({ detail: { verified: true }, remoteReadCount: captured.finalRemoteReadCount })
+  })
+
+  it('performs an initial save at revision 1 and preserves membership and unrelated fields', async () => {
+    seedSceneSave(scopeLayer())
+    const result = await saveOperationsBlueprintScopeLayerAnimationScene({
+      blueprintSetId: 'set-1', scopeLayerId: 'package-1', expectedBaseRevision: 0,
+      nextScene: animationScene(1), now: NEWER,
+    })
+    expect(result).toMatchObject({ success: true, scene: { revision: 1, updatedAt: NEWER } })
+    const savedLayer = (supabaseState.capturedPayload as any).blueprintSummaries.operationsBlueprintScopeLayers['set-1'][0]
+    expect(savedLayer.selectedAnnotationIds).toEqual(['annotation-1'])
+    expect(savedLayer.crewNotes).toBe('Preserve notes')
+    expect(savedLayer.updatedAt).toBe(NEWER)
+  })
+
+  it('increments exactly once and rejects a stale local revision', async () => {
+    seedSceneSave(scopeLayer('package-1', NEW, { animationScene: animationScene(1) }))
+    const success = await saveOperationsBlueprintScopeLayerAnimationScene({
+      blueprintSetId: 'set-1', scopeLayerId: 'package-1', expectedBaseRevision: 1,
+      nextScene: animationScene(99), now: NEWER,
+    })
+    expect(success).toMatchObject({ success: true, scene: { revision: 2 } })
+    supabaseState.remoteData = supabaseState.capturedPayload
+    supabaseState.capturedPayload = null
+    const stale = await saveOperationsBlueprintScopeLayerAnimationScene({
+      blueprintSetId: 'set-1', scopeLayerId: 'package-1', expectedBaseRevision: 1,
+      nextScene: animationScene(1), now: NEWER,
+    })
+    expect(stale).toMatchObject({ success: false, conflict: true, reason: 'stale-local-revision' })
+    expect(supabaseState.capturedPayload).toBeNull()
+  })
+
+  it('does not overwrite a newer remote scene and returns both saved scene and caller draft', async () => {
+    const localLayer = scopeLayer('package-1', NEW, { animationScene: animationScene(1) })
+    const remoteLayer = scopeLayer('package-1', NEWER, { animationScene: animationScene(2) })
+    seedSceneSave(localLayer, remoteLayer)
+    const draft = animationScene(1, { id: 'caller-draft' })
+    const result = await saveOperationsBlueprintScopeLayerAnimationScene({
+      blueprintSetId: 'set-1', scopeLayerId: 'package-1', expectedBaseRevision: 1,
+      nextScene: draft, now: NEWER,
+    })
+    expect(result).toMatchObject({
+      success: false, conflict: true, reason: 'stale-remote-revision',
+      currentScene: { revision: 2 }, callerDraft: { id: 'caller-draft' },
+    })
+    expect(supabaseState.capturedPayload).toBeNull()
+  })
+
+  it('rejects a malformed function-updater draft instead of treating it as scene removal', async () => {
+    const revisionOne = scopeLayer('package-1', NEW, { animationScene: animationScene(1) })
+    seedSceneSave(revisionOne)
+    const result = await saveOperationsBlueprintScopeLayerAnimationScene({
+      blueprintSetId: 'set-1', scopeLayerId: 'package-1', expectedBaseRevision: 1,
+      nextScene: (() => ({ schemaVersion: 99, id: 'future-draft' } as any)), now: NEWER,
+    })
+    expect(result).toMatchObject({ success: false, conflict: true, reason: 'invalid-next-scene' })
+    expect(supabaseState.capturedPayload).toBeNull()
+    expect((getBackupData() as any).blueprintSummaries.operationsBlueprintScopeLayers['set-1'][0].animationScene.revision).toBe(1)
+  })
+
+  it('rejects a remote scene that advances during the second preflight', async () => {
+    const revisionOne = scopeLayer('package-1', NEW, { animationScene: animationScene(1) })
+    const revisionTwo = scopeLayer('package-1', NEWER, { animationScene: animationScene(2) })
+    seedSceneSave(revisionOne, revisionOne)
+    supabaseState.remoteReadSequence = [
+      { data: { projects: [], settings: {}, blueprintSummaries: { operationsBlueprintScopeLayers: { 'set-1': [revisionOne] } } }, updatedAt: NEW },
+      { data: { projects: [], settings: {}, blueprintSummaries: { operationsBlueprintScopeLayers: { 'set-1': [revisionTwo] } } }, updatedAt: NEWER },
+    ]
+    const result = await saveOperationsBlueprintScopeLayerAnimationScene({
+      blueprintSetId: 'set-1', scopeLayerId: 'package-1', expectedBaseRevision: 1,
+      nextScene: animationScene(1, { id: 'caller-draft' }), now: NEWER,
+    })
+    expect(result).toMatchObject({ success: false, conflict: true, reason: 'stale-remote-revision', currentScene: { revision: 2 } })
+    expect(supabaseState.capturedPayload).toBeNull()
+  })
+
+  it('does not report success when an equal-revision concurrent scene wins after preflight', async () => {
+    const revisionOne = scopeLayer('package-1', NEW, { animationScene: animationScene(1) })
+    const competingRevisionTwo = scopeLayer('package-1', NEWER, {
+      animationScene: animationScene(2, { id: 'competing-scene' }),
+      animationSceneRevision: 2,
+    })
+    seedSceneSave(revisionOne, revisionOne)
+    const snapshotOne = { projects: [], settings: {}, blueprintSummaries: { operationsBlueprintScopeLayers: { 'set-1': [revisionOne] } } }
+    const competingSnapshot = { projects: [], settings: {}, blueprintSummaries: { operationsBlueprintScopeLayers: { 'set-1': [competingRevisionTwo] } } }
+    supabaseState.remoteReadSequence = [
+      { data: snapshotOne, updatedAt: NEW },
+      { data: snapshotOne, updatedAt: NEW },
+      { data: competingSnapshot, updatedAt: NEWER },
+    ]
+    const captured = await captureSyncSuccessEvents(() => saveOperationsBlueprintScopeLayerAnimationScene({
+      blueprintSetId: 'set-1', scopeLayerId: 'package-1', expectedBaseRevision: 1,
+      nextScene: animationScene(1, { id: 'caller-scene' }), now: NEWER,
+    }))
+    expect(captured.result).toMatchObject({ success: false, conflict: true, reason: 'remote-conflict-unresolved' })
+    expect(captured.events).toHaveLength(0)
+    expect((supabaseState.capturedPayload as any).blueprintSummaries.operationsBlueprintScopeLayers['set-1'][0].animationScene.id).toBe('competing-scene')
+  })
+
+  it('emits no success event when the remote write fails', async () => {
+    const revisionOne = scopeLayer('package-1', NEW, { animationScene: animationScene(1) })
+    seedSceneSave(revisionOne)
+    supabaseState.remoteWriteError = 'write rejected'
+    const captured = await captureSyncSuccessEvents(() => saveOperationsBlueprintScopeLayerAnimationScene({
+      blueprintSetId: 'set-1', scopeLayerId: 'package-1', expectedBaseRevision: 1,
+      nextScene: animationScene(1, { id: 'unsaved-scene' }), now: NEWER,
+    }))
+    expect(captured.result).toMatchObject({ success: false, conflict: true, reason: 'remote-conflict-unresolved' })
+    expect(captured.events).toHaveLength(0)
+  })
+
+  it('rejects a stale save after the remote scene was explicitly removed', async () => {
+    const localRevisionOne = scopeLayer('package-1', NEW, { animationScene: animationScene(1) })
+    const remoteRemoval = scopeLayer('package-1', NEWER, { animationSceneRevision: 2 })
+    seedSceneSave(localRevisionOne, remoteRemoval)
+    const result = await saveOperationsBlueprintScopeLayerAnimationScene({
+      blueprintSetId: 'set-1', scopeLayerId: 'package-1', expectedBaseRevision: 1,
+      nextScene: animationScene(1, { id: 'stale-draft' }), now: NEWER,
+    })
+    expect(result).toMatchObject({ success: false, conflict: true, reason: 'stale-remote-revision' })
+    expect(supabaseState.capturedPayload).toBeNull()
+  })
+
+  it('removes a scene with a matching revision and rejects stale removal', async () => {
+    const revisionOne = scopeLayer('package-1', NEW, { animationScene: animationScene(1) })
+    seedSceneSave(revisionOne)
+    const verifiedRemoval = await captureSyncSuccessEvents(() => saveOperationsBlueprintScopeLayerAnimationScene({
+      blueprintSetId: 'set-1', scopeLayerId: 'package-1', expectedBaseRevision: 1,
+      nextScene: null, now: NEWER,
+    }))
+    expect(verifiedRemoval.result).toMatchObject({ success: true, scene: undefined })
+    expect(verifiedRemoval.events).toHaveLength(1)
+    expect(verifiedRemoval.events[0]).toMatchObject({ detail: { verified: true } })
+    const removedLayer = (supabaseState.capturedPayload as any).blueprintSummaries.operationsBlueprintScopeLayers['set-1'][0]
+    expect(removedLayer.animationScene).toBeUndefined()
+    expect(removedLayer.animationSceneRevision).toBe(2)
+
+    const localLayer = scopeLayer('package-1', NEW, { animationScene: animationScene(1) })
+    const remoteLayer = scopeLayer('package-1', NEWER, { animationScene: animationScene(2) })
+    seedSceneSave(localLayer, remoteLayer)
+    supabaseState.capturedPayload = null
+    const staleRemoval = await captureSyncSuccessEvents(() => saveOperationsBlueprintScopeLayerAnimationScene({
+      blueprintSetId: 'set-1', scopeLayerId: 'package-1', expectedBaseRevision: 1,
+      nextScene: null, now: NEWER,
+    }))
+    expect(staleRemoval.result).toMatchObject({ success: false, conflict: true, reason: 'stale-remote-revision' })
+    expect(staleRemoval.events).toHaveLength(0)
+    expect(supabaseState.capturedPayload).toBeNull()
   })
 })
