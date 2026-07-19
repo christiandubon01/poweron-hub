@@ -35,6 +35,7 @@ import {
   Settings,
   Shapes,
   Sparkles,
+  Spline,
   Square,
   StickyNote,
   Type,
@@ -221,6 +222,14 @@ const ALIGNMENT_GUIDE_THRESHOLD_NORM = 0.03
 // Circuit/Switch-Leg Path: max distance (page-normalized) a click can be from an existing
 // annotation's center and still snap to it, rather than using the raw click point.
 const CIRCUIT_PATH_SNAP_RADIUS_NORM = 0.03
+// Circuit Arc Path (CIRCUITARC): default perpendicular bulge applied to each segment at
+// creation time, as a fraction of that segment's length. Deliberately gentler than Arch
+// Line's 0.5 -- that factor reads fine on a single span but compounds into a scalloped
+// mess when repeated across the many short segments of a fixture-to-fixture circuit run.
+const CIRCUIT_ARC_DEFAULT_BULGE = 0.18
+// Samples per segment used to approximate quadratic Bezier arc length. 24 keeps the
+// measured length within ~0.1% of true for the curvatures this tool can produce.
+const CIRCUIT_ARC_LENGTH_SAMPLES = 24
 
 // refId (optional) = the annotation this guide is lining up against, so the canvas can highlight
 // the reference item during Guide Assist. Purely visual — never used to move data.
@@ -254,6 +263,7 @@ type ShapeKind =
   | 'arch-line'
   | 'polyline'
   | 'circuit-path'
+  | 'circuit-arc'
   | 'star'
   | 'cross'
   | 'diamond'
@@ -537,6 +547,7 @@ const GENERIC_SHAPE_KIND_OPTIONS: Array<{ label: string; value: ShapeKind }> = [
   { label: 'Arch Line', value: 'arch-line' },
   { label: 'Polyline / Multi-Point Line', value: 'polyline' },
   { label: 'Circuit / Switch-Leg Path', value: 'circuit-path' },
+  { label: 'Circuit Arc Path', value: 'circuit-arc' },
   { label: 'Diamond', value: 'diamond' },
   { label: 'Star', value: 'star' },
   { label: 'Cross', value: 'cross' },
@@ -726,11 +737,23 @@ function getShapeKindLabel(kind: any, meta: Record<string, any> = {}) {
   if (electricalDisplayName) return electricalDisplayName
   switch (kind) {
     case 'arch-line': return 'Arch Line'
+    case 'circuit-arc': return 'Circuit Arc Path'
     case 'can-light-4': return 'Can Light 4"'
     case 'can-light-6': return 'Can Light 6"'
     default:
       return String(kind || 'Shape').replace(/-/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase())
   }
+}
+
+// Shape kinds placed by successive clicks (Stop/Cancel pill flow) rather than a single
+// press-drag-release. They share draft state, the rubber band, and the hit-test bypass.
+function isMultiPointShapeKind(kind: any): boolean {
+  return kind === 'polyline' || kind === 'circuit-path' || kind === 'circuit-arc'
+}
+
+// Multi-point kinds that snap each click to a nearby fixture/symbol center.
+function isCircuitShapeKind(kind: any): boolean {
+  return kind === 'circuit-path' || kind === 'circuit-arc'
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Measurement & calibration types Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -1963,6 +1986,77 @@ function getPointsBounds(points: Array<{ x: number; y: number }>) {
   return { x: left, y: top, w: Math.max(0.001, right - left), h: Math.max(0.001, bottom - top) }
 }
 
+// ── Circuit Arc Path (CIRCUITARC) geometry ────────────────────────────────────
+// A circuit-arc stores N points plus N-1 quadratic Bezier control points, all in
+// absolute page-normalized space (same convention as arch-line's archCtrlX/Y).
+//
+// Absolute control points -- rather than arch-line's legacy archFactor scalar -- are
+// what make this work past 2 points. The renderer maps page space into the
+// annotation-local `viewBox="0 0 100 100"` under preserveAspectRatio="none", a
+// non-uniform scale. A quadratic Bezier is affine-invariant, so pushing each control
+// point through the *same* transform as its endpoints reproduces the curve exactly at
+// any point count. A perpendicular-offset scalar would instead be skewed per segment,
+// by an amount that varies with each segment's orientation relative to the path bbox.
+
+// Reads the control point for segment i, falling back to the segment midpoint (which
+// makes the quadratic degenerate to a straight line) when arcCtrls is short, missing,
+// or holds a non-finite value from a partial write or a cross-device merge.
+function getCircuitArcControl(
+  arcCtrls: any,
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  i: number,
+): { x: number; y: number } {
+  const raw = Array.isArray(arcCtrls) ? arcCtrls[i] : null
+  if (raw && Number.isFinite(raw.x) && Number.isFinite(raw.y)) return { x: raw.x, y: raw.y }
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+}
+
+// Seeds one control point per segment with a gentle perpendicular bulge. The offset is
+// computed in PIXEL space and converted back once -- deriving it from normalized deltas
+// distorts the bulge on non-square pages (same lesson as the arch-line commit path).
+function seedCircuitArcControls(
+  points: Array<{ x: number; y: number }>,
+  displayW: number,
+  displayH: number,
+): Array<{ x: number; y: number }> {
+  const w = Math.max(1, displayW)
+  const h = Math.max(1, displayH)
+  const ctrls: Array<{ x: number; y: number }> = []
+  for (let i = 1; i < points.length; i++) {
+    const x1 = points[i - 1].x * w, y1 = points[i - 1].y * h
+    const x2 = points[i].x * w, y2 = points[i].y * h
+    const cxPx = (x1 + x2) / 2 + CIRCUIT_ARC_DEFAULT_BULGE * (y2 - y1)
+    const cyPx = (y1 + y2) / 2 - CIRCUIT_ARC_DEFAULT_BULGE * (x2 - x1)
+    ctrls.push({ x: clampNorm(cxPx / w), y: clampNorm(cyPx / h) })
+  }
+  return ctrls
+}
+
+// Flattens the curved path into a dense polyline so the existing polyline-length
+// measurement helpers report TRUE arc length rather than the straight chord sum.
+function sampleCircuitArcPolyline(
+  points: Array<{ x: number; y: number }>,
+  arcCtrls: any,
+): Array<{ x: number; y: number }> {
+  if (points.length < 2) return [...points]
+  const out: Array<{ x: number; y: number }> = [points[0]]
+  for (let i = 1; i < points.length; i++) {
+    const p0 = points[i - 1]
+    const p1 = points[i]
+    const c = getCircuitArcControl(arcCtrls, p0, p1, i - 1)
+    for (let s = 1; s <= CIRCUIT_ARC_LENGTH_SAMPLES; s++) {
+      const t = s / CIRCUIT_ARC_LENGTH_SAMPLES
+      const mt = 1 - t
+      out.push({
+        x: mt * mt * p0.x + 2 * mt * t * c.x + t * t * p1.x,
+        y: mt * mt * p0.y + 2 * mt * t * c.y + t * t * p1.y,
+      })
+    }
+  }
+  return out
+}
+
 function clampPx(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, Number.isFinite(value) ? value : min))
 }
@@ -2925,6 +3019,19 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   } | null>(null)
   const archControlDragRef = useRef<{
     annotationId: string
+    pointerId: number
+  } | null>(null)
+
+  // CIRCUITARC: same shape as the arch control drag, plus the index of the segment whose
+  // curvature is being adjusted — that index is what keeps each segment independent.
+  const [circuitArcControlDrag, setCircuitArcControlDrag] = useState<{
+    annotationId: string
+    segIndex: number
+    pointerId: number
+  } | null>(null)
+  const circuitArcControlDragRef = useRef<{
+    annotationId: string
+    segIndex: number
     pointerId: number
   } | null>(null)
 
@@ -4876,8 +4983,17 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       return
     }
     const now = new Date().toISOString()
-    const bounds = clampRectToPage(getPointsBounds(points))
-    const isCircuit = shapeKind === 'circuit-path'
+    const isArc = shapeKind === 'circuit-arc'
+    const isCircuit = isCircuitShapeKind(shapeKind)
+
+    // Circuit Arc: seed one Bezier control point per segment so the path renders as
+    // curves immediately; each is independently draggable afterwards.
+    const arcCtrls = isArc ? seedCircuitArcControls(points, displaySize.w, displaySize.h) : null
+    // Control points must be inside the bounding rect. Beyond keeping the curve from
+    // being visually clipped, this is what stops a straight horizontal run from producing
+    // a near-zero-height rect — the renderer divides by rect.h to reach local viewBox
+    // space, and an off-axis control point in a flat box explodes to absurd coordinates.
+    const bounds = clampRectToPage(getPointsBounds(arcCtrls ? [...points, ...arcCtrls] : points))
 
     // Circuit Path total distance (Step 13B-QA5-R Part 3) -- same manual-over-auto
     // calibration precedence used by the measure tools. Calibration is never
@@ -4892,7 +5008,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       const calForPage = manualCal ?? autoCal
       const pageSize = getPageSizeInches(currentPage)
       if (calForPage) {
-        totalDistance = convertMeasuredPolylineLength(points, calForPage, pageSize)
+        // For an arc path the straight chord sum would understate the run. Flatten the
+        // curves into a dense polyline first so the label reports true arc length.
+        const lengthPoints = arcCtrls ? sampleCircuitArcPolyline(points, arcCtrls) : points
+        totalDistance = convertMeasuredPolylineLength(lengthPoints, calForPage, pageSize)
         distanceUnit = calForPage.realWorldUnit
         distanceLabel = `Total: ${totalDistance.toFixed(2)} ${distanceUnit}`
       } else {
@@ -4904,7 +5023,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const meta = {
       shapeKind,
       points,
-      pathType: isCircuit ? 'circuit' : 'polyline',
+      ...(arcCtrls ? { arcCtrls } : {}),
+      pathType: isArc ? 'circuit-arc' : isCircuit ? 'circuit' : 'polyline',
       closed: false,
       borderColor: shapeOptions.borderColor,
       borderThickness: shapeOptions.borderThickness,
@@ -4929,7 +5049,33 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setFocusedAnnotationId(ann.id)
     setToolMode('select')
     void persistAnnotation(ann)
-  }, [blueprint, currentPage, shapeKind, shapeOptions, persistAnnotation, savedCalibrations, detectedScales, showTransientSyncNotice, getPageSizeInches])
+  }, [blueprint, currentPage, shapeKind, shapeOptions, persistAnnotation, savedCalibrations, detectedScales, showTransientSyncNotice, getPageSizeInches, displaySize.w, displaySize.h])
+
+  // Recomputes a Circuit Arc's true arc length after its curvature changed, so the label
+  // tracks the curve rather than the chords it was first created from. Returns the
+  // annotation unchanged when it is not a circuit-arc or the page has no calibration.
+  const withRecomputedCircuitArcDistance = useCallback((ann: BlueprintAnnotation): BlueprintAnnotation => {
+    const m = getAnnotationMeta(ann)
+    if (m.shapeKind !== 'circuit-arc') return ann
+    const points: Array<{ x: number; y: number }> = Array.isArray(m.points) ? m.points : []
+    if (points.length < 2) return ann
+    const page = ann.pageNumber
+    const manualCal = savedCalibrations[page] ?? null
+    const detRes = detectedScales[page] ?? null
+    const calForPage = manualCal ?? buildAutoCalibrationForPage(page, detRes, getPageSizeInches(page))
+    if (!calForPage) return ann
+    const totalDistance = convertMeasuredPolylineLength(
+      sampleCircuitArcPolyline(points, m.arcCtrls),
+      calForPage,
+      getPageSizeInches(page),
+    )
+    return withAnnotationMeta(ann, {
+      ...m,
+      totalDistance,
+      distanceUnit: calForPage.realWorldUnit,
+      distanceLabel: `Total: ${totalDistance.toFixed(2)} ${calForPage.realWorldUnit}`,
+    }) as BlueprintAnnotation
+  }, [savedCalibrations, detectedScales, getPageSizeInches])
 
   useEffect(() => {
     if (!measurePendingCommit) return
@@ -5231,7 +5377,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // annotations — bypass hit-testing entirely so the pointer event bubbles through to the
   // canvas draw handlers instead of selecting/blocking on the item underneath. Circuit Path
   // additionally relies on this to click directly on symbols so its center-snap logic runs.
-  if (effectiveTool === 'shape' && (shapeKind === 'arch-line' || shapeKind === 'polyline' || shapeKind === 'circuit-path')) return
+  if (effectiveTool === 'shape' && (shapeKind === 'arch-line' || isMultiPointShapeKind(shapeKind))) return
 
   // BLUEPRINT-6L — while a measure or calibrate tool is active the user is drawing a NEW
   // measurement; a tap on an existing measurement line must fall through to the draw handlers
@@ -5546,12 +5692,15 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const startArchCtrl = (isLineLike && meta.archCtrlX != null && meta.archCtrlY != null)
       ? { x: meta.archCtrlX, y: meta.archCtrlY }
       : null
-    // Multi-point Polyline / Circuit Path shapes store their geometry as an absolute
-    // page-normalized points array (meta.points) rather than box-relative fractions —
+    // Multi-point Polyline / Circuit Path / Circuit Arc shapes store their geometry as an
+    // absolute page-normalized points array (meta.points) rather than box-relative fractions —
     // moving the shape must translate every point by the same delta, mirroring the
     // line-like absolute-endpoint handling above.
-    const isPathLike = mode === 'move' && (meta.shapeKind === 'polyline' || meta.shapeKind === 'circuit-path')
+    const isPathLike = mode === 'move' && isMultiPointShapeKind(meta.shapeKind)
     const startPoints = (isPathLike && Array.isArray(meta.points)) ? meta.points.map((p: any) => ({ x: p.x, y: p.y })) : null
+    // Circuit Arc control points are absolute too, so they must ride along with the move
+    // or the curves detach from the path they belong to.
+    const startArcCtrls = (isPathLike && Array.isArray(meta.arcCtrls)) ? meta.arcCtrls.map((p: any) => ({ x: p.x, y: p.y })) : null
     const drag = {
       annotationId: annotation.id,
       mode,
@@ -5562,6 +5711,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       startLineAbs,
       startArchCtrl,
       startPoints,
+      startArcCtrls,
     }
     // Write ref synchronously — the first pointermove fires before React batches setLayoutDrag
     layoutDragRef.current = drag
@@ -5673,6 +5823,17 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     e.stopPropagation()
   }, [])
 
+  const startCircuitArcControlDrag = useCallback((e: React.PointerEvent<HTMLElement>, annotation: BlueprintAnnotation, segIndex: number) => {
+    const drag = { annotationId: annotation.id, segIndex, pointerId: e.pointerId }
+    circuitArcControlDragRef.current = drag
+    setCircuitArcControlDrag(drag)
+    setFocusedAnnotationId(annotation.id)
+    setLayoutEditId(annotation.id)
+    try { overlayRef.current?.setPointerCapture(e.pointerId) } catch {}
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
   const handleAnnotationLayoutPointerMove = useCallback((e: React.PointerEvent<HTMLElement>) => {
     // Use the ref mirror to avoid stale-closure miss on the first pointermove after setLayoutDrag
     const drag = layoutDragRef.current || layoutDrag
@@ -5729,10 +5890,19 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         x: clampNorm(p.x + moveDx),
         y: clampNorm(p.y + moveDy),
       }))
+      const nextArcCtrls = drag.startArcCtrls
+        ? drag.startArcCtrls.map((p: { x: number; y: number }) => ({
+            x: clampNorm(p.x + moveDx),
+            y: clampNorm(p.y + moveDy),
+          }))
+        : null
       setAllAnnotations((prev) => prev.map((ann) => {
         if (ann.id !== drag.annotationId) return ann
         const m = getAnnotationMeta(ann)
-        return withAnnotationMeta({ ...ann, rect: safeBox, updatedAt: new Date().toISOString() }, { ...m, points: nextPoints }) as BlueprintAnnotation
+        return withAnnotationMeta(
+          { ...ann, rect: safeBox, updatedAt: new Date().toISOString() },
+          { ...m, points: nextPoints, ...(nextArcCtrls ? { arcCtrls: nextArcCtrls } : {}) },
+        ) as BlueprintAnnotation
       }))
       e.preventDefault()
       e.stopPropagation()
@@ -6195,9 +6365,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // Multi-point Polyline / Circuit Path: every click adds one more point to the same
     // open path. Finishing only happens via the explicit Stop button (or Escape/tool
     // switch cancels) — never an implicit double-click or point-count cap.
-    if (effectiveTool === 'shape' && (shapeKind === 'polyline' || shapeKind === 'circuit-path')) {
+    if (effectiveTool === 'shape' && isMultiPointShapeKind(shapeKind)) {
       const n = toNorm(x, y, rect.width, rect.height)
-      const point = shapeKind === 'circuit-path'
+      const point = isCircuitShapeKind(shapeKind)
         ? (findNearestAnnotationCenterNorm(n, CIRCUIT_PATH_SNAP_RADIUS_NORM) || n)
         : n
       const next = [...pathDraftRef.current, point]
@@ -6474,6 +6644,36 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       return
     }
 
+    const caDrag = circuitArcControlDragRef.current
+    if (caDrag && caDrag.pointerId === e.pointerId && overlayRef.current) {
+      const overlayRect = overlayRef.current.getBoundingClientRect()
+      // Same freeform mapping as the arch handle — the cursor position IS the control
+      // point — but written only at segIndex, so sibling segments keep their curvature.
+      const nhx = clampNorm((e.clientX - overlayRect.left) / Math.max(1, overlayRect.width))
+      const nhy = clampNorm((e.clientY - overlayRect.top) / Math.max(1, overlayRect.height))
+      setAllAnnotations((prev) => prev.map((ann) => {
+        if (ann.id !== caDrag.annotationId) return ann
+        const m = getAnnotationMeta(ann)
+        const pts: Array<{ x: number; y: number }> = Array.isArray(m.points) ? m.points : []
+        if (caDrag.segIndex < 0 || caDrag.segIndex >= Math.max(0, pts.length - 1)) return ann
+        // Rebuild the full array from the effective (fallback-resolved) control points so a
+        // sparse or short arcCtrls never leaves holes once one segment has been dragged.
+        const nextCtrls = pts.slice(1).map((p, i) =>
+          i === caDrag.segIndex ? { x: nhx, y: nhy } : getCircuitArcControl(m.arcCtrls, pts[i], p, i),
+        )
+        // Keep the bounding rect enclosing points and control points, so the curve is not
+        // clipped and the page→local divisor can never collapse toward zero.
+        const nextRect = clampRectToPage(getPointsBounds([...pts, ...nextCtrls]))
+        return withAnnotationMeta(
+          { ...ann, rect: nextRect, updatedAt: new Date().toISOString() },
+          { ...m, arcCtrls: nextCtrls },
+        ) as BlueprintAnnotation
+      }))
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+
     if (Date.now() < suppressAnnotationUntilRef.current) return
     if (!overlayRef.current || isEditorOpen) return
     const rect = overlayRef.current.getBoundingClientRect()
@@ -6517,7 +6717,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       return
     }
 
-    if (effectiveTool === 'shape' && (shapeKind === 'polyline' || shapeKind === 'circuit-path')) {
+    if (effectiveTool === 'shape' && isMultiPointShapeKind(shapeKind)) {
       if (pathDraftRef.current.length > 0) {
         setPathCursorPx({
           x: x / Math.max(1, rect.width) * displaySize.w,
@@ -6736,6 +6936,23 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       return
     }
 
+    // CIRCUITARC — commit the adjusted segment curvature. The arcCtrls array and bounding
+    // rect were updated live during the drag; the arc-length label is refreshed here.
+    const caDragUp = circuitArcControlDragRef.current
+    if (caDragUp && caDragUp.pointerId === e.pointerId) {
+      circuitArcControlDragRef.current = null
+      setCircuitArcControlDrag(null)
+      const ann = allAnnotationsRef.current.find((a) => a.id === caDragUp.annotationId)
+      if (ann) {
+        const updated = withRecomputedCircuitArcDistance({ ...ann, updatedAt: new Date().toISOString() })
+        setAllAnnotations((prev) => prev.map((x) => (x.id === updated.id ? updated : x)))
+        void persistAnnotation(updated)
+      }
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+
     if (Date.now() < suppressAnnotationUntilRef.current) return
     if (!overlayRef.current || !blueprint || isEditorOpen) return
     const rect = overlayRef.current.getBoundingClientRect()
@@ -6934,7 +7151,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       setFocusedAnnotationId(ann.id)
       setToolMode('select')
     }
-  }, [effectiveTool, dragStart, inkDraft, blueprint, currentPage, persistAnnotation, toolColors, isEditorOpen, endTouchPointer, openCreateRichTextEditor, shapeKind, shapeOptions, drawOptions, markerOptions, clearAlignmentGuides, alignmentGuidesEnabled, displaySize.w, displaySize.h])
+  }, [effectiveTool, dragStart, inkDraft, blueprint, currentPage, persistAnnotation, toolColors, isEditorOpen, endTouchPointer, openCreateRichTextEditor, shapeKind, shapeOptions, drawOptions, markerOptions, clearAlignmentGuides, alignmentGuidesEnabled, displaySize.w, displaySize.h, withRecomputedCircuitArcDistance])
 
   const handlePointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     clearAlignmentGuides()
@@ -6972,6 +7189,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     if (measurePointDragRef.current?.pointerId === e.pointerId) measurePointDragRef.current = null
     archControlDragRef.current = null
     setArchControlDrag(null)
+    circuitArcControlDragRef.current = null
+    setCircuitArcControlDrag(null)
     if (layoutDragRef.current?.pointerId === e.pointerId) {
       layoutDragRef.current = null
       setLayoutDrag(null)
@@ -7989,11 +8208,11 @@ const annotationPanelSizeClass =
       {/* Circuit Path / Polyline active-mode Stop button — viewport-fixed (not page-anchored)
           so it stays reachable at any zoom/pan level, including 1000%, and is easy to tap on
           iPad. Step 13B-QA5 Part 4. */}
-      {effectiveTool === 'shape' && (shapeKind === 'polyline' || shapeKind === 'circuit-path') && (
+      {effectiveTool === 'shape' && isMultiPointShapeKind(shapeKind) && (
         <div className="pointer-events-none absolute left-1/2 bottom-4 z-[100050] -translate-x-1/2">
           <div className="pointer-events-auto flex items-center gap-3 rounded-full border border-cyan-500/50 bg-[#0f1624]/95 px-4 py-2 shadow-2xl">
             <span className="text-xs text-cyan-200">
-              {shapeKind === 'circuit-path' ? 'Circuit Path' : 'Polyline'} — {pathDraftPoints.length} point{pathDraftPoints.length === 1 ? '' : 's'}
+              {shapeKind === 'circuit-arc' ? 'Circuit Arc Path' : shapeKind === 'circuit-path' ? 'Circuit Path' : 'Polyline'} — {pathDraftPoints.length} point{pathDraftPoints.length === 1 ? '' : 's'}
             </span>
             <button
               type="button"
@@ -8001,7 +8220,7 @@ const annotationPanelSizeClass =
               disabled={pathDraftPoints.length < 2}
               className="inline-flex items-center gap-1.5 rounded-full bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <Check size={12} /> {shapeKind === 'circuit-path' ? 'Stop Circuit Path' : 'Stop Drawing'}
+              <Check size={12} /> {shapeKind === 'circuit-arc' ? 'Stop Circuit Arc' : shapeKind === 'circuit-path' ? 'Stop Circuit Path' : 'Stop Drawing'}
             </button>
             <button
               type="button"
@@ -8586,6 +8805,11 @@ const annotationPanelSizeClass =
                     className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' && shapeKind === 'circuit-path' ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                     title="Click multiple symbols/points to connect them, then Stop Circuit Path"
                   ><Waypoints size={12} /> Circuit Path</button>
+                  <button
+                    onClick={() => { setToolMode('shape'); setShapeKind('circuit-arc'); setOpenPopover(null) }}
+                    className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' && shapeKind === 'circuit-arc' ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                    title="Like Circuit Path, but each run is drawn as a curve with its own draggable curvature handle"
+                  ><Spline size={12} /> Circuit Arc</button>
                 </div>
                 <div className="space-y-1.5">
                   <div className="text-[10px] uppercase tracking-wide text-gray-500">Electrical Symbols</div>
@@ -9269,7 +9493,7 @@ const annotationPanelSizeClass =
                           // Arc Line / Polyline / Circuit Path placement must be able to draw on top of
                           // existing annotations — let the event bubble through untouched to the canvas
                           // draw handlers.
-                          if (effectiveTool === 'shape' && (shapeKind === 'arch-line' || shapeKind === 'polyline' || shapeKind === 'circuit-path')) return
+                          if (effectiveTool === 'shape' && (shapeKind === 'arch-line' || isMultiPointShapeKind(shapeKind))) return
 
                           // BLUEPRINT-6L — measure/calibrate tools are in draw mode: let taps on
                           // existing measurements pass through to the canvas draw handlers.
@@ -9402,6 +9626,75 @@ const annotationPanelSizeClass =
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" style={{ zIndex: 1 }} />}
                                 {isLayoutEditing && <div onPointerDown={(e) => { e.stopPropagation(); startAnnotationEndpointDrag(e, a, 'start') }} className="absolute w-3 h-3 rounded-full bg-blue-400 border border-white shadow cursor-crosshair" style={{ left: alx1css, top: aly1css, transform: 'translate(-50%,-50%)', zIndex: 3, touchAction: 'none' }} />}
                                 {isLayoutEditing && <div onPointerDown={(e) => { e.stopPropagation(); startAnnotationEndpointDrag(e, a, 'end') }} className="absolute w-3 h-3 rounded-full bg-green-400 border border-white shadow cursor-crosshair" style={{ left: alx2css, top: aly2css, transform: 'translate(-50%,-50%)', zIndex: 3, touchAction: 'none' }} />}
+                              </div>
+                            )
+                          }
+                          if (kind === 'circuit-arc') {
+                            // CIRCUITARC: one quadratic Bezier per consecutive point pair.
+                            // Points AND control points go through the identical page→local
+                            // transform; because a quadratic Bezier is affine-invariant, the
+                            // curve stays exact under this viewBox's non-uniform scale at any
+                            // point count. See the geometry helpers near getPointsBounds.
+                            const crect = a.rect || { x: 0, y: 0, w: 0.0001, h: 0.0001 }
+                            const points: Array<{ x: number; y: number }> = Array.isArray(meta.points) ? meta.points : []
+                            const cw = Math.max(crect.w, 0.0001)
+                            const ch = Math.max(crect.h, 0.0001)
+                            const toLocal = (p: { x: number; y: number }) => ({
+                              vx: ((p.x - crect.x) / cw) * 100,
+                              vy: ((p.y - crect.y) / ch) * 100,
+                            })
+                            const localPts = points.map(toLocal)
+                            let arcD = ''
+                            if (localPts.length >= 2) {
+                              arcD = `M ${localPts[0].vx} ${localPts[0].vy}`
+                              for (let i = 1; i < points.length; i++) {
+                                const c = toLocal(getCircuitArcControl(meta.arcCtrls, points[i - 1], points[i], i - 1))
+                                arcD += ` Q ${c.vx} ${c.vy} ${localPts[i].vx} ${localPts[i].vy}`
+                              }
+                            }
+                            return (
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
+                                <svg className="absolute inset-0 overflow-visible" viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none">
+                                  {arcD && (
+                                    <path
+                                      d={arcD}
+                                      fill="none"
+                                      stroke={borderColor}
+                                      strokeWidth={borderThickness}
+                                      strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined}
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      opacity={fillOpacity}
+                                      vectorEffect="non-scaling-stroke"
+                                    />
+                                  )}
+                                  {localPts.map((p, i) => (
+                                    <circle key={i} cx={p.vx} cy={p.vy} r={1.4} fill={borderColor} opacity={fillOpacity} vectorEffect="non-scaling-stroke" />
+                                  ))}
+                                </svg>
+                                {/* Total-distance label — plain HTML for the same reason as Circuit
+                                    Path's: the SVG above uses preserveAspectRatio="none" and would
+                                    non-uniformly stretch any text drawn inside it. */}
+                                {meta.distanceLabel && localPts.length > 0 && (
+                                  <div
+                                    className="absolute rounded px-1.5 py-0.5 text-[10px] font-mono pointer-events-none"
+                                    style={{
+                                      left: `${localPts.reduce((s, p) => s + p.vx, 0) / localPts.length}%`,
+                                      top: `${localPts.reduce((s, p) => s + p.vy, 0) / localPts.length}%`,
+                                      transform: 'translate(-50%, -50%)',
+                                      backgroundColor: '#0a0d16',
+                                      opacity: 0.9,
+                                      color: meta.totalDistance != null ? borderColor : '#fbbf24',
+                                      whiteSpace: meta.totalDistance != null ? 'nowrap' : 'normal',
+                                      maxWidth: meta.totalDistance != null ? undefined : 170,
+                                      textAlign: 'center',
+                                      zIndex: 2,
+                                    }}
+                                  >
+                                    {meta.distanceLabel}
+                                  </div>
+                                )}
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" style={{ zIndex: 1 }} />}
                               </div>
                             )
                           }
@@ -10008,6 +10301,31 @@ const annotationPanelSizeClass =
                         )
                       })()}
 
+                      {/* CIRCUITARC — one yellow curvature handle per segment on the selected
+                          circuit-arc. Positioned in absolute page-normalized space (like the arch
+                          handle above) rather than inside the annotation's local viewBox, so the
+                          handle sits exactly where the control point is stored. */}
+                      {layoutEditId && (() => {
+                        const arcAnn = canvasPageAnnotations.find(a => a.id === layoutEditId)
+                        if (!arcAnn) return null
+                        const arcMeta = getAnnotationMeta(arcAnn)
+                        if (arcMeta.shapeKind !== 'circuit-arc') return null
+                        const pts: Array<{ x: number; y: number }> = Array.isArray(arcMeta.points) ? arcMeta.points : []
+                        if (pts.length < 2) return null
+                        return pts.slice(1).map((p, i) => {
+                          const c = getCircuitArcControl(arcMeta.arcCtrls, pts[i], p, i)
+                          return (
+                            <div
+                              key={`circuit-arc-control-${i}`}
+                              style={{ position: 'absolute', left: `${c.x * 100}%`, top: `${c.y * 100}%`, transform: 'translate(-50%,-50%)', zIndex: 4, touchAction: 'none' }}
+                              className="w-3 h-3 rounded-full bg-yellow-400 border border-white shadow cursor-move"
+                              title={`Drag to adjust the curve of segment ${i + 1} of ${pts.length - 1}`}
+                              onPointerDown={(e) => { e.stopPropagation(); startCircuitArcControlDrag(e, arcAnn, i) }}
+                            />
+                          )
+                        })
+                      })()}
+
                       <svg
                         ref={alignmentGuideSvgRef}
                         className="absolute inset-0 pointer-events-none overflow-visible"
@@ -10165,7 +10483,7 @@ const annotationPanelSizeClass =
 
                       {/* Multi-point path draft SVG — placed points + rubber-band to cursor,
                           shared by Polyline and Circuit/Switch-Leg Path (Step 13B-QA5) */}
-                      {displaySize.w > 0 && pathDraftPoints.length > 0 && effectiveTool === 'shape' && (shapeKind === 'polyline' || shapeKind === 'circuit-path') && pageOverlaySvgProps && (
+                      {displaySize.w > 0 && pathDraftPoints.length > 0 && effectiveTool === 'shape' && isMultiPointShapeKind(shapeKind) && pageOverlaySvgProps && (
                         <svg className="absolute inset-0 pointer-events-none overflow-visible" {...pageOverlaySvgProps}>
                           {(() => {
                             const col = shapeOptions.borderColor || '#facc15'
