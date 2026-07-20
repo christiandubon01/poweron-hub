@@ -1469,6 +1469,12 @@ function sceneConflict(
   }
 }
 
+/** Read-back retry budget, matching saveLiveDataVerified's contract in backupDataService. */
+const SCENE_READBACK_MAX_ATTEMPTS = 3
+const SCENE_READBACK_RETRY_DELAY_MS = 300
+
+const waitForSceneReadback = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
 /**
  * Conflict-aware package animation-scene save. This is deliberately separate from the package
  * editor's whole-array save: it checks scene revision against local and freshly fetched remote
@@ -1561,52 +1567,75 @@ export async function saveOperationsBlueprintScopeLayerAnimationScene(
   }
   if (!savedScene) delete (updatedLayer as any).animationScene
 
+  // A single immediate read can return the PRE-write row (read-your-write lag), which would
+  // report an already-landed write as a conflict. Retry only the shapes that mean "the row has
+  // not caught up yet"; a genuine conflict moves the revision FORWARD or keeps it at target with
+  // different content, so it is still decided on the first read.
   const verifyRemoteWrite = async (): Promise<SaveBlueprintAnimationSceneResult> => {
-    const verification = await fetchLatestRemoteBackup(userId || undefined)
-    if (verification.error || !verification.hasRemoteRow || !verification.remoteData) {
-      return sceneConflict('remote-conflict-unresolved', verification.error || 'The remote scene write could not be read back.', expectedRevision, currentScene, callerDraft, true)
-    }
-    const verifiedLayer = getScopeLayerById(verification.remoteData, input.blueprintSetId, input.scopeLayerId)
-    if (!verifiedLayer) {
-      return sceneConflict('remote-conflict-unresolved', 'The saved work package was missing during remote read-back.', expectedRevision, undefined, callerDraft, true)
-    }
-    if (verifiedLayer.deletedAt) {
-      return sceneConflict('scope-layer-deleted', 'The work package was deleted before the scene save could be verified.', expectedRevision, verifiedLayer.animationScene, callerDraft, true)
-    }
-    const verifiedParse = parseBlueprintAnimationScene(verifiedLayer.animationScene)
-    if (verifiedParse.status === 'unsupported-version') {
-      return sceneConflict('unsupported-current-scene', 'The saved work package now uses an unsupported scene schema.', expectedRevision, verifiedParse.scene, callerDraft, true)
-    }
     const targetRevision = expectedRevision + 1
-    const verifiedRevision = getSceneRevision(verifiedLayer)
-    if (verifiedRevision > targetRevision) {
-      return sceneConflict('stale-remote-revision', `The remote scene advanced to revision ${verifiedRevision} before read-back completed.`, expectedRevision, verifiedLayer.animationScene, callerDraft, true)
+    let lagged: SaveBlueprintAnimationSceneResult | null = null
+
+    for (let attempt = 1; attempt <= SCENE_READBACK_MAX_ATTEMPTS; attempt++) {
+      if (attempt > 1) await waitForSceneReadback(SCENE_READBACK_RETRY_DELAY_MS)
+
+      const verification = await fetchLatestRemoteBackup(userId || undefined)
+      if (verification.error || !verification.hasRemoteRow || !verification.remoteData) {
+        // No usable row this attempt — read-back lag, not proof the write was lost.
+        lagged = sceneConflict('remote-conflict-unresolved', verification.error || 'The remote scene write could not be read back.', expectedRevision, currentScene, callerDraft, true)
+        continue
+      }
+      const verifiedLayer = getScopeLayerById(verification.remoteData, input.blueprintSetId, input.scopeLayerId)
+      if (!verifiedLayer) {
+        // A landed write always carries this layer, so absence means the row predates it.
+        lagged = sceneConflict('remote-conflict-unresolved', 'The saved work package was missing during remote read-back.', expectedRevision, undefined, callerDraft, true)
+        continue
+      }
+      if (verifiedLayer.deletedAt) {
+        return sceneConflict('scope-layer-deleted', 'The work package was deleted before the scene save could be verified.', expectedRevision, verifiedLayer.animationScene, callerDraft, true)
+      }
+      const verifiedParse = parseBlueprintAnimationScene(verifiedLayer.animationScene)
+      if (verifiedParse.status === 'unsupported-version') {
+        return sceneConflict('unsupported-current-scene', 'The saved work package now uses an unsupported scene schema.', expectedRevision, verifiedParse.scene, callerDraft, true)
+      }
+      const verifiedRevision = getSceneRevision(verifiedLayer)
+      if (verifiedRevision > targetRevision) {
+        return sceneConflict('stale-remote-revision', `The remote scene advanced to revision ${verifiedRevision} before read-back completed.`, expectedRevision, verifiedLayer.animationScene, callerDraft, true)
+      }
+      if (verifiedRevision < targetRevision) {
+        // Behind the revision we just wrote. Revisions only advance, so this is lag — never a
+        // concurrent write — and must not be reported as a conflict until the budget is spent.
+        lagged = sceneConflict('remote-conflict-unresolved', 'The remote scene did not match the caller draft during read-back verification.', expectedRevision, verifiedLayer.animationScene, callerDraft, true)
+        continue
+      }
+      const verifiedScene = verifiedParse.status === 'supported' ? verifiedParse.scene : undefined
+      const contentMatches = savedScene
+        ? !!verifiedScene && canonicalSceneJson(verifiedScene) === canonicalSceneJson(savedScene)
+        : !verifiedScene
+      if (!contentMatches) {
+        // Target revision reached with different content — a concurrent write claimed it.
+        return sceneConflict('remote-conflict-unresolved', 'The remote scene did not match the caller draft during read-back verification.', expectedRevision, verifiedLayer.animationScene, callerDraft, true)
+      }
+      const successResult: SaveBlueprintAnimationSceneResult = {
+        success: true,
+        conflict: false,
+        localSaved: true,
+        cloudSynced: true,
+        scene: verifiedScene,
+        scopeLayer: verifiedLayer,
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('poweron:sync-success', {
+          detail: {
+            savedBy: (verification.remoteData as any)?._syncMeta?.savedBy,
+            savedAt: verification.remoteDataLastSavedAt || verification.remoteUpdatedAt,
+            verified: true,
+          },
+        }))
+      }
+      return successResult
     }
-    const verifiedScene = verifiedParse.status === 'supported' ? verifiedParse.scene : undefined
-    const contentMatches = savedScene
-      ? !!verifiedScene && canonicalSceneJson(verifiedScene) === canonicalSceneJson(savedScene)
-      : !verifiedScene
-    if (verifiedRevision !== targetRevision || !contentMatches) {
-      return sceneConflict('remote-conflict-unresolved', 'The remote scene did not match the caller draft during read-back verification.', expectedRevision, verifiedLayer.animationScene, callerDraft, true)
-    }
-    const successResult: SaveBlueprintAnimationSceneResult = {
-      success: true,
-      conflict: false,
-      localSaved: true,
-      cloudSynced: true,
-      scene: verifiedScene,
-      scopeLayer: verifiedLayer,
-    }
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('poweron:sync-success', {
-        detail: {
-          savedBy: (verification.remoteData as any)?._syncMeta?.savedBy,
-          savedAt: verification.remoteDataLastSavedAt || verification.remoteUpdatedAt,
-          verified: true,
-        },
-      }))
-    }
-    return successResult
+
+    return lagged ?? sceneConflict('remote-conflict-unresolved', 'The remote scene write could not be read back.', expectedRevision, currentScene, callerDraft, true)
   }
 
   if (!isSupabaseConfigured()) {
