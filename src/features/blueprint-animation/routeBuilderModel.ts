@@ -1,0 +1,1293 @@
+import { validateBlueprintAnimationScene, type BlueprintAnimationValidationIssue } from './graphValidation'
+import {
+  createCircuitGeometryFingerprint,
+  resolveCircuitSegmentIndex,
+  type CircuitShapeKind,
+  type NormalizedPoint,
+} from './routeGeometry'
+import {
+  createDefaultBlueprintAnimationScene,
+  parseBlueprintAnimationScene,
+} from './sceneSchema'
+import type {
+  BlueprintAnimationChannelType,
+  BlueprintAnimationDeviceRole,
+  BlueprintAnimationEdge,
+  BlueprintAnimationNode,
+  BlueprintAnimationPlaybackOptions,
+  BlueprintAnimationTraversalStep,
+  BlueprintScopeAnimationScene,
+  BlueprintScopeAnimationSceneV1,
+} from './types'
+import type { RouteSegmentPick } from './routePicking'
+
+export const ROUTE_BUILDER_SOURCE_KINDS = [
+  'electrical-switch',
+  'electrical-switch-3way',
+  'electrical-switch-4way',
+  'electrical-dimmer',
+  'electrical-timer-control',
+  'electrical-photocell',
+  'electrical-ceiling-occupancy-sensor',
+  'electrical-wall-occupancy-sensor',
+] as const
+
+export const ROUTE_BUILDER_SENSOR_KINDS = [
+  'electrical-ceiling-occupancy-sensor',
+  'electrical-wall-occupancy-sensor',
+] as const
+
+export const ROUTE_BUILDER_LOAD_KINDS = [
+  'can-light-4',
+  'can-light-6',
+  'electrical-recessed-light',
+  'electrical-pendant-light',
+  'electrical-sconce',
+  'electrical-led-panel-2x2',
+  'electrical-led-panel-2x4',
+] as const
+
+export const ROUTE_BUILDER_CHANNEL_OPTIONS: Array<{ value: BlueprintAnimationChannelType; label: string }> = [
+  { value: 'generic-route', label: 'Generic Route' },
+  { value: 'switched-line-voltage', label: 'Switched Power' },
+  { value: 'constant-line-voltage', label: 'Constant Power' },
+  { value: 'zero-to-ten-volt-control', label: '0–10V Control' },
+  { value: 'low-voltage-control-signal', label: 'Sensor Signal' },
+  { value: 'emergency-power', label: 'Emergency Power' },
+]
+
+const SOURCE_KINDS = new Set<string>(ROUTE_BUILDER_SOURCE_KINDS)
+const SENSOR_KINDS = new Set<string>(ROUTE_BUILDER_SENSOR_KINDS)
+const LOAD_KINDS = new Set<string>(ROUTE_BUILDER_LOAD_KINDS)
+const CIRCUIT_KINDS = new Set<string>(['circuit-path', 'circuit-arc'])
+const CONNECTION_TOLERANCE = 0.02
+const DEVICE_MATCH_TOLERANCE = 0.014
+
+export interface RouteBuilderAnnotation {
+  id: string
+  pageNumber: number
+  label: string
+  shapeKind?: string
+  rect?: { x: number; y: number; w: number; h: number }
+  points?: NormalizedPoint[]
+  arcCtrls?: NormalizedPoint[]
+  pointIds?: string[]
+  segmentIds?: string[]
+}
+
+export interface RouteBuilderIssue {
+  severity: 'error' | 'warning'
+  code: string
+  message: string
+  selectionId?: string
+}
+
+export interface RouteBuilderSourceSelection {
+  annotationId: string
+  channel: BlueprintAnimationChannelType
+}
+
+export interface RouteBuilderSegmentSelection extends Omit<RouteSegmentPick, 'distancePx'> {
+  id: string
+  kind: 'segment'
+  channel: BlueprintAnimationChannelType
+  persistedEdgeId?: string
+  persistedTraversalId?: string
+}
+
+export interface RouteBuilderDirectSelection {
+  id: string
+  kind: 'direct'
+  annotationId: string
+  channel: BlueprintAnimationChannelType
+  persistedEdgeId?: string
+  persistedTraversalId?: string
+}
+
+export type RouteBuilderTransition = RouteBuilderSegmentSelection | RouteBuilderDirectSelection
+
+export interface PackageAnimationRouteDraft {
+  packageId: string
+  packageName: string
+  packageAnnotationIds: string[]
+  annotations: RouteBuilderAnnotation[]
+  expectedBaseRevision: number
+  sceneId: string
+  createdAt: string
+  playbackOptions: BlueprintAnimationPlaybackOptions
+  baseScene?: BlueprintScopeAnimationSceneV1
+  sourceId: string
+  sourcePriority?: number
+  source?: RouteBuilderSourceSelection
+  transitions: RouteBuilderTransition[]
+  readOnlyReason?: string
+  malformedSceneReason?: string
+  dirty: boolean
+  notice?: RouteBuilderIssue
+}
+
+interface ResolvedNode extends BlueprintAnimationNode {
+  point: NormalizedPoint
+  pageNumber: number
+}
+
+export interface ResolvedRouteTransition {
+  selection: RouteBuilderTransition
+  edge?: BlueprintAnimationEdge
+  from?: ResolvedNode
+  to?: ResolvedNode
+}
+
+export interface ResolvedPackageAnimationRouteDraft {
+  nodes: ResolvedNode[]
+  edges: BlueprintAnimationEdge[]
+  traversal: BlueprintAnimationTraversalStep[]
+  transitions: ResolvedRouteTransition[]
+  issues: RouteBuilderIssue[]
+  currentEndpoint?: { node: ResolvedNode; point: NormalizedPoint }
+}
+
+export interface RouteBuilderMutationResult {
+  accepted: boolean
+  draft: PackageAnimationRouteDraft
+  message?: string
+}
+
+export interface RouteBuilderSceneSummary {
+  state: 'absent' | 'supported' | 'unsupported' | 'malformed'
+  sourceCount: number
+  routeStepCount: number
+  valid: boolean
+  advanced: boolean
+  message?: string
+}
+
+function clone<T>(value: T): T {
+  if (typeof structuredClone === 'function') return structuredClone(value)
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+function id(prefix: string): string {
+  if (globalThis.crypto?.randomUUID) return `${prefix}_${globalThis.crypto.randomUUID()}`
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+}
+
+function center(annotation: RouteBuilderAnnotation): NormalizedPoint | null {
+  const rect = annotation.rect
+  if (!rect || ![rect.x, rect.y, rect.w, rect.h].every(Number.isFinite)) return null
+  return { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 }
+}
+
+function distance(a: NormalizedPoint, b: NormalizedPoint): number {
+  return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+function annotationNodeId(draft: PackageAnimationRouteDraft, annotationId: string): string {
+  const persisted = draft.baseScene?.nodes.find((node) => node.anchor.kind === 'annotation-center' && node.anchor.annotationId === annotationId)
+  if (persisted) return persisted.id
+  return `animation_node_annotation_${annotationId}`
+}
+
+function junctionNodeId(draft: PackageAnimationRouteDraft, annotationId: string, pointId: string): string {
+  const persisted = draft.baseScene?.nodes.find((node) => node.anchor.kind === 'circuit-point' && node.anchor.annotationId === annotationId && node.anchor.pointId === pointId)
+  if (persisted) return persisted.id
+  return `animation_node_point_${annotationId}_${pointId}`
+}
+
+function isCircuitShapeKind(value: unknown): value is CircuitShapeKind {
+  return value === 'circuit-path' || value === 'circuit-arc'
+}
+
+export function isRouteBuilderSourceKind(shapeKind: unknown): boolean {
+  return typeof shapeKind === 'string' && SOURCE_KINDS.has(shapeKind)
+}
+
+export function isRouteBuilderLoadKind(shapeKind: unknown): boolean {
+  return typeof shapeKind === 'string' && LOAD_KINDS.has(shapeKind)
+}
+
+export function isRouteBuilderDeviceKind(shapeKind: unknown): boolean {
+  return isRouteBuilderSourceKind(shapeKind) || isRouteBuilderLoadKind(shapeKind)
+}
+
+export function inferRouteBuilderNodeRoles(
+  shapeKind: unknown,
+  options: { selectedAsSource?: boolean; junction?: boolean } = {},
+): BlueprintAnimationDeviceRole[] {
+  if (options.junction) return ['junction']
+  const roles: BlueprintAnimationDeviceRole[] = []
+  if (options.selectedAsSource) roles.push('source')
+  if (typeof shapeKind === 'string' && SENSOR_KINDS.has(shapeKind)) roles.push('sensor', 'control')
+  else if (typeof shapeKind === 'string' && SOURCE_KINDS.has(shapeKind)) roles.push('control')
+  if (typeof shapeKind === 'string' && LOAD_KINDS.has(shapeKind)) roles.push('load')
+  return [...new Set(roles)]
+}
+
+export function inferRouteBuilderDefaultChannel(shapeKind: unknown): BlueprintAnimationChannelType {
+  if (typeof shapeKind === 'string' && SENSOR_KINDS.has(shapeKind)) return 'low-voltage-control-signal'
+  if (typeof shapeKind === 'string' && SOURCE_KINDS.has(shapeKind)) return 'switched-line-voltage'
+  return 'generic-route'
+}
+
+function issue(
+  severity: RouteBuilderIssue['severity'],
+  code: string,
+  message: string,
+  selectionId?: string,
+): RouteBuilderIssue {
+  return { severity, code, message, ...(selectionId ? { selectionId } : {}) }
+}
+
+function packageHas(draft: PackageAnimationRouteDraft, annotationId: string): boolean {
+  return draft.packageAnnotationIds.includes(annotationId)
+}
+
+function byId(draft: PackageAnimationRouteDraft): Map<string, RouteBuilderAnnotation> {
+  return new Map(draft.annotations.map((annotation) => [annotation.id, annotation]))
+}
+
+function annotationNode(draft: PackageAnimationRouteDraft, annotation: RouteBuilderAnnotation, selectedAsSource = false): ResolvedNode | null {
+  const point = center(annotation)
+  if (!point) return null
+  const persisted = draft.baseScene?.nodes.find((node) => node.anchor.kind === 'annotation-center' && node.anchor.annotationId === annotation.id)
+  return {
+    ...persisted,
+    id: annotationNodeId(draft, annotation.id),
+    roles: inferRouteBuilderNodeRoles(annotation.shapeKind, { selectedAsSource }),
+    anchor: { kind: 'annotation-center', annotationId: annotation.id },
+    label: annotation.label,
+    point,
+    pageNumber: annotation.pageNumber,
+  }
+}
+
+function matchDeviceAtPoint(
+  draft: PackageAnimationRouteDraft,
+  point: NormalizedPoint,
+  pageNumber: number,
+): RouteBuilderAnnotation | null {
+  let best: RouteBuilderAnnotation | null = null
+  let bestDistance = DEVICE_MATCH_TOLERANCE
+  for (const annotation of draft.annotations) {
+    if (!packageHas(draft, annotation.id) || annotation.pageNumber !== pageNumber) continue
+    if (!isRouteBuilderDeviceKind(annotation.shapeKind)) continue
+    const annotationCenter = center(annotation)
+    if (!annotationCenter) continue
+    const nextDistance = distance(point, annotationCenter)
+    if (nextDistance <= bestDistance) {
+      best = annotation
+      bestDistance = nextDistance
+    }
+  }
+  return best
+}
+
+function geometryForSelection(
+  annotation: RouteBuilderAnnotation,
+  selection: RouteBuilderSegmentSelection,
+): {
+  index: number
+  start: NormalizedPoint
+  end: NormalizedPoint
+  startPointId: string
+  endPointId: string
+  control?: NormalizedPoint
+  fingerprintMatches: boolean
+} | null {
+  if (!isCircuitShapeKind(annotation.shapeKind) || !Array.isArray(annotation.points)) return null
+  const resolution = resolveCircuitSegmentIndex({
+    annotationId: annotation.id,
+    pageNumber: annotation.pageNumber,
+    shapeKind: annotation.shapeKind,
+    points: annotation.points,
+    arcCtrls: annotation.arcCtrls,
+    segmentIds: annotation.segmentIds,
+  }, selection.segmentId, selection.segmentIndexHint, selection.geometryFingerprint)
+  if (resolution.status !== 'resolved') return null
+  const index = resolution.index
+  const start = annotation.points[index]
+  const end = annotation.points[index + 1]
+  const startPointId = annotation.pointIds?.[index]
+  const endPointId = annotation.pointIds?.[index + 1]
+  if (!start || !end || !startPointId || !endPointId) return null
+  const rawControl = annotation.arcCtrls?.[index]
+  const control = annotation.shapeKind === 'circuit-arc'
+    ? (rawControl && Number.isFinite(rawControl.x) && Number.isFinite(rawControl.y)
+        ? rawControl
+        : { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 })
+    : undefined
+  return { index, start, end, startPointId, endPointId, control, fingerprintMatches: resolution.fingerprintMatches }
+}
+
+function pushUniqueNode(nodes: ResolvedNode[], node: ResolvedNode): ResolvedNode {
+  const existing = nodes.find((candidate) => candidate.id === node.id)
+  if (existing) return existing
+  nodes.push(node)
+  return node
+}
+
+export function resolvePackageAnimationRouteDraft(draft: PackageAnimationRouteDraft): ResolvedPackageAnimationRouteDraft {
+  const annotations = byId(draft)
+  const nodes: ResolvedNode[] = []
+  const edges: BlueprintAnimationEdge[] = []
+  const traversal: BlueprintAnimationTraversalStep[] = []
+  const resolvedTransitions: ResolvedRouteTransition[] = []
+  const issues: RouteBuilderIssue[] = []
+  const usedSegmentKeys = new Set<string>()
+  const visitedNodeIds = new Set<string>()
+  const visitedPoints: NormalizedPoint[] = []
+  let current: ResolvedNode | undefined
+
+  if (!draft.source) {
+    issues.push(issue('error', 'missing-source', 'Select one eligible control or sensor as the source.'))
+  } else {
+    const sourceAnnotation = annotations.get(draft.source.annotationId)
+    if (!sourceAnnotation) {
+      issues.push(issue('error', 'missing-source-annotation', 'The selected source annotation no longer exists.'))
+    } else if (!packageHas(draft, sourceAnnotation.id)) {
+      issues.push(issue('error', 'source-not-in-package', 'The selected source is no longer in this work package.'))
+    } else if (!isRouteBuilderSourceKind(sourceAnnotation.shapeKind)) {
+      issues.push(issue('error', 'invalid-source-kind', 'The source must be a switch, dimmer, timer, photocell, or occupancy sensor.'))
+    } else {
+      const sourceNode = annotationNode(draft, sourceAnnotation, true)
+      if (!sourceNode) {
+        issues.push(issue('error', 'source-anchor-missing', 'The selected source has no usable annotation center.'))
+      } else {
+        current = pushUniqueNode(nodes, sourceNode)
+        visitedNodeIds.add(current.id)
+        visitedPoints.push(current.point)
+      }
+    }
+  }
+
+  for (const selection of draft.transitions) {
+    if (!current) {
+      issues.push(issue('error', 'invalid-traversal', 'This route step cannot be resolved before a valid source.', selection.id))
+      resolvedTransitions.push({ selection })
+      continue
+    }
+    if (selection.kind === 'direct') {
+      const target = annotations.get(selection.annotationId)
+      if (!target) {
+        issues.push(issue('error', 'missing-direct-annotation', 'The direct route destination no longer exists.', selection.id))
+        resolvedTransitions.push({ selection, from: current })
+        continue
+      }
+      if (!packageHas(draft, target.id)) {
+        issues.push(issue('error', 'annotation-not-in-package', 'A direct route destination is not in this work package.', selection.id))
+        resolvedTransitions.push({ selection, from: current })
+        continue
+      }
+      if (!isRouteBuilderDeviceKind(target.shapeKind)) {
+        issues.push(issue('error', 'invalid-direct-destination', 'Direct transitions may only end at a supported device or fixture.', selection.id))
+        resolvedTransitions.push({ selection, from: current })
+        continue
+      }
+      const destination = annotationNode(draft, target)
+      if (!destination) {
+        issues.push(issue('error', 'direct-anchor-missing', 'The direct route destination has no usable center.', selection.id))
+        resolvedTransitions.push({ selection, from: current })
+        continue
+      }
+      if (visitedNodeIds.has(destination.id)) {
+        issues.push(issue('error', 'duplicate-load-or-cycle', 'This device is already in the route; selecting it again would create a cycle.', selection.id))
+        resolvedTransitions.push({ selection, from: current })
+        continue
+      }
+      const nextNode = pushUniqueNode(nodes, destination)
+      const persistedEdge = selection.persistedEdgeId ? draft.baseScene?.edges.find((candidate) => candidate.id === selection.persistedEdgeId) : undefined
+      const edge: BlueprintAnimationEdge = {
+        ...persistedEdge,
+        id: selection.persistedEdgeId || `animation_edge_${selection.id}`,
+        fromNodeId: current.id,
+        toNodeId: nextNode.id,
+        channel: selection.channel,
+        geometry: { kind: 'direct' },
+      }
+      edges.push(edge)
+      const persistedTraversal = selection.persistedTraversalId ? draft.baseScene?.manualTraversal.find((candidate) => candidate.id === selection.persistedTraversalId) : undefined
+      traversal.push({ ...persistedTraversal, id: selection.persistedTraversalId || `animation_traversal_${selection.id}`, edgeId: edge.id, sourceId: draft.sourceId, direction: 'forward' })
+      resolvedTransitions.push({ selection, edge, from: current, to: nextNode })
+      issues.push(issue('warning', 'direct-transition', 'This step intentionally jumps without visible circuit geometry.', selection.id))
+      current = nextNode
+      visitedNodeIds.add(current.id)
+      visitedPoints.push(current.point)
+      continue
+    }
+
+    const segmentKey = `${selection.annotationId}:${selection.segmentId}`
+    if (usedSegmentKeys.has(segmentKey)) {
+      issues.push(issue('error', 'duplicate-segment', 'That exact circuit segment is already in the route.', selection.id))
+      resolvedTransitions.push({ selection, from: current })
+      continue
+    }
+    usedSegmentKeys.add(segmentKey)
+    const annotation = annotations.get(selection.annotationId)
+    if (!annotation) {
+      issues.push(issue('error', 'missing-circuit-annotation', 'The selected circuit annotation no longer exists.', selection.id))
+      resolvedTransitions.push({ selection, from: current })
+      continue
+    }
+    if (!packageHas(draft, annotation.id)) {
+      issues.push(issue('error', 'annotation-not-in-package', 'A selected circuit segment is not in this work package.', selection.id))
+      resolvedTransitions.push({ selection, from: current })
+      continue
+    }
+    const geometry = geometryForSelection(annotation, selection)
+    if (!geometry) {
+      issues.push(issue('error', 'missing-segment', 'The referenced stable circuit segment no longer exists.', selection.id))
+      resolvedTransitions.push({ selection, from: current })
+      continue
+    }
+    if (!geometry.fingerprintMatches) {
+      issues.push(issue('error', 'geometry-fingerprint-mismatch', 'Circuit geometry changed after this route step was saved. Remove and reselect the segment.', selection.id))
+    }
+
+    const startDistance = distance(current.point, geometry.start)
+    const endDistance = distance(current.point, geometry.end)
+    const connectsStart = startDistance <= CONNECTION_TOLERANCE
+    const connectsEnd = endDistance <= CONNECTION_TOLERANCE
+    if (!connectsStart && !connectsEnd) {
+      issues.push(issue('error', 'disconnected-segment', 'That segment does not connect to the current route endpoint.', selection.id))
+      resolvedTransitions.push({ selection, from: current })
+      continue
+    }
+    const reversed = connectsEnd && (!connectsStart || endDistance < startDistance)
+    const destinationPoint = reversed ? geometry.start : geometry.end
+    const destinationPointId = reversed ? geometry.startPointId : geometry.endPointId
+    const destinationPointIndex = reversed ? geometry.index : geometry.index + 1
+    const matchedDevice = matchDeviceAtPoint(draft, destinationPoint, annotation.pageNumber)
+    let destination: ResolvedNode | null = matchedDevice ? annotationNode(draft, matchedDevice) : null
+    if (!destination) {
+      const persisted = draft.baseScene?.nodes.find((node) => node.anchor.kind === 'circuit-point' && node.anchor.annotationId === annotation.id && node.anchor.pointId === destinationPointId)
+      destination = {
+        ...persisted,
+        id: junctionNodeId(draft, annotation.id, destinationPointId),
+        roles: inferRouteBuilderNodeRoles(undefined, { junction: true }),
+        anchor: {
+          kind: 'circuit-point',
+          annotationId: annotation.id,
+          pointId: destinationPointId,
+          pointIndexHint: destinationPointIndex,
+          geometryFingerprint: selection.geometryFingerprint,
+        },
+        label: `${annotation.label} point ${destinationPointIndex + 1}`,
+        point: { ...destinationPoint },
+        pageNumber: annotation.pageNumber,
+      }
+    }
+    const repeatsPoint = visitedPoints.some((point) => distance(point, destinationPoint) <= 0.00001)
+    if (visitedNodeIds.has(destination.id) || repeatsPoint) {
+      issues.push(issue('error', 'route-cycle', 'That segment returns to a node already visited and would create a cycle.', selection.id))
+      resolvedTransitions.push({ selection, from: current })
+      continue
+    }
+    const nextNode = pushUniqueNode(nodes, destination)
+    const persistedEdge = selection.persistedEdgeId ? draft.baseScene?.edges.find((candidate) => candidate.id === selection.persistedEdgeId) : undefined
+    const edge: BlueprintAnimationEdge = {
+      ...persistedEdge,
+      id: selection.persistedEdgeId || `animation_edge_${selection.id}`,
+      fromNodeId: current.id,
+      toNodeId: nextNode.id,
+      channel: selection.channel,
+      geometry: {
+        kind: 'circuit-segment',
+        annotationId: annotation.id,
+        segmentId: selection.segmentId,
+        segmentIndexHint: geometry.index,
+        fromT: reversed ? 1 : 0,
+        toT: reversed ? 0 : 1,
+        geometryFingerprint: selection.geometryFingerprint,
+      },
+    }
+    edges.push(edge)
+    const persistedTraversal = selection.persistedTraversalId ? draft.baseScene?.manualTraversal.find((candidate) => candidate.id === selection.persistedTraversalId) : undefined
+    traversal.push({ ...persistedTraversal, id: selection.persistedTraversalId || `animation_traversal_${selection.id}`, edgeId: edge.id, sourceId: draft.sourceId, direction: 'forward' })
+    resolvedTransitions.push({ selection, edge, from: current, to: nextNode })
+    current = nextNode
+    visitedNodeIds.add(current.id)
+    visitedPoints.push(destinationPoint)
+  }
+
+  return {
+    nodes,
+    edges,
+    traversal,
+    transitions: resolvedTransitions,
+    issues,
+    ...(current ? { currentEndpoint: { node: current, point: current.point } } : {}),
+  }
+}
+
+export function createEmptyPackageAnimationRouteDraft(options: {
+  packageId: string
+  packageName: string
+  packageAnnotationIds: string[]
+  annotations: RouteBuilderAnnotation[]
+  expectedBaseRevision?: number
+  now?: string
+  sceneId?: string
+}): PackageAnimationRouteDraft {
+  const scene = createDefaultBlueprintAnimationScene({ id: options.sceneId, now: options.now })
+  return {
+    packageId: options.packageId,
+    packageName: options.packageName,
+    packageAnnotationIds: [...options.packageAnnotationIds],
+    annotations: clone(options.annotations),
+    expectedBaseRevision: Math.max(0, Math.floor(Number(options.expectedBaseRevision) || 0)),
+    sceneId: scene.id,
+    createdAt: scene.createdAt,
+    playbackOptions: { ...scene.playbackOptions },
+    sourceId: 'animation_source_primary',
+    transitions: [],
+    dirty: false,
+  }
+}
+
+function withNotice(draft: PackageAnimationRouteDraft, nextIssue?: RouteBuilderIssue): PackageAnimationRouteDraft {
+  return { ...draft, notice: nextIssue }
+}
+
+export function setRouteBuilderNotice(draft: PackageAnimationRouteDraft, nextIssue?: RouteBuilderIssue): PackageAnimationRouteDraft {
+  return withNotice(draft, nextIssue)
+}
+
+export function selectPackageAnimationRouteSource(
+  draft: PackageAnimationRouteDraft,
+  annotationId: string,
+): RouteBuilderMutationResult {
+  if (draft.readOnlyReason) return { accepted: false, draft, message: draft.readOnlyReason }
+  const annotation = byId(draft).get(annotationId)
+  if (!annotation) return { accepted: false, draft, message: 'That annotation no longer exists.' }
+  if (!packageHas(draft, annotationId)) {
+    const message = 'Add this item to the work package before using it in the animation route.'
+    return { accepted: false, draft: withNotice(draft, issue('error', 'annotation-not-in-package', message)), message }
+  }
+  if (!isRouteBuilderSourceKind(annotation.shapeKind)) {
+    const message = 'Select a switch, dimmer, timer, photocell, or occupancy sensor as the source.'
+    return { accepted: false, draft: withNotice(draft, issue('error', 'invalid-source-kind', message)), message }
+  }
+  const next: PackageAnimationRouteDraft = {
+    ...draft,
+    source: { annotationId, channel: inferRouteBuilderDefaultChannel(annotation.shapeKind) },
+    transitions: [],
+    dirty: true,
+    notice: undefined,
+  }
+  return { accepted: true, draft: next }
+}
+
+export function addPackageAnimationRouteSegment(
+  draft: PackageAnimationRouteDraft,
+  pick: RouteSegmentPick,
+): RouteBuilderMutationResult {
+  if (draft.readOnlyReason) return { accepted: false, draft, message: draft.readOnlyReason }
+  if (!draft.source) {
+    const message = 'Select the source before adding circuit segments.'
+    return { accepted: false, draft: withNotice(draft, issue('error', 'missing-source', message)), message }
+  }
+  if (!packageHas(draft, pick.annotationId)) {
+    const message = 'Add this item to the work package before using it in the animation route.'
+    return { accepted: false, draft: withNotice(draft, issue('error', 'annotation-not-in-package', message)), message }
+  }
+  const selection: RouteBuilderSegmentSelection = {
+    ...clone(pick),
+    id: id('route_segment'),
+    kind: 'segment',
+    channel: draft.transitions.length === 0 ? draft.source.channel : 'generic-route',
+  }
+  const candidate = { ...draft, transitions: [...draft.transitions, selection], dirty: true, notice: undefined }
+  const blocking = resolvePackageAnimationRouteDraft(candidate).issues.find((entry) => entry.severity === 'error' && entry.selectionId === selection.id)
+  if (blocking) return { accepted: false, draft: withNotice(draft, blocking), message: blocking.message }
+  return { accepted: true, draft: candidate }
+}
+
+export function addPackageAnimationDirectTransition(
+  draft: PackageAnimationRouteDraft,
+  annotationId: string,
+): RouteBuilderMutationResult {
+  if (draft.readOnlyReason) return { accepted: false, draft, message: draft.readOnlyReason }
+  if (!draft.source) return { accepted: false, draft, message: 'Select the source first.' }
+  const annotation = byId(draft).get(annotationId)
+  if (!annotation) return { accepted: false, draft, message: 'That annotation no longer exists.' }
+  if (!packageHas(draft, annotationId)) {
+    const message = 'Add this item to the work package before using it in the animation route.'
+    return { accepted: false, draft: withNotice(draft, issue('error', 'annotation-not-in-package', message)), message }
+  }
+  if (!isRouteBuilderDeviceKind(annotation.shapeKind)) {
+    const message = 'Only supported controls, sensors, and light fixtures can be direct destinations.'
+    return { accepted: false, draft: withNotice(draft, issue('error', 'invalid-direct-destination', message)), message }
+  }
+  const selection: RouteBuilderDirectSelection = {
+    id: id('route_direct'),
+    kind: 'direct',
+    annotationId,
+    channel: draft.transitions.length === 0 ? draft.source.channel : 'generic-route',
+  }
+  const candidate = { ...draft, transitions: [...draft.transitions, selection], dirty: true, notice: undefined }
+  const blocking = resolvePackageAnimationRouteDraft(candidate).issues.find((entry) => entry.severity === 'error' && entry.selectionId === selection.id)
+  if (blocking) return { accepted: false, draft: withNotice(draft, blocking), message: blocking.message }
+  return { accepted: true, draft: candidate, message: 'Direct transition added with a warning.' }
+}
+
+export function undoPackageAnimationRouteSelection(draft: PackageAnimationRouteDraft): PackageAnimationRouteDraft {
+  if (draft.readOnlyReason) return draft
+  if (draft.transitions.length > 0) {
+    return { ...draft, transitions: draft.transitions.slice(0, -1), dirty: true, notice: undefined }
+  }
+  return { ...draft, source: undefined, dirty: true, notice: undefined }
+}
+
+export function clearPackageAnimationRouteDraft(draft: PackageAnimationRouteDraft): PackageAnimationRouteDraft {
+  if (draft.readOnlyReason) return draft
+  return { ...draft, source: undefined, transitions: [], dirty: true, notice: undefined }
+}
+
+export function removePackageAnimationRouteTransition(
+  draft: PackageAnimationRouteDraft,
+  selectionId: string,
+): PackageAnimationRouteDraft {
+  if (draft.readOnlyReason) return draft
+  return { ...draft, transitions: draft.transitions.filter((entry) => entry.id !== selectionId), dirty: true, notice: undefined }
+}
+
+export function updatePackageAnimationRouteChannel(
+  draft: PackageAnimationRouteDraft,
+  selectionId: string,
+  channel: BlueprintAnimationChannelType,
+): PackageAnimationRouteDraft {
+  if (draft.readOnlyReason || !ROUTE_BUILDER_CHANNEL_OPTIONS.some((entry) => entry.value === channel)) return draft
+  return {
+    ...draft,
+    transitions: draft.transitions.map((entry) => entry.id === selectionId ? { ...entry, channel } : entry),
+    dirty: true,
+    notice: undefined,
+  }
+}
+
+export function movePackageAnimationRouteTransition(
+  draft: PackageAnimationRouteDraft,
+  selectionId: string,
+  direction: 'up' | 'down',
+): RouteBuilderMutationResult {
+  if (draft.readOnlyReason) return { accepted: false, draft, message: draft.readOnlyReason }
+  const index = draft.transitions.findIndex((entry) => entry.id === selectionId)
+  const target = direction === 'up' ? index - 1 : index + 1
+  if (index < 0 || target < 0 || target >= draft.transitions.length) return { accepted: false, draft }
+  const transitions = [...draft.transitions]
+  ;[transitions[index], transitions[target]] = [transitions[target], transitions[index]]
+  const candidate = { ...draft, transitions, dirty: true, notice: undefined }
+  const blocking = resolvePackageAnimationRouteDraft(candidate).issues.find((entry) => entry.severity === 'error')
+  if (blocking) {
+    const message = `That move would break route continuity: ${blocking.message}`
+    return { accepted: false, draft: withNotice(draft, issue('error', 'invalid-reorder', message)), message }
+  }
+  return { accepted: true, draft: candidate }
+}
+
+function validationContext(draft: PackageAnimationRouteDraft) {
+  return {
+    packageAnnotationIds: draft.packageAnnotationIds,
+    annotations: draft.annotations.map((annotation) => ({
+      id: annotation.id,
+      pageNumber: annotation.pageNumber,
+      shapeKind: annotation.shapeKind || '',
+      points: annotation.points,
+      arcCtrls: annotation.arcCtrls,
+      pointIds: annotation.pointIds,
+      segmentIds: annotation.segmentIds,
+    })),
+  }
+}
+
+function graphIssue(entry: BlueprintAnimationValidationIssue): RouteBuilderIssue {
+  return issue(entry.severity, entry.code, entry.message)
+}
+
+function dedupeIssues(entries: RouteBuilderIssue[]): RouteBuilderIssue[] {
+  const seen = new Set<string>()
+  return entries.filter((entry) => {
+    const key = `${entry.severity}:${entry.code}:${entry.selectionId || ''}:${entry.message}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+export function packageAnimationRouteDraftToScene(
+  draft: PackageAnimationRouteDraft,
+  now = new Date().toISOString(),
+): { scene?: BlueprintScopeAnimationSceneV1; issues: RouteBuilderIssue[] } {
+  const resolved = resolvePackageAnimationRouteDraft(draft)
+  const issues = [...resolved.issues]
+  if (draft.readOnlyReason) issues.push(issue('error', 'read-only-scene', draft.readOnlyReason))
+  if (resolved.edges.length === 0) issues.push(issue('error', 'empty-route', 'Add at least one connected route segment or confirmed direct transition.'))
+  const sourceNode = resolved.nodes[0]
+  if (!sourceNode || !draft.source) return { issues: dedupeIssues(issues) }
+  const scene: BlueprintScopeAnimationSceneV1 = {
+    ...(draft.baseScene ? clone(draft.baseScene) : createDefaultBlueprintAnimationScene({ id: draft.sceneId, now: draft.createdAt })),
+    schemaVersion: 1,
+    id: draft.sceneId,
+    revision: Math.max(1, draft.expectedBaseRevision || 1),
+    createdAt: draft.createdAt,
+    updatedAt: now,
+    nodes: resolved.nodes.map(({ point: _point, pageNumber: _pageNumber, ...node }) => node),
+    edges: resolved.edges,
+    sources: [{ ...(draft.baseScene?.sources.find((source) => source.id === draft.sourceId) || {}), id: draft.sourceId, nodeId: sourceNode.id, channel: draft.source.channel, ...(draft.sourcePriority != null ? { priority: draft.sourcePriority } : {}) }],
+    manualTraversal: resolved.traversal,
+    branchOrders: [],
+    events: [],
+    playbackOptions: { ...draft.playbackOptions },
+  }
+  issues.push(...validateBlueprintAnimationScene(scene, validationContext(draft)).map(graphIssue))
+  return { scene, issues: dedupeIssues(issues) }
+}
+
+export function validatePackageAnimationRouteDraft(draft: PackageAnimationRouteDraft): RouteBuilderIssue[] {
+  return packageAnimationRouteDraftToScene(draft).issues
+}
+
+function advancedSceneReason(scene: BlueprintScopeAnimationSceneV1): string | undefined {
+  if (scene.sources.length !== 1) return 'This scene uses multiple or missing sources and is read-only in the one-source editor.'
+  if (scene.branchOrders.length > 0) return 'This scene contains branch ordering and is read-only in this editor.'
+  if (scene.events.length > 0) return 'This scene contains animation events that this editor cannot safely preserve.'
+  if (scene.edges.some((edge) => edge.fromPort || edge.toPort)) return 'This scene uses explicit graph ports and is read-only in this editor.'
+  const supportedRoles = new Set<BlueprintAnimationDeviceRole>(['source', 'control', 'sensor', 'junction', 'load'])
+  if (scene.nodes.some((node) => node.roles.some((role) => !supportedRoles.has(role)))) {
+    return 'This scene contains advanced emergency or transfer roles and is read-only in this editor.'
+  }
+  const outgoing = new Map<string, number>()
+  const incoming = new Map<string, number>()
+  scene.edges.forEach((edge) => {
+    outgoing.set(edge.fromNodeId, (outgoing.get(edge.fromNodeId) || 0) + 1)
+    incoming.set(edge.toNodeId, (incoming.get(edge.toNodeId) || 0) + 1)
+  })
+  if ([...outgoing.values()].some((count) => count > 1) || [...incoming.values()].some((count) => count > 1)) {
+    return 'This scene contains branches and is read-only in the one-route editor.'
+  }
+  if (scene.manualTraversal.length !== scene.edges.length) {
+    return 'This scene has graph edges outside its manual traversal and cannot be edited without data loss.'
+  }
+  const traversalEdgeIds = scene.manualTraversal.map((step) => step.edgeId)
+  if (new Set(traversalEdgeIds).size !== traversalEdgeIds.length || scene.edges.some((edge) => !traversalEdgeIds.includes(edge.id))) {
+    return 'This scene has an advanced traversal structure and is read-only in this editor.'
+  }
+  return undefined
+}
+
+function selectionFromEdge(
+  edge: BlueprintAnimationEdge,
+  draft: PackageAnimationRouteDraft,
+  traversalId?: string,
+): RouteBuilderTransition {
+  if (edge.geometry.kind === 'direct') {
+    const destination = draft.baseScene?.nodes.find((node) => node.id === edge.toNodeId)
+    const annotationId = destination?.anchor.kind === 'annotation-center' ? destination.anchor.annotationId : ''
+    return {
+      id: edge.id.replace(/^animation_edge_/, '') || id('route_direct'),
+      kind: 'direct',
+      annotationId,
+      channel: edge.channel,
+      persistedEdgeId: edge.id,
+      ...(traversalId ? { persistedTraversalId: traversalId } : {}),
+    }
+  }
+  const geometry = edge.geometry
+  const annotation = draft.annotations.find((entry) => entry.id === geometry.annotationId)
+  const shapeKind = isCircuitShapeKind(annotation?.shapeKind) ? annotation.shapeKind : 'circuit-path'
+  const resolution = annotation && isCircuitShapeKind(annotation.shapeKind) && Array.isArray(annotation.points)
+    ? resolveCircuitSegmentIndex({
+        annotationId: annotation.id,
+        pageNumber: annotation.pageNumber,
+        shapeKind: annotation.shapeKind,
+        points: annotation.points,
+        arcCtrls: annotation.arcCtrls,
+        segmentIds: annotation.segmentIds,
+      }, geometry.segmentId, geometry.segmentIndexHint, geometry.geometryFingerprint)
+    : null
+  const index = resolution?.status === 'resolved' ? resolution.index : Math.max(0, geometry.segmentIndexHint || 0)
+  const start = annotation?.points?.[index] || { x: 0, y: 0 }
+  const end = annotation?.points?.[index + 1] || { x: 0, y: 0 }
+  return {
+    id: edge.id.replace(/^animation_edge_/, '') || id('route_segment'),
+    kind: 'segment',
+    annotationId: geometry.annotationId,
+    pageNumber: annotation?.pageNumber || 1,
+    shapeKind,
+    segmentId: geometry.segmentId,
+    segmentIndexHint: geometry.segmentIndexHint ?? index,
+    geometryFingerprint: geometry.geometryFingerprint,
+    startPointId: annotation?.pointIds?.[index] || '',
+    endPointId: annotation?.pointIds?.[index + 1] || '',
+    startPointIndexHint: index,
+    endPointIndexHint: index + 1,
+    start: clone(start),
+    end: clone(end),
+    ...(shapeKind === 'circuit-arc' ? { control: clone(annotation?.arcCtrls?.[index] || { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }) } : {}),
+    channel: edge.channel,
+    persistedEdgeId: edge.id,
+    ...(traversalId ? { persistedTraversalId: traversalId } : {}),
+  }
+}
+
+export function loadPackageAnimationRouteDraft(options: {
+  packageId: string
+  packageName: string
+  packageAnnotationIds: string[]
+  annotations: RouteBuilderAnnotation[]
+  scene: unknown
+  expectedBaseRevision: number
+  now?: string
+}): PackageAnimationRouteDraft {
+  const empty = createEmptyPackageAnimationRouteDraft(options)
+  const parsed = parseBlueprintAnimationScene(options.scene)
+  if (parsed.status === 'absent') return empty
+  if (parsed.status === 'unsupported-version') {
+    return { ...empty, readOnlyReason: 'Animation created by a newer app version.', expectedBaseRevision: options.expectedBaseRevision }
+  }
+  if (parsed.status === 'malformed') {
+    return { ...empty, readOnlyReason: 'The saved animation scene is malformed and cannot be safely edited.', malformedSceneReason: parsed.reason }
+  }
+  const scene = parsed.scene
+  const readOnlyReason = advancedSceneReason(scene)
+  const source = scene.sources[0]
+  const sourceNode = scene.nodes.find((node) => node.id === source?.nodeId)
+  const sourceAnnotationId = sourceNode?.anchor.kind === 'annotation-center' ? sourceNode.anchor.annotationId : undefined
+  const draft: PackageAnimationRouteDraft = {
+    ...empty,
+    sceneId: scene.id,
+    createdAt: scene.createdAt,
+    expectedBaseRevision: Math.max(options.expectedBaseRevision, scene.revision),
+    playbackOptions: { ...scene.playbackOptions },
+    baseScene: clone(scene),
+    sourceId: source?.id || 'animation_source_primary',
+    ...(source?.priority != null ? { sourcePriority: source.priority } : {}),
+    ...(sourceAnnotationId ? { source: { annotationId: sourceAnnotationId, channel: source.channel || inferRouteBuilderDefaultChannel(options.annotations.find((entry) => entry.id === sourceAnnotationId)?.shapeKind) } } : {}),
+    transitions: [],
+    ...(readOnlyReason ? { readOnlyReason } : {}),
+    dirty: false,
+  }
+  const edgeById = new Map(scene.edges.map((edge) => [edge.id, edge]))
+  draft.transitions = scene.manualTraversal
+    .map((step) => ({ step, edge: edgeById.get(step.edgeId) }))
+    .filter((entry): entry is { step: BlueprintAnimationTraversalStep; edge: BlueprintAnimationEdge } => !!entry.edge)
+    .map(({ step, edge }) => selectionFromEdge(edge, draft, step.id))
+  return draft
+}
+
+export function summarizePackageAnimationScene(
+  scene: BlueprintScopeAnimationScene | undefined,
+  annotations: RouteBuilderAnnotation[],
+  packageAnnotationIds: string[],
+): RouteBuilderSceneSummary {
+  const parsed = parseBlueprintAnimationScene(scene)
+  if (parsed.status === 'absent') return { state: 'absent', sourceCount: 0, routeStepCount: 0, valid: false, advanced: false }
+  if (parsed.status === 'unsupported-version') {
+    return { state: 'unsupported', sourceCount: 0, routeStepCount: 0, valid: false, advanced: true, message: 'Animation created by a newer app version.' }
+  }
+  if (parsed.status === 'malformed') {
+    return { state: 'malformed', sourceCount: 0, routeStepCount: 0, valid: false, advanced: true, message: parsed.reason }
+  }
+  const advancedReason = advancedSceneReason(parsed.scene)
+  const validation = validateBlueprintAnimationScene(parsed.scene, {
+    packageAnnotationIds,
+    annotations: annotations.map((annotation) => ({
+      id: annotation.id,
+      pageNumber: annotation.pageNumber,
+      shapeKind: annotation.shapeKind || '',
+      points: annotation.points,
+      arcCtrls: annotation.arcCtrls,
+      pointIds: annotation.pointIds,
+      segmentIds: annotation.segmentIds,
+    })),
+  })
+  return {
+    state: 'supported',
+    sourceCount: parsed.scene.sources.length,
+    routeStepCount: parsed.scene.manualTraversal.length,
+    valid: !validation.some((entry) => entry.severity === 'error'),
+    advanced: !!advancedReason,
+    ...(advancedReason ? { message: advancedReason } : {}),
+  }
+}
+
+export interface RouteBuilderListEntry {
+  id: string
+  number?: number
+  label: string
+  typeLabel: string
+  channel?: BlueprintAnimationChannelType
+  isSource?: boolean
+}
+
+export function getPackageAnimationRouteList(draft: PackageAnimationRouteDraft): RouteBuilderListEntry[] {
+  const annotations = byId(draft)
+  const resolvedBySelectionId = new Map(resolvePackageAnimationRouteDraft(draft).transitions.map((transition) => [transition.selection.id, transition]))
+  const entries: RouteBuilderListEntry[] = []
+  if (draft.source) {
+    const annotation = annotations.get(draft.source.annotationId)
+    entries.push({ id: 'source', number: 1, label: annotation?.label || 'Missing source', typeLabel: 'Source device', channel: draft.source.channel, isSource: true })
+  }
+  draft.transitions.forEach((selection, index) => {
+    const annotation = annotations.get(selection.annotationId)
+    const destinationLabel = resolvedBySelectionId.get(selection.id)?.to?.label
+    entries.push({
+      id: selection.id,
+      label: selection.kind === 'segment'
+        ? `${annotation?.label || 'Missing circuit'} · segment ${selection.segmentIndexHint + 1}${destinationLabel ? ` → ${destinationLabel}` : ''}`
+        : annotation?.label || 'Missing device',
+      typeLabel: selection.kind === 'segment'
+        ? (selection.shapeKind === 'circuit-arc' ? 'Circuit Arc segment' : 'Circuit Path segment')
+        : 'Direct transition',
+      channel: selection.channel,
+      number: index + 2,
+    })
+  })
+  return entries
+}
+
+export interface RouteBuilderOverlay {
+  segments: Array<{ id: string; pageNumber: number; kind: 'straight' | 'quadratic'; start: NormalizedPoint; end: NormalizedPoint; control?: NormalizedPoint }>
+  badges: Array<{ id: string; pageNumber: number; label?: number; point: NormalizedPoint; junction: boolean; ariaLabel: string }>
+}
+
+export function getPackageAnimationRouteOverlay(draft: PackageAnimationRouteDraft): RouteBuilderOverlay {
+  const annotations = byId(draft)
+  const segments: RouteBuilderOverlay['segments'] = []
+  draft.transitions.forEach((selection) => {
+    if (selection.kind !== 'segment') return
+    const annotation = annotations.get(selection.annotationId)
+    if (!annotation) return
+    const geometry = geometryForSelection(annotation, selection)
+    if (!geometry) return
+    segments.push({
+      id: selection.id,
+      pageNumber: annotation.pageNumber,
+      kind: annotation.shapeKind === 'circuit-arc' ? 'quadratic' : 'straight',
+      start: geometry.start,
+      end: geometry.end,
+      ...(geometry.control ? { control: geometry.control } : {}),
+    })
+  })
+  const resolved = resolvePackageAnimationRouteDraft(draft)
+  const badges: RouteBuilderOverlay['badges'] = []
+  let meaningfulNumber = 1
+  const source = resolved.nodes[0]
+  if (source) badges.push({ id: source.id, pageNumber: source.pageNumber, label: meaningfulNumber, point: source.point, junction: false, ariaLabel: `Animation route step ${meaningfulNumber}: ${source.label || 'source'}` })
+  resolved.transitions.forEach((transition) => {
+    const destination = transition.to
+    if (!destination) return
+    const junction = destination.roles.includes('junction')
+    if (junction) {
+      badges.push({ id: `${transition.selection.id}-junction`, pageNumber: destination.pageNumber, point: destination.point, junction: true, ariaLabel: `Animation route junction: ${destination.label || 'circuit point'}` })
+      return
+    }
+    meaningfulNumber += 1
+    badges.push({ id: destination.id, pageNumber: destination.pageNumber, label: meaningfulNumber, point: destination.point, junction: false, ariaLabel: `Animation route step ${meaningfulNumber}: ${destination.label || 'device'}` })
+  })
+  return { segments, badges }
+}
+
+// ── ANIM-2B1: post-save reconciliation ──
+// The builder captures `expectedBaseRevision` when it opens and the draft scene freezes that
+// number (see packageAnimationRouteDraftToScene). Nothing used to advance it after a verified
+// save, so the builder stayed permanently behind local storage and every later save tripped the
+// service's revision check. These helpers are pure so the reconciliation can be tested without
+// mounting the PDF viewer.
+
+/**
+ * Synchronous single-flight guard for Save Route / Clear Route. React state alone cannot close
+ * the double-tap window: the handler closure keeps reading the pre-render `saving: false` until
+ * the next commit, so two taps would issue two scene saves at the same expected revision — the
+ * second of which the service correctly rejects as stale. `begin()` flips synchronously.
+ */
+export interface SingleFlightGuard {
+  begin(): boolean
+  end(): void
+  readonly busy: boolean
+}
+
+export function createSingleFlightGuard(): SingleFlightGuard {
+  let inFlight = false
+  return {
+    begin() {
+      if (inFlight) return false
+      inFlight = true
+      return true
+    },
+    end() {
+      inFlight = false
+    },
+    get busy() {
+      return inFlight
+    },
+  }
+}
+
+export interface PackageAnimationRouteConflictState {
+  message: string
+  latestRevision?: number
+  currentScene?: unknown
+  /** True when this device's own stored route is ahead of the builder — not a remote edit. */
+  sameDevice: boolean
+}
+
+export interface PackageAnimationRouteBuilderState {
+  /**
+   * Identifies one builder session. A save/clear that resolves after its session closed (or
+   * after a different package was opened) must not stamp its conflict onto the session that
+   * happens to be open now — that is how a brand-new clean builder inherited a stale
+   * "out of date" banner before the owner had touched anything.
+   */
+  sessionId: string
+  layerId: string
+  pageNumber: number
+  draft: PackageAnimationRouteDraft
+  saving: boolean
+  conflict?: PackageAnimationRouteConflictState
+}
+
+/** Minimal shape the builder needs from a canonical scope layer. */
+export interface PackageAnimationRouteSourceLayer {
+  id: string
+  name: string
+  selectedAnnotationIds: string[]
+  animationScene?: unknown
+  animationSceneRevision?: number
+}
+
+/**
+ * The approved revision convention, in one place: the greater of the supported scene's own
+ * revision and the layer's revision marker. Open, Reload Latest and Clear must all agree.
+ */
+export function resolvePackageAnimationRouteBaseRevision(layer: PackageAnimationRouteSourceLayer | undefined): number {
+  if (!layer) return 0
+  const parsed = parseBlueprintAnimationScene(layer.animationScene)
+  return Math.max(
+    Math.max(0, Math.floor(Number(layer.animationSceneRevision) || 0)),
+    parsed.status === 'supported' ? parsed.scene.revision : 0,
+  )
+}
+
+/**
+ * Build a clean builder session from a canonical package. This is the single entry point for
+ * both Edit Animation Route and Reload Latest, so the normal open path starts in exactly the
+ * state Reload Latest produces: latest scene, latest revision, clean, no conflict.
+ */
+export function openPackageAnimationRouteSession(options: {
+  layer: PackageAnimationRouteSourceLayer
+  annotations: RouteBuilderAnnotation[]
+  pageNumber: number
+  sessionId: string
+  now?: string
+}): PackageAnimationRouteBuilderState {
+  const { layer } = options
+  const expectedBaseRevision = resolvePackageAnimationRouteBaseRevision(layer)
+  const draftOptions = {
+    packageId: layer.id,
+    packageName: layer.name,
+    packageAnnotationIds: [...layer.selectedAnnotationIds],
+    annotations: options.annotations,
+    expectedBaseRevision,
+    ...(options.now ? { now: options.now } : {}),
+  }
+  const parsed = parseBlueprintAnimationScene(layer.animationScene)
+  const draft = parsed.status === 'absent'
+    ? createEmptyPackageAnimationRouteDraft(draftOptions)
+    : loadPackageAnimationRouteDraft({ ...draftOptions, scene: layer.animationScene })
+  return {
+    sessionId: options.sessionId,
+    layerId: layer.id,
+    pageNumber: options.pageNumber,
+    // A freshly loaded scene is the baseline, so it is clean by construction: nothing about
+    // normalization, default playback fields or rebuilt traversal may mark it dirty.
+    draft: { ...draft, dirty: false, notice: undefined },
+    saving: false,
+    // No conflict, no save error, no verification message carried in from any earlier session.
+  }
+}
+
+export type PackageAnimationRouteRefreshOutcome =
+  | { status: 'unchanged'; state: PackageAnimationRouteBuilderState }
+  | { status: 'rebased'; state: PackageAnimationRouteBuilderState }
+  | { status: 'conflict'; state: PackageAnimationRouteBuilderState }
+
+/**
+ * The canonical local package advanced while a builder was open. A clean builder has no owner
+ * work to protect, so it silently rebases onto the newer scene instead of demanding a manual
+ * Reload Latest. A dirty builder keeps its draft byte-for-byte and raises the local banner.
+ */
+export function reconcilePackageAnimationRouteLocalRefresh(
+  state: PackageAnimationRouteBuilderState,
+  canonicalLayer: PackageAnimationRouteSourceLayer | undefined,
+  annotations: RouteBuilderAnnotation[],
+): PackageAnimationRouteRefreshOutcome {
+  // Case C: a save owns the revision handshake while it is in flight. A refresh watcher must
+  // not manufacture a conflict against the save's own expected revision.
+  if (state.saving || !canonicalLayer || canonicalLayer.id !== state.layerId) {
+    return { status: 'unchanged', state }
+  }
+  const canonicalRevision = resolvePackageAnimationRouteBaseRevision(canonicalLayer)
+  if (canonicalRevision <= state.draft.expectedBaseRevision) {
+    return { status: 'unchanged', state }
+  }
+  if (!state.draft.dirty) {
+    // Case A: auto-rebase, stay clean, drop any stale local banner.
+    return {
+      status: 'rebased',
+      state: openPackageAnimationRouteSession({
+        layer: canonicalLayer,
+        annotations,
+        pageNumber: state.pageNumber,
+        sessionId: state.sessionId,
+      }),
+    }
+  }
+  // Idempotent: once the banner for this revision is showing, re-running the watcher must not
+  // rebuild it (the state object would change identity every pass and spin the effect).
+  if (state.conflict?.sameDevice && state.conflict.latestRevision === canonicalRevision) {
+    return { status: 'unchanged', state }
+  }
+  // Case B: preserve the draft and its expected revision until the owner explicitly reloads.
+  return {
+    status: 'conflict',
+    state: {
+      ...state,
+      conflict: {
+        message: conflictMessageFor('stale-local-revision', undefined),
+        sameDevice: true,
+        latestRevision: canonicalRevision,
+        ...(canonicalLayer.animationScene != null ? { currentScene: canonicalLayer.animationScene } : {}),
+      },
+    },
+  }
+}
+
+export interface PackageAnimationRouteSaveResultLike<TLayer> {
+  success: boolean
+  reason?: string
+  message?: string
+  scene?: unknown
+  scopeLayer?: TLayer
+  currentScene?: unknown
+}
+
+export type PackageAnimationRouteSaveOutcome<TLayer> =
+  | {
+      status: 'saved'
+      scopeLayer: TLayer
+      savedScene: BlueprintScopeAnimationSceneV1 | undefined
+      savedRevision: number
+      /** Clean draft rebased on the verified saved scene, for callers that reconcile before closing. */
+      savedDraft?: PackageAnimationRouteDraft
+      builder: null
+    }
+  | {
+      status: 'conflict'
+      conflict: PackageAnimationRouteConflictState
+      builder: PackageAnimationRouteBuilderState | null
+    }
+
+/**
+ * A same-device stale result means local storage already moved past this builder. Calling that
+ * "another device changed this route" is what made the owner-reported save look like a phantom
+ * remote conflict, so only genuinely remote reasons get that wording.
+ */
+const SAME_DEVICE_CONFLICT_REASONS = new Set(['stale-local-revision'])
+
+function conflictMessageFor(reason: string | undefined, fallback: string | undefined): string {
+  switch (reason) {
+    case 'stale-local-revision':
+      return 'This route builder is out of date with the animation route already saved on this device. Reload the latest route, or keep your draft open.'
+    case 'stale-remote-revision':
+      return 'Another device changed this animation route. Your draft has not been overwritten.'
+    case 'remote-conflict-unresolved':
+      return 'The route save could not be verified. Your draft is still open and unchanged.'
+    case 'scope-layer-missing':
+      return 'The work package no longer exists.'
+    case 'scope-layer-deleted':
+      return 'The work package was deleted.'
+    case 'unsupported-current-scene':
+      return 'The saved animation route uses a newer app version and cannot be replaced here.'
+    case 'invalid-next-scene':
+      return 'The animation route draft could not be saved because it is not valid.'
+    default:
+      return fallback || 'The route save could not be completed. Your draft is still open.'
+  }
+}
+
+function supportedSceneRevision(scene: unknown): number | undefined {
+  const parsed = parseBlueprintAnimationScene(scene)
+  return parsed.status === 'supported' ? parsed.scene.revision : undefined
+}
+
+/**
+ * Rebase a draft onto the scene the service verified as saved: clean, with the final revision.
+ * Reopening the builder from the reconciled package must produce exactly this state.
+ */
+export function markPackageAnimationRouteDraftSaved(
+  draft: PackageAnimationRouteDraft,
+  savedScene: unknown,
+  savedRevision: number,
+): PackageAnimationRouteDraft {
+  const revision = Math.max(0, Math.floor(Number(savedRevision) || 0))
+  if (savedScene == null) {
+    return {
+      ...draft,
+      baseScene: undefined,
+      source: undefined,
+      transitions: [],
+      expectedBaseRevision: revision,
+      dirty: false,
+      notice: undefined,
+    }
+  }
+  return loadPackageAnimationRouteDraft({
+    packageId: draft.packageId,
+    packageName: draft.packageName,
+    packageAnnotationIds: [...draft.packageAnnotationIds],
+    annotations: draft.annotations,
+    scene: savedScene,
+    expectedBaseRevision: revision,
+  })
+}
+
+/**
+ * Translate a public scene-save result into the next builder/package state. Only an explicit
+ * `success: true` carrying the saved scope layer counts as saved; the final revision is always
+ * taken from the service result, never derived from the draft.
+ */
+export function reconcilePackageAnimationRouteSave<TLayer extends { id: string }>(
+  state: PackageAnimationRouteBuilderState | null,
+  result: PackageAnimationRouteSaveResultLike<TLayer>,
+): PackageAnimationRouteSaveOutcome<TLayer> {
+  if (result.success && result.scopeLayer) {
+    const layer = result.scopeLayer as TLayer & { animationSceneRevision?: number }
+    const parsed = parseBlueprintAnimationScene(result.scene)
+    const savedScene = parsed.status === 'supported' ? parsed.scene : undefined
+    const savedRevision = Math.max(
+      savedScene?.revision ?? 0,
+      Math.max(0, Math.floor(Number(layer.animationSceneRevision) || 0)),
+    )
+    return {
+      status: 'saved',
+      scopeLayer: result.scopeLayer,
+      savedScene,
+      savedRevision,
+      ...(state ? { savedDraft: markPackageAnimationRouteDraftSaved(state.draft, savedScene, savedRevision) } : {}),
+      builder: null,
+    }
+  }
+  const conflict: PackageAnimationRouteConflictState = {
+    message: conflictMessageFor(result.reason, result.message),
+    sameDevice: SAME_DEVICE_CONFLICT_REASONS.has(result.reason || ''),
+    ...(supportedSceneRevision(result.currentScene) != null ? { latestRevision: supportedSceneRevision(result.currentScene) } : {}),
+    ...(result.currentScene != null ? { currentScene: result.currentScene } : {}),
+  }
+  return {
+    status: 'conflict',
+    conflict,
+    // Draft, dirty flag and overlays are deliberately untouched on every non-success result.
+    builder: state ? { ...state, saving: false, conflict } : null,
+  }
+}

@@ -51,6 +51,7 @@ import {
   getBlueprintSignedUrl,
   getOperationsBlueprintAnnotations,
   getOperationsBlueprintScopeLayers,
+  saveOperationsBlueprintScopeLayerAnimationScene,
   saveOperationsBlueprintScopeLayers,
   SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
   type BlueprintAnnotation,
@@ -76,6 +77,28 @@ import {
   regenerateCircuitTopologyIds,
   translateNormalizedPoints,
 } from '@/features/blueprint-animation/routeGeometry'
+import { PackageAnimationRouteBuilder } from '@/features/blueprint-animation/PackageAnimationRouteBuilder'
+import {
+  addPackageAnimationDirectTransition,
+  addPackageAnimationRouteSegment,
+  createEmptyPackageAnimationRouteDraft,
+  getPackageAnimationRouteOverlay,
+  isRouteBuilderDeviceKind,
+  loadPackageAnimationRouteDraft,
+  createSingleFlightGuard,
+  openPackageAnimationRouteSession,
+  packageAnimationRouteDraftToScene,
+  reconcilePackageAnimationRouteLocalRefresh,
+  reconcilePackageAnimationRouteSave,
+  resolvePackageAnimationRouteBaseRevision,
+  selectPackageAnimationRouteSource,
+  setRouteBuilderNotice,
+  summarizePackageAnimationScene,
+  type PackageAnimationRouteConflictState,
+  type PackageAnimationRouteDraft,
+  type RouteBuilderAnnotation,
+} from '@/features/blueprint-animation/routeBuilderModel'
+import { findNearestRouteSegment } from '@/features/blueprint-animation/routePicking'
 
 let _pdfjsLib: typeof import('pdfjs-dist') | null = null
 async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
@@ -2698,6 +2721,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [selectedForPackageIds, setSelectedForPackageIds] = useState<Set<string>>(new Set())
   const [scopeLayers, setScopeLayers] = useState<BlueprintScopeLayer[]>([])
+  // Canonical scope-layer snapshot for callbacks that must not read a render-stale package
+  // (notably opening the animation route builder from a package card). Assigned during render
+  // so it is never a commit behind the state it mirrors.
+  const scopeLayersRef = useRef<BlueprintScopeLayer[]>(scopeLayers)
+  scopeLayersRef.current = scopeLayers
   /** Local UI only — canvas isolate mode; not persisted to avoid noisy cloud saves.
    *  Set-based so multiple work packages can be made visible at once (multi-package
    *  visibility filter). Empty set = no filter = show all annotations. */
@@ -2713,6 +2741,17 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   /** Local UI only — Package Pick / Multi Select mode. When on, clicking an annotation on the
    *  canvas toggles it into selectedForPackageIds instead of selecting/moving/editing it. */
   const [isPackagePickMode, setIsPackagePickMode] = useState(false)
+  const [animationRouteBuilder, setAnimationRouteBuilder] = useState<{
+    layerId: string
+    pageNumber: number
+    draft: PackageAnimationRouteDraft
+    saving: boolean
+    conflict?: PackageAnimationRouteConflictState
+  } | null>(null)
+  // ANIM-2B1: React state alone leaves a double-tap window open — the handler closure still
+  // reads `saving: false` until the next render commits, so two taps would fire two saves at the
+  // same expected revision. This guard closes that window synchronously.
+  const animationRouteSaveGuardRef = useRef(createSingleFlightGuard())
   /** Local UI only — drag-to-reorder state for the Work Package / Scope Layer cards.
    *  Order is the scopeLayers array order (no separate index field); reordering rebuilds the
    *  array and persists via the existing persistScopeLayers path. */
@@ -3828,7 +3867,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     !!layoutEditId ||
     // BLUEPRINT-6Q — keep the scope dirty while an annotation save is committing so a
     // realtime/live refresh can't overwrite local storage and drop the new annotation.
-    hasPendingAnnotationSaves
+    hasPendingAnnotationSaves ||
+    // ANIM-2B1 — the route builder holds an unsaved draft whose expectedBaseRevision was
+    // captured when it opened. A live refresh applying a remote snapshot here rewrites local
+    // storage and reloads scopeLayers underneath the builder, leaving the draft behind the
+    // stored revision — which the scene-save service then rejects as a stale revision on the
+    // very first Save. Treat an open builder as dirty for the same reason annotation saves are.
+    !!animationRouteBuilder
 
   useRemoteDataRefresh({
     scopeId: 'blueprints',
@@ -4375,6 +4420,25 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     return pageAnnotations
   }, [pageAnnotations, isolatedAnnotationIdSet, hiddenAnnotationIdSet])
 
+  const animationRouteAnnotations = useMemo<RouteBuilderAnnotation[]>(() => allAnnotations.map((annotation) => {
+    const meta = getAnnotationMeta(annotation)
+    return {
+      id: annotation.id,
+      pageNumber: Math.max(1, Math.floor(Number(annotation.pageNumber) || 1)),
+      label: annotationLabel(annotation),
+      ...(annotation.type === 'shape' && meta.shapeKind ? { shapeKind: meta.shapeKind } : {}),
+      ...(annotation.rect ? { rect: { ...annotation.rect } } : {}),
+      ...(Array.isArray(meta.points) ? { points: meta.points.map((point: any) => ({ x: Number(point.x), y: Number(point.y) })) } : {}),
+      ...(Array.isArray(meta.arcCtrls) ? { arcCtrls: meta.arcCtrls.map((point: any) => ({ x: Number(point.x), y: Number(point.y) })) } : {}),
+      ...(Array.isArray(meta.pointIds) ? { pointIds: [...meta.pointIds] } : {}),
+      ...(Array.isArray(meta.segmentIds) ? { segmentIds: [...meta.segmentIds] } : {}),
+    }
+  }), [allAnnotations])
+  const animationRouteOverlay = useMemo(
+    () => animationRouteBuilder ? getPackageAnimationRouteOverlay(animationRouteBuilder.draft) : null,
+    [animationRouteBuilder]
+  )
+
   const isAnnotationVisibleOnCanvas = useCallback((annotationId: string) => {
     if (isolatedAnnotationIdSet) return isolatedAnnotationIdSet.has(annotationId)
     if (hiddenAnnotationIdSet) return !hiddenAnnotationIdSet.has(annotationId)
@@ -4717,6 +4781,227 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     next.splice(target, 0, moved)
     void persistReorderedScopeLayers(next)
   }, [scopeLayers, persistReorderedScopeLayers])
+
+  // ── ANIM-2B1: one-source package route builder ──
+  const openPackageAnimationRouteBuilder = useCallback((clickedLayer: BlueprintScopeLayer) => {
+    // Resolve the package again from the latest canonical scopeLayers at the moment the builder
+    // opens. The card callback closes over the layer object from the render that drew it, which
+    // can be a revision behind after a save or a live refresh; using it as the authoritative
+    // scene source is what opened the builder on a stale revision.
+    const layer = scopeLayersRef.current.find((entry) => entry.id === clickedLayer.id) || clickedLayer
+    const pageNumber = Math.max(1, Math.floor(Number(layer.pageNumber || layer.itemRefs?.[0]?.pageNumber || currentPage) || 1))
+    setIsPackagePickMode(false)
+    setLayoutEditId(null)
+    setFocusedAnnotationId(null)
+    setOpenPopover(null)
+    if (pageNumber !== currentPage) {
+      setCurrentPage(pageNumber)
+      setPageInput(String(pageNumber))
+    }
+    // A fresh session id: any save/clear still in flight from an earlier session can no longer
+    // stamp its conflict onto this one.
+    setAnimationRouteBuilder(openPackageAnimationRouteSession({
+      layer,
+      annotations: animationRouteAnnotations,
+      pageNumber,
+      sessionId: `route_session_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+    }))
+  }, [animationRouteAnnotations, currentPage])
+
+  const closePackageAnimationRouteBuilder = useCallback(() => {
+    setAnimationRouteBuilder(null)
+  }, [])
+
+  const savePackageAnimationRoute = useCallback(async () => {
+    if (!animationRouteBuilder || animationRouteBuilder.saving || !blueprint?.id) return
+    const session = animationRouteBuilder
+    const conversion = packageAnimationRouteDraftToScene(animationRouteBuilder.draft)
+    if (!conversion.scene || conversion.issues.some((entry) => entry.severity === 'error')) return
+    if (!animationRouteSaveGuardRef.current.begin()) return
+    setAnimationRouteBuilder((previous) => previous ? { ...previous, saving: true, conflict: undefined } : previous)
+    try {
+      const result = await saveOperationsBlueprintScopeLayerAnimationScene({
+        blueprintSetId: blueprint.id,
+        scopeLayerId: animationRouteBuilder.layerId,
+        expectedBaseRevision: animationRouteBuilder.draft.expectedBaseRevision,
+        nextScene: JSON.parse(JSON.stringify(conversion.scene)),
+      })
+      const outcome = reconcilePackageAnimationRouteSave(animationRouteBuilder, result)
+      if (outcome.status === 'saved') {
+        // Reconcile from the verified result only: the saved layer carries the service's final
+        // revision, so the package card and any reopen both read the revision that actually
+        // landed. Closing clears the draft, overlays, badges and route-pick pointer capture in
+        // one step, and never runs the unsaved-changes confirm. The service already dispatched
+        // the one verified poweron:sync-success event — do not dispatch another here.
+        setScopeLayers((previous) => previous.map((layer) => layer.id === outcome.scopeLayer.id ? outcome.scopeLayer : layer))
+        setAnimationRouteBuilder(null)
+        setActionMsg({ type: 'success', text: 'Animation route saved.' })
+        return
+      }
+      // Conflict: keep the builder open, keep the draft and its dirty flag, keep the expected
+      // revision untouched, and leave overlays in place. Reload Latest / Keep Draft Open recover.
+      // Only the session that issued this save may be marked — a late result must never brand a
+      // newly opened (or different) package's builder with a conflict it did not cause.
+      setAnimationRouteBuilder((previous) => previous && previous.sessionId === session.sessionId
+        ? { ...previous, saving: false, conflict: outcome.conflict }
+        : previous)
+    } catch (error: any) {
+      setAnimationRouteBuilder((previous) => previous && previous.sessionId === session.sessionId ? {
+        ...previous,
+        saving: false,
+        conflict: {
+          message: error?.message || 'The route save could not be completed. Your draft is still open.',
+          sameDevice: false,
+        },
+      } : previous)
+    } finally {
+      // Reset after success, conflict and failure alike so a deliberate retry is always allowed.
+      animationRouteSaveGuardRef.current.end()
+    }
+  }, [animationRouteBuilder, blueprint?.id])
+
+  const clearSavedPackageAnimationRoute = useCallback(async (clickedLayer: BlueprintScopeLayer) => {
+    if (!blueprint?.id || !clickedLayer.animationScene) return
+    // Same canonical resolution as open: never send a revision read off a render-stale card.
+    const layer = scopeLayersRef.current.find((entry) => entry.id === clickedLayer.id) || clickedLayer
+    if (!layer.animationScene) return
+    if (typeof window !== 'undefined' && !window.confirm(`Clear the saved animation route for “${layer.name}”? This cannot be undone.`)) return
+    const expectedBaseRevision = resolvePackageAnimationRouteBaseRevision(layer)
+    if (!animationRouteSaveGuardRef.current.begin()) return
+    try {
+      const result = await saveOperationsBlueprintScopeLayerAnimationScene({
+        blueprintSetId: blueprint.id,
+        scopeLayerId: layer.id,
+        expectedBaseRevision,
+        nextScene: null,
+      })
+      const outcome = reconcilePackageAnimationRouteSave(null, result)
+      if (outcome.status === 'saved') {
+        // Same reconciliation as save: adopt the returned scene-less layer so the package card
+        // stops showing the removed route, and keep the service's removal revision marker.
+        setScopeLayers((previous) => previous.map((entry) => entry.id === outcome.scopeLayer.id ? outcome.scopeLayer : entry))
+        if (animationRouteBuilder?.layerId === layer.id) setAnimationRouteBuilder(null)
+        setActionMsg({ type: 'success', text: 'Animation route cleared.' })
+        return
+      }
+      // Conflict-aware removal semantics are unchanged: no local removal, existing scene stays.
+      // Only a builder still showing this package may surface the conflict.
+      setAnimationRouteBuilder((previous) => previous && previous.layerId === layer.id
+        ? { ...previous, saving: false, conflict: outcome.conflict }
+        : previous)
+      setActionMsg({ type: 'error', text: outcome.conflict.message })
+    } finally {
+      animationRouteSaveGuardRef.current.end()
+    }
+  }, [animationRouteBuilder?.layerId, blueprint?.id])
+
+  const reloadLatestPackageAnimationRoute = useCallback(() => {
+    if (!animationRouteBuilder) return
+    const canonical = scopeLayersRef.current.find((entry) => entry.id === animationRouteBuilder.layerId)
+    if (!canonical) {
+      loadScopeLayers()
+      return
+    }
+    // Canonical local scopeLayers is normally already current, so no cloud fetch is needed. A
+    // remote conflict is the exception: its currentScene can be ahead of anything stored locally.
+    const conflictScene = animationRouteBuilder.conflict?.currentScene
+    const conflictCandidate = conflictScene != null
+      ? { ...canonical, animationScene: conflictScene, animationSceneRevision: undefined }
+      : undefined
+    const layer = conflictCandidate
+      && resolvePackageAnimationRouteBaseRevision(conflictCandidate) > resolvePackageAnimationRouteBaseRevision(canonical)
+      ? conflictCandidate
+      : canonical
+    // Reload Latest and Edit-open now produce the same clean state from the same helper.
+    setAnimationRouteBuilder(openPackageAnimationRouteSession({
+      layer,
+      annotations: animationRouteAnnotations,
+      pageNumber: animationRouteBuilder.pageNumber,
+      sessionId: `route_session_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+    }))
+  }, [animationRouteAnnotations, animationRouteBuilder, loadScopeLayers])
+
+  const handleAnimationRoutePick = useCallback((event: React.PointerEvent<HTMLDivElement>, targetAnnotationId?: string) => {
+    if (!animationRouteBuilder || !overlayRef.current) return false
+    const layer = scopeLayers.find((entry) => entry.id === animationRouteBuilder.layerId)
+    if (!layer) return false
+    const overlayRect = overlayRef.current.getBoundingClientRect()
+    const pointer = toNorm(event.clientX - overlayRect.left, event.clientY - overlayRect.top, overlayRect.width, overlayRect.height)
+    const packageIds = new Set(layer.selectedAnnotationIds)
+    const circuits = animationRouteAnnotations.filter((annotation) => (
+      annotation.pageNumber === currentPage && packageIds.has(annotation.id) && isCircuitShapeKind(annotation.shapeKind)
+    ))
+    const hit = findNearestRouteSegment(pointer, circuits, {
+      pageWidth: Math.max(1, overlayRect.width),
+      pageHeight: Math.max(1, overlayRect.height),
+      tolerancePx: event.pointerType === 'touch' ? 28 : 14,
+    })
+    let mutation
+    if (hit && animationRouteBuilder.draft.source) {
+      mutation = addPackageAnimationRouteSegment(animationRouteBuilder.draft, hit)
+    } else if (targetAnnotationId) {
+      const annotation = animationRouteAnnotations.find((entry) => entry.id === targetAnnotationId)
+      if (!packageIds.has(targetAnnotationId)) {
+        mutation = {
+          accepted: false,
+          draft: setRouteBuilderNotice(animationRouteBuilder.draft, {
+            severity: 'error',
+            code: 'annotation-not-in-package',
+            message: 'Add this item to the work package before using it in the animation route.',
+          }),
+        }
+      } else if (!animationRouteBuilder.draft.source) {
+        mutation = selectPackageAnimationRouteSource(animationRouteBuilder.draft, targetAnnotationId)
+      } else if (annotation && isRouteBuilderDeviceKind(annotation.shapeKind)) {
+        const confirmed = typeof window === 'undefined' || window.confirm('This device is not being reached by a visible circuit segment. Add an explicit direct transition with a warning?')
+        mutation = confirmed
+          ? addPackageAnimationDirectTransition(animationRouteBuilder.draft, targetAnnotationId)
+          : { accepted: false, draft: animationRouteBuilder.draft }
+      } else if (annotation && isCircuitShapeKind(annotation.shapeKind)) {
+        mutation = {
+          accepted: false,
+          draft: setRouteBuilderNotice(animationRouteBuilder.draft, {
+            severity: 'error',
+            code: 'segment-not-hit',
+            message: Array.isArray(annotation.segmentIds)
+              ? 'Tap closer to an individual circuit segment.'
+              : 'This circuit annotation has no persisted stable segment IDs and cannot be used safely.',
+          }),
+        }
+      } else {
+        mutation = {
+          accepted: false,
+          draft: setRouteBuilderNotice(animationRouteBuilder.draft, {
+            severity: 'error',
+            code: 'ineligible-route-item',
+            message: 'That annotation is not an eligible route source, circuit segment, control, or light fixture.',
+          }),
+        }
+      }
+    } else {
+      return false
+    }
+    setAnimationRouteBuilder((previous) => previous ? { ...previous, draft: mutation.draft, conflict: undefined } : previous)
+    return true
+  }, [animationRouteAnnotations, animationRouteBuilder, currentPage, scopeLayers])
+
+  useEffect(() => {
+    if (!animationRouteBuilder) return
+    if (currentPage !== animationRouteBuilder.pageNumber || !scopeLayers.some((layer) => layer.id === animationRouteBuilder.layerId)) {
+      setAnimationRouteBuilder(null)
+    }
+  }, [animationRouteBuilder, currentPage, scopeLayers])
+
+  // The canonical local package can legitimately advance while the builder is open (verified
+  // save, local refresh, sync reconciliation). A clean builder rebases silently; a dirty one
+  // keeps the owner's draft and raises the local banner; a save in flight owns its own handshake.
+  useEffect(() => {
+    if (!animationRouteBuilder) return
+    const canonical = scopeLayers.find((layer) => layer.id === animationRouteBuilder.layerId)
+    const outcome = reconcilePackageAnimationRouteLocalRefresh(animationRouteBuilder, canonical, animationRouteAnnotations)
+    if (outcome.status === 'unchanged') return
+    setAnimationRouteBuilder((previous) => previous && previous.sessionId === animationRouteBuilder.sessionId ? outcome.state : previous)
+  }, [animationRouteAnnotations, animationRouteBuilder, scopeLayers])
 
   // ── Symbols Size popup open — positions the panel just below its toggle button ──
   // Pure UI positioning; never touches annotation data, geometry, or viewer layout.
@@ -5529,6 +5814,15 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   if (!annEl || !annotationId) return
 
+  // Route Builder has its own pick state and takes precedence over Package Pick and normal
+  // annotation focus/editing. Segment hit-testing still uses the exact pointer location.
+  if (animationRouteBuilder) {
+    e.preventDefault()
+    e.stopPropagation()
+    handleAnimationRoutePick(e, annotationId)
+    return
+  }
+
   // Package Pick mode takes precedence over all normal interactions. A pointerdown on an
   // annotation toggles it in/out of the package-pick set and stops here — no focus, move,
   // edit, draw or delete is triggered, and annotation geometry is never touched. This fires
@@ -5577,7 +5871,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     height: r.height,
   })
   setFocusedAnnotationId(annotationId)
-}, [effectiveTool, layoutEditId, removeAnnotation, shapeKind, isPackagePickMode, togglePackagePickId])
+}, [animationRouteBuilder, effectiveTool, handleAnimationRoutePick, layoutEditId, removeAnnotation, shapeKind, isPackagePickMode, togglePackagePickId])
 
   const jumpToPage = useCallback(() => {
     const raw = Number(pageInput)
@@ -9741,6 +10035,11 @@ const annotationPanelSizeClass =
                         const selectAnnotation = (
                           e: React.MouseEvent<HTMLElement | SVGElement> | React.PointerEvent<HTMLElement | SVGElement>
                         ) => {
+                          if (animationRouteBuilder) {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            return
+                          }
                           // Package Pick mode: selection toggling is handled once on pointerdown by
                           // handleAnnotationSelectCapture. Here we only block the normal click-select /
                           // move / edit behaviour so the item is never accidentally focused or moved.
@@ -10553,6 +10852,38 @@ const annotationPanelSizeClass =
                         )
                       })}
 
+                      {/* ANIM-2B1 builder-only overlays. These never write annotation styling or
+                          metadata and disappear with the dedicated builder state. */}
+                      {animationRouteOverlay && pageOverlaySvgProps && (
+                        <svg
+                          className="absolute inset-0 pointer-events-none overflow-visible"
+                          {...pageOverlaySvgProps}
+                          style={{ zIndex: 24 }}
+                          aria-hidden="true"
+                        >
+                          {animationRouteOverlay.segments.filter((segment) => segment.pageNumber === currentPage).map((segment) => {
+                            const startX = segment.start.x * displaySize.w
+                            const startY = segment.start.y * displaySize.h
+                            const endX = segment.end.x * displaySize.w
+                            const endY = segment.end.y * displaySize.h
+                            return segment.kind === 'quadratic' && segment.control
+                              ? <path key={segment.id} d={`M ${startX} ${startY} Q ${segment.control.x * displaySize.w} ${segment.control.y * displaySize.h} ${endX} ${endY}`} fill="none" stroke="#22d3ee" strokeWidth={5} strokeLinecap="round" opacity={0.82} vectorEffect="non-scaling-stroke" />
+                              : <line key={segment.id} x1={startX} y1={startY} x2={endX} y2={endY} stroke="#22d3ee" strokeWidth={5} strokeLinecap="round" opacity={0.82} vectorEffect="non-scaling-stroke" />
+                          })}
+                        </svg>
+                      )}
+                      {animationRouteOverlay?.badges.filter((badge) => badge.pageNumber === currentPage).map((badge) => (
+                        <div
+                          key={badge.id}
+                          role="img"
+                          aria-label={badge.ariaLabel}
+                          className={`absolute pointer-events-none flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white font-bold shadow-[0_0_0_2px_rgba(8,145,178,0.8),0_2px_8px_rgba(0,0,0,0.7)] ${badge.junction ? 'h-3 w-3 bg-cyan-300' : 'h-6 w-6 bg-cyan-500 text-[11px] text-cyan-950'}`}
+                          style={{ left: `${badge.point.x * 100}%`, top: `${badge.point.y * 100}%`, zIndex: 25 }}
+                        >
+                          {!badge.junction ? badge.label : null}
+                        </div>
+                      ))}
+
                       {isPackageVisibilityFilterActive && isolatedAnnotationIdSet && isolatedAnnotationIdSet.size === 0 && annotationsVisible && (
                         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[5]">
                           <div className="rounded-lg border border-amber-500/40 bg-black/70 px-3 py-2 text-xs text-amber-200 shadow-lg">
@@ -10562,7 +10893,7 @@ const annotationPanelSizeClass =
                       )}
 
                       {/* Arch control handle — yellow draggable handle at bezier control point for selected arch-line */}
-                      {layoutEditId && (() => {
+                      {!animationRouteBuilder && layoutEditId && (() => {
                         const archAnn = canvasPageAnnotations.find(a => a.id === layoutEditId)
                         if (!archAnn) return null
                         const archMeta = getAnnotationMeta(archAnn)
@@ -10601,7 +10932,7 @@ const annotationPanelSizeClass =
                           circuit-arc. Positioned in absolute page-normalized space (like the arch
                           handle above) rather than inside the annotation's local viewBox, so the
                           handle sits exactly where the control point is stored. */}
-                      {layoutEditId && (() => {
+                      {!animationRouteBuilder && layoutEditId && (() => {
                         const arcAnn = canvasPageAnnotations.find(a => a.id === layoutEditId)
                         if (!arcAnn) return null
                         const arcMeta = getAnnotationMeta(arcAnn)
@@ -11288,6 +11619,7 @@ const annotationPanelSizeClass =
                         const isLastLayer = layerIndex === scopeLayers.length - 1
                         const distinctPageCount = getBlueprintScopeLayerDistinctPageCount(layer)
                         const pageBadgeLabel = layer.pageNumber != null ? `Page ${layer.pageNumber}` : 'Unscoped'
+                        const animationSummary = summarizePackageAnimationScene(layer.animationScene, animationRouteAnnotations, layer.selectedAnnotationIds)
                         return (
                           <div
                             key={layer.id}
@@ -11397,6 +11729,46 @@ const annotationPanelSizeClass =
                                 {summary.length > 4 && <span className="text-[9px] text-gray-500">+{summary.length - 4} more</span>}
                               </div>
                             )}
+                            <div className="mt-2 border-t border-cyan-900/35 pt-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-cyan-300"><Waypoints size={11} /> Animation</div>
+                                {animationSummary.state === 'supported' && (
+                                  <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${animationSummary.valid ? 'border-emerald-500/40 bg-emerald-950/35 text-emerald-300' : 'border-amber-500/40 bg-amber-950/35 text-amber-300'}`}>
+                                    {animationSummary.valid ? 'Valid' : 'Needs attention'}
+                                  </span>
+                                )}
+                              </div>
+                              {animationSummary.state === 'unsupported' ? (
+                                <div className="mt-1.5 rounded border border-amber-700/40 bg-amber-950/30 px-2 py-1 text-[10px] text-amber-200">Animation created by a newer app version</div>
+                              ) : animationSummary.state === 'malformed' ? (
+                                <div className="mt-1.5 rounded border border-red-800/40 bg-red-950/25 px-2 py-1 text-[10px] text-red-200">Saved animation data needs attention and is read-only.</div>
+                              ) : (
+                                <>
+                                  {animationSummary.state === 'supported' && (
+                                    <div className="mt-1 text-[10px] text-gray-400">{animationSummary.sourceCount} {animationSummary.sourceCount === 1 ? 'source' : 'sources'} • {animationSummary.routeStepCount} route {animationSummary.routeStepCount === 1 ? 'step' : 'steps'}</div>
+                                  )}
+                                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => openPackageAnimationRouteBuilder(layer)}
+                                      className="min-h-7 rounded border border-cyan-500/50 bg-cyan-500/10 px-2 text-[10px] font-semibold text-cyan-200 hover:bg-cyan-500/20"
+                                    >
+                                      {animationSummary.state === 'supported' ? 'Edit Animation Route' : 'Build Animation Route'}
+                                    </button>
+                                    {animationSummary.state === 'supported' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => void clearSavedPackageAnimationRoute(layer)}
+                                        className="min-h-7 rounded border border-red-900/60 px-2 text-[10px] text-red-300 hover:bg-red-950/35"
+                                      >
+                                        Clear Animation Route
+                                      </button>
+                                    )}
+                                  </div>
+                                  {animationSummary.advanced && animationSummary.message && <div className="mt-1 text-[9px] text-amber-300/80">{animationSummary.message}</div>}
+                                </>
+                              )}
+                            </div>
                           </div>
                         )
                       })}
@@ -12077,6 +12449,20 @@ const annotationPanelSizeClass =
             </div>
           </div>
         </div>,
+        viewerPortalTarget
+      )}
+
+      {animationRouteBuilder && createPortal(
+        <PackageAnimationRouteBuilder
+          draft={animationRouteBuilder.draft}
+          saving={animationRouteBuilder.saving}
+          conflict={animationRouteBuilder.conflict}
+          onDraftChange={(draft) => setAnimationRouteBuilder((previous) => previous ? { ...previous, draft, conflict: undefined } : previous)}
+          onCancel={closePackageAnimationRouteBuilder}
+          onSave={() => void savePackageAnimationRoute()}
+          onReloadLatest={reloadLatestPackageAnimationRoute}
+          onKeepDraftOpen={() => setAnimationRouteBuilder((previous) => previous ? { ...previous, conflict: undefined } : previous)}
+        />,
         viewerPortalTarget
       )}
 
