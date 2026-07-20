@@ -79,6 +79,7 @@ import {
 } from '@/features/blueprint-animation/routeGeometry'
 import { PackageAnimationRouteBuilder } from '@/features/blueprint-animation/PackageAnimationRouteBuilder'
 import { PackageAnimationPlaybackControls } from '@/features/blueprint-animation/PackageAnimationPlaybackControls'
+import type { PlaybackFixtureAppearance } from '@/features/blueprint-animation/playbackFixtureAppearance'
 import { parseBlueprintAnimationScene } from '@/features/blueprint-animation/sceneSchema'
 import {
   addPackageAnimationDirectTransition,
@@ -100,7 +101,7 @@ import {
   type PackageAnimationRouteDraft,
   type RouteBuilderAnnotation,
 } from '@/features/blueprint-animation/routeBuilderModel'
-import { findNearestRouteSegment } from '@/features/blueprint-animation/routePicking'
+import { findNearestRouteSegment, resolveRoutePickIntent } from '@/features/blueprint-animation/routePicking'
 
 let _pdfjsLib: typeof import('pdfjs-dist') | null = null
 async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
@@ -1395,6 +1396,10 @@ const LIGHT_OUTPUT_SHAPE_KINDS = new Set<ShapeKind>([
 function isLightOutputShapeKind(shapeKind: any): shapeKind is ShapeKind {
   return typeof shapeKind === 'string' && LIGHT_OUTPUT_SHAPE_KINDS.has(shapeKind as ShapeKind)
 }
+
+// Stable empty set so "no playback running" never produces a fresh identity and re-renders the
+// annotation layer on every pass.
+const EMPTY_ANNOTATION_ID_SET: Set<string> = new Set()
 
 // Wall-mounted electrical symbols that support rotation to match wall orientation.
 // Light fixtures (can lights, recessed/pendant lights, LED panels) intentionally excluded.
@@ -4448,6 +4453,40 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     [animationRouteBuilder]
   )
 
+  // Annotations owned by the active playback run. Their resting Light Output glow is suppressed
+  // for the duration so the route can light them from "off" — a render gate only, recomputed just
+  // on play/stop rather than per frame. Nothing here writes to an annotation.
+  const animationPlaybackAnnotationIds = useMemo<Set<string>>(() => {
+    if (!animationPlayback) return EMPTY_ANNOTATION_ID_SET
+    const layer = scopeLayers.find((entry) => entry.id === animationPlayback.layerId)
+    const parsed = parseBlueprintAnimationScene(layer?.animationScene)
+    if (parsed.status !== 'supported') return EMPTY_ANNOTATION_ID_SET
+    const ids = new Set<string>()
+    parsed.scene.nodes.forEach((node) => {
+      if (node.anchor.kind !== 'virtual-point') ids.add(node.anchor.annotationId)
+    })
+    return ids
+  }, [animationPlayback, scopeLayers])
+
+  // Each route fixture's resting appearance, resolved through the same helper the canvas uses so
+  // a fully activated fixture lands exactly on its saved Light Output rather than an approximation.
+  const animationPlaybackFixtureAppearances = useMemo<Record<string, PlaybackFixtureAppearance>>(() => {
+    if (animationPlaybackAnnotationIds.size === 0) return {}
+    const appearances: Record<string, PlaybackFixtureAppearance> = {}
+    allAnnotations.forEach((annotation) => {
+      if (!animationPlaybackAnnotationIds.has(annotation.id) || !annotation.rect) return
+      const meta = getAnnotationMeta(annotation)
+      if (!isLightOutputShapeKind(meta.shapeKind)) return
+      const metrics = getLightOutputGlowMetrics(meta.shapeKind, meta)
+      appearances[annotation.id] = {
+        rect: clampRectToPage(annotation.rect as any),
+        glowRadius: metrics.outputOverlayR,
+        glowColor: metrics.kelvinColor,
+      }
+    })
+    return appearances
+  }, [allAnnotations, animationPlaybackAnnotationIds])
+
   const isAnnotationVisibleOnCanvas = useCallback((annotationId: string) => {
     if (isolatedAnnotationIdSet) return isolatedAnnotationIdSet.has(annotationId)
     if (hiddenAnnotationIdSet) return !hiddenAnnotationIdSet.has(annotationId)
@@ -4948,12 +4987,35 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       pageHeight: Math.max(1, overlayRect.height),
       tolerancePx: event.pointerType === 'touch' ? 28 : 14,
     })
+    const overlappingAnnotationIds: string[] = []
+    if (typeof document !== 'undefined') {
+      for (const element of document.elementsFromPoint(event.clientX, event.clientY)) {
+        const annotationElement = element.closest?.('[data-annotation-id]') as HTMLElement | null
+        const annotationId = annotationElement?.getAttribute('data-annotation-id')
+        if (!annotationId || !overlayRef.current.contains(annotationElement) || overlappingAnnotationIds.includes(annotationId)) continue
+        overlappingAnnotationIds.push(annotationId)
+      }
+    }
+    const eligibleDeviceIds = new Set(animationRouteAnnotations.filter((annotation) => (
+      annotation.pageNumber === currentPage
+      && packageIds.has(annotation.id)
+      && isRouteBuilderDeviceKind(annotation.shapeKind)
+    )).map((annotation) => annotation.id))
+    const intent = resolveRoutePickIntent({
+      sourceSelected: !!animationRouteBuilder.draft.source,
+      overlappingAnnotationIds,
+      eligibleDeviceIds,
+      segmentHit: hit,
+      fallbackAnnotationId: targetAnnotationId,
+    })
+    if (!intent) return false
     let mutation
-    if (hit && animationRouteBuilder.draft.source) {
-      mutation = addPackageAnimationRouteSegment(animationRouteBuilder.draft, hit)
-    } else if (targetAnnotationId) {
-      const annotation = animationRouteAnnotations.find((entry) => entry.id === targetAnnotationId)
-      if (!packageIds.has(targetAnnotationId)) {
+    if (intent.kind === 'segment') {
+      mutation = addPackageAnimationRouteSegment(animationRouteBuilder.draft, intent.hit)
+    } else {
+      const annotationId = intent.annotationId
+      const annotation = animationRouteAnnotations.find((entry) => entry.id === annotationId)
+      if (!packageIds.has(annotationId)) {
         mutation = {
           accepted: false,
           draft: setRouteBuilderNotice(animationRouteBuilder.draft, {
@@ -4963,11 +5025,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
           }),
         }
       } else if (!animationRouteBuilder.draft.source) {
-        mutation = selectPackageAnimationRouteSource(animationRouteBuilder.draft, targetAnnotationId)
+        mutation = selectPackageAnimationRouteSource(animationRouteBuilder.draft, annotationId)
       } else if (annotation && isRouteBuilderDeviceKind(annotation.shapeKind)) {
         const confirmed = typeof window === 'undefined' || window.confirm('This device is not being reached by a visible circuit segment. Add an explicit direct transition with a warning?')
         mutation = confirmed
-          ? addPackageAnimationDirectTransition(animationRouteBuilder.draft, targetAnnotationId)
+          ? addPackageAnimationDirectTransition(animationRouteBuilder.draft, annotationId)
           : { accepted: false, draft: animationRouteBuilder.draft }
       } else if (annotation && isCircuitShapeKind(annotation.shapeKind)) {
         mutation = {
@@ -4990,8 +5052,6 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
           }),
         }
       }
-    } else {
-      return false
     }
     setAnimationRouteBuilder((previous) => previous ? { ...previous, draft: mutation.draft, conflict: undefined } : previous)
     return true
@@ -10391,7 +10451,7 @@ const annotationPanelSizeClass =
                                   height="100%"
                                   preserveAspectRatio="xMidYMid meet"
                                 >
-                                  {glowMetrics && renderLightOutputGlowSvg(glowId, glowMetrics, lightingEffectsVisible)}
+                                  {glowMetrics && renderLightOutputGlowSvg(glowId, glowMetrics, lightingEffectsVisible && !animationPlaybackAnnotationIds.has(a.id))}
                                   <g opacity={fillOpacity}>
                                     {renderElectricalSymbolSvg(kind, meta, { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible: electricalSymbolLabelsVisible, labelScale: symbolLabelScale, labelCustomColorsEnabled: symbolLabelCustomColorsEnabled, labelTextColor: symbolLabelTextColor, labelBorderColor: symbolLabelBorderColor, labelFillColor: symbolLabelFillColor }, getAnnotationRotationDeg(meta), isFocused)}
                                   </g>
@@ -10420,7 +10480,7 @@ const annotationPanelSizeClass =
                                   height="100%"
                                   preserveAspectRatio="xMidYMid meet"
                                 >
-                                  {renderLightOutputGlowSvg(glowId, glowMetrics, lightingEffectsVisible)}
+                                  {renderLightOutputGlowSvg(glowId, glowMetrics, lightingEffectsVisible && !animationPlaybackAnnotationIds.has(a.id))}
                                   {/* Outer trim ring */}
                                   <circle cx="50" cy="50" r={trimRadius} fill="none" stroke={borderColor} strokeWidth={ringStrokeWidth} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} opacity={fillOpacity} />
                                   {/* Crosshair — horizontal */}
@@ -11786,6 +11846,8 @@ const annotationPanelSizeClass =
                                         overlayWidth={overlayVisualW}
                                         overlayHeight={overlayVisualH}
                                         overlayTarget={overlayRef.current}
+                                        fixtureAppearances={animationPlaybackFixtureAppearances}
+                                        lightingEffectsVisible={lightingEffectsVisible}
                                         onActivate={() => {
                                           if (!blueprint?.id) return
                                           if (playbackPageNumber !== currentPage) {

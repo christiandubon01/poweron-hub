@@ -1,9 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { RouteBuilderAnnotation } from './routeBuilderModel'
 import { preparePlaybackGeometry } from './playbackGeometry'
 import { calculatePlaybackFrame, createPlaybackTimeline, type PlaybackFrame } from './playbackModel'
 import { parseBlueprintAnimationScene } from './sceneSchema'
+import {
+  buildPlaybackActivationEventNodeIds,
+  classifyPlaybackNodeVisualRole,
+  resolvePlaybackDeviceVisual,
+  type PlaybackDeviceVisualKind,
+  type PlaybackFixtureAppearance,
+} from './playbackFixtureAppearance'
 
 type PlaybackStatus = 'idle' | 'playing' | 'paused' | 'complete'
 
@@ -17,9 +24,32 @@ export interface PackageAnimationPlaybackControlsProps {
   overlayWidth: number
   overlayHeight: number
   overlayTarget: HTMLElement | null
+  /** Resting Light Output of each route fixture, keyed by annotation id and resolved by the
+   *  viewer from the annotation's own saved meta. Playback only ever reads these. */
+  fixtureAppearances?: Record<string, PlaybackFixtureAppearance>
+  /** Mirrors the viewer's Lighting Effects toggle. Playback honours it: with effects hidden the
+   *  devices still show their reaction and ready rings, but no fixture glow is forced on. */
+  lightingEffectsVisible?: boolean
   onActivate(): void
   onDeactivate(): void
 }
+
+/** Ring tints per treatment. "ready" is deliberately neutral — a control that has merely been
+ *  reached must never read as one that has switched on. */
+const DEVICE_RING_COLORS: Record<Exclude<PlaybackDeviceVisualKind, 'none'>, string> = {
+  'source-pulse': '#fde68a',
+  ready: '#94a3b8',
+  reacting: '#67e8f9',
+  energized: '#a7f3d0',
+}
+
+// Gradient stops mirror the viewer's resting fixture glow so a fully activated fixture is
+// indistinguishable from its saved appearance; only the opacity multiplier animates.
+const GLOW_STOPS: Array<{ offset: string; opacity: number }> = [
+  { offset: '0%', opacity: 0.5 },
+  { offset: '55%', opacity: 0.24 },
+  { offset: '100%', opacity: 0 },
+]
 
 const CHANNEL_COLORS: Record<string, string> = {
   'switched-line-voltage': '#facc15',
@@ -40,6 +70,8 @@ export function PackageAnimationPlaybackControls({
   overlayWidth,
   overlayHeight,
   overlayTarget,
+  fixtureAppearances,
+  lightingEffectsVisible = true,
   onActivate,
   onDeactivate,
 }: PackageAnimationPlaybackControlsProps) {
@@ -47,15 +79,36 @@ export function PackageAnimationPlaybackControls({
     ? Number((pageWidth / pageHeight).toFixed(6))
     : 0
   const prepared = useMemo(() => {
+    // Both indexes are derived once per scene: the timeline reports device state by node id, but
+    // painting a fixture needs the annotation it is anchored to, and the activation-event set is
+    // what keeps a control from ever lighting itself up.
+    const nodeAnnotationIds = new Map<string, string>()
     try {
       const parsed = parseBlueprintAnimationScene(scene)
       if (parsed.status !== 'supported') throw new Error('The saved animation scene is not playable by this app version.')
       const geometry = preparePlaybackGeometry({ scene: parsed.scene, annotations, pageMetrics: { width: pageAspect, height: 1 } })
-      return { timeline: createPlaybackTimeline(geometry, parsed.scene.playbackOptions), error: undefined }
+      parsed.scene.nodes.forEach((node) => {
+        if (node.anchor.kind !== 'virtual-point') nodeAnnotationIds.set(node.id, node.anchor.annotationId)
+      })
+      return {
+        timeline: createPlaybackTimeline(geometry, parsed.scene.playbackOptions),
+        nodeAnnotationIds,
+        activationEventNodeIds: buildPlaybackActivationEventNodeIds(parsed.scene.events),
+        error: undefined,
+      }
     } catch (error) {
-      return { timeline: undefined, error: error instanceof Error ? error.message : 'Animation geometry could not be resolved.' }
+      return {
+        timeline: undefined,
+        nodeAnnotationIds,
+        activationEventNodeIds: new Set<string>(),
+        error: error instanceof Error ? error.message : 'Animation geometry could not be resolved.',
+      }
     }
   }, [annotations, pageAspect, scene])
+  const nodesById = useMemo(
+    () => new Map((prepared.timeline?.nodes ?? []).map((node) => [node.id, node])),
+    [prepared.timeline],
+  )
   const [status, setStatus] = useState<PlaybackStatus>('idle')
   const [elapsedMs, setElapsedMs] = useState(0)
   const [runToken, setRunToken] = useState(0)
@@ -219,22 +272,88 @@ export function PackageAnimationPlaybackControls({
               />
             )}
           </svg>
-          {frame.devices.filter((device) => device.pageNumber === currentPage && device.phase !== 'idle').map((device) => (
-            <div
-              key={device.nodeId}
-              className="absolute pointer-events-none select-none -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-cyan-200"
-              style={{
-                left: `${device.point.x * 100}%`,
-                top: `${device.point.y * 100}%`,
-                width: `${16 + device.progress * 10}px`,
-                height: `${16 + device.progress * 10}px`,
-                zIndex: 27,
-                opacity: 0.35 + device.progress * 0.65,
-                boxShadow: `0 0 ${6 + device.progress * 10}px rgba(34,211,238,0.85)`,
-              }}
-              aria-hidden="true"
-            />
-          ))}
+          {frame.devices.map((device) => {
+            if (device.pageNumber !== currentPage) return null
+            const node = nodesById.get(device.nodeId)
+            const visual = resolvePlaybackDeviceVisual({
+              visualRole: classifyPlaybackNodeVisualRole(node?.roles, device.nodeId === prepared.timeline?.sourceNodeId),
+              phase: device.phase,
+              progress: device.progress,
+              elapsedMs: frame.elapsedMs,
+              hasActivationEvent: prepared.activationEventNodeIds.has(device.nodeId),
+              reducedMotion: prepared.timeline?.options.reducedMotion === true,
+            })
+            if (visual.kind === 'none') return null
+            const annotationId = prepared.nodeAnnotationIds.get(device.nodeId)
+            const appearance = annotationId ? fixtureAppearances?.[annotationId] : undefined
+            const ringColor = DEVICE_RING_COLORS[visual.kind]
+            const isPulse = visual.kind === 'source-pulse'
+            // The source pulse expands as it fades; every other ring grows into its treatment.
+            const ringSize = isPulse ? 16 + (1 - visual.ringStrength) * 24 : 16 + visual.ringStrength * 10
+            const ringOpacity = isPulse ? visual.ringStrength : 0.35 + visual.ringStrength * 0.65
+            return (
+              <Fragment key={device.nodeId}>
+                {/* The fixture's own saved Light Output, faded in. Rendered here rather than on the
+                    annotation so the per-frame clock never re-renders the viewer, and so Stop
+                    leaves nothing behind — the annotation's stored meta is only ever read. */}
+                {lightingEffectsVisible && appearance && visual.glowOpacity > 0 && (
+                  <div
+                    className="absolute pointer-events-none select-none"
+                    style={{
+                      left: `${appearance.rect.x * 100}%`,
+                      top: `${appearance.rect.y * 100}%`,
+                      width: `${appearance.rect.w * 100}%`,
+                      height: `${appearance.rect.h * 100}%`,
+                      zIndex: 25,
+                    }}
+                    aria-hidden="true"
+                  >
+                    <svg
+                      className="absolute inset-0 overflow-visible"
+                      viewBox="0 0 100 100"
+                      width="100%"
+                      height="100%"
+                      preserveAspectRatio="xMidYMid meet"
+                    >
+                      <defs>
+                        <radialGradient id={`playback-glow-${device.nodeId}`} cx="50%" cy="50%" r="50%">
+                          {GLOW_STOPS.map((stop) => (
+                            <stop
+                              key={stop.offset}
+                              offset={stop.offset}
+                              stopColor={appearance.glowColor}
+                              stopOpacity={stop.opacity * visual.glowOpacity}
+                            />
+                          ))}
+                        </radialGradient>
+                      </defs>
+                      <circle
+                        cx={50}
+                        cy={50}
+                        r={appearance.glowRadius * visual.glowRadiusFraction}
+                        fill={`url(#playback-glow-${device.nodeId})`}
+                        stroke="none"
+                      />
+                    </svg>
+                  </div>
+                )}
+                <div
+                  className={`absolute pointer-events-none select-none -translate-x-1/2 -translate-y-1/2 rounded-full border-2 ${visual.kind === 'ready' ? 'border-dashed' : ''}`}
+                  style={{
+                    left: `${device.point.x * 100}%`,
+                    top: `${device.point.y * 100}%`,
+                    width: `${ringSize}px`,
+                    height: `${ringSize}px`,
+                    borderColor: ringColor,
+                    zIndex: 27,
+                    opacity: ringOpacity,
+                    ...(visual.kind === 'ready' ? {} : { boxShadow: `0 0 ${6 + visual.ringStrength * 10}px ${ringColor}` }),
+                  }}
+                  aria-hidden="true"
+                />
+              </Fragment>
+            )
+          })}
         </>,
         overlayTarget,
       )}

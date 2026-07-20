@@ -50,6 +50,40 @@ export interface RoutePickOptions {
   quadraticSamples?: number
 }
 
+export type RoutePickIntent =
+  | { kind: 'annotation'; annotationId: string }
+  | { kind: 'segment'; hit: RouteSegmentPick }
+
+export interface RoutePickIntentOptions {
+  sourceSelected: boolean
+  overlappingAnnotationIds: string[]
+  eligibleDeviceIds: ReadonlySet<string>
+  segmentHit: RouteSegmentPick | null
+  fallbackAnnotationId?: string
+}
+
+/**
+ * Resolves one route-builder pointer gesture after DOM and geometry hit-testing. Once a source
+ * exists, an eligible device actually under the pointer is more specific than a nearby circuit
+ * segment. DOM order is deliberately ignored for that choice; the first overlapping annotation
+ * remains the fallback for source selection and non-device notices.
+ */
+export function resolveRoutePickIntent(options: RoutePickIntentOptions): RoutePickIntent | null {
+  const overlappingIds = Array.from(new Set(
+    options.overlappingAnnotationIds.filter((id) => typeof id === 'string' && id.trim()),
+  ))
+  const fallbackId = overlappingIds[0] || options.fallbackAnnotationId
+
+  if (!options.sourceSelected) {
+    return fallbackId ? { kind: 'annotation', annotationId: fallbackId } : null
+  }
+
+  const deviceId = overlappingIds.find((id) => options.eligibleDeviceIds.has(id))
+  if (deviceId) return { kind: 'annotation', annotationId: deviceId }
+  if (options.segmentHit) return { kind: 'segment', hit: options.segmentHit }
+  return fallbackId ? { kind: 'annotation', annotationId: fallbackId } : null
+}
+
 function isFinitePoint(point: unknown): point is NormalizedPoint {
   const value = point as NormalizedPoint
   return !!value && Number.isFinite(value.x) && Number.isFinite(value.y)

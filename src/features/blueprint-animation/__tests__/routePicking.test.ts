@@ -1,6 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { createCircuitGeometryFingerprint } from '../routeGeometry'
-import { findNearestRoutePoint, findNearestRouteSegment } from '../routePicking'
+import { findNearestRoutePoint, findNearestRouteSegment, resolveRoutePickIntent, type RouteSegmentPick } from '../routePicking'
+
+const segmentHit: RouteSegmentPick = {
+  annotationId: 'circuit-1',
+  pageNumber: 1,
+  shapeKind: 'circuit-path',
+  segmentId: 'segment-1',
+  segmentIndexHint: 0,
+  geometryFingerprint: 'fingerprint',
+  startPointId: 'point-1',
+  endPointId: 'point-2',
+  startPointIndexHint: 0,
+  endPointIndexHint: 1,
+  start: { x: 0.1, y: 0.1 },
+  end: { x: 0.2, y: 0.2 },
+  distancePx: 2,
+}
 
 describe('routePicking', () => {
   it('selects the nearest individual straight segment with stable IDs', () => {
@@ -53,5 +69,53 @@ describe('routePicking', () => {
     }
     expect(findNearestRoutePoint({ x: 0.79, y: 0.8 }, [annotation], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 15 }))
       .toMatchObject({ pointId: 'b', pointIndexHint: 1 })
+  })
+
+  it('prefers an overlapping eligible fixture over a circuit-segment hit after source selection', () => {
+    expect(resolveRoutePickIntent({
+      sourceSelected: true,
+      overlappingAnnotationIds: ['fixture-1', 'circuit-1'],
+      eligibleDeviceIds: new Set(['fixture-1']),
+      segmentHit,
+    })).toEqual({ kind: 'annotation', annotationId: 'fixture-1' })
+  })
+
+  it('falls back to the nearest segment when only a circuit annotation overlaps', () => {
+    expect(resolveRoutePickIntent({
+      sourceSelected: true,
+      overlappingAnnotationIds: ['circuit-1'],
+      eligibleDeviceIds: new Set(['fixture-1']),
+      segmentHit,
+    })).toEqual({ kind: 'segment', hit: segmentHit })
+  })
+
+  it('keeps the direct-device intent when a fixture is outside segment tolerance', () => {
+    expect(resolveRoutePickIntent({
+      sourceSelected: true,
+      overlappingAnnotationIds: ['fixture-1'],
+      eligibleDeviceIds: new Set(['fixture-1']),
+      segmentHit: null,
+    })).toEqual({ kind: 'annotation', annotationId: 'fixture-1' })
+  })
+
+  it('prefers the fixture regardless of overlapping DOM order', () => {
+    const resolve = (overlappingAnnotationIds: string[]) => resolveRoutePickIntent({
+      sourceSelected: true,
+      overlappingAnnotationIds,
+      eligibleDeviceIds: new Set(['fixture-1']),
+      segmentHit,
+    })
+    expect(resolve(['fixture-1', 'circuit-1'])).toEqual({ kind: 'annotation', annotationId: 'fixture-1' })
+    expect(resolve(['circuit-1', 'fixture-1'])).toEqual({ kind: 'annotation', annotationId: 'fixture-1' })
+  })
+
+  it('keeps device precedence when touch tolerance produces a segment hit', () => {
+    const touchToleranceHit = { ...segmentHit, distancePx: 27 }
+    expect(resolveRoutePickIntent({
+      sourceSelected: true,
+      overlappingAnnotationIds: ['circuit-1', 'fixture-1'],
+      eligibleDeviceIds: new Set(['fixture-1']),
+      segmentHit: touchToleranceHit,
+    })).toEqual({ kind: 'annotation', annotationId: 'fixture-1' })
   })
 })
