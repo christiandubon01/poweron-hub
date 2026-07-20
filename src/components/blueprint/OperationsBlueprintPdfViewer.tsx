@@ -78,6 +78,8 @@ import {
   translateNormalizedPoints,
 } from '@/features/blueprint-animation/routeGeometry'
 import { PackageAnimationRouteBuilder } from '@/features/blueprint-animation/PackageAnimationRouteBuilder'
+import { PackageAnimationPlaybackControls } from '@/features/blueprint-animation/PackageAnimationPlaybackControls'
+import { parseBlueprintAnimationScene } from '@/features/blueprint-animation/sceneSchema'
 import {
   addPackageAnimationDirectTransition,
   addPackageAnimationRouteSegment,
@@ -2748,6 +2750,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     saving: boolean
     conflict?: PackageAnimationRouteConflictState
   } | null>(null)
+  /** Ephemeral only: identifies the one package whose isolated playback component owns the rAF clock. */
+  const [animationPlayback, setAnimationPlayback] = useState<{
+    blueprintId: string
+    layerId: string
+    sceneRevision: number
+    pageNumber: number
+  } | null>(null)
   // ANIM-2B1: React state alone leaves a double-tap window open — the handler closure still
   // reads `saving: false` until the next render commits, so two taps would fire two saves at the
   // same expected revision. This guard closes that window synchronously.
@@ -4693,6 +4702,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   const deleteScopeLayer = useCallback(async (layerId: string) => {
     setActionMsg(null)
+    setAnimationPlayback((previous) => previous?.layerId === layerId ? null : previous)
     setIsolatedScopeLayerIds((prev) => {
       if (!prev.has(layerId)) return prev
       const next = new Set(prev)
@@ -4789,6 +4799,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // can be a revision behind after a save or a live refresh; using it as the authoritative
     // scene source is what opened the builder on a stale revision.
     const layer = scopeLayersRef.current.find((entry) => entry.id === clickedLayer.id) || clickedLayer
+    setAnimationPlayback((previous) => previous?.layerId === layer.id ? null : previous)
     const pageNumber = Math.max(1, Math.floor(Number(layer.pageNumber || layer.itemRefs?.[0]?.pageNumber || currentPage) || 1))
     setIsPackagePickMode(false)
     setLayoutEditId(null)
@@ -4880,6 +4891,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         // Same reconciliation as save: adopt the returned scene-less layer so the package card
         // stops showing the removed route, and keep the service's removal revision marker.
         setScopeLayers((previous) => previous.map((entry) => entry.id === outcome.scopeLayer.id ? outcome.scopeLayer : entry))
+        setAnimationPlayback((previous) => previous?.layerId === layer.id ? null : previous)
         if (animationRouteBuilder?.layerId === layer.id) setAnimationRouteBuilder(null)
         setActionMsg({ type: 'success', text: 'Animation route cleared.' })
         return
@@ -5002,6 +5014,19 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     if (outcome.status === 'unchanged') return
     setAnimationRouteBuilder((previous) => previous && previous.sessionId === animationRouteBuilder.sessionId ? outcome.state : previous)
   }, [animationRouteAnnotations, animationRouteBuilder, scopeLayers])
+
+  // Playback is tied to one immutable scene revision and one visible PDF page. Any canonical
+  // replacement, package removal, page navigation or blueprint close unmounts its clock/overlay.
+  useEffect(() => {
+    if (!animationPlayback) return
+    const layer = scopeLayers.find((entry) => entry.id === animationPlayback.layerId)
+    if (!layer
+      || animationPlayback.blueprintId !== blueprint?.id
+      || animationPlayback.pageNumber !== currentPage
+      || resolvePackageAnimationRouteBaseRevision(layer) !== animationPlayback.sceneRevision) {
+      setAnimationPlayback(null)
+    }
+  }, [animationPlayback, blueprint?.id, currentPage, scopeLayers])
 
   // ── Symbols Size popup open — positions the panel just below its toggle button ──
   // Pure UI positioning; never touches annotation data, geometry, or viewer layout.
@@ -11620,6 +11645,8 @@ const annotationPanelSizeClass =
                         const distinctPageCount = getBlueprintScopeLayerDistinctPageCount(layer)
                         const pageBadgeLabel = layer.pageNumber != null ? `Page ${layer.pageNumber}` : 'Unscoped'
                         const animationSummary = summarizePackageAnimationScene(layer.animationScene, animationRouteAnnotations, layer.selectedAnnotationIds)
+                        const animationSceneParse = parseBlueprintAnimationScene(layer.animationScene)
+                        const playbackPageNumber = Math.max(1, Math.floor(Number(layer.pageNumber || layer.itemRefs?.[0]?.pageNumber || currentPage) || 1))
                         return (
                           <div
                             key={layer.id}
@@ -11746,6 +11773,35 @@ const annotationPanelSizeClass =
                                 <>
                                   {animationSummary.state === 'supported' && (
                                     <div className="mt-1 text-[10px] text-gray-400">{animationSummary.sourceCount} {animationSummary.sourceCount === 1 ? 'source' : 'sources'} • {animationSummary.routeStepCount} route {animationSummary.routeStepCount === 1 ? 'step' : 'steps'}</div>
+                                  )}
+                                  {animationSceneParse.status === 'supported' && animationSummary.valid && !animationSummary.advanced && (
+                                    <div className="mt-1.5">
+                                      <PackageAnimationPlaybackControls
+                                        scene={layer.animationScene}
+                                        annotations={animationRouteAnnotations}
+                                        active={animationPlayback?.layerId === layer.id}
+                                        currentPage={currentPage}
+                                        pageWidth={displaySize.w}
+                                        pageHeight={displaySize.h}
+                                        overlayWidth={overlayVisualW}
+                                        overlayHeight={overlayVisualH}
+                                        overlayTarget={overlayRef.current}
+                                        onActivate={() => {
+                                          if (!blueprint?.id) return
+                                          if (playbackPageNumber !== currentPage) {
+                                            setCurrentPage(playbackPageNumber)
+                                            setPageInput(String(playbackPageNumber))
+                                          }
+                                          setAnimationPlayback({
+                                            blueprintId: blueprint.id,
+                                            layerId: layer.id,
+                                            sceneRevision: resolvePackageAnimationRouteBaseRevision(layer),
+                                            pageNumber: playbackPageNumber,
+                                          })
+                                        }}
+                                        onDeactivate={() => setAnimationPlayback((previous) => previous?.layerId === layer.id ? null : previous)}
+                                      />
+                                    </div>
                                   )}
                                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                                     <button
