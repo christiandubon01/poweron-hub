@@ -11,6 +11,8 @@ import {
 } from './sceneSchema'
 import type {
   BlueprintAnimationChannelType,
+  BlueprintAnimationBranchMode,
+  BlueprintAnimationBranchOrder,
   BlueprintAnimationDeviceRole,
   BlueprintAnimationEdge,
   BlueprintAnimationNode,
@@ -106,6 +108,13 @@ export interface RouteBuilderDirectSelection {
 
 export type RouteBuilderTransition = RouteBuilderSegmentSelection | RouteBuilderDirectSelection
 
+export interface RouteBuilderBranchDraft {
+  originSelectionId: 'source' | string
+  mode: BlueprintAnimationBranchMode
+  transitions: RouteBuilderTransition[]
+  editing: boolean
+}
+
 export interface PackageAnimationRouteDraft {
   packageId: string
   packageName: string
@@ -120,6 +129,7 @@ export interface PackageAnimationRouteDraft {
   sourcePriority?: number
   source?: RouteBuilderSourceSelection
   transitions: RouteBuilderTransition[]
+  branch?: RouteBuilderBranchDraft
   readOnlyReason?: string
   malformedSceneReason?: string
   dirty: boolean
@@ -143,6 +153,9 @@ export interface ResolvedPackageAnimationRouteDraft {
   edges: BlueprintAnimationEdge[]
   traversal: BlueprintAnimationTraversalStep[]
   transitions: ResolvedRouteTransition[]
+  branchTransitions: ResolvedRouteTransition[]
+  branchOriginNodeId?: string
+  branchConvergenceNodeId?: string
   issues: RouteBuilderIssue[]
   currentEndpoint?: { node: ResolvedNode; point: NormalizedPoint }
 }
@@ -258,6 +271,166 @@ function annotationNode(draft: PackageAnimationRouteDraft, annotation: RouteBuil
     label: annotation.label,
     point,
     pageNumber: annotation.pageNumber,
+  }
+}
+
+function resolvePackageAnimationBranch(
+  draft: PackageAnimationRouteDraft,
+  annotations: Map<string, RouteBuilderAnnotation>,
+  nodes: ResolvedNode[],
+  resolvedTransitions: ResolvedRouteTransition[],
+  issues: RouteBuilderIssue[],
+  usedSegmentKeys: Set<string>,
+  edges: BlueprintAnimationEdge[],
+  traversal: BlueprintAnimationTraversalStep[],
+): {
+  branchTransitions: ResolvedRouteTransition[]
+  branchOriginNodeId?: string
+  branchConvergenceNodeId?: string
+  branchEndpoint?: ResolvedNode
+} {
+  const branchTransitions: ResolvedRouteTransition[] = []
+  let branchOriginNodeId: string | undefined
+  let branchConvergenceNodeId: string | undefined
+  let branchEndpoint: ResolvedNode | undefined
+  if (draft.branch) {
+    const primaryNodes: ResolvedNode[] = []
+    if (nodes[0]) primaryNodes.push(nodes[0])
+    resolvedTransitions.forEach((transition) => {
+      if (transition.to && primaryNodes[primaryNodes.length - 1]?.id !== transition.to.id) primaryNodes.push(transition.to)
+    })
+    const originIndex = draft.branch.originSelectionId === 'source'
+      ? 0
+      : resolvedTransitions.findIndex((transition) => transition.selection.id === draft.branch?.originSelectionId) + 1
+    let branchCurrent = originIndex >= 0 ? primaryNodes[originIndex] : undefined
+    branchOriginNodeId = branchCurrent?.id
+    const branchVisitedNodeIds = new Set(branchCurrent ? [branchCurrent.id] : [])
+    const branchVisitedPoints = branchCurrent ? [branchCurrent.point] : []
+
+    if (!branchCurrent || originIndex >= primaryNodes.length - 1) {
+      issues.push(issue('error', 'invalid-branch-origin', 'A branch must start at a primary-route node that has a later rejoin point.'))
+    }
+
+    for (const selection of draft.branch.transitions) {
+      if (!branchCurrent) {
+        issues.push(issue('error', 'invalid-branch-traversal', 'This branch step cannot be resolved before a valid branch origin.', selection.id))
+        branchTransitions.push({ selection })
+        continue
+      }
+      if (branchConvergenceNodeId) {
+        issues.push(issue('error', 'branch-after-convergence', 'The branch has already rejoined the primary route.', selection.id))
+        branchTransitions.push({ selection, from: branchCurrent })
+        continue
+      }
+
+      let destination: ResolvedNode | null = null
+      let edgeGeometry: BlueprintAnimationEdge['geometry'] | null = null
+      if (selection.kind === 'direct') {
+        const target = annotations.get(selection.annotationId)
+        if (!target || !packageHas(draft, selection.annotationId) || !isRouteBuilderDeviceKind(target.shapeKind)) {
+          issues.push(issue('error', 'invalid-direct-destination', 'The branch direct destination must be a supported package device.', selection.id))
+        } else {
+          destination = annotationNode(draft, target)
+          edgeGeometry = { kind: 'direct' }
+          issues.push(issue('warning', 'direct-transition', 'This branch step intentionally jumps without visible circuit geometry.', selection.id))
+        }
+      } else {
+        const segmentKey = `${selection.annotationId}:${selection.segmentId}`
+        const annotation = annotations.get(selection.annotationId)
+        const geometry = annotation ? geometryForSelection(annotation, selection) : null
+        if (usedSegmentKeys.has(segmentKey)) {
+          issues.push(issue('error', 'duplicate-segment', 'That exact circuit segment is already used by this route.', selection.id))
+        } else if (!annotation || !packageHas(draft, selection.annotationId) || !geometry) {
+          issues.push(issue('error', 'missing-segment', 'The referenced branch circuit segment is unavailable.', selection.id))
+        } else {
+          usedSegmentKeys.add(segmentKey)
+          if (!geometry.fingerprintMatches) {
+            issues.push(issue('error', 'geometry-fingerprint-mismatch', 'Circuit geometry changed after this branch step was saved. Remove and reselect the segment.', selection.id))
+          }
+          const startDistance = distance(branchCurrent.point, geometry.start)
+          const endDistance = distance(branchCurrent.point, geometry.end)
+          const connectsStart = startDistance <= CONNECTION_TOLERANCE
+          const connectsEnd = endDistance <= CONNECTION_TOLERANCE
+          if (!connectsStart && !connectsEnd) {
+            issues.push(issue('error', 'disconnected-segment', 'That segment does not connect to the current branch endpoint.', selection.id))
+          } else {
+            const reversed = connectsEnd && (!connectsStart || endDistance < startDistance)
+            const destinationPoint = reversed ? geometry.start : geometry.end
+            const destinationPointId = reversed ? geometry.startPointId : geometry.endPointId
+            const destinationPointIndex = reversed ? geometry.index : geometry.index + 1
+            const matchedDevice = matchDeviceAtPoint(draft, destinationPoint, annotation.pageNumber)
+            destination = matchedDevice ? annotationNode(draft, matchedDevice) : null
+            if (!destination) {
+              const persisted = draft.baseScene?.nodes.find((node) => node.anchor.kind === 'circuit-point' && node.anchor.annotationId === annotation.id && node.anchor.pointId === destinationPointId)
+              destination = {
+                ...persisted,
+                id: junctionNodeId(draft, annotation.id, destinationPointId),
+                roles: inferRouteBuilderNodeRoles(undefined, { junction: true }),
+                anchor: { kind: 'circuit-point', annotationId: annotation.id, pointId: destinationPointId, pointIndexHint: destinationPointIndex, geometryFingerprint: selection.geometryFingerprint },
+                label: `${annotation.label} point ${destinationPointIndex + 1}`,
+                point: { ...destinationPoint },
+                pageNumber: annotation.pageNumber,
+              }
+            }
+            edgeGeometry = {
+              kind: 'circuit-segment',
+              annotationId: annotation.id,
+              segmentId: selection.segmentId,
+              segmentIndexHint: geometry.index,
+              fromT: reversed ? 1 : 0,
+              toT: reversed ? 0 : 1,
+              geometryFingerprint: selection.geometryFingerprint,
+            }
+          }
+        }
+      }
+
+      if (!destination || !edgeGeometry) {
+        branchTransitions.push({ selection, from: branchCurrent })
+        continue
+      }
+      const primaryDestinationIndex = primaryNodes.findIndex((node) => node.id === destination?.id)
+      if (primaryDestinationIndex >= 0 && primaryDestinationIndex <= originIndex) {
+        issues.push(issue('error', 'branch-cycle', 'A branch may only rejoin a later primary-route node.', selection.id))
+        branchTransitions.push({ selection, from: branchCurrent })
+        continue
+      }
+      if (primaryDestinationIndex < 0 && (branchVisitedNodeIds.has(destination.id) || branchVisitedPoints.some((point) => distance(point, destination?.point as NormalizedPoint) <= 0.00001))) {
+        issues.push(issue('error', 'branch-cycle', 'That branch step returns to an already visited node.', selection.id))
+        branchTransitions.push({ selection, from: branchCurrent })
+        continue
+      }
+      const nextNode = pushUniqueNode(nodes, destination)
+      const persistedEdge = selection.persistedEdgeId ? draft.baseScene?.edges.find((candidate) => candidate.id === selection.persistedEdgeId) : undefined
+      const edge: BlueprintAnimationEdge = {
+        ...persistedEdge,
+        id: selection.persistedEdgeId || `animation_edge_${selection.id}`,
+        fromNodeId: branchCurrent.id,
+        toNodeId: nextNode.id,
+        channel: selection.channel,
+        geometry: edgeGeometry,
+      }
+      edges.push(edge)
+      const persistedTraversal = selection.persistedTraversalId ? draft.baseScene?.manualTraversal.find((candidate) => candidate.id === selection.persistedTraversalId) : undefined
+      traversal.push({ ...persistedTraversal, id: selection.persistedTraversalId || `animation_traversal_${selection.id}`, edgeId: edge.id, sourceId: draft.sourceId, direction: 'forward' })
+      branchTransitions.push({ selection, edge, from: branchCurrent, to: nextNode })
+      branchCurrent = nextNode
+      branchEndpoint = nextNode
+      if (primaryDestinationIndex > originIndex) branchConvergenceNodeId = nextNode.id
+      else {
+        branchVisitedNodeIds.add(nextNode.id)
+        branchVisitedPoints.push(nextNode.point)
+      }
+    }
+    if (draft.branch.transitions.length === 0) issues.push(issue('error', 'empty-branch', 'Add at least one alternate branch step.'))
+    else if (!branchConvergenceNodeId) issues.push(issue('error', 'unmerged-branch', 'The alternate branch must rejoin a later node on the primary route.'))
+  }
+
+  return {
+    branchTransitions,
+    ...(branchOriginNodeId ? { branchOriginNodeId } : {}),
+    ...(branchConvergenceNodeId ? { branchConvergenceNodeId } : {}),
+    ...(branchEndpoint ? { branchEndpoint } : {}),
   }
 }
 
@@ -509,13 +682,30 @@ export function resolvePackageAnimationRouteDraft(draft: PackageAnimationRouteDr
     visitedPoints.push(destinationPoint)
   }
 
+  const branchResolution = resolvePackageAnimationBranch(
+    draft,
+    annotations,
+    nodes,
+    resolvedTransitions,
+    issues,
+    usedSegmentKeys,
+    edges,
+    traversal,
+  )
+  const { branchTransitions, branchOriginNodeId, branchConvergenceNodeId, branchEndpoint } = branchResolution
+
   return {
     nodes,
     edges,
     traversal,
     transitions: resolvedTransitions,
+    branchTransitions,
     issues,
-    ...(current ? { currentEndpoint: { node: current, point: current.point } } : {}),
+    ...(branchOriginNodeId ? { branchOriginNodeId } : {}),
+    ...(branchConvergenceNodeId ? { branchConvergenceNodeId } : {}),
+    ...((draft.branch?.editing && branchEndpoint && !branchConvergenceNodeId)
+      ? { currentEndpoint: { node: branchEndpoint, point: branchEndpoint.point } }
+      : current ? { currentEndpoint: { node: current, point: current.point } } : {}),
   }
 }
 
@@ -571,6 +761,7 @@ export function selectPackageAnimationRouteSource(
     ...draft,
     source: { annotationId, channel: inferRouteBuilderDefaultChannel(annotation.shapeKind) },
     transitions: [],
+    branch: undefined,
     dirty: true,
     notice: undefined,
   }
@@ -590,13 +781,16 @@ export function addPackageAnimationRouteSegment(
     const message = 'Add this item to the work package before using it in the animation route.'
     return { accepted: false, draft: withNotice(draft, issue('error', 'annotation-not-in-package', message)), message }
   }
+  const targetTransitions = draft.branch?.editing ? draft.branch.transitions : draft.transitions
   const selection: RouteBuilderSegmentSelection = {
     ...clone(pick),
     id: id('route_segment'),
     kind: 'segment',
-    channel: draft.transitions.length === 0 ? draft.source.channel : 'generic-route',
+    channel: targetTransitions.length === 0 ? draft.source.channel : 'generic-route',
   }
-  const candidate = { ...draft, transitions: [...draft.transitions, selection], dirty: true, notice: undefined }
+  const candidate: PackageAnimationRouteDraft = draft.branch?.editing
+    ? { ...draft, branch: { ...draft.branch, transitions: [...draft.branch.transitions, selection] }, dirty: true, notice: undefined }
+    : { ...draft, transitions: [...draft.transitions, selection], dirty: true, notice: undefined }
   const blocking = resolvePackageAnimationRouteDraft(candidate).issues.find((entry) => entry.severity === 'error' && entry.selectionId === selection.id)
   if (blocking) return { accepted: false, draft: withNotice(draft, blocking), message: blocking.message }
   return { accepted: true, draft: candidate }
@@ -618,13 +812,16 @@ export function addPackageAnimationDirectTransition(
     const message = 'Only supported controls, sensors, and light fixtures can be direct destinations.'
     return { accepted: false, draft: withNotice(draft, issue('error', 'invalid-direct-destination', message)), message }
   }
+  const targetTransitions = draft.branch?.editing ? draft.branch.transitions : draft.transitions
   const selection: RouteBuilderDirectSelection = {
     id: id('route_direct'),
     kind: 'direct',
     annotationId,
-    channel: draft.transitions.length === 0 ? draft.source.channel : 'generic-route',
+    channel: targetTransitions.length === 0 ? draft.source.channel : 'generic-route',
   }
-  const candidate = { ...draft, transitions: [...draft.transitions, selection], dirty: true, notice: undefined }
+  const candidate: PackageAnimationRouteDraft = draft.branch?.editing
+    ? { ...draft, branch: { ...draft.branch, transitions: [...draft.branch.transitions, selection] }, dirty: true, notice: undefined }
+    : { ...draft, transitions: [...draft.transitions, selection], dirty: true, notice: undefined }
   const blocking = resolvePackageAnimationRouteDraft(candidate).issues.find((entry) => entry.severity === 'error' && entry.selectionId === selection.id)
   if (blocking) return { accepted: false, draft: withNotice(draft, blocking), message: blocking.message }
   return { accepted: true, draft: candidate, message: 'Direct transition added with a warning.' }
@@ -632,15 +829,47 @@ export function addPackageAnimationDirectTransition(
 
 export function undoPackageAnimationRouteSelection(draft: PackageAnimationRouteDraft): PackageAnimationRouteDraft {
   if (draft.readOnlyReason) return draft
+  if (draft.branch?.editing) {
+    if (draft.branch.transitions.length > 0) {
+      return { ...draft, branch: { ...draft.branch, transitions: draft.branch.transitions.slice(0, -1) }, dirty: true, notice: undefined }
+    }
+    return { ...draft, branch: undefined, dirty: true, notice: undefined }
+  }
   if (draft.transitions.length > 0) {
     return { ...draft, transitions: draft.transitions.slice(0, -1), dirty: true, notice: undefined }
   }
-  return { ...draft, source: undefined, dirty: true, notice: undefined }
+  return { ...draft, source: undefined, branch: undefined, dirty: true, notice: undefined }
 }
 
 export function clearPackageAnimationRouteDraft(draft: PackageAnimationRouteDraft): PackageAnimationRouteDraft {
   if (draft.readOnlyReason) return draft
-  return { ...draft, source: undefined, transitions: [], dirty: true, notice: undefined }
+  return { ...draft, source: undefined, transitions: [], branch: undefined, dirty: true, notice: undefined }
+}
+
+export function startPackageAnimationRouteBranch(
+  draft: PackageAnimationRouteDraft,
+  originSelectionId: 'source' | string,
+): PackageAnimationRouteDraft {
+  if (draft.readOnlyReason || draft.branch) return draft
+  return { ...draft, branch: { originSelectionId, mode: draft.playbackOptions.branchMode, transitions: [], editing: true }, dirty: true, notice: undefined }
+}
+
+export function finishPackageAnimationRouteBranch(draft: PackageAnimationRouteDraft): PackageAnimationRouteDraft {
+  if (!draft.branch || !resolvePackageAnimationRouteDraft(draft).branchConvergenceNodeId) return draft
+  return { ...draft, branch: { ...draft.branch, editing: false }, dirty: true, notice: undefined }
+}
+
+export function removePackageAnimationRouteBranch(draft: PackageAnimationRouteDraft): PackageAnimationRouteDraft {
+  if (draft.readOnlyReason || !draft.branch) return draft
+  return { ...draft, branch: undefined, dirty: true, notice: undefined }
+}
+
+export function setPackageAnimationRouteBranchMode(
+  draft: PackageAnimationRouteDraft,
+  mode: BlueprintAnimationBranchMode,
+): PackageAnimationRouteDraft {
+  if (!draft.branch || (mode !== 'simultaneous' && mode !== 'sequential')) return draft
+  return { ...draft, branch: { ...draft.branch, mode }, dirty: true, notice: undefined }
 }
 
 export function removePackageAnimationRouteTransition(
@@ -648,7 +877,16 @@ export function removePackageAnimationRouteTransition(
   selectionId: string,
 ): PackageAnimationRouteDraft {
   if (draft.readOnlyReason) return draft
-  return { ...draft, transitions: draft.transitions.filter((entry) => entry.id !== selectionId), dirty: true, notice: undefined }
+  if (draft.branch?.transitions.some((entry) => entry.id === selectionId)) {
+    return { ...draft, branch: { ...draft.branch, transitions: draft.branch.transitions.filter((entry) => entry.id !== selectionId), editing: true }, dirty: true, notice: undefined }
+  }
+  return {
+    ...draft,
+    transitions: draft.transitions.filter((entry) => entry.id !== selectionId),
+    ...(draft.branch?.originSelectionId === selectionId ? { branch: undefined } : {}),
+    dirty: true,
+    notice: undefined,
+  }
 }
 
 export function updatePackageAnimationRouteChannel(
@@ -660,6 +898,7 @@ export function updatePackageAnimationRouteChannel(
   return {
     ...draft,
     transitions: draft.transitions.map((entry) => entry.id === selectionId ? { ...entry, channel } : entry),
+    ...(draft.branch ? { branch: { ...draft.branch, transitions: draft.branch.transitions.map((entry) => entry.id === selectionId ? { ...entry, channel } : entry) } } : {}),
     dirty: true,
     notice: undefined,
   }
@@ -724,6 +963,22 @@ export function packageAnimationRouteDraftToScene(
   if (resolved.edges.length === 0) issues.push(issue('error', 'empty-route', 'Add at least one connected route segment or confirmed direct transition.'))
   const sourceNode = resolved.nodes[0]
   if (!sourceNode || !draft.source) return { issues: dedupeIssues(issues) }
+  const branchOrders: BlueprintAnimationBranchOrder[] = []
+  if (draft.branch && resolved.branchOriginNodeId && resolved.branchConvergenceNodeId) {
+    const originIndex = draft.branch.originSelectionId === 'source'
+      ? -1
+      : draft.transitions.findIndex((transition) => transition.id === draft.branch?.originSelectionId)
+    const primaryOutgoing = resolved.transitions[originIndex + 1]?.edge
+    const alternateOutgoing = resolved.branchTransitions[0]?.edge
+    if (primaryOutgoing && alternateOutgoing) {
+      branchOrders.push({
+        id: `animation_branch_${resolved.branchOriginNodeId}`,
+        nodeId: resolved.branchOriginNodeId,
+        mode: draft.branch.mode,
+        outgoingEdgeIds: [primaryOutgoing.id, alternateOutgoing.id],
+      })
+    }
+  }
   const scene: BlueprintScopeAnimationSceneV1 = {
     ...(draft.baseScene ? clone(draft.baseScene) : createDefaultBlueprintAnimationScene({ id: draft.sceneId, now: draft.createdAt })),
     schemaVersion: 1,
@@ -735,7 +990,7 @@ export function packageAnimationRouteDraftToScene(
     edges: resolved.edges,
     sources: [{ ...(draft.baseScene?.sources.find((source) => source.id === draft.sourceId) || {}), id: draft.sourceId, nodeId: sourceNode.id, channel: draft.source.channel, ...(draft.sourcePriority != null ? { priority: draft.sourcePriority } : {}) }],
     manualTraversal: resolved.traversal,
-    branchOrders: [],
+    branchOrders,
     events: [],
     playbackOptions: { ...draft.playbackOptions },
   }
@@ -749,7 +1004,7 @@ export function validatePackageAnimationRouteDraft(draft: PackageAnimationRouteD
 
 function advancedSceneReason(scene: BlueprintScopeAnimationSceneV1): string | undefined {
   if (scene.sources.length !== 1) return 'This scene uses multiple or missing sources and is read-only in the one-source editor.'
-  if (scene.branchOrders.length > 0) return 'This scene contains branch ordering and is read-only in this editor.'
+  if (scene.branchOrders.length > 1) return 'This scene contains multiple branch points and is read-only in the single-branch editor.'
   if (scene.events.length > 0) return 'This scene contains animation events that this editor cannot safely preserve.'
   if (scene.edges.some((edge) => edge.fromPort || edge.toPort)) return 'This scene uses explicit graph ports and is read-only in this editor.'
   const supportedRoles = new Set<BlueprintAnimationDeviceRole>(['source', 'control', 'sensor', 'junction', 'load'])
@@ -762,8 +1017,25 @@ function advancedSceneReason(scene: BlueprintScopeAnimationSceneV1): string | un
     outgoing.set(edge.fromNodeId, (outgoing.get(edge.fromNodeId) || 0) + 1)
     incoming.set(edge.toNodeId, (incoming.get(edge.toNodeId) || 0) + 1)
   })
-  if ([...outgoing.values()].some((count) => count > 1) || [...incoming.values()].some((count) => count > 1)) {
-    return 'This scene contains branches and is read-only in the one-route editor.'
+  if (scene.branchOrders.length === 0 && ([...outgoing.values()].some((count) => count > 1) || [...incoming.values()].some((count) => count > 1))) {
+    return 'This scene contains an unordered branch and is read-only in this editor.'
+  }
+  if (scene.branchOrders.length === 1) {
+    const branch = scene.branchOrders[0]
+    const outgoingEdges = scene.edges.filter((edge) => edge.fromNodeId === branch.nodeId)
+    const splitNodes = [...outgoing.values()].filter((count) => count > 1)
+    const mergeNodes = [...incoming.values()].filter((count) => count > 1)
+    if (
+      branch.outgoingEdgeIds.length !== 2
+      || outgoingEdges.length !== 2
+      || new Set(branch.outgoingEdgeIds).size !== 2
+      || outgoingEdges.some((edge) => !branch.outgoingEdgeIds.includes(edge.id))
+      || splitNodes.length !== 1
+      || mergeNodes.length !== 1
+      || [...outgoing.values(), ...incoming.values()].some((count) => count > 2)
+    ) {
+      return 'This scene uses a branch structure beyond the single split/rejoin editor.'
+    }
   }
   if (scene.manualTraversal.length !== scene.edges.length) {
     return 'This scene has graph edges outside its manual traversal and cannot be edited without data loss.'
@@ -868,10 +1140,54 @@ export function loadPackageAnimationRouteDraft(options: {
     dirty: false,
   }
   const edgeById = new Map(scene.edges.map((edge) => [edge.id, edge]))
-  draft.transitions = scene.manualTraversal
-    .map((step) => ({ step, edge: edgeById.get(step.edgeId) }))
-    .filter((entry): entry is { step: BlueprintAnimationTraversalStep; edge: BlueprintAnimationEdge } => !!entry.edge)
-    .map(({ step, edge }) => selectionFromEdge(edge, draft, step.id))
+  const traversalByEdgeId = new Map(scene.manualTraversal.map((step) => [step.edgeId, step]))
+  const branchOrder = scene.branchOrders[0]
+  if (!branchOrder || !source) {
+    draft.transitions = scene.manualTraversal
+      .map((step) => ({ step, edge: edgeById.get(step.edgeId) }))
+      .filter((entry): entry is { step: BlueprintAnimationTraversalStep; edge: BlueprintAnimationEdge } => !!entry.edge)
+      .map(({ step, edge }) => selectionFromEdge(edge, draft, step.id))
+    return draft
+  }
+
+  const outgoingByNode = new Map<string, BlueprintAnimationEdge[]>()
+  scene.edges.forEach((edge) => outgoingByNode.set(edge.fromNodeId, [...(outgoingByNode.get(edge.fromNodeId) ?? []), edge]))
+  const walk = (firstEdgeId: string, stopNodes = new Set<string>()): BlueprintAnimationEdge[] => {
+    const path: BlueprintAnimationEdge[] = []
+    let next = edgeById.get(firstEdgeId)
+    const seen = new Set<string>()
+    while (next && !seen.has(next.id)) {
+      path.push(next)
+      seen.add(next.id)
+      if (stopNodes.has(next.toNodeId)) break
+      next = (outgoingByNode.get(next.toNodeId) ?? [])[0]
+    }
+    return path
+  }
+  const prefix: BlueprintAnimationEdge[] = []
+  let cursorNodeId = source.nodeId
+  while (cursorNodeId !== branchOrder.nodeId) {
+    const next = (outgoingByNode.get(cursorNodeId) ?? [])[0]
+    if (!next) break
+    prefix.push(next)
+    cursorNodeId = next.toNodeId
+  }
+  const primaryTail = walk(branchOrder.outgoingEdgeIds[0])
+  const primaryEdges = [...prefix, ...primaryTail]
+  const primaryNodeIds = new Set([source.nodeId, ...primaryEdges.map((edge) => edge.toNodeId)])
+  const alternateEdges = walk(branchOrder.outgoingEdgeIds[1], primaryNodeIds)
+  draft.transitions = primaryEdges.map((edge) => selectionFromEdge(edge, draft, traversalByEdgeId.get(edge.id)?.id))
+  const originSelectionId = branchOrder.nodeId === source.nodeId
+    ? 'source'
+    : draft.transitions[primaryEdges.findIndex((edge) => edge.toNodeId === branchOrder.nodeId)]?.id
+  if (originSelectionId) {
+    draft.branch = {
+      originSelectionId,
+      mode: branchOrder.mode,
+      transitions: alternateEdges.map((edge) => selectionFromEdge(edge, draft, traversalByEdgeId.get(edge.id)?.id)),
+      editing: false,
+    }
+  }
   return draft
 }
 
@@ -946,6 +1262,27 @@ export function getPackageAnimationRouteList(draft: PackageAnimationRouteDraft):
   return entries
 }
 
+export function getPackageAnimationBranchList(draft: PackageAnimationRouteDraft): RouteBuilderListEntry[] {
+  if (!draft.branch) return []
+  const annotations = byId(draft)
+  const resolved = new Map(resolvePackageAnimationRouteDraft(draft).branchTransitions.map((transition) => [transition.selection.id, transition]))
+  return draft.branch.transitions.map((selection, index) => {
+    const annotation = annotations.get(selection.annotationId)
+    const destinationLabel = resolved.get(selection.id)?.to?.label
+    return {
+      id: selection.id,
+      number: index + 1,
+      label: selection.kind === 'segment'
+        ? `${annotation?.label || 'Missing circuit'} · segment ${selection.segmentIndexHint + 1}${destinationLabel ? ` → ${destinationLabel}` : ''}`
+        : annotation?.label || 'Missing device',
+      typeLabel: selection.kind === 'segment'
+        ? (selection.shapeKind === 'circuit-arc' ? 'Circuit Arc segment' : 'Circuit Path segment')
+        : 'Direct transition',
+      channel: selection.channel,
+    }
+  })
+}
+
 export interface RouteBuilderOverlay {
   segments: Array<{ id: string; pageNumber: number; kind: 'straight' | 'quadratic'; start: NormalizedPoint; end: NormalizedPoint; control?: NormalizedPoint }>
   badges: Array<{ id: string; pageNumber: number; label?: number; point: NormalizedPoint; junction: boolean; ariaLabel: string }>
@@ -954,7 +1291,7 @@ export interface RouteBuilderOverlay {
 export function getPackageAnimationRouteOverlay(draft: PackageAnimationRouteDraft): RouteBuilderOverlay {
   const annotations = byId(draft)
   const segments: RouteBuilderOverlay['segments'] = []
-  draft.transitions.forEach((selection) => {
+  ;[...draft.transitions, ...(draft.branch?.transitions ?? [])].forEach((selection) => {
     if (selection.kind !== 'segment') return
     const annotation = annotations.get(selection.annotationId)
     if (!annotation) return
@@ -984,6 +1321,18 @@ export function getPackageAnimationRouteOverlay(draft: PackageAnimationRouteDraf
     }
     meaningfulNumber += 1
     badges.push({ id: destination.id, pageNumber: destination.pageNumber, label: meaningfulNumber, point: destination.point, junction: false, ariaLabel: `Animation route step ${meaningfulNumber}: ${destination.label || 'device'}` })
+  })
+  resolved.branchTransitions.forEach((transition) => {
+    const destination = transition.to
+    if (!destination) return
+    const junction = destination.roles.includes('junction')
+    badges.push({
+      id: `branch-${transition.selection.id}`,
+      pageNumber: destination.pageNumber,
+      point: destination.point,
+      junction,
+      ariaLabel: `Animation branch: ${destination.label || (junction ? 'circuit point' : 'device')}`,
+    })
   })
   return { segments, badges }
 }

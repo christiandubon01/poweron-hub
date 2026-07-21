@@ -292,10 +292,11 @@ export function PackageAnimationPlaybackControls({
                 </Fragment>
               )
             })}
-            {frame.orb?.pageNumber === currentPage && (
+            {frame.orbs.filter((orb) => orb.pageNumber === currentPage).map((orb) => (
               <circle
-                cx={frame.orb.point.x * pageWidth}
-                cy={frame.orb.point.y * pageHeight}
+                key={orb.edgeId}
+                cx={orb.point.x * pageWidth}
+                cy={orb.point.y * pageHeight}
                 r={7}
                 fill="#ffffff"
                 stroke="#22d3ee"
@@ -303,7 +304,7 @@ export function PackageAnimationPlaybackControls({
                 vectorEffect="non-scaling-stroke"
                 style={{ filter: 'drop-shadow(0 0 6px rgba(34,211,238,0.95))' }}
               />
-            )}
+            ))}
           </svg>
           {frame.devices.map((device) => {
             if (device.pageNumber !== currentPage) return null

@@ -1,11 +1,17 @@
 import { useEffect, useMemo } from 'react'
-import { AlertTriangle, Check, ChevronDown, ChevronUp, Loader2, RotateCcw, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Check, ChevronDown, ChevronUp, GitBranch, Loader2, RotateCcw, Trash2, X } from 'lucide-react'
 import {
   ROUTE_BUILDER_CHANNEL_OPTIONS,
   clearPackageAnimationRouteDraft,
+  finishPackageAnimationRouteBranch,
+  getPackageAnimationBranchList,
   getPackageAnimationRouteList,
   movePackageAnimationRouteTransition,
   removePackageAnimationRouteTransition,
+  removePackageAnimationRouteBranch,
+  resolvePackageAnimationRouteDraft,
+  setPackageAnimationRouteBranchMode,
+  startPackageAnimationRouteBranch,
   undoPackageAnimationRouteSelection,
   updatePackageAnimationRouteChannel,
   validatePackageAnimationRouteDraft,
@@ -44,6 +50,8 @@ export function PackageAnimationRouteBuilder({
   onKeepDraftOpen,
 }: PackageAnimationRouteBuilderProps) {
   const entries = useMemo(() => getPackageAnimationRouteList(draft), [draft])
+  const branchEntries = useMemo(() => getPackageAnimationBranchList(draft), [draft])
+  const resolved = useMemo(() => resolvePackageAnimationRouteDraft(draft), [draft])
   const validation = useMemo(() => validatePackageAnimationRouteDraft(draft), [draft])
   const blocking = validation.filter((entry) => entry.severity === 'error')
   const warnings = validation.filter((entry) => entry.severity === 'warning')
@@ -52,7 +60,9 @@ export function PackageAnimationRouteBuilder({
     ? draft.readOnlyReason
     : !draft.source
       ? 'Select one supported control or sensor on the blueprint.'
-      : 'Select connected Circuit Path/Arc segments in travel order, or select a package device for a confirmed direct transition.'
+      : draft.branch?.editing
+        ? 'Select the alternate branch in travel order until it rejoins a later primary-route node.'
+        : 'Select connected Circuit Path/Arc segments in travel order, or select a package device for a confirmed direct transition.'
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -123,7 +133,10 @@ export function PackageAnimationRouteBuilder({
               </div>
             </div>
             {draft.source && !readOnly && (
-              <button type="button" onClick={clearDraft} className="rounded border border-gray-700 px-2 py-1 text-[10px] text-gray-300 hover:bg-white/5" aria-label="Clear source and route">Clear Source</button>
+              <div className="flex gap-1">
+                {!draft.branch && draft.transitions.length > 0 && <button type="button" onClick={() => onDraftChange(startPackageAnimationRouteBranch(draft, 'source'))} className="inline-flex items-center gap-1 rounded border border-cyan-700 px-2 py-1 text-[10px] text-cyan-200 hover:bg-cyan-950/50"><GitBranch size={10} /> Branch here</button>}
+                <button type="button" onClick={clearDraft} className="rounded border border-gray-700 px-2 py-1 text-[10px] text-gray-300 hover:bg-white/5" aria-label="Clear source and route">Clear Source</button>
+              </div>
             )}
           </div>
         </section>
@@ -146,6 +159,7 @@ export function PackageAnimationRouteBuilder({
                     </div>
                     {!readOnly && (
                       <div className="flex shrink-0 items-center gap-0.5">
+                        {!draft.branch && index < draft.transitions.length - 1 && <button type="button" onClick={() => onDraftChange(startPackageAnimationRouteBranch(draft, entry.id))} className="rounded p-1 text-cyan-300 hover:bg-cyan-950/50" aria-label={`Start branch after ${entry.label}`}><GitBranch size={12} /></button>}
                         <button type="button" onClick={() => move(entry.id, 'up')} disabled={index === 0} className="rounded p-1 text-gray-400 hover:bg-white/10 disabled:opacity-25" aria-label={`Move ${entry.label} up`}><ChevronUp size={12} /></button>
                         <button type="button" onClick={() => move(entry.id, 'down')} disabled={index === draft.transitions.length - 1} className="rounded p-1 text-gray-400 hover:bg-white/10 disabled:opacity-25" aria-label={`Move ${entry.label} down`}><ChevronDown size={12} /></button>
                         <button type="button" onClick={() => onDraftChange(removePackageAnimationRouteTransition(draft, entry.id))} className="rounded p-1 text-red-400 hover:bg-red-950/50" aria-label={`Remove ${entry.label}`}><Trash2 size={12} /></button>
@@ -169,6 +183,37 @@ export function PackageAnimationRouteBuilder({
             </div>
           </div>
         </section>
+
+        {draft.branch && (
+          <section className="rounded-lg border border-cyan-800/70 bg-cyan-950/20 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-300"><GitBranch size={12} /> Alternate branch</div>
+              <button type="button" onClick={() => onDraftChange(removePackageAnimationRouteBranch(draft))} className="rounded p-1 text-red-400 hover:bg-red-950/50" aria-label="Remove alternate branch"><Trash2 size={12} /></button>
+            </div>
+            <label className="mt-2 flex items-center gap-2 text-[9px] text-gray-400">
+              Schedule
+              <select value={draft.branch.mode} disabled={readOnly} onChange={(event) => onDraftChange(setPackageAnimationRouteBranchMode(draft, event.target.value as 'simultaneous' | 'sequential'))} className="min-w-0 flex-1 rounded border border-gray-700 bg-gray-950 px-1.5 py-1 text-[10px] text-gray-200">
+                <option value="simultaneous">Together</option>
+                <option value="sequential">Sequential</option>
+              </select>
+            </label>
+            <div className="mt-2 space-y-1">
+              {branchEntries.length === 0 && <div className="py-2 text-center text-[10px] italic text-gray-500">Select the first alternate segment on the canvas.</div>}
+              {branchEntries.map((entry) => (
+                <div key={entry.id} className="flex items-center gap-2 rounded border border-gray-800 bg-gray-950/60 p-1.5">
+                  <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-cyan-700 text-[9px] font-bold text-white">{entry.number}</span>
+                  <div className="min-w-0 flex-1"><div className="truncate text-[10px] text-gray-100">{entry.label}</div><div className="text-[9px] text-gray-500">{entry.typeLabel}</div></div>
+                  <button type="button" onClick={() => onDraftChange(removePackageAnimationRouteTransition(draft, entry.id))} className="rounded p-1 text-red-400 hover:bg-red-950/50" aria-label={`Remove ${entry.label}`}><Trash2 size={11} /></button>
+                </div>
+              ))}
+            </div>
+            {draft.branch.editing ? (
+              <button type="button" disabled={!resolved.branchConvergenceNodeId} onClick={() => onDraftChange(finishPackageAnimationRouteBranch(draft))} className="mt-2 w-full rounded border border-cyan-600 px-2 py-1.5 text-[10px] font-semibold text-cyan-100 hover:bg-cyan-900/40 disabled:opacity-35">Finish branch after rejoin</button>
+            ) : (
+              <div className="mt-2 flex items-center gap-1 text-[10px] text-emerald-300"><Check size={11} /> Rejoins the primary route</div>
+            )}
+          </section>
+        )}
 
         <section className={`rounded-lg border p-2 ${blocking.length > 0 ? 'border-red-800/60 bg-red-950/25' : 'border-emerald-800/50 bg-emerald-950/20'}`} aria-live="assertive">
           <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide">

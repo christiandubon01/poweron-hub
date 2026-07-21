@@ -8,6 +8,7 @@ import {
 } from './routeGeometry'
 import type { RouteBuilderAnnotation } from './routeBuilderModel'
 import type {
+  BlueprintAnimationBranchOrder,
   BlueprintAnimationChannelType,
   BlueprintAnimationDeviceRole,
   BlueprintAnimationNode,
@@ -51,6 +52,8 @@ export interface PreparedPlaybackGeometry {
   sourceNodeId: string
   nodes: PreparedPlaybackNode[]
   steps: PreparedPlaybackGeometryStep[]
+  /** Persisted branch scheduling intent. Optional keeps hand-built linear test fixtures compatible. */
+  branchOrders?: BlueprintAnimationBranchOrder[]
 }
 
 function finiteMetrics(metrics: PlaybackPageMetrics): PlaybackPageMetrics {
@@ -243,5 +246,5 @@ export function preparePlaybackGeometry(options: {
     ? steps[0]?.fromNodeId ?? scene.sources[0]?.nodeId
     : scene.sources[0]?.nodeId
   if (!sourceNodeId || !nodeById.has(sourceNodeId)) throw new Error('Animation scene has no resolvable source node.')
-  return { sourceNodeId, nodes: [...nodeById.values()], steps }
+  return { sourceNodeId, nodes: [...nodeById.values()], steps, branchOrders: scene.branchOrders.map((order) => ({ ...order, outgoingEdgeIds: [...order.outgoingEdgeIds] })) }
 }
