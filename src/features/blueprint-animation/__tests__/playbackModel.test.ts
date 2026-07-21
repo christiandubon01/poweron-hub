@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculatePlaybackFrame, createPlaybackTimeline, type PlaybackFrame } from '../playbackModel'
+import { calculatePlaybackFrame, createPlaybackTimeline, detectPlaybackBranches, type PlaybackFrame } from '../playbackModel'
 import { buildPlaybackSegmentGeometry, type PreparedPlaybackGeometry, type PreparedPlaybackNode } from '../playbackGeometry'
 import { DEFAULT_BLUEPRINT_ANIMATION_PLAYBACK_OPTIONS } from '../sceneSchema'
 
@@ -150,12 +150,39 @@ function sensorNodeGeometry(): PreparedPlaybackGeometry {
   return { ...base, nodes }
 }
 
+function branchedGeometry(mode: 'simultaneous' | 'sequential' = 'simultaneous'): PreparedPlaybackGeometry {
+  const segment = (start: { x: number; y: number }, end: { x: number; y: number }) => buildPlaybackSegmentGeometry({
+    kind: 'straight', start, end, pageMetrics: { width: 1000, height: 1000 },
+  })
+  const a1 = segment({ x: 0, y: 0.5 }, { x: 0.25, y: 0.25 })
+  const a2 = segment({ x: 0.25, y: 0.25 }, { x: 0.75, y: 0.5 })
+  const b1 = segment({ x: 0, y: 0.5 }, { x: 0.5, y: 0.75 })
+  const b2 = segment({ x: 0.5, y: 0.75 }, { x: 0.75, y: 0.5 })
+  return {
+    sourceNodeId: 'source',
+    nodes: [
+      { id: 'source', pageNumber: 1, point: { x: 0, y: 0.5 }, roles: ['source'] },
+      { id: 'branch-a', pageNumber: 1, point: { x: 0.25, y: 0.25 }, roles: ['junction'] },
+      { id: 'branch-b', pageNumber: 1, point: { x: 0.5, y: 0.75 }, roles: ['junction'] },
+      { id: 'merge-load', pageNumber: 1, point: { x: 0.75, y: 0.5 }, roles: ['load'] },
+    ],
+    steps: [
+      { id: 'a1', edgeId: 'edge-a1', channel: 'switched-line-voltage', pageNumber: 1, fromNodeId: 'source', toNodeId: 'branch-a', kind: 'circuit-segment', start: a1.start, end: a1.end, geometry: a1 },
+      { id: 'a2', edgeId: 'edge-a2', channel: 'switched-line-voltage', pageNumber: 1, fromNodeId: 'branch-a', toNodeId: 'merge-load', kind: 'circuit-segment', start: a2.start, end: a2.end, geometry: a2 },
+      { id: 'b1', edgeId: 'edge-b1', channel: 'low-voltage-control-signal', pageNumber: 1, fromNodeId: 'source', toNodeId: 'branch-b', kind: 'circuit-segment', start: b1.start, end: b1.end, geometry: b1 },
+      { id: 'b2', edgeId: 'edge-b2', channel: 'low-voltage-control-signal', pageNumber: 1, fromNodeId: 'branch-b', toNodeId: 'merge-load', kind: 'circuit-segment', start: b2.start, end: b2.end, geometry: b2 },
+    ],
+    branchOrders: [{ id: 'source-branches', nodeId: 'source', mode, outgoingEdgeIds: ['edge-a1', 'edge-b1'] }],
+  }
+}
+
 /** Observable frame payload. `step` is dropped: it is a back-reference to the timeline, not output. */
 function serializeFrame(frame: PlaybackFrame): string {
   return JSON.stringify({
     elapsedMs: frame.elapsedMs,
     complete: frame.complete,
     orb: frame.orb,
+    orbs: frame.orbs,
     energizedEdges: frame.energizedEdges.map(({ step, ...rest }) => rest),
     devices: frame.devices,
   })
@@ -247,5 +274,58 @@ describe('aspect correction, direct edges and per-role reactions', () => {
       const replay = calculatePlaybackFrame(createPlaybackTimeline(preparedGeometry(), options), ms)
       expect(serializeFrame(replay)).toBe(serializeFrame(first))
     }
+  })
+})
+
+describe('branch playback scheduling', () => {
+  it('detects a reachable split and its shared convergence node', () => {
+    expect(detectPlaybackBranches(branchedGeometry())).toEqual([{
+      nodeId: 'source',
+      mode: 'simultaneous',
+      outgoingStepIds: ['a1', 'b1'],
+      convergenceNodeId: 'merge-load',
+    }])
+  })
+
+  it('runs simultaneous branches from one clock with independent deterministic progress', () => {
+    const firstTimeline = createPlaybackTimeline(branchedGeometry(), options)
+    const replayTimeline = createPlaybackTimeline(branchedGeometry(), options)
+    expect(firstTimeline.steps.find((step) => step.id === 'a1')?.travelStartMs).toBe(0)
+    expect(firstTimeline.steps.find((step) => step.id === 'b1')?.travelStartMs).toBe(0)
+    const elapsed = 500
+    const first = calculatePlaybackFrame(firstTimeline, elapsed)
+    const replay = calculatePlaybackFrame(replayTimeline, elapsed)
+    expect(serializeFrame(replay)).toBe(serializeFrame(first))
+    expect(first.orbs.map((orb) => orb.edgeId).sort()).toEqual(['edge-a1', 'edge-b1'])
+    expect(first.orbs[0].progress).not.toBe(first.orbs[1].progress)
+  })
+
+  it('serializes whole sibling paths when branch mode is sequential', () => {
+    const timeline = createPlaybackTimeline(branchedGeometry('sequential'), options)
+    const firstBranchEnd = timeline.steps.find((step) => step.id === 'a2')?.pauseEndMs as number
+    expect(timeline.steps.find((step) => step.id === 'b1')?.travelStartMs).toBe(firstBranchEnd)
+  })
+
+  it('deduplicates convergence activation and starts it at the latest branch arrival', () => {
+    const timeline = createPlaybackTimeline(branchedGeometry(), options)
+    const incoming = timeline.steps.filter((step) => step.toNodeId === 'merge-load')
+    const convergenceArrival = Math.max(...incoming.map((step) => step.travelEndMs))
+    expect(calculatePlaybackFrame(timeline, convergenceArrival - 1).devices.filter((device) => device.nodeId === 'merge-load')).toEqual([
+      expect.objectContaining({ phase: 'idle' }),
+    ])
+    expect(calculatePlaybackFrame(timeline, convergenceArrival + 50).devices.filter((device) => device.nodeId === 'merge-load')).toEqual([
+      expect.objectContaining({ phase: 'reacting', progress: 0.5 }),
+    ])
+  })
+
+  it('keeps the legacy linear cursor timings and sole orb behavior unchanged', () => {
+    const timeline = createPlaybackTimeline(preparedGeometry(), options)
+    expect(timeline.hasBranches).toBe(false)
+    expect(timeline.steps.map((step) => [step.travelStartMs, step.travelEndMs, step.pauseEndMs])).toEqual([
+      [0, 1000, 1200],
+      [1200, 3200, 3400],
+    ])
+    const frame = calculatePlaybackFrame(timeline, 1700)
+    expect(frame.orbs).toEqual(frame.orb ? [frame.orb] : [])
   })
 })

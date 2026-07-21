@@ -19,6 +19,8 @@ import {
   removePackageAnimationRouteTransition,
   resolvePackageAnimationRouteDraft,
   selectPackageAnimationRouteSource,
+  finishPackageAnimationRouteBranch,
+  startPackageAnimationRouteBranch,
   summarizePackageAnimationScene,
   undoPackageAnimationRouteSelection,
   updatePackageAnimationRouteChannel,
@@ -42,9 +44,14 @@ const arc: RouteBuilderAnnotation = {
   points: [{ x: 0.1, y: 0.5 }, { x: 0.5, y: 0.5 }], arcCtrls: [{ x: 0.3, y: 0.2 }],
   pointIds: ['a1', 'a2'], segmentIds: ['as1'],
 }
+const branchCircuit: RouteBuilderAnnotation = {
+  id: 'branch-circuit', pageNumber: 1, label: 'Branch Circuit', shapeKind: 'circuit-path',
+  points: [{ x: 0.1, y: 0.5 }, { x: 0.5, y: 0.3 }, { x: 0.9, y: 0.5 }],
+  pointIds: ['bp1', 'bp2', 'bp3'], segmentIds: ['bs1', 'bs2'],
+}
 
 function allAnnotations(): RouteBuilderAnnotation[] {
-  return [source, sensor, fixture1, fixture2, circuit, arc].map((entry) => structuredClone(entry))
+  return [source, sensor, fixture1, fixture2, circuit, arc, branchCircuit].map((entry) => structuredClone(entry))
 }
 
 function empty(overrides: Partial<Parameters<typeof createEmptyPackageAnimationRouteDraft>[0]> = {}) {
@@ -247,6 +254,40 @@ describe('routeBuilderModel', () => {
     expect(loaded).toMatchObject({ sceneId: 'scene-1', createdAt: '2026-07-19T00:00:00.000Z', expectedBaseRevision: 7, dirty: false })
     expect(loaded.playbackOptions.travelSpeed).toBe(0.77)
     expect(loaded.transitions).toHaveLength(1)
+  })
+
+  it('authors, saves, and reloads one deterministic split/rejoin branch without a schema extension', () => {
+    let draft = sourceDraft()
+    draft = addSegment(draft, circuit, 0)
+    draft = addSegment(draft, circuit, 1)
+    draft = startPackageAnimationRouteBranch(draft, 'source')
+    draft = addSegment(draft, branchCircuit, 0)
+    expect(validatePackageAnimationRouteDraft(draft).map((entry) => entry.code)).toContain('unmerged-branch')
+    draft = addSegment(draft, branchCircuit, 1)
+    expect(resolvePackageAnimationRouteDraft(draft)).toMatchObject({
+      branchOriginNodeId: 'animation_node_annotation_source',
+      branchConvergenceNodeId: 'animation_node_annotation_fixture-2',
+    })
+    draft = finishPackageAnimationRouteBranch(draft)
+
+    const saved = packageAnimationRouteDraftToScene(draft).scene!
+    expect(saved.schemaVersion).toBe(1)
+    expect(saved.branchOrders).toEqual([expect.objectContaining({
+      nodeId: 'animation_node_annotation_source',
+      mode: 'simultaneous',
+      outgoingEdgeIds: [saved.edges[0].id, saved.edges[2].id],
+    })])
+    expect(summarizePackageAnimationScene(saved, allAnnotations(), allAnnotations().map((entry) => entry.id)).advanced).toBe(false)
+
+    const loaded = loadPackageAnimationRouteDraft({
+      packageId: 'package', packageName: 'Lighting', packageAnnotationIds: allAnnotations().map((entry) => entry.id),
+      annotations: allAnnotations(), scene: saved, expectedBaseRevision: 1,
+    })
+    expect(loaded.readOnlyReason).toBeUndefined()
+    expect(loaded.transitions).toHaveLength(2)
+    expect(loaded.branch).toMatchObject({ originSelectionId: 'source', mode: 'simultaneous', editing: false })
+    expect(loaded.branch?.transitions).toHaveLength(2)
+    expect(validatePackageAnimationRouteDraft(loaded).filter((entry) => entry.severity === 'error')).toEqual([])
   })
 
   it('refuses destructive editing of multi-source and branch scenes', () => {
