@@ -124,6 +124,24 @@ function directEdgeGeometry(): PreparedPlaybackGeometry {
   }
 }
 
+/** Three back-to-back direct fixture transitions with no circuit geometry between them. */
+function consecutiveDirectEdgeGeometry(): PreparedPlaybackGeometry {
+  return {
+    sourceNodeId: 'source',
+    nodes: [
+      { id: 'source', pageNumber: 1, point: { x: 0.1, y: 0.5 }, roles: ['source'] },
+      { id: 'load-1', pageNumber: 1, point: { x: 0.3, y: 0.5 }, roles: ['load'] },
+      { id: 'load-2', pageNumber: 1, point: { x: 0.5, y: 0.5 }, roles: ['load'] },
+      { id: 'load-3', pageNumber: 1, point: { x: 0.7, y: 0.5 }, roles: ['load'] },
+    ],
+    steps: [
+      { id: 'direct-1', edgeId: 'edge-direct-1', channel: 'switched-line-voltage', pageNumber: 1, fromNodeId: 'source', toNodeId: 'load-1', kind: 'direct', start: { x: 0.1, y: 0.5 }, end: { x: 0.3, y: 0.5 } },
+      { id: 'direct-2', edgeId: 'edge-direct-2', channel: 'switched-line-voltage', pageNumber: 1, fromNodeId: 'load-1', toNodeId: 'load-2', kind: 'direct', start: { x: 0.3, y: 0.5 }, end: { x: 0.5, y: 0.5 } },
+      { id: 'direct-3', edgeId: 'edge-direct-3', channel: 'switched-line-voltage', pageNumber: 1, fromNodeId: 'load-2', toNodeId: 'load-3', kind: 'direct', start: { x: 0.5, y: 0.5 }, end: { x: 0.7, y: 0.5 } },
+    ],
+  }
+}
+
 /** Same shape as preparedGeometry(), but the middle node is a sensor rather than a junction. */
 function sensorNodeGeometry(): PreparedPlaybackGeometry {
   const base = preparedGeometry()
@@ -171,6 +189,32 @@ describe('aspect correction, direct edges and per-role reactions', () => {
     expect(frame.orb?.edgeId).not.toBe('edge-direct')
     // ... yet the node on its far side still arrives on schedule and reacts.
     expect(frame.devices.find((device) => device.nodeId === 'load')).toMatchObject({ phase: 'reacting' })
+  })
+
+  it('gives consecutive direct fixtures distinct observable activation windows', () => {
+    const timeline = createPlaybackTimeline(consecutiveDirectEdgeGeometry(), {
+      ...options,
+      nodePauseMs: 0,
+      holdActivatedNodes: false,
+    })
+    const activationWindowMs = options.deviceReactionMs + options.fixtureFadeMs
+
+    expect(timeline.steps.map((step) => step.travelEndMs - step.travelStartMs)).toEqual([0, 0, 0])
+    expect(timeline.steps.map((step) => step.travelStartMs)).toEqual([
+      0,
+      activationWindowMs,
+      activationWindowMs * 2,
+    ])
+
+    timeline.steps.forEach((step, index) => {
+      const frame = calculatePlaybackFrame(timeline, step.travelEndMs + options.deviceReactionMs + 1)
+      expect(frame.devices.find((device) => device.nodeId === `load-${index + 1}`)).toMatchObject({
+        phase: 'activating',
+      })
+      timeline.steps.slice(index + 1).forEach((laterStep) => {
+        expect(frame.devices.find((device) => device.nodeId === laterStep.toNodeId)).toMatchObject({ phase: 'idle' })
+      })
+    })
   })
 
   it('activates a junction instantly on arrival with no reaction ramp', () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   applyAnnotationSnapshotsToList,
+  buildAnnotationMutationCommand,
   buildAnnotationRestorePayload,
   clearHistoryScope,
   commitRedo,
@@ -56,7 +57,171 @@ function command(
   }
 }
 
+function mutationCommand(options: {
+  id: string
+  type: string
+  before?: BlueprintAnnotation | null
+  after?: BlueprintAnnotation | null
+  label?: string
+}): AnnotationHistoryCommand {
+  const before = options.before === undefined
+    ? null
+    : options.before
+  const after = options.after === undefined
+    ? annotation('after', { id: options.id, type: options.type } as Partial<BlueprintAnnotation>)
+    : options.after
+  const built = buildAnnotationMutationCommand({
+    transactionId: `tx-${options.id}`,
+    label: options.label || `Mutate ${options.type}`,
+    scope,
+    before: { [options.id]: before },
+    after: { [options.id]: after },
+    selectionAfter: after ? options.id : null,
+    timestamp: 10,
+  })
+  if (!built) throw new Error('Expected a history command')
+  return built
+}
+
 describe('command history', () => {
+  it('builds commands from changed snapshot maps and owns deep-cloned snapshots', () => {
+    const before = annotation('before', { meta: { textStyle: { bold: false } } } as any)
+    const after = annotation('after', { meta: { textStyle: { bold: true } } } as any)
+    const built = buildAnnotationMutationCommand({
+      transactionId: 'tx-builder',
+      label: 'Edit note',
+      scope,
+      before: { 'ann-1': before },
+      after: { 'ann-1': after },
+      selectionBefore: 'ann-1',
+      selectionAfter: 'ann-1',
+      timestamp: 123,
+    })
+    expect(built?.affectedAnnotationIds).toEqual(['ann-1'])
+    expect(built?.timestamp).toBe(123)
+    ;(after as any).meta.textStyle.bold = false
+    expect((built?.after['ann-1'] as any).meta.textStyle.bold).toBe(true)
+  })
+
+  it('does not create a command when snapshots differ only by persistence timestamps', () => {
+    const before = annotation('same', { updatedAt: '2026-01-01T00:00:00.000Z' })
+    const after = annotation('same', { updatedAt: '2026-07-20T00:00:00.000Z' })
+    expect(buildAnnotationMutationCommand({
+      transactionId: 'tx-noop',
+      label: 'No-op',
+      scope,
+      before: { 'ann-1': before },
+      after: { 'ann-1': after },
+    })).toBeNull()
+  })
+
+  it.each([
+    ['pen', { points: [{ x: 0.1, y: 0.2 }, { x: 0.3, y: 0.4 }], thickness: 3, opacity: 0.9 }],
+    ['marker', { points: [{ x: 0.2, y: 0.3 }, { x: 0.5, y: 0.6 }], thickness: 12, opacity: 0.35 }],
+    ['highlight', { opacity: 0.35 }],
+  ])('round-trips a newly-created %s annotation without losing drawing metadata', (type, meta) => {
+    const created = annotation(type, { id: `${type}-1`, type, meta, metadata: meta } as any)
+    const historyCommand = mutationCommand({ id: created.id, type, after: created })
+    const history = pushCommand(createCommandHistory(), historyCommand)
+    expect(isHistoryCommandSourceCurrent(historyCommand, 'undo', [created])).toBe(true)
+    const undoneList = applyAnnotationSnapshotsToList([created], historyCommand.affectedAnnotationIds, historyCommand.before)
+    expect(undoneList).toEqual([])
+    const undoneHistory = commitUndo(history, scope, historyCommand.transactionId)
+    const redoneList = applyAnnotationSnapshotsToList(undoneList, historyCommand.affectedAnnotationIds, historyCommand.after)
+    expect((redoneList[0] as any).meta).toEqual(meta)
+    expect(peekRedo(undoneHistory, scope)?.transactionId).toBe(historyCommand.transactionId)
+  })
+
+  it.each([
+    ['note', { textStyle: { bold: true }, anchor: { x: 0.2, y: 0.3 } }],
+    ['callout', { textStyle: { fontSize: 18, align: 'center' }, box: { x: 0.2, y: 0.3, w: 0.25, h: 0.1 } }],
+  ])('restores the complete %s text-edit snapshot', (type, meta) => {
+    const before = annotation('before', { id: `${type}-edit`, type, meta, metadata: meta } as any)
+    const afterMeta = { ...meta, textStyle: { ...meta.textStyle, italic: true } }
+    const after = annotation('after', { id: before.id, type, meta: afterMeta, metadata: afterMeta } as any)
+    const historyCommand = mutationCommand({ id: before.id, type, before, after })
+    const restored = applyAnnotationSnapshotsToList([after], historyCommand.affectedAnnotationIds, historyCommand.before)
+    expect(restored[0].text).toBe('before')
+    expect((restored[0] as any).meta).toEqual(meta)
+  })
+
+  it.each(['measure-distance', 'measure-perimeter', 'measure-area'])('preserves %s points, labels, and style across replay', (type) => {
+    const meta = {
+      points: [{ x: 0.1, y: 0.1 }, { x: 0.4, y: 0.5 }, { x: 0.7, y: 0.2 }],
+      label: '12 ft',
+      style: { lineThickness: 4, linePattern: 'dash-dot' },
+    }
+    const created = annotation('12 ft', { id: `${type}-1`, type, meta, metadata: meta } as any)
+    const historyCommand = mutationCommand({ id: created.id, type, after: created })
+    const restored = applyAnnotationSnapshotsToList([], historyCommand.affectedAnnotationIds, historyCommand.after)
+    expect((restored[0] as any).meta).toEqual(meta)
+  })
+
+  it('undoes a paste by removing only the pasted identity', () => {
+    const original = annotation('source', { id: 'original' })
+    const pasted = annotation('source', { id: 'pasted', rect: { x: 0.2, y: 0.2, w: 0.1, h: 0.1 } } as any)
+    const pasteCommand = mutationCommand({ id: pasted.id, type: pasted.type, after: pasted, label: 'Paste note' })
+    const afterUndo = applyAnnotationSnapshotsToList([original, pasted], pasteCommand.affectedAnnotationIds, pasteCommand.before)
+    expect(afterUndo.map((item) => item.id)).toEqual(['original'])
+  })
+
+  it('restores Light Output and Kelvin through the standard property-edit snapshot path', () => {
+    const beforeMeta = { shapeKind: 'electrical-recessed-light', lightIntensity: 1, lightKelvin: 3000 }
+    const afterMeta = { ...beforeMeta, lightIntensity: 4.5, lightKelvin: 4000 }
+    const before = annotation('light', { id: 'light-1', type: 'shape', meta: beforeMeta, metadata: beforeMeta } as any)
+    const after = annotation('light', { id: 'light-1', type: 'shape', meta: afterMeta, metadata: afterMeta } as any)
+    const propertyCommand = mutationCommand({ id: 'light-1', type: 'shape', before, after, label: 'Edit light properties' })
+    const undone = applyAnnotationSnapshotsToList([after], propertyCommand.affectedAnnotationIds, propertyCommand.before)
+    const redone = applyAnnotationSnapshotsToList(undone, propertyCommand.affectedAnnotationIds, propertyCommand.after)
+    expect((undone[0] as any).meta).toEqual(beforeMeta)
+    expect((redone[0] as any).meta).toEqual(afterMeta)
+  })
+
+  it('records a three-annotation eraser gesture as one command and restores all three together', () => {
+    const erased = ['erase-1', 'erase-2', 'erase-3'].map((id, index) => annotation(`item ${index}`, { id }))
+    const before = Object.fromEntries(erased.map((item) => [item.id, item]))
+    const after = Object.fromEntries(erased.map((item) => [item.id, null]))
+    const eraseCommand = buildAnnotationMutationCommand({
+      transactionId: 'tx-erase-three',
+      label: 'Erase 3 annotations',
+      scope,
+      before,
+      after,
+      selectionBefore: erased[0].id,
+    })!
+    const history = pushCommand(createCommandHistory(), eraseCommand)
+    expect(getScopeHistory(history, scope).past).toHaveLength(1)
+    expect(peekUndo(history, scope)?.affectedAnnotationIds).toEqual(erased.map((item) => item.id))
+    const restored = applyAnnotationSnapshotsToList([], eraseCommand.affectedAnnotationIds, eraseCommand.before)
+    expect(restored.map((item) => item.id)).toEqual(erased.map((item) => item.id))
+    const deletedAgain = applyAnnotationSnapshotsToList(restored, eraseCommand.affectedAnnotationIds, eraseCommand.after)
+    expect(deletedAgain).toEqual([])
+  })
+
+  it('rejects an entire grouped undo when one erased annotation has externally reappeared', () => {
+    const erased = ['erase-1', 'erase-2', 'erase-3'].map((id) => annotation(id, { id }))
+    const eraseCommand = buildAnnotationMutationCommand({
+      transactionId: 'tx-stale-erase',
+      label: 'Erase 3 annotations',
+      scope,
+      before: Object.fromEntries(erased.map((item) => [item.id, item])),
+      after: Object.fromEntries(erased.map((item) => [item.id, null])),
+    })!
+    expect(isHistoryCommandSourceCurrent(eraseCommand, 'undo', [])).toBe(true)
+    expect(isHistoryCommandSourceCurrent(eraseCommand, 'undo', [erased[1]])).toBe(false)
+  })
+
+  it('strips tombstones from every snapshot in a grouped restore', () => {
+    const erased = ['erase-1', 'erase-2', 'erase-3'].map((id) => annotation(id, {
+      id,
+      deletedAt: '2026-07-20T10:00:00.000Z',
+      deletedBy: 'user-1',
+    } as any))
+    const restored = erased.map((item, index) => buildAnnotationRestorePayload(item, `2026-07-20T10:00:0${index}.000Z`)) as any[]
+    expect(restored.every((item) => !('deletedAt' in item) && !('deletedBy' in item))).toBe(true)
+    expect(restored.map((item) => item.id)).toEqual(erased.map((item) => item.id))
+  })
+
   it('pushes commands and exposes the latest undo', () => {
     const history = pushCommand(createCommandHistory(), command('tx-1', null, 'created'))
     expect(peekUndo(history, scope)?.transactionId).toBe('tx-1')

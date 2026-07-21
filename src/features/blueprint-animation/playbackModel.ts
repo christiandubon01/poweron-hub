@@ -62,13 +62,21 @@ export function createPlaybackTimeline(
   options: BlueprintAnimationPlaybackOptions,
 ): PlaybackTimeline {
   let cursor = 0
+  const nodeById = new Map(geometry.nodes.map((node) => [node.id, node]))
   const steps = geometry.steps.map((step): PlaybackTimelineStep => {
     const duration = options.reducedMotion || step.kind === 'direct'
       ? 0
       : (step.geometry?.length ?? 0) * 1000 / options.travelSpeed
     const travelStartMs = cursor
     const travelEndMs = travelStartMs + duration
-    const pauseEndMs = travelEndMs + (options.reducedMotion ? 0 : options.nodePauseMs)
+    const directTarget = step.kind === 'direct' ? nodeById.get(step.toNodeId) : undefined
+    const directActivationMs = directTarget
+      ? options.deviceReactionMs + (directTarget.roles.includes('load') ? options.fixtureFadeMs : 0)
+      : 0
+    const pauseDuration = options.reducedMotion
+      ? 0
+      : Math.max(options.nodePauseMs, directActivationMs)
+    const pauseEndMs = travelEndMs + pauseDuration
     cursor = pauseEndMs
     return { ...step, travelStartMs, travelEndMs, pauseEndMs }
   })

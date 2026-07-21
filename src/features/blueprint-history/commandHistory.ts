@@ -1,6 +1,7 @@
 import type {
   AnnotationHistoryCommand,
   AnnotationHistoryScope,
+  AnnotationSnapshot,
   CommandHistoryState,
   ScopeCommandHistory,
 } from './types'
@@ -16,6 +17,44 @@ export function createCommandHistory(maxCommandsPerScope = 100): CommandHistoryS
   return {
     scopes: {},
     maxCommandsPerScope: Math.max(1, Math.floor(maxCommandsPerScope)),
+  }
+}
+
+export function buildAnnotationMutationCommand(options: {
+  transactionId: string
+  label: string
+  scope: AnnotationHistoryScope
+  before: Record<string, AnnotationSnapshot>
+  after: Record<string, AnnotationSnapshot>
+  selectionBefore?: string | null
+  selectionAfter?: string | null
+  timestamp?: number
+  coalesceKey?: string
+}): AnnotationHistoryCommand | null {
+  const candidateIds = [...Object.keys(options.before), ...Object.keys(options.after)]
+  const affectedAnnotationIds = Array.from(new Set(candidateIds)).filter((id) => (
+    !areAnnotationSnapshotsEqual(options.before[id], options.after[id])
+  ))
+  if (affectedAnnotationIds.length === 0) return null
+
+  const before: Record<string, AnnotationSnapshot> = {}
+  const after: Record<string, AnnotationSnapshot> = {}
+  for (const id of affectedAnnotationIds) {
+    before[id] = cloneAnnotationSnapshot(options.before[id])
+    after[id] = cloneAnnotationSnapshot(options.after[id])
+  }
+
+  return {
+    transactionId: options.transactionId,
+    label: options.label,
+    scope: options.scope,
+    affectedAnnotationIds,
+    before,
+    after,
+    selectionBefore: options.selectionBefore ?? null,
+    selectionAfter: options.selectionAfter ?? null,
+    timestamp: options.timestamp ?? Date.now(),
+    ...(options.coalesceKey ? { coalesceKey: options.coalesceKey } : {}),
   }
 }
 
