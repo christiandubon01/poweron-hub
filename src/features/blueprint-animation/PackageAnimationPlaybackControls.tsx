@@ -11,6 +11,15 @@ import {
   type PlaybackDeviceVisualKind,
   type PlaybackFixtureAppearance,
 } from './playbackFixtureAppearance'
+import {
+  PLAYBACK_PATH_NOT_YET_OPACITY,
+  PLAYBACK_PATH_PULSE_DURATION_MS,
+  PLAYBACK_PATH_PULSE_OPACITIES,
+  PLAYBACK_PATH_SOLID_OPACITY,
+  PLAYBACK_PATH_STROKE_WIDTH,
+  resolvePlaybackChannelColor,
+  resolvePlaybackPathState,
+} from './playbackPathAppearance'
 
 type PlaybackStatus = 'idle' | 'playing' | 'paused' | 'complete'
 
@@ -50,15 +59,6 @@ const GLOW_STOPS: Array<{ offset: string; opacity: number }> = [
   { offset: '55%', opacity: 0.24 },
   { offset: '100%', opacity: 0 },
 ]
-
-const CHANNEL_COLORS: Record<string, string> = {
-  'switched-line-voltage': '#facc15',
-  'constant-line-voltage': '#fb923c',
-  'zero-to-ten-volt-control': '#a78bfa',
-  'low-voltage-control-signal': '#38bdf8',
-  'emergency-power': '#f43f5e',
-  'generic-route': '#22d3ee',
-}
 
 export function PackageAnimationPlaybackControls({
   active,
@@ -162,6 +162,7 @@ export function PackageAnimationPlaybackControls({
   const frame: PlaybackFrame | null = active && prepared.timeline
     ? calculatePlaybackFrame(prepared.timeline, elapsedMs)
     : null
+  const energizedEdgesByStepId = new Map((frame?.energizedEdges ?? []).map((edge) => [edge.step.id, edge]))
 
   const play = () => {
     if (!prepared.timeline) return
@@ -240,23 +241,55 @@ export function PackageAnimationPlaybackControls({
             style={{ zIndex: 26 }}
             aria-hidden="true"
           >
-            {frame.energizedEdges.filter((edge) => edge.pageNumber === currentPage && edge.step.geometry).map((edge) => {
-              const geometry = edge.step.geometry!
+            {prepared.timeline?.steps.filter((step) => (
+              step.kind === 'circuit-segment' && step.pageNumber === currentPage && step.geometry
+            )).map((step) => {
+              const geometry = step.geometry!
               const points = geometry.renderPoints.map((point) => `${point.x * pageWidth},${point.y * pageHeight}`).join(' ')
+              const pathState = resolvePlaybackPathState({
+                elapsedMs: frame.elapsedMs,
+                travelStartMs: step.travelStartMs,
+                travelEndMs: step.travelEndMs,
+                reducedMotion: prepared.timeline?.options.reducedMotion,
+              })
+              const energizedEdge = energizedEdgesByStepId.get(step.id)
+              const solidProgress = pathState === 'solid' ? 1 : energizedEdge?.progress ?? 0
+              const stroke = resolvePlaybackChannelColor(step.channel)
+              const sharedProps = {
+                points,
+                fill: 'none',
+                stroke,
+                strokeWidth: PLAYBACK_PATH_STROKE_WIDTH,
+                strokeLinecap: 'round' as const,
+                strokeLinejoin: 'round' as const,
+                pathLength: 1,
+                vectorEffect: 'non-scaling-stroke' as const,
+              }
               return (
-                <polyline
-                  key={edge.edgeId}
-                  points={points}
-                  fill="none"
-                  stroke={CHANNEL_COLORS[edge.channel] || CHANNEL_COLORS['generic-route']}
-                  strokeWidth={6}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  pathLength={1}
-                  strokeDasharray={`${edge.progress} 1`}
-                  opacity={0.9}
-                  vectorEffect="non-scaling-stroke"
-                />
+                <Fragment key={step.id}>
+                  {pathState !== 'solid' && (
+                    <polyline
+                      {...sharedProps}
+                      opacity={pathState === 'not-yet' ? PLAYBACK_PATH_NOT_YET_OPACITY : PLAYBACK_PATH_PULSE_OPACITIES[0]}
+                    >
+                      {pathState === 'dim-pulsing' && status === 'playing' && (
+                        <animate
+                          attributeName="opacity"
+                          values={PLAYBACK_PATH_PULSE_OPACITIES.join(';')}
+                          dur={`${PLAYBACK_PATH_PULSE_DURATION_MS}ms`}
+                          repeatCount="indefinite"
+                        />
+                      )}
+                    </polyline>
+                  )}
+                  {solidProgress > 0 && (
+                    <polyline
+                      {...sharedProps}
+                      strokeDasharray={solidProgress < 1 ? `${solidProgress} 1` : undefined}
+                      opacity={PLAYBACK_PATH_SOLID_OPACITY}
+                    />
+                  )}
+                </Fragment>
               )
             })}
             {frame.orb?.pageNumber === currentPage && (

@@ -82,10 +82,16 @@ import {
 import { PackageAnimationRouteBuilder } from '@/features/blueprint-animation/PackageAnimationRouteBuilder'
 import { PackageAnimationPlaybackControls } from '@/features/blueprint-animation/PackageAnimationPlaybackControls'
 import type { PlaybackFixtureAppearance } from '@/features/blueprint-animation/playbackFixtureAppearance'
+import {
+  buildCircuitSegmentChannelColorMap,
+  circuitSegmentChannelKey,
+} from '@/features/blueprint-animation/playbackPathAppearance'
 import { parseBlueprintAnimationScene } from '@/features/blueprint-animation/sceneSchema'
+import type { BlueprintAnimationChannelType } from '@/features/blueprint-animation/types'
 import {
   applyAnnotationSnapshotsToList,
   areAnnotationSnapshotsEqual,
+  buildAnnotationMutationCommand,
   buildAnnotationRestorePayload,
   clearCommandHistory,
   clearHistoryScope,
@@ -97,7 +103,7 @@ import {
   peekUndo,
   pushCommand,
 } from '@/features/blueprint-history/commandHistory'
-import type { AnnotationHistoryCommand, AnnotationHistoryScope } from '@/features/blueprint-history/types'
+import type { AnnotationHistoryScope, AnnotationSnapshot } from '@/features/blueprint-history/types'
 import {
   addPackageAnimationDirectTransition,
   addPackageAnimationRouteSegment,
@@ -4534,6 +4540,25 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     [animationRouteBuilder]
   )
 
+  // Route channel colors are a transient view of saved animation scenes. They never rewrite a
+  // circuit annotation's own style; unassigned or conflicting segments fall back to that style.
+  const animationCircuitSegmentColors = useMemo(() => {
+    const assignments: Array<{ annotationId: string; segmentId: string; channel: BlueprintAnimationChannelType }> = []
+    scopeLayers.forEach((layer) => {
+      const parsed = parseBlueprintAnimationScene(layer.animationScene)
+      if (parsed.status !== 'supported') return
+      parsed.scene.edges.forEach((edge) => {
+        if (edge.geometry.kind !== 'circuit-segment') return
+        assignments.push({
+          annotationId: edge.geometry.annotationId,
+          segmentId: edge.geometry.segmentId,
+          channel: edge.channel,
+        })
+      })
+    })
+    return buildCircuitSegmentChannelColorMap(assignments)
+  }, [scopeLayers])
+
   // Annotations owned by the active playback run. Their resting Light Output glow is suppressed
   // for the duration so the route can light them from "off" — a render gate only, recomputed just
   // on play/stop rather than per frame. Nothing here writes to an annotation.
@@ -5243,18 +5268,18 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       : after == null
         ? `Delete ${annotationLabel(subject)}`
         : `Edit ${annotationLabel(subject)}`
-    const command: AnnotationHistoryCommand = {
+    const command = buildAnnotationMutationCommand({
       transactionId,
       label: options.label || defaultLabel,
       scope,
-      affectedAnnotationIds: [id],
       before: { [id]: cloneAnnotationForHistory(before) },
       after: { [id]: cloneAnnotationForHistory(after) },
       selectionBefore: options.selectionBefore !== undefined ? options.selectionBefore : (before ? id : null),
       selectionAfter: options.selectionAfter !== undefined ? options.selectionAfter : (after ? id : null),
       timestamp: Date.now(),
       ...(options.coalesceKey ? { coalesceKey: options.coalesceKey } : {}),
-    }
+    })
+    if (!command) return
     annotationHistoryRef.current = pushCommand(annotationHistoryRef.current, command, { coalesce: !!options.coalesceKey })
     setAnnotationHistoryRevision((revision) => revision + 1)
   }, [buildAnnotationHistoryScope])
@@ -6040,6 +6065,76 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     return mutationQueueRef.current
   }, [blueprint?.id, clearStaleSyncMessages, loadAnnotations, onAnnotationsChanged, recordSuccessfulAnnotationMutation, showSyncPausedNoticeOnce])
 
+  const removeAnnotationsAsSingleHistoryCommand = useCallback(async (
+    annotationIds: string[],
+    label: string,
+  ): Promise<boolean> => {
+    const uniqueIds = Array.from(new Set(annotationIds.map((id) => String(id).trim()).filter(Boolean)))
+    const before: Record<string, AnnotationSnapshot> = {}
+    for (const id of uniqueIds) {
+      before[id] = cloneAnnotationForHistory(
+        persistedAnnotationSnapshotsRef.current.get(id)
+        || allAnnotationsRef.current.find((annotation) => annotation.id === id),
+      )
+    }
+    const affectedIds = uniqueIds.filter((id) => before[id] != null)
+    if (affectedIds.length === 0) return false
+
+    const scope = buildAnnotationHistoryScope(before[affectedIds[0]])
+    if (!scope) return false
+    const sameScopeIds = affectedIds.filter((id) => {
+      const candidateScope = buildAnnotationHistoryScope(before[id])
+      return candidateScope
+        && candidateScope.blueprintSetId === scope.blueprintSetId
+        && candidateScope.projectId === scope.projectId
+        && candidateScope.pageNumber === scope.pageNumber
+    })
+    if (sameScopeIds.length !== affectedIds.length) {
+      setError('Grouped annotation deletion cannot span blueprint pages.')
+      return false
+    }
+
+    const removedIds: string[] = []
+    setIsAnnotationHistoryBusy(true)
+    try {
+      for (const id of affectedIds) {
+        const removed = await removeAnnotation(id, { recordHistory: false })
+        if (!removed) {
+          // The storage API is single-row, so compensate earlier successful deletes before
+          // returning. History stays untouched unless the entire eraser gesture succeeds.
+          for (const removedId of [...removedIds].reverse()) {
+            const snapshot = before[removedId]
+            if (!snapshot) continue
+            const restored = buildAnnotationRestorePayload(snapshot, new Date().toISOString())
+            locallyDeletedIdsRef.current.delete(removedId)
+            setAllAnnotations((prev) => applyAnnotationSnapshotsToList(prev, [removedId], { [removedId]: restored }))
+            await persistAnnotation(restored, { recordHistory: false })
+          }
+          return false
+        }
+        removedIds.push(id)
+      }
+
+      const after = Object.fromEntries(affectedIds.map((id) => [id, null])) as Record<string, AnnotationSnapshot>
+      const command = buildAnnotationMutationCommand({
+        transactionId: `annotation_batch_delete_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        label,
+        scope,
+        before,
+        after,
+        selectionBefore: affectedIds[0] ?? null,
+        selectionAfter: null,
+      })
+      if (command) {
+        annotationHistoryRef.current = pushCommand(annotationHistoryRef.current, command)
+        setAnnotationHistoryRevision((revision) => revision + 1)
+      }
+      return true
+    } finally {
+      setIsAnnotationHistoryBusy(false)
+    }
+  }, [buildAnnotationHistoryScope, persistAnnotation, removeAnnotation])
+
   const currentAnnotationHistoryScope = useMemo<AnnotationHistoryScope | null>(() => {
     if (!blueprint?.id || !blueprint?.projectId) return null
     return {
@@ -6087,6 +6182,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
     setIsAnnotationHistoryBusy(true)
     try {
+      const source = direction === 'undo' ? command.after : command.before
+      const appliedIds: string[] = []
       for (const id of command.affectedAnnotationIds) {
         const targetSnapshot = cloneAnnotationForHistory(target[id])
         let saved = false
@@ -6102,7 +6199,28 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
           })
           saved = await persistAnnotation(replayAnnotation, { recordHistory: false })
         }
-        if (!saved) return
+        if (!saved) {
+          // A multi-annotation command is one user gesture even though storage writes are
+          // single-row. Compensate prior replay writes so a failed undo/redo remains atomic
+          // and the history cursor can safely stay where it was.
+          for (const appliedId of [...appliedIds].reverse()) {
+            const sourceSnapshot = cloneAnnotationForHistory(source[appliedId])
+            if (!sourceSnapshot) {
+              await removeAnnotation(appliedId, { recordHistory: false })
+              continue
+            }
+            const replaySource = buildAnnotationRestorePayload(sourceSnapshot, new Date().toISOString())
+            locallyDeletedIdsRef.current.delete(appliedId)
+            setAllAnnotations((prev) => applyAnnotationSnapshotsToList(
+              prev,
+              [appliedId],
+              { [appliedId]: replaySource },
+            ))
+            await persistAnnotation(replaySource, { recordHistory: false })
+          }
+          return
+        }
+        appliedIds.push(id)
       }
 
       annotationHistoryRef.current = direction === 'undo'
@@ -7909,7 +8027,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         if (!ar) return false
         return !(ar.x > eraseNorm.x + eraseNorm.w || ar.x + ar.w < eraseNorm.x || ar.y > eraseNorm.y + eraseNorm.h || ar.y + ar.h < eraseNorm.y)
       })
-      for (const a of toDelete) { void removeAnnotation(a.id) }
+      if (toDelete.length > 0) {
+        const label = toDelete.length === 1
+          ? `Erase ${annotationLabel(toDelete[0])}`
+          : `Erase ${toDelete.length} annotations`
+        void removeAnnotationsAsSingleHistoryCommand(toDelete.map((annotation) => annotation.id), label)
+      }
       return
     }
 
@@ -8058,7 +8181,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       setFocusedAnnotationId(ann.id)
       setToolMode('select')
     }
-  }, [effectiveTool, dragStart, inkDraft, blueprint, currentPage, persistAnnotation, toolColors, isEditorOpen, endTouchPointer, openCreateRichTextEditor, shapeKind, shapeOptions, drawOptions, markerOptions, clearAlignmentGuides, alignmentGuidesEnabled, displaySize.w, displaySize.h, withRecomputedCircuitArcDistance])
+  }, [effectiveTool, dragStart, inkDraft, blueprint, currentPage, persistAnnotation, toolColors, isEditorOpen, endTouchPointer, openCreateRichTextEditor, shapeKind, shapeOptions, drawOptions, markerOptions, clearAlignmentGuides, alignmentGuidesEnabled, displaySize.w, displaySize.h, withRecomputedCircuitArcDistance, removeAnnotationsAsSingleHistoryCommand])
 
   const handlePointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     clearAlignmentGuides()
@@ -10631,10 +10754,17 @@ const annotationPanelSizeClass =
                                 arcD += ` Q ${c.vx} ${c.vy} ${localPts[i].vx} ${localPts[i].vy}`
                               }
                             }
+                            const arcSegmentColors = points.slice(1).map((_, index) => {
+                              const segmentId = Array.isArray(meta.segmentIds) ? meta.segmentIds[index] : undefined
+                              return typeof segmentId === 'string'
+                                ? animationCircuitSegmentColors.get(circuitSegmentChannelKey(a.id, segmentId))
+                                : undefined
+                            })
+                            const hasArcChannelOverride = arcSegmentColors.some(Boolean)
                             return (
                               <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                                 <svg className="absolute inset-0 overflow-visible" viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none">
-                                  {arcD && (
+                                  {arcD && !hasArcChannelOverride && (
                                     <path
                                       d={arcD}
                                       fill="none"
@@ -10647,6 +10777,24 @@ const annotationPanelSizeClass =
                                       vectorEffect="non-scaling-stroke"
                                     />
                                   )}
+                                  {hasArcChannelOverride && localPts.slice(1).map((point, index) => {
+                                    const previous = localPts[index]
+                                    const control = toLocal(getCircuitArcControl(meta.arcCtrls, points[index], points[index + 1], index))
+                                    return (
+                                      <path
+                                        key={meta.segmentIds?.[index] || index}
+                                        d={`M ${previous.vx} ${previous.vy} Q ${control.vx} ${control.vy} ${point.vx} ${point.vy}`}
+                                        fill="none"
+                                        stroke={arcSegmentColors[index] || borderColor}
+                                        strokeWidth={borderThickness}
+                                        strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined}
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        opacity={fillOpacity}
+                                        vectorEffect="non-scaling-stroke"
+                                      />
+                                    )
+                                  })}
                                 </svg>
                                 {localPts.map((p, i) => (
                                   <div
@@ -10702,20 +10850,44 @@ const annotationPanelSizeClass =
                             }))
                             const svgPts = localPts.map((p) => `${p.vx},${p.vy}`).join(' ')
                             const isCircuit = kind === 'circuit-path'
+                            const pathSegmentColors = isCircuit ? localPts.slice(1).map((_, index) => {
+                              const segmentId = Array.isArray(meta.segmentIds) ? meta.segmentIds[index] : undefined
+                              return typeof segmentId === 'string'
+                                ? animationCircuitSegmentColors.get(circuitSegmentChannelKey(a.id, segmentId))
+                                : undefined
+                            }) : []
+                            const hasPathChannelOverride = pathSegmentColors.some(Boolean)
                             return (
                               <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                                 <svg className="absolute inset-0 overflow-visible" viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none">
-                                  <polyline
-                                    points={svgPts}
-                                    fill="none"
-                                    stroke={borderColor}
-                                    strokeWidth={borderThickness}
-                                    strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined}
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    opacity={fillOpacity}
-                                    vectorEffect="non-scaling-stroke"
-                                  />
+                                  {!hasPathChannelOverride ? (
+                                    <polyline
+                                      points={svgPts}
+                                      fill="none"
+                                      stroke={borderColor}
+                                      strokeWidth={borderThickness}
+                                      strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined}
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      opacity={fillOpacity}
+                                      vectorEffect="non-scaling-stroke"
+                                    />
+                                  ) : localPts.slice(1).map((point, index) => (
+                                    <line
+                                      key={meta.segmentIds?.[index] || index}
+                                      x1={localPts[index].vx}
+                                      y1={localPts[index].vy}
+                                      x2={point.vx}
+                                      y2={point.vy}
+                                      stroke={pathSegmentColors[index] || borderColor}
+                                      strokeWidth={borderThickness}
+                                      strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined}
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      opacity={fillOpacity}
+                                      vectorEffect="non-scaling-stroke"
+                                    />
+                                  ))}
                                 </svg>
                                 {isCircuit && localPts.map((p, i) => (
                                   <div
@@ -12174,7 +12346,7 @@ const annotationPanelSizeClass =
                                         overlayHeight={overlayVisualH}
                                         overlayTarget={overlayRef.current}
                                         fixtureAppearances={animationPlaybackFixtureAppearances}
-                                        lightingEffectsVisible={lightingEffectsVisible}
+                                        lightingEffectsVisible={lightingEffectsVisible || animationPlayback?.layerId === layer.id}
                                         onActivate={() => {
                                           if (!blueprint?.id) return
                                           if (playbackPageNumber !== currentPage) {
