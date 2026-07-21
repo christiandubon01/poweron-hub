@@ -30,6 +30,7 @@ import {
   Pencil,
   PenLine,
   RefreshCw,
+  Redo2,
   RotateCw,
   Ruler,
   Settings,
@@ -41,6 +42,7 @@ import {
   Type,
   Trash2,
   Underline,
+  Undo2,
   Waypoints,
   X,
   ZoomIn,
@@ -81,6 +83,21 @@ import { PackageAnimationRouteBuilder } from '@/features/blueprint-animation/Pac
 import { PackageAnimationPlaybackControls } from '@/features/blueprint-animation/PackageAnimationPlaybackControls'
 import type { PlaybackFixtureAppearance } from '@/features/blueprint-animation/playbackFixtureAppearance'
 import { parseBlueprintAnimationScene } from '@/features/blueprint-animation/sceneSchema'
+import {
+  applyAnnotationSnapshotsToList,
+  areAnnotationSnapshotsEqual,
+  buildAnnotationRestorePayload,
+  clearCommandHistory,
+  clearHistoryScope,
+  commitRedo,
+  commitUndo,
+  createCommandHistory,
+  isHistoryCommandSourceCurrent,
+  peekRedo,
+  peekUndo,
+  pushCommand,
+} from '@/features/blueprint-history/commandHistory'
+import type { AnnotationHistoryCommand, AnnotationHistoryScope } from '@/features/blueprint-history/types'
 import {
   addPackageAnimationDirectTransition,
   addPackageAnimationRouteSegment,
@@ -2295,6 +2312,17 @@ function mergeVisibleAnnotationsWithLocalPending(
   return out
 }
 
+function cloneAnnotationForHistory(annotation: BlueprintAnnotation | null | undefined): BlueprintAnnotation | null {
+  return annotation ? JSON.parse(JSON.stringify(annotation)) as BlueprintAnnotation : null
+}
+
+function annotationHistorySnapshotsEqual(
+  left: BlueprintAnnotation | null | undefined,
+  right: BlueprintAnnotation | null | undefined,
+): boolean {
+  return areAnnotationSnapshotsEqual(left, right)
+}
+
 function BlueprintPageThumbnail({
   pdfDoc,
   pageNumber,
@@ -2533,6 +2561,10 @@ export default function OperationsBlueprintPdfViewer({
   const focusedAnnotationElRef = useRef<HTMLElement | null>(null)
   const isSavingTextBoxRef = useRef(false)
   const mutationQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const annotationHistoryRef = useRef(createCommandHistory())
+  const persistedAnnotationSnapshotsRef = useRef<Map<string, BlueprintAnnotation>>(new Map())
+  const [annotationHistoryRevision, setAnnotationHistoryRevision] = useState(0)
+  const [isAnnotationHistoryBusy, setIsAnnotationHistoryBusy] = useState(false)
   // Track annotation IDs that have been locally deleted but may not yet be flushed to storage.
   // loadAnnotations filters these out so a quick reload never re-surfaces a deleted item.
   const locallyDeletedIdsRef = useRef<Set<string>>(new Set())
@@ -3389,6 +3421,44 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     allAnnotationsRef.current = allAnnotations
   }, [allAnnotations])
 
+  useEffect(() => {
+    annotationHistoryRef.current = clearCommandHistory(annotationHistoryRef.current)
+    persistedAnnotationSnapshotsRef.current = new Map()
+    setAnnotationHistoryRevision((revision) => revision + 1)
+  }, [blueprint?.id])
+
+  useEffect(() => {
+    // Focus and edit chrome are page-local. Never carry a page-A selection onto page B.
+    const cancelledIds = new Set<string>([
+      layoutDragRef.current?.annotationId,
+      endpointDragRef.current?.annotationId,
+      measureEndpointDragRef.current?.annotationId,
+      measureLineDragRef.current?.annotationId,
+      measurePointDragRef.current?.annotationId,
+      archControlDragRef.current?.annotationId,
+      circuitArcControlDragRef.current?.annotationId,
+    ].filter(Boolean) as string[])
+    if (cancelledIds.size > 0) {
+      setAllAnnotations((prev) => prev.map((annotation) => (
+        cancelledIds.has(annotation.id)
+          ? cloneAnnotationForHistory(persistedAnnotationSnapshotsRef.current.get(annotation.id)) || annotation
+          : annotation
+      )))
+    }
+    layoutDragRef.current = null
+    endpointDragRef.current = null
+    measureEndpointDragRef.current = null
+    measureLineDragRef.current = null
+    measurePointDragRef.current = null
+    archControlDragRef.current = null
+    circuitArcControlDragRef.current = null
+    setFocusedAnnotationId(null)
+    setFocusedAnnotationRect(null)
+    setLayoutEditId(null)
+    setOpenPopover(null)
+    setBarDragOffset(null)
+  }, [currentPage])
+
   const renderAlignmentGuideLines = useCallback((guides: AlignmentGuideLine[]) => {
     const svg = alignmentGuideSvgRef.current
     activeAlignmentGuidesRef.current = guides
@@ -3694,6 +3764,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const loadAnnotations = useCallback(() => {
     if (!blueprint?.id) {
       setAllAnnotations([])
+      persistedAnnotationSnapshotsRef.current = new Map()
       return
     }
     try {
@@ -3708,6 +3779,16 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       const savePending = pendingAnnotationMutationsRef.current > 0
       const recentlyStarted = now - lastAnnotationSaveStartedAtRef.current < 10000
       const recentlyFinished = now - lastAnnotationSaveFinishedAtRef.current < 5000
+      if (!savePending && !recentlyStarted && !recentlyFinished) {
+        persistedAnnotationSnapshotsRef.current = new Map(loaded.map((item) => [item.id, cloneAnnotationForHistory(item)!]))
+      } else {
+        for (const item of loaded) {
+          const previous = persistedAnnotationSnapshotsRef.current.get(item.id)
+          if (!previous || Date.parse(item.updatedAt || '') >= Date.parse(previous.updatedAt || '')) {
+            persistedAnnotationSnapshotsRef.current.set(item.id, cloneAnnotationForHistory(item)!)
+          }
+        }
+      }
       if (savePending || recentlyStarted || recentlyFinished) {
         loaded = mergeVisibleAnnotationsWithLocalPending(loaded, allAnnotationsRef.current)
           .filter((item) => !pendingDeletes.has(item.id))
@@ -5139,7 +5220,56 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     onSelectedPagesChange([...selectedPageNumbers, current])
   }, [onSelectedPagesChange, selectedPageNumbers, currentPage])
 
-  const persistAnnotation = useCallback(async (annotation: BlueprintAnnotation) => {
+  const buildAnnotationHistoryScope = useCallback((annotation?: BlueprintAnnotation | null): AnnotationHistoryScope | null => {
+    const blueprintSetId = String(annotation?.blueprintSetId || blueprint?.id || '').trim()
+    const projectId = String(annotation?.projectId || blueprint?.projectId || '').trim()
+    const pageNumber = Math.max(1, Math.floor(Number(annotation?.pageNumber || currentPageRef.current) || 1))
+    return blueprintSetId && projectId ? { blueprintSetId, projectId, pageNumber } : null
+  }, [blueprint?.id, blueprint?.projectId])
+
+  const recordSuccessfulAnnotationMutation = useCallback((
+    before: BlueprintAnnotation | null,
+    after: BlueprintAnnotation | null,
+    options: { label?: string; transactionId?: string; coalesceKey?: string; selectionBefore?: string | null; selectionAfter?: string | null } = {},
+  ) => {
+    if (annotationHistorySnapshotsEqual(before, after)) return
+    const subject = after || before
+    const scope = buildAnnotationHistoryScope(subject)
+    if (!subject || !scope) return
+    const id = subject.id
+    const transactionId = options.transactionId || `annotation_tx_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+    const defaultLabel = before == null
+      ? `Create ${annotationLabel(subject)}`
+      : after == null
+        ? `Delete ${annotationLabel(subject)}`
+        : `Edit ${annotationLabel(subject)}`
+    const command: AnnotationHistoryCommand = {
+      transactionId,
+      label: options.label || defaultLabel,
+      scope,
+      affectedAnnotationIds: [id],
+      before: { [id]: cloneAnnotationForHistory(before) },
+      after: { [id]: cloneAnnotationForHistory(after) },
+      selectionBefore: options.selectionBefore !== undefined ? options.selectionBefore : (before ? id : null),
+      selectionAfter: options.selectionAfter !== undefined ? options.selectionAfter : (after ? id : null),
+      timestamp: Date.now(),
+      ...(options.coalesceKey ? { coalesceKey: options.coalesceKey } : {}),
+    }
+    annotationHistoryRef.current = pushCommand(annotationHistoryRef.current, command, { coalesce: !!options.coalesceKey })
+    setAnnotationHistoryRevision((revision) => revision + 1)
+  }, [buildAnnotationHistoryScope])
+
+  const persistAnnotation = useCallback(async (
+    annotation: BlueprintAnnotation,
+    historyOptions: {
+      recordHistory?: boolean
+      label?: string
+      transactionId?: string
+      coalesceKey?: string
+      selectionBefore?: string | null
+      selectionAfter?: string | null
+    } = {},
+  ): Promise<boolean> => {
     const annotationToPersist = withEnsuredCircuitTopologyIds(annotation)
     if (annotationToPersist !== annotation) {
       // Keep the optimistic copy aligned with the queued save so overlapping explicit edits
@@ -5164,10 +5294,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // BLUEPRINT-6R — synchronous start stamp for the remote-apply reload guard (runs before
     // any state update propagates, so it protects the immediate realtime-refresh race).
     lastAnnotationSaveStartedAtRef.current = Date.now()
-    const op = async () => {
+    const op = async (): Promise<boolean> => {
+      const before = cloneAnnotationForHistory(persistedAnnotationSnapshotsRef.current.get(annotationToPersist.id))
       try {
         const backup = getBackupData()
-        if (!backup) return
+        if (!backup) throw new Error('No local backup data available.')
         const saveResult = await upsertOperationsBlueprintAnnotation(backup, annotationToPersist)
         if (saveResult.cloudSynced) {
           clearStaleSyncMessages()
@@ -5178,7 +5309,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         } else if (!saveResult.localSaved) {
           throw new Error(saveResult.error || 'Failed to save annotation.')
         }
+        persistedAnnotationSnapshotsRef.current.set(annotationToPersist.id, cloneAnnotationForHistory(annotationToPersist)!)
+        locallyDeletedIdsRef.current.delete(annotationToPersist.id)
+        if (historyOptions.recordHistory !== false) {
+          recordSuccessfulAnnotationMutation(before, annotationToPersist, historyOptions)
+        }
         onAnnotationsChanged?.()
+        return true
       } catch (e: any) {
         // BLUEPRINT-6R — record the failure so the drain below does NOT reload from the
         // unchanged backup and wipe the optimistic annotation the user just placed.
@@ -5190,6 +5327,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
           console.error('[Blueprint] Annotation save failed — keeping optimistic annotation:', msg)
           setError(msg)
         }
+        // A failed local save never advances history and cannot leave an untracked optimistic edit.
+        setAllAnnotations((prev) => applyAnnotationSnapshotsToList(
+          prev,
+          [annotationToPersist.id],
+          { [annotationToPersist.id]: before },
+        ))
+        return false
       } finally {
         pendingAnnotationMutationsRef.current = Math.max(0, pendingAnnotationMutationsRef.current - 1)
         // Only refresh annotations from backup once the entire queue has drained.
@@ -5214,7 +5358,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     mutationQueueRef.current = mutationQueueRef.current.then(op)
     return mutationQueueRef.current
-  }, [clearStaleSyncMessages, loadAnnotations, onAnnotationsChanged, showSyncPausedNoticeOnce])
+  }, [clearStaleSyncMessages, loadAnnotations, onAnnotationsChanged, recordSuccessfulAnnotationMutation, showSyncPausedNoticeOnce])
 
   // ─── Copy / Paste for placed annotations & shapes (Fix 1) ─────────────────────
   // Builds a paste-ready template that preserves the full design (type, rect,
@@ -5841,17 +5985,25 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     return () => { cancelled = true }
   }, [pdfDoc, numPages, getLoadedPdfDoc, getSafePdfPageNumber, scaleRescanNonce])
 
-  const removeAnnotation = useCallback(async (annotationId: string) => {
-    if (!blueprint?.id) return
+  const removeAnnotation = useCallback(async (
+    annotationId: string,
+    historyOptions: { recordHistory?: boolean; label?: string; transactionId?: string; selectionBefore?: string | null; selectionAfter?: string | null } = {},
+  ): Promise<boolean> => {
+    if (!blueprint?.id) return false
+    const before = cloneAnnotationForHistory(
+      persistedAnnotationSnapshotsRef.current.get(annotationId)
+      || allAnnotationsRef.current.find((annotation) => annotation.id === annotationId),
+    )
+    if (!before) return false
     // Guard loadAnnotations from re-surfacing this ID before storage commits the delete.
     locallyDeletedIdsRef.current.add(annotationId)
     setAllAnnotations((prev) => prev.filter((a) => a.id !== annotationId))
     setFocusedAnnotationId((prev) => (prev === annotationId ? null : prev))
     const bpId = blueprint.id
-    const op = async () => {
+    const op = async (): Promise<boolean> => {
       try {
         const backup = getBackupData()
-        if (!backup) return
+        if (!backup) throw new Error('No local backup data available.')
         const saveResult = await deleteOperationsBlueprintAnnotation(backup, bpId, annotationId)
         if (saveResult.cloudSynced) {
           clearStaleSyncMessages()
@@ -5860,9 +6012,18 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         } else if (!saveResult.localSaved) {
           throw new Error(saveResult.error || 'Failed to delete annotation.')
         }
+        persistedAnnotationSnapshotsRef.current.delete(annotationId)
+        if (historyOptions.recordHistory !== false) {
+          recordSuccessfulAnnotationMutation(before, null, {
+            ...historyOptions,
+            selectionBefore: historyOptions.selectionBefore !== undefined ? historyOptions.selectionBefore : annotationId,
+            selectionAfter: historyOptions.selectionAfter !== undefined ? historyOptions.selectionAfter : null,
+          })
+        }
         // Keep ID in locallyDeletedIdsRef so any concurrent loadAnnotations
         // triggered by onAnnotationsChanged cannot re-surface a deleted item.
         onAnnotationsChanged?.()
+        return true
       } catch (e: any) {
         locallyDeletedIdsRef.current.delete(annotationId)
         const msg = e?.message || 'Failed to delete annotation.'
@@ -5872,10 +6033,120 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
           setError(msg)
         }
         loadAnnotations()
+        return false
       }
     }
     mutationQueueRef.current = mutationQueueRef.current.then(op)
-  }, [blueprint?.id, clearStaleSyncMessages, loadAnnotations, onAnnotationsChanged, showSyncPausedNoticeOnce])
+    return mutationQueueRef.current
+  }, [blueprint?.id, clearStaleSyncMessages, loadAnnotations, onAnnotationsChanged, recordSuccessfulAnnotationMutation, showSyncPausedNoticeOnce])
+
+  const currentAnnotationHistoryScope = useMemo<AnnotationHistoryScope | null>(() => {
+    if (!blueprint?.id || !blueprint?.projectId) return null
+    return {
+      blueprintSetId: blueprint.id,
+      projectId: blueprint.projectId,
+      pageNumber: Math.max(1, Math.floor(Number(currentPage) || 1)),
+    }
+  }, [blueprint?.id, blueprint?.projectId, currentPage])
+
+  const hasActiveAnnotationHistoryInteraction = useCallback(() => (
+    !!layoutDragRef.current
+    || !!endpointDragRef.current
+    || !!measureEndpointDragRef.current
+    || !!measureLineDragRef.current
+    || !!measurePointDragRef.current
+    || !!archControlDragRef.current
+    || !!circuitArcControlDragRef.current
+    || !!inlineTextEditId
+    || isEditorOpen
+    || !!dragStartRef.current
+    || !!inkDraftRef.current
+    || pathDraftRef.current.length > 0
+    || measureDraftRef.current.length > 0
+    || isAnnotationHistoryBusy
+    || hasPendingAnnotationSaves
+    || !!animationRouteBuilder
+    || !!animationPlayback
+  ), [animationPlayback, animationRouteBuilder, hasPendingAnnotationSaves, inlineTextEditId, isAnnotationHistoryBusy, isEditorOpen])
+
+  const applyAnnotationHistory = useCallback(async (direction: 'undo' | 'redo') => {
+    const scope = currentAnnotationHistoryScope
+    if (!scope || hasActiveAnnotationHistoryInteraction()) return
+    const command = direction === 'undo'
+      ? peekUndo(annotationHistoryRef.current, scope)
+      : peekRedo(annotationHistoryRef.current, scope)
+    if (!command) return
+
+    const target = direction === 'undo' ? command.before : command.after
+    if (!isHistoryCommandSourceCurrent(command, direction, allAnnotationsRef.current)) {
+      annotationHistoryRef.current = clearHistoryScope(annotationHistoryRef.current, scope)
+      setAnnotationHistoryRevision((revision) => revision + 1)
+      showTransientSyncNotice('Annotation history reset because this page changed outside the current history.')
+      return
+    }
+
+    setIsAnnotationHistoryBusy(true)
+    try {
+      for (const id of command.affectedAnnotationIds) {
+        const targetSnapshot = cloneAnnotationForHistory(target[id])
+        let saved = false
+        if (!targetSnapshot) {
+          saved = await removeAnnotation(id, { recordHistory: false })
+        } else {
+          const replayAnnotation = buildAnnotationRestorePayload(targetSnapshot, new Date().toISOString())
+          locallyDeletedIdsRef.current.delete(id)
+          setAllAnnotations((prev) => {
+            const existingIndex = prev.findIndex((annotation) => annotation.id === id)
+            if (existingIndex < 0) return [...prev, replayAnnotation]
+            return prev.map((annotation) => annotation.id === id ? replayAnnotation : annotation)
+          })
+          saved = await persistAnnotation(replayAnnotation, { recordHistory: false })
+        }
+        if (!saved) return
+      }
+
+      annotationHistoryRef.current = direction === 'undo'
+        ? commitUndo(annotationHistoryRef.current, scope, command.transactionId)
+        : commitRedo(annotationHistoryRef.current, scope, command.transactionId)
+      const requestedSelection = direction === 'undo' ? command.selectionBefore : command.selectionAfter
+      const selectedSnapshot = requestedSelection ? target[requestedSelection] : null
+      setFocusedAnnotationId(selectedSnapshot ? requestedSelection : null)
+      setLayoutEditId(null)
+      setOpenPopover(null)
+      setAnnotationHistoryRevision((revision) => revision + 1)
+    } finally {
+      setIsAnnotationHistoryBusy(false)
+    }
+  }, [currentAnnotationHistoryScope, hasActiveAnnotationHistoryInteraction, persistAnnotation, removeAnnotation, showTransientSyncNotice])
+
+  useEffect(() => {
+    const onHistoryKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+      const activeElement = document.activeElement as HTMLElement | null
+      const typing = !!activeElement && (
+        activeElement.tagName === 'INPUT'
+        || activeElement.tagName === 'TEXTAREA'
+        || activeElement.tagName === 'SELECT'
+        || activeElement.isContentEditable
+      )
+      if (typing || hasActiveAnnotationHistoryInteraction()) return
+      const key = event.key.toLowerCase()
+      const direction = key === 'y' || (key === 'z' && event.shiftKey)
+        ? 'redo'
+        : key === 'z' && !event.shiftKey
+          ? 'undo'
+          : null
+      if (!direction || !currentAnnotationHistoryScope) return
+      const command = direction === 'undo'
+        ? peekUndo(annotationHistoryRef.current, currentAnnotationHistoryScope)
+        : peekRedo(annotationHistoryRef.current, currentAnnotationHistoryScope)
+      if (!command) return
+      event.preventDefault()
+      void applyAnnotationHistory(direction)
+    }
+    window.addEventListener('keydown', onHistoryKeyDown)
+    return () => window.removeEventListener('keydown', onHistoryKeyDown)
+  }, [applyAnnotationHistory, currentAnnotationHistoryScope, hasActiveAnnotationHistoryInteraction])
 
   // Cycles a rotatable electrical symbol's rotationDeg 0deg -> 90deg -> 180deg -> 270deg -> 0deg.
   // Stored additively on meta so copy/paste, persistence, and Work Package isolate view all
@@ -6286,10 +6557,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     updateAnnotationLayout(annotationId, safeBox)
   }, [updateAnnotationLayout])
 
-  const commitAnnotationLayout = useCallback(async (annotationId: string) => {
+  const commitAnnotationLayout = useCallback(async (
+    annotationId: string,
+    historyOptions: { label?: string; transactionId?: string; coalesceKey?: string } = {},
+  ) => {
     const ann = allAnnotationsRef.current.find((item) => item.id === annotationId)
     if (!ann) return
-    await persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
+    await persistAnnotation({ ...ann, updatedAt: new Date().toISOString() }, historyOptions)
   }, [persistAnnotation])
 
   // KEYNUDGE — arrow-key fine positioning. Mouse drag is for large moves; the keyboard is for
@@ -6310,7 +6584,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     if (nudgeCommitTimerRef.current) clearTimeout(nudgeCommitTimerRef.current)
     nudgeCommitTimerRef.current = setTimeout(() => {
       nudgeCommitTimerRef.current = null
-      void commitAnnotationLayout(annotationId)
+      void commitAnnotationLayout(annotationId, { label: `Move ${annotationLabel(annotation)}` })
     }, 300)
   }, [applyAnnotationMove, commitAnnotationLayout])
 
@@ -6367,6 +6641,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       startArchCtrl,
       startPoints,
       startArcCtrls,
+      historyTransactionId: `annotation_drag_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
     }
     // Write ref synchronously — the first pointermove fires before React batches setLayoutDrag
     layoutDragRef.current = drag
@@ -6525,7 +6800,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     clearAlignmentGuides()
     layoutDragRef.current = null
     setLayoutDrag(null)
-    void commitAnnotationLayout(id)
+    const annotation = allAnnotationsRef.current.find((item) => item.id === id)
+    void commitAnnotationLayout(id, {
+      label: `${drag.mode === 'resize' ? 'Resize' : 'Move'} ${annotation ? annotationLabel(annotation) : 'annotation'}`,
+      transactionId: drag.historyTransactionId,
+    })
     e.preventDefault()
     e.stopPropagation()
   }, [layoutDrag, commitAnnotationLayout, clearAlignmentGuides])
@@ -7512,7 +7791,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       endpointDragRef.current = null
       setEndpointDrag(null)
       const ann = allAnnotationsRef.current.find((a) => a.id === epDragUp.annotationId)
-      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
+      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() }, { label: `Edit points for ${annotationLabel(ann)}` })
       e.preventDefault()
       e.stopPropagation()
       return
@@ -7524,7 +7803,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     if (meDragUp && meDragUp.pointerId === e.pointerId) {
       measureEndpointDragRef.current = null
       const ann = allAnnotationsRef.current.find((a) => a.id === meDragUp.annotationId)
-      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
+      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() }, { label: `Edit points for ${annotationLabel(ann)}` })
       e.preventDefault()
       e.stopPropagation()
       return
@@ -7536,7 +7815,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     if (mlDragUp && mlDragUp.pointerId === e.pointerId) {
       measureLineDragRef.current = null
       const ann = allAnnotationsRef.current.find((a) => a.id === mlDragUp.annotationId)
-      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
+      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() }, { label: `Move ${annotationLabel(ann)}` })
       e.preventDefault()
       e.stopPropagation()
       return
@@ -7547,7 +7826,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     if (mpDragUp && mpDragUp.pointerId === e.pointerId) {
       measurePointDragRef.current = null
       const ann = allAnnotationsRef.current.find((a) => a.id === mpDragUp.annotationId)
-      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
+      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() }, { label: `Edit points for ${annotationLabel(ann)}` })
       e.preventDefault()
       e.stopPropagation()
       return
@@ -7558,7 +7837,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       archControlDragRef.current = null
       setArchControlDrag(null)
       const ann = allAnnotationsRef.current.find((a) => a.id === acDragUp.annotationId)
-      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() })
+      if (ann) void persistAnnotation({ ...ann, updatedAt: new Date().toISOString() }, { label: `Edit curve for ${annotationLabel(ann)}` })
       e.preventDefault()
       e.stopPropagation()
       return
@@ -7574,7 +7853,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       if (ann) {
         const updated = withRecomputedCircuitArcDistance({ ...ann, updatedAt: new Date().toISOString() })
         setAllAnnotations((prev) => prev.map((x) => (x.id === updated.id ? updated : x)))
-        void persistAnnotation(updated)
+        void persistAnnotation(updated, { label: `Edit circuit segment for ${annotationLabel(updated)}` })
       }
       e.preventDefault()
       e.stopPropagation()
@@ -7783,6 +8062,22 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   const handlePointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     clearAlignmentGuides()
+    const cancelledIds = new Set<string>([
+      layoutDragRef.current?.pointerId === e.pointerId ? layoutDragRef.current.annotationId : null,
+      endpointDragRef.current?.pointerId === e.pointerId ? endpointDragRef.current.annotationId : null,
+      measureEndpointDragRef.current?.pointerId === e.pointerId ? measureEndpointDragRef.current.annotationId : null,
+      measureLineDragRef.current?.pointerId === e.pointerId ? measureLineDragRef.current.annotationId : null,
+      measurePointDragRef.current?.pointerId === e.pointerId ? measurePointDragRef.current.annotationId : null,
+      archControlDragRef.current?.pointerId === e.pointerId ? archControlDragRef.current.annotationId : null,
+      circuitArcControlDragRef.current?.pointerId === e.pointerId ? circuitArcControlDragRef.current.annotationId : null,
+    ].filter(Boolean) as string[])
+    if (cancelledIds.size > 0) {
+      setAllAnnotations((prev) => prev.map((annotation) => (
+        cancelledIds.has(annotation.id)
+          ? cloneAnnotationForHistory(persistedAnnotationSnapshotsRef.current.get(annotation.id)) || annotation
+          : annotation
+      )))
+    }
     const mousePan = mousePanRef.current
     if (e.pointerType === 'mouse' && mousePan.active && mousePan.pointerId === e.pointerId) {
       const moved = mousePan.moved
@@ -7841,6 +8136,15 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         : effectiveTool === 'eraser'
           ? 'cursor-not-allowed'
           : 'cursor-grab'
+
+  void annotationHistoryRevision
+  const activeUndoCommand = currentAnnotationHistoryScope
+    ? peekUndo(annotationHistoryRef.current, currentAnnotationHistoryScope)
+    : null
+  const activeRedoCommand = currentAnnotationHistoryScope
+    ? peekRedo(annotationHistoryRef.current, currentAnnotationHistoryScope)
+    : null
+  const annotationHistoryInteractionBlocked = hasActiveAnnotationHistoryInteraction()
 
   // Multi-Point Measure (Perimeter tool) live running total — updates as points are
   // added, including a live rubber-band segment to the current cursor position.
@@ -9309,6 +9613,29 @@ const annotationPanelSizeClass =
               ? 'bv-left-toolbar col-start-1 row-start-3 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2'
               : 'px-3 sm:px-4 py-1 border-b border-gray-800 space-y-1 flex-shrink-0'}
           >
+            <div className={`flex items-center gap-1.5 ${useDesktopThreePaneLayout ? 'border-b border-gray-800 pb-2' : 'overflow-x-auto'}`}>
+              <button
+                type="button"
+                disabled={!activeUndoCommand || annotationHistoryInteractionBlocked}
+                onClick={() => void applyAnnotationHistory('undo')}
+                className="inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2 text-xs text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                title={activeUndoCommand ? `Undo: ${activeUndoCommand.label} (Ctrl+Z)` : 'Nothing to undo'}
+                aria-label={activeUndoCommand ? `Undo ${activeUndoCommand.label}` : 'Nothing to undo'}
+              >
+                <Undo2 size={13} /> Undo
+              </button>
+              <button
+                type="button"
+                disabled={!activeRedoCommand || annotationHistoryInteractionBlocked}
+                onClick={() => void applyAnnotationHistory('redo')}
+                className="inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2 text-xs text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                title={activeRedoCommand ? `Redo: ${activeRedoCommand.label} (Ctrl+Y / Ctrl+Shift+Z)` : 'Nothing to redo'}
+                aria-label={activeRedoCommand ? `Redo ${activeRedoCommand.label}` : 'Nothing to redo'}
+              >
+                <Redo2 size={13} /> Redo
+              </button>
+            </div>
+
             {/* â"€â"€â"€â"€ Tablet: Compact single-row segmented bucket selector â"€â"€â"€â"€ */}
             {!useDesktopThreePaneLayout && !isTabletImmersiveFullscreen && (
               <div className="flex gap-0.5 items-stretch overflow-x-auto">
