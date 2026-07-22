@@ -389,7 +389,19 @@ function resolvePackageAnimationBranch(
         branchTransitions.push({ selection, from: branchCurrent })
         continue
       }
-      const primaryDestinationIndex = primaryNodes.findIndex((node) => node.id === destination?.id)
+      let primaryDestinationIndex = primaryNodes.findIndex((node) => node.id === destination?.id)
+      if (primaryDestinationIndex < 0) {
+        let nearestDistance = Number.POSITIVE_INFINITY
+        primaryNodes.forEach((node, index) => {
+          if (index <= originIndex || node.pageNumber !== destination?.pageNumber) return
+          const candidateDistance = distance(node.point, destination.point)
+          if (candidateDistance <= CONNECTION_TOLERANCE && candidateDistance < nearestDistance) {
+            primaryDestinationIndex = index
+            nearestDistance = candidateDistance
+          }
+        })
+        if (primaryDestinationIndex > originIndex) destination = primaryNodes[primaryDestinationIndex]
+      }
       if (primaryDestinationIndex >= 0 && primaryDestinationIndex <= originIndex) {
         issues.push(issue('error', 'branch-cycle', 'A branch may only rejoin a later primary-route node.', selection.id))
         branchTransitions.push({ selection, from: branchCurrent })

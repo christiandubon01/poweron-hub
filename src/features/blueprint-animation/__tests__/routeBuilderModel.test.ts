@@ -269,6 +269,18 @@ describe('routeBuilderModel', () => {
       branchConvergenceNodeId: 'animation_node_annotation_fixture-2',
     })
     draft = finishPackageAnimationRouteBranch(draft)
+    const authoredBranchStructure = {
+      originSelectionId: draft.branch?.originSelectionId,
+      mode: draft.branch?.mode,
+      editing: draft.branch?.editing,
+      transitions: draft.branch?.transitions.map((transition) => ({
+        id: transition.id,
+        kind: transition.kind,
+        annotationId: transition.annotationId,
+        channel: transition.channel,
+        ...(transition.kind === 'segment' ? { segmentId: transition.segmentId } : {}),
+      })),
+    }
 
     const saved = packageAnimationRouteDraftToScene(draft).scene!
     expect(saved.schemaVersion).toBe(1)
@@ -287,7 +299,153 @@ describe('routeBuilderModel', () => {
     expect(loaded.transitions).toHaveLength(2)
     expect(loaded.branch).toMatchObject({ originSelectionId: 'source', mode: 'simultaneous', editing: false })
     expect(loaded.branch?.transitions).toHaveLength(2)
+    expect({
+      originSelectionId: loaded.branch?.originSelectionId,
+      mode: loaded.branch?.mode,
+      editing: loaded.branch?.editing,
+      transitions: loaded.branch?.transitions.map((transition) => ({
+        id: transition.id,
+        kind: transition.kind,
+        annotationId: transition.annotationId,
+        channel: transition.channel,
+        ...(transition.kind === 'segment' ? { segmentId: transition.segmentId } : {}),
+      })),
+    }).toEqual(authoredBranchStructure)
     expect(validatePackageAnimationRouteDraft(loaded).filter((entry) => entry.severity === 'error')).toEqual([])
+    const resaved = packageAnimationRouteDraftToScene(loaded).scene!
+    expect(resaved.branchOrders).toEqual(saved.branchOrders)
+    expect(resaved.edges).toEqual(saved.edges)
+    expect(resaved.manualTraversal).toEqual(saved.manualTraversal)
+  })
+
+  it('canonicalizes separate circuit annotations onto one shared plain-junction convergence node', () => {
+    const primaryCircuit: RouteBuilderAnnotation = {
+      id: 'primary-junction-circuit', pageNumber: 1, label: 'Primary Junction Circuit', shapeKind: 'circuit-path',
+      points: [{ x: 0.1, y: 0.5 }, { x: 0.6, y: 0.6 }, { x: 0.9, y: 0.5 }],
+      pointIds: ['primary-source', 'primary-join', 'primary-load'], segmentIds: ['primary-1', 'primary-2'],
+    }
+    const alternateCircuit: RouteBuilderAnnotation = {
+      id: 'alternate-junction-circuit', pageNumber: 1, label: 'Alternate Junction Circuit', shapeKind: 'circuit-path',
+      points: [{ x: 0.1, y: 0.5 }, { x: 0.35, y: 0.25 }, { x: 0.6, y: 0.6 }],
+      pointIds: ['alternate-source', 'alternate-mid', 'alternate-join'], segmentIds: ['alternate-1', 'alternate-2'],
+    }
+    const annotations = [source, fixture2, primaryCircuit, alternateCircuit].map((entry) => structuredClone(entry))
+    let draft = sourceDraft(empty({
+      packageAnnotationIds: annotations.map((entry) => entry.id),
+      annotations,
+    }))
+    draft = addSegment(draft, primaryCircuit, 0)
+    draft = addSegment(draft, primaryCircuit, 1)
+    draft = startPackageAnimationRouteBranch(draft, 'source')
+    draft = addSegment(draft, alternateCircuit, 0)
+    draft = addSegment(draft, alternateCircuit, 1)
+
+    const resolved = resolvePackageAnimationRouteDraft(draft)
+    expect(resolved.branchConvergenceNodeId).toBe('animation_node_point_primary-junction-circuit_primary-join')
+    draft = finishPackageAnimationRouteBranch(draft)
+    const saved = packageAnimationRouteDraftToScene(draft).scene!
+    const primaryIncoming = saved.edges.find((edge) => edge.geometry.kind === 'circuit-segment'
+      && edge.geometry.annotationId === primaryCircuit.id && edge.geometry.segmentId === 'primary-1')!
+    const alternateIncoming = saved.edges.find((edge) => edge.geometry.kind === 'circuit-segment'
+      && edge.geometry.annotationId === alternateCircuit.id && edge.geometry.segmentId === 'alternate-2')!
+
+    expect(alternateIncoming.toNodeId).toBe(primaryIncoming.toNodeId)
+    expect(saved.edges.filter((edge) => edge.toNodeId === primaryIncoming.toNodeId)).toHaveLength(2)
+    expect(saved.nodes.filter((node) => node.id === primaryIncoming.toNodeId)).toEqual([
+      expect.objectContaining({
+        roles: ['junction'],
+        anchor: expect.objectContaining({
+          kind: 'circuit-point',
+          annotationId: primaryCircuit.id,
+          pointId: 'primary-join',
+        }),
+      }),
+    ])
+
+    const loaded = loadPackageAnimationRouteDraft({
+      packageId: 'package', packageName: 'Lighting', packageAnnotationIds: annotations.map((entry) => entry.id),
+      annotations, scene: saved, expectedBaseRevision: 1,
+    })
+    expect(validatePackageAnimationRouteDraft(loaded).filter((entry) => entry.severity === 'error')).toEqual([])
+    const resaved = packageAnimationRouteDraftToScene(loaded).scene!
+    const resavedPrimaryIncoming = resaved.edges.find((edge) => edge.geometry.kind === 'circuit-segment'
+      && edge.geometry.annotationId === primaryCircuit.id && edge.geometry.segmentId === 'primary-1')!
+    const resavedAlternateIncoming = resaved.edges.find((edge) => edge.geometry.kind === 'circuit-segment'
+      && edge.geometry.annotationId === alternateCircuit.id && edge.geometry.segmentId === 'alternate-2')!
+    expect(resavedAlternateIncoming.toNodeId).toBe(resavedPrimaryIncoming.toNodeId)
+    expect(resaved.edges.filter((edge) => edge.toNodeId === resavedPrimaryIncoming.toNodeId)).toHaveLength(2)
+    expect(resaved.nodes.filter((node) => node.id === resavedPrimaryIncoming.toNodeId)).toHaveLength(1)
+    expect(resaved.branchOrders).toEqual(saved.branchOrders)
+  })
+
+  it('rejoins a four-step alternate route into a dense seven-step multi-annotation primary route', () => {
+    const primaryA: RouteBuilderAnnotation = {
+      id: 'complex-primary-a', pageNumber: 1, label: 'Primary A', shapeKind: 'circuit-arc',
+      points: [{ x: 0.1, y: 0.5 }, { x: 0.22, y: 0.42 }, { x: 0.34, y: 0.44 }],
+      arcCtrls: [{ x: 0.15, y: 0.4 }, { x: 0.28, y: 0.48 }],
+      pointIds: ['primary-a-source', 'primary-a-mid', 'primary-a-end'], segmentIds: ['primary-a-1', 'primary-a-2'],
+    }
+    const primaryB: RouteBuilderAnnotation = {
+      id: 'complex-primary-b', pageNumber: 1, label: 'Primary B', shapeKind: 'circuit-path',
+      points: [{ x: 0.34, y: 0.44 }, { x: 0.48, y: 0.36 }, { x: 0.62, y: 0.4 }],
+      pointIds: ['primary-b-start', 'primary-b-mid', 'primary-b-join'], segmentIds: ['primary-b-1', 'primary-b-2'],
+    }
+    const primaryC: RouteBuilderAnnotation = {
+      id: 'complex-primary-c', pageNumber: 1, label: 'Primary C', shapeKind: 'circuit-arc',
+      points: [{ x: 0.62, y: 0.4 }, { x: 0.635, y: 0.405 }, { x: 0.78, y: 0.46 }, { x: 0.9, y: 0.5 }],
+      arcCtrls: [{ x: 0.627, y: 0.397 }, { x: 0.7, y: 0.39 }, { x: 0.84, y: 0.52 }],
+      pointIds: ['primary-c-start', 'primary-c-nearby', 'primary-c-mid', 'primary-c-load'],
+      segmentIds: ['primary-c-1', 'primary-c-2', 'primary-c-3'],
+    }
+    const alternate: RouteBuilderAnnotation = {
+      id: 'complex-alternate', pageNumber: 1, label: 'Four-step Alternate', shapeKind: 'circuit-path',
+      points: [
+        { x: 0.1, y: 0.5 }, { x: 0.2, y: 0.66 }, { x: 0.36, y: 0.64 },
+        { x: 0.5, y: 0.53 }, { x: 0.621, y: 0.401 },
+      ],
+      pointIds: ['alternate-source', 'alternate-1', 'alternate-2', 'alternate-3', 'alternate-join'],
+      segmentIds: ['alternate-step-1', 'alternate-step-2', 'alternate-step-3', 'alternate-step-4'],
+    }
+    const crossingA: RouteBuilderAnnotation = {
+      id: 'dense-crossing-a', pageNumber: 1, label: 'Crossing A', shapeKind: 'circuit-path',
+      points: [{ x: 0.56, y: 0.45 }, { x: 0.619, y: 0.399 }, { x: 0.69, y: 0.34 }],
+      pointIds: ['cross-a-1', 'cross-a-near', 'cross-a-2'], segmentIds: ['cross-a-seg-1', 'cross-a-seg-2'],
+    }
+    const crossingB: RouteBuilderAnnotation = {
+      id: 'dense-crossing-b', pageNumber: 1, label: 'Crossing B', shapeKind: 'circuit-arc',
+      points: [{ x: 0.58, y: 0.35 }, { x: 0.623, y: 0.402 }, { x: 0.7, y: 0.48 }],
+      arcCtrls: [{ x: 0.59, y: 0.4 }, { x: 0.66, y: 0.43 }],
+      pointIds: ['cross-b-1', 'cross-b-near', 'cross-b-2'], segmentIds: ['cross-b-seg-1', 'cross-b-seg-2'],
+    }
+    const annotations = [source, fixture2, primaryA, primaryB, primaryC, alternate, crossingA, crossingB]
+      .map((entry) => structuredClone(entry))
+    let draft = sourceDraft(empty({
+      packageAnnotationIds: annotations.map((entry) => entry.id),
+      annotations,
+    }))
+    ;[0, 1].forEach((index) => { draft = addSegment(draft, primaryA, index) })
+    ;[0, 1].forEach((index) => { draft = addSegment(draft, primaryB, index) })
+    ;[0, 1, 2].forEach((index) => { draft = addSegment(draft, primaryC, index) })
+    draft = startPackageAnimationRouteBranch(draft, 'source')
+    ;[0, 1, 2, 3].forEach((index) => { draft = addSegment(draft, alternate, index) })
+
+    const resolved = resolvePackageAnimationRouteDraft(draft)
+    expect(draft.transitions).toHaveLength(7)
+    expect(draft.branch?.transitions).toHaveLength(4)
+    expect(new Set(draft.transitions.map((transition) => transition.annotationId))).toEqual(new Set([
+      primaryA.id, primaryB.id, primaryC.id,
+    ]))
+    expect(resolved.issues.map((entry) => entry.code)).not.toContain('unmerged-branch')
+    expect(resolved.branchConvergenceNodeId).toBe('animation_node_point_complex-primary-b_primary-b-join')
+
+    draft = finishPackageAnimationRouteBranch(draft)
+    expect(draft.branch?.editing).toBe(false)
+    const saved = packageAnimationRouteDraftToScene(draft).scene!
+    const incoming = saved.edges.filter((edge) => edge.toNodeId === resolved.branchConvergenceNodeId)
+    expect(incoming).toHaveLength(2)
+    expect(new Set(incoming.map((edge) => edge.geometry.kind === 'circuit-segment' ? edge.geometry.annotationId : 'direct')))
+      .toEqual(new Set([primaryB.id, alternate.id]))
+    expect(saved.nodes.filter((node) => node.id === resolved.branchConvergenceNodeId)).toHaveLength(1)
   })
 
   it('refuses destructive editing of multi-source and branch scenes', () => {

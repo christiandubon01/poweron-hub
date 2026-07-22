@@ -188,6 +188,24 @@ function serializeFrame(frame: PlaybackFrame): string {
   })
 }
 
+// Golden output captured from the shipped ANIM4.1 linear scheduler before branch support.
+// This intentionally pins the complete observable frame rather than re-deriving expectations.
+const RECORDED_ANIM4_1_LINEAR_FRAME_AT_1700 = {
+  elapsedMs: 1700,
+  complete: false,
+  orb: { edgeId: 'edge-2', pageNumber: 1, point: { x: 0.375, y: 0.5 }, progress: 0.25 },
+  orbs: [{ edgeId: 'edge-2', pageNumber: 1, point: { x: 0.375, y: 0.5 }, progress: 0.25 }],
+  energizedEdges: [
+    { edgeId: 'edge-1', pageNumber: 1, channel: 'switched-line-voltage', progress: 1 },
+    { edgeId: 'edge-2', pageNumber: 1, channel: 'switched-line-voltage', progress: 0.25 },
+  ],
+  devices: [
+    { nodeId: 'source', pageNumber: 1, point: { x: 0, y: 0.5 }, phase: 'active', progress: 1 },
+    { nodeId: 'junction', pageNumber: 1, point: { x: 0.25, y: 0.5 }, phase: 'active', progress: 1 },
+    { nodeId: 'load', pageNumber: 1, point: { x: 0.75, y: 0.5 }, phase: 'idle', progress: 0 },
+  ],
+}
+
 describe('aspect correction, direct edges and per-role reactions', () => {
   it('keeps segment durations aspect-correct on a non-square page', () => {
     const timeline = createPlaybackTimeline(nonSquarePageGeometry(), options)
@@ -294,7 +312,9 @@ describe('branch playback scheduling', () => {
     expect(firstTimeline.steps.find((step) => step.id === 'b1')?.travelStartMs).toBe(0)
     const elapsed = 500
     const first = calculatePlaybackFrame(firstTimeline, elapsed)
+    const sameTimelineReplay = calculatePlaybackFrame(firstTimeline, elapsed)
     const replay = calculatePlaybackFrame(replayTimeline, elapsed)
+    expect(serializeFrame(sameTimelineReplay)).toBe(serializeFrame(first))
     expect(serializeFrame(replay)).toBe(serializeFrame(first))
     expect(first.orbs.map((orb) => orb.edgeId).sort()).toEqual(['edge-a1', 'edge-b1'])
     expect(first.orbs[0].progress).not.toBe(first.orbs[1].progress)
@@ -327,5 +347,10 @@ describe('branch playback scheduling', () => {
     ])
     const frame = calculatePlaybackFrame(timeline, 1700)
     expect(frame.orbs).toEqual(frame.orb ? [frame.orb] : [])
+  })
+
+  it('matches the complete recorded ANIM4.1 linear frame byte-for-byte', () => {
+    const frame = calculatePlaybackFrame(createPlaybackTimeline(preparedGeometry(), options), 1700)
+    expect(serializeFrame(frame)).toBe(JSON.stringify(RECORDED_ANIM4_1_LINEAR_FRAME_AT_1700))
   })
 })
