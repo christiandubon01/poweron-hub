@@ -4,6 +4,7 @@ import {
   ROUTE_BUILDER_CHANNEL_OPTIONS,
   clearPackageAnimationRouteDraft,
   finishPackageAnimationRouteBranch,
+  getPackageAnimationBranchStatus,
   getPackageAnimationBranchList,
   getPackageAnimationRouteList,
   movePackageAnimationRouteTransition,
@@ -51,6 +52,7 @@ export function PackageAnimationRouteBuilder({
 }: PackageAnimationRouteBuilderProps) {
   const entries = useMemo(() => getPackageAnimationRouteList(draft), [draft])
   const branchEntries = useMemo(() => getPackageAnimationBranchList(draft), [draft])
+  const branchStatus = useMemo(() => getPackageAnimationBranchStatus(draft), [draft])
   const resolved = useMemo(() => resolvePackageAnimationRouteDraft(draft), [draft])
   const validation = useMemo(() => validatePackageAnimationRouteDraft(draft), [draft])
   const blocking = validation.filter((entry) => entry.severity === 'error')
@@ -157,7 +159,7 @@ export function PackageAnimationRouteBuilder({
                       <div className="truncate text-[11px] font-medium text-gray-100">{entry.label}</div>
                       <div className="text-[9px] text-gray-500">{entry.typeLabel}</div>
                     </div>
-                    {!readOnly && (
+                    {!readOnly && !draft.branch?.editing && (
                       <div className="flex shrink-0 items-center gap-0.5">
                         {!draft.branch && index < draft.transitions.length - 1 && <button type="button" onClick={() => onDraftChange(startPackageAnimationRouteBranch(draft, entry.id))} className="rounded p-1 text-cyan-300 hover:bg-cyan-950/50" aria-label={`Start branch after ${entry.label}`}><GitBranch size={12} /></button>}
                         <button type="button" onClick={() => move(entry.id, 'up')} disabled={index === 0} className="rounded p-1 text-gray-400 hover:bg-white/10 disabled:opacity-25" aria-label={`Move ${entry.label} up`}><ChevronUp size={12} /></button>
@@ -170,7 +172,7 @@ export function PackageAnimationRouteBuilder({
                     Channel
                     <select
                       value={entry.channel}
-                      disabled={readOnly}
+                      disabled={readOnly || !!draft.branch?.editing}
                       onChange={(event) => onDraftChange(updatePackageAnimationRouteChannel(draft, entry.id, event.target.value as BlueprintAnimationChannelType))}
                       className="min-w-0 flex-1 rounded border border-gray-700 bg-gray-950 px-1.5 py-1 text-[10px] text-gray-200 outline-none focus:border-cyan-500 disabled:opacity-60"
                       aria-label={`Electrical channel for ${entry.label}`}
@@ -184,11 +186,17 @@ export function PackageAnimationRouteBuilder({
           </div>
         </section>
 
-        {draft.branch && (
+        {draft.branch && branchStatus && (
           <section className="rounded-lg border border-cyan-800/70 bg-cyan-950/20 p-2">
             <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-300"><GitBranch size={12} /> Alternate branch</div>
-              <button type="button" onClick={() => onDraftChange(removePackageAnimationRouteBranch(draft))} className="rounded p-1 text-red-400 hover:bg-red-950/50" aria-label="Remove alternate branch"><Trash2 size={12} /></button>
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-300"><GitBranch size={12} /> {branchStatus.heading}</div>
+              <span className="rounded-full bg-cyan-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-cyan-200">{branchStatus.stepCount} steps</span>
+            </div>
+            <div className="mt-2 rounded border border-cyan-900/70 bg-gray-950/45 p-2 text-[10px] leading-4 text-gray-300">
+              <div><span className="text-gray-500">Starts at:</span> {branchStatus.originLabel}</div>
+              <div className={draft.notice?.severity === 'error' ? 'mt-1 font-semibold text-amber-300' : branchStatus.valid ? 'mt-1 font-semibold text-emerald-300' : 'mt-1 font-semibold text-cyan-200'}>{branchStatus.phase}</div>
+              <div className="mt-0.5">{branchStatus.instruction}</div>
+              <div className="mt-0.5 text-gray-500">Next: {branchStatus.nextAction}</div>
             </div>
             <label className="mt-2 flex items-center gap-2 text-[9px] text-gray-400">
               Schedule
@@ -208,9 +216,13 @@ export function PackageAnimationRouteBuilder({
               ))}
             </div>
             {draft.branch.editing ? (
-              <button type="button" disabled={!resolved.branchConvergenceNodeId} onClick={() => onDraftChange(finishPackageAnimationRouteBranch(draft))} className="mt-2 w-full rounded border border-cyan-600 px-2 py-1.5 text-[10px] font-semibold text-cyan-100 hover:bg-cyan-900/40 disabled:opacity-35">Finish branch after rejoin</button>
+              <div className="mt-2 grid grid-cols-2 gap-1.5">
+                <button type="button" onClick={() => onDraftChange(removePackageAnimationRouteBranch(draft))} className="rounded border border-red-900/70 px-2 py-1.5 text-[10px] font-semibold text-red-300 hover:bg-red-950/35">Cancel Branch</button>
+                <button type="button" onClick={() => onDraftChange(undoPackageAnimationRouteSelection(draft))} disabled={draft.branch.transitions.length === 0} className="rounded border border-gray-700 px-2 py-1.5 text-[10px] font-semibold text-gray-300 hover:bg-white/5 disabled:opacity-35">Undo Last Branch Step</button>
+                <button type="button" disabled={!resolved.branchConvergenceNodeId && !resolved.branchTerminalNodeId} onClick={() => onDraftChange(finishPackageAnimationRouteBranch(draft))} className="col-span-2 rounded border border-cyan-600 px-2 py-1.5 text-[10px] font-semibold text-cyan-100 hover:bg-cyan-900/40 disabled:opacity-35">Finish Branch</button>
+              </div>
             ) : (
-              <div className="mt-2 flex items-center gap-1 text-[10px] text-emerald-300"><Check size={11} /> Rejoins the primary route</div>
+              <div className="mt-2 flex items-center justify-between gap-2"><div className="flex items-center gap-1 text-[10px] text-emerald-300"><Check size={11} /> {branchStatus.completionKind === 'terminal' ? `Terminates at ${branchStatus.endpointLabel || 'final fixture'}` : `Rejoins the primary route${branchStatus.endpointLabel ? ` at ${branchStatus.endpointLabel}` : ''}`}</div><button type="button" onClick={() => onDraftChange(removePackageAnimationRouteBranch(draft))} className="rounded border border-red-900/70 px-2 py-1 text-[10px] text-red-300 hover:bg-red-950/35">Remove Branch</button></div>
             )}
           </section>
         )}

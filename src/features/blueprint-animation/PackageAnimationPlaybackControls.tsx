@@ -17,8 +17,10 @@ import {
   PLAYBACK_PATH_PULSE_OPACITIES,
   PLAYBACK_PATH_SOLID_OPACITY,
   PLAYBACK_PATH_STROKE_WIDTH,
-  resolvePlaybackChannelColor,
+  resolveAnimationRouteEdgeRole,
+  resolvePlaybackEdgeStrokeColor,
   resolvePlaybackPathState,
+  resolveSourceConnectorEdgeId,
 } from './playbackPathAppearance'
 
 type PlaybackStatus = 'idle' | 'playing' | 'paused' | 'complete'
@@ -90,10 +92,15 @@ export function PackageAnimationPlaybackControls({
       parsed.scene.nodes.forEach((node) => {
         if (node.anchor.kind !== 'virtual-point') nodeAnnotationIds.set(node.id, node.anchor.annotationId)
       })
+      // The source connector is the primary edge leaving the source node — structural, stable across
+      // forward/reverse traversal. It renders cyan; every other routed edge renders the one default
+      // route color, so a branch split never changes color.
+      const sourceConnectorEdgeId = resolveSourceConnectorEdgeId(parsed.scene)
       return {
         timeline: createPlaybackTimeline(geometry, parsed.scene.playbackOptions),
         nodeAnnotationIds,
         activationEventNodeIds: buildPlaybackActivationEventNodeIds(parsed.scene.events),
+        sourceConnectorEdgeId,
         error: undefined,
       }
     } catch (error) {
@@ -101,6 +108,7 @@ export function PackageAnimationPlaybackControls({
         timeline: undefined,
         nodeAnnotationIds,
         activationEventNodeIds: new Set<string>(),
+        sourceConnectorEdgeId: undefined as string | undefined,
         error: error instanceof Error ? error.message : 'Animation geometry could not be resolved.',
       }
     }
@@ -254,7 +262,9 @@ export function PackageAnimationPlaybackControls({
               })
               const energizedEdge = energizedEdgesByStepId.get(step.id)
               const solidProgress = pathState === 'solid' ? 1 : energizedEdge?.progress ?? 0
-              const stroke = resolvePlaybackChannelColor(step.channel)
+              const stroke = resolvePlaybackEdgeStrokeColor({
+                role: resolveAnimationRouteEdgeRole(step.edgeId, prepared.sourceConnectorEdgeId),
+              })
               const sharedProps = {
                 points,
                 fill: 'none',

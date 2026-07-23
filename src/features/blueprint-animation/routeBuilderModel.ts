@@ -95,6 +95,7 @@ export interface RouteBuilderSegmentSelection extends Omit<RouteSegmentPick, 'di
   channel: BlueprintAnimationChannelType
   persistedEdgeId?: string
   persistedTraversalId?: string
+  rejoinNodeId?: string
 }
 
 export interface RouteBuilderDirectSelection {
@@ -104,6 +105,7 @@ export interface RouteBuilderDirectSelection {
   channel: BlueprintAnimationChannelType
   persistedEdgeId?: string
   persistedTraversalId?: string
+  rejoinNodeId?: string
 }
 
 export type RouteBuilderTransition = RouteBuilderSegmentSelection | RouteBuilderDirectSelection
@@ -155,7 +157,10 @@ export interface ResolvedPackageAnimationRouteDraft {
   transitions: ResolvedRouteTransition[]
   branchTransitions: ResolvedRouteTransition[]
   branchOriginNodeId?: string
+  /** Set only when the alternate branch rejoins a later primary-route node (completion kind: rejoin). */
   branchConvergenceNodeId?: string
+  /** Set only when the alternate branch ends at an eligible fixture/device (completion kind: terminal). */
+  branchTerminalNodeId?: string
   issues: RouteBuilderIssue[]
   currentEndpoint?: { node: ResolvedNode; point: NormalizedPoint }
 }
@@ -164,6 +169,19 @@ export interface RouteBuilderMutationResult {
   accepted: boolean
   draft: PackageAnimationRouteDraft
   message?: string
+}
+
+export type PackageAnimationRoutePickAction =
+  | { kind: 'segment'; pick: RouteSegmentPick }
+  | { kind: 'annotation'; annotationId: string; clickedPoint?: NormalizedPoint; allowPrimaryDirectTransition?: boolean }
+  | { kind: 'rejoin-node'; nodeId: string; clickedPoint?: NormalizedPoint }
+
+export interface PackageAnimationRoutePickResult extends RouteBuilderMutationResult {
+  consumed: true
+  mode: 'alternate-branch' | 'primary-route'
+  category: 'accepted' | 'rejected' | 'direct-confirmation-required'
+  branchActive: boolean
+  rejoinDiagnostics?: PackageAnimationBranchRejoinDiagnostics
 }
 
 export interface RouteBuilderSceneSummary {
@@ -274,6 +292,15 @@ function annotationNode(draft: PackageAnimationRouteDraft, annotation: RouteBuil
   }
 }
 
+/**
+ * A terminal branch may end at any eligible fixture/device — a node anchored to a real package
+ * device annotation. Bare wire junctions (circuit-point anchors) are never valid terminal endpoints.
+ */
+function isEligibleTerminalNode(node: ResolvedNode): boolean {
+  return node.anchor.kind === 'annotation-center'
+    && (node.roles.includes('load') || node.roles.includes('source') || node.roles.includes('sensor') || node.roles.includes('control'))
+}
+
 function resolvePackageAnimationBranch(
   draft: PackageAnimationRouteDraft,
   annotations: Map<string, RouteBuilderAnnotation>,
@@ -287,11 +314,13 @@ function resolvePackageAnimationBranch(
   branchTransitions: ResolvedRouteTransition[]
   branchOriginNodeId?: string
   branchConvergenceNodeId?: string
+  branchTerminalNodeId?: string
   branchEndpoint?: ResolvedNode
 } {
   const branchTransitions: ResolvedRouteTransition[] = []
   let branchOriginNodeId: string | undefined
   let branchConvergenceNodeId: string | undefined
+  let branchTerminalNodeId: string | undefined
   let branchEndpoint: ResolvedNode | undefined
   if (draft.branch) {
     const primaryNodes: ResolvedNode[] = []
@@ -308,7 +337,7 @@ function resolvePackageAnimationBranch(
     const branchVisitedPoints = branchCurrent ? [branchCurrent.point] : []
 
     if (!branchCurrent || originIndex >= primaryNodes.length - 1) {
-      issues.push(issue('error', 'invalid-branch-origin', 'A branch must start at a primary-route node that has a later rejoin point.'))
+      issues.push(issue('error', 'invalid-branch-origin', 'A branch must start at a primary-route node the route continues past, so the route can split.'))
     }
 
     for (const selection of draft.branch.transitions) {
@@ -390,6 +419,28 @@ function resolvePackageAnimationBranch(
         continue
       }
       let primaryDestinationIndex = primaryNodes.findIndex((node) => node.id === destination?.id)
+      if (selection.rejoinNodeId) {
+        const explicitIndex = primaryNodes.findIndex((node) => node.id === selection.rejoinNodeId)
+        const explicitNode = explicitIndex >= 0 ? primaryNodes[explicitIndex] : undefined
+        const explicitDistance = explicitNode ? distance(explicitNode.point, destination.point) : Number.POSITIVE_INFINITY
+        if (!explicitNode) {
+          issues.push(issue('error', 'missing-rejoin-node', 'The selected primary-route rejoin node is no longer available.', selection.id))
+          branchTransitions.push({ selection, from: branchCurrent })
+          continue
+        }
+        if (explicitIndex <= originIndex) {
+          issues.push(issue('error', 'branch-cycle', 'A branch may only rejoin a later primary-route node.', selection.id))
+          branchTransitions.push({ selection, from: branchCurrent })
+          continue
+        }
+        if (explicitDistance > CONNECTION_TOLERANCE) {
+          issues.push(issue('error', 'rejoin-outside-tolerance', `The branch endpoint is ${explicitDistance.toFixed(4)} from the selected primary node; the maximum is ${CONNECTION_TOLERANCE.toFixed(2)}.`, selection.id))
+          branchTransitions.push({ selection, from: branchCurrent })
+          continue
+        }
+        destination = explicitNode
+        primaryDestinationIndex = explicitIndex
+      }
       if (primaryDestinationIndex < 0) {
         let nearestDistance = Number.POSITIVE_INFINITY
         primaryNodes.forEach((node, index) => {
@@ -434,14 +485,28 @@ function resolvePackageAnimationBranch(
         branchVisitedPoints.push(nextNode.point)
       }
     }
-    if (draft.branch.transitions.length === 0) issues.push(issue('error', 'empty-branch', 'Add at least one alternate branch step.'))
-    else if (!branchConvergenceNodeId) issues.push(issue('error', 'unmerged-branch', 'The alternate branch must rejoin a later node on the primary route.'))
+    // Completion is one of two kinds. A rejoin ends on a later primary-route node (branchConvergenceNodeId,
+    // set above). Otherwise a terminal parallel branch may end at any eligible fixture/device without ever
+    // rejoining the primary route. Only require the endpoint to be a device when every step resolved cleanly;
+    // a per-step error already blocks the branch and should not be masked by an endpoint message.
+    const allBranchStepsResolved = branchTransitions.length === draft.branch.transitions.length
+      && branchTransitions.every((entry) => !!entry.to)
+    if (draft.branch.transitions.length === 0) {
+      issues.push(issue('error', 'empty-branch', 'Add at least one alternate branch step.'))
+    } else if (!branchConvergenceNodeId && allBranchStepsResolved) {
+      if (branchEndpoint && isEligibleTerminalNode(branchEndpoint)) {
+        branchTerminalNodeId = branchEndpoint.id
+      } else {
+        issues.push(issue('error', 'invalid-branch-endpoint', 'This branch endpoint is not a valid fixture/device. Continue the alternate route to a fixture, or select a later primary-route node to rejoin.'))
+      }
+    }
   }
 
   return {
     branchTransitions,
     ...(branchOriginNodeId ? { branchOriginNodeId } : {}),
     ...(branchConvergenceNodeId ? { branchConvergenceNodeId } : {}),
+    ...(branchTerminalNodeId ? { branchTerminalNodeId } : {}),
     ...(branchEndpoint ? { branchEndpoint } : {}),
   }
 }
@@ -704,7 +769,7 @@ export function resolvePackageAnimationRouteDraft(draft: PackageAnimationRouteDr
     edges,
     traversal,
   )
-  const { branchTransitions, branchOriginNodeId, branchConvergenceNodeId, branchEndpoint } = branchResolution
+  const { branchTransitions, branchOriginNodeId, branchConvergenceNodeId, branchTerminalNodeId, branchEndpoint } = branchResolution
 
   return {
     nodes,
@@ -715,6 +780,7 @@ export function resolvePackageAnimationRouteDraft(draft: PackageAnimationRouteDr
     issues,
     ...(branchOriginNodeId ? { branchOriginNodeId } : {}),
     ...(branchConvergenceNodeId ? { branchConvergenceNodeId } : {}),
+    ...(branchTerminalNodeId ? { branchTerminalNodeId } : {}),
     ...((draft.branch?.editing && branchEndpoint && !branchConvergenceNodeId)
       ? { currentEndpoint: { node: branchEndpoint, point: branchEndpoint.point } }
       : current ? { currentEndpoint: { node: current, point: current.point } } : {}),
@@ -839,13 +905,181 @@ export function addPackageAnimationDirectTransition(
   return { accepted: true, draft: candidate, message: 'Direct transition added with a warning.' }
 }
 
+export interface PackageAnimationPrimaryRouteCandidate {
+  nodeId: string
+  index: number
+  point: NormalizedPoint
+  pageNumber: number
+  label?: string
+  annotationId?: string
+}
+
+export interface PackageAnimationBranchRejoinDiagnostics {
+  clickedNodeId: string
+  clickedAnnotationId?: string
+  clickedNormalizedPoint?: NormalizedPoint
+  clickedNodePoint?: NormalizedPoint
+  branchEndpointId?: string
+  branchEndpointPoint?: NormalizedPoint
+  originIndex: number
+  candidates: Array<PackageAnimationPrimaryRouteCandidate & { distance?: number; later: boolean }>
+  selectedNodeId?: string
+  rejectionReason?: string
+}
+
+function primaryRouteCandidatesFromResolved(resolved: ResolvedPackageAnimationRouteDraft): PackageAnimationPrimaryRouteCandidate[] {
+  const primaryNodes: ResolvedNode[] = []
+  const source = resolved.transitions[0]?.from || resolved.nodes[0]
+  if (source) primaryNodes.push(source)
+  resolved.transitions.forEach((transition) => {
+    if (transition.to && primaryNodes[primaryNodes.length - 1]?.id !== transition.to.id) primaryNodes.push(transition.to)
+  })
+  return primaryNodes.map((node, index) => ({
+    nodeId: node.id,
+    index,
+    point: { ...node.point },
+    pageNumber: node.pageNumber,
+    ...(node.label ? { label: node.label } : {}),
+    ...(node.anchor.kind === 'annotation-center' ? { annotationId: node.anchor.annotationId } : {}),
+  }))
+}
+
+export function getPackageAnimationPrimaryRouteCandidates(draft: PackageAnimationRouteDraft): PackageAnimationPrimaryRouteCandidate[] {
+  return primaryRouteCandidatesFromResolved(resolvePackageAnimationRouteDraft(draft))
+}
+
+export function tryCompletePackageAnimationRouteBranchAtNode(
+  draft: PackageAnimationRouteDraft,
+  clickedNodeId: string,
+  clickedPoint?: NormalizedPoint,
+): RouteBuilderMutationResult & { diagnostics: PackageAnimationBranchRejoinDiagnostics } {
+  const resolved = resolvePackageAnimationRouteDraft(draft)
+  const candidates = primaryRouteCandidatesFromResolved(resolved)
+  const originIndex = draft.branch?.originSelectionId === 'source'
+    ? 0
+    : resolved.transitions.findIndex((entry) => entry.selection.id === draft.branch?.originSelectionId) + 1
+  const endpoint = resolved.branchTransitions[resolved.branchTransitions.length - 1]?.to
+  const clicked = candidates.find((candidate) => candidate.nodeId === clickedNodeId)
+  const diagnostics: PackageAnimationBranchRejoinDiagnostics = {
+    clickedNodeId,
+    ...(clicked?.annotationId ? { clickedAnnotationId: clicked.annotationId } : {}),
+    ...(clickedPoint ? { clickedNormalizedPoint: { ...clickedPoint } } : {}),
+    ...(clicked ? { clickedNodePoint: { ...clicked.point } } : {}),
+    ...(endpoint ? { branchEndpointId: endpoint.id, branchEndpointPoint: { ...endpoint.point } } : {}),
+    originIndex,
+    candidates: candidates.map((candidate) => ({
+      ...candidate,
+      ...(endpoint ? { distance: distance(endpoint.point, candidate.point) } : {}),
+      later: candidate.index > originIndex,
+    })),
+  }
+  const reject = (code: string, message: string) => ({
+    accepted: false,
+    draft: withNotice(draft, issue('error', code, message)),
+    message,
+    diagnostics: { ...diagnostics, rejectionReason: message },
+  })
+
+  if (!draft.branch?.editing) return reject('branch-not-active', 'Start or resume an alternate branch before selecting a rejoin node.')
+  if (!clicked) return reject('missing-rejoin-node', `Primary-route node ${clickedNodeId} is no longer available.`)
+  if (clicked.index <= originIndex) return reject('branch-cycle', `Node ${clicked.nodeId} is primary index ${clicked.index}; a rejoin must be later than origin index ${originIndex}.`)
+  if (!endpoint || draft.branch.transitions.length === 0) return reject('empty-branch', 'Select at least one alternate segment before choosing a rejoin node.')
+
+  const endpointDistance = distance(endpoint.point, clicked.point)
+  if (endpointDistance <= CONNECTION_TOLERANCE) {
+    const lastIndex = draft.branch.transitions.length - 1
+    const transitions = draft.branch.transitions.map((entry, index) => index === lastIndex ? { ...entry, rejoinNodeId: clicked.nodeId } : entry)
+    const candidate = { ...draft, branch: { ...draft.branch, transitions }, dirty: true, notice: undefined }
+    if (resolvePackageAnimationRouteDraft(candidate).branchConvergenceNodeId === clicked.nodeId) {
+      return { accepted: true, draft: candidate, diagnostics: { ...diagnostics, selectedNodeId: clicked.nodeId } }
+    }
+  }
+
+  // A clicked primary-route device is an explicit graph edge to that same canonical node. Plain
+  // junctions still require physical endpoint equivalence; a visual crossing cannot create one.
+  if (clicked.annotationId) {
+    const direct = addPackageAnimationDirectTransition(draft, clicked.annotationId)
+    if (direct.accepted && resolvePackageAnimationRouteDraft(direct.draft).branchConvergenceNodeId === clicked.nodeId) {
+      return { ...direct, diagnostics: { ...diagnostics, selectedNodeId: clicked.nodeId } }
+    }
+  }
+  return reject('rejoin-outside-tolerance', `Branch endpoint ${endpoint.id} is ${endpointDistance.toFixed(4)} from primary node ${clicked.nodeId}; a junction rejoin must be within ${CONNECTION_TOLERANCE.toFixed(2)}.`)
+}
+
+/**
+ * Routes one viewer pick through exactly one authoring mode. In particular, an active alternate
+ * branch owns device and segment picks before any primary-route source/cycle logic can run.
+ */
+export function dispatchPackageAnimationRoutePick(
+  draft: PackageAnimationRouteDraft,
+  action: PackageAnimationRoutePickAction,
+): PackageAnimationRoutePickResult {
+  const branchActive = !!draft.branch?.editing
+  const mode = branchActive ? 'alternate-branch' : 'primary-route'
+  let mutation: RouteBuilderMutationResult
+
+  if (action.kind === 'rejoin-node') {
+    mutation = tryCompletePackageAnimationRouteBranchAtNode(draft, action.nodeId, action.clickedPoint)
+  } else if (action.kind === 'segment') {
+    mutation = addPackageAnimationRouteSegment(draft, action.pick)
+  } else {
+    const annotation = byId(draft).get(action.annotationId)
+    if (!packageHas(draft, action.annotationId)) {
+      const message = 'Add this item to the work package before using it in the animation route.'
+      mutation = { accepted: false, draft: withNotice(draft, issue('error', 'annotation-not-in-package', message)), message }
+    } else if (branchActive) {
+      if (annotation && isRouteBuilderDeviceKind(annotation.shapeKind)) {
+        const matchingPrimaryNode = getPackageAnimationPrimaryRouteCandidates(draft)
+          .find((candidate) => candidate.annotationId === action.annotationId)
+        mutation = matchingPrimaryNode
+          ? tryCompletePackageAnimationRouteBranchAtNode(draft, matchingPrimaryNode.nodeId, action.clickedPoint)
+          : addPackageAnimationDirectTransition(draft, action.annotationId)
+      } else {
+        const message = isCircuitShapeKind(annotation?.shapeKind)
+          ? 'Tap closer to an individual branch circuit segment.'
+          : 'Select a connected branch segment, a terminal fixture/device, or a later primary-route node to rejoin. The branch remains open.'
+        mutation = { accepted: false, draft: withNotice(draft, issue('error', 'invalid-branch-selection', message)), message }
+      }
+    } else if (!draft.source) {
+      mutation = selectPackageAnimationRouteSource(draft, action.annotationId)
+    } else if (annotation && isRouteBuilderDeviceKind(annotation.shapeKind)) {
+      if (!action.allowPrimaryDirectTransition) {
+        const message = 'Confirm the direct transition before adding this device.'
+        mutation = { accepted: false, draft, message }
+        return { ...mutation, consumed: true, mode, category: 'direct-confirmation-required', branchActive }
+      }
+      mutation = addPackageAnimationDirectTransition(draft, action.annotationId)
+    } else if (annotation && isCircuitShapeKind(annotation.shapeKind)) {
+      const message = Array.isArray(annotation.segmentIds)
+        ? 'Tap closer to an individual circuit segment.'
+        : 'This circuit annotation has no persisted stable segment IDs and cannot be used safely.'
+      mutation = { accepted: false, draft: withNotice(draft, issue('error', 'segment-not-hit', message)), message }
+    } else {
+      const message = 'That annotation is not an eligible route source, circuit segment, control, or light fixture.'
+      mutation = { accepted: false, draft: withNotice(draft, issue('error', 'ineligible-route-item', message)), message }
+    }
+  }
+
+  const rejoinDiagnostics = 'diagnostics' in mutation
+    ? mutation.diagnostics as PackageAnimationBranchRejoinDiagnostics
+    : undefined
+  return {
+    ...mutation,
+    consumed: true,
+    mode,
+    category: mutation.accepted ? 'accepted' : 'rejected',
+    branchActive: !!mutation.draft.branch?.editing,
+    ...(rejoinDiagnostics ? { rejoinDiagnostics } : {}),
+  }
+}
+
 export function undoPackageAnimationRouteSelection(draft: PackageAnimationRouteDraft): PackageAnimationRouteDraft {
   if (draft.readOnlyReason) return draft
   if (draft.branch?.editing) {
     if (draft.branch.transitions.length > 0) {
       return { ...draft, branch: { ...draft.branch, transitions: draft.branch.transitions.slice(0, -1) }, dirty: true, notice: undefined }
     }
-    return { ...draft, branch: undefined, dirty: true, notice: undefined }
+    return withNotice(draft, issue('warning', 'empty-branch-undo', 'There are no alternate branch steps to undo. Use Cancel Branch to leave alternate-branch mode.'))
   }
   if (draft.transitions.length > 0) {
     return { ...draft, transitions: draft.transitions.slice(0, -1), dirty: true, notice: undefined }
@@ -867,7 +1101,10 @@ export function startPackageAnimationRouteBranch(
 }
 
 export function finishPackageAnimationRouteBranch(draft: PackageAnimationRouteDraft): PackageAnimationRouteDraft {
-  if (!draft.branch || !resolvePackageAnimationRouteDraft(draft).branchConvergenceNodeId) return draft
+  if (!draft.branch) return draft
+  const resolved = resolvePackageAnimationRouteDraft(draft)
+  // A branch may finish two ways: rejoining a later primary node, or terminating at an eligible fixture/device.
+  if (!resolved.branchConvergenceNodeId && !resolved.branchTerminalNodeId) return draft
   return { ...draft, branch: { ...draft.branch, editing: false }, dirty: true, notice: undefined }
 }
 
@@ -976,7 +1213,9 @@ export function packageAnimationRouteDraftToScene(
   const sourceNode = resolved.nodes[0]
   if (!sourceNode || !draft.source) return { issues: dedupeIssues(issues) }
   const branchOrders: BlueprintAnimationBranchOrder[] = []
-  if (draft.branch && resolved.branchOriginNodeId && resolved.branchConvergenceNodeId) {
+  // Both completion kinds split at the origin (primary continuation + alternate), so both persist a
+  // branch order. A rejoin adds a downstream merge; a terminal branch simply ends at its final fixture.
+  if (draft.branch && resolved.branchOriginNodeId && (resolved.branchConvergenceNodeId || resolved.branchTerminalNodeId)) {
     const originIndex = draft.branch.originSelectionId === 'source'
       ? -1
       : draft.transitions.findIndex((transition) => transition.id === draft.branch?.originSelectionId)
@@ -1037,13 +1276,15 @@ function advancedSceneReason(scene: BlueprintScopeAnimationSceneV1): string | un
     const outgoingEdges = scene.edges.filter((edge) => edge.fromNodeId === branch.nodeId)
     const splitNodes = [...outgoing.values()].filter((count) => count > 1)
     const mergeNodes = [...incoming.values()].filter((count) => count > 1)
+    // Exactly one split at the branch origin. A rejoin adds exactly one merge; a terminal parallel
+    // branch adds none. Two or more merges is a structure this single-branch editor cannot express.
     if (
       branch.outgoingEdgeIds.length !== 2
       || outgoingEdges.length !== 2
       || new Set(branch.outgoingEdgeIds).size !== 2
       || outgoingEdges.some((edge) => !branch.outgoingEdgeIds.includes(edge.id))
       || splitNodes.length !== 1
-      || mergeNodes.length !== 1
+      || mergeNodes.length > 1
       || [...outgoing.values(), ...incoming.values()].some((count) => count > 2)
     ) {
       return 'This scene uses a branch structure beyond the single split/rejoin editor.'
@@ -1295,9 +1536,70 @@ export function getPackageAnimationBranchList(draft: PackageAnimationRouteDraft)
   })
 }
 
+export interface PackageAnimationBranchStatus {
+  heading: 'ALTERNATE BRANCH'
+  originLabel: string
+  stepCount: number
+  phase: 'Select first alternate segment' | 'Continue alternate route' | 'Branch valid — ready to finish' | 'Invalid selection — branch remains open' | 'Branch complete'
+  /** Which completion the current endpoint satisfies, once valid. Absent while the branch is still open. */
+  completionKind?: 'rejoin' | 'terminal'
+  /** Label of the resolved endpoint device/node, when the branch is valid to finish. */
+  endpointLabel?: string
+  instruction: string
+  nextAction: string
+  valid: boolean
+}
+
+export function getPackageAnimationBranchStatus(draft: PackageAnimationRouteDraft): PackageAnimationBranchStatus | null {
+  if (!draft.branch) return null
+  const resolved = resolvePackageAnimationRouteDraft(draft)
+  const entries = getPackageAnimationRouteList(draft)
+  const originLabel = draft.branch.originSelectionId === 'source'
+    ? entries.find((entry) => entry.isSource)?.label || 'Source'
+    : resolved.transitions.find((entry) => entry.selection.id === draft.branch?.originSelectionId)?.to?.label || 'Primary-route node'
+  const completionKind = resolved.branchConvergenceNodeId ? 'rejoin' : resolved.branchTerminalNodeId ? 'terminal' : undefined
+  const valid = !!completionKind
+  const endpointLabel = valid
+    ? resolved.branchTransitions[resolved.branchTransitions.length - 1]?.to?.label
+    : undefined
+  const invalidSelection = draft.branch.editing && draft.notice?.severity === 'error'
+  const phase = !draft.branch.editing
+    ? 'Branch complete'
+    : invalidSelection
+      ? 'Invalid selection — branch remains open'
+      : valid
+        ? 'Branch valid — ready to finish'
+        : draft.branch.transitions.length === 0
+          ? 'Select first alternate segment'
+          : 'Continue alternate route'
+  const instruction = completionKind === 'rejoin'
+    ? `The alternate route rejoins the primary route${endpointLabel ? ` at ${endpointLabel}` : ''}.`
+    : completionKind === 'terminal'
+      ? `Terminal endpoint${endpointLabel ? `: ${endpointLabel}` : ''}. Finish here, or keep selecting alternate segments to extend the branch.`
+      : draft.branch.transitions.length === 0
+        ? 'Select the first connected Circuit Path or Circuit Arc segment.'
+        : 'Continue the alternate route, finish at a terminal fixture/device, or select a later primary-route node to rejoin.'
+  const nextAction = !draft.branch.editing
+    ? 'Save Route, or remove the completed branch to author it again.'
+    : valid
+      ? 'Choose Finish Branch.'
+      : 'Select another connected branch segment, a terminal fixture/device, or a later primary-route rejoin node.'
+  return {
+    heading: 'ALTERNATE BRANCH',
+    originLabel,
+    stepCount: draft.branch.transitions.length,
+    phase,
+    ...(completionKind ? { completionKind } : {}),
+    ...(endpointLabel ? { endpointLabel } : {}),
+    instruction,
+    nextAction,
+    valid,
+  }
+}
+
 export interface RouteBuilderOverlay {
   segments: Array<{ id: string; pageNumber: number; kind: 'straight' | 'quadratic'; start: NormalizedPoint; end: NormalizedPoint; control?: NormalizedPoint }>
-  badges: Array<{ id: string; pageNumber: number; label?: number; point: NormalizedPoint; junction: boolean; ariaLabel: string }>
+  badges: Array<{ id: string; nodeId: string; route: 'primary' | 'branch'; pageNumber: number; label?: number; point: NormalizedPoint; junction: boolean; ariaLabel: string }>
 }
 
 export function getPackageAnimationRouteOverlay(draft: PackageAnimationRouteDraft): RouteBuilderOverlay {
@@ -1322,17 +1624,17 @@ export function getPackageAnimationRouteOverlay(draft: PackageAnimationRouteDraf
   const badges: RouteBuilderOverlay['badges'] = []
   let meaningfulNumber = 1
   const source = resolved.nodes[0]
-  if (source) badges.push({ id: source.id, pageNumber: source.pageNumber, label: meaningfulNumber, point: source.point, junction: false, ariaLabel: `Animation route step ${meaningfulNumber}: ${source.label || 'source'}` })
+  if (source) badges.push({ id: source.id, nodeId: source.id, route: 'primary', pageNumber: source.pageNumber, label: meaningfulNumber, point: source.point, junction: false, ariaLabel: `Animation route step ${meaningfulNumber}: ${source.label || 'source'}` })
   resolved.transitions.forEach((transition) => {
     const destination = transition.to
     if (!destination) return
     const junction = destination.roles.includes('junction')
     if (junction) {
-      badges.push({ id: `${transition.selection.id}-junction`, pageNumber: destination.pageNumber, point: destination.point, junction: true, ariaLabel: `Animation route junction: ${destination.label || 'circuit point'}` })
+      badges.push({ id: `${transition.selection.id}-junction`, nodeId: destination.id, route: 'primary', pageNumber: destination.pageNumber, point: destination.point, junction: true, ariaLabel: `Animation route junction: ${destination.label || 'circuit point'}` })
       return
     }
     meaningfulNumber += 1
-    badges.push({ id: destination.id, pageNumber: destination.pageNumber, label: meaningfulNumber, point: destination.point, junction: false, ariaLabel: `Animation route step ${meaningfulNumber}: ${destination.label || 'device'}` })
+    badges.push({ id: destination.id, nodeId: destination.id, route: 'primary', pageNumber: destination.pageNumber, label: meaningfulNumber, point: destination.point, junction: false, ariaLabel: `Animation route step ${meaningfulNumber}: ${destination.label || 'device'}` })
   })
   resolved.branchTransitions.forEach((transition) => {
     const destination = transition.to
@@ -1340,6 +1642,8 @@ export function getPackageAnimationRouteOverlay(draft: PackageAnimationRouteDraf
     const junction = destination.roles.includes('junction')
     badges.push({
       id: `branch-${transition.selection.id}`,
+      nodeId: destination.id,
+      route: 'branch',
       pageNumber: destination.pageNumber,
       point: destination.point,
       junction,

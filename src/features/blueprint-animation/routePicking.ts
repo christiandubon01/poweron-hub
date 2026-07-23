@@ -50,6 +50,16 @@ export interface RoutePickOptions {
   quadraticSamples?: number
 }
 
+export interface RouteNodePickCandidate {
+  nodeId: string
+  pageNumber: number
+  point: NormalizedPoint
+}
+
+export interface RouteNodePick extends RouteNodePickCandidate {
+  distancePx: number
+}
+
 export type RoutePickIntent =
   | { kind: 'annotation'; annotationId: string }
   | { kind: 'segment'; hit: RouteSegmentPick }
@@ -242,5 +252,23 @@ export function findNearestRoutePoint(
       }
     })
   }
+  return best
+}
+
+/** Resolves a visible primary-route badge/node in rendered pixels before nearby segment picking. */
+export function findNearestRouteNode(
+  pointer: NormalizedPoint,
+  candidates: RouteNodePickCandidate[],
+  options: Pick<RoutePickOptions, 'pageWidth' | 'pageHeight' | 'tolerancePx'>,
+): RouteNodePick | null {
+  const width = Math.max(1, Number(options.pageWidth) || 1)
+  const height = Math.max(1, Number(options.pageHeight) || 1)
+  const tolerance = Math.max(1, Number(options.tolerancePx) || 1)
+  let best: RouteNodePick | null = null
+  candidates.forEach((candidate) => {
+    const distancePx = Math.hypot((pointer.x - candidate.point.x) * width, (pointer.y - candidate.point.y) * height)
+    if (distancePx > tolerance || (best && distancePx >= best.distancePx)) return
+    best = { ...candidate, point: { ...candidate.point }, distancePx }
+  })
   return best
 }

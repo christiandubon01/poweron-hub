@@ -83,11 +83,12 @@ import { PackageAnimationRouteBuilder } from '@/features/blueprint-animation/Pac
 import { PackageAnimationPlaybackControls } from '@/features/blueprint-animation/PackageAnimationPlaybackControls'
 import type { PlaybackFixtureAppearance } from '@/features/blueprint-animation/playbackFixtureAppearance'
 import {
-  buildCircuitSegmentChannelColorMap,
+  buildCircuitSegmentRouteAppearanceColorMap,
   circuitSegmentChannelKey,
+  resolveAnimationRouteEdgeRole,
+  resolveSourceConnectorEdgeId,
 } from '@/features/blueprint-animation/playbackPathAppearance'
 import { parseBlueprintAnimationScene } from '@/features/blueprint-animation/sceneSchema'
-import type { BlueprintAnimationChannelType } from '@/features/blueprint-animation/types'
 import {
   applyAnnotationSnapshotsToList,
   areAnnotationSnapshotsEqual,
@@ -105,9 +106,9 @@ import {
 } from '@/features/blueprint-history/commandHistory'
 import type { AnnotationHistoryScope, AnnotationSnapshot } from '@/features/blueprint-history/types'
 import {
-  addPackageAnimationDirectTransition,
-  addPackageAnimationRouteSegment,
   createEmptyPackageAnimationRouteDraft,
+  dispatchPackageAnimationRoutePick,
+  getPackageAnimationPrimaryRouteCandidates,
   getPackageAnimationRouteOverlay,
   isRouteBuilderDeviceKind,
   loadPackageAnimationRouteDraft,
@@ -117,14 +118,12 @@ import {
   reconcilePackageAnimationRouteLocalRefresh,
   reconcilePackageAnimationRouteSave,
   resolvePackageAnimationRouteBaseRevision,
-  selectPackageAnimationRouteSource,
-  setRouteBuilderNotice,
   summarizePackageAnimationScene,
   type PackageAnimationRouteConflictState,
   type PackageAnimationRouteDraft,
   type RouteBuilderAnnotation,
 } from '@/features/blueprint-animation/routeBuilderModel'
-import { findNearestRouteSegment, resolveRoutePickIntent } from '@/features/blueprint-animation/routePicking'
+import { findNearestRouteNode, findNearestRouteSegment, resolveRoutePickIntent } from '@/features/blueprint-animation/routePicking'
 
 let _pdfjsLib: typeof import('pdfjs-dist') | null = null
 async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
@@ -2787,12 +2786,15 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
    *  canvas toggles it into selectedForPackageIds instead of selecting/moving/editing it. */
   const [isPackagePickMode, setIsPackagePickMode] = useState(false)
   const [animationRouteBuilder, setAnimationRouteBuilder] = useState<{
+    sessionId: string
     layerId: string
     pageNumber: number
     draft: PackageAnimationRouteDraft
     saving: boolean
     conflict?: PackageAnimationRouteConflictState
   } | null>(null)
+  const animationRouteBuilderRef = useRef(animationRouteBuilder)
+  animationRouteBuilderRef.current = animationRouteBuilder
   /** Ephemeral only: identifies the one package whose isolated playback component owns the rAF clock. */
   const [animationPlayback, setAnimationPlayback] = useState<{
     blueprintId: string
@@ -4542,21 +4544,29 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   // Route channel colors are a transient view of saved animation scenes. They never rewrite a
   // circuit annotation's own style; unassigned or conflicting segments fall back to that style.
+  // Transient resting tint for saved animation routes: the source connector is cyan, and every other
+  // routed segment — primary and branch alike — is the one continuous default route color. Purely a
+  // display overlay; it never writes back into the Circuit Path/Arc annotation's own stored color.
   const animationCircuitSegmentColors = useMemo(() => {
-    const assignments: Array<{ annotationId: string; segmentId: string; channel: BlueprintAnimationChannelType }> = []
+    const assignments: Array<{
+      annotationId: string
+      segmentId: string
+      role: ReturnType<typeof resolveAnimationRouteEdgeRole>
+    }> = []
     scopeLayers.forEach((layer) => {
       const parsed = parseBlueprintAnimationScene(layer.animationScene)
       if (parsed.status !== 'supported') return
+      const sourceConnectorEdgeId = resolveSourceConnectorEdgeId(parsed.scene)
       parsed.scene.edges.forEach((edge) => {
         if (edge.geometry.kind !== 'circuit-segment') return
         assignments.push({
           annotationId: edge.geometry.annotationId,
           segmentId: edge.geometry.segmentId,
-          channel: edge.channel,
+          role: resolveAnimationRouteEdgeRole(edge.id, sourceConnectorEdgeId),
         })
       })
     })
-    return buildCircuitSegmentChannelColorMap(assignments)
+    return buildCircuitSegmentRouteAppearanceColorMap(assignments)
   }, [scopeLayers])
 
   // Annotations owned by the active playback run. Their resting Light Output glow is suppressed
@@ -4965,7 +4975,17 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   }, [animationRouteAnnotations, currentPage])
 
   const closePackageAnimationRouteBuilder = useCallback(() => {
+    animationRouteBuilderRef.current = null
     setAnimationRouteBuilder(null)
+  }, [])
+
+  const changePackageAnimationRouteDraft = useCallback((draft: PackageAnimationRouteDraft) => {
+    const previous = animationRouteBuilderRef.current
+    if (!previous) return
+    const next = { ...previous, draft, conflict: undefined }
+    // Keep pointer dispatch synchronized with panel actions even before React commits a rerender.
+    animationRouteBuilderRef.current = next
+    setAnimationRouteBuilder(next)
   }, [])
 
   const savePackageAnimationRoute = useCallback(async () => {
@@ -5079,8 +5099,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   }, [animationRouteAnnotations, animationRouteBuilder, loadScopeLayers])
 
   const handleAnimationRoutePick = useCallback((event: React.PointerEvent<HTMLDivElement>, targetAnnotationId?: string) => {
-    if (!animationRouteBuilder || !overlayRef.current) return false
-    const layer = scopeLayers.find((entry) => entry.id === animationRouteBuilder.layerId)
+    const liveSession = animationRouteBuilderRef.current
+    if (!liveSession || !overlayRef.current) return false
+    const layer = scopeLayersRef.current.find((entry) => entry.id === liveSession.layerId)
     if (!layer) return false
     const overlayRect = overlayRef.current.getBoundingClientRect()
     const pointer = toNorm(event.clientX - overlayRect.left, event.clientY - overlayRect.top, overlayRect.width, overlayRect.height)
@@ -5107,61 +5128,50 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       && packageIds.has(annotation.id)
       && isRouteBuilderDeviceKind(annotation.shapeKind)
     )).map((annotation) => annotation.id))
-    const intent = resolveRoutePickIntent({
-      sourceSelected: !!animationRouteBuilder.draft.source,
+    const branchOriginIndex = liveSession.draft.branch?.originSelectionId === 'source'
+      ? 0
+      : liveSession.draft.transitions.findIndex((entry) => entry.id === liveSession.draft.branch?.originSelectionId) + 1
+    const primaryNodeCandidates = getPackageAnimationPrimaryRouteCandidates(liveSession.draft)
+      .filter((candidate) => candidate.pageNumber === currentPage
+        && (liveSession.draft.branch?.transitions.length ? true : candidate.index > branchOriginIndex))
+    const primaryNodeHit = liveSession.draft.branch?.editing
+      ? findNearestRouteNode(pointer, primaryNodeCandidates, {
+        pageWidth: Math.max(1, overlayRect.width),
+        pageHeight: Math.max(1, overlayRect.height),
+        tolerancePx: event.pointerType === 'touch' ? 30 : 18,
+      })
+      : null
+    const intent = primaryNodeHit ? null : resolveRoutePickIntent({
+      sourceSelected: !!liveSession.draft.source,
       overlappingAnnotationIds,
       eligibleDeviceIds,
       segmentHit: hit,
       fallbackAnnotationId: targetAnnotationId,
     })
-    if (!intent) return false
-    let mutation
-    if (intent.kind === 'segment') {
-      mutation = addPackageAnimationRouteSegment(animationRouteBuilder.draft, intent.hit)
-    } else {
-      const annotationId = intent.annotationId
-      const annotation = animationRouteAnnotations.find((entry) => entry.id === annotationId)
-      if (!packageIds.has(annotationId)) {
-        mutation = {
-          accepted: false,
-          draft: setRouteBuilderNotice(animationRouteBuilder.draft, {
-            severity: 'error',
-            code: 'annotation-not-in-package',
-            message: 'Add this item to the work package before using it in the animation route.',
-          }),
-        }
-      } else if (!animationRouteBuilder.draft.source) {
-        mutation = selectPackageAnimationRouteSource(animationRouteBuilder.draft, annotationId)
-      } else if (annotation && isRouteBuilderDeviceKind(annotation.shapeKind)) {
-        const confirmed = typeof window === 'undefined' || window.confirm('This device is not being reached by a visible circuit segment. Add an explicit direct transition with a warning?')
-        mutation = confirmed
-          ? addPackageAnimationDirectTransition(animationRouteBuilder.draft, annotationId)
-          : { accepted: false, draft: animationRouteBuilder.draft }
-      } else if (annotation && isCircuitShapeKind(annotation.shapeKind)) {
-        mutation = {
-          accepted: false,
-          draft: setRouteBuilderNotice(animationRouteBuilder.draft, {
-            severity: 'error',
-            code: 'segment-not-hit',
-            message: Array.isArray(annotation.segmentIds)
-              ? 'Tap closer to an individual circuit segment.'
-              : 'This circuit annotation has no persisted stable segment IDs and cannot be used safely.',
-          }),
-        }
-      } else {
-        mutation = {
-          accepted: false,
-          draft: setRouteBuilderNotice(animationRouteBuilder.draft, {
-            severity: 'error',
-            code: 'ineligible-route-item',
-            message: 'That annotation is not an eligible route source, circuit segment, control, or light fixture.',
-          }),
-        }
-      }
-    }
-    setAnimationRouteBuilder((previous) => previous ? { ...previous, draft: mutation.draft, conflict: undefined } : previous)
+    if (!primaryNodeHit && !intent) return false
+    const requiresPrimaryDirectConfirmation = intent?.kind === 'annotation'
+      && !!liveSession.draft.source
+      && !liveSession.draft.branch?.editing
+      && !!animationRouteAnnotations.find((entry) => entry.id === intent.annotationId && isRouteBuilderDeviceKind(entry.shapeKind))
+    const allowPrimaryDirectTransition = !requiresPrimaryDirectConfirmation
+      || typeof window === 'undefined'
+      || window.confirm('This device is not being reached by a visible circuit segment. Add an explicit direct transition with a warning?')
+    const action = primaryNodeHit
+      ? { kind: 'rejoin-node' as const, nodeId: primaryNodeHit.nodeId, clickedPoint: pointer }
+      : intent?.kind === 'segment'
+        ? { kind: 'segment' as const, pick: intent.hit }
+        : { kind: 'annotation' as const, annotationId: intent!.annotationId, clickedPoint: pointer, allowPrimaryDirectTransition }
+    const sessionId = liveSession.sessionId
+    setAnimationRouteBuilder((previous) => {
+      if (!previous || previous.sessionId !== sessionId) return previous
+      const result = dispatchPackageAnimationRoutePick(previous.draft, action)
+      if (result.rejoinDiagnostics) console.info('[Animation route branch rejoin]', result.rejoinDiagnostics)
+      const next = { ...previous, draft: result.draft, conflict: undefined }
+      animationRouteBuilderRef.current = next
+      return next
+    })
     return true
-  }, [animationRouteAnnotations, animationRouteBuilder, currentPage, scopeLayers])
+  }, [animationRouteAnnotations, currentPage])
 
   useEffect(() => {
     if (!animationRouteBuilder) return
@@ -6286,16 +6296,17 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const annEl = target?.closest?.('[data-annotation-id]') as HTMLElement | null
   const annotationId = annEl?.getAttribute('data-annotation-id')
 
-  if (!annEl || !annotationId) return
-
   // Route Builder has its own pick state and takes precedence over Package Pick and normal
-  // annotation focus/editing. Segment hit-testing still uses the exact pointer location.
+  // annotation focus/editing. Bare-canvas route badges and junctions must reach the same exact
+  // pointer hit-test even when there is no underlying annotation DOM element.
   if (animationRouteBuilder) {
     e.preventDefault()
     e.stopPropagation()
-    handleAnimationRoutePick(e, annotationId)
+    handleAnimationRoutePick(e, annotationId || undefined)
     return
   }
+
+  if (!annEl || !annotationId) return
 
   // Package Pick mode takes precedence over all normal interactions. A pointerdown on an
   // annotation toggles it in/out of the package-pick set and stops here — no focus, move,
@@ -13074,7 +13085,7 @@ const annotationPanelSizeClass =
           draft={animationRouteBuilder.draft}
           saving={animationRouteBuilder.saving}
           conflict={animationRouteBuilder.conflict}
-          onDraftChange={(draft) => setAnimationRouteBuilder((previous) => previous ? { ...previous, draft, conflict: undefined } : previous)}
+          onDraftChange={changePackageAnimationRouteDraft}
           onCancel={closePackageAnimationRouteBuilder}
           onSave={() => void savePackageAnimationRoute()}
           onReloadLatest={reloadLatestPackageAnimationRoute}
