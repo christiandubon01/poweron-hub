@@ -2329,9 +2329,27 @@ function mergeBlueprintSummariesObject(remoteRaw: any, localRaw: any): Record<st
       }
       merged[key] = nextAnn
     } else if (key === 'operationsBlueprintScopeLayers') {
-      const remoteLayers = (merged[key] && typeof merged[key] === 'object') ? merged[key] as Record<string, unknown> : {}
-      const localLayers = (localVal && typeof localVal === 'object') ? localVal as Record<string, unknown> : {}
-      merged[key] = { ...remoteLayers, ...localLayers }
+      // BP-SYNC-FIX-1 Part B: union scope layers per blueprintSetId by stable package id.
+      // Previously this was a wholesale `{ ...remoteLayers, ...localLayers }` spread, so a
+      // stale local set-array replaced a more complete remote one wholesale — dropping
+      // remote-only packages on remote apply (the production incident where four newly
+      // created iPad packages vanished from the PC while annotations synced fine). Now this
+      // mirrors the annotations branch above and reuses mergeBlueprintScopeLayersById, the
+      // SAME package-level merge the direct-save/push paths already use: remote-only and
+      // local-only packages both survive, same-id conflicts resolve by the existing
+      // updatedAt LWW + tombstone rules, and animationScene/animationSceneRevision + itemRefs
+      // are preserved. Order: local (winning/visible) order first, remote-only appended.
+      const remoteLayers = (merged[key] && typeof merged[key] === 'object') ? merged[key] as Record<string, unknown[]> : {}
+      const localLayers = (localVal && typeof localVal === 'object') ? localVal as Record<string, unknown[]> : {}
+      const setIds = new Set([...Object.keys(remoteLayers), ...Object.keys(localLayers)])
+      const nextLayers: Record<string, unknown[]> = { ...remoteLayers }
+      for (const setId of setIds) {
+        nextLayers[setId] = mergeBlueprintScopeLayersById(
+          Array.isArray(remoteLayers[setId]) ? remoteLayers[setId] as any[] : [],
+          Array.isArray(localLayers[setId]) ? localLayers[setId] as any[] : [],
+        )
+      }
+      merged[key] = nextLayers
     } else if (key === 'operationsBlueprintLibrary') {
       const remoteLibrary = Array.isArray(merged[key]) ? merged[key] as any[] : []
       const localLibrary = Array.isArray(localVal) ? localVal as any[] : []

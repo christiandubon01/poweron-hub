@@ -59,11 +59,13 @@ import {
   syncToSupabase,
 } from '@/services/backupDataService'
 import {
+  deleteOperationsBlueprintScopeLayer,
   getOperationsBlueprintScopeLayers,
   getLiveBlueprintSetRecords,
   mergeBlueprintScopeLayersById,
   mergeBlueprintSetRecordsById,
   saveOperationsBlueprintScopeLayerAnimationScene,
+  saveOperationsBlueprintScopeLayers,
 } from '@/services/blueprintLibraryService'
 import { createDefaultBlueprintAnimationScene } from '@/features/blueprint-animation/sceneSchema'
 
@@ -322,6 +324,215 @@ describe('blueprint animation scene preservation', () => {
       computeVerificationSummary(removedWithMarker),
       computeVerificationSummary(removedWithoutMarker),
     )).toMatchObject({ verified: false })
+  })
+})
+
+describe('BP-SYNC-FIX-1 Part B: remote apply unions work packages by id', () => {
+  const setId = 'ops_bp_set_1'
+  const bp = (layers: any[]): any => ({ blueprintSummaries: { operationsBlueprintScopeLayers: { [setId]: layers } } })
+  const liveIds = (backup: any): string[] => getOperationsBlueprintScopeLayers(backup, setId).map((l) => l.id)
+  const rawIds = (backup: any): string[] => ((backup.blueprintSummaries.operationsBlueprintScopeLayers[setId]) as any[]).map((l) => l.id)
+
+  it('incident shape: remote {A,B,C,D} + local {A,B} apply → all four survive, deterministic order, no dupes', () => {
+    const remote = bp([scopeLayer('A'), scopeLayer('B'), scopeLayer('C'), scopeLayer('D')])
+    const local = bp([scopeLayer('A'), scopeLayer('B')])
+    const applied = mergeLocalRecordsIntoRemoteSnapshot(remote, local)
+    expect(liveIds(applied)).toEqual(['A', 'B', 'C', 'D'])
+    // Local (winning/visible) order first, remote-only appended in remote order; no id duplicated.
+    expect(rawIds(applied)).toEqual(['A', 'B', 'C', 'D'])
+    expect(new Set(rawIds(applied)).size).toBe(4)
+  })
+
+  it('preserves a local-only package and a remote-only package together', () => {
+    const remote = bp([scopeLayer('shared'), scopeLayer('remote-only')])
+    const local = bp([scopeLayer('shared'), scopeLayer('local-only')])
+    const applied = mergeLocalRecordsIntoRemoteSnapshot(remote, local)
+    expect(liveIds(applied).sort()).toEqual(['local-only', 'remote-only', 'shared'])
+  })
+
+  it('same-id conflict: newer remote wins, and newer local wins', () => {
+    const newerRemote = mergeLocalRecordsIntoRemoteSnapshot(
+      bp([scopeLayer('A', NEWER, { crewNotes: 'remote-wins' })]),
+      bp([scopeLayer('A', OLD, { crewNotes: 'local-loses' })]),
+    )
+    expect(getOperationsBlueprintScopeLayers(newerRemote, setId)[0].crewNotes).toBe('remote-wins')
+
+    const newerLocal = mergeLocalRecordsIntoRemoteSnapshot(
+      bp([scopeLayer('A', OLD, { crewNotes: 'remote-loses' })]),
+      bp([scopeLayer('A', NEWER, { crewNotes: 'local-wins' })]),
+    )
+    expect(getOperationsBlueprintScopeLayers(newerLocal, setId)[0].crewNotes).toBe('local-wins')
+  })
+
+  it('explicit newer tombstone beats an older live package on apply (retained in raw, hidden from live)', () => {
+    const remote = bp([scopeLayer('A', NEW, { deletedAt: NEW })])
+    const local = bp([scopeLayer('A', OLD)])
+    const applied = mergeLocalRecordsIntoRemoteSnapshot(remote, local)
+    expect(liveIds(applied)).toEqual([])
+    expect(rawIds(applied)).toEqual(['A'])
+    expect((applied.blueprintSummaries.operationsBlueprintScopeLayers[setId][0] as any).deletedAt).toBe(NEW)
+  })
+
+  it('preserves remote-only itemRefs, animationScene and animationSceneRevision', () => {
+    const remoteOnly = scopeLayer('C', NEW, {
+      itemRefs: [
+        { annotationId: 'a1', pageNumber: 1, label: 'One' },
+        { annotationId: 'a2', pageNumber: 1, label: 'Two' },
+        { annotationId: 'a3', pageNumber: 2, label: 'Three' },
+      ],
+      animationScene: animationScene(3),
+      animationSceneRevision: 3,
+    })
+    const applied = mergeLocalRecordsIntoRemoteSnapshot(bp([scopeLayer('A'), remoteOnly]), bp([scopeLayer('A')]))
+    const survived = getOperationsBlueprintScopeLayers(applied, setId).find((l) => l.id === 'C')!
+    expect(survived.itemRefs).toHaveLength(3)
+    expect((survived.animationScene as any).revision).toBe(3)
+    expect(survived.animationSceneRevision).toBe(3)
+  })
+
+  it('keeps multiple blueprint sets isolated', () => {
+    const remote = { blueprintSummaries: { operationsBlueprintScopeLayers: {
+      'set-1': [scopeLayer('A'), scopeLayer('C')],
+      'set-2': [scopeLayer('X')],
+    } } } as any
+    const local = { blueprintSummaries: { operationsBlueprintScopeLayers: {
+      'set-1': [scopeLayer('A'), scopeLayer('B')],
+    } } } as any
+    const applied = mergeLocalRecordsIntoRemoteSnapshot(remote, local)
+    expect(getOperationsBlueprintScopeLayers(applied, 'set-1').map((l) => l.id).sort()).toEqual(['A', 'B', 'C'])
+    expect(getOperationsBlueprintScopeLayers(applied, 'set-2').map((l) => l.id)).toEqual(['X'])
+  })
+
+  it('regression: a stale local set-array can no longer drop a more complete remote set', () => {
+    // Pre-fix `{ ...remote, ...local }` let local win wholesale, dropping C & D. Union keeps them.
+    const remote = bp([scopeLayer('A'), scopeLayer('B'), scopeLayer('C'), scopeLayer('D')])
+    const staleLocal = bp([scopeLayer('A', NEWER)])
+    const applied = mergeLocalRecordsIntoRemoteSnapshot(remote, staleLocal)
+    expect(liveIds(applied).sort()).toEqual(['A', 'B', 'C', 'D'])
+  })
+})
+
+describe('BP-SYNC-FIX-1 Part A: work-package save never deletes by omission; explicit delete', () => {
+  const setId = 'set-1'
+  const seed = (localLayers: any[], remoteLayers: any[] = localLayers): void => {
+    const local = { projects: [], settings: {}, blueprintSummaries: { operationsBlueprintScopeLayers: { [setId]: localLayers } } } as any
+    const remote = { projects: [], settings: {}, blueprintSummaries: { operationsBlueprintScopeLayers: { [setId]: remoteLayers } } } as any
+    setActiveTenantUser(supabaseState.userId)
+    markTenantDataReady(supabaseState.userId)
+    saveBackupData(local, supabaseState.userId)
+    supabaseState.remoteData = remote
+  }
+  // Packages actually persisted to the cloud row after a save (raw incl. tombstones / live / ids).
+  const pushedRaw = (): any[] => (supabaseState.capturedPayload?.blueprintSummaries?.operationsBlueprintScopeLayers?.[setId] ?? [])
+  const pushedLive = (): any[] => pushedRaw().filter((l: any) => !l.deletedAt)
+  const pushedIds = (): string[] => pushedLive().map((l: any) => l.id)
+  const tombstonedIds = (): string[] => pushedRaw().filter((l: any) => l.deletedAt).map((l: any) => l.id).sort()
+
+  // ── Group 1: normal save must never delete by omission ──
+  it('normal save of only a modified A keeps B, C, D live and tombstones nothing (1.1)', async () => {
+    seed([scopeLayer('A'), scopeLayer('B'), scopeLayer('C'), scopeLayer('D')])
+    const result = await saveOperationsBlueprintScopeLayers(getBackupData(), setId, [scopeLayer('A', NEWER, { crewNotes: 'edited A' })])
+    expect(result).toMatchObject({ success: true })
+    expect(pushedIds().sort()).toEqual(['A', 'B', 'C', 'D'])
+    expect(tombstonedIds()).toEqual([])
+    expect(pushedLive().find((l) => l.id === 'A').crewNotes).toBe('edited A')
+  })
+
+  it('normal save adding E keeps A–D and adds E (1.2)', async () => {
+    seed([scopeLayer('A'), scopeLayer('B'), scopeLayer('C'), scopeLayer('D')])
+    await saveOperationsBlueprintScopeLayers(getBackupData(), setId,
+      ['A', 'B', 'C', 'D', 'E'].map((id) => scopeLayer(id)))
+    expect(pushedIds().sort()).toEqual(['A', 'B', 'C', 'D', 'E'])
+    expect(tombstonedIds()).toEqual([])
+  })
+
+  it('a stale incoming array cannot drop a remote-only package (1.3)', async () => {
+    seed([scopeLayer('A')], [scopeLayer('A'), scopeLayer('D')]) // local knows only A; remote has A + D
+    await saveOperationsBlueprintScopeLayers(getBackupData(), setId, [scopeLayer('A', NEWER)])
+    expect(pushedIds().sort()).toEqual(['A', 'D'])
+    expect(tombstonedIds()).toEqual([])
+  })
+
+  it('an empty save payload does not tombstone existing packages (1.4)', async () => {
+    seed([scopeLayer('A'), scopeLayer('B'), scopeLayer('C')])
+    await saveOperationsBlueprintScopeLayers(getBackupData(), setId, [])
+    expect(pushedIds().sort()).toEqual(['A', 'B', 'C'])
+    expect(tombstonedIds()).toEqual([])
+  })
+
+  it('an existing tombstone stays a tombstone and is not revived by omission (1.5)', async () => {
+    const tomb = scopeLayer('B', NEW, { deletedAt: NEW })
+    seed([scopeLayer('A'), tomb])
+    await saveOperationsBlueprintScopeLayers(getBackupData(), setId, [scopeLayer('A', NEWER)])
+    expect(pushedIds()).toEqual(['A'])
+    expect(tombstonedIds()).toEqual(['B'])
+  })
+
+  // ── Group 2: explicit delete ──
+  it('explicit delete of B tombstones only B; A and C stay live and unchanged (test 6)', async () => {
+    const b = scopeLayer('B', NEW, { itemRefs: [
+      { annotationId: 'b1', pageNumber: 1, label: 'One' },
+      { annotationId: 'b2', pageNumber: 2, label: 'Two' },
+    ] })
+    seed([scopeLayer('A', NEW, { crewNotes: 'A notes' }), b, scopeLayer('C', NEW, { crewNotes: 'C notes' })])
+    const result = await deleteOperationsBlueprintScopeLayer(getBackupData(), setId, 'B')
+    expect(result).toMatchObject({ success: true })
+    expect(pushedIds().sort()).toEqual(['A', 'C'])
+    expect(tombstonedIds()).toEqual(['B'])
+    const bTomb = pushedRaw().find((l) => l.id === 'B')
+    expect(bTomb.deletedAt).toBeTruthy()
+    expect(bTomb.itemRefs).toHaveLength(2) // full package content retained inside the tombstone
+    // Unrelated packages' timestamps are untouched.
+    expect(pushedRaw().find((l) => l.id === 'A').updatedAt).toBe(NEW)
+    expect(pushedRaw().find((l) => l.id === 'C').updatedAt).toBe(NEW)
+  })
+
+  it('explicit delete of a remote-only package tombstones the exact remote id (test 7)', async () => {
+    // local knows only A; R was created on another device and only exists remotely.
+    seed([scopeLayer('A')], [scopeLayer('A'), scopeLayer('R', NEW, { itemRefs: [{ annotationId: 'r1', pageNumber: 3, label: 'Ref' }] })])
+    const result = await deleteOperationsBlueprintScopeLayer(getBackupData(), setId, 'R')
+    expect(result).toMatchObject({ success: true })
+    expect(pushedIds().sort()).toEqual(['A'])
+    expect(tombstonedIds()).toEqual(['R'])
+    expect(pushedRaw().find((l) => l.id === 'R').itemRefs).toHaveLength(1)
+  })
+
+  it('a failed cloud write on delete reports cloudSynced:false and never loses other packages (test 8)', async () => {
+    seed([scopeLayer('A'), scopeLayer('B')])
+    supabaseState.remoteWriteError = 'write rejected'
+    const result = await deleteOperationsBlueprintScopeLayer(getBackupData(), setId, 'B')
+    expect(result.cloudSynced).toBe(false)
+    expect(result.success).toBe(false)
+    // A is never lost; the delete is committed locally and retryable (sync paused), not corrupt.
+    // The viewer keeps the local delete on a paused save and restores via loadScopeLayers() only
+    // when nothing persisted — the package is never permanently hidden by a failed write.
+    const localRaw = (getBackupData()!.blueprintSummaries.operationsBlueprintScopeLayers[setId]) as any[]
+    expect(localRaw.some((l) => l.id === 'A' && !l.deletedAt)).toBe(true)
+  })
+
+  // ── Incident-shaped (Group 4): Circuit 1–16 + Labels ──
+  const incidentSet = (): any[] =>
+    [...Array.from({ length: 16 }, (_, i) => `Circuit ${i + 1}`), 'Labels'].map((name, i) => scopeLayer(`scope_${i}`, NEW, { name }))
+
+  it('editing Circuit 1 with a stale payload omitting Circuit 14/15/16 + Labels keeps all 17 live (Group 4)', async () => {
+    seed(incidentSet())
+    // Stale payload carries only the edited Circuit 1 (scope_0), omitting scope_13..scope_16.
+    await saveOperationsBlueprintScopeLayers(getBackupData(), setId,
+      [scopeLayer('scope_0', NEWER, { name: 'Circuit 1', crewNotes: 'edited' })])
+    expect(pushedLive()).toHaveLength(17)
+    expect(tombstonedIds()).toEqual([])
+    for (const id of ['scope_13', 'scope_14', 'scope_15', 'scope_16']) { // Circuit 14/15/16 + Labels
+      const layer = pushedRaw().find((l) => l.id === id)
+      expect(layer).toBeTruthy()
+      expect(layer.deletedAt).toBeUndefined()
+    }
+  })
+
+  it('after the incident-shaped edit, an explicit delete tombstones exactly one package (Group 4 cont.)', async () => {
+    seed(incidentSet())
+    await deleteOperationsBlueprintScopeLayer(getBackupData(), setId, 'scope_16') // "Labels"
+    expect(pushedLive()).toHaveLength(16)
+    expect(tombstonedIds()).toEqual(['scope_16'])
   })
 })
 

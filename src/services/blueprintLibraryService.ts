@@ -1228,29 +1228,21 @@ export async function saveOperationsBlueprintScopeLayers(
   const userId = getActiveTenantUserId()
   const localBase = backup || getBackupData()
 
-  // Phase 5E: infer tombstones for layers the UI dropped. deleteScopeLayer (and any edit)
-  // passes the COMPLETE live array for this set (verified in the Phase 5E pre-edit caller
-  // check) — it filters rather than tombstoning — so any previously-live id now absent is a
-  // delete. Synthesize a tombstone for it; carry forward previously-tombstoned layers so they
-  // survive. This keeps the delete durable without editing OperationsBlueprintPdfViewer.tsx.
-  const nowIsoTombstone = new Date().toISOString()
+  // BP-SYNC-FIX-1 Part A: deletion is NEVER inferred from a package id merely being absent
+  // from this payload. A stale/incomplete incoming array — e.g. a single-package edit made
+  // against a React snapshot captured before other packages were added — must not tombstone
+  // real packages. That delete-by-omission was the production incident (four newly created
+  // packages tombstoned together with identical timestamps). Deletes now travel ONLY as
+  // explicit tombstones: the incoming array may itself carry a tombstoned layer (see
+  // deleteOperationsBlueprintScopeLayer), and any layer already tombstoned in local state but
+  // absent from this payload is carried forward so an existing delete still propagates
+  // cross-device. Every omitted-but-live id is preserved by the id-merge onto the freshly
+  // fetched remote (and by mergeScopedIncomingIntoLocal on the local side).
+  const incomingIds = new Set(incomingLive.map((l) => l.id))
   const prevRawLayers = localBase ? getOperationsBlueprintScopeLayersRaw(localBase, blueprintSetId) : []
-  const incomingLiveIds = new Set(incomingLive.map((l) => l.id))
-  const inferredTombstones: BlueprintScopeLayer[] = []
-  const carriedTombstones: BlueprintScopeLayer[] = []
-  for (const prev of prevRawLayers) {
-    if (prev.deletedAt) { carriedTombstones.push(prev); continue }
-    if (!incomingLiveIds.has(prev.id)) {
-      inferredTombstones.push({
-        ...prev,
-        deletedAt: nowIsoTombstone,
-        updatedAt: nowIsoTombstone,
-        ...(userId ? { deletedBy: userId } : {}),
-      })
-    }
-  }
-  // Incoming order first (preserves UI reorder), tombstones appended (hidden from UI anyway).
-  const sanitizedLayers = [...incomingLive, ...inferredTombstones, ...carriedTombstones]
+  const carriedTombstones = prevRawLayers.filter((prev) => prev.deletedAt && !incomingIds.has(prev.id))
+  // Incoming order first (preserves UI reorder); previously-tombstoned layers appended.
+  const sanitizedLayers = [...incomingLive, ...carriedTombstones]
 
   const saveLocalOnly = (base: any): SaveScopeLayersResult => {
     const merged = applySanitizedScopeLayersToBackup(base, blueprintSetId, sanitizedLayers)
@@ -1336,6 +1328,65 @@ export async function saveOperationsBlueprintScopeLayers(
     warning: SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
     error: result.error,
   }
+}
+
+/**
+ * BP-SYNC-FIX-1 Part A: explicit, single-package soft delete — the ONLY way to delete a work
+ * package now that saveOperationsBlueprintScopeLayers no longer infers deletes from omission.
+ * Mirrors deleteOperationsBlueprintAnnotation: it tombstones exactly `scopeLayerId` (retaining
+ * the full record — itemRefs, animationScene/revision, hours — inside the tombstone) and routes
+ * through the same remote-baseline save, so the delete propagates via the established package
+ * id-merge and every unrelated package is left untouched. If the target is missing from stale
+ * local state it is looked up in the latest remote, so the exact remote id can still be
+ * tombstoned safely (a package created on another device that never reached this cache).
+ */
+export async function deleteOperationsBlueprintScopeLayer(
+  backup: any,
+  blueprintSetId: string,
+  scopeLayerId: string,
+): Promise<SaveScopeLayersResult> {
+  const now = new Date().toISOString()
+  let userId: string | null = null
+  try {
+    const { getActiveTenantUserId } = await import('@/services/backupDataService')
+    userId = getActiveTenantUserId()
+  } catch { /* deletedBy is best-effort; never block a delete on it */ }
+
+  const localRaw = getOperationsBlueprintScopeLayersRaw(backup || {}, blueprintSetId)
+  let target = localRaw.find((layer) => layer.id === scopeLayerId)
+
+  // Target absent from (stale) local state — consult the latest remote so a package created on
+  // another device can still be deleted by its exact id.
+  if (!target) {
+    try {
+      const { isSupabaseConfigured, fetchLatestRemoteBackup } = await import('@/services/backupDataService')
+      if (isSupabaseConfigured()) {
+        const remote = await fetchLatestRemoteBackup(userId || undefined)
+        if (remote.hasRemoteRow && remote.remoteData) {
+          target = getOperationsBlueprintScopeLayersRaw(remote.remoteData, blueprintSetId).find((layer) => layer.id === scopeLayerId)
+        }
+      }
+    } catch { /* fall through to the no-op below */ }
+  }
+
+  if (!target || target.deletedAt) {
+    // Unknown id or already deleted — nothing live to tombstone. Re-save the current live set so
+    // the caller still gets the normal result shape; no id is created, revived, or dropped.
+    console.warn('[ScopeLayers] delete: package not found live locally or remotely; nothing to tombstone', { blueprintSetId, scopeLayerId })
+    return saveOperationsBlueprintScopeLayers(backup, blueprintSetId, localRaw.filter((layer) => !layer.deletedAt))
+  }
+
+  const tombstone: BlueprintScopeLayer = {
+    ...target,
+    deletedAt: now,
+    updatedAt: now,
+    ...(userId ? { deletedBy: userId } : {}),
+  }
+  // Pass the current live set with exactly this id replaced by (or, for a remote-only target,
+  // appended as) its tombstone. saveOperationsBlueprintScopeLayers merges it onto fresh remote;
+  // nothing is deleted by omission, and any other existing tombstone is carried forward there.
+  const liveWithoutTarget = localRaw.filter((layer) => !layer.deletedAt && layer.id !== scopeLayerId)
+  return saveOperationsBlueprintScopeLayers(backup, blueprintSetId, [...liveWithoutTarget, tombstone])
 }
 
 export type BlueprintAnimationSceneUpdater = (

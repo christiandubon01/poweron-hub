@@ -50,6 +50,7 @@ import {
 } from 'lucide-react'
 import {
   deleteOperationsBlueprintAnnotation,
+  deleteOperationsBlueprintScopeLayer,
   getBlueprintSignedUrl,
   getOperationsBlueprintAnnotations,
   getOperationsBlueprintScopeLayers,
@@ -3853,6 +3854,42 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
   }, [blueprint?.id, clearStaleSyncMessages, loadScopeLayers, showSyncPausedNoticeOnce])
 
+  // BP-SYNC-FIX-1 Part A: explicit single-package delete. Deliberately separate from
+  // persistScopeLayers (which saves the live set) so a delete never travels as an omitted id —
+  // it tombstones exactly this id via the service's dedicated delete path. Same result handling
+  // as persistScopeLayers; on failure loadScopeLayers() restores the full array.
+  const persistScopeLayerDeletion = useCallback(async (layerId: string) => {
+    if (!blueprint?.id) return false
+    try {
+      const backup = getBackupData()
+      if (!backup) throw new Error('No local backup data available.')
+      const result = await deleteOperationsBlueprintScopeLayer(backup, blueprint.id, layerId)
+      if (result.cloudSynced) {
+        clearStaleSyncMessages()
+        return true
+      }
+      if (result.localSaved) {
+        if (result.warning) {
+          showSyncPausedNoticeOnce()
+        }
+        return true
+      }
+      setActionMsg({
+        type: 'error',
+        text: result.error || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
+      })
+      loadScopeLayers()
+      return false
+    } catch (e: any) {
+      setActionMsg({
+        type: 'error',
+        text: e?.message || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
+      })
+      loadScopeLayers()
+      return false
+    }
+  }, [blueprint?.id, clearStaleSyncMessages, loadScopeLayers, showSyncPausedNoticeOnce])
+
   const clearDoc = useCallback(async () => {
     try {
       if (renderTaskRef.current) {
@@ -4870,15 +4907,17 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       next.delete(layerId)
       return next
     })
+    // Optimistic removal; the explicit single-id delete tombstones exactly this package.
+    // On failure persistScopeLayerDeletion → loadScopeLayers() restores the full prior array.
     const nextLayers = scopeLayers.filter((layer) => layer.id !== layerId)
     setScopeLayers(nextLayers)
-    const saved = await persistScopeLayers(nextLayers)
+    const saved = await persistScopeLayerDeletion(layerId)
     if (!saved) {
       loadScopeLayers()
       return
     }
     setActionMsg({ type: 'success', text: 'Work package deleted.' })
-  }, [loadScopeLayers, persistScopeLayers, scopeLayers])
+  }, [loadScopeLayers, persistScopeLayerDeletion, scopeLayers])
 
   // Multi-package visibility toggle. Adds/removes a package from the visible set.
   // Empty set = no filter = all annotations shown (handled by isolatedAnnotationIdSet).
