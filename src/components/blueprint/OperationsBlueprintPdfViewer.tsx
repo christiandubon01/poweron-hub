@@ -83,12 +83,6 @@ import {
 import { PackageAnimationRouteBuilder } from '@/features/blueprint-animation/PackageAnimationRouteBuilder'
 import { PackageAnimationPlaybackControls } from '@/features/blueprint-animation/PackageAnimationPlaybackControls'
 import type { PlaybackFixtureAppearance } from '@/features/blueprint-animation/playbackFixtureAppearance'
-import {
-  buildCircuitSegmentRouteAppearanceColorMap,
-  circuitSegmentChannelKey,
-  resolveAnimationRouteEdgeRole,
-  resolveSourceConnectorEdgeId,
-} from '@/features/blueprint-animation/playbackPathAppearance'
 import { parseBlueprintAnimationScene } from '@/features/blueprint-animation/sceneSchema'
 import {
   applyAnnotationSnapshotsToList,
@@ -4677,6 +4671,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       pageNumber: Math.max(1, Math.floor(Number(annotation.pageNumber) || 1)),
       label: annotationLabel(annotation),
       ...(annotation.text ? { text: annotation.text } : {}),
+      ...(annotation.color ? { color: annotation.color } : {}),
+      ...(meta.borderColor ? { borderColor: meta.borderColor } : {}),
       ...(annotation.type === 'shape' && meta.shapeKind ? { shapeKind: meta.shapeKind } : {}),
       ...(annotation.rect ? { rect: { ...annotation.rect } } : {}),
       ...(Array.isArray(meta.points) ? { points: meta.points.map((point: any) => ({ x: Number(point.x), y: Number(point.y) })) } : {}),
@@ -4689,33 +4685,6 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     () => animationRouteBuilder ? getPackageAnimationRouteOverlay(animationRouteBuilder.draft) : null,
     [animationRouteBuilder]
   )
-
-  // Route channel colors are a transient view of saved animation scenes. They never rewrite a
-  // circuit annotation's own style; unassigned or conflicting segments fall back to that style.
-  // Transient resting tint for saved animation routes: the source connector is cyan, and every other
-  // routed segment — primary and branch alike — is the one continuous default route color. Purely a
-  // display overlay; it never writes back into the Circuit Path/Arc annotation's own stored color.
-  const animationCircuitSegmentColors = useMemo(() => {
-    const assignments: Array<{
-      annotationId: string
-      segmentId: string
-      role: ReturnType<typeof resolveAnimationRouteEdgeRole>
-    }> = []
-    scopeLayers.forEach((layer) => {
-      const parsed = parseBlueprintAnimationScene(layer.animationScene)
-      if (parsed.status !== 'supported') return
-      const sourceConnectorEdgeId = resolveSourceConnectorEdgeId(parsed.scene)
-      parsed.scene.edges.forEach((edge) => {
-        if (edge.geometry.kind !== 'circuit-segment') return
-        assignments.push({
-          annotationId: edge.geometry.annotationId,
-          segmentId: edge.geometry.segmentId,
-          role: resolveAnimationRouteEdgeRole(edge.id, sourceConnectorEdgeId),
-        })
-      })
-    })
-    return buildCircuitSegmentRouteAppearanceColorMap(assignments)
-  }, [scopeLayers])
 
   // Annotations owned by the active playback run. Their resting Light Output glow is suppressed
   // for the duration so the route can light them from "off" — a render gate only, recomputed just
@@ -11002,17 +10971,10 @@ const annotationPanelSizeClass =
                                 arcD += ` Q ${c.vx} ${c.vy} ${localPts[i].vx} ${localPts[i].vy}`
                               }
                             }
-                            const arcSegmentColors = points.slice(1).map((_, index) => {
-                              const segmentId = Array.isArray(meta.segmentIds) ? meta.segmentIds[index] : undefined
-                              return typeof segmentId === 'string'
-                                ? animationCircuitSegmentColors.get(circuitSegmentChannelKey(a.id, segmentId))
-                                : undefined
-                            })
-                            const hasArcChannelOverride = arcSegmentColors.some(Boolean)
                             return (
                               <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                                 <svg className="absolute inset-0 overflow-visible" viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none">
-                                  {arcD && !hasArcChannelOverride && (
+                                  {arcD && (
                                     <path
                                       d={arcD}
                                       fill="none"
@@ -11025,24 +10987,6 @@ const annotationPanelSizeClass =
                                       vectorEffect="non-scaling-stroke"
                                     />
                                   )}
-                                  {hasArcChannelOverride && localPts.slice(1).map((point, index) => {
-                                    const previous = localPts[index]
-                                    const control = toLocal(getCircuitArcControl(meta.arcCtrls, points[index], points[index + 1], index))
-                                    return (
-                                      <path
-                                        key={meta.segmentIds?.[index] || index}
-                                        d={`M ${previous.vx} ${previous.vy} Q ${control.vx} ${control.vy} ${point.vx} ${point.vy}`}
-                                        fill="none"
-                                        stroke={arcSegmentColors[index] || borderColor}
-                                        strokeWidth={borderThickness}
-                                        strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined}
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        opacity={fillOpacity}
-                                        vectorEffect="non-scaling-stroke"
-                                      />
-                                    )
-                                  })}
                                 </svg>
                                 {localPts.map((p, i) => (
                                   <div
@@ -11098,44 +11042,20 @@ const annotationPanelSizeClass =
                             }))
                             const svgPts = localPts.map((p) => `${p.vx},${p.vy}`).join(' ')
                             const isCircuit = kind === 'circuit-path'
-                            const pathSegmentColors = isCircuit ? localPts.slice(1).map((_, index) => {
-                              const segmentId = Array.isArray(meta.segmentIds) ? meta.segmentIds[index] : undefined
-                              return typeof segmentId === 'string'
-                                ? animationCircuitSegmentColors.get(circuitSegmentChannelKey(a.id, segmentId))
-                                : undefined
-                            }) : []
-                            const hasPathChannelOverride = pathSegmentColors.some(Boolean)
                             return (
                               <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
                                 <svg className="absolute inset-0 overflow-visible" viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none">
-                                  {!hasPathChannelOverride ? (
-                                    <polyline
-                                      points={svgPts}
-                                      fill="none"
-                                      stroke={borderColor}
-                                      strokeWidth={borderThickness}
-                                      strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined}
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      opacity={fillOpacity}
-                                      vectorEffect="non-scaling-stroke"
-                                    />
-                                  ) : localPts.slice(1).map((point, index) => (
-                                    <line
-                                      key={meta.segmentIds?.[index] || index}
-                                      x1={localPts[index].vx}
-                                      y1={localPts[index].vy}
-                                      x2={point.vx}
-                                      y2={point.vy}
-                                      stroke={pathSegmentColors[index] || borderColor}
-                                      strokeWidth={borderThickness}
-                                      strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined}
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      opacity={fillOpacity}
-                                      vectorEffect="non-scaling-stroke"
-                                    />
-                                  ))}
+                                  <polyline
+                                    points={svgPts}
+                                    fill="none"
+                                    stroke={borderColor}
+                                    strokeWidth={borderThickness}
+                                    strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined}
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    opacity={fillOpacity}
+                                    vectorEffect="non-scaling-stroke"
+                                  />
                                 </svg>
                                 {isCircuit && localPts.map((p, i) => (
                                   <div

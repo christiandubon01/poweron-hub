@@ -74,6 +74,8 @@ export interface RouteBuilderAnnotation {
   pageNumber: number
   label: string
   text?: string
+  color?: string
+  borderColor?: string
   shapeKind?: string
   rect?: { x: number; y: number; w: number; h: number }
   points?: NormalizedPoint[]

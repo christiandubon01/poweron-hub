@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { createPlaybackLoopController, type PlaybackLoopController } from './playbackLoopController'
 import type { RouteBuilderAnnotation } from './routeBuilderModel'
 import { preparePlaybackGeometry } from './playbackGeometry'
-import { calculatePlaybackFrame, createPlaybackTimeline, type PlaybackFrame } from './playbackModel'
+import { calculatePlaybackFrame, createPlaybackTimeline, type PlaybackFrame, type PlaybackTimeline } from './playbackModel'
 import { parseBlueprintAnimationScene } from './sceneSchema'
 import {
   buildPlaybackActivationEventNodeIds,
@@ -12,15 +13,14 @@ import {
   type PlaybackFixtureAppearance,
 } from './playbackFixtureAppearance'
 import {
-  PLAYBACK_PATH_NOT_YET_OPACITY,
   PLAYBACK_PATH_PULSE_DURATION_MS,
   PLAYBACK_PATH_PULSE_OPACITIES,
   PLAYBACK_PATH_SOLID_OPACITY,
   PLAYBACK_PATH_STROKE_WIDTH,
-  resolveAnimationRouteEdgeRole,
-  resolvePlaybackEdgeStrokeColor,
+  buildPlaybackRouteEdgeAppearanceMap,
+  resolvePlaybackOrbColor,
   resolvePlaybackPathState,
-  resolveSourceConnectorEdgeId,
+  type PlaybackRouteEdgeAppearance,
 } from './playbackPathAppearance'
 
 type PlaybackStatus = 'idle' | 'playing' | 'paused' | 'complete'
@@ -62,6 +62,116 @@ const GLOW_STOPS: Array<{ offset: string; opacity: number }> = [
   { offset: '100%', opacity: 0 },
 ]
 
+export interface PlaybackRouteOverlayProps {
+  frame: PlaybackFrame
+  steps: PlaybackTimeline['steps']
+  routeEdgeAppearances: ReadonlyMap<string, PlaybackRouteEdgeAppearance>
+  currentPage: number
+  pageWidth: number
+  pageHeight: number
+  overlayWidth: number
+  overlayHeight: number
+  reducedMotion?: boolean
+  playing?: boolean
+}
+
+function stepRenderPoints(step: PlaybackTimeline['steps'][number]) {
+  return step.geometry?.renderPoints ?? [step.start, step.end]
+}
+
+export function PlaybackRouteOverlay({
+  frame,
+  steps,
+  routeEdgeAppearances,
+  currentPage,
+  pageWidth,
+  pageHeight,
+  overlayWidth,
+  overlayHeight,
+  reducedMotion,
+  playing,
+}: PlaybackRouteOverlayProps) {
+  const energizedEdgesByStepId = new Map((frame.energizedEdges ?? []).map((edge) => [edge.step.id, edge]))
+  return (
+    <svg
+      className="absolute inset-0 pointer-events-none overflow-visible select-none"
+      width={overlayWidth}
+      height={overlayHeight}
+      viewBox={`0 0 ${pageWidth} ${pageHeight}`}
+      style={{ zIndex: 26 }}
+      aria-hidden="true"
+      data-playback-route-overlay="true"
+    >
+      {steps.filter((step) => step.pageNumber === currentPage).map((step) => {
+        const points = stepRenderPoints(step).map((point) => `${point.x * pageWidth},${point.y * pageHeight}`).join(' ')
+        const pathState = resolvePlaybackPathState({
+          elapsedMs: frame.elapsedMs,
+          travelStartMs: step.travelStartMs,
+          travelEndMs: step.travelEndMs,
+          reducedMotion,
+        })
+        const energizedEdge = energizedEdgesByStepId.get(step.id)
+        const solidProgress = pathState === 'solid' ? 1 : energizedEdge?.progress ?? 0
+        const stroke = routeEdgeAppearances.get(step.edgeId)?.overlayColor ?? '#facc15'
+        const sharedProps = {
+          points,
+          fill: 'none',
+          stroke,
+          strokeWidth: PLAYBACK_PATH_STROKE_WIDTH,
+          strokeLinecap: 'round' as const,
+          strokeLinejoin: 'round' as const,
+          pathLength: 1,
+          vectorEffect: 'non-scaling-stroke' as const,
+          pointerEvents: 'none' as const,
+        }
+        if (pathState === 'not-yet' || solidProgress <= 0) return null
+        return (
+          <Fragment key={step.id}>
+            <polyline
+              {...sharedProps}
+              strokeWidth={PLAYBACK_PATH_STROKE_WIDTH + 8}
+              strokeDasharray={solidProgress < 1 ? `${solidProgress} 1` : undefined}
+              opacity={pathState === 'dim-pulsing' ? PLAYBACK_PATH_PULSE_OPACITIES[0] : 0.42}
+              style={{ filter: `drop-shadow(0 0 6px ${stroke})` }}
+              data-playback-route-glow={step.kind}
+            >
+              {pathState === 'dim-pulsing' && playing && (
+                <animate
+                  attributeName="opacity"
+                  values={PLAYBACK_PATH_PULSE_OPACITIES.join(';')}
+                  dur={`${PLAYBACK_PATH_PULSE_DURATION_MS}ms`}
+                  repeatCount="indefinite"
+                />
+              )}
+            </polyline>
+            {pathState === 'solid' && (
+              <polyline {...sharedProps} opacity={PLAYBACK_PATH_SOLID_OPACITY} data-playback-route-solid={step.kind} />
+            )}
+          </Fragment>
+        )
+      })}
+      {frame.orbs.filter((orb) => orb.pageNumber === currentPage).map((orb) => {
+        const stroke = resolvePlaybackOrbColor(routeEdgeAppearances.get(orb.edgeId))
+        return (
+          <circle
+            key={orb.edgeId}
+            cx={orb.point.x * pageWidth}
+            cy={orb.point.y * pageHeight}
+            r={7}
+            fill="#ffffff"
+            stroke={stroke}
+            strokeWidth={3}
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="none"
+            style={{ filter: `drop-shadow(0 0 6px ${stroke})` }}
+            data-playback-orb="true"
+          />
+        )
+      })}
+    </svg>
+  )
+}
+
 export function PackageAnimationPlaybackControls({
   active,
   scene,
@@ -93,14 +203,13 @@ export function PackageAnimationPlaybackControls({
         if (node.anchor.kind !== 'virtual-point') nodeAnnotationIds.set(node.id, node.anchor.annotationId)
       })
       // The source connector is the primary edge leaving the source node — structural, stable across
-      // forward/reverse traversal. It renders cyan; every other routed edge renders the one default
-      // route color, so a branch split never changes color.
-      const sourceConnectorEdgeId = resolveSourceConnectorEdgeId(parsed.scene)
+      // Playback adds an ephemeral glow over the route; the underlying Circuit Path/Arc keeps its
+      // authored annotation color and style.
       return {
-        timeline: createPlaybackTimeline(geometry, parsed.scene.playbackOptions),
+        timeline: createPlaybackTimeline(geometry, { ...parsed.scene.playbackOptions, loop: false }),
         nodeAnnotationIds,
         activationEventNodeIds: buildPlaybackActivationEventNodeIds(parsed.scene.events),
-        sourceConnectorEdgeId,
+        routeEdgeAppearances: buildPlaybackRouteEdgeAppearanceMap(parsed.scene, annotations),
         error: undefined,
       }
     } catch (error) {
@@ -108,7 +217,7 @@ export function PackageAnimationPlaybackControls({
         timeline: undefined,
         nodeAnnotationIds,
         activationEventNodeIds: new Set<string>(),
-        sourceConnectorEdgeId: undefined as string | undefined,
+        routeEdgeAppearances: new Map<string, { baseColor: string; overlayColor: string }>(),
         error: error instanceof Error ? error.message : 'Animation geometry could not be resolved.',
       }
     }
@@ -119,90 +228,64 @@ export function PackageAnimationPlaybackControls({
   )
   const [status, setStatus] = useState<PlaybackStatus>('idle')
   const [elapsedMs, setElapsedMs] = useState(0)
-  const [runToken, setRunToken] = useState(0)
-  const rafRef = useRef<number | null>(null)
-  const accumulatedRef = useRef(0)
+  const playbackControllerRef = useRef<PlaybackLoopController | null>(null)
 
   useEffect(() => {
-    if (!active || !prepared.timeline) {
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
-      rafRef.current = null
-      accumulatedRef.current = 0
-      setElapsedMs(0)
-      setStatus('idle')
+    playbackControllerRef.current?.dispose()
+    playbackControllerRef.current = prepared.timeline
+      ? createPlaybackLoopController({
+          totalDurationMs: prepared.timeline.totalDurationMs,
+          callbacks: {
+            onElapsedMs: setElapsedMs,
+            onStatus: (nextStatus) => setStatus(nextStatus),
+          },
+        })
+      : null
+    setElapsedMs(0)
+    setStatus('idle')
+    return () => {
+      playbackControllerRef.current?.dispose()
+      playbackControllerRef.current = null
+    }
+  }, [prepared.timeline])
+
+  useEffect(() => {
+    const controller = playbackControllerRef.current
+    if (!active || !controller) {
+      controller?.stop()
       return
     }
-    accumulatedRef.current = 0
-    setElapsedMs(0)
-    setStatus(prepared.timeline.totalDurationMs === 0 ? 'complete' : 'playing')
-    setRunToken((value) => value + 1)
+    controller.play()
   }, [active, prepared.timeline])
-
-  useEffect(() => {
-    const timeline = prepared.timeline
-    if (!active || !timeline || status !== 'playing') return
-    let startedAt: number | null = null
-    const tick = (timestamp: number) => {
-      if (startedAt == null) startedAt = timestamp
-      const nextElapsed = accumulatedRef.current + timestamp - startedAt
-      const nextFrame = calculatePlaybackFrame(timeline, nextElapsed)
-      setElapsedMs(nextElapsed)
-      if (nextFrame.complete) {
-        accumulatedRef.current = timeline.totalDurationMs
-        setElapsedMs(timeline.totalDurationMs)
-        setStatus('complete')
-        rafRef.current = null
-        return
-      }
-      rafRef.current = requestAnimationFrame(tick)
-    }
-    rafRef.current = requestAnimationFrame(tick)
-    return () => {
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
-      rafRef.current = null
-    }
-  }, [active, prepared.timeline, runToken, status])
-
-  useEffect(() => () => {
-    if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
-  }, [])
 
   const frame: PlaybackFrame | null = active && prepared.timeline
     ? calculatePlaybackFrame(prepared.timeline, elapsedMs)
     : null
-  const energizedEdgesByStepId = new Map((frame?.energizedEdges ?? []).map((edge) => [edge.step.id, edge]))
-
+  const playbackTimeline = prepared.timeline
   const play = () => {
-    if (!prepared.timeline) return
+    const controller = playbackControllerRef.current
+    if (!prepared.timeline || !controller) return
     if (!active) {
       onActivate()
       return
     }
-    accumulatedRef.current = 0
-    setElapsedMs(0)
-    setStatus(prepared.timeline.totalDurationMs === 0 ? 'complete' : 'playing')
-    setRunToken((value) => value + 1)
+    controller.play()
   }
   const pause = () => {
-    accumulatedRef.current = elapsedMs
-    setStatus('paused')
+    playbackControllerRef.current?.pause()
   }
   const resume = () => {
-    accumulatedRef.current = elapsedMs
-    setStatus('playing')
-    setRunToken((value) => value + 1)
+    playbackControllerRef.current?.resume()
   }
   const restart = () => {
-    if (!active) onActivate()
-    accumulatedRef.current = 0
-    setElapsedMs(0)
-    setStatus(prepared.timeline?.totalDurationMs === 0 ? 'complete' : 'playing')
-    setRunToken((value) => value + 1)
+    if (!active) {
+      onActivate()
+      return
+    }
+    playbackControllerRef.current?.restart()
   }
   const stop = () => {
-    accumulatedRef.current = 0
-    setElapsedMs(0)
-    setStatus('idle')
+    playbackControllerRef.current?.stop()
     onDeactivate()
   }
 
@@ -239,88 +322,25 @@ export function PackageAnimationPlaybackControls({
         </button>
       </div>
       {prepared.error && <div className="mt-1 text-[9px] text-amber-300/80">Playback unavailable: {prepared.error}</div>}
-      {active && frame && overlayTarget && pageWidth > 0 && pageHeight > 0 && createPortal(
+      {active && frame && playbackTimeline && overlayTarget && pageWidth > 0 && pageHeight > 0 && createPortal(
         <>
-          <svg
-            className="absolute inset-0 pointer-events-none overflow-visible select-none"
-            width={overlayWidth}
-            height={overlayHeight}
-            viewBox={`0 0 ${pageWidth} ${pageHeight}`}
-            style={{ zIndex: 26 }}
-            aria-hidden="true"
-          >
-            {prepared.timeline?.steps.filter((step) => (
-              step.kind === 'circuit-segment' && step.pageNumber === currentPage && step.geometry
-            )).map((step) => {
-              const geometry = step.geometry!
-              const points = geometry.renderPoints.map((point) => `${point.x * pageWidth},${point.y * pageHeight}`).join(' ')
-              const pathState = resolvePlaybackPathState({
-                elapsedMs: frame.elapsedMs,
-                travelStartMs: step.travelStartMs,
-                travelEndMs: step.travelEndMs,
-                reducedMotion: prepared.timeline?.options.reducedMotion,
-              })
-              const energizedEdge = energizedEdgesByStepId.get(step.id)
-              const solidProgress = pathState === 'solid' ? 1 : energizedEdge?.progress ?? 0
-              const stroke = resolvePlaybackEdgeStrokeColor({
-                role: resolveAnimationRouteEdgeRole(step.edgeId, prepared.sourceConnectorEdgeId),
-              })
-              const sharedProps = {
-                points,
-                fill: 'none',
-                stroke,
-                strokeWidth: PLAYBACK_PATH_STROKE_WIDTH,
-                strokeLinecap: 'round' as const,
-                strokeLinejoin: 'round' as const,
-                pathLength: 1,
-                vectorEffect: 'non-scaling-stroke' as const,
-              }
-              return (
-                <Fragment key={step.id}>
-                  {pathState !== 'solid' && (
-                    <polyline
-                      {...sharedProps}
-                      opacity={pathState === 'not-yet' ? PLAYBACK_PATH_NOT_YET_OPACITY : PLAYBACK_PATH_PULSE_OPACITIES[0]}
-                    >
-                      {pathState === 'dim-pulsing' && status === 'playing' && (
-                        <animate
-                          attributeName="opacity"
-                          values={PLAYBACK_PATH_PULSE_OPACITIES.join(';')}
-                          dur={`${PLAYBACK_PATH_PULSE_DURATION_MS}ms`}
-                          repeatCount="indefinite"
-                        />
-                      )}
-                    </polyline>
-                  )}
-                  {solidProgress > 0 && (
-                    <polyline
-                      {...sharedProps}
-                      strokeDasharray={solidProgress < 1 ? `${solidProgress} 1` : undefined}
-                      opacity={PLAYBACK_PATH_SOLID_OPACITY}
-                    />
-                  )}
-                </Fragment>
-              )
-            })}
-            {frame.orbs.filter((orb) => orb.pageNumber === currentPage).map((orb) => (
-              <circle
-                key={orb.edgeId}
-                cx={orb.point.x * pageWidth}
-                cy={orb.point.y * pageHeight}
-                r={7}
-                fill="#ffffff"
-                stroke="#22d3ee"
-                strokeWidth={3}
-                vectorEffect="non-scaling-stroke"
-                style={{ filter: 'drop-shadow(0 0 6px rgba(34,211,238,0.95))' }}
-              />
-            ))}
-          </svg>
+          <PlaybackRouteOverlay
+            frame={frame}
+            steps={playbackTimeline.steps}
+            routeEdgeAppearances={prepared.routeEdgeAppearances}
+            currentPage={currentPage}
+            pageWidth={pageWidth}
+            pageHeight={pageHeight}
+            overlayWidth={overlayWidth}
+            overlayHeight={overlayHeight}
+            reducedMotion={playbackTimeline.options.reducedMotion}
+            playing={status === 'playing'}
+          />
           {frame.devices.map((device) => {
             if (device.pageNumber !== currentPage) return null
             const node = nodesById.get(device.nodeId)
             const visual = resolvePlaybackDeviceVisual({
-              visualRole: classifyPlaybackNodeVisualRole(node?.roles, device.nodeId === prepared.timeline?.sourceNodeId),
+              visualRole: classifyPlaybackNodeVisualRole(node?.roles, device.nodeId === playbackTimeline.sourceNodeId),
               phase: device.phase,
               progress: device.progress,
               elapsedMs: frame.elapsedMs,

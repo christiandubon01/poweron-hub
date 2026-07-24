@@ -9,6 +9,7 @@ export const PLAYBACK_PATH_PULSE_OPACITIES = [0.18, 0.38, 0.18] as const
 export const PLAYBACK_PATH_PULSE_DURATION_MS = 1_200
 export const PLAYBACK_PATH_SOLID_OPACITY = 0.9
 export const PLAYBACK_PATH_STROKE_WIDTH = 6
+export const DEFAULT_AUTHORED_CIRCUIT_COLOR = '#facc15'
 
 const CHANNEL_COLORS: Record<BlueprintAnimationChannelType, string> = {
   'switched-line-voltage': '#facc15',
@@ -88,6 +89,181 @@ export function resolveSourceConnectorEdgeId(scene: {
  */
 export function resolvePlaybackEdgeStrokeColor(options: { role: BlueprintAnimationRouteEdgeRole }): string {
   return options.role === 'source-connector' ? BLUEPRINT_ROUTE_SOURCE_CONNECTOR_COLOR : resolveDefaultRouteColor()
+}
+
+export interface RouteAppearanceAnnotation {
+  id: string
+  color?: string
+  borderColor?: string
+}
+
+export interface RouteAppearanceEdge {
+  id: string
+  fromNodeId: string
+  toNodeId: string
+  geometry: {
+    kind: 'circuit-segment' | 'direct'
+    annotationId?: string
+  }
+}
+
+export interface RouteAppearanceScene {
+  edges: ReadonlyArray<RouteAppearanceEdge>
+  manualTraversal?: ReadonlyArray<{ edgeId: string }>
+  branchOrders?: ReadonlyArray<{ nodeId: string; outgoingEdgeIds: string[] }>
+}
+
+export interface PlaybackRouteEdgeAppearance {
+  baseColor: string
+  overlayColor: string
+}
+
+export function resolveAuthoredCircuitColor(
+  annotation: RouteAppearanceAnnotation | undefined,
+  fallback = DEFAULT_AUTHORED_CIRCUIT_COLOR,
+): string {
+  const borderColor = String(annotation?.borderColor || '').trim()
+  if (borderColor) return borderColor
+  const color = String(annotation?.color || '').trim()
+  return color || fallback
+}
+
+export function resolvePlaybackGlowColor(baseColor: string): string {
+  return String(baseColor || '').trim() || DEFAULT_AUTHORED_CIRCUIT_COLOR
+}
+
+export function resolvePlaybackOrbColor(
+  appearance: PlaybackRouteEdgeAppearance | undefined,
+  fallback = DEFAULT_AUTHORED_CIRCUIT_COLOR,
+): string {
+  return resolvePlaybackGlowColor(appearance?.overlayColor || appearance?.baseColor || fallback)
+}
+
+export function buildPlaybackRouteEdgeAppearanceMap(
+  scene: RouteAppearanceScene,
+  annotations: readonly RouteAppearanceAnnotation[],
+): Map<string, PlaybackRouteEdgeAppearance> {
+  const annotationById = new Map(annotations.map((annotation) => [annotation.id, annotation]))
+  const appearances = new Map<string, PlaybackRouteEdgeAppearance>()
+  const setEdgeColor = (edgeId: string, color: string) => {
+    appearances.set(edgeId, { baseColor: color, overlayColor: resolvePlaybackGlowColor(color) })
+  }
+
+  scene.edges.forEach((edge) => {
+    if (edge.geometry.kind !== 'circuit-segment') return
+    setEdgeColor(edge.id, resolveAuthoredCircuitColor(annotationById.get(edge.geometry.annotationId || '')))
+  })
+
+  const traversalEdgeIds = (scene.manualTraversal ?? []).map((step) => step.edgeId)
+  const edgeById = new Map(scene.edges.map((edge) => [edge.id, edge]))
+  const branchRankByNode = new Map(
+    (scene.branchOrders ?? []).map((order) => [
+      order.nodeId,
+      new Map(order.outgoingEdgeIds.map((edgeId, index) => [edgeId, index])),
+    ]),
+  )
+  const edgeRank = (nodeId: string, edgeId: string): number => branchRankByNode.get(nodeId)?.get(edgeId) ?? Number.MAX_SAFE_INTEGER
+  const stableEdgeSort = (nodeId: string) => (left: RouteAppearanceEdge, right: RouteAppearanceEdge) => (
+    edgeRank(nodeId, left.id) - edgeRank(nodeId, right.id)
+    || left.id.localeCompare(right.id)
+  )
+  const outgoingByNode = new Map<string, RouteAppearanceEdge[]>()
+  const incomingByNode = new Map<string, RouteAppearanceEdge[]>()
+  scene.edges.forEach((edge) => {
+    outgoingByNode.set(edge.fromNodeId, [...(outgoingByNode.get(edge.fromNodeId) ?? []), edge])
+    incomingByNode.set(edge.toNodeId, [...(incomingByNode.get(edge.toNodeId) ?? []), edge])
+  })
+  outgoingByNode.forEach((edges, nodeId) => edges.sort(stableEdgeSort(nodeId)))
+  incomingByNode.forEach((edges, nodeId) => edges.sort(stableEdgeSort(nodeId)))
+
+  const sharesNode = (left: RouteAppearanceEdge | undefined, right: RouteAppearanceEdge | undefined): boolean => (
+    !!left && !!right
+    && (left.fromNodeId === right.fromNodeId
+      || left.fromNodeId === right.toNodeId
+      || left.toNodeId === right.fromNodeId
+      || left.toNodeId === right.toNodeId)
+  )
+  const tryInheritFromTraversalNeighbor = (edge: RouteAppearanceEdge): string | undefined => {
+    const indexes = traversalEdgeIds
+      .map((edgeId, index) => (edgeId === edge.id ? index : -1))
+      .filter((index) => index >= 0)
+    for (const index of indexes) {
+      for (const neighborIndex of [index + 1, index - 1]) {
+        const neighborEdge = edgeById.get(traversalEdgeIds[neighborIndex] || '')
+        const neighborColor = neighborEdge && sharesNode(edge, neighborEdge) ? appearances.get(neighborEdge.id)?.baseColor : undefined
+        if (neighborColor) return neighborColor
+      }
+    }
+    for (const index of indexes) {
+      for (let offset = 2; offset < traversalEdgeIds.length; offset += 1) {
+        for (const neighborIndex of [index + offset, index - offset]) {
+          const neighborEdge = edgeById.get(traversalEdgeIds[neighborIndex] || '')
+          const neighborColor = neighborEdge && sharesNode(edge, neighborEdge) ? appearances.get(neighborEdge.id)?.baseColor : undefined
+          if (neighborColor) return neighborColor
+        }
+      }
+    }
+    return undefined
+  }
+
+  const firstCircuitColorFromNode = (
+    startNodeId: string,
+    blockedEdgeId: string,
+    firstDirection: 'outgoing' | 'incoming',
+  ): string | undefined => {
+    const pending = [startNodeId]
+    const visitedNodes = new Set<string>()
+    const visitedEdges = new Set([blockedEdgeId])
+    while (pending.length > 0) {
+      const nodeId = pending.shift() as string
+      if (visitedNodes.has(nodeId)) continue
+      visitedNodes.add(nodeId)
+      const first = firstDirection === 'outgoing' ? outgoingByNode.get(nodeId) ?? [] : incomingByNode.get(nodeId) ?? []
+      const second = firstDirection === 'outgoing' ? incomingByNode.get(nodeId) ?? [] : outgoingByNode.get(nodeId) ?? []
+      for (const nextEdge of [...first, ...second]) {
+        if (visitedEdges.has(nextEdge.id)) continue
+        visitedEdges.add(nextEdge.id)
+        const color = appearances.get(nextEdge.id)?.baseColor
+        if (color) return color
+        pending.push(nextEdge.fromNodeId === nodeId ? nextEdge.toNodeId : nextEdge.fromNodeId)
+      }
+    }
+    return undefined
+  }
+  const tryInheritFromGraphStructure = (edge: RouteAppearanceEdge): string | undefined => {
+    const directlyConnected = [
+      ...(outgoingByNode.get(edge.toNodeId) ?? []),
+      ...(incomingByNode.get(edge.fromNodeId) ?? []),
+      ...(outgoingByNode.get(edge.fromNodeId) ?? []),
+      ...(incomingByNode.get(edge.toNodeId) ?? []),
+    ].filter((candidate, index, list) => candidate.id !== edge.id && list.findIndex((item) => item.id === candidate.id) === index)
+    const directCircuit = directlyConnected
+      .filter((candidate) => appearances.has(candidate.id))
+      .sort((left, right) => left.id.localeCompare(right.id))[0]
+    if (directCircuit) return appearances.get(directCircuit.id)?.baseColor
+    return firstCircuitColorFromNode(edge.toNodeId, edge.id, 'outgoing')
+      ?? firstCircuitColorFromNode(edge.fromNodeId, edge.id, 'incoming')
+      ?? firstCircuitColorFromNode(edge.fromNodeId, edge.id, 'outgoing')
+      ?? firstCircuitColorFromNode(edge.toNodeId, edge.id, 'incoming')
+  }
+
+  for (let pass = 0; pass < scene.edges.length; pass += 1) {
+    let changed = false
+    ;[...scene.edges].sort((left, right) => left.id.localeCompare(right.id)).forEach((edge) => {
+      if (appearances.has(edge.id)) return
+      const inherited = tryInheritFromTraversalNeighbor(edge) ?? tryInheritFromGraphStructure(edge)
+      if (!inherited) return
+      setEdgeColor(edge.id, inherited)
+      changed = true
+    })
+    if (!changed) break
+  }
+
+  scene.edges.forEach((edge) => {
+    if (!appearances.has(edge.id)) setEdgeColor(edge.id, DEFAULT_AUTHORED_CIRCUIT_COLOR)
+  })
+
+  return appearances
 }
 
 export interface CircuitSegmentRouteAppearanceAssignment {

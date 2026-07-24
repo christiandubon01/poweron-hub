@@ -66,6 +66,14 @@ function clamp01(value: number): number {
   return Math.max(0, Math.min(1, Number(value) || 0))
 }
 
+function stepPointAtProgress(step: PlaybackTimelineStep, progress: number): NormalizedPoint {
+  if (step.geometry) return step.geometry.pointAtProgress(progress)
+  return {
+    x: step.start.x + (step.end.x - step.start.x) * clamp01(progress),
+    y: step.start.y + (step.end.y - step.start.y) * clamp01(progress),
+  }
+}
+
 function stepDuration(step: PreparedPlaybackGeometryStep, options: BlueprintAnimationPlaybackOptions): number {
   return options.reducedMotion || step.kind === 'direct'
     ? 0
@@ -333,7 +341,7 @@ export function calculatePlaybackFrame(timeline: PlaybackTimeline, elapsedValue:
   const concurrentOrbs: PlaybackOrbState[] = []
 
   timeline.steps.forEach((step) => {
-    if (step.kind !== 'circuit-segment' || !step.geometry || elapsedMs < step.travelStartMs) return
+    if (elapsedMs < step.travelStartMs) return
     const travelDuration = step.travelEndMs - step.travelStartMs
     const progress = travelDuration <= 0
       ? 1
@@ -343,7 +351,7 @@ export function calculatePlaybackFrame(timeline: PlaybackTimeline, elapsedValue:
       const nextOrb = {
         edgeId: step.edgeId,
         pageNumber: step.pageNumber,
-        point: step.geometry.pointAtProgress(progress),
+        point: stepPointAtProgress(step, progress),
         progress,
       }
       orb = nextOrb

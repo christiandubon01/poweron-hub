@@ -221,7 +221,7 @@ describe('aspect correction, direct edges and per-role reactions', () => {
     expect(horizontalMs).not.toBeCloseTo(verticalMs)
   })
 
-  it('treats a direct edge as an instant jump with no traversable geometry', () => {
+  it('treats a direct edge as an instant connector overlay with no segment geometry', () => {
     const timeline = createPlaybackTimeline(directEdgeGeometry(), options)
     const direct = timeline.steps[1]
     expect(direct.kind).toBe('direct')
@@ -230,8 +230,9 @@ describe('aspect correction, direct edges and per-role reactions', () => {
 
     const frame = calculatePlaybackFrame(timeline, direct.travelEndMs + 10)
     // The hop is never drawn and never traversed — no energized line, no orb riding it ...
-    expect(frame.energizedEdges.map((edge) => edge.edgeId)).toEqual(['edge-1'])
-    expect(frame.orb?.edgeId).not.toBe('edge-direct')
+    expect(frame.energizedEdges.map((edge) => edge.edgeId)).toEqual(['edge-1', 'edge-direct'])
+    expect(frame.orb?.edgeId).toBe('edge-direct')
+    expect(frame.orb?.point).toEqual({ x: 0.9, y: 0.5 })
     // ... yet the node on its far side still arrives on schedule and reacts.
     expect(frame.devices.find((device) => device.nodeId === 'load')).toMatchObject({ phase: 'reacting' })
   })
