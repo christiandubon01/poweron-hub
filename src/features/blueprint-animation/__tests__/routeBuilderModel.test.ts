@@ -10,6 +10,8 @@ import {
   createEmptyPackageAnimationRouteDraft,
   createSingleFlightGuard,
   dispatchPackageAnimationRoutePick,
+  formatRouteBuilderSourceLabel,
+  getPackageAnimationSourceCandidates,
   getPackageAnimationBranchStatus,
   getPackageAnimationPrimaryRouteCandidates,
   markPackageAnimationRouteDraftSaved,
@@ -34,6 +36,8 @@ import {
   validatePackageAnimationRouteDraft,
   type PackageAnimationRouteDraft,
   type RouteBuilderAnnotation,
+  isRouteBuilderLoadKind,
+  isRouteBuilderSourceKind,
 } from '../routeBuilderModel'
 import { findNearestRouteNode, type RouteSegmentPick } from '../routePicking'
 
@@ -125,13 +129,275 @@ describe('routeBuilderModel', () => {
     expect(inferRouteBuilderNodeRoles('electrical-wall-occupancy-sensor', { selectedAsSource: true })).toEqual(['source', 'sensor', 'control'])
     expect(inferRouteBuilderNodeRoles('electrical-dimmer', { selectedAsSource: true })).toEqual(['source', 'control'])
     expect(inferRouteBuilderNodeRoles('electrical-recessed-light')).toEqual(['load'])
+    expect(inferRouteBuilderNodeRoles('electrical-receptacle')).toEqual(['load'])
+    expect(inferRouteBuilderNodeRoles('electrical-gfci')).toEqual(['load'])
     expect(inferRouteBuilderNodeRoles(undefined, { junction: true })).toEqual(['junction'])
+    expect(isRouteBuilderLoadKind('electrical-receptacle')).toBe(true)
+    expect(isRouteBuilderLoadKind('electrical-gfci')).toBe(true)
   })
 
   it('infers source-specific default channels', () => {
     expect(inferRouteBuilderDefaultChannel('electrical-ceiling-occupancy-sensor')).toBe('low-voltage-control-signal')
     expect(inferRouteBuilderDefaultChannel('electrical-switch')).toBe('switched-line-voltage')
     expect(inferRouteBuilderDefaultChannel('unknown')).toBe('generic-route')
+  })
+
+  it('treats an electrical panel as an eligible source with source-only roles and constant power', () => {
+    const panel: RouteBuilderAnnotation = {
+      id: 'panel',
+      pageNumber: 1,
+      label: 'Electrical Panel',
+      text: 'Subpanel',
+      shapeKind: 'electrical-panel',
+      rect: { x: 0.18, y: 0.38, w: 0.06, h: 0.08 },
+    }
+    const receptacle: RouteBuilderAnnotation = {
+      id: 'receptacle',
+      pageNumber: 1,
+      label: 'Receptacle',
+      shapeKind: 'electrical-receptacle',
+      rect: { x: 0.7, y: 0.38, w: 0.04, h: 0.04 },
+    }
+    const base = empty({ annotations: [panel, receptacle], packageAnnotationIds: ['panel', 'receptacle'] })
+    const selected = selectPackageAnimationRouteSource(base, 'panel')
+
+    expect(isRouteBuilderSourceKind('electrical-panel')).toBe(true)
+    expect(isRouteBuilderSourceKind('electrical-receptacle')).toBe(false)
+    expect(selected.accepted).toBe(true)
+    expect(selected.draft.source).toEqual({ annotationId: 'panel', channel: 'constant-line-voltage' })
+    expect(formatRouteBuilderSourceLabel(panel)).toBe('Electrical Panel — Subpanel')
+    expect(formatRouteBuilderSourceLabel({ ...panel, text: '' })).toBe('Electrical Panel')
+    expect(formatRouteBuilderSourceLabel({ ...panel, text: '   ' })).toBe('Electrical Panel')
+    expect(formatRouteBuilderSourceLabel({ ...panel, text: ' MDP ' })).toBe('Electrical Panel — MDP')
+    expect(inferRouteBuilderNodeRoles('electrical-panel', { selectedAsSource: true })).toEqual(['source'])
+    expect(inferRouteBuilderNodeRoles('electrical-panel')).toEqual([])
+    expect(inferRouteBuilderNodeRoles('electrical-panel', { selectedAsSource: true })).not.toEqual(expect.arrayContaining(['control', 'sensor', 'load', 'emergency-source']))
+    expect(inferRouteBuilderDefaultChannel('electrical-panel')).toBe('constant-line-voltage')
+    expect(selectPackageAnimationRouteSource(base, 'receptacle')).toMatchObject({ accepted: false })
+
+    const resolved = resolvePackageAnimationRouteDraft(selected.draft)
+    expect(resolved.nodes[0]).toMatchObject({
+      id: 'animation_node_annotation_panel',
+      roles: ['source'],
+      anchor: { kind: 'annotation-center', annotationId: 'panel' },
+      point: { x: 0.21, y: 0.42 },
+    })
+  })
+
+  it('filters panel source candidates by package membership and geometry', () => {
+    const panel: RouteBuilderAnnotation = {
+      id: 'panel',
+      pageNumber: 1,
+      label: 'Electrical Panel',
+      text: 'Subpanel',
+      shapeKind: 'electrical-panel',
+      rect: { x: 0.2, y: 0.2, w: 0.04, h: 0.04 },
+    }
+    const circuitOnly = empty({ annotations: [panel, circuit], packageAnnotationIds: ['circuit'] })
+    expect(getPackageAnimationSourceCandidates(circuitOnly)).toEqual([])
+    expect(selectPackageAnimationRouteSource(circuitOnly, 'panel')).toMatchObject({ accepted: false })
+
+    const withPanel = empty({ annotations: [panel, circuit], packageAnnotationIds: ['circuit', 'panel'] })
+    expect(getPackageAnimationSourceCandidates(withPanel)).toEqual([{
+      id: 'panel',
+      annotationId: 'panel',
+      label: 'Electrical Panel — Subpanel',
+      shapeKind: 'electrical-panel',
+      pageNumber: 1,
+      channel: 'constant-line-voltage',
+    }])
+    expect(selectPackageAnimationRouteSource(withPanel, 'panel')).toMatchObject({ accepted: true })
+  })
+
+  it('keeps two labeled panels distinct as source candidates by stable annotation id', () => {
+    const panelA: RouteBuilderAnnotation = {
+      id: 'panel-a',
+      pageNumber: 1,
+      label: 'Electrical Panel',
+      text: 'Panel A',
+      shapeKind: 'electrical-panel',
+      rect: { x: 0.1, y: 0.2, w: 0.04, h: 0.04 },
+    }
+    const panelB: RouteBuilderAnnotation = {
+      id: 'panel-b',
+      pageNumber: 1,
+      label: 'Electrical Panel',
+      text: 'Panel B',
+      shapeKind: 'electrical-panel',
+      rect: { x: 0.2, y: 0.2, w: 0.04, h: 0.04 },
+    }
+    const draft = empty({ annotations: [panelA, panelB, circuit], packageAnnotationIds: ['panel-a', 'panel-b', 'circuit'] })
+    expect(getPackageAnimationSourceCandidates(draft)).toEqual([
+      expect.objectContaining({ annotationId: 'panel-a', label: 'Electrical Panel — Panel A' }),
+      expect.objectContaining({ annotationId: 'panel-b', label: 'Electrical Panel — Panel B' }),
+    ])
+    expect(selectPackageAnimationRouteSource(draft, 'panel-a').draft.source?.annotationId).toBe('panel-a')
+    expect(selectPackageAnimationRouteSource(draft, 'panel-b').draft.source?.annotationId).toBe('panel-b')
+  })
+
+  it('supports panel to segment to receptacle A to outgoing segment to receptacle B', () => {
+    const panel: RouteBuilderAnnotation = {
+      id: 'panel-source',
+      pageNumber: 1,
+      label: 'Electrical Panel',
+      text: 'Panel',
+      shapeKind: 'electrical-panel',
+      rect: { x: 0.08, y: 0.46, w: 0.04, h: 0.08 },
+    }
+    const receptacleA: RouteBuilderAnnotation = {
+      id: 'receptacle-a',
+      pageNumber: 1,
+      label: 'Receptacle A',
+      shapeKind: 'electrical-receptacle',
+      rect: { x: 0.38, y: 0.46, w: 0.04, h: 0.08 },
+    }
+    const receptacleB: RouteBuilderAnnotation = {
+      id: 'receptacle-b',
+      pageNumber: 1,
+      label: 'Receptacle B',
+      shapeKind: 'electrical-gfci',
+      rect: { x: 0.58, y: 0.46, w: 0.04, h: 0.08 },
+    }
+    const approach: RouteBuilderAnnotation = {
+      id: 'approach-a', pageNumber: 1, label: 'Panel to A', shapeKind: 'circuit-path',
+      points: [{ x: 0.1, y: 0.5 }, { x: 0.4, y: 0.47 }],
+      pointIds: ['pa0', 'pa1'], segmentIds: ['pas0'],
+    }
+    const outgoing: RouteBuilderAnnotation = {
+      id: 'a-to-b', pageNumber: 1, label: 'A to B', shapeKind: 'circuit-path',
+      points: [{ x: 0.4, y: 0.5 }, { x: 0.6, y: 0.5 }],
+      pointIds: ['ab0', 'ab1'], segmentIds: ['abs0'],
+    }
+    const annotations = [panel, receptacleA, receptacleB, approach, outgoing]
+    let draft = sourceDraft(empty({ annotations, packageAnnotationIds: annotations.map((entry) => entry.id) }), 'panel-source')
+    draft = addSegment(draft, approach, 0)
+
+    const selectedA = dispatchPackageAnimationRoutePick(draft, {
+      kind: 'annotation',
+      annotationId: 'receptacle-a',
+      clickedPoint: { x: 0.4, y: 0.5 },
+      allowPrimaryDirectTransition: true,
+    })
+    expect(selectedA).toMatchObject({ accepted: true, mode: 'primary-route', branchActive: false })
+
+    const selectedOutgoing = dispatchPackageAnimationRoutePick(selectedA.draft, { kind: 'segment', pick: segmentPick(outgoing, 0) })
+    expect(selectedOutgoing).toMatchObject({ accepted: true, mode: 'primary-route', branchActive: false })
+    const resolved = resolvePackageAnimationRouteDraft(selectedOutgoing.draft)
+    expect(resolved.nodes.map((node) => node.anchor.kind === 'annotation-center' ? node.anchor.annotationId : node.anchor.kind)).toEqual([
+      'panel-source',
+      'circuit-point',
+      'receptacle-a',
+      'receptacle-b',
+    ])
+    expect(selectedOutgoing.draft.transitions.map((transition) => transition.kind)).toEqual(['segment', 'direct', 'segment'])
+  })
+
+  it('keeps existing switch and occupancy-sensor source roles and channels unchanged', () => {
+    expect(inferRouteBuilderNodeRoles('electrical-switch', { selectedAsSource: true })).toEqual(['source', 'control'])
+    expect(inferRouteBuilderDefaultChannel('electrical-switch')).toBe('switched-line-voltage')
+    expect(inferRouteBuilderNodeRoles('electrical-ceiling-occupancy-sensor', { selectedAsSource: true })).toEqual(['source', 'sensor', 'control'])
+    expect(inferRouteBuilderDefaultChannel('electrical-ceiling-occupancy-sensor')).toBe('low-voltage-control-signal')
+  })
+
+  it('authors, saves, reopens, and preserves a panel common-feeder split', () => {
+    const panel: RouteBuilderAnnotation = { id: 'panel', pageNumber: 1, label: 'Electrical Panel', text: 'MDP', shapeKind: 'electrical-panel', rect: { x: 0.08, y: 0.48, w: 0.04, h: 0.04 } }
+    const roomA: RouteBuilderAnnotation = { id: 'room-a', pageNumber: 1, label: 'Room A', shapeKind: 'electrical-sconce', rect: { x: 0.88, y: 0.28, w: 0.04, h: 0.04 } }
+    const roomB: RouteBuilderAnnotation = { id: 'room-b', pageNumber: 1, label: 'Room B', shapeKind: 'electrical-sconce', rect: { x: 0.88, y: 0.68, w: 0.04, h: 0.04 } }
+    const feeder: RouteBuilderAnnotation = {
+      id: 'feeder', pageNumber: 1, label: 'Common Feeder', shapeKind: 'circuit-path',
+      points: [{ x: 0.1, y: 0.5 }, { x: 0.5, y: 0.5 }, { x: 0.9, y: 0.3 }],
+      pointIds: ['f1', 'junction', 'roomA'], segmentIds: ['common', 'armA'],
+    }
+    const armB: RouteBuilderAnnotation = {
+      id: 'arm-b', pageNumber: 1, label: 'Room B Arm', shapeKind: 'circuit-arc',
+      points: [{ x: 0.5, y: 0.5 }, { x: 0.9, y: 0.7 }], arcCtrls: [{ x: 0.7, y: 0.62 }],
+      pointIds: ['b1', 'roomB'], segmentIds: ['armB'],
+    }
+    const annotations = [panel, roomA, roomB, feeder, armB]
+    let draft = sourceDraft(empty({ annotations, packageAnnotationIds: annotations.map((entry) => entry.id) }), 'panel')
+    draft = addSegment(draft, feeder, 0)
+    draft = addSegment(draft, feeder, 1)
+    draft = startPackageAnimationRouteBranch(draft, draft.transitions[0].id)
+    draft = addSegment(draft, armB, 0)
+
+    const finished = finishPackageAnimationRouteBranch(draft)
+    const scene = packageAnimationRouteDraftToScene(finished).scene!
+    const sourceNodeId = scene.sources[0].nodeId
+    const sourceOutgoing = scene.edges.filter((edge) => edge.fromNodeId === sourceNodeId)
+    const commonEdge = scene.edges.find((edge) => edge.geometry.kind === 'circuit-segment' && edge.geometry.segmentId === 'common')!
+    const branchOrder = scene.branchOrders[0]
+
+    expect(validatePackageAnimationRouteDraft(finished).filter((entry) => entry.severity === 'error')).toEqual([])
+    expect(scene.nodes.filter((node) => node.anchor.kind === 'annotation-center' && node.anchor.annotationId === 'panel')).toHaveLength(1)
+    expect(scene.sources).toEqual([{ id: 'animation_source_primary', nodeId: sourceNodeId, channel: 'constant-line-voltage' }])
+    expect(sourceOutgoing).toHaveLength(1)
+    expect(scene.manualTraversal.filter((step) => step.edgeId === commonEdge.id)).toHaveLength(1)
+    expect(scene.manualTraversal[0].edgeId).toBe(commonEdge.id)
+    expect(branchOrder.nodeId).toBe(commonEdge.toNodeId)
+    expect(branchOrder.outgoingEdgeIds).toHaveLength(2)
+    expect(new Set(branchOrder.outgoingEdgeIds)).toEqual(new Set(scene.edges.filter((edge) => edge.fromNodeId === branchOrder.nodeId).map((edge) => edge.id)))
+    expect(scene.edges.some((edge) => edge.toNodeId === 'animation_node_annotation_room-a')).toBe(true)
+    expect(scene.edges.some((edge) => edge.toNodeId === 'animation_node_annotation_room-b')).toBe(true)
+
+    const reopened = loadPackageAnimationRouteDraft({
+      packageId: 'package',
+      packageName: 'Lighting',
+      packageAnnotationIds: annotations.map((entry) => entry.id),
+      annotations,
+      scene,
+      expectedBaseRevision: 1,
+    })
+    const resaved = packageAnimationRouteDraftToScene(reopened).scene!
+    expect(reopened.source).toEqual({ annotationId: 'panel', channel: 'constant-line-voltage' })
+    expect(resaved.sources).toEqual(scene.sources)
+    expect(resaved.branchOrders).toEqual(scene.branchOrders)
+  })
+
+  it('authors deterministic direct source fan-out from one panel node without array-order fallback', () => {
+    const panel: RouteBuilderAnnotation = { id: 'panel', pageNumber: 1, label: 'Electrical Panel', shapeKind: 'electrical-panel', rect: { x: 0.08, y: 0.48, w: 0.04, h: 0.04 } }
+    const armA: RouteBuilderAnnotation = { id: 'arm-a', pageNumber: 1, label: 'Arm A', shapeKind: 'electrical-sconce', rect: { x: 0.5, y: 0.28, w: 0.04, h: 0.04 } }
+    const armB: RouteBuilderAnnotation = { id: 'arm-b', pageNumber: 1, label: 'Arm B', shapeKind: 'electrical-sconce', rect: { x: 0.5, y: 0.68, w: 0.04, h: 0.04 } }
+    const annotations = [panel, armA, armB]
+    let draft = sourceDraft(empty({ annotations, packageAnnotationIds: annotations.map((entry) => entry.id) }), 'panel')
+    draft = addPackageAnimationDirectTransition(draft, 'arm-a').draft
+    draft = startPackageAnimationRouteBranch(draft, 'source')
+    const invalid = dispatchPackageAnimationRoutePick(draft, { kind: 'annotation', annotationId: 'panel' })
+    expect(invalid).toMatchObject({ accepted: false, branchActive: true })
+    expect(invalid.draft.branch?.editing).toBe(true)
+    draft = addPackageAnimationDirectTransition(invalid.draft, 'arm-b').draft
+
+    const primarySourceOutgoingEdgeId = `animation_edge_${draft.transitions[0].id}`
+    const alternateSourceOutgoingEdgeId = `animation_edge_${draft.branch!.transitions[0].id}`
+    expect(primarySourceOutgoingEdgeId).toBeTruthy()
+    expect(alternateSourceOutgoingEdgeId).toBeTruthy()
+    expect(primarySourceOutgoingEdgeId).not.toBe(alternateSourceOutgoingEdgeId)
+
+    const scene = packageAnimationRouteDraftToScene(finishPackageAnimationRouteBranch(draft)).scene!
+    const sourceNodeId = scene.sources[0].nodeId
+    const outgoing = scene.edges.filter((edge) => edge.fromNodeId === sourceNodeId)
+    const branchOrder = scene.branchOrders.find((order) => order.nodeId === sourceNodeId)!
+
+    expect(outgoing).toHaveLength(2)
+    expect(new Set(outgoing.map((edge) => edge.id))).toEqual(new Set([primarySourceOutgoingEdgeId, alternateSourceOutgoingEdgeId]))
+    expect(branchOrder.outgoingEdgeIds).toEqual([primarySourceOutgoingEdgeId, alternateSourceOutgoingEdgeId])
+    expect(scene.manualTraversal[0].edgeId).toBe(primarySourceOutgoingEdgeId)
+    expect(scene.nodes.filter((node) => node.anchor.kind === 'annotation-center' && node.anchor.annotationId === 'panel')).toHaveLength(1)
+
+    const reordered = { ...scene, edges: [...scene.edges].reverse() }
+    const reopened = loadPackageAnimationRouteDraft({
+      packageId: 'package',
+      packageName: 'Lighting',
+      packageAnnotationIds: annotations.map((entry) => entry.id),
+      annotations,
+      scene: reordered,
+      expectedBaseRevision: 1,
+    })
+    expect(reopened.source?.annotationId).toBe('panel')
+    expect(reopened.transitions[0].persistedEdgeId).toBe(primarySourceOutgoingEdgeId)
+    expect(reopened.transitions).toHaveLength(1)
+    expect(reopened.branch?.originSelectionId).toBe('source')
+    expect(reopened.branch?.transitions[0].persistedEdgeId).toBe(alternateSourceOutgoingEdgeId)
+    expect(reopened.branch?.transitions).toHaveLength(1)
   })
 
   it('adds a connected straight segment and matches its destination fixture', () => {
@@ -1331,6 +1597,111 @@ describe('ANIM-5.2 terminal parallel branches', () => {
     expect(finalResolved.branchTerminalNodeId).toBe(FAR_RIGHT_ID)
     expect(draft.branch?.editing).toBe(true)
     expect(draft.branch?.transitions).toHaveLength(4)
+  })
+
+  it('appends an overlapping package receptacle as an alternate-branch terminal device', () => {
+    const receptacle: RouteBuilderAnnotation = {
+      id: 'terminal-receptacle',
+      pageNumber: 1,
+      label: 'Duplex Receptacle',
+      shapeKind: 'electrical-receptacle',
+      rect: { x: 0.68, y: 0.61, w: 0.04, h: 0.08 },
+    }
+    const primary: RouteBuilderAnnotation = {
+      id: 'primary-for-receptacle', pageNumber: 1, label: 'Primary to light', shapeKind: 'circuit-path',
+      points: [{ x: 0.1, y: 0.5 }, { x: 0.9, y: 0.5 }],
+      pointIds: ['pr-start', 'pr-end'], segmentIds: ['pr-seg'],
+    }
+    const alternate: RouteBuilderAnnotation = {
+      id: 'branch-under-receptacle', pageNumber: 1, label: 'Alternate branch', shapeKind: 'circuit-arc',
+      points: [{ x: 0.1, y: 0.5 }, { x: 0.28, y: 0.66 }, { x: 0.5, y: 0.66 }, { x: 0.7, y: 0.62 }],
+      arcCtrls: [{ x: 0.18, y: 0.64 }, { x: 0.38, y: 0.72 }, { x: 0.6, y: 0.64 }],
+      pointIds: ['ba0', 'ba1', 'ba2', 'ba3'], segmentIds: ['bas0', 'bas1', 'bas2'],
+    }
+    const annotations = [source, fixture2, receptacle, primary, alternate]
+    let draft = sourceDraft(empty({ annotations, packageAnnotationIds: annotations.map((entry) => entry.id) }))
+    draft = addSegment(draft, primary, 0)
+    draft = startPackageAnimationRouteBranch(draft, 'source')
+    draft = addSegment(draft, alternate, 0)
+    draft = addSegment(draft, alternate, 1)
+    draft = addSegment(draft, alternate, 2)
+
+    const selectedDevice = dispatchPackageAnimationRoutePick(draft, { kind: 'annotation', annotationId: 'terminal-receptacle', clickedPoint: { x: 0.7, y: 0.65 } })
+    expect(selectedDevice).toMatchObject({ accepted: true, consumed: true, mode: 'alternate-branch', branchActive: true })
+    const branchTransitions = selectedDevice.draft.branch?.transitions ?? []
+    expect(branchTransitions[branchTransitions.length - 1]).toMatchObject({ kind: 'direct', annotationId: 'terminal-receptacle' })
+    expect(resolvePackageAnimationRouteDraft(selectedDevice.draft).branchTerminalNodeId).toBe('animation_node_annotation_terminal-receptacle')
+    expect(getPackageAnimationBranchStatus(selectedDevice.draft)).toMatchObject({
+      phase: 'Branch valid — ready to finish',
+      completionKind: 'terminal',
+      valid: true,
+    })
+
+    const finished = finishPackageAnimationRouteBranch(selectedDevice.draft)
+    expect(finished.branch?.editing).toBe(false)
+    const scene = packageAnimationRouteDraftToScene(finished).scene
+    expect(scene?.nodes.find((node) => node.id === 'animation_node_annotation_terminal-receptacle')).toMatchObject({
+      roles: ['load'],
+      anchor: { kind: 'annotation-center', annotationId: 'terminal-receptacle' },
+    })
+    const reloaded = loadPackageAnimationRouteDraft({
+      packageId: finished.packageId,
+      packageName: finished.packageName,
+      packageAnnotationIds: finished.packageAnnotationIds,
+      annotations,
+      scene,
+      expectedBaseRevision: 1,
+    })
+    expect(resolvePackageAnimationRouteDraft(reloaded).branchTerminalNodeId).toBe('animation_node_annotation_terminal-receptacle')
+  })
+
+  it('does not append an overlapping receptacle that is outside the active package', () => {
+    const receptacle: RouteBuilderAnnotation = {
+      id: 'outside-receptacle',
+      pageNumber: 1,
+      label: 'Outside Receptacle',
+      shapeKind: 'electrical-receptacle',
+      rect: { x: 0.68, y: 0.61, w: 0.04, h: 0.08 },
+    }
+    const primary: RouteBuilderAnnotation = {
+      id: 'outside-primary', pageNumber: 1, label: 'Primary', shapeKind: 'circuit-path',
+      points: [{ x: 0.1, y: 0.5 }, { x: 0.9, y: 0.5 }],
+      pointIds: ['op0', 'op1'], segmentIds: ['ops0'],
+    }
+    const annotations = [source, fixture2, receptacle, primary]
+    let draft = sourceDraft(empty({ annotations, packageAnnotationIds: ['source', 'fixture-2', 'outside-primary'] }))
+    draft = addSegment(draft, primary, 0)
+    draft = startPackageAnimationRouteBranch(draft, 'source')
+
+    const rejected = dispatchPackageAnimationRoutePick(draft, { kind: 'annotation', annotationId: 'outside-receptacle', clickedPoint: { x: 0.7, y: 0.65 } })
+    expect(rejected).toMatchObject({ accepted: false, consumed: true, mode: 'alternate-branch', branchActive: true })
+    expect(rejected.draft.branch?.transitions).toEqual([])
+    expect(rejected.draft.notice?.code).toBe('annotation-not-in-package')
+  })
+
+  it('uses the same direct device selection for a primary-route receptacle terminal', () => {
+    const receptacle: RouteBuilderAnnotation = {
+      id: 'primary-receptacle',
+      pageNumber: 1,
+      label: 'Primary Receptacle',
+      shapeKind: 'electrical-gfci',
+      rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 },
+    }
+    const annotations = [source, receptacle]
+    const draft = sourceDraft(empty({ annotations, packageAnnotationIds: annotations.map((entry) => entry.id) }))
+    const picked = dispatchPackageAnimationRoutePick(draft, {
+      kind: 'annotation',
+      annotationId: 'primary-receptacle',
+      clickedPoint: { x: 0.7, y: 0.5 },
+      allowPrimaryDirectTransition: true,
+    })
+
+    expect(picked).toMatchObject({ accepted: true, consumed: true, mode: 'primary-route', branchActive: false })
+    expect(picked.draft.transitions).toHaveLength(1)
+    expect(resolvePackageAnimationRouteDraft(picked.draft).nodes[1]).toMatchObject({
+      roles: ['load'],
+      anchor: { kind: 'annotation-center', annotationId: 'primary-receptacle' },
+    })
   })
 
   it('refuses to finish a branch whose endpoint is a bare wire junction (mid-wire / crossing)', () => {

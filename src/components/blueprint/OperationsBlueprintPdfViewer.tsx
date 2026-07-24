@@ -119,12 +119,13 @@ import {
   reconcilePackageAnimationRouteLocalRefresh,
   reconcilePackageAnimationRouteSave,
   resolvePackageAnimationRouteBaseRevision,
+  resolvePackageAnimationRouteDraft,
   summarizePackageAnimationScene,
   type PackageAnimationRouteConflictState,
   type PackageAnimationRouteDraft,
   type RouteBuilderAnnotation,
 } from '@/features/blueprint-animation/routeBuilderModel'
-import { findNearestRouteNode, findNearestRouteSegment, resolveRoutePickIntent } from '@/features/blueprint-animation/routePicking'
+import { findFirstRouteDeviceHit, findNearestRouteNode, findNearestRouteSegment, resolveRoutePickIntent } from '@/features/blueprint-animation/routePicking'
 
 let _pdfjsLib: typeof import('pdfjs-dist') | null = null
 async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
@@ -337,6 +338,7 @@ type ShapeKind =
   | 'electrical-sconce'
   | 'electrical-led-panel-2x2'
   | 'electrical-led-panel-2x4'
+  | 'electrical-panel'
   | 'electrical-gfci'
   | 'electrical-receptacle'
   | 'electrical-receptacle-240v'
@@ -362,6 +364,7 @@ type ElectricalSymbolKind = Extract<ShapeKind,
   | 'electrical-sconce'
   | 'electrical-led-panel-2x2'
   | 'electrical-led-panel-2x4'
+  | 'electrical-panel'
   | 'electrical-gfci'
   | 'electrical-receptacle'
   | 'electrical-receptacle-240v'
@@ -488,6 +491,17 @@ const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, ElectricalSymbolM
     laborKey: 'led-panel-2x4',
     isElectricalSymbol: true,
   },
+  'electrical-panel': {
+    symbolKind: 'electrical-panel',
+    displayName: 'Electrical Panel',
+    shortLabel: 'PNL',
+    category: 'power',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'electrical-panel',
+    laborKey: 'electrical-panel',
+    isElectricalSymbol: true,
+  },
   'electrical-gfci': {
     symbolKind: 'electrical-gfci',
     displayName: 'GFCI',
@@ -611,7 +625,7 @@ const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, ElectricalSymbolM
   },
 }
 
-const ELECTRICAL_SYMBOL_OPTIONS: Array<{ label: string; value: ElectricalSymbolKind; shortLabel: string }> =
+export const ELECTRICAL_SYMBOL_OPTIONS: Array<{ label: string; value: ElectricalSymbolKind; shortLabel: string }> =
   Object.values(ELECTRICAL_SYMBOL_METADATA).map((symbol) => ({
     label: symbol.displayName,
     value: symbol.symbolKind,
@@ -727,11 +741,11 @@ function isSyncBlockedMessage(message: string | null | undefined) {
   return /cloud sync was blocked/i.test(message) || /could not prove it loaded the latest remote/i.test(message)
 }
 
-function isElectricalShapeKind(shapeKind: any): shapeKind is ElectricalSymbolKind {
+export function isElectricalShapeKind(shapeKind: any): shapeKind is ElectricalSymbolKind {
   return typeof shapeKind === 'string' && shapeKind in ELECTRICAL_SYMBOL_METADATA
 }
 
-function getElectricalSymbolMetadata(shapeKind: any, meta: Record<string, any> = {}): ElectricalSymbolMetadata | null {
+export function getElectricalSymbolMetadata(shapeKind: any, meta: Record<string, any> = {}): ElectricalSymbolMetadata | null {
   if (!isElectricalShapeKind(shapeKind)) return null
   const base = ELECTRICAL_SYMBOL_METADATA[shapeKind]
   return {
@@ -740,7 +754,7 @@ function getElectricalSymbolMetadata(shapeKind: any, meta: Record<string, any> =
   }
 }
 
-function getElectricalSymbolDisplayName(shapeKind: any, meta: Record<string, any> = {}) {
+export function getElectricalSymbolDisplayName(shapeKind: any, meta: Record<string, any> = {}) {
   const symbol = getElectricalSymbolMetadata(shapeKind, meta)
   if (!symbol) return null
   return shapeKind === 'electrical-recessed-light' && meta.emergency
@@ -756,7 +770,7 @@ function formatElectricalSymbolCategory(category: ElectricalSymbolCategory) {
   return category.charAt(0).toUpperCase() + category.slice(1)
 }
 
-function getElectricalSymbolMetadataStamp(shapeKind: any, meta: Record<string, any> = {}) {
+export function getElectricalSymbolMetadataStamp(shapeKind: any, meta: Record<string, any> = {}) {
   const symbol = getElectricalSymbolMetadata(shapeKind, meta)
   if (!symbol) return {}
   return {
@@ -785,7 +799,7 @@ function getBlueprintScopeLayerDistinctPageCount(layer: Pick<BlueprintScopeLayer
   return pages.size
 }
 
-function buildBlueprintScopeItemRef(annotation: BlueprintAnnotation): BlueprintScopeItemRef {
+export function buildBlueprintScopeItemRef(annotation: BlueprintAnnotation): BlueprintScopeItemRef {
   const meta = getAnnotationMeta(annotation)
   const shapeKind = annotation.type === 'shape' ? meta.shapeKind : undefined
   const electricalMetadata = getElectricalSymbolMetadata(shapeKind, meta)
@@ -797,6 +811,78 @@ function buildBlueprintScopeItemRef(annotation: BlueprintAnnotation): BlueprintS
     ...(electricalMetadata ? { category: electricalMetadata.category } : {}),
     ...(electricalMetadata ? { countValue: getElectricalSymbolCountValue(shapeKind, meta) } : {}),
   }
+}
+
+export function cloneBlueprintAnnotationForPaste(source: BlueprintAnnotation) {
+  const meta = getAnnotationMeta(source)
+  let clonedMeta: Record<string, any> = {}
+  try { clonedMeta = JSON.parse(JSON.stringify(meta || {})) } catch { clonedMeta = { ...(meta || {}) } }
+  return {
+    type: source.type,
+    rect: source.rect ? { ...source.rect } : undefined,
+    path: Array.isArray(source.path) ? source.path.map((p: any) => ({ x: p.x, y: p.y })) : undefined,
+    text: source.text,
+    color: source.color || '#facc15',
+    meta: clonedMeta,
+  }
+}
+
+export function buildElectricalPanelLabelPatch(value: string): Pick<BlueprintAnnotation, 'text'> {
+  return { text: normalizeElectricalPanelLabel(value) }
+}
+
+export function normalizeElectricalPanelLabel(value: string | null | undefined): string | undefined {
+  const label = String(value || '').trim()
+  return label || undefined
+}
+
+export function buildElectricalPanelLabelCommit(
+  annotationId: string | null | undefined,
+  rawDraft: string,
+  persistedText: string | null | undefined,
+): { annotationId?: string; changed: boolean; patch?: Pick<BlueprintAnnotation, 'text'> } {
+  if (!annotationId) return { changed: false }
+  const next = normalizeElectricalPanelLabel(rawDraft)
+  const previous = normalizeElectricalPanelLabel(persistedText)
+  if (next === previous) return { annotationId, changed: false }
+  return { annotationId, changed: true, patch: { text: next } }
+}
+
+export function ElectricalPanelLabelControl({
+  value,
+  onChange,
+  onBlur,
+  onKeyDown,
+}: {
+  value: string
+  onChange(value: string): void
+  onBlur(): void
+  onKeyDown(event: React.KeyboardEvent<HTMLInputElement>): void
+}) {
+  return (
+    <label style={{ display: 'block', marginBottom: 8, fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
+      Label
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={onBlur}
+        onKeyDown={onKeyDown}
+        placeholder="Panel, Subpanel, MDP, Panel A..."
+        aria-label="Electrical panel label"
+        style={{
+          marginTop: 4,
+          width: '100%',
+          borderRadius: 6,
+          border: '1px solid rgba(55,65,81,1)',
+          background: 'rgba(3,7,18,0.6)',
+          color: 'rgba(243,244,246,1)',
+          padding: '7px 9px',
+          fontSize: 12,
+          outline: 'none',
+        }}
+      />
+    </label>
+  )
 }
 
 function buildBlueprintScopeItemRefs(annotations: BlueprintAnnotation[], annotationIds: string[]) {
@@ -1633,6 +1719,7 @@ const ELECTRICAL_SYMBOL_VISUAL_BOUNDS: Partial<Record<ElectricalSymbolKind, { x:
   'electrical-dimmer': { x: 13, y: 15, w: 74, h: 64 },
   'electrical-receptacle': { x: 25, y: 9, w: 50, h: 74 },
   'electrical-receptacle-240v': { x: 25, y: 9, w: 50, h: 74 },
+  'electrical-panel': { x: 8, y: 7, w: 84, h: 86 },
   'electrical-gfci': { x: 25, y: 9, w: 50, h: 74 },
   'electrical-sconce': { x: 15, y: 15, w: 47, h: 68 },
   'electrical-photocell': { x: 14, y: 11, w: 78, h: 68 },
@@ -1641,11 +1728,24 @@ const ELECTRICAL_SYMBOL_VISUAL_BOUNDS: Partial<Record<ElectricalSymbolKind, { x:
   'electrical-wall-occupancy-sensor': { x: 26, y: 15, w: 44, h: 60 },
 }
 
-function getElectricalSymbolVisualBounds(kind: ShapeKind) {
+export function getElectricalSymbolVisualBounds(kind: ShapeKind) {
   return isElectricalShapeKind(kind) ? ELECTRICAL_SYMBOL_VISUAL_BOUNDS[kind] ?? null : null
 }
 
-function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, style: {
+function getAnnotationVisualBodyRect(annotation: RouteBuilderAnnotation): RouteBuilderAnnotation['rect'] {
+  const rect = annotation.rect
+  if (!rect) return undefined
+  const bounds = annotation.shapeKind ? getElectricalSymbolVisualBounds(annotation.shapeKind as ShapeKind) : null
+  if (!bounds) return { ...rect }
+  return clampRectToPage({
+    x: rect.x + rect.w * (bounds.x / 100),
+    y: rect.y + rect.h * (bounds.y / 100),
+    w: rect.w * (bounds.w / 100),
+    h: rect.h * (bounds.h / 100),
+  })
+}
+
+export function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, style: {
   borderColor: string
   borderThickness: number
   borderStyle: BorderStyle
@@ -1787,6 +1887,16 @@ function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, s
       </>
     )
     label = externalLabel(panelLabel)
+  } else if (kind === 'electrical-panel') {
+    body = (
+      <>
+        <rect x="8" y="7" width="84" height="86" rx="5" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <rect x="18" y="18" width="64" height="64" rx="3" fill="none" stroke={borderColor} strokeWidth={fineStroke} opacity="0.72" />
+        <line x1="28" y1="30" x2="72" y2="30" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} strokeLinecap="round" opacity="0.55" />
+        <line x1="28" y1="70" x2="72" y2="70" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} strokeLinecap="round" opacity="0.55" />
+        <text x="50" y="52" fontSize="20" letterSpacing="0" {...commonText}>PNL</text>
+      </>
+    )
   } else if (kind === 'electrical-gfci' || kind === 'electrical-receptacle') {
     const symbolLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? (kind === 'electrical-gfci' ? 'GFCI' : 'REC')
     body = (
@@ -4566,6 +4676,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       id: annotation.id,
       pageNumber: Math.max(1, Math.floor(Number(annotation.pageNumber) || 1)),
       label: annotationLabel(annotation),
+      ...(annotation.text ? { text: annotation.text } : {}),
       ...(annotation.type === 'shape' && meta.shapeKind ? { shapeKind: meta.shapeKind } : {}),
       ...(annotation.rect ? { rect: { ...annotation.rect } } : {}),
       ...(Array.isArray(meta.points) ? { points: meta.points.map((point: any) => ({ x: Number(point.x), y: Number(point.y) })) } : {}),
@@ -5146,7 +5257,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const pointer = toNorm(event.clientX - overlayRect.left, event.clientY - overlayRect.top, overlayRect.width, overlayRect.height)
     const packageIds = new Set(layer.selectedAnnotationIds)
     const circuits = animationRouteAnnotations.filter((annotation) => (
-      annotation.pageNumber === currentPage && packageIds.has(annotation.id) && isCircuitShapeKind(annotation.shapeKind)
+      annotation.pageNumber === currentPage
+      && packageIds.has(annotation.id)
+      && isAnnotationVisibleOnCanvas(annotation.id)
+      && isCircuitShapeKind(annotation.shapeKind)
     ))
     const hit = findNearestRouteSegment(pointer, circuits, {
       pageWidth: Math.max(1, overlayRect.width),
@@ -5165,15 +5279,35 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const eligibleDeviceIds = new Set(animationRouteAnnotations.filter((annotation) => (
       annotation.pageNumber === currentPage
       && packageIds.has(annotation.id)
+      && isAnnotationVisibleOnCanvas(annotation.id)
       && isRouteBuilderDeviceKind(annotation.shapeKind)
     )).map((annotation) => annotation.id))
+    const resolvedRoute = resolvePackageAnimationRouteDraft(liveSession.draft)
+    const currentEndpointAnnotationId = resolvedRoute.currentEndpoint?.node.anchor.kind === 'annotation-center'
+      ? resolvedRoute.currentEndpoint.node.anchor.annotationId
+      : undefined
+    const excludedDeviceIds = new Set<string>(currentEndpointAnnotationId ? [currentEndpointAnnotationId] : [])
+    const eligibleDevices = animationRouteAnnotations
+      .filter((annotation) => eligibleDeviceIds.has(annotation.id))
+      .map((annotation) => ({
+        ...annotation,
+        hitRect: getAnnotationVisualBodyRect(annotation),
+      }))
+    const deviceHit = liveSession.draft.source
+      ? findFirstRouteDeviceHit(pointer, eligibleDevices, {
+        pageWidth: Math.max(1, overlayRect.width),
+        pageHeight: Math.max(1, overlayRect.height),
+        tolerancePx: event.pointerType === 'touch' ? 7 : 4,
+        excludedAnnotationIds: excludedDeviceIds,
+      })
+      : null
     const branchOriginIndex = liveSession.draft.branch?.originSelectionId === 'source'
       ? 0
       : liveSession.draft.transitions.findIndex((entry) => entry.id === liveSession.draft.branch?.originSelectionId) + 1
     const primaryNodeCandidates = getPackageAnimationPrimaryRouteCandidates(liveSession.draft)
       .filter((candidate) => candidate.pageNumber === currentPage
         && (liveSession.draft.branch?.transitions.length ? true : candidate.index > branchOriginIndex))
-    const primaryNodeHit = liveSession.draft.branch?.editing
+    const primaryNodeHit = !deviceHit && liveSession.draft.branch?.editing
       ? findNearestRouteNode(pointer, primaryNodeCandidates, {
         pageWidth: Math.max(1, overlayRect.width),
         pageHeight: Math.max(1, overlayRect.height),
@@ -5184,6 +5318,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       sourceSelected: !!liveSession.draft.source,
       overlappingAnnotationIds,
       eligibleDeviceIds,
+      ...(deviceHit ? { eligibleDeviceHitId: deviceHit.annotationId } : {}),
+      ...(currentEndpointAnnotationId ? { currentEndpointAnnotationId } : {}),
       segmentHit: hit,
       fallbackAnnotationId: targetAnnotationId,
     })
@@ -5210,7 +5346,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       return next
     })
     return true
-  }, [animationRouteAnnotations, currentPage])
+  }, [animationRouteAnnotations, currentPage, isAnnotationVisibleOnCanvas])
 
   useEffect(() => {
     if (!animationRouteBuilder) return
@@ -5439,19 +5575,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // color, path and ALL meta — shapeKind, border/fill/hatch, line/arrow/arch
   // endpoints, text content, can-light lightIntensity) while dropping anything
   // that would corrupt a fresh row (id, createdAt, updatedAt, pageNumber).
-  const cloneAnnotationForPaste = useCallback((source: BlueprintAnnotation) => {
-    const meta = getAnnotationMeta(source)
-    let clonedMeta: Record<string, any> = {}
-    try { clonedMeta = JSON.parse(JSON.stringify(meta || {})) } catch { clonedMeta = { ...(meta || {}) } }
-    return {
-      type: source.type,
-      rect: source.rect ? { ...source.rect } : undefined,
-      path: Array.isArray(source.path) ? source.path.map((p: any) => ({ x: p.x, y: p.y })) : undefined,
-      text: source.text,
-      color: source.color || '#facc15',
-      meta: clonedMeta,
-    }
-  }, [])
+  const cloneAnnotationForPaste = useCallback(cloneBlueprintAnnotationForPaste, [])
 
   const copyAnnotation = useCallback((source: BlueprintAnnotation) => {
     if (!source) return
@@ -8579,16 +8703,65 @@ const annotationPanelSizeClass =
     ? (allAnnotations.find(a => a.id === openPopover.editingAnnotationId) ?? null)
     : null
 
-  const persistEditAnnotation = (changes: Partial<BlueprintAnnotation>) => {
-    if (!editingAnnotation) return
-    const editId = editingAnnotation.id
+  const [panelLabelDraft, setPanelLabelDraft] = useState<{ annotationId: string | null; value: string; dirty: boolean }>({
+    annotationId: null,
+    value: '',
+    dirty: false,
+  })
+  const panelLabelSuppressBlurRef = useRef(false)
+
+  const activePanelLabelAnnotationId = editingAnnotation?.type === 'shape' && getAnnotationMeta(editingAnnotation).shapeKind === 'electrical-panel'
+    ? editingAnnotation.id
+    : null
+  const activePanelLabelText = activePanelLabelAnnotationId ? (editingAnnotation?.text || '') : ''
+
+  useEffect(() => {
+    setPanelLabelDraft((previous) => {
+      if (!activePanelLabelAnnotationId) {
+        return previous.annotationId === null && previous.value === '' && !previous.dirty
+          ? previous
+          : { annotationId: null, value: '', dirty: false }
+      }
+      if (previous.annotationId !== activePanelLabelAnnotationId) {
+        return { annotationId: activePanelLabelAnnotationId, value: activePanelLabelText, dirty: false }
+      }
+      if (previous.dirty) return previous
+      return previous.value === activePanelLabelText
+        ? previous
+        : { annotationId: activePanelLabelAnnotationId, value: activePanelLabelText, dirty: false }
+    })
+  }, [activePanelLabelAnnotationId, activePanelLabelText])
+
+  const persistEditAnnotationForId = (annotationId: string, changes: Partial<BlueprintAnnotation>) => {
+    const editId = annotationId
     // BLUEPRINT-6M — read the latest in-flight annotation (not the stale closure) and apply
     // the change optimistically to local state first, so top-level edits like color swap
     // instantly instead of waiting for the persist round-trip. Mirrors persistEditAnnotationMeta.
-    const latest = allAnnotationsRef.current.find((ann) => ann.id === editId) ?? editingAnnotation
+    const latest = allAnnotationsRef.current.find((ann) => ann.id === editId)
+    if (!latest) return
     const updated = { ...latest, ...changes, updatedAt: new Date().toISOString() } as BlueprintAnnotation
     setAllAnnotations((prev) => prev.map((ann) => ann.id === editId ? updated : ann))
     void persistAnnotation(updated)
+  }
+
+  const persistEditAnnotation = (changes: Partial<BlueprintAnnotation>) => {
+    if (!editingAnnotation) return
+    persistEditAnnotationForId(editingAnnotation.id, changes)
+  }
+
+  const commitElectricalPanelLabelDraft = (annotationId: string | null, rawDraft: string) => {
+    const latest = annotationId ? allAnnotationsRef.current.find((ann) => ann.id === annotationId) : null
+    const outcome = buildElectricalPanelLabelCommit(annotationId, rawDraft, latest?.text)
+    if (!outcome.annotationId) return
+    if (outcome.changed && outcome.patch) {
+      persistEditAnnotationForId(outcome.annotationId, outcome.patch)
+    }
+    setPanelLabelDraft({ annotationId: outcome.annotationId, value: normalizeElectricalPanelLabel(rawDraft) || '', dirty: false })
+  }
+
+  const cancelElectricalPanelLabelDraft = (annotationId: string | null) => {
+    const latest = annotationId ? allAnnotationsRef.current.find((ann) => ann.id === annotationId) : null
+    setPanelLabelDraft({ annotationId, value: latest?.text || '', dirty: false })
   }
 
   const persistEditAnnotationMeta = (metaChanges: Record<string, any>) => {
@@ -8947,6 +9120,31 @@ const annotationPanelSizeClass =
                   },
                 ]} />
               </div>
+            )}
+            {isEdit && currentKind === 'electrical-panel' && (
+              <ElectricalPanelLabelControl
+                value={panelLabelDraft.annotationId === editingAnnotation?.id ? panelLabelDraft.value : (editingAnnotation?.text || '')}
+                onChange={(value) => setPanelLabelDraft({ annotationId: editingAnnotation?.id || null, value, dirty: true })}
+                onBlur={() => {
+                  if (panelLabelSuppressBlurRef.current) {
+                    panelLabelSuppressBlurRef.current = false
+                    return
+                  }
+                  commitElectricalPanelLabelDraft(panelLabelDraft.annotationId, panelLabelDraft.value)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    commitElectricalPanelLabelDraft(panelLabelDraft.annotationId, panelLabelDraft.value)
+                    event.currentTarget.blur()
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    panelLabelSuppressBlurRef.current = true
+                    cancelElectricalPanelLabelDraft(panelLabelDraft.annotationId)
+                    event.currentTarget.blur()
+                  }
+                }}
+              />
             )}
             <LabeledSelect label="Shape" value={currentKind}
               options={

@@ -61,7 +61,7 @@ export function PackageAnimationRouteBuilder({
   const instruction = readOnly
     ? draft.readOnlyReason
     : !draft.source
-      ? 'Select one supported control or sensor on the blueprint.'
+      ? 'Select one supported source on the blueprint: Electrical Panel, switch, dimmer, timer, photocell, or occupancy sensor.'
       : draft.branch?.editing
         ? 'Select the alternate branch in travel order until it rejoins a later primary-route node.'
         : 'Select connected Circuit Path/Arc segments in travel order, or select a package device for a confirmed direct transition.'

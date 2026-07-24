@@ -15,6 +15,13 @@ export interface RoutePickCircuitAnnotation {
   segmentIds?: string[]
 }
 
+export interface RoutePickDeviceAnnotation {
+  id: string
+  pageNumber: number
+  rect?: { x: number; y: number; w: number; h: number }
+  hitRect?: { x: number; y: number; w: number; h: number }
+}
+
 export interface RouteSegmentPick {
   annotationId: string
   pageNumber: number
@@ -60,6 +67,12 @@ export interface RouteNodePick extends RouteNodePickCandidate {
   distancePx: number
 }
 
+export interface RouteDevicePick {
+  annotationId: string
+  pageNumber: number
+  distancePx: number
+}
+
 export type RoutePickIntent =
   | { kind: 'annotation'; annotationId: string }
   | { kind: 'segment'; hit: RouteSegmentPick }
@@ -68,6 +81,8 @@ export interface RoutePickIntentOptions {
   sourceSelected: boolean
   overlappingAnnotationIds: string[]
   eligibleDeviceIds: ReadonlySet<string>
+  eligibleDeviceHitId?: string
+  currentEndpointAnnotationId?: string
   segmentHit: RouteSegmentPick | null
   fallbackAnnotationId?: string
 }
@@ -88,10 +103,19 @@ export function resolveRoutePickIntent(options: RoutePickIntentOptions): RoutePi
     return fallbackId ? { kind: 'annotation', annotationId: fallbackId } : null
   }
 
-  const deviceId = overlappingIds.find((id) => options.eligibleDeviceIds.has(id))
+  if (
+    options.eligibleDeviceHitId
+    && options.eligibleDeviceHitId !== options.currentEndpointAnnotationId
+    && options.eligibleDeviceIds.has(options.eligibleDeviceHitId)
+  ) {
+    return { kind: 'annotation', annotationId: options.eligibleDeviceHitId }
+  }
+  const deviceId = overlappingIds.find((id) => id !== options.currentEndpointAnnotationId && options.eligibleDeviceIds.has(id))
   if (deviceId) return { kind: 'annotation', annotationId: deviceId }
   if (options.segmentHit) return { kind: 'segment', hit: options.segmentHit }
-  return fallbackId ? { kind: 'annotation', annotationId: fallbackId } : null
+  return fallbackId && fallbackId !== options.currentEndpointAnnotationId
+    ? { kind: 'annotation', annotationId: fallbackId }
+    : null
 }
 
 function isFinitePoint(point: unknown): point is NormalizedPoint {
@@ -101,6 +125,55 @@ function isFinitePoint(point: unknown): point is NormalizedPoint {
 
 function pixelPoint(point: NormalizedPoint, width: number, height: number): NormalizedPoint {
   return { x: point.x * width, y: point.y * height }
+}
+
+function validRect(rect: RoutePickDeviceAnnotation['rect']): NonNullable<RoutePickDeviceAnnotation['rect']> | null {
+  if (!rect || ![rect.x, rect.y, rect.w, rect.h].every(Number.isFinite)) return null
+  if (rect.w <= 0 || rect.h <= 0) return null
+  return rect
+}
+
+function distanceToRectPx(
+  pointer: NormalizedPoint,
+  rect: NonNullable<RoutePickDeviceAnnotation['rect']>,
+  pageWidth: number,
+  pageHeight: number,
+): number {
+  const x = pointer.x * pageWidth
+  const y = pointer.y * pageHeight
+  const left = rect.x * pageWidth
+  const top = rect.y * pageHeight
+  const right = (rect.x + rect.w) * pageWidth
+  const bottom = (rect.y + rect.h) * pageHeight
+  const dx = x < left ? left - x : x > right ? x - right : 0
+  const dy = y < top ? top - y : y > bottom ? y - bottom : 0
+  return Math.hypot(dx, dy)
+}
+
+/**
+ * Finds an eligible package device under the pointer using page geometry, independent of DOM/SVG
+ * layering. The visible annotation body wins with only a small rendered-pixel tolerance.
+ * Candidate order is preserved so overlapping devices follow the same deterministic annotation
+ * ordering supplied by the caller rather than display text.
+ */
+export function findFirstRouteDeviceHit(
+  pointer: NormalizedPoint,
+  annotations: RoutePickDeviceAnnotation[],
+  options: Pick<RoutePickOptions, 'pageWidth' | 'pageHeight'> & { tolerancePx: number; excludedAnnotationIds?: ReadonlySet<string> },
+): RouteDevicePick | null {
+  const width = Math.max(1, Number(options.pageWidth) || 1)
+  const height = Math.max(1, Number(options.pageHeight) || 1)
+  const tolerance = Math.max(0, Number(options.tolerancePx) || 0)
+  for (const annotation of annotations) {
+    if (options.excludedAnnotationIds?.has(annotation.id)) continue
+    const rect = validRect(annotation.hitRect) ?? validRect(annotation.rect)
+    if (!rect) continue
+    const rectDistancePx = distanceToRectPx(pointer, rect, width, height)
+    if (rectDistancePx <= tolerance) {
+      return { annotationId: annotation.id, pageNumber: annotation.pageNumber, distancePx: rectDistancePx }
+    }
+  }
+  return null
 }
 
 export function distanceToLineSegmentPx(

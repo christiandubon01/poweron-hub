@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createCircuitGeometryFingerprint } from '../routeGeometry'
-import { findNearestRoutePoint, findNearestRouteSegment, resolveRoutePickIntent, type RouteSegmentPick } from '../routePicking'
+import { findFirstRouteDeviceHit, findNearestRoutePoint, findNearestRouteSegment, resolveRoutePickIntent, type RouteSegmentPick } from '../routePicking'
 
 const segmentHit: RouteSegmentPick = {
   annotationId: 'circuit-1',
@@ -117,5 +117,108 @@ describe('routePicking', () => {
       eligibleDeviceIds: new Set(['fixture-1']),
       segmentHit: touchToleranceHit,
     })).toEqual({ kind: 'annotation', annotationId: 'fixture-1' })
+  })
+
+  it('finds a package device by geometry when its body overlaps a route segment', () => {
+    const receptacle = { id: 'receptacle-1', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 } }
+    const deviceHit = findFirstRouteDeviceHit({ x: 0.7, y: 0.5 }, [receptacle], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })
+
+    expect(deviceHit).toMatchObject({ annotationId: 'receptacle-1', pageNumber: 1 })
+    expect(resolveRoutePickIntent({
+      sourceSelected: true,
+      overlappingAnnotationIds: ['circuit-1'],
+      eligibleDeviceIds: new Set(['receptacle-1']),
+      eligibleDeviceHitId: deviceHit?.annotationId,
+      segmentHit,
+    })).toEqual({ kind: 'annotation', annotationId: 'receptacle-1' })
+  })
+
+  it('leaves the route segment selectable away from the device body and hit radius', () => {
+    const receptacle = { id: 'receptacle-1', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 } }
+    const deviceHit = findFirstRouteDeviceHit({ x: 0.55, y: 0.5 }, [receptacle], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })
+
+    expect(deviceHit).toBeNull()
+    expect(resolveRoutePickIntent({
+      sourceSelected: true,
+      overlappingAnnotationIds: ['circuit-1'],
+      eligibleDeviceIds: new Set(['receptacle-1']),
+      segmentHit,
+    })).toEqual({ kind: 'segment', hit: segmentHit })
+  })
+
+  it('does not let devices omitted by package membership or visibility intercept segment picks', () => {
+    const receptacle = { id: 'receptacle-1', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 } }
+    const deviceHit = findFirstRouteDeviceHit({ x: 0.7, y: 0.5 }, [], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })
+
+    expect(deviceHit).toBeNull()
+    expect(resolveRoutePickIntent({
+      sourceSelected: true,
+      overlappingAnnotationIds: ['circuit-1'],
+      eligibleDeviceIds: new Set(['receptacle-1']),
+      segmentHit,
+    })).toEqual({ kind: 'segment', hit: segmentHit })
+    expect(findFirstRouteDeviceHit({ x: 0.7, y: 0.5 }, [{ ...receptacle, rect: undefined }], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })).toBeNull()
+  })
+
+  it('uses deterministic candidate order when two eligible devices overlap', () => {
+    const first = { id: 'device-a', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 } }
+    const second = { id: 'device-b', pageNumber: 1, rect: { x: 0.69, y: 0.47, w: 0.04, h: 0.08 } }
+
+    expect(findFirstRouteDeviceHit({ x: 0.7, y: 0.5 }, [first, second], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })?.annotationId).toBe('device-a')
+    expect(findFirstRouteDeviceHit({ x: 0.7, y: 0.5 }, [second, first], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })?.annotationId).toBe('device-b')
+  })
+
+  it('excludes the current endpoint device so its outgoing segment remains selectable', () => {
+    const currentDevice = { id: 'receptacle-a', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 } }
+    const excluded = new Set(['receptacle-a'])
+    const deviceHit = findFirstRouteDeviceHit({ x: 0.701, y: 0.5 }, [currentDevice], {
+      pageWidth: 1000,
+      pageHeight: 1000,
+      tolerancePx: 4,
+      excludedAnnotationIds: excluded,
+    })
+
+    expect(deviceHit).toBeNull()
+    expect(resolveRoutePickIntent({
+      sourceSelected: true,
+      overlappingAnnotationIds: ['receptacle-a', 'circuit-1'],
+      eligibleDeviceIds: new Set(['receptacle-a']),
+      currentEndpointAnnotationId: 'receptacle-a',
+      segmentHit,
+      fallbackAnnotationId: 'receptacle-a',
+    })).toEqual({ kind: 'segment', hit: segmentHit })
+  })
+
+  it('still lets a different back-to-back device win while the current endpoint is excluded', () => {
+    const currentDevice = { id: 'receptacle-a', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 } }
+    const nextDevice = { id: 'receptacle-b', pageNumber: 1, rect: { x: 0.71, y: 0.46, w: 0.04, h: 0.08 } }
+    const deviceHit = findFirstRouteDeviceHit({ x: 0.725, y: 0.5 }, [currentDevice, nextDevice], {
+      pageWidth: 1000,
+      pageHeight: 1000,
+      tolerancePx: 4,
+      excludedAnnotationIds: new Set(['receptacle-a']),
+    })
+
+    expect(deviceHit?.annotationId).toBe('receptacle-b')
+    expect(resolveRoutePickIntent({
+      sourceSelected: true,
+      overlappingAnnotationIds: ['receptacle-a', 'receptacle-b', 'circuit-1'],
+      eligibleDeviceIds: new Set(['receptacle-a', 'receptacle-b']),
+      currentEndpointAnnotationId: 'receptacle-a',
+      eligibleDeviceHitId: deviceHit?.annotationId,
+      segmentHit,
+    })).toEqual({ kind: 'annotation', annotationId: 'receptacle-b' })
+  })
+
+  it('uses visible body bounds instead of a large center-radius dead zone', () => {
+    const receptacle = {
+      id: 'receptacle-1',
+      pageNumber: 1,
+      rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 },
+      hitRect: { x: 0.69, y: 0.4672, w: 0.02, h: 0.0592 },
+    }
+
+    expect(findFirstRouteDeviceHit({ x: 0.709, y: 0.5 }, [receptacle], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })?.annotationId).toBe('receptacle-1')
+    expect(findFirstRouteDeviceHit({ x: 0.715, y: 0.5 }, [receptacle], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })).toBeNull()
   })
 })

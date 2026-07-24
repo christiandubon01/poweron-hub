@@ -32,6 +32,7 @@ export const ROUTE_BUILDER_SOURCE_KINDS = [
   'electrical-photocell',
   'electrical-ceiling-occupancy-sensor',
   'electrical-wall-occupancy-sensor',
+  'electrical-panel',
 ] as const
 
 export const ROUTE_BUILDER_SENSOR_KINDS = [
@@ -42,6 +43,9 @@ export const ROUTE_BUILDER_SENSOR_KINDS = [
 export const ROUTE_BUILDER_LOAD_KINDS = [
   'can-light-4',
   'can-light-6',
+  'electrical-gfci',
+  'electrical-receptacle',
+  'electrical-receptacle-240v',
   'electrical-recessed-light',
   'electrical-pendant-light',
   'electrical-sconce',
@@ -69,6 +73,7 @@ export interface RouteBuilderAnnotation {
   id: string
   pageNumber: number
   label: string
+  text?: string
   shapeKind?: string
   rect?: { x: number; y: number; w: number; h: number }
   points?: NormalizedPoint[]
@@ -246,6 +251,8 @@ export function inferRouteBuilderNodeRoles(
   options: { selectedAsSource?: boolean; junction?: boolean } = {},
 ): BlueprintAnimationDeviceRole[] {
   if (options.junction) return ['junction']
+  if (options.selectedAsSource && shapeKind === 'electrical-panel') return ['source']
+  if (shapeKind === 'electrical-panel') return []
   const roles: BlueprintAnimationDeviceRole[] = []
   if (options.selectedAsSource) roles.push('source')
   if (typeof shapeKind === 'string' && SENSOR_KINDS.has(shapeKind)) roles.push('sensor', 'control')
@@ -255,6 +262,7 @@ export function inferRouteBuilderNodeRoles(
 }
 
 export function inferRouteBuilderDefaultChannel(shapeKind: unknown): BlueprintAnimationChannelType {
+  if (shapeKind === 'electrical-panel') return 'constant-line-voltage'
   if (typeof shapeKind === 'string' && SENSOR_KINDS.has(shapeKind)) return 'low-voltage-control-signal'
   if (typeof shapeKind === 'string' && SOURCE_KINDS.has(shapeKind)) return 'switched-line-voltage'
   return 'generic-route'
@@ -589,7 +597,7 @@ export function resolvePackageAnimationRouteDraft(draft: PackageAnimationRouteDr
   let current: ResolvedNode | undefined
 
   if (!draft.source) {
-    issues.push(issue('error', 'missing-source', 'Select one eligible control or sensor as the source.'))
+    issues.push(issue('error', 'missing-source', 'Select one eligible source device as the source.'))
   } else {
     const sourceAnnotation = annotations.get(draft.source.annotationId)
     if (!sourceAnnotation) {
@@ -597,7 +605,7 @@ export function resolvePackageAnimationRouteDraft(draft: PackageAnimationRouteDr
     } else if (!packageHas(draft, sourceAnnotation.id)) {
       issues.push(issue('error', 'source-not-in-package', 'The selected source is no longer in this work package.'))
     } else if (!isRouteBuilderSourceKind(sourceAnnotation.shapeKind)) {
-      issues.push(issue('error', 'invalid-source-kind', 'The source must be a switch, dimmer, timer, photocell, or occupancy sensor.'))
+      issues.push(issue('error', 'invalid-source-kind', 'The source must be an electrical panel, switch, dimmer, timer, photocell, or occupancy sensor.'))
     } else {
       const sourceNode = annotationNode(draft, sourceAnnotation, true)
       if (!sourceNode) {
@@ -832,7 +840,7 @@ export function selectPackageAnimationRouteSource(
     return { accepted: false, draft: withNotice(draft, issue('error', 'annotation-not-in-package', message)), message }
   }
   if (!isRouteBuilderSourceKind(annotation.shapeKind)) {
-    const message = 'Select a switch, dimmer, timer, photocell, or occupancy sensor as the source.'
+    const message = 'Select an electrical panel, switch, dimmer, timer, photocell, or occupancy sensor as the source.'
     return { accepted: false, draft: withNotice(draft, issue('error', 'invalid-source-kind', message)), message }
   }
   const next: PackageAnimationRouteDraft = {
@@ -1489,13 +1497,43 @@ export interface RouteBuilderListEntry {
   isSource?: boolean
 }
 
+export function formatRouteBuilderSourceLabel(annotation: RouteBuilderAnnotation | undefined): string {
+  if (!annotation) return 'Missing source'
+  if (annotation.shapeKind !== 'electrical-panel') return annotation.label || 'Source'
+  const customLabel = String(annotation.text || '').trim()
+  return customLabel ? `Electrical Panel — ${customLabel}` : 'Electrical Panel'
+}
+
+export interface RouteBuilderSourceCandidate {
+  id: string
+  annotationId: string
+  label: string
+  shapeKind?: string
+  pageNumber: number
+  channel: BlueprintAnimationChannelType
+}
+
+export function getPackageAnimationSourceCandidates(draft: Pick<PackageAnimationRouteDraft, 'packageAnnotationIds' | 'annotations'>): RouteBuilderSourceCandidate[] {
+  const packageIds = new Set(draft.packageAnnotationIds)
+  return draft.annotations
+    .filter((annotation) => packageIds.has(annotation.id) && isRouteBuilderSourceKind(annotation.shapeKind) && !!center(annotation))
+    .map((annotation) => ({
+      id: annotation.id,
+      annotationId: annotation.id,
+      label: formatRouteBuilderSourceLabel(annotation),
+      ...(annotation.shapeKind ? { shapeKind: annotation.shapeKind } : {}),
+      pageNumber: annotation.pageNumber,
+      channel: inferRouteBuilderDefaultChannel(annotation.shapeKind),
+    }))
+}
+
 export function getPackageAnimationRouteList(draft: PackageAnimationRouteDraft): RouteBuilderListEntry[] {
   const annotations = byId(draft)
   const resolvedBySelectionId = new Map(resolvePackageAnimationRouteDraft(draft).transitions.map((transition) => [transition.selection.id, transition]))
   const entries: RouteBuilderListEntry[] = []
   if (draft.source) {
     const annotation = annotations.get(draft.source.annotationId)
-    entries.push({ id: 'source', number: 1, label: annotation?.label || 'Missing source', typeLabel: 'Source device', channel: draft.source.channel, isSource: true })
+    entries.push({ id: 'source', number: 1, label: formatRouteBuilderSourceLabel(annotation), typeLabel: 'Source device', channel: draft.source.channel, isSource: true })
   }
   draft.transitions.forEach((selection, index) => {
     const annotation = annotations.get(selection.annotationId)
