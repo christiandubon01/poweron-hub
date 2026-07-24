@@ -10,6 +10,18 @@ import type {
   BlueprintScopeAnimationScene,
   BlueprintScopeAnimationSceneV1,
 } from '@/features/blueprint-animation/types'
+import {
+  archiveWireProfile,
+  createWireProfile,
+  createWireProfileTombstone,
+  duplicateWireProfile,
+  resolveWireProfileStatus,
+  restoreWireProfile,
+  sanitizeWireProfile,
+  updateWireProfile,
+  type WireProfile,
+  type WireProfileResolution,
+} from '@/features/blueprint-wire-profiles'
 
 // Phase 5C: dev-only assertion that the registry descriptors still point at the
 // concrete BackupData container keys these save paths write. Metadata sanity check
@@ -96,6 +108,8 @@ export interface BlueprintAnnotation {
   path?: BlueprintAnnotationPoint[]
   text?: string
   color: string
+  meta?: Record<string, any>
+  metadata?: Record<string, any>
   createdAt: string
   updatedAt: string
   // Phase 5E: soft-delete tombstone. Presence of deletedAt marks the item deleted.
@@ -689,6 +703,15 @@ export function mergeBlueprintAnnotationsById(
   return mergeItemsById(remote as TombstonedItem[], incoming as TombstonedItem[]) as unknown as BlueprintAnnotation[]
 }
 
+export function mergeBlueprintWireProfilesById(
+  remoteItems: any[],
+  incomingItems: any[],
+): WireProfile[] {
+  const remote = (Array.isArray(remoteItems) ? remoteItems : []).map(sanitizeWireProfile).filter(Boolean) as WireProfile[]
+  const incoming = (Array.isArray(incomingItems) ? incomingItems : []).map(sanitizeWireProfile).filter(Boolean) as WireProfile[]
+  return mergeItemsById(remote as TombstonedItem[], incoming as TombstonedItem[]) as unknown as WireProfile[]
+}
+
 export function mergeBlueprintScopeLayersById(
   remoteItems: any[],
   incomingItems: any[],
@@ -1070,6 +1093,214 @@ export function getOperationsBlueprintAnnotationSummary(backup: any, blueprintSe
     pagesWithAnnotations: Object.keys(byPage).length,
     byPage,
   }
+}
+
+function getWireProfilesContainer(backup: any): Record<string, WireProfile[]> {
+  if (!backup.blueprintSummaries || typeof backup.blueprintSummaries !== 'object') {
+    backup.blueprintSummaries = {}
+  }
+  const raw = backup.blueprintSummaries.operationsBlueprintWireProfiles
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    backup.blueprintSummaries.operationsBlueprintWireProfiles = {}
+  }
+  return backup.blueprintSummaries.operationsBlueprintWireProfiles
+}
+
+export function getOperationsBlueprintWireProfilesRaw(backup: any, projectId: string): WireProfile[] {
+  const cleanProjectId = String(projectId || '').trim()
+  if (!cleanProjectId) return []
+  const container = getWireProfilesContainer(backup || {})
+  const rawList = container?.[cleanProjectId]
+  if (!Array.isArray(rawList)) return []
+  return rawList.map(sanitizeWireProfile).filter(Boolean) as WireProfile[]
+}
+
+export function getOperationsBlueprintWireProfiles(backup: any, projectId: string): WireProfile[] {
+  return getOperationsBlueprintWireProfilesRaw(backup, projectId).filter((profile) => !profile.deletedAt)
+}
+
+export function getOperationsBlueprintWireProfileById(backup: any, projectId: string, profileId: string): WireProfile | undefined {
+  const id = String(profileId || '').trim()
+  if (!id) return undefined
+  return getOperationsBlueprintWireProfilesRaw(backup, projectId).find((profile) => profile.id === id && !profile.deletedAt)
+}
+
+export function resolveOperationsBlueprintWireProfile(backup: any, projectId: string, profileId: string | null | undefined): WireProfileResolution {
+  return resolveWireProfileStatus(profileId, getOperationsBlueprintWireProfilesRaw(backup, projectId))
+}
+
+function applyWireProfilesToBackup(targetBackup: any, projectId: string, profiles: WireProfile[]): any {
+  const merged = JSON.parse(JSON.stringify(targetBackup || {}))
+  const container = getWireProfilesContainer(merged)
+  const existingRaw = Array.isArray(container[projectId]) ? container[projectId] : []
+  container[projectId] = mergeBlueprintWireProfilesById(existingRaw, Array.isArray(profiles) ? profiles : [])
+  return merged
+}
+
+export async function saveOperationsBlueprintWireProfiles(
+  backup: any,
+  projectId: string,
+  profiles: WireProfile[],
+): Promise<SaveBlueprintAnnotationsResult> {
+  const SCOPE: DataScope = 'blueprint.wireProfiles'
+  const cleanProjectId = String(projectId || '').trim()
+  if (!cleanProjectId) return { localSaved: false, cloudSynced: false, error: 'Missing project id.' }
+  const sanitized = (Array.isArray(profiles) ? profiles : []).map(sanitizeWireProfile).filter(Boolean) as WireProfile[]
+
+  const {
+    getBackupData,
+    getActiveTenantUserId,
+    isSupabaseConfigured,
+    saveBackupData,
+    saveBackupDataAndSyncNow,
+    saveBackupWithRemoteBaselineSync,
+    fetchLatestRemoteBackup,
+    isLocalDevOrigin,
+  } = await import('@/services/backupDataService')
+
+  const userId = getActiveTenantUserId()
+  const localBase = getBackupData() || backup
+  if (!localBase) return { localSaved: false, cloudSynced: false, error: 'No local backup data available.' }
+
+  const notifyLocalProfilesSaved = () => {
+    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+    try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+  }
+  const localMerged = applyWireProfilesToBackup(localBase, cleanProjectId, sanitized)
+  localMerged._lastSavedAt = new Date().toISOString()
+  saveBackupData(localMerged, userId || undefined, { notify: false })
+  notifyLocalProfilesSaved()
+
+  const localOnlyWarning = (detail?: string): SaveBlueprintAnnotationsResult => ({
+    localSaved: true,
+    cloudSynced: false,
+    warning: isLocalDevOrigin()
+      ? (detail ? `Wire profiles saved locally. Cloud sync blocked: ${detail}` : 'Wire profiles saved locally. Localhost cloud sync blocked while remote is newer.')
+      : (detail ? `Wire profiles saved locally. Cloud sync will retry shortly. (${detail})` : 'Wire profiles saved locally. Cloud sync will retry shortly.'),
+  })
+
+  if (!isSupabaseConfigured()) return localOnlyWarning('Supabase not configured')
+
+  const remote = await fetchLatestRemoteBackup(userId || undefined)
+  if (remote.error) {
+    console.warn('[WireProfiles] Remote fetch failed - local-only save', remote.error)
+    return localOnlyWarning(remote.error)
+  }
+
+  const latestLocal = getBackupData() || localMerged
+  const latestList = getOperationsBlueprintWireProfilesRaw(latestLocal, cleanProjectId)
+
+  if (!remote.hasRemoteRow || !remote.remoteData) {
+    const merged = applyWireProfilesToBackup(latestLocal, cleanProjectId, latestList)
+    const result = await saveBackupDataAndSyncNow(merged, 'blueprintSummaries', { source: 'wire-profiles-first-sync', _scopes: [SCOPE] })
+    return result.success
+      ? { localSaved: true, cloudSynced: true }
+      : { localSaved: true, cloudSynced: false, warning: result.error || 'Wire profiles saved locally. Cloud sync did not complete.', error: result.error }
+  }
+
+  const mergedFromRemote = applyWireProfilesToBackup(remote.remoteData, cleanProjectId, latestList)
+  const result = await saveBackupWithRemoteBaselineSync(
+    mergedFromRemote,
+    {
+      remoteUpdatedAt: remote.remoteUpdatedAt,
+      remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+    },
+    { source: 'wire-profiles-remote-merge', _scopes: [SCOPE] },
+  )
+
+  if (result.success) return { localSaved: true, cloudSynced: true }
+  return {
+    localSaved: result.localSaved !== false,
+    cloudSynced: false,
+    warning: result.error || 'Wire profiles saved locally. Cloud sync did not complete.',
+    error: result.error || 'Failed to sync wire profiles.',
+  }
+}
+
+export async function createOperationsBlueprintWireProfile(backup: any, input: Parameters<typeof createWireProfile>[0]): Promise<SaveBlueprintAnnotationsResult & { profile?: WireProfile }> {
+  const profile = createWireProfile(input)
+  const list = getOperationsBlueprintWireProfiles(backup, profile.projectId)
+  const result = await saveOperationsBlueprintWireProfiles(backup, profile.projectId, [...list, profile])
+  return { ...result, profile }
+}
+
+export async function upsertOperationsBlueprintWireProfile(backup: any, profile: WireProfile): Promise<SaveBlueprintAnnotationsResult> {
+  const clean = sanitizeWireProfile(profile)
+  if (!clean) return { localSaved: false, cloudSynced: false, error: 'Invalid wire profile.' }
+  const raw = getOperationsBlueprintWireProfilesRaw(backup, clean.projectId)
+  const idx = raw.findIndex((item) => item.id === clean.id)
+  const next = idx >= 0
+    ? raw.map((item) => item.id === clean.id ? clean : item)
+    : [...raw, clean]
+  return saveOperationsBlueprintWireProfiles(backup, clean.projectId, next)
+}
+
+export async function updateOperationsBlueprintWireProfile(backup: any, projectId: string, profileId: string, patch: Partial<WireProfile>): Promise<SaveBlueprintAnnotationsResult & { profile?: WireProfile }> {
+  const existing = getOperationsBlueprintWireProfileById(backup, projectId, profileId)
+  if (!existing) return { localSaved: false, cloudSynced: false, error: 'Wire profile not found.' }
+  const profile = updateWireProfile(existing, patch)
+  const result = await upsertOperationsBlueprintWireProfile(backup, profile)
+  return { ...result, profile }
+}
+
+export async function duplicateOperationsBlueprintWireProfile(backup: any, projectId: string, profileId: string): Promise<SaveBlueprintAnnotationsResult & { profile?: WireProfile }> {
+  const existing = getOperationsBlueprintWireProfileById(backup, projectId, profileId)
+  if (!existing) return { localSaved: false, cloudSynced: false, error: 'Wire profile not found.' }
+  const profile = duplicateWireProfile(existing)
+  const list = getOperationsBlueprintWireProfiles(backup, projectId)
+  const result = await saveOperationsBlueprintWireProfiles(backup, projectId, [...list, profile])
+  return { ...result, profile }
+}
+
+export async function archiveOperationsBlueprintWireProfile(backup: any, projectId: string, profileId: string): Promise<SaveBlueprintAnnotationsResult> {
+  const existing = getOperationsBlueprintWireProfileById(backup, projectId, profileId)
+  if (!existing) return { localSaved: false, cloudSynced: false, error: 'Wire profile not found.' }
+  return upsertOperationsBlueprintWireProfile(backup, archiveWireProfile(existing))
+}
+
+export async function restoreOperationsBlueprintWireProfile(backup: any, projectId: string, profileId: string): Promise<SaveBlueprintAnnotationsResult> {
+  const existing = getOperationsBlueprintWireProfileById(backup, projectId, profileId)
+  if (!existing) return { localSaved: false, cloudSynced: false, error: 'Wire profile not found.' }
+  return upsertOperationsBlueprintWireProfile(backup, restoreWireProfile(existing))
+}
+
+export function identifyOperationsBlueprintWireProfileReferences(backup: any, projectId: string, profileId: string): BlueprintAnnotation[] {
+  const id = String(profileId || '').trim()
+  const cleanProjectId = String(projectId || '').trim()
+  if (!id || !cleanProjectId) return []
+  const annotationMap = backup?.blueprintSummaries?.operationsBlueprintAnnotations
+  if (!annotationMap || typeof annotationMap !== 'object' || Array.isArray(annotationMap)) return []
+  const refs: BlueprintAnnotation[] = []
+  for (const rawList of Object.values(annotationMap)) {
+    if (!Array.isArray(rawList)) continue
+    for (const annotation of rawList.map(sanitizeAnnotation).filter(Boolean) as BlueprintAnnotation[]) {
+      if (annotation.projectId !== cleanProjectId || annotation.deletedAt) continue
+      const meta = annotation.meta && typeof annotation.meta === 'object'
+        ? annotation.meta
+        : annotation.metadata && typeof annotation.metadata === 'object'
+          ? annotation.metadata
+          : {}
+      const defaultId = String(meta.wireProfileId || '').trim()
+      const segmentIds = Array.isArray(meta.segmentWireProfileIds)
+        ? meta.segmentWireProfileIds.map((entry: any) => String(entry || '').trim())
+        : []
+      if (defaultId === id || segmentIds.includes(id)) refs.push(annotation)
+    }
+  }
+  return refs
+}
+
+export async function deleteUnreferencedOperationsBlueprintWireProfile(
+  backup: any,
+  projectId: string,
+  profileId: string,
+): Promise<SaveBlueprintAnnotationsResult> {
+  const existing = getOperationsBlueprintWireProfileById(backup, projectId, profileId)
+  if (!existing) return { localSaved: false, cloudSynced: false, error: 'Wire profile not found.' }
+  if (identifyOperationsBlueprintWireProfileReferences(backup, projectId, profileId).length > 0) {
+    return { localSaved: false, cloudSynced: false, error: 'Referenced wire profiles cannot be hard-deleted.' }
+  }
+  return upsertOperationsBlueprintWireProfile(backup, createWireProfileTombstone(existing))
 }
 
 function coerceScopeLayerHours(value: any): number {

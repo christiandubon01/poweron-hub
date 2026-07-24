@@ -66,4 +66,42 @@ describe('playback geometry', () => {
     expect(prepared.steps[0].geometry?.pointAtProgress(1)).toEqual({ x: 0.1, y: 0.5 })
     expect(prepared.steps[0].geometry?.length).toBeCloseTo(0.8)
   })
+
+  it('keeps route projection unchanged when circuit wire profile metadata is present', () => {
+    const baseAnnotation: RouteBuilderAnnotation = {
+      id: 'circuit-profiled', pageNumber: 1, label: 'Circuit', shapeKind: 'circuit-path',
+      points: [{ x: 0.1, y: 0.5 }, { x: 0.5, y: 0.5 }, { x: 0.9, y: 0.5 }],
+      pointIds: ['p1', 'p2', 'p3'], segmentIds: ['s1', 's2'],
+    }
+    const profiledAnnotation = {
+      ...baseAnnotation,
+      meta: {
+        wireProfileId: 'wire_profile_default',
+        segmentWireProfileIds: [null, 'wire_profile_override'],
+      },
+    } as RouteBuilderAnnotation
+    const fingerprint = createCircuitGeometryFingerprint({
+      annotationId: baseAnnotation.id,
+      pageNumber: baseAnnotation.pageNumber,
+      shapeKind: 'circuit-path',
+      points: baseAnnotation.points!,
+    })
+    const scene = createDefaultBlueprintAnimationScene({ id: 'scene-profiled', now: '2026-07-24T00:00:00.000Z' })
+    scene.nodes = [
+      { id: 'source', roles: ['source'], anchor: { kind: 'virtual-point', pageNumber: 1, x: 0.1, y: 0.5 } },
+      { id: 'load', roles: ['load'], anchor: { kind: 'virtual-point', pageNumber: 1, x: 0.9, y: 0.5 } },
+    ]
+    scene.sources = [{ id: 'source-1', nodeId: 'source' }]
+    scene.edges = [{
+      id: 'edge-1', fromNodeId: 'source', toNodeId: 'load', channel: 'generic-route',
+      geometry: { kind: 'circuit-segment', annotationId: 'circuit-profiled', segmentId: 's2', fromT: 0, toT: 1, geometryFingerprint: fingerprint },
+    }]
+    scene.manualTraversal = [{ id: 'step-1', edgeId: 'edge-1', direction: 'forward' }]
+
+    const base = preparePlaybackGeometry({ scene, annotations: [baseAnnotation], pageMetrics: { width: 1000, height: 1000 } })
+    const profiled = preparePlaybackGeometry({ scene, annotations: [profiledAnnotation], pageMetrics: { width: 1000, height: 1000 } })
+    expect(profiled.steps[0].geometry?.pointAtProgress(0)).toEqual(base.steps[0].geometry?.pointAtProgress(0))
+    expect(profiled.steps[0].geometry?.pointAtProgress(1)).toEqual(base.steps[0].geometry?.pointAtProgress(1))
+    expect(profiled.steps[0].geometry?.length).toBeCloseTo(base.steps[0].geometry?.length || 0)
+  })
 })

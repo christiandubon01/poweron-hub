@@ -60,12 +60,21 @@ import {
 } from '@/services/backupDataService'
 import {
   deleteOperationsBlueprintScopeLayer,
+  deleteUnreferencedOperationsBlueprintWireProfile,
+  getOperationsBlueprintAnnotations,
+  getOperationsBlueprintAnnotationsRaw,
   getOperationsBlueprintScopeLayers,
+  getOperationsBlueprintWireProfiles,
   getLiveBlueprintSetRecords,
+  identifyOperationsBlueprintWireProfileReferences,
   mergeBlueprintScopeLayersById,
   mergeBlueprintSetRecordsById,
+  mergeBlueprintWireProfilesById,
+  resolveOperationsBlueprintWireProfile,
+  saveOperationsBlueprintWireProfiles,
   saveOperationsBlueprintScopeLayerAnimationScene,
   saveOperationsBlueprintScopeLayers,
+  upsertOperationsBlueprintWireProfile,
 } from '@/services/blueprintLibraryService'
 import { createDefaultBlueprintAnimationScene } from '@/features/blueprint-animation/sceneSchema'
 
@@ -124,6 +133,21 @@ function scopeLayer(id = 'package-1', updatedAt = NEW, extra: Record<string, unk
   })
 }
 
+function wireProfile(id = 'wire_profile_1', projectId = 'project-1', updatedAt = NEW, extra: Record<string, unknown> = {}): any {
+  return record(id, updatedAt, {
+    projectId,
+    name: 'Branch MC',
+    installationFamily: 'mc',
+    displayColor: '#facc15',
+    displayWidth: 3,
+    displayStyle: 'solid',
+    wastePercent: 5,
+    allowedTools: ['circuit-path', 'circuit-arc'],
+    isArchived: false,
+    ...extra,
+  })
+}
+
 function animationScene(revision = 1, extra: Record<string, unknown> = {}): any {
   return {
     ...createDefaultBlueprintAnimationScene({ id: 'scene-1', now: OLD }),
@@ -135,7 +159,9 @@ function animationScene(revision = 1, extra: Record<string, unknown> = {}): any 
 
 beforeEach(() => {
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new MemoryStorage() })
-  Object.defineProperty(globalThis, 'window', { configurable: true, value: new EventTarget() })
+  const testWindow = new EventTarget() as any
+  testWindow.location = { hostname: 'localhost' }
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: testWindow })
   setNavigator('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
   vi.spyOn(Math, 'random').mockReturnValue(0.25)
   supabaseState.capturedPayload = null
@@ -186,6 +212,368 @@ describe('merge preservation', () => {
     expect((outgoing.projects[0] as any).blueprints.map((item: any) => item.id)).toEqual(expect.arrayContaining(['legacy-local', 'legacy-remote']))
     expect((outgoing as any).blueprintSummaries.operationsBlueprintLibrary.map((item: any) => item.id)).toEqual(expect.arrayContaining(['library-local', 'library-remote']))
     expect((outgoing as any).blueprintSummaries.operationsBlueprintAnnotations['library-remote'].map((item: any) => item.id)).toContain('annotation-remote')
+  })
+})
+
+describe('wire profile library persistence', () => {
+  it('saves, loads, and isolates project-scoped profile libraries', async () => {
+    const backup = {
+      blueprintSummaries: {
+        operationsBlueprintWireProfiles: {
+          'project-1': [wireProfile('wire_profile_project_1', 'project-1')],
+          'project-2': [wireProfile('wire_profile_project_2', 'project-2')],
+        },
+      },
+    } as any
+    saveBackupData(backup as any)
+
+    await upsertOperationsBlueprintWireProfile(backup, wireProfile('wire_profile_new', 'project-1', NEWER))
+    const saved = getBackupData() as any
+    expect(getOperationsBlueprintWireProfiles(saved, 'project-1').map((profile) => profile.id)).toEqual(expect.arrayContaining(['wire_profile_project_1', 'wire_profile_new']))
+    expect(getOperationsBlueprintWireProfiles(saved, 'project-2').map((profile) => profile.id)).toEqual(['wire_profile_project_2'])
+  })
+
+  it('merges profiles by stable id while preserving local-only, remote-only, and same-name records', () => {
+    const localOnly = wireProfile('wire_profile_local')
+    const remoteOnly = wireProfile('wire_profile_remote', 'project-1', NEWER)
+    const staleSameId = wireProfile('wire_profile_same', 'project-1', OLD, { name: 'Stale' })
+    const newerSameId = wireProfile('wire_profile_same', 'project-1', NEWER, { name: 'Newer' })
+    const sameNameA = wireProfile('wire_profile_name_a', 'project-1', NEW, { name: 'Duplicate Name' })
+    const sameNameB = wireProfile('wire_profile_name_b', 'project-1', NEW, { name: 'Duplicate Name' })
+
+    const merged = mergeBlueprintWireProfilesById(
+      [remoteOnly, newerSameId, sameNameA],
+      [localOnly, staleSameId, sameNameB],
+    )
+    expect(merged.map((profile) => profile.id)).toEqual(expect.arrayContaining([
+      'wire_profile_local',
+      'wire_profile_remote',
+      'wire_profile_same',
+      'wire_profile_name_a',
+      'wire_profile_name_b',
+    ]))
+    expect(merged.find((profile) => profile.id === 'wire_profile_same')?.name).toBe('Newer')
+  })
+
+  it('does not delete profiles by omission and preserves remote-only profiles in backup folds', () => {
+    const local = {
+      blueprintSummaries: {
+        operationsBlueprintWireProfiles: {
+          'project-1': [wireProfile('wire_profile_local')],
+        },
+      },
+    } as any
+    const remote = {
+      blueprintSummaries: {
+        operationsBlueprintWireProfiles: {
+          'project-1': [wireProfile('wire_profile_remote', 'project-1', NEWER)],
+        },
+      },
+    } as any
+
+    const applied = mergeLocalRecordsIntoRemoteSnapshot(remote, local)
+    expect((applied as any).blueprintSummaries.operationsBlueprintWireProfiles['project-1'].map((profile: any) => profile.id)).toEqual(expect.arrayContaining(['wire_profile_local', 'wire_profile_remote']))
+
+    const outgoing = mergeRemoteBlueprintSummariesIntoOutgoing(local, remote)
+    expect((outgoing as any).blueprintSummaries.operationsBlueprintWireProfiles['project-1'].map((profile: any) => profile.id)).toEqual(expect.arrayContaining(['wire_profile_local', 'wire_profile_remote']))
+  })
+
+  it('keeps Profile B and C live when a stale client saves only updated Profile A', async () => {
+    const profileA = wireProfile('wire_profile_A', 'project-1', OLD, { name: 'Profile A' })
+    const profileB = wireProfile('wire_profile_B', 'project-1', OLD, { name: 'Profile B' })
+    const profileC = wireProfile('wire_profile_C', 'project-1', OLD, { name: 'Profile C' })
+    const backup = {
+      blueprintSummaries: {
+        operationsBlueprintWireProfiles: {
+          'project-1': [profileA, profileB, profileC],
+        },
+      },
+    } as any
+    saveBackupData(backup as any)
+
+    await saveOperationsBlueprintWireProfiles(backup, 'project-1', [
+      { ...profileA, name: 'Profile A Updated', updatedAt: NEWER },
+    ])
+
+    const savedProfiles = getOperationsBlueprintWireProfiles(getBackupData(), 'project-1')
+    const byId = new Map(savedProfiles.map((profile) => [profile.id, profile]))
+    expect(savedProfiles).toHaveLength(3)
+    expect(byId.get('wire_profile_A')?.name).toBe('Profile A Updated')
+    expect(byId.get('wire_profile_B')?.deletedAt).toBeUndefined()
+    expect(byId.get('wire_profile_C')?.deletedAt).toBeUndefined()
+    expect([...byId.keys()]).toEqual(expect.arrayContaining(['wire_profile_A', 'wire_profile_B', 'wire_profile_C']))
+  })
+
+  it('keeps omitted profiles live when stored order differs from stale save payload order', async () => {
+    const profileA = wireProfile('wire_profile_A', 'project-1', OLD, { name: 'Profile A' })
+    const profileB = wireProfile('wire_profile_B', 'project-1', OLD, { name: 'Profile B' })
+    const profileC = wireProfile('wire_profile_C', 'project-1', OLD, { name: 'Profile C' })
+    const backup = {
+      blueprintSummaries: {
+        operationsBlueprintWireProfiles: {
+          'project-1': [profileC, profileB, profileA],
+        },
+      },
+    } as any
+    saveBackupData(backup as any)
+
+    await saveOperationsBlueprintWireProfiles(backup, 'project-1', [
+      { ...profileA, name: 'Profile A Updated Again', updatedAt: NEWER },
+    ])
+
+    const savedProfiles = getOperationsBlueprintWireProfiles(getBackupData(), 'project-1')
+    const byId = new Map(savedProfiles.map((profile) => [profile.id, profile]))
+    expect(savedProfiles).toHaveLength(3)
+    expect(byId.get('wire_profile_A')?.name).toBe('Profile A Updated Again')
+    expect(byId.get('wire_profile_B')?.deletedAt).toBeUndefined()
+    expect(byId.get('wire_profile_C')?.deletedAt).toBeUndefined()
+  })
+
+  it('merges profile content equivalently when local and remote array order is reversed', () => {
+    const remote = [
+      wireProfile('wire_profile_remote_only', 'project-1', NEW, { name: 'Remote Only' }),
+      wireProfile('wire_profile_conflict', 'project-1', NEWER, { name: 'Remote Newer' }),
+      wireProfile('wire_profile_archived', 'project-1', NEW, { name: 'Archived', isArchived: true }),
+      wireProfile('wire_profile_same_name_a', 'project-1', NEW, { name: 'Same Name' }),
+    ]
+    const local = [
+      wireProfile('wire_profile_local_only', 'project-1', NEW, { name: 'Local Only' }),
+      wireProfile('wire_profile_conflict', 'project-1', OLD, { name: 'Local Older' }),
+      wireProfile('wire_profile_tombstoned', 'project-1', NEWER, { name: 'Deleted', deletedAt: NEWER }),
+      wireProfile('wire_profile_same_name_b', 'project-1', NEW, { name: 'Same Name' }),
+    ]
+
+    const summarize = (profiles: any[]) => Object.fromEntries(
+      profiles.map((profile) => [profile.id, {
+        name: profile.name,
+        isArchived: profile.isArchived,
+        deletedAt: profile.deletedAt,
+      }]),
+    )
+    expect(summarize(mergeBlueprintWireProfilesById(remote, local))).toEqual(
+      summarize(mergeBlueprintWireProfilesById([...remote].reverse(), [...local].reverse())),
+    )
+  })
+
+  it('archives exactly one profile and distinguishes active archived and missing references', async () => {
+    const backup = {
+      blueprintSummaries: {
+        operationsBlueprintWireProfiles: {
+          'project-1': [
+            wireProfile('wire_profile_active'),
+            wireProfile('wire_profile_archived', 'project-1', NEW, { isArchived: true }),
+          ],
+        },
+      },
+    } as any
+    saveBackupData(backup as any)
+
+    await upsertOperationsBlueprintWireProfile(backup, wireProfile('wire_profile_active', 'project-1', NEWER, { isArchived: true }))
+    const saved = getBackupData() as any
+    expect(resolveOperationsBlueprintWireProfile(saved, 'project-1', 'wire_profile_active')).toMatchObject({ status: 'ASSIGNED_ARCHIVED' })
+    expect(resolveOperationsBlueprintWireProfile(saved, 'project-1', 'wire_profile_archived')).toMatchObject({ status: 'ASSIGNED_ARCHIVED' })
+    expect(resolveOperationsBlueprintWireProfile(saved, 'project-1', 'wire_profile_missing')).toEqual({ status: 'MISSING', profileId: 'wire_profile_missing' })
+  })
+
+  it('tombstones exactly one unreferenced profile and refuses referenced profile deletion', async () => {
+    const backup = {
+      blueprintSummaries: {
+        operationsBlueprintWireProfiles: {
+          'project-1': [
+            wireProfile('wire_profile_referenced'),
+            wireProfile('wire_profile_unreferenced'),
+          ],
+        },
+        operationsBlueprintAnnotations: {
+          'set-1': [
+            annotation('ann-profiled', 'set-1', NEW),
+            annotation('ann-override', 'set-1', NEW),
+          ],
+        },
+      },
+    } as any
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][0].meta = { shapeKind: 'circuit-path', wireProfileId: 'wire_profile_referenced' }
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][1].meta = { shapeKind: 'circuit-arc', segmentWireProfileIds: ['wire_profile_referenced'] }
+    saveBackupData(backup as any)
+
+    expect(identifyOperationsBlueprintWireProfileReferences(backup, 'project-1', 'wire_profile_referenced')).toHaveLength(2)
+    await expect(deleteUnreferencedOperationsBlueprintWireProfile(backup, 'project-1', 'wire_profile_referenced')).resolves.toMatchObject({
+      localSaved: false,
+      error: 'Referenced wire profiles cannot be hard-deleted.',
+    })
+
+    const deleteResult = await deleteUnreferencedOperationsBlueprintWireProfile(backup, 'project-1', 'wire_profile_unreferenced')
+    expect(deleteResult.localSaved).toBe(true)
+    const raw = (getBackupData() as any).blueprintSummaries.operationsBlueprintWireProfiles['project-1']
+    expect(raw.find((profile: any) => profile.id === 'wire_profile_unreferenced')?.deletedAt).toBeTruthy()
+    expect(raw.find((profile: any) => profile.id === 'wire_profile_referenced')?.deletedAt).toBeUndefined()
+  })
+
+  it.each([
+    ['meta default', { meta: { shapeKind: 'circuit-path', wireProfileId: 'wire_profile_referenced' } }],
+    ['metadata default', { metadata: { shapeKind: 'circuit-path', wireProfileId: 'wire_profile_referenced' } }],
+    ['meta segment override', { meta: { shapeKind: 'circuit-path', wireProfileId: 'wire_profile_other', segmentWireProfileIds: ['wire_profile_referenced'] } }],
+    ['metadata segment override', { metadata: { shapeKind: 'circuit-path', wireProfileId: 'wire_profile_other', segmentWireProfileIds: ['wire_profile_referenced'] } }],
+  ])('refuses deletion for a live circuit reference through %s', async (_label, annotationPatch) => {
+    const ann = {
+      ...annotation('ann-reference', 'set-1', NEW),
+      type: 'shape',
+      ...annotationPatch,
+    }
+    const backup = {
+      blueprintSummaries: {
+        operationsBlueprintWireProfiles: {
+          'project-1': [wireProfile('wire_profile_referenced')],
+        },
+        operationsBlueprintAnnotations: { 'set-1': [ann] },
+      },
+    } as any
+
+    expect(identifyOperationsBlueprintWireProfileReferences(backup, 'project-1', 'wire_profile_referenced')).toHaveLength(1)
+    await expect(deleteUnreferencedOperationsBlueprintWireProfile(backup, 'project-1', 'wire_profile_referenced')).resolves.toMatchObject({
+      localSaved: false,
+      error: 'Referenced wire profiles cannot be hard-deleted.',
+    })
+  })
+
+  it('ignores tombstoned annotations and references from other projects during profile deletion', async () => {
+    const tombstoned = {
+      ...annotation('ann-deleted-reference', 'set-1', NEW),
+      type: 'shape',
+      meta: { shapeKind: 'circuit-path', wireProfileId: 'wire_profile_referenced' },
+      deletedAt: NEWER,
+      updatedAt: NEWER,
+    }
+    const otherProject = {
+      ...annotation('ann-other-project-reference', 'set-2', NEW),
+      projectId: 'project-2',
+      type: 'shape',
+      meta: { shapeKind: 'circuit-path', wireProfileId: 'wire_profile_referenced' },
+    }
+    const backup = {
+      blueprintSummaries: {
+        operationsBlueprintWireProfiles: {
+          'project-1': [wireProfile('wire_profile_referenced')],
+        },
+        operationsBlueprintAnnotations: {
+          'set-1': [tombstoned],
+          'set-2': [otherProject],
+        },
+      },
+    } as any
+    saveBackupData(backup as any)
+
+    expect(identifyOperationsBlueprintWireProfileReferences(backup, 'project-1', 'wire_profile_referenced')).toHaveLength(0)
+    const result = await deleteUnreferencedOperationsBlueprintWireProfile(backup, 'project-1', 'wire_profile_referenced')
+    expect(result.localSaved).toBe(true)
+    const raw = (getBackupData() as any).blueprintSummaries.operationsBlueprintWireProfiles['project-1']
+    expect(raw.find((profile: any) => profile.id === 'wire_profile_referenced')?.deletedAt).toBeTruthy()
+  })
+
+  it('loads legacy BackupData without a profile collection safely', () => {
+    const legacy = { blueprintSummaries: {} } as any
+    expect(getOperationsBlueprintWireProfiles(legacy, 'project-1')).toEqual([])
+    expect(legacy.blueprintSummaries.operationsBlueprintWireProfiles).toEqual({})
+  })
+
+  it('preserves circuit profile metadata through annotation sanitization and save reload', () => {
+    const backup = {
+      blueprintSummaries: {
+        operationsBlueprintAnnotations: {
+          'set-1': [
+            annotation('path-profiled', 'set-1', NEW),
+            annotation('arc-profiled', 'set-1', NEW),
+          ],
+        },
+      },
+    } as any
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][0].type = 'shape'
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][0].color = '#facc15'
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][0].meta = {
+      shapeKind: 'circuit-path',
+      points: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.2 }],
+      pointIds: ['p1', 'p2'],
+      segmentIds: ['s1'],
+      wireProfileId: 'wire_profile_path',
+      segmentWireProfileIds: [null],
+      borderColor: '#facc15',
+      borderThickness: 3,
+      totalDistance: 12,
+    }
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][1].type = 'shape'
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][1].meta = {
+      shapeKind: 'circuit-arc',
+      points: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.2 }],
+      pointIds: ['p1', 'p2'],
+      segmentIds: ['s1'],
+      arcCtrls: [{ x: 0.15, y: 0.05 }],
+      wireProfileId: 'wire_profile_arc',
+      segmentWireProfileIds: ['wire_profile_segment'],
+    }
+
+    const raw = getOperationsBlueprintAnnotationsRaw(backup, 'set-1')
+    expect(raw[0].meta?.wireProfileId).toBe('wire_profile_path')
+    expect(raw[0].meta?.segmentWireProfileIds).toEqual([null])
+    expect(raw[0].meta?.points).toHaveLength(2)
+    expect(raw[1].meta?.arcCtrls).toEqual([{ x: 0.15, y: 0.05 }])
+  })
+
+  it('keeps legacy circuit annotations unassigned without color mapping or load rewrite', () => {
+    const backup = {
+      blueprintSummaries: {
+        operationsBlueprintAnnotations: {
+          'set-1': [
+            annotation('legacy-yellow-path', 'set-1', NEW),
+            annotation('legacy-purple-arc', 'set-1', NEW),
+          ],
+        },
+      },
+    } as any
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][0].type = 'shape'
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][0].color = '#facc15'
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][0].meta = { shapeKind: 'circuit-path', points: [{ x: 0, y: 0 }, { x: 1, y: 0 }], segmentIds: ['s1'] }
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][1].type = 'shape'
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][1].color = '#a855f7'
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][1].meta = { shapeKind: 'circuit-arc', points: [{ x: 0, y: 0 }, { x: 1, y: 0 }], segmentIds: ['s1'] }
+
+    const before = JSON.stringify(backup)
+    const loaded = getOperationsBlueprintAnnotations(backup, 'set-1')
+    expect(loaded.map((ann) => ann.meta?.wireProfileId ?? null)).toEqual([null, null])
+    expect(JSON.stringify(backup)).toBe(before)
+  })
+
+  it('keeps work-package membership and labor unchanged when profiled circuits exist', () => {
+    const backup = {
+      blueprintSummaries: {
+        operationsBlueprintAnnotations: {
+          'set-1': [annotation('profiled-circuit', 'set-1', NEW)],
+        },
+        operationsBlueprintScopeLayers: {
+          'set-1': [scopeLayer('package-1', NEW, {
+            selectedAnnotationIds: ['profiled-circuit'],
+            itemRefs: [{ annotationId: 'profiled-circuit', pageNumber: 1, label: 'Circuit Path' }],
+            roughInHours: 4,
+            trimHours: 2,
+            testingHours: 1,
+            cleanupHours: 0.5,
+          })],
+        },
+      },
+    } as any
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][0].type = 'shape'
+    backup.blueprintSummaries.operationsBlueprintAnnotations['set-1'][0].meta = {
+      shapeKind: 'circuit-path',
+      wireProfileId: 'wire_profile_1',
+      segmentIds: ['s1'],
+    }
+
+    const layer = getOperationsBlueprintScopeLayers(backup, 'set-1')[0]
+    expect(layer.selectedAnnotationIds).toEqual(['profiled-circuit'])
+    expect(layer.itemRefs).toEqual([{ annotationId: 'profiled-circuit', pageNumber: 1, label: 'Circuit Path' }])
+    expect(layer.roughInHours).toBe(4)
+    expect(layer.trimHours).toBe(2)
+    expect(layer.testingHours).toBe(1)
+    expect(layer.cleanupHours).toBe(0.5)
   })
 })
 

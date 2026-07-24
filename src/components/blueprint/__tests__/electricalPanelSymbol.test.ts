@@ -14,6 +14,7 @@ import {
   isElectricalShapeKind,
   renderElectricalSymbolSvg,
 } from '../OperationsBlueprintPdfViewer'
+import { regenerateCircuitTopologyIds, translateNormalizedPoints } from '@/features/blueprint-animation/routeGeometry'
 
 const panelAnnotation = {
   id: 'panel-1',
@@ -207,5 +208,79 @@ describe('ANIM-5.4 electrical panel symbol', () => {
     const rect = panelAnnotation.rect
     expect(rect.x + rect.w / 2).toBeCloseTo(0.12)
     expect(rect.y + rect.h / 2).toBeCloseTo(0.225)
+  })
+
+  it('preserves circuit wire profiles through copy while regenerating topology identity', () => {
+    const source = {
+      ...panelAnnotation,
+      id: 'circuit-source',
+      type: 'shape',
+      color: '#a855f7',
+      meta: {
+        shapeKind: 'circuit-path',
+        points: [{ x: 0.1, y: 0.1 }, { x: 0.4, y: 0.1 }, { x: 0.4, y: 0.5 }],
+        pointIds: ['p1', 'p2', 'p3'],
+        segmentIds: ['s1', 's2'],
+        wireProfileId: 'wire_profile_default',
+        segmentWireProfileIds: [null, 'wire_profile_override'],
+      },
+    } as any
+    const template = cloneBlueprintAnnotationForPaste(source)
+    const movedPoints = translateNormalizedPoints(template.meta.points, 0.05, 0.05)
+    let serial = 0
+    const topology = regenerateCircuitTopologyIds(movedPoints, (kind) => `${kind}-copy-${++serial}`)
+    const pasted: any = {
+      ...template,
+      id: 'circuit-copy',
+      meta: {
+        ...template.meta,
+        points: movedPoints,
+        pointIds: topology.pointIds,
+        segmentIds: topology.segmentIds,
+      },
+    }
+
+    expect(pasted.id).not.toBe(source.id)
+    expect(pasted.meta.pointIds).not.toEqual(source.meta.pointIds)
+    expect(pasted.meta.segmentIds).not.toEqual(source.meta.segmentIds)
+    expect(pasted.meta.wireProfileId).toBe('wire_profile_default')
+    expect(pasted.meta.segmentWireProfileIds).toEqual([null, 'wire_profile_override'])
+  })
+
+  it('preserves circuit profile metadata across geometry and appearance edits', () => {
+    const source = {
+      ...panelAnnotation,
+      id: 'circuit-edit',
+      type: 'shape',
+      color: '#facc15',
+      meta: {
+        shapeKind: 'circuit-arc',
+        points: [{ x: 0.1, y: 0.1 }, { x: 0.4, y: 0.5 }],
+        arcCtrls: [{ x: 0.25, y: 0.05 }],
+        segmentIds: ['s1'],
+        wireProfileId: 'wire_profile_arc',
+        segmentWireProfileIds: ['wire_profile_arc_override'],
+      },
+    } as any
+
+    const moved = {
+      ...source,
+      meta: {
+        ...source.meta,
+        points: translateNormalizedPoints(source.meta.points, 0.1, 0.1),
+      },
+    }
+    const controlEdited = {
+      ...moved,
+      meta: {
+        ...moved.meta,
+        arcCtrls: [{ x: 0.3, y: 0.08 }],
+      },
+    }
+    const colorEdited = { ...controlEdited, color: '#ef4444' }
+
+    expect(colorEdited.meta.wireProfileId).toBe('wire_profile_arc')
+    expect(colorEdited.meta.segmentWireProfileIds).toEqual(['wire_profile_arc_override'])
+    expect(colorEdited.color).toBe('#ef4444')
   })
 })

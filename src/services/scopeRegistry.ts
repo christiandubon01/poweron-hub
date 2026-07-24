@@ -26,6 +26,7 @@
 export type DataScope =
   | 'blueprint.annotations'
   | 'blueprint.workPackages'
+  | 'blueprint.wireProfiles'
   | 'project.rfis'
   | 'project.changeOrders'
   | 'project.estimate'
@@ -129,6 +130,20 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
   },
 
   // ── Project inner tabs (all live inside projects[]) ──
+  'blueprint.wireProfiles': {
+    scope: 'blueprint.wireProfiles',
+    dataPath: 'blueprintSummaries.operationsBlueprintWireProfiles[projectId][]',
+    owner: 'blueprint-wire-profiles / blueprintLibraryService',
+    level: 'nested',
+    identityField: 'id',
+    timestampField: 'updatedAt',
+    tombstoneField: 'deletedAt',
+    needsTimestamp: false,
+    needsTombstone: false,
+    strategy: 'id-merge',
+    priority: 'critical',
+    notes: 'EST-1A: project-scoped WireProfile library stored inside BackupData JSON. Profiles merge by stable id; newer updatedAt wins; archived and tombstoned records remain readable/resolvable; omission is never deletion.',
+  },
   'project.rfis': {
     scope: 'project.rfis',
     dataPath: 'projects[].rfis[]',
@@ -726,6 +741,7 @@ export const LEGACY_CHANGED_KEY_TO_SCOPES: Readonly<Record<string, DataScope[]>>
   blueprintSummaries: [
     'blueprint.annotations',
     'blueprint.workPackages',
+    'blueprint.wireProfiles',
   ],
 }
 

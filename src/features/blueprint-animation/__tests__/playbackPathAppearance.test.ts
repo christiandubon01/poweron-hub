@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildCircuitSegmentChannelColorMap,
+  buildPlaybackRouteEdgeAppearanceMap,
   circuitSegmentChannelKey,
   resolvePlaybackChannelColor,
   resolvePlaybackPathState,
@@ -54,5 +55,26 @@ describe('resting circuit segment colors', () => {
     ])
     expect(colors.get(circuitSegmentChannelKey('circuit-1', 'segment-1'))).toBe('#facc15')
     expect(colors.has(circuitSegmentChannelKey('circuit-1', 'segment-2'))).toBe(false)
+  })
+})
+
+describe('wire profile animation boundary', () => {
+  it('uses authored annotation appearance instead of wire profile display color', () => {
+    const colors = buildPlaybackRouteEdgeAppearanceMap({
+      edges: [{
+        id: 'edge-1',
+        fromNodeId: 'source',
+        toNodeId: 'load',
+        geometry: { kind: 'circuit-segment', annotationId: 'circuit-1' },
+      }],
+      manualTraversal: [{ edgeId: 'edge-1' }],
+    }, [{
+      id: 'circuit-1',
+      color: '#facc15',
+      borderColor: '#ef4444',
+      meta: { wireProfileId: 'wire_profile_blue', displayColor: '#3b82f6' },
+    } as any])
+
+    expect(colors.get('edge-1')).toEqual({ baseColor: '#ef4444', overlayColor: '#ef4444' })
   })
 })

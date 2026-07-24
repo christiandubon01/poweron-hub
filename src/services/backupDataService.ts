@@ -35,7 +35,7 @@ import { mergeRemoteMultiDayServiceCallsIntoOutgoing } from './serviceScopeMerge
 // blueprint save path uses, so a stale unrelated whole-app save cannot clobber newer
 // remote blueprint annotations / scope layers. blueprintLibraryService only imports
 // backupDataService dynamically, so this static edge introduces no module cycle.
-import { mergeBlueprintAnnotationsById, mergeBlueprintScopeLayersById, mergeBlueprintSetRecordsById, mergeOperationsBlueprintLibraryById } from './blueprintLibraryService'
+import { mergeBlueprintAnnotationsById, mergeBlueprintScopeLayersById, mergeBlueprintSetRecordsById, mergeBlueprintWireProfilesById, mergeOperationsBlueprintLibraryById } from './blueprintLibraryService'
 import { idbDelete, idbGet, idbSet } from './idbStorage'
 
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
@@ -2350,6 +2350,18 @@ function mergeBlueprintSummariesObject(remoteRaw: any, localRaw: any): Record<st
         )
       }
       merged[key] = nextLayers
+    } else if (key === 'operationsBlueprintWireProfiles') {
+      const remoteProfiles = (merged[key] && typeof merged[key] === 'object') ? merged[key] as Record<string, unknown[]> : {}
+      const localProfiles = (localVal && typeof localVal === 'object') ? localVal as Record<string, unknown[]> : {}
+      const projectIds = new Set([...Object.keys(remoteProfiles), ...Object.keys(localProfiles)])
+      const nextProfiles: Record<string, unknown[]> = { ...remoteProfiles }
+      for (const projectId of projectIds) {
+        nextProfiles[projectId] = mergeBlueprintWireProfilesById(
+          Array.isArray(remoteProfiles[projectId]) ? remoteProfiles[projectId] as any[] : [],
+          Array.isArray(localProfiles[projectId]) ? localProfiles[projectId] as any[] : [],
+        )
+      }
+      merged[key] = nextProfiles
     } else if (key === 'operationsBlueprintLibrary') {
       const remoteLibrary = Array.isArray(merged[key]) ? merged[key] as any[] : []
       const localLibrary = Array.isArray(localVal) ? localVal as any[] : []
@@ -2881,23 +2893,28 @@ function isBlueprintSyncSource(options?: { source?: string | null; _scopes?: Dat
     sourceLower.includes('blueprintsummaries')
     || sourceLower.includes('operationsblueprintannotations')
     || sourceLower.includes('operationsblueprintscopelayers')
+    || sourceLower.includes('operationsblueprintwireprofiles')
     || sourceLower.includes('blueprint.annotations')
     || sourceLower.includes('blueprint.workpackages')
+    || sourceLower.includes('blueprint.wireprofiles')
     || sourceLower.includes('annotation')
     || sourceLower.includes('scope-layers')
+    || sourceLower.includes('wire-profiles')
   ) return true
   const changedKeyLower = options.changedKey ? String(options.changedKey).toLowerCase() : ''
   if (
     changedKeyLower === 'blueprintsummaries'
     || changedKeyLower === 'operationsblueprintannotations'
     || changedKeyLower === 'operationsblueprintscopelayers'
+    || changedKeyLower === 'operationsblueprintwireprofiles'
     || changedKeyLower === 'blueprint.annotations'
     || changedKeyLower === 'blueprint.workpackages'
+    || changedKeyLower === 'blueprint.wireprofiles'
   ) return true
-  if (Array.isArray(options._scopes) && (options._scopes.includes('blueprint.annotations') || options._scopes.includes('blueprint.workPackages'))) return true
+  if (Array.isArray(options._scopes) && (options._scopes.includes('blueprint.annotations') || options._scopes.includes('blueprint.workPackages') || options._scopes.includes('blueprint.wireProfiles'))) return true
   try {
     const scopes = resolveScopesForSyncInput(options.source ?? options.changedKey ?? null)
-    return scopes.includes('blueprint.annotations') || scopes.includes('blueprint.workPackages')
+    return scopes.includes('blueprint.annotations') || scopes.includes('blueprint.workPackages') || scopes.includes('blueprint.wireProfiles')
   } catch {
     return false
   }
@@ -2955,6 +2972,18 @@ export function mergeRemoteBlueprintSummariesIntoOutgoing(outgoing: BackupData, 
         outLayers[setId] = mergeBlueprintScopeLayersById(remoteList, outList)
       }
       outBp.operationsBlueprintScopeLayers = outLayers
+    }
+
+    // Wire profiles: Record<projectId, WireProfile[]>
+    if (isMap(remoteBp.operationsBlueprintWireProfiles)) {
+      const remoteProfiles = remoteBp.operationsBlueprintWireProfiles as Record<string, any[]>
+      const outProfiles = isMap(outBp.operationsBlueprintWireProfiles) ? { ...(outBp.operationsBlueprintWireProfiles as Record<string, any[]>) } : {}
+      for (const projectId of new Set([...Object.keys(remoteProfiles), ...Object.keys(outProfiles)])) {
+        const remoteList = Array.isArray(remoteProfiles[projectId]) ? remoteProfiles[projectId] : []
+        const outList = Array.isArray(outProfiles[projectId]) ? outProfiles[projectId] : []
+        outProfiles[projectId] = mergeBlueprintWireProfilesById(remoteList, outList)
+      }
+      outBp.operationsBlueprintWireProfiles = outProfiles
     }
 
     merged.blueprintSummaries = outBp
