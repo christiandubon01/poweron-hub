@@ -5294,13 +5294,16 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         excludedAnnotationIds: excludedDeviceIds,
       })
       : null
-    const branchOriginIndex = liveSession.draft.branch?.originSelectionId === 'source'
+    const activeRouteBranch = liveSession.draft.activeBranchId
+      ? liveSession.draft.branches.find((branch) => branch.id === liveSession.draft.activeBranchId)
+      : undefined
+    const branchOriginIndex = activeRouteBranch?.originSelectionId === 'source'
       ? 0
-      : liveSession.draft.transitions.findIndex((entry) => entry.id === liveSession.draft.branch?.originSelectionId) + 1
+      : liveSession.draft.transitions.findIndex((entry) => entry.id === activeRouteBranch?.originSelectionId) + 1
     const primaryNodeCandidates = getPackageAnimationPrimaryRouteCandidates(liveSession.draft)
       .filter((candidate) => candidate.pageNumber === currentPage
-        && (liveSession.draft.branch?.transitions.length ? true : candidate.index > branchOriginIndex))
-    const primaryNodeHit = !deviceHit && liveSession.draft.branch?.editing
+        && (activeRouteBranch?.transitions.length ? true : candidate.index > branchOriginIndex))
+    const primaryNodeHit = !deviceHit && activeRouteBranch?.editing
       ? findNearestRouteNode(pointer, primaryNodeCandidates, {
         pageWidth: Math.max(1, overlayRect.width),
         pageHeight: Math.max(1, overlayRect.height),
@@ -5319,7 +5322,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     if (!primaryNodeHit && !intent) return false
     const requiresPrimaryDirectConfirmation = intent?.kind === 'annotation'
       && !!liveSession.draft.source
-      && !liveSession.draft.branch?.editing
+      && !activeRouteBranch?.editing
       && !!animationRouteAnnotations.find((entry) => entry.id === intent.annotationId && isRouteBuilderDeviceKind(entry.shapeKind))
     const allowPrimaryDirectTransition = !requiresPrimaryDirectConfirmation
       || typeof window === 'undefined'

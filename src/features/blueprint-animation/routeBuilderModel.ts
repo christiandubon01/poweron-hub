@@ -118,10 +118,14 @@ export interface RouteBuilderDirectSelection {
 export type RouteBuilderTransition = RouteBuilderSegmentSelection | RouteBuilderDirectSelection
 
 export interface RouteBuilderBranchDraft {
+  id: string
   originSelectionId: 'source' | string
   mode: BlueprintAnimationBranchMode
   transitions: RouteBuilderTransition[]
   editing: boolean
+  persistedBranchOrderId?: string
+  persistedAlternateEdgeIds?: string[]
+  editBaselineTransitions?: RouteBuilderTransition[]
 }
 
 export interface PackageAnimationRouteDraft {
@@ -138,7 +142,8 @@ export interface PackageAnimationRouteDraft {
   sourcePriority?: number
   source?: RouteBuilderSourceSelection
   transitions: RouteBuilderTransition[]
-  branch?: RouteBuilderBranchDraft
+  branches: RouteBuilderBranchDraft[]
+  activeBranchId: string | null
   readOnlyReason?: string
   malformedSceneReason?: string
   dirty: boolean
@@ -163,6 +168,7 @@ export interface ResolvedPackageAnimationRouteDraft {
   traversal: BlueprintAnimationTraversalStep[]
   transitions: ResolvedRouteTransition[]
   branchTransitions: ResolvedRouteTransition[]
+  branchResolutions: ResolvedPackageAnimationRouteBranch[]
   branchOriginNodeId?: string
   /** Set only when the alternate branch rejoins a later primary-route node (completion kind: rejoin). */
   branchConvergenceNodeId?: string
@@ -170,6 +176,17 @@ export interface ResolvedPackageAnimationRouteDraft {
   branchTerminalNodeId?: string
   issues: RouteBuilderIssue[]
   currentEndpoint?: { node: ResolvedNode; point: NormalizedPoint }
+}
+
+export interface ResolvedPackageAnimationRouteBranch {
+  branchId: string
+  originSelectionId: 'source' | string
+  mode: BlueprintAnimationBranchMode
+  transitions: ResolvedRouteTransition[]
+  originNodeId?: string
+  convergenceNodeId?: string
+  terminalNodeId?: string
+  endpoint?: ResolvedNode
 }
 
 export interface RouteBuilderMutationResult {
@@ -208,6 +225,41 @@ function clone<T>(value: T): T {
 function id(prefix: string): string {
   if (globalThis.crypto?.randomUUID) return `${prefix}_${globalThis.crypto.randomUUID()}`
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+}
+
+function activeBranch(draft: PackageAnimationRouteDraft): RouteBuilderBranchDraft | undefined {
+  return draft.activeBranchId ? draft.branches.find((branch) => branch.id === draft.activeBranchId) : undefined
+}
+
+function hasEditingBranch(draft: PackageAnimationRouteDraft): boolean {
+  return draft.branches.some((branch) => branch.editing)
+}
+
+function updateBranch(
+  draft: PackageAnimationRouteDraft,
+  branchId: string,
+  updater: (branch: RouteBuilderBranchDraft) => RouteBuilderBranchDraft,
+): PackageAnimationRouteDraft {
+  return {
+    ...draft,
+    branches: draft.branches.map((branch) => branch.id === branchId ? updater(branch) : branch),
+  }
+}
+
+function normalizeDraftBranches(draft: PackageAnimationRouteDraft & { branch?: RouteBuilderBranchDraft }): PackageAnimationRouteDraft {
+  const legacyBranch = draft.branch
+  const branches = Array.isArray(draft.branches)
+    ? draft.branches
+    : legacyBranch
+      ? [{ ...legacyBranch, id: legacyBranch.id || id('route_branch') }]
+      : []
+  const activeBranchId = draft.activeBranchId ?? branches.find((branch) => branch.editing)?.id ?? null
+  const { branch: _legacyBranch, ...rest } = draft
+  return {
+    ...rest,
+    branches,
+    activeBranchId: activeBranchId && branches.some((branch) => branch.id === activeBranchId) ? activeBranchId : null,
+  }
 }
 
 function center(annotation: RouteBuilderAnnotation): NormalizedPoint | null {
@@ -313,6 +365,7 @@ function isEligibleTerminalNode(node: ResolvedNode): boolean {
 
 function resolvePackageAnimationBranch(
   draft: PackageAnimationRouteDraft,
+  branch: RouteBuilderBranchDraft,
   annotations: Map<string, RouteBuilderAnnotation>,
   nodes: ResolvedNode[],
   resolvedTransitions: ResolvedRouteTransition[],
@@ -332,25 +385,24 @@ function resolvePackageAnimationBranch(
   let branchConvergenceNodeId: string | undefined
   let branchTerminalNodeId: string | undefined
   let branchEndpoint: ResolvedNode | undefined
-  if (draft.branch) {
-    const primaryNodes: ResolvedNode[] = []
-    if (nodes[0]) primaryNodes.push(nodes[0])
-    resolvedTransitions.forEach((transition) => {
-      if (transition.to && primaryNodes[primaryNodes.length - 1]?.id !== transition.to.id) primaryNodes.push(transition.to)
-    })
-    const originIndex = draft.branch.originSelectionId === 'source'
-      ? 0
-      : resolvedTransitions.findIndex((transition) => transition.selection.id === draft.branch?.originSelectionId) + 1
-    let branchCurrent = originIndex >= 0 ? primaryNodes[originIndex] : undefined
-    branchOriginNodeId = branchCurrent?.id
-    const branchVisitedNodeIds = new Set(branchCurrent ? [branchCurrent.id] : [])
-    const branchVisitedPoints = branchCurrent ? [branchCurrent.point] : []
+  const primaryNodes: ResolvedNode[] = []
+  if (nodes[0]) primaryNodes.push(nodes[0])
+  resolvedTransitions.forEach((transition) => {
+    if (transition.to && primaryNodes[primaryNodes.length - 1]?.id !== transition.to.id) primaryNodes.push(transition.to)
+  })
+  const originIndex = branch.originSelectionId === 'source'
+    ? 0
+    : resolvedTransitions.findIndex((transition) => transition.selection.id === branch.originSelectionId) + 1
+  let branchCurrent = originIndex >= 0 ? primaryNodes[originIndex] : undefined
+  branchOriginNodeId = branchCurrent?.id
+  const branchVisitedNodeIds = new Set(branchCurrent ? [branchCurrent.id] : [])
+  const branchVisitedPoints = branchCurrent ? [branchCurrent.point] : []
 
-    if (!branchCurrent || originIndex >= primaryNodes.length - 1) {
-      issues.push(issue('error', 'invalid-branch-origin', 'A branch must start at a primary-route node the route continues past, so the route can split.'))
-    }
+  if (!branchCurrent || originIndex >= primaryNodes.length - 1) {
+    issues.push(issue('error', 'invalid-branch-origin', 'A branch must start at a primary-route node the route continues past, so the route can split.'))
+  }
 
-    for (const selection of draft.branch.transitions) {
+  for (const selection of branch.transitions) {
       if (!branchCurrent) {
         issues.push(issue('error', 'invalid-branch-traversal', 'This branch step cannot be resolved before a valid branch origin.', selection.id))
         branchTransitions.push({ selection })
@@ -499,9 +551,9 @@ function resolvePackageAnimationBranch(
     // set above). Otherwise a terminal parallel branch may end at any eligible fixture/device without ever
     // rejoining the primary route. Only require the endpoint to be a device when every step resolved cleanly;
     // a per-step error already blocks the branch and should not be masked by an endpoint message.
-    const allBranchStepsResolved = branchTransitions.length === draft.branch.transitions.length
+    const allBranchStepsResolved = branchTransitions.length === branch.transitions.length
       && branchTransitions.every((entry) => !!entry.to)
-    if (draft.branch.transitions.length === 0) {
+    if (branch.transitions.length === 0) {
       issues.push(issue('error', 'empty-branch', 'Add at least one alternate branch step.'))
     } else if (!branchConvergenceNodeId && allBranchStepsResolved) {
       if (branchEndpoint && isEligibleTerminalNode(branchEndpoint)) {
@@ -510,7 +562,6 @@ function resolvePackageAnimationBranch(
         issues.push(issue('error', 'invalid-branch-endpoint', 'This branch endpoint is not a valid fixture/device. Continue the alternate route to a fixture, or select a later primary-route node to rejoin.'))
       }
     }
-  }
 
   return {
     branchTransitions,
@@ -587,6 +638,7 @@ function pushUniqueNode(nodes: ResolvedNode[], node: ResolvedNode): ResolvedNode
 }
 
 export function resolvePackageAnimationRouteDraft(draft: PackageAnimationRouteDraft): ResolvedPackageAnimationRouteDraft {
+  draft = normalizeDraftBranches(draft as PackageAnimationRouteDraft & { branch?: RouteBuilderBranchDraft })
   const annotations = byId(draft)
   const nodes: ResolvedNode[] = []
   const edges: BlueprintAnimationEdge[] = []
@@ -769,17 +821,39 @@ export function resolvePackageAnimationRouteDraft(draft: PackageAnimationRouteDr
     visitedPoints.push(destinationPoint)
   }
 
-  const branchResolution = resolvePackageAnimationBranch(
-    draft,
-    annotations,
-    nodes,
-    resolvedTransitions,
-    issues,
-    usedSegmentKeys,
-    edges,
-    traversal,
-  )
-  const { branchTransitions, branchOriginNodeId, branchConvergenceNodeId, branchTerminalNodeId, branchEndpoint } = branchResolution
+  const branchResolutions: ResolvedPackageAnimationRouteBranch[] = []
+  for (const branch of draft.branches) {
+    const branchResolution = resolvePackageAnimationBranch(
+      draft,
+      branch,
+      annotations,
+      nodes,
+      resolvedTransitions,
+      issues,
+      usedSegmentKeys,
+      edges,
+      traversal,
+    )
+    branchResolutions.push({
+      branchId: branch.id,
+      originSelectionId: branch.originSelectionId,
+      mode: branch.mode,
+      transitions: branchResolution.branchTransitions,
+      ...(branchResolution.branchOriginNodeId ? { originNodeId: branchResolution.branchOriginNodeId } : {}),
+      ...(branchResolution.branchConvergenceNodeId ? { convergenceNodeId: branchResolution.branchConvergenceNodeId } : {}),
+      ...(branchResolution.branchTerminalNodeId ? { terminalNodeId: branchResolution.branchTerminalNodeId } : {}),
+      ...(branchResolution.branchEndpoint ? { endpoint: branchResolution.branchEndpoint } : {}),
+    })
+  }
+  const branchTransitions = branchResolutions.flatMap((branch) => branch.transitions)
+  const currentBranch = activeBranch(draft)
+  const activeBranchResolution = currentBranch
+    ? branchResolutions.find((branch) => branch.branchId === currentBranch.id)
+    : branchResolutions[0]
+  const branchOriginNodeId = activeBranchResolution?.originNodeId
+  const branchConvergenceNodeId = activeBranchResolution?.convergenceNodeId
+  const branchTerminalNodeId = activeBranchResolution?.terminalNodeId
+  const branchEndpoint = activeBranchResolution?.endpoint
 
   return {
     nodes,
@@ -787,11 +861,12 @@ export function resolvePackageAnimationRouteDraft(draft: PackageAnimationRouteDr
     traversal,
     transitions: resolvedTransitions,
     branchTransitions,
+    branchResolutions,
     issues,
     ...(branchOriginNodeId ? { branchOriginNodeId } : {}),
     ...(branchConvergenceNodeId ? { branchConvergenceNodeId } : {}),
     ...(branchTerminalNodeId ? { branchTerminalNodeId } : {}),
-    ...((draft.branch?.editing && branchEndpoint && !branchConvergenceNodeId)
+    ...((currentBranch?.editing && branchEndpoint && !branchConvergenceNodeId)
       ? { currentEndpoint: { node: branchEndpoint, point: branchEndpoint.point } }
       : current ? { currentEndpoint: { node: current, point: current.point } } : {}),
   }
@@ -818,6 +893,8 @@ export function createEmptyPackageAnimationRouteDraft(options: {
     playbackOptions: { ...scene.playbackOptions },
     sourceId: 'animation_source_primary',
     transitions: [],
+    branches: [],
+    activeBranchId: null,
     dirty: false,
   }
 }
@@ -849,7 +926,8 @@ export function selectPackageAnimationRouteSource(
     ...draft,
     source: { annotationId, channel: inferRouteBuilderDefaultChannel(annotation.shapeKind) },
     transitions: [],
-    branch: undefined,
+    branches: [],
+    activeBranchId: null,
     dirty: true,
     notice: undefined,
   }
@@ -869,15 +947,16 @@ export function addPackageAnimationRouteSegment(
     const message = 'Add this item to the work package before using it in the animation route.'
     return { accepted: false, draft: withNotice(draft, issue('error', 'annotation-not-in-package', message)), message }
   }
-  const targetTransitions = draft.branch?.editing ? draft.branch.transitions : draft.transitions
+  const branch = activeBranch(draft)
+  const targetTransitions = branch?.editing ? branch.transitions : draft.transitions
   const selection: RouteBuilderSegmentSelection = {
     ...clone(pick),
     id: id('route_segment'),
     kind: 'segment',
     channel: targetTransitions.length === 0 ? draft.source.channel : 'generic-route',
   }
-  const candidate: PackageAnimationRouteDraft = draft.branch?.editing
-    ? { ...draft, branch: { ...draft.branch, transitions: [...draft.branch.transitions, selection] }, dirty: true, notice: undefined }
+  const candidate: PackageAnimationRouteDraft = branch?.editing
+    ? { ...updateBranch(draft, branch.id, (entry) => ({ ...entry, transitions: [...entry.transitions, selection] })), dirty: true, notice: undefined }
     : { ...draft, transitions: [...draft.transitions, selection], dirty: true, notice: undefined }
   const blocking = resolvePackageAnimationRouteDraft(candidate).issues.find((entry) => entry.severity === 'error' && entry.selectionId === selection.id)
   if (blocking) return { accepted: false, draft: withNotice(draft, blocking), message: blocking.message }
@@ -900,15 +979,16 @@ export function addPackageAnimationDirectTransition(
     const message = 'Only supported controls, sensors, and light fixtures can be direct destinations.'
     return { accepted: false, draft: withNotice(draft, issue('error', 'invalid-direct-destination', message)), message }
   }
-  const targetTransitions = draft.branch?.editing ? draft.branch.transitions : draft.transitions
+  const branch = activeBranch(draft)
+  const targetTransitions = branch?.editing ? branch.transitions : draft.transitions
   const selection: RouteBuilderDirectSelection = {
     id: id('route_direct'),
     kind: 'direct',
     annotationId,
     channel: targetTransitions.length === 0 ? draft.source.channel : 'generic-route',
   }
-  const candidate: PackageAnimationRouteDraft = draft.branch?.editing
-    ? { ...draft, branch: { ...draft.branch, transitions: [...draft.branch.transitions, selection] }, dirty: true, notice: undefined }
+  const candidate: PackageAnimationRouteDraft = branch?.editing
+    ? { ...updateBranch(draft, branch.id, (entry) => ({ ...entry, transitions: [...entry.transitions, selection] })), dirty: true, notice: undefined }
     : { ...draft, transitions: [...draft.transitions, selection], dirty: true, notice: undefined }
   const blocking = resolvePackageAnimationRouteDraft(candidate).issues.find((entry) => entry.severity === 'error' && entry.selectionId === selection.id)
   if (blocking) return { accepted: false, draft: withNotice(draft, blocking), message: blocking.message }
@@ -963,12 +1043,14 @@ export function tryCompletePackageAnimationRouteBranchAtNode(
   clickedNodeId: string,
   clickedPoint?: NormalizedPoint,
 ): RouteBuilderMutationResult & { diagnostics: PackageAnimationBranchRejoinDiagnostics } {
+  const branch = activeBranch(draft)
   const resolved = resolvePackageAnimationRouteDraft(draft)
   const candidates = primaryRouteCandidatesFromResolved(resolved)
-  const originIndex = draft.branch?.originSelectionId === 'source'
+  const originIndex = branch?.originSelectionId === 'source'
     ? 0
-    : resolved.transitions.findIndex((entry) => entry.selection.id === draft.branch?.originSelectionId) + 1
-  const endpoint = resolved.branchTransitions[resolved.branchTransitions.length - 1]?.to
+    : resolved.transitions.findIndex((entry) => entry.selection.id === branch?.originSelectionId) + 1
+  const activeResolvedBranch = branch ? resolved.branchResolutions.find((entry) => entry.branchId === branch.id) : undefined
+  const endpoint = activeResolvedBranch?.transitions[activeResolvedBranch.transitions.length - 1]?.to
   const clicked = candidates.find((candidate) => candidate.nodeId === clickedNodeId)
   const diagnostics: PackageAnimationBranchRejoinDiagnostics = {
     clickedNodeId,
@@ -990,16 +1072,16 @@ export function tryCompletePackageAnimationRouteBranchAtNode(
     diagnostics: { ...diagnostics, rejectionReason: message },
   })
 
-  if (!draft.branch?.editing) return reject('branch-not-active', 'Start or resume an alternate branch before selecting a rejoin node.')
+  if (!branch?.editing) return reject('branch-not-active', 'Start or resume an alternate branch before selecting a rejoin node.')
   if (!clicked) return reject('missing-rejoin-node', `Primary-route node ${clickedNodeId} is no longer available.`)
   if (clicked.index <= originIndex) return reject('branch-cycle', `Node ${clicked.nodeId} is primary index ${clicked.index}; a rejoin must be later than origin index ${originIndex}.`)
-  if (!endpoint || draft.branch.transitions.length === 0) return reject('empty-branch', 'Select at least one alternate segment before choosing a rejoin node.')
+  if (!endpoint || branch.transitions.length === 0) return reject('empty-branch', 'Select at least one alternate segment before choosing a rejoin node.')
 
   const endpointDistance = distance(endpoint.point, clicked.point)
   if (endpointDistance <= CONNECTION_TOLERANCE) {
-    const lastIndex = draft.branch.transitions.length - 1
-    const transitions = draft.branch.transitions.map((entry, index) => index === lastIndex ? { ...entry, rejoinNodeId: clicked.nodeId } : entry)
-    const candidate = { ...draft, branch: { ...draft.branch, transitions }, dirty: true, notice: undefined }
+    const lastIndex = branch.transitions.length - 1
+    const transitions = branch.transitions.map((entry, index) => index === lastIndex ? { ...entry, rejoinNodeId: clicked.nodeId } : entry)
+    const candidate = { ...updateBranch(draft, branch.id, (entry) => ({ ...entry, transitions })), dirty: true, notice: undefined }
     if (resolvePackageAnimationRouteDraft(candidate).branchConvergenceNodeId === clicked.nodeId) {
       return { accepted: true, draft: candidate, diagnostics: { ...diagnostics, selectedNodeId: clicked.nodeId } }
     }
@@ -1024,7 +1106,7 @@ export function dispatchPackageAnimationRoutePick(
   draft: PackageAnimationRouteDraft,
   action: PackageAnimationRoutePickAction,
 ): PackageAnimationRoutePickResult {
-  const branchActive = !!draft.branch?.editing
+  const branchActive = !!activeBranch(draft)?.editing
   const mode = branchActive ? 'alternate-branch' : 'primary-route'
   let mutation: RouteBuilderMutationResult
 
@@ -1078,57 +1160,126 @@ export function dispatchPackageAnimationRoutePick(
     consumed: true,
     mode,
     category: mutation.accepted ? 'accepted' : 'rejected',
-    branchActive: !!mutation.draft.branch?.editing,
+    branchActive: !!activeBranch(mutation.draft)?.editing,
     ...(rejoinDiagnostics ? { rejoinDiagnostics } : {}),
   }
 }
 
 export function undoPackageAnimationRouteSelection(draft: PackageAnimationRouteDraft): PackageAnimationRouteDraft {
   if (draft.readOnlyReason) return draft
-  if (draft.branch?.editing) {
-    if (draft.branch.transitions.length > 0) {
-      return { ...draft, branch: { ...draft.branch, transitions: draft.branch.transitions.slice(0, -1) }, dirty: true, notice: undefined }
+  const branch = activeBranch(draft)
+  if (branch?.editing) {
+    if (branch.transitions.length > 0) {
+      return { ...updateBranch(draft, branch.id, (entry) => ({ ...entry, transitions: entry.transitions.slice(0, -1) })), dirty: true, notice: undefined }
     }
     return withNotice(draft, issue('warning', 'empty-branch-undo', 'There are no alternate branch steps to undo. Use Cancel Branch to leave alternate-branch mode.'))
   }
   if (draft.transitions.length > 0) {
     return { ...draft, transitions: draft.transitions.slice(0, -1), dirty: true, notice: undefined }
   }
-  return { ...draft, source: undefined, branch: undefined, dirty: true, notice: undefined }
+  return { ...draft, source: undefined, branches: [], activeBranchId: null, dirty: true, notice: undefined }
 }
 
 export function clearPackageAnimationRouteDraft(draft: PackageAnimationRouteDraft): PackageAnimationRouteDraft {
   if (draft.readOnlyReason) return draft
-  return { ...draft, source: undefined, transitions: [], branch: undefined, dirty: true, notice: undefined }
+  return { ...draft, source: undefined, transitions: [], branches: [], activeBranchId: null, dirty: true, notice: undefined }
 }
 
 export function startPackageAnimationRouteBranch(
   draft: PackageAnimationRouteDraft,
   originSelectionId: 'source' | string,
 ): PackageAnimationRouteDraft {
-  if (draft.readOnlyReason || draft.branch) return draft
-  return { ...draft, branch: { originSelectionId, mode: draft.playbackOptions.branchMode, transitions: [], editing: true }, dirty: true, notice: undefined }
+  if (draft.readOnlyReason) return draft
+  if (hasEditingBranch(draft)) return withNotice(draft, issue('error', 'branch-edit-active', 'Finish or cancel the active branch before starting another branch.'))
+  if (draft.branches.some((branch) => branch.originSelectionId === originSelectionId)) {
+    return withNotice(draft, issue('error', 'duplicate-branch-origin', 'That primary-route point already has a branch. Edit or delete the existing branch instead.'))
+  }
+  const resolved = resolvePackageAnimationRouteDraft(draft)
+  const originIndex = originSelectionId === 'source'
+    ? 0
+    : resolved.transitions.findIndex((transition) => transition.selection.id === originSelectionId) + 1
+  const primaryNodes = primaryRouteCandidatesFromResolved(resolved)
+  if (originIndex < 0 || originIndex >= primaryNodes.length - 1) {
+    return withNotice(draft, issue('error', 'invalid-branch-origin', 'A branch must start at a primary-route point the route continues past.'))
+  }
+  const branchId = id('route_branch')
+  return {
+    ...draft,
+    branches: [...draft.branches, { id: branchId, originSelectionId, mode: draft.playbackOptions.branchMode, transitions: [], editing: true }],
+    activeBranchId: branchId,
+    dirty: true,
+    notice: undefined,
+  }
 }
 
 export function finishPackageAnimationRouteBranch(draft: PackageAnimationRouteDraft): PackageAnimationRouteDraft {
-  if (!draft.branch) return draft
+  const branch = activeBranch(draft)
+  if (!branch) return draft
   const resolved = resolvePackageAnimationRouteDraft(draft)
+  const branchResolution = resolved.branchResolutions.find((entry) => entry.branchId === branch.id)
   // A branch may finish two ways: rejoining a later primary node, or terminating at an eligible fixture/device.
-  if (!resolved.branchConvergenceNodeId && !resolved.branchTerminalNodeId) return draft
-  return { ...draft, branch: { ...draft.branch, editing: false }, dirty: true, notice: undefined }
+  if (!branchResolution?.convergenceNodeId && !branchResolution?.terminalNodeId) return draft
+  return {
+    ...updateBranch(draft, branch.id, (entry) => ({ ...entry, editing: false, editBaselineTransitions: undefined })),
+    activeBranchId: null,
+    dirty: true,
+    notice: undefined,
+  }
 }
 
-export function removePackageAnimationRouteBranch(draft: PackageAnimationRouteDraft): PackageAnimationRouteDraft {
-  if (draft.readOnlyReason || !draft.branch) return draft
-  return { ...draft, branch: undefined, dirty: true, notice: undefined }
+export function removePackageAnimationRouteBranch(draft: PackageAnimationRouteDraft, branchId = draft.activeBranchId ?? draft.branches[0]?.id): PackageAnimationRouteDraft {
+  if (draft.readOnlyReason || !branchId) return draft
+  return {
+    ...draft,
+    branches: draft.branches.filter((branch) => branch.id !== branchId),
+    activeBranchId: draft.activeBranchId === branchId ? null : draft.activeBranchId,
+    dirty: true,
+    notice: undefined,
+  }
+}
+
+export function cancelPackageAnimationRouteBranch(draft: PackageAnimationRouteDraft): PackageAnimationRouteDraft {
+  const branch = activeBranch(draft)
+  if (draft.readOnlyReason || !branch) return draft
+  if (branch.editBaselineTransitions) {
+    return {
+      ...updateBranch(draft, branch.id, (entry) => ({
+        ...entry,
+        transitions: clone(entry.editBaselineTransitions ?? []),
+        editBaselineTransitions: undefined,
+        editing: false,
+      })),
+      activeBranchId: null,
+      dirty: true,
+      notice: undefined,
+    }
+  }
+  return removePackageAnimationRouteBranch(draft, branch.id)
+}
+
+export function editPackageAnimationRouteBranch(draft: PackageAnimationRouteDraft, branchId: string): PackageAnimationRouteDraft {
+  if (draft.readOnlyReason || hasEditingBranch(draft)) return draft
+  const branch = draft.branches.find((entry) => entry.id === branchId)
+  if (!branch) return draft
+  return {
+    ...updateBranch(draft, branchId, (entry) => ({
+      ...entry,
+      editing: true,
+      editBaselineTransitions: clone(entry.transitions),
+    })),
+    activeBranchId: branchId,
+    dirty: true,
+    notice: undefined,
+  }
 }
 
 export function setPackageAnimationRouteBranchMode(
   draft: PackageAnimationRouteDraft,
   mode: BlueprintAnimationBranchMode,
 ): PackageAnimationRouteDraft {
-  if (!draft.branch || (mode !== 'simultaneous' && mode !== 'sequential')) return draft
-  return { ...draft, branch: { ...draft.branch, mode }, dirty: true, notice: undefined }
+  const branch = activeBranch(draft)
+  if (!branch || (mode !== 'simultaneous' && mode !== 'sequential')) return draft
+  return { ...updateBranch(draft, branch.id, (entry) => ({ ...entry, mode })), dirty: true, notice: undefined }
 }
 
 export function removePackageAnimationRouteTransition(
@@ -1136,13 +1287,15 @@ export function removePackageAnimationRouteTransition(
   selectionId: string,
 ): PackageAnimationRouteDraft {
   if (draft.readOnlyReason) return draft
-  if (draft.branch?.transitions.some((entry) => entry.id === selectionId)) {
-    return { ...draft, branch: { ...draft.branch, transitions: draft.branch.transitions.filter((entry) => entry.id !== selectionId), editing: true }, dirty: true, notice: undefined }
+  const branch = draft.branches.find((entry) => entry.transitions.some((transition) => transition.id === selectionId))
+  if (branch) {
+    return { ...updateBranch(draft, branch.id, (entry) => ({ ...entry, transitions: entry.transitions.filter((transition) => transition.id !== selectionId), editing: true })), activeBranchId: branch.id, dirty: true, notice: undefined }
   }
   return {
     ...draft,
     transitions: draft.transitions.filter((entry) => entry.id !== selectionId),
-    ...(draft.branch?.originSelectionId === selectionId ? { branch: undefined } : {}),
+    branches: draft.branches.filter((branch) => branch.originSelectionId !== selectionId),
+    activeBranchId: draft.branches.some((branch) => branch.id === draft.activeBranchId && branch.originSelectionId === selectionId) ? null : draft.activeBranchId,
     dirty: true,
     notice: undefined,
   }
@@ -1157,7 +1310,7 @@ export function updatePackageAnimationRouteChannel(
   return {
     ...draft,
     transitions: draft.transitions.map((entry) => entry.id === selectionId ? { ...entry, channel } : entry),
-    ...(draft.branch ? { branch: { ...draft.branch, transitions: draft.branch.transitions.map((entry) => entry.id === selectionId ? { ...entry, channel } : entry) } } : {}),
+    branches: draft.branches.map((branch) => ({ ...branch, transitions: branch.transitions.map((entry) => entry.id === selectionId ? { ...entry, channel } : entry) })),
     dirty: true,
     notice: undefined,
   }
@@ -1216,28 +1369,50 @@ export function packageAnimationRouteDraftToScene(
   draft: PackageAnimationRouteDraft,
   now = new Date().toISOString(),
 ): { scene?: BlueprintScopeAnimationSceneV1; issues: RouteBuilderIssue[] } {
+  draft = normalizeDraftBranches(draft as PackageAnimationRouteDraft & { branch?: RouteBuilderBranchDraft })
   const resolved = resolvePackageAnimationRouteDraft(draft)
   const issues = [...resolved.issues]
   if (draft.readOnlyReason) issues.push(issue('error', 'read-only-scene', draft.readOnlyReason))
   if (resolved.edges.length === 0) issues.push(issue('error', 'empty-route', 'Add at least one connected route segment or confirmed direct transition.'))
+  const branchIds = new Set<string>()
+  const branchOrigins = new Set<string>()
+  for (const branch of draft.branches) {
+    if (branchIds.has(branch.id)) issues.push(issue('error', 'duplicate-branch-id', 'Two alternate branches have the same stable branch ID.'))
+    branchIds.add(branch.id)
+    if (!branch.originSelectionId) issues.push(issue('error', 'missing-branch-origin', 'A branch is missing its primary-route origin.'))
+    if (branchOrigins.has(branch.originSelectionId)) issues.push(issue('error', 'duplicate-branch-origin', 'Each primary-route point can have only one authored alternate branch.'))
+    branchOrigins.add(branch.originSelectionId)
+  }
+  if (draft.activeBranchId && !draft.branches.some((branch) => branch.id === draft.activeBranchId)) {
+    issues.push(issue('error', 'missing-active-branch', 'The active branch edit no longer points to an existing branch.'))
+  }
   const sourceNode = resolved.nodes[0]
   if (!sourceNode || !draft.source) return { issues: dedupeIssues(issues) }
   const branchOrders: BlueprintAnimationBranchOrder[] = []
   // Both completion kinds split at the origin (primary continuation + alternate), so both persist a
   // branch order. A rejoin adds a downstream merge; a terminal branch simply ends at its final fixture.
-  if (draft.branch && resolved.branchOriginNodeId && (resolved.branchConvergenceNodeId || resolved.branchTerminalNodeId)) {
-    const originIndex = draft.branch.originSelectionId === 'source'
+  for (const branch of draft.branches) {
+    const branchResolution = resolved.branchResolutions.find((entry) => entry.branchId === branch.id)
+    if (!branchResolution?.originNodeId) continue
+    if (!branchResolution.convergenceNodeId && !branchResolution.terminalNodeId) {
+      if (!branch.editing) issues.push(issue('error', 'invalid-branch-endpoint', 'A completed branch no longer has a valid terminal or rejoin endpoint.'))
+      continue
+    }
+    if (branch.editing) continue
+    const originIndex = branch.originSelectionId === 'source'
       ? -1
-      : draft.transitions.findIndex((transition) => transition.id === draft.branch?.originSelectionId)
+      : draft.transitions.findIndex((transition) => transition.id === branch.originSelectionId)
     const primaryOutgoing = resolved.transitions[originIndex + 1]?.edge
-    const alternateOutgoing = resolved.branchTransitions[0]?.edge
+    const alternateOutgoing = branchResolution.transitions[0]?.edge
     if (primaryOutgoing && alternateOutgoing) {
       branchOrders.push({
-        id: `animation_branch_${resolved.branchOriginNodeId}`,
-        nodeId: resolved.branchOriginNodeId,
-        mode: draft.branch.mode,
+        id: branch.persistedBranchOrderId || `animation_branch_${branchResolution.originNodeId}`,
+        nodeId: branchResolution.originNodeId,
+        mode: branch.mode,
         outgoingEdgeIds: [primaryOutgoing.id, alternateOutgoing.id],
       })
+    } else {
+      issues.push(issue('error', 'missing-primary-continuation', 'A branch junction is missing its primary continuation or alternate outgoing edge.'))
     }
   }
   const scene: BlueprintScopeAnimationSceneV1 = {
@@ -1265,7 +1440,6 @@ export function validatePackageAnimationRouteDraft(draft: PackageAnimationRouteD
 
 function advancedSceneReason(scene: BlueprintScopeAnimationSceneV1): string | undefined {
   if (scene.sources.length !== 1) return 'This scene uses multiple or missing sources and is read-only in the one-source editor.'
-  if (scene.branchOrders.length > 1) return 'This scene contains multiple branch points and is read-only in the single-branch editor.'
   if (scene.events.length > 0) return 'This scene contains animation events that this editor cannot safely preserve.'
   if (scene.edges.some((edge) => edge.fromPort || edge.toPort)) return 'This scene uses explicit graph ports and is read-only in this editor.'
   const supportedRoles = new Set<BlueprintAnimationDeviceRole>(['source', 'control', 'sensor', 'junction', 'load'])
@@ -1281,23 +1455,39 @@ function advancedSceneReason(scene: BlueprintScopeAnimationSceneV1): string | un
   if (scene.branchOrders.length === 0 && ([...outgoing.values()].some((count) => count > 1) || [...incoming.values()].some((count) => count > 1))) {
     return 'This scene contains an unordered branch and is read-only in this editor.'
   }
-  if (scene.branchOrders.length === 1) {
-    const branch = scene.branchOrders[0]
+  if (scene.branchOrders.length > 0) {
+    const branchNodes = new Set<string>()
+    for (const branch of scene.branchOrders) {
+      if (branchNodes.has(branch.nodeId)) return 'This scene has multiple alternate branches at one junction, which this editor cannot author yet.'
+      branchNodes.add(branch.nodeId)
+      const outgoingEdges = scene.edges.filter((edge) => edge.fromNodeId === branch.nodeId)
+      if (
+        branch.outgoingEdgeIds.length !== 2
+        || outgoingEdges.length !== 2
+        || new Set(branch.outgoingEdgeIds).size !== 2
+        || outgoingEdges.some((edge) => !branch.outgoingEdgeIds.includes(edge.id))
+      ) {
+        return 'This scene uses a branch junction this editor cannot reconstruct.'
+      }
+    }
+    const branchNodeIds = new Set(scene.branchOrders.map((branch) => branch.nodeId))
+    if ([...outgoing.entries()].some(([nodeId, count]) => count > 1 && !branchNodeIds.has(nodeId))) {
+      return 'This scene contains an unordered branch and is read-only in this editor.'
+    }
+    if ([...outgoing.values(), ...incoming.values()].some((count) => count > 2)) {
+      return 'This scene uses more than two connections at a junction and is read-only in this editor.'
+    }
+    for (const branch of scene.branchOrders) {
     const outgoingEdges = scene.edges.filter((edge) => edge.fromNodeId === branch.nodeId)
     const splitNodes = [...outgoing.values()].filter((count) => count > 1)
-    const mergeNodes = [...incoming.values()].filter((count) => count > 1)
-    // Exactly one split at the branch origin. A rejoin adds exactly one merge; a terminal parallel
-    // branch adds none. Two or more merges is a structure this single-branch editor cannot express.
+    // Each supported split is described by its own branch order. A rejoin adds a downstream merge;
+    // a terminal branch adds none. Multiple simple splits are authorable as independent junctions.
     if (
-      branch.outgoingEdgeIds.length !== 2
+      splitNodes.length !== scene.branchOrders.length
       || outgoingEdges.length !== 2
-      || new Set(branch.outgoingEdgeIds).size !== 2
-      || outgoingEdges.some((edge) => !branch.outgoingEdgeIds.includes(edge.id))
-      || splitNodes.length !== 1
-      || mergeNodes.length > 1
-      || [...outgoing.values(), ...incoming.values()].some((count) => count > 2)
     ) {
-      return 'This scene uses a branch structure beyond the single split/rejoin editor.'
+      return 'This scene uses a branch structure beyond the simple route builder.'
+    }
     }
   }
   if (scene.manualTraversal.length !== scene.edges.length) {
@@ -1399,13 +1589,14 @@ export function loadPackageAnimationRouteDraft(options: {
     ...(source?.priority != null ? { sourcePriority: source.priority } : {}),
     ...(sourceAnnotationId ? { source: { annotationId: sourceAnnotationId, channel: source.channel || inferRouteBuilderDefaultChannel(options.annotations.find((entry) => entry.id === sourceAnnotationId)?.shapeKind) } } : {}),
     transitions: [],
+    branches: [],
+    activeBranchId: null,
     ...(readOnlyReason ? { readOnlyReason } : {}),
     dirty: false,
   }
   const edgeById = new Map(scene.edges.map((edge) => [edge.id, edge]))
   const traversalByEdgeId = new Map(scene.manualTraversal.map((step) => [step.edgeId, step]))
-  const branchOrder = scene.branchOrders[0]
-  if (!branchOrder || !source) {
+  if (scene.branchOrders.length === 0 || !source) {
     draft.transitions = scene.manualTraversal
       .map((step) => ({ step, edge: edgeById.get(step.edgeId) }))
       .filter((entry): entry is { step: BlueprintAnimationTraversalStep; edge: BlueprintAnimationEdge } => !!entry.edge)
@@ -1427,30 +1618,45 @@ export function loadPackageAnimationRouteDraft(options: {
     }
     return path
   }
-  const prefix: BlueprintAnimationEdge[] = []
+  const branchOrderByNode = new Map(scene.branchOrders.map((order) => [order.nodeId, order]))
+  const primaryEdges: BlueprintAnimationEdge[] = []
   let cursorNodeId = source.nodeId
-  while (cursorNodeId !== branchOrder.nodeId) {
-    const next = (outgoingByNode.get(cursorNodeId) ?? [])[0]
+  const seenPrimaryNodes = new Set<string>()
+  while (!seenPrimaryNodes.has(cursorNodeId)) {
+    seenPrimaryNodes.add(cursorNodeId)
+    const branchOrder = branchOrderByNode.get(cursorNodeId)
+    const next = branchOrder
+      ? edgeById.get(branchOrder.outgoingEdgeIds[0])
+      : (outgoingByNode.get(cursorNodeId) ?? [])[0]
     if (!next) break
-    prefix.push(next)
+    primaryEdges.push(next)
     cursorNodeId = next.toNodeId
   }
-  const primaryTail = walk(branchOrder.outgoingEdgeIds[0])
-  const primaryEdges = [...prefix, ...primaryTail]
   const primaryNodeIds = new Set([source.nodeId, ...primaryEdges.map((edge) => edge.toNodeId)])
-  const alternateEdges = walk(branchOrder.outgoingEdgeIds[1], primaryNodeIds)
   draft.transitions = primaryEdges.map((edge) => selectionFromEdge(edge, draft, traversalByEdgeId.get(edge.id)?.id))
-  const originSelectionId = branchOrder.nodeId === source.nodeId
-    ? 'source'
-    : draft.transitions[primaryEdges.findIndex((edge) => edge.toNodeId === branchOrder.nodeId)]?.id
-  if (originSelectionId) {
-    draft.branch = {
+  const loadedBranches: Array<RouteBuilderBranchDraft & { originIndex: number }> = []
+  scene.branchOrders.forEach((branchOrder) => {
+    const originEdgeIndex = primaryEdges.findIndex((edge) => edge.toNodeId === branchOrder.nodeId)
+    const originSelectionId = branchOrder.nodeId === source.nodeId
+      ? 'source'
+      : draft.transitions[originEdgeIndex]?.id
+    if (!originSelectionId) return
+    const alternateEdges = walk(branchOrder.outgoingEdgeIds[1], primaryNodeIds)
+    loadedBranches.push({
+      id: branchOrder.id || `route_branch_${branchOrder.nodeId}`,
       originSelectionId,
       mode: branchOrder.mode,
       transitions: alternateEdges.map((edge) => selectionFromEdge(edge, draft, traversalByEdgeId.get(edge.id)?.id)),
       editing: false,
-    }
-  }
+      ...(branchOrder.id ? { persistedBranchOrderId: branchOrder.id } : {}),
+      persistedAlternateEdgeIds: alternateEdges.map((edge) => edge.id),
+      originIndex: originSelectionId === 'source' ? 0 : originEdgeIndex + 1,
+    })
+  })
+  draft.branches = loadedBranches
+    .sort((a, b) => a.originIndex - b.originIndex)
+    .map(({ originIndex: _originIndex, ...branch }) => branch)
+  draft.activeBranchId = null
   return draft
 }
 
@@ -1556,10 +1762,12 @@ export function getPackageAnimationRouteList(draft: PackageAnimationRouteDraft):
 }
 
 export function getPackageAnimationBranchList(draft: PackageAnimationRouteDraft): RouteBuilderListEntry[] {
-  if (!draft.branch) return []
+  const branch = activeBranch(draft)
+  if (!branch) return []
   const annotations = byId(draft)
-  const resolved = new Map(resolvePackageAnimationRouteDraft(draft).branchTransitions.map((transition) => [transition.selection.id, transition]))
-  return draft.branch.transitions.map((selection, index) => {
+  const resolvedBranch = resolvePackageAnimationRouteDraft(draft).branchResolutions.find((entry) => entry.branchId === branch.id)
+  const resolved = new Map((resolvedBranch?.transitions ?? []).map((transition) => [transition.selection.id, transition]))
+  return branch.transitions.map((selection, index) => {
     const annotation = annotations.get(selection.annotationId)
     const destinationLabel = resolved.get(selection.id)?.to?.label
     return {
@@ -1574,6 +1782,43 @@ export function getPackageAnimationBranchList(draft: PackageAnimationRouteDraft)
       channel: selection.channel,
     }
   })
+}
+
+export interface PackageAnimationBranchSummary {
+  id: string
+  originSelectionId: 'source' | string
+  originLabel: string
+  originNumber: number
+  stepCount: number
+  endpointLabel?: string
+  editing: boolean
+}
+
+export function getPackageAnimationBranchSummaries(draft: PackageAnimationRouteDraft): PackageAnimationBranchSummary[] {
+  const routeEntries = getPackageAnimationRouteList(draft)
+  const resolved = resolvePackageAnimationRouteDraft(draft)
+  const resolvedByBranchId = new Map(resolved.branchResolutions.map((branch) => [branch.branchId, branch]))
+  return draft.branches
+    .map((branch) => {
+      const routeEntry = branch.originSelectionId === 'source'
+        ? routeEntries.find((entry) => entry.isSource)
+        : routeEntries.find((entry) => entry.id === branch.originSelectionId)
+      const branchResolution = resolvedByBranchId.get(branch.id)
+      return {
+        id: branch.id,
+        originSelectionId: branch.originSelectionId,
+        originLabel: routeEntry?.label || 'Primary-route point',
+        originNumber: routeEntry?.number || 1,
+        stepCount: branch.transitions.length,
+        ...(branchResolution?.endpoint?.label ? { endpointLabel: branchResolution.endpoint.label } : {}),
+        editing: branch.editing,
+      }
+    })
+    .sort((a, b) => a.originNumber - b.originNumber)
+}
+
+export function packageAnimationRouteHasBranchAtOrigin(draft: PackageAnimationRouteDraft, originSelectionId: 'source' | string): boolean {
+  return draft.branches.some((branch) => branch.originSelectionId === originSelectionId)
 }
 
 export interface PackageAnimationBranchStatus {
@@ -1591,35 +1836,37 @@ export interface PackageAnimationBranchStatus {
 }
 
 export function getPackageAnimationBranchStatus(draft: PackageAnimationRouteDraft): PackageAnimationBranchStatus | null {
-  if (!draft.branch) return null
+  const branch = activeBranch(draft) ?? (draft.branches.length === 1 ? draft.branches[0] : undefined)
+  if (!branch) return null
   const resolved = resolvePackageAnimationRouteDraft(draft)
+  const branchResolution = resolved.branchResolutions.find((entry) => entry.branchId === branch.id)
   const entries = getPackageAnimationRouteList(draft)
-  const originLabel = draft.branch.originSelectionId === 'source'
+  const originLabel = branch.originSelectionId === 'source'
     ? entries.find((entry) => entry.isSource)?.label || 'Source'
-    : resolved.transitions.find((entry) => entry.selection.id === draft.branch?.originSelectionId)?.to?.label || 'Primary-route node'
-  const completionKind = resolved.branchConvergenceNodeId ? 'rejoin' : resolved.branchTerminalNodeId ? 'terminal' : undefined
+    : resolved.transitions.find((entry) => entry.selection.id === branch.originSelectionId)?.to?.label || 'Primary-route node'
+  const completionKind = branchResolution?.convergenceNodeId ? 'rejoin' : branchResolution?.terminalNodeId ? 'terminal' : undefined
   const valid = !!completionKind
   const endpointLabel = valid
-    ? resolved.branchTransitions[resolved.branchTransitions.length - 1]?.to?.label
+    ? branchResolution?.transitions[branchResolution.transitions.length - 1]?.to?.label
     : undefined
-  const invalidSelection = draft.branch.editing && draft.notice?.severity === 'error'
-  const phase = !draft.branch.editing
+  const invalidSelection = branch.editing && draft.notice?.severity === 'error'
+  const phase = !branch.editing
     ? 'Branch complete'
     : invalidSelection
       ? 'Invalid selection — branch remains open'
       : valid
         ? 'Branch valid — ready to finish'
-        : draft.branch.transitions.length === 0
+        : branch.transitions.length === 0
           ? 'Select first alternate segment'
           : 'Continue alternate route'
   const instruction = completionKind === 'rejoin'
     ? `The alternate route rejoins the primary route${endpointLabel ? ` at ${endpointLabel}` : ''}.`
     : completionKind === 'terminal'
       ? `Terminal endpoint${endpointLabel ? `: ${endpointLabel}` : ''}. Finish here, or keep selecting alternate segments to extend the branch.`
-      : draft.branch.transitions.length === 0
+      : branch.transitions.length === 0
         ? 'Select the first connected Circuit Path or Circuit Arc segment.'
         : 'Continue the alternate route, finish at a terminal fixture/device, or select a later primary-route node to rejoin.'
-  const nextAction = !draft.branch.editing
+  const nextAction = !branch.editing
     ? 'Save Route, or remove the completed branch to author it again.'
     : valid
       ? 'Choose Finish Branch.'
@@ -1627,7 +1874,7 @@ export function getPackageAnimationBranchStatus(draft: PackageAnimationRouteDraf
   return {
     heading: 'ALTERNATE BRANCH',
     originLabel,
-    stepCount: draft.branch.transitions.length,
+    stepCount: branch.transitions.length,
     phase,
     ...(completionKind ? { completionKind } : {}),
     ...(endpointLabel ? { endpointLabel } : {}),
@@ -1645,7 +1892,7 @@ export interface RouteBuilderOverlay {
 export function getPackageAnimationRouteOverlay(draft: PackageAnimationRouteDraft): RouteBuilderOverlay {
   const annotations = byId(draft)
   const segments: RouteBuilderOverlay['segments'] = []
-  ;[...draft.transitions, ...(draft.branch?.transitions ?? [])].forEach((selection) => {
+  ;[...draft.transitions, ...draft.branches.flatMap((branch) => branch.transitions)].forEach((selection) => {
     if (selection.kind !== 'segment') return
     const annotation = annotations.get(selection.annotationId)
     if (!annotation) return
@@ -1942,6 +2189,8 @@ export function markPackageAnimationRouteDraftSaved(
       baseScene: undefined,
       source: undefined,
       transitions: [],
+      branches: [],
+      activeBranchId: null,
       expectedBaseRevision: revision,
       dirty: false,
       notice: undefined,

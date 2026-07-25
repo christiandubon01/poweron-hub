@@ -6,11 +6,14 @@ import { DEFAULT_BLUEPRINT_ANIMATION_PLAYBACK_OPTIONS } from '../sceneSchema'
 import {
   addPackageAnimationDirectTransition,
   addPackageAnimationRouteSegment,
+  cancelPackageAnimationRouteBranch,
   clearPackageAnimationRouteDraft,
   createEmptyPackageAnimationRouteDraft,
   createSingleFlightGuard,
   dispatchPackageAnimationRoutePick,
+  editPackageAnimationRouteBranch,
   formatRouteBuilderSourceLabel,
+  getPackageAnimationBranchSummaries,
   getPackageAnimationSourceCandidates,
   getPackageAnimationBranchStatus,
   getPackageAnimationPrimaryRouteCandidates,
@@ -363,11 +366,11 @@ describe('routeBuilderModel', () => {
     draft = startPackageAnimationRouteBranch(draft, 'source')
     const invalid = dispatchPackageAnimationRoutePick(draft, { kind: 'annotation', annotationId: 'panel' })
     expect(invalid).toMatchObject({ accepted: false, branchActive: true })
-    expect(invalid.draft.branch?.editing).toBe(true)
+    expect(invalid.draft.branches[0]?.editing).toBe(true)
     draft = addPackageAnimationDirectTransition(invalid.draft, 'arm-b').draft
 
     const primarySourceOutgoingEdgeId = `animation_edge_${draft.transitions[0].id}`
-    const alternateSourceOutgoingEdgeId = `animation_edge_${draft.branch!.transitions[0].id}`
+    const alternateSourceOutgoingEdgeId = `animation_edge_${draft.branches[0]!.transitions[0].id}`
     expect(primarySourceOutgoingEdgeId).toBeTruthy()
     expect(alternateSourceOutgoingEdgeId).toBeTruthy()
     expect(primarySourceOutgoingEdgeId).not.toBe(alternateSourceOutgoingEdgeId)
@@ -395,9 +398,9 @@ describe('routeBuilderModel', () => {
     expect(reopened.source?.annotationId).toBe('panel')
     expect(reopened.transitions[0].persistedEdgeId).toBe(primarySourceOutgoingEdgeId)
     expect(reopened.transitions).toHaveLength(1)
-    expect(reopened.branch?.originSelectionId).toBe('source')
-    expect(reopened.branch?.transitions[0].persistedEdgeId).toBe(alternateSourceOutgoingEdgeId)
-    expect(reopened.branch?.transitions).toHaveLength(1)
+    expect(reopened.branches[0]?.originSelectionId).toBe('source')
+    expect(reopened.branches[0]?.transitions[0].persistedEdgeId).toBe(alternateSourceOutgoingEdgeId)
+    expect(reopened.branches[0]?.transitions).toHaveLength(1)
   })
 
   it('adds a connected straight segment and matches its destination fixture', () => {
@@ -544,10 +547,10 @@ describe('routeBuilderModel', () => {
     })
     draft = finishPackageAnimationRouteBranch(draft)
     const authoredBranchStructure = {
-      originSelectionId: draft.branch?.originSelectionId,
-      mode: draft.branch?.mode,
-      editing: draft.branch?.editing,
-      transitions: draft.branch?.transitions.map((transition) => ({
+      originSelectionId: draft.branches[0]?.originSelectionId,
+      mode: draft.branches[0]?.mode,
+      editing: draft.branches[0]?.editing,
+      transitions: draft.branches[0]?.transitions.map((transition) => ({
         id: transition.id,
         kind: transition.kind,
         annotationId: transition.annotationId,
@@ -571,13 +574,13 @@ describe('routeBuilderModel', () => {
     })
     expect(loaded.readOnlyReason).toBeUndefined()
     expect(loaded.transitions).toHaveLength(2)
-    expect(loaded.branch).toMatchObject({ originSelectionId: 'source', mode: 'simultaneous', editing: false })
-    expect(loaded.branch?.transitions).toHaveLength(2)
+    expect(loaded.branches[0]).toMatchObject({ originSelectionId: 'source', mode: 'simultaneous', editing: false })
+    expect(loaded.branches[0]?.transitions).toHaveLength(2)
     expect({
-      originSelectionId: loaded.branch?.originSelectionId,
-      mode: loaded.branch?.mode,
-      editing: loaded.branch?.editing,
-      transitions: loaded.branch?.transitions.map((transition) => ({
+      originSelectionId: loaded.branches[0]?.originSelectionId,
+      mode: loaded.branches[0]?.mode,
+      editing: loaded.branches[0]?.editing,
+      transitions: loaded.branches[0]?.transitions.map((transition) => ({
         id: transition.id,
         kind: transition.kind,
         annotationId: transition.annotationId,
@@ -705,7 +708,7 @@ describe('routeBuilderModel', () => {
 
     const resolved = resolvePackageAnimationRouteDraft(draft)
     expect(draft.transitions).toHaveLength(7)
-    expect(draft.branch?.transitions).toHaveLength(4)
+    expect(draft.branches[0]?.transitions).toHaveLength(4)
     expect(new Set(draft.transitions.map((transition) => transition.annotationId))).toEqual(new Set([
       primaryA.id, primaryB.id, primaryC.id,
     ]))
@@ -713,7 +716,7 @@ describe('routeBuilderModel', () => {
     expect(resolved.branchConvergenceNodeId).toBe('animation_node_point_complex-primary-b_primary-b-join')
 
     draft = finishPackageAnimationRouteBranch(draft)
-    expect(draft.branch?.editing).toBe(false)
+    expect(draft.branches[0]?.editing).toBe(false)
     const saved = packageAnimationRouteDraftToScene(draft).scene!
     const incoming = saved.edges.filter((edge) => edge.toNodeId === resolved.branchConvergenceNodeId)
     expect(incoming).toHaveLength(2)
@@ -1233,12 +1236,12 @@ describe('ANIM-2B1 route save reconciliation', () => {
     const fromSource = startPackageAnimationRouteBranch(primary, 'source')
     const fromMiddle = startPackageAnimationRouteBranch(primary, primary.transitions[0].id)
 
-    expect(fromSource.branch).toMatchObject({ originSelectionId: 'source', editing: true, transitions: [] })
-    expect(fromMiddle.branch).toMatchObject({ originSelectionId: primary.transitions[0].id, editing: true, transitions: [] })
+    expect(fromSource.branches[0]).toMatchObject({ originSelectionId: 'source', editing: true, transitions: [] })
+    expect(fromMiddle.branches[0]).toMatchObject({ originSelectionId: primary.transitions[0].id, editing: true, transitions: [] })
     expect(getPackageAnimationBranchStatus(fromSource)).toMatchObject({ heading: 'ALTERNATE BRANCH', originLabel: 'Switch', stepCount: 0, phase: 'Select first alternate segment' })
     expect(getPackageAnimationBranchStatus(fromMiddle)).toMatchObject({ heading: 'ALTERNATE BRANCH', originLabel: 'Light 1' })
     const emptyUndo = undoPackageAnimationRouteSelection(fromMiddle)
-    expect(emptyUndo.branch).toEqual(fromMiddle.branch)
+    expect(emptyUndo.branches[0]).toEqual(fromMiddle.branches[0])
     expect(emptyUndo.notice?.code).toBe('empty-branch-undo')
   })
 
@@ -1253,19 +1256,19 @@ describe('ANIM-2B1 route save reconciliation', () => {
     draft = addSegment(draft, circuit, 1)
     draft = startPackageAnimationRouteBranch(draft, 'source')
     draft = dispatchPackageAnimationRoutePick(draft, { kind: 'segment', pick: segmentPick(branchCircuit, 0) }).draft
-    expect(draft.branch).toMatchObject({ editing: true })
-    expect(draft.branch?.transitions).toHaveLength(1)
+    expect(draft.branches[0]).toMatchObject({ editing: true })
+    expect(draft.branches[0]?.transitions).toHaveLength(1)
     expect(getPackageAnimationBranchStatus(draft)?.phase).toBe('Continue alternate route')
 
-    const beforeInvalid = structuredClone(draft.branch?.transitions)
+    const beforeInvalid = structuredClone(draft.branches[0]?.transitions)
     const rejected = dispatchPackageAnimationRoutePick(draft, { kind: 'segment', pick: segmentPick(disconnected, 0) })
     expect(rejected).toMatchObject({ accepted: false, consumed: true, mode: 'alternate-branch', branchActive: true })
-    expect(rejected.draft.branch?.transitions).toEqual(beforeInvalid)
+    expect(rejected.draft.branches[0]?.transitions).toEqual(beforeInvalid)
     expect(getPackageAnimationBranchStatus(rejected.draft)?.phase).toBe('Invalid selection — branch remains open')
 
     const completedTrace = dispatchPackageAnimationRoutePick(draft, { kind: 'segment', pick: segmentPick(branchCircuit, 1) })
-    expect(completedTrace.draft.branch).toMatchObject({ editing: true })
-    expect(completedTrace.draft.branch?.transitions).toHaveLength(2)
+    expect(completedTrace.draft.branches[0]).toMatchObject({ editing: true })
+    expect(completedTrace.draft.branches[0]?.transitions).toHaveLength(2)
     expect(getPackageAnimationBranchStatus(completedTrace.draft)?.phase).toBe('Branch valid — ready to finish')
   })
 
@@ -1277,7 +1280,7 @@ describe('ANIM-2B1 route save reconciliation', () => {
     expect(duplicate).toMatchObject({ accepted: false, mode: 'alternate-branch', branchActive: true })
     expect(duplicate.draft.notice?.code).toBe('duplicate-segment')
     expect(duplicate.draft.transitions).toEqual(primary.transitions)
-    expect(duplicate.draft.branch?.transitions).toEqual([])
+    expect(duplicate.draft.branches[0]?.transitions).toEqual([])
 
     const cycle = dispatchPackageAnimationRoutePick(branch, { kind: 'annotation', annotationId: 'source' })
     expect(cycle).toMatchObject({ accepted: false, mode: 'alternate-branch', branchActive: true })
@@ -1301,7 +1304,7 @@ describe('ANIM-2B1 route save reconciliation', () => {
 
     expect(rejoin).toMatchObject({ accepted: true, consumed: true, mode: 'alternate-branch', branchActive: true })
     expect(rejoin.draft.transitions).toEqual(primarySnapshot)
-    expect(rejoin.draft.branch?.transitions).toHaveLength(2)
+    expect(rejoin.draft.branches[0]?.transitions).toHaveLength(2)
     expect(resolvePackageAnimationRouteDraft(rejoin.draft).branchConvergenceNodeId).toBe('animation_node_annotation_fixture-2')
   })
 
@@ -1330,12 +1333,12 @@ describe('ANIM-2B1 route save reconciliation', () => {
     outsideDraft = addSegment(outsideDraft, outside, 0)
     outsideDraft = addSegment(outsideDraft, outside, 1)
     expect(resolvePackageAnimationRouteDraft(outsideDraft).branchConvergenceNodeId).toBeUndefined()
-    expect(outsideDraft.branch?.editing).toBe(true)
+    expect(outsideDraft.branches[0]?.editing).toBe(true)
 
     let crossingDraft = startPackageAnimationRouteBranch(primaryDraft, 'source')
     crossingDraft = addSegment(crossingDraft, crossing, 0)
     expect(resolvePackageAnimationRouteDraft(crossingDraft).branchConvergenceNodeId).toBeUndefined()
-    expect(crossingDraft.branch?.editing).toBe(true)
+    expect(crossingDraft.branches[0]?.editing).toBe(true)
   })
 
   it('finishes, cancels, and undoes only the alternate branch while preserving the primary route', () => {
@@ -1347,15 +1350,15 @@ describe('ANIM-2B1 route save reconciliation', () => {
     const primarySnapshot = structuredClone(branch.transitions)
 
     const undone = undoPackageAnimationRouteSelection(branch)
-    expect(undone.branch?.transitions).toHaveLength(1)
+    expect(undone.branches[0]?.transitions).toHaveLength(1)
     expect(undone.transitions).toEqual(primarySnapshot)
 
     const cancelled = removePackageAnimationRouteBranch(branch)
-    expect(cancelled.branch).toBeUndefined()
+    expect(cancelled.branches[0]).toBeUndefined()
     expect(cancelled.transitions).toEqual(primarySnapshot)
 
     const finished = finishPackageAnimationRouteBranch(branch)
-    expect(finished.branch?.editing).toBe(false)
+    expect(finished.branches[0]?.editing).toBe(false)
     expect(packageAnimationRouteDraftToScene(finished).scene?.branchOrders).toHaveLength(1)
     expect(getPackageAnimationBranchStatus(finished)?.phase).toBe('Branch complete')
   })
@@ -1363,15 +1366,15 @@ describe('ANIM-2B1 route save reconciliation', () => {
   it('keeps ordinary primary dispatch working and does not leak branch state between package drafts', () => {
     const packageA = startPackageAnimationRouteBranch(addSegment(addSegment(sourceDraft(), circuit, 0), circuit, 1), 'source')
     const packageB = empty({ packageId: 'package-b', packageName: 'Package B' })
-    expect(packageA.branch?.editing).toBe(true)
-    expect(packageB.branch).toBeUndefined()
+    expect(packageA.branches[0]?.editing).toBe(true)
+    expect(packageB.branches[0]).toBeUndefined()
 
     const sourcePick = dispatchPackageAnimationRoutePick(packageB, { kind: 'annotation', annotationId: 'source' })
     expect(sourcePick).toMatchObject({ accepted: true, consumed: true, mode: 'primary-route', branchActive: false })
     const primarySegment = dispatchPackageAnimationRoutePick(sourcePick.draft, { kind: 'segment', pick: segmentPick(circuit, 0) })
     expect(primarySegment).toMatchObject({ accepted: true, mode: 'primary-route' })
     expect(primarySegment.draft.transitions).toHaveLength(1)
-    expect(primarySegment.draft.branch).toBeUndefined()
+    expect(primarySegment.draft.branches[0]).toBeUndefined()
   })
 
   it('resolves source → four alternate segments → clicked later primary node at the viewer/model boundary', () => {
@@ -1390,7 +1393,7 @@ describe('ANIM-2B1 route save reconciliation', () => {
     ;[0, 1, 2, 3, 4].forEach((index) => { draft = addSegment(draft, primary, index) })
     draft = startPackageAnimationRouteBranch(draft, 'source')
     ;[0, 1, 2, 3].forEach((index) => { draft = addSegment(draft, alternate, index) })
-    expect(draft.branch?.transitions).toHaveLength(4)
+    expect(draft.branches[0]?.transitions).toHaveLength(4)
     expect(resolvePackageAnimationRouteDraft(draft).branchConvergenceNodeId).toBeUndefined()
 
     const candidates = getPackageAnimationPrimaryRouteCandidates(draft).filter((candidate) => candidate.index > 0)
@@ -1408,7 +1411,7 @@ describe('ANIM-2B1 route save reconciliation', () => {
     expect(rejoin.rejoinDiagnostics?.candidates.map((candidate) => candidate.index)).toEqual([0, 1, 2, 3, 4, 5])
     expect(resolvePackageAnimationRouteDraft(rejoin.draft).branchConvergenceNodeId).toBe(viewerHit!.nodeId)
     const finished = finishPackageAnimationRouteBranch(rejoin.draft)
-    expect(finished.branch?.editing).toBe(false)
+    expect(finished.branches[0]?.editing).toBe(false)
     expect(packageAnimationRouteDraftToScene(finished).scene?.branchOrders).toHaveLength(1)
   })
 })
@@ -1452,7 +1455,7 @@ describe('ANIM-5.2 terminal parallel branches', () => {
   it('authors the exact screenshot route: five primary steps + four-arc terminal branch from node #2', () => {
     const draft = screenshotTerminalBranch()
     expect(draft.transitions).toHaveLength(5)
-    expect(draft.branch?.transitions).toHaveLength(4)
+    expect(draft.branches[0]?.transitions).toHaveLength(4)
 
     const resolved = resolvePackageAnimationRouteDraft(draft)
     expect(resolved.branchConvergenceNodeId).toBeUndefined()
@@ -1476,7 +1479,7 @@ describe('ANIM-5.2 terminal parallel branches', () => {
     expect(status?.instruction).toContain('Terminal endpoint')
 
     const finished = finishPackageAnimationRouteBranch(draft)
-    expect(finished.branch?.editing).toBe(false)
+    expect(finished.branches[0]?.editing).toBe(false)
     expect(getPackageAnimationBranchStatus(finished)).toMatchObject({ phase: 'Branch complete', completionKind: 'terminal' })
   })
 
@@ -1511,8 +1514,8 @@ describe('ANIM-5.2 terminal parallel branches', () => {
     })
     expect(loaded.readOnlyReason).toBeUndefined()
     expect(loaded.transitions).toHaveLength(5)
-    expect(loaded.branch).toMatchObject({ editing: false })
-    expect(loaded.branch?.transitions).toHaveLength(4)
+    expect(loaded.branches[0]).toMatchObject({ editing: false })
+    expect(loaded.branches[0]?.transitions).toHaveLength(4)
     const resolved = resolvePackageAnimationRouteDraft(loaded)
     expect(resolved.branchOriginNodeId).toBe(NODE_TWO_ID)
     expect(resolved.branchConvergenceNodeId).toBeUndefined()
@@ -1571,7 +1574,7 @@ describe('ANIM-5.2 terminal parallel branches', () => {
     expect(resolved.branchConvergenceNodeId).toBeUndefined()
     expect(resolved.branchTerminalNodeId).toBe('animation_node_annotation_source-terminal-sconce')
     const finished = finishPackageAnimationRouteBranch(draft)
-    expect(finished.branch?.editing).toBe(false)
+    expect(finished.branches[0]?.editing).toBe(false)
     const scene = packageAnimationRouteDraftToScene(finished).scene!
     expect(scene.branchOrders[0].nodeId).toBe('animation_node_annotation_source')
     expect(summarizePackageAnimationScene(scene, annotations, annotations.map((entry) => entry.id)).advanced).toBe(false)
@@ -1595,8 +1598,8 @@ describe('ANIM-5.2 terminal parallel branches', () => {
     draft = addSegment(draft, branchArcs, 3)
     const finalResolved = resolvePackageAnimationRouteDraft(draft)
     expect(finalResolved.branchTerminalNodeId).toBe(FAR_RIGHT_ID)
-    expect(draft.branch?.editing).toBe(true)
-    expect(draft.branch?.transitions).toHaveLength(4)
+    expect(draft.branches[0]?.editing).toBe(true)
+    expect(draft.branches[0]?.transitions).toHaveLength(4)
   })
 
   it('appends an overlapping package receptacle as an alternate-branch terminal device', () => {
@@ -1628,7 +1631,7 @@ describe('ANIM-5.2 terminal parallel branches', () => {
 
     const selectedDevice = dispatchPackageAnimationRoutePick(draft, { kind: 'annotation', annotationId: 'terminal-receptacle', clickedPoint: { x: 0.7, y: 0.65 } })
     expect(selectedDevice).toMatchObject({ accepted: true, consumed: true, mode: 'alternate-branch', branchActive: true })
-    const branchTransitions = selectedDevice.draft.branch?.transitions ?? []
+    const branchTransitions = selectedDevice.draft.branches[0]?.transitions ?? []
     expect(branchTransitions[branchTransitions.length - 1]).toMatchObject({ kind: 'direct', annotationId: 'terminal-receptacle' })
     expect(resolvePackageAnimationRouteDraft(selectedDevice.draft).branchTerminalNodeId).toBe('animation_node_annotation_terminal-receptacle')
     expect(getPackageAnimationBranchStatus(selectedDevice.draft)).toMatchObject({
@@ -1638,7 +1641,7 @@ describe('ANIM-5.2 terminal parallel branches', () => {
     })
 
     const finished = finishPackageAnimationRouteBranch(selectedDevice.draft)
-    expect(finished.branch?.editing).toBe(false)
+    expect(finished.branches[0]?.editing).toBe(false)
     const scene = packageAnimationRouteDraftToScene(finished).scene
     expect(scene?.nodes.find((node) => node.id === 'animation_node_annotation_terminal-receptacle')).toMatchObject({
       roles: ['load'],
@@ -1675,7 +1678,7 @@ describe('ANIM-5.2 terminal parallel branches', () => {
 
     const rejected = dispatchPackageAnimationRoutePick(draft, { kind: 'annotation', annotationId: 'outside-receptacle', clickedPoint: { x: 0.7, y: 0.65 } })
     expect(rejected).toMatchObject({ accepted: false, consumed: true, mode: 'alternate-branch', branchActive: true })
-    expect(rejected.draft.branch?.transitions).toEqual([])
+    expect(rejected.draft.branches[0]?.transitions).toEqual([])
     expect(rejected.draft.notice?.code).toBe('annotation-not-in-package')
   })
 
@@ -1721,14 +1724,14 @@ describe('ANIM-5.2 terminal parallel branches', () => {
     expect(resolved.issues.map((entry) => entry.code)).toContain('invalid-branch-endpoint')
     // Finish is inert while the endpoint is not an eligible fixture/device.
     const attempted = finishPackageAnimationRouteBranch(draft)
-    expect(attempted.branch?.editing).toBe(true)
+    expect(attempted.branches[0]?.editing).toBe(true)
   })
 
   it('cannot finish an empty branch or a branch whose only step cycles back to the origin', () => {
     const primary = screenshotPrimary()
     const emptyBranch = startPackageAnimationRouteBranch(primary, primary.transitions[1].id)
     expect(resolvePackageAnimationRouteDraft(emptyBranch).branchTerminalNodeId).toBeUndefined()
-    expect(finishPackageAnimationRouteBranch(emptyBranch).branch?.editing).toBe(true)
+    expect(finishPackageAnimationRouteBranch(emptyBranch).branches[0]?.editing).toBe(true)
 
     // A branch step that returns to the origin device is a cycle, never a terminal endpoint.
     let draft = sourceDraft()
@@ -1753,18 +1756,18 @@ describe('ANIM-5.2 terminal parallel branches', () => {
     expect(resolved.branchTerminalNodeId).toBeUndefined()
     expect(getPackageAnimationBranchStatus(branch)).toMatchObject({ completionKind: 'rejoin', valid: true })
     const finished = finishPackageAnimationRouteBranch(branch)
-    expect(finished.branch?.editing).toBe(false)
+    expect(finished.branches[0]?.editing).toBe(false)
     expect(packageAnimationRouteDraftToScene(finished).scene?.branchOrders).toHaveLength(1)
   })
 
   it('rejects a duplicate primary segment inside a terminal branch without dropping branch state', () => {
     const draft = screenshotTerminalBranch()
     // primaryRun segment 0 is already used by the primary route; reusing it in the branch is rejected.
-    const beforeBranch = structuredClone(draft.branch?.transitions)
+    const beforeBranch = structuredClone(draft.branches[0]?.transitions)
     const duplicate = addPackageAnimationRouteSegment(draft, segmentPick(primaryRun, 0))
     expect(duplicate.accepted).toBe(false)
-    expect(duplicate.draft.branch?.transitions).toEqual(beforeBranch)
-    expect(duplicate.draft.branch?.editing).toBe(true)
+    expect(duplicate.draft.branches[0]?.transitions).toEqual(beforeBranch)
+    expect(duplicate.draft.branches[0]?.editing).toBe(true)
   })
 
   it('leaves rejoining scenes backward-compatible and preserves package annotation ordering', () => {
@@ -1787,7 +1790,83 @@ describe('ANIM-5.2 terminal parallel branches', () => {
     const order = screenshotAnnotations.map((entry) => entry.id)
     const cleared = clearPackageAnimationRouteDraft(screenshotTerminalBranch())
     expect(cleared.source).toBeUndefined()
-    expect(cleared.branch).toBeUndefined()
+    expect(cleared.branches[0]).toBeUndefined()
     expect(cleared.packageAnnotationIds).toEqual(order)
+  })
+
+  it('authors Point 2 and Point 3 terminal branches without replacing the first junction', () => {
+    const pointThreeBranch: RouteBuilderAnnotation = {
+      id: 'point-three-branch', pageNumber: 1, label: 'Point 3 branch', shapeKind: 'circuit-path',
+      points: [{ x: 0.58, y: 0.5 }, { x: 0.66, y: 0.78 }, { x: 0.76, y: 0.74 }],
+      pointIds: ['p3b0', 'p3b1', 'p3b2'], segmentIds: ['p3bs0', 'p3bs1'],
+    }
+    const pointThreeTerminal: RouteBuilderAnnotation = { id: 'point-three-terminal', pageNumber: 1, label: 'Branch B Sconce', shapeKind: 'electrical-sconce', rect: { x: 0.74, y: 0.72, w: 0.04, h: 0.04 } }
+    const annotations = [...screenshotAnnotations, pointThreeBranch, pointThreeTerminal]
+    let draft = sourceDraft(empty({ annotations, packageAnnotationIds: annotations.map((entry) => entry.id) }))
+    ;[0, 1, 2, 3, 4].forEach((index) => { draft = addSegment(draft, primaryRun, index) })
+
+    draft = startPackageAnimationRouteBranch(draft, draft.transitions[1].id)
+    ;[0, 1, 2, 3].forEach((index) => { draft = addSegment(draft, branchArcs, index) })
+    draft = finishPackageAnimationRouteBranch(draft)
+    const pointTwoBranch = structuredClone(draft.branches[0])
+
+    draft = startPackageAnimationRouteBranch(draft, draft.transitions[2].id)
+    expect(draft.branches[0]).toEqual(pointTwoBranch)
+    ;[0, 1].forEach((index) => { draft = addSegment(draft, pointThreeBranch, index) })
+    draft = finishPackageAnimationRouteBranch(draft)
+
+    expect(draft.activeBranchId).toBeNull()
+    expect(draft.branches).toHaveLength(2)
+    expect(draft.branches[0]).toEqual(pointTwoBranch)
+    expect(getPackageAnimationBranchSummaries(draft).map((summary) => summary.originNumber)).toEqual([3, 4])
+
+    const built = packageAnimationRouteDraftToScene(draft)
+    expect(built.issues.filter((entry) => entry.severity === 'error')).toEqual([])
+    const scene = built.scene!
+    expect(scene.branchOrders).toHaveLength(2)
+    expect(scene.branchOrders.map((order) => order.nodeId)).toEqual([NODE_TWO_ID, 'animation_node_point_primary-run_pr3'])
+    scene.branchOrders.forEach((order) => {
+      expect(order.outgoingEdgeIds).toHaveLength(2)
+      const [primaryEdgeId, alternateEdgeId] = order.outgoingEdgeIds
+      expect(scene.edges.find((edge) => edge.id === primaryEdgeId)?.fromNodeId).toBe(order.nodeId)
+      expect(scene.edges.find((edge) => edge.id === alternateEdgeId)?.fromNodeId).toBe(order.nodeId)
+    })
+    expect(summarizePackageAnimationScene(scene, annotations, annotations.map((entry) => entry.id))).toMatchObject({ advanced: false })
+
+    const reopened = loadPackageAnimationRouteDraft({
+      packageId: 'package', packageName: 'Lighting',
+      packageAnnotationIds: annotations.map((entry) => entry.id), annotations,
+      scene, expectedBaseRevision: 1,
+    })
+    expect(reopened.readOnlyReason).toBeUndefined()
+    expect(reopened.activeBranchId).toBeNull()
+    expect(reopened.branches.map((branch) => branch.originSelectionId)).toEqual([draft.transitions[1].id, draft.transitions[2].id])
+    expect(packageAnimationRouteDraftToScene(reopened).scene?.branchOrders).toEqual(scene.branchOrders)
+  })
+
+  it('targets edit cancel and delete by stable branch ID', () => {
+    const pointThreeBranch: RouteBuilderAnnotation = {
+      id: 'delete-point-three-branch', pageNumber: 1, label: 'Point 3 branch', shapeKind: 'circuit-path',
+      points: [{ x: 0.58, y: 0.5 }, { x: 0.66, y: 0.78 }, { x: 0.76, y: 0.74 }],
+      pointIds: ['dp3b0', 'dp3b1', 'dp3b2'], segmentIds: ['dp3bs0', 'dp3bs1'],
+    }
+    const pointThreeTerminal: RouteBuilderAnnotation = { id: 'delete-point-three-terminal', pageNumber: 1, label: 'Branch B Sconce', shapeKind: 'electrical-sconce', rect: { x: 0.74, y: 0.72, w: 0.04, h: 0.04 } }
+    const annotations = [...screenshotAnnotations, pointThreeBranch, pointThreeTerminal]
+    let draft = sourceDraft(empty({ annotations, packageAnnotationIds: annotations.map((entry) => entry.id) }))
+    ;[0, 1, 2, 3, 4].forEach((index) => { draft = addSegment(draft, primaryRun, index) })
+    draft = finishPackageAnimationRouteBranch([0, 1, 2, 3].reduce((next, index) => addSegment(next, branchArcs, index), startPackageAnimationRouteBranch(draft, draft.transitions[1].id)))
+    draft = finishPackageAnimationRouteBranch([0, 1].reduce((next, index) => addSegment(next, pointThreeBranch, index), startPackageAnimationRouteBranch(draft, draft.transitions[2].id)))
+    const [pointTwo, pointThree] = draft.branches
+
+    const editingPointThree = editPackageAnimationRouteBranch(draft, pointThree.id)
+    expect(editingPointThree.activeBranchId).toBe(pointThree.id)
+    expect(editingPointThree.branches[0]).toEqual(pointTwo)
+    const cancelled = cancelPackageAnimationRouteBranch(removePackageAnimationRouteTransition(editingPointThree, pointThree.transitions[1].id))
+    expect(cancelled.branches.find((branch) => branch.id === pointThree.id)?.transitions).toEqual(pointThree.transitions)
+    expect(cancelled.branches.find((branch) => branch.id === pointTwo.id)).toEqual(pointTwo)
+
+    const deletedPointTwo = removePackageAnimationRouteBranch(cancelled, pointTwo.id)
+    expect(deletedPointTwo.branches.map((branch) => branch.id)).toEqual([pointThree.id])
+    expect(packageAnimationRouteDraftToScene(deletedPointTwo).scene?.branchOrders).toHaveLength(1)
   })
 })
