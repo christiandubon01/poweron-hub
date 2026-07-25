@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import {
   ArrowUpRight,
   Bold,
+  Cable,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -120,6 +121,7 @@ import {
   type RouteBuilderAnnotation,
 } from '@/features/blueprint-animation/routeBuilderModel'
 import { findFirstRouteDeviceHit, findNearestRouteNode, findNearestRouteSegment, resolveRoutePickIntent } from '@/features/blueprint-animation/routePicking'
+import { shouldCloseWireProfileManagerForProjectChange, WireProfileManagerDialog } from '@/features/blueprint-wire-profiles'
 
 let _pdfjsLib: typeof import('pdfjs-dist') | null = null
 async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
@@ -3410,6 +3412,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [quickAccessPresets, setQuickAccessPresets] = useState<Array<QuickAccessPreset | null>>(loadQuickAccessPresets)
   const [quickAccessModalSlot, setQuickAccessModalSlot] = useState<number | null>(null)
   const [quickAccessDraft, setQuickAccessDraft] = useState<QuickAccessPreset | null>(null)
+  const [isWireProfileManagerOpen, setIsWireProfileManagerOpen] = useState(false)
+  const [wireProfileRemoteRefreshVersion, setWireProfileRemoteRefreshVersion] = useState(0)
+  const previousWireProfileProjectIdRef = useRef<string | null>(blueprint?.projectId ?? null)
 
   const buildQuickAccessDraft = (slotIndex: number, preset?: QuickAccessPreset | null): QuickAccessPreset => {
     if (preset) return JSON.parse(JSON.stringify(preset))
@@ -4141,6 +4146,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       }
       loadAnnotations()
       loadScopeLayers()
+      setWireProfileRemoteRefreshVersion((version) => version + 1)
     },
   })
 
@@ -4482,6 +4488,19 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     ? viewerRootRef.current
     : document.body
 
+  useEffect(() => {
+    const previousProjectId = previousWireProfileProjectIdRef.current
+    const nextProjectId = blueprint?.projectId ?? null
+    previousWireProfileProjectIdRef.current = nextProjectId
+    if (shouldCloseWireProfileManagerForProjectChange({
+      isOpen: isWireProfileManagerOpen,
+      previousProjectId,
+      nextProjectId,
+    })) {
+      setIsWireProfileManagerOpen(false)
+    }
+  }, [blueprint?.projectId, isWireProfileManagerOpen])
+
   // Escape key handler: closes UI state first, then exits fullscreen if no UI open.
   // This ensures Escape closes annotation editors, measurements, etc. before exiting fullscreen.
   // Fullscreen exit only happens when all annotation UI is closed.
@@ -4489,6 +4508,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       e.preventDefault()
+      if (isWireProfileManagerOpen) {
+        // The wire profile manager owns Escape while open so confirmations, busy state,
+        // and dirty drafts cannot be bypassed by viewer-level shortcuts.
+        return
+      }
       // Stop paste mode first (Fix 1, req 6) — before closing editors/fullscreen.
       // Keeps copiedAnnotationTemplate so the user can resume via Paste.
       if (pasteModeActive) {
@@ -4519,7 +4543,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover, pasteModeActive])
+  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover, pasteModeActive, isWireProfileManagerOpen])
 
   useEffect(() => {
     pendingScrollResetRef.current = true
@@ -8713,6 +8737,18 @@ const annotationPanelSizeClass =
     void persistAnnotation(updated)
   }
 
+  const openWireProfileManager = () => {
+    if (!blueprint?.projectId) {
+      showTransientSyncNotice('Wire Profiles need a project-scoped blueprint before they can open.')
+      return
+    }
+    setIsWireProfileManagerOpen(true)
+  }
+
+  const forceCloseWireProfileManager = () => {
+    setIsWireProfileManagerOpen(false)
+  }
+
   const persistEditAnnotation = (changes: Partial<BlueprintAnnotation>) => {
     if (!editingAnnotation) return
     persistEditAnnotationForId(editingAnnotation.id, changes)
@@ -9648,6 +9684,17 @@ const annotationPanelSizeClass =
             >
               <RefreshCw size={11} />
             </button>
+            <button
+              type="button"
+              onClick={openWireProfileManager}
+              disabled={!blueprint?.projectId}
+              className="shrink-0 inline-flex min-h-10 items-center justify-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              title={blueprint?.projectId ? 'Manage wire profiles' : 'Wire Profiles need a project id'}
+              aria-label="Manage wire profiles"
+            >
+              <Cable size={12} />
+              <span className="hidden sm:inline">Wire Profiles</span>
+            </button>
           </div>
         </div>
       )}
@@ -9730,6 +9777,17 @@ const annotationPanelSizeClass =
                   title="Refresh PDF link"
                 >
                   <RefreshCw size={10} />
+                </button>
+                <button
+                  type="button"
+                  onClick={openWireProfileManager}
+                  disabled={!blueprint?.projectId}
+                  className="shrink-0 inline-flex min-h-10 items-center justify-center gap-1 rounded-md border border-gray-700 px-2 text-xs text-gray-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  title={blueprint?.projectId ? 'Manage wire profiles' : 'Wire Profiles need a project id'}
+                  aria-label="Manage wire profiles"
+                >
+                  <Cable size={12} />
+                  <span className="hidden sm:inline">Wire Profiles</span>
                 </button>
               </div>
 
@@ -10471,6 +10529,17 @@ const annotationPanelSizeClass =
                     aria-label="Quick Access settings"
                   >
                     <Settings size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openWireProfileManager}
+                    disabled={!blueprint?.projectId}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2.5 text-xs font-medium text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    title={blueprint?.projectId ? 'Manage wire profiles' : 'Wire Profiles need a project id'}
+                    aria-label="Manage wire profiles"
+                  >
+                    <Cable size={14} />
+                    Wire Profiles
                   </button>
                 </div>
                 <div className="grid grid-cols-2 gap-1.5">
@@ -12891,6 +12960,15 @@ const annotationPanelSizeClass =
           )}
         </>
       )}
+
+      <WireProfileManagerDialog
+        open={isWireProfileManagerOpen}
+        projectId={blueprint?.projectId}
+        projectName={blueprint?.projectName}
+        portalTarget={viewerPortalTarget}
+        remoteRefreshVersion={wireProfileRemoteRefreshVersion}
+        onForceClose={forceCloseWireProfileManager}
+      />
 
       {/* Ã¢â€â‚¬Ã¢â€â‚¬ Floating tool popover (portal) Ã¢â€â‚¬Ã¢â€â‚¬ */}
       {_popoverContent && openPopover && (
