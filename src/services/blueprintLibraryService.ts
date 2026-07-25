@@ -22,6 +22,11 @@ import {
   type WireProfile,
   type WireProfileResolution,
 } from '@/features/blueprint-wire-profiles'
+import {
+  isValidWorkPackageOrderTimestamp,
+  normalizeWorkPackageSortOrder,
+  sortWorkPackages,
+} from '@/features/blueprint-work-packages'
 
 // Phase 5C: dev-only assertion that the registry descriptors still point at the
 // concrete BackupData container keys these save paths write. Metadata sanity check
@@ -144,6 +149,8 @@ export interface BlueprintScopeLayer {
   proposalSummary: string
   createdAt: string
   updatedAt: string
+  sortOrder?: number
+  orderTouchedAt?: string
   visible: boolean
   isolated: boolean
   animationScene?: BlueprintScopeAnimationScene
@@ -712,6 +719,53 @@ export function mergeBlueprintWireProfilesById(
   return mergeItemsById(remote as TombstonedItem[], incoming as TombstonedItem[]) as unknown as WireProfile[]
 }
 
+function stableOrderCandidateSignature(value: any): string {
+  if (Array.isArray(value)) return `[${value.map(stableOrderCandidateSignature).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableOrderCandidateSignature(value[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function resolveScopeLayerOrderFields(
+  contentWinner: BlueprintScopeLayer,
+  remoteLayer?: BlueprintScopeLayer,
+  incomingLayer?: BlueprintScopeLayer,
+): Pick<BlueprintScopeLayer, 'sortOrder' | 'orderTouchedAt'> {
+  const remoteOrder = normalizeWorkPackageSortOrder(remoteLayer?.sortOrder)
+  const incomingOrder = normalizeWorkPackageSortOrder(incomingLayer?.sortOrder)
+  const remoteTouchedAt = isValidWorkPackageOrderTimestamp(remoteLayer?.orderTouchedAt)
+    ? String(remoteLayer?.orderTouchedAt)
+    : undefined
+  const incomingTouchedAt = isValidWorkPackageOrderTimestamp(incomingLayer?.orderTouchedAt)
+    ? String(incomingLayer?.orderTouchedAt)
+    : undefined
+
+  if (remoteTouchedAt && incomingTouchedAt) {
+    return Date.parse(incomingTouchedAt) > Date.parse(remoteTouchedAt)
+      ? { sortOrder: incomingOrder, orderTouchedAt: incomingTouchedAt }
+      : { sortOrder: remoteOrder, orderTouchedAt: remoteTouchedAt }
+  }
+  if (remoteTouchedAt) return { sortOrder: remoteOrder, orderTouchedAt: remoteTouchedAt }
+  if (incomingTouchedAt) return { sortOrder: incomingOrder, orderTouchedAt: incomingTouchedAt }
+  if (remoteOrder != null && incomingOrder != null) {
+    const remoteUpdatedAt = parseTimestampMs(remoteLayer?.updatedAt)
+    const incomingUpdatedAt = parseTimestampMs(incomingLayer?.updatedAt)
+    if (remoteUpdatedAt !== incomingUpdatedAt) {
+      return { sortOrder: incomingUpdatedAt > remoteUpdatedAt ? incomingOrder : remoteOrder }
+    }
+    const remoteSignature = stableOrderCandidateSignature(remoteLayer)
+    const incomingSignature = stableOrderCandidateSignature(incomingLayer)
+    if (remoteSignature !== incomingSignature) {
+      return { sortOrder: incomingSignature > remoteSignature ? incomingOrder : remoteOrder }
+    }
+    return { sortOrder: Math.min(remoteOrder, incomingOrder) }
+  }
+  if (remoteOrder != null) return { sortOrder: remoteOrder }
+  if (incomingOrder != null) return { sortOrder: incomingOrder }
+  return {}
+}
+
 export function mergeBlueprintScopeLayersById(
   remoteItems: any[],
   incomingItems: any[],
@@ -723,9 +777,9 @@ export function mergeBlueprintScopeLayersById(
   const incomingById = new Map(incoming.map((layer) => [layer.id, layer]))
 
   return merged.map((layer) => {
-    if (layer.deletedAt) return layer
     const remoteLayer = remoteById.get(layer.id)
     const incomingLayer = incomingById.get(layer.id)
+    const orderFields = resolveScopeLayerOrderFields(layer, remoteLayer, incomingLayer)
     const remoteScene = remoteLayer?.animationScene
     const incomingScene = incomingLayer?.animationScene
     const remoteRevision = Math.max(
@@ -774,6 +828,11 @@ export function mergeBlueprintScopeLayersById(
     }
 
     const next = { ...layer }
+    if (orderFields.sortOrder != null) next.sortOrder = orderFields.sortOrder
+    else delete (next as any).sortOrder
+    if (orderFields.orderTouchedAt) next.orderTouchedAt = orderFields.orderTouchedAt
+    else delete (next as any).orderTouchedAt
+    if (layer.deletedAt) return next
     if (animationScene) next.animationScene = animationScene
     else delete (next as any).animationScene
     const latestRevision = Math.max(remoteRevision, incomingRevision)
@@ -1349,6 +1408,10 @@ function sanitizeScopeLayer(raw: any): BlueprintScopeLayer | null {
   const updatedAt = normalizeUpdatedAt(raw, createdAt)
   const deletedAt = isValidDateString(raw.deletedAt) ? String(raw.deletedAt) : undefined
   const deletedBy = deletedAt && raw.deletedBy != null ? String(raw.deletedBy) : undefined
+  const sortOrder = normalizeWorkPackageSortOrder(raw.sortOrder)
+  const orderTouchedAt = isValidWorkPackageOrderTimestamp(raw.orderTouchedAt)
+    ? String(raw.orderTouchedAt)
+    : undefined
   const animationScene = sanitizeBlueprintAnimationSceneForStorage(raw.animationScene)
   const animationSceneRevision = Number.isInteger(Number(raw.animationSceneRevision))
     && Number(raw.animationSceneRevision) > 0
@@ -1371,6 +1434,8 @@ function sanitizeScopeLayer(raw: any): BlueprintScopeLayer | null {
     proposalSummary: String(raw.proposalSummary || ''),
     createdAt,
     updatedAt,
+    ...(sortOrder != null ? { sortOrder } : {}),
+    ...(orderTouchedAt ? { orderTouchedAt } : {}),
     visible: raw.visible === false ? false : true,
     isolated: raw.isolated === true,
     ...(animationScene ? { animationScene } : {}),
@@ -1404,7 +1469,7 @@ export function getOperationsBlueprintScopeLayersRaw(backup: any, blueprintSetId
 
 export function getOperationsBlueprintScopeLayers(backup: any, blueprintSetId: string): BlueprintScopeLayer[] {
   // Public/UI accessor: hide tombstoned items.
-  return getOperationsBlueprintScopeLayersRaw(backup, blueprintSetId).filter((l) => !l.deletedAt)
+  return sortWorkPackages(getOperationsBlueprintScopeLayersRaw(backup, blueprintSetId).filter((l) => !l.deletedAt))
 }
 
 export const SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG =

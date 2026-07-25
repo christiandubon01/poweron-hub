@@ -81,6 +81,15 @@ import {
   regenerateCircuitTopologyIds,
   translateNormalizedPoints,
 } from '@/features/blueprint-animation/routeGeometry'
+import {
+  assignNewWorkPackageOrder,
+  decideWorkPackageRemoteRefreshApply,
+  getVisibleWorkPackageMoveState,
+  moveWorkPackageById,
+  reorderVisibleWorkPackagesById,
+  shouldRunDeferredWorkPackageRefresh,
+  sortWorkPackages,
+} from '@/features/blueprint-work-packages'
 import { PackageAnimationRouteBuilder } from '@/features/blueprint-animation/PackageAnimationRouteBuilder'
 import { PackageAnimationPlaybackControls } from '@/features/blueprint-animation/PackageAnimationPlaybackControls'
 import type { PlaybackFixtureAppearance } from '@/features/blueprint-animation/playbackFixtureAppearance'
@@ -2914,10 +2923,15 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // same expected revision. This guard closes that window synchronously.
   const animationRouteSaveGuardRef = useRef(createSingleFlightGuard())
   /** Local UI only — drag-to-reorder state for the Work Package / Scope Layer cards.
-   *  Order is the scopeLayers array order (no separate index field); reordering rebuilds the
-   *  array and persists via the existing persistScopeLayers path. */
+   *  Persistent order is sortOrder/orderTouchedAt; scopeLayers is a canonically sorted UI
+   *  projection, and arrow/drag requests route through the shared ordering helper. */
   const [draggingScopeLayerId, setDraggingScopeLayerId] = useState<string | null>(null)
   const [dragOverScopeLayerId, setDragOverScopeLayerId] = useState<string | null>(null)
+  const [isScopeLayerOrderSaving, setIsScopeLayerOrderSaving] = useState(false)
+  const isScopeLayerOrderSavingRef = useRef(false)
+  const scopeLayerOrderSaveIdRef = useRef(0)
+  const deferredScopeLayerRefreshRef = useRef(false)
+  const isViewerMountedRef = useRef(true)
   const [scopeLayerModal, setScopeLayerModal] = useState<{ open: boolean; mode: 'create' | 'edit'; layerId?: string }>({ open: false, mode: 'create' })
   const [scopeLayerDraftIds, setScopeLayerDraftIds] = useState<string[]>([])
   const [scopeLayerForm, setScopeLayerForm] = useState({
@@ -3925,9 +3939,15 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     try {
       const backup = getBackupData()
       const items = getOperationsBlueprintScopeLayers(backup || {}, blueprint.id)
-      setScopeLayers(Array.isArray(items) ? items : [])
+      const orderedItems = sortWorkPackages(Array.isArray(items) ? items : [])
+      setScopeLayers(orderedItems)
+      const liveIds = new Set(orderedItems.map((item) => item.id))
+      setDraggingScopeLayerId((id) => id && liveIds.has(id) ? id : null)
+      setDragOverScopeLayerId((id) => id && liveIds.has(id) ? id : null)
     } catch {
       setScopeLayers([])
+      setDraggingScopeLayerId(null)
+      setDragOverScopeLayerId(null)
     }
   }, [blueprint?.id])
 
@@ -4092,6 +4112,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   }, [blueprint, clearDoc, hasStoragePath])
 
   useEffect(() => {
+    isViewerMountedRef.current = true
+    return () => { isViewerMountedRef.current = false }
+  }, [])
+
+  useEffect(() => {
     if (!blueprint) {
       clearDoc()
       setError(null)
@@ -4117,6 +4142,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // BLUEPRINT-6Q — keep the scope dirty while an annotation save is committing so a
     // realtime/live refresh can't overwrite local storage and drop the new annotation.
     hasPendingAnnotationSaves ||
+    // EMERG-PKG-ORDER-1-B — keep remote refresh from replacing optimistic package order while
+    // the normalized order save is still resolving.
+    isScopeLayerOrderSaving ||
     // ANIM-2B1 — the route builder holds an unsaved draft whose expectedBaseRevision was
     // captured when it opened. A live refresh applying a remote snapshot here rewrites local
     // storage and reloads scopeLayers underneath the builder, leaving the draft behind the
@@ -4140,12 +4168,16 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       const savePending = pendingAnnotationMutationsRef.current > 0
       const recentlyStarted = now - lastAnnotationSaveStartedAtRef.current < 10000
       const recentlyFinished = now - lastAnnotationSaveFinishedAtRef.current < 5000
+      const scopeLayerRefresh = decideWorkPackageRemoteRefreshApply(isScopeLayerOrderSavingRef.current)
+      if (scopeLayerRefresh.deferScopeLayerRefresh) {
+        deferredScopeLayerRefreshRef.current = true
+      }
       if (savePending || recentlyStarted || recentlyFinished) {
-        loadScopeLayers()
+        if (scopeLayerRefresh.loadScopeLayers) loadScopeLayers()
         return
       }
       loadAnnotations()
-      loadScopeLayers()
+      if (scopeLayerRefresh.loadScopeLayers) loadScopeLayers()
       setWireProfileRemoteRefreshVersion((version) => version + 1)
     },
   })
@@ -4624,9 +4656,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     [allAnnotations, currentPage]
   )
 
+  const orderedScopeLayers = useMemo(() => sortWorkPackages(scopeLayers), [scopeLayers])
   const isolatedScopeLayers = useMemo(
-    () => scopeLayers.filter((layer) => isolatedScopeLayerIds.has(layer.id)),
-    [scopeLayers, isolatedScopeLayerIds],
+    () => orderedScopeLayers.filter((layer) => isolatedScopeLayerIds.has(layer.id)),
+    [orderedScopeLayers, isolatedScopeLayerIds],
   )
   const isPackageVisibilityFilterActive = isolatedScopeLayers.length > 0
 
@@ -4636,10 +4669,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const pageFilteredScopeLayers = useMemo(
     () => (
       scopeLayerShowAllPages
-        ? scopeLayers
-        : scopeLayers.filter((layer) => layer.pageNumber == null || layer.pageNumber === currentPage)
+        ? orderedScopeLayers
+        : orderedScopeLayers.filter((layer) => layer.pageNumber == null || layer.pageNumber === currentPage)
     ),
-    [scopeLayers, scopeLayerShowAllPages, currentPage],
+    [orderedScopeLayers, scopeLayerShowAllPages, currentPage],
+  )
+  const pageFilteredScopeLayerIds = useMemo(
+    () => pageFilteredScopeLayers.map((layer) => layer.id),
+    [pageFilteredScopeLayers],
   )
 
   const isolatedAnnotationIdSet = useMemo(() => {
@@ -4948,13 +4985,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     let nextLayers: BlueprintScopeLayer[]
     if (scopeLayerModal.mode === 'edit' && scopeLayerModal.layerId) {
       // Preserve the package's existing home page — adding/removing items never moves it.
-      nextLayers = scopeLayers.map((layer) => (
+      nextLayers = sortWorkPackages(scopeLayers.map((layer) => (
         layer.id === scopeLayerModal.layerId
           ? { ...layer, ...payloadBase, updatedAt: now }
           : layer
-      ))
+      )))
     } else {
-      nextLayers = [
+      const newSortOrder = assignNewWorkPackageOrder(scopeLayers)
+      nextLayers = sortWorkPackages([
         ...scopeLayers,
         {
           id: `scope_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -4962,10 +5000,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
           pageNumber: currentPage,
           createdAt: now,
           updatedAt: now,
+          ...(newSortOrder != null ? { sortOrder: newSortOrder } : {}),
           visible: true,
           isolated: false,
         },
-      ]
+      ])
     }
 
     setScopeLayers(nextLayers)
@@ -5054,41 +5093,108 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   }, [])
 
   // ── Work Package / Scope Layer reordering ──
-  // Order is the array order (no separate index field). These helpers only move a card within
-  // the array and persist the reordered array via the existing persistScopeLayers path — same
-  // pattern as deleteScopeLayer. Package membership (selectedAnnotationIds/itemRefs),
-  // names/details, visibility filter and package-pick selection are never modified.
   const persistReorderedScopeLayers = useCallback(async (nextLayers: BlueprintScopeLayer[]) => {
-    setScopeLayers(nextLayers)
-    const saved = await persistScopeLayers(nextLayers)
+    if (!blueprint?.id) return
+    const saveId = ++scopeLayerOrderSaveIdRef.current
+    isScopeLayerOrderSavingRef.current = true
+    setIsScopeLayerOrderSaving(true)
+    setScopeLayers(sortWorkPackages(nextLayers))
+    let saved = false
+    let cloudSynced = false
+    try {
+      const backup = getBackupData()
+      if (!backup) throw new Error('No local backup data available.')
+      const result = await saveOperationsBlueprintScopeLayers(backup, blueprint.id, nextLayers)
+      saved = result.cloudSynced || result.localSaved
+      cloudSynced = result.cloudSynced
+      if (result.cloudSynced) {
+        clearStaleSyncMessages()
+      } else if (result.localSaved) {
+        if (result.warning) showSyncPausedNoticeOnce()
+      } else {
+        setActionMsg({
+          type: 'error',
+          text: result.error || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
+        })
+      }
+    } catch (e: any) {
+      setActionMsg({
+        type: 'error',
+        text: e?.message || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
+      })
+    }
+    if (!isViewerMountedRef.current) return
     if (!saved) {
+      setDraggingScopeLayerId(null)
+      setDragOverScopeLayerId(null)
       loadScopeLayers()
     }
-  }, [loadScopeLayers, persistScopeLayers])
+    if (scopeLayerOrderSaveIdRef.current === saveId) {
+      const runDeferredRefresh = shouldRunDeferredWorkPackageRefresh({
+        deferred: deferredScopeLayerRefreshRef.current,
+        saved,
+        cloudSynced,
+        saveId,
+        currentSaveId: scopeLayerOrderSaveIdRef.current,
+      })
+      deferredScopeLayerRefreshRef.current = false
+      isScopeLayerOrderSavingRef.current = false
+      setIsScopeLayerOrderSaving(false)
+      if (runDeferredRefresh) {
+        loadScopeLayers()
+      }
+    }
+  }, [
+    blueprint?.id,
+    clearStaleSyncMessages,
+    loadScopeLayers,
+    showSyncPausedNoticeOnce,
+  ])
+
+  const requestScopeLayerReorder = useCallback((params: {
+    movedId: string
+    targetId?: string
+    direction?: 'up' | 'down'
+    placement?: 'before' | 'after'
+  }) => {
+    if (isScopeLayerOrderSavingRef.current) return
+    const orderTouchedAt = new Date().toISOString()
+    const result = params.direction
+      ? moveWorkPackageById({
+        fullOrderedLivePackages: orderedScopeLayers,
+        visibleIds: pageFilteredScopeLayerIds,
+        movedId: params.movedId,
+        direction: params.direction,
+        orderTouchedAt,
+      })
+      : params.targetId
+        ? reorderVisibleWorkPackagesById({
+          fullOrderedLivePackages: orderedScopeLayers,
+          visibleIds: pageFilteredScopeLayerIds,
+          movedId: params.movedId,
+          targetId: params.targetId,
+          placement: params.placement || 'before',
+          orderTouchedAt,
+        })
+        : { changed: false, packages: orderedScopeLayers }
+    if (!result.changed) return
+    void persistReorderedScopeLayers(result.packages)
+  }, [
+    isScopeLayerOrderSaving,
+    orderedScopeLayers,
+    pageFilteredScopeLayerIds,
+    persistReorderedScopeLayers,
+  ])
 
   // Drop card `fromId` at the position currently occupied by `toId`.
   const reorderScopeLayer = useCallback((fromId: string, toId: string) => {
-    if (fromId === toId) return
-    const fromIndex = scopeLayers.findIndex((l) => l.id === fromId)
-    const toIndex = scopeLayers.findIndex((l) => l.id === toId)
-    if (fromIndex === -1 || toIndex === -1) return
-    const next = [...scopeLayers]
-    const [moved] = next.splice(fromIndex, 1)
-    next.splice(toIndex, 0, moved)
-    void persistReorderedScopeLayers(next)
-  }, [scopeLayers, persistReorderedScopeLayers])
+    requestScopeLayerReorder({ movedId: fromId, targetId: toId, placement: 'before' })
+  }, [requestScopeLayerReorder])
 
   // Fallback up/down control (reliable on touch where native drag is finicky).
   const moveScopeLayer = useCallback((layerId: string, direction: 'up' | 'down') => {
-    const index = scopeLayers.findIndex((l) => l.id === layerId)
-    if (index === -1) return
-    const target = direction === 'up' ? index - 1 : index + 1
-    if (target < 0 || target >= scopeLayers.length) return
-    const next = [...scopeLayers]
-    const [moved] = next.splice(index, 1)
-    next.splice(target, 0, moved)
-    void persistReorderedScopeLayers(next)
-  }, [scopeLayers, persistReorderedScopeLayers])
+    requestScopeLayerReorder({ movedId: layerId, direction })
+  }, [requestScopeLayerReorder])
 
   // ── ANIM-2B1: one-source package route builder ──
   const openPackageAnimationRouteBuilder = useCallback((clickedLayer: BlueprintScopeLayer) => {
@@ -5152,7 +5258,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         // landed. Closing clears the draft, overlays, badges and route-pick pointer capture in
         // one step, and never runs the unsaved-changes confirm. The service already dispatched
         // the one verified poweron:sync-success event — do not dispatch another here.
-        setScopeLayers((previous) => previous.map((layer) => layer.id === outcome.scopeLayer.id ? outcome.scopeLayer : layer))
+        setScopeLayers((previous) => sortWorkPackages(previous.map((layer) => layer.id === outcome.scopeLayer.id ? outcome.scopeLayer : layer)))
         setAnimationRouteBuilder(null)
         setActionMsg({ type: 'success', text: 'Animation route saved.' })
         return
@@ -5198,7 +5304,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       if (outcome.status === 'saved') {
         // Same reconciliation as save: adopt the returned scene-less layer so the package card
         // stops showing the removed route, and keep the service's removal revision marker.
-        setScopeLayers((previous) => previous.map((entry) => entry.id === outcome.scopeLayer.id ? outcome.scopeLayer : entry))
+        setScopeLayers((previous) => sortWorkPackages(previous.map((entry) => entry.id === outcome.scopeLayer.id ? outcome.scopeLayer : entry)))
         setAnimationPlayback((previous) => previous?.layerId === layer.id ? null : previous)
         if (animationRouteBuilder?.layerId === layer.id) setAnimationRouteBuilder(null)
         setActionMsg({ type: 'success', text: 'Animation route cleared.' })
@@ -12384,7 +12490,7 @@ const annotationPanelSizeClass =
                         <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-200">{pageFilteredScopeLayers.length}{!scopeLayerShowAllPages && pageFilteredScopeLayers.length !== scopeLayers.length ? ` / ${scopeLayers.length}` : ''}</span>
                       </div>
                       <div className="mt-0.5 flex items-center justify-between gap-2">
-                        <div className="text-[10px] text-sky-200/60">Saved work packages for this viewer session. Drag the handle or use ↑/↓ to reorder.</div>
+                        <div className="text-[10px] text-sky-200/60">{isScopeLayerOrderSaving ? 'Saving package order...' : 'Saved work packages for this viewer session. Drag the handle or use ↑/↓ to reorder.'}</div>
                         <button
                           type="button"
                           onClick={() => setScopeLayerShowAllPages((prev) => !prev)}
@@ -12432,15 +12538,17 @@ const annotationPanelSizeClass =
                     )}
                     <div className="space-y-2 px-3 pb-3">
                       {pageFilteredScopeLayers.map((layer) => {
-                        const layerIndex = scopeLayers.findIndex((l) => l.id === layer.id)
                         const totalHours = getBlueprintScopeLayerLaborTotal(layer)
                         const summary = buildBlueprintScopeItemSummary(layer.itemRefs)
                         const isLayerIsolated = isolatedScopeLayerIds.has(layer.id)
                         const isLayerHidden = hiddenWorkPackageIds.has(layer.id)
                         const isDragging = draggingScopeLayerId === layer.id
                         const isDropTarget = dragOverScopeLayerId === layer.id && draggingScopeLayerId !== layer.id
-                        const isFirstLayer = layerIndex === 0
-                        const isLastLayer = layerIndex === scopeLayers.length - 1
+                        const moveState = getVisibleWorkPackageMoveState({
+                          visibleIds: pageFilteredScopeLayerIds,
+                          packageId: layer.id,
+                          busy: isScopeLayerOrderSaving,
+                        })
                         const distinctPageCount = getBlueprintScopeLayerDistinctPageCount(layer)
                         const pageBadgeLabel = layer.pageNumber != null ? `Page ${layer.pageNumber}` : 'Unscoped'
                         const animationSummary = summarizePackageAnimationScene(layer.animationScene, animationRouteAnnotations, layer.selectedAnnotationIds)
@@ -12453,7 +12561,7 @@ const annotationPanelSizeClass =
                             onDragEnter={(e) => { e.preventDefault(); if (draggingScopeLayerId) setDragOverScopeLayerId(layer.id) }}
                             onDrop={(e) => {
                               e.preventDefault()
-                              if (draggingScopeLayerId) reorderScopeLayer(draggingScopeLayerId, layer.id)
+                              if (!isScopeLayerOrderSaving && draggingScopeLayerId) reorderScopeLayer(draggingScopeLayerId, layer.id)
                               setDraggingScopeLayerId(null)
                               setDragOverScopeLayerId(null)
                             }}
@@ -12462,10 +12570,16 @@ const annotationPanelSizeClass =
                             <div className="flex items-start justify-between gap-2">
                               <div className="flex min-w-0 items-start gap-1.5">
                                 <span
-                                  draggable
-                                  onDragStart={(e) => { setDraggingScopeLayerId(layer.id); setDragOverScopeLayerId(null); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', layer.id) } catch {} }}
+                                  draggable={!isScopeLayerOrderSaving}
+                                  onDragStart={(e) => {
+                                    if (isScopeLayerOrderSaving) {
+                                      e.preventDefault()
+                                      return
+                                    }
+                                    setDraggingScopeLayerId(layer.id); setDragOverScopeLayerId(null); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', layer.id) } catch {}
+                                  }}
                                   onDragEnd={() => { setDraggingScopeLayerId(null); setDragOverScopeLayerId(null) }}
-                                  className="mt-0.5 flex-shrink-0 cursor-grab touch-none text-gray-500 hover:text-gray-300 active:cursor-grabbing"
+                                  className={`mt-0.5 flex-shrink-0 touch-none text-gray-500 hover:text-gray-300 ${isScopeLayerOrderSaving ? 'cursor-not-allowed opacity-50' : 'cursor-grab active:cursor-grabbing'}`}
                                   title="Drag to reorder this work package"
                                   aria-label="Drag to reorder"
                                 >
@@ -12498,18 +12612,20 @@ const annotationPanelSizeClass =
                                   <button
                                     type="button"
                                     onClick={() => moveScopeLayer(layer.id, 'up')}
-                                    disabled={isFirstLayer}
+                                    disabled={!moveState.canMoveUp}
                                     className="rounded border border-gray-700 px-1 leading-none text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-700"
-                                    title="Move up"
+                                    title="Move package up"
+                                    aria-label="Move package up"
                                   >
                                     <ChevronUp size={10} />
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => moveScopeLayer(layer.id, 'down')}
-                                    disabled={isLastLayer}
+                                    disabled={!moveState.canMoveDown}
                                     className="mt-0.5 rounded border border-gray-700 px-1 leading-none text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-700"
-                                    title="Move down"
+                                    title="Move package down"
+                                    aria-label="Move package down"
                                   >
                                     <ChevronDown size={10} />
                                   </button>

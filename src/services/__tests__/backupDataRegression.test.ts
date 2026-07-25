@@ -64,6 +64,7 @@ import {
   getOperationsBlueprintAnnotations,
   getOperationsBlueprintAnnotationsRaw,
   getOperationsBlueprintScopeLayers,
+  getOperationsBlueprintScopeLayersRaw,
   getOperationsBlueprintWireProfiles,
   getLiveBlueprintSetRecords,
   identifyOperationsBlueprintWireProfileReferences,
@@ -676,10 +677,9 @@ describe('blueprint animation scene preservation', () => {
     expect(merged[1].animationScene).toEqual(futureScene)
 
     const backup = { blueprintSummaries: { operationsBlueprintScopeLayers: { 'set-1': merged } } }
-    expect(getOperationsBlueprintScopeLayers(backup, 'set-1').map((layer) => layer.animationScene)).toEqual([
-      supported.animationScene,
-      futureScene,
-    ])
+    const scenesByPackageId = new Map(getOperationsBlueprintScopeLayers(backup, 'set-1').map((layer) => [layer.id, layer.animationScene]))
+    expect(scenesByPackageId.get('package-supported')).toEqual(supported.animationScene)
+    expect(scenesByPackageId.get('package-future')).toEqual(futureScene)
 
     const metadataOnlyEdit = scopeLayer('package-supported', NEWER, { crewNotes: 'New metadata, old scene omitted' })
     const sceneSafeMerge = mergeBlueprintScopeLayersById([supported], [metadataOnlyEdit])
@@ -921,6 +921,169 @@ describe('BP-SYNC-FIX-1 Part A: work-package save never deletes by omission; exp
     await deleteOperationsBlueprintScopeLayer(getBackupData(), setId, 'scope_16') // "Labels"
     expect(pushedLive()).toHaveLength(16)
     expect(tombstonedIds()).toEqual(['scope_16'])
+  })
+})
+
+describe('EMERG-PKG-ORDER-1 work-package order metadata', () => {
+  const setId = 'set-order-1'
+  const seed = (localLayers: any[], remoteLayers: any[] = localLayers): void => {
+    const local = { projects: [], settings: {}, blueprintSummaries: { operationsBlueprintScopeLayers: { [setId]: localLayers } } } as any
+    const remote = { projects: [], settings: {}, blueprintSummaries: { operationsBlueprintScopeLayers: { [setId]: remoteLayers } } } as any
+    setActiveTenantUser(supabaseState.userId)
+    markTenantDataReady(supabaseState.userId)
+    saveBackupData(local, supabaseState.userId)
+    supabaseState.remoteData = remote
+  }
+  const pushedRaw = (): any[] => (supabaseState.capturedPayload?.blueprintSummaries?.operationsBlueprintScopeLayers?.[setId] ?? [])
+  const pushedLive = (): any[] => pushedRaw().filter((l: any) => !l.deletedAt)
+
+  it('sanitizes valid and invalid order metadata without preserving unknown fields', () => {
+    const backup = { blueprintSummaries: { operationsBlueprintScopeLayers: { [setId]: [
+      scopeLayer('A', NEW, { sortOrder: 2.8, orderTouchedAt: NEWER, unknownField: 'strip me' }),
+      scopeLayer('B', NEW, { sortOrder: -1, orderTouchedAt: 'not-a-date' }),
+      scopeLayer('C', NEW, { sortOrder: Number.POSITIVE_INFINITY, orderTouchedAt: '' }),
+    ] } } } as any
+    const raw = getOperationsBlueprintScopeLayersRaw(backup, setId) as any[]
+    expect(raw[0].sortOrder).toBe(2)
+    expect(raw[0].orderTouchedAt).toBe(NEWER)
+    expect(raw[0].unknownField).toBeUndefined()
+    expect(raw[1].sortOrder).toBeUndefined()
+    expect(raw[1].orderTouchedAt).toBeUndefined()
+    expect(raw[2].sortOrder).toBeUndefined()
+    expect(raw[2].orderTouchedAt).toBeUndefined()
+  })
+
+  it('round trips order metadata through save and backup JSON', async () => {
+    seed([scopeLayer('A', NEW, { sortOrder: 0, orderTouchedAt: NEW }), scopeLayer('B', NEW, { sortOrder: 1, orderTouchedAt: NEW })])
+    const result = await saveOperationsBlueprintScopeLayers(getBackupData(), setId, [
+      scopeLayer('B', NEW, { sortOrder: 0, orderTouchedAt: NEWER }),
+      scopeLayer('A', NEW, { sortOrder: 1, orderTouchedAt: NEWER }),
+    ])
+    expect(result).toMatchObject({ success: true })
+    const pushedBackup = { blueprintSummaries: { operationsBlueprintScopeLayers: { [setId]: pushedLive() } } }
+    expect(getOperationsBlueprintScopeLayers(pushedBackup, setId).map((l) => [l.id, l.sortOrder, l.orderTouchedAt])).toEqual([
+      ['B', 0, NEWER],
+      ['A', 1, NEWER],
+    ])
+    const restored = JSON.parse(JSON.stringify(supabaseState.capturedPayload))
+    expect(getOperationsBlueprintScopeLayers(restored, setId).map((l) => [l.id, l.sortOrder, l.orderTouchedAt])).toEqual([
+      ['B', 0, NEWER],
+      ['A', 1, NEWER],
+    ])
+  })
+
+  it('uses explicit order fields instead of incoming raw array order', () => {
+    const backup = { blueprintSummaries: { operationsBlueprintScopeLayers: { [setId]: [
+      scopeLayer('B', NEW, { sortOrder: 1, orderTouchedAt: NEW }),
+      scopeLayer('A', NEW, { sortOrder: 0, orderTouchedAt: NEW }),
+      scopeLayer('C', NEW),
+    ] } } } as any
+    expect(getOperationsBlueprintScopeLayers(backup, setId).map((l) => l.id)).toEqual(['A', 'B', 'C'])
+  })
+
+  it('keeps newer order metadata independently from newer content edits', () => {
+    const deviceAOrder = [
+      scopeLayer('C', NEW, { sortOrder: 0, orderTouchedAt: NEWER }),
+      scopeLayer('A', NEW, { sortOrder: 1, orderTouchedAt: NEWER }),
+      scopeLayer('B', NEW, { sortOrder: 2, orderTouchedAt: NEWER, crewNotes: 'old notes' }),
+    ]
+    const deviceBContent = [
+      scopeLayer('A', NEW),
+      scopeLayer('B', '2026-07-17T12:00:00.000Z', { crewNotes: 'remote crew notes', sortOrder: 1, orderTouchedAt: OLD }),
+      scopeLayer('C', NEW),
+    ]
+    const merged = mergeBlueprintScopeLayersById(deviceAOrder, deviceBContent)
+    const backup = { blueprintSummaries: { operationsBlueprintScopeLayers: { [setId]: merged } } } as any
+    const ordered = getOperationsBlueprintScopeLayers(backup, setId)
+    expect(ordered.map((l) => l.id)).toEqual(['C', 'A', 'B'])
+    expect(ordered.find((l) => l.id === 'B')?.crewNotes).toBe('remote crew notes')
+    expect(ordered.find((l) => l.id === 'B')?.sortOrder).toBe(2)
+    expect(ordered.find((l) => l.id === 'B')?.orderTouchedAt).toBe(NEWER)
+  })
+
+  it('keeps newer labor/content and newer order metadata from opposite sides', () => {
+    const deviceAOrder = scopeLayer('A', NEW, {
+      roughInHours: 1,
+      trimHours: 1,
+      crewNotes: 'older labor',
+      sortOrder: 4,
+      orderTouchedAt: NEWER,
+    })
+    const deviceBContent = scopeLayer('A', '2026-07-17T12:00:00.000Z', {
+      roughInHours: 8,
+      trimHours: 6,
+      crewNotes: 'new labor notes',
+      sortOrder: 1,
+      orderTouchedAt: OLD,
+    })
+    const merged = mergeBlueprintScopeLayersById([deviceAOrder], [deviceBContent])[0]
+    expect(merged.roughInHours).toBe(8)
+    expect(merged.trimHours).toBe(6)
+    expect(merged.crewNotes).toBe('new labor notes')
+    expect(merged.sortOrder).toBe(4)
+    expect(merged.orderTouchedAt).toBe(NEWER)
+  })
+
+  it('keeps newer animation revision and newer order event from opposite sides', () => {
+    const remoteContent = scopeLayer('A', NEWER, {
+      animationScene: animationScene(3, {
+        id: 'remote-scene',
+        branchOrders: [{ sourceNodeId: 'junction-1', branchNodeIds: ['branch-b', 'branch-a'] }],
+      }),
+      animationSceneRevision: 3,
+      sortOrder: 9,
+      orderTouchedAt: OLD,
+      crewNotes: 'newer content',
+    })
+    const localOrder = scopeLayer('A', NEW, {
+      animationScene: animationScene(1, {
+        id: 'local-scene',
+        branchOrders: [{ sourceNodeId: 'junction-1', branchNodeIds: ['branch-a'] }],
+      }),
+      animationSceneRevision: 1,
+      sortOrder: 2,
+      orderTouchedAt: NEWER,
+      crewNotes: 'older content',
+    })
+    const merged = mergeBlueprintScopeLayersById([remoteContent], [localOrder])[0]
+    expect(merged.crewNotes).toBe('newer content')
+    expect(merged.animationSceneRevision).toBe(3)
+    expect((merged.animationScene as any).id).toBe('remote-scene')
+    expect((merged.animationScene as any).branchOrders).toEqual([{ sourceNodeId: 'junction-1', branchNodeIds: ['branch-b', 'branch-a'] }])
+    expect(merged.sortOrder).toBe(2)
+    expect(merged.orderTouchedAt).toBe(NEWER)
+  })
+
+  it('preserves explicit order when the content winner omits order fields and keeps remote-created packages', async () => {
+    seed(
+      [scopeLayer('A', NEW, { sortOrder: 0, orderTouchedAt: NEW }), scopeLayer('B', NEW, { sortOrder: 1, orderTouchedAt: NEW })],
+      [scopeLayer('A', NEW, { sortOrder: 0, orderTouchedAt: NEW }), scopeLayer('B', NEW, { sortOrder: 1, orderTouchedAt: NEW }), scopeLayer('R', NEW, { sortOrder: 2, orderTouchedAt: NEW })],
+    )
+    await saveOperationsBlueprintScopeLayers(getBackupData(), setId, [scopeLayer('A', NEWER, { crewNotes: 'edited with stale order fields' })])
+    expect(pushedLive().map((l) => l.id).sort()).toEqual(['A', 'B', 'R'])
+    expect(pushedLive().find((l) => l.id === 'A').crewNotes).toBe('edited with stale order fields')
+    expect(pushedLive().find((l) => l.id === 'A').sortOrder).toBe(0)
+    expect(pushedLive().find((l) => l.id === 'R').sortOrder).toBe(2)
+  })
+
+  it('resolves no-timestamp sortOrder conflicts deterministically when merge arguments are reversed', () => {
+    const left = scopeLayer('A', NEW, { sortOrder: 0, crewNotes: 'same timestamp left' })
+    const right = scopeLayer('A', NEW, { sortOrder: 5, crewNotes: 'same timestamp right' })
+    const forward = mergeBlueprintScopeLayersById([left], [right])[0]
+    const reversed = mergeBlueprintScopeLayersById([right], [left])[0]
+    expect(forward.sortOrder).toBe(reversed.sortOrder)
+  })
+
+  it('keeps tombstones authoritative while retaining their order metadata', () => {
+    const tomb = scopeLayer('B', NEWER, { deletedAt: NEWER, sortOrder: 1, orderTouchedAt: NEW })
+    const merged = mergeBlueprintScopeLayersById(
+      [scopeLayer('A', NEW, { sortOrder: 0, orderTouchedAt: NEW }), tomb],
+      [scopeLayer('B', NEW, { sortOrder: 0, orderTouchedAt: OLD })],
+    )
+    const rawB = merged.find((l) => l.id === 'B') as any
+    expect(rawB.deletedAt).toBe(NEWER)
+    expect(rawB.sortOrder).toBe(1)
+    expect(getOperationsBlueprintScopeLayers({ blueprintSummaries: { operationsBlueprintScopeLayers: { [setId]: merged } } }, setId).map((l) => l.id)).toEqual(['A'])
   })
 })
 
