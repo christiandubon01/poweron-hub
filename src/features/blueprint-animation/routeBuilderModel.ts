@@ -9,6 +9,7 @@ import {
   createDefaultBlueprintAnimationScene,
   parseBlueprintAnimationScene,
 } from './sceneSchema'
+import { mergeBlueprintScopeLayersById } from '@/services/blueprintLibraryService'
 import type {
   BlueprintAnimationChannelType,
   BlueprintAnimationBranchMode,
@@ -2117,11 +2118,77 @@ export function reconcilePackageAnimationRouteLocalRefresh(
 
 export interface PackageAnimationRouteSaveResultLike<TLayer> {
   success: boolean
+  status?: string
+  localSaved?: boolean
+  cloudSynced?: boolean
   reason?: string
   message?: string
   scene?: unknown
   scopeLayer?: TLayer
+  animationSceneRevision?: number
   currentScene?: unknown
+}
+
+export type PackageAnimationRouteActionMessage =
+  | { type: 'success'; text: string }
+  | { type: 'warning'; text: string }
+  | { type: 'error'; text: string }
+
+export type PackageAnimationRouteNotice = PackageAnimationRouteActionMessage & {
+  blueprintSetId: string
+  scopeLayerId: string
+  operationId?: number
+}
+
+export function packageAnimationRouteNoticeKey(blueprintSetId: string, scopeLayerId: string): string {
+  return `${blueprintSetId}:${scopeLayerId}`
+}
+
+export function isPackageAnimationRouteOperationNewer(
+  existingOperationId: number | undefined,
+  incomingOperationId: number | undefined,
+): boolean {
+  return Number.isFinite(existingOperationId)
+    && Number.isFinite(incomingOperationId)
+    && Number(existingOperationId) > Number(incomingOperationId)
+}
+
+export function upsertPackageAnimationRouteNotice(
+  previous: Record<string, PackageAnimationRouteNotice>,
+  notice: PackageAnimationRouteNotice,
+): Record<string, PackageAnimationRouteNotice> {
+  const key = packageAnimationRouteNoticeKey(notice.blueprintSetId, notice.scopeLayerId)
+  const existing = previous[key]
+  if (existing && isPackageAnimationRouteOperationNewer(existing.operationId, notice.operationId)) {
+    return previous
+  }
+  return { ...previous, [key]: notice }
+}
+
+export function clearPackageAnimationRouteNotice(
+  previous: Record<string, PackageAnimationRouteNotice>,
+  input: { blueprintSetId: string; scopeLayerId: string; operationId?: number },
+): Record<string, PackageAnimationRouteNotice> {
+  const key = packageAnimationRouteNoticeKey(input.blueprintSetId, input.scopeLayerId)
+  const existing = previous[key]
+  if (!existing || isPackageAnimationRouteOperationNewer(existing.operationId, input.operationId)) {
+    return previous
+  }
+  const next = { ...previous }
+  delete next[key]
+  return next
+}
+
+export function packageAnimationRouteActionMessageClass(type: PackageAnimationRouteActionMessage['type']): string {
+  switch (type) {
+    case 'success':
+      return 'bg-emerald-900/30 text-emerald-300'
+    case 'warning':
+      return 'border border-amber-800/50 bg-amber-950/40 text-amber-200'
+    case 'error':
+    default:
+      return 'bg-red-900/30 text-red-300'
+  }
 }
 
 export type PackageAnimationRouteSaveOutcome<TLayer> =
@@ -2130,6 +2197,10 @@ export type PackageAnimationRouteSaveOutcome<TLayer> =
       scopeLayer: TLayer
       savedScene: BlueprintScopeAnimationSceneV1 | undefined
       savedRevision: number
+      saveStatus: 'verified-success' | 'local-success-cloud-warning' | 'local-success-verification-conflict'
+      message: string
+      actionMessage: PackageAnimationRouteActionMessage
+      reviewConflict?: PackageAnimationRouteConflictState
       /** Clean draft rebased on the verified saved scene, for callers that reconcile before closing. */
       savedDraft?: PackageAnimationRouteDraft
       builder: null
@@ -2152,9 +2223,13 @@ function conflictMessageFor(reason: string | undefined, fallback: string | undef
     case 'stale-local-revision':
       return 'This route builder is out of date with the animation route already saved on this device. Reload the latest route, or keep your draft open.'
     case 'stale-remote-revision':
-      return 'Another device changed this animation route. Your draft has not been overwritten.'
+      return 'The saved route changed elsewhere. Review the latest route before replacing it.'
     case 'remote-conflict-unresolved':
-      return 'The route save could not be verified. Your draft is still open and unchanged.'
+      return 'The saved route changed elsewhere. Review the latest route before replacing it.'
+    case 'remote-write-failed':
+      return 'Animation route could not be saved. Your draft is still open.'
+    case 'verification-mismatch':
+      return 'The route was saved locally, but the cloud copy does not match. Your local route has been preserved.'
     case 'scope-layer-missing':
       return 'The work package no longer exists.'
     case 'scope-layer-deleted':
@@ -2162,15 +2237,142 @@ function conflictMessageFor(reason: string | undefined, fallback: string | undef
     case 'unsupported-current-scene':
       return 'The saved animation route uses a newer app version and cannot be replaced here.'
     case 'invalid-next-scene':
-      return 'The animation route draft could not be saved because it is not valid.'
+      return 'Animation route could not be saved. Your draft is still open.'
     default:
-      return fallback || 'The route save could not be completed. Your draft is still open.'
+      return fallback || 'Animation route could not be saved. Your draft is still open.'
   }
+}
+
+export function classifyPackageAnimationRouteActionMessage(result: Pick<PackageAnimationRouteSaveResultLike<unknown>, 'status' | 'cloudSynced' | 'reason' | 'message'>): PackageAnimationRouteActionMessage {
+  if (result.cloudSynced && result.status === 'verified') {
+    return { type: 'success', text: 'Animation route saved.' }
+  }
+  if (result.status === 'verification-mismatch') {
+    return { type: 'warning', text: 'The route was saved locally, but the cloud copy does not match. Your local route has been preserved.' }
+  }
+  if (result.status === 'local-saved-cloud-failed' || result.reason === 'remote-write-failed') {
+    return { type: 'warning', text: 'Animation route saved on this device, but cloud sync failed. Other devices may not show the latest route yet.' }
+  }
+  if (result.status === 'local-saved-revision-conflict') {
+    return { type: 'warning', text: 'The route was saved locally, but a newer cloud route also exists. Review the cloud copy before replacing either version.' }
+  }
+  if (result.status === 'local-saved-remote-deleted') {
+    return { type: 'warning', text: 'The route was saved locally, but the cloud Work Package is missing or deleted. Your local route has been preserved.' }
+  }
+  if (String(result.status || '').startsWith('local-saved-')) {
+    return { type: 'warning', text: 'Animation route saved on this device. Cloud sync has not been verified yet.' }
+  }
+  return { type: 'error', text: result.message || 'Animation route could not be saved. Your draft is still open.' }
+}
+
+export function applySavedAnimationScopeLayer<TLayer extends { id: string; updatedAt?: string; sortOrder?: number; orderTouchedAt?: string; animationScene?: unknown; animationSceneRevision?: number }>(
+  currentLayers: TLayer[],
+  savedLayer: TLayer,
+): TLayer[] {
+  const merged = mergeBlueprintScopeLayersById(currentLayers as any[], [savedLayer as any]) as unknown as TLayer[]
+  return merged.map((layer) => {
+    if (layer.id !== savedLayer.id || (layer as any).deletedAt) return layer
+    const next: TLayer = { ...layer }
+    if (Object.prototype.hasOwnProperty.call(savedLayer, 'animationScene')) {
+      ;(next as any).animationScene = structuredClone(savedLayer.animationScene)
+    } else {
+      delete (next as any).animationScene
+    }
+    if (savedLayer.animationSceneRevision != null) {
+      ;(next as any).animationSceneRevision = savedLayer.animationSceneRevision
+    } else {
+      delete (next as any).animationSceneRevision
+    }
+    return next
+  })
 }
 
 function supportedSceneRevision(scene: unknown): number | undefined {
   const parsed = parseBlueprintAnimationScene(scene)
   return parsed.status === 'supported' ? parsed.scene.revision : undefined
+}
+
+export function buildPackageAnimationRouteReviewConflict(
+  result: Pick<PackageAnimationRouteSaveResultLike<unknown>, 'status' | 'reason' | 'message' | 'currentScene'>,
+): PackageAnimationRouteConflictState | undefined {
+  if (result.currentScene == null) return undefined
+  const status = String(result.status || '')
+  const reviewable = status === 'verification-mismatch'
+    || status === 'local-saved-revision-conflict'
+    || status === 'local-saved-cloud-failed'
+  if (!reviewable) return undefined
+  return {
+    message: classifyPackageAnimationRouteActionMessage(result).text,
+    sameDevice: false,
+    ...(supportedSceneRevision(result.currentScene) != null ? { latestRevision: supportedSceneRevision(result.currentScene) } : {}),
+    currentScene: result.currentScene,
+  }
+}
+
+export function shouldClosePackageAnimationRouteBuilderAfterSave(
+  current: Pick<PackageAnimationRouteBuilderState, 'sessionId' | 'layerId'> | null,
+  session: Pick<PackageAnimationRouteBuilderState, 'sessionId' | 'layerId'> & {
+    blueprintSetId: string
+    projectId?: string | null
+    operationId?: number
+  },
+  context: {
+    blueprintSetId?: string | null
+    projectId?: string | null
+    currentOperationId?: number
+  },
+): boolean {
+  if (!current) return false
+  if (current.sessionId !== session.sessionId) return false
+  if (current.layerId !== session.layerId) return false
+  if (!isPackageAnimationRouteIdentityCurrent(session, context)) return false
+  if (session.operationId != null && context.currentOperationId !== session.operationId) return false
+  return true
+}
+
+export type PackageAnimationRouteOperationIdentity = Pick<PackageAnimationRouteBuilderState, 'sessionId' | 'layerId'> & {
+  blueprintSetId: string
+  projectId?: string | null
+  operationId?: number
+}
+
+export interface PackageAnimationRouteCurrentBlueprintIdentity {
+  blueprintSetId?: string | null
+  projectId?: string | null
+  currentOperationId?: number
+}
+
+export interface PackageAnimationRouteCompletionDecision {
+  applyToCurrentScopeLayers: boolean
+  applyNoticeToCurrentView: boolean
+  applyReviewToCurrentView: boolean
+  closeCurrentBuilder: boolean
+}
+
+function normalizePackageAnimationRouteIdentityId(value: string | null | undefined): string {
+  return String(value ?? '').trim()
+}
+
+export function isPackageAnimationRouteIdentityCurrent(
+  operation: Pick<PackageAnimationRouteOperationIdentity, 'blueprintSetId' | 'projectId'>,
+  current: Pick<PackageAnimationRouteCurrentBlueprintIdentity, 'blueprintSetId' | 'projectId'>,
+): boolean {
+  return normalizePackageAnimationRouteIdentityId(current.blueprintSetId) === normalizePackageAnimationRouteIdentityId(operation.blueprintSetId)
+    && normalizePackageAnimationRouteIdentityId(current.projectId) === normalizePackageAnimationRouteIdentityId(operation.projectId)
+}
+
+export function decidePackageAnimationRouteCompletion(
+  currentBuilder: Pick<PackageAnimationRouteBuilderState, 'sessionId' | 'layerId'> | null,
+  operation: PackageAnimationRouteOperationIdentity,
+  current: PackageAnimationRouteCurrentBlueprintIdentity,
+): PackageAnimationRouteCompletionDecision {
+  const identityStillCurrent = isPackageAnimationRouteIdentityCurrent(operation, current)
+  return {
+    applyToCurrentScopeLayers: identityStillCurrent,
+    applyNoticeToCurrentView: identityStillCurrent,
+    applyReviewToCurrentView: identityStillCurrent,
+    closeCurrentBuilder: identityStillCurrent && shouldClosePackageAnimationRouteBuilderAfterSave(currentBuilder, operation, current),
+  }
 }
 
 /**
@@ -2207,27 +2409,40 @@ export function markPackageAnimationRouteDraftSaved(
 }
 
 /**
- * Translate a public scene-save result into the next builder/package state. Only an explicit
- * `success: true` carrying the saved scope layer counts as saved; the final revision is always
- * taken from the service result, never derived from the draft.
+ * Translate a public scene-save result into the next builder/package state. A verified save or
+ * confirmed local save carrying the persisted scope layer counts as saved on this device; the
+ * final revision is always taken from the service result, never derived from the draft.
  */
 export function reconcilePackageAnimationRouteSave<TLayer extends { id: string }>(
   state: PackageAnimationRouteBuilderState | null,
   result: PackageAnimationRouteSaveResultLike<TLayer>,
 ): PackageAnimationRouteSaveOutcome<TLayer> {
-  if (result.success && result.scopeLayer) {
+  if ((result.success || result.localSaved) && result.scopeLayer) {
     const layer = result.scopeLayer as TLayer & { animationSceneRevision?: number }
     const parsed = parseBlueprintAnimationScene(result.scene)
     const savedScene = parsed.status === 'supported' ? parsed.scene : undefined
     const savedRevision = Math.max(
       savedScene?.revision ?? 0,
+      Math.max(0, Math.floor(Number(result.animationSceneRevision) || 0)),
       Math.max(0, Math.floor(Number(layer.animationSceneRevision) || 0)),
     )
+    const saveStatus = result.cloudSynced && result.status === 'verified'
+      ? 'verified-success'
+      : result.status === 'verification-mismatch'
+        ? 'local-success-verification-conflict'
+        : 'local-success-cloud-warning'
+    const actionMessage = classifyPackageAnimationRouteActionMessage(result)
+    const message = actionMessage.text
+    const reviewConflict = buildPackageAnimationRouteReviewConflict(result)
     return {
       status: 'saved',
       scopeLayer: result.scopeLayer,
       savedScene,
       savedRevision,
+      saveStatus,
+      message,
+      actionMessage,
+      ...(reviewConflict ? { reviewConflict } : {}),
       ...(state ? { savedDraft: markPackageAnimationRouteDraftSaved(state.draft, savedScene, savedRevision) } : {}),
       builder: null,
     }

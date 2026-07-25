@@ -112,21 +112,28 @@ import {
 import type { AnnotationHistoryScope, AnnotationSnapshot } from '@/features/blueprint-history/types'
 import {
   createEmptyPackageAnimationRouteDraft,
+  decidePackageAnimationRouteCompletion,
   dispatchPackageAnimationRoutePick,
   getPackageAnimationPrimaryRouteCandidates,
   getPackageAnimationRouteOverlay,
   isRouteBuilderDeviceKind,
   loadPackageAnimationRouteDraft,
+  applySavedAnimationScopeLayer,
+  clearPackageAnimationRouteNotice,
   createSingleFlightGuard,
   openPackageAnimationRouteSession,
+  packageAnimationRouteActionMessageClass,
+  packageAnimationRouteNoticeKey,
   packageAnimationRouteDraftToScene,
   reconcilePackageAnimationRouteLocalRefresh,
   reconcilePackageAnimationRouteSave,
   resolvePackageAnimationRouteBaseRevision,
   resolvePackageAnimationRouteDraft,
   summarizePackageAnimationScene,
+  upsertPackageAnimationRouteNotice,
   type PackageAnimationRouteConflictState,
   type PackageAnimationRouteDraft,
+  type PackageAnimationRouteNotice,
   type RouteBuilderAnnotation,
 } from '@/features/blueprint-animation/routeBuilderModel'
 import { findFirstRouteDeviceHit, findNearestRouteNode, findNearestRouteSegment, resolveRoutePickIntent } from '@/features/blueprint-animation/routePicking'
@@ -2911,6 +2918,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   } | null>(null)
   const animationRouteBuilderRef = useRef(animationRouteBuilder)
   animationRouteBuilderRef.current = animationRouteBuilder
+  const blueprintIdentityRef = useRef<{ blueprintSetId?: string | null; projectId?: string | null }>({
+    blueprintSetId: blueprint?.id,
+    projectId: blueprint?.projectId,
+  })
+  blueprintIdentityRef.current = {
+    blueprintSetId: blueprint?.id,
+    projectId: blueprint?.projectId,
+  }
   /** Ephemeral only: identifies the one package whose isolated playback component owns the rAF clock. */
   const [animationPlayback, setAnimationPlayback] = useState<{
     blueprintId: string
@@ -2922,6 +2937,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // reads `saving: false` until the next render commits, so two taps would fire two saves at the
   // same expected revision. This guard closes that window synchronously.
   const animationRouteSaveGuardRef = useRef(createSingleFlightGuard())
+  const animationRouteSaveOperationIdRef = useRef(0)
   /** Local UI only — drag-to-reorder state for the Work Package / Scope Layer cards.
    *  Persistent order is sortOrder/orderTouchedAt; scopeLayers is a canonically sorted UI
    *  projection, and arrow/drag requests route through the shared ordering helper. */
@@ -2949,7 +2965,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [cordForm, setCordForm] = useState({ category: 'light', dueDate: '' })
   const [submittingRfi, setSubmittingRfi] = useState(false)
   const [submittingCord, setSubmittingCord] = useState(false)
-  const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'warning' | 'error'; text: string; key?: string } | null>(null)
+  const [packageAnimationRouteNotices, setPackageAnimationRouteNotices] = useState<Record<string, PackageAnimationRouteNotice>>({})
+  const [animationRouteReviewConflicts, setAnimationRouteReviewConflicts] = useState<Record<string, PackageAnimationRouteConflictState & { operationId?: number }>>({})
   const [syncNotice, setSyncNotice] = useState<string | null>(null)
   const syncNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Step 13B-QA5-R4: gate for the one-time "cloud paused" banner. While the
@@ -2961,6 +2979,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const normalBlueprintViewerMinHeight = isDesktopBlueprintLayout
     ? 'calc(100dvh - 120px)'
     : 'clamp(420px, 72dvh, 760px)'
+
+  useEffect(() => {
+    setActionMsg(null)
+    setPackageAnimationRouteNotices({})
+    setAnimationRouteReviewConflicts({})
+  }, [blueprint?.id])
 
   useEffect(() => {
     if (!blueprint?.id || !pdfDoc) return
@@ -5228,6 +5252,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setAnimationRouteBuilder(null)
   }, [])
 
+  const dismissPackageAnimationRouteNotice = useCallback((notice: PackageAnimationRouteNotice) => {
+    setPackageAnimationRouteNotices((previous) => clearPackageAnimationRouteNotice(previous, {
+      blueprintSetId: notice.blueprintSetId,
+      scopeLayerId: notice.scopeLayerId,
+      operationId: notice.operationId,
+    }))
+  }, [])
+
   const changePackageAnimationRouteDraft = useCallback((draft: PackageAnimationRouteDraft) => {
     const previous = animationRouteBuilderRef.current
     if (!previous) return
@@ -5243,7 +5275,18 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const conversion = packageAnimationRouteDraftToScene(animationRouteBuilder.draft)
     if (!conversion.scene || conversion.issues.some((entry) => entry.severity === 'error')) return
     if (!animationRouteSaveGuardRef.current.begin()) return
-    setAnimationRouteBuilder((previous) => previous ? { ...previous, saving: true, conflict: undefined } : previous)
+    const operationId = animationRouteSaveOperationIdRef.current + 1
+    animationRouteSaveOperationIdRef.current = operationId
+    const saveIdentity = {
+      sessionId: session.sessionId,
+      layerId: session.layerId,
+      blueprintSetId: blueprint.id,
+      projectId: blueprint.projectId,
+      operationId,
+    }
+    setAnimationRouteBuilder((previous) => previous && previous.sessionId === session.sessionId && previous.layerId === session.layerId
+      ? { ...previous, saving: true, conflict: undefined }
+      : previous)
     try {
       const result = await saveOperationsBlueprintScopeLayerAnimationScene({
         blueprintSetId: blueprint.id,
@@ -5253,25 +5296,70 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       })
       const outcome = reconcilePackageAnimationRouteSave(animationRouteBuilder, result)
       if (outcome.status === 'saved') {
+        const completionDecision = decidePackageAnimationRouteCompletion(animationRouteBuilderRef.current, saveIdentity, {
+          ...blueprintIdentityRef.current,
+          currentOperationId: animationRouteSaveOperationIdRef.current,
+        })
         // Reconcile from the verified result only: the saved layer carries the service's final
         // revision, so the package card and any reopen both read the revision that actually
         // landed. Closing clears the draft, overlays, badges and route-pick pointer capture in
         // one step, and never runs the unsaved-changes confirm. The service already dispatched
         // the one verified poweron:sync-success event — do not dispatch another here.
-        setScopeLayers((previous) => sortWorkPackages(previous.map((layer) => layer.id === outcome.scopeLayer.id ? outcome.scopeLayer : layer)))
-        setAnimationRouteBuilder(null)
-        setActionMsg({ type: 'success', text: 'Animation route saved.' })
+        if (completionDecision.applyToCurrentScopeLayers) {
+          setScopeLayers((previous) => sortWorkPackages(applySavedAnimationScopeLayer(previous, outcome.scopeLayer).filter((layer) => !layer.deletedAt)))
+        }
+        if (completionDecision.applyReviewToCurrentView) {
+          setAnimationRouteReviewConflicts((previous) => {
+            const key = packageAnimationRouteNoticeKey(saveIdentity.blueprintSetId, outcome.scopeLayer.id)
+            const existing = previous[key]
+            if (existing?.operationId != null && existing.operationId > operationId) return previous
+            if (outcome.reviewConflict) return { ...previous, [key]: { ...outcome.reviewConflict, operationId } }
+            const next = { ...previous }
+            delete next[key]
+            return next
+          })
+        }
+        if (completionDecision.closeCurrentBuilder) {
+          setAnimationRouteBuilder((current) => current && current.sessionId === saveIdentity.sessionId && current.layerId === saveIdentity.layerId ? null : current)
+        }
+        if (completionDecision.applyNoticeToCurrentView) {
+          if (outcome.actionMessage.type === 'success') {
+            setPackageAnimationRouteNotices((previous) => clearPackageAnimationRouteNotice(previous, {
+              blueprintSetId: saveIdentity.blueprintSetId,
+              scopeLayerId: outcome.scopeLayer.id,
+              operationId,
+            }))
+          } else {
+            setPackageAnimationRouteNotices((previous) => upsertPackageAnimationRouteNotice(previous, {
+              ...outcome.actionMessage,
+              blueprintSetId: saveIdentity.blueprintSetId,
+              scopeLayerId: outcome.scopeLayer.id,
+              operationId,
+            }))
+          }
+        }
         return
       }
       // Conflict: keep the builder open, keep the draft and its dirty flag, keep the expected
       // revision untouched, and leave overlays in place. Reload Latest / Keep Draft Open recover.
       // Only the session that issued this save may be marked — a late result must never brand a
       // newly opened (or different) package's builder with a conflict it did not cause.
-      setAnimationRouteBuilder((previous) => previous && previous.sessionId === session.sessionId
+      const completionDecision = decidePackageAnimationRouteCompletion(animationRouteBuilderRef.current, saveIdentity, {
+        ...blueprintIdentityRef.current,
+        currentOperationId: animationRouteSaveOperationIdRef.current,
+      })
+      setAnimationRouteBuilder((previous) => completionDecision.closeCurrentBuilder && previous && previous.sessionId === session.sessionId && previous.layerId === session.layerId
         ? { ...previous, saving: false, conflict: outcome.conflict }
         : previous)
+      if (completionDecision.closeCurrentBuilder) {
+        setActionMsg({ type: 'error', text: outcome.conflict.message })
+      }
     } catch (error: any) {
-      setAnimationRouteBuilder((previous) => previous && previous.sessionId === session.sessionId ? {
+      const completionDecision = decidePackageAnimationRouteCompletion(animationRouteBuilderRef.current, saveIdentity, {
+        ...blueprintIdentityRef.current,
+        currentOperationId: animationRouteSaveOperationIdRef.current,
+      })
+      setAnimationRouteBuilder((previous) => completionDecision.closeCurrentBuilder && previous && previous.sessionId === session.sessionId && previous.layerId === session.layerId ? {
         ...previous,
         saving: false,
         conflict: {
@@ -5283,7 +5371,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       // Reset after success, conflict and failure alike so a deliberate retry is always allowed.
       animationRouteSaveGuardRef.current.end()
     }
-  }, [animationRouteBuilder, blueprint?.id])
+  }, [animationRouteBuilder, blueprint?.id, blueprint?.projectId])
 
   const clearSavedPackageAnimationRoute = useCallback(async (clickedLayer: BlueprintScopeLayer) => {
     if (!blueprint?.id || !clickedLayer.animationScene) return
@@ -5293,6 +5381,16 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     if (typeof window !== 'undefined' && !window.confirm(`Clear the saved animation route for “${layer.name}”? This cannot be undone.`)) return
     const expectedBaseRevision = resolvePackageAnimationRouteBaseRevision(layer)
     if (!animationRouteSaveGuardRef.current.begin()) return
+    const operationId = animationRouteSaveOperationIdRef.current + 1
+    animationRouteSaveOperationIdRef.current = operationId
+    const clearSession = animationRouteBuilderRef.current?.layerId === layer.id ? animationRouteBuilderRef.current : null
+    const clearIdentity = {
+      sessionId: clearSession?.sessionId || '',
+      layerId: layer.id,
+      blueprintSetId: blueprint.id,
+      projectId: blueprint.projectId,
+      operationId,
+    }
     try {
       const result = await saveOperationsBlueprintScopeLayerAnimationScene({
         blueprintSetId: blueprint.id,
@@ -5302,50 +5400,99 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       })
       const outcome = reconcilePackageAnimationRouteSave(null, result)
       if (outcome.status === 'saved') {
+        const completionDecision = decidePackageAnimationRouteCompletion(animationRouteBuilderRef.current, clearIdentity, {
+          ...blueprintIdentityRef.current,
+          currentOperationId: animationRouteSaveOperationIdRef.current,
+        })
         // Same reconciliation as save: adopt the returned scene-less layer so the package card
         // stops showing the removed route, and keep the service's removal revision marker.
-        setScopeLayers((previous) => sortWorkPackages(previous.map((entry) => entry.id === outcome.scopeLayer.id ? outcome.scopeLayer : entry)))
-        setAnimationPlayback((previous) => previous?.layerId === layer.id ? null : previous)
-        if (animationRouteBuilder?.layerId === layer.id) setAnimationRouteBuilder(null)
-        setActionMsg({ type: 'success', text: 'Animation route cleared.' })
+        if (completionDecision.applyToCurrentScopeLayers) {
+          setScopeLayers((previous) => sortWorkPackages(applySavedAnimationScopeLayer(previous, outcome.scopeLayer).filter((layer) => !layer.deletedAt)))
+          setAnimationPlayback((previous) => previous?.layerId === layer.id ? null : previous)
+        }
+        if (completionDecision.applyReviewToCurrentView) {
+          setAnimationRouteReviewConflicts((previous) => {
+            const key = packageAnimationRouteNoticeKey(clearIdentity.blueprintSetId, outcome.scopeLayer.id)
+            const existing = previous[key]
+            if (existing?.operationId != null && existing.operationId > operationId) return previous
+            if (outcome.reviewConflict) return { ...previous, [key]: { ...outcome.reviewConflict, operationId } }
+            const next = { ...previous }
+            delete next[key]
+            return next
+          })
+        }
+        if (completionDecision.closeCurrentBuilder) {
+          setAnimationRouteBuilder((previous) => previous && previous.sessionId === clearIdentity.sessionId && previous.layerId === clearIdentity.layerId ? null : previous)
+        }
+        if (completionDecision.applyNoticeToCurrentView) {
+          if (outcome.saveStatus === 'verified-success') {
+            setPackageAnimationRouteNotices((previous) => clearPackageAnimationRouteNotice(previous, {
+              blueprintSetId: clearIdentity.blueprintSetId,
+              scopeLayerId: outcome.scopeLayer.id,
+              operationId,
+            }))
+          } else {
+            setPackageAnimationRouteNotices((previous) => upsertPackageAnimationRouteNotice(previous, {
+              ...outcome.actionMessage,
+              blueprintSetId: clearIdentity.blueprintSetId,
+              scopeLayerId: outcome.scopeLayer.id,
+              operationId,
+            }))
+          }
+        }
         return
       }
       // Conflict-aware removal semantics are unchanged: no local removal, existing scene stays.
       // Only a builder still showing this package may surface the conflict.
-      setAnimationRouteBuilder((previous) => previous && previous.layerId === layer.id
+      const completionDecision = decidePackageAnimationRouteCompletion(animationRouteBuilderRef.current, clearIdentity, {
+        ...blueprintIdentityRef.current,
+        currentOperationId: animationRouteSaveOperationIdRef.current,
+      })
+      setAnimationRouteBuilder((previous) => completionDecision.closeCurrentBuilder && previous && previous.sessionId === clearIdentity.sessionId && previous.layerId === layer.id
         ? { ...previous, saving: false, conflict: outcome.conflict }
         : previous)
-      setActionMsg({ type: 'error', text: outcome.conflict.message })
+      if (completionDecision.closeCurrentBuilder) {
+        setActionMsg({ type: 'error', text: outcome.conflict.message })
+      }
     } finally {
       animationRouteSaveGuardRef.current.end()
     }
-  }, [animationRouteBuilder?.layerId, blueprint?.id])
+  }, [animationRouteBuilder?.layerId, blueprint?.id, blueprint?.projectId])
 
   const reloadLatestPackageAnimationRoute = useCallback(() => {
-    if (!animationRouteBuilder) return
-    const canonical = scopeLayersRef.current.find((entry) => entry.id === animationRouteBuilder.layerId)
-    if (!canonical) {
+    if (!animationRouteBuilder || !blueprint?.id) return
+    let freshLayers: BlueprintScopeLayer[] = []
+    try {
+      const backup = getBackupData()
+      freshLayers = sortWorkPackages(getOperationsBlueprintScopeLayers(backup || {}, blueprint.id))
+    } catch {
+      freshLayers = []
+    }
+    const freshLocal = freshLayers.find((entry) => entry.id === animationRouteBuilder.layerId)
+    if (freshLayers.length) setScopeLayers(freshLayers)
+    if (!freshLocal) {
       loadScopeLayers()
+      setActionMsg({ type: 'error', text: 'The work package no longer exists. Your draft is still open.' })
       return
     }
-    // Canonical local scopeLayers is normally already current, so no cloud fetch is needed. A
-    // remote conflict is the exception: its currentScene can be ahead of anything stored locally.
+    const reactLayer = scopeLayersRef.current.find((entry) => entry.id === animationRouteBuilder.layerId)
     const conflictScene = animationRouteBuilder.conflict?.currentScene
     const conflictCandidate = conflictScene != null
-      ? { ...canonical, animationScene: conflictScene, animationSceneRevision: undefined }
+      ? { ...freshLocal, animationScene: conflictScene, animationSceneRevision: undefined }
       : undefined
-    const layer = conflictCandidate
-      && resolvePackageAnimationRouteBaseRevision(conflictCandidate) > resolvePackageAnimationRouteBaseRevision(canonical)
-      ? conflictCandidate
-      : canonical
-    // Reload Latest and Edit-open now produce the same clean state from the same helper.
+    const candidates = [freshLocal, reactLayer, conflictCandidate].filter(Boolean) as BlueprintScopeLayer[]
+    const layer = candidates.reduce((best, candidate) => (
+      resolvePackageAnimationRouteBaseRevision(candidate) > resolvePackageAnimationRouteBaseRevision(best)
+        ? candidate
+        : best
+    ), freshLocal)
     setAnimationRouteBuilder(openPackageAnimationRouteSession({
       layer,
       annotations: animationRouteAnnotations,
       pageNumber: animationRouteBuilder.pageNumber,
       sessionId: `route_session_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
     }))
-  }, [animationRouteAnnotations, animationRouteBuilder, loadScopeLayers])
+  }, [animationRouteAnnotations, animationRouteBuilder, blueprint?.id, loadScopeLayers])
 
   const handleAnimationRoutePick = useCallback((event: React.PointerEvent<HTMLDivElement>, targetAnnotationId?: string) => {
     const liveSession = animationRouteBuilderRef.current
@@ -12532,6 +12679,11 @@ const annotationPanelSizeClass =
                           </button>
                         </div>
                       )}
+                      {actionMsg && (
+                        <div className={`mt-1.5 rounded px-2 py-1.5 text-[10px] font-medium ${packageAnimationRouteActionMessageClass(actionMsg.type)}`}>
+                          {actionMsg.text}
+                        </div>
+                      )}
                     </div>
                     {pageFilteredScopeLayers.length === 0 && (
                       <div className="px-3 pb-3 text-[10px] text-gray-500 italic">No work packages on this page. Turn on "Show All Pages" to see packages from other pages.</div>
@@ -12553,6 +12705,9 @@ const annotationPanelSizeClass =
                         const pageBadgeLabel = layer.pageNumber != null ? `Page ${layer.pageNumber}` : 'Unscoped'
                         const animationSummary = summarizePackageAnimationScene(layer.animationScene, animationRouteAnnotations, layer.selectedAnnotationIds)
                         const animationSceneParse = parseBlueprintAnimationScene(layer.animationScene)
+                        const animationReviewKey = blueprint?.id ? packageAnimationRouteNoticeKey(blueprint.id, layer.id) : ''
+                        const animationReviewConflict = animationReviewKey ? animationRouteReviewConflicts[animationReviewKey] : undefined
+                        const animationRouteNotice = animationReviewKey ? packageAnimationRouteNotices[animationReviewKey] : undefined
                         const playbackPageNumber = Math.max(1, Math.floor(Number(layer.pageNumber || layer.itemRefs?.[0]?.pageNumber || currentPage) || 1))
                         return (
                           <div
@@ -12663,6 +12818,20 @@ const annotationPanelSizeClass =
                               </div>
                             </div>
                             {layer.description && <div className="mt-1 text-[10px] text-gray-400 line-clamp-2">{layer.description}</div>}
+                            {animationRouteNotice && (
+                              <div className={`mt-1.5 flex items-start justify-between gap-2 rounded px-2 py-1.5 text-[10px] font-medium ${packageAnimationRouteActionMessageClass(animationRouteNotice.type)}`}>
+                                <span className="min-w-0">{animationRouteNotice.text}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => dismissPackageAnimationRouteNotice(animationRouteNotice)}
+                                  className="mt-0.5 flex-shrink-0 rounded p-0.5 text-current opacity-70 hover:bg-white/10 hover:opacity-100"
+                                  title="Dismiss route notice"
+                                  aria-label="Dismiss route notice"
+                                >
+                                  <X size={10} />
+                                </button>
+                              </div>
+                            )}
                             {summary.length > 0 && (
                               <div className="mt-1.5 flex flex-wrap gap-1">
                                 {summary.slice(0, 4).map((item) => (
@@ -12734,10 +12903,36 @@ const annotationPanelSizeClass =
                                         onClick={() => void clearSavedPackageAnimationRoute(layer)}
                                         className="min-h-7 rounded border border-red-900/60 px-2 text-[10px] text-red-300 hover:bg-red-950/35"
                                       >
-                                        Clear Animation Route
+                                      Clear Animation Route
+                                      </button>
+                                    )}
+                                    {animationReviewConflict?.currentScene != null && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const localSession = openPackageAnimationRouteSession({
+                                            layer,
+                                            annotations: animationRouteAnnotations,
+                                            pageNumber: playbackPageNumber,
+                                            sessionId: `route_session_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+                                          })
+                                          setAnimationPlayback((previous) => previous?.layerId === layer.id ? null : previous)
+                                          setAnimationRouteBuilder({
+                                            ...localSession,
+                                            conflict: animationReviewConflict,
+                                          })
+                                        }}
+                                        className="min-h-7 rounded border border-amber-500/50 bg-amber-500/10 px-2 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20"
+                                      >
+                                        Review Cloud Copy
                                       </button>
                                     )}
                                   </div>
+                                  {animationReviewConflict?.currentScene != null && (
+                                    <div className="mt-1.5 rounded border border-amber-700/40 bg-amber-950/25 px-2 py-1 text-[9px] text-amber-200">
+                                      Cloud copy differs from this device's saved route.
+                                    </div>
+                                  )}
                                   {animationSummary.advanced && animationSummary.message && <div className="mt-1 text-[9px] text-amber-300/80">{animationSummary.message}</div>}
                                 </>
                               )}
@@ -14126,7 +14321,7 @@ const annotationPanelSizeClass =
                 </div>
               </div>
               {actionMsg && (
-                <div className={`text-xs px-2 py-1.5 rounded ${actionMsg.type === 'success' ? 'bg-emerald-900/30 text-emerald-300' : 'bg-red-900/30 text-red-300'}`}>
+                <div className={`text-xs px-2 py-1.5 rounded ${packageAnimationRouteActionMessageClass(actionMsg.type)}`}>
                   {actionMsg.text}
                 </div>
               )}
@@ -14229,7 +14424,7 @@ const annotationPanelSizeClass =
                 </div>
               </div>
               {actionMsg && (
-                <div className={`text-xs px-2 py-1.5 rounded ${actionMsg.type === 'success' ? 'bg-emerald-900/30 text-emerald-300' : 'bg-red-900/30 text-red-300'}`}>
+                <div className={`text-xs px-2 py-1.5 rounded ${packageAnimationRouteActionMessageClass(actionMsg.type)}`}>
                   {actionMsg.text}
                 </div>
               )}

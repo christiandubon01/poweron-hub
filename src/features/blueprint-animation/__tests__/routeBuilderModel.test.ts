@@ -10,6 +10,11 @@ import {
   clearPackageAnimationRouteDraft,
   createEmptyPackageAnimationRouteDraft,
   createSingleFlightGuard,
+  applySavedAnimationScopeLayer,
+  buildPackageAnimationRouteReviewConflict,
+  classifyPackageAnimationRouteActionMessage,
+  clearPackageAnimationRouteNotice,
+  decidePackageAnimationRouteCompletion,
   dispatchPackageAnimationRoutePick,
   editPackageAnimationRouteBranch,
   formatRouteBuilderSourceLabel,
@@ -24,18 +29,22 @@ import {
   resolvePackageAnimationRouteBaseRevision,
   inferRouteBuilderDefaultChannel,
   inferRouteBuilderNodeRoles,
+  isPackageAnimationRouteIdentityCurrent,
   loadPackageAnimationRouteDraft,
   movePackageAnimationRouteTransition,
   packageAnimationRouteDraftToScene,
+  packageAnimationRouteNoticeKey,
   removePackageAnimationRouteBranch,
   removePackageAnimationRouteTransition,
   resolvePackageAnimationRouteDraft,
   selectPackageAnimationRouteSource,
+  shouldClosePackageAnimationRouteBuilderAfterSave,
   finishPackageAnimationRouteBranch,
   startPackageAnimationRouteBranch,
   summarizePackageAnimationScene,
   undoPackageAnimationRouteSelection,
   updatePackageAnimationRouteChannel,
+  upsertPackageAnimationRouteNotice,
   validatePackageAnimationRouteDraft,
   type PackageAnimationRouteDraft,
   type RouteBuilderAnnotation,
@@ -43,6 +52,7 @@ import {
   isRouteBuilderSourceKind,
 } from '../routeBuilderModel'
 import { findNearestRouteNode, type RouteSegmentPick } from '../routePicking'
+import { compareAnimationScenesForVerification, mergeBlueprintScopeLayersById } from '@/services/blueprintLibraryService'
 
 const source: RouteBuilderAnnotation = { id: 'source', pageNumber: 1, label: 'Switch', shapeKind: 'electrical-switch', rect: { x: 0.08, y: 0.48, w: 0.04, h: 0.04 } }
 const sensor: RouteBuilderAnnotation = { id: 'sensor', pageNumber: 1, label: 'Sensor', shapeKind: 'electrical-ceiling-occupancy-sensor', rect: { x: 0.08, y: 0.28, w: 0.04, h: 0.04 } }
@@ -777,8 +787,15 @@ interface FakeScopeLayer {
   name: string
   selectedAnnotationIds: string[]
   itemRefs: Array<{ annotationId: string; pageNumber: number }>
+  roughInHours?: number
+  crewNotes?: string
+  updatedAt?: string
+  sortOrder?: number
+  orderTouchedAt?: string
   animationScene?: unknown
   animationSceneRevision?: number
+  deletedAt?: string
+  deletedBy?: string
 }
 
 function packageWith(scene?: unknown, revision?: number): FakeScopeLayer {
@@ -802,14 +819,16 @@ function verifiedSave(scene: unknown, revision: number) {
   return {
     success: true as const,
     conflict: false as const,
+    status: 'verified',
     localSaved: true,
     cloudSynced: true,
     scene: savedScene,
     scopeLayer: { ...packageWith(savedScene, revision) },
+    animationSceneRevision: revision,
   }
 }
 
-function conflictSave(reason: string, currentScene?: unknown) {
+function conflictSave(reason: string, currentScene?: unknown, extra: Record<string, unknown> = {}) {
   return {
     success: false as const,
     conflict: true as const,
@@ -820,12 +839,12 @@ function conflictSave(reason: string, currentScene?: unknown) {
     expectedBaseRevision: 1,
     currentScene,
     callerDraft: null,
+    ...extra,
   }
 }
 
-/** Mirrors the viewer's setScopeLayers reconciliation. */
 function applySavedLayer(layers: FakeScopeLayer[], saved: FakeScopeLayer): FakeScopeLayer[] {
-  return layers.map((layer) => layer.id === saved.id ? saved : layer)
+  return applySavedAnimationScopeLayer(layers, saved)
 }
 
 /** Mirrors openPackageAnimationRouteBuilder's expected-revision derivation + draft load. */
@@ -848,6 +867,281 @@ function reopen(layer: FakeScopeLayer): PackageAnimationRouteDraft {
 }
 
 describe('ANIM-2B1 route save reconciliation', () => {
+  it('classifies route save action messages with visible warning and error channels', () => {
+    expect(classifyPackageAnimationRouteActionMessage({ status: 'verified', cloudSynced: true })).toEqual({ type: 'success', text: 'Animation route saved.' })
+    expect(classifyPackageAnimationRouteActionMessage({ status: 'local-saved-cloud-pending' })).toEqual({
+      type: 'warning',
+      text: 'Animation route saved on this device. Cloud sync has not been verified yet.',
+    })
+    expect(classifyPackageAnimationRouteActionMessage({ status: 'local-saved-cloud-failed' })).toEqual({
+      type: 'warning',
+      text: 'Animation route saved on this device, but cloud sync failed. Other devices may not show the latest route yet.',
+    })
+    expect(classifyPackageAnimationRouteActionMessage({ status: 'verification-mismatch' })).toEqual({
+      type: 'warning',
+      text: 'The route was saved locally, but the cloud copy does not match. Your local route has been preserved.',
+    })
+    expect(classifyPackageAnimationRouteActionMessage({ status: 'local-save-failed', message: 'failed' })).toEqual({ type: 'error', text: 'failed' })
+    expect(classifyPackageAnimationRouteActionMessage({ status: 'local-saved-revision-conflict' })).toEqual({
+      type: 'warning',
+      text: 'The route was saved locally, but a newer cloud route also exists. Review the cloud copy before replacing either version.',
+    })
+    expect(classifyPackageAnimationRouteActionMessage({ status: 'local-saved-remote-deleted' })).toEqual({
+      type: 'warning',
+      text: 'The route was saved locally, but the cloud Work Package is missing or deleted. Your local route has been preserved.',
+    })
+  })
+
+  it('closes only the matching saved route builder session and operation', () => {
+    const session = {
+      sessionId: 'save-a',
+      layerId: 'package-a',
+      blueprintSetId: 'set-1',
+      projectId: 'project-1',
+      operationId: 7,
+    }
+
+    expect(shouldClosePackageAnimationRouteBuilderAfterSave(
+      { sessionId: 'save-a', layerId: 'package-a' },
+      session,
+      { blueprintSetId: 'set-1', projectId: 'project-1', currentOperationId: 7 },
+    )).toBe(true)
+    expect(shouldClosePackageAnimationRouteBuilderAfterSave(
+      { sessionId: 'save-b', layerId: 'package-b' },
+      session,
+      { blueprintSetId: 'set-1', projectId: 'project-1', currentOperationId: 7 },
+    )).toBe(false)
+    expect(shouldClosePackageAnimationRouteBuilderAfterSave(
+      { sessionId: 'save-a2', layerId: 'package-a' },
+      session,
+      { blueprintSetId: 'set-1', projectId: 'project-1', currentOperationId: 7 },
+    )).toBe(false)
+    expect(shouldClosePackageAnimationRouteBuilderAfterSave(
+      { sessionId: 'save-a', layerId: 'package-a' },
+      session,
+      { blueprintSetId: 'set-2', projectId: 'project-1', currentOperationId: 7 },
+    )).toBe(false)
+    expect(shouldClosePackageAnimationRouteBuilderAfterSave(
+      { sessionId: 'save-a', layerId: 'package-a' },
+      session,
+      { blueprintSetId: 'set-1', projectId: 'project-1', currentOperationId: 8 },
+    )).toBe(false)
+  })
+
+  it('gates route completions by project and blueprint-set identity before applying to the current view', () => {
+    const operation = {
+      sessionId: 'save-a',
+      layerId: 'package-a',
+      blueprintSetId: 'set-a',
+      projectId: 'project-1',
+      operationId: 11,
+    }
+
+    expect(isPackageAnimationRouteIdentityCurrent(operation, { blueprintSetId: ' set-a ', projectId: ' project-1 ' })).toBe(true)
+    expect(isPackageAnimationRouteIdentityCurrent(operation, { blueprintSetId: 'set-b', projectId: 'project-1' })).toBe(false)
+    expect(isPackageAnimationRouteIdentityCurrent(operation, { blueprintSetId: 'set-a', projectId: 'project-2' })).toBe(false)
+    expect(isPackageAnimationRouteIdentityCurrent({ ...operation, projectId: undefined }, { blueprintSetId: 'set-a', projectId: null })).toBe(true)
+
+    expect(decidePackageAnimationRouteCompletion(
+      { sessionId: 'save-a', layerId: 'package-a' },
+      operation,
+      { blueprintSetId: 'set-a', projectId: 'project-1', currentOperationId: 11 },
+    )).toEqual({
+      applyToCurrentScopeLayers: true,
+      applyNoticeToCurrentView: true,
+      applyReviewToCurrentView: true,
+      closeCurrentBuilder: true,
+    })
+    expect(decidePackageAnimationRouteCompletion(
+      { sessionId: 'save-a', layerId: 'package-a' },
+      operation,
+      { blueprintSetId: 'set-b', projectId: 'project-1', currentOperationId: 11 },
+    )).toEqual({
+      applyToCurrentScopeLayers: false,
+      applyNoticeToCurrentView: false,
+      applyReviewToCurrentView: false,
+      closeCurrentBuilder: false,
+    })
+    expect(decidePackageAnimationRouteCompletion(
+      { sessionId: 'save-a', layerId: 'package-a' },
+      operation,
+      { blueprintSetId: 'set-a', projectId: 'project-2', currentOperationId: 11 },
+    ).applyToCurrentScopeLayers).toBe(false)
+  })
+
+  it('leaves the current blueprint set untouched when a saved completion finishes after switching sets', () => {
+    const draftA = addSegment(sourceDraft(empty({ packageId: 'package-a', packageName: 'Package A' })), circuit, 0)
+    const sceneA = { ...packageAnimationRouteDraftToScene(draftA).scene!, revision: 2 }
+    const outcome = reconcilePackageAnimationRouteSave(
+      { sessionId: 'session-a', layerId: 'package-a', pageNumber: 1, draft: draftA, saving: true },
+      {
+        success: false,
+        localSaved: true,
+        cloudSynced: false,
+        status: 'local-saved-cloud-failed',
+        reason: 'remote-write-failed',
+        scene: sceneA,
+        scopeLayer: { ...packageWith(sceneA, 2), id: 'package-a', name: 'Package A' },
+        animationSceneRevision: 2,
+      },
+    )
+    expect(outcome.status).toBe('saved')
+    if (outcome.status !== 'saved') return
+
+    const currentSetBLayers = [{ ...packageWith(undefined, 0), id: 'package-b', name: 'Package B' }]
+    const currentNotices: Record<string, { blueprintSetId: string; scopeLayerId: string; operationId?: number; type: 'success' | 'warning' | 'error'; text: string }> = {
+      'set-b:package-b': { blueprintSetId: 'set-b', scopeLayerId: 'package-b', operationId: 7, type: 'warning' as const, text: 'newer set b warning' },
+    }
+    const currentReviews: Record<string, { message: string; sameDevice: boolean; operationId?: number; currentScene?: unknown }> = {
+      'set-b:package-b': { message: 'newer set b review', sameDevice: false, operationId: 7 },
+    }
+    const currentBuilderB = { sessionId: 'session-b', layerId: 'package-b', pageNumber: 1, draft: sourceDraft(empty({ packageId: 'package-b', packageName: 'Package B' })), saving: false }
+    const decision = decidePackageAnimationRouteCompletion(
+      currentBuilderB,
+      { sessionId: 'session-a', layerId: 'package-a', blueprintSetId: 'set-a', projectId: 'project-1', operationId: 6 },
+      { blueprintSetId: 'set-b', projectId: 'project-1', currentOperationId: 6 },
+    )
+
+    let nextLayers = currentSetBLayers
+    let nextNotices = currentNotices
+    let nextReviews = currentReviews
+    let nextBuilder: typeof currentBuilderB | null = currentBuilderB
+    if (decision.applyToCurrentScopeLayers) nextLayers = applySavedLayer(nextLayers, outcome.scopeLayer as FakeScopeLayer)
+    if (decision.applyNoticeToCurrentView) nextNotices = upsertPackageAnimationRouteNotice(nextNotices, { blueprintSetId: 'set-a', scopeLayerId: 'package-a', operationId: 6, type: 'warning', text: outcome.message })
+    if (decision.applyReviewToCurrentView && outcome.reviewConflict) nextReviews = { ...nextReviews, 'set-a:package-a': { ...outcome.reviewConflict, operationId: 6 } }
+    if (decision.closeCurrentBuilder) nextBuilder = null
+
+    expect(nextLayers).toBe(currentSetBLayers)
+    expect(nextLayers).toHaveLength(1)
+    expect(nextLayers[0].id).toBe('package-b')
+    expect(nextNotices).toBe(currentNotices)
+    expect(nextReviews).toBe(currentReviews)
+    expect(nextBuilder).toBe(currentBuilderB)
+
+    const returnedToSetA = applySavedLayer([{ ...packageWith(undefined, 0), id: 'package-a', name: 'Package A' }], outcome.scopeLayer as FakeScopeLayer)
+    expect(returnedToSetA).toHaveLength(1)
+    expect(returnedToSetA[0].id).toBe('package-a')
+    expect((returnedToSetA[0].animationScene as any).revision).toBe(2)
+  })
+
+  it('keeps same blueprint-set ids isolated across projects and reused package ids', () => {
+    const operation = { sessionId: 'session-p1', layerId: 'package-reused', blueprintSetId: 'set-reused', projectId: 'project-1', operationId: 3 }
+    const decision = decidePackageAnimationRouteCompletion(
+      { sessionId: 'session-p2', layerId: 'package-reused' },
+      operation,
+      { blueprintSetId: 'set-reused', projectId: 'project-2', currentOperationId: 3 },
+    )
+
+    expect(decision.applyToCurrentScopeLayers).toBe(false)
+    expect(decision.applyNoticeToCurrentView).toBe(false)
+    expect(decision.applyReviewToCurrentView).toBe(false)
+    expect(decision.closeCurrentBuilder).toBe(false)
+  })
+
+  it('does not let a stale clear-route completion mutate the current list or close a newer session', () => {
+    const clearOperation = { sessionId: 'clear-a1', layerId: 'package-a', blueprintSetId: 'set-a', projectId: 'project-1', operationId: 4 }
+    const currentBuilderB = { sessionId: 'clear-b1', layerId: 'package-b' }
+    const decision = decidePackageAnimationRouteCompletion(
+      currentBuilderB,
+      clearOperation,
+      { blueprintSetId: 'set-b', projectId: 'project-1', currentOperationId: 4 },
+    )
+    const currentSetBLayers = [{ ...packageWith(undefined, 0), id: 'package-b', name: 'Package B' }]
+    const clearedA = { ...packageWith(undefined, 5), id: 'package-a', name: 'Package A' }
+
+    const nextLayers = decision.applyToCurrentScopeLayers ? applySavedLayer(currentSetBLayers, clearedA) : currentSetBLayers
+    const nextBuilder = decision.closeCurrentBuilder ? null : currentBuilderB
+
+    expect(nextLayers).toBe(currentSetBLayers)
+    expect(nextLayers).toEqual([{ ...packageWith(undefined, 0), id: 'package-b', name: 'Package B' }])
+    expect(nextBuilder).toBe(currentBuilderB)
+  })
+
+  it('keeps stale saved completions keyed to Package A without closing or clearing Package B', () => {
+    const draftA = addSegment(sourceDraft(empty({ packageId: 'package-a', packageName: 'Package A' })), circuit, 0)
+    const draftB = sourceDraft(empty({ packageId: 'package-b', packageName: 'Package B' }))
+    const currentBuilderB = { sessionId: 'session-b', layerId: 'package-b', pageNumber: 1, draft: draftB, saving: false }
+    const sceneA = { ...packageAnimationRouteDraftToScene(draftA).scene!, revision: 1 }
+    const outcome = reconcilePackageAnimationRouteSave(
+      { sessionId: 'session-a', layerId: 'package-a', pageNumber: 1, draft: draftA, saving: true },
+      {
+        success: false,
+        localSaved: true,
+        cloudSynced: false,
+        status: 'local-saved-cloud-failed',
+        reason: 'remote-write-failed',
+        scene: sceneA,
+        scopeLayer: { ...packageWith(sceneA, 1), id: 'package-a', name: 'Package A' },
+        animationSceneRevision: 1,
+      },
+    )
+
+    expect(outcome.status).toBe('saved')
+    if (outcome.status !== 'saved') return
+    const layers = applySavedLayer([
+      { ...packageWith(undefined, 0), id: 'package-a', name: 'Package A' },
+      { ...packageWith(undefined, 0), id: 'package-b', name: 'Package B' },
+    ], outcome.scopeLayer as FakeScopeLayer)
+    expect((layers.find((layer) => layer.id === 'package-a')?.animationScene as any).revision).toBe(1)
+    expect(layers.find((layer) => layer.id === 'package-b')?.animationScene).toBeUndefined()
+    expect(shouldClosePackageAnimationRouteBuilderAfterSave(
+      currentBuilderB,
+      { sessionId: 'session-a', layerId: 'package-a', blueprintSetId: 'set-1', projectId: 'project-1', operationId: 1 },
+      { blueprintSetId: 'set-1', projectId: 'project-1', currentOperationId: 1 },
+    )).toBe(false)
+    expect(currentBuilderB.draft).toBe(draftB)
+    expect(packageAnimationRouteNoticeKey('set-1', (outcome.scopeLayer as FakeScopeLayer).id)).toBe('set-1:package-a')
+  })
+
+  it('prevents an older same-package operation notice from overwriting a newer warning', () => {
+    const newer = upsertPackageAnimationRouteNotice({}, {
+      blueprintSetId: 'set-1',
+      scopeLayerId: 'package-a',
+      operationId: 2,
+      type: 'warning',
+      text: 'newer warning',
+    })
+    const staleWrite = upsertPackageAnimationRouteNotice(newer, {
+      blueprintSetId: 'set-1',
+      scopeLayerId: 'package-a',
+      operationId: 1,
+      type: 'success',
+      text: 'old success',
+    })
+    expect(staleWrite).toBe(newer)
+    expect(staleWrite['set-1:package-a'].text).toBe('newer warning')
+    expect(clearPackageAnimationRouteNotice(staleWrite, {
+      blueprintSetId: 'set-1',
+      scopeLayerId: 'package-a',
+      operationId: 1,
+    })).toBe(staleWrite)
+    expect(clearPackageAnimationRouteNotice(staleWrite, {
+      blueprintSetId: 'set-1',
+      scopeLayerId: 'package-b',
+      operationId: 3,
+    })).toBe(staleWrite)
+  })
+
+  it('creates Review Cloud Copy state only for statuses with a usable remote scene', () => {
+    const draft = addSegment(sourceDraft(), circuit, 0)
+    const localScene = { ...packageAnimationRouteDraftToScene(draft).scene!, revision: 2 }
+    const remoteScene = { ...localScene, id: 'remote-scene', revision: 3 }
+
+    expect(buildPackageAnimationRouteReviewConflict({ status: 'local-saved-cloud-pending' })).toBeUndefined()
+    expect(buildPackageAnimationRouteReviewConflict({ status: 'local-saved-cloud-failed', reason: 'remote-write-failed' })).toBeUndefined()
+    expect(buildPackageAnimationRouteReviewConflict({ status: 'local-saved-remote-deleted', reason: 'scope-layer-deleted' })).toBeUndefined()
+    expect(buildPackageAnimationRouteReviewConflict({
+      status: 'verification-mismatch',
+      reason: 'verification-mismatch',
+      currentScene: remoteScene,
+    })).toMatchObject({ currentScene: remoteScene, latestRevision: 3, message: 'The route was saved locally, but the cloud copy does not match. Your local route has been preserved.' })
+    expect(buildPackageAnimationRouteReviewConflict({
+      status: 'local-saved-revision-conflict',
+      reason: 'stale-remote-revision',
+      currentScene: remoteScene,
+    })).toMatchObject({ currentScene: remoteScene, latestRevision: 3, message: 'The route was saved locally, but a newer cloud route also exists. Review the cloud copy before replacing either version.' })
+  })
+
   it('consumes the returned revision, updates the package, clears conflict, cleans the draft, and closes the builder', () => {
     const draft = addSegment(sourceDraft(), circuit, 0)
     expect(draft.dirty).toBe(true)
@@ -859,6 +1153,8 @@ describe('ANIM-2B1 route save reconciliation', () => {
     expect(outcome.status).toBe('saved')
     if (outcome.status !== 'saved') return
     expect(outcome.savedRevision).toBe(1)
+    expect(outcome.saveStatus).toBe('verified-success')
+    expect(outcome.message).toBe('Animation route saved.')
     expect(outcome.builder).toBeNull()
     expect(outcome.savedDraft?.dirty).toBe(false)
     expect(outcome.savedDraft?.expectedBaseRevision).toBe(1)
@@ -930,7 +1226,7 @@ describe('ANIM-2B1 route save reconciliation', () => {
 
     expect(outcome.status).toBe('conflict')
     if (outcome.status !== 'conflict') return
-    expect(outcome.conflict.message).toContain('Another device changed')
+    expect(outcome.conflict.message).toContain('Review the latest route')
     expect(outcome.conflict.sameDevice).toBe(false)
     expect(outcome.conflict.latestRevision).toBe(2)
     expect(outcome.builder?.saving).toBe(false)
@@ -961,7 +1257,7 @@ describe('ANIM-2B1 route save reconciliation', () => {
 
     expect(outcome.status).toBe('conflict')
     if (outcome.status !== 'conflict') return
-    expect(outcome.conflict.message).toContain('could not be verified')
+    expect(outcome.conflict.message).toContain('Review the latest route')
     expect(outcome.conflict.latestRevision).toBeUndefined()
     expect(outcome.builder).not.toBeNull()
     expect(outcome.builder?.draft).toEqual(draft)
@@ -971,6 +1267,226 @@ describe('ANIM-2B1 route save reconciliation', () => {
     const draft = addSegment(sourceDraft(), circuit, 0)
     const outcome = reconcilePackageAnimationRouteSave(builderState(draft), { success: true } as any)
     expect(outcome.status).toBe('conflict')
+  })
+
+  it('applies a local-only save, closes the builder, and reports cloud pending', () => {
+    const draft = addSegment(sourceDraft(), circuit, 0)
+    const scene = { ...packageAnimationRouteDraftToScene(draft).scene!, revision: 1 }
+    const outcome = reconcilePackageAnimationRouteSave(builderState(draft), conflictSave('remote-conflict-unresolved', undefined, {
+      status: 'local-saved-cloud-pending',
+      localSaved: true,
+      scene,
+      scopeLayer: packageWith(scene, 1),
+      animationSceneRevision: 1,
+    }))
+
+    expect(outcome.status).toBe('saved')
+    if (outcome.status !== 'saved') return
+    expect(outcome.saveStatus).toBe('local-success-cloud-warning')
+    expect(outcome.message).toBe('Animation route saved on this device. Cloud sync has not been verified yet.')
+    expect(outcome.builder).toBeNull()
+    expect(outcome.savedDraft?.dirty).toBe(false)
+    expect(outcome.savedDraft?.expectedBaseRevision).toBe(1)
+  })
+
+  it('applies a local save with cloud failure without classifying it as local failure', () => {
+    const draft = addSegment(sourceDraft(), circuit, 0)
+    const scene = { ...packageAnimationRouteDraftToScene(draft).scene!, revision: 1 }
+    const outcome = reconcilePackageAnimationRouteSave(builderState(draft), conflictSave('remote-write-failed', undefined, {
+      status: 'local-saved-cloud-failed',
+      localSaved: true,
+      scene,
+      scopeLayer: packageWith(scene, 1),
+      animationSceneRevision: 1,
+    }))
+
+    expect(outcome.status).toBe('saved')
+    if (outcome.status !== 'saved') return
+    expect(outcome.message).toBe('Animation route saved on this device, but cloud sync failed. Other devices may not show the latest route yet.')
+    expect(outcome.message).not.toContain('could not be saved')
+    expect(outcome.builder).toBeNull()
+    expect(outcome.reviewConflict).toBeUndefined()
+  })
+
+  it('treats every localSaved result with a returned scope layer as saved, never ordinary failure', () => {
+    const draft = addSegment(sourceDraft(), circuit, 0)
+    const scene = { ...packageAnimationRouteDraftToScene(draft).scene!, revision: 2 }
+    const localSavedStatuses = [
+      ['local-saved-cloud-pending', 'remote-conflict-unresolved'],
+      ['local-saved-cloud-failed', 'remote-write-failed'],
+      ['verification-mismatch', 'verification-mismatch'],
+      ['local-saved-revision-conflict', 'stale-remote-revision'],
+      ['local-saved-remote-deleted', 'scope-layer-deleted'],
+    ] as const
+
+    for (const [status, reason] of localSavedStatuses) {
+      const outcome = reconcilePackageAnimationRouteSave(builderState(draft), conflictSave(reason, undefined, {
+        status,
+        localSaved: true,
+        scene,
+        scopeLayer: packageWith(scene, 2),
+        animationSceneRevision: 2,
+      }))
+      expect(outcome.status).toBe('saved')
+      if (outcome.status !== 'saved') continue
+      expect(outcome.actionMessage.type).toBe('warning')
+      expect(outcome.message).not.toContain('could not be saved')
+    }
+  })
+
+  it('preserves a local save when cloud verification reaches mismatching content', () => {
+    const draft = addSegment(sourceDraft(), circuit, 0)
+    const localScene = { ...packageAnimationRouteDraftToScene(draft).scene!, revision: 1 }
+    const remoteScene = { ...localScene, id: 'remote-different' }
+    const outcome = reconcilePackageAnimationRouteSave(builderState(draft), conflictSave('verification-mismatch', remoteScene, {
+      status: 'verification-mismatch',
+      localSaved: true,
+      scene: localScene,
+      scopeLayer: packageWith(localScene, 1),
+      animationSceneRevision: 1,
+    }))
+
+    expect(outcome.status).toBe('saved')
+    if (outcome.status !== 'saved') return
+    expect(outcome.saveStatus).toBe('local-success-verification-conflict')
+    expect(outcome.message).toContain('cloud copy does not match')
+    expect(outcome.actionMessage.type).toBe('warning')
+    expect(outcome.reviewConflict?.currentScene).toEqual(remoteScene)
+    expect(((outcome.scopeLayer as FakeScopeLayer).animationScene as any).id).toBe(localScene.id)
+  })
+
+  it('applies a saved route layer while preserving newer current package order, labor, notes and membership', () => {
+    const scene = { ...packageAnimationRouteDraftToScene(addSegment(sourceDraft(), circuit, 0)).scene!, revision: 2 }
+    const current = {
+      ...packageWith(undefined, 1),
+      selectedAnnotationIds: ['new-member'],
+      itemRefs: [{ annotationId: 'new-member', pageNumber: 1 }],
+      roughInHours: 9,
+      crewNotes: 'newer notes',
+      updatedAt: '2026-07-19T12:00:00.000Z',
+      sortOrder: 2,
+      orderTouchedAt: '2026-07-19T13:00:00.000Z',
+    }
+    const saved = {
+      ...packageWith(scene, 2),
+      selectedAnnotationIds: ['old-member'],
+      itemRefs: [{ annotationId: 'old-member', pageNumber: 1 }],
+      roughInHours: 1,
+      crewNotes: 'older notes',
+      updatedAt: '2026-07-19T11:00:00.000Z',
+      sortOrder: 8,
+      orderTouchedAt: '2026-07-19T10:00:00.000Z',
+    }
+
+    const [next] = applySavedAnimationScopeLayer([current], saved)
+
+    expect((next.animationScene as any).revision).toBe(2)
+    expect(next.animationSceneRevision).toBe(2)
+    expect(next.sortOrder).toBe(2)
+    expect(next.orderTouchedAt).toBe('2026-07-19T13:00:00.000Z')
+    expect(next.roughInHours).toBe(9)
+    expect(next.crewNotes).toBe('newer notes')
+    expect(next.selectedAnnotationIds).toEqual(['new-member'])
+    expect(next.itemRefs).toEqual([{ annotationId: 'new-member', pageNumber: 1, label: 'Item' }])
+  })
+
+  it('applies newer returned package content while still taking the saved route scene', () => {
+    const scene = { ...packageAnimationRouteDraftToScene(addSegment(sourceDraft(), circuit, 0)).scene!, revision: 2 }
+    const current = {
+      ...packageWith(undefined, 1),
+      roughInHours: 1,
+      crewNotes: 'older notes',
+      updatedAt: '2026-07-19T10:00:00.000Z',
+      sortOrder: 2,
+      orderTouchedAt: '2026-07-19T13:00:00.000Z',
+    }
+    const saved = {
+      ...packageWith(scene, 2),
+      roughInHours: 7,
+      crewNotes: 'newer notes',
+      updatedAt: '2026-07-19T12:00:00.000Z',
+      sortOrder: 8,
+      orderTouchedAt: '2026-07-19T11:00:00.000Z',
+    }
+
+    const [next] = applySavedAnimationScopeLayer([current], saved)
+
+    expect((next.animationScene as any).revision).toBe(2)
+    expect(next.animationSceneRevision).toBe(2)
+    expect(next.roughInHours).toBe(7)
+    expect(next.crewNotes).toBe('newer notes')
+    expect(next.sortOrder).toBe(2)
+    expect(next.orderTouchedAt).toBe('2026-07-19T13:00:00.000Z')
+  })
+
+  it('does not resurrect a current authoritative tombstone when applying a saved route layer', () => {
+    const scene = { ...packageAnimationRouteDraftToScene(addSegment(sourceDraft(), circuit, 0)).scene!, revision: 2 }
+    const current = {
+      ...packageWith(undefined, 1),
+      updatedAt: '2026-07-19T12:00:00.000Z',
+      deletedAt: '2026-07-19T12:00:00.000Z',
+    }
+    const saved = {
+      ...packageWith(scene, 2),
+      updatedAt: '2026-07-19T11:00:00.000Z',
+    }
+
+    const [next] = applySavedAnimationScopeLayer([current], saved)
+
+    expect(next.deletedAt).toBe('2026-07-19T12:00:00.000Z')
+    expect(next.animationScene).toBeUndefined()
+    expect(next.animationSceneRevision).toBe(1)
+  })
+
+  it('retains a returned authoritative tombstone when applying a saved route layer', () => {
+    const scene = { ...packageAnimationRouteDraftToScene(addSegment(sourceDraft(), circuit, 0)).scene!, revision: 2 }
+    const current = {
+      ...packageWith(scene, 2),
+      updatedAt: '2026-07-19T11:00:00.000Z',
+    }
+    const saved = {
+      ...packageWith(scene, 3),
+      updatedAt: '2026-07-19T12:00:00.000Z',
+      deletedAt: '2026-07-19T12:00:00.000Z',
+    }
+
+    const [next] = applySavedAnimationScopeLayer([current], saved)
+
+    expect(next.deletedAt).toBe('2026-07-19T12:00:00.000Z')
+    expect((next.animationScene as any).revision).toBe(2)
+    expect(next.animationSceneRevision).toBe(3)
+    expect(applySavedAnimationScopeLayer([current], saved).filter((layer) => !layer.deletedAt)).toEqual([])
+  })
+
+  it('matches the service tombstone winner contract for older tombstone versus newer live', () => {
+    const scene = { ...packageAnimationRouteDraftToScene(addSegment(sourceDraft(), circuit, 0)).scene!, revision: 2 }
+    const currentTombstone = {
+      ...packageWith(undefined, 1),
+      updatedAt: '2026-07-19T10:00:00.000Z',
+      deletedAt: '2026-07-19T10:00:00.000Z',
+    }
+    const newerLive = {
+      ...packageWith(scene, 2),
+      updatedAt: '2026-07-19T11:00:00.000Z',
+    }
+
+    expect(applySavedAnimationScopeLayer([currentTombstone], newerLive)).toEqual(
+      mergeBlueprintScopeLayersById([currentTombstone], [newerLive]),
+    )
+  })
+
+  it('keeps the draft open on true local save failure', () => {
+    const draft = addSegment(sourceDraft(), circuit, 0)
+    const outcome = reconcilePackageAnimationRouteSave(builderState(draft), conflictSave('remote-write-failed', undefined, {
+      status: 'local-save-failed',
+      localSaved: false,
+      message: 'disk full',
+    }))
+
+    expect(outcome.status).toBe('conflict')
+    if (outcome.status !== 'conflict') return
+    expect(outcome.builder?.draft).toEqual(draft)
+    expect(outcome.conflict.message).toBe('Animation route could not be saved. Your draft is still open.')
   })
 
   it('invokes the public saver exactly once while the first save is still pending', async () => {
@@ -1032,7 +1548,7 @@ describe('ANIM-2B1 route save reconciliation', () => {
 
     expect(outcome.status).toBe('conflict')
     if (outcome.status !== 'conflict') return
-    expect(outcome.conflict.message).toContain('Another device changed')
+    expect(outcome.conflict.message).toContain('Review the latest route')
     expect(outcome.builder).toBeNull()
     expect((layers[0].animationScene as any).revision).toBe(1)
     expect(layers[0].animationSceneRevision).toBe(1)
@@ -1842,6 +2358,31 @@ describe('ANIM-5.2 terminal parallel branches', () => {
     expect(reopened.activeBranchId).toBeNull()
     expect(reopened.branches.map((branch) => branch.originSelectionId)).toEqual([draft.transitions[1].id, draft.transitions[2].id])
     expect(packageAnimationRouteDraftToScene(reopened).scene?.branchOrders).toEqual(scene.branchOrders)
+
+    const storedLayers = mergeBlueprintScopeLayersById([], [{
+      ...packageWith(scene, 1),
+      selectedAnnotationIds: annotations.map((entry) => entry.id),
+      itemRefs: annotations.map((entry) => ({ annotationId: entry.id, pageNumber: entry.pageNumber, label: entry.label })),
+      animationScene: scene,
+      animationSceneRevision: 1,
+      updatedAt: '2026-07-19T12:00:00.000Z',
+    }])
+    const storedScene = storedLayers[0].animationScene as typeof scene
+    const storedReopened = loadPackageAnimationRouteDraft({
+      packageId: 'package', packageName: 'Lighting',
+      packageAnnotationIds: annotations.map((entry) => entry.id), annotations,
+      scene: storedScene, expectedBaseRevision: 1,
+    })
+    const storedResaved = packageAnimationRouteDraftToScene(storedReopened).scene!
+
+    expect(storedScene.schemaVersion).toBe(1)
+    expect(compareAnimationScenesForVerification(storedScene, scene)).toBe(true)
+    expect(storedScene.branchOrders).toHaveLength(2)
+    expect(storedScene.branchOrders).toEqual(scene.branchOrders)
+    expect(storedScene.branchOrders.map((order) => order.outgoingEdgeIds)).toEqual(scene.branchOrders.map((order) => order.outgoingEdgeIds))
+    expect(storedScene.manualTraversal).toEqual(scene.manualTraversal)
+    expect(storedResaved.branchOrders).toEqual(scene.branchOrders)
+    expect(storedResaved.manualTraversal).toEqual(scene.manualTraversal)
   })
 
   it('targets edit cancel and delete by stable branch ID', () => {

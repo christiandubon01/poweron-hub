@@ -1697,19 +1697,38 @@ export type SaveBlueprintAnimationSceneConflictReason =
   | 'stale-local-revision'
   | 'stale-remote-revision'
   | 'remote-conflict-unresolved'
+  | 'remote-write-failed'
+  | 'verification-mismatch'
+
+export type BlueprintAnimationSceneSaveStatus =
+  | 'verified'
+  | 'local-saved-cloud-pending'
+  | 'local-saved-cloud-failed'
+  | 'local-saved-revision-conflict'
+  | 'local-saved-remote-deleted'
+  | 'verification-mismatch'
+  | 'local-save-failed'
+  | 'revision-conflict'
+  | 'stale-local-revision'
+  | 'missing-scope-layer'
+  | 'invalid-scene'
 
 export type SaveBlueprintAnimationSceneResult =
   | {
       success: true
       conflict: false
+      status: BlueprintAnimationSceneSaveStatus
       localSaved: boolean
       cloudSynced: boolean
       scene: BlueprintScopeAnimationSceneV1 | undefined
       scopeLayer: BlueprintScopeLayer
+      animationSceneRevision: number
+      warning?: string
     }
   | {
       success: false
       conflict: true
+      status: BlueprintAnimationSceneSaveStatus
       localSaved: boolean
       cloudSynced: false
       reason: SaveBlueprintAnimationSceneConflictReason
@@ -1717,6 +1736,9 @@ export type SaveBlueprintAnimationSceneResult =
       expectedBaseRevision: number
       currentScene: BlueprintScopeAnimationScene | undefined
       callerDraft: BlueprintScopeAnimationSceneV1 | null
+      scene?: BlueprintScopeAnimationSceneV1 | undefined
+      scopeLayer?: BlueprintScopeLayer
+      animationSceneRevision?: number
     }
 
 export interface SaveOperationsBlueprintScopeLayerAnimationSceneInput {
@@ -1762,6 +1784,38 @@ function canonicalSceneJson(value: unknown): string {
   return JSON.stringify(canonicalize(value))
 }
 
+export function canonicalizeAnimationSceneForVerification(value: unknown): unknown {
+  const canonicalize = (entry: any, path: string[]): any => {
+    if (Array.isArray(entry)) {
+      const key = path[path.length - 1]
+      const normalized = entry.map((item) => canonicalize(item, path))
+      if (key === 'nodes' || key === 'edges') {
+        return [...normalized].sort((a, b) => String(a?.id || '').localeCompare(String(b?.id || '')))
+      }
+      if (key === 'branchOrders') {
+        return [...normalized].sort((a, b) => String(a?.nodeId || a?.id || '').localeCompare(String(b?.nodeId || b?.id || '')))
+      }
+      return normalized
+    }
+    if (!entry || typeof entry !== 'object') return entry
+    return Object.keys(entry).sort().reduce((out: Record<string, unknown>, key) => {
+      const normalized = canonicalize(entry[key], [...path, key])
+      if (normalized == null) return out
+      if ((Array.isArray(normalized) && normalized.length === 0) && (key === 'events' || key === 'branchOrders' || key === 'manualTraversal' || key === 'sources')) {
+        out[key] = []
+        return out
+      }
+      out[key] = normalized
+      return out
+    }, {})
+  }
+  return canonicalize(value, [])
+}
+
+export function compareAnimationScenesForVerification(a: unknown, b: unknown): boolean {
+  return canonicalSceneJson(canonicalizeAnimationSceneForVerification(a)) === canonicalSceneJson(canonicalizeAnimationSceneForVerification(b))
+}
+
 function buildSceneDraft(
   nextScene: BlueprintScopeAnimationSceneV1 | null | BlueprintAnimationSceneUpdater,
   currentScene: BlueprintScopeAnimationSceneV1 | undefined,
@@ -1795,6 +1849,60 @@ function applyAnimationSceneLayerToBackup(
   return next
 }
 
+export function readPersistedOperationsBlueprintScopeLayerAnimationScene(input: {
+  backup?: any
+  blueprintSetId: string
+  scopeLayerId: string
+  targetRevision: number
+  intendedScene: BlueprintScopeAnimationSceneV1 | undefined
+}): {
+  found: boolean
+  scopeLayer?: BlueprintScopeLayer
+  scene?: BlueprintScopeAnimationSceneV1
+  revision?: number
+  semanticallyMatches: boolean
+} {
+  const backup = input.backup
+  const layer = getScopeLayerById(backup, input.blueprintSetId, input.scopeLayerId)
+  if (!layer) return { found: false, semanticallyMatches: false }
+  const scene = getSupportedScene(layer)
+  const revision = getSceneRevision(layer)
+  const targetRevision = Math.max(0, Math.floor(Number(input.targetRevision) || 0))
+  const revisionMatches = revision === targetRevision
+  const semanticallyMatches = input.intendedScene
+    ? !!scene && compareAnimationScenesForVerification(scene, input.intendedScene)
+    : !scene && revisionMatches
+  return {
+    found: revisionMatches && semanticallyMatches,
+    scopeLayer: layer,
+    scene,
+    revision,
+    semanticallyMatches,
+  }
+}
+
+function requireLocalSavedSceneResult(
+  result: SaveBlueprintAnimationSceneResult,
+): SaveBlueprintAnimationSceneResult {
+  if (!result.localSaved) return result
+  if (result.scopeLayer && result.animationSceneRevision != null && Object.prototype.hasOwnProperty.call(result, 'scene')) {
+    return result
+  }
+  return {
+    ...result,
+    success: false,
+    conflict: true,
+    status: 'local-save-failed',
+    localSaved: false,
+    cloudSynced: false,
+    reason: 'remote-write-failed',
+    message: 'The animation route could not be confirmed on this device.',
+    expectedBaseRevision: (result as any).expectedBaseRevision ?? 0,
+    currentScene: (result as any).currentScene,
+    callerDraft: (result as any).callerDraft ?? null,
+  } as SaveBlueprintAnimationSceneResult
+}
+
 function sceneConflict(
   reason: SaveBlueprintAnimationSceneConflictReason,
   message: string,
@@ -1802,10 +1910,17 @@ function sceneConflict(
   currentScene: BlueprintScopeAnimationScene | undefined,
   callerDraft: BlueprintScopeAnimationSceneV1 | null,
   localSaved = false,
+  options: {
+    status?: BlueprintAnimationSceneSaveStatus
+    scopeLayer?: BlueprintScopeLayer
+    scene?: BlueprintScopeAnimationSceneV1 | undefined
+    animationSceneRevision?: number
+  } = {},
 ): SaveBlueprintAnimationSceneResult {
-  return {
+  return requireLocalSavedSceneResult({
     success: false,
     conflict: true,
+    status: options.status || statusForSceneConflict(reason, localSaved),
     localSaved,
     cloudSynced: false,
     reason,
@@ -1813,6 +1928,36 @@ function sceneConflict(
     expectedBaseRevision,
     currentScene: currentScene ? JSON.parse(JSON.stringify(currentScene)) : undefined,
     callerDraft: cloneScene(callerDraft),
+    ...(options.scopeLayer ? { scopeLayer: JSON.parse(JSON.stringify(options.scopeLayer)) } : {}),
+    ...(Object.prototype.hasOwnProperty.call(options, 'scene') ? { scene: cloneScene(options.scene) } : {}),
+    ...(options.animationSceneRevision != null ? { animationSceneRevision: options.animationSceneRevision } : {}),
+  })
+}
+
+function statusForSceneConflict(reason: SaveBlueprintAnimationSceneConflictReason, localSaved: boolean): BlueprintAnimationSceneSaveStatus {
+  if (localSaved) {
+    if (reason === 'remote-write-failed') return 'local-saved-cloud-failed'
+    if (reason === 'verification-mismatch') return 'verification-mismatch'
+    if (reason === 'stale-remote-revision') return 'local-saved-revision-conflict'
+    if (reason === 'scope-layer-deleted' || reason === 'scope-layer-missing') return 'local-saved-remote-deleted'
+    return 'local-saved-cloud-pending'
+  }
+  switch (reason) {
+    case 'scope-layer-missing':
+    case 'scope-layer-deleted':
+      return 'missing-scope-layer'
+    case 'invalid-next-scene':
+    case 'unsupported-current-scene':
+      return 'invalid-scene'
+    case 'stale-local-revision':
+      return 'stale-local-revision'
+    case 'stale-remote-revision':
+    case 'remote-conflict-unresolved':
+    case 'verification-mismatch':
+      return 'revision-conflict'
+    case 'remote-write-failed':
+    default:
+      return 'local-save-failed'
   }
 }
 
@@ -1928,47 +2073,84 @@ export async function saveOperationsBlueprintScopeLayerAnimationScene(
       const verification = await fetchLatestRemoteBackup(userId || undefined)
       if (verification.error || !verification.hasRemoteRow || !verification.remoteData) {
         // No usable row this attempt — read-back lag, not proof the write was lost.
-        lagged = sceneConflict('remote-conflict-unresolved', verification.error || 'The remote scene write could not be read back.', expectedRevision, currentScene, callerDraft, true)
+        lagged = sceneConflict('remote-conflict-unresolved', verification.error || 'The remote scene write could not be read back.', expectedRevision, currentScene, callerDraft, true, {
+          status: 'local-saved-cloud-pending',
+          scopeLayer: updatedLayer,
+          scene: savedScene,
+          animationSceneRevision: targetRevision,
+        })
         continue
       }
       const verifiedLayer = getScopeLayerById(verification.remoteData, input.blueprintSetId, input.scopeLayerId)
       if (!verifiedLayer) {
         // A landed write always carries this layer, so absence means the row predates it.
-        lagged = sceneConflict('remote-conflict-unresolved', 'The saved work package was missing during remote read-back.', expectedRevision, undefined, callerDraft, true)
+        lagged = sceneConflict('remote-conflict-unresolved', 'The saved work package was missing during remote read-back.', expectedRevision, undefined, callerDraft, true, {
+          status: 'local-saved-cloud-pending',
+          scopeLayer: updatedLayer,
+          scene: savedScene,
+          animationSceneRevision: targetRevision,
+        })
         continue
       }
       if (verifiedLayer.deletedAt) {
-        return sceneConflict('scope-layer-deleted', 'The work package was deleted before the scene save could be verified.', expectedRevision, verifiedLayer.animationScene, callerDraft, true)
+        return sceneConflict('scope-layer-deleted', 'The work package was deleted before the scene save could be verified.', expectedRevision, verifiedLayer.animationScene, callerDraft, true, {
+          status: 'local-saved-remote-deleted',
+          scopeLayer: updatedLayer,
+          scene: savedScene,
+          animationSceneRevision: targetRevision,
+        })
       }
       const verifiedParse = parseBlueprintAnimationScene(verifiedLayer.animationScene)
       if (verifiedParse.status === 'unsupported-version') {
-        return sceneConflict('unsupported-current-scene', 'The saved work package now uses an unsupported scene schema.', expectedRevision, verifiedParse.scene, callerDraft, true)
+        return sceneConflict('unsupported-current-scene', 'The saved work package now uses an unsupported scene schema.', expectedRevision, verifiedParse.scene, callerDraft, true, {
+          status: 'local-saved-cloud-pending',
+          scopeLayer: updatedLayer,
+          scene: savedScene,
+          animationSceneRevision: targetRevision,
+        })
       }
       const verifiedRevision = getSceneRevision(verifiedLayer)
       if (verifiedRevision > targetRevision) {
-        return sceneConflict('stale-remote-revision', `The remote scene advanced to revision ${verifiedRevision} before read-back completed.`, expectedRevision, verifiedLayer.animationScene, callerDraft, true)
+        return sceneConflict('stale-remote-revision', `The remote scene advanced to revision ${verifiedRevision} before read-back completed.`, expectedRevision, verifiedLayer.animationScene, callerDraft, true, {
+          status: 'local-saved-revision-conflict',
+          scopeLayer: updatedLayer,
+          scene: savedScene,
+          animationSceneRevision: targetRevision,
+        })
       }
       if (verifiedRevision < targetRevision) {
         // Behind the revision we just wrote. Revisions only advance, so this is lag — never a
         // concurrent write — and must not be reported as a conflict until the budget is spent.
-        lagged = sceneConflict('remote-conflict-unresolved', 'The remote scene did not match the caller draft during read-back verification.', expectedRevision, verifiedLayer.animationScene, callerDraft, true)
+        lagged = sceneConflict('remote-conflict-unresolved', 'The remote scene did not reach the locally saved route revision during read-back verification.', expectedRevision, verifiedLayer.animationScene, callerDraft, true, {
+          status: 'local-saved-cloud-pending',
+          scopeLayer: updatedLayer,
+          scene: savedScene,
+          animationSceneRevision: targetRevision,
+        })
         continue
       }
       const verifiedScene = verifiedParse.status === 'supported' ? verifiedParse.scene : undefined
       const contentMatches = savedScene
-        ? !!verifiedScene && canonicalSceneJson(verifiedScene) === canonicalSceneJson(savedScene)
+        ? !!verifiedScene && compareAnimationScenesForVerification(verifiedScene, savedScene)
         : !verifiedScene
       if (!contentMatches) {
         // Target revision reached with different content — a concurrent write claimed it.
-        return sceneConflict('remote-conflict-unresolved', 'The remote scene did not match the caller draft during read-back verification.', expectedRevision, verifiedLayer.animationScene, callerDraft, true)
+        return sceneConflict('verification-mismatch', 'The remote scene did not match the locally saved route during read-back verification.', expectedRevision, verifiedLayer.animationScene, callerDraft, true, {
+          status: 'verification-mismatch',
+          scopeLayer: updatedLayer,
+          scene: savedScene,
+          animationSceneRevision: targetRevision,
+        })
       }
       const successResult: SaveBlueprintAnimationSceneResult = {
         success: true,
         conflict: false,
+        status: 'verified',
         localSaved: true,
         cloudSynced: true,
         scene: verifiedScene,
         scopeLayer: verifiedLayer,
+        animationSceneRevision: targetRevision,
       }
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('poweron:sync-success', {
@@ -1982,29 +2164,74 @@ export async function saveOperationsBlueprintScopeLayerAnimationScene(
       return successResult
     }
 
-    return lagged ?? sceneConflict('remote-conflict-unresolved', 'The remote scene write could not be read back.', expectedRevision, currentScene, callerDraft, true)
+    return lagged ?? sceneConflict('remote-conflict-unresolved', 'The remote scene write could not be read back.', expectedRevision, currentScene, callerDraft, true, {
+      status: 'local-saved-cloud-pending',
+      scopeLayer: updatedLayer,
+      scene: savedScene,
+      animationSceneRevision: targetRevision,
+    })
   }
 
   if (!isSupabaseConfigured()) {
-    const savedBackup = applyAnimationSceneLayerToBackup(localBase, input.blueprintSetId, updatedLayer)
-    savedBackup._lastSavedAt = now
-    saveBackupData(savedBackup)
-    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
-    try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
-    return { success: true, conflict: false, localSaved: true, cloudSynced: false, scene: savedScene, scopeLayer: updatedLayer }
+    try {
+      const savedBackup = applyAnimationSceneLayerToBackup(localBase, input.blueprintSetId, updatedLayer)
+      savedBackup._lastSavedAt = now
+      saveBackupData(savedBackup)
+      try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+      try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+      return {
+        success: true,
+        conflict: false,
+        status: 'local-saved-cloud-pending',
+        localSaved: true,
+        cloudSynced: false,
+        scene: savedScene,
+        scopeLayer: updatedLayer,
+        animationSceneRevision: expectedRevision + 1,
+        warning: 'Animation route saved on this device. Cloud sync has not been verified yet.',
+      }
+    } catch (error: any) {
+      return sceneConflict('remote-write-failed', error?.message || 'The animation route could not be saved locally.', expectedRevision, currentScene, callerDraft, false, {
+        status: 'local-save-failed',
+      })
+    }
   }
 
   if (!remoteSnapshot?.hasRemoteRow || !remoteSnapshot.remoteData) {
     const savedBackup = applyAnimationSceneLayerToBackup(localBase, input.blueprintSetId, updatedLayer)
-    const result = await saveBackupDataAndSyncNow(savedBackup, 'blueprintSummaries', {
-      source: 'scope-layer-animation-scene-first-sync',
-      _scopes: ['blueprint.workPackages'],
-      _suppressSuccessEvent: true,
-    })
+    let result: Awaited<ReturnType<typeof saveBackupDataAndSyncNow>>
+    try {
+      result = await saveBackupDataAndSyncNow(savedBackup, 'blueprintSummaries', {
+        source: 'scope-layer-animation-scene-first-sync',
+        _scopes: ['blueprint.workPackages'],
+        _suppressSuccessEvent: true,
+      })
+    } catch (error: any) {
+      const persisted = readPersistedOperationsBlueprintScopeLayerAnimationScene({
+        backup: getBackupData(),
+        blueprintSetId: input.blueprintSetId,
+        scopeLayerId: input.scopeLayerId,
+        targetRevision: expectedRevision + 1,
+        intendedScene: savedScene,
+      })
+      return sceneConflict('remote-write-failed', error?.message || 'The route was saved locally, but cloud sync failed.', expectedRevision, currentScene, callerDraft, persisted.found, persisted.found
+        ? {
+            status: 'local-saved-cloud-failed',
+            scopeLayer: persisted.scopeLayer,
+            scene: persisted.scene,
+            animationSceneRevision: persisted.revision,
+          }
+        : { status: 'local-save-failed' })
+    }
     if (result.success) {
       return verifyRemoteWrite()
     }
-    return sceneConflict('remote-conflict-unresolved', result.error || 'The remote scene save could not be verified.', expectedRevision, currentScene, callerDraft, true)
+    return sceneConflict('remote-write-failed', result.error || 'The route was saved locally, but cloud sync failed.', expectedRevision, currentScene, callerDraft, true, {
+      status: 'local-saved-cloud-failed',
+      scopeLayer: updatedLayer,
+      scene: savedScene,
+      animationSceneRevision: expectedRevision + 1,
+    })
   }
 
   // Second preflight narrows the non-atomic window: if the row changed after the initial scene
@@ -2032,20 +2259,49 @@ export async function saveOperationsBlueprintScopeLayerAnimationScene(
   }
 
   const remoteBasedBackup = applyAnimationSceneLayerToBackup(preflight.remoteData, input.blueprintSetId, updatedLayer)
-  const result = await saveBackupWithRemoteBaselineSync(
-    remoteBasedBackup,
-    {
-      remoteUpdatedAt: preflight.remoteUpdatedAt,
-      remoteDataLastSavedAt: preflight.remoteDataLastSavedAt,
-    },
-    {
-      source: 'scope-layer-animation-scene-remote-merge',
-      _scopes: ['blueprint.workPackages'],
-      _suppressSuccessEvent: true,
-    },
-  )
+  let result: Awaited<ReturnType<typeof saveBackupWithRemoteBaselineSync>>
+  try {
+    result = await saveBackupWithRemoteBaselineSync(
+      remoteBasedBackup,
+      {
+        remoteUpdatedAt: preflight.remoteUpdatedAt,
+        remoteDataLastSavedAt: preflight.remoteDataLastSavedAt,
+      },
+      {
+        source: 'scope-layer-animation-scene-remote-merge',
+        _scopes: ['blueprint.workPackages'],
+        _suppressSuccessEvent: true,
+      },
+    )
+  } catch (error: any) {
+    const persisted = readPersistedOperationsBlueprintScopeLayerAnimationScene({
+      backup: getBackupData(),
+      blueprintSetId: input.blueprintSetId,
+      scopeLayerId: input.scopeLayerId,
+      targetRevision: expectedRevision + 1,
+      intendedScene: savedScene,
+    })
+    return sceneConflict('remote-write-failed', error?.message || 'The route was saved locally, but cloud sync failed.', expectedRevision, remoteLayer?.animationScene || currentScene, callerDraft, persisted.found, persisted.found
+      ? {
+          status: 'local-saved-cloud-failed',
+          scopeLayer: persisted.scopeLayer,
+          scene: persisted.scene,
+          animationSceneRevision: persisted.revision,
+        }
+      : { status: 'local-save-failed' })
+  }
   if (!result.success) {
-    return sceneConflict('remote-conflict-unresolved', result.error || 'The remote baseline changed before the scene save completed.', expectedRevision, remoteLayer?.animationScene || currentScene, callerDraft, result.localSaved)
+    return sceneConflict(
+      'remote-write-failed',
+      result.error || 'The route was saved locally, but cloud sync failed.',
+      expectedRevision,
+      remoteLayer?.animationScene || currentScene,
+      callerDraft,
+      result.localSaved,
+      result.localSaved
+        ? { status: 'local-saved-cloud-failed', scopeLayer: updatedLayer, scene: savedScene, animationSceneRevision: expectedRevision + 1 }
+        : { status: 'local-save-failed' },
+    )
   }
   return verifyRemoteWrite()
 }
