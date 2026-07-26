@@ -88,6 +88,7 @@ export function WireProfileManagerDialog({
   portalTarget,
   remoteRefreshVersion = 0,
   onForceClose,
+  onProfilesChanged,
 }: {
   open: boolean
   projectId?: string | null
@@ -95,6 +96,7 @@ export function WireProfileManagerDialog({
   portalTarget?: HTMLElement | null
   remoteRefreshVersion?: number
   onForceClose: () => void
+  onProfilesChanged?: () => void
 }) {
   const cleanProjectId = String(projectId || '').trim()
   const projectReady = !!cleanProjectId
@@ -411,7 +413,10 @@ export function WireProfileManagerDialog({
       })) return
       setMessage(statusMessage(result, label))
       refresh(result.profile?.id || selectedId)
-      if (result.localSaved && !result.error) after?.(result)
+      if (result.localSaved && !result.error) {
+        onProfilesChanged?.()
+        after?.(result)
+      }
     } catch (error) {
       if (!canApplyWireProfileAsyncResult({
         mounted: mountedRef.current,
@@ -533,6 +538,7 @@ export function WireProfileManagerDialog({
       })) return
       setFilter('active')
       setMessage(summarizeStarterWireProfileResult(aggregate))
+      if (aggregate.createdNames.length > 0) onProfilesChanged?.()
     } catch (error) {
       if (!canApplyWireProfileAsyncResult({
         mounted: mountedRef.current,

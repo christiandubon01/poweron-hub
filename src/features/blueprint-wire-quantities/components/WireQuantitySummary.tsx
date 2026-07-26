@@ -1,4 +1,4 @@
-import { CheckSquare, ChevronDown, ChevronRight, Square, Zap } from 'lucide-react'
+import { CheckSquare, ChevronDown, ChevronRight, MousePointer2, Square, Zap } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
 import { describeContributionKind, formatTotalRow, formatWireLength } from '../formatting'
 import { groupUnassignedWireQuantityContributions, type WireProfileAssignmentSelection } from '../wireQuantityAssignment'
@@ -26,6 +26,8 @@ export interface WireQuantityAssignmentControls {
   onOpenDialog(): void
   selectedCount: number
   disabled?: boolean
+  onPickSegmentsOnPlan?: () => void
+  canPickSegmentsOnPlan?: boolean
 }
 
 export function WireQuantitySummary({
@@ -69,14 +71,14 @@ export function WireQuantitySummary({
         <div className="mt-2 rounded border border-gray-800 bg-gray-950/40 px-2 py-2 text-[10px] italic text-gray-500">{emptyText}</div>
       ) : (
         <div className="mt-2 overflow-x-auto">
-          <table className="w-full table-fixed text-left text-[10px]">
+          <table className="min-w-[560px] w-full table-fixed text-left text-[10px]">
             <thead className="text-gray-500">
               <tr className="border-b border-gray-800">
-                <th className="w-[34%] py-1 pr-2 font-medium">Profile</th>
-                <th className="w-[17%] py-1 pr-2 font-medium">Measured</th>
-                <th className="w-[13%] py-1 pr-2 font-medium">Waste %</th>
-                <th className="w-[17%] py-1 pr-2 font-medium">Waste length</th>
-                <th className="w-[19%] py-1 font-medium">Purchase length</th>
+                <th className="w-[32%] py-1 pr-3 font-medium">Profile</th>
+                <th className="w-[17%] py-1 pr-3 font-medium">Measured</th>
+                <th className="w-[12%] py-1 pr-3 font-medium">Waste %</th>
+                <th className="w-[19%] py-1 pr-3 font-medium">Waste length</th>
+                <th className="w-[20%] py-1 font-medium">Purchase length</th>
               </tr>
             </thead>
             <tbody>
@@ -88,7 +90,7 @@ export function WireQuantitySummary({
                 return (
                   <Fragment key={total.key}>
                     <tr className="border-b border-gray-900/80 text-gray-300">
-                      <td className="py-1.5 pr-2 align-top">
+                      <td className="py-1.5 pr-3 align-top">
                         <button
                           type="button"
                           onClick={() => setExpanded((prev) => ({ ...prev, [total.key]: !prev[total.key] }))}
@@ -101,9 +103,9 @@ export function WireQuantitySummary({
                         </button>
                         <span className="mt-0.5 inline-flex rounded-full border border-gray-700 px-1 py-0.5 text-[8px] uppercase text-gray-400">{statusLabel(total)}</span>
                       </td>
-                      <td className="py-1.5 pr-2 align-top tabular-nums">{row.measured}</td>
-                      <td className="py-1.5 pr-2 align-top tabular-nums">{row.wastePercent}</td>
-                      <td className="py-1.5 pr-2 align-top tabular-nums">{row.wasteLength}</td>
+                      <td className="py-1.5 pr-3 align-top tabular-nums">{row.measured}</td>
+                      <td className="py-1.5 pr-3 align-top tabular-nums">{row.wastePercent}</td>
+                      <td className="py-1.5 pr-3 align-top tabular-nums">{row.wasteLength}</td>
                       <td className="py-1.5 align-top tabular-nums">{row.purchaseLength}</td>
                     </tr>
                     {isExpanded && (
@@ -114,6 +116,11 @@ export function WireQuantitySummary({
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="text-[10px] font-semibold text-cyan-100">Assign Unassigned quantities</div>
                                 <div className="flex flex-wrap items-center gap-1.5">
+                                  {assignment.onPickSegmentsOnPlan && (
+                                    <button type="button" onClick={assignment.onPickSegmentsOnPlan} disabled={assignment.disabled || !assignment.canPickSegmentsOnPlan} className="inline-flex items-center gap-1 rounded border border-emerald-500/60 bg-emerald-500/10 px-2 py-1 text-[9px] font-semibold text-emerald-100 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:border-gray-800 disabled:bg-transparent disabled:text-gray-600">
+                                      <MousePointer2 size={11} /> Pick Wire Segments on Plan
+                                    </button>
+                                  )}
                                   <button type="button" onClick={() => assignment.onSelectMany(routeSelections, true)} disabled={assignment.disabled || routeSelections.length === 0} className="inline-flex items-center gap-1 rounded border border-cyan-700/60 px-2 py-1 text-[9px] font-semibold text-cyan-100 hover:bg-cyan-900/30 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-600">
                                     <CheckSquare size={11} /> Select all routes
                                   </button>

@@ -103,13 +103,19 @@ import {
 import {
   applyWireProfileAssignmentPlanToAnnotations,
   AssignWireProfileDialog,
+  applyWireSegmentProfileAssignmentPlanToAnnotations,
+  buildWireSegmentPickOverlayModel,
   buildEffectiveWorkPackagesForPreview,
+  buildWireSegmentProfileAssignmentPlan,
   buildWireProfileAssignmentPlan,
   buildWireQuantityResult,
+  formatWireLength,
   listAssignableActiveWireProfiles,
   normalizeWireProfileAssignmentSelection,
   ProjectWireTotalsDialog,
+  resolveWireSegmentRange,
   type WireProfileAssignmentSelection,
+  type WireSegmentRangeSelection,
   WireQuantitySummary,
 } from '@/features/blueprint-wire-quantities'
 import {
@@ -168,7 +174,7 @@ import {
   type PackageAnimationRouteNotice,
   type RouteBuilderAnnotation,
 } from '@/features/blueprint-animation/routeBuilderModel'
-import { findFirstRouteDeviceHit, findNearestRouteNode, findNearestRouteSegment, resolveRoutePickIntent } from '@/features/blueprint-animation/routePicking'
+import { findFirstRouteDeviceHit, findNearestRouteNode, findNearestRoutePoint, findNearestRouteSegment, resolveRoutePickIntent } from '@/features/blueprint-animation/routePicking'
 import {
   QUICK_ACCESS_BINDING_SAVE_FAILURE_MESSAGE,
   applyQuickAccessWireProfileToAnnotationMeta,
@@ -3448,6 +3454,26 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [wireAssignmentDialogOpen, setWireAssignmentDialogOpen] = useState(false)
   const [wireAssignmentTargetProfileId, setWireAssignmentTargetProfileId] = useState('')
   const [wireAssignmentBusy, setWireAssignmentBusy] = useState(false)
+  const [wireSegmentPickSession, setWireSegmentPickSession] = useState<{
+    packageId: string
+    pageNumber: number
+    eligibleAnnotationIds: string[]
+    stage: 'choose-route' | 'choose-start' | 'choose-end' | 'review' | 'applying'
+    activeAnnotationId: string | null
+    startPointId: string | null
+    pendingRanges: WireSegmentRangeSelection[]
+    targetWireProfileId: string | null
+    notice?: { type: 'error' | 'info'; text: string }
+  } | null>(null)
+  const [wireSegmentPickHover, setWireSegmentPickHover] = useState<{
+    annotationId: string
+    pointId?: string
+    segmentIds?: string[]
+  } | null>(null)
+  const cancelWireSegmentPicker = useCallback(() => {
+    setWireSegmentPickSession(null)
+    setWireSegmentPickHover(null)
+  }, [])
   const [wireProfileRemoteRefreshVersion, setWireProfileRemoteRefreshVersion] = useState(0)
   const previousWireProfileProjectIdRef = useRef<string | null>(blueprint?.projectId ?? null)
 
@@ -4741,6 +4767,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         // and dirty drafts cannot be bypassed by viewer-level shortcuts.
         return
       }
+      if (wireSegmentPickSession) {
+        cancelWireSegmentPicker()
+        return
+      }
       // Stop paste mode first (Fix 1, req 6) — before closing editors/fullscreen.
       // Keeps copiedAnnotationTemplate so the user can resume via Paste.
       if (pasteModeActive) {
@@ -4771,7 +4801,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover, pasteModeActive, isWireProfileManagerOpen])
+  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover, pasteModeActive, isWireProfileManagerOpen, wireSegmentPickSession, cancelWireSegmentPicker])
 
   useEffect(() => {
     pendingScrollResetRef.current = true
@@ -4982,6 +5012,43 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     if (hiddenAnnotationIdSet) return !hiddenAnnotationIdSet.has(annotationId)
     return true
   }, [isolatedAnnotationIdSet, hiddenAnnotationIdSet])
+
+  const wireSegmentPickEligibleIds = useMemo(() => {
+    if (!scopeLayerModal.open) return new Set<string>()
+    return new Set(scopeLayerDraftIds)
+  }, [scopeLayerDraftIds, scopeLayerModal.open])
+  const wireSegmentPickEligibleRoutes = useMemo(() => {
+    if (!wireSegmentPickSession) return []
+    const eligible = new Set(wireSegmentPickSession.eligibleAnnotationIds)
+    return animationRouteAnnotations.filter((annotation) => (
+      annotation.pageNumber === currentPage
+      && eligible.has(annotation.id)
+      && isAnnotationVisibleOnCanvas(annotation.id)
+      && isCircuitShapeKind(annotation.shapeKind)
+      && Array.isArray(annotation.points)
+      && Array.isArray(annotation.pointIds)
+      && Array.isArray(annotation.segmentIds)
+      && annotation.points.length >= 2
+      && annotation.pointIds.length === annotation.points.length
+      && annotation.segmentIds.length === annotation.points.length - 1
+    ))
+  }, [animationRouteAnnotations, currentPage, isAnnotationVisibleOnCanvas, wireSegmentPickSession])
+  const canPickWireSegmentsForScopeDraft = useMemo(() => {
+    if (!scopeLayerModal.open || scopeLayerModal.mode !== 'edit') return false
+    const draftIds = new Set(scopeLayerDraftIds)
+    return animationRouteAnnotations.some((annotation) => (
+      annotation.pageNumber === currentPage
+      && draftIds.has(annotation.id)
+      && isAnnotationVisibleOnCanvas(annotation.id)
+      && isCircuitShapeKind(annotation.shapeKind)
+      && Array.isArray(annotation.points)
+      && Array.isArray(annotation.pointIds)
+      && Array.isArray(annotation.segmentIds)
+      && annotation.points.length >= 2
+      && annotation.pointIds.length === annotation.points.length
+      && annotation.segmentIds.length === annotation.points.length - 1
+    ))
+  }, [animationRouteAnnotations, currentPage, isAnnotationVisibleOnCanvas, scopeLayerDraftIds, scopeLayerModal.mode, scopeLayerModal.open])
 
   const activeScopeLayerSelectionIds = scopeLayerModal.open ? scopeLayerDraftIds : Array.from(selectedForPackageIds)
   const selectedPackageAnnotations = useMemo(
@@ -6200,6 +6267,302 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     )))
   }, [wireQuantityResult.contributions])
 
+  const wireSegmentAssignmentPlan = useMemo(() => {
+    if (!wireSegmentPickSession) return null
+    return buildWireSegmentProfileAssignmentPlan({
+      projectId: String(blueprint?.projectId || ''),
+      blueprintSetId: String(blueprint?.id || ''),
+      targetWireProfileId: wireSegmentPickSession.targetWireProfileId,
+      selectedRanges: wireSegmentPickSession.pendingRanges,
+      annotations: allAnnotations,
+      contributions: wireQuantityResult.contributions,
+      wireProfiles: projectWireProfiles,
+      eligibleAnnotationIds: wireSegmentPickEligibleIds,
+    })
+  }, [
+    allAnnotations,
+    blueprint?.id,
+    blueprint?.projectId,
+    projectWireProfiles,
+    wireQuantityResult.contributions,
+    wireSegmentPickEligibleIds,
+    wireSegmentPickSession,
+  ])
+  const wireSegmentPickOverlay = useMemo(() => {
+    if (!wireSegmentPickSession) return null
+    return buildWireSegmentPickOverlayModel({
+      annotations: allAnnotations,
+      currentPage,
+      eligibleAnnotationIds: new Set(wireSegmentPickSession.eligibleAnnotationIds),
+      activeAnnotationId: wireSegmentPickSession.activeAnnotationId,
+      startPointId: wireSegmentPickSession.startPointId,
+      hover: wireSegmentPickHover,
+      pendingRanges: wireSegmentPickSession.pendingRanges,
+      includeEligible: true,
+    })
+  }, [allAnnotations, currentPage, wireSegmentPickHover, wireSegmentPickSession])
+
+  useEffect(() => {
+    setWireSegmentPickSession(null)
+    setWireSegmentPickHover(null)
+  }, [blueprint?.id, blueprint?.projectId, scopeLayerModal.open])
+
+  const openWireSegmentPicker = useCallback(() => {
+    if (!scopeLayerModal.open || scopeLayerModal.mode !== 'edit' || !scopeLayerModal.layerId) return
+    const eligibleAnnotationIds = scopeLayerDraftIds.filter((id) => {
+      const annotation = animationRouteAnnotations.find((entry) => entry.id === id)
+      return !!annotation
+        && annotation.pageNumber === currentPage
+        && isAnnotationVisibleOnCanvas(annotation.id)
+        && isCircuitShapeKind(annotation.shapeKind)
+        && Array.isArray(annotation.points)
+        && Array.isArray(annotation.pointIds)
+        && Array.isArray(annotation.segmentIds)
+        && annotation.points.length >= 2
+        && annotation.pointIds.length === annotation.points.length
+        && annotation.segmentIds.length === annotation.points.length - 1
+    })
+    if (eligibleAnnotationIds.length === 0) {
+      setActionMsg({ type: 'warning', text: 'This Work Package draft has no pickable Circuit Path or Circuit Arc routes on the current page.' })
+      return
+    }
+    setWireSegmentPickSession({
+      packageId: scopeLayerModal.layerId,
+      pageNumber: currentPage,
+      eligibleAnnotationIds,
+      stage: 'choose-route',
+      activeAnnotationId: null,
+      startPointId: null,
+      pendingRanges: [],
+      targetWireProfileId: assignableWireProfiles[0]?.id || null,
+      notice: { type: 'info', text: 'Select a Circuit Path or Circuit Arc.' },
+    })
+    setWireSegmentPickHover(null)
+  }, [animationRouteAnnotations, assignableWireProfiles, currentPage, isAnnotationVisibleOnCanvas, scopeLayerDraftIds, scopeLayerModal.layerId, scopeLayerModal.mode, scopeLayerModal.open])
+
+  const updateWireSegmentPickTarget = useCallback((targetWireProfileId: string) => {
+    setWireSegmentPickSession((previous) => previous ? { ...previous, targetWireProfileId } : previous)
+  }, [])
+
+  const removeWireSegmentRange = useCallback((rangeId: string) => {
+    setWireSegmentPickSession((previous) => previous
+      ? {
+        ...previous,
+        pendingRanges: previous.pendingRanges.filter((range) => range.id !== rangeId),
+        stage: previous.pendingRanges.length <= 1 ? 'choose-start' : previous.stage,
+        notice: { type: 'info', text: previous.pendingRanges.length <= 1 ? 'Select the starting point.' : 'Range removed.' },
+      }
+      : previous)
+  }, [])
+
+  const reviewWireSegmentAssignment = useCallback(() => {
+    setWireSegmentPickSession((previous) => previous ? { ...previous, stage: 'review', notice: undefined } : previous)
+  }, [])
+
+  const addAnotherWireSegmentRange = useCallback(() => {
+    setWireSegmentPickSession((previous) => previous ? { ...previous, stage: 'choose-route', activeAnnotationId: null, startPointId: null, notice: { type: 'info', text: 'Select a Circuit Path or Circuit Arc.' } } : previous)
+    setWireSegmentPickHover(null)
+  }, [])
+
+  const handleWireSegmentPickPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const session = wireSegmentPickSession
+    if (!session || !overlayRef.current) return
+    if (session.stage !== 'choose-route' && session.stage !== 'choose-end') return
+    const overlayRect = overlayRef.current.getBoundingClientRect()
+    const pointer = toNorm(event.clientX - overlayRect.left, event.clientY - overlayRect.top, overlayRect.width, overlayRect.height)
+    if (session.stage === 'choose-route') {
+      const hit = findNearestRouteSegment(pointer, wireSegmentPickEligibleRoutes, {
+        pageWidth: Math.max(1, overlayRect.width),
+        pageHeight: Math.max(1, overlayRect.height),
+        tolerancePx: event.pointerType === 'touch' ? 28 : 14,
+      })
+      setWireSegmentPickHover(hit ? { annotationId: hit.annotationId } : null)
+      return
+    }
+    if (!session.activeAnnotationId || !session.startPointId) return
+    const activeRoute = wireSegmentPickEligibleRoutes.filter((route) => route.id === session.activeAnnotationId)
+    const point = findNearestRoutePoint(pointer, activeRoute, {
+      pageWidth: Math.max(1, overlayRect.width),
+      pageHeight: Math.max(1, overlayRect.height),
+      tolerancePx: event.pointerType === 'touch' ? 30 : 18,
+    })
+    if (!point) {
+      setWireSegmentPickHover(null)
+      return
+    }
+    const annotation = allAnnotationsRef.current.find((entry) => entry.id === session.activeAnnotationId)
+    const resolved = annotation ? resolveWireSegmentRange({ annotation, startPointId: session.startPointId, endPointId: point.pointId }) : null
+    setWireSegmentPickHover({
+      annotationId: point.annotationId,
+      pointId: point.pointId,
+      ...(resolved?.ok ? { segmentIds: resolved.range.segmentIds } : {}),
+    })
+  }, [wireSegmentPickEligibleRoutes, wireSegmentPickSession])
+
+  const handleWireSegmentPickPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>, targetAnnotationId?: string) => {
+    const session = wireSegmentPickSession
+    if (!session || !overlayRef.current) return false
+    const overlayRect = overlayRef.current.getBoundingClientRect()
+    const pointer = toNorm(event.clientX - overlayRect.left, event.clientY - overlayRect.top, overlayRect.width, overlayRect.height)
+    const routes = wireSegmentPickEligibleRoutes
+    const setNotice = (text: string) => {
+      setWireSegmentPickSession((previous) => previous ? { ...previous, notice: { type: 'error', text } } : previous)
+    }
+    if (session.stage === 'choose-route') {
+      const hit = findNearestRouteSegment(pointer, routes, {
+        pageWidth: Math.max(1, overlayRect.width),
+        pageHeight: Math.max(1, overlayRect.height),
+        tolerancePx: event.pointerType === 'touch' ? 28 : 14,
+      })
+      const annotationId = hit?.annotationId || (targetAnnotationId && routes.some((route) => route.id === targetAnnotationId) ? targetAnnotationId : null)
+      if (!annotationId) {
+        setNotice('Select a Circuit Path or Circuit Arc in this Work Package.')
+        return true
+      }
+      setWireSegmentPickSession((previous) => previous ? {
+        ...previous,
+        activeAnnotationId: annotationId,
+        startPointId: null,
+        stage: 'choose-start',
+        notice: { type: 'info', text: 'Select the starting point.' },
+      } : previous)
+      setWireSegmentPickHover(null)
+      return true
+    }
+    if (session.stage === 'choose-start' || session.stage === 'choose-end') {
+      const activeRoute = routes.filter((route) => route.id === session.activeAnnotationId)
+      const point = findNearestRoutePoint(pointer, activeRoute, {
+        pageWidth: Math.max(1, overlayRect.width),
+        pageHeight: Math.max(1, overlayRect.height),
+        tolerancePx: event.pointerType === 'touch' ? 30 : 18,
+      })
+      if (!point) {
+        setNotice('Tap a stable point on the selected route.')
+        return true
+      }
+      if (session.stage === 'choose-start') {
+        setWireSegmentPickSession((previous) => previous ? {
+          ...previous,
+          startPointId: point.pointId,
+          stage: 'choose-end',
+          notice: { type: 'info', text: 'Select the ending point.' },
+        } : previous)
+        setWireSegmentPickHover({ annotationId: point.annotationId, pointId: point.pointId })
+        return true
+      }
+      const annotation = allAnnotationsRef.current.find((entry) => entry.id === session.activeAnnotationId)
+      if (!annotation || point.annotationId !== session.activeAnnotationId || !session.startPointId) {
+        setNotice('Selected route is no longer available.')
+        return true
+      }
+      const resolved = resolveWireSegmentRange({ annotation, startPointId: session.startPointId, endPointId: point.pointId })
+      if (!resolved.ok) {
+        setNotice(resolved.error)
+        return true
+      }
+      const range: WireSegmentRangeSelection = {
+        id: `wire_range_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        ...resolved.range,
+      }
+      setWireSegmentPickSession((previous) => previous ? {
+        ...previous,
+        pendingRanges: [...previous.pendingRanges, range],
+        activeAnnotationId: resolved.range.annotationId,
+        startPointId: null,
+        stage: 'choose-start',
+        notice: { type: 'info', text: 'Range added. Select another starting point or review assignment.' },
+      } : previous)
+      setWireSegmentPickHover(null)
+      return true
+    }
+    return true
+  }, [wireSegmentPickEligibleRoutes, wireSegmentPickSession])
+
+  const applyWireSegmentAssignment = useCallback(async () => {
+    const session = wireSegmentPickSession
+    if (!session || session.stage === 'applying') return
+    const livePlan = buildWireSegmentProfileAssignmentPlan({
+      projectId: String(blueprint?.projectId || ''),
+      blueprintSetId: String(blueprint?.id || ''),
+      targetWireProfileId: session.targetWireProfileId,
+      selectedRanges: session.pendingRanges,
+      annotations: allAnnotationsRef.current,
+      contributions: wireQuantityResult.contributions,
+      wireProfiles: projectWireProfiles,
+      eligibleAnnotationIds: wireSegmentPickEligibleIds,
+    })
+    if (!livePlan.ok) {
+      setWireSegmentPickSession((previous) => previous ? { ...previous, notice: { type: 'error', text: livePlan.errors[0] || 'Wire segment assignment is no longer valid.' } } : previous)
+      return
+    }
+    const beforeList = allAnnotationsRef.current
+    const afterList = applyWireSegmentProfileAssignmentPlanToAnnotations(beforeList, livePlan)
+    const changed = livePlan.changes
+      .map((change) => {
+        const before = beforeList.find((annotation) => annotation.id === change.annotationId) || null
+        const after = afterList.find((annotation) => annotation.id === change.annotationId) || null
+        return before && after && !annotationHistorySnapshotsEqual(before, after) ? { before, after } : null
+      })
+      .filter(Boolean) as Array<{ before: BlueprintAnnotation; after: BlueprintAnnotation }>
+    if (changed.length === 0) {
+      setWireSegmentPickSession((previous) => previous ? { ...previous, notice: { type: 'error', text: 'Selected segments are already assigned.' } } : previous)
+      return
+    }
+
+    setWireSegmentPickSession((previous) => previous ? { ...previous, stage: 'applying', notice: undefined } : previous)
+    allAnnotationsRef.current = afterList
+    setAllAnnotations(afterList)
+    try {
+      for (const item of changed) {
+        const saved = await persistAnnotation(item.after, { recordHistory: false })
+        if (!saved) throw new Error('Failed to save Wire Segment assignment.')
+      }
+      const byPage = new Map<number, Array<{ before: BlueprintAnnotation; after: BlueprintAnnotation }>>()
+      for (const item of changed) {
+        const page = Math.max(1, Math.floor(Number(item.after.pageNumber || item.before.pageNumber || 1)))
+        byPage.set(page, [...(byPage.get(page) || []), item])
+      }
+      const transactionId = `wire_segment_assignment_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+      for (const pageNumber of Array.from(byPage.keys()).sort((a, b) => a - b)) {
+        const pageItems = byPage.get(pageNumber) || []
+        const command = buildAnnotationMutationCommand({
+          transactionId: `${transactionId}_${pageNumber}`,
+          label: 'Assign Wire Segments',
+          scope: {
+            blueprintSetId: String(blueprint?.id || ''),
+            projectId: String(blueprint?.projectId || ''),
+            pageNumber,
+          },
+          before: Object.fromEntries(pageItems.map((item) => [item.before.id, cloneAnnotationForHistory(item.before)])),
+          after: Object.fromEntries(pageItems.map((item) => [item.after.id, cloneAnnotationForHistory(item.after)])),
+          selectionBefore: pageItems[0]?.before.id || null,
+          selectionAfter: pageItems[0]?.after.id || null,
+          timestamp: Date.now(),
+        })
+        if (command) annotationHistoryRef.current = pushCommand(annotationHistoryRef.current, command)
+      }
+      setAnnotationHistoryRevision((revision) => revision + 1)
+      setWireSegmentPickSession(null)
+      setWireSegmentPickHover(null)
+      setActionMsg({ type: 'success', text: `Assigned Wire Profile to ${livePlan.segmentCount} selected segment${livePlan.segmentCount === 1 ? '' : 's'}.` })
+    } catch (error: any) {
+      allAnnotationsRef.current = beforeList
+      setAllAnnotations(beforeList)
+      for (const item of changed) {
+        await persistAnnotation(item.before, { recordHistory: false })
+      }
+      setWireSegmentPickSession((previous) => previous ? { ...previous, stage: 'review', notice: { type: 'error', text: error?.message || 'Failed to assign Wire Segments.' } } : previous)
+    }
+  }, [
+    blueprint?.id,
+    blueprint?.projectId,
+    persistAnnotation,
+    projectWireProfiles,
+    wireQuantityResult.contributions,
+    wireSegmentPickEligibleIds,
+    wireSegmentPickSession,
+  ])
+
   // ─── Copy / Paste for placed annotations & shapes (Fix 1) ─────────────────────
   // Builds a paste-ready template that preserves the full design (type, rect,
   // color, path and ALL meta — shapeKind, border/fill/hatch, line/arrow/arch
@@ -7132,6 +7495,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     return
   }
 
+  if (wireSegmentPickSession) {
+    e.preventDefault()
+    e.stopPropagation()
+    handleWireSegmentPickPointerDown(e, annotationId || undefined)
+    return
+  }
+
   if (!annEl || !annotationId) return
 
   // Package Pick mode takes precedence over all normal interactions. A pointerdown on an
@@ -7182,7 +7552,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     height: r.height,
   })
   setFocusedAnnotationId(annotationId)
-}, [animationRouteBuilder, effectiveTool, handleAnimationRoutePick, layoutEditId, removeAnnotation, shapeKind, isPackagePickMode, togglePackagePickId])
+}, [animationRouteBuilder, effectiveTool, handleAnimationRoutePick, handleWireSegmentPickPointerDown, layoutEditId, removeAnnotation, shapeKind, isPackagePickMode, togglePackagePickId, wireSegmentPickSession])
 
   const jumpToPage = useCallback(() => {
     const raw = Number(pageInput)
@@ -11536,6 +11906,7 @@ const annotationPanelSizeClass =
                       height: overlayVisualH || undefined,
                     }}
                     onPointerDownCapture={handleAnnotationSelectCapture}
+                    onPointerMoveCapture={handleWireSegmentPickPointerMove}
                     onClick={handleOverlayClick}
                     onPointerDown={handlePointerDown}
                     onPointerMove={handlePointerMove}
@@ -11560,6 +11931,11 @@ const annotationPanelSizeClass =
                           e: React.MouseEvent<HTMLElement | SVGElement> | React.PointerEvent<HTMLElement | SVGElement>
                         ) => {
                           if (animationRouteBuilder) {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            return
+                          }
+                          if (wireSegmentPickSession) {
                             e.preventDefault()
                             e.stopPropagation()
                             return
@@ -12387,6 +12763,76 @@ const annotationPanelSizeClass =
                               <Check size={10} strokeWidth={3} />
                             </span>
                           </div>
+                        )
+                      })}
+
+                      {wireSegmentPickOverlay && pageOverlaySvgProps && (
+                        <svg
+                          className="absolute inset-0 pointer-events-none overflow-visible"
+                          {...pageOverlaySvgProps}
+                          style={{ zIndex: 32 }}
+                          aria-hidden="true"
+                          data-wire-segment-pick-overlay="true"
+                        >
+                          {wireSegmentPickOverlay.segments.map((segment) => {
+                            const stroke = segment.tone === 'pending'
+                              ? '#22c55e'
+                              : segment.tone === 'preview'
+                                ? '#f59e0b'
+                                : segment.tone === 'active'
+                                  ? '#facc15'
+                                  : segment.tone === 'hover'
+                                    ? '#34d399'
+                                    : '#67e8f9'
+                            const opacity = segment.tone === 'eligible' ? 0.18 : segment.tone === 'hover' ? 0.48 : 0.96
+                            const width = segment.tone === 'eligible' ? 4 : segment.tone === 'pending' ? 8 : segment.tone === 'preview' ? 7 : 6
+                            const d = segment.shapeKind === 'circuit-arc' && segment.control
+                              ? `M ${segment.start.x * displaySize.w} ${segment.start.y * displaySize.h} Q ${segment.control.x * displaySize.w} ${segment.control.y * displaySize.h} ${segment.end.x * displaySize.w} ${segment.end.y * displaySize.h}`
+                              : null
+                            return (
+                              <g
+                                key={segment.key}
+                                data-wire-segment-tone={segment.tone}
+                                data-wire-segment-id={segment.segmentId}
+                                style={{ pointerEvents: 'none' }}
+                              >
+                                {d ? (
+                                  <>
+                                    <path d={d} fill="none" stroke="#020617" strokeWidth={width + 6} strokeLinecap="round" strokeLinejoin="round" opacity={segment.tone === 'eligible' ? 0 : 0.7} vectorEffect="non-scaling-stroke" />
+                                    <path d={d} fill="none" stroke={stroke} strokeWidth={width} strokeLinecap="round" strokeLinejoin="round" opacity={opacity} vectorEffect="non-scaling-stroke" />
+                                  </>
+                                ) : (
+                                  <>
+                                    <line x1={segment.start.x * displaySize.w} y1={segment.start.y * displaySize.h} x2={segment.end.x * displaySize.w} y2={segment.end.y * displaySize.h} stroke="#020617" strokeWidth={width + 6} strokeLinecap="round" opacity={segment.tone === 'eligible' ? 0 : 0.7} vectorEffect="non-scaling-stroke" />
+                                    <line x1={segment.start.x * displaySize.w} y1={segment.start.y * displaySize.h} x2={segment.end.x * displaySize.w} y2={segment.end.y * displaySize.h} stroke={stroke} strokeWidth={width} strokeLinecap="round" opacity={opacity} vectorEffect="non-scaling-stroke" />
+                                  </>
+                                )}
+                              </g>
+                            )
+                          })}
+                        </svg>
+                      )}
+
+                      {wireSegmentPickOverlay?.points.map((entry) => {
+                        const fill = entry.tone === 'start' ? '#facc15' : entry.tone === 'hover' ? '#f59e0b' : '#0f172a'
+                        const border = entry.tone === 'point' ? '#67e8f9' : '#ffffff'
+                        const size = entry.tone === 'point' ? 12 : 16
+                        return (
+                          <div
+                            key={entry.key}
+                            className="absolute pointer-events-none rounded-full shadow-[0_0_0_3px_rgba(2,6,23,0.75),0_0_14px_rgba(34,211,238,0.65)]"
+                            data-wire-segment-point-tone={entry.tone}
+                            style={{
+                              left: `${entry.point.x * 100}%`,
+                              top: `${entry.point.y * 100}%`,
+                              width: size,
+                              height: size,
+                              transform: 'translate(-50%, -50%)',
+                              backgroundColor: fill,
+                              border: `2px solid ${border}`,
+                              zIndex: 33,
+                            }}
+                          />
                         )
                       })}
 
@@ -13763,6 +14209,7 @@ const annotationPanelSizeClass =
         portalTarget={viewerPortalTarget}
         remoteRefreshVersion={wireProfileRemoteRefreshVersion}
         onForceClose={forceCloseWireProfileManager}
+        onProfilesChanged={() => setWireProfileRemoteRefreshVersion((value) => value + 1)}
       />
 
       {projectWireTotalsOpen && createPortal(
@@ -14209,7 +14656,120 @@ const annotationPanelSizeClass =
         viewerPortalTarget
       )}
 
-      {scopeLayerModal.open && createPortal(
+      {wireSegmentPickSession && createPortal(
+        <div className="fixed left-1/2 top-4 z-[100002] w-[min(760px,calc(100vw-24px))] -translate-x-1/2 rounded-lg border border-cyan-500/40 bg-[#111827] shadow-2xl" role="status" aria-live="polite">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-cyan-100">Pick Wire Segments on Plan</div>
+              <div className="mt-0.5 text-xs text-gray-400">
+                {wireSegmentPickSession.stage === 'choose-route'
+                  ? 'Select a Circuit Path or Circuit Arc.'
+                  : wireSegmentPickSession.stage === 'choose-start'
+                    ? 'Select the starting point.'
+                    : wireSegmentPickSession.stage === 'choose-end'
+                      ? 'Select the ending point.'
+                      : wireSegmentPickSession.stage === 'applying'
+                        ? 'Applying selected segment assignment...'
+                        : 'Review selected ranges and apply a Wire Profile.'}
+              </div>
+              <div className="mt-1 text-[10px] text-cyan-300">This updates the selected physical wire segments everywhere they are referenced.</div>
+            </div>
+            <button type="button" onClick={cancelWireSegmentPicker} disabled={wireSegmentPickSession.stage === 'applying'} className="rounded border border-gray-700 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5 disabled:opacity-50">
+              Cancel
+            </button>
+          </div>
+          <div className="max-h-[min(520px,calc(100dvh-120px))] overflow-y-auto px-4 py-3">
+            {wireSegmentPickSession.notice && (
+              <div className={`mb-3 rounded border px-2 py-1.5 text-xs ${wireSegmentPickSession.notice.type === 'error' ? 'border-red-800/60 bg-red-950/35 text-red-200' : 'border-cyan-800/60 bg-cyan-950/30 text-cyan-100'}`}>
+                {wireSegmentPickSession.notice.text}
+              </div>
+            )}
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div className="rounded border border-gray-800 bg-gray-950/40 px-2 py-1.5">
+                <div className="text-[9px] uppercase text-gray-500">Ranges</div>
+                <div className="text-sm font-semibold text-gray-100">{wireSegmentPickSession.pendingRanges.length}</div>
+              </div>
+              <div className="rounded border border-gray-800 bg-gray-950/40 px-2 py-1.5">
+                <div className="text-[9px] uppercase text-gray-500">Unique Segments</div>
+                <div className="text-sm font-semibold text-gray-100">{wireSegmentAssignmentPlan?.segmentCount || 0}</div>
+              </div>
+              <div className="rounded border border-gray-800 bg-gray-950/40 px-2 py-1.5">
+                <div className="text-[9px] uppercase text-gray-500">Routes</div>
+                <div className="text-sm font-semibold text-gray-100">{wireSegmentAssignmentPlan?.affectedAnnotations.length || 0}</div>
+              </div>
+            </div>
+
+            {wireSegmentPickSession.pendingRanges.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {wireSegmentPickSession.pendingRanges.map((range, index) => (
+                  <div key={range.id} className="flex items-center justify-between gap-2 rounded border border-gray-800 bg-gray-950/45 px-2 py-1.5 text-xs text-gray-300">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-gray-100">Range {index + 1}: Pg {range.pageNumber} {range.shapeKind === 'circuit-arc' ? 'Circuit Arc' : 'Circuit Path'}</div>
+                      <div className="truncate text-[10px] text-gray-500">{range.annotationId} - {range.segmentIds.length} segment{range.segmentIds.length === 1 ? '' : 's'}</div>
+                    </div>
+                    <button type="button" onClick={() => removeWireSegmentRange(range.id)} disabled={wireSegmentPickSession.stage === 'applying'} className="rounded p-1 text-red-300 hover:bg-red-950/40 disabled:opacity-50" aria-label={`Remove range ${index + 1}`}>
+                      <X size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {(wireSegmentPickSession.stage === 'review' || wireSegmentPickSession.pendingRanges.length > 0) && (
+              <div className="mt-3 rounded border border-gray-800 bg-gray-950/35 p-3">
+                <label className="block text-xs text-gray-300">
+                  Wire Profile
+                  <select
+                    value={wireSegmentPickSession.targetWireProfileId || ''}
+                    onChange={(event) => updateWireSegmentPickTarget(event.target.value)}
+                    disabled={wireSegmentPickSession.stage === 'applying'}
+                    className="mt-1 w-full rounded border border-gray-700 bg-gray-950/70 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-cyan-500 disabled:opacity-60"
+                  >
+                    <option value="">Select profile...</option>
+                    {assignableWireProfiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>{profile.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="mt-3 text-[11px] text-gray-300">
+                  <div className="font-semibold text-gray-100">Selected measured length</div>
+                  <div className="mt-1 space-y-0.5">
+                    {(wireSegmentAssignmentPlan?.selectedLengthByUnit || []).length === 0 && <div className="text-gray-500">No measurable selection.</div>}
+                    {(wireSegmentAssignmentPlan?.selectedLengthByUnit || []).map((entry) => (
+                      <div key={entry.unit || 'not-configured'} className="tabular-nums">{formatWireLength(entry.measuredLength, entry.unit)}</div>
+                    ))}
+                  </div>
+                  <div className="mt-2 text-gray-500">Affected packages: {(wireSegmentAssignmentPlan?.affectedPackageIds || []).map((id) => Object.fromEntries(scopeLayers.map((layer) => [layer.id, layer.name]))[id] || id).join(', ') || 'None'}</div>
+                  <div className="mt-1 text-gray-500">Route geometry and style remain unchanged.</div>
+                  {(wireSegmentAssignmentPlan?.replacedOverrides.length || 0) > 0 && (
+                    <div className="mt-2 text-amber-200">{wireSegmentAssignmentPlan?.replacedOverrides.length} existing selected segment override{wireSegmentAssignmentPlan?.replacedOverrides.length === 1 ? '' : 's'} will be replaced.</div>
+                  )}
+                  {(wireSegmentAssignmentPlan?.warnings || []).map((warning) => (
+                    <div key={warning} className="mt-2 rounded border border-amber-700/50 bg-amber-950/30 px-2 py-1 text-amber-200">{warning}</div>
+                  ))}
+                  {(wireSegmentAssignmentPlan?.errors || []).map((error) => (
+                    <div key={error} className="mt-2 rounded border border-red-800/60 bg-red-950/30 px-2 py-1 text-red-200">{error}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap justify-end gap-2 border-t border-gray-800 px-4 py-3">
+            <button type="button" onClick={addAnotherWireSegmentRange} disabled={wireSegmentPickSession.stage === 'applying'} className="rounded border border-gray-700 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5 disabled:opacity-50">
+              Add Another Range
+            </button>
+            <button type="button" onClick={reviewWireSegmentAssignment} disabled={wireSegmentPickSession.pendingRanges.length === 0 || wireSegmentPickSession.stage === 'applying'} className="rounded border border-cyan-700/60 px-3 py-1.5 text-xs font-semibold text-cyan-100 hover:bg-cyan-900/30 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-600">
+              Review Assignment
+            </button>
+            <button type="button" onClick={() => void applyWireSegmentAssignment()} disabled={!wireSegmentAssignmentPlan?.ok || wireSegmentPickSession.stage === 'applying'} className="rounded bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-gray-700 disabled:text-gray-400">
+              {wireSegmentPickSession.stage === 'applying' ? 'Applying...' : 'Apply Assignment'}
+            </button>
+          </div>
+        </div>,
+        viewerPortalTarget
+      )}
+
+      {scopeLayerModal.open && !wireSegmentPickSession && createPortal(
         // While Package Pick mode is on, let pointer events fall THROUGH the dimmed backdrop to the
         // canvas so the user can keep tapping annotations into selectedForPackageIds with the Edit
         // modal open (in pick mode a canvas tap only toggles selection — no move/edit/geometry
@@ -14220,7 +14780,7 @@ const annotationPanelSizeClass =
           onMouseDown={(e) => e.stopPropagation()}
         >
           <div
-            className={`w-full max-w-2xl rounded-xl border border-gray-700 bg-[#111827] p-4 shadow-2xl ${isPackagePickMode ? 'pointer-events-auto' : ''}`}
+            className={`flex max-h-[min(860px,calc(100dvh-32px))] w-[min(1120px,calc(100vw-32px))] flex-col overflow-hidden rounded-xl border border-gray-700 bg-[#111827] p-4 shadow-2xl ${isPackagePickMode ? 'pointer-events-auto' : ''}`}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-start justify-between gap-3">
@@ -14248,8 +14808,9 @@ const annotationPanelSizeClass =
               </div>
             )}
 
-            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
-              <div className="space-y-2">
+            <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+            <div className="grid gap-3 lg:grid-cols-[minmax(360px,0.9fr)_minmax(520px,1.1fr)]">
+              <div className="min-w-0 space-y-2">
                 <label className="block text-[11px] text-gray-400">
                   Work Package Name
                   <input
@@ -14317,7 +14878,7 @@ const annotationPanelSizeClass =
                 </label>
               </div>
 
-              <div className="rounded-lg border border-gray-800 bg-gray-950/30 p-2">
+              <div className="min-w-0 rounded-lg border border-gray-800 bg-gray-950/30 p-2">
                 <div className="flex items-center justify-between">
                   <div className="text-[11px] font-semibold text-gray-300">Items</div>
                   <span className="rounded-full bg-gray-800 px-1.5 py-0.5 text-[9px] font-semibold text-gray-300">{selectedPackageItemRefs.length}</span>
@@ -14389,14 +14950,17 @@ const annotationPanelSizeClass =
                         },
                         selectedCount: wireAssignmentSelections.length,
                         disabled: wireAssignmentBusy,
+                        onPickSegmentsOnPlan: openWireSegmentPicker,
+                        canPickSegmentsOnPlan: canPickWireSegmentsForScopeDraft,
                       }}
                     />
                   </div>
                 )}
               </div>
             </div>
+            </div>
 
-            <div className="mt-4 flex justify-end gap-2">
+            <div className="sticky bottom-0 -mx-4 -mb-4 mt-4 flex justify-end gap-2 border-t border-gray-800 bg-[#111827] px-4 py-3">
               <button
                 type="button"
                 onClick={closeScopeLayerModal}
