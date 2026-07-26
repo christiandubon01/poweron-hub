@@ -1,13 +1,15 @@
 import { X } from 'lucide-react'
-import { WireQuantitySummary } from './WireQuantitySummary'
+import { WireQuantitySummary, type WireQuantityAssignmentControls } from './WireQuantitySummary'
 import type { WireQuantityResult } from '../types'
 
 export function ProjectWireTotalsDialog({
   result,
   onClose,
+  assignment,
 }: {
   result: WireQuantityResult
   onClose(): void
+  assignment?: WireQuantityAssignmentControls
 }) {
   const duplicateCount = result.diagnostics.filter((diagnostic) => diagnostic.type === 'duplicate-package-membership').length
   const unpackagedCount = result.contributions.filter((contribution) => contribution.isUnpackaged).length
@@ -44,7 +46,7 @@ export function ProjectWireTotalsDialog({
               <div className="mt-1 text-lg font-semibold text-gray-100">{duplicateCount}</div>
             </div>
           </div>
-          <WireQuantitySummary totals={result.projectTotals} contributions={result.contributions} diagnostics={result.diagnostics} title="Current Blueprint Set Totals" />
+          <WireQuantitySummary totals={result.projectTotals} contributions={result.contributions} diagnostics={result.diagnostics} title="Current Blueprint Set Totals" assignment={assignment} />
           {result.unpackagedTotals.length > 0 && (
             <WireQuantitySummary totals={result.unpackagedTotals} contributions={result.contributions.filter((contribution) => contribution.isUnpackaged)} title="Unpackaged Contributions" compact />
           )}

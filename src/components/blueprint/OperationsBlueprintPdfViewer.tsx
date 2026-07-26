@@ -101,9 +101,15 @@ import {
   sampleCircuitArcPolyline as sampleSharedCircuitArcPolyline,
 } from '@/features/blueprint-measurements'
 import {
+  applyWireProfileAssignmentPlanToAnnotations,
+  AssignWireProfileDialog,
   buildEffectiveWorkPackagesForPreview,
+  buildWireProfileAssignmentPlan,
   buildWireQuantityResult,
+  listAssignableActiveWireProfiles,
+  normalizeWireProfileAssignmentSelection,
   ProjectWireTotalsDialog,
+  type WireProfileAssignmentSelection,
   WireQuantitySummary,
 } from '@/features/blueprint-wire-quantities'
 import {
@@ -3438,6 +3444,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   } | null>(null)
   const [isWireProfileManagerOpen, setIsWireProfileManagerOpen] = useState(false)
   const [projectWireTotalsOpen, setProjectWireTotalsOpen] = useState(false)
+  const [wireAssignmentSelections, setWireAssignmentSelections] = useState<WireProfileAssignmentSelection[]>([])
+  const [wireAssignmentDialogOpen, setWireAssignmentDialogOpen] = useState(false)
+  const [wireAssignmentTargetProfileId, setWireAssignmentTargetProfileId] = useState('')
+  const [wireAssignmentBusy, setWireAssignmentBusy] = useState(false)
   const [wireProfileRemoteRefreshVersion, setWireProfileRemoteRefreshVersion] = useState(0)
   const previousWireProfileProjectIdRef = useRef<string | null>(blueprint?.projectId ?? null)
 
@@ -5191,6 +5201,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const closeScopeLayerModal = useCallback(() => {
     setScopeLayerModal({ open: false, mode: 'create' })
     setScopeLayerDraftIds([])
+    setWireAssignmentSelections([])
+    setWireAssignmentDialogOpen(false)
+    setWireAssignmentTargetProfileId('')
   }, [])
 
   const saveScopeLayerFromModal = useCallback(async () => {
@@ -6042,6 +6055,150 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     mutationQueueRef.current = mutationQueueRef.current.then(op)
     return mutationQueueRef.current
   }, [clearStaleSyncMessages, loadAnnotations, onAnnotationsChanged, recordSuccessfulAnnotationMutation, showSyncPausedNoticeOnce])
+
+  const assignableWireProfiles = useMemo(
+    () => listAssignableActiveWireProfiles(String(blueprint?.projectId || ''), projectWireProfiles),
+    [blueprint?.projectId, projectWireProfiles],
+  )
+
+  const wireAssignmentPlan = useMemo(() => buildWireProfileAssignmentPlan({
+    selections: wireAssignmentSelections,
+    contributions: wireQuantityResult.contributions,
+    annotations: allAnnotations,
+    projectId: String(blueprint?.projectId || ''),
+    blueprintSetId: String(blueprint?.id || ''),
+    wireProfiles: projectWireProfiles,
+    targetProfileId: wireAssignmentTargetProfileId,
+  }), [
+    allAnnotations,
+    blueprint?.id,
+    blueprint?.projectId,
+    projectWireProfiles,
+    wireAssignmentSelections,
+    wireAssignmentTargetProfileId,
+    wireQuantityResult.contributions,
+  ])
+
+  const clearWireAssignmentState = useCallback(() => {
+    setWireAssignmentSelections([])
+    setWireAssignmentDialogOpen(false)
+    setWireAssignmentTargetProfileId('')
+  }, [])
+
+  const updateWireAssignmentSelection = useCallback((selection: WireProfileAssignmentSelection, selected: boolean) => {
+    setWireAssignmentSelections((prev) => normalizeWireProfileAssignmentSelection(prev, selection, selected))
+  }, [])
+
+  const updateManyWireAssignmentSelections = useCallback((selections: WireProfileAssignmentSelection[], selected: boolean) => {
+    setWireAssignmentSelections((prev) => selections.reduce((next, selection) => (
+      normalizeWireProfileAssignmentSelection(next, selection, selected)
+    ), prev))
+  }, [])
+
+  const applyWireAssignment = useCallback(async () => {
+    if (wireAssignmentBusy) return
+    const livePlan = buildWireProfileAssignmentPlan({
+      selections: wireAssignmentSelections,
+      contributions: wireQuantityResult.contributions,
+      annotations: allAnnotationsRef.current,
+      projectId: String(blueprint?.projectId || ''),
+      blueprintSetId: String(blueprint?.id || ''),
+      wireProfiles: projectWireProfiles,
+      targetProfileId: wireAssignmentTargetProfileId,
+    })
+    if (!livePlan.ok) {
+      setActionMsg({ type: 'error', text: livePlan.errors[0] || 'Wire Profile assignment is no longer valid.' })
+      return
+    }
+    const beforeList = allAnnotationsRef.current
+    const afterList = applyWireProfileAssignmentPlanToAnnotations(beforeList, livePlan)
+    const changed = livePlan.changes
+      .map((change) => {
+        const before = beforeList.find((annotation) => annotation.id === change.annotationId) || null
+        const after = afterList.find((annotation) => annotation.id === change.annotationId) || null
+        return before && after && !annotationHistorySnapshotsEqual(before, after) ? { before, after } : null
+      })
+      .filter(Boolean) as Array<{ before: BlueprintAnnotation; after: BlueprintAnnotation }>
+    if (changed.length === 0) {
+      setActionMsg({ type: 'warning', text: 'Selected quantities are already assigned.' })
+      clearWireAssignmentState()
+      return
+    }
+
+    setWireAssignmentBusy(true)
+    setActionMsg(null)
+    allAnnotationsRef.current = afterList
+    setAllAnnotations(afterList)
+    try {
+      for (const item of changed) {
+        const saved = await persistAnnotation(item.after, { recordHistory: false })
+        if (!saved) throw new Error('Failed to save Wire Profile assignment.')
+      }
+      const byPage = new Map<number, Array<{ before: BlueprintAnnotation; after: BlueprintAnnotation }>>()
+      for (const item of changed) {
+        const page = Math.max(1, Math.floor(Number(item.after.pageNumber || item.before.pageNumber || 1)))
+        byPage.set(page, [...(byPage.get(page) || []), item])
+      }
+      const transactionId = `wire_profile_assignment_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+      for (const pageNumber of Array.from(byPage.keys()).sort((a, b) => a - b)) {
+        const pageItems = byPage.get(pageNumber) || []
+        const scope = {
+          blueprintSetId: String(blueprint?.id || ''),
+          projectId: String(blueprint?.projectId || ''),
+          pageNumber,
+        }
+        const command = buildAnnotationMutationCommand({
+          transactionId: `${transactionId}_${pageNumber}`,
+          label: 'Assign Wire Profile',
+          scope,
+          before: Object.fromEntries(pageItems.map((item) => [item.before.id, cloneAnnotationForHistory(item.before)])),
+          after: Object.fromEntries(pageItems.map((item) => [item.after.id, cloneAnnotationForHistory(item.after)])),
+          selectionBefore: pageItems[0]?.before.id || null,
+          selectionAfter: pageItems[0]?.after.id || null,
+          timestamp: Date.now(),
+        })
+        if (command) annotationHistoryRef.current = pushCommand(annotationHistoryRef.current, command)
+      }
+      setAnnotationHistoryRevision((revision) => revision + 1)
+      clearWireAssignmentState()
+      setActionMsg({ type: 'success', text: `Assigned Wire Profile to ${livePlan.routeCount} route${livePlan.routeCount === 1 ? '' : 's'} and ${livePlan.segmentCount} segment${livePlan.segmentCount === 1 ? '' : 's'}.` })
+    } catch (error: any) {
+      allAnnotationsRef.current = beforeList
+      setAllAnnotations(beforeList)
+      for (const item of changed) {
+        await persistAnnotation(item.before, { recordHistory: false })
+      }
+      setActionMsg({ type: 'error', text: error?.message || 'Failed to assign Wire Profile.' })
+    } finally {
+      setWireAssignmentBusy(false)
+    }
+  }, [
+    allAnnotationsRef,
+    blueprint?.id,
+    blueprint?.projectId,
+    clearWireAssignmentState,
+    persistAnnotation,
+    projectWireProfiles,
+    wireAssignmentBusy,
+    wireAssignmentSelections,
+    wireAssignmentTargetProfileId,
+    wireQuantityResult.contributions,
+  ])
+
+  useEffect(() => {
+    clearWireAssignmentState()
+  }, [blueprint?.id, blueprint?.projectId, clearWireAssignmentState])
+
+  useEffect(() => {
+    const liveIds = new Set(wireQuantityResult.contributions
+      .filter((contribution) => contribution.profileResolution.status === 'unassigned')
+      .map((contribution) => contribution.quantityLineId))
+    setWireAssignmentSelections((prev) => prev.filter((selection) => (
+      selection.mode === 'annotation-default'
+        ? wireQuantityResult.contributions.some((contribution) => contribution.annotationId === selection.annotationId && contribution.profileResolution.status === 'unassigned')
+        : liveIds.has(selection.quantityLineId)
+    )))
+  }, [wireQuantityResult.contributions])
 
   // ─── Copy / Paste for placed annotations & shapes (Fix 1) ─────────────────────
   // Builds a paste-ready template that preserves the full design (type, rect,
@@ -13611,7 +13768,36 @@ const annotationPanelSizeClass =
       {projectWireTotalsOpen && createPortal(
         <ProjectWireTotalsDialog
           result={wireQuantityResult}
-          onClose={() => setProjectWireTotalsOpen(false)}
+          onClose={() => {
+            setProjectWireTotalsOpen(false)
+            clearWireAssignmentState()
+          }}
+          assignment={{
+            selections: wireAssignmentSelections,
+            onSelectionChange: updateWireAssignmentSelection,
+            onSelectMany: updateManyWireAssignmentSelections,
+            onOpenDialog: () => {
+              setWireAssignmentTargetProfileId((prev) => prev || assignableWireProfiles[0]?.id || '')
+              setWireAssignmentDialogOpen(true)
+            },
+            selectedCount: wireAssignmentSelections.length,
+            disabled: wireAssignmentBusy,
+          }}
+        />,
+        viewerPortalTarget
+      )}
+
+      {wireAssignmentDialogOpen && createPortal(
+        <AssignWireProfileDialog
+          open={wireAssignmentDialogOpen}
+          profiles={assignableWireProfiles}
+          selectedProfileId={wireAssignmentTargetProfileId}
+          plan={wireAssignmentPlan}
+          packageNamesById={Object.fromEntries(scopeLayers.map((layer) => [layer.id, layer.name]))}
+          busy={wireAssignmentBusy}
+          onProfileChange={setWireAssignmentTargetProfileId}
+          onCancel={clearWireAssignmentState}
+          onApply={applyWireAssignment}
         />,
         viewerPortalTarget
       )}
@@ -14189,10 +14375,21 @@ const annotationPanelSizeClass =
                   <div className="mt-2">
                     <WireQuantitySummary
                       totals={scopeLayerDraftWireQuantityRollup.totals}
-                      contributions={scopeLayerDraftWireQuantityResult?.contributions || []}
+                      contributions={(scopeLayerDraftWireQuantityResult?.contributions || []).filter((contribution) => scopeLayerDraftWireQuantityRollup.contributionIds.includes(contribution.quantityLineId))}
                       diagnostics={scopeLayerDraftWireQuantityRollup.diagnostics}
                       emptyText="No measurable circuit routes in this Work Package."
                       compact
+                      assignment={{
+                        selections: wireAssignmentSelections,
+                        onSelectionChange: updateWireAssignmentSelection,
+                        onSelectMany: updateManyWireAssignmentSelections,
+                        onOpenDialog: () => {
+                          setWireAssignmentTargetProfileId((prev) => prev || assignableWireProfiles[0]?.id || '')
+                          setWireAssignmentDialogOpen(true)
+                        },
+                        selectedCount: wireAssignmentSelections.length,
+                        disabled: wireAssignmentBusy,
+                      }}
                     />
                   </div>
                 )}
