@@ -133,6 +133,62 @@ describe('routePicking', () => {
     })).toEqual({ kind: 'annotation', annotationId: 'receptacle-1' })
   })
 
+  it('prefers an eligible source geometry hit over an overlapping route segment before source selection', () => {
+    const switchDevice = { id: 'switch-1', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 } }
+    const deviceHit = findFirstRouteDeviceHit({ x: 0.7, y: 0.5 }, [switchDevice], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })
+
+    expect(resolveRoutePickIntent({
+      sourceSelected: false,
+      overlappingAnnotationIds: ['circuit-1'],
+      eligibleDeviceIds: new Set(['switch-1']),
+      eligibleDeviceHitId: deviceHit?.annotationId,
+      segmentHit,
+    })).toEqual({ kind: 'annotation', annotationId: 'switch-1' })
+  })
+
+  it('prefers an eligible source geometry hit over a non-source DOM annotation before source selection', () => {
+    const switchDevice = { id: 'switch-1', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 } }
+    const deviceHit = findFirstRouteDeviceHit({ x: 0.7, y: 0.5 }, [switchDevice], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })
+
+    expect(resolveRoutePickIntent({
+      sourceSelected: false,
+      overlappingAnnotationIds: ['fixture-1'],
+      eligibleDeviceIds: new Set(['switch-1']),
+      eligibleDeviceHitId: deviceHit?.annotationId,
+      segmentHit: null,
+    })).toEqual({ kind: 'annotation', annotationId: 'switch-1' })
+  })
+
+  it('prefers eligible overlapping source annotations over captured fallback before source selection', () => {
+    expect(resolveRoutePickIntent({
+      sourceSelected: false,
+      overlappingAnnotationIds: ['circuit-1', 'switch-1'],
+      eligibleDeviceIds: new Set(['switch-1']),
+      segmentHit,
+      fallbackAnnotationId: 'fixture-1',
+    })).toEqual({ kind: 'annotation', annotationId: 'switch-1' })
+  })
+
+  it('does not let a route segment become the source before source selection', () => {
+    expect(resolveRoutePickIntent({
+      sourceSelected: false,
+      overlappingAnnotationIds: [],
+      eligibleDeviceIds: new Set(['switch-1']),
+      segmentHit,
+    })).toBeNull()
+  })
+
+  it('returns an overlapping supported source diagnostic before generic fallback in source mode', () => {
+    expect(resolveRoutePickIntent({
+      sourceSelected: false,
+      overlappingAnnotationIds: ['circuit-1', 'outside-switch'],
+      eligibleDeviceIds: new Set(['inside-switch']),
+      diagnosticSourceIds: new Set(['outside-switch']),
+      segmentHit,
+      fallbackAnnotationId: 'fixture-1',
+    })).toEqual({ kind: 'annotation', annotationId: 'outside-switch' })
+  })
+
   it('leaves the route segment selectable away from the device body and hit radius', () => {
     const receptacle = { id: 'receptacle-1', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 } }
     const deviceHit = findFirstRouteDeviceHit({ x: 0.55, y: 0.5 }, [receptacle], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })
@@ -160,12 +216,18 @@ describe('routePicking', () => {
     expect(findFirstRouteDeviceHit({ x: 0.7, y: 0.5 }, [{ ...receptacle, rect: undefined }], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })).toBeNull()
   })
 
-  it('uses deterministic candidate order when two eligible devices overlap', () => {
+  it('uses nearest center when two eligible devices overlap', () => {
     const first = { id: 'device-a', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 } }
     const second = { id: 'device-b', pageNumber: 1, rect: { x: 0.69, y: 0.47, w: 0.04, h: 0.08 } }
 
+    expect(findFirstRouteDeviceHit({ x: 0.71, y: 0.51 }, [first, second], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })?.annotationId).toBe('device-b')
+  })
+
+  it('uses stable annotation id order when eligible device center distances tie', () => {
+    const first = { id: 'device-b', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 } }
+    const second = { id: 'device-a', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 } }
+
     expect(findFirstRouteDeviceHit({ x: 0.7, y: 0.5 }, [first, second], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })?.annotationId).toBe('device-a')
-    expect(findFirstRouteDeviceHit({ x: 0.7, y: 0.5 }, [second, first], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })?.annotationId).toBe('device-b')
   })
 
   it('excludes the current endpoint device so its outgoing segment remains selectable', () => {

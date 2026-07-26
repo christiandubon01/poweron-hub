@@ -120,6 +120,7 @@ import {
   getPackageAnimationPrimaryRouteCandidates,
   getPackageAnimationRouteOverlay,
   isRouteBuilderDeviceKind,
+  isRouteBuilderSourceKind,
   loadPackageAnimationRouteDraft,
   applySavedAnimationScopeLayer,
   clearPackageAnimationRouteNotice,
@@ -5699,25 +5700,34 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       && isAnnotationVisibleOnCanvas(annotation.id)
       && isRouteBuilderDeviceKind(annotation.shapeKind)
     )).map((annotation) => annotation.id))
+    const eligibleSourceDeviceIds = new Set(animationRouteAnnotations.filter((annotation) => (
+      annotation.pageNumber === currentPage
+      && packageIds.has(annotation.id)
+      && isAnnotationVisibleOnCanvas(annotation.id)
+      && isRouteBuilderSourceKind(annotation.shapeKind)
+    )).map((annotation) => annotation.id))
+    const diagnosticSourceIds = new Set(animationRouteAnnotations.filter((annotation) => (
+      annotation.pageNumber === currentPage
+      && isAnnotationVisibleOnCanvas(annotation.id)
+      && isRouteBuilderSourceKind(annotation.shapeKind)
+    )).map((annotation) => annotation.id))
     const resolvedRoute = resolvePackageAnimationRouteDraft(liveSession.draft)
     const currentEndpointAnnotationId = resolvedRoute.currentEndpoint?.node.anchor.kind === 'annotation-center'
       ? resolvedRoute.currentEndpoint.node.anchor.annotationId
       : undefined
     const excludedDeviceIds = new Set<string>(currentEndpointAnnotationId ? [currentEndpointAnnotationId] : [])
     const eligibleDevices = animationRouteAnnotations
-      .filter((annotation) => eligibleDeviceIds.has(annotation.id))
+      .filter((annotation) => (liveSession.draft.source ? eligibleDeviceIds : eligibleSourceDeviceIds).has(annotation.id))
       .map((annotation) => ({
         ...annotation,
         hitRect: getAnnotationVisualBodyRect(annotation),
       }))
-    const deviceHit = liveSession.draft.source
-      ? findFirstRouteDeviceHit(pointer, eligibleDevices, {
+    const deviceHit = findFirstRouteDeviceHit(pointer, eligibleDevices, {
         pageWidth: Math.max(1, overlayRect.width),
         pageHeight: Math.max(1, overlayRect.height),
         tolerancePx: event.pointerType === 'touch' ? 7 : 4,
-        excludedAnnotationIds: excludedDeviceIds,
+        ...(liveSession.draft.source ? { excludedAnnotationIds: excludedDeviceIds } : {}),
       })
-      : null
     const activeRouteBranch = liveSession.draft.activeBranchId
       ? liveSession.draft.branches.find((branch) => branch.id === liveSession.draft.activeBranchId)
       : undefined
@@ -5737,7 +5747,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const intent = primaryNodeHit ? null : resolveRoutePickIntent({
       sourceSelected: !!liveSession.draft.source,
       overlappingAnnotationIds,
-      eligibleDeviceIds,
+      eligibleDeviceIds: liveSession.draft.source ? eligibleDeviceIds : eligibleSourceDeviceIds,
+      ...(!liveSession.draft.source ? { diagnosticSourceIds } : {}),
       ...(deviceHit ? { eligibleDeviceHitId: deviceHit.annotationId } : {}),
       ...(currentEndpointAnnotationId ? { currentEndpointAnnotationId } : {}),
       segmentHit: hit,

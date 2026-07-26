@@ -81,6 +81,7 @@ export interface RoutePickIntentOptions {
   sourceSelected: boolean
   overlappingAnnotationIds: string[]
   eligibleDeviceIds: ReadonlySet<string>
+  diagnosticSourceIds?: ReadonlySet<string>
   eligibleDeviceHitId?: string
   currentEndpointAnnotationId?: string
   segmentHit: RouteSegmentPick | null
@@ -88,10 +89,10 @@ export interface RoutePickIntentOptions {
 }
 
 /**
- * Resolves one route-builder pointer gesture after DOM and geometry hit-testing. Once a source
- * exists, an eligible device actually under the pointer is more specific than a nearby circuit
- * segment. DOM order is deliberately ignored for that choice; the first overlapping annotation
- * remains the fallback for source selection and non-device notices.
+ * Resolves one route-builder pointer gesture after DOM and geometry hit-testing. An eligible
+ * device actually under the pointer is more specific than a nearby circuit segment. DOM order is
+ * deliberately ignored for that geometry choice; overlapping annotations remain fallback context
+ * for precise source-selection notices and non-device route notices.
  */
 export function resolveRoutePickIntent(options: RoutePickIntentOptions): RoutePickIntent | null {
   const overlappingIds = Array.from(new Set(
@@ -100,6 +101,19 @@ export function resolveRoutePickIntent(options: RoutePickIntentOptions): RoutePi
   const fallbackId = overlappingIds[0] || options.fallbackAnnotationId
 
   if (!options.sourceSelected) {
+    if (options.eligibleDeviceHitId && options.eligibleDeviceIds.has(options.eligibleDeviceHitId)) {
+      return { kind: 'annotation', annotationId: options.eligibleDeviceHitId }
+    }
+    const sourceId = overlappingIds.find((id) => options.eligibleDeviceIds.has(id))
+    if (sourceId) return { kind: 'annotation', annotationId: sourceId }
+    if (options.fallbackAnnotationId && options.eligibleDeviceIds.has(options.fallbackAnnotationId)) {
+      return { kind: 'annotation', annotationId: options.fallbackAnnotationId }
+    }
+    const diagnosticSourceId = overlappingIds.find((id) => options.diagnosticSourceIds?.has(id))
+    if (diagnosticSourceId) return { kind: 'annotation', annotationId: diagnosticSourceId }
+    if (options.fallbackAnnotationId && options.diagnosticSourceIds?.has(options.fallbackAnnotationId)) {
+      return { kind: 'annotation', annotationId: options.fallbackAnnotationId }
+    }
     return fallbackId ? { kind: 'annotation', annotationId: fallbackId } : null
   }
 
@@ -164,16 +178,29 @@ export function findFirstRouteDeviceHit(
   const width = Math.max(1, Number(options.pageWidth) || 1)
   const height = Math.max(1, Number(options.pageHeight) || 1)
   const tolerance = Math.max(0, Number(options.tolerancePx) || 0)
+  let best: (RouteDevicePick & { centerDistancePx: number }) | null = null
   for (const annotation of annotations) {
     if (options.excludedAnnotationIds?.has(annotation.id)) continue
     const rect = validRect(annotation.hitRect) ?? validRect(annotation.rect)
     if (!rect) continue
     const rectDistancePx = distanceToRectPx(pointer, rect, width, height)
     if (rectDistancePx <= tolerance) {
-      return { annotationId: annotation.id, pageNumber: annotation.pageNumber, distancePx: rectDistancePx }
+      const centerDistancePx = Math.hypot(
+        (pointer.x - (rect.x + rect.w / 2)) * width,
+        (pointer.y - (rect.y + rect.h / 2)) * height,
+      )
+      if (
+        !best
+        || centerDistancePx < best.centerDistancePx
+        || (centerDistancePx === best.centerDistancePx && annotation.id < best.annotationId)
+      ) {
+        best = { annotationId: annotation.id, pageNumber: annotation.pageNumber, distancePx: rectDistancePx, centerDistancePx }
+      }
     }
   }
-  return null
+  if (!best) return null
+  const { centerDistancePx: _centerDistancePx, ...hit } = best
+  return hit
 }
 
 export function distanceToLineSegmentPx(

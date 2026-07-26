@@ -915,13 +915,18 @@ export function selectPackageAnimationRouteSource(
   if (draft.readOnlyReason) return { accepted: false, draft, message: draft.readOnlyReason }
   const annotation = byId(draft).get(annotationId)
   if (!annotation) return { accepted: false, draft, message: 'That annotation no longer exists.' }
-  if (!packageHas(draft, annotationId)) {
-    const message = 'Add this item to the work package before using it in the animation route.'
-    return { accepted: false, draft: withNotice(draft, issue('error', 'annotation-not-in-package', message)), message }
-  }
   if (!isRouteBuilderSourceKind(annotation.shapeKind)) {
-    const message = 'Select an electrical panel, switch, dimmer, timer, photocell, or occupancy sensor as the source.'
+    const message = 'Select an electrical panel, switch, dimmer, timer, photocell, or occupancy sensor that belongs to this Work Package.'
     return { accepted: false, draft: withNotice(draft, issue('error', 'invalid-source-kind', message)), message }
+  }
+  if (!packageHas(draft, annotationId)) {
+    const isSwitch = annotation.shapeKind === 'electrical-switch'
+      || annotation.shapeKind === 'electrical-switch-3way'
+      || annotation.shapeKind === 'electrical-switch-4way'
+    const message = isSwitch
+      ? 'This switch is not included in this Work Package. Add it to the package before using it as the animation source.'
+      : 'This source device is not included in this Work Package. Add it to the package before using it as the animation source.'
+    return { accepted: false, draft: withNotice(draft, issue('error', 'source-not-in-package', message)), message }
   }
   const next: PackageAnimationRouteDraft = {
     ...draft,
@@ -1117,7 +1122,9 @@ export function dispatchPackageAnimationRoutePick(
     mutation = addPackageAnimationRouteSegment(draft, action.pick)
   } else {
     const annotation = byId(draft).get(action.annotationId)
-    if (!packageHas(draft, action.annotationId)) {
+    if (!draft.source && !branchActive) {
+      mutation = selectPackageAnimationRouteSource(draft, action.annotationId)
+    } else if (!packageHas(draft, action.annotationId)) {
       const message = 'Add this item to the work package before using it in the animation route.'
       mutation = { accepted: false, draft: withNotice(draft, issue('error', 'annotation-not-in-package', message)), message }
     } else if (branchActive) {
@@ -1133,8 +1140,6 @@ export function dispatchPackageAnimationRoutePick(
           : 'Select a connected branch segment, a terminal fixture/device, or a later primary-route node to rejoin. The branch remains open.'
         mutation = { accepted: false, draft: withNotice(draft, issue('error', 'invalid-branch-selection', message)), message }
       }
-    } else if (!draft.source) {
-      mutation = selectPackageAnimationRouteSource(draft, action.annotationId)
     } else if (annotation && isRouteBuilderDeviceKind(annotation.shapeKind)) {
       if (!action.allowPrimaryDirectTransition) {
         const message = 'Confirm the direct transition before adding this device.'

@@ -155,6 +155,53 @@ describe('routeBuilderModel', () => {
     expect(inferRouteBuilderDefaultChannel('unknown')).toBe('generic-route')
   })
 
+  it('accepts the exact supported source kind catalog', () => {
+    expect([
+      'electrical-switch',
+      'electrical-switch-3way',
+      'electrical-switch-4way',
+      'electrical-dimmer',
+      'electrical-timer-control',
+      'electrical-photocell',
+      'electrical-ceiling-occupancy-sensor',
+      'electrical-wall-occupancy-sensor',
+      'electrical-panel',
+    ].every((kind) => isRouteBuilderSourceKind(kind))).toBe(true)
+  })
+
+  it('rejects a supported switch outside the package with a package-specific source notice', () => {
+    const draft = empty({ annotations: [source], packageAnnotationIds: [] })
+    const rejected = selectPackageAnimationRouteSource(draft, 'source')
+
+    expect(rejected.accepted).toBe(false)
+    expect(rejected.draft.notice).toMatchObject({
+      code: 'source-not-in-package',
+      message: 'This switch is not included in this Work Package. Add it to the package before using it as the animation source.',
+    })
+  })
+
+  it('rejects a supported non-switch source outside the package with a source-device package notice', () => {
+    const draft = empty({ annotations: [sensor], packageAnnotationIds: [] })
+    const rejected = selectPackageAnimationRouteSource(draft, 'sensor')
+
+    expect(rejected.accepted).toBe(false)
+    expect(rejected.draft.notice).toMatchObject({
+      code: 'source-not-in-package',
+      message: 'This source device is not included in this Work Package. Add it to the package before using it as the animation source.',
+    })
+  })
+
+  it('rejects an unsupported source annotation with the supported-source notice even outside the package', () => {
+    const draft = empty({ annotations: [fixture1], packageAnnotationIds: [] })
+    const rejected = dispatchPackageAnimationRoutePick(draft, { kind: 'annotation', annotationId: 'fixture-1' })
+
+    expect(rejected.accepted).toBe(false)
+    expect(rejected.draft.notice).toMatchObject({
+      code: 'invalid-source-kind',
+      message: 'Select an electrical panel, switch, dimmer, timer, photocell, or occupancy sensor that belongs to this Work Package.',
+    })
+  })
+
   it('treats an electrical panel as an eligible source with source-only roles and constant power', () => {
     const panel: RouteBuilderAnnotation = {
       id: 'panel',
