@@ -85,6 +85,28 @@ import {
   translateNormalizedPoints,
 } from '@/features/blueprint-animation/routeGeometry'
 import {
+  buildAutoCalibrationForPage as buildSharedAutoCalibrationForPage,
+  buildManualKnownDistanceCalibration as buildSharedManualKnownDistanceCalibration,
+  buildScaleCalibration as buildSharedScaleCalibration,
+  convertMeasuredDistance as convertSharedMeasuredDistance,
+  convertMeasuredPolygonArea as convertSharedMeasuredPolygonArea,
+  convertMeasuredPolylineLength as convertSharedMeasuredPolylineLength,
+  formatArchitecturalLength as formatSharedArchitecturalLength,
+  getCircuitArcControl as getSharedCircuitArcControl,
+  getLegacyScaleForPage as getSharedLegacyScaleForPage,
+  getNormSegmentSheetDistanceInches as getSharedNormSegmentSheetDistanceInches,
+  getPageSizeInchesFromPts as getSharedPageSizeInchesFromPts,
+  resolveUnitsPerSheetInch as resolveSharedUnitsPerSheetInch,
+  resolveEffectiveCalibration as resolveSharedEffectiveCalibration,
+  sampleCircuitArcPolyline as sampleSharedCircuitArcPolyline,
+} from '@/features/blueprint-measurements'
+import {
+  buildEffectiveWorkPackagesForPreview,
+  buildWireQuantityResult,
+  ProjectWireTotalsDialog,
+  WireQuantitySummary,
+} from '@/features/blueprint-wire-quantities'
+import {
   assignNewWorkPackageOrder,
   decideWorkPackageRemoteRefreshApply,
   getVisibleWorkPackageMoveState,
@@ -313,10 +335,6 @@ const NUDGE_STEP_NORM = 0.001
 // Line's 0.5 -- that factor reads fine on a single span but compounds into a scalloped
 // mess when repeated across the many short segments of a fixture-to-fixture circuit run.
 const CIRCUIT_ARC_DEFAULT_BULGE = 0.18
-// Samples per segment used to approximate quadratic Bezier arc length. 24 keeps the
-// measured length within ~0.1% of true for the curvatures this tool can produce.
-const CIRCUIT_ARC_LENGTH_SAMPLES = 24
-
 // refId (optional) = the annotation this guide is lining up against, so the canvas can highlight
 // the reference item during Guide Assist. Purely visual — never used to move data.
 type AlignmentGuideLine = { axis: 'x' | 'y'; value: number; refId?: string }
@@ -1036,27 +1054,15 @@ interface CalibrationData {
 }
 
 function getPageSizeInchesFromPts(pageWidthPts: number, pageHeightPts: number): PageSizeInches {
-  return {
-    pageWidthInches: pageWidthPts / 72,
-    pageHeightInches: pageHeightPts / 72,
-  }
+  return getSharedPageSizeInchesFromPts(pageWidthPts, pageHeightPts)
 }
 
 function getLegacyScaleForPage(cal: CalibrationData): number {
-  return cal.normDistance / Math.max(0.001, cal.realWorldValue)
+  return getSharedLegacyScaleForPage(cal)
 }
 
 function resolveUnitsPerSheetInch(cal: CalibrationData, pageSize: PageSizeInches | null): number | null {
-  if (cal.unitsPerSheetInch != null && Number.isFinite(cal.unitsPerSheetInch) && cal.unitsPerSheetInch > 0) {
-    return cal.unitsPerSheetInch
-  }
-  if (cal.sheetDistanceInches != null && cal.sheetDistanceInches > 0) {
-    return cal.realWorldValue / cal.sheetDistanceInches
-  }
-  if (pageSize && Math.abs(cal.normDistance - 1.0) < 0.0001 && pageSize.pageWidthInches > 0) {
-    return cal.realWorldValue / pageSize.pageWidthInches
-  }
-  return null
+  return resolveSharedUnitsPerSheetInch(cal, pageSize)
 }
 
 function getNormSegmentSheetDistanceInches(
@@ -1064,9 +1070,7 @@ function getNormSegmentSheetDistanceInches(
   p2: { x: number; y: number },
   pageSize: PageSizeInches,
 ): number {
-  const dxSheetInches = (p2.x - p1.x) * pageSize.pageWidthInches
-  const dySheetInches = (p2.y - p1.y) * pageSize.pageHeightInches
-  return Math.hypot(dxSheetInches, dySheetInches)
+  return getSharedNormSegmentSheetDistanceInches(p1, p2, pageSize)
 }
 
 function buildScaleCalibration(
@@ -1076,21 +1080,7 @@ function buildScaleCalibration(
   savedAt: string,
   kind: 'auto-scale' | 'selected-scale',
 ): CalibrationData {
-  const cal: CalibrationData = {
-    pageNumber,
-    normDistance: 1.0,
-    realWorldValue: realWidthFeet,
-    realWorldUnit: 'ft',
-    savedAt,
-    calibrationKind: kind,
-  }
-  if (pageSize && pageSize.pageWidthInches > 0) {
-    cal.pageWidthInches = pageSize.pageWidthInches
-    cal.pageHeightInches = pageSize.pageHeightInches
-    cal.sheetDistanceInches = pageSize.pageWidthInches
-    cal.unitsPerSheetInch = realWidthFeet / pageSize.pageWidthInches
-  }
-  return cal
+  return buildSharedScaleCalibration(pageNumber, realWidthFeet, pageSize, savedAt, kind)
 }
 
 function buildManualKnownDistanceCalibration(
@@ -1101,23 +1091,7 @@ function buildManualKnownDistanceCalibration(
   realWorldUnit: CalibrationUnit,
   pageSize: PageSizeInches | null,
 ): CalibrationData {
-  const normDist = Math.hypot(p2.x - p1.x, p2.y - p1.y)
-  const cal: CalibrationData = {
-    pageNumber,
-    normDistance: normDist,
-    realWorldValue,
-    realWorldUnit,
-    savedAt: new Date().toISOString(),
-    calibrationKind: 'manual-known-distance',
-  }
-  if (pageSize && normDist > 0) {
-    const sheetDistanceInches = getNormSegmentSheetDistanceInches(p1, p2, pageSize)
-    cal.pageWidthInches = pageSize.pageWidthInches
-    cal.pageHeightInches = pageSize.pageHeightInches
-    cal.sheetDistanceInches = sheetDistanceInches
-    cal.unitsPerSheetInch = realWorldValue / sheetDistanceInches
-  }
-  return cal
+  return buildSharedManualKnownDistanceCalibration(pageNumber, p1, p2, realWorldValue, realWorldUnit, pageSize)
 }
 
 function buildAutoCalibrationForPage(
@@ -1125,9 +1099,7 @@ function buildAutoCalibrationForPage(
   detectedResult: DetectedScaleResult | null,
   pageSize: PageSizeInches | null,
 ): CalibrationData | null {
-  if (!detectedResult || detectedResult.ambiguous || detectedResult.candidates.length !== 1) return null
-  const c = detectedResult.candidates[0]
-  return buildScaleCalibration(pageNumber, c.realWidthFeet, pageSize, detectedResult.detectedAt, 'auto-scale')
+  return buildSharedAutoCalibrationForPage(pageNumber, detectedResult, pageSize)
 }
 
 function convertMeasuredDistance(
@@ -1136,12 +1108,7 @@ function convertMeasuredDistance(
   cal: CalibrationData,
   pageSize: PageSizeInches | null,
 ): number {
-  const unitsPerSheetInch = resolveUnitsPerSheetInch(cal, pageSize)
-  if (pageSize && unitsPerSheetInch != null) {
-    return getNormSegmentSheetDistanceInches(p1, p2, pageSize) * unitsPerSheetInch
-  }
-  const normDist = Math.hypot(p2.x - p1.x, p2.y - p1.y)
-  return normDist / getLegacyScaleForPage(cal)
+  return convertSharedMeasuredDistance(p1, p2, cal, pageSize)
 }
 
 function convertMeasuredPolylineLength(
@@ -1149,19 +1116,7 @@ function convertMeasuredPolylineLength(
   cal: CalibrationData,
   pageSize: PageSizeInches | null,
 ): number {
-  const unitsPerSheetInch = resolveUnitsPerSheetInch(cal, pageSize)
-  if (pageSize && unitsPerSheetInch != null) {
-    let sheetLen = 0
-    for (let i = 1; i < points.length; i++) {
-      sheetLen += getNormSegmentSheetDistanceInches(points[i - 1], points[i], pageSize)
-    }
-    return sheetLen * unitsPerSheetInch
-  }
-  let normLen = 0
-  for (let i = 1; i < points.length; i++) {
-    normLen += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
-  }
-  return normLen / getLegacyScaleForPage(cal)
+  return convertSharedMeasuredPolylineLength(points, cal, pageSize)
 }
 
 function convertMeasuredPolygonArea(
@@ -1169,19 +1124,7 @@ function convertMeasuredPolygonArea(
   cal: CalibrationData,
   pageSize: PageSizeInches | null,
 ): number {
-  let normArea = 0
-  for (let i = 0; i < points.length; i++) {
-    const j = (i + 1) % points.length
-    normArea += points[i].x * points[j].y - points[j].x * points[i].y
-  }
-  normArea = Math.abs(normArea) / 2
-  const unitsPerSheetInch = resolveUnitsPerSheetInch(cal, pageSize)
-  if (pageSize && unitsPerSheetInch != null) {
-    const sheetAreaSquareInches = normArea * pageSize.pageWidthInches * pageSize.pageHeightInches
-    return sheetAreaSquareInches * unitsPerSheetInch * unitsPerSheetInch
-  }
-  const scaleForPage = getLegacyScaleForPage(cal)
-  return normArea / (scaleForPage * scaleForPage)
+  return convertSharedMeasuredPolygonArea(points, cal, pageSize)
 }
 
 // BLUEPRINT-6P — architectural feet/inches formatter for length measurement labels.
@@ -1191,35 +1134,7 @@ function convertMeasuredPolygonArea(
 // This ONLY affects display strings — the underlying measurement math is untouched.
 //   10.25 ft -> 10'-3"   ·   9.8333 ft -> 9'-10"   ·   1.375 in -> 1-3/8"   ·   0.25 in -> 1/4"
 function formatArchitecturalLength(value: number, unit: string): string {
-  const u = String(unit || '').toLowerCase()
-  if (!Number.isFinite(value)) return `0 ${unit}`
-  // Non-imperial units keep decimal formatting.
-  if (u !== 'ft' && u !== 'in') return `${value.toFixed(2)} ${unit}`
-
-  const sign = value < 0 ? '-' : ''
-  const abs = Math.abs(value)
-  // Work in sixteenths of an inch, rounding first so carry propagates cleanly.
-  const totalInches = u === 'ft' ? abs * 12 : abs
-  const sixteenths = Math.round(totalInches * 16)
-  const wholeInches = Math.floor(sixteenths / 16)
-  const remSixteenths = sixteenths % 16
-  const gcd = (x: number, y: number): number => (y === 0 ? x : gcd(y, x % y))
-  const g = remSixteenths > 0 ? gcd(remSixteenths, 16) : 1
-  const fracStr = remSixteenths > 0 ? `${remSixteenths / g}/${16 / g}` : ''
-
-  if (u === 'in') {
-    // Keep inches unit (no feet rollover): 1-3/8", 3/4", 12".
-    if (wholeInches > 0 && fracStr) return `${sign}${wholeInches}-${fracStr}"`
-    if (wholeInches > 0) return `${sign}${wholeInches}"`
-    if (fracStr) return `${sign}${fracStr}"`
-    return `0"`
-  }
-
-  // Feet unit → architectural feet-inches (always shows the feet field, e.g. 0'-6").
-  const feet = Math.floor(wholeInches / 12)
-  const inches = wholeInches % 12
-  const inchStr = fracStr ? `${inches} ${fracStr}` : `${inches}`
-  return `${sign}${feet}'-${inchStr}"`
+  return formatSharedArchitecturalLength(value, unit)
 }
 
 // Parses common construction-style length input for the Calibrate manual-length field.
@@ -2357,9 +2272,7 @@ function getCircuitArcControl(
   b: { x: number; y: number },
   i: number,
 ): { x: number; y: number } {
-  const raw = Array.isArray(arcCtrls) ? arcCtrls[i] : null
-  if (raw && Number.isFinite(raw.x) && Number.isFinite(raw.y)) return { x: raw.x, y: raw.y }
-  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+  return getSharedCircuitArcControl(arcCtrls, a, b, i)
 }
 
 // Seeds one control point per segment with a gentle perpendicular bulge. The offset is
@@ -2389,22 +2302,7 @@ function sampleCircuitArcPolyline(
   points: Array<{ x: number; y: number }>,
   arcCtrls: any,
 ): Array<{ x: number; y: number }> {
-  if (points.length < 2) return [...points]
-  const out: Array<{ x: number; y: number }> = [points[0]]
-  for (let i = 1; i < points.length; i++) {
-    const p0 = points[i - 1]
-    const p1 = points[i]
-    const c = getCircuitArcControl(arcCtrls, p0, p1, i - 1)
-    for (let s = 1; s <= CIRCUIT_ARC_LENGTH_SAMPLES; s++) {
-      const t = s / CIRCUIT_ARC_LENGTH_SAMPLES
-      const mt = 1 - t
-      out.push({
-        x: mt * mt * p0.x + 2 * mt * t * c.x + t * t * p1.x,
-        y: mt * mt * p0.y + 2 * mt * t * c.y + t * t * p1.y,
-      })
-    }
-  }
-  return out
+  return sampleSharedCircuitArcPolyline(points, arcCtrls)
 }
 
 function clampPx(value: number, min: number, max: number) {
@@ -3218,6 +3116,16 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     return cached?.pageWidthInches > 0 && cached?.pageHeightInches > 0 ? cached : null
   }, [pageSizeInchesCache])
 
+  const getEffectiveCalibrationForPage = useCallback((pageNumber: number): CalibrationData | null => {
+    const result = resolveSharedEffectiveCalibration({
+      pageNumber,
+      savedCalibrations,
+      detectedScales,
+      pageSize: getPageSizeInches(pageNumber),
+    })
+    return result.status === 'calibrated' ? result.calibration : null
+  }, [savedCalibrations, detectedScales, getPageSizeInches])
+
   const cachePageSizeInches = useCallback((pageNumber: number, pageWidthPts: number, pageHeightPts: number) => {
     if (!Number.isFinite(pageWidthPts) || !Number.isFinite(pageHeightPts) || pageWidthPts <= 0 || pageHeightPts <= 0) return
     const next = getPageSizeInchesFromPts(pageWidthPts, pageHeightPts)
@@ -3238,15 +3146,21 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     detectedResult,
     getPageSizeInches(currentPage),
   )
-  const activeCalibration: CalibrationData | null = savedCalibration ?? autoCalibration
+  const effectiveCalibrationResult = resolveSharedEffectiveCalibration({
+    pageNumber: currentPage,
+    savedCalibrations,
+    detectedScales,
+    pageSize: getPageSizeInches(currentPage),
+  })
+  const activeCalibration: CalibrationData | null = effectiveCalibrationResult.status === 'calibrated' ? effectiveCalibrationResult.calibration : null
   const detectedScale: number | null = activeCalibration
     ? activeCalibration.normDistance / Math.max(0.001, activeCalibration.realWorldValue)
     : null
   type CalibrationSource = 'manual' | 'auto' | 'ambiguous' | 'none'
   const calibrationSource: CalibrationSource =
-    savedCalibration ? 'manual' :
+    effectiveCalibrationResult.status === 'calibrated' && effectiveCalibrationResult.source === 'manual' ? 'manual' :
     detectedResult?.ambiguous ? 'ambiguous' :
-    autoCalibration ? 'auto' : 'none'
+    effectiveCalibrationResult.status === 'calibrated' && effectiveCalibrationResult.source === 'auto' ? 'auto' : 'none'
   const calibrationStatus: CalibrationStatus =
     pendingCalibration?.pageNumber === currentPage ? 'pending' :
     activeCalibration ? 'saved' : 'none'
@@ -3523,6 +3437,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     activationId: string
   } | null>(null)
   const [isWireProfileManagerOpen, setIsWireProfileManagerOpen] = useState(false)
+  const [projectWireTotalsOpen, setProjectWireTotalsOpen] = useState(false)
   const [wireProfileRemoteRefreshVersion, setWireProfileRemoteRefreshVersion] = useState(0)
   const previousWireProfileProjectIdRef = useRef<string | null>(blueprint?.projectId ?? null)
 
@@ -3550,6 +3465,42 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       return []
     }
   }, [blueprint?.projectId, wireProfileRemoteRefreshVersion])
+
+  const wireQuantityResult = useMemo(() => {
+    const projectId = String(blueprint?.projectId || '').trim()
+    const blueprintSetId = String(blueprint?.id || '').trim()
+    if (!projectId || !blueprintSetId) {
+      return buildWireQuantityResult({
+        projectId,
+        blueprintSetId,
+        annotations: [],
+        workPackages: [],
+        wireProfiles: [],
+        savedCalibrations: {},
+        detectedScales: {},
+        getPageSizeInches: () => null,
+      })
+    }
+    return buildWireQuantityResult({
+      projectId,
+      blueprintSetId,
+      annotations: allAnnotations,
+      workPackages: scopeLayers,
+      wireProfiles: projectWireProfiles,
+      savedCalibrations,
+      detectedScales,
+      getPageSizeInches,
+    })
+  }, [
+    allAnnotations,
+    blueprint?.id,
+    blueprint?.projectId,
+    detectedScales,
+    getPageSizeInches,
+    projectWireProfiles,
+    savedCalibrations,
+    scopeLayers,
+  ])
 
   const buildQuickAccessDraft = (slotIndex: number, preset?: QuickAccessPreset | null): QuickAccessPreset => {
     if (preset) return JSON.parse(JSON.stringify(preset))
@@ -5038,6 +4989,58 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     () => buildBlueprintScopeItemSummary(selectedPackageItemRefs),
     [selectedPackageItemRefs]
   )
+  const scopeLayerDraftWireQuantityResult = useMemo(() => {
+    if (!scopeLayerModal.open || !blueprint) return null
+    const draftPackage = {
+      id: scopeLayerModal.layerId || 'draft-work-package',
+      name: scopeLayerForm.name || 'Work Package',
+      description: scopeLayerForm.description || '',
+      color: scopeLayerForm.color || DEFAULT_SCOPE_LAYER_COLOR,
+      selectedAnnotationIds: scopeLayerDraftIds,
+      itemRefs: selectedPackageItemRefs,
+      pageNumber: currentPage,
+      roughInHours: 0,
+      trimHours: 0,
+      testingHours: 0,
+      cleanupHours: 0,
+      crewNotes: '',
+      proposalSummary: '',
+      createdAt: '',
+      updatedAt: '',
+      visible: true,
+      isolated: false,
+    }
+    const previewPackages = buildEffectiveWorkPackagesForPreview({
+      workPackages: scopeLayers,
+      draftPackage,
+    })
+    return buildWireQuantityResult({
+      projectId: blueprint.projectId,
+      blueprintSetId: blueprint.id,
+      annotations: allAnnotations,
+      workPackages: previewPackages,
+      wireProfiles: projectWireProfiles,
+      savedCalibrations,
+      detectedScales,
+      getPageSizeInches,
+    })
+  }, [
+    allAnnotations,
+    blueprint,
+    currentPage,
+    detectedScales,
+    getPageSizeInches,
+    projectWireProfiles,
+    savedCalibrations,
+    scopeLayerDraftIds,
+    scopeLayerForm.color,
+    scopeLayerForm.description,
+    scopeLayerForm.name,
+    scopeLayerModal,
+    scopeLayers,
+    selectedPackageItemRefs,
+  ])
+  const scopeLayerDraftWireQuantityRollup = scopeLayerDraftWireQuantityResult?.packageRollups.find((rollup) => rollup.packageId === (scopeLayerModal.layerId || 'draft-work-package')) ?? null
   const selectedPackageCount = selectedForPackageIds.size
 
   // ── Edit/Create Work Package: which Package-Pick selections can still be added ──
@@ -6327,11 +6330,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     let distanceUnit: string | null = null
     let distanceLabel: string | null = null
     if (isCircuit) {
-      const manualCal = savedCalibrations[currentPage] ?? null
-      const detRes = detectedScales[currentPage] ?? null
-      const autoCal = buildAutoCalibrationForPage(currentPage, detRes, getPageSizeInches(currentPage))
-      const calForPage = manualCal ?? autoCal
       const pageSize = getPageSizeInches(currentPage)
+      const calForPage = getEffectiveCalibrationForPage(currentPage)
       if (calForPage) {
         // For an arc path the straight chord sum would understate the run. Flatten the
         // curves into a dense polyline first so the label reports true arc length.
@@ -6416,7 +6416,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setToolMode('select')
     clearActiveQuickAccessSession()
     void persistAnnotation(ann)
-  }, [blueprint, currentPage, shapeKind, shapeOptions, persistAnnotation, savedCalibrations, detectedScales, showTransientSyncNotice, getPageSizeInches, displaySize.w, displaySize.h, activeQuickAccessSession, clearActiveQuickAccessSession])
+  }, [blueprint, currentPage, shapeKind, shapeOptions, persistAnnotation, showTransientSyncNotice, getPageSizeInches, getEffectiveCalibrationForPage, displaySize.w, displaySize.h, activeQuickAccessSession, clearActiveQuickAccessSession])
 
   // ── Spacebar finishes a multi-point shape draft (CIRCUITSPACE) ──────────────
   // Additive third finish gesture for Polyline / Circuit Path / Circuit Arc, mirroring the
@@ -6454,9 +6454,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const points: Array<{ x: number; y: number }> = Array.isArray(m.points) ? m.points : []
     if (points.length < 2) return ann
     const page = ann.pageNumber
-    const manualCal = savedCalibrations[page] ?? null
-    const detRes = detectedScales[page] ?? null
-    const calForPage = manualCal ?? buildAutoCalibrationForPage(page, detRes, getPageSizeInches(page))
+    const calForPage = getEffectiveCalibrationForPage(page)
     if (!calForPage) return ann
     const totalDistance = convertMeasuredPolylineLength(
       sampleCircuitArcPolyline(points, m.arcCtrls),
@@ -6469,18 +6467,15 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       distanceUnit: calForPage.realWorldUnit,
       distanceLabel: `Total: ${totalDistance.toFixed(2)} ${calForPage.realWorldUnit}`,
     }) as BlueprintAnnotation
-  }, [savedCalibrations, detectedScales, getPageSizeInches])
+  }, [getEffectiveCalibrationForPage, getPageSizeInches])
 
   useEffect(() => {
     if (!measurePendingCommit) return
     const { type, points, pageNumber } = measurePendingCommit
     setMeasurePendingCommit(null)
     if (!blueprint) return
-    // Manual calibration takes precedence over auto-detected.
-    const manualCal = savedCalibrations[pageNumber] ?? null
-    const detRes = detectedScales[pageNumber] ?? null
-    const autoCal = buildAutoCalibrationForPage(pageNumber, detRes, getPageSizeInches(pageNumber))
-    const calForPage = manualCal ?? autoCal
+    // Shared effective calibration: valid manual, then usable auto, else uncalibrated.
+    const calForPage = getEffectiveCalibrationForPage(pageNumber)
     const pageSize = getPageSizeInches(pageNumber)
     const hasCalibration = !!calForPage
     // Multi-point measure (measure-perimeter) still finalizes and keeps its path
@@ -6557,7 +6552,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     void persistAnnotation(ann)
     setFocusedAnnotationId(ann.id)
     setToolMode('select')
-  }, [measurePendingCommit, blueprint, persistAnnotation, savedCalibrations, detectedScales, toolColors, measurementStyle, showTransientSyncNotice, getPageSizeInches])
+  }, [measurePendingCommit, blueprint, persistAnnotation, getEffectiveCalibrationForPage, toolColors, measurementStyle, showTransientSyncNotice, getPageSizeInches])
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Persist manual calibrations to localStorage Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   useEffect(() => {
@@ -8201,11 +8196,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         const pts = Array.isArray(m.points) ? m.points.map((p: any) => ({ x: p.x, y: p.y })) : []
         if (pts.length < 2) return ann
         pts[meDrag.endpoint] = { x: nx, y: ny }
-        const manualCal = savedCalibrationsRef.current[ann.pageNumber] ?? null
-        const detRes = detectedScalesRef.current[ann.pageNumber] ?? null
         const pageSize = getPageSizeInches(ann.pageNumber)
-        const autoCal = buildAutoCalibrationForPage(ann.pageNumber, detRes, pageSize)
-        const calForPage = manualCal ?? autoCal
+        const effective = resolveSharedEffectiveCalibration({
+          pageNumber: ann.pageNumber,
+          savedCalibrations: savedCalibrationsRef.current,
+          detectedScales: detectedScalesRef.current,
+          pageSize,
+        })
+        const calForPage = effective.status === 'calibrated' ? effective.calibration : null
         const normDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
         const nextMeta: Record<string, any> = { ...m, points: pts, normDistance: normDist }
         if (calForPage) {
@@ -8240,11 +8238,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         if (ann.id !== mlDrag.annotationId) return ann
         const m = getAnnotationMeta(ann)
         if (pts.length < 2) return ann
-        const manualCal = savedCalibrationsRef.current[ann.pageNumber] ?? null
-        const detRes = detectedScalesRef.current[ann.pageNumber] ?? null
         const pageSize = getPageSizeInches(ann.pageNumber)
-        const autoCal = buildAutoCalibrationForPage(ann.pageNumber, detRes, pageSize)
-        const calForPage = manualCal ?? autoCal
+        const effective = resolveSharedEffectiveCalibration({
+          pageNumber: ann.pageNumber,
+          savedCalibrations: savedCalibrationsRef.current,
+          detectedScales: detectedScalesRef.current,
+          pageSize,
+        })
+        const calForPage = effective.status === 'calibrated' ? effective.calibration : null
         // BLUEPRINT-6O — a rigid whole-object move keeps every segment length, so the total is
         // unchanged; we still recompute with the aspect-aware helper for consistency. Perimeter
         // and distance store their geometry differently, so recalc the matching meta fields.
@@ -8293,10 +8294,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         const pts = Array.isArray(m.points) ? m.points.map((p: any) => ({ x: p.x, y: p.y })) : []
         if (mpDrag.pointIndex < 0 || mpDrag.pointIndex >= pts.length) return ann
         pts[mpDrag.pointIndex] = { x: nx, y: ny }
-        const manualCal = savedCalibrationsRef.current[ann.pageNumber] ?? null
-        const detRes = detectedScalesRef.current[ann.pageNumber] ?? null
         const pageSize = getPageSizeInches(ann.pageNumber)
-        const calForPage = manualCal ?? buildAutoCalibrationForPage(ann.pageNumber, detRes, pageSize)
+        const effective = resolveSharedEffectiveCalibration({
+          pageNumber: ann.pageNumber,
+          savedCalibrations: savedCalibrationsRef.current,
+          detectedScales: detectedScalesRef.current,
+          pageSize,
+        })
+        const calForPage = effective.status === 'calibrated' ? effective.calibration : null
         let normPerim = 0
         for (let i = 1; i < pts.length; i++) normPerim += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)
         const nextMeta: Record<string, any> = { ...m, points: pts, normPerimeter: normPerim }
@@ -12037,10 +12042,14 @@ const annotationPanelSizeClass =
                           const perimeterLabelData = (() => {
                             const empty = { segments: [] as Array<{ midPx: { px: number; py: number }; label: string }>, total: null as null | { anchor: { px: number; py: number }; text: string } }
                             if (a.type !== 'measure-perimeter' || pxPts.length < 2) return empty
-                            const manualCal = savedCalibrationsRef.current[a.pageNumber] ?? null
-                            const detRes = detectedScalesRef.current[a.pageNumber] ?? null
                             const segPageSize = getPageSizeInches(a.pageNumber)
-                            const segCal = manualCal ?? buildAutoCalibrationForPage(a.pageNumber, detRes, segPageSize)
+                            const effective = resolveSharedEffectiveCalibration({
+                              pageNumber: a.pageNumber,
+                              savedCalibrations: savedCalibrationsRef.current,
+                              detectedScales: detectedScalesRef.current,
+                              pageSize: segPageSize,
+                            })
+                            const segCal = effective.status === 'calibrated' ? effective.calibration : null
                             // Below-path anchor: horizontal center of the point bounds, offset ~26px under the
                             // lowest point, clamped inside the page so it stays visible near the bottom edge.
                             const minX = Math.min(...pxPts.map((p) => p.px)), maxX = Math.max(...pxPts.map((p) => p.px))
@@ -12933,14 +12942,24 @@ const annotationPanelSizeClass =
                       </div>
                       <div className="mt-0.5 flex items-center justify-between gap-2">
                         <div className="text-[10px] text-sky-200/60">{isScopeLayerOrderSaving ? 'Saving package order...' : 'Saved work packages for this viewer session. Drag the handle or use ↑/↓ to reorder.'}</div>
-                        <button
-                          type="button"
-                          onClick={() => setScopeLayerShowAllPages((prev) => !prev)}
-                          className={`flex-shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-semibold ${scopeLayerShowAllPages ? 'border-sky-400/60 bg-sky-500/20 text-sky-100' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
-                          title={scopeLayerShowAllPages ? 'Showing packages from all pages — click to show only this page' : 'Showing only this page\'s packages — click to show all pages'}
-                        >
-                          {scopeLayerShowAllPages ? 'Showing: All Pages' : 'Showing: Current Page'}
-                        </button>
+                        <div className="flex flex-shrink-0 items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setProjectWireTotalsOpen(true)}
+                            className="rounded border border-cyan-500/50 bg-cyan-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-cyan-100 hover:bg-cyan-500/20"
+                            title="Open read-only wire totals for the current blueprint set"
+                          >
+                            Project Wire Totals
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setScopeLayerShowAllPages((prev) => !prev)}
+                            className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold ${scopeLayerShowAllPages ? 'border-sky-400/60 bg-sky-500/20 text-sky-100' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+                            title={scopeLayerShowAllPages ? 'Showing packages from all pages — click to show only this page' : 'Showing only this page\'s packages — click to show all pages'}
+                          >
+                            {scopeLayerShowAllPages ? 'Showing: All Pages' : 'Showing: Current Page'}
+                          </button>
+                        </div>
                       </div>
                       {isPackageVisibilityFilterActive && (
                         <div className="mt-1.5 flex items-center justify-between gap-2 rounded border border-amber-500/40 bg-amber-950/25 px-2 py-1 text-[10px] font-medium text-amber-200">
@@ -13468,7 +13487,17 @@ const annotationPanelSizeClass =
                         <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-100">
                           <Layers size={12} /> Scope Layers
                         </div>
-                        <span className="text-[10px] text-gray-500">{scopeLayers.length}</span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setProjectWireTotalsOpen(true)}
+                            className="rounded border border-cyan-500/50 bg-cyan-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-cyan-100 hover:bg-cyan-500/20"
+                            title="Open read-only wire totals for the current blueprint set"
+                          >
+                            Project Wire Totals
+                          </button>
+                          <span className="text-[10px] text-gray-500">{scopeLayers.length}</span>
+                        </div>
                       </div>
                       <div className="mt-0.5 text-[10px] text-gray-500">V1 work packages are local to this viewer session.</div>
                     </div>
@@ -13578,6 +13607,14 @@ const annotationPanelSizeClass =
         remoteRefreshVersion={wireProfileRemoteRefreshVersion}
         onForceClose={forceCloseWireProfileManager}
       />
+
+      {projectWireTotalsOpen && createPortal(
+        <ProjectWireTotalsDialog
+          result={wireQuantityResult}
+          onClose={() => setProjectWireTotalsOpen(false)}
+        />,
+        viewerPortalTarget
+      )}
 
       {/* Ã¢â€â‚¬Ã¢â€â‚¬ Floating tool popover (portal) Ã¢â€â‚¬Ã¢â€â‚¬ */}
       {_popoverContent && openPopover && (
@@ -14148,6 +14185,17 @@ const annotationPanelSizeClass =
                 <div className="mt-2 rounded border border-sky-900/40 bg-sky-950/20 px-2 py-1 text-[10px] text-sky-200">
                   Labor total: {getBlueprintScopeLayerLaborTotal(scopeLayerForm as any).toFixed(1)} hrs
                 </div>
+                {scopeLayerDraftWireQuantityRollup && (
+                  <div className="mt-2">
+                    <WireQuantitySummary
+                      totals={scopeLayerDraftWireQuantityRollup.totals}
+                      contributions={scopeLayerDraftWireQuantityResult?.contributions || []}
+                      diagnostics={scopeLayerDraftWireQuantityRollup.diagnostics}
+                      emptyText="No measurable circuit routes in this Work Package."
+                      compact
+                    />
+                  </div>
+                )}
               </div>
             </div>
 
