@@ -133,6 +133,20 @@ describe('routePicking', () => {
     })).toEqual({ kind: 'annotation', annotationId: 'receptacle-1' })
   })
 
+  it('lets an emergency exit sign device hit beat an overlapping segment after source selection', () => {
+    const exitSign = { id: 'exit-sign', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.08, h: 0.04 } }
+    const deviceHit = findFirstRouteDeviceHit({ x: 0.7, y: 0.48 }, [exitSign], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })
+
+    expect(deviceHit).toMatchObject({ annotationId: 'exit-sign', pageNumber: 1 })
+    expect(resolveRoutePickIntent({
+      sourceSelected: true,
+      overlappingAnnotationIds: ['circuit-1'],
+      eligibleDeviceIds: new Set(['exit-sign']),
+      eligibleDeviceHitId: deviceHit?.annotationId,
+      segmentHit,
+    })).toEqual({ kind: 'annotation', annotationId: 'exit-sign' })
+  })
+
   it('prefers an eligible source geometry hit over an overlapping route segment before source selection', () => {
     const switchDevice = { id: 'switch-1', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.04, h: 0.08 } }
     const deviceHit = findFirstRouteDeviceHit({ x: 0.7, y: 0.5 }, [switchDevice], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })
@@ -157,6 +171,21 @@ describe('routePicking', () => {
       eligibleDeviceHitId: deviceHit?.annotationId,
       segmentHit: null,
     })).toEqual({ kind: 'annotation', annotationId: 'switch-1' })
+  })
+
+  it('does not promote an emergency exit sign to a source candidate before source selection', () => {
+    const exitSign = { id: 'exit-sign', pageNumber: 1, rect: { x: 0.68, y: 0.46, w: 0.08, h: 0.04 } }
+    const deviceHit = findFirstRouteDeviceHit({ x: 0.7, y: 0.48 }, [exitSign], { pageWidth: 1000, pageHeight: 1000, tolerancePx: 4 })
+
+    expect(deviceHit?.annotationId).toBe('exit-sign')
+    expect(resolveRoutePickIntent({
+      sourceSelected: false,
+      overlappingAnnotationIds: ['exit-sign', 'circuit-1'],
+      eligibleDeviceIds: new Set(['switch-1']),
+      eligibleDeviceHitId: deviceHit?.annotationId,
+      segmentHit,
+      fallbackAnnotationId: 'exit-sign',
+    })).toEqual({ kind: 'annotation', annotationId: 'exit-sign' })
   })
 
   it('prefers eligible overlapping source annotations over captured fallback before source selection', () => {

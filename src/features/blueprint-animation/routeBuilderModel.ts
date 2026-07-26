@@ -50,6 +50,7 @@ export const ROUTE_BUILDER_LOAD_KINDS = [
   'electrical-recessed-light',
   'electrical-pendant-light',
   'electrical-sconce',
+  'electrical-emergency-exit-sign',
   'electrical-led-panel-2x2',
   'electrical-led-panel-2x4',
 ] as const

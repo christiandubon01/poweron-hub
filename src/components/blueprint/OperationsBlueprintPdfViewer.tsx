@@ -363,6 +363,7 @@ type ShapeKind =
   | 'electrical-recessed-light'
   | 'electrical-pendant-light'
   | 'electrical-sconce'
+  | 'electrical-emergency-exit-sign'
   | 'electrical-led-panel-2x2'
   | 'electrical-led-panel-2x4'
   | 'electrical-panel'
@@ -389,6 +390,7 @@ type ElectricalSymbolKind = Extract<ShapeKind,
   | 'electrical-recessed-light'
   | 'electrical-pendant-light'
   | 'electrical-sconce'
+  | 'electrical-emergency-exit-sign'
   | 'electrical-led-panel-2x2'
   | 'electrical-led-panel-2x4'
   | 'electrical-panel'
@@ -494,6 +496,17 @@ const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, ElectricalSymbolM
     defaultPhase: 'electrical',
     materialKey: 'sconce',
     laborKey: 'sconce',
+    isElectricalSymbol: true,
+  },
+  'electrical-emergency-exit-sign': {
+    symbolKind: 'electrical-emergency-exit-sign',
+    displayName: 'Emergency Exit Sign',
+    shortLabel: 'EXIT',
+    category: 'lighting',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'emergency-exit-sign',
+    laborKey: 'emergency-exit-sign',
     isElectricalSymbol: true,
   },
   'electrical-led-panel-2x2': {
@@ -1525,11 +1538,12 @@ const LIGHT_OUTPUT_SHAPE_KINDS = new Set<ShapeKind>([
   'electrical-recessed-light',
   'electrical-pendant-light',
   'electrical-sconce',
+  'electrical-emergency-exit-sign',
   'electrical-led-panel-2x2',
   'electrical-led-panel-2x4',
 ])
 
-function isLightOutputShapeKind(shapeKind: any): shapeKind is ShapeKind {
+export function isLightOutputShapeKind(shapeKind: any): shapeKind is ShapeKind {
   return typeof shapeKind === 'string' && LIGHT_OUTPUT_SHAPE_KINDS.has(shapeKind as ShapeKind)
 }
 
@@ -1547,13 +1561,14 @@ const ROTATABLE_ELECTRICAL_SHAPE_KINDS = new Set<ShapeKind>([
   'electrical-switch-4way',
   'electrical-dimmer',
   'electrical-sconce',
+  'electrical-emergency-exit-sign',
   'electrical-gfci',
   'electrical-photocell',
   'electrical-timer-control',
   'electrical-wall-occupancy-sensor',
 ])
 
-function isRotatableElectricalShapeKind(shapeKind: any): shapeKind is ShapeKind {
+export function isRotatableElectricalShapeKind(shapeKind: any): shapeKind is ShapeKind {
   return typeof shapeKind === 'string' && ROTATABLE_ELECTRICAL_SHAPE_KINDS.has(shapeKind as ShapeKind)
 }
 
@@ -1749,6 +1764,7 @@ const ELECTRICAL_SYMBOL_VISUAL_BOUNDS: Partial<Record<ElectricalSymbolKind, { x:
   'electrical-panel': { x: 8, y: 7, w: 84, h: 86 },
   'electrical-gfci': { x: 25, y: 9, w: 50, h: 74 },
   'electrical-sconce': { x: 15, y: 15, w: 47, h: 68 },
+  'electrical-emergency-exit-sign': { x: 12, y: 28, w: 76, h: 38 },
   'electrical-photocell': { x: 14, y: 11, w: 78, h: 68 },
   'electrical-timer-control': { x: 13, y: 13, w: 68, h: 64 },
   'electrical-ceiling-occupancy-sensor': { x: 20, y: 17, w: 56, h: 56 },
@@ -1899,6 +1915,13 @@ export function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, 
         <path d="M26 30 A24 20 0 0 1 26 70" fill="none" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} strokeLinecap="round" />
         <path d="M26 38 L58 28 M26 62 L58 72" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.7" />
         <circle cx="42" cy="50" r="7" fill={symbolFill} stroke={borderColor} strokeWidth={fineStroke} />
+      </>
+    )
+  } else if (kind === 'electrical-emergency-exit-sign') {
+    body = (
+      <>
+        <rect x="12" y="28" width="76" height="38" rx="3" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <text x="50" y="48" fontSize="20" letterSpacing="0" {...commonText}>EXIT</text>
       </>
     )
   } else if (kind === 'electrical-led-panel-2x2' || kind === 'electrical-led-panel-2x4') {

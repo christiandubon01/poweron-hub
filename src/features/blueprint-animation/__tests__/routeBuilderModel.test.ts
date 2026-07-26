@@ -48,7 +48,9 @@ import {
   validatePackageAnimationRouteDraft,
   type PackageAnimationRouteDraft,
   type RouteBuilderAnnotation,
+  isRouteBuilderDeviceKind,
   isRouteBuilderLoadKind,
+  ROUTE_BUILDER_SENSOR_KINDS,
   isRouteBuilderSourceKind,
 } from '../routeBuilderModel'
 import { findNearestRouteNode, type RouteSegmentPick } from '../routePicking'
@@ -58,6 +60,7 @@ const source: RouteBuilderAnnotation = { id: 'source', pageNumber: 1, label: 'Sw
 const sensor: RouteBuilderAnnotation = { id: 'sensor', pageNumber: 1, label: 'Sensor', shapeKind: 'electrical-ceiling-occupancy-sensor', rect: { x: 0.08, y: 0.28, w: 0.04, h: 0.04 } }
 const fixture1: RouteBuilderAnnotation = { id: 'fixture-1', pageNumber: 1, label: 'Light 1', shapeKind: 'electrical-recessed-light', rect: { x: 0.48, y: 0.48, w: 0.04, h: 0.04 } }
 const fixture2: RouteBuilderAnnotation = { id: 'fixture-2', pageNumber: 1, label: 'Light 2', shapeKind: 'electrical-pendant-light', rect: { x: 0.88, y: 0.48, w: 0.04, h: 0.04 } }
+const exitSign: RouteBuilderAnnotation = { id: 'exit-sign', pageNumber: 1, label: 'Emergency Exit Sign', shapeKind: 'electrical-emergency-exit-sign', rect: { x: 0.88, y: 0.28, w: 0.06, h: 0.04 } }
 const circuit: RouteBuilderAnnotation = {
   id: 'circuit', pageNumber: 1, label: 'Circuit Path', shapeKind: 'circuit-path',
   points: [{ x: 0.1, y: 0.5 }, { x: 0.5, y: 0.5 }, { x: 0.9, y: 0.5 }],
@@ -75,7 +78,7 @@ const branchCircuit: RouteBuilderAnnotation = {
 }
 
 function allAnnotations(): RouteBuilderAnnotation[] {
-  return [source, sensor, fixture1, fixture2, circuit, arc, branchCircuit].map((entry) => structuredClone(entry))
+  return [source, sensor, fixture1, fixture2, exitSign, circuit, arc, branchCircuit].map((entry) => structuredClone(entry))
 }
 
 function empty(overrides: Partial<Parameters<typeof createEmptyPackageAnimationRouteDraft>[0]> = {}) {
@@ -144,9 +147,14 @@ describe('routeBuilderModel', () => {
     expect(inferRouteBuilderNodeRoles('electrical-recessed-light')).toEqual(['load'])
     expect(inferRouteBuilderNodeRoles('electrical-receptacle')).toEqual(['load'])
     expect(inferRouteBuilderNodeRoles('electrical-gfci')).toEqual(['load'])
+    expect(inferRouteBuilderNodeRoles('electrical-emergency-exit-sign')).toEqual(['load'])
     expect(inferRouteBuilderNodeRoles(undefined, { junction: true })).toEqual(['junction'])
     expect(isRouteBuilderLoadKind('electrical-receptacle')).toBe(true)
     expect(isRouteBuilderLoadKind('electrical-gfci')).toBe(true)
+    expect(isRouteBuilderLoadKind('electrical-emergency-exit-sign')).toBe(true)
+    expect(isRouteBuilderDeviceKind('electrical-emergency-exit-sign')).toBe(true)
+    expect(isRouteBuilderSourceKind('electrical-emergency-exit-sign')).toBe(false)
+    expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain('electrical-emergency-exit-sign')
   })
 
   it('infers source-specific default channels', () => {
@@ -199,6 +207,61 @@ describe('routeBuilderModel', () => {
     expect(rejected.draft.notice).toMatchObject({
       code: 'invalid-source-kind',
       message: 'Select an electrical panel, switch, dimmer, timer, photocell, or occupancy sensor that belongs to this Work Package.',
+    })
+  })
+
+  it('keeps an emergency exit sign out of source mode while allowing it as a downstream load', () => {
+    const base = empty({ annotations: [source, exitSign], packageAnnotationIds: ['source', 'exit-sign'] })
+
+    expect(getPackageAnimationSourceCandidates(base).map((candidate) => candidate.annotationId)).toEqual(['source'])
+
+    const rejectedSource = dispatchPackageAnimationRoutePick(base, { kind: 'annotation', annotationId: 'exit-sign' })
+    expect(rejectedSource).toMatchObject({ accepted: false, consumed: true, mode: 'primary-route', branchActive: false })
+    expect(rejectedSource.draft.source).toBeUndefined()
+    expect(rejectedSource.draft.notice).toMatchObject({
+      code: 'invalid-source-kind',
+      message: 'Select an electrical panel, switch, dimmer, timer, photocell, or occupancy sensor that belongs to this Work Package.',
+    })
+
+    const draft = sourceDraft(base)
+    const acceptedLoad = dispatchPackageAnimationRoutePick(draft, {
+      kind: 'annotation',
+      annotationId: 'exit-sign',
+      clickedPoint: { x: 0.91, y: 0.3 },
+      allowPrimaryDirectTransition: true,
+    })
+    expect(acceptedLoad).toMatchObject({ accepted: true, consumed: true, mode: 'primary-route', branchActive: false })
+    expect(resolvePackageAnimationRouteDraft(acceptedLoad.draft).nodes[1]).toMatchObject({
+      roles: ['load'],
+      anchor: { kind: 'annotation-center', annotationId: 'exit-sign' },
+    })
+  })
+
+  it('uses the normal direct-transition confirmation flow for an emergency exit sign', () => {
+    const base = empty({ annotations: [source, exitSign], packageAnnotationIds: ['source', 'exit-sign'] })
+    const draft = sourceDraft(base)
+
+    const pending = dispatchPackageAnimationRoutePick(draft, {
+      kind: 'annotation',
+      annotationId: 'exit-sign',
+      clickedPoint: { x: 0.91, y: 0.3 },
+    })
+    expect(pending).toMatchObject({ accepted: false, category: 'direct-confirmation-required' })
+    expect(pending.draft.transitions).toEqual([])
+
+    const confirmed = dispatchPackageAnimationRoutePick(draft, {
+      kind: 'annotation',
+      annotationId: 'exit-sign',
+      clickedPoint: { x: 0.91, y: 0.3 },
+      allowPrimaryDirectTransition: true,
+    })
+    expect(confirmed).toMatchObject({ accepted: true, category: 'accepted' })
+    const resolved = resolvePackageAnimationRouteDraft(confirmed.draft)
+    expect(resolved.edges[0].geometry).toEqual({ kind: 'direct' })
+    expect(resolved.edges[0].geometry.kind).toBe('direct')
+    expect(resolved.nodes[1]).toMatchObject({
+      roles: ['load'],
+      anchor: { kind: 'annotation-center', annotationId: 'exit-sign' },
     })
   })
 
@@ -469,6 +532,41 @@ describe('routeBuilderModel', () => {
   it('adds a connected quadratic Arc segment', () => {
     const draft = addSegment(sourceDraft(), arc, 0)
     expect(resolvePackageAnimationRouteDraft(draft).edges[0].geometry).toMatchObject({ kind: 'circuit-segment', annotationId: 'arc', segmentId: 'as1' })
+  })
+
+  it('matches Circuit Path and Circuit Arc endpoints to an emergency exit sign load node', () => {
+    const pathToExit: RouteBuilderAnnotation = {
+      id: 'path-to-exit', pageNumber: 1, label: 'Path to Exit', shapeKind: 'circuit-path',
+      points: [{ x: 0.1, y: 0.5 }, { x: 0.91, y: 0.3 }],
+      pointIds: ['pe0', 'pe1'], segmentIds: ['pes0'],
+    }
+    const arcToExit: RouteBuilderAnnotation = {
+      id: 'arc-to-exit', pageNumber: 1, label: 'Arc to Exit', shapeKind: 'circuit-arc',
+      points: [{ x: 0.1, y: 0.5 }, { x: 0.91, y: 0.3 }],
+      arcCtrls: [{ x: 0.52, y: 0.22 }],
+      pointIds: ['ae0', 'ae1'], segmentIds: ['aes0'],
+    }
+
+    const pathAnnotations = [source, exitSign, pathToExit]
+    const pathDraft = addSegment(sourceDraft(empty({ annotations: pathAnnotations, packageAnnotationIds: pathAnnotations.map((entry) => entry.id) })), pathToExit, 0)
+    const pathResolved = resolvePackageAnimationRouteDraft(pathDraft)
+    expect(pathResolved.nodes[1]).toMatchObject({
+      roles: ['load'],
+      anchor: { kind: 'annotation-center', annotationId: 'exit-sign' },
+    })
+    expect(pathResolved.nodes[1].anchor.kind).not.toBe('circuit-point')
+    expect(pathResolved.edges[0].geometry).toMatchObject({ kind: 'circuit-segment', annotationId: 'path-to-exit', segmentId: 'pes0' })
+    expect(pathResolved.issues.map((entry) => entry.code)).not.toContain('direct-transition')
+
+    const arcAnnotations = [source, exitSign, arcToExit]
+    const arcDraft = addSegment(sourceDraft(empty({ annotations: arcAnnotations, packageAnnotationIds: arcAnnotations.map((entry) => entry.id) })), arcToExit, 0)
+    const arcResolved = resolvePackageAnimationRouteDraft(arcDraft)
+    expect(arcResolved.nodes[1]).toMatchObject({
+      roles: ['load'],
+      anchor: { kind: 'annotation-center', annotationId: 'exit-sign' },
+    })
+    expect(arcResolved.nodes[1].anchor.kind).not.toBe('circuit-point')
+    expect(arcResolved.edges[0].geometry).toMatchObject({ kind: 'circuit-segment', annotationId: 'arc-to-exit', segmentId: 'aes0' })
   })
 
   it('reverses segment direction from the current endpoint while persisting forward traversal', () => {
@@ -2219,6 +2317,93 @@ describe('ANIM-5.2 terminal parallel branches', () => {
       expectedBaseRevision: 1,
     })
     expect(resolvePackageAnimationRouteDraft(reloaded).branchTerminalNodeId).toBe('animation_node_annotation_terminal-receptacle')
+  })
+
+  it('validates mixed fixture and emergency-exit-sign parallel branch terminals from a common feeder', () => {
+    const normalFixture: RouteBuilderAnnotation = { id: 'normal-fixture', pageNumber: 1, label: 'Normal Fixture', shapeKind: 'electrical-recessed-light', rect: { x: 0.78, y: 0.28, w: 0.04, h: 0.04 } }
+    const emergencyFixture: RouteBuilderAnnotation = { id: 'emergency-fixture', pageNumber: 1, label: 'Emergency Fixture', shapeKind: 'electrical-sconce', rect: { x: 0.78, y: 0.48, w: 0.04, h: 0.04 } }
+    const branchExitSign: RouteBuilderAnnotation = { id: 'branch-exit-sign', pageNumber: 1, label: 'Emergency Exit Sign', shapeKind: 'electrical-emergency-exit-sign', rect: { x: 0.77, y: 0.68, w: 0.06, h: 0.04 } }
+    const sensorDevice: RouteBuilderAnnotation = { ...sensor, rect: { x: 0.28, y: 0.28, w: 0.04, h: 0.04 } }
+    const switchToSensor: RouteBuilderAnnotation = {
+      id: 'switch-to-sensor', pageNumber: 1, label: 'Switch to Sensor', shapeKind: 'circuit-path',
+      points: [{ x: 0.1, y: 0.5 }, { x: 0.3, y: 0.3 }],
+      pointIds: ['ss0', 'ss1'], segmentIds: ['sss0'],
+    }
+    const commonFeeder: RouteBuilderAnnotation = {
+      id: 'common-feeder', pageNumber: 1, label: 'Common Feeder', shapeKind: 'circuit-path',
+      points: [{ x: 0.3, y: 0.3 }, { x: 0.5, y: 0.5 }],
+      pointIds: ['cf0', 'cf1'], segmentIds: ['cfs0'],
+    }
+    const primaryArm: RouteBuilderAnnotation = {
+      id: 'normal-arm', pageNumber: 1, label: 'Normal Arm', shapeKind: 'circuit-path',
+      points: [{ x: 0.5, y: 0.5 }, { x: 0.8, y: 0.3 }],
+      pointIds: ['na0', 'na1'], segmentIds: ['nas0'],
+    }
+    const primaryEmergencyArm: RouteBuilderAnnotation = {
+      id: 'primary-emergency-arm', pageNumber: 1, label: 'Primary Emergency Arm', shapeKind: 'circuit-path',
+      points: [{ x: 0.8, y: 0.3 }, { x: 0.8, y: 0.5 }],
+      pointIds: ['ea0', 'ea1'], segmentIds: ['eas0'],
+    }
+    const exitArm: RouteBuilderAnnotation = {
+      id: 'exit-arm', pageNumber: 1, label: 'Exit Arm', shapeKind: 'circuit-arc',
+      points: [{ x: 0.5, y: 0.5 }, { x: 0.8, y: 0.7 }],
+      arcCtrls: [{ x: 0.63, y: 0.66 }],
+      pointIds: ['xa0', 'xa1'], segmentIds: ['xas0'],
+    }
+    const annotations = [source, sensorDevice, switchToSensor, commonFeeder, primaryArm, primaryEmergencyArm, exitArm, normalFixture, emergencyFixture, branchExitSign]
+    let draft = sourceDraft(empty({ annotations, packageAnnotationIds: annotations.map((entry) => entry.id) }))
+    draft = addSegment(draft, switchToSensor, 0)
+    draft = addSegment(draft, commonFeeder, 0)
+    const branchOriginSelectionId = draft.transitions[1].id
+    draft = addSegment(draft, primaryArm, 0)
+    draft = addSegment(draft, primaryEmergencyArm, 0)
+
+    draft = startPackageAnimationRouteBranch(draft, branchOriginSelectionId)
+    draft = addSegment(draft, exitArm, 0)
+    const exitBranchResolved = resolvePackageAnimationRouteDraft(draft)
+    expect(exitBranchResolved.branchTerminalNodeId).toBe('animation_node_annotation_branch-exit-sign')
+    expect(exitBranchResolved.branchConvergenceNodeId).toBeUndefined()
+    expect(exitBranchResolved.issues.map((entry) => entry.code)).not.toContain('invalid-branch-endpoint')
+    draft = finishPackageAnimationRouteBranch(draft)
+
+    const built = packageAnimationRouteDraftToScene(draft)
+    expect(built.issues.filter((entry) => entry.severity === 'error')).toEqual([])
+    const scene = built.scene!
+    const branchOriginNodeId = 'animation_node_point_common-feeder_cf1'
+    expect(scene.branchOrders).toHaveLength(1)
+    expect(scene.branchOrders[0]).toMatchObject({ nodeId: branchOriginNodeId })
+    expect(scene.branchOrders[0].outgoingEdgeIds).toHaveLength(2)
+    expect(scene.nodes.find((node) => node.id === 'animation_node_annotation_normal-fixture')).toMatchObject({ roles: ['load'] })
+    expect(scene.nodes.find((node) => node.id === 'animation_node_annotation_emergency-fixture')).toMatchObject({ roles: ['load'] })
+    expect(scene.nodes.find((node) => node.id === 'animation_node_annotation_branch-exit-sign')).toMatchObject({
+      roles: ['load'],
+      anchor: { kind: 'annotation-center', annotationId: 'branch-exit-sign' },
+    })
+    expect(scene.nodes.find((node) => node.id === branchOriginNodeId)?.roles).toEqual(['junction'])
+    expect(scene.manualTraversal.some((step) => scene.edges.find((edge) => edge.id === step.edgeId)?.toNodeId === 'animation_node_annotation_branch-exit-sign')).toBe(true)
+
+    const simultaneousTimeline = createPlaybackTimeline(
+      preparePlaybackGeometry({ scene: { ...scene, playbackOptions: { ...scene.playbackOptions, branchMode: 'simultaneous' } }, annotations, pageMetrics: { width: 1000, height: 1000 } }),
+      { ...playbackOptions, branchMode: 'simultaneous' },
+    )
+    const sequentialTimeline = createPlaybackTimeline(
+      preparePlaybackGeometry({ scene: { ...scene, playbackOptions: { ...scene.playbackOptions, branchMode: 'sequential' } }, annotations, pageMetrics: { width: 1000, height: 1000 } }),
+      { ...playbackOptions, branchMode: 'sequential' },
+    )
+    expect(calculatePlaybackFrame(simultaneousTimeline, simultaneousTimeline.totalDurationMs).devices.find((device) => device.nodeId === 'animation_node_annotation_branch-exit-sign')).toMatchObject({ phase: 'active' })
+    expect(calculatePlaybackFrame(sequentialTimeline, sequentialTimeline.totalDurationMs).devices.find((device) => device.nodeId === 'animation_node_annotation_branch-exit-sign')).toMatchObject({ phase: 'active' })
+
+    const reloaded = loadPackageAnimationRouteDraft({
+      packageId: draft.packageId,
+      packageName: draft.packageName,
+      packageAnnotationIds: draft.packageAnnotationIds,
+      annotations,
+      scene,
+      expectedBaseRevision: 1,
+    })
+    const resaved = packageAnimationRouteDraftToScene(reloaded).scene!
+    expect(resaved.branchOrders).toEqual(scene.branchOrders)
+    expect(resaved.manualTraversal).toEqual(scene.manualTraversal)
   })
 
   it('does not append an overlapping receptacle that is outside the active package', () => {
