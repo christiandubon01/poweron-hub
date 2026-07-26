@@ -677,6 +677,9 @@ const CAN_LIGHT_TOOL_OPTIONS: Array<{ label: string; value: 'can-light-4' | 'can
   { label: 'Can Light 6"', value: 'can-light-6', shortLabel: '6"' },
 ]
 
+export const CIRCUIT_MEASUREMENT_LABELS_DEFAULT_VISIBLE = false
+export const CIRCUIT_DRAW_GROUP_TOOL_ORDER = ['circuit-path', 'circuit-arc', 'circuit-labels'] as const
+
 const GENERIC_SHAPE_KIND_OPTIONS: Array<{ label: string; value: ShapeKind }> = [
   { label: 'Square', value: 'square' },
   { label: 'Circle', value: 'circle' },
@@ -992,6 +995,19 @@ function getAnnotationMoveGeometry(meta: Record<string, any>): AnnotationMoveGeo
 // Multi-point kinds that snap each click to a nearby fixture/symbol center.
 function isCircuitShapeKind(kind: any): boolean {
   return kind === 'circuit-path' || kind === 'circuit-arc'
+}
+
+export function shouldRenderCircuitMeasurementLabel(options: {
+  labelsVisible: boolean
+  shapeKind: unknown
+  distanceLabel: unknown
+  localPointCount: number
+}) {
+  return options.labelsVisible
+    && isCircuitShapeKind(options.shapeKind)
+    && typeof options.distanceLabel === 'string'
+    && options.distanceLabel.length > 0
+    && options.localPointCount > 0
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Measurement & calibration types Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -3286,7 +3302,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // Visual-only toggle for electrical symbol corner labels/badges.
   const [electricalSymbolLabelsVisible, setElectricalSymbolLabelsVisible] = useState(true)
   // Visual-only toggle for Circuit Path and Circuit Arc measurement labels.
-  const [showCircuitMeasurementLabels, setShowCircuitMeasurementLabels] = useState(true)
+  const [showCircuitMeasurementLabels, setShowCircuitMeasurementLabels] = useState(CIRCUIT_MEASUREMENT_LABELS_DEFAULT_VISIBLE)
   // Symbols Size control — scales symbol LABEL text only (not the glyph/box/geometry). Local UI
   // state (0.75x–5.0x, default 1.0). The draggable popup and its position are also local UI only.
   const [symbolLabelScale, setSymbolLabelScale] = useState(1)
@@ -11600,7 +11616,12 @@ const annotationPanelSizeClass =
                                 {/* Total-distance label — plain HTML for the same reason as Circuit
                                     Path's: the SVG above uses preserveAspectRatio="none" and would
                                     non-uniformly stretch any text drawn inside it. */}
-                                {showCircuitMeasurementLabels && meta.distanceLabel && localPts.length > 0 && (
+                                {shouldRenderCircuitMeasurementLabel({
+                                  labelsVisible: showCircuitMeasurementLabels,
+                                  shapeKind: kind,
+                                  distanceLabel: meta.distanceLabel,
+                                  localPointCount: localPts.length,
+                                }) && (
                                   <div
                                     className="absolute rounded px-1.5 py-0.5 text-[10px] font-mono pointer-events-none"
                                     style={{
@@ -11670,7 +11691,12 @@ const annotationPanelSizeClass =
                                     Rendered as plain HTML positioned by percentage -- NOT inside the
                                     0-100 viewBox SVG above, which uses preserveAspectRatio="none" and
                                     would non-uniformly stretch/distort any text drawn inside it. */}
-                                {showCircuitMeasurementLabels && isCircuit && meta.distanceLabel && localPts.length > 0 && (
+                                {shouldRenderCircuitMeasurementLabel({
+                                  labelsVisible: showCircuitMeasurementLabels,
+                                  shapeKind: kind,
+                                  distanceLabel: meta.distanceLabel,
+                                  localPointCount: localPts.length,
+                                }) && (
                                   <div
                                     className="absolute rounded px-1.5 py-0.5 text-[10px] font-mono pointer-events-none"
                                     style={{
