@@ -66,12 +66,17 @@ import {
   getOperationsBlueprintScopeLayers,
   getOperationsBlueprintScopeLayersRaw,
   getOperationsBlueprintWireProfiles,
+  getOperationsBlueprintQuickAccessWireProfileBinding,
+  getOperationsBlueprintQuickAccessWireProfileBindings,
   getLiveBlueprintSetRecords,
+  identifyOperationsBlueprintQuickAccessWireProfileReferences,
   identifyOperationsBlueprintWireProfileReferences,
+  mergeBlueprintQuickAccessWireProfileBindings,
   mergeBlueprintScopeLayersById,
   mergeBlueprintSetRecordsById,
   mergeBlueprintWireProfilesById,
   resolveOperationsBlueprintWireProfile,
+  saveOperationsBlueprintQuickAccessWireProfileBinding,
   saveOperationsBlueprintWireProfiles,
   compareAnimationScenesForVerification,
   readPersistedOperationsBlueprintScopeLayerAnimationScene,
@@ -577,6 +582,213 @@ describe('wire profile library persistence', () => {
     expect(layer.trimHours).toBe(2)
     expect(layer.testingHours).toBe(1)
     expect(layer.cleanupHours).toBe(0.5)
+  })
+})
+
+describe('quick access wire profile bindings', () => {
+  // Visual Quick Access presets remain localStorage-only; these tests cover the
+  // project-scoped BackupData binding map that synchronizes desktop ↔ iPad.
+
+  it('saves and loads project-scoped slot bindings without touching unrelated summaries', async () => {
+    const backup = {
+      blueprintSummaries: {
+        operationsBlueprintWireProfiles: {
+          'project-1': [wireProfile('wire_profile_romex')],
+        },
+        operationsBlueprintAnnotations: {
+          'set-1': [annotation('ann-1', 'set-1', NEW)],
+        },
+        operationsBlueprintScopeLayers: {
+          'set-1': [scopeLayer('package-1', NEW, {
+            selectedAnnotationIds: ['ann-1'],
+            roughInHours: 3,
+            trimHours: 1,
+          })],
+        },
+      },
+    } as any
+    saveBackupData(backup as any)
+
+    const result = await saveOperationsBlueprintQuickAccessWireProfileBinding(
+      backup,
+      'project-1',
+      'slot-1',
+      'wire_profile_romex',
+    )
+    expect(result.localSaved).toBe(true)
+
+    const saved = getBackupData() as any
+    expect(getOperationsBlueprintQuickAccessWireProfileBinding(saved, 'project-1', 'slot-1')).toBe('wire_profile_romex')
+    expect(getOperationsBlueprintQuickAccessWireProfileBinding(saved, 'project-2', 'slot-1')).toBeNull()
+    expect(getOperationsBlueprintScopeLayers(saved, 'set-1')[0].roughInHours).toBe(3)
+    expect(getOperationsBlueprintScopeLayers(saved, 'set-1')[0].trimHours).toBe(1)
+    expect(getOperationsBlueprintAnnotations(saved, 'set-1')).toHaveLength(1)
+    expect(getOperationsBlueprintWireProfiles(saved, 'project-1').map((profile) => profile.id)).toContain('wire_profile_romex')
+  })
+
+  it('merges per-slot bindings omission-safely across devices', () => {
+    const local = {
+      blueprintSummaries: {
+        operationsBlueprintQuickAccessWireProfileBindings: {
+          'project-1': {
+            'slot-1': { wireProfileId: 'wire_profile_local', updatedAt: NEWER },
+          },
+        },
+      },
+    } as any
+    const remote = {
+      blueprintSummaries: {
+        operationsBlueprintQuickAccessWireProfileBindings: {
+          'project-1': {
+            'slot-2': { wireProfileId: 'wire_profile_remote', updatedAt: NEW },
+          },
+        },
+      },
+    } as any
+
+    const applied = mergeLocalRecordsIntoRemoteSnapshot(remote, local)
+    const bindings = (applied as any).blueprintSummaries.operationsBlueprintQuickAccessWireProfileBindings['project-1']
+    expect(bindings['slot-1'].wireProfileId).toBe('wire_profile_local')
+    expect(bindings['slot-2'].wireProfileId).toBe('wire_profile_remote')
+
+    const outgoing = mergeRemoteBlueprintSummariesIntoOutgoing(local, remote)
+    const outBindings = (outgoing as any).blueprintSummaries.operationsBlueprintQuickAccessWireProfileBindings['project-1']
+    expect(outBindings['slot-1'].wireProfileId).toBe('wire_profile_local')
+    expect(outBindings['slot-2'].wireProfileId).toBe('wire_profile_remote')
+  })
+
+  it('resolves equal-timestamp Quick Access conflicts deterministically through BackupData apply merge', () => {
+    const bindingA = { wireProfileId: 'wire_profile_romex_12_2', updatedAt: NEW }
+    const bindingB = { wireProfileId: 'wire_profile_mc_12_2', updatedAt: NEW }
+    const localA = {
+      blueprintSummaries: {
+        operationsBlueprintLibrary: [record('set-local', NEW)],
+        operationsBlueprintAnnotations: { 'set-1': [annotation('ann-local', 'set-1', NEW)] },
+        operationsBlueprintScopeLayers: {
+          'set-1': [scopeLayer('package-local', NEW, {
+            sortOrder: 1,
+            orderTouchedAt: NEW,
+            animationScene: animationScene(2),
+            animationSceneRevision: 2,
+          })],
+        },
+        operationsBlueprintWireProfiles: { 'project-1': [wireProfile('wire_profile_romex_12_2')] },
+        operationsBlueprintQuickAccessWireProfileBindings: { 'project-1': { 'slot-1': bindingA } },
+      },
+    } as any
+    const remoteB = {
+      blueprintSummaries: {
+        operationsBlueprintLibrary: [record('set-remote', NEW)],
+        operationsBlueprintAnnotations: { 'set-1': [annotation('ann-remote', 'set-1', NEW)] },
+        operationsBlueprintScopeLayers: {
+          'set-1': [scopeLayer('package-remote', NEW, {
+            sortOrder: 2,
+            orderTouchedAt: NEW,
+            animationScene: animationScene(1),
+            animationSceneRevision: 1,
+          })],
+        },
+        operationsBlueprintWireProfiles: { 'project-1': [wireProfile('wire_profile_mc_12_2')] },
+        operationsBlueprintQuickAccessWireProfileBindings: { 'project-1': { 'slot-1': bindingB } },
+      },
+    } as any
+    const localB = JSON.parse(JSON.stringify(remoteB))
+    const remoteA = JSON.parse(JSON.stringify(localA))
+
+    const ab = mergeLocalRecordsIntoRemoteSnapshot(remoteB, localA) as any
+    const ba = mergeLocalRecordsIntoRemoteSnapshot(remoteA, localB) as any
+    const abSummary = ab.blueprintSummaries
+    const baSummary = ba.blueprintSummaries
+
+    expect(abSummary.operationsBlueprintQuickAccessWireProfileBindings).toEqual(baSummary.operationsBlueprintQuickAccessWireProfileBindings)
+    expect(abSummary.operationsBlueprintQuickAccessWireProfileBindings['project-1']['slot-1']).toEqual(bindingA)
+    expect(abSummary.operationsBlueprintWireProfiles['project-1'].map((profile: any) => profile.id).sort()).toEqual([
+      'wire_profile_mc_12_2',
+      'wire_profile_romex_12_2',
+    ])
+    expect(abSummary.operationsBlueprintScopeLayers['set-1'].map((layer: any) => layer.id).sort()).toEqual([
+      'package-local',
+      'package-remote',
+    ])
+    expect(abSummary.operationsBlueprintScopeLayers['set-1'].find((layer: any) => layer.id === 'package-local').sortOrder).toBe(1)
+    expect(abSummary.operationsBlueprintScopeLayers['set-1'].find((layer: any) => layer.id === 'package-local').animationSceneRevision).toBe(2)
+    expect(abSummary.operationsBlueprintAnnotations['set-1'].map((ann: any) => ann.id).sort()).toEqual(['ann-local', 'ann-remote'])
+    expect(abSummary.operationsBlueprintLibrary.map((item: any) => item.id).sort()).toEqual(['set-local', 'set-remote'])
+  })
+
+  it('resolves equal-timestamp Quick Access conflicts deterministically through outgoing remote fold', () => {
+    const bindingA = { wireProfileId: 'wire_profile_romex_12_2', updatedAt: NEW }
+    const bindingB = { wireProfileId: 'wire_profile_mc_12_2', updatedAt: NEW }
+    const outgoingA = {
+      blueprintSummaries: {
+        operationsBlueprintWireProfiles: { 'project-1': [wireProfile('wire_profile_romex_12_2')] },
+        operationsBlueprintScopeLayers: { 'set-1': [scopeLayer('package-local', NEW, { sortOrder: 1, orderTouchedAt: NEW })] },
+        operationsBlueprintAnnotations: { 'set-1': [annotation('ann-local', 'set-1', NEW)] },
+        operationsBlueprintLibrary: [record('set-local', NEW)],
+        operationsBlueprintQuickAccessWireProfileBindings: { 'project-1': { 'slot-1': bindingA } },
+      },
+    } as any
+    const remoteB = {
+      blueprintSummaries: {
+        operationsBlueprintWireProfiles: { 'project-1': [wireProfile('wire_profile_mc_12_2')] },
+        operationsBlueprintScopeLayers: { 'set-1': [scopeLayer('package-remote', NEW, { sortOrder: 2, orderTouchedAt: NEWER })] },
+        operationsBlueprintAnnotations: { 'set-1': [annotation('ann-remote', 'set-1', NEW)] },
+        operationsBlueprintLibrary: [record('set-remote', NEW)],
+        operationsBlueprintQuickAccessWireProfileBindings: { 'project-1': { 'slot-1': bindingB } },
+      },
+    } as any
+    const outgoingB = JSON.parse(JSON.stringify(remoteB))
+    const remoteA = JSON.parse(JSON.stringify(outgoingA))
+
+    const ab = mergeRemoteBlueprintSummariesIntoOutgoing(outgoingA, remoteB) as any
+    const ba = mergeRemoteBlueprintSummariesIntoOutgoing(outgoingB, remoteA) as any
+    const summary = ab.blueprintSummaries
+
+    expect(summary.operationsBlueprintQuickAccessWireProfileBindings).toEqual(ba.blueprintSummaries.operationsBlueprintQuickAccessWireProfileBindings)
+    expect(summary.operationsBlueprintQuickAccessWireProfileBindings['project-1']['slot-1']).toEqual(bindingA)
+    expect(summary.operationsBlueprintWireProfiles['project-1'].map((profile: any) => profile.id).sort()).toEqual([
+      'wire_profile_mc_12_2',
+      'wire_profile_romex_12_2',
+    ])
+    expect(summary.operationsBlueprintScopeLayers['set-1'].map((layer: any) => layer.id).sort()).toEqual([
+      'package-local',
+      'package-remote',
+    ])
+    expect(summary.operationsBlueprintScopeLayers['set-1'].find((layer: any) => layer.id === 'package-remote').sortOrder).toBe(2)
+    expect(summary.operationsBlueprintAnnotations['set-1'].map((ann: any) => ann.id).sort()).toEqual(['ann-local', 'ann-remote'])
+    expect(summary.operationsBlueprintLibrary.map((item: any) => item.id).sort()).toEqual(['set-local', 'set-remote'])
+  })
+
+  it('blocks hard-delete while a Quick Access slot still references the profile', async () => {
+    const backup = {
+      blueprintSummaries: {
+        operationsBlueprintWireProfiles: {
+          'project-1': [wireProfile('wire_profile_bound')],
+        },
+        operationsBlueprintQuickAccessWireProfileBindings: {
+          'project-1': {
+            'slot-3': { wireProfileId: 'wire_profile_bound', updatedAt: NEW },
+          },
+        },
+      },
+    } as any
+    saveBackupData(backup as any)
+
+    expect(identifyOperationsBlueprintQuickAccessWireProfileReferences(backup, 'project-1', 'wire_profile_bound')).toEqual(['slot-3'])
+    const blocked = await deleteUnreferencedOperationsBlueprintWireProfile(backup, 'project-1', 'wire_profile_bound')
+    expect(blocked.localSaved).toBe(false)
+    expect(blocked.error).toMatch(/referenced/i)
+
+    await saveOperationsBlueprintQuickAccessWireProfileBinding(backup, 'project-1', 'slot-3', null)
+    const afterClear = getBackupData()
+    const allowed = await deleteUnreferencedOperationsBlueprintWireProfile(afterClear, 'project-1', 'wire_profile_bound')
+    expect(allowed.localSaved).toBe(true)
+  })
+
+  it('loads legacy backups without binding maps as empty Unassigned state', () => {
+    const legacy = { blueprintSummaries: {} } as any
+    expect(getOperationsBlueprintQuickAccessWireProfileBindings(legacy)).toEqual({})
+    expect(mergeBlueprintQuickAccessWireProfileBindings(undefined, undefined)).toEqual({})
   })
 })
 

@@ -23,6 +23,14 @@ import {
   type WireProfileResolution,
 } from '@/features/blueprint-wire-profiles'
 import {
+  findQuickAccessWireProfileReferences,
+  mergeQuickAccessWireProfileBindingsBySlot,
+  sanitizeQuickAccessWireProfileBindings,
+  setQuickAccessWireProfileBinding,
+  type BlueprintQuickAccessWireProfileBindings,
+  type QuickAccessWireProfileBinding,
+} from '@/features/blueprint-wire-profiles/profileAwareQuickAccess'
+import {
   isValidWorkPackageOrderTimestamp,
   normalizeWorkPackageSortOrder,
   sortWorkPackages,
@@ -719,6 +727,14 @@ export function mergeBlueprintWireProfilesById(
   return mergeItemsById(remote as TombstonedItem[], incoming as TombstonedItem[]) as unknown as WireProfile[]
 }
 
+/** Per-slot LWW merge for project-scoped Quick Access Wire Profile bindings. */
+export function mergeBlueprintQuickAccessWireProfileBindings(
+  remoteRaw: unknown,
+  incomingRaw: unknown,
+): BlueprintQuickAccessWireProfileBindings {
+  return mergeQuickAccessWireProfileBindingsBySlot(remoteRaw, incomingRaw)
+}
+
 function stableOrderCandidateSignature(value: any): string {
   if (Array.isArray(value)) return `[${value.map(stableOrderCandidateSignature).join(',')}]`
   if (value && typeof value === 'object') {
@@ -1349,6 +1365,191 @@ export function identifyOperationsBlueprintWireProfileReferences(backup: any, pr
   return refs
 }
 
+function getQuickAccessWireProfileBindingsContainer(backup: any): BlueprintQuickAccessWireProfileBindings {
+  if (!backup.blueprintSummaries || typeof backup.blueprintSummaries !== 'object') {
+    backup.blueprintSummaries = {}
+  }
+  const raw = backup.blueprintSummaries.operationsBlueprintQuickAccessWireProfileBindings
+  const sanitized = sanitizeQuickAccessWireProfileBindings(raw)
+  backup.blueprintSummaries.operationsBlueprintQuickAccessWireProfileBindings = sanitized
+  return sanitized
+}
+
+/**
+ * Project-scoped Quick Access → Wire Profile bindings.
+ * Visual Quick Access presets remain device-local (localStorage); only these
+ * profile IDs synchronize through BackupData / desktop↔iPad sync.
+ */
+export function getOperationsBlueprintQuickAccessWireProfileBindings(
+  backup: any,
+): BlueprintQuickAccessWireProfileBindings {
+  return sanitizeQuickAccessWireProfileBindings(
+    backup?.blueprintSummaries?.operationsBlueprintQuickAccessWireProfileBindings,
+  )
+}
+
+export function getOperationsBlueprintQuickAccessWireProfileBindingsForProject(
+  backup: any,
+  projectId: string,
+): Record<string, QuickAccessWireProfileBinding> {
+  const cleanProjectId = String(projectId || '').trim()
+  if (!cleanProjectId) return {}
+  return getOperationsBlueprintQuickAccessWireProfileBindings(backup)[cleanProjectId] || {}
+}
+
+export function getOperationsBlueprintQuickAccessWireProfileBinding(
+  backup: any,
+  projectId: string,
+  slotKey: string,
+): string | null {
+  const entry = getOperationsBlueprintQuickAccessWireProfileBindingsForProject(backup, projectId)[String(slotKey || '').trim()]
+  if (!entry) return null
+  return entry.wireProfileId == null ? null : String(entry.wireProfileId).trim() || null
+}
+
+export function identifyOperationsBlueprintQuickAccessWireProfileReferences(
+  backup: any,
+  projectId: string,
+  profileId: string,
+): string[] {
+  return findQuickAccessWireProfileReferences(
+    getOperationsBlueprintQuickAccessWireProfileBindings(backup),
+    projectId,
+    profileId,
+  )
+}
+
+function applyQuickAccessWireProfileBindingsToBackup(
+  targetBackup: any,
+  bindings: BlueprintQuickAccessWireProfileBindings,
+): any {
+  const merged = JSON.parse(JSON.stringify(targetBackup || {}))
+  if (!merged.blueprintSummaries || typeof merged.blueprintSummaries !== 'object') {
+    merged.blueprintSummaries = {}
+  }
+  const existing = sanitizeQuickAccessWireProfileBindings(
+    merged.blueprintSummaries.operationsBlueprintQuickAccessWireProfileBindings,
+  )
+  merged.blueprintSummaries.operationsBlueprintQuickAccessWireProfileBindings =
+    mergeBlueprintQuickAccessWireProfileBindings(existing, bindings)
+  return merged
+}
+
+export async function saveOperationsBlueprintQuickAccessWireProfileBindings(
+  backup: any,
+  projectId: string,
+  projectBindings: Record<string, QuickAccessWireProfileBinding | string | null>,
+): Promise<SaveBlueprintAnnotationsResult> {
+  const SCOPE: DataScope = 'blueprint.wireProfiles'
+  const cleanProjectId = String(projectId || '').trim()
+  if (!cleanProjectId) return { localSaved: false, cloudSynced: false, error: 'Missing project id.' }
+
+  let nextBindings = getOperationsBlueprintQuickAccessWireProfileBindings(backup || {})
+  const now = new Date().toISOString()
+  for (const [slotKey, value] of Object.entries(projectBindings || {})) {
+    const wireProfileId = value && typeof value === 'object'
+      ? (value as QuickAccessWireProfileBinding).wireProfileId
+      : value as string | null
+    const updatedAt = value && typeof value === 'object' && (value as QuickAccessWireProfileBinding).updatedAt
+      ? (value as QuickAccessWireProfileBinding).updatedAt
+      : now
+    nextBindings = setQuickAccessWireProfileBinding(nextBindings, cleanProjectId, slotKey, wireProfileId, updatedAt)
+  }
+
+  const {
+    getBackupData,
+    getActiveTenantUserId,
+    isSupabaseConfigured,
+    saveBackupData,
+    saveBackupDataAndSyncNow,
+    saveBackupWithRemoteBaselineSync,
+    fetchLatestRemoteBackup,
+    isLocalDevOrigin,
+  } = await import('@/services/backupDataService')
+
+  const userId = getActiveTenantUserId()
+  const localBase = getBackupData() || backup
+  if (!localBase) return { localSaved: false, cloudSynced: false, error: 'No local backup data available.' }
+
+  const notifyLocalBindingsSaved = () => {
+    try { window.dispatchEvent(new Event('storage')) } catch { /* ignore */ }
+    try { window.dispatchEvent(new Event('poweron-data-saved')) } catch { /* ignore */ }
+  }
+
+  // Merge only this project's slot map into the latest local container (omit-safe).
+  const latestLocalBindings = getOperationsBlueprintQuickAccessWireProfileBindings(localBase)
+  const projectOnly: BlueprintQuickAccessWireProfileBindings = {
+    [cleanProjectId]: nextBindings[cleanProjectId] || {},
+  }
+  const localMerged = applyQuickAccessWireProfileBindingsToBackup(localBase, projectOnly)
+  // Ensure the saved project map reflects the caller's intended slot set (including clears).
+  getQuickAccessWireProfileBindingsContainer(localMerged)
+  localMerged.blueprintSummaries.operationsBlueprintQuickAccessWireProfileBindings = mergeBlueprintQuickAccessWireProfileBindings(
+    latestLocalBindings,
+    projectOnly,
+  )
+  localMerged._lastSavedAt = new Date().toISOString()
+  saveBackupData(localMerged, userId || undefined, { notify: false })
+  notifyLocalBindingsSaved()
+
+  const localOnlyWarning = (detail?: string): SaveBlueprintAnnotationsResult => ({
+    localSaved: true,
+    cloudSynced: false,
+    warning: isLocalDevOrigin()
+      ? (detail ? `Quick Access wire bindings saved locally. Cloud sync blocked: ${detail}` : 'Quick Access wire bindings saved locally. Localhost cloud sync blocked while remote is newer.')
+      : (detail ? `Quick Access wire bindings saved locally. Cloud sync will retry shortly. (${detail})` : 'Quick Access wire bindings saved locally. Cloud sync will retry shortly.'),
+  })
+
+  if (!isSupabaseConfigured()) return localOnlyWarning('Supabase not configured')
+
+  const remote = await fetchLatestRemoteBackup(userId || undefined)
+  if (remote.error) {
+    console.warn('[QuickAccessWireBindings] Remote fetch failed - local-only save', remote.error)
+    return localOnlyWarning(remote.error)
+  }
+
+  const latestAfterLocal = getBackupData() || localMerged
+  const latestBindings = getOperationsBlueprintQuickAccessWireProfileBindings(latestAfterLocal)
+
+  if (!remote.hasRemoteRow || !remote.remoteData) {
+    const merged = applyQuickAccessWireProfileBindingsToBackup(latestAfterLocal, latestBindings)
+    const result = await saveBackupDataAndSyncNow(merged, 'blueprintSummaries', { source: 'quick-access-wire-bindings-first-sync', _scopes: [SCOPE] })
+    return result.success
+      ? { localSaved: true, cloudSynced: true }
+      : { localSaved: true, cloudSynced: false, warning: result.error || 'Quick Access wire bindings saved locally. Cloud sync did not complete.', error: result.error }
+  }
+
+  const mergedFromRemote = applyQuickAccessWireProfileBindingsToBackup(remote.remoteData, latestBindings)
+  const result = await saveBackupWithRemoteBaselineSync(
+    mergedFromRemote,
+    {
+      remoteUpdatedAt: remote.remoteUpdatedAt,
+      remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
+    },
+    { source: 'quick-access-wire-bindings-remote-merge', _scopes: [SCOPE] },
+  )
+
+  if (result.success) return { localSaved: true, cloudSynced: true }
+  return {
+    localSaved: result.localSaved !== false,
+    cloudSynced: false,
+    warning: result.error || 'Quick Access wire bindings saved locally. Cloud sync did not complete.',
+    error: result.error || 'Failed to sync Quick Access wire bindings.',
+  }
+}
+
+export async function saveOperationsBlueprintQuickAccessWireProfileBinding(
+  backup: any,
+  projectId: string,
+  slotKey: string,
+  wireProfileId: string | null,
+): Promise<SaveBlueprintAnnotationsResult> {
+  const now = new Date().toISOString()
+  return saveOperationsBlueprintQuickAccessWireProfileBindings(backup, projectId, {
+    [slotKey]: { wireProfileId, updatedAt: now },
+  })
+}
+
 export async function deleteUnreferencedOperationsBlueprintWireProfile(
   backup: any,
   projectId: string,
@@ -1356,7 +1557,9 @@ export async function deleteUnreferencedOperationsBlueprintWireProfile(
 ): Promise<SaveBlueprintAnnotationsResult> {
   const existing = getOperationsBlueprintWireProfileById(backup, projectId, profileId)
   if (!existing) return { localSaved: false, cloudSynced: false, error: 'Wire profile not found.' }
-  if (identifyOperationsBlueprintWireProfileReferences(backup, projectId, profileId).length > 0) {
+  const annotationRefs = identifyOperationsBlueprintWireProfileReferences(backup, projectId, profileId)
+  const quickAccessRefs = identifyOperationsBlueprintQuickAccessWireProfileReferences(backup, projectId, profileId)
+  if (annotationRefs.length > 0 || quickAccessRefs.length > 0) {
     return { localSaved: false, cloudSynced: false, error: 'Referenced wire profiles cannot be hard-deleted.' }
   }
   return upsertOperationsBlueprintWireProfile(backup, createWireProfileTombstone(existing))

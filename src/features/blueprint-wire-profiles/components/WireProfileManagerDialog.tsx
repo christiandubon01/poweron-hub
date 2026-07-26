@@ -8,6 +8,7 @@ import {
   deleteUnreferencedOperationsBlueprintWireProfile,
   duplicateOperationsBlueprintWireProfile,
   getOperationsBlueprintWireProfiles,
+  identifyOperationsBlueprintQuickAccessWireProfileReferences,
   identifyOperationsBlueprintWireProfileReferences,
   restoreOperationsBlueprintWireProfile,
   updateOperationsBlueprintWireProfile,
@@ -184,7 +185,8 @@ export function WireProfileManagerDialog({
     const nextSummaries: Record<string, WireProfileReferenceSummary> = {}
     for (const profile of nextProfiles) {
       const references = identifyOperationsBlueprintWireProfileReferences(backup, cleanProjectId, profile.id)
-      nextSummaries[profile.id] = summarizeWireProfileReferences(references, profile.id)
+      const quickAccessSlotKeys = identifyOperationsBlueprintQuickAccessWireProfileReferences(backup, cleanProjectId, profile.id)
+      nextSummaries[profile.id] = summarizeWireProfileReferences(references, profile.id, quickAccessSlotKeys)
     }
     setProfiles(nextProfiles)
     setSummaries(nextSummaries)
@@ -655,7 +657,12 @@ export function WireProfileManagerDialog({
                     onRestore={restoreProfile}
                     onDelete={(profile) => {
                       if (busy) return
-                      const summary = summarizeWireProfileReferences(identifyOperationsBlueprintWireProfileReferences(getBackupData(), cleanProjectId, profile.id), profile.id)
+                      const backupForDelete = getBackupData()
+                      const summary = summarizeWireProfileReferences(
+                        identifyOperationsBlueprintWireProfileReferences(backupForDelete, cleanProjectId, profile.id),
+                        profile.id,
+                        identifyOperationsBlueprintQuickAccessWireProfileReferences(backupForDelete, cleanProjectId, profile.id),
+                      )
                       if (summary.totalLiveReferences > 0) {
                         setMessage({ tone: 'warning', text: `${summary.totalLiveReferences} existing circuit reference${summary.totalLiveReferences === 1 ? '' : 's'} use this profile. Archive it instead of deleting.` })
                         return
@@ -685,7 +692,7 @@ export function WireProfileManagerDialog({
 
             {selectedProfile && mode === 'edit' && (
               <div className="border-t border-gray-800 px-4 py-3 text-xs text-gray-400">
-                References: {summaries[selectedProfile.id]?.totalLiveReferences || 0} live, {summaries[selectedProfile.id]?.defaultAssignmentCount || 0} default, {summaries[selectedProfile.id]?.segmentOverrideCount || 0} segment override, {summaries[selectedProfile.id]?.blueprintSetCount || 0} set{(summaries[selectedProfile.id]?.blueprintSetCount || 0) === 1 ? '' : 's'}, {summaries[selectedProfile.id]?.pageCount || 0} page{(summaries[selectedProfile.id]?.pageCount || 0) === 1 ? '' : 's'}.
+                References: {summaries[selectedProfile.id]?.totalLiveReferences || 0} live ({summaries[selectedProfile.id]?.annotationReferenceCount || 0} annotation, {summaries[selectedProfile.id]?.quickAccessReferenceCount || 0} Quick Access), {summaries[selectedProfile.id]?.defaultAssignmentCount || 0} default, {summaries[selectedProfile.id]?.segmentOverrideCount || 0} segment override, {summaries[selectedProfile.id]?.blueprintSetCount || 0} set{(summaries[selectedProfile.id]?.blueprintSetCount || 0) === 1 ? '' : 's'}, {summaries[selectedProfile.id]?.pageCount || 0} page{(summaries[selectedProfile.id]?.pageCount || 0) === 1 ? '' : 's'}.
               </div>
             )}
           </>

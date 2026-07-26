@@ -35,7 +35,7 @@ import { mergeRemoteMultiDayServiceCallsIntoOutgoing } from './serviceScopeMerge
 // blueprint save path uses, so a stale unrelated whole-app save cannot clobber newer
 // remote blueprint annotations / scope layers. blueprintLibraryService only imports
 // backupDataService dynamically, so this static edge introduces no module cycle.
-import { mergeBlueprintAnnotationsById, mergeBlueprintScopeLayersById, mergeBlueprintSetRecordsById, mergeBlueprintWireProfilesById, mergeOperationsBlueprintLibraryById } from './blueprintLibraryService'
+import { mergeBlueprintAnnotationsById, mergeBlueprintQuickAccessWireProfileBindings, mergeBlueprintScopeLayersById, mergeBlueprintSetRecordsById, mergeBlueprintWireProfilesById, mergeOperationsBlueprintLibraryById } from './blueprintLibraryService'
 import { idbDelete, idbGet, idbSet } from './idbStorage'
 
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
@@ -2362,6 +2362,11 @@ function mergeBlueprintSummariesObject(remoteRaw: any, localRaw: any): Record<st
         )
       }
       merged[key] = nextProfiles
+    } else if (key === 'operationsBlueprintQuickAccessWireProfileBindings') {
+      // EST-1C: project→slot→{wireProfileId,updatedAt} bindings. Visual Quick Access
+      // presets stay in localStorage; only these profile IDs sync. Per-slot LWW merge
+      // so Slot 1 and Slot 2 edits on different devices both survive.
+      merged[key] = mergeBlueprintQuickAccessWireProfileBindings(merged[key], localVal)
     } else if (key === 'operationsBlueprintLibrary') {
       const remoteLibrary = Array.isArray(merged[key]) ? merged[key] as any[] : []
       const localLibrary = Array.isArray(localVal) ? localVal as any[] : []
@@ -2984,6 +2989,18 @@ export function mergeRemoteBlueprintSummariesIntoOutgoing(outgoing: BackupData, 
         outProfiles[projectId] = mergeBlueprintWireProfilesById(remoteList, outList)
       }
       outBp.operationsBlueprintWireProfiles = outProfiles
+    }
+
+    // Quick Access Wire Profile bindings: Record<projectId, Record<slotKey, {wireProfileId,updatedAt}>>
+    // Visual presets remain device-local; bindings are project-scoped BackupData.
+    if (
+      (remoteBp.operationsBlueprintQuickAccessWireProfileBindings && typeof remoteBp.operationsBlueprintQuickAccessWireProfileBindings === 'object')
+      || (outBp.operationsBlueprintQuickAccessWireProfileBindings && typeof outBp.operationsBlueprintQuickAccessWireProfileBindings === 'object')
+    ) {
+      outBp.operationsBlueprintQuickAccessWireProfileBindings = mergeBlueprintQuickAccessWireProfileBindings(
+        remoteBp.operationsBlueprintQuickAccessWireProfileBindings,
+        outBp.operationsBlueprintQuickAccessWireProfileBindings,
+      )
     }
 
     merged.blueprintSummaries = outBp

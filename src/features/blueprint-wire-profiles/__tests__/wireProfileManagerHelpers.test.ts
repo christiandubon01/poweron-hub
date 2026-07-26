@@ -116,6 +116,21 @@ describe('wire profile reference summary', () => {
   it('counts unique live annotations, defaults, segment overrides, sets, and pages safely', () => {
     expect(summarizeWireProfileReferences(annotations, 'wire_profile_a')).toEqual({
       totalLiveReferences: 4,
+      annotationReferenceCount: 4,
+      quickAccessReferenceCount: 0,
+      totalReferenceCount: 4,
+      quickAccessSlotKeys: [],
+      defaultAssignmentCount: 3,
+      segmentOverrideCount: 3,
+      blueprintSetCount: 2,
+      pageCount: 2,
+    })
+    expect(summarizeWireProfileReferences(annotations, 'wire_profile_a', ['slot-1', 'slot-3'])).toEqual({
+      totalLiveReferences: 6,
+      annotationReferenceCount: 4,
+      quickAccessReferenceCount: 2,
+      totalReferenceCount: 6,
+      quickAccessSlotKeys: ['slot-1', 'slot-3'],
       defaultAssignmentCount: 3,
       segmentOverrideCount: 3,
       blueprintSetCount: 2,

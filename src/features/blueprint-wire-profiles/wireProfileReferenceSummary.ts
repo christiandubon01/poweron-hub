@@ -1,15 +1,20 @@
 import type { BlueprintAnnotation } from '@/services/blueprintLibraryService'
+import {
+  buildCombinedWireProfileReferenceSummary,
+  type QuickAccessWireProfileReferenceSummary,
+} from './profileAwareQuickAccess'
 
-export type WireProfileReferenceSummary = {
+export type WireProfileReferenceSummary = QuickAccessWireProfileReferenceSummary & {
+  /** Combined live annotation + Quick Access binding references (delete gate). */
   totalLiveReferences: number
-  defaultAssignmentCount: number
-  segmentOverrideCount: number
-  blueprintSetCount: number
-  pageCount: number
 }
 
 const EMPTY_SUMMARY: WireProfileReferenceSummary = {
   totalLiveReferences: 0,
+  annotationReferenceCount: 0,
+  quickAccessReferenceCount: 0,
+  totalReferenceCount: 0,
+  quickAccessSlotKeys: [],
   defaultAssignmentCount: 0,
   segmentOverrideCount: 0,
   blueprintSetCount: 0,
@@ -25,6 +30,7 @@ function readMeta(annotation: BlueprintAnnotation | any): Record<string, unknown
 export function summarizeWireProfileReferences(
   references: Array<BlueprintAnnotation | any>,
   profileId: string,
+  quickAccessSlotKeys: string[] = [],
 ): WireProfileReferenceSummary {
   const id = String(profileId || '').trim()
   if (!id) return { ...EMPTY_SUMMARY }
@@ -57,12 +63,18 @@ export function summarizeWireProfileReferences(
     segmentOverrideCount += segmentMatches
   }
 
-  return {
-    totalLiveReferences: liveAnnotationIds.size,
+  const combined = buildCombinedWireProfileReferenceSummary({
+    annotationReferenceCount: liveAnnotationIds.size,
     defaultAssignmentCount,
     segmentOverrideCount,
     blueprintSetCount: blueprintSetIds.size,
     pageCount: pages.size,
+    quickAccessSlotKeys,
+  })
+
+  return {
+    ...combined,
+    totalLiveReferences: combined.totalReferenceCount,
   }
 }
 

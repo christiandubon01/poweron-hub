@@ -54,7 +54,10 @@ import {
   deleteOperationsBlueprintScopeLayer,
   getBlueprintSignedUrl,
   getOperationsBlueprintAnnotations,
+  getOperationsBlueprintQuickAccessWireProfileBinding,
   getOperationsBlueprintScopeLayers,
+  getOperationsBlueprintWireProfiles,
+  saveOperationsBlueprintQuickAccessWireProfileBinding,
   saveOperationsBlueprintScopeLayerAnimationScene,
   saveOperationsBlueprintScopeLayers,
   SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
@@ -137,7 +140,18 @@ import {
   type RouteBuilderAnnotation,
 } from '@/features/blueprint-animation/routeBuilderModel'
 import { findFirstRouteDeviceHit, findNearestRouteNode, findNearestRouteSegment, resolveRoutePickIntent } from '@/features/blueprint-animation/routePicking'
-import { shouldCloseWireProfileManagerForProjectChange, WireProfileManagerDialog } from '@/features/blueprint-wire-profiles'
+import {
+  QUICK_ACCESS_BINDING_SAVE_FAILURE_MESSAGE,
+  applyQuickAccessWireProfileToAnnotationMeta,
+  decideQuickAccessWireProfileActivation,
+  getQuickAccessSlotKey,
+  listSelectableQuickAccessWireProfiles,
+  resolveQuickAccessWireProfileDisplay,
+  supportsWireProfileAssignment,
+  validateQuickAccessActivationIdentity,
+  shouldCloseWireProfileManagerForProjectChange,
+  WireProfileManagerDialog,
+} from '@/features/blueprint-wire-profiles'
 
 let _pdfjsLib: typeof import('pdfjs-dist') | null = null
 async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
@@ -3450,9 +3464,52 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [quickAccessPresets, setQuickAccessPresets] = useState<Array<QuickAccessPreset | null>>(loadQuickAccessPresets)
   const [quickAccessModalSlot, setQuickAccessModalSlot] = useState<number | null>(null)
   const [quickAccessDraft, setQuickAccessDraft] = useState<QuickAccessPreset | null>(null)
+  /** Draft Wire Profile binding for the open settings slot (project-scoped BackupData). */
+  const [quickAccessDraftWireProfileId, setQuickAccessDraftWireProfileId] = useState<string | null>(null)
+  const [quickAccessBindingSaveError, setQuickAccessBindingSaveError] = useState<string | null>(null)
+  const [quickAccessBindingSaving, setQuickAccessBindingSaving] = useState(false)
+  /**
+   * Scoped Quick Access activation for Wire Profile assignment.
+   * Visual presets stay in localStorage; this carries the project-scoped binding
+   * for the current drawing session only (cleared on manual tool / project switch).
+   */
+  const [activeQuickAccessSession, setActiveQuickAccessSession] = useState<{
+    slotKey: string
+    toolType: QuickAccessTool
+    toolVariant?: ShapeKind
+    projectId: string
+    blueprintSetId: string
+    wireProfileId: string | null
+    activationId: string
+  } | null>(null)
   const [isWireProfileManagerOpen, setIsWireProfileManagerOpen] = useState(false)
   const [wireProfileRemoteRefreshVersion, setWireProfileRemoteRefreshVersion] = useState(0)
   const previousWireProfileProjectIdRef = useRef<string | null>(blueprint?.projectId ?? null)
+
+  const clearActiveQuickAccessSession = useCallback(() => {
+    setActiveQuickAccessSession(null)
+  }, [])
+
+  const readProjectQuickAccessBinding = useCallback((slotIndex: number): string | null => {
+    const slotKey = getQuickAccessSlotKey(slotIndex)
+    const projectId = String(blueprint?.projectId || '').trim()
+    if (!slotKey || !projectId) return null
+    try {
+      return getOperationsBlueprintQuickAccessWireProfileBinding(getBackupData(), projectId, slotKey)
+    } catch {
+      return null
+    }
+  }, [blueprint?.projectId, wireProfileRemoteRefreshVersion])
+
+  const projectWireProfiles = useMemo(() => {
+    const projectId = String(blueprint?.projectId || '').trim()
+    if (!projectId) return []
+    try {
+      return getOperationsBlueprintWireProfiles(getBackupData(), projectId)
+    } catch {
+      return []
+    }
+  }, [blueprint?.projectId, wireProfileRemoteRefreshVersion])
 
   const buildQuickAccessDraft = (slotIndex: number, preset?: QuickAccessPreset | null): QuickAccessPreset => {
     if (preset) return JSON.parse(JSON.stringify(preset))
@@ -3482,14 +3539,18 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const safeIndex = Math.max(0, Math.min(QUICK_ACCESS_SLOT_COUNT - 1, slotIndex))
     setQuickAccessModalSlot(safeIndex)
     setQuickAccessDraft(buildQuickAccessDraft(safeIndex, quickAccessPresets[safeIndex]))
+    setQuickAccessDraftWireProfileId(readProjectQuickAccessBinding(safeIndex))
+    setQuickAccessBindingSaveError(null)
   }
 
   const selectQuickAccessSlotForEdit = (slotIndex: number) => {
     setQuickAccessModalSlot(slotIndex)
     setQuickAccessDraft(buildQuickAccessDraft(slotIndex, quickAccessPresets[slotIndex]))
+    setQuickAccessDraftWireProfileId(readProjectQuickAccessBinding(slotIndex))
+    setQuickAccessBindingSaveError(null)
   }
 
-  const persistQuickAccessDraft = () => {
+  const persistQuickAccessDraft = async () => {
     if (quickAccessModalSlot == null || !quickAccessDraft) return
     const now = new Date().toISOString()
     const nextPreset: QuickAccessPreset = {
@@ -3499,6 +3560,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       createdAt: quickAccessPresets[quickAccessModalSlot]?.createdAt || quickAccessDraft.createdAt || now,
       updatedAt: now,
     }
+    // A) Visual preset — device-local localStorage (existing path).
     setQuickAccessPresets((previous) => {
       const next = [...previous]
       next[quickAccessModalSlot] = nextPreset
@@ -3506,20 +3568,100 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       return next
     })
     setQuickAccessDraft(nextPreset)
+
+    // B) Project Wire Profile binding — BackupData (synced). Clear when saved as non-wire.
+    const slotKey = getQuickAccessSlotKey(quickAccessModalSlot)
+    const projectId = String(blueprint?.projectId || '').trim()
+    if (!slotKey || !projectId) {
+      setQuickAccessBindingSaveError(null)
+      return
+    }
+    const bindingSupports = supportsWireProfileAssignment({
+      toolType: nextPreset.toolType,
+      toolVariant: nextPreset.toolVariant,
+    })
+    const nextBindingId = bindingSupports ? quickAccessDraftWireProfileId : null
+    setQuickAccessBindingSaving(true)
+    setQuickAccessBindingSaveError(null)
+    try {
+      const result = await saveOperationsBlueprintQuickAccessWireProfileBinding(
+        getBackupData(),
+        projectId,
+        slotKey,
+        nextBindingId,
+      )
+      if (!result.localSaved) {
+        setQuickAccessBindingSaveError(result.error || QUICK_ACCESS_BINDING_SAVE_FAILURE_MESSAGE)
+      } else {
+        setQuickAccessDraftWireProfileId(nextBindingId)
+        setWireProfileRemoteRefreshVersion((version) => version + 1)
+        if (result.warning || result.error) {
+          setQuickAccessBindingSaveError(result.warning || result.error || null)
+        }
+      }
+    } catch (error: any) {
+      setQuickAccessBindingSaveError(error?.message || QUICK_ACCESS_BINDING_SAVE_FAILURE_MESSAGE)
+    } finally {
+      setQuickAccessBindingSaving(false)
+    }
   }
 
-  const clearQuickAccessSlot = (slotIndex: number) => {
+  const clearQuickAccessSlot = async (slotIndex: number) => {
     setQuickAccessPresets((previous) => {
       const next = [...previous]
       next[slotIndex] = null
       saveQuickAccessPresets(next)
       return next
     })
-    if (quickAccessModalSlot === slotIndex) setQuickAccessDraft(buildQuickAccessDraft(slotIndex, null))
+    if (quickAccessModalSlot === slotIndex) {
+      setQuickAccessDraft(buildQuickAccessDraft(slotIndex, null))
+      setQuickAccessDraftWireProfileId(null)
+    }
+    const slotKey = getQuickAccessSlotKey(slotIndex)
+    const projectId = String(blueprint?.projectId || '').trim()
+    if (slotKey && projectId) {
+      try {
+        await saveOperationsBlueprintQuickAccessWireProfileBinding(getBackupData(), projectId, slotKey, null)
+        setWireProfileRemoteRefreshVersion((version) => version + 1)
+      } catch { /* binding clear is best-effort alongside visual clear */ }
+    }
+    const activeKey = getQuickAccessSlotKey(slotIndex)
+    if (activeKey && activeQuickAccessSession?.slotKey === activeKey) clearActiveQuickAccessSession()
   }
 
-  const applyQuickAccessPreset = (preset: QuickAccessPreset) => {
+  const applyQuickAccessPreset = (preset: QuickAccessPreset, slotIndex: number) => {
     if (!QUICK_ACCESS_TOOL_SET.has(preset.toolType)) return
+    const slotKey = getQuickAccessSlotKey(slotIndex)
+    const projectId = String(blueprint?.projectId || '').trim()
+    const blueprintSetId = String(blueprint?.id || '').trim()
+    const supportsBinding = supportsWireProfileAssignment({
+      toolType: preset.toolType,
+      toolVariant: preset.toolVariant,
+    })
+    const wireProfileId = supportsBinding ? readProjectQuickAccessBinding(slotIndex) : null
+    if (supportsBinding) {
+      const decision = decideQuickAccessWireProfileActivation(wireProfileId, projectWireProfiles)
+      if (!decision.ok) {
+        setActionMsg({ type: 'warning', text: decision.message })
+        return
+      }
+      if (slotKey && projectId && blueprintSetId) {
+        setActiveQuickAccessSession({
+          slotKey,
+          toolType: preset.toolType,
+          toolVariant: preset.toolVariant,
+          projectId,
+          blueprintSetId,
+          wireProfileId: decision.wireProfileId,
+          activationId: `qa_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        })
+      } else {
+        clearActiveQuickAccessSession()
+      }
+    } else {
+      clearActiveQuickAccessSession()
+    }
+
     setOpenPopover(null)
     setToolMode(preset.toolType)
     setToolbarBucket(
@@ -3844,6 +3986,17 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setPathDraftPoints([])
     setPathCursorPx(null)
   }, [effectiveTool, shapeKind, currentPage])
+
+  // EST-1C: preset-only Wire Profile state is scoped to the activated Quick Access tool.
+  useEffect(() => {
+    if (!activeQuickAccessSession) return
+    const stillMatches = effectiveTool === activeQuickAccessSession.toolType
+      && (
+        !activeQuickAccessSession.toolVariant
+        || shapeKind === activeQuickAccessSession.toolVariant
+      )
+    if (!stillMatches) clearActiveQuickAccessSession()
+  }, [effectiveTool, shapeKind, activeQuickAccessSession, clearActiveQuickAccessSession])
 
   const clampScroll = useCallback((scroll: HTMLDivElement, left: number, top: number) => {
     const maxLeft = Math.max(0, scroll.scrollWidth - scroll.clientWidth)
@@ -4555,7 +4708,25 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     })) {
       setIsWireProfileManagerOpen(false)
     }
-  }, [blueprint?.projectId, isWireProfileManagerOpen])
+    // EST-1C: never carry a Project A Quick Access profile into Project B drawing.
+    if (previousProjectId && nextProjectId && previousProjectId !== nextProjectId) {
+      clearActiveQuickAccessSession()
+      pathDraftRef.current = []
+      setPathDraftPoints([])
+      setPathCursorPx(null)
+      if (quickAccessModalSlot != null) {
+        setQuickAccessDraftWireProfileId(readProjectQuickAccessBinding(quickAccessModalSlot))
+      }
+    }
+  }, [blueprint?.projectId, isWireProfileManagerOpen, clearActiveQuickAccessSession, quickAccessModalSlot, readProjectQuickAccessBinding])
+
+  useEffect(() => {
+    // Blueprint-set identity change also invalidates scoped Quick Access activation.
+    clearActiveQuickAccessSession()
+    pathDraftRef.current = []
+    setPathDraftPoints([])
+    setPathCursorPx(null)
+  }, [blueprint?.id, clearActiveQuickAccessSession])
 
   // Escape key handler: closes UI state first, then exits fullscreen if no UI open.
   // This ensures Escape closes annotation editors, measurements, etc. before exiting fullscreen.
@@ -6124,7 +6295,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       }
     }
 
-    const meta = {
+    let meta: Record<string, any> = {
       shapeKind,
       points,
       ...(topology ? { pointIds: topology.pointIds, segmentIds: topology.segmentIds } : {}),
@@ -6137,6 +6308,46 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       fillOpacity: shapeOptions.fillOpacity,
       ...(isCircuit ? { totalDistance, distanceUnit, distanceLabel } : {}),
     }
+
+    // EST-1C: copy validated Quick Access Wire Profile binding once at commit.
+    // Appearance remains from shapeOptions; segmentWireProfileIds stays absent.
+    if (isCircuit && activeQuickAccessSession) {
+      const identity = validateQuickAccessActivationIdentity({
+        activationProjectId: activeQuickAccessSession.projectId,
+        activationBlueprintSetId: activeQuickAccessSession.blueprintSetId,
+        currentProjectId: blueprint.projectId,
+        currentBlueprintSetId: blueprint.id,
+      })
+      const toolMatches = supportsWireProfileAssignment({
+        toolType: 'shape',
+        toolVariant: shapeKind,
+      }) && (
+        !activeQuickAccessSession.toolVariant
+        || activeQuickAccessSession.toolVariant === shapeKind
+      )
+      if (!identity.ok || !toolMatches) {
+        showTransientSyncNotice(
+          identity.ok
+            ? 'Quick Access Wire Profile binding no longer matches this drawing tool.'
+            : 'Quick Access Wire Profile binding expired after a project or blueprint change.',
+        )
+        clearActiveQuickAccessSession()
+        setToolMode('select')
+        return
+      }
+      const decision = decideQuickAccessWireProfileActivation(
+        activeQuickAccessSession.wireProfileId,
+        getOperationsBlueprintWireProfiles(getBackupData(), blueprint.projectId),
+      )
+      if (!decision.ok) {
+        showTransientSyncNotice(decision.message)
+        clearActiveQuickAccessSession()
+        setToolMode('select')
+        return
+      }
+      meta = applyQuickAccessWireProfileToAnnotationMeta(meta, decision.wireProfileId)
+    }
+
     const ann: BlueprintAnnotation = {
       id: `ann_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       blueprintSetId: blueprint.id,
@@ -6153,8 +6364,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setAllAnnotations((prev) => [...prev, ann])
     setFocusedAnnotationId(ann.id)
     setToolMode('select')
+    clearActiveQuickAccessSession()
     void persistAnnotation(ann)
-  }, [blueprint, currentPage, shapeKind, shapeOptions, persistAnnotation, savedCalibrations, detectedScales, showTransientSyncNotice, getPageSizeInches, displaySize.w, displaySize.h])
+  }, [blueprint, currentPage, shapeKind, shapeOptions, persistAnnotation, savedCalibrations, detectedScales, showTransientSyncNotice, getPageSizeInches, displaySize.w, displaySize.h, activeQuickAccessSession, clearActiveQuickAccessSession])
 
   // ── Spacebar finishes a multi-point shape draft (CIRCUITSPACE) ──────────────
   // Additive third finish gesture for Polyline / Circuit Path / Circuit Arc, mirroring the
@@ -10411,12 +10623,23 @@ const annotationPanelSizeClass =
                     className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                   ><Shapes size={12} /> Shapes{toolMode === 'shape' && <span className="text-gray-400 text-[10px] ml-0.5">({getShapeKindLabel(shapeKind)})</span>}</button>
                   <button
-                    onClick={() => { setToolMode('shape'); setShapeKind('circuit-path'); setOpenPopover(null) }}
+                    onClick={() => {
+                      // Manual tool selection remains Unassigned — clear preset-only binding.
+                      clearActiveQuickAccessSession()
+                      setToolMode('shape')
+                      setShapeKind('circuit-path')
+                      setOpenPopover(null)
+                    }}
                     className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' && shapeKind === 'circuit-path' ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                     title="Click multiple symbols/points to connect them, then Stop Circuit Path"
                   ><Waypoints size={12} /> Circuit Path</button>
                   <button
-                    onClick={() => { setToolMode('shape'); setShapeKind('circuit-arc'); setOpenPopover(null) }}
+                    onClick={() => {
+                      clearActiveQuickAccessSession()
+                      setToolMode('shape')
+                      setShapeKind('circuit-arc')
+                      setOpenPopover(null)
+                    }}
                     className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' && shapeKind === 'circuit-arc' ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                     title="Like Circuit Path, but each run is drawn as a curve with its own draggable curvature handle"
                   ><Spline size={12} /> Circuit Arc</button>
@@ -10803,9 +11026,16 @@ const annotationPanelSizeClass =
                     <button
                       key={`quick-access-slot-${index + 1}`}
                       type="button"
-                      onClick={() => preset ? applyQuickAccessPreset(preset) : openQuickAccessSettings(index)}
+                      onClick={() => preset ? applyQuickAccessPreset(preset, index) : openQuickAccessSettings(index)}
                       className={`relative flex min-h-11 min-w-0 items-center gap-2 rounded-md border px-2 py-2 text-left transition-colors ${preset ? 'border-gray-700 bg-gray-900/40 text-gray-200 hover:border-blue-500/60 hover:bg-blue-900/15' : 'border-dashed border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'}`}
-                      title={preset ? `Activate ${preset.label}` : `Configure Slot ${index + 1}`}
+                      title={(() => {
+                        if (!preset) return `Configure Slot ${index + 1}`
+                        if (!supportsWireProfileAssignment({ toolType: preset.toolType, toolVariant: preset.toolVariant })) {
+                          return `Activate ${preset.label}`
+                        }
+                        const display = resolveQuickAccessWireProfileDisplay(readProjectQuickAccessBinding(index), projectWireProfiles)
+                        return `Activate ${preset.label} — ${display.label}`
+                      })()}
                     >
                       {preset ? (
                         <>
@@ -10813,6 +11043,11 @@ const annotationPanelSizeClass =
                           <span className="min-w-0 flex-1">
                             <span className="block text-[9px] uppercase tracking-wide text-gray-500">Slot {index + 1}</span>
                             <span className="block truncate text-[11px] font-medium">{preset.label}</span>
+                            {supportsWireProfileAssignment({ toolType: preset.toolType, toolVariant: preset.toolVariant }) && (
+                              <span className="block truncate text-[10px] text-gray-500">
+                                {resolveQuickAccessWireProfileDisplay(readProjectQuickAccessBinding(index), projectWireProfiles).label}
+                              </span>
+                            )}
                           </span>
                           {preset.color && (
                             <span className="h-3 w-3 shrink-0 rounded-full border border-white/30" style={{ backgroundColor: preset.color }} />
@@ -13369,6 +13604,7 @@ const annotationPanelSizeClass =
                           toolType,
                           color: toolColors[toolType as ToolKey] || previous.color,
                         }) : previous)
+                        if (toolType !== 'shape') setQuickAccessDraftWireProfileId(null)
                       }}
                       className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
                     >
@@ -13381,7 +13617,14 @@ const annotationPanelSizeClass =
                       Shape / electrical symbol variation
                       <select
                         value={quickAccessDraft.toolVariant || 'square'}
-                        onChange={(event) => setQuickAccessDraft((previous) => previous ? ({ ...previous, toolVariant: event.target.value as ShapeKind }) : previous)}
+                        onChange={(event) => {
+                          const toolVariant = event.target.value as ShapeKind
+                          setQuickAccessDraft((previous) => previous ? ({ ...previous, toolVariant }) : previous)
+                          // Path ↔ Arc retains binding; leaving wire tools clears the draft selection display.
+                          if (!supportsWireProfileAssignment({ toolType: 'shape', toolVariant })) {
+                            setQuickAccessDraftWireProfileId(null)
+                          }
+                        }}
                         className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
                       >
                         <optgroup label="Shapes">
@@ -13395,6 +13638,45 @@ const annotationPanelSizeClass =
                         </optgroup>
                       </select>
                     </label>
+                  )}
+
+                  {supportsWireProfileAssignment({
+                    toolType: quickAccessDraft.toolType,
+                    toolVariant: quickAccessDraft.toolVariant,
+                  }) && (
+                    <label className="block text-xs text-gray-400 sm:col-span-2">
+                      Wire Profile
+                      <select
+                        value={quickAccessDraftWireProfileId ?? ''}
+                        onChange={(event) => {
+                          const value = event.target.value
+                          setQuickAccessDraftWireProfileId(value ? value : null)
+                        }}
+                        disabled={!blueprint?.projectId || quickAccessBindingSaving}
+                        className="mt-1 w-full rounded-md border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500 disabled:opacity-50"
+                      >
+                        {listSelectableQuickAccessWireProfiles(projectWireProfiles, quickAccessDraftWireProfileId).map((option) => (
+                          <option key={option.profileId ?? 'unassigned'} value={option.profileId ?? ''}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="mt-1 block text-[11px] leading-snug text-gray-500">
+                        Assigned to new Circuit Path and Circuit Arc annotations. Visual line settings remain independent.
+                      </span>
+                      <span className="mt-0.5 block text-[11px] leading-snug text-gray-600">
+                        Labor remains in the Work Package.
+                      </span>
+                    </label>
+                  )}
+
+                  {quickAccessBindingSaveError && (
+                    <div className="sm:col-span-2 rounded-md border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-[11px] text-amber-200">
+                      {quickAccessBindingSaveError === QUICK_ACCESS_BINDING_SAVE_FAILURE_MESSAGE
+                        || /could not be saved|failed/i.test(quickAccessBindingSaveError)
+                        ? QUICK_ACCESS_BINDING_SAVE_FAILURE_MESSAGE
+                        : quickAccessBindingSaveError}
+                    </div>
                   )}
 
                   <label className="block text-xs text-gray-400">
@@ -13599,8 +13881,8 @@ const annotationPanelSizeClass =
                 <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-gray-800 pt-4">
                   <button
                     type="button"
-                    onClick={() => clearQuickAccessSlot(quickAccessModalSlot)}
-                    disabled={!quickAccessPresets[quickAccessModalSlot]}
+                    onClick={() => { void clearQuickAccessSlot(quickAccessModalSlot) }}
+                    disabled={!quickAccessPresets[quickAccessModalSlot] || quickAccessBindingSaving}
                     className="rounded-md border border-red-900/60 px-3 py-2 text-xs font-medium text-red-300 hover:bg-red-950/30 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     Clear Slot
@@ -13615,10 +13897,11 @@ const annotationPanelSizeClass =
                     </button>
                     <button
                       type="button"
-                      onClick={persistQuickAccessDraft}
-                      className="rounded-md bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-500"
+                      onClick={() => { void persistQuickAccessDraft() }}
+                      disabled={quickAccessBindingSaving}
+                      className="rounded-md bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
                     >
-                      Save Preset
+                      {quickAccessBindingSaving ? 'Saving…' : 'Save Preset'}
                     </button>
                   </div>
                 </div>
