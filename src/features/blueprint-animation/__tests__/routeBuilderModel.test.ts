@@ -151,12 +151,14 @@ describe('routeBuilderModel', () => {
       expect(isRouteBuilderSourceKind(kind)).toBe(false)
       expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
     }
-    expect(inferRouteBuilderNodeRoles('electrical-receptacle')).toEqual(['load'])
-    expect(inferRouteBuilderNodeRoles('electrical-gfci')).toEqual(['load'])
+    for (const kind of ['electrical-receptacle', 'electrical-gfci', 'electrical-gfci-wp', 'electrical-receptacle-240v', 'electrical-single-receptacle', 'electrical-half-hot-receptacle']) {
+      expect(inferRouteBuilderNodeRoles(kind)).toEqual(['load'])
+      expect(isRouteBuilderLoadKind(kind)).toBe(true)
+      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
+    }
     expect(inferRouteBuilderNodeRoles('electrical-emergency-exit-sign')).toEqual(['load'])
     expect(inferRouteBuilderNodeRoles(undefined, { junction: true })).toEqual(['junction'])
-    expect(isRouteBuilderLoadKind('electrical-receptacle')).toBe(true)
-    expect(isRouteBuilderLoadKind('electrical-gfci')).toBe(true)
     expect(isRouteBuilderLoadKind('electrical-emergency-exit-sign')).toBe(true)
     expect(isRouteBuilderDeviceKind('electrical-emergency-exit-sign')).toBe(true)
     expect(isRouteBuilderSourceKind('electrical-emergency-exit-sign')).toBe(false)

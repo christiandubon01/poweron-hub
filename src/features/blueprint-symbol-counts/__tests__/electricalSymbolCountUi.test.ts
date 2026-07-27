@@ -78,7 +78,7 @@ describe('blueprint-symbol-counts UI', () => {
     const markup = renderToStaticMarkup(element(ElectricalSymbolCountSummary, { totals: rollup.totals, contributions: result.contributions }))
     expect(markup).toContain('Electrical Symbol Counts')
     expect(markup).toContain('Package attribution only')
-    expect(markup).toContain('Receptacle')
+    expect(markup).toContain('Duplex Receptacle')
     expect(markup).toContain('data-electrical-symbol-glyph="electrical-receptacle"')
     expect(markup).not.toMatch(/labor|pricing/i)
 
@@ -102,7 +102,7 @@ describe('blueprint-symbol-counts UI', () => {
     expect(markup).toContain('Unique symbols')
     expect(markup).toContain('Category Subtotals')
     expect(markup).toContain('4&quot; Can Light')
-    expect(markup).toContain('Receptacle')
+    expect(markup).toContain('Duplex Receptacle')
     expect(markup).toContain('Pg 1')
     expect(markup).toContain('1 total warnings - 1 duplicate memberships - 0 stale references')
     expect(markup).toContain('aria-expanded="false"')
@@ -140,7 +140,7 @@ describe('blueprint-symbol-counts UI', () => {
     expect(counts.staleCount).toBe(0)
     expect(duplicateRows).toHaveLength(1)
     expect(duplicateRows[0]).toMatchObject({
-      displayName: 'Receptacle',
+      displayName: 'Duplex Receptacle',
       pageNumber: 1,
       packageNames: ['Package A', 'Package B'],
       representedCount: 2,

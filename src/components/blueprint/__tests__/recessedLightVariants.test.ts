@@ -13,6 +13,8 @@ import {
   DESKTOP_ELECTRICAL_TOOL_CATEGORIES,
   DESKTOP_LIGHTING_CONTROL_KINDS,
   DESKTOP_LIGHTING_CONTROLS_CATEGORY_ID,
+  DESKTOP_RECEPTACLE_KINDS,
+  DESKTOP_RECEPTACLES_CATEGORY_ID,
   DESKTOP_RECESSED_LIGHT_CATEGORY_ID,
   DESKTOP_RECESSED_LIGHT_KINDS,
   DESKTOP_SWITCHES_CATEGORY_ID,
@@ -20,6 +22,7 @@ import {
   isDesktopCeilingDeviceKind,
   isDesktopElectricalCategoryChildKind,
   isDesktopLightingControlKind,
+  isDesktopReceptacleKind,
   isDesktopRecessedLightKind,
   isDesktopSwitchKind,
   shouldShowElectricalSymbolInDesktopMainGrid,
@@ -114,8 +117,8 @@ describe('desktop recessed light registered variants', () => {
     }
   })
 
-  it('keeps Recessed Lights, Switches, Ceiling Devices, and Lighting Controls in locked desktop category order', () => {
-    expect(DESKTOP_ELECTRICAL_TOOL_CATEGORIES.slice(0, 4)).toEqual([
+  it('keeps Recessed Lights, Switches, Ceiling Devices, Lighting Controls, and Receptacles in locked desktop category order', () => {
+    expect(DESKTOP_ELECTRICAL_TOOL_CATEGORIES).toEqual([
       {
         id: DESKTOP_RECESSED_LIGHT_CATEGORY_ID,
         label: 'Recessed Lights',
@@ -136,10 +139,23 @@ describe('desktop recessed light registered variants', () => {
         label: 'Lighting Controls',
         children: DESKTOP_LIGHTING_CONTROL_KINDS,
       },
+      {
+        id: DESKTOP_RECEPTACLES_CATEGORY_ID,
+        label: 'Receptacles',
+        children: DESKTOP_RECEPTACLE_KINDS,
+      },
     ])
     expect(DESKTOP_SWITCH_KINDS).toEqual(SWITCH_EXPECTATIONS.map(([kind]) => kind))
     expect(DESKTOP_CEILING_DEVICE_KINDS).toEqual(CEILING_DEVICE_EXPECTATIONS.map(([kind]) => kind))
     expect(DESKTOP_LIGHTING_CONTROL_KINDS).toEqual(LIGHTING_CONTROL_EXPECTATIONS.map(([kind]) => kind))
+    expect(DESKTOP_RECEPTACLE_KINDS).toEqual([
+      'electrical-receptacle',
+      'electrical-gfci',
+      'electrical-gfci-wp',
+      'electrical-receptacle-240v',
+      'electrical-single-receptacle',
+      'electrical-half-hot-receptacle',
+    ])
     expect(new Set(DESKTOP_SWITCH_KINDS).size).toBe(DESKTOP_SWITCH_KINDS.length)
     expect(new Set(DESKTOP_CEILING_DEVICE_KINDS).size).toBe(DESKTOP_CEILING_DEVICE_KINDS.length)
     expect(new Set(DESKTOP_LIGHTING_CONTROL_KINDS).size).toBe(DESKTOP_LIGHTING_CONTROL_KINDS.length)
@@ -196,6 +212,11 @@ describe('desktop recessed light registered variants', () => {
     for (const [kind] of CEILING_DEVICE_EXPECTATIONS) {
       expect(DESKTOP_LIGHTING_CONTROL_KINDS).not.toContain(kind as any)
     }
+    for (const kind of DESKTOP_RECEPTACLE_KINDS) {
+      expect(isDesktopReceptacleKind(kind)).toBe(true)
+      expect(isDesktopElectricalCategoryChildKind(kind)).toBe(true)
+      expect(DESKTOP_LIGHTING_CONTROL_KINDS).not.toContain(kind as any)
+    }
     const categorizedChildren = DESKTOP_ELECTRICAL_TOOL_CATEGORIES.flatMap((category) => category.children)
     expect(new Set(categorizedChildren).size).toBe(categorizedChildren.length)
   })
@@ -245,8 +266,10 @@ describe('desktop recessed light registered variants', () => {
     for (const [kind] of LIGHTING_CONTROL_EXPECTATIONS) {
       expect(shouldShowElectricalSymbolInDesktopMainGrid(kind)).toBe(false)
     }
+    for (const kind of DESKTOP_RECEPTACLE_KINDS) {
+      expect(shouldShowElectricalSymbolInDesktopMainGrid(kind)).toBe(false)
+    }
     expect(shouldShowElectricalSymbolInDesktopMainGrid('electrical-recessed-light')).toBe(false)
-    expect(shouldShowElectricalSymbolInDesktopMainGrid('electrical-receptacle')).toBe(true)
 
     const registryOrderBefore = ELECTRICAL_SYMBOL_OPTIONS.map((option) => option.value)
     const desktopStandalone = ELECTRICAL_SYMBOL_OPTIONS.filter((option) => shouldShowElectricalSymbolInDesktopMainGrid(option.value)).map((option) => option.value)
@@ -255,6 +278,7 @@ describe('desktop recessed light registered variants', () => {
       && !DESKTOP_SWITCH_KINDS.includes(kind as any)
       && !DESKTOP_CEILING_DEVICE_KINDS.includes(kind as any)
       && !DESKTOP_LIGHTING_CONTROL_KINDS.includes(kind as any)
+      && !DESKTOP_RECEPTACLE_KINDS.includes(kind as any)
       && kind !== 'electrical-recessed-light'
     ))
     expect(desktopStandalone).toEqual(expectedDesktopStandalone)
@@ -274,6 +298,12 @@ describe('desktop recessed light registered variants', () => {
     for (const [kind] of LIGHTING_CONTROL_EXPECTATIONS) {
       expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar(kind)).toBe(true)
     }
+    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-receptacle')).toBe(true)
+    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-gfci')).toBe(true)
+    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-receptacle-240v')).toBe(true)
+    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-gfci-wp')).toBe(false)
+    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-single-receptacle')).toBe(false)
+    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-half-hot-receptacle')).toBe(false)
     const legacyNonDesktopOrder = ELECTRICAL_SYMBOL_OPTIONS.filter((option) => shouldShowElectricalSymbolInLegacyNonDesktopToolbar(option.value)).map((option) => option.value)
     const switchStart = legacyNonDesktopOrder.indexOf('electrical-switch')
     expect(legacyNonDesktopOrder.slice(switchStart, switchStart + 4)).toEqual([

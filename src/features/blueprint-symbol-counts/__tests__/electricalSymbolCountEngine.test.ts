@@ -64,12 +64,28 @@ describe('blueprint-symbol-counts engine', () => {
   })
 
   it('counts multiple annotations of one type and keeps exact symbol types separate', () => {
-    const result = run({ annotations: [ann('a1', 'electrical-receptacle'), ann('a2', 'electrical-receptacle'), ann('a3', 'electrical-gfci')] })
-    expect(result.overallCount).toBe(3)
+    const result = run({
+      annotations: [
+        ann('a1', 'electrical-receptacle'),
+        ann('a2', 'electrical-receptacle'),
+        ann('a3', 'electrical-gfci'),
+        ann('a4', 'electrical-gfci-wp'),
+        ann('a5', 'electrical-single-receptacle'),
+        ann('a6', 'electrical-half-hot-receptacle'),
+      ],
+    })
+    expect(result.overallCount).toBe(6)
     expect(result.symbolTotals.map((total) => [total.shapeKind, total.count])).toEqual([
       ['electrical-gfci', 1],
       ['electrical-receptacle', 2],
+      ['electrical-gfci-wp', 1],
+      ['electrical-single-receptacle', 1],
+      ['electrical-half-hot-receptacle', 1],
     ])
+    expect(result.symbolTotals.find((total) => total.shapeKind === 'electrical-receptacle')).toMatchObject({
+      displayName: 'Duplex Receptacle',
+      category: 'power',
+    })
   })
 
   it('counts every shared registered electrical kind, including can lights, through registry iteration', () => {
@@ -239,7 +255,7 @@ describe('blueprint-symbol-counts engine', () => {
   })
 
   it('keeps the registered kind type usable for representative exact rows', () => {
-    const exactKinds: ElectricalSymbolKind[] = ['electrical-receptacle', 'electrical-gfci', 'electrical-receptacle-240v', 'electrical-switch-3way', 'electrical-switch-4way', 'electrical-dimmer', 'electrical-timer-control', 'electrical-photocell', 'electrical-ceiling-occupancy-sensor', 'electrical-wall-occupancy-sensor', 'can-light-2', 'canless-light-2', 'can-light-4', 'canless-light-4', 'can-light-6', 'canless-light-6', 'canless-light-10', 'electrical-emergency-exit-sign', 'electrical-smoke-alarm', 'electrical-co-alarm']
+    const exactKinds: ElectricalSymbolKind[] = ['electrical-receptacle', 'electrical-gfci', 'electrical-gfci-wp', 'electrical-receptacle-240v', 'electrical-single-receptacle', 'electrical-half-hot-receptacle', 'electrical-switch-3way', 'electrical-switch-4way', 'electrical-dimmer', 'electrical-timer-control', 'electrical-photocell', 'electrical-ceiling-occupancy-sensor', 'electrical-wall-occupancy-sensor', 'can-light-2', 'canless-light-2', 'can-light-4', 'canless-light-4', 'can-light-6', 'canless-light-6', 'canless-light-10', 'electrical-emergency-exit-sign', 'electrical-smoke-alarm', 'electrical-co-alarm']
     const result = run({ annotations: exactKinds.map((kind, index) => ann(`a${index}`, kind)) })
     expect(result.symbolTotals).toHaveLength(exactKinds.length)
   })

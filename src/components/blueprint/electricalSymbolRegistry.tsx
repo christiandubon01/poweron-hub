@@ -20,8 +20,11 @@ export type ElectricalSymbolKind =
   | 'electrical-led-panel-2x4'
   | 'electrical-panel'
   | 'electrical-gfci'
+  | 'electrical-gfci-wp'
   | 'electrical-receptacle'
   | 'electrical-receptacle-240v'
+  | 'electrical-single-receptacle'
+  | 'electrical-half-hot-receptacle'
   | 'electrical-timer-control'
   | 'electrical-photocell'
   | 'electrical-ceiling-occupancy-sensor'
@@ -257,13 +260,24 @@ export const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, Electrical
   },
   'electrical-receptacle': {
     symbolKind: 'electrical-receptacle',
-    displayName: 'Receptacle',
+    displayName: 'Duplex Receptacle',
     shortLabel: 'REC',
     category: 'power',
     countValue: 1,
     defaultPhase: 'electrical',
     materialKey: 'receptacle',
     laborKey: 'receptacle',
+    isElectricalSymbol: true,
+  },
+  'electrical-gfci-wp': {
+    symbolKind: 'electrical-gfci-wp',
+    displayName: 'GFCI WP',
+    shortLabel: 'GFCI-WP',
+    category: 'power',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'gfci',
+    laborKey: 'gfci',
     isElectricalSymbol: true,
   },
   'electrical-receptacle-240v': {
@@ -275,6 +289,28 @@ export const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, Electrical
     defaultPhase: 'electrical',
     materialKey: 'receptacle-240v',
     laborKey: 'receptacle-240v',
+    isElectricalSymbol: true,
+  },
+  'electrical-single-receptacle': {
+    symbolKind: 'electrical-single-receptacle',
+    displayName: 'Single Receptacle',
+    shortLabel: 'SR',
+    category: 'power',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'receptacle',
+    laborKey: 'receptacle',
+    isElectricalSymbol: true,
+  },
+  'electrical-half-hot-receptacle': {
+    symbolKind: 'electrical-half-hot-receptacle',
+    displayName: 'Half-Hot Receptacle',
+    shortLabel: 'HH',
+    category: 'power',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'receptacle',
+    laborKey: 'receptacle',
     isElectricalSymbol: true,
   },
   'electrical-timer-control': {
@@ -443,7 +479,10 @@ export function isLightOutputShapeKind(shapeKind: unknown): shapeKind is Electri
 
 const ROTATABLE_ELECTRICAL_SHAPE_KINDS = new Set<ElectricalSymbolKind>([
   'electrical-receptacle',
+  'electrical-gfci-wp',
   'electrical-receptacle-240v',
+  'electrical-single-receptacle',
+  'electrical-half-hot-receptacle',
   'electrical-switch',
   'electrical-switch-3way',
   'electrical-switch-4way',
@@ -466,7 +505,10 @@ const ELECTRICAL_SYMBOL_VISUAL_BOUNDS: Partial<Record<ElectricalSymbolKind, { x:
   'electrical-switch-4way': { x: 30, y: 15, w: 40, h: 68 },
   'electrical-dimmer': { x: 13, y: 15, w: 74, h: 64 },
   'electrical-receptacle': { x: 25, y: 9, w: 50, h: 74 },
+  'electrical-gfci-wp': { x: 22, y: 7, w: 56, h: 78 },
   'electrical-receptacle-240v': { x: 25, y: 9, w: 50, h: 74 },
+  'electrical-single-receptacle': { x: 25, y: 16, w: 50, h: 58 },
+  'electrical-half-hot-receptacle': { x: 25, y: 9, w: 50, h: 74 },
   'electrical-panel': { x: 8, y: 7, w: 84, h: 86 },
   'electrical-gfci': { x: 25, y: 9, w: 50, h: 74 },
   'electrical-sconce': { x: 15, y: 15, w: 47, h: 68 },
@@ -644,16 +686,24 @@ export function renderElectricalSymbolSvg(kind: unknown, meta: Record<string, an
         <text x="50" y="52" fontSize="20" letterSpacing="0" {...commonText}>PNL</text>
       </>
     )
-  } else if (kind === 'electrical-gfci' || kind === 'electrical-receptacle') {
+  } else if (kind === 'electrical-gfci' || kind === 'electrical-gfci-wp' || kind === 'electrical-receptacle') {
     const symbolLabel = getElectricalSymbolMetadata(kind)?.shortLabel ?? (kind === 'electrical-gfci' ? 'GFCI' : 'REC')
+    const isWeatherproof = kind === 'electrical-gfci-wp'
     body = (
       <>
+        {isWeatherproof && (
+          <>
+            <rect x="22" y="14" width="56" height="66" rx="7" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeDasharray={dash} opacity="0.85" />
+            <path d="M28 20 L72 20 M28 74 L72 74" fill="none" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.75)} strokeLinecap="round" opacity="0.7" />
+          </>
+        )}
         <path d="M30 24 Q50 12 70 24 L70 66 Q50 78 30 66 Z" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
         <circle cx="50" cy="35" r="9" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
         <circle cx="50" cy="58" r="9" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
         <line x1="45" y1="35" x2="55" y2="35" stroke={borderColor} strokeWidth={fineStroke} />
         <line x1="45" y1="58" x2="55" y2="58" stroke={borderColor} strokeWidth={fineStroke} />
-        {kind === 'electrical-gfci' && <line x1="39" y1="47" x2="61" y2="47" stroke={borderColor} strokeWidth={fineStroke} opacity="0.75" />}
+        {(kind === 'electrical-gfci' || isWeatherproof) && <line x1="39" y1="47" x2="61" y2="47" stroke={borderColor} strokeWidth={fineStroke} opacity="0.75" />}
+        {isWeatherproof && <text x="50" y="20" fontSize="8" {...commonText}>WP</text>}
       </>
     )
     label = externalLabel(symbolLabel)
@@ -669,6 +719,33 @@ export function renderElectricalSymbolSvg(kind: unknown, meta: Record<string, an
       </>
     )
     label = externalLabel(v240Label)
+  } else if (kind === 'electrical-single-receptacle') {
+    const singleLabel = getElectricalSymbolMetadata(kind)?.shortLabel ?? 'SR'
+    body = (
+      <>
+        <path d="M30 26 Q50 14 70 26 L70 62 Q50 74 30 62 Z" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <line x1="43" y1="42" x2="43" y2="54" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" />
+        <line x1="57" y1="42" x2="57" y2="54" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" />
+        <circle cx="50" cy="60" r="4" fill="none" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.9)} />
+      </>
+    )
+    label = externalLabel(singleLabel)
+  } else if (kind === 'electrical-half-hot-receptacle') {
+    const halfHotLabel = getElectricalSymbolMetadata(kind)?.shortLabel ?? 'HH'
+    const switchedFill = symbolFill === 'none' ? borderColor : symbolFill
+    body = (
+      <>
+        <path d="M30 24 Q50 12 70 24 L70 66 Q50 78 30 66 Z" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <path d="M31 25 Q50 14 69 25 L69 46 L31 46 Z" fill={switchedFill} fillOpacity={symbolFill === 'none' ? 0.14 : Math.max(0.18, Math.min(0.5, fillOpacity))} stroke="none" />
+        <circle cx="50" cy="35" r="9" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
+        <circle cx="50" cy="58" r="9" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
+        <line x1="45" y1="35" x2="55" y2="35" stroke={borderColor} strokeWidth={fineStroke} />
+        <line x1="45" y1="58" x2="55" y2="58" stroke={borderColor} strokeWidth={fineStroke} />
+        <path d="M38 26 L62 44 M45 25 L66 41" fill="none" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.85)} strokeLinecap="round" opacity="0.85" />
+        <line x1="34" y1="47" x2="66" y2="47" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.75)} opacity="0.65" />
+      </>
+    )
+    label = externalLabel(halfHotLabel)
   } else if (kind === 'electrical-timer-control') {
     const timerLabel = getElectricalSymbolMetadata(kind)?.shortLabel ?? 'TMR'
     body = (
