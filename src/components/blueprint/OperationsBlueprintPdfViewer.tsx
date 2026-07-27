@@ -69,6 +69,7 @@ import {
 } from '@/services/blueprintLibraryService'
 import { getBackupData } from '@/services/backupDataService'
 import { setDirtyScope } from '@/services/liveCloudRefreshService'
+import { createAnnotationMutationCoordinator, type AnnotationMutationCoordinator } from './annotationMutationCoordinator'
 import { ToolPopover, ColorRow, Stepper, LabeledSelect, ToggleRow } from './ToolPopover'
 import { useAuth } from '@/hooks/useAuth'
 import { useRemoteDataRefresh } from '@/hooks/useRemoteDataRefresh'
@@ -2032,9 +2033,12 @@ export default function OperationsBlueprintPdfViewer({
   const persistedAnnotationSnapshotsRef = useRef<Map<string, BlueprintAnnotation>>(new Map())
   const [annotationHistoryRevision, setAnnotationHistoryRevision] = useState(0)
   const [isAnnotationHistoryBusy, setIsAnnotationHistoryBusy] = useState(false)
-  // Track annotation IDs that have been locally deleted but may not yet be flushed to storage.
-  // loadAnnotations filters these out so a quick reload never re-surfaces a deleted item.
-  const locallyDeletedIdsRef = useRef<Set<string>>(new Set())
+  // BUG-ANNOTATION-DELETE-RESURRECT-1 — single source of truth for annotation mutation ordering:
+  // strict enqueue sequence, in-flight count, per-id delete sequence, and the set of locally-deleted
+  // ids a reload must hide until the tombstone is durable. Consolidates the former locallyDeletedIdsRef
+  // + pendingAnnotationMutationsRef so deletes and saves share ONE ordered accounting and an older
+  // save can never clear a newer delete's guard. See ./annotationMutationCoordinator.
+  const annotationMutationCoordinatorRef = useRef<AnnotationMutationCoordinator>(createAnnotationMutationCoordinator())
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   // Ref to the viewer's outermost element Ã¢â‚¬â€ used as the target for the
   // Fullscreen API on mobile (iPad/Android) so the viewer opens like a
@@ -2067,8 +2071,8 @@ export default function OperationsBlueprintPdfViewer({
   const scopeLayersPanelRef = useRef<HTMLDivElement | null>(null)
   // Point-to-point line placement: stores the first click position (pixel coords within overlay).
   const lineFirstPointRef = useRef<{ x: number; y: number } | null>(null)
-  // Tracks how many annotation mutations are in-flight so loadAnnotations() fires only when the queue drains.
-  const pendingAnnotationMutationsRef = useRef(0)
+  // In-flight count, enqueue sequence and per-id delete sequence now live in
+  // annotationMutationCoordinatorRef (declared above) — see ./annotationMutationCoordinator.
   // BLUEPRINT-6Q — render-visible mirror of the in-flight save counter. Feeds isBlueprintDirty so
   // the live/realtime cloud refresh (which silently OVERWRITES local storage with the remote
   // snapshot) is suppressed while an annotation save is still committing. Without this, the
@@ -3521,13 +3525,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     try {
       const backup = getBackupData()
       const items = getOperationsBlueprintAnnotations(backup || {}, blueprint.id)
-      const pendingDeletes = locallyDeletedIdsRef.current
-      let loaded = (Array.isArray(items) ? items : []).filter((item) => !pendingDeletes.has(item.id))
+      const coordinator = annotationMutationCoordinatorRef.current
+      let loaded = (Array.isArray(items) ? items : []).filter((item) => !coordinator.isDeleteGuarded(item.id))
       // While a save is pending or within the grace window, never replace the in-memory
       // list with a stale loaded snapshot that is missing locally-created / locally-newer
       // annotations. Merge by id; local wins on newer-or-equal updatedAt.
       const now = Date.now()
-      const savePending = pendingAnnotationMutationsRef.current > 0
+      const savePending = coordinator.pending() > 0
       const recentlyStarted = now - lastAnnotationSaveStartedAtRef.current < 10000
       const recentlyFinished = now - lastAnnotationSaveFinishedAtRef.current < 5000
       if (!savePending && !recentlyStarted && !recentlyFinished) {
@@ -3542,7 +3546,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       }
       if (savePending || recentlyStarted || recentlyFinished) {
         loaded = mergeVisibleAnnotationsWithLocalPending(loaded, allAnnotationsRef.current)
-          .filter((item) => !pendingDeletes.has(item.id))
+          .filter((item) => !coordinator.isDeleteGuarded(item.id))
       }
       setAllAnnotations(loaded)
     } catch {
@@ -3784,7 +3788,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       // current in-memory annotations and let the next post-settle load reconcile. Scope layers
       // are not part of this race, so refresh them normally.
       const now = Date.now()
-      const savePending = pendingAnnotationMutationsRef.current > 0
+      const savePending = annotationMutationCoordinatorRef.current.pending() > 0
       const recentlyStarted = now - lastAnnotationSaveStartedAtRef.current < 10000
       const recentlyFinished = now - lastAnnotationSaveFinishedAtRef.current < 5000
       const scopeLayerRefresh = decideWorkPackageRemoteRefreshApply(isScopeLayerOrderSavingRef.current)
@@ -5485,6 +5489,39 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setAnnotationHistoryRevision((revision) => revision + 1)
   }, [buildAnnotationHistoryScope])
 
+  // BUG-ANNOTATION-DELETE-RESURRECT-1 — shared enqueue/drain accounting used by BOTH
+  // persistAnnotation and removeAnnotation so deletes participate in the exact same in-flight
+  // counter, dirty-scope and reload-gating discipline as saves. Returns the strict enqueue
+  // sequence assigned to this mutation (monotonic, order-based — never a timestamp).
+  const beginAnnotationMutation = useCallback((): number => {
+    const sequence = annotationMutationCoordinatorRef.current.begin()
+    // Keep the blueprint scope dirty for the life of the mutation so the live/realtime cloud
+    // refresh can't silently overwrite local storage mid-flight (BLUEPRINT-6Q). Deletes need this
+    // exactly as much as saves — without it a stale remote snapshot could re-apply a just-deleted
+    // annotation. Register synchronously because the useRemoteDataRefresh state→effect lags a frame.
+    setHasPendingAnnotationSaves(true)
+    setDirtyScope('blueprints', true, 'Blueprint annotation mutation')
+    // BLUEPRINT-6R — synchronous start stamp for the remote-apply reload guard.
+    lastAnnotationSaveStartedAtRef.current = Date.now()
+    return sequence
+  }, [])
+
+  // Drain accounting: decrement exactly once per finished mutation and, ONLY when the entire queued
+  // set (creates, updates AND deletes) has drained, clear the pending flag and perform at most one
+  // reconciling reload. Skipped when any op in the batch errored so an optimistic create/delete is
+  // never wiped by a reload from an unchanged backup. Sharing this with removeAnnotation is what
+  // keeps a queued delete counted, so persistAnnotation's reload can no longer fire in the window
+  // between an older save finishing and a pending delete writing its tombstone.
+  const finishAnnotationMutation = useCallback((): void => {
+    const { drained } = annotationMutationCoordinatorRef.current.finish()
+    if (!drained) return
+    setHasPendingAnnotationSaves(false)
+    lastAnnotationSaveFinishedAtRef.current = Date.now()
+    const hadError = annotationSaveErrorRef.current
+    annotationSaveErrorRef.current = false
+    if (!hadError) loadAnnotations()
+  }, [loadAnnotations])
+
   const persistAnnotation = useCallback(async (
     annotation: BlueprintAnnotation,
     historyOptions: {
@@ -5507,19 +5544,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         item.id === annotationToPersist.id ? annotationToPersist : item
       )))
     }
-    // Increment before queuing so the counter is accurate when mutations overlap.
-    pendingAnnotationMutationsRef.current += 1
-    // BLUEPRINT-6Q — mark the blueprint scope dirty for the duration of the save so the
-    // live/realtime cloud refresh can't silently overwrite local storage and wipe the
-    // just-created annotation while its push is still in flight.
-    setHasPendingAnnotationSaves(true)
-    // Register dirty scope synchronously — React state→effect for useRemoteDataRefresh
-    // lags one frame, which left a window where realtime could apply a stale remote row
-    // before local-first persist + hasPendingLocalSave were visible to the guard.
-    setDirtyScope('blueprints', true, 'Blueprint annotation save')
-    // BLUEPRINT-6R — synchronous start stamp for the remote-apply reload guard (runs before
-    // any state update propagates, so it protects the immediate realtime-refresh race).
-    lastAnnotationSaveStartedAtRef.current = Date.now()
+    // BUG-ANNOTATION-DELETE-RESURRECT-1 — enqueue accounting + strict order sequence, assigned
+    // synchronously (before queuing) so overlapping mutations resolve by enqueue order, not by
+    // wall-clock time. See beginAnnotationMutation for the dirty-scope / reload-guard reasoning.
+    const saveSequence = beginAnnotationMutation()
     const op = async (): Promise<boolean> => {
       const before = cloneAnnotationForHistory(persistedAnnotationSnapshotsRef.current.get(annotationToPersist.id))
       try {
@@ -5536,7 +5564,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
           throw new Error(saveResult.error || 'Failed to save annotation.')
         }
         persistedAnnotationSnapshotsRef.current.set(annotationToPersist.id, cloneAnnotationForHistory(annotationToPersist)!)
-        locallyDeletedIdsRef.current.delete(annotationToPersist.id)
+        // BUG-ANNOTATION-DELETE-RESURRECT-1 — clear the delete guard ONLY when no newer delete has
+        // been enqueued for this id. An older, still-in-flight save must never cancel a later delete
+        // (the resurrection bug); a legitimate later restore (undo/redo) carries a newer sequence and
+        // is allowed through. The coordinator encapsulates that strict-order decision.
+        annotationMutationCoordinatorRef.current.resolveSaveSuccess(annotationToPersist.id, saveSequence)
         if (historyOptions.recordHistory !== false) {
           recordSuccessfulAnnotationMutation(before, annotationToPersist, historyOptions)
         }
@@ -5561,30 +5593,16 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         ))
         return false
       } finally {
-        pendingAnnotationMutationsRef.current = Math.max(0, pendingAnnotationMutationsRef.current - 1)
-        // Only refresh annotations from backup once the entire queue has drained.
-        // Calling loadAnnotations() after every individual save was overwriting the
-        // optimistic setAllAnnotations updates that the UI had already applied, causing
-        // the opacity/color to snap back to the pre-click value mid-sequence.
-        if (pendingAnnotationMutationsRef.current === 0) {
-          // BLUEPRINT-6Q/6R — clear the React dirty flag after the queue drains. Do NOT
-          // call setDirtyScope(false) here: open editors (note/text/draft) may still need
-          // the guard, and useRemoteDataRefresh clears the scope when isDirty is false.
-          setHasPendingAnnotationSaves(false)
-          lastAnnotationSaveFinishedAtRef.current = Date.now()
-          const hadError = annotationSaveErrorRef.current
-          annotationSaveErrorRef.current = false
-          // Reconcile from the backup only on success. On failure the backup never received the
-          // new annotation, so reloading would silently delete the user's just-placed work.
-          if (!hadError) {
-            loadAnnotations()
-          }
-        }
+        // Shared drain accounting — a queued delete keeps the counter above zero and defers this
+        // reconciling reload until the delete has committed its tombstone (BUG-ANNOTATION-DELETE-
+        // RESURRECT-1). Do NOT call setDirtyScope(false) here: open editors (note/text/draft) may
+        // still need the guard, and useRemoteDataRefresh clears the scope when isDirty is false.
+        finishAnnotationMutation()
       }
     }
     mutationQueueRef.current = mutationQueueRef.current.then(op)
     return mutationQueueRef.current
-  }, [clearStaleSyncMessages, loadAnnotations, onAnnotationsChanged, recordSuccessfulAnnotationMutation, showSyncPausedNoticeOnce])
+  }, [beginAnnotationMutation, clearStaleSyncMessages, finishAnnotationMutation, onAnnotationsChanged, recordSuccessfulAnnotationMutation, showSyncPausedNoticeOnce])
 
   const assignableWireProfiles = useMemo(
     () => listAssignableActiveWireProfiles(String(blueprint?.projectId || ''), projectWireProfiles),
@@ -6682,11 +6700,19 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       || allAnnotationsRef.current.find((annotation) => annotation.id === annotationId),
     )
     if (!before) return false
-    // Guard loadAnnotations from re-surfacing this ID before storage commits the delete.
-    locallyDeletedIdsRef.current.add(annotationId)
+    // Optimistically remove it now. The coordinator guard added by markDeleted() below (once
+    // beginAnnotationMutation has assigned this delete's enqueue sequence) keeps any reload from
+    // re-surfacing it before storage commits the tombstone.
     setAllAnnotations((prev) => prev.filter((a) => a.id !== annotationId))
     setFocusedAnnotationId((prev) => (prev === annotationId ? null : prev))
     const bpId = blueprint.id
+    // BUG-ANNOTATION-DELETE-RESURRECT-1 — participate in the shared in-flight counter and record
+    // this delete's strict enqueue sequence + guard. That (a) defers persistAnnotation's drain reload
+    // until this delete commits its tombstone, (b) keeps the blueprint scope dirty so a realtime
+    // refresh can't apply a stale remote row mid-delete, and (c) lets an older, still-queued save
+    // recognise it must not clear this newer delete's guard.
+    const deleteSequence = beginAnnotationMutation()
+    annotationMutationCoordinatorRef.current.markDeleted(annotationId, deleteSequence)
     const op = async (): Promise<boolean> => {
       try {
         const backup = getBackupData()
@@ -6707,12 +6733,17 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
             selectionAfter: historyOptions.selectionAfter !== undefined ? historyOptions.selectionAfter : null,
           })
         }
-        // Keep ID in locallyDeletedIdsRef so any concurrent loadAnnotations
-        // triggered by onAnnotationsChanged cannot re-surface a deleted item.
+        // Deliberately DO NOT clear the coordinator delete guard here: keep it so any concurrent
+        // loadAnnotations (e.g. triggered by onAnnotationsChanged) cannot re-surface the deleted
+        // item. Only a newer save (undo/redo restore) or an explicit rollback clears it.
         onAnnotationsChanged?.()
         return true
       } catch (e: any) {
-        locallyDeletedIdsRef.current.delete(annotationId)
+        // A genuinely failed delete never persisted a tombstone. Drop the guard so the reload below
+        // surfaces the still-live annotation (explicit rollback). Flag the batch error so the shared
+        // drain does not ALSO reload from the same unchanged backup.
+        annotationSaveErrorRef.current = true
+        annotationMutationCoordinatorRef.current.clearDeleteGuard(annotationId)
         const msg = e?.message || 'Failed to delete annotation.'
         if (isSyncBlockedMessage(msg)) {
           showSyncPausedNoticeOnce()
@@ -6721,11 +6752,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         }
         loadAnnotations()
         return false
+      } finally {
+        finishAnnotationMutation()
       }
     }
     mutationQueueRef.current = mutationQueueRef.current.then(op)
     return mutationQueueRef.current
-  }, [blueprint?.id, clearStaleSyncMessages, loadAnnotations, onAnnotationsChanged, recordSuccessfulAnnotationMutation, showSyncPausedNoticeOnce])
+  }, [beginAnnotationMutation, blueprint?.id, clearStaleSyncMessages, finishAnnotationMutation, loadAnnotations, onAnnotationsChanged, recordSuccessfulAnnotationMutation, showSyncPausedNoticeOnce])
 
   const removeAnnotationsAsSingleHistoryCommand = useCallback(async (
     annotationIds: string[],
@@ -6757,6 +6790,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
 
     const removedIds: string[] = []
+    // BUG-ANNOTATION-DELETE-RESURRECT-1 — bracket the whole eraser gesture in one mutation slot so
+    // the per-id removeAnnotation calls never drain the counter to zero mid-loop (which would fire
+    // an intermediate reload between deletes). Exactly one reconciling reload runs at the end.
+    beginAnnotationMutation()
     setIsAnnotationHistoryBusy(true)
     try {
       for (const id of affectedIds) {
@@ -6768,7 +6805,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
             const snapshot = before[removedId]
             if (!snapshot) continue
             const restored = buildAnnotationRestorePayload(snapshot, new Date().toISOString())
-            locallyDeletedIdsRef.current.delete(removedId)
+            annotationMutationCoordinatorRef.current.clearDeleteGuard(removedId)
             setAllAnnotations((prev) => applyAnnotationSnapshotsToList(prev, [removedId], { [removedId]: restored }))
             await persistAnnotation(restored, { recordHistory: false })
           }
@@ -6794,8 +6831,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       return true
     } finally {
       setIsAnnotationHistoryBusy(false)
+      finishAnnotationMutation()
     }
-  }, [buildAnnotationHistoryScope, persistAnnotation, removeAnnotation])
+  }, [beginAnnotationMutation, buildAnnotationHistoryScope, finishAnnotationMutation, persistAnnotation, removeAnnotation])
 
   const currentAnnotationHistoryScope = useMemo<AnnotationHistoryScope | null>(() => {
     if (!blueprint?.id || !blueprint?.projectId) return null
@@ -6842,6 +6880,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       return
     }
 
+    // BUG-ANNOTATION-DELETE-RESURRECT-1 — bracket the whole undo/redo command in one mutation slot
+    // so the per-id persist/remove replays never drain the counter to zero mid-loop. The restore
+    // path enqueues AFTER the original delete, so its save sequence is newer and correctly clears
+    // the delete guard; a redo re-enqueues an even newer delete. Exactly one reload runs at the end.
+    beginAnnotationMutation()
     setIsAnnotationHistoryBusy(true)
     try {
       const source = direction === 'undo' ? command.after : command.before
@@ -6853,7 +6896,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
           saved = await removeAnnotation(id, { recordHistory: false })
         } else {
           const replayAnnotation = buildAnnotationRestorePayload(targetSnapshot, new Date().toISOString())
-          locallyDeletedIdsRef.current.delete(id)
+          annotationMutationCoordinatorRef.current.clearDeleteGuard(id)
           setAllAnnotations((prev) => {
             const existingIndex = prev.findIndex((annotation) => annotation.id === id)
             if (existingIndex < 0) return [...prev, replayAnnotation]
@@ -6872,7 +6915,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
               continue
             }
             const replaySource = buildAnnotationRestorePayload(sourceSnapshot, new Date().toISOString())
-            locallyDeletedIdsRef.current.delete(appliedId)
+            annotationMutationCoordinatorRef.current.clearDeleteGuard(appliedId)
             setAllAnnotations((prev) => applyAnnotationSnapshotsToList(
               prev,
               [appliedId],
@@ -6896,8 +6939,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       setAnnotationHistoryRevision((revision) => revision + 1)
     } finally {
       setIsAnnotationHistoryBusy(false)
+      finishAnnotationMutation()
     }
-  }, [currentAnnotationHistoryScope, hasActiveAnnotationHistoryInteraction, persistAnnotation, removeAnnotation, showTransientSyncNotice])
+  }, [beginAnnotationMutation, currentAnnotationHistoryScope, finishAnnotationMutation, hasActiveAnnotationHistoryInteraction, persistAnnotation, removeAnnotation, showTransientSyncNotice])
 
   useEffect(() => {
     const onHistoryKeyDown = (event: KeyboardEvent) => {
@@ -14766,7 +14810,7 @@ const annotationPanelSizeClass =
                   const els = document.elementsFromPoint(cx, cy)
                   const nextEl = els.find((el) => {
                     const id = (el as HTMLElement).dataset?.annotationId
-                    return id && !locallyDeletedIdsRef.current.has(id)
+                    return id && !annotationMutationCoordinatorRef.current.isDeleteGuarded(id)
                   }) as HTMLElement | undefined
                   if (nextEl?.dataset?.annotationId) {
                     const nextId = nextEl.dataset.annotationId
