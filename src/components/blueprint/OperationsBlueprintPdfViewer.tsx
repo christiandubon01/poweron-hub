@@ -442,6 +442,11 @@ type ShapeKind =
   | 'electrical-led-panel-2x2'
   | 'electrical-led-panel-2x4'
   | 'electrical-panel'
+  | 'electrical-sub-panel'
+  | 'electrical-switchboard'
+  | 'electrical-switchgear'
+  | 'electrical-ats'
+  | 'electrical-transformer'
   | 'electrical-gfci'
   | 'electrical-gfci-wp'
   | 'electrical-receptacle'
@@ -654,7 +659,7 @@ export function ElectricalPanelLabelControl({
         onBlur={onBlur}
         onKeyDown={onKeyDown}
         placeholder="Panel, Subpanel, MDP, Panel A..."
-        aria-label="Electrical panel label"
+        aria-label="Main panel label"
         style={{
           marginTop: 4,
           width: '100%',

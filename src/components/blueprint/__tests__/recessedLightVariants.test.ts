@@ -13,6 +13,8 @@ import {
   DESKTOP_CEILING_DEVICE_KINDS,
   DESKTOP_CEILING_DEVICES_CATEGORY_ID,
   DESKTOP_ELECTRICAL_TOOL_CATEGORIES,
+  DESKTOP_ELECTRICAL_PANELS_CATEGORY_ID,
+  DESKTOP_ELECTRICAL_PANEL_KINDS,
   DESKTOP_LIGHTING_CATEGORY_ID,
   DESKTOP_LIGHTING_KINDS,
   DESKTOP_LOW_VOLTAGE_CATEGORY_ID,
@@ -27,6 +29,7 @@ import {
   DESKTOP_SWITCH_KINDS,
   isDesktopCeilingDeviceKind,
   isDesktopElectricalCategoryChildKind,
+  isDesktopElectricalPanelKind,
   isDesktopLightingKind,
   isDesktopLightingControlKind,
   isDesktopLowVoltageKind,
@@ -86,6 +89,15 @@ const LIGHTING_EXPECTATIONS = [
   ['electrical-pendant-light', 'Pendant Light', 'P', 'pendant-light', 'pendant-light', false],
 ] as const
 
+const ELECTRICAL_PANEL_EXPECTATIONS = [
+  ['electrical-panel', 'Main Panel', 'PNL', 'electrical-panel', 'electrical-panel', true],
+  ['electrical-sub-panel', 'Sub Panel', 'SP', 'electrical-sub-panel', 'electrical-sub-panel', false],
+  ['electrical-switchboard', 'Switchboard', 'SWBD', 'electrical-switchboard', 'electrical-switchboard', false],
+  ['electrical-switchgear', 'Switchgear', 'SWGR', 'electrical-switchgear', 'electrical-switchgear', false],
+  ['electrical-ats', 'ATS', 'ATS', 'electrical-ats', 'electrical-ats', false],
+  ['electrical-transformer', 'Transformer', 'XFMR', 'electrical-transformer', 'electrical-transformer', false],
+] as const
+
 describe('desktop recessed light registered variants', () => {
   it('registers the seven locked child kinds with exact owner-facing metadata', () => {
     expect(DESKTOP_RECESSED_LIGHT_KINDS).toEqual(RECESSED_LIGHT_EXPECTATIONS.map(([kind]) => kind))
@@ -137,7 +149,7 @@ describe('desktop recessed light registered variants', () => {
     }
   })
 
-  it('keeps Recessed Lights, Switches, Ceiling Devices, Lighting Controls, Receptacles, Low Voltage, and Lighting in locked desktop category order', () => {
+  it('keeps Recessed Lights, Switches, Ceiling Devices, Lighting Controls, Receptacles, Low Voltage, Lighting, and Electrical Panels in locked desktop category order', () => {
     expect(DESKTOP_ELECTRICAL_TOOL_CATEGORIES).toEqual([
       {
         id: DESKTOP_RECESSED_LIGHT_CATEGORY_ID,
@@ -174,6 +186,11 @@ describe('desktop recessed light registered variants', () => {
         label: 'Lighting',
         children: DESKTOP_LIGHTING_KINDS,
       },
+      {
+        id: DESKTOP_ELECTRICAL_PANELS_CATEGORY_ID,
+        label: 'Electrical Panels',
+        children: DESKTOP_ELECTRICAL_PANEL_KINDS,
+      },
     ])
     expect(DESKTOP_SWITCH_KINDS).toEqual(SWITCH_EXPECTATIONS.map(([kind]) => kind))
     expect(DESKTOP_CEILING_DEVICE_KINDS).toEqual(CEILING_DEVICE_EXPECTATIONS.map(([kind]) => kind))
@@ -192,6 +209,14 @@ describe('desktop recessed light registered variants', () => {
       'electrical-led-panel-2x4',
       'electrical-sconce',
       'electrical-pendant-light',
+    ])
+    expect(DESKTOP_ELECTRICAL_PANEL_KINDS).toEqual([
+      'electrical-panel',
+      'electrical-sub-panel',
+      'electrical-switchboard',
+      'electrical-switchgear',
+      'electrical-ats',
+      'electrical-transformer',
     ])
     expect(new Set(DESKTOP_SWITCH_KINDS).size).toBe(DESKTOP_SWITCH_KINDS.length)
     expect(new Set(DESKTOP_CEILING_DEVICE_KINDS).size).toBe(DESKTOP_CEILING_DEVICE_KINDS.length)
@@ -295,6 +320,30 @@ describe('desktop recessed light registered variants', () => {
       expect(isLightOutputShapeKind(kind)).toBe(true)
       expect(isRotatableElectricalShapeKind(kind)).toBe(isRotatable)
     }
+    for (const [kind, displayName, shortLabel, materialKey, laborKey] of ELECTRICAL_PANEL_EXPECTATIONS) {
+      expect(ELECTRICAL_SYMBOL_OPTIONS).toContainEqual({ value: kind, label: displayName, shortLabel })
+      expect(getElectricalSymbolMetadata(kind)).toMatchObject({
+        symbolKind: kind,
+        displayName,
+        shortLabel,
+        category: 'power',
+        countValue: 1,
+        defaultPhase: 'electrical',
+        materialKey,
+        laborKey,
+        isElectricalSymbol: true,
+      })
+      expect(getElectricalSymbolMetadataStamp(kind)).toEqual({
+        symbolCategory: 'power',
+        countValue: 1,
+        materialKey,
+        laborKey,
+      })
+      expect(isDesktopElectricalPanelKind(kind)).toBe(true)
+      expect(isDesktopElectricalCategoryChildKind(kind)).toBe(true)
+      expect(isLightOutputShapeKind(kind)).toBe(false)
+      expect(isRotatableElectricalShapeKind(kind)).toBe(false)
+    }
     const categorizedChildren = DESKTOP_ELECTRICAL_TOOL_CATEGORIES.flatMap((category) => category.children)
     expect(new Set(categorizedChildren).size).toBe(categorizedChildren.length)
   })
@@ -353,7 +402,9 @@ describe('desktop recessed light registered variants', () => {
     for (const kind of DESKTOP_LIGHTING_KINDS) {
       expect(shouldShowElectricalSymbolInDesktopMainGrid(kind)).toBe(false)
     }
-    expect(shouldShowElectricalSymbolInDesktopMainGrid('electrical-panel')).toBe(true)
+    for (const kind of DESKTOP_ELECTRICAL_PANEL_KINDS) {
+      expect(shouldShowElectricalSymbolInDesktopMainGrid(kind)).toBe(false)
+    }
     expect(shouldShowElectricalSymbolInDesktopMainGrid('electrical-recessed-light')).toBe(false)
 
     const registryOrderBefore = ELECTRICAL_SYMBOL_OPTIONS.map((option) => option.value)
@@ -366,6 +417,7 @@ describe('desktop recessed light registered variants', () => {
       && !DESKTOP_RECEPTACLE_KINDS.includes(kind as any)
       && !DESKTOP_LOW_VOLTAGE_KINDS.includes(kind as any)
       && !DESKTOP_LIGHTING_KINDS.includes(kind as any)
+      && !DESKTOP_ELECTRICAL_PANEL_KINDS.includes(kind as any)
       && kind !== 'electrical-recessed-light'
     ))
     expect(desktopStandalone).toEqual(expectedDesktopStandalone)
@@ -395,6 +447,10 @@ describe('desktop recessed light registered variants', () => {
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-data')).toBe(true)
     for (const [kind] of LIGHTING_EXPECTATIONS) {
       expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar(kind)).toBe(true)
+    }
+    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-panel')).toBe(true)
+    for (const [kind, , , , , isLegacyVisible] of ELECTRICAL_PANEL_EXPECTATIONS) {
+      expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar(kind)).toBe(isLegacyVisible)
     }
     const legacyNonDesktopOrder = ELECTRICAL_SYMBOL_OPTIONS.filter((option) => shouldShowElectricalSymbolInLegacyNonDesktopToolbar(option.value)).map((option) => option.value)
     const switchStart = legacyNonDesktopOrder.indexOf('electrical-switch')

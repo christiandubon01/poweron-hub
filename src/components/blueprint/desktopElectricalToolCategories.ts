@@ -7,6 +7,7 @@ export const DESKTOP_LIGHTING_CONTROLS_CATEGORY_ID = 'lighting-controls'
 export const DESKTOP_RECEPTACLES_CATEGORY_ID = 'receptacles'
 export const DESKTOP_LOW_VOLTAGE_CATEGORY_ID = 'low-voltage'
 export const DESKTOP_LIGHTING_CATEGORY_ID = 'lighting'
+export const DESKTOP_ELECTRICAL_PANELS_CATEGORY_ID = 'electrical-panels'
 
 export const DESKTOP_RECESSED_LIGHT_KINDS = [
   'can-light-2',
@@ -66,6 +67,16 @@ export const DESKTOP_LIGHTING_KINDS = [
 ] as const satisfies readonly ElectricalSymbolKind[]
 
 const DESKTOP_LIGHTING_KIND_SET = new Set<ElectricalSymbolKind>(DESKTOP_LIGHTING_KINDS)
+export const DESKTOP_ELECTRICAL_PANEL_KINDS = [
+  'electrical-panel',
+  'electrical-sub-panel',
+  'electrical-switchboard',
+  'electrical-switchgear',
+  'electrical-ats',
+  'electrical-transformer',
+] as const satisfies readonly ElectricalSymbolKind[]
+
+const DESKTOP_ELECTRICAL_PANEL_KIND_SET = new Set<ElectricalSymbolKind>(DESKTOP_ELECTRICAL_PANEL_KINDS)
 const LEGACY_NON_DESKTOP_HIDDEN_KIND_SET = new Set<ElectricalSymbolKind>([
   'can-light-2',
   'canless-light-2',
@@ -75,6 +86,11 @@ const LEGACY_NON_DESKTOP_HIDDEN_KIND_SET = new Set<ElectricalSymbolKind>([
   'electrical-gfci-wp',
   'electrical-single-receptacle',
   'electrical-half-hot-receptacle',
+  'electrical-sub-panel',
+  'electrical-switchboard',
+  'electrical-switchgear',
+  'electrical-ats',
+  'electrical-transformer',
 ])
 
 export type DesktopElectricalToolCategory = {
@@ -86,6 +102,7 @@ export type DesktopElectricalToolCategory = {
     | typeof DESKTOP_RECEPTACLES_CATEGORY_ID
     | typeof DESKTOP_LOW_VOLTAGE_CATEGORY_ID
     | typeof DESKTOP_LIGHTING_CATEGORY_ID
+    | typeof DESKTOP_ELECTRICAL_PANELS_CATEGORY_ID
   label: string
   children: readonly ElectricalSymbolKind[]
 }
@@ -126,6 +143,11 @@ export const DESKTOP_ELECTRICAL_TOOL_CATEGORIES: readonly DesktopElectricalToolC
     label: 'Lighting',
     children: DESKTOP_LIGHTING_KINDS,
   },
+  {
+    id: DESKTOP_ELECTRICAL_PANELS_CATEGORY_ID,
+    label: 'Electrical Panels',
+    children: DESKTOP_ELECTRICAL_PANEL_KINDS,
+  },
 ]
 
 export function isDesktopRecessedLightKind(kind: unknown): kind is (typeof DESKTOP_RECESSED_LIGHT_KINDS)[number] {
@@ -156,8 +178,12 @@ export function isDesktopLightingKind(kind: unknown): kind is (typeof DESKTOP_LI
   return typeof kind === 'string' && DESKTOP_LIGHTING_KIND_SET.has(kind as ElectricalSymbolKind)
 }
 
+export function isDesktopElectricalPanelKind(kind: unknown): kind is (typeof DESKTOP_ELECTRICAL_PANEL_KINDS)[number] {
+  return typeof kind === 'string' && DESKTOP_ELECTRICAL_PANEL_KIND_SET.has(kind as ElectricalSymbolKind)
+}
+
 export function isDesktopElectricalCategoryChildKind(kind: unknown): kind is ElectricalSymbolKind {
-  return isDesktopRecessedLightKind(kind) || isDesktopSwitchKind(kind) || isDesktopCeilingDeviceKind(kind) || isDesktopLightingControlKind(kind) || isDesktopReceptacleKind(kind) || isDesktopLowVoltageKind(kind) || isDesktopLightingKind(kind)
+  return isDesktopRecessedLightKind(kind) || isDesktopSwitchKind(kind) || isDesktopCeilingDeviceKind(kind) || isDesktopLightingControlKind(kind) || isDesktopReceptacleKind(kind) || isDesktopLowVoltageKind(kind) || isDesktopLightingKind(kind) || isDesktopElectricalPanelKind(kind)
 }
 
 export function shouldShowElectricalSymbolInDesktopMainGrid(kind: ElectricalSymbolKind) {

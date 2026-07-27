@@ -12,9 +12,43 @@ import {
   getElectricalSymbolMetadataStamp,
   getElectricalSymbolVisualBounds,
   isElectricalShapeKind,
+  isLightOutputShapeKind,
+  isRotatableElectricalShapeKind,
   renderElectricalSymbolSvg,
 } from '../OperationsBlueprintPdfViewer'
+import {
+  inferRouteBuilderDefaultChannel,
+  inferRouteBuilderNodeRoles,
+  isRouteBuilderLoadKind,
+  isRouteBuilderSourceKind,
+  ROUTE_BUILDER_SENSOR_KINDS,
+} from '@/features/blueprint-animation/routeBuilderModel'
 import { regenerateCircuitTopologyIds, translateNormalizedPoints } from '@/features/blueprint-animation/routeGeometry'
+
+const EQUIPMENT_EXPECTATIONS = [
+  ['electrical-sub-panel', 'Sub Panel', 'SP', 'electrical-sub-panel'],
+  ['electrical-switchboard', 'Switchboard', 'SWBD', 'electrical-switchboard'],
+  ['electrical-switchgear', 'Switchgear', 'SWGR', 'electrical-switchgear'],
+  ['electrical-ats', 'ATS', 'ATS', 'electrical-ats'],
+  ['electrical-transformer', 'Transformer', 'XFMR', 'electrical-transformer'],
+] as const
+
+function markupFor(kind: string) {
+  return renderToStaticMarkup(
+    React.createElement(
+      'svg',
+      { viewBox: '0 0 100 100' },
+      renderElectricalSymbolSvg(kind as any, {}, {
+        borderColor: '#38bdf8',
+        borderThickness: 2,
+        borderStyle: 'solid',
+        fillColor: 'transparent',
+        fillOpacity: 1,
+        labelsVisible: true,
+      }),
+    ),
+  )
+}
 
 const panelAnnotation = {
   id: 'panel-1',
@@ -32,18 +66,22 @@ const panelAnnotation = {
 } as any
 
 describe('ANIM-5.4 electrical panel symbol', () => {
-  it('registers electrical-panel with Electrical Panel / PNL / power metadata', () => {
+  it('registers electrical-panel with Main Panel / PNL / power metadata', () => {
     expect(isElectricalShapeKind('electrical-panel')).toBe(true)
     expect(ELECTRICAL_SYMBOL_OPTIONS).toContainEqual({
-      label: 'Electrical Panel',
+      label: 'Main Panel',
       value: 'electrical-panel',
       shortLabel: 'PNL',
     })
     expect(getElectricalSymbolMetadata('electrical-panel')).toMatchObject({
       symbolKind: 'electrical-panel',
-      displayName: 'Electrical Panel',
+      displayName: 'Main Panel',
       shortLabel: 'PNL',
       category: 'power',
+      defaultPhase: 'electrical',
+      countValue: 1,
+      materialKey: 'electrical-panel',
+      laborKey: 'electrical-panel',
       isElectricalSymbol: true,
     })
     expect(getElectricalSymbolMetadataStamp('electrical-panel')).toMatchObject({
@@ -52,30 +90,62 @@ describe('ANIM-5.4 electrical panel symbol', () => {
       materialKey: 'electrical-panel',
       laborKey: 'electrical-panel',
     })
+    expect(isRotatableElectricalShapeKind('electrical-panel')).toBe(false)
+    expect(isLightOutputShapeKind('electrical-panel')).toBe(false)
+    expect(isElectricalShapeKind('electrical-main-panel')).toBe(false)
+  })
+
+  it('registers new electrical equipment symbols with locked power metadata', () => {
+    for (const [kind, displayName, shortLabel, key] of EQUIPMENT_EXPECTATIONS) {
+      expect(isElectricalShapeKind(kind)).toBe(true)
+      expect(ELECTRICAL_SYMBOL_OPTIONS).toContainEqual({ value: kind, label: displayName, shortLabel })
+      expect(getElectricalSymbolMetadata(kind)).toMatchObject({
+        symbolKind: kind,
+        displayName,
+        shortLabel,
+        category: 'power',
+        defaultPhase: 'electrical',
+        countValue: 1,
+        materialKey: key,
+        laborKey: key,
+        isElectricalSymbol: true,
+      })
+      expect(getElectricalSymbolMetadataStamp(kind)).toEqual({
+        symbolCategory: 'power',
+        countValue: 1,
+        materialKey: key,
+        laborKey: key,
+      })
+      expect(isRotatableElectricalShapeKind(kind)).toBe(false)
+      expect(isLightOutputShapeKind(kind)).toBe(false)
+    }
   })
 
   it('renders a stable inline SVG panelboard glyph with compact PNL artwork', () => {
-    const markup = renderToStaticMarkup(
-      React.createElement(
-        'svg',
-        { viewBox: '0 0 100 100' },
-        renderElectricalSymbolSvg('electrical-panel' as any, {}, {
-          borderColor: '#38bdf8',
-          borderThickness: 2,
-          borderStyle: 'solid',
-          fillColor: 'transparent',
-          fillOpacity: 1,
-          labelsVisible: true,
-        }),
-      ),
-    )
+    const markup = markupFor('electrical-panel')
     expect(markup).toContain('<rect')
     expect(markup).toContain('PNL')
     expect(markup).not.toContain('<image')
   })
 
+  it('renders distinct inline SVG glyphs for the five new equipment symbols', () => {
+    const glyphs = EQUIPMENT_EXPECTATIONS.map(([kind, , shortLabel]) => {
+      const markup = markupFor(kind)
+      expect(markup).toContain(shortLabel)
+      expect(markup).not.toContain('<image')
+      return markup
+    })
+    expect(new Set(glyphs).size).toBe(glyphs.length)
+    expect(glyphs[0]).not.toBe(markupFor('electrical-panel'))
+  })
+
   it('uses tight panel visual bounds without changing other electrical symbol bounds', () => {
     expect(getElectricalSymbolVisualBounds('electrical-panel' as any)).toEqual({ x: 8, y: 7, w: 84, h: 86 })
+    expect(getElectricalSymbolVisualBounds('electrical-sub-panel' as any)).toEqual({ x: 17, y: 15, w: 66, h: 70 })
+    expect(getElectricalSymbolVisualBounds('electrical-switchboard' as any)).toEqual({ x: 8, y: 24, w: 84, h: 52 })
+    expect(getElectricalSymbolVisualBounds('electrical-switchgear' as any)).toEqual({ x: 12, y: 12, w: 76, h: 76 })
+    expect(getElectricalSymbolVisualBounds('electrical-ats' as any)).toEqual({ x: 16, y: 16, w: 68, h: 68 })
+    expect(getElectricalSymbolVisualBounds('electrical-transformer' as any)).toEqual({ x: 13, y: 16, w: 74, h: 66 })
     expect(getElectricalSymbolVisualBounds('electrical-receptacle' as any)).toEqual({ x: 25, y: 9, w: 50, h: 74 })
   })
 
@@ -113,7 +183,7 @@ describe('ANIM-5.4 electrical panel symbol', () => {
         onKeyDown: () => undefined,
       }),
     )
-    expect(markup).toContain('Electrical panel label')
+    expect(markup).toContain('Main panel label')
     expect(markup).toContain('Subpanel')
     expect(buildElectricalPanelLabelPatch(' MDP ')).toEqual({ text: 'MDP' })
     expect(buildElectricalPanelLabelPatch('   ')).toEqual({ text: undefined })
@@ -197,11 +267,27 @@ describe('ANIM-5.4 electrical panel symbol', () => {
     expect(buildBlueprintScopeItemRef(panelAnnotation)).toMatchObject({
       annotationId: 'panel-1',
       pageNumber: 2,
-      label: 'Electrical Panel',
+      label: 'Main Panel',
       shapeKind: 'electrical-panel',
       category: 'power',
       countValue: 1,
     })
+  })
+
+  it('preserves Main Panel animation behavior and keeps new equipment animation-neutral', () => {
+    expect(isRouteBuilderSourceKind('electrical-panel')).toBe(true)
+    expect(isRouteBuilderLoadKind('electrical-panel')).toBe(false)
+    expect(inferRouteBuilderNodeRoles('electrical-panel', { selectedAsSource: true })).toEqual(['source'])
+    expect(inferRouteBuilderNodeRoles('electrical-panel')).toEqual([])
+    expect(inferRouteBuilderDefaultChannel('electrical-panel')).toBe('constant-line-voltage')
+
+    for (const [kind] of EQUIPMENT_EXPECTATIONS) {
+      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(isRouteBuilderLoadKind(kind)).toBe(false)
+      expect(inferRouteBuilderNodeRoles(kind)).toEqual([])
+      expect(inferRouteBuilderDefaultChannel(kind)).toBe('generic-route')
+      expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
+    }
   })
 
   it('keeps the panel source anchor at the annotation center', () => {

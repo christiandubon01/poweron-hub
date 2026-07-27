@@ -19,6 +19,11 @@ export type ElectricalSymbolKind =
   | 'electrical-led-panel-2x2'
   | 'electrical-led-panel-2x4'
   | 'electrical-panel'
+  | 'electrical-sub-panel'
+  | 'electrical-switchboard'
+  | 'electrical-switchgear'
+  | 'electrical-ats'
+  | 'electrical-transformer'
   | 'electrical-gfci'
   | 'electrical-gfci-wp'
   | 'electrical-receptacle'
@@ -238,13 +243,68 @@ export const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, Electrical
   },
   'electrical-panel': {
     symbolKind: 'electrical-panel',
-    displayName: 'Electrical Panel',
+    displayName: 'Main Panel',
     shortLabel: 'PNL',
     category: 'power',
     countValue: 1,
     defaultPhase: 'electrical',
     materialKey: 'electrical-panel',
     laborKey: 'electrical-panel',
+    isElectricalSymbol: true,
+  },
+  'electrical-sub-panel': {
+    symbolKind: 'electrical-sub-panel',
+    displayName: 'Sub Panel',
+    shortLabel: 'SP',
+    category: 'power',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'electrical-sub-panel',
+    laborKey: 'electrical-sub-panel',
+    isElectricalSymbol: true,
+  },
+  'electrical-switchboard': {
+    symbolKind: 'electrical-switchboard',
+    displayName: 'Switchboard',
+    shortLabel: 'SWBD',
+    category: 'power',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'electrical-switchboard',
+    laborKey: 'electrical-switchboard',
+    isElectricalSymbol: true,
+  },
+  'electrical-switchgear': {
+    symbolKind: 'electrical-switchgear',
+    displayName: 'Switchgear',
+    shortLabel: 'SWGR',
+    category: 'power',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'electrical-switchgear',
+    laborKey: 'electrical-switchgear',
+    isElectricalSymbol: true,
+  },
+  'electrical-ats': {
+    symbolKind: 'electrical-ats',
+    displayName: 'ATS',
+    shortLabel: 'ATS',
+    category: 'power',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'electrical-ats',
+    laborKey: 'electrical-ats',
+    isElectricalSymbol: true,
+  },
+  'electrical-transformer': {
+    symbolKind: 'electrical-transformer',
+    displayName: 'Transformer',
+    shortLabel: 'XFMR',
+    category: 'power',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'electrical-transformer',
+    laborKey: 'electrical-transformer',
     isElectricalSymbol: true,
   },
   'electrical-gfci': {
@@ -510,6 +570,11 @@ const ELECTRICAL_SYMBOL_VISUAL_BOUNDS: Partial<Record<ElectricalSymbolKind, { x:
   'electrical-single-receptacle': { x: 25, y: 16, w: 50, h: 58 },
   'electrical-half-hot-receptacle': { x: 25, y: 9, w: 50, h: 74 },
   'electrical-panel': { x: 8, y: 7, w: 84, h: 86 },
+  'electrical-sub-panel': { x: 17, y: 15, w: 66, h: 70 },
+  'electrical-switchboard': { x: 8, y: 24, w: 84, h: 52 },
+  'electrical-switchgear': { x: 12, y: 12, w: 76, h: 76 },
+  'electrical-ats': { x: 16, y: 16, w: 68, h: 68 },
+  'electrical-transformer': { x: 13, y: 16, w: 74, h: 66 },
   'electrical-gfci': { x: 25, y: 9, w: 50, h: 74 },
   'electrical-sconce': { x: 15, y: 15, w: 47, h: 68 },
   'electrical-emergency-exit-sign': { x: 12, y: 28, w: 76, h: 38 },
@@ -684,6 +749,60 @@ export function renderElectricalSymbolSvg(kind: unknown, meta: Record<string, an
         <line x1="28" y1="30" x2="72" y2="30" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} strokeLinecap="round" opacity="0.55" />
         <line x1="28" y1="70" x2="72" y2="70" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} strokeLinecap="round" opacity="0.55" />
         <text x="50" y="52" fontSize="20" letterSpacing="0" {...commonText}>PNL</text>
+      </>
+    )
+  } else if (kind === 'electrical-sub-panel') {
+    body = (
+      <>
+        <rect x="17" y="15" width="66" height="70" rx="5" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <rect x="26" y="25" width="48" height="50" rx="3" fill="none" stroke={borderColor} strokeWidth={fineStroke} opacity="0.68" />
+        <line x1="34" y1="35" x2="66" y2="35" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.75)} strokeLinecap="round" opacity="0.55" />
+        <line x1="34" y1="65" x2="66" y2="65" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.75)} strokeLinecap="round" opacity="0.55" />
+        <text x="50" y="52" fontSize="22" letterSpacing="0" {...commonText}>SP</text>
+      </>
+    )
+  } else if (kind === 'electrical-switchboard') {
+    body = (
+      <>
+        <rect x="8" y="24" width="84" height="52" rx="4" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <line x1="22" y1="24" x2="22" y2="76" stroke={borderColor} strokeWidth={fineStroke} opacity="0.62" />
+        <line x1="78" y1="24" x2="78" y2="76" stroke={borderColor} strokeWidth={fineStroke} opacity="0.62" />
+        <line x1="16" y1="35" x2="84" y2="35" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.7)} opacity="0.48" />
+        <line x1="16" y1="65" x2="84" y2="65" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.7)} opacity="0.48" />
+        <text x="50" y="51" fontSize="17" letterSpacing="0" {...commonText}>SWBD</text>
+      </>
+    )
+  } else if (kind === 'electrical-switchgear') {
+    body = (
+      <>
+        <rect x="12" y="12" width="76" height="76" rx="4" fill={symbolFill} stroke={borderColor} strokeWidth={Math.max(borderThickness, 2.6)} strokeDasharray={dash} />
+        <line x1="31" y1="12" x2="31" y2="88" stroke={borderColor} strokeWidth={fineStroke} opacity="0.72" />
+        <line x1="69" y1="12" x2="69" y2="88" stroke={borderColor} strokeWidth={fineStroke} opacity="0.72" />
+        <rect x="20" y="22" width="60" height="56" rx="2" fill="none" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} opacity="0.55" />
+        <circle cx="24" cy="30" r="2.4" fill={borderColor} opacity="0.75" />
+        <circle cx="76" cy="30" r="2.4" fill={borderColor} opacity="0.75" />
+        <text x="50" y="52" fontSize="17" letterSpacing="0" {...commonText}>SWGR</text>
+      </>
+    )
+  } else if (kind === 'electrical-ats') {
+    body = (
+      <>
+        <rect x="16" y="16" width="68" height="68" rx="5" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <path d="M29 33 H41 M59 33 H71 M31 67 H43 M57 67 H69" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.78" />
+        <path d="M41 33 L57 67" fill="none" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" />
+        <path d="M50 29 V21 M50 79 V71" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.68" />
+        <text x="50" y="51" fontSize="20" letterSpacing="0" {...commonText}>ATS</text>
+      </>
+    )
+  } else if (kind === 'electrical-transformer') {
+    body = (
+      <>
+        <rect x="13" y="16" width="74" height="66" rx="5" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <path d="M31 32 C21 32 21 46 31 46 C41 46 41 60 31 60" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" />
+        <path d="M69 32 C79 32 79 46 69 46 C59 46 59 60 69 60" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" />
+        <line x1="43" y1="30" x2="43" y2="62" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} opacity="0.55" />
+        <line x1="57" y1="30" x2="57" y2="62" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} opacity="0.55" />
+        <text x="50" y="50" fontSize="15" letterSpacing="0" {...commonText}>XFMR</text>
       </>
     )
   } else if (kind === 'electrical-gfci' || kind === 'electrical-gfci-wp' || kind === 'electrical-receptacle') {

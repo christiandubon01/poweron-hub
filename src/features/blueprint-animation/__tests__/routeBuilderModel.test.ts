@@ -1,4 +1,7 @@
+import React from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { PackageAnimationRouteBuilder } from '../PackageAnimationRouteBuilder'
 import { createCircuitGeometryFingerprint } from '../routeGeometry'
 import { preparePlaybackGeometry } from '../playbackGeometry'
 import { calculatePlaybackFrame, createPlaybackTimeline, detectPlaybackBranches } from '../playbackModel'
@@ -133,6 +136,28 @@ describe('routeBuilderModel', () => {
     expect(validatePackageAnimationRouteDraft(draft).map((entry) => entry.code)).toEqual(expect.arrayContaining(['missing-source', 'empty-route']))
   })
 
+  it('uses Main Panel in route-builder source instructions without changing source eligibility', () => {
+    const draft = empty({ annotations: [], packageAnnotationIds: [] })
+    const markup = renderToStaticMarkup(
+      React.createElement(PackageAnimationRouteBuilder, {
+        draft,
+        saving: false,
+        onDraftChange: () => undefined,
+        onCancel: () => undefined,
+        onSave: () => undefined,
+      }),
+    )
+
+    expect(markup).toContain('Select one supported source on the blueprint: Main Panel, switch, dimmer, timer, photocell, or occupancy sensor.')
+    expect(markup).not.toContain('Electrical Panel')
+    expect(isRouteBuilderSourceKind('electrical-panel')).toBe(true)
+    expect(inferRouteBuilderNodeRoles('electrical-panel', { selectedAsSource: true })).toEqual(['source'])
+    expect(inferRouteBuilderDefaultChannel('electrical-panel')).toBe('constant-line-voltage')
+    for (const kind of ['electrical-sub-panel', 'electrical-switchboard', 'electrical-switchgear', 'electrical-ats', 'electrical-transformer']) {
+      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+    }
+  })
+
   it('selects exactly one eligible source and resets the traversal', () => {
     let draft = sourceDraft()
     draft = addSegment(draft, circuit, 0)
@@ -154,6 +179,12 @@ describe('routeBuilderModel', () => {
     for (const kind of ['electrical-receptacle', 'electrical-gfci', 'electrical-gfci-wp', 'electrical-receptacle-240v', 'electrical-single-receptacle', 'electrical-half-hot-receptacle']) {
       expect(inferRouteBuilderNodeRoles(kind)).toEqual(['load'])
       expect(isRouteBuilderLoadKind(kind)).toBe(true)
+      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
+    }
+    for (const kind of ['electrical-sub-panel', 'electrical-switchboard', 'electrical-switchgear', 'electrical-ats', 'electrical-transformer']) {
+      expect(inferRouteBuilderNodeRoles(kind)).toEqual([])
+      expect(isRouteBuilderLoadKind(kind)).toBe(false)
       expect(isRouteBuilderSourceKind(kind)).toBe(false)
       expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
     }
@@ -273,11 +304,11 @@ describe('routeBuilderModel', () => {
     })
   })
 
-  it('treats an electrical panel as an eligible source with source-only roles and constant power', () => {
+  it('treats a Main Panel as an eligible source with source-only roles and constant power', () => {
     const panel: RouteBuilderAnnotation = {
       id: 'panel',
       pageNumber: 1,
-      label: 'Electrical Panel',
+      label: 'Main Panel',
       text: 'Subpanel',
       shapeKind: 'electrical-panel',
       rect: { x: 0.18, y: 0.38, w: 0.06, h: 0.08 },
@@ -296,10 +327,10 @@ describe('routeBuilderModel', () => {
     expect(isRouteBuilderSourceKind('electrical-receptacle')).toBe(false)
     expect(selected.accepted).toBe(true)
     expect(selected.draft.source).toEqual({ annotationId: 'panel', channel: 'constant-line-voltage' })
-    expect(formatRouteBuilderSourceLabel(panel)).toBe('Electrical Panel — Subpanel')
-    expect(formatRouteBuilderSourceLabel({ ...panel, text: '' })).toBe('Electrical Panel')
-    expect(formatRouteBuilderSourceLabel({ ...panel, text: '   ' })).toBe('Electrical Panel')
-    expect(formatRouteBuilderSourceLabel({ ...panel, text: ' MDP ' })).toBe('Electrical Panel — MDP')
+    expect(formatRouteBuilderSourceLabel(panel)).toBe('Main Panel — Subpanel')
+    expect(formatRouteBuilderSourceLabel({ ...panel, text: '' })).toBe('Main Panel')
+    expect(formatRouteBuilderSourceLabel({ ...panel, text: '   ' })).toBe('Main Panel')
+    expect(formatRouteBuilderSourceLabel({ ...panel, text: ' MDP ' })).toBe('Main Panel — MDP')
     expect(inferRouteBuilderNodeRoles('electrical-panel', { selectedAsSource: true })).toEqual(['source'])
     expect(inferRouteBuilderNodeRoles('electrical-panel')).toEqual([])
     expect(inferRouteBuilderNodeRoles('electrical-panel', { selectedAsSource: true })).not.toEqual(expect.arrayContaining(['control', 'sensor', 'load', 'emergency-source']))
@@ -319,7 +350,7 @@ describe('routeBuilderModel', () => {
     const panel: RouteBuilderAnnotation = {
       id: 'panel',
       pageNumber: 1,
-      label: 'Electrical Panel',
+      label: 'Main Panel',
       text: 'Subpanel',
       shapeKind: 'electrical-panel',
       rect: { x: 0.2, y: 0.2, w: 0.04, h: 0.04 },
@@ -332,7 +363,7 @@ describe('routeBuilderModel', () => {
     expect(getPackageAnimationSourceCandidates(withPanel)).toEqual([{
       id: 'panel',
       annotationId: 'panel',
-      label: 'Electrical Panel — Subpanel',
+      label: 'Main Panel — Subpanel',
       shapeKind: 'electrical-panel',
       pageNumber: 1,
       channel: 'constant-line-voltage',
@@ -344,7 +375,7 @@ describe('routeBuilderModel', () => {
     const panelA: RouteBuilderAnnotation = {
       id: 'panel-a',
       pageNumber: 1,
-      label: 'Electrical Panel',
+      label: 'Main Panel',
       text: 'Panel A',
       shapeKind: 'electrical-panel',
       rect: { x: 0.1, y: 0.2, w: 0.04, h: 0.04 },
@@ -352,15 +383,15 @@ describe('routeBuilderModel', () => {
     const panelB: RouteBuilderAnnotation = {
       id: 'panel-b',
       pageNumber: 1,
-      label: 'Electrical Panel',
+      label: 'Main Panel',
       text: 'Panel B',
       shapeKind: 'electrical-panel',
       rect: { x: 0.2, y: 0.2, w: 0.04, h: 0.04 },
     }
     const draft = empty({ annotations: [panelA, panelB, circuit], packageAnnotationIds: ['panel-a', 'panel-b', 'circuit'] })
     expect(getPackageAnimationSourceCandidates(draft)).toEqual([
-      expect.objectContaining({ annotationId: 'panel-a', label: 'Electrical Panel — Panel A' }),
-      expect.objectContaining({ annotationId: 'panel-b', label: 'Electrical Panel — Panel B' }),
+      expect.objectContaining({ annotationId: 'panel-a', label: 'Main Panel — Panel A' }),
+      expect.objectContaining({ annotationId: 'panel-b', label: 'Main Panel — Panel B' }),
     ])
     expect(selectPackageAnimationRouteSource(draft, 'panel-a').draft.source?.annotationId).toBe('panel-a')
     expect(selectPackageAnimationRouteSource(draft, 'panel-b').draft.source?.annotationId).toBe('panel-b')
@@ -370,7 +401,7 @@ describe('routeBuilderModel', () => {
     const panel: RouteBuilderAnnotation = {
       id: 'panel-source',
       pageNumber: 1,
-      label: 'Electrical Panel',
+      label: 'Main Panel',
       text: 'Panel',
       shapeKind: 'electrical-panel',
       rect: { x: 0.08, y: 0.46, w: 0.04, h: 0.08 },
@@ -431,7 +462,7 @@ describe('routeBuilderModel', () => {
   })
 
   it('authors, saves, reopens, and preserves a panel common-feeder split', () => {
-    const panel: RouteBuilderAnnotation = { id: 'panel', pageNumber: 1, label: 'Electrical Panel', text: 'MDP', shapeKind: 'electrical-panel', rect: { x: 0.08, y: 0.48, w: 0.04, h: 0.04 } }
+    const panel: RouteBuilderAnnotation = { id: 'panel', pageNumber: 1, label: 'Main Panel', text: 'MDP', shapeKind: 'electrical-panel', rect: { x: 0.08, y: 0.48, w: 0.04, h: 0.04 } }
     const roomA: RouteBuilderAnnotation = { id: 'room-a', pageNumber: 1, label: 'Room A', shapeKind: 'electrical-sconce', rect: { x: 0.88, y: 0.28, w: 0.04, h: 0.04 } }
     const roomB: RouteBuilderAnnotation = { id: 'room-b', pageNumber: 1, label: 'Room B', shapeKind: 'electrical-sconce', rect: { x: 0.88, y: 0.68, w: 0.04, h: 0.04 } }
     const feeder: RouteBuilderAnnotation = {
@@ -485,7 +516,7 @@ describe('routeBuilderModel', () => {
   })
 
   it('authors deterministic direct source fan-out from one panel node without array-order fallback', () => {
-    const panel: RouteBuilderAnnotation = { id: 'panel', pageNumber: 1, label: 'Electrical Panel', shapeKind: 'electrical-panel', rect: { x: 0.08, y: 0.48, w: 0.04, h: 0.04 } }
+    const panel: RouteBuilderAnnotation = { id: 'panel', pageNumber: 1, label: 'Main Panel', shapeKind: 'electrical-panel', rect: { x: 0.08, y: 0.48, w: 0.04, h: 0.04 } }
     const armA: RouteBuilderAnnotation = { id: 'arm-a', pageNumber: 1, label: 'Arm A', shapeKind: 'electrical-sconce', rect: { x: 0.5, y: 0.28, w: 0.04, h: 0.04 } }
     const armB: RouteBuilderAnnotation = { id: 'arm-b', pageNumber: 1, label: 'Arm B', shapeKind: 'electrical-sconce', rect: { x: 0.5, y: 0.68, w: 0.04, h: 0.04 } }
     const annotations = [panel, armA, armB]

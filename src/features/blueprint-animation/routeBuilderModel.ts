@@ -1724,7 +1724,7 @@ export function formatRouteBuilderSourceLabel(annotation: RouteBuilderAnnotation
   if (!annotation) return 'Missing source'
   if (annotation.shapeKind !== 'electrical-panel') return annotation.label || 'Source'
   const customLabel = String(annotation.text || '').trim()
-  return customLabel ? `Electrical Panel — ${customLabel}` : 'Electrical Panel'
+  return customLabel ? `Main Panel — ${customLabel}` : 'Main Panel'
 }
 
 export interface RouteBuilderSourceCandidate {
