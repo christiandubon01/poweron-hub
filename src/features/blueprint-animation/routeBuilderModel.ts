@@ -42,8 +42,13 @@ export const ROUTE_BUILDER_SENSOR_KINDS = [
 ] as const
 
 export const ROUTE_BUILDER_LOAD_KINDS = [
+  'can-light-2',
+  'canless-light-2',
   'can-light-4',
+  'canless-light-4',
   'can-light-6',
+  'canless-light-6',
+  'canless-light-10',
   'electrical-gfci',
   'electrical-receptacle',
   'electrical-receptacle-240v',

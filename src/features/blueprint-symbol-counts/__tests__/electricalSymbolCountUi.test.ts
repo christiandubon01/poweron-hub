@@ -101,7 +101,7 @@ describe('blueprint-symbol-counts UI', () => {
     expect(markup).toContain('Current blueprint set')
     expect(markup).toContain('Unique symbols')
     expect(markup).toContain('Category Subtotals')
-    expect(markup).toContain('4-inch Can Light')
+    expect(markup).toContain('4&quot; Can Light')
     expect(markup).toContain('Receptacle')
     expect(markup).toContain('Pg 1')
     expect(markup).toContain('1 total warnings - 1 duplicate memberships - 0 stale references')

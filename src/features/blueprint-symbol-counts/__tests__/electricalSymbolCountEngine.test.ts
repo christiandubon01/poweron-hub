@@ -78,8 +78,8 @@ describe('blueprint-symbol-counts engine', () => {
     expect(result.overallCount).toBe(ELECTRICAL_SYMBOL_OPTIONS.length)
     expect(new Set(result.symbolTotals.map((total) => total.shapeKind))).toEqual(new Set(ELECTRICAL_SYMBOL_OPTIONS.map((option) => option.value)))
     expect(result.symbolTotals.map((total) => total.category).slice(0, 8)).toEqual(['lighting', 'lighting', 'lighting', 'lighting', 'lighting', 'lighting', 'lighting', 'lighting'])
-    expect(result.symbolTotals.find((total) => total.shapeKind === 'can-light-4')).toMatchObject({ displayName: '4-inch Can Light', count: 1 })
-    expect(result.symbolTotals.find((total) => total.shapeKind === 'can-light-6')).toMatchObject({ displayName: '6-inch Can Light', count: 1 })
+    expect(result.symbolTotals.find((total) => total.shapeKind === 'can-light-4')).toMatchObject({ displayName: '4" Can Light', count: 1 })
+    expect(result.symbolTotals.find((total) => total.shapeKind === 'can-light-6')).toMatchObject({ displayName: '6" Can Light', count: 1 })
   })
 
   it('keeps EST-1E countability tied to the shared registry instead of a local metadata copy', () => {
@@ -103,10 +103,15 @@ describe('blueprint-symbol-counts engine', () => {
         labelsVisible: false,
       })).toBeTruthy()
     }
-    const result = run({ annotations: [ann('can4', 'can-light-4'), ann('can6', 'can-light-6')] })
+    const result = run({ annotations: [ann('can2', 'can-light-2'), ann('canless2', 'canless-light-2'), ann('can4', 'can-light-4'), ann('canless4', 'canless-light-4'), ann('can6', 'can-light-6'), ann('canless6', 'canless-light-6'), ann('canless10', 'canless-light-10')] })
     expect(result.symbolTotals.map((total) => [total.shapeKind, total.count])).toEqual([
+      ['can-light-2', 1],
+      ['canless-light-2', 1],
       ['can-light-4', 1],
+      ['canless-light-4', 1],
       ['can-light-6', 1],
+      ['canless-light-6', 1],
+      ['canless-light-10', 1],
     ])
   })
 
@@ -234,7 +239,7 @@ describe('blueprint-symbol-counts engine', () => {
   })
 
   it('keeps the registered kind type usable for representative exact rows', () => {
-    const exactKinds: ElectricalSymbolKind[] = ['electrical-receptacle', 'electrical-gfci', 'electrical-receptacle-240v', 'electrical-switch-3way', 'electrical-switch-4way', 'electrical-dimmer', 'electrical-timer-control', 'electrical-photocell', 'electrical-ceiling-occupancy-sensor', 'electrical-wall-occupancy-sensor', 'can-light-4', 'can-light-6', 'electrical-emergency-exit-sign', 'electrical-smoke-alarm', 'electrical-co-alarm']
+    const exactKinds: ElectricalSymbolKind[] = ['electrical-receptacle', 'electrical-gfci', 'electrical-receptacle-240v', 'electrical-switch-3way', 'electrical-switch-4way', 'electrical-dimmer', 'electrical-timer-control', 'electrical-photocell', 'electrical-ceiling-occupancy-sensor', 'electrical-wall-occupancy-sensor', 'can-light-2', 'canless-light-2', 'can-light-4', 'canless-light-4', 'can-light-6', 'canless-light-6', 'canless-light-10', 'electrical-emergency-exit-sign', 'electrical-smoke-alarm', 'electrical-co-alarm']
     const result = run({ annotations: exactKinds.map((kind, index) => ann(`a${index}`, kind)) })
     expect(result.symbolTotals).toHaveLength(exactKinds.length)
   })

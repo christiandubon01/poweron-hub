@@ -145,6 +145,12 @@ describe('routeBuilderModel', () => {
     expect(inferRouteBuilderNodeRoles('electrical-wall-occupancy-sensor', { selectedAsSource: true })).toEqual(['source', 'sensor', 'control'])
     expect(inferRouteBuilderNodeRoles('electrical-dimmer', { selectedAsSource: true })).toEqual(['source', 'control'])
     expect(inferRouteBuilderNodeRoles('electrical-recessed-light')).toEqual(['load'])
+    for (const kind of ['can-light-2', 'canless-light-2', 'can-light-4', 'canless-light-4', 'can-light-6', 'canless-light-6', 'canless-light-10']) {
+      expect(inferRouteBuilderNodeRoles(kind)).toEqual(['load'])
+      expect(isRouteBuilderLoadKind(kind)).toBe(true)
+      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
+    }
     expect(inferRouteBuilderNodeRoles('electrical-receptacle')).toEqual(['load'])
     expect(inferRouteBuilderNodeRoles('electrical-gfci')).toEqual(['load'])
     expect(inferRouteBuilderNodeRoles('electrical-emergency-exit-sign')).toEqual(['load'])

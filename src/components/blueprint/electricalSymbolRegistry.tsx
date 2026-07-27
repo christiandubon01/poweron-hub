@@ -1,8 +1,13 @@
 import type React from 'react'
 
 export type ElectricalSymbolKind =
+  | 'can-light-2'
   | 'can-light-4'
   | 'can-light-6'
+  | 'canless-light-2'
+  | 'canless-light-4'
+  | 'canless-light-6'
+  | 'canless-light-10'
   | 'electrical-switch'
   | 'electrical-switch-3way'
   | 'electrical-switch-4way'
@@ -41,9 +46,31 @@ export type ElectricalSymbolMetadata = {
 }
 
 export const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, ElectricalSymbolMetadata> = {
+  'can-light-2': {
+    symbolKind: 'can-light-2',
+    displayName: '2" Can Light',
+    shortLabel: '2"',
+    category: 'lighting',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'can-light-2',
+    laborKey: 'can-light',
+    isElectricalSymbol: true,
+  },
+  'canless-light-2': {
+    symbolKind: 'canless-light-2',
+    displayName: '2" Canless',
+    shortLabel: '2" CL',
+    category: 'lighting',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'canless-light-2',
+    laborKey: 'canless-light',
+    isElectricalSymbol: true,
+  },
   'can-light-4': {
     symbolKind: 'can-light-4',
-    displayName: '4-inch Can Light',
+    displayName: '4" Can Light',
     shortLabel: '4"',
     category: 'lighting',
     countValue: 1,
@@ -52,15 +79,48 @@ export const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, Electrical
     laborKey: 'can-light',
     isElectricalSymbol: true,
   },
+  'canless-light-4': {
+    symbolKind: 'canless-light-4',
+    displayName: '4" Canless Light',
+    shortLabel: '4" CL',
+    category: 'lighting',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'canless-light-4',
+    laborKey: 'canless-light',
+    isElectricalSymbol: true,
+  },
   'can-light-6': {
     symbolKind: 'can-light-6',
-    displayName: '6-inch Can Light',
+    displayName: '6" Can Light',
     shortLabel: '6"',
     category: 'lighting',
     countValue: 1,
     defaultPhase: 'electrical',
     materialKey: 'can-light-6',
     laborKey: 'can-light',
+    isElectricalSymbol: true,
+  },
+  'canless-light-6': {
+    symbolKind: 'canless-light-6',
+    displayName: '6" Canless Light',
+    shortLabel: '6" CL',
+    category: 'lighting',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'canless-light-6',
+    laborKey: 'canless-light',
+    isElectricalSymbol: true,
+  },
+  'canless-light-10': {
+    symbolKind: 'canless-light-10',
+    displayName: '10" Canless Light',
+    shortLabel: '10" CL',
+    category: 'lighting',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'canless-light-10',
+    laborKey: 'canless-light',
     isElectricalSymbol: true,
   },
   'electrical-switch': {
@@ -326,8 +386,8 @@ export function isElectricalShapeKind(shapeKind: unknown): shapeKind is Electric
   return typeof shapeKind === 'string' && shapeKind in ELECTRICAL_SYMBOL_METADATA
 }
 
-export function isCanLightShapeKind(shapeKind: unknown): shapeKind is 'can-light-4' | 'can-light-6' {
-  return shapeKind === 'can-light-4' || shapeKind === 'can-light-6'
+export function isCanLightShapeKind(shapeKind: unknown): shapeKind is 'can-light-2' | 'can-light-4' | 'can-light-6' {
+  return shapeKind === 'can-light-2' || shapeKind === 'can-light-4' || shapeKind === 'can-light-6'
 }
 
 export function getElectricalSymbolMetadata(shapeKind: unknown): ElectricalSymbolMetadata | null {
@@ -362,8 +422,13 @@ export function formatElectricalSymbolCategory(category: ElectricalSymbolCategor
 }
 
 const LIGHT_OUTPUT_SHAPE_KINDS = new Set<ElectricalSymbolKind>([
+  'can-light-2',
+  'canless-light-2',
   'can-light-4',
+  'canless-light-4',
   'can-light-6',
+  'canless-light-6',
+  'canless-light-10',
   'electrical-recessed-light',
   'electrical-pendant-light',
   'electrical-sconce',
@@ -477,9 +542,9 @@ export function renderElectricalSymbolSvg(kind: unknown, meta: Record<string, an
     </>
   )
 
-  if (kind === 'can-light-4' || kind === 'can-light-6') {
-    const aperture = kind === 'can-light-4' ? 10 : 13
-    const labelText = kind === 'can-light-4' ? '4"' : '6"'
+  if (kind === 'can-light-2' || kind === 'can-light-4' || kind === 'can-light-6') {
+    const aperture = kind === 'can-light-2' ? 7 : kind === 'can-light-4' ? 10 : 13
+    const labelText = getElectricalSymbolMetadata(kind)?.shortLabel ?? ''
     body = (
       <>
         <circle cx="50" cy="50" r="24" fill="none" stroke={borderColor} strokeWidth={Math.max(0.8, borderThickness * 0.65)} strokeDasharray={dash} />
@@ -487,6 +552,20 @@ export function renderElectricalSymbolSvg(kind: unknown, meta: Record<string, an
         <line x1="50" y1="31" x2="50" y2="69" stroke={borderColor} strokeWidth={Math.max(1, borderThickness * 0.45)} opacity="0.55" />
         <circle cx="50" cy="50" r={aperture} fill={symbolFill} stroke={borderColor} strokeWidth={fineStroke} />
         <text x="50" y="87" fontSize="14" {...commonText}>{labelText}</text>
+      </>
+    )
+  } else if (kind === 'canless-light-2' || kind === 'canless-light-4' || kind === 'canless-light-6' || kind === 'canless-light-10') {
+    const metaLabel = getElectricalSymbolMetadata(kind)?.shortLabel ?? ''
+    const size = kind === 'canless-light-10' ? 10 : kind === 'canless-light-6' ? 6 : kind === 'canless-light-4' ? 4 : 2
+    const innerRadius = size === 10 ? 17 : size === 6 ? 14 : size === 4 ? 11 : 8
+    body = (
+      <>
+        <circle cx="50" cy="50" r="24" fill={symbolFill} fillOpacity="0.16" stroke={borderColor} strokeWidth={Math.max(1.1, borderThickness * 0.8)} strokeDasharray={dash} />
+        <circle cx="50" cy="50" r="19" fill="none" stroke={borderColor} strokeWidth={Math.max(1, borderThickness * 0.42)} opacity="0.45" />
+        <path d="M32 39 Q50 29 68 39 M32 61 Q50 71 68 61" fill="none" stroke={borderColor} strokeWidth={Math.max(1, borderThickness * 0.45)} opacity="0.7" strokeLinecap="round" />
+        <circle cx="50" cy="50" r={innerRadius} fill="none" stroke={borderColor} strokeWidth={fineStroke} opacity="0.9" />
+        <circle cx="50" cy="50" r="3" fill={borderColor} opacity="0.8" />
+        <text x="50" y="87" fontSize="12" {...commonText}>{metaLabel}</text>
       </>
     )
   } else if (kind === 'electrical-switch') {

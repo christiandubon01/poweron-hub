@@ -208,6 +208,13 @@ import {
   type ElectricalSymbolCategory,
   type ElectricalSymbolKind,
 } from './electricalSymbolRegistry'
+import {
+  DESKTOP_ELECTRICAL_TOOL_CATEGORIES,
+  DESKTOP_RECESSED_LIGHT_CATEGORY_ID,
+  isDesktopRecessedLightKind,
+  shouldShowElectricalSymbolInDesktopMainGrid,
+  shouldShowElectricalSymbolInLegacyNonDesktopToolbar,
+} from './desktopElectricalToolCategories'
 
 export {
   ELECTRICAL_SYMBOL_OPTIONS,
@@ -417,8 +424,13 @@ type ShapeKind =
   | 'cross'
   | 'diamond'
   | 'pentagon'
+  | 'can-light-2'
   | 'can-light-4'
   | 'can-light-6'
+  | 'canless-light-2'
+  | 'canless-light-4'
+  | 'canless-light-6'
+  | 'canless-light-10'
   | 'electrical-switch'
   | 'electrical-switch-3way'
   | 'electrical-switch-4way'
@@ -679,8 +691,6 @@ function getShapeKindLabel(kind: any, meta: Record<string, any> = {}) {
   switch (kind) {
     case 'arch-line': return 'Arch Line'
     case 'circuit-arc': return 'Circuit Arc Path'
-    case 'can-light-4': return 'Can Light 4"'
-    case 'can-light-6': return 'Can Light 6"'
     default:
       return String(kind || 'Shape').replace(/-/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase())
   }
@@ -2571,6 +2581,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     mode: 'tool' | 'edit'
     editingAnnotationId?: string
   } | null>(null)
+  const [openDesktopElectricalCategory, setOpenDesktopElectricalCategory] = useState<string | null>(null)
 
   // Per-tool numeric options
   const [eraserSize, setEraserSize] = useState(20)
@@ -2912,6 +2923,28 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       workPackages: projectId && blueprintSetId ? scopeLayers : [],
     })
   }, [allAnnotations, blueprint?.id, blueprint?.projectId, scopeLayers])
+
+  const electricalSymbolOptionByKind = useMemo(() => {
+    return new Map(ELECTRICAL_SYMBOL_OPTIONS.map((option) => [option.value, option]))
+  }, [])
+
+  const desktopElectricalSymbolOptions = useMemo(
+    () => ELECTRICAL_SYMBOL_OPTIONS.filter((option) => shouldShowElectricalSymbolInDesktopMainGrid(option.value)),
+    [],
+  )
+
+  const legacyNonDesktopElectricalSymbolOptions = useMemo(
+    () => ELECTRICAL_SYMBOL_OPTIONS.filter((option) => shouldShowElectricalSymbolInLegacyNonDesktopToolbar(option.value)),
+    [],
+  )
+
+  const activateElectricalSymbolTool = useCallback((kind: ElectricalSymbolKind, options: { closeDesktopCategory?: boolean } = {}) => {
+    clearActiveQuickAccessSession()
+    setToolMode('shape')
+    setShapeKind(kind)
+    setOpenPopover(null)
+    if (options.closeDesktopCategory !== false) setOpenDesktopElectricalCategory(null)
+  }, [clearActiveQuickAccessSession])
 
   const buildQuickAccessDraft = (slotIndex: number, preset?: QuickAccessPreset | null): QuickAccessPreset => {
     if (preset) return JSON.parse(JSON.stringify(preset))
@@ -3399,6 +3432,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       )
     if (!stillMatches) clearActiveQuickAccessSession()
   }, [effectiveTool, shapeKind, activeQuickAccessSession, clearActiveQuickAccessSession])
+
+  useEffect(() => {
+    if (toolMode === 'shape' && isDesktopRecessedLightKind(shapeKind)) return
+    setOpenDesktopElectricalCategory(null)
+  }, [toolMode, shapeKind])
 
   const clampScroll = useCallback((scroll: HTMLDivElement, left: number, top: number) => {
     const maxLeft = Math.max(0, scroll.scrollWidth - scroll.clientWidth)
@@ -4146,6 +4184,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         cancelWireSegmentPicker()
         return
       }
+      if (openDesktopElectricalCategory) {
+        setOpenDesktopElectricalCategory(null)
+        return
+      }
       // Stop paste mode first (Fix 1, req 6) — before closing editors/fullscreen.
       // Keeps copiedAnnotationTemplate so the user can resume via Paste.
       if (pasteModeActive) {
@@ -4176,7 +4218,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover, pasteModeActive, isWireProfileManagerOpen, wireSegmentPickSession, cancelWireSegmentPicker])
+  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover, openDesktopElectricalCategory, pasteModeActive, isWireProfileManagerOpen, wireSegmentPickSession, cancelWireSegmentPicker])
 
   useEffect(() => {
     pendingScrollResetRef.current = true
@@ -10655,20 +10697,61 @@ const annotationPanelSizeClass =
                 <div className="space-y-1.5">
                   <div className="text-[10px] uppercase tracking-wide text-gray-500">Electrical Symbols</div>
                   <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : `flex flex-nowrap overflow-x-auto bv-tool-bucket${isTabletImmersiveFullscreen ? ' justify-center' : ''}`} gap-1.5`}>
-                    {ELECTRICAL_SYMBOL_OPTIONS.map((option) => (
+                    {useDesktopThreePaneLayout && DESKTOP_ELECTRICAL_TOOL_CATEGORIES.map((category) => {
+                      const isOpen = openDesktopElectricalCategory === category.id
+                      const activeChild = toolMode === 'shape' && isDesktopRecessedLightKind(shapeKind) ? electricalSymbolOptionByKind.get(shapeKind as ElectricalSymbolKind) : null
+                      const regionId = `desktop-electrical-category-${category.id}`
+                      return (
+                        <div key={category.id} className="col-span-2 min-w-0">
+                          <button
+                            type="button"
+                            aria-expanded={isOpen}
+                            aria-controls={regionId}
+                            onClick={() => {
+                              setOpenPopover(null)
+                              setOpenDesktopElectricalCategory((current) => current === category.id ? null : category.id)
+                            }}
+                            className={`w-full inline-flex items-center gap-1.5 min-h-8 text-xs px-2 py-1 rounded-md border text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${activeChild ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                            title={activeChild ? `${category.label}: ${activeChild.label}` : category.label}
+                          >
+                            <ChevronDown size={12} className={`shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+                            <span className="min-w-0 flex-1 whitespace-normal break-words font-medium">{category.label}</span>
+                            {activeChild && <span className="hidden min-w-0 max-w-[45%] truncate text-[10px] text-cyan-200/80 sm:inline">{activeChild.label}</span>}
+                          </button>
+                          {isOpen && (
+                            <div id={regionId} className="mt-1 grid grid-cols-1 gap-1 rounded-md border border-gray-800 bg-gray-950/40 p-1">
+                              {category.children.map((childKind) => {
+                                const child = electricalSymbolOptionByKind.get(childKind)
+                                if (!child) return null
+                                const childActive = toolMode === 'shape' && shapeKind === child.value
+                                return (
+                                  <button
+                                    key={child.value}
+                                    type="button"
+                                    onClick={() => activateElectricalSymbolTool(child.value)}
+                                    className={`w-full inline-flex items-center gap-1.5 min-h-8 rounded-md border px-2 py-1 text-left text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${childActive ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                                    title={`Place ${child.label}`}
+                                  >
+                                    <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded border border-current px-1 text-[9px] font-semibold leading-none" aria-hidden="true">{child.shortLabel}</span>
+                                    <span className="min-w-0 whitespace-normal break-words">{child.label}</span>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                    {(useDesktopThreePaneLayout ? desktopElectricalSymbolOptions : legacyNonDesktopElectricalSymbolOptions).map((option) => (
                       <button
                         key={option.value}
                         type="button"
-                        onClick={() => {
-                          setToolMode('shape')
-                          setShapeKind(option.value)
-                          setOpenPopover(null)
-                        }}
-                        className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' && shapeKind === option.value ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                        onClick={() => activateElectricalSymbolTool(option.value)}
+                        className={`w-full inline-flex items-center gap-1.5 min-h-8 text-xs px-2 py-1 rounded-md border ${toolMode === 'shape' && shapeKind === option.value ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                         title={`Place ${option.label}`}
                       >
-                        <span className="inline-flex h-4 min-w-4 items-center justify-center rounded border border-current px-1 text-[9px] font-semibold leading-none">{option.shortLabel}</span>
-                        <span className="truncate">{option.label}</span>
+                        <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded border border-current px-1 text-[9px] font-semibold leading-none" aria-hidden="true">{option.shortLabel}</span>
+                        <span className="min-w-0 whitespace-normal break-words">{option.label}</span>
                       </button>
                     ))}
                   </div>
@@ -11662,9 +11745,9 @@ const annotationPanelSizeClass =
                             // If blueprint calibration is active, the user sizes the marker to match scale via drag.
                             // Without calibration the symbol is still clear — 4" vs 6" distinguished by aperture radius + label.
                             const trimRadius = 24
-                            const aperture = kind === 'can-light-4' ? 10 : 13
+                            const aperture = kind === 'can-light-2' ? 7 : kind === 'can-light-4' ? 10 : 13
                             const ringStrokeWidth = Math.max(0.8, borderThickness * 0.65)
-                            const label = kind === 'can-light-4' ? '4"' : '6"'
+                            const label = getElectricalSymbolMetadata(kind)?.shortLabel ?? ''
                             const glowMetrics = getLightOutputGlowMetrics(kind, meta)
                             const glowId = `canlight-glow-${a.id}`
                             return (
@@ -12353,12 +12436,12 @@ const annotationPanelSizeClass =
                             : effectiveTool === 'underline' || (effectiveTool === 'shape' && (shapeKind === 'line' || shapeKind === 'arrow'))
                               ? 'none'
                               : `1px solid ${toolColors[effectiveTool as ToolKey] || '#facc15'}`,
-                          borderRadius: effectiveTool === 'shape' && (shapeKind === 'circle' || shapeKind === 'can-light-4' || shapeKind === 'can-light-6') ? '9999px' : '0.25rem',
+                          borderRadius: effectiveTool === 'shape' && (shapeKind === 'circle' || isCanLightShapeKind(shapeKind)) ? '9999px' : '0.25rem',
                           background: effectiveTool === 'highlight'
                             ? hexWithAlpha(toolColors.highlight || '#facc15', highlightOpacity / 100)
                             : effectiveTool === 'textHighlight'
                               ? hexWithAlpha(toolColors.textHighlight || '#facc15', 0.4)
-                              : effectiveTool === 'shape' && shapeKind !== 'line' && shapeKind !== 'arrow' && shapeKind !== 'arch-line' && shapeKind !== 'can-light-4' && shapeKind !== 'can-light-6'
+                              : effectiveTool === 'shape' && shapeKind !== 'line' && shapeKind !== 'arrow' && shapeKind !== 'arch-line' && !isCanLightShapeKind(shapeKind)
                                 ? getHatchBackground(shapeOptions.hatchPattern, shapeOptions.borderColor, shapeOptions.fillColor, shapeOptions.fillOpacity)
                                 : 'transparent',
                           borderBottom: effectiveTool === 'underline' ? `${underlineThickness}px solid ${toolColors.underline || '#facc15'}` : undefined,
