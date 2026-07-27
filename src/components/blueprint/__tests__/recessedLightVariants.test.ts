@@ -8,11 +8,14 @@ import {
   renderElectricalSymbolSvg,
 } from '../electricalSymbolRegistry'
 import {
+  DESKTOP_CEILING_DEVICE_KINDS,
+  DESKTOP_CEILING_DEVICES_CATEGORY_ID,
   DESKTOP_ELECTRICAL_TOOL_CATEGORIES,
   DESKTOP_RECESSED_LIGHT_CATEGORY_ID,
   DESKTOP_RECESSED_LIGHT_KINDS,
   DESKTOP_SWITCHES_CATEGORY_ID,
   DESKTOP_SWITCH_KINDS,
+  isDesktopCeilingDeviceKind,
   isDesktopElectricalCategoryChildKind,
   isDesktopRecessedLightKind,
   isDesktopSwitchKind,
@@ -41,6 +44,12 @@ const SWITCH_EXPECTATIONS = [
   ['electrical-switch-3way', '3-Way Switch', 'S3', 'switch-3way', 'switch-3way'],
   ['electrical-switch-4way', '4-Way Switch', 'S4', 'switch-4way', 'switch-4way'],
   ['electrical-dimmer', 'Dimmer', 'DIM', 'dimmer', 'dimmer'],
+] as const
+
+const CEILING_DEVICE_EXPECTATIONS = [
+  ['electrical-co-alarm', 'CO Alarm', 'CO', 'control', 'co-alarm', 'co-alarm'],
+  ['electrical-smoke-alarm', 'Smoke Alarm', 'SA', 'control', 'smoke-alarm', 'smoke-alarm'],
+  ['electrical-emergency-exit-sign', 'Emergency Exit Sign', 'EXIT', 'lighting', 'emergency-exit-sign', 'emergency-exit-sign'],
 ] as const
 
 describe('desktop recessed light registered variants', () => {
@@ -94,8 +103,8 @@ describe('desktop recessed light registered variants', () => {
     }
   })
 
-  it('keeps Recessed Lights first and adds Switches second in the desktop category model', () => {
-    expect(DESKTOP_ELECTRICAL_TOOL_CATEGORIES.slice(0, 2)).toEqual([
+  it('keeps Recessed Lights, Switches, and Ceiling Devices in locked desktop category order', () => {
+    expect(DESKTOP_ELECTRICAL_TOOL_CATEGORIES.slice(0, 3)).toEqual([
       {
         id: DESKTOP_RECESSED_LIGHT_CATEGORY_ID,
         label: 'Recessed Lights',
@@ -106,9 +115,16 @@ describe('desktop recessed light registered variants', () => {
         label: 'Switches',
         children: DESKTOP_SWITCH_KINDS,
       },
+      {
+        id: DESKTOP_CEILING_DEVICES_CATEGORY_ID,
+        label: 'Ceiling Devices',
+        children: DESKTOP_CEILING_DEVICE_KINDS,
+      },
     ])
     expect(DESKTOP_SWITCH_KINDS).toEqual(SWITCH_EXPECTATIONS.map(([kind]) => kind))
+    expect(DESKTOP_CEILING_DEVICE_KINDS).toEqual(CEILING_DEVICE_EXPECTATIONS.map(([kind]) => kind))
     expect(new Set(DESKTOP_SWITCH_KINDS).size).toBe(DESKTOP_SWITCH_KINDS.length)
+    expect(new Set(DESKTOP_CEILING_DEVICE_KINDS).size).toBe(DESKTOP_CEILING_DEVICE_KINDS.length)
 
     for (const [kind, displayName, shortLabel, materialKey, laborKey] of SWITCH_EXPECTATIONS) {
       expect(ELECTRICAL_SYMBOL_OPTIONS).toContainEqual({ value: kind, label: displayName, shortLabel })
@@ -125,6 +141,42 @@ describe('desktop recessed light registered variants', () => {
       expect(isDesktopSwitchKind(kind)).toBe(true)
       expect(isDesktopElectricalCategoryChildKind(kind)).toBe(true)
     }
+
+    for (const [kind, displayName, shortLabel, category, materialKey, laborKey] of CEILING_DEVICE_EXPECTATIONS) {
+      expect(ELECTRICAL_SYMBOL_OPTIONS).toContainEqual({ value: kind, label: displayName, shortLabel })
+      expect(getElectricalSymbolMetadata(kind)).toMatchObject({
+        symbolKind: kind,
+        displayName,
+        shortLabel,
+        category,
+        countValue: 1,
+        materialKey,
+        laborKey,
+        isElectricalSymbol: true,
+      })
+      expect(isDesktopCeilingDeviceKind(kind)).toBe(true)
+      expect(isDesktopElectricalCategoryChildKind(kind)).toBe(true)
+    }
+
+    expect(DESKTOP_CEILING_DEVICE_KINDS).not.toContain('electrical-ceiling-occupancy-sensor')
+    const categorizedChildren = DESKTOP_ELECTRICAL_TOOL_CATEGORIES.flatMap((category) => category.children)
+    expect(new Set(categorizedChildren).size).toBe(categorizedChildren.length)
+  })
+
+  it('preserves Ceiling Devices registry and animation isolation', () => {
+    expect(isLightOutputShapeKind('electrical-emergency-exit-sign')).toBe(true)
+    expect(isRouteBuilderLoadKind('electrical-emergency-exit-sign')).toBe(true)
+    expect(inferRouteBuilderNodeRoles('electrical-emergency-exit-sign')).toEqual(['load'])
+    expect(isRouteBuilderSourceKind('electrical-emergency-exit-sign')).toBe(false)
+    expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain('electrical-emergency-exit-sign')
+
+    for (const kind of ['electrical-co-alarm', 'electrical-smoke-alarm'] as const) {
+      expect(isLightOutputShapeKind(kind)).toBe(false)
+      expect(isRouteBuilderLoadKind(kind)).toBe(false)
+      expect(inferRouteBuilderNodeRoles(kind)).toEqual([])
+      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
+    }
   })
 
   it('keeps desktop category organization separate from legacy non-desktop toolbar visibility', () => {
@@ -136,6 +188,9 @@ describe('desktop recessed light registered variants', () => {
     for (const [kind] of SWITCH_EXPECTATIONS) {
       expect(shouldShowElectricalSymbolInDesktopMainGrid(kind)).toBe(false)
     }
+    for (const [kind] of CEILING_DEVICE_EXPECTATIONS) {
+      expect(shouldShowElectricalSymbolInDesktopMainGrid(kind)).toBe(false)
+    }
     expect(shouldShowElectricalSymbolInDesktopMainGrid('electrical-recessed-light')).toBe(false)
     expect(shouldShowElectricalSymbolInDesktopMainGrid('electrical-receptacle')).toBe(true)
 
@@ -144,6 +199,7 @@ describe('desktop recessed light registered variants', () => {
     const expectedDesktopStandalone = registryOrderBefore.filter((kind) => (
       !DESKTOP_RECESSED_LIGHT_KINDS.includes(kind as any)
       && !DESKTOP_SWITCH_KINDS.includes(kind as any)
+      && !DESKTOP_CEILING_DEVICE_KINDS.includes(kind as any)
       && kind !== 'electrical-recessed-light'
     ))
     expect(desktopStandalone).toEqual(expectedDesktopStandalone)
@@ -157,6 +213,9 @@ describe('desktop recessed light registered variants', () => {
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('canless-light-4')).toBe(false)
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('canless-light-6')).toBe(false)
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('canless-light-10')).toBe(false)
+    for (const [kind] of CEILING_DEVICE_EXPECTATIONS) {
+      expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar(kind)).toBe(true)
+    }
     const legacyNonDesktopOrder = ELECTRICAL_SYMBOL_OPTIONS.filter((option) => shouldShowElectricalSymbolInLegacyNonDesktopToolbar(option.value)).map((option) => option.value)
     const switchStart = legacyNonDesktopOrder.indexOf('electrical-switch')
     expect(legacyNonDesktopOrder.slice(switchStart, switchStart + 4)).toEqual([
