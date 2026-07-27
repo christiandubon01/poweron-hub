@@ -228,6 +228,18 @@ export {
   renderElectricalSymbolSvg,
 } from './electricalSymbolRegistry'
 
+function DesktopToolbarScrollContent({ enabled, children }: { enabled: boolean; children: any }) {
+  if (!enabled) return <>{children}</>
+  return (
+    <div
+      className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain space-y-2"
+      data-testid="desktop-left-toolbar-scroll"
+    >
+      {children}
+    </div>
+  )
+}
+
 let _pdfjsLib: typeof import('pdfjs-dist') | null = null
 async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
   if (_pdfjsLib) return _pdfjsLib
@@ -10460,7 +10472,7 @@ const annotationPanelSizeClass =
               columnGap: 0,
               rowGap: 16,
               minHeight: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100vh - 52px)' : isTabletImmersiveFullscreen ? 'calc(100vh - 40px)' : normalBlueprintViewerMinHeight,
-              height: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100vh - 52px)' : isTabletImmersiveFullscreen ? 'calc(100vh - 40px)' : 'auto',
+              height: isFullScreenView && isDesktopBlueprintLayout ? 'calc(100vh - 52px)' : isTabletImmersiveFullscreen ? 'calc(100vh - 40px)' : normalBlueprintViewerMinHeight,
             } : undefined}
           >
             {useDesktopThreePaneLayout && (
@@ -10567,9 +10579,10 @@ const annotationPanelSizeClass =
           <div
             ref={toolbarAreaRef}
             className={useDesktopThreePaneLayout
-              ? 'bv-left-toolbar col-start-1 row-start-3 self-start rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2'
+              ? 'bv-left-toolbar col-start-1 row-start-3 min-h-0 h-full overflow-hidden flex flex-col rounded-xl border border-gray-800 bg-[#10131c] p-4'
               : 'px-3 sm:px-4 py-1 border-b border-gray-800 space-y-1 flex-shrink-0'}
           >
+            <DesktopToolbarScrollContent enabled={useDesktopThreePaneLayout}>
             <div className={`flex items-center gap-1.5 ${useDesktopThreePaneLayout ? 'border-b border-gray-800 pb-2' : 'overflow-x-auto'}`}>
               <button
                 type="button"
@@ -11179,6 +11192,7 @@ const annotationPanelSizeClass =
                 </div>
               </div>
             )}
+            </DesktopToolbarScrollContent>
           </div>
 
           {useDesktopThreePaneLayout && (
