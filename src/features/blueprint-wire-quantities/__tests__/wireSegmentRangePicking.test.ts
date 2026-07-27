@@ -22,6 +22,8 @@ function annotation(extra: any = {}) {
       segmentIds: ['s1', 's2'],
       segmentWireProfileIds: [null, 'wire_profile_old'],
     },
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
     ...extra,
   }
 }
@@ -170,10 +172,31 @@ describe('wire segment range picking', () => {
     const updated = applyWireSegmentProfileAssignmentPlanToAnnotations([annotation({ meta: { ...annotation().meta, wireProfileId: 'wire_profile_default', color: '#abc123' } })], plan)
     expect((updated[0].meta as any).wireProfileId).toBe('wire_profile_default')
     expect((updated[0].meta as any).segmentWireProfileIds).toEqual(['wire_profile_new', 'wire_profile_old'])
+    expect((updated[0].metadata as any).segmentWireProfileIds).toEqual(['wire_profile_new', 'wire_profile_old'])
+    expect(updated[0].metadata).toEqual(updated[0].meta)
+    expect(Date.parse(updated[0].updatedAt)).toBeGreaterThan(Date.parse('2026-01-01T00:00:00.000Z'))
     expect((updated[0].meta as any).points).toEqual(annotation().meta.points)
     expect((updated[0].meta as any).pointIds).toEqual(['p1', 'p2', 'p3'])
     expect((updated[0].meta as any).segmentIds).toEqual(['s1', 's2'])
     expect((updated[0].meta as any).color).toBe('#abc123')
+  })
+
+  it('does not rewrite or retimestamp a no-op picker segment assignment', () => {
+    const source = annotation({ meta: { ...annotation().meta, segmentWireProfileIds: ['wire_profile_new', 'wire_profile_old'] } })
+    const frozen = Object.freeze({ ...source, meta: Object.freeze({ ...(source.meta as any) }) }) as any
+    const plan = buildWireSegmentProfileAssignmentPlan({
+      projectId: 'project-1',
+      blueprintSetId: 'set-1',
+      targetWireProfileId: 'wire_profile_new',
+      selectedRanges: [range({ startPointId: 'p1', endPointId: 'p2', segmentIds: ['s1'] })],
+      annotations: [frozen],
+      contributions: [contribution({ segmentId: 's1' })],
+      wireProfiles: [profile()],
+      eligibleAnnotationIds: new Set(['ann-1']),
+    })
+    const updated = applyWireSegmentProfileAssignmentPlanToAnnotations([frozen], plan)
+    expect(updated[0]).toBe(frozen)
+    expect(updated[0].updatedAt).toBe('2026-01-01T00:00:00.000Z')
   })
 
   it('blocks itemRefs-only, stale segment, and inactive profile plans', () => {

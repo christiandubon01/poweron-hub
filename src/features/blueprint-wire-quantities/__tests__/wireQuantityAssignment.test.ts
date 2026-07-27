@@ -58,6 +58,9 @@ const annotations: any[] = [{
   blueprintSetId: 'set-1',
   pageNumber: 1,
   meta: { shapeKind: 'circuit-path', segmentIds: ['seg-1', 'seg-2'], segmentWireProfileIds: [null, 'wire_profile_existing'] },
+  metadata: { shapeKind: 'circuit-path', segmentIds: ['seg-1', 'seg-2'], segmentWireProfileIds: [null, 'stale_profile'] },
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
 }]
 
 describe('wire quantity assignment helpers', () => {
@@ -153,6 +156,8 @@ describe('wire quantity assignment helpers', () => {
     expect(routed[0]).not.toBe(annotations[0])
     expect((routed[0]!.meta as any).wireProfileId).toBe('wire_profile_a')
     expect((routed[0]!.meta as any).segmentWireProfileIds).toEqual([null, 'wire_profile_existing'])
+    expect(routed[0]!.metadata).toEqual(routed[0]!.meta)
+    expect(Date.parse(routed[0]!.updatedAt)).toBeGreaterThan(Date.parse(annotations[0].updatedAt))
 
     const segmentPlan = buildWireProfileAssignmentPlan({
       selections: [{ mode: 'segment-override', annotationId: 'ann-1', quantityLineId: 'q1', segmentId: 'seg-1', segmentIndex: 0 }],
@@ -163,7 +168,37 @@ describe('wire quantity assignment helpers', () => {
       wireProfiles: [profile()],
       targetProfileId: 'wire_profile_a',
     })
-    expect((applyWireProfileAssignmentPlanToAnnotations(annotations, segmentPlan)[0]!.meta as any).segmentWireProfileIds).toEqual(['wire_profile_a', 'wire_profile_existing'])
+    const segmented = applyWireProfileAssignmentPlanToAnnotations(annotations, segmentPlan)
+    expect((segmented[0]!.meta as any).segmentWireProfileIds).toEqual(['wire_profile_a', 'wire_profile_existing'])
+    expect(segmented[0]!.metadata).toEqual(segmented[0]!.meta)
+    expect(Date.parse(segmented[0]!.updatedAt)).toBeGreaterThan(Date.parse(annotations[0].updatedAt))
+  })
+
+  it('keeps quantity-list no-op assignments from changing content or updatedAt', () => {
+    const sameDefault = [{ ...annotations[0], meta: { ...(annotations[0].meta as any), wireProfileId: 'wire_profile_a' }, metadata: { ...(annotations[0].meta as any), wireProfileId: 'wire_profile_a' } }]
+    const routePlan = buildWireProfileAssignmentPlan({
+      selections: [{ mode: 'annotation-default', annotationId: 'ann-1' }],
+      contributions: [contribution()],
+      annotations: sameDefault,
+      projectId: 'project-1',
+      blueprintSetId: 'set-1',
+      wireProfiles: [profile()],
+      targetProfileId: 'wire_profile_a',
+    })
+    expect(applyWireProfileAssignmentPlanToAnnotations(sameDefault, routePlan)[0]).toBe(sameDefault[0])
+
+    const sameSegment = [{ ...annotations[0], meta: { ...(annotations[0].meta as any), segmentWireProfileIds: ['wire_profile_a', 'wire_profile_existing'] }, metadata: { ...(annotations[0].meta as any), segmentWireProfileIds: ['wire_profile_a', 'wire_profile_existing'] } }]
+    const segmentPlan = buildWireProfileAssignmentPlan({
+      selections: [{ mode: 'segment-override', annotationId: 'ann-1', quantityLineId: 'q1', segmentId: 'seg-1', segmentIndex: 0 }],
+      contributions: [contribution()],
+      annotations: sameSegment,
+      projectId: 'project-1',
+      blueprintSetId: 'set-1',
+      wireProfiles: [profile()],
+      targetProfileId: 'wire_profile_a',
+    })
+    expect(applyWireProfileAssignmentPlanToAnnotations(sameSegment, segmentPlan)[0]).toBe(sameSegment[0])
+    expect(sameSegment[0].updatedAt).toBe('2026-01-01T00:00:00.000Z')
   })
 
   it('renders assignment dialog controls, warnings, affected packages, and no labor or pricing preview', () => {

@@ -71,11 +71,13 @@ import {
   getLiveBlueprintSetRecords,
   identifyOperationsBlueprintQuickAccessWireProfileReferences,
   identifyOperationsBlueprintWireProfileReferences,
+  mergeBlueprintAnnotationsById,
   mergeBlueprintQuickAccessWireProfileBindings,
   mergeBlueprintScopeLayersById,
   mergeBlueprintSetRecordsById,
   mergeBlueprintWireProfilesById,
   resolveOperationsBlueprintWireProfile,
+  saveOperationsBlueprintAnnotations,
   saveOperationsBlueprintQuickAccessWireProfileBinding,
   saveOperationsBlueprintWireProfiles,
   compareAnimationScenesForVerification,
@@ -85,6 +87,11 @@ import {
   upsertOperationsBlueprintWireProfile,
 } from '@/services/blueprintLibraryService'
 import { createDefaultBlueprintAnimationScene } from '@/features/blueprint-animation/sceneSchema'
+import {
+  applyWireSegmentProfileAssignmentPlanToAnnotations,
+  buildWireSegmentProfileAssignmentPlan,
+} from '@/features/blueprint-wire-quantities/wireSegmentRangePicking'
+import { resolveSegmentWireProfile } from '@/features/blueprint-wire-quantities/profileResolver'
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>()
@@ -183,6 +190,98 @@ beforeEach(() => {
 })
 
 describe('merge preservation', () => {
+  it('persists segment Wire Profile overrides for Path and Arc annotations only when updatedAt advances', async () => {
+    const setId = 'set-wire-segment-persist'
+    const profileTarget = wireProfile('wire_profile_target')
+    const makeCircuit = (id: string, shapeKind: 'circuit-path' | 'circuit-arc', extraMeta: Record<string, unknown> = {}) => record(id, OLD, {
+      blueprintSetId: setId,
+      projectId: 'project-1',
+      pageNumber: 1,
+      type: 'shape',
+      color: '#38bdf8',
+      meta: {
+        shapeKind,
+        points: [{ x: 0, y: 0 }, { x: 0.5, y: 0.1 }, { x: 1, y: 0 }],
+        pointIds: [`${id}-p1`, `${id}-p2`, `${id}-p3`],
+        segmentIds: [`${id}-s1`, `${id}-s2`],
+        wireProfileId: 'wire_profile_default',
+        segmentWireProfileIds: [null, null],
+        ...extraMeta,
+      },
+    })
+    const path = makeCircuit('wire-path', 'circuit-path')
+    const arcCtrls = [{ x: 0.25, y: 0.35 }, { x: 0.75, y: 0.35 }]
+    const arc = makeCircuit('wire-arc', 'circuit-arc', { arcCtrls })
+    const backup = {
+      projects: [],
+      blueprintSummaries: {
+        operationsBlueprintAnnotations: { [setId]: [path, arc] },
+        operationsBlueprintWireProfiles: { 'project-1': [profileTarget, wireProfile('wire_profile_default')] },
+      },
+    } as any
+    saveBackupData(backup)
+
+    const plan = buildWireSegmentProfileAssignmentPlan({
+      projectId: 'project-1',
+      blueprintSetId: setId,
+      targetWireProfileId: 'wire_profile_target',
+      selectedRanges: [
+        { id: 'range-path', annotationId: 'wire-path', pageNumber: 1, shapeKind: 'circuit-path', startPointId: 'wire-path-p1', endPointId: 'wire-path-p2', segmentIds: ['wire-path-s1'] },
+        { id: 'range-arc', annotationId: 'wire-arc', pageNumber: 1, shapeKind: 'circuit-arc', startPointId: 'wire-arc-p1', endPointId: 'wire-arc-p2', segmentIds: ['wire-arc-s1'] },
+      ],
+      annotations: [path, arc],
+      contributions: [],
+      wireProfiles: [profileTarget],
+      eligibleAnnotationIds: new Set(['wire-path', 'wire-arc']),
+    })
+    const [updatedPath, updatedArc] = applyWireSegmentProfileAssignmentPlanToAnnotations([path, arc], plan)
+
+    expect((updatedPath.meta as any).segmentWireProfileIds).toEqual(['wire_profile_target', null])
+    expect((updatedArc.meta as any).segmentWireProfileIds).toEqual(['wire_profile_target', null])
+    expect((updatedPath.meta as any).wireProfileId).toBe('wire_profile_default')
+    expect((updatedPath.meta as any).pointIds).toEqual((path.meta as any).pointIds)
+    expect((updatedPath.meta as any).segmentIds).toEqual((path.meta as any).segmentIds)
+    expect((updatedArc.meta as any).pointIds).toEqual((arc.meta as any).pointIds)
+    expect((updatedArc.meta as any).segmentIds).toEqual((arc.meta as any).segmentIds)
+    expect((updatedArc.meta as any).arcCtrls).toEqual(arcCtrls)
+    expect(Date.parse(updatedPath.updatedAt)).toBeGreaterThan(Date.parse(path.updatedAt))
+    expect(Date.parse(updatedArc.updatedAt)).toBeGreaterThan(Date.parse(arc.updatedAt))
+
+    await saveOperationsBlueprintAnnotations(getBackupData(), setId, [updatedPath, updatedArc])
+    const loaded = getOperationsBlueprintAnnotations(getBackupData(), setId)
+    const loadedPath = loaded.find((item: any) => item.id === 'wire-path')!
+    const loadedArc = loaded.find((item: any) => item.id === 'wire-arc')!
+
+    expect((loadedPath.meta as any).pointIds).toEqual((path.meta as any).pointIds)
+    expect((loadedPath.meta as any).segmentIds).toEqual((path.meta as any).segmentIds)
+    expect((loadedPath.meta as any).segmentWireProfileIds).toEqual(['wire_profile_target', null])
+    expect((loadedArc.meta as any).pointIds).toEqual((arc.meta as any).pointIds)
+    expect((loadedArc.meta as any).segmentIds).toEqual((arc.meta as any).segmentIds)
+    expect((loadedArc.meta as any).arcCtrls).toEqual(arcCtrls)
+    expect((loadedArc.meta as any).segmentWireProfileIds).toEqual(['wire_profile_target', null])
+
+    expect(resolveSegmentWireProfile({
+      projectId: 'project-1',
+      annotationMeta: loadedPath.meta as Record<string, unknown>,
+      stableSegmentId: 'wire-path-s1',
+      wireProfiles: [profileTarget, wireProfile('wire_profile_default')],
+    })).toMatchObject({ status: 'active', source: 'segment-override', wireProfileId: 'wire_profile_target' })
+    expect(resolveSegmentWireProfile({
+      projectId: 'project-1',
+      annotationMeta: loadedPath.meta as Record<string, unknown>,
+      stableSegmentId: 'wire-path-s2',
+      wireProfiles: [profileTarget, wireProfile('wire_profile_default')],
+    })).toMatchObject({ status: 'active', source: 'annotation-default', wireProfileId: 'wire_profile_default' })
+
+    const equalTimestampIncoming = { ...path, meta: { ...(path.meta as any), segmentWireProfileIds: ['wire_profile_target', null] } }
+    const equalTimestampMerged = mergeBlueprintAnnotationsById([path], [equalTimestampIncoming])
+    expect((equalTimestampMerged[0].meta as any).segmentWireProfileIds).toEqual([null, null])
+
+    const newerTimestampIncoming = { ...equalTimestampIncoming, updatedAt: new Date(Date.parse(path.updatedAt) + 1).toISOString() }
+    const newerTimestampMerged = mergeBlueprintAnnotationsById([path], [newerTimestampIncoming])
+    expect((newerTimestampMerged[0].meta as any).segmentWireProfileIds).toEqual(['wire_profile_target', null])
+  })
+
   it('keeps local records during apply and remote-only records in the outgoing build', () => {
     const local = {
       projects: [record('project-1', NEW, { blueprints: [record('legacy-local')] })],

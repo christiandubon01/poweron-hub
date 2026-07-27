@@ -3,6 +3,7 @@ import { getCircuitArcControl } from '@/features/blueprint-measurements'
 import type { BlueprintAnnotation } from '@/services/blueprintLibraryService'
 import type { WireProfile } from '@/features/blueprint-wire-profiles'
 import type { WireQuantityContribution } from './types'
+import { readAnnotationMeta, writeAnnotationMetaIfChanged } from './annotationMetadata'
 import { listAssignableActiveWireProfiles } from './wireQuantityAssignment'
 
 export type WireSegmentPickShapeKind = 'circuit-path' | 'circuit-arc'
@@ -115,15 +116,11 @@ function cleanId(value: unknown): string {
 }
 
 function readMeta(annotation: BlueprintAnnotation): CircuitWireProfileMetadata & Record<string, unknown> {
-  return ((annotation.meta || annotation.metadata || {}) as CircuitWireProfileMetadata & Record<string, unknown>)
+  return readAnnotationMeta<CircuitWireProfileMetadata & Record<string, unknown>>(annotation)
 }
 
 function writeMeta(annotation: BlueprintAnnotation, meta: CircuitWireProfileMetadata): BlueprintAnnotation {
-  const next = { ...annotation, meta: { ...(annotation.meta || {}), ...meta } } as BlueprintAnnotation
-  if (annotation.metadata && annotation.metadata !== annotation.meta) {
-    next.metadata = { ...(annotation.metadata || {}), ...meta } as any
-  }
-  return next
+  return writeAnnotationMetaIfChanged(annotation, meta as CircuitWireProfileMetadata & Record<string, unknown>)
 }
 
 function shapeKindFromMeta(meta: Record<string, unknown>): WireSegmentPickShapeKind | null {

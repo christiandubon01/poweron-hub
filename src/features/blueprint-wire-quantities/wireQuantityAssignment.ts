@@ -7,6 +7,7 @@ import {
 import type { BlueprintAnnotation } from '@/services/blueprintLibraryService'
 import type { WireProfile } from '@/features/blueprint-wire-profiles'
 import type { WireQuantityContribution } from './types'
+import { readAnnotationMeta, writeAnnotationMetaIfChanged } from './annotationMetadata'
 
 export type WireProfileAssignmentSelection =
   | { mode: 'annotation-default'; annotationId: string }
@@ -63,15 +64,11 @@ function segmentSelectionKey(selection: WireProfileAssignmentSelection): string 
 }
 
 function readMeta(annotation: BlueprintAnnotation): CircuitWireProfileMetadata {
-  return ((annotation.meta || annotation.metadata || {}) as CircuitWireProfileMetadata)
+  return readAnnotationMeta<CircuitWireProfileMetadata & Record<string, unknown>>(annotation)
 }
 
 function writeMeta(annotation: BlueprintAnnotation, meta: CircuitWireProfileMetadata): BlueprintAnnotation {
-  const next = { ...annotation, meta: { ...(annotation.meta || {}), ...meta } } as BlueprintAnnotation
-  if (annotation.metadata && annotation.metadata !== annotation.meta) {
-    next.metadata = { ...(annotation.metadata || {}), ...meta } as any
-  }
-  return next
+  return writeAnnotationMetaIfChanged(annotation, meta as CircuitWireProfileMetadata & Record<string, unknown>)
 }
 
 function addLength(
