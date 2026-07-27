@@ -11,6 +11,8 @@ import {
   DESKTOP_CEILING_DEVICE_KINDS,
   DESKTOP_CEILING_DEVICES_CATEGORY_ID,
   DESKTOP_ELECTRICAL_TOOL_CATEGORIES,
+  DESKTOP_LOW_VOLTAGE_CATEGORY_ID,
+  DESKTOP_LOW_VOLTAGE_KINDS,
   DESKTOP_LIGHTING_CONTROL_KINDS,
   DESKTOP_LIGHTING_CONTROLS_CATEGORY_ID,
   DESKTOP_RECEPTACLE_KINDS,
@@ -22,6 +24,7 @@ import {
   isDesktopCeilingDeviceKind,
   isDesktopElectricalCategoryChildKind,
   isDesktopLightingControlKind,
+  isDesktopLowVoltageKind,
   isDesktopReceptacleKind,
   isDesktopRecessedLightKind,
   isDesktopSwitchKind,
@@ -64,6 +67,11 @@ const LIGHTING_CONTROL_EXPECTATIONS = [
   ['electrical-wall-occupancy-sensor', 'Wall Occupancy Sensor', 'OS-W', 'switch', 'switch', true, 'low-voltage-control-signal'],
   ['electrical-photocell', 'Photocell', 'PC', 'photocell', 'photocell', false, 'switched-line-voltage'],
   ['electrical-timer-control', 'Timer Control Box', 'TMR', 'timer-control', 'timer-control', false, 'switched-line-voltage'],
+] as const
+
+const LOW_VOLTAGE_EXPECTATIONS = [
+  ['electrical-hdmi', 'HDMI', 'HDMI', 'hdmi', 'hdmi'],
+  ['electrical-data', 'Data', 'DATA', 'data', 'data'],
 ] as const
 
 describe('desktop recessed light registered variants', () => {
@@ -117,7 +125,7 @@ describe('desktop recessed light registered variants', () => {
     }
   })
 
-  it('keeps Recessed Lights, Switches, Ceiling Devices, Lighting Controls, and Receptacles in locked desktop category order', () => {
+  it('keeps Recessed Lights, Switches, Ceiling Devices, Lighting Controls, Receptacles, and Low Voltage in locked desktop category order', () => {
     expect(DESKTOP_ELECTRICAL_TOOL_CATEGORIES).toEqual([
       {
         id: DESKTOP_RECESSED_LIGHT_CATEGORY_ID,
@@ -144,6 +152,11 @@ describe('desktop recessed light registered variants', () => {
         label: 'Receptacles',
         children: DESKTOP_RECEPTACLE_KINDS,
       },
+      {
+        id: DESKTOP_LOW_VOLTAGE_CATEGORY_ID,
+        label: 'Low Voltage',
+        children: DESKTOP_LOW_VOLTAGE_KINDS,
+      },
     ])
     expect(DESKTOP_SWITCH_KINDS).toEqual(SWITCH_EXPECTATIONS.map(([kind]) => kind))
     expect(DESKTOP_CEILING_DEVICE_KINDS).toEqual(CEILING_DEVICE_EXPECTATIONS.map(([kind]) => kind))
@@ -156,6 +169,7 @@ describe('desktop recessed light registered variants', () => {
       'electrical-single-receptacle',
       'electrical-half-hot-receptacle',
     ])
+    expect(DESKTOP_LOW_VOLTAGE_KINDS).toEqual(['electrical-hdmi', 'electrical-data'])
     expect(new Set(DESKTOP_SWITCH_KINDS).size).toBe(DESKTOP_SWITCH_KINDS.length)
     expect(new Set(DESKTOP_CEILING_DEVICE_KINDS).size).toBe(DESKTOP_CEILING_DEVICE_KINDS.length)
     expect(new Set(DESKTOP_LIGHTING_CONTROL_KINDS).size).toBe(DESKTOP_LIGHTING_CONTROL_KINDS.length)
@@ -217,6 +231,23 @@ describe('desktop recessed light registered variants', () => {
       expect(isDesktopElectricalCategoryChildKind(kind)).toBe(true)
       expect(DESKTOP_LIGHTING_CONTROL_KINDS).not.toContain(kind as any)
     }
+    for (const [kind, displayName, shortLabel, materialKey, laborKey] of LOW_VOLTAGE_EXPECTATIONS) {
+      expect(ELECTRICAL_SYMBOL_OPTIONS).toContainEqual({ value: kind, label: displayName, shortLabel })
+      expect(getElectricalSymbolMetadata(kind)).toMatchObject({
+        symbolKind: kind,
+        displayName,
+        shortLabel,
+        category: 'power',
+        countValue: 1,
+        defaultPhase: 'low-voltage',
+        materialKey,
+        laborKey,
+        isElectricalSymbol: true,
+      })
+      expect(isDesktopLowVoltageKind(kind)).toBe(true)
+      expect(isDesktopElectricalCategoryChildKind(kind)).toBe(true)
+      expect(isLightOutputShapeKind(kind)).toBe(false)
+    }
     const categorizedChildren = DESKTOP_ELECTRICAL_TOOL_CATEGORIES.flatMap((category) => category.children)
     expect(new Set(categorizedChildren).size).toBe(categorizedChildren.length)
   })
@@ -269,6 +300,9 @@ describe('desktop recessed light registered variants', () => {
     for (const kind of DESKTOP_RECEPTACLE_KINDS) {
       expect(shouldShowElectricalSymbolInDesktopMainGrid(kind)).toBe(false)
     }
+    for (const kind of DESKTOP_LOW_VOLTAGE_KINDS) {
+      expect(shouldShowElectricalSymbolInDesktopMainGrid(kind)).toBe(false)
+    }
     expect(shouldShowElectricalSymbolInDesktopMainGrid('electrical-recessed-light')).toBe(false)
 
     const registryOrderBefore = ELECTRICAL_SYMBOL_OPTIONS.map((option) => option.value)
@@ -279,6 +313,7 @@ describe('desktop recessed light registered variants', () => {
       && !DESKTOP_CEILING_DEVICE_KINDS.includes(kind as any)
       && !DESKTOP_LIGHTING_CONTROL_KINDS.includes(kind as any)
       && !DESKTOP_RECEPTACLE_KINDS.includes(kind as any)
+      && !DESKTOP_LOW_VOLTAGE_KINDS.includes(kind as any)
       && kind !== 'electrical-recessed-light'
     ))
     expect(desktopStandalone).toEqual(expectedDesktopStandalone)
@@ -304,6 +339,8 @@ describe('desktop recessed light registered variants', () => {
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-gfci-wp')).toBe(false)
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-single-receptacle')).toBe(false)
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-half-hot-receptacle')).toBe(false)
+    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-hdmi')).toBe(true)
+    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-data')).toBe(true)
     const legacyNonDesktopOrder = ELECTRICAL_SYMBOL_OPTIONS.filter((option) => shouldShowElectricalSymbolInLegacyNonDesktopToolbar(option.value)).map((option) => option.value)
     const switchStart = legacyNonDesktopOrder.indexOf('electrical-switch')
     expect(legacyNonDesktopOrder.slice(switchStart, switchStart + 4)).toEqual([
@@ -312,5 +349,18 @@ describe('desktop recessed light registered variants', () => {
       'electrical-switch-4way',
       'electrical-dimmer',
     ])
+    const lowVoltageStart = legacyNonDesktopOrder.indexOf('electrical-hdmi')
+    expect(legacyNonDesktopOrder.slice(lowVoltageStart, lowVoltageStart + 2)).toEqual(['electrical-hdmi', 'electrical-data'])
+  })
+
+  it('preserves Low Voltage registry and animation isolation', () => {
+    for (const [kind] of LOW_VOLTAGE_EXPECTATIONS) {
+      expect(isDesktopLowVoltageKind(kind)).toBe(true)
+      expect(isRouteBuilderLoadKind(kind)).toBe(false)
+      expect(isLightOutputShapeKind(kind)).toBe(false)
+      expect(inferRouteBuilderNodeRoles(kind)).toEqual([])
+      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
+    }
   })
 })

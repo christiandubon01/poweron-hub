@@ -148,6 +148,7 @@ describe('desktop receptacle variants', () => {
       'ceiling-devices',
       'lighting-controls',
       DESKTOP_RECEPTACLES_CATEGORY_ID,
+      'low-voltage',
     ])
     expect(DESKTOP_ELECTRICAL_TOOL_CATEGORIES[4]).toEqual({
       id: DESKTOP_RECEPTACLES_CATEGORY_ID,
