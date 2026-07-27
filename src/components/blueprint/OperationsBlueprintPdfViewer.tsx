@@ -187,6 +187,39 @@ import {
   shouldCloseWireProfileManagerForProjectChange,
   WireProfileManagerDialog,
 } from '@/features/blueprint-wire-profiles'
+import {
+  buildElectricalSymbolCountResult,
+  ElectricalSymbolCountSummary,
+  ElectricalSymbolTotalsDialog,
+} from '@/features/blueprint-symbol-counts'
+import {
+  ELECTRICAL_SYMBOL_OPTIONS,
+  formatElectricalSymbolCategory,
+  getElectricalSymbolCountValue,
+  getElectricalSymbolDisplayName,
+  getElectricalSymbolMetadata,
+  getElectricalSymbolMetadataStamp,
+  getElectricalSymbolVisualBounds,
+  isCanLightShapeKind,
+  isElectricalShapeKind,
+  isLightOutputShapeKind,
+  isRotatableElectricalShapeKind,
+  renderElectricalSymbolSvg,
+  type ElectricalSymbolCategory,
+  type ElectricalSymbolKind,
+} from './electricalSymbolRegistry'
+
+export {
+  ELECTRICAL_SYMBOL_OPTIONS,
+  getElectricalSymbolDisplayName,
+  getElectricalSymbolMetadata,
+  getElectricalSymbolMetadataStamp,
+  getElectricalSymbolVisualBounds,
+  isElectricalShapeKind,
+  isLightOutputShapeKind,
+  isRotatableElectricalShapeKind,
+  renderElectricalSymbolSvg,
+} from './electricalSymbolRegistry'
 
 let _pdfjsLib: typeof import('pdfjs-dist') | null = null
 async function getPdfjsLib(): Promise<typeof import('pdfjs-dist')> {
@@ -412,301 +445,6 @@ type BorderStyle = 'solid' | 'dashed' | 'dotted'
 type HatchPattern = 'none' | 'diagonal' | 'cross' | 'dots'
 type GenerateQuestionType = 'coordination' | 'rfi'
 
-type ElectricalSymbolKind = Extract<ShapeKind,
-  | 'electrical-switch'
-  | 'electrical-switch-3way'
-  | 'electrical-switch-4way'
-  | 'electrical-dimmer'
-  | 'electrical-recessed-light'
-  | 'electrical-pendant-light'
-  | 'electrical-sconce'
-  | 'electrical-emergency-exit-sign'
-  | 'electrical-led-panel-2x2'
-  | 'electrical-led-panel-2x4'
-  | 'electrical-panel'
-  | 'electrical-gfci'
-  | 'electrical-receptacle'
-  | 'electrical-receptacle-240v'
-  | 'electrical-timer-control'
-  | 'electrical-photocell'
-  | 'electrical-ceiling-occupancy-sensor'
-  | 'electrical-wall-occupancy-sensor'
-  | 'electrical-smoke-alarm'
-  | 'electrical-co-alarm'
-  | 'electrical-hdmi'
-  | 'electrical-data'
->
-type ElectricalSymbolCategory = 'lighting' | 'switching' | 'power' | 'control'
-
-type ElectricalSymbolMetadata = {
-  symbolKind: ElectricalSymbolKind
-  displayName: string
-  shortLabel: string
-  category: ElectricalSymbolCategory
-  countValue: number
-  defaultPhase: string
-  materialKey: string
-  laborKey: string
-  isElectricalSymbol: true
-}
-
-const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, ElectricalSymbolMetadata> = {
-  'electrical-switch': {
-    symbolKind: 'electrical-switch',
-    displayName: 'Switch',
-    shortLabel: 'S',
-    category: 'switching',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'switch',
-    laborKey: 'switch',
-    isElectricalSymbol: true,
-  },
-  'electrical-switch-3way': {
-    symbolKind: 'electrical-switch-3way',
-    displayName: '3-Way Switch',
-    shortLabel: 'S3',
-    category: 'switching',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'switch-3way',
-    laborKey: 'switch-3way',
-    isElectricalSymbol: true,
-  },
-  'electrical-switch-4way': {
-    symbolKind: 'electrical-switch-4way',
-    displayName: '4-Way Switch',
-    shortLabel: 'S4',
-    category: 'switching',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'switch-4way',
-    laborKey: 'switch-4way',
-    isElectricalSymbol: true,
-  },
-  'electrical-dimmer': {
-    symbolKind: 'electrical-dimmer',
-    displayName: 'Dimmer',
-    shortLabel: 'DIM',
-    category: 'switching',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'dimmer',
-    laborKey: 'dimmer',
-    isElectricalSymbol: true,
-  },
-  'electrical-recessed-light': {
-    symbolKind: 'electrical-recessed-light',
-    displayName: 'Recessed Light',
-    shortLabel: 'RL',
-    category: 'lighting',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'recessed-light',
-    laborKey: 'recessed-light',
-    isElectricalSymbol: true,
-  },
-  'electrical-pendant-light': {
-    symbolKind: 'electrical-pendant-light',
-    displayName: 'Pendant Light',
-    shortLabel: 'P',
-    category: 'lighting',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'pendant-light',
-    laborKey: 'pendant-light',
-    isElectricalSymbol: true,
-  },
-  'electrical-sconce': {
-    symbolKind: 'electrical-sconce',
-    displayName: 'Sconce',
-    shortLabel: 'SC',
-    category: 'lighting',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'sconce',
-    laborKey: 'sconce',
-    isElectricalSymbol: true,
-  },
-  'electrical-emergency-exit-sign': {
-    symbolKind: 'electrical-emergency-exit-sign',
-    displayName: 'Emergency Exit Sign',
-    shortLabel: 'EXIT',
-    category: 'lighting',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'emergency-exit-sign',
-    laborKey: 'emergency-exit-sign',
-    isElectricalSymbol: true,
-  },
-  'electrical-led-panel-2x2': {
-    symbolKind: 'electrical-led-panel-2x2',
-    displayName: '2x2 LED Panel',
-    shortLabel: '2x2',
-    category: 'lighting',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'led-panel-2x2',
-    laborKey: 'led-panel-2x2',
-    isElectricalSymbol: true,
-  },
-  'electrical-led-panel-2x4': {
-    symbolKind: 'electrical-led-panel-2x4',
-    displayName: '2x4 LED Panel',
-    shortLabel: '2x4',
-    category: 'lighting',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'led-panel-2x4',
-    laborKey: 'led-panel-2x4',
-    isElectricalSymbol: true,
-  },
-  'electrical-panel': {
-    symbolKind: 'electrical-panel',
-    displayName: 'Electrical Panel',
-    shortLabel: 'PNL',
-    category: 'power',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'electrical-panel',
-    laborKey: 'electrical-panel',
-    isElectricalSymbol: true,
-  },
-  'electrical-gfci': {
-    symbolKind: 'electrical-gfci',
-    displayName: 'GFCI',
-    shortLabel: 'GFCI',
-    category: 'power',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'gfci',
-    laborKey: 'gfci',
-    isElectricalSymbol: true,
-  },
-  'electrical-receptacle': {
-    symbolKind: 'electrical-receptacle',
-    displayName: 'Receptacle',
-    shortLabel: 'REC',
-    category: 'power',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'receptacle',
-    laborKey: 'receptacle',
-    isElectricalSymbol: true,
-  },
-  'electrical-receptacle-240v': {
-    symbolKind: 'electrical-receptacle-240v',
-    displayName: '240V Receptacle',
-    shortLabel: '240V',
-    category: 'power',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'receptacle-240v',
-    laborKey: 'receptacle-240v',
-    isElectricalSymbol: true,
-  },
-  'electrical-timer-control': {
-    symbolKind: 'electrical-timer-control',
-    displayName: 'Timer Control Box',
-    shortLabel: 'TMR',
-    category: 'control',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'timer-control',
-    laborKey: 'timer-control',
-    isElectricalSymbol: true,
-  },
-  'electrical-photocell': {
-    symbolKind: 'electrical-photocell',
-    displayName: 'Photocell',
-    shortLabel: 'PC',
-    category: 'control',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'photocell',
-    laborKey: 'photocell',
-    isElectricalSymbol: true,
-  },
-  'electrical-ceiling-occupancy-sensor': {
-    symbolKind: 'electrical-ceiling-occupancy-sensor',
-    displayName: 'Ceiling Occupancy Sensor',
-    shortLabel: 'OS-C',
-    category: 'control',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'switch',
-    laborKey: 'switch',
-    isElectricalSymbol: true,
-  },
-  'electrical-wall-occupancy-sensor': {
-    symbolKind: 'electrical-wall-occupancy-sensor',
-    displayName: 'Wall Occupancy Sensor',
-    shortLabel: 'OS-W',
-    category: 'control',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'switch',
-    laborKey: 'switch',
-    isElectricalSymbol: true,
-  },
-  'electrical-smoke-alarm': {
-    symbolKind: 'electrical-smoke-alarm',
-    displayName: 'Smoke Alarm',
-    shortLabel: 'SA',
-    category: 'control',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'smoke-alarm',
-    laborKey: 'smoke-alarm',
-    isElectricalSymbol: true,
-  },
-  'electrical-co-alarm': {
-    symbolKind: 'electrical-co-alarm',
-    displayName: 'CO Alarm',
-    shortLabel: 'CO',
-    category: 'control',
-    countValue: 1,
-    defaultPhase: 'electrical',
-    materialKey: 'co-alarm',
-    laborKey: 'co-alarm',
-    isElectricalSymbol: true,
-  },
-  'electrical-hdmi': {
-    symbolKind: 'electrical-hdmi',
-    displayName: 'HDMI',
-    shortLabel: 'HDMI',
-    category: 'power',
-    countValue: 1,
-    defaultPhase: 'low-voltage',
-    materialKey: 'hdmi',
-    laborKey: 'hdmi',
-    isElectricalSymbol: true,
-  },
-  'electrical-data': {
-    symbolKind: 'electrical-data',
-    displayName: 'Data',
-    shortLabel: 'DATA',
-    category: 'power',
-    countValue: 1,
-    defaultPhase: 'low-voltage',
-    materialKey: 'data',
-    laborKey: 'data',
-    isElectricalSymbol: true,
-  },
-}
-
-export const ELECTRICAL_SYMBOL_OPTIONS: Array<{ label: string; value: ElectricalSymbolKind; shortLabel: string }> =
-  Object.values(ELECTRICAL_SYMBOL_METADATA).map((symbol) => ({
-    label: symbol.displayName,
-    value: symbol.symbolKind,
-    shortLabel: symbol.shortLabel,
-  }))
-
-const CAN_LIGHT_TOOL_OPTIONS: Array<{ label: string; value: 'can-light-4' | 'can-light-6'; shortLabel: string }> = [
-  { label: 'Can Light 4"', value: 'can-light-4', shortLabel: '4"' },
-  { label: 'Can Light 6"', value: 'can-light-6', shortLabel: '6"' },
-]
-
 export const CIRCUIT_MEASUREMENT_LABELS_DEFAULT_VISIBLE = false
 export const CIRCUIT_DRAW_GROUP_TOOL_ORDER = ['circuit-path', 'circuit-arc', 'circuit-labels'] as const
 
@@ -812,46 +550,6 @@ function saveQuickAccessPresets(presets: Array<QuickAccessPreset | null>) {
 function isSyncBlockedMessage(message: string | null | undefined) {
   if (!message) return false
   return /cloud sync was blocked/i.test(message) || /could not prove it loaded the latest remote/i.test(message)
-}
-
-export function isElectricalShapeKind(shapeKind: any): shapeKind is ElectricalSymbolKind {
-  return typeof shapeKind === 'string' && shapeKind in ELECTRICAL_SYMBOL_METADATA
-}
-
-export function getElectricalSymbolMetadata(shapeKind: any, meta: Record<string, any> = {}): ElectricalSymbolMetadata | null {
-  if (!isElectricalShapeKind(shapeKind)) return null
-  const base = ELECTRICAL_SYMBOL_METADATA[shapeKind]
-  return {
-    ...base,
-    countValue: Number.isFinite(Number(meta.countValue)) ? Number(meta.countValue) : base.countValue,
-  }
-}
-
-export function getElectricalSymbolDisplayName(shapeKind: any, meta: Record<string, any> = {}) {
-  const symbol = getElectricalSymbolMetadata(shapeKind, meta)
-  if (!symbol) return null
-  return shapeKind === 'electrical-recessed-light' && meta.emergency
-    ? `${symbol.displayName} · EM`
-    : symbol.displayName
-}
-
-function getElectricalSymbolCountValue(shapeKind: any, meta: Record<string, any> = {}) {
-  return getElectricalSymbolMetadata(shapeKind, meta)?.countValue ?? 0
-}
-
-function formatElectricalSymbolCategory(category: ElectricalSymbolCategory) {
-  return category.charAt(0).toUpperCase() + category.slice(1)
-}
-
-export function getElectricalSymbolMetadataStamp(shapeKind: any, meta: Record<string, any> = {}) {
-  const symbol = getElectricalSymbolMetadata(shapeKind, meta)
-  if (!symbol) return {}
-  return {
-    symbolCategory: symbol.category,
-    countValue: symbol.countValue,
-    materialKey: symbol.materialKey,
-    laborKey: symbol.laborKey,
-  }
 }
 
 const DEFAULT_SCOPE_LAYER_COLOR = '#38bdf8'
@@ -1367,6 +1065,47 @@ interface OperationsBlueprintPdfViewerProps {
   }) => void
 }
 
+export function ScopeLayerTotalsControls({
+  onOpenProjectWireTotals,
+  onOpenElectricalSymbolTotals,
+  scopeLayerShowAllPages,
+  onToggleScopeLayerPages,
+}: {
+  onOpenProjectWireTotals(): void
+  onOpenElectricalSymbolTotals(): void
+  scopeLayerShowAllPages: boolean
+  onToggleScopeLayerPages(): void
+}) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+      <button
+        type="button"
+        onClick={onOpenProjectWireTotals}
+        className="rounded border border-cyan-500/50 bg-cyan-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-cyan-100 hover:bg-cyan-500/20"
+        title="Open read-only wire totals for the current blueprint set"
+      >
+        Project Wire Totals
+      </button>
+      <button
+        type="button"
+        onClick={onOpenElectricalSymbolTotals}
+        className="rounded border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-100 hover:bg-emerald-500/20"
+        title="Open read-only electrical symbol totals for the current blueprint set"
+      >
+        Electrical Symbol Totals
+      </button>
+      <button
+        type="button"
+        onClick={onToggleScopeLayerPages}
+        className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold ${scopeLayerShowAllPages ? 'border-sky-400/60 bg-sky-500/20 text-sky-100' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+        title={scopeLayerShowAllPages ? 'Showing packages from all pages — click to show only this page' : 'Showing only this page\'s packages — click to show all pages'}
+      >
+        {scopeLayerShowAllPages ? 'Showing: All Pages' : 'Showing: Current Page'}
+      </button>
+    </div>
+  )
+}
+
 function toNorm(x: number, y: number, w: number, h: number) {
   return {
     x: Math.max(0, Math.min(1, x / Math.max(1, w))),
@@ -1474,46 +1213,9 @@ function withEnsuredCircuitTopologyIds(annotation: BlueprintAnnotation): Bluepri
   }) as BlueprintAnnotation
 }
 
-// Light-output symbol detection — used for glare/glow overlay and Light Output controls.
-const LIGHT_OUTPUT_SHAPE_KINDS = new Set<ShapeKind>([
-  'can-light-4',
-  'can-light-6',
-  'electrical-recessed-light',
-  'electrical-pendant-light',
-  'electrical-sconce',
-  'electrical-emergency-exit-sign',
-  'electrical-led-panel-2x2',
-  'electrical-led-panel-2x4',
-])
-
-export function isLightOutputShapeKind(shapeKind: any): shapeKind is ShapeKind {
-  return typeof shapeKind === 'string' && LIGHT_OUTPUT_SHAPE_KINDS.has(shapeKind as ShapeKind)
-}
-
 // Stable empty set so "no playback running" never produces a fresh identity and re-renders the
 // annotation layer on every pass.
 const EMPTY_ANNOTATION_ID_SET: Set<string> = new Set()
-
-// Wall-mounted electrical symbols that support rotation to match wall orientation.
-// Light fixtures (can lights, recessed/pendant lights, LED panels) intentionally excluded.
-const ROTATABLE_ELECTRICAL_SHAPE_KINDS = new Set<ShapeKind>([
-  'electrical-receptacle',
-  'electrical-receptacle-240v',
-  'electrical-switch',
-  'electrical-switch-3way',
-  'electrical-switch-4way',
-  'electrical-dimmer',
-  'electrical-sconce',
-  'electrical-emergency-exit-sign',
-  'electrical-gfci',
-  'electrical-photocell',
-  'electrical-timer-control',
-  'electrical-wall-occupancy-sensor',
-])
-
-export function isRotatableElectricalShapeKind(shapeKind: any): shapeKind is ShapeKind {
-  return typeof shapeKind === 'string' && ROTATABLE_ELECTRICAL_SHAPE_KINDS.has(shapeKind as ShapeKind)
-}
 
 const ROTATION_STEP_DEG = 90
 
@@ -1533,7 +1235,7 @@ function isLightOutputShape(annotation: any) {
 function isCanLightShape(annotation: any) {
   if (!annotation || annotation.type !== 'shape') return false
   const kind = getAnnotationMeta(annotation).shapeKind
-  return kind === 'can-light-4' || kind === 'can-light-6'
+  return isCanLightShapeKind(kind)
 }
 
 // Center point of an annotation/shape's bounding rect, in page-normalized (0-1) coordinates.
@@ -1691,33 +1393,6 @@ function getHatchBackground(pattern: HatchPattern, color: string, fillColor: str
   return fill
 }
 
-// Compact ink bounds (in the symbol's 0-100 viewBox space) for device-type electrical
-// symbols whose glyph occupies only a small fraction of the full placed rect — used to
-// draw a selection outline that hugs the visible symbol instead of the full annotation
-// box. Deliberately excludes light glow (glow is a separate fixed-radius overlay, not
-// part of the body) and external labels/badges (rendered outside this box). Symbol
-// kinds not listed here (lights, LED panels, can-lights) keep the existing full-box ring.
-const ELECTRICAL_SYMBOL_VISUAL_BOUNDS: Partial<Record<ElectricalSymbolKind, { x: number; y: number; w: number; h: number }>> = {
-  'electrical-switch': { x: 30, y: 15, w: 40, h: 68 },
-  'electrical-switch-3way': { x: 30, y: 15, w: 40, h: 68 },
-  'electrical-switch-4way': { x: 30, y: 15, w: 40, h: 68 },
-  'electrical-dimmer': { x: 13, y: 15, w: 74, h: 64 },
-  'electrical-receptacle': { x: 25, y: 9, w: 50, h: 74 },
-  'electrical-receptacle-240v': { x: 25, y: 9, w: 50, h: 74 },
-  'electrical-panel': { x: 8, y: 7, w: 84, h: 86 },
-  'electrical-gfci': { x: 25, y: 9, w: 50, h: 74 },
-  'electrical-sconce': { x: 15, y: 15, w: 47, h: 68 },
-  'electrical-emergency-exit-sign': { x: 12, y: 28, w: 76, h: 38 },
-  'electrical-photocell': { x: 14, y: 11, w: 78, h: 68 },
-  'electrical-timer-control': { x: 13, y: 13, w: 68, h: 64 },
-  'electrical-ceiling-occupancy-sensor': { x: 20, y: 17, w: 56, h: 56 },
-  'electrical-wall-occupancy-sensor': { x: 26, y: 15, w: 44, h: 60 },
-}
-
-export function getElectricalSymbolVisualBounds(kind: ShapeKind) {
-  return isElectricalShapeKind(kind) ? ELECTRICAL_SYMBOL_VISUAL_BOUNDS[kind] ?? null : null
-}
-
 function getAnnotationVisualBodyRect(annotation: RouteBuilderAnnotation): RouteBuilderAnnotation['rect'] {
   const rect = annotation.rect
   if (!rect) return undefined
@@ -1729,318 +1404,6 @@ function getAnnotationVisualBodyRect(annotation: RouteBuilderAnnotation): RouteB
     w: rect.w * (bounds.w / 100),
     h: rect.h * (bounds.h / 100),
   })
-}
-
-export function renderElectricalSymbolSvg(kind: ShapeKind, meta: Record<string, any>, style: {
-  borderColor: string
-  borderThickness: number
-  borderStyle: BorderStyle
-  fillColor: string
-  fillOpacity: number
-  labelsVisible: boolean
-  labelScale?: number
-  labelCustomColorsEnabled?: boolean
-  labelTextColor?: string
-  labelBorderColor?: string
-  labelFillColor?: string
-}, rotationDeg: number = 0, showCompactSelectionBox: boolean = false) {
-  const { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible } = style
-  // Label-only scale (Symbols Size control) — affects the external label badge/text size only,
-  // never the symbol glyph geometry or the annotation box. Defaults to 1 (100%).
-  const labelScale = Number.isFinite(style.labelScale) ? Math.max(0.5, Math.min(5, style.labelScale as number)) : 1
-  // Label-only color override (Symbols Size popup "Custom Label Colors" toggle). Applies to the
-  // external label badge (text/border/fill) only — never the symbol glyph/body/geometry.
-  const labelColorsEnabled = !!style.labelCustomColorsEnabled
-  const customLabelTextColor = style.labelTextColor
-  const customLabelBorderColor = style.labelBorderColor
-  const customLabelFillColor = style.labelFillColor
-  const dash = borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined
-  const symbolFill = fillColor === 'transparent' ? 'none' : fillColor
-  const textFill = borderColor
-  const commonText = {
-    textAnchor: 'middle' as const,
-    dominantBaseline: 'middle' as const,
-    fontFamily: 'monospace',
-    fontWeight: 800,
-    fill: textFill,
-  }
-  const fineStroke = Math.max(1.4, borderThickness * 0.7)
-  const symbolStroke = Math.max(2, borderThickness)
-  // externalLabel is always rendered OUTSIDE the rotated body group so labels stay
-  // readable at any rotation angle, matching the existing GFCI label pattern.
-  const externalLabel = (label: string) => {
-    if (!labelsVisible) return null
-    // Label badge scales with labelScale (Symbols Size), anchored to its right edge (x=96) and
-    // top (y=78) so growing/shrinking text never shifts the symbol glyph.
-    const labelWidth = Math.max(22, label.length * 7 + 8) * labelScale
-    const labelHeight = 16 * labelScale
-    const labelX = 96 - labelWidth
-    const labelTop = 78
-    const labelTextFill = labelColorsEnabled && customLabelTextColor ? customLabelTextColor : textFill
-    const labelBorder = labelColorsEnabled && customLabelBorderColor ? customLabelBorderColor : borderColor
-    const labelFill = labelColorsEnabled && customLabelFillColor ? customLabelFillColor : '#0b1020'
-    return (
-      <g>
-        <rect
-          x={labelX}
-          y={labelTop}
-          width={labelWidth}
-          height={labelHeight}
-          rx={4 * labelScale}
-          fill={labelFill}
-          fillOpacity="0.82"
-          stroke={labelBorder}
-          strokeWidth="1.2"
-          opacity="0.95"
-        />
-        <text x={labelX + labelWidth / 2} y={labelTop + labelHeight / 2} fontSize={9.5 * labelScale} {...commonText} fill={labelTextFill}>{label}</text>
-      </g>
-    )
-  }
-  const badge = kind === 'electrical-recessed-light' && meta.emergency ? (
-    externalLabel('EM')
-  ) : null
-
-  // body = the rotatable symbol glyph. label = fixed external badge, never rotated.
-  let body: React.ReactNode = null
-  let label: React.ReactNode = null
-
-  const switchBody = (
-    <>
-      <text x="50" y="52" fontSize="52" {...commonText}>S</text>
-      <line x1="50" y1="20" x2="50" y2="78" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" strokeDasharray={dash} />
-    </>
-  )
-
-  if (kind === 'electrical-switch') {
-    body = switchBody
-  } else if (kind === 'electrical-switch-3way') {
-    // Body matches the regular switch symbol exactly; S3 is an external label, not a custom body.
-    body = switchBody
-    label = externalLabel('S3')
-  } else if (kind === 'electrical-switch-4way') {
-    // Body matches the regular switch symbol exactly; S4 is an external label, not a custom body.
-    body = switchBody
-    label = externalLabel('S4')
-  } else if (kind === 'electrical-dimmer') {
-    const dimmerLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'DIM'
-    body = (
-      <>
-        <text x="46" y="50" fontSize="48" {...commonText}>S</text>
-        <line x1="46" y1="20" x2="46" y2="74" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" strokeDasharray={dash} />
-        <path d="M72 28 L84 28 M74 37 L84 37 M76 46 L84 46" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.75" />
-      </>
-    )
-    label = externalLabel(dimmerLabel)
-  } else if (kind === 'electrical-recessed-light') {
-    body = (
-      <>
-        <circle cx="48" cy="45" r="34" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
-        <circle cx="48" cy="45" r="17" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
-        <line x1="18" y1="45" x2="78" y2="45" stroke={borderColor} strokeWidth={Math.max(1, borderThickness * 0.5)} opacity="0.65" />
-        <line x1="48" y1="15" x2="48" y2="75" stroke={borderColor} strokeWidth={Math.max(1, borderThickness * 0.5)} opacity="0.65" />
-      </>
-    )
-    label = badge
-  } else if (kind === 'electrical-pendant-light') {
-    body = (
-      <>
-        <circle cx="50" cy="16" r="6" fill={symbolFill} stroke={borderColor} strokeWidth={fineStroke} />
-        <line x1="50" y1="22" x2="50" y2="52" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" />
-        <path d="M30 54 Q50 72 70 54" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} strokeLinecap="round" />
-        <circle cx="50" cy="62" r="13" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
-      </>
-    )
-  } else if (kind === 'electrical-sconce') {
-    body = (
-      <>
-        <line x1="24" y1="20" x2="24" y2="78" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" />
-        <path d="M26 30 A24 20 0 0 1 26 70" fill="none" stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} strokeLinecap="round" />
-        <path d="M26 38 L58 28 M26 62 L58 72" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.7" />
-        <circle cx="42" cy="50" r="7" fill={symbolFill} stroke={borderColor} strokeWidth={fineStroke} />
-      </>
-    )
-  } else if (kind === 'electrical-emergency-exit-sign') {
-    body = (
-      <>
-        <rect x="12" y="28" width="76" height="38" rx="3" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
-        <text x="50" y="48" fontSize="20" letterSpacing="0" {...commonText}>EXIT</text>
-      </>
-    )
-  } else if (kind === 'electrical-led-panel-2x2' || kind === 'electrical-led-panel-2x4') {
-    const isLong = kind === 'electrical-led-panel-2x4'
-    const panelLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? (isLong ? '2x4' : '2x2')
-    body = (
-      <>
-        <rect x={isLong ? 10 : 18} y={isLong ? 22 : 14} width={isLong ? 78 : 58} height={isLong ? 40 : 58} rx="3" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
-        <line x1={isLong ? 49 : 18} y1={isLong ? 22 : 43} x2={isLong ? 49 : 76} y2={isLong ? 62 : 43} stroke={borderColor} strokeWidth={fineStroke} opacity="0.65" />
-        <line x1={isLong ? 10 : 47} y1={isLong ? 42 : 14} x2={isLong ? 88 : 47} y2={isLong ? 42 : 72} stroke={borderColor} strokeWidth={fineStroke} opacity="0.65" />
-        <line x1={isLong ? 14 : 24} y1={isLong ? 26 : 20} x2={isLong ? 84 : 70} y2={isLong ? 58 : 66} stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} opacity="0.35" />
-        <line x1={isLong ? 84 : 70} y1={isLong ? 26 : 20} x2={isLong ? 14 : 24} y2={isLong ? 58 : 66} stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} opacity="0.35" />
-      </>
-    )
-    label = externalLabel(panelLabel)
-  } else if (kind === 'electrical-panel') {
-    body = (
-      <>
-        <rect x="8" y="7" width="84" height="86" rx="5" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
-        <rect x="18" y="18" width="64" height="64" rx="3" fill="none" stroke={borderColor} strokeWidth={fineStroke} opacity="0.72" />
-        <line x1="28" y1="30" x2="72" y2="30" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} strokeLinecap="round" opacity="0.55" />
-        <line x1="28" y1="70" x2="72" y2="70" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} strokeLinecap="round" opacity="0.55" />
-        <text x="50" y="52" fontSize="20" letterSpacing="0" {...commonText}>PNL</text>
-      </>
-    )
-  } else if (kind === 'electrical-gfci' || kind === 'electrical-receptacle') {
-    const symbolLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? (kind === 'electrical-gfci' ? 'GFCI' : 'REC')
-    body = (
-      <>
-        <path d="M30 24 Q50 12 70 24 L70 66 Q50 78 30 66 Z" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
-        <circle cx="50" cy="35" r="9" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
-        <circle cx="50" cy="58" r="9" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
-        <line x1="45" y1="35" x2="55" y2="35" stroke={borderColor} strokeWidth={fineStroke} />
-        <line x1="45" y1="58" x2="55" y2="58" stroke={borderColor} strokeWidth={fineStroke} />
-        {kind === 'electrical-gfci' && <line x1="39" y1="47" x2="61" y2="47" stroke={borderColor} strokeWidth={fineStroke} opacity="0.75" />}
-      </>
-    )
-    label = externalLabel(symbolLabel)
-  } else if (kind === 'electrical-receptacle-240v') {
-    const v240Label = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? '240V'
-    // 240V receptacle: same outlet-face silhouette as Standard Receptacle, but with angled
-    // (diagonal) blade slots instead of round slots, a round ground hole below, and a thicker
-    // outline — reads as a distinct high-voltage outlet at a glance, never touches the
-    // Standard Receptacle glyph above.
-    const heavyStroke = Math.max(3, borderThickness * 1.4)
-    body = (
-      <>
-        <path d="M28 22 Q50 10 72 22 L72 68 Q50 80 28 68 Z" fill={symbolFill} stroke={borderColor} strokeWidth={heavyStroke} strokeDasharray={dash} />
-        <line x1="38" y1="30" x2="48" y2="42" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" />
-        <line x1="62" y1="30" x2="52" y2="42" stroke={borderColor} strokeWidth={symbolStroke} strokeLinecap="round" />
-        <circle cx="50" cy="58" r="7" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
-      </>
-    )
-    label = externalLabel(v240Label)
-  } else if (kind === 'electrical-timer-control') {
-    const timerLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'TMR'
-    body = (
-      <>
-        <rect x="18" y="18" width="58" height="54" rx="5" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
-        <circle cx="47" cy="43" r="15" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
-        <line x1="47" y1="43" x2="47" y2="33" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" />
-        <line x1="47" y1="43" x2="57" y2="49" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" />
-        <circle cx="27" cy="27" r="2.5" fill={borderColor} />
-        <circle cx="67" cy="27" r="2.5" fill={borderColor} />
-      </>
-    )
-    label = externalLabel(timerLabel)
-  } else if (kind === 'electrical-photocell') {
-    const photocellLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'PC'
-    body = (
-      <>
-        <circle cx="46" cy="45" r="27" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
-        <path d="M25 45 Q46 26 67 45 Q46 64 25 45 Z" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
-        <circle cx="46" cy="45" r="6" fill={borderColor} />
-        <path d="M72 23 L80 15 M76 44 L88 44 M72 65 L80 73" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.75" />
-      </>
-    )
-    label = externalLabel(photocellLabel)
-  } else if (kind === 'electrical-ceiling-occupancy-sensor') {
-    const sensorLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'OS-C'
-    body = (
-      <>
-        <circle cx="48" cy="45" r="28" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
-        <path d="M48 26 A19 19 0 0 1 64.5 35.5 M64.5 54.5 A19 19 0 0 1 48 64 M31.5 54.5 A19 19 0 0 1 31.5 35.5" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.78" />
-        <circle cx="48" cy="45" r="7" fill={borderColor} />
-        <circle cx="48" cy="45" r="3" fill={symbolFill} />
-      </>
-    )
-    label = externalLabel(sensorLabel)
-  } else if (kind === 'electrical-wall-occupancy-sensor') {
-    const sensorLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'OS-W'
-    body = (
-      <>
-        <rect x="26" y="15" width="44" height="60" rx="5" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
-        <path d="M34 34 Q48 23 62 34 Q48 45 34 34 Z" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinejoin="round" />
-        <circle cx="48" cy="34" r="4" fill={borderColor} />
-        <path d="M39 52 Q48 59 57 52 M35 57 Q48 68 61 57" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.78" />
-      </>
-    )
-    label = externalLabel(sensorLabel)
-  } else if (kind === 'electrical-smoke-alarm') {
-    const smokeLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'SA'
-    // Ceiling-mounted smoke detector: circular detector base + inner ring, with stacked wavy
-    // "smoke plume" lines inside the body. The wavy plume reads clearly as smoke and keeps it
-    // distinct from the CO Alarm (straight horizontal vent slots).
-    body = (
-      <>
-        <circle cx="48" cy="45" r="30" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
-        <circle cx="48" cy="45" r="21" fill="none" stroke={borderColor} strokeWidth={fineStroke} opacity="0.5" />
-        <path d="M35 53 q6.5 -7 13 0 t13 0" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" />
-        <path d="M35 45 q6.5 -7 13 0 t13 0" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" />
-        <path d="M35 37 q6.5 -7 13 0 t13 0" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.8" />
-      </>
-    )
-    label = externalLabel(smokeLabel)
-  } else if (kind === 'electrical-co-alarm') {
-    const coLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'CO'
-    // Ceiling/wall CO detector: outer body, inner ring, horizontal vent slots.
-    body = (
-      <>
-        <circle cx="48" cy="45" r="30" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
-        <circle cx="48" cy="45" r="18" fill="none" stroke={borderColor} strokeWidth={fineStroke} />
-        <path d="M40 38 L56 38 M38 45 L58 45 M40 52 L56 52" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinecap="round" opacity="0.7" />
-      </>
-    )
-    label = externalLabel(coLabel)
-  } else if (kind === 'electrical-hdmi') {
-    const hdmiLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'HDMI'
-    // HDMI wall plate: trapezoidal HDMI connector mouth inside a plate outline.
-    body = (
-      <>
-        <rect x="22" y="26" width="52" height="38" rx="4" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
-        <path d="M34 40 L62 40 L58 52 L38 52 Z" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinejoin="round" />
-        <path d="M40 44 L56 44" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.8)} strokeLinecap="round" opacity="0.7" />
-      </>
-    )
-    label = externalLabel(hdmiLabel)
-  } else if (kind === 'electrical-data') {
-    const dataLabel = getElectricalSymbolMetadata(kind, meta)?.shortLabel ?? 'DATA'
-    // Data / network jack: RJ45-style keyed port inside a plate outline.
-    body = (
-      <>
-        <rect x="24" y="26" width="48" height="40" rx="4" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
-        <path d="M36 38 L60 38 L60 52 L54 52 L54 57 L42 57 L42 52 L36 52 Z" fill="none" stroke={borderColor} strokeWidth={fineStroke} strokeLinejoin="round" />
-        <path d="M41 42 L41 48 M48 42 L48 48 M55 42 L55 48" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.75)} strokeLinecap="round" opacity="0.65" />
-      </>
-    )
-    label = externalLabel(dataLabel)
-  }
-
-  if (!body) return null
-  const visualBounds = showCompactSelectionBox ? getElectricalSymbolVisualBounds(kind) : null
-  const compactSelectionBox = visualBounds ? (
-    <rect
-      x={visualBounds.x}
-      y={visualBounds.y}
-      width={visualBounds.w}
-      height={visualBounds.h}
-      rx="4"
-      fill="none"
-      stroke="#ffffff"
-      strokeWidth="2"
-      strokeOpacity="0.85"
-      vectorEffect="non-scaling-stroke"
-    />
-  ) : null
-  const bodyWithSelectionBox = compactSelectionBox ? <>{body}{compactSelectionBox}</> : body
-  const rotatedBody = rotationDeg
-    ? <g transform={`rotate(${rotationDeg} 50 50)`}>{bodyWithSelectionBox}</g>
-    : bodyWithSelectionBox
-  return (
-    <>
-      {rotatedBody}
-      {label}
-    </>
-  )
 }
 
 // SVG <pattern> element for measurement area fills Ã¢â‚¬â€ returns null for solid/none.
@@ -3450,6 +2813,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   } | null>(null)
   const [isWireProfileManagerOpen, setIsWireProfileManagerOpen] = useState(false)
   const [projectWireTotalsOpen, setProjectWireTotalsOpen] = useState(false)
+  const [electricalSymbolTotalsOpen, setElectricalSymbolTotalsOpen] = useState(false)
   const [wireAssignmentSelections, setWireAssignmentSelections] = useState<WireProfileAssignmentSelection[]>([])
   const [wireAssignmentDialogOpen, setWireAssignmentDialogOpen] = useState(false)
   const [wireAssignmentTargetProfileId, setWireAssignmentTargetProfileId] = useState('')
@@ -3537,6 +2901,17 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     savedCalibrations,
     scopeLayers,
   ])
+
+  const electricalSymbolCountResult = useMemo(() => {
+    const projectId = String(blueprint?.projectId || '').trim()
+    const blueprintSetId = String(blueprint?.id || '').trim()
+    return buildElectricalSymbolCountResult({
+      projectId,
+      blueprintSetId,
+      annotations: projectId && blueprintSetId ? allAnnotations : [],
+      workPackages: projectId && blueprintSetId ? scopeLayers : [],
+    })
+  }, [allAnnotations, blueprint?.id, blueprint?.projectId, scopeLayers])
 
   const buildQuickAccessDraft = (slotIndex: number, preset?: QuickAccessPreset | null): QuickAccessPreset => {
     if (preset) return JSON.parse(JSON.stringify(preset))
@@ -5118,6 +4493,50 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     selectedPackageItemRefs,
   ])
   const scopeLayerDraftWireQuantityRollup = scopeLayerDraftWireQuantityResult?.packageRollups.find((rollup) => rollup.packageId === (scopeLayerModal.layerId || 'draft-work-package')) ?? null
+  const scopeLayerDraftElectricalSymbolResult = useMemo(() => {
+    if (!scopeLayerModal.open || !blueprint) return null
+    const draftPackage = {
+      id: scopeLayerModal.layerId || 'draft-work-package',
+      name: scopeLayerForm.name || 'Work Package',
+      description: scopeLayerForm.description || '',
+      color: scopeLayerForm.color || DEFAULT_SCOPE_LAYER_COLOR,
+      selectedAnnotationIds: scopeLayerDraftIds,
+      itemRefs: selectedPackageItemRefs,
+      pageNumber: currentPage,
+      roughInHours: 0,
+      trimHours: 0,
+      testingHours: 0,
+      cleanupHours: 0,
+      crewNotes: '',
+      proposalSummary: '',
+      createdAt: '',
+      updatedAt: '',
+      visible: true,
+      isolated: false,
+    }
+    const previewPackages = buildEffectiveWorkPackagesForPreview({
+      workPackages: scopeLayers,
+      draftPackage,
+    })
+    return buildElectricalSymbolCountResult({
+      projectId: blueprint.projectId,
+      blueprintSetId: blueprint.id,
+      annotations: allAnnotations,
+      workPackages: previewPackages,
+    })
+  }, [
+    allAnnotations,
+    blueprint,
+    currentPage,
+    scopeLayerDraftIds,
+    scopeLayerForm.color,
+    scopeLayerForm.description,
+    scopeLayerForm.name,
+    scopeLayerModal,
+    scopeLayers,
+    selectedPackageItemRefs,
+  ])
+  const scopeLayerDraftElectricalSymbolRollup = scopeLayerDraftElectricalSymbolResult?.packageRollups.find((rollup) => rollup.packageId === (scopeLayerModal.layerId || 'draft-work-package')) ?? null
   const selectedPackageCount = selectedForPackageIds.size
 
   // ── Edit/Create Work Package: which Package-Pick selections can still be added ──
@@ -10203,11 +9622,8 @@ const annotationPanelSizeClass =
             )}
             <LabeledSelect label="Shape" value={currentKind}
               options={
-                isEdit && (isElectricalShapeKind(currentKind) || currentKind === 'can-light-4' || currentKind === 'can-light-6')
-                  ? [
-                    ...ELECTRICAL_SYMBOL_OPTIONS.map((option) => ({ label: option.label, value: option.value })),
-                    ...CAN_LIGHT_TOOL_OPTIONS.map((option) => ({ label: option.label, value: option.value })),
-                  ]
+                isEdit && isElectricalShapeKind(currentKind)
+                  ? ELECTRICAL_SYMBOL_OPTIONS.map((option) => ({ label: option.label, value: option.value }))
                   : GENERIC_SHAPE_KIND_OPTIONS
               }
               onChange={(v) => {
@@ -11239,22 +10655,6 @@ const annotationPanelSizeClass =
                 <div className="space-y-1.5">
                   <div className="text-[10px] uppercase tracking-wide text-gray-500">Electrical Symbols</div>
                   <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : `flex flex-nowrap overflow-x-auto bv-tool-bucket${isTabletImmersiveFullscreen ? ' justify-center' : ''}`} gap-1.5`}>
-                    {CAN_LIGHT_TOOL_OPTIONS.map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => {
-                          setToolMode('shape')
-                          setShapeKind(option.value)
-                          setOpenPopover(null)
-                        }}
-                        className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' && shapeKind === option.value ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                        title={`Place ${option.label}`}
-                      >
-                        <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-current px-1 text-[9px] font-semibold leading-none">{option.shortLabel}</span>
-                        <span className="truncate">{option.label}</span>
-                      </button>
-                    ))}
                     {ELECTRICAL_SYMBOL_OPTIONS.map((option) => (
                       <button
                         key={option.value}
@@ -12257,6 +11657,40 @@ const annotationPanelSizeClass =
                               </div>
                             )
                           }
+                          if (isCanLightShape(a)) {
+                            // Can-light symbol: outer trim ring + crosshair + aperture circle + size label.
+                            // If blueprint calibration is active, the user sizes the marker to match scale via drag.
+                            // Without calibration the symbol is still clear — 4" vs 6" distinguished by aperture radius + label.
+                            const trimRadius = 24
+                            const aperture = kind === 'can-light-4' ? 10 : 13
+                            const ringStrokeWidth = Math.max(0.8, borderThickness * 0.65)
+                            const label = kind === 'can-light-4' ? '4"' : '6"'
+                            const glowMetrics = getLightOutputGlowMetrics(kind, meta)
+                            const glowId = `canlight-glow-${a.id}`
+                            return (
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-full' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
+                                <svg
+                                  className="absolute inset-0 overflow-visible"
+                                  viewBox="0 0 100 100"
+                                  width="100%"
+                                  height="100%"
+                                  preserveAspectRatio="xMidYMid meet"
+                                >
+                                  {renderLightOutputGlowSvg(glowId, glowMetrics, lightingEffectsVisible && !animationPlaybackAnnotationIds.has(a.id))}
+                                  {/* Outer trim ring */}
+                                  <circle cx="50" cy="50" r={trimRadius} fill="none" stroke={borderColor} strokeWidth={ringStrokeWidth} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} opacity={fillOpacity} />
+                                  {/* Crosshair reference */}
+                                  <line x1="31" y1="50" x2="69" y2="50" stroke={borderColor} strokeWidth={Math.max(1, borderThickness * 0.45)} opacity={fillOpacity * 0.55} />
+                                  <line x1="50" y1="31" x2="50" y2="69" stroke={borderColor} strokeWidth={Math.max(1, borderThickness * 0.45)} opacity={fillOpacity * 0.55} />
+                                  {/* Aperture */}
+                                  <circle cx="50" cy="50" r={aperture} fill={fillColor === 'transparent' ? 'none' : fillColor} fillOpacity={Math.max(0, Math.min(1, fillOpacity * 0.32))} stroke={borderColor} strokeWidth={Math.max(1, borderThickness * 0.55)} opacity={fillOpacity} />
+                                  <text x="50" y="87" textAnchor="middle" dominantBaseline="middle" fontSize="14" fontFamily="monospace" fontWeight="800" fill={borderColor} opacity={fillOpacity}>{label}</text>
+                                </svg>
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move rounded-full" />}
+                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
+                              </div>
+                            )
+                          }
                           if (isElectricalShapeKind(kind)) {
                             const glowMetrics = isLightOutputShapeKind(kind)
                               ? getLightOutputGlowMetrics(kind, meta)
@@ -12280,42 +11714,6 @@ const annotationPanelSizeClass =
                                   <g opacity={fillOpacity}>
                                     {renderElectricalSymbolSvg(kind, meta, { borderColor, borderThickness, borderStyle, fillColor, fillOpacity, labelsVisible: electricalSymbolLabelsVisible, labelScale: symbolLabelScale, labelCustomColorsEnabled: symbolLabelCustomColorsEnabled, labelTextColor: symbolLabelTextColor, labelBorderColor: symbolLabelBorderColor, labelFillColor: symbolLabelFillColor }, getAnnotationRotationDeg(meta), isFocused)}
                                   </g>
-                                </svg>
-                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
-                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
-                              </div>
-                            )
-                          }
-                          if (isCanLightShape(a)) {
-                            // Can-light symbol: outer trim ring + crosshair + aperture circle + size label.
-                            // If blueprint calibration is active, the user sizes the marker to match scale via drag.
-                            // Without calibration the symbol is still clear — 4" vs 6" distinguished by aperture radius + label.
-                            const trimRadius = 24
-                            const aperture = kind === 'can-light-4' ? 10 : 13
-                            const ringStrokeWidth = Math.max(0.8, borderThickness * 0.65)
-                            const label = kind === 'can-light-4' ? '4"' : '6"'
-                            const glowMetrics = getLightOutputGlowMetrics(kind, meta)
-                            const glowId = `canlight-glow-${a.id}`
-                            return (
-                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80 rounded-full' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
-                                <svg
-                                  className="absolute inset-0 overflow-visible"
-                                  viewBox="0 0 100 100"
-                                  width="100%"
-                                  height="100%"
-                                  preserveAspectRatio="xMidYMid meet"
-                                >
-                                  {renderLightOutputGlowSvg(glowId, glowMetrics, lightingEffectsVisible && !animationPlaybackAnnotationIds.has(a.id))}
-                                  {/* Outer trim ring */}
-                                  <circle cx="50" cy="50" r={trimRadius} fill="none" stroke={borderColor} strokeWidth={ringStrokeWidth} strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined} opacity={fillOpacity} />
-                                  {/* Crosshair — horizontal */}
-                                  <line x1="4" y1="50" x2="96" y2="50" stroke={borderColor} strokeWidth={Math.max(0.8, borderThickness * 0.55)} opacity={fillOpacity * 0.65} />
-                                  {/* Crosshair — vertical */}
-                                  <line x1="50" y1="4" x2="50" y2="96" stroke={borderColor} strokeWidth={Math.max(0.8, borderThickness * 0.55)} opacity={fillOpacity * 0.65} />
-                                  {/* Aperture circle — filled by fillColor so the color swatch is reflected */}
-                                  <circle cx="50" cy="50" r={aperture} fill={fillColor === 'transparent' ? 'none' : hexWithAlpha(fillColor, Math.max(fillOpacity, 0.6))} stroke={borderColor} strokeWidth={ringStrokeWidth} />
-                                  {/* Size label centered inside aperture */}
-                                  <text x="50" y="55" textAnchor="middle" fontSize="16" fontWeight="700" fontFamily="monospace" fill={borderColor} opacity={fillOpacity}>{label}</text>
                                 </svg>
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" />}
                                 {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'resize')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute -right-1 -bottom-1 h-3 w-3 cursor-nwse-resize rounded-sm bg-blue-400" />}
@@ -13545,24 +12943,12 @@ const annotationPanelSizeClass =
                       </div>
                       <div className="mt-0.5 flex items-center justify-between gap-2">
                         <div className="text-[10px] text-sky-200/60">{isScopeLayerOrderSaving ? 'Saving package order...' : 'Saved work packages for this viewer session. Drag the handle or use ↑/↓ to reorder.'}</div>
-                        <div className="flex flex-shrink-0 items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => setProjectWireTotalsOpen(true)}
-                            className="rounded border border-cyan-500/50 bg-cyan-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-cyan-100 hover:bg-cyan-500/20"
-                            title="Open read-only wire totals for the current blueprint set"
-                          >
-                            Project Wire Totals
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setScopeLayerShowAllPages((prev) => !prev)}
-                            className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold ${scopeLayerShowAllPages ? 'border-sky-400/60 bg-sky-500/20 text-sky-100' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
-                            title={scopeLayerShowAllPages ? 'Showing packages from all pages — click to show only this page' : 'Showing only this page\'s packages — click to show all pages'}
-                          >
-                            {scopeLayerShowAllPages ? 'Showing: All Pages' : 'Showing: Current Page'}
-                          </button>
-                        </div>
+                        <ScopeLayerTotalsControls
+                          onOpenProjectWireTotals={() => setProjectWireTotalsOpen(true)}
+                          onOpenElectricalSymbolTotals={() => setElectricalSymbolTotalsOpen(true)}
+                          scopeLayerShowAllPages={scopeLayerShowAllPages}
+                          onToggleScopeLayerPages={() => setScopeLayerShowAllPages((prev) => !prev)}
+                        />
                       </div>
                       {isPackageVisibilityFilterActive && (
                         <div className="mt-1.5 flex items-center justify-between gap-2 rounded border border-amber-500/40 bg-amber-950/25 px-2 py-1 text-[10px] font-medium text-amber-200">
@@ -14234,6 +13620,14 @@ const annotationPanelSizeClass =
         viewerPortalTarget
       )}
 
+      {electricalSymbolTotalsOpen && createPortal(
+        <ElectricalSymbolTotalsDialog
+          result={electricalSymbolCountResult}
+          onClose={() => setElectricalSymbolTotalsOpen(false)}
+        />,
+        viewerPortalTarget
+      )}
+
       {wireAssignmentDialogOpen && createPortal(
         <AssignWireProfileDialog
           open={wireAssignmentDialogOpen}
@@ -14359,9 +13753,6 @@ const annotationPanelSizeClass =
                       >
                         <optgroup label="Shapes">
                           {GENERIC_SHAPE_KIND_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                        </optgroup>
-                        <optgroup label="Can Lights">
-                          {CAN_LIGHT_TOOL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                         </optgroup>
                         <optgroup label="Electrical Symbols">
                           {ELECTRICAL_SYMBOL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -14932,6 +14323,16 @@ const annotationPanelSizeClass =
                 <div className="mt-2 rounded border border-sky-900/40 bg-sky-950/20 px-2 py-1 text-[10px] text-sky-200">
                   Labor total: {getBlueprintScopeLayerLaborTotal(scopeLayerForm as any).toFixed(1)} hrs
                 </div>
+                {scopeLayerDraftElectricalSymbolRollup && (
+                  <div className="mt-2">
+                    <ElectricalSymbolCountSummary
+                      totals={scopeLayerDraftElectricalSymbolRollup.totals}
+                      contributions={(scopeLayerDraftElectricalSymbolResult?.contributions || []).filter((contribution) => scopeLayerDraftElectricalSymbolRollup.contributionIds.includes(contribution.annotationId))}
+                      emptyText="No registered electrical symbols are attributed to this Work Package."
+                      compact
+                    />
+                  </div>
+                )}
                 {scopeLayerDraftWireQuantityRollup && (
                   <div className="mt-2">
                     <WireQuantitySummary
