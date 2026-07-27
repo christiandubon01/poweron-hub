@@ -210,8 +210,7 @@ import {
 } from './electricalSymbolRegistry'
 import {
   DESKTOP_ELECTRICAL_TOOL_CATEGORIES,
-  DESKTOP_RECESSED_LIGHT_CATEGORY_ID,
-  isDesktopRecessedLightKind,
+  isDesktopElectricalCategoryChildKind,
   shouldShowElectricalSymbolInDesktopMainGrid,
   shouldShowElectricalSymbolInLegacyNonDesktopToolbar,
 } from './desktopElectricalToolCategories'
@@ -3434,7 +3433,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   }, [effectiveTool, shapeKind, activeQuickAccessSession, clearActiveQuickAccessSession])
 
   useEffect(() => {
-    if (toolMode === 'shape' && isDesktopRecessedLightKind(shapeKind)) return
+    if (toolMode === 'shape' && isDesktopElectricalCategoryChildKind(shapeKind)) return
     setOpenDesktopElectricalCategory(null)
   }, [toolMode, shapeKind])
 
@@ -10699,7 +10698,9 @@ const annotationPanelSizeClass =
                   <div className={`${useDesktopThreePaneLayout ? 'grid grid-cols-2' : `flex flex-nowrap overflow-x-auto bv-tool-bucket${isTabletImmersiveFullscreen ? ' justify-center' : ''}`} gap-1.5`}>
                     {useDesktopThreePaneLayout && DESKTOP_ELECTRICAL_TOOL_CATEGORIES.map((category) => {
                       const isOpen = openDesktopElectricalCategory === category.id
-                      const activeChild = toolMode === 'shape' && isDesktopRecessedLightKind(shapeKind) ? electricalSymbolOptionByKind.get(shapeKind as ElectricalSymbolKind) : null
+                      const activeChild = toolMode === 'shape' && category.children.includes(shapeKind as ElectricalSymbolKind)
+                        ? electricalSymbolOptionByKind.get(shapeKind as ElectricalSymbolKind)
+                        : null
                       const regionId = `desktop-electrical-category-${category.id}`
                       return (
                         <div key={category.id} className="col-span-2 min-w-0">

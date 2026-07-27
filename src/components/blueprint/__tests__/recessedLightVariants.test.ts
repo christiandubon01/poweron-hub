@@ -11,7 +11,11 @@ import {
   DESKTOP_ELECTRICAL_TOOL_CATEGORIES,
   DESKTOP_RECESSED_LIGHT_CATEGORY_ID,
   DESKTOP_RECESSED_LIGHT_KINDS,
+  DESKTOP_SWITCHES_CATEGORY_ID,
+  DESKTOP_SWITCH_KINDS,
+  isDesktopElectricalCategoryChildKind,
   isDesktopRecessedLightKind,
+  isDesktopSwitchKind,
   shouldShowElectricalSymbolInDesktopMainGrid,
   shouldShowElectricalSymbolInLegacyNonDesktopToolbar,
 } from '../desktopElectricalToolCategories'
@@ -30,6 +34,13 @@ const RECESSED_LIGHT_EXPECTATIONS = [
   ['can-light-6', '6" Can Light', '6"', 'can-light-6', 'can-light'],
   ['canless-light-6', '6" Canless Light', '6" CL', 'canless-light-6', 'canless-light'],
   ['canless-light-10', '10" Canless Light', '10" CL', 'canless-light-10', 'canless-light'],
+] as const
+
+const SWITCH_EXPECTATIONS = [
+  ['electrical-switch', 'Switch', 'S', 'switch', 'switch'],
+  ['electrical-switch-3way', '3-Way Switch', 'S3', 'switch-3way', 'switch-3way'],
+  ['electrical-switch-4way', '4-Way Switch', 'S4', 'switch-4way', 'switch-4way'],
+  ['electrical-dimmer', 'Dimmer', 'DIM', 'dimmer', 'dimmer'],
 ] as const
 
 describe('desktop recessed light registered variants', () => {
@@ -83,21 +94,60 @@ describe('desktop recessed light registered variants', () => {
     }
   })
 
-  it('keeps desktop category organization separate from legacy non-desktop toolbar visibility', () => {
-    expect(DESKTOP_ELECTRICAL_TOOL_CATEGORIES).toEqual([
+  it('keeps Recessed Lights first and adds Switches second in the desktop category model', () => {
+    expect(DESKTOP_ELECTRICAL_TOOL_CATEGORIES.slice(0, 2)).toEqual([
       {
         id: DESKTOP_RECESSED_LIGHT_CATEGORY_ID,
         label: 'Recessed Lights',
         children: DESKTOP_RECESSED_LIGHT_KINDS,
       },
+      {
+        id: DESKTOP_SWITCHES_CATEGORY_ID,
+        label: 'Switches',
+        children: DESKTOP_SWITCH_KINDS,
+      },
     ])
+    expect(DESKTOP_SWITCH_KINDS).toEqual(SWITCH_EXPECTATIONS.map(([kind]) => kind))
+    expect(new Set(DESKTOP_SWITCH_KINDS).size).toBe(DESKTOP_SWITCH_KINDS.length)
 
+    for (const [kind, displayName, shortLabel, materialKey, laborKey] of SWITCH_EXPECTATIONS) {
+      expect(ELECTRICAL_SYMBOL_OPTIONS).toContainEqual({ value: kind, label: displayName, shortLabel })
+      expect(getElectricalSymbolMetadata(kind)).toMatchObject({
+        symbolKind: kind,
+        displayName,
+        shortLabel,
+        category: kind === 'electrical-dimmer' ? 'switching' : 'switching',
+        countValue: 1,
+        materialKey,
+        laborKey,
+        isElectricalSymbol: true,
+      })
+      expect(isDesktopSwitchKind(kind)).toBe(true)
+      expect(isDesktopElectricalCategoryChildKind(kind)).toBe(true)
+    }
+  })
+
+  it('keeps desktop category organization separate from legacy non-desktop toolbar visibility', () => {
     for (const [kind] of RECESSED_LIGHT_EXPECTATIONS) {
       expect(isDesktopRecessedLightKind(kind)).toBe(true)
+      expect(isDesktopElectricalCategoryChildKind(kind)).toBe(true)
+      expect(shouldShowElectricalSymbolInDesktopMainGrid(kind)).toBe(false)
+    }
+    for (const [kind] of SWITCH_EXPECTATIONS) {
       expect(shouldShowElectricalSymbolInDesktopMainGrid(kind)).toBe(false)
     }
     expect(shouldShowElectricalSymbolInDesktopMainGrid('electrical-recessed-light')).toBe(false)
     expect(shouldShowElectricalSymbolInDesktopMainGrid('electrical-receptacle')).toBe(true)
+
+    const registryOrderBefore = ELECTRICAL_SYMBOL_OPTIONS.map((option) => option.value)
+    const desktopStandalone = ELECTRICAL_SYMBOL_OPTIONS.filter((option) => shouldShowElectricalSymbolInDesktopMainGrid(option.value)).map((option) => option.value)
+    const expectedDesktopStandalone = registryOrderBefore.filter((kind) => (
+      !DESKTOP_RECESSED_LIGHT_KINDS.includes(kind as any)
+      && !DESKTOP_SWITCH_KINDS.includes(kind as any)
+      && kind !== 'electrical-recessed-light'
+    ))
+    expect(desktopStandalone).toEqual(expectedDesktopStandalone)
+    expect(ELECTRICAL_SYMBOL_OPTIONS.map((option) => option.value)).toEqual(registryOrderBefore)
 
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('can-light-4')).toBe(true)
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('can-light-6')).toBe(true)
@@ -107,5 +157,13 @@ describe('desktop recessed light registered variants', () => {
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('canless-light-4')).toBe(false)
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('canless-light-6')).toBe(false)
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('canless-light-10')).toBe(false)
+    const legacyNonDesktopOrder = ELECTRICAL_SYMBOL_OPTIONS.filter((option) => shouldShowElectricalSymbolInLegacyNonDesktopToolbar(option.value)).map((option) => option.value)
+    const switchStart = legacyNonDesktopOrder.indexOf('electrical-switch')
+    expect(legacyNonDesktopOrder.slice(switchStart, switchStart + 4)).toEqual([
+      'electrical-switch',
+      'electrical-switch-3way',
+      'electrical-switch-4way',
+      'electrical-dimmer',
+    ])
   })
 })
