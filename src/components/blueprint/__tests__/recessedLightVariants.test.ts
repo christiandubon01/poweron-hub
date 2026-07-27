@@ -4,13 +4,17 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import {
   ELECTRICAL_SYMBOL_OPTIONS,
   getElectricalSymbolMetadata,
+  getElectricalSymbolMetadataStamp,
   isLightOutputShapeKind,
+  isRotatableElectricalShapeKind,
   renderElectricalSymbolSvg,
 } from '../electricalSymbolRegistry'
 import {
   DESKTOP_CEILING_DEVICE_KINDS,
   DESKTOP_CEILING_DEVICES_CATEGORY_ID,
   DESKTOP_ELECTRICAL_TOOL_CATEGORIES,
+  DESKTOP_LIGHTING_CATEGORY_ID,
+  DESKTOP_LIGHTING_KINDS,
   DESKTOP_LOW_VOLTAGE_CATEGORY_ID,
   DESKTOP_LOW_VOLTAGE_KINDS,
   DESKTOP_LIGHTING_CONTROL_KINDS,
@@ -23,6 +27,7 @@ import {
   DESKTOP_SWITCH_KINDS,
   isDesktopCeilingDeviceKind,
   isDesktopElectricalCategoryChildKind,
+  isDesktopLightingKind,
   isDesktopLightingControlKind,
   isDesktopLowVoltageKind,
   isDesktopReceptacleKind,
@@ -72,6 +77,13 @@ const LIGHTING_CONTROL_EXPECTATIONS = [
 const LOW_VOLTAGE_EXPECTATIONS = [
   ['electrical-hdmi', 'HDMI', 'HDMI', 'hdmi', 'hdmi'],
   ['electrical-data', 'Data', 'DATA', 'data', 'data'],
+] as const
+
+const LIGHTING_EXPECTATIONS = [
+  ['electrical-led-panel-2x2', '2x2 LED Panel', '2x2', 'led-panel-2x2', 'led-panel-2x2', false],
+  ['electrical-led-panel-2x4', '2x4 LED Panel', '2x4', 'led-panel-2x4', 'led-panel-2x4', false],
+  ['electrical-sconce', 'Sconce', 'SC', 'sconce', 'sconce', true],
+  ['electrical-pendant-light', 'Pendant Light', 'P', 'pendant-light', 'pendant-light', false],
 ] as const
 
 describe('desktop recessed light registered variants', () => {
@@ -125,7 +137,7 @@ describe('desktop recessed light registered variants', () => {
     }
   })
 
-  it('keeps Recessed Lights, Switches, Ceiling Devices, Lighting Controls, Receptacles, and Low Voltage in locked desktop category order', () => {
+  it('keeps Recessed Lights, Switches, Ceiling Devices, Lighting Controls, Receptacles, Low Voltage, and Lighting in locked desktop category order', () => {
     expect(DESKTOP_ELECTRICAL_TOOL_CATEGORIES).toEqual([
       {
         id: DESKTOP_RECESSED_LIGHT_CATEGORY_ID,
@@ -157,6 +169,11 @@ describe('desktop recessed light registered variants', () => {
         label: 'Low Voltage',
         children: DESKTOP_LOW_VOLTAGE_KINDS,
       },
+      {
+        id: DESKTOP_LIGHTING_CATEGORY_ID,
+        label: 'Lighting',
+        children: DESKTOP_LIGHTING_KINDS,
+      },
     ])
     expect(DESKTOP_SWITCH_KINDS).toEqual(SWITCH_EXPECTATIONS.map(([kind]) => kind))
     expect(DESKTOP_CEILING_DEVICE_KINDS).toEqual(CEILING_DEVICE_EXPECTATIONS.map(([kind]) => kind))
@@ -170,6 +187,12 @@ describe('desktop recessed light registered variants', () => {
       'electrical-half-hot-receptacle',
     ])
     expect(DESKTOP_LOW_VOLTAGE_KINDS).toEqual(['electrical-hdmi', 'electrical-data'])
+    expect(DESKTOP_LIGHTING_KINDS).toEqual([
+      'electrical-led-panel-2x2',
+      'electrical-led-panel-2x4',
+      'electrical-sconce',
+      'electrical-pendant-light',
+    ])
     expect(new Set(DESKTOP_SWITCH_KINDS).size).toBe(DESKTOP_SWITCH_KINDS.length)
     expect(new Set(DESKTOP_CEILING_DEVICE_KINDS).size).toBe(DESKTOP_CEILING_DEVICE_KINDS.length)
     expect(new Set(DESKTOP_LIGHTING_CONTROL_KINDS).size).toBe(DESKTOP_LIGHTING_CONTROL_KINDS.length)
@@ -248,6 +271,30 @@ describe('desktop recessed light registered variants', () => {
       expect(isDesktopElectricalCategoryChildKind(kind)).toBe(true)
       expect(isLightOutputShapeKind(kind)).toBe(false)
     }
+    for (const [kind, displayName, shortLabel, materialKey, laborKey, isRotatable] of LIGHTING_EXPECTATIONS) {
+      expect(ELECTRICAL_SYMBOL_OPTIONS).toContainEqual({ value: kind, label: displayName, shortLabel })
+      expect(getElectricalSymbolMetadata(kind)).toMatchObject({
+        symbolKind: kind,
+        displayName,
+        shortLabel,
+        category: 'lighting',
+        countValue: 1,
+        defaultPhase: 'electrical',
+        materialKey,
+        laborKey,
+        isElectricalSymbol: true,
+      })
+      expect(getElectricalSymbolMetadataStamp(kind)).toEqual({
+        symbolCategory: 'lighting',
+        countValue: 1,
+        materialKey,
+        laborKey,
+      })
+      expect(isDesktopLightingKind(kind)).toBe(true)
+      expect(isDesktopElectricalCategoryChildKind(kind)).toBe(true)
+      expect(isLightOutputShapeKind(kind)).toBe(true)
+      expect(isRotatableElectricalShapeKind(kind)).toBe(isRotatable)
+    }
     const categorizedChildren = DESKTOP_ELECTRICAL_TOOL_CATEGORIES.flatMap((category) => category.children)
     expect(new Set(categorizedChildren).size).toBe(categorizedChildren.length)
   })
@@ -303,6 +350,10 @@ describe('desktop recessed light registered variants', () => {
     for (const kind of DESKTOP_LOW_VOLTAGE_KINDS) {
       expect(shouldShowElectricalSymbolInDesktopMainGrid(kind)).toBe(false)
     }
+    for (const kind of DESKTOP_LIGHTING_KINDS) {
+      expect(shouldShowElectricalSymbolInDesktopMainGrid(kind)).toBe(false)
+    }
+    expect(shouldShowElectricalSymbolInDesktopMainGrid('electrical-panel')).toBe(true)
     expect(shouldShowElectricalSymbolInDesktopMainGrid('electrical-recessed-light')).toBe(false)
 
     const registryOrderBefore = ELECTRICAL_SYMBOL_OPTIONS.map((option) => option.value)
@@ -314,6 +365,7 @@ describe('desktop recessed light registered variants', () => {
       && !DESKTOP_LIGHTING_CONTROL_KINDS.includes(kind as any)
       && !DESKTOP_RECEPTACLE_KINDS.includes(kind as any)
       && !DESKTOP_LOW_VOLTAGE_KINDS.includes(kind as any)
+      && !DESKTOP_LIGHTING_KINDS.includes(kind as any)
       && kind !== 'electrical-recessed-light'
     ))
     expect(desktopStandalone).toEqual(expectedDesktopStandalone)
@@ -341,6 +393,9 @@ describe('desktop recessed light registered variants', () => {
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-half-hot-receptacle')).toBe(false)
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-hdmi')).toBe(true)
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-data')).toBe(true)
+    for (const [kind] of LIGHTING_EXPECTATIONS) {
+      expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar(kind)).toBe(true)
+    }
     const legacyNonDesktopOrder = ELECTRICAL_SYMBOL_OPTIONS.filter((option) => shouldShowElectricalSymbolInLegacyNonDesktopToolbar(option.value)).map((option) => option.value)
     const switchStart = legacyNonDesktopOrder.indexOf('electrical-switch')
     expect(legacyNonDesktopOrder.slice(switchStart, switchStart + 4)).toEqual([
@@ -351,6 +406,12 @@ describe('desktop recessed light registered variants', () => {
     ])
     const lowVoltageStart = legacyNonDesktopOrder.indexOf('electrical-hdmi')
     expect(legacyNonDesktopOrder.slice(lowVoltageStart, lowVoltageStart + 2)).toEqual(['electrical-hdmi', 'electrical-data'])
+    expect(legacyNonDesktopOrder.filter((kind) => DESKTOP_LIGHTING_KINDS.includes(kind as any))).toEqual([
+      'electrical-pendant-light',
+      'electrical-sconce',
+      'electrical-led-panel-2x2',
+      'electrical-led-panel-2x4',
+    ])
   })
 
   it('preserves Low Voltage registry and animation isolation', () => {
@@ -359,6 +420,34 @@ describe('desktop recessed light registered variants', () => {
       expect(isRouteBuilderLoadKind(kind)).toBe(false)
       expect(isLightOutputShapeKind(kind)).toBe(false)
       expect(inferRouteBuilderNodeRoles(kind)).toEqual([])
+      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
+    }
+  })
+
+  it('preserves Lighting fixture registry, glyph, and animation isolation', () => {
+    for (const [kind] of LIGHTING_EXPECTATIONS) {
+      const markup = renderToStaticMarkup(
+        React.createElement(
+          'svg',
+          { viewBox: '0 0 100 100' },
+          renderElectricalSymbolSvg(kind, {}, {
+            borderColor: '#67e8f9',
+            borderThickness: 2,
+            borderStyle: 'solid',
+            fillColor: 'transparent',
+            fillOpacity: 0,
+            labelsVisible: true,
+          }),
+        ),
+      )
+      expect(markup).toBeTruthy()
+      expect(markup).not.toContain('<image')
+      if (kind === 'electrical-sconce') expect(markup).toContain('M26 30 A24 20')
+      else if (kind === 'electrical-pendant-light') expect(markup).toContain('Q50 72 70 54')
+      else expect(markup).toContain(getElectricalSymbolMetadata(kind)?.shortLabel)
+      expect(isRouteBuilderLoadKind(kind)).toBe(true)
+      expect(inferRouteBuilderNodeRoles(kind)).toEqual(['load'])
       expect(isRouteBuilderSourceKind(kind)).toBe(false)
       expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
     }

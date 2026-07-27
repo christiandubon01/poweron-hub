@@ -149,6 +149,7 @@ describe('desktop receptacle variants', () => {
       'lighting-controls',
       DESKTOP_RECEPTACLES_CATEGORY_ID,
       'low-voltage',
+      'lighting',
     ])
     expect(DESKTOP_ELECTRICAL_TOOL_CATEGORIES[4]).toEqual({
       id: DESKTOP_RECEPTACLES_CATEGORY_ID,
