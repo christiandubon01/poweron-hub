@@ -1721,6 +1721,16 @@ export default function V15rTeamPanel() {
             <TrendingUp className="w-4 h-4" />
             Team Cost Settings
           </button>
+          <a
+            href="/employee/login"
+            title="Employee Login — open the employee portal sign-in"
+            aria-label="Employee Login"
+            className="flex items-center gap-1.5 rounded-full border border-indigo-400/40 bg-indigo-500/15 px-3 py-1.5 text-xs font-medium text-indigo-200 flex-shrink-0 whitespace-nowrap hover:bg-indigo-500/25 transition-colors"
+            style={{ minHeight: '44px' }}
+          >
+            <Users className="h-3.5 w-3.5 flex-shrink-0" />
+            <span className="hidden md:inline">Employee Login</span>
+          </a>
           {isAdmin && (
             <button
               onClick={() => setShowEmployeeInviteModal(true)}

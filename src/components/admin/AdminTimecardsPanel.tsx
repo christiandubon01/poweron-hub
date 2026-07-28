@@ -17,6 +17,11 @@ import {
   type ClockPhase,
 } from '@/services/adminTimecardService'
 import AdminPunchHistoryModal from '@/components/admin/AdminPunchHistoryModal'
+import {
+  TRADE_ROLE_LABELS,
+  TRADE_ROLE_BADGE_CLASS,
+  toTradeRole,
+} from '@/services/roleService'
 
 // ── Presentation ───────────────────────────────────────────────────────────────
 
@@ -221,7 +226,24 @@ export default function AdminTimecardsPanel() {
                       <p className="text-xs text-gray-500 truncate">{row.profile.email}</p>
                     )}
                     <p className="text-[11px] text-gray-600 mt-0.5 capitalize">
-                      {row.profile.role} · {String(row.profile.employment_type || '').replace('_', ' ')}
+                      {(() => {
+                        const trade = toTradeRole(row.profile.employee_role)
+                        if (trade) {
+                          return (
+                            <span className={`inline-flex items-center gap-1.5`}>
+                              <span className={`px-1.5 py-0.5 rounded-full border text-[10px] font-medium normal-case ${TRADE_ROLE_BADGE_CLASS[trade]}`}>
+                                {TRADE_ROLE_LABELS[trade]}
+                              </span>
+                              <span>· {String(row.profile.employment_type || '').replace('_', ' ')}</span>
+                            </span>
+                          )
+                        }
+                        return (
+                          <>
+                            {row.profile.role} · {String(row.profile.employment_type || '').replace('_', ' ')}
+                          </>
+                        )
+                      })()}
                     </p>
                   </div>
                   {/* Status */}
