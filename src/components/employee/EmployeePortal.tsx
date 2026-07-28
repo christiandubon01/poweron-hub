@@ -14,6 +14,7 @@ import { useAuth } from '@/hooks/useAuth'
 import EmployeeTimeClock from '@/components/employee/EmployeeTimeClock'
 import EmployeeMyTimePanel from '@/components/employee/EmployeeMyTimePanel'
 import EmployeeMyTasksPanel from '@/components/employee/EmployeeMyTasksPanel'
+import EmployeeSchedulePanel from '@/components/employee/EmployeeSchedulePanel'
 import EmployeePortalBrandHeader from '@/components/employee/EmployeePortalBrandHeader'
 
 interface EmployeeProfileSummary {
@@ -187,12 +188,7 @@ export function EmployeePortal() {
         {activeSection === 'clock' && <EmployeeTimeClock />}
         {activeSection === 'my-time' && <EmployeeMyTimePanel />}
         {activeSection === 'assignments' && <EmployeeMyTasksPanel />}
-        {activeSection === 'schedule' && (
-          <ComingSoonCard
-            title="Schedule"
-            message="Schedule is coming soon. Current schedule tables are not safely mapped to employee portal profiles yet."
-          />
-        )}
+        {activeSection === 'schedule' && <EmployeeSchedulePanel />}
       </main>
     </div>
   )
