@@ -1,5 +1,6 @@
 /**
- * crewPortalService.ts — Crew Portal (TEAM sidebar) live data (CREW-PORTAL-LIVE-1)
+ * crewPortalService.ts — Crew Portal (TEAM sidebar) live data
+ * CREW-PORTAL-LIVE-1 + LIVE-2 (health % from project_phases, employee_role).
  *
  * Owner / crew / guest reads for src/views/CrewPortal.tsx.
  * Does not touch Guardian, field CrewPortal, or protected backup/blueprint services.
@@ -20,6 +21,7 @@ import {
   type EmployeeMyTask,
   type TaskAssignmentStatus,
 } from '@/services/employeeTaskAssignmentService'
+import { toTradeRole, type EmployeeTradeRole } from '@/services/roleService'
 
 const from = supabase.from as any
 
@@ -31,7 +33,10 @@ export interface CrewRosterMember {
   id: string
   userId: string | null
   name: string
+  /** Portal access role (employee | foreman). */
   role: string
+  /** Trade role when set; UI prefers this over role for badges. */
+  employeeRole: EmployeeTradeRole | null
   assignedProjects: string[]
   hoursThisWeek: number
   active: boolean
@@ -41,6 +46,7 @@ export interface CrewSelfView {
   profileId: string
   name: string
   role: string
+  employeeRole: EmployeeTradeRole | null
   hoursThisWeek: number
   assignedProjects: string[]
   tasksToday: Array<{
@@ -55,7 +61,10 @@ export interface GuestProjectView {
   id: string
   name: string
   phaseLabel: string
-  /** Null when projects has no health column — UI must not invent a value. */
+  /**
+   * Average percent_complete of started project_phases, or null when none.
+   * Never invent 0% for unstarted projects.
+   */
   healthPercent: number | null
 }
 
@@ -110,6 +119,62 @@ export function mapProjectStatusToPhaseLabel(status: string, phase?: string | nu
   const trimmedPhase = (phase || '').trim()
   if (trimmedPhase) return trimmedPhase
   return PROJECT_STATUS_PHASE_LABELS[status] || status || 'Unknown'
+}
+
+/**
+ * Project health % from project_phases (read-only).
+ *
+ * Active / started phases = percent_complete > 0
+ *   OR status IN ('in_progress', 'completed')
+ *   (excludes pending / skipped with 0%).
+ * Returns rounded average of percent_complete (0–100), or null if none.
+ */
+export async function getProjectHealthPercent(
+  projectId: string,
+): Promise<ServiceResult<number | null>> {
+  try {
+    const cleanId = String(projectId || '').trim()
+    if (!cleanId) return { success: true, data: null }
+
+    const { data, error } = await from('project_phases')
+      .select('percent_complete, status, started_at')
+      .eq('project_id', cleanId)
+
+    if (error) {
+      console.warn('[crewPortalService.getProjectHealthPercent]', error.message)
+      return { success: false, error: error.message }
+    }
+
+    const rows = (data ?? []) as Array<{
+      percent_complete: number | null
+      status: string | null
+      started_at: string | null
+    }>
+
+    const started = rows.filter((row) => {
+      const status = String(row.status || '').toLowerCase()
+      if (status === 'skipped') return false
+      const pct = typeof row.percent_complete === 'number' ? row.percent_complete : 0
+      if (pct > 0) return true
+      if (status === 'in_progress' || status === 'completed') return true
+      if (row.started_at) return true
+      return false
+    })
+
+    if (started.length === 0) return { success: true, data: null }
+
+    let sum = 0
+    for (const row of started) {
+      const pct = typeof row.percent_complete === 'number' ? row.percent_complete : 0
+      sum += Math.max(0, Math.min(100, pct))
+    }
+    const avg = Math.round(sum / started.length)
+    return { success: true, data: Math.max(0, Math.min(100, avg)) }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[crewPortalService.getProjectHealthPercent]', err)
+    return { success: false, error: message }
+  }
 }
 
 function minutesToHours(minutes: number): number {
@@ -193,7 +258,7 @@ export async function getOwnerCrewRoster(): Promise<ServiceResult<CrewRosterMemb
     const orgId = orgResult.data
 
     const { data: profiles, error: profileError } = await from('employee_profiles')
-      .select('id, user_id, org_id, display_name, role, active')
+      .select('id, user_id, org_id, display_name, role, employee_role, active')
       .eq('org_id', orgId)
       .order('display_name', { ascending: true })
 
@@ -213,12 +278,14 @@ export async function getOwnerCrewRoster(): Promise<ServiceResult<CrewRosterMemb
       user_id: string | null
       display_name: string
       role: string
+      employee_role: string | null
       active: boolean
     }>).map((p) => ({
       id: p.id,
       userId: p.user_id,
       name: p.display_name || 'Unknown',
       role: p.role || 'employee',
+      employeeRole: toTradeRole(p.employee_role),
       assignedProjects: projectsByEmployee.get(p.id) ?? [],
       hoursThisWeek: hoursByProfile.get(p.id) ?? 0,
       active: p.active !== false,
@@ -243,7 +310,7 @@ export async function getCrewSelfView(): Promise<ServiceResult<CrewSelfView | nu
     if (!user?.id) return { success: false, error: 'Not authenticated' }
 
     const { data: profileRows, error: profileError } = await from('employee_profiles')
-      .select('id, display_name, role, active, accepted_at')
+      .select('id, display_name, role, employee_role, active, accepted_at')
       .eq('user_id', user.id)
       .eq('active', true)
       .order('accepted_at', { ascending: false })
@@ -290,6 +357,7 @@ export async function getCrewSelfView(): Promise<ServiceResult<CrewSelfView | nu
         profileId: profile.id,
         name: profile.display_name || 'Crew Member',
         role: profile.role || 'employee',
+        employeeRole: toTradeRole(profile.employee_role),
         hoursThisWeek,
         assignedProjects: [...projectSet].sort((a, b) => a.localeCompare(b)),
         tasksToday,
@@ -308,7 +376,7 @@ export async function getCrewSelfView(): Promise<ServiceResult<CrewSelfView | nu
  * NEEDS OWNER DESIGN DECISION: no guest↔project linking table/column exists.
  * Placeholder: most recently updated active/open project for the owner's org.
  *
- * NEEDS OWNER DESIGN DECISION: no health % column on projects — healthPercent is null.
+ * Health %: average of started project_phases.percent_complete (null if none).
  */
 export async function getGuestProjectPlaceholder(): Promise<ServiceResult<GuestProjectView | null>> {
   try {
@@ -329,14 +397,17 @@ export async function getGuestProjectPlaceholder(): Promise<ServiceResult<GuestP
     if (error) return { success: false, error: error.message }
     if (!data) return { success: true, data: null }
 
+    const projectId = String(data.id)
+    const healthResult = await getProjectHealthPercent(projectId)
+    const healthPercent = healthResult.success ? healthResult.data : null
+
     return {
       success: true,
       data: {
-        id: String(data.id),
+        id: projectId,
         name: String(data.name || 'Untitled project'),
         phaseLabel: mapProjectStatusToPhaseLabel(String(data.status || ''), data.phase),
-        // No health_% / health_percent column on projects — do not invent.
-        healthPercent: null,
+        healthPercent,
       },
     }
   } catch (err: unknown) {

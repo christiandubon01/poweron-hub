@@ -21,8 +21,13 @@ import {
 import {
   getOrgMembers,
   assignRole,
+  assignTradeRole,
+  TRADE_ROLE_LABELS,
+  TRADE_ROLE_BADGE_CLASS,
+  TRADE_ROLE_OPTIONS,
   type OrgMember,
   type EmployeePortalRole,
+  type EmployeeTradeRole,
 } from '../services/roleService'
 import {
   getOwnerCrewRoster,
@@ -121,6 +126,26 @@ function RoleBadge({ role }: { role: string }) {
       {role}
     </span>
   )
+}
+
+/** Prefer trade role badge when set; otherwise fall back to portal/system role. Never both. */
+function MemberRoleBadge({
+  employeeRole,
+  fallbackRole,
+}: {
+  employeeRole?: EmployeeTradeRole | null
+  fallbackRole: string
+}) {
+  if (employeeRole) {
+    return (
+      <span
+        className={`text-xs font-medium px-2 py-0.5 rounded-full border ${TRADE_ROLE_BADGE_CLASS[employeeRole]}`}
+      >
+        {TRADE_ROLE_LABELS[employeeRole]}
+      </span>
+    )
+  }
+  return <RoleBadge role={fallbackRole} />
 }
 
 function ActiveStatusDot({ active }: { active: boolean }) {
@@ -234,7 +259,7 @@ function OwnerPanel() {
                 >
                   <td className="px-4 py-3 font-medium text-gray-200">{member.name}</td>
                   <td className="px-4 py-3">
-                    <RoleBadge role={member.role} />
+                    <MemberRoleBadge employeeRole={member.employeeRole} fallbackRole={member.role} />
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1">
@@ -331,7 +356,7 @@ function CrewPanel() {
         </div>
         <div>
           <p className="font-semibold text-gray-100">{self.name}</p>
-          <RoleBadge role={self.role} />
+          <MemberRoleBadge employeeRole={self.employeeRole} fallbackRole={self.role} />
         </div>
         <div className="ml-auto text-right">
           <p className="text-xs text-gray-500">Hours This Week</p>
@@ -478,24 +503,27 @@ function GuestPanel() {
               </span>
             </div>
 
-            {/* NEEDS OWNER DESIGN DECISION: no health % column on projects — omit bar */}
-            {project.healthPercent != null ? (
+            {/* Health bar — only when started phases exist (null = hide entirely) */}
+            {project.healthPercent != null && (
               <div className="mb-1">
                 <div className="flex justify-between text-xs text-gray-500 mb-1">
                   <span>Health</span>
                   <span className="text-green-400 font-mono">{project.healthPercent}%</span>
                 </div>
-                <div className="h-2 w-full rounded-full" style={{ backgroundColor: '#1a1c23' }}>
+                <div
+                  className="w-full h-1.5 rounded-full overflow-hidden"
+                  style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.04)' }}
+                >
                   <div
-                    className="h-2 rounded-full"
-                    style={{ width: `${project.healthPercent}%`, backgroundColor: '#16a34a' }}
+                    className="h-full rounded-full transition-all duration-700"
+                    style={{
+                      width: `${project.healthPercent}%`,
+                      background: 'linear-gradient(90deg, #16a34a, #4ade80)',
+                      boxShadow: project.healthPercent > 0 ? '0 0 6px rgba(52,211,153,0.45)' : 'none',
+                    }}
                   />
                 </div>
               </div>
-            ) : (
-              <p className="text-xs text-gray-600">
-                Health % unavailable — no health column on projects.
-              </p>
             )}
           </>
         )}
@@ -528,19 +556,7 @@ function GuestPanel() {
 
 // ─── Role Manager ────────────────────────────────────────────────────────────
 
-function PortalRoleBadge({ role }: { role: EmployeePortalRole }) {
-  const styles =
-    role === 'foreman'
-      ? 'text-amber-400 bg-amber-900/30 border-amber-700/40'
-      : 'text-blue-400 bg-blue-900/30 border-blue-700/40'
-  return (
-    <span className={`text-xs font-medium px-2 py-0.5 rounded-full border capitalize ${styles}`}>
-      {PORTAL_ROLE_LABELS[role]}
-    </span>
-  )
-}
-
-function RoleDropdown({
+function AccessLevelDropdown({
   memberId,
   currentRole,
   onChange,
@@ -583,6 +599,59 @@ function RoleDropdown({
               {PORTAL_ROLE_LABELS[role]}
             </button>
           ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TradeRoleDropdown({
+  memberId,
+  currentRole,
+  onChange,
+}: {
+  memberId: string
+  currentRole: EmployeeTradeRole | null
+  onChange: (memberId: string, role: EmployeeTradeRole | null) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const label = currentRole ? TRADE_ROLE_LABELS[currentRole] : 'Unassigned'
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 px-2 py-1 rounded border text-xs transition-colors hover:bg-gray-800/60"
+        style={{ borderColor: '#2d3140', color: '#9ca3af' }}
+      >
+        {label}
+        <ChevronDown size={10} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute left-0 top-full mt-1 z-20 rounded-lg border overflow-hidden min-w-[140px]"
+          style={{ backgroundColor: '#0d0e14', borderColor: '#1e2128', boxShadow: '0 4px 16px #00000088' }}
+        >
+          {TRADE_ROLE_OPTIONS.map((role) => {
+            const optionLabel = role ? TRADE_ROLE_LABELS[role] : 'Unassigned'
+            const selected = role === currentRole
+            return (
+              <button
+                key={role ?? 'unassigned'}
+                onClick={() => {
+                  onChange(memberId, role)
+                  setOpen(false)
+                }}
+                className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-gray-800/60 flex items-center gap-2 ${
+                  selected ? 'text-green-400' : 'text-gray-300'
+                }`}
+              >
+                {selected ? <span className="text-green-500">✓</span> : <span className="w-3" />}
+                {optionLabel}
+              </button>
+            )
+          })}
         </div>
       )}
     </div>
@@ -687,6 +756,19 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
     })
   }
 
+  async function handleTradeRoleChange(memberId: string, newRole: EmployeeTradeRole | null) {
+    if (!orgId || !isOwner) return
+    setMembers((prev) =>
+      prev.map((m) => (m.id === memberId ? { ...m, employeeRole: newRole } : m)),
+    )
+    await assignTradeRole({
+      profileId: memberId,
+      orgId,
+      employeeRole: newRole,
+      assignedBy: authUser?.id || '',
+    })
+  }
+
   return (
     <div className="mt-8">
       <div className="flex items-center justify-between mb-4">
@@ -738,10 +820,13 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
               <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
                 <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Member</th>
                 <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Email</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Current Role</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Role</th>
                 <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Status</th>
                 {isOwner && (
-                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Change Role</th>
+                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Access Level</th>
+                )}
+                {isOwner && (
+                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Trade Role</th>
                 )}
                 <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Joined</th>
               </tr>
@@ -749,7 +834,7 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
             <tbody>
               {(members ?? []).length === 0 ? (
                 <tr>
-                  <td colSpan={isOwner ? 6 : 5} className="px-4 py-4 text-xs text-gray-600">
+                  <td colSpan={isOwner ? 7 : 5} className="px-4 py-4 text-xs text-gray-600">
                     No employees yet. Invite to add to the roster.
                   </td>
                 </tr>
@@ -782,7 +867,7 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                     <td className="px-4 py-3 text-gray-500 text-xs">{member.email || '—'}</td>
 
                     <td className="px-4 py-3">
-                      <PortalRoleBadge role={member.role} />
+                      <MemberRoleBadge employeeRole={member.employeeRole} fallbackRole={member.role} />
                     </td>
 
                     <td className="px-4 py-3">
@@ -794,10 +879,24 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                         {member.user_id && member.user_id === authUser?.id ? (
                           <span className="text-xs text-gray-700 italic">You</span>
                         ) : (
-                          <RoleDropdown
+                          <AccessLevelDropdown
                             memberId={member.id}
                             currentRole={member.role}
                             onChange={handleRoleChange}
+                          />
+                        )}
+                      </td>
+                    )}
+
+                    {isOwner && (
+                      <td className="px-4 py-3">
+                        {member.user_id && member.user_id === authUser?.id ? (
+                          <span className="text-xs text-gray-700 italic">—</span>
+                        ) : (
+                          <TradeRoleDropdown
+                            memberId={member.id}
+                            currentRole={member.employeeRole}
+                            onChange={handleTradeRoleChange}
                           />
                         )}
                       </td>

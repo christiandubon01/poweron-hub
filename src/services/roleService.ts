@@ -1,10 +1,11 @@
 /**
  * roleService.ts
- * V3-28 — Role Configuration System (CREW-PORTAL-LIVE-1 live wiring)
+ * V3-28 — Role Configuration System (CREW-PORTAL-LIVE-1 + LIVE-2)
  *
  * Member list + role writes use employee_profiles (same source as Team → Timesheets).
- * Invite path for Crew Portal Role Manager is sendEmployeeInvite (see employeeInviteService),
- * not generateInviteLink — that stub is retained only for legacy callers.
+ * Portal access role: employee | foreman (`role` column).
+ * Trade role: tech_1 | tech_2 | lead | foreman | null (`employee_role` column, migration 084).
+ * Invite path: sendEmployeeInvite (see employeeInviteService).
  */
 
 import type { AppRole } from '../config/rolePermissions'
@@ -13,6 +14,32 @@ import { supabase } from '@/lib/supabase'
 const from = supabase.from as any
 
 export type EmployeePortalRole = 'employee' | 'foreman'
+
+/** Trade / field role — independent of portal access level. */
+export type EmployeeTradeRole = 'tech_1' | 'tech_2' | 'lead' | 'foreman'
+
+export const TRADE_ROLE_OPTIONS: Array<EmployeeTradeRole | null> = [
+  'tech_1',
+  'tech_2',
+  'lead',
+  'foreman',
+  null,
+]
+
+export const TRADE_ROLE_LABELS: Record<EmployeeTradeRole, string> = {
+  tech_1: 'Tech 1',
+  tech_2: 'Tech 2',
+  lead: 'Lead',
+  foreman: 'Foreman',
+}
+
+/** Badge colors for trade roles (Crew Portal + timecards). */
+export const TRADE_ROLE_BADGE_CLASS: Record<EmployeeTradeRole, string> = {
+  tech_1: 'text-blue-400 bg-blue-900/30 border-blue-700/40',
+  tech_2: 'text-cyan-400 bg-cyan-900/30 border-cyan-700/40',
+  lead: 'text-amber-400 bg-amber-900/30 border-amber-700/40',
+  foreman: 'text-orange-400 bg-orange-900/30 border-orange-700/40',
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -33,6 +60,7 @@ export interface OrgMember {
   name: string
   email: string
   role: EmployeePortalRole
+  employeeRole: EmployeeTradeRole | null
   active: boolean
   assigned_at: string
   avatarInitials?: string
@@ -44,6 +72,14 @@ export interface AssignRolePayload {
   profileId: string
   orgId: string
   role: EmployeePortalRole
+  assignedBy: string
+}
+
+export interface AssignTradeRolePayload {
+  profileId: string
+  orgId: string
+  /** null = Unassigned */
+  employeeRole: EmployeeTradeRole | null
   assignedBy: string
 }
 
@@ -63,6 +99,11 @@ export interface RoleServiceResult<T = void> {
 
 function toPortalRole(raw: string | null | undefined): EmployeePortalRole {
   return raw === 'foreman' ? 'foreman' : 'employee'
+}
+
+export function toTradeRole(raw: string | null | undefined): EmployeeTradeRole | null {
+  if (raw === 'tech_1' || raw === 'tech_2' || raw === 'lead' || raw === 'foreman') return raw
+  return null
 }
 
 function initials(name: string): string {
@@ -111,8 +152,8 @@ export async function getUserRole(
 }
 
 /**
- * Update employee_profiles.role for a portal employee.
- * Owner/admin only (RLS). Roles are employee | foreman only.
+ * Update employee_profiles.role (portal access: employee | foreman).
+ * Owner/admin only (RLS).
  */
 export async function assignRole(
   payload: AssignRolePayload,
@@ -153,8 +194,50 @@ export async function assignRole(
 }
 
 /**
+ * Update employee_profiles.employee_role (trade role). null = Unassigned.
+ * Does not change portal access `role`.
+ */
+export async function assignTradeRole(
+  payload: AssignTradeRolePayload,
+): Promise<RoleServiceResult<{ id: string; employeeRole: EmployeeTradeRole | null }>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+
+    const next =
+      payload.employeeRole === null
+        ? null
+        : toTradeRole(payload.employeeRole)
+
+    if (payload.employeeRole !== null && next === null) {
+      return { success: false, error: 'Invalid trade role' }
+    }
+
+    const { data, error } = await from('employee_profiles')
+      .update({ employee_role: next })
+      .eq('id', payload.profileId)
+      .eq('org_id', payload.orgId)
+      .select('id, employee_role')
+      .single()
+
+    if (error) return { success: false, error: error.message }
+
+    return {
+      success: true,
+      data: {
+        id: data.id,
+        employeeRole: toTradeRole(data.employee_role),
+      },
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.warn('[roleService] assignTradeRole error:', err)
+    return { success: false, error: message }
+  }
+}
+
+/**
  * All employee_profiles for the org (same roster source as Team → Timesheets).
- * orgId is required for explicit scoping; RLS also restricts by caller org.
  */
 export async function getOrgMembers(
   orgId: string,
@@ -164,7 +247,7 @@ export async function getOrgMembers(
     if (!user?.id) return { success: false, error: 'Not authenticated' }
 
     const { data, error } = await from('employee_profiles')
-      .select('id, user_id, org_id, display_name, email, role, active, invited_at, created_at, accepted_at')
+      .select('id, user_id, org_id, display_name, email, role, employee_role, active, invited_at, created_at, accepted_at')
       .eq('org_id', orgId)
       .order('display_name', { ascending: true })
 
@@ -179,6 +262,7 @@ export async function getOrgMembers(
       display_name: string
       email: string | null
       role: string
+      employee_role: string | null
       active: boolean
       invited_at: string | null
       created_at: string
@@ -189,6 +273,7 @@ export async function getOrgMembers(
       name: p.display_name || 'Unknown',
       email: p.email || '',
       role: toPortalRole(p.role),
+      employeeRole: toTradeRole(p.employee_role),
       active: p.active !== false,
       assigned_at: p.accepted_at || p.invited_at || p.created_at,
       avatarInitials: initials(p.display_name || 'U'),
@@ -204,8 +289,7 @@ export async function getOrgMembers(
 }
 
 /**
- * @deprecated Use sendEmployeeInvite from employeeInviteService (identical to Team page).
- * Retained as a no-op-style stub so accidental callers do not invent fake invite URLs.
+ * @deprecated Use sendEmployeeInvite from employeeInviteService.
  */
 export async function generateInviteLink(
   orgId: string,

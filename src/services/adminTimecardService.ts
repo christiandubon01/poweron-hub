@@ -37,6 +37,7 @@ export interface AdminEmployeeProfile {
   display_name: string
   email: string | null
   role: string
+  employee_role: string | null
   employment_type: string
   active: boolean
   portal_access: Record<string, unknown> | null
@@ -73,7 +74,7 @@ interface Result<T> {
 }
 
 const PROFILE_COLS =
-  'id, user_id, org_id, display_name, email, role, employment_type, active, portal_access, accepted_at'
+  'id, user_id, org_id, display_name, email, role, employee_role, employment_type, active, portal_access, accepted_at'
 const ENTRY_COLS =
   'id, org_id, employee_user_id, employee_profile_id, work_date, clock_in_at, lunch_out_at, lunch_in_at, clock_out_at, total_minutes, lunch_minutes, paid_minutes, status'
 const PUNCH_COLS =
