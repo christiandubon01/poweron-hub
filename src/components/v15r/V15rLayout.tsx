@@ -2045,21 +2045,6 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 </button>
               )}
 
-              {/* Employee Login — handoff to the employee portal entry point.
-                  Distinct indigo styling (vs the green owner actions) so it reads
-                  as "for employees." Full navigation to /employee/login cleanly
-                  re-runs the auth state machine. Shown on all devices; the label
-                  collapses to icon-only on mobile to avoid crowding the controls. */}
-              <a
-                href="/employee/login"
-                title="Employee Login — open the employee portal sign-in"
-                aria-label="Employee Login"
-                className="px-3 py-1.5 text-sm font-medium rounded-full border border-indigo-400/40 bg-indigo-500/15 text-indigo-200 hover:bg-indigo-500/25 transition-colors flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap"
-              >
-                <Users size={14} />
-                <span className="hidden md:inline">Employee Login</span>
-              </a>
-
               {/* Time */}
               <div className="flex items-center gap-1 text-gray-400 text-sm">
                 <Clock size={16} />
