@@ -73,6 +73,8 @@ export interface EmployeeTaskAssignment {
   due_date: string | null
   status: TaskAssignmentStatus
   completion_notes: string | null
+  completed_at: string | null
+  completed_by: string | null
   updated_at: string
   created_at?: string
 }
@@ -88,6 +90,7 @@ export interface EmployeeMyTask {
   due_date: string | null
   status: TaskAssignmentStatus
   completion_notes: string | null
+  completed_at: string | null
   assigned_at: string
   updated_at: string
   /** True only for the private primary assignee; does not reveal who that is to others. */
@@ -120,7 +123,7 @@ export interface UpdateTaskAssignmentInput {
 type Result<T> = { success: true; data: T } | { success: false; error: string }
 
 const ASSIGNMENT_COLS =
-  'id, org_id, work_package_id, work_package_name, project_id, project_name, blueprint_set_id, lead_employee_id, assigned_employee_ids, assigned_by, assigned_at, due_date, status, completion_notes, updated_at, created_at'
+  'id, org_id, work_package_id, work_package_name, project_id, project_name, blueprint_set_id, lead_employee_id, assigned_employee_ids, assigned_by, assigned_at, due_date, status, completion_notes, completed_at, completed_by, updated_at, created_at'
 
 // ── Work package catalog (BackupData read-only) ───────────────────────────────
 

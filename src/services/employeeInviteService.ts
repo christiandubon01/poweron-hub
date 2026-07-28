@@ -154,3 +154,47 @@ export async function acceptEmployeeInvite(
 
   return (data ?? { success: false, reason: 'not_found' }) as EmployeeInviteAcceptResult
 }
+
+// ── resendEmployeeInvite ────────────────────────────────────────────────────────
+
+export interface ResendEmployeeInviteResult {
+  success: boolean
+  email?: string
+  error?: string
+}
+
+/**
+ * Generates a new invite token for a pending employee and re-sends the email.
+ * The existing employee_profiles row is updated in-place — no new row is created.
+ * Requires an authenticated owner/admin session.
+ */
+export async function resendEmployeeInvite(
+  profileId: string,
+): Promise<ResendEmployeeInviteResult> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.access_token) {
+      return { success: false, error: 'Not authenticated' }
+    }
+
+    const res = await fetch('/.netlify/functions/resendEmployeeInvite', {
+      method:  'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization:  `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ profileId }),
+    })
+
+    const data = await res.json()
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || `HTTP ${res.status}` }
+    }
+
+    return { success: true, email: data.email }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[employeeInviteService.resendEmployeeInvite] Error:', err)
+    return { success: false, error: message }
+  }
+}

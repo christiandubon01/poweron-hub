@@ -201,6 +201,8 @@ function SearchablePicker({
   )
 }
 
+type CompletionFilter = 'all' | 'pending' | 'completed'
+
 export default function AdminTaskDelegationPanel({ initialProjectId }: { initialProjectId?: string } = {}) {
   const { profile } = useAuth()
   const orgId = profile?.org_id || ''
@@ -212,6 +214,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [completionFilter, setCompletionFilter] = useState<CompletionFilter>('all')
   const [formOpen, setFormOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm)
@@ -568,65 +571,117 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
         </div>
       )}
 
+      {/* Filter tabs */}
+      {!loading && assignments.length > 0 && (
+        <div className="flex gap-1 border-b border-gray-700/60 pb-0">
+          {(['all', 'pending', 'completed'] as CompletionFilter[]).map((f) => {
+            const count = f === 'all'
+              ? assignments.length
+              : f === 'pending'
+                ? assignments.filter((a) => a.status !== 'completed').length
+                : assignments.filter((a) => a.status === 'completed').length
+            return (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setCompletionFilter(f)}
+                className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors capitalize ${
+                  completionFilter === f
+                    ? 'bg-[var(--bg-secondary)] text-teal-300 border border-b-0 border-gray-700/60'
+                    : 'text-gray-500 hover:text-gray-300'
+                }`}
+              >
+                {f} <span className="text-xs opacity-70">({count})</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       {!loading && assignments.length === 0 && (
         <p className="text-sm text-gray-500 py-4 text-center">
           No assignments yet. Assign a work package to one or more employees.
         </p>
       )}
 
-      {!loading && assignments.length > 0 && (
-        <div className="space-y-3">
-          {assignments.map((row) => {
-            const names = (row.assigned_employee_ids || [])
-              .map((id) => empById.get(id)?.display_name || 'Employee')
-              .join(', ')
-            return (
-              <div
-                key={row.id}
-                className="bg-[var(--bg-secondary)] border border-gray-700/60 rounded-xl p-4 space-y-2"
-              >
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-gray-100">{row.work_package_name}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      {row.project_name || 'Project'} · Due {formatDue(row.due_date)}
-                    </p>
-                    <p className="text-xs text-gray-400 mt-1">Assigned: {names || '—'}</p>
-                    {row.completion_notes ? (
-                      <p className="text-sm text-gray-300 mt-2 whitespace-pre-wrap">{row.completion_notes}</p>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-col items-end gap-2">
-                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border capitalize ${STATUS_PILL[row.status]}`}>
-                      {row.status.replace('_', ' ')}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => openEdit(row)}
-                        className="p-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-200"
-                        aria-label="Edit assignment"
-                        style={{ minHeight: 44, minWidth: 44 }}
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleRevoke(row.id)}
-                        className="p-2 rounded-lg bg-red-900/40 hover:bg-red-800/50 text-red-300"
-                        aria-label="Revoke assignment"
-                        style={{ minHeight: 44, minWidth: 44 }}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+      {!loading && assignments.length > 0 && (() => {
+        const visible = assignments.filter((row) => {
+          if (completionFilter === 'pending') return row.status !== 'completed'
+          if (completionFilter === 'completed') return row.status === 'completed'
+          return true
+        })
+        if (visible.length === 0) {
+          return (
+            <p className="text-sm text-gray-500 py-4 text-center">
+              No {completionFilter} assignments.
+            </p>
+          )
+        }
+        return (
+          <div className="space-y-3">
+            {visible.map((row) => {
+              const names = (row.assigned_employee_ids || [])
+                .map((id) => empById.get(id)?.display_name || 'Employee')
+                .join(', ')
+              const completedByName = row.completed_by
+                ? (empById.get(row.completed_by)?.display_name || 'Employee')
+                : null
+              const completedDate = row.completed_at
+                ? new Date(row.completed_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+                : null
+              return (
+                <div
+                  key={row.id}
+                  className="bg-[var(--bg-secondary)] border border-gray-700/60 rounded-xl p-4 space-y-2"
+                >
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-gray-100">{row.work_package_name}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {row.project_name || 'Project'} · Due {formatDue(row.due_date)}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-1">Assigned: {names || '—'}</p>
+                      {row.status === 'completed' && completedByName && (
+                        <p className="text-xs text-green-400/80 mt-1">
+                          Completed by {completedByName}{completedDate ? ` · ${completedDate}` : ''}
+                        </p>
+                      )}
+                      {row.completion_notes ? (
+                        <p className="text-sm text-gray-300 mt-2 whitespace-pre-wrap">{row.completion_notes}</p>
+                      ) : null}
+                    </div>
+                    <div className="flex flex-col items-end gap-2">
+                      <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border capitalize ${STATUS_PILL[row.status]}`}>
+                        {row.status.replace('_', ' ')}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => openEdit(row)}
+                          className="p-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-200"
+                          aria-label="Edit assignment"
+                          style={{ minHeight: 44, minWidth: 44 }}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRevoke(row.id)}
+                          className="p-2 rounded-lg bg-red-900/40 hover:bg-red-800/50 text-red-300"
+                          aria-label="Revoke assignment"
+                          style={{ minHeight: 44, minWidth: 44 }}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
+              )
+            })}
+          </div>
+        )
+      })()}
 
       {formOpen && (
         <div

@@ -48,6 +48,7 @@ import {
 } from '../services/crewPortalService'
 import AdminTaskDelegationPanel from '../components/admin/AdminTaskDelegationPanel'
 import EmployeeInviteModal from '../components/admin/EmployeeInviteModal'
+import { resendEmployeeInvite } from '../services/employeeInviteService'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -226,6 +227,8 @@ function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }
   const [error, setError] = useState<string | null>(null)
   const [inviteTarget, setInviteTarget] = useState<{ name: string } | null>(null)
   const [showInvite, setShowInvite] = useState(false)
+  const [resendingId, setResendingId] = useState<string | null>(null)
+  const [resendMsg, setResendMsg] = useState<{ id: string; ok: boolean; text: string } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -328,16 +331,43 @@ function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }
                   </td>
                   <td className="px-4 py-3">
                     {member.status === 'pending_invite' && (
-                      <button
-                        className="text-xs px-2 py-1 rounded border transition-colors hover:bg-amber-900/20"
-                        style={{ borderColor: '#78350f55', color: '#fbbf24' }}
-                        onClick={() => {
-                          // TODO: wire to resend RPC — no resend endpoint exists yet (EMS-PHASE-3)
-                          alert('Resend invite not yet available. The employee can use the original invite link.')
-                        }}
-                      >
-                        Resend Invite
-                      </button>
+                      <div className="flex flex-col gap-1">
+                        <button
+                          className="text-xs px-2 py-1 rounded border transition-colors hover:bg-amber-900/20 disabled:opacity-50"
+                          style={{ borderColor: '#78350f55', color: '#fbbf24' }}
+                          disabled={resendingId === member.profileId || !member.profileId}
+                          onClick={async () => {
+                            if (!member.profileId) return
+                            setResendingId(member.profileId)
+                            setResendMsg(null)
+                            const res = await resendEmployeeInvite(member.profileId)
+                            setResendingId(null)
+                            setResendMsg({
+                              id: member.profileId,
+                              ok: res.success,
+                              text: res.success
+                                ? `Invite resent to ${res.email || 'employee'}`
+                                : (res.error || 'Failed to resend'),
+                            })
+                            if (res.success) {
+                              setTimeout(() => {
+                                setResendMsg(null)
+                                void load()
+                              }, 3000)
+                            }
+                          }}
+                        >
+                          {resendingId === member.profileId ? 'Sending…' : 'Resend Invite'}
+                        </button>
+                        {resendMsg?.id === member.profileId && (
+                          <span
+                            className="text-xs"
+                            style={{ color: resendMsg.ok ? '#4ade80' : '#f87171' }}
+                          >
+                            {resendMsg.text}
+                          </span>
+                        )}
+                      </div>
                     )}
                     {member.status === 'cost_model_only' && (
                       <button
