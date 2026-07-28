@@ -77,7 +77,7 @@ const PROFILE_COLS =
 const ENTRY_COLS =
   'id, org_id, employee_user_id, employee_profile_id, work_date, clock_in_at, lunch_out_at, lunch_in_at, clock_out_at, total_minutes, lunch_minutes, paid_minutes, status'
 const PUNCH_COLS =
-  'id, org_id, employee_user_id, employee_profile_id, work_date, punch_type, punched_at, source, is_void'
+  'id, org_id, employee_user_id, employee_profile_id, work_date, punch_type, punched_at, source, is_void, end_of_day_summary'
 
 // ── A. getActiveEmployeeProfiles ────────────────────────────────────────────────
 

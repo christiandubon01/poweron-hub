@@ -11,7 +11,8 @@
  *   deriveClockPhase(punches)    — pure state machine from today's punches
  *   getNextActions(phase)        — allowed punch types for a phase
  *   getTodayTimeStatus()         — today's punches + summary + derived phase
- *   recordTimePunch(punchType)   — calls record_time_punch RPC
+ *   recordTimePunch(punchType, opts?) — calls record_time_punch RPC
+ *     opts.endOfDaySummary is sent only for clock_out (optional)
  */
 
 import { supabase } from '@/lib/supabase'
@@ -41,6 +42,7 @@ export interface TimePunchEvent {
   punched_at: string
   source: string
   is_void: boolean
+  end_of_day_summary?: string | null
 }
 
 export interface TimeEntry {
@@ -130,7 +132,7 @@ export async function getTodayTimeStatus(): Promise<{
     const workDate = getTenantWorkDate()
 
     const { data: punchData, error: punchError } = await from('time_punch_events')
-      .select('id, org_id, employee_user_id, employee_profile_id, work_date, punch_type, punched_at, source, is_void')
+      .select('id, org_id, employee_user_id, employee_profile_id, work_date, punch_type, punched_at, source, is_void, end_of_day_summary')
       .eq('employee_user_id', user.id)
       .eq('work_date', workDate)
       .eq('is_void', false)
@@ -172,20 +174,34 @@ export async function getTodayTimeStatus(): Promise<{
 
 // ── E. recordTimePunch ─────────────────────────────────────────────────────────
 
+export interface RecordTimePunchOptions {
+  /** Optional end-of-day summary; only sent / stored on clock_out. */
+  endOfDaySummary?: string | null
+}
+
 /**
  * Records a punch via the record_time_punch RPC. The RPC validates sequence,
  * duplicates, and profile access, then returns the inserted row. Expected RPC
  * errors (invalid sequence, duplicate punch) are returned, not thrown.
  */
-export async function recordTimePunch(punchType: PunchType): Promise<{
+export async function recordTimePunch(
+  punchType: PunchType,
+  options?: RecordTimePunchOptions,
+): Promise<{
   success: boolean
   punch?: TimePunchEvent
   error?: string
 }> {
   try {
-    const { data, error } = await rpc('record_time_punch', {
+    const payload: { p_punch_type: PunchType; p_end_of_day_summary?: string | null } = {
       p_punch_type: punchType,
-    })
+    }
+    if (punchType === 'clock_out') {
+      const trimmed = (options?.endOfDaySummary ?? '').trim()
+      payload.p_end_of_day_summary = trimmed.length > 0 ? trimmed : null
+    }
+
+    const { data, error } = await rpc('record_time_punch', payload)
 
     if (error) {
       return { success: false, error: error.message || 'Could not record punch' }
