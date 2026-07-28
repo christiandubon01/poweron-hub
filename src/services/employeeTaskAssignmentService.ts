@@ -162,28 +162,28 @@ export function listAssignableWorkPackages(backup?: unknown): AssignableWorkPack
 }
 
 /**
- * SQL projects for Step 1 of the cascading picker.
- * Active/open only (excludes completed / canceled). Org-scoped via RLS + org_id.
+ * BackupData projects for Step 1 of the cascading picker.
+ * Active/open only (excludes deleted, archived, completed, and canceled).
  */
 export async function listAssignableProjects(): Promise<Result<AssignableProject[]>> {
   try {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user?.id) return { success: false, error: 'Not authenticated' }
+    const backup = getBackupData()
+    if (!backup) return { success: true, data: [] }
 
-    const { data, error } = await from('projects')
-      .select('id, name, status')
-      .in('status', [...ACTIVE_PROJECT_STATUSES])
-      .order('name', { ascending: true })
-
-    if (error) return { success: false, error: error.message }
-    return {
-      success: true,
-      data: ((data ?? []) as AssignableProject[]).map((p) => ({
+    const projects = (backup.projects || [])
+      .filter((p) =>
+        !p.deletedAt &&
+        !(p as any).archived &&
+        ACTIVE_PROJECT_STATUSES.includes(p.status as any)
+      )
+      .map((p) => ({
         id: String(p.id),
         name: String(p.name || 'Untitled project'),
         status: String(p.status || ''),
-      })),
-    }
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+
+    return { success: true, data: projects }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Network error'
     console.error('[employeeTaskAssignmentService.listAssignableProjects]', err)
