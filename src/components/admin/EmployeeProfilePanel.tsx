@@ -4,7 +4,7 @@
  * CREW-DIRECTORY-PROFILE-1: dual registration status, identity, portal + cost model sections.
  */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   ArrowLeft,
   DollarSign,
@@ -19,7 +19,16 @@ import {
   Archive,
   Trash2,
   AlertTriangle,
+  BarChart2,
+  Star,
 } from 'lucide-react'
+import {
+  getLatestSnapshot,
+  getQualityRatings,
+  getCompensationHistory,
+  type PerformanceSnapshot,
+  type CompensationEvent,
+} from '@/services/employeePerformanceService'
 import { type UnifiedCrewMember } from '@/services/crewPortalService'
 import {
   updateEmployeeDisplayName,
@@ -457,6 +466,161 @@ function ConfirmBar({
   )
 }
 
+// ─── Performance summary helpers ─────────────────────────────────────────────
+
+function PerfMini({ label, value, color = 'text-gray-200' }: { label: string; value: string; color?: string }) {
+  return (
+    <div className="rounded-lg px-3 py-2 border" style={{ backgroundColor: '#090a0e', borderColor: '#1e2128' }}>
+      <p className="text-[11px] text-gray-600">{label}</p>
+      <p className={`text-sm font-bold ${color}`}>{value}</p>
+    </div>
+  )
+}
+
+function perfRateColor(rate: number | null): string {
+  if (rate === null) return 'text-gray-500'
+  if (rate >= 80) return 'text-green-400'
+  if (rate >= 60) return 'text-amber-400'
+  return 'text-red-400'
+}
+
+function perfFmtDate(iso: string): string {
+  if (!iso) return ''
+  const [y, m, d] = iso.split('-')
+  return `${m}/${d}/${y}`
+}
+
+function PerformanceSummarySection({
+  profileId,
+  onNavigateToPerformance,
+}: {
+  profileId: string
+  onNavigateToPerformance?: () => void
+}) {
+  const [snapshot, setSnapshot] = useState<PerformanceSnapshot | null>(null)
+  const [avgRating, setAvgRating] = useState<number | null>(null)
+  const [latestEvent, setLatestEvent] = useState<CompensationEvent | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    setSnapshot(null)
+    setAvgRating(null)
+    setLatestEvent(null)
+    Promise.all([
+      getLatestSnapshot(profileId),
+      getQualityRatings(profileId),
+      getCompensationHistory(profileId),
+    ]).then(([snapRes, ratingsRes, eventsRes]) => {
+      if (snapRes.success) setSnapshot(snapRes.data)
+      if (ratingsRes.success && ratingsRes.data.length > 0) {
+        const sum = ratingsRes.data.reduce((acc, r) => acc + r.score, 0)
+        setAvgRating(Math.round((sum / ratingsRes.data.length) * 10) / 10)
+      }
+      if (eventsRes.success && eventsRes.data.length > 0) setLatestEvent(eventsRes.data[0])
+      setLoading(false)
+    })
+  }, [profileId])
+
+  return (
+    <div className="rounded-xl border p-5" style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}>
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <div className="flex items-center gap-2">
+          <BarChart2 size={13} className="text-blue-400" />
+          <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Performance</h4>
+        </div>
+        {onNavigateToPerformance && (
+          <button
+            onClick={onNavigateToPerformance}
+            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            {snapshot ? 'View Full Report →' : 'Go to Performance Tab →'}
+          </button>
+        )}
+      </div>
+
+      {loading && <p className="text-xs text-gray-600">Loading…</p>}
+
+      {!loading && !snapshot && (
+        <p className="text-xs text-gray-600">
+          No performance report generated yet.{' '}
+          {onNavigateToPerformance && (
+            <button
+              onClick={onNavigateToPerformance}
+              className="text-blue-400 hover:text-blue-300 underline transition-colors"
+            >
+              Generate one in the Performance tab.
+            </button>
+          )}
+        </p>
+      )}
+
+      {!loading && snapshot && (
+        <div className="space-y-3">
+          <p className="text-xs text-gray-500">
+            {perfFmtDate(snapshot.period_start)} – {perfFmtDate(snapshot.period_end)}
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <PerfMini label="Hours Worked" value={`${(snapshot.paid_minutes / 60).toFixed(1)}h`} />
+            <PerfMini label="Tasks Completed" value={`${snapshot.tasks_completed} / ${snapshot.tasks_assigned}`} />
+            <PerfMini
+              label="On-Time Rate"
+              value={snapshot.on_time_rate != null ? `${snapshot.on_time_rate}%` : '—'}
+              color={perfRateColor(snapshot.on_time_rate)}
+            />
+            <PerfMini
+              label="Avg Daily Hours"
+              value={snapshot.avg_daily_hours != null ? `${snapshot.avg_daily_hours}h` : '—'}
+            />
+          </div>
+          {avgRating != null && (
+            <div className="flex items-center gap-2">
+              <div className="flex gap-0.5">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <Star
+                    key={n}
+                    size={12}
+                    className={n <= Math.round(avgRating) ? 'text-amber-400 fill-amber-400' : 'text-gray-700'}
+                  />
+                ))}
+              </div>
+              <span className="text-xs text-gray-500">{avgRating} avg quality rating</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!loading && latestEvent && (
+        <div className="mt-4 pt-4 border-t" style={{ borderColor: '#1a1c23' }}>
+          <p className="text-[11px] text-gray-500 uppercase tracking-wider mb-2">Latest Compensation</p>
+          <div className="flex items-start gap-2 flex-wrap">
+            <span className="text-xs font-medium capitalize text-gray-300">{latestEvent.event_type}</span>
+            {latestEvent.amount != null && (
+              <span className="text-xs text-green-400 font-semibold">
+                ${Number(latestEvent.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              </span>
+            )}
+            <span className="text-xs text-gray-600 ml-auto">
+              Eff. {perfFmtDate(latestEvent.effective_date)}
+            </span>
+          </div>
+          {latestEvent.reason && (
+            <p className="text-xs text-gray-500 mt-1">{latestEvent.reason}</p>
+          )}
+          {onNavigateToPerformance && (
+            <button
+              onClick={onNavigateToPerformance}
+              className="text-xs text-blue-400 hover:text-blue-300 transition-colors mt-2 underline"
+            >
+              View History
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Props & main component ───────────────────────────────────────────────────
 
 interface EmployeeProfilePanelProps {
@@ -465,6 +629,7 @@ interface EmployeeProfilePanelProps {
   onInviteSent?: () => void
   onArchived?: () => void
   onDeleted?: () => void
+  onNavigateToPerformance?: (profileId: string) => void
 }
 
 export default function EmployeeProfilePanel({
@@ -473,6 +638,7 @@ export default function EmployeeProfilePanel({
   onInviteSent,
   onArchived,
   onDeleted,
+  onNavigateToPerformance,
 }: EmployeeProfilePanelProps) {
   const [member, setMember] = useState(initialMember)
   const [showCostModal, setShowCostModal] = useState(false)
@@ -671,7 +837,19 @@ export default function EmployeeProfilePanel({
         </div>
       )}
 
-      {/* ── SECTION 4: Actions ── */}
+      {/* ── SECTION 4: Performance Summary (portal employees only) ── */}
+      {member.hasPortal && member.profileId && (
+        <PerformanceSummarySection
+          profileId={member.profileId}
+          onNavigateToPerformance={
+            onNavigateToPerformance
+              ? () => onNavigateToPerformance(member.profileId!)
+              : undefined
+          }
+        />
+      )}
+
+      {/* ── SECTION 5: Actions ── */}
       <div
         className="rounded-xl border p-5 space-y-3"
         style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}

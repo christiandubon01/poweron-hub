@@ -270,7 +270,7 @@ function SnapshotSection({ profileId }: { profileId: string }) {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <StatCard
               label="Hours Worked"
-              value={fmtMinutes(displaySnap.paid_minutes)}
+              value={`${(displaySnap.paid_minutes / 60).toFixed(1)}h`}
               sub={`${displaySnap.days_worked} days worked`}
               color="text-blue-400"
             />
@@ -729,10 +729,10 @@ function CompensationSection({
 
 // ── Root: OwnerPerformancePanel ───────────────────────────────────────────────
 
-export default function OwnerPerformancePanel() {
+export default function OwnerPerformancePanel({ initialEmployeeId }: { initialEmployeeId?: string } = {}) {
   const [employees, setEmployees] = useState<AdminEmployeeProfile[]>([])
   const [loadingEmps, setLoadingEmps] = useState(true)
-  const [selectedId, setSelectedId] = useState('')
+  const [selectedId, setSelectedId] = useState(initialEmployeeId ?? '')
   const [snapshots, setSnapshots] = useState<PerformanceSnapshot[]>([])
 
   useEffect(() => {

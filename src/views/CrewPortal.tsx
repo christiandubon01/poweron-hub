@@ -256,7 +256,13 @@ function ArchivedBadge() {
 
 // ─── Unified Directory Panel ──────────────────────────────────────────────────
 
-function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }) {
+function UnifiedDirectoryPanel({
+  onInviteClose,
+  onNavigateToPerformance,
+}: {
+  onInviteClose?: () => void
+  onNavigateToPerformance?: (profileId: string) => void
+}) {
   const [members, setMembers] = useState<UnifiedCrewMember[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -297,6 +303,7 @@ function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }
         onInviteSent={handleProfileEvent}
         onArchived={handleProfileEvent}
         onDeleted={handleProfileEvent}
+        onNavigateToPerformance={onNavigateToPerformance}
       />
     )
   }
@@ -625,10 +632,16 @@ const OWNER_TABS: { id: OwnerTab; label: string; icon: React.ReactNode }[] = [
 function OwnerPanel() {
   const [tab, setTab] = useState<OwnerTab>('directory')
   const [taskProjectId, setTaskProjectId] = useState<string | undefined>(undefined)
+  const [initialPerfEmployeeId, setInitialPerfEmployeeId] = useState<string | undefined>(undefined)
 
   function handleAssignProject(projectId: string) {
     setTaskProjectId(projectId)
     setTab('tasks')
+  }
+
+  function handleNavigateToPerformance(profileId: string) {
+    setInitialPerfEmployeeId(profileId)
+    setTab('performance')
   }
 
   return (
@@ -638,7 +651,7 @@ function OwnerPanel() {
         {OWNER_TABS.map(({ id, label, icon }) => (
           <button
             key={id}
-            onClick={() => setTab(id)}
+            onClick={() => { setInitialPerfEmployeeId(undefined); setTab(id) }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
               tab === id
                 ? 'border-green-600 text-green-400 bg-green-900/20'
@@ -651,11 +664,11 @@ function OwnerPanel() {
         ))}
       </div>
 
-      {tab === 'directory' && <UnifiedDirectoryPanel />}
+      {tab === 'directory' && <UnifiedDirectoryPanel onNavigateToPerformance={handleNavigateToPerformance} />}
       {tab === 'projects' && <ActiveProjectsPanel onAssignProject={handleAssignProject} />}
       {tab === 'tasks' && <AdminTaskDelegationPanel initialProjectId={taskProjectId} />}
       {tab === 'schedule' && <OwnerSchedulePanel />}
-      {tab === 'performance' && <OwnerPerformancePanel />}
+      {tab === 'performance' && <OwnerPerformancePanel initialEmployeeId={initialPerfEmployeeId} />}
     </div>
   )
 }
