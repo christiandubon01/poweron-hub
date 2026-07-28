@@ -13,6 +13,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import EmployeeTimeClock from '@/components/employee/EmployeeTimeClock'
 import EmployeeMyTimePanel from '@/components/employee/EmployeeMyTimePanel'
+import EmployeeMyTasksPanel from '@/components/employee/EmployeeMyTasksPanel'
 import EmployeePortalBrandHeader from '@/components/employee/EmployeePortalBrandHeader'
 
 interface EmployeeProfileSummary {
@@ -26,7 +27,7 @@ type EmployeePortalSection = 'clock' | 'my-time' | 'assignments' | 'schedule'
 const SECTIONS: { key: EmployeePortalSection; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: 'clock',       label: 'Clock',       icon: Clock },
   { key: 'my-time',     label: 'My Time',     icon: ListChecks },
-  { key: 'assignments', label: 'Assignments', icon: ClipboardList },
+  { key: 'assignments', label: 'My Tasks',    icon: ClipboardList },
   { key: 'schedule',    label: 'Schedule',    icon: CalendarRange },
 ]
 
@@ -185,12 +186,7 @@ export function EmployeePortal() {
         {/* Active section */}
         {activeSection === 'clock' && <EmployeeTimeClock />}
         {activeSection === 'my-time' && <EmployeeMyTimePanel />}
-        {activeSection === 'assignments' && (
-          <ComingSoonCard
-            title="Assignments"
-            message="Assignments are coming soon. Project/task assignment needs a dedicated employee assignment model."
-          />
-        )}
+        {activeSection === 'assignments' && <EmployeeMyTasksPanel />}
         {activeSection === 'schedule' && (
           <ComingSoonCard
             title="Schedule"

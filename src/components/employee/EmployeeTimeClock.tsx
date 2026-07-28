@@ -161,6 +161,8 @@ export function EmployeeTimeClock() {
   const [pending, setPending]     = useState<PunchType | null>(null) // punch in flight
   const [error, setError]         = useState('')
   const [nowTs, setNowTs]         = useState(() => Date.now())
+  const [showClockOutSummary, setShowClockOutSummary] = useState(false)
+  const [clockOutSummary, setClockOutSummary] = useState('')
 
   const loadStatus = useCallback(async () => {
     setLoading(true)
@@ -190,15 +192,29 @@ export function EmployeeTimeClock() {
     return () => clearInterval(id)
   }, [isRunning, phase])
 
-  const handlePunch = async (punchType: PunchType) => {
+  const handlePunch = async (punchType: PunchType, endOfDaySummary?: string | null) => {
     // Dup-click guard: ignore while a punch or a load is already in flight.
     if (pending || loading) return
+
+    // Clock-out: collect optional end-of-day summary before submitting the punch.
+    if (punchType === 'clock_out' && endOfDaySummary === undefined && !showClockOutSummary) {
+      setShowClockOutSummary(true)
+      setClockOutSummary('')
+      setError('')
+      return
+    }
+
     setPending(punchType)          // instant feedback before the network round-trip
     setError('')
 
-    const res = await recordTimePunch(punchType)
+    const res = await recordTimePunch(
+      punchType,
+      punchType === 'clock_out' ? { endOfDaySummary: endOfDaySummary ?? clockOutSummary } : undefined,
+    )
 
     if (res.success) {
+      setShowClockOutSummary(false)
+      setClockOutSummary('')
       // Re-sync from the server (trigger updates the summary entry).
       await loadStatus()
     } else {
@@ -207,6 +223,12 @@ export function EmployeeTimeClock() {
       await loadStatus()
     }
     setPending(null)
+  }
+
+  const cancelClockOutSummary = () => {
+    if (pending) return
+    setShowClockOutSummary(false)
+    setClockOutSummary('')
   }
 
   const busy = loading || pending != null
@@ -330,7 +352,7 @@ export function EmployeeTimeClock() {
         </div>
       )}
 
-      {/* Actions / Done state */}
+      {/* Actions / Done state / Clock-out summary */}
       {phase === 'done' ? (
         <div
           className="eclock-done relative overflow-hidden w-full py-4 rounded-xl bg-gradient-to-r from-green-600 to-emerald-500 text-white font-bold text-base flex items-center justify-center gap-2 select-none"
@@ -342,6 +364,47 @@ export function EmployeeTimeClock() {
             className="eclock-shimmer pointer-events-none absolute inset-y-0 -left-1/3 w-1/3"
             style={{ background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.45), transparent)' }}
           />
+        </div>
+      ) : showClockOutSummary ? (
+        <div className="space-y-3">
+          <div>
+            <label htmlFor="eod-summary" className="block text-sm font-semibold text-gray-800 mb-1.5">
+              What did you get done today?
+            </label>
+            <textarea
+              id="eod-summary"
+              value={clockOutSummary}
+              onChange={(e) => setClockOutSummary(e.target.value)}
+              placeholder="Optional — brief end-of-day summary"
+              rows={4}
+              disabled={busy}
+              className="w-full rounded-xl border border-gray-300 bg-white px-3 py-3 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
+              style={{ minHeight: 96, fontSize: 16 }}
+            />
+            <p className="text-[11px] text-gray-400 mt-1">Optional — you can clock out without a summary.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => handlePunch('clock_out', clockOutSummary)}
+            disabled={busy}
+            aria-busy={pending === 'clock_out'}
+            className="w-full flex items-center justify-center gap-2 rounded-xl font-bold text-base transition disabled:opacity-60 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white shadow-md shadow-blue-600/25"
+            style={{ minHeight: 44 }}
+          >
+            {pending === 'clock_out'
+              ? <Loader2 size={16} className="animate-spin" />
+              : <Square size={16} />}
+            {pending === 'clock_out' ? PENDING_LABEL.clock_out : 'Submit Clock Out'}
+          </button>
+          <button
+            type="button"
+            onClick={cancelClockOutSummary}
+            disabled={busy}
+            className="w-full py-3 rounded-xl font-semibold text-sm text-gray-600 bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-60"
+            style={{ minHeight: 44 }}
+          >
+            Cancel
+          </button>
         </div>
       ) : (
         <div className="space-y-2">
@@ -361,6 +424,7 @@ export function EmployeeTimeClock() {
                 disabled={busy}
                 aria-busy={isPending}
                 className={`${base} ${style} ${pulse}`}
+                style={{ minHeight: 44 }}
               >
                 {isPending
                   ? <Loader2 size={16} className="animate-spin" />

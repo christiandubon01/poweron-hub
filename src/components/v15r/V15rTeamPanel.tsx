@@ -23,6 +23,7 @@ import AddTeamMemberModal from './AddTeamMemberModal'
 import DemoInvite from '@/components/admin/DemoInvite'
 import EmployeeInviteModal from '@/components/admin/EmployeeInviteModal'
 import AdminTimecardsPanel from '@/components/admin/AdminTimecardsPanel'
+import AdminTaskDelegationPanel from '@/components/admin/AdminTaskDelegationPanel'
 import OhmComplianceCard from './OhmComplianceCard'
 import { normalizeEmployee } from './employeeTypes'
 import { getWorkerCostProfile, calcMonthlyBreakdown, workerTypeLabel, getLoadedHourlyRate, resolveWorkerType, buildSavePayload } from './employeeCostUtils'
@@ -1292,6 +1293,7 @@ export default function V15rTeamPanel() {
   const { isOwner, isAdmin, user } = useAuth()
   const [showDemoInviteModal, setShowDemoInviteModal] = useState(false)
   const [showEmployeeInviteModal, setShowEmployeeInviteModal] = useState(false)
+  const [teamAdminTab, setTeamAdminTab] = useState<'timesheets' | 'tasks'>('timesheets')
 
   const employees = (backup?.employees || []) as EnhancedEmployee[]
   // Phase 6S-C: the full `employees` array is kept for historical resolution (log
@@ -1742,101 +1744,209 @@ export default function V15rTeamPanel() {
         </div>
       </div>
 
-      {/* ADMIN TIMECARDS OVERVIEW (read-only) */}
-      {isAdmin && <AdminTimecardsPanel />}
-
-      {/* INTERACTIVE ORG PYRAMID */}
-      <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
-        <h2 className="text-lg font-bold text-gray-100 mb-6">Interactive Org Pyramid</h2>
-        <div className="flex flex-col items-center gap-8">
-          {/* Owner (always at top, larger) */}
-          <div className="text-center">
-            <div className="bg-blue-600/30 border border-blue-500/50 rounded-lg px-6 py-3 inline-block">
-              <div className="text-base font-bold text-blue-300">👑 {owner.name}</div>
-              <div className="text-xs text-gray-400">{owner.role || 'Business Manager'}</div>
-            </div>
+      {/* ADMIN PORTAL TABS — Timesheets | Tasks (functional layout) */}
+      {isAdmin && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setTeamAdminTab('timesheets')}
+              aria-pressed={teamAdminTab === 'timesheets'}
+              className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition border ${
+                teamAdminTab === 'timesheets'
+                  ? 'bg-blue-600 border-blue-500 text-white'
+                  : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'
+              }`}
+              style={{ minHeight: 44 }}
+            >
+              Timesheets
+            </button>
+            <button
+              type="button"
+              onClick={() => setTeamAdminTab('tasks')}
+              aria-pressed={teamAdminTab === 'tasks'}
+              className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition border ${
+                teamAdminTab === 'tasks'
+                  ? 'bg-teal-600 border-teal-500 text-white'
+                  : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'
+              }`}
+              style={{ minHeight: 44 }}
+            >
+              Tasks
+            </button>
           </div>
 
-          {/* Vertical line */}
-          <div className="h-8 w-0.5 bg-gray-700"></div>
+          {teamAdminTab === 'timesheets' && (
+            <>
+              <AdminTimecardsPanel />
 
-          {/* Real Employees + Hypotheticals Grid */}
-          {/* Phase 6S-C hotfix: Org Pyramid uses liveEmployees so deleted/inactive
-              employees are hidden here too (they remain in backup for history). */}
-          {liveEmployees.filter(e => !e.isOwner).length > 0 || hypotheticals.length > 0 ? (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 w-full">
-              {/* Real employees (non-owner) — style by employee_type */}
-              {liveEmployees
-                .filter(e => !e.isOwner)
-                .map((rawEmp) => {
-                  const emp = normalizeEmployee(rawEmp)
-                  const project = projects.find(p => p.id === emp.project_id)
+              {/* INTERACTIVE ORG PYRAMID — stays on Timesheets */}
+              <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+                <h2 className="text-lg font-bold text-gray-100 mb-6">Interactive Org Pyramid</h2>
+                <div className="flex flex-col items-center gap-8">
+                  <div className="text-center">
+                    <div className="bg-blue-600/30 border border-blue-500/50 rounded-lg px-6 py-3 inline-block">
+                      <div className="text-base font-bold text-blue-300">👑 {owner.name}</div>
+                      <div className="text-xs text-gray-400">{owner.role || 'Business Manager'}</div>
+                    </div>
+                  </div>
 
-                  // Per-project: dashed border, amber project color tag
-                  if (emp.employee_type === 'per_project') {
-                    return (
-                      <div key={emp.id} className="text-center">
-                        <div className="bg-amber-700/15 border-2 border-dashed border-amber-500/60 rounded-lg px-3 py-2 relative hover:border-amber-500 transition">
-                          <div className="text-sm font-semibold text-amber-200">{emp.name}</div>
-                          <div className="text-xs text-amber-400/80">{emp.role || 'Per-Project'}</div>
-                          {project && (
-                            <div className="mt-1 text-xs px-1.5 py-0.5 bg-amber-600/30 text-amber-300 rounded inline-block">
-                              {project.name}
+                  <div className="h-8 w-0.5 bg-gray-700"></div>
+
+                  {liveEmployees.filter(e => !e.isOwner).length > 0 || hypotheticals.length > 0 ? (
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 w-full">
+                      {liveEmployees
+                        .filter(e => !e.isOwner)
+                        .map((rawEmp) => {
+                          const emp = normalizeEmployee(rawEmp)
+                          const project = projects.find(p => p.id === emp.project_id)
+
+                          if (emp.employee_type === 'per_project') {
+                            return (
+                              <div key={emp.id} className="text-center">
+                                <div className="bg-amber-700/15 border-2 border-dashed border-amber-500/60 rounded-lg px-3 py-2 relative hover:border-amber-500 transition">
+                                  <div className="text-sm font-semibold text-amber-200">{emp.name}</div>
+                                  <div className="text-xs text-amber-400/80">{emp.role || 'Per-Project'}</div>
+                                  {project && (
+                                    <div className="mt-1 text-xs px-1.5 py-0.5 bg-amber-600/30 text-amber-300 rounded inline-block">
+                                      {project.name}
+                                    </div>
+                                  )}
+                                  <div className="text-xs text-gray-600 mt-0.5">{emp.classification}</div>
+                                </div>
+                              </div>
+                            )
+                          }
+
+                          return (
+                            <div key={emp.id} className="text-center">
+                              <div className="bg-blue-700/15 border border-blue-600/50 rounded-lg px-3 py-2 hover:border-blue-500 transition">
+                                <div className="text-sm font-semibold text-blue-200">{emp.name}</div>
+                                <div className="text-xs text-blue-400/80">{emp.role || 'Team Member'}</div>
+                                <div className="text-xs text-gray-600 mt-0.5">W-2 · {emp.status}</div>
+                              </div>
                             </div>
-                          )}
-                          <div className="text-xs text-gray-600 mt-0.5">{emp.classification}</div>
+                          )
+                        })}
+
+                      {hypotheticals.map((hyp) => (
+                        <div key={hyp.id} className="text-center">
+                          <div className="bg-transparent border-2 border-dashed border-purple-600/50 rounded-lg px-3 py-2 relative opacity-75">
+                            <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-xs px-2 py-0.5 bg-[var(--bg-primary)] border border-purple-600/50 text-purple-400 rounded font-bold tracking-widest">
+                              PLANNED
+                            </div>
+                            <div className="text-sm font-semibold text-purple-300 mt-1">{hyp.title}</div>
+                            <div className="text-xs text-purple-400/70">{hyp.roleType}</div>
+                            <button
+                              onClick={() => deleteHypothetical(hyp.id)}
+                              className="mt-2 text-xs px-1.5 py-0.5 bg-red-600/20 text-red-400 rounded hover:bg-red-600/40 transition"
+                            >
+                              Remove
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    )
-                  }
-
-                  // Permanent: solid border, role color (blue)
-                  return (
-                    <div key={emp.id} className="text-center">
-                      <div className="bg-blue-700/15 border border-blue-600/50 rounded-lg px-3 py-2 hover:border-blue-500 transition">
-                        <div className="text-sm font-semibold text-blue-200">{emp.name}</div>
-                        <div className="text-xs text-blue-400/80">{emp.role || 'Team Member'}</div>
-                        <div className="text-xs text-gray-600 mt-0.5">W-2 · {emp.status}</div>
-                      </div>
+                      ))}
                     </div>
-                  )
-                })}
+                  ) : (
+                    <div className="text-gray-500 text-sm">No team members yet — add your first position below</div>
+                  )}
 
-              {/* Hypothetical positions — ghost/transparent, labeled PLANNED */}
-              {hypotheticals.map((hyp) => (
-                <div key={hyp.id} className="text-center">
-                  <div className="bg-transparent border-2 border-dashed border-purple-600/50 rounded-lg px-3 py-2 relative opacity-75">
-                    <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-xs px-2 py-0.5 bg-[var(--bg-primary)] border border-purple-600/50 text-purple-400 rounded font-bold tracking-widest">
-                      PLANNED
-                    </div>
-                    <div className="text-sm font-semibold text-purple-300 mt-1">{hyp.title}</div>
-                    <div className="text-xs text-purple-400/70">{hyp.roleType}</div>
+                  <div className="mt-4 w-full max-w-md">
                     <button
-                      onClick={() => deleteHypothetical(hyp.id)}
-                      className="mt-2 text-xs px-1.5 py-0.5 bg-red-600/20 text-red-400 rounded hover:bg-red-600/40 transition"
+                      onClick={() => setShowAddModal(true)}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600/30 text-blue-300 rounded-lg hover:bg-blue-600/50 transition text-sm font-semibold border border-blue-600/30"
                     >
-                      Remove
+                      <Plus className="w-4 h-4" />
+                      + Add Team Member
                     </button>
                   </div>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-gray-500 text-sm">No team members yet — add your first position below</div>
+              </div>
+            </>
           )}
 
-          {/* ── Add Team Member button (replaces "Add Hypothetical Position") ── */}
-          <div className="mt-4 w-full max-w-md">
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600/30 text-blue-300 rounded-lg hover:bg-blue-600/50 transition text-sm font-semibold border border-blue-600/30"
-            >
-              <Plus className="w-4 h-4" />
-              + Add Team Member
-            </button>
+          {teamAdminTab === 'tasks' && <AdminTaskDelegationPanel />}
+        </div>
+      )}
+
+      {/* Non-admin: Org Pyramid without admin tabs */}
+      {!isAdmin && (
+        <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+          <h2 className="text-lg font-bold text-gray-100 mb-6">Interactive Org Pyramid</h2>
+          <div className="flex flex-col items-center gap-8">
+            <div className="text-center">
+              <div className="bg-blue-600/30 border border-blue-500/50 rounded-lg px-6 py-3 inline-block">
+                <div className="text-base font-bold text-blue-300">👑 {owner.name}</div>
+                <div className="text-xs text-gray-400">{owner.role || 'Business Manager'}</div>
+              </div>
+            </div>
+            <div className="h-8 w-0.5 bg-gray-700"></div>
+            {liveEmployees.filter(e => !e.isOwner).length > 0 || hypotheticals.length > 0 ? (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 w-full">
+                {liveEmployees
+                  .filter(e => !e.isOwner)
+                  .map((rawEmp) => {
+                    const emp = normalizeEmployee(rawEmp)
+                    const project = projects.find(p => p.id === emp.project_id)
+                    if (emp.employee_type === 'per_project') {
+                      return (
+                        <div key={emp.id} className="text-center">
+                          <div className="bg-amber-700/15 border-2 border-dashed border-amber-500/60 rounded-lg px-3 py-2 relative hover:border-amber-500 transition">
+                            <div className="text-sm font-semibold text-amber-200">{emp.name}</div>
+                            <div className="text-xs text-amber-400/80">{emp.role || 'Per-Project'}</div>
+                            {project && (
+                              <div className="mt-1 text-xs px-1.5 py-0.5 bg-amber-600/30 text-amber-300 rounded inline-block">
+                                {project.name}
+                              </div>
+                            )}
+                            <div className="text-xs text-gray-600 mt-0.5">{emp.classification}</div>
+                          </div>
+                        </div>
+                      )
+                    }
+                    return (
+                      <div key={emp.id} className="text-center">
+                        <div className="bg-blue-700/15 border border-blue-600/50 rounded-lg px-3 py-2 hover:border-blue-500 transition">
+                          <div className="text-sm font-semibold text-blue-200">{emp.name}</div>
+                          <div className="text-xs text-blue-400/80">{emp.role || 'Team Member'}</div>
+                          <div className="text-xs text-gray-600 mt-0.5">W-2 · {emp.status}</div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                {hypotheticals.map((hyp) => (
+                  <div key={hyp.id} className="text-center">
+                    <div className="bg-transparent border-2 border-dashed border-purple-600/50 rounded-lg px-3 py-2 relative opacity-75">
+                      <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-xs px-2 py-0.5 bg-[var(--bg-primary)] border border-purple-600/50 text-purple-400 rounded font-bold tracking-widest">
+                        PLANNED
+                      </div>
+                      <div className="text-sm font-semibold text-purple-300 mt-1">{hyp.title}</div>
+                      <div className="text-xs text-purple-400/70">{hyp.roleType}</div>
+                      <button
+                        onClick={() => deleteHypothetical(hyp.id)}
+                        className="mt-2 text-xs px-1.5 py-0.5 bg-red-600/20 text-red-400 rounded hover:bg-red-600/40 transition"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-gray-500 text-sm">No team members yet — add your first position below</div>
+            )}
+            <div className="mt-4 w-full max-w-md">
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600/30 text-blue-300 rounded-lg hover:bg-blue-600/50 transition text-sm font-semibold border border-blue-600/30"
+              >
+                <Plus className="w-4 h-4" />
+                + Add Team Member
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* EMPLOYEE COST STRUCTURE — moved to Team Cost Settings modal */}
 

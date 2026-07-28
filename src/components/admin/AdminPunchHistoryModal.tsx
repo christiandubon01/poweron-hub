@@ -69,24 +69,34 @@ export default function AdminPunchHistoryModal({
             <p className="text-sm text-gray-500 text-center py-6">No punches recorded for this day.</p>
           ) : (
             <ul className="space-y-2">
-              {punches.map(p => (
-                <li
-                  key={p.id}
-                  className="flex items-center justify-between bg-[var(--bg-secondary,#11141c)] border border-gray-700/60 rounded-xl px-4 py-3"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-gray-200">
-                      {PUNCH_LABEL[p.punch_type] ?? p.punch_type}
-                    </p>
-                    {p.source && (
-                      <p className="text-[11px] text-gray-500 mt-0.5">{p.source}</p>
-                    )}
-                  </div>
-                  <span className="text-sm text-gray-100 font-medium tabular-nums flex-shrink-0">
-                    {formatTime(p.punched_at)}
-                  </span>
-                </li>
-              ))}
+              {punches.map(p => {
+                const summary = (p.end_of_day_summary || '').trim()
+                return (
+                  <li
+                    key={p.id}
+                    className="bg-[var(--bg-secondary,#11141c)] border border-gray-700/60 rounded-xl px-4 py-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-gray-200">
+                          {PUNCH_LABEL[p.punch_type] ?? p.punch_type}
+                        </p>
+                        {p.source && (
+                          <p className="text-[11px] text-gray-500 mt-0.5">{p.source}</p>
+                        )}
+                      </div>
+                      <span className="text-sm text-gray-100 font-medium tabular-nums flex-shrink-0">
+                        {formatTime(p.punched_at)}
+                      </span>
+                    </div>
+                    {summary ? (
+                      <p className="mt-2 text-sm text-gray-300 leading-relaxed whitespace-pre-wrap border-t border-gray-700/50 pt-2">
+                        {summary}
+                      </p>
+                    ) : null}
+                  </li>
+                )
+              })}
             </ul>
           )}
         </div>

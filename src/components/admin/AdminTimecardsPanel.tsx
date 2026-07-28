@@ -78,6 +78,14 @@ function lunchText(row: AdminTimecardRow): string {
   return '—'
 }
 
+function endOfDaySummaryFromRow(row: AdminTimecardRow): string | null {
+  const punch = [...row.punches]
+    .reverse()
+    .find(p => p.punch_type === 'clock_out' && !p.is_void && (p.end_of_day_summary || '').trim())
+  const text = (punch?.end_of_day_summary || '').trim()
+  return text || null
+}
+
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export default function AdminTimecardsPanel() {
@@ -199,6 +207,7 @@ export default function AdminTimecardsPanel() {
           {rows.map(row => {
             const pill = row.isPendingInvite ? PENDING_PILL : PHASE_PILL[row.phase]
             const e = row.entry
+            const eodSummary = endOfDaySummaryFromRow(row)
             return (
               <div
                 key={row.profile.id}
@@ -247,6 +256,12 @@ export default function AdminTimecardsPanel() {
                         <p className="text-xs font-bold text-emerald-400 tabular-nums">{formatMinutes(e?.paid_minutes)}</p>
                       </div>
                     </div>
+
+                    {eodSummary ? (
+                      <p className="mt-3 text-sm text-gray-300 leading-relaxed whitespace-pre-wrap bg-[var(--bg-card)] border border-gray-700/40 rounded-lg px-3 py-2">
+                        {eodSummary}
+                      </p>
+                    ) : null}
 
                     <div className="mt-3 flex justify-end">
                       <button
