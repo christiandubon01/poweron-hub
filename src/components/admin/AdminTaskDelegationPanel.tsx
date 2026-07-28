@@ -1,21 +1,27 @@
 // @ts-nocheck
 /**
- * AdminTaskDelegationPanel — owner/admin task assignment UI (Feature 1 WS2).
+ * AdminTaskDelegationPanel — owner/admin task assignment UI (Feature 1 WS2 + Feature 2 picker).
  *
  * Functional layout only. Assigns BackupData work packages to portal employees.
  * Primary assignee is private (admin-only control; never labeled on employee UI).
+ *
+ * Feature 2: three-step cascading picker — Project (SQL) → Blueprint (BackupData) → Work package.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { ClipboardList, Loader2, AlertCircle, Plus, Trash2, Pencil, X } from 'lucide-react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ClipboardList, Loader2, AlertCircle, Plus, Trash2, Pencil, X, ChevronDown, RotateCcw } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import {
-  listAssignableWorkPackages,
+  listAssignableProjects,
+  listBlueprintsForProject,
+  listWorkPackagesForBlueprint,
   listAssignableEmployees,
   listOrgTaskAssignments,
   createTaskAssignment,
   updateTaskAssignment,
   revokeTaskAssignment,
+  type AssignableProject,
+  type AssignableBlueprint,
   type AssignableWorkPackage,
   type EmployeeTaskAssignment,
   type TaskAssignmentStatus,
@@ -38,7 +44,12 @@ function formatDue(date: string | null | undefined): string {
 }
 
 interface FormState {
-  workPackageKey: string
+  projectId: string
+  projectName: string
+  blueprintSetId: string
+  blueprintTitle: string
+  workPackageId: string
+  workPackageName: string
   employeeIds: string[]
   primaryEmployeeId: string
   dueDate: string
@@ -46,22 +57,156 @@ interface FormState {
 }
 
 const emptyForm = (): FormState => ({
-  workPackageKey: '',
+  projectId: '',
+  projectName: '',
+  blueprintSetId: '',
+  blueprintTitle: '',
+  workPackageId: '',
+  workPackageName: '',
   employeeIds: [],
   primaryEmployeeId: '',
   dueDate: '',
   status: 'assigned',
 })
 
-function packageKey(pkg: AssignableWorkPackage): string {
-  return `${pkg.blueprintSetId}::${pkg.workPackageId}`
+// ── Searchable picker (filterable list — used when lists can exceed ~10) ───────
+
+interface SearchablePickerOption {
+  id: string
+  label: string
+  sublabel?: string
+}
+
+function SearchablePicker({
+  label,
+  placeholder,
+  options,
+  value,
+  onChange,
+  disabled,
+  loading,
+  emptyMessage,
+  mutedHint,
+}: {
+  label: string
+  placeholder: string
+  options: SearchablePickerOption[]
+  value: string
+  onChange: (id: string, option: SearchablePickerOption | null) => void
+  disabled?: boolean
+  loading?: boolean
+  emptyMessage?: string
+  mutedHint?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const rootRef = useRef(null)
+
+  const selected = options.find((o) => o.id === value) || null
+
+  useEffect(() => {
+    if (!open) setQuery('')
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return options
+    return options.filter(
+      (o) =>
+        o.label.toLowerCase().includes(q) ||
+        (o.sublabel || '').toLowerCase().includes(q),
+    )
+  }, [options, query])
+
+  const muted = !!disabled
+
+  return (
+    <div ref={rootRef} className={`relative ${muted ? 'opacity-50 pointer-events-none' : ''}`}>
+      <label className="block text-xs font-semibold text-gray-400 uppercase mb-1.5">{label}</label>
+      <button
+        type="button"
+        disabled={disabled || loading}
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between gap-2 rounded-xl bg-[var(--bg-secondary)] border border-gray-600 text-left px-3 py-3 text-sm text-gray-100 disabled:cursor-not-allowed"
+        style={{ fontSize: 16, minHeight: 44 }}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+      >
+        <span className={`truncate ${selected ? 'text-gray-100' : 'text-gray-500'}`}>
+          {loading ? 'Loading…' : selected ? selected.label : placeholder}
+        </span>
+        {loading
+          ? <Loader2 size={16} className="animate-spin text-teal-400 flex-shrink-0" />
+          : <ChevronDown size={16} className="text-gray-400 flex-shrink-0" />}
+      </button>
+
+      {mutedHint && muted && (
+        <p className="text-[11px] text-gray-500 mt-1">{mutedHint}</p>
+      )}
+
+      {open && !disabled && !loading && (
+        <div className="absolute z-20 mt-1 w-full rounded-xl border border-gray-600 bg-[var(--bg-card,#1e2433)] shadow-xl overflow-hidden">
+          <div className="p-2 border-b border-gray-700/60">
+            <input
+              autoFocus
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search…"
+              className="w-full rounded-lg bg-[var(--bg-secondary)] border border-gray-600 text-gray-100 px-3 py-2"
+              style={{ fontSize: 16, minHeight: 40 }}
+            />
+          </div>
+          <ul className="max-h-48 overflow-y-auto" role="listbox">
+            {filtered.length === 0 ? (
+              <li className="px-3 py-3 text-sm text-gray-500">
+                {emptyMessage || (options.length === 0 ? 'No options' : 'No matches')}
+              </li>
+            ) : (
+              filtered.map((opt) => (
+                <li key={opt.id}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={opt.id === value}
+                    onClick={() => {
+                      onChange(opt.id, opt)
+                      setOpen(false)
+                    }}
+                    className={`w-full text-left px-3 py-2.5 hover:bg-gray-700/50 ${
+                      opt.id === value ? 'bg-teal-600/20 text-teal-200' : 'text-gray-200'
+                    }`}
+                  >
+                    <span className="block text-sm font-medium truncate">{opt.label}</span>
+                    {opt.sublabel ? (
+                      <span className="block text-[11px] text-gray-500 truncate">{opt.sublabel}</span>
+                    ) : null}
+                  </button>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function AdminTaskDelegationPanel() {
   const { profile } = useAuth()
   const orgId = profile?.org_id || ''
 
-  const [packages, setPackages] = useState<AssignableWorkPackage[]>([])
+  const [projects, setProjects] = useState<AssignableProject[]>([])
+  const [projectsLoading, setProjectsLoading] = useState(false)
   const [employees, setEmployees] = useState<AdminEmployeeProfile[]>([])
   const [assignments, setAssignments] = useState<EmployeeTaskAssignment[]>([])
   const [loading, setLoading] = useState(true)
@@ -70,6 +215,10 @@ export default function AdminTaskDelegationPanel() {
   const [formOpen, setFormOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm)
+  const [blueprintsLoading, setBlueprintsLoading] = useState(false)
+  const [packagesLoading, setPackagesLoading] = useState(false)
+  const [blueprints, setBlueprints] = useState<AssignableBlueprint[]>([])
+  const [workPackages, setWorkPackages] = useState<AssignableWorkPackage[]>([])
 
   const empById = useMemo(() => {
     const map = new Map<string, AdminEmployeeProfile>()
@@ -77,17 +226,35 @@ export default function AdminTaskDelegationPanel() {
     return map
   }, [employees])
 
-  const pkgByKey = useMemo(() => {
-    const map = new Map<string, AssignableWorkPackage>()
-    for (const p of packages) map.set(packageKey(p), p)
-    return map
-  }, [packages])
+  const projectOptions = useMemo(
+    () => projects.map((p) => ({
+      id: p.id,
+      label: p.name,
+      sublabel: p.status ? p.status.replace(/_/g, ' ') : undefined,
+    })),
+    [projects],
+  )
+
+  const blueprintOptions = useMemo(
+    () => blueprints.map((b) => ({
+      id: b.blueprintSetId,
+      label: b.title,
+    })),
+    [blueprints],
+  )
+
+  const packageOptions = useMemo(
+    () => workPackages.map((p) => ({
+      id: p.workPackageId,
+      label: p.workPackageName,
+    })),
+    [workPackages],
+  )
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      setPackages(listAssignableWorkPackages())
       const [empRes, asgRes] = await Promise.all([
         listAssignableEmployees(),
         listOrgTaskAssignments(),
@@ -115,26 +282,77 @@ export default function AdminTaskDelegationPanel() {
     load()
   }, [load])
 
+  const loadProjects = useCallback(async () => {
+    setProjectsLoading(true)
+    const res = await listAssignableProjects()
+    setProjectsLoading(false)
+    if (!res.success) {
+      setProjects([])
+      setError(res.error || 'Could not load projects.')
+      return
+    }
+    setProjects(res.data)
+  }, [])
+
+  const loadBlueprintsFor = useCallback((projectId: string) => {
+    setBlueprintsLoading(true)
+    // Sync BackupData read — brief loading tick for UX consistency.
+    window.setTimeout(() => {
+      setBlueprints(listBlueprintsForProject(projectId))
+      setBlueprintsLoading(false)
+    }, 0)
+  }, [])
+
+  const loadPackagesFor = useCallback((blueprintSetId: string) => {
+    setPackagesLoading(true)
+    window.setTimeout(() => {
+      setWorkPackages(listWorkPackagesForBlueprint(blueprintSetId))
+      setPackagesLoading(false)
+    }, 0)
+  }, [])
+
+  const resetPickerSteps = () => {
+    setForm((f) => ({
+      ...f,
+      projectId: '',
+      projectName: '',
+      blueprintSetId: '',
+      blueprintTitle: '',
+      workPackageId: '',
+      workPackageName: '',
+    }))
+    setBlueprints([])
+    setWorkPackages([])
+    setBlueprintsLoading(false)
+    setPackagesLoading(false)
+  }
+
   const openCreate = () => {
     setEditingId(null)
     setForm(emptyForm())
+    setBlueprints([])
+    setWorkPackages([])
     setFormOpen(true)
     setError('')
+    loadProjects()
   }
 
   const openEdit = (row: EmployeeTaskAssignment) => {
-    const key =
-      packages.find(
-        (p) => p.workPackageId === row.work_package_id && p.blueprintSetId === (row.blueprint_set_id || p.blueprintSetId),
-      ) || packages.find((p) => p.workPackageId === row.work_package_id)
     setEditingId(row.id)
     setForm({
-      workPackageKey: key ? packageKey(key) : '',
+      projectId: row.project_id || '',
+      projectName: row.project_name || '',
+      blueprintSetId: row.blueprint_set_id || '',
+      blueprintTitle: '',
+      workPackageId: row.work_package_id,
+      workPackageName: row.work_package_name,
       employeeIds: [...(row.assigned_employee_ids || [])],
       primaryEmployeeId: row.lead_employee_id,
       dueDate: row.due_date || '',
       status: row.status,
     })
+    setBlueprints([])
+    setWorkPackages([])
     setFormOpen(true)
     setError('')
   }
@@ -144,6 +362,8 @@ export default function AdminTaskDelegationPanel() {
     setFormOpen(false)
     setEditingId(null)
     setForm(emptyForm())
+    setBlueprints([])
+    setWorkPackages([])
   }
 
   const toggleEmployee = (id: string) => {
@@ -160,15 +380,59 @@ export default function AdminTaskDelegationPanel() {
     })
   }
 
+  const selectProject = (id: string, option: SearchablePickerOption | null) => {
+    setForm((f) => ({
+      ...f,
+      projectId: id,
+      projectName: option?.label || '',
+      blueprintSetId: '',
+      blueprintTitle: '',
+      workPackageId: '',
+      workPackageName: '',
+    }))
+    setWorkPackages([])
+    if (id) loadBlueprintsFor(id)
+    else setBlueprints([])
+  }
+
+  const selectBlueprint = (id: string, option: SearchablePickerOption | null) => {
+    setForm((f) => ({
+      ...f,
+      blueprintSetId: id,
+      blueprintTitle: option?.label || '',
+      workPackageId: '',
+      workPackageName: '',
+    }))
+    if (id) loadPackagesFor(id)
+    else setWorkPackages([])
+  }
+
+  const selectWorkPackage = (id: string, option: SearchablePickerOption | null) => {
+    setForm((f) => ({
+      ...f,
+      workPackageId: id,
+      workPackageName: option?.label || '',
+    }))
+  }
+
   const submit = async () => {
     if (!orgId) {
       setError('Missing organization.')
       return
     }
-    const pkg = pkgByKey.get(form.workPackageKey)
-    if (!pkg && !editingId) {
-      setError('Select a work package.')
-      return
+    if (!editingId) {
+      if (!form.projectId || !form.projectName) {
+        setError('Select a project.')
+        return
+      }
+      if (!form.blueprintSetId) {
+        setError('Select a blueprint.')
+        return
+      }
+      if (!form.workPackageId || !form.workPackageName) {
+        setError('Select a work package.')
+        return
+      }
     }
     if (form.employeeIds.length === 0) {
       setError('Select at least one employee.')
@@ -188,26 +452,20 @@ export default function AdminTaskDelegationPanel() {
         assignedEmployeeIds: form.employeeIds,
         dueDate: form.dueDate || null,
         status: form.status,
-        ...(pkg
-          ? {
-              workPackageName: pkg.workPackageName,
-              projectName: pkg.projectName,
-            }
-          : {}),
       })
       setSaving(false)
       if (!res.success) {
         setError(res.error || 'Could not update assignment.')
         return
       }
-    } else if (pkg) {
+    } else {
       const res = await createTaskAssignment({
         orgId,
-        workPackageId: pkg.workPackageId,
-        workPackageName: pkg.workPackageName,
-        projectId: pkg.projectId,
-        projectName: pkg.projectName,
-        blueprintSetId: pkg.blueprintSetId,
+        workPackageId: form.workPackageId,
+        workPackageName: form.workPackageName,
+        projectId: form.projectId,
+        projectName: form.projectName,
+        blueprintSetId: form.blueprintSetId,
         leadEmployeeId: form.primaryEmployeeId,
         assignedEmployeeIds: form.employeeIds,
         dueDate: form.dueDate || null,
@@ -223,6 +481,8 @@ export default function AdminTaskDelegationPanel() {
     setFormOpen(false)
     setEditingId(null)
     setForm(emptyForm())
+    setBlueprints([])
+    setWorkPackages([])
     await load()
   }
 
@@ -238,6 +498,18 @@ export default function AdminTaskDelegationPanel() {
     }
     await load()
   }
+
+  const canSubmitCreate =
+    !!form.projectId &&
+    !!form.blueprintSetId &&
+    !!form.workPackageId &&
+    form.employeeIds.length > 0 &&
+    !!form.primaryEmployeeId
+
+  const noBlueprints =
+    !!form.projectId && !blueprintsLoading && blueprints.length === 0
+  const noPackages =
+    !!form.blueprintSetId && !packagesLoading && workPackages.length === 0
 
   return (
     <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6 space-y-5">
@@ -272,13 +544,7 @@ export default function AdminTaskDelegationPanel() {
         </div>
       )}
 
-      {!loading && packages.length === 0 && (
-        <p className="text-sm text-gray-500">
-          No work packages found in project blueprints yet. Create scope packages on a blueprint first.
-        </p>
-      )}
-
-      {!loading && assignments.length === 0 && packages.length > 0 && (
+      {!loading && assignments.length === 0 && (
         <p className="text-sm text-gray-500 py-4 text-center">
           No assignments yet. Assign a work package to one or more employees.
         </p>
@@ -354,23 +620,76 @@ export default function AdminTaskDelegationPanel() {
             </div>
 
             <div className="px-5 py-4 space-y-4 overflow-y-auto">
-              <div>
-                <label className="block text-xs font-semibold text-gray-400 uppercase mb-1.5">Work package</label>
-                <select
-                  value={form.workPackageKey}
-                  onChange={(e) => setForm((f) => ({ ...f, workPackageKey: e.target.value }))}
-                  disabled={!!editingId}
-                  className="w-full rounded-xl bg-[var(--bg-secondary)] border border-gray-600 text-gray-100 px-3 py-3 text-sm"
-                  style={{ fontSize: 16, minHeight: 44 }}
-                >
-                  <option value="">Select…</option>
-                  {packages.map((p) => (
-                    <option key={packageKey(p)} value={packageKey(p)}>
-                      {p.projectName} — {p.workPackageName}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/* Work package selection — create: 3-step cascade; edit: locked summary */}
+              {editingId ? (
+                <div className="rounded-xl bg-[var(--bg-secondary)] border border-gray-700/60 px-3 py-3">
+                  <p className="text-xs font-semibold text-gray-400 uppercase mb-1">Work package</p>
+                  <p className="text-sm font-bold text-gray-100">{form.workPackageName || '—'}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {form.projectName || 'Project'}
+                    {form.blueprintSetId ? ` · Blueprint ${form.blueprintSetId.slice(0, 8)}…` : ''}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-gray-400 uppercase">Work package</p>
+                    <button
+                      type="button"
+                      onClick={resetPickerSteps}
+                      className="flex items-center gap-1 text-[11px] font-semibold text-gray-400 hover:text-gray-200 px-2 py-1 rounded-lg"
+                      style={{ minHeight: 32 }}
+                    >
+                      <RotateCcw size={12} />
+                      Clear
+                    </button>
+                  </div>
+
+                  <SearchablePicker
+                    label="1. Project"
+                    placeholder="Select project…"
+                    options={projectOptions}
+                    value={form.projectId}
+                    onChange={selectProject}
+                    loading={projectsLoading}
+                    emptyMessage="No active projects found"
+                  />
+
+                  <SearchablePicker
+                    label="2. Blueprint / document"
+                    placeholder={form.projectId ? 'Select blueprint…' : 'Select a project first'}
+                    options={blueprintOptions}
+                    value={form.blueprintSetId}
+                    onChange={selectBlueprint}
+                    disabled={!form.projectId || noBlueprints}
+                    loading={!!form.projectId && blueprintsLoading}
+                    emptyMessage="No blueprints found for this project"
+                    mutedHint={!form.projectId ? 'Select a project to load blueprints' : undefined}
+                  />
+                  {noBlueprints && (
+                    <p className="text-sm text-amber-300/90 -mt-1">No blueprints found for this project</p>
+                  )}
+
+                  <SearchablePicker
+                    label="3. Work package"
+                    placeholder={
+                      !form.blueprintSetId
+                        ? 'Select a blueprint first'
+                        : 'Select work package…'
+                    }
+                    options={packageOptions}
+                    value={form.workPackageId}
+                    onChange={selectWorkPackage}
+                    disabled={!form.blueprintSetId || noPackages || noBlueprints}
+                    loading={!!form.blueprintSetId && packagesLoading}
+                    emptyMessage="No work packages found"
+                    mutedHint={!form.blueprintSetId ? 'Select a blueprint to load work packages' : undefined}
+                  />
+                  {noPackages && (
+                    <p className="text-sm text-amber-300/90 -mt-1">No work packages found</p>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-gray-400 uppercase mb-1.5">Employees</label>
@@ -457,7 +776,7 @@ export default function AdminTaskDelegationPanel() {
               <button
                 type="button"
                 onClick={submit}
-                disabled={saving}
+                disabled={saving || (!editingId && (!canSubmitCreate || noPackages || noBlueprints))}
                 className="flex-1 py-3 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-sm font-semibold disabled:opacity-60 flex items-center justify-center gap-2"
                 style={{ minHeight: 44 }}
               >
