@@ -285,6 +285,15 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
     load()
   }, [load])
 
+  const loadBlueprintsFor = useCallback((projectId: string) => {
+    setBlueprintsLoading(true)
+    // Sync BackupData read — brief loading tick for UX consistency.
+    window.setTimeout(() => {
+      setBlueprints(listBlueprintsForProject(projectId))
+      setBlueprintsLoading(false)
+    }, 0)
+  }, [])
+
   // When initialProjectId is provided, auto-open the create form pre-filtered to that project.
   const autoOpenRef = useRef<string | undefined>(undefined)
   useEffect(() => {
@@ -319,15 +328,6 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
       return
     }
     setProjects(res.data)
-  }, [])
-
-  const loadBlueprintsFor = useCallback((projectId: string) => {
-    setBlueprintsLoading(true)
-    // Sync BackupData read — brief loading tick for UX consistency.
-    window.setTimeout(() => {
-      setBlueprints(listBlueprintsForProject(projectId))
-      setBlueprintsLoading(false)
-    }, 0)
   }, [])
 
   const loadPackagesFor = useCallback((blueprintSetId: string) => {
