@@ -484,6 +484,80 @@ export interface ActiveProject {
   healthPercent: number | null
 }
 
+type BackupProjectForCrewPortal = {
+  id?: string
+  name?: string
+  status?: string
+  projectStatus?: string
+  outcome?: string | null
+  phases?: Record<string, number>
+  archived?: boolean
+  isArchived?: boolean
+  archivedAt?: string | null
+  deletedAt?: string | null
+}
+
+function isCrewPortalArchivedProject(project: BackupProjectForCrewPortal | null | undefined): boolean {
+  return !!(project && (project.archived === true || project.isArchived === true || project.archivedAt))
+}
+
+/** Inline copy of the V15rProjectsPanel project filter logic; source helpers live in protected backupDataService.ts. */
+function isCrewPortalActiveProject(project: BackupProjectForCrewPortal | null | undefined): boolean {
+  if (!project || isCrewPortalArchivedProject(project)) return false
+  if (project.deletedAt) return false
+  const status = String(project.status || project.projectStatus || '').toLowerCase().trim()
+  const outcome = String(project.outcome || '').toLowerCase().trim()
+  if (['deleted', 'lost', 'rejected', 'cancelled', 'canceled', 'archived'].includes(status)) return false
+  if (['lost', 'cancelled', 'canceled'].includes(outcome)) return false
+  return true
+}
+
+function resolveCrewPortalProjectBucket(project: BackupProjectForCrewPortal): 'active' | 'coming' | 'completed' {
+  const status = String(project.status || '').toLowerCase().trim()
+  if (status === 'completed') return 'completed'
+  if (status === 'coming') return 'coming'
+  return 'active'
+}
+
+function buildProjectPhaseRows(projectId: string, phases: Record<string, number> | null | undefined): ProjectPhaseRow[] {
+  return Object.entries(phases || {}).map(([phaseName, rawPercent], index) => {
+    const percent = Number(rawPercent) || 0
+    return {
+      id: `${projectId}:${phaseName}`,
+      name: phaseName,
+      order_index: index,
+      status: percent === 100 ? 'completed' : percent > 0 ? 'in_progress' : 'pending',
+      checklist: null,
+      started_at: null,
+      completed_at: null,
+      notes: null,
+    }
+  })
+}
+
+function getBackupProjectHealthPercent(phases: Record<string, number> | null | undefined): number | null {
+  const nonZero = Object.values(phases || {})
+    .map((value) => Number(value) || 0)
+    .filter((value) => value > 0)
+
+  if (nonZero.length === 0) return null
+  const avg = Math.round(nonZero.reduce((sum, value) => sum + value, 0) / nonZero.length)
+  return Math.max(0, Math.min(100, avg))
+}
+
+function buildActiveProjectFromBackup(project: BackupProjectForCrewPortal): ActiveProject {
+  const projectId = String(project.id || '')
+  return {
+    id: projectId,
+    name: String(project.name || 'Untitled'),
+    status: String(project.status || ''),
+    estimated_start: null,
+    estimated_end: null,
+    phases: buildProjectPhaseRows(projectId, project.phases),
+    healthPercent: getBackupProjectHealthPercent(project.phases),
+  }
+}
+
 /** Shared in-memory health % logic — avoids N+1 queries in getActiveProjects. */
 function computeHealthFromPhases(
   phases: Array<{ status: string | null; checklist: Array<{ completed?: boolean }> | null }>,
@@ -509,74 +583,16 @@ function computeHealthFromPhases(
   return Math.max(0, Math.min(100, Math.round(sum / nonSkipped.length)))
 }
 
-/**
- * All active/open SQL projects for this org, each with their non-skipped phases.
- * Two queries: one for projects, one batch-fetch of all phases (no N+1).
- * Read-only. No financial columns.
- */
+/** Active project cards from BackupData.projects, matching the main Projects tab source of truth. */
 export async function getActiveProjects(): Promise<ServiceResult<ActiveProject[]>> {
   try {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user?.id) return { success: false, error: 'Not authenticated' }
+    const backup = getBackupData()
+    if (!backup) return { success: true, data: [] }
 
-    const orgResult = await getOwnerOrgId()
-    if (!orgResult.success) return { success: false, error: orgResult.error }
-
-    const { data: projects, error: projError } = await from('projects')
-      .select('id, name, status, estimated_start, estimated_end')
-      .eq('org_id', orgResult.data)
-      .in('status', [...ACTIVE_PROJECT_STATUSES])
-      .order('name', { ascending: true })
-
-    if (projError) return { success: false, error: projError.message }
-    if (!projects || projects.length === 0) return { success: true, data: [] }
-
-    const projectIds = (projects as Array<{ id: string }>).map((p) => p.id)
-
-    const { data: allPhases, error: phaseError } = await from('project_phases')
-      .select('id, project_id, name, order_index, status, checklist, started_at, completed_at, notes')
-      .in('project_id', projectIds)
-      .order('order_index', { ascending: true })
-
-    if (phaseError) {
-      console.warn('[crewPortalService.getActiveProjects] phases query:', phaseError.message)
-    }
-
-    const phasesByProject = new Map<string, ProjectPhaseRow[]>()
-    for (const phase of (allPhases ?? []) as Array<{
-      id: string; project_id: string; name: string; order_index: number;
-      status: string; checklist: unknown; started_at: string | null;
-      completed_at: string | null; notes: string | null;
-    }>) {
-      const rows = phasesByProject.get(phase.project_id) ?? []
-      rows.push({
-        id: phase.id,
-        name: phase.name,
-        order_index: phase.order_index,
-        status: phase.status,
-        checklist: Array.isArray(phase.checklist) ? phase.checklist as PhaseChecklistItem[] : null,
-        started_at: phase.started_at,
-        completed_at: phase.completed_at,
-        notes: phase.notes,
-      })
-      phasesByProject.set(phase.project_id, rows)
-    }
-
-    const result: ActiveProject[] = (projects as Array<{
-      id: string; name: string; status: string;
-      estimated_start: string | null; estimated_end: string | null;
-    }>).map((p) => {
-      const phases = phasesByProject.get(p.id) ?? []
-      return {
-        id: p.id,
-        name: p.name || 'Untitled',
-        status: p.status,
-        estimated_start: p.estimated_start,
-        estimated_end: p.estimated_end,
-        phases,
-        healthPercent: computeHealthFromPhases(phases),
-      }
-    })
+    const result = ((backup.projects || []) as BackupProjectForCrewPortal[])
+      .filter((project) => isCrewPortalActiveProject(project))
+      .filter((project) => resolveCrewPortalProjectBucket(project) === 'active')
+      .map(buildActiveProjectFromBackup)
 
     return { success: true, data: result }
   } catch (err: unknown) {
@@ -597,53 +613,17 @@ export async function getProjectWithPhases(
     const cleanId = String(projectId || '').trim()
     if (!cleanId) return { success: true, data: null }
 
-    const orgResult = await getOwnerOrgId()
-    if (!orgResult.success) return { success: false, error: orgResult.error }
+    const backup = getBackupData()
+    if (!backup) return { success: true, data: null }
 
-    const { data: project, error: projError } = await from('projects')
-      .select('id, name, status, estimated_start, estimated_end')
-      .eq('id', cleanId)
-      .eq('org_id', orgResult.data)
-      .maybeSingle()
+    const project = ((backup.projects || []) as BackupProjectForCrewPortal[])
+      .find((p) => String(p.id || '') === cleanId)
 
-    if (projError) return { success: false, error: projError.message }
     if (!project) return { success: true, data: null }
-
-    const { data: phases, error: phaseError } = await from('project_phases')
-      .select('id, project_id, name, order_index, status, checklist, started_at, completed_at, notes')
-      .eq('project_id', cleanId)
-      .order('order_index', { ascending: true })
-
-    if (phaseError) {
-      console.warn('[crewPortalService.getProjectWithPhases] phases query:', phaseError.message)
-    }
-
-    const phaseRows: ProjectPhaseRow[] = ((phases ?? []) as Array<{
-      id: string; project_id: string; name: string; order_index: number;
-      status: string; checklist: unknown; started_at: string | null;
-      completed_at: string | null; notes: string | null;
-    }>).map((ph) => ({
-      id: ph.id,
-      name: ph.name,
-      order_index: ph.order_index,
-      status: ph.status,
-      checklist: Array.isArray(ph.checklist) ? ph.checklist as PhaseChecklistItem[] : null,
-      started_at: ph.started_at,
-      completed_at: ph.completed_at,
-      notes: ph.notes,
-    }))
 
     return {
       success: true,
-      data: {
-        id: String(project.id),
-        name: String(project.name || 'Untitled'),
-        status: String(project.status),
-        estimated_start: project.estimated_start ?? null,
-        estimated_end: project.estimated_end ?? null,
-        phases: phaseRows,
-        healthPercent: computeHealthFromPhases(phaseRows),
-      },
+      data: buildActiveProjectFromBackup(project),
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Network error'
