@@ -151,7 +151,8 @@ describe('OperationsBlueprintPdfViewer Work Package visibility wiring', () => {
   it('keeps Show All scoped/isolate clearing separate from persisted hidden visibility', () => {
     const clearScopedSource = sourceBetween('const clearScopeLayerVisibilityFilter = useCallback', 'const applyOptimisticScopeLayerVisibility = useCallback')
 
-    expect(clearScopedSource).toContain('setIsolatedScopeLayerIds(new Set())')
+    expect(clearScopedSource).toContain('applyOptimisticScopeLayerScopedSelection(next)')
+    expect(clearScopedSource).toContain('saveScopeLayerScopedSelection(next)')
     expect(clearScopedSource).not.toContain('setHiddenWorkPackageIds')
     expect(clearScopedSource).not.toContain('saveScopeLayerVisibility')
   })

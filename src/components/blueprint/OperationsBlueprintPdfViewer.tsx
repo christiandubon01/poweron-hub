@@ -122,12 +122,15 @@ import {
 } from '@/features/blueprint-wire-quantities'
 import {
   assignNewWorkPackageOrder,
+  applyWorkPackageScopedSelection,
   applyWorkPackageVisibility,
+  clearWorkPackageScopedState,
   decideWorkPackageRemoteRefreshApply,
   getVisibleWorkPackageMoveState,
   hiddenIdsFromWorkPackages,
   moveWorkPackageById,
   reorderVisibleWorkPackagesById,
+  scopedIdsFromWorkPackages,
   shouldRunDeferredWorkPackageRefresh,
   sortWorkPackages,
 } from '@/features/blueprint-work-packages'
@@ -2393,10 +2396,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // so it is never a commit behind the state it mirrors.
   const scopeLayersRef = useRef<BlueprintScopeLayer[]>(scopeLayers)
   scopeLayersRef.current = scopeLayers
-  /** Local UI only — canvas isolate mode; not persisted to avoid noisy cloud saves.
-   *  Set-based so multiple work packages can be made visible at once (multi-package
-   *  visibility filter). Empty set = no filter = show all annotations. */
+  /** Mirrors persisted BlueprintScopeLayer.isolated values for Scoped View.
+   *  Set-based so multiple work packages can be inspected at once. Empty set = General View. */
   const [isolatedScopeLayerIds, setIsolatedScopeLayerIds] = useState<Set<string>>(new Set())
+  const isolatedScopeLayerIdsRef = useRef(isolatedScopeLayerIds)
+  isolatedScopeLayerIdsRef.current = isolatedScopeLayerIds
   /** Mirrors persisted BlueprintScopeLayer.visible values for General View hiding.
    *  visible:false adds the package id here so its annotations are hidden from General View.
    *  Temporary scoped/isolate viewing remains session-only and overrides this while active. */
@@ -2449,6 +2453,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const scopeLayerOrderSaveIdRef = useRef(0)
   const scopeLayerVisibilitySaveQueueRef = useRef<Promise<void>>(Promise.resolve())
   const scopeLayerVisibilityGenerationRef = useRef<Map<string, number>>(new Map())
+  const scopeLayerScopedSaveQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const scopeLayerScopedGenerationRef = useRef<Map<string, number>>(new Map())
   const deferredScopeLayerRefreshRef = useRef(false)
   const isViewerMountedRef = useRef(true)
   const [scopeLayerModal, setScopeLayerModal] = useState<{ open: boolean; mode: 'create' | 'edit'; layerId?: string }>({ open: false, mode: 'create' })
@@ -3721,6 +3727,9 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const loadScopeLayers = useCallback(() => {
     if (!blueprint?.id) {
       setScopeLayers([])
+      const emptyScopedIds = new Set<string>()
+      setIsolatedScopeLayerIds(emptyScopedIds)
+      isolatedScopeLayerIdsRef.current = emptyScopedIds
       setHiddenWorkPackageIds(new Set())
       return
     }
@@ -3728,13 +3737,19 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       const backup = getBackupData()
       const items = getOperationsBlueprintScopeLayers(backup || {}, blueprint.id)
       const orderedItems = sortWorkPackages(Array.isArray(items) ? items : [])
+      const scopedIds = scopedIdsFromWorkPackages(orderedItems)
       setScopeLayers(orderedItems)
+      setIsolatedScopeLayerIds(scopedIds)
+      isolatedScopeLayerIdsRef.current = scopedIds
       setHiddenWorkPackageIds(hiddenIdsFromWorkPackages(orderedItems))
       const liveIds = new Set(orderedItems.map((item) => item.id))
       setDraggingScopeLayerId((id) => id && liveIds.has(id) ? id : null)
       setDragOverScopeLayerId((id) => id && liveIds.has(id) ? id : null)
     } catch {
       setScopeLayers([])
+      const emptyScopedIds = new Set<string>()
+      setIsolatedScopeLayerIds(emptyScopedIds)
+      isolatedScopeLayerIdsRef.current = emptyScopedIds
       setHiddenWorkPackageIds(new Set())
       setDraggingScopeLayerId(null)
       setDragOverScopeLayerId(null)
@@ -3912,12 +3927,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       setError(null)
       setAllAnnotations([])
       setScopeLayers([])
+      const emptyScopedIds = new Set<string>()
+      setIsolatedScopeLayerIds(emptyScopedIds)
+      isolatedScopeLayerIdsRef.current = emptyScopedIds
       setHiddenWorkPackageIds(new Set())
       return
     }
     loadAnnotations()
     loadScopeLayers()
-    setIsolatedScopeLayerIds(new Set())
     void loadPdf()
     return () => { void clearDoc() }
   }, [blueprint?.id])
@@ -5027,6 +5044,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       if (!prev.has(layerId)) return prev
       const next = new Set(prev)
       next.delete(layerId)
+      isolatedScopeLayerIdsRef.current = next
       return next
     })
     setHiddenWorkPackageIds((prev) => {
@@ -5047,20 +5065,103 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setActionMsg({ type: 'success', text: 'Work package deleted.' })
   }, [loadScopeLayers, persistScopeLayerDeletion, scopeLayers])
 
-  // Multi-package visibility toggle. Adds/removes a package from the visible set.
-  // Empty set = no filter = all annotations shown (handled by isolatedAnnotationIdSet).
-  const toggleScopeLayerIsolation = useCallback((layerId: string) => {
-    setIsolatedScopeLayerIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(layerId)) next.delete(layerId)
-      else next.add(layerId)
-      return next
-    })
+  const applyOptimisticScopeLayerScopedSelection = useCallback((selectedIds: Set<string>) => {
+    const nextSelectedIds = new Set(selectedIds)
+    setIsolatedScopeLayerIds(nextSelectedIds)
+    isolatedScopeLayerIdsRef.current = nextSelectedIds
+    setScopeLayers((prev) => sortWorkPackages(prev.map((layer) => {
+      const isolated = nextSelectedIds.has(layer.id)
+      return layer.isolated === isolated ? layer : { ...layer, isolated }
+    })))
   }, [])
 
+  // Scoped View persistence is intentionally separate from Hide from General View persistence.
+  const saveScopeLayerScopedSelection = useCallback((selectedIds: Set<string>, targetLayerId?: string) => {
+    if (!blueprint?.id) return
+    const blueprintSetId = blueprint.id
+    const generation = (scopeLayerScopedGenerationRef.current.get(blueprintSetId) || 0) + 1
+    scopeLayerScopedGenerationRef.current.set(blueprintSetId, generation)
+    const selectedSnapshot = new Set(selectedIds)
+
+    scopeLayerScopedSaveQueueRef.current = scopeLayerScopedSaveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (scopeLayerScopedGenerationRef.current.get(blueprintSetId) !== generation) return
+        let saved = false
+        let persistedLayers: BlueprintScopeLayer[] | null = null
+        try {
+          const backup = getBackupData()
+          if (!backup) throw new Error('No local backup data available.')
+          const liveLayers = sortWorkPackages(getOperationsBlueprintScopeLayers(backup || {}, blueprintSetId))
+          if (targetLayerId && !liveLayers.some((layer) => layer.id === targetLayerId)) {
+            throw new Error('The work package no longer exists.')
+          }
+          const result = selectedSnapshot.size === 0
+            ? clearWorkPackageScopedState(liveLayers, new Date().toISOString())
+            : applyWorkPackageScopedSelection(liveLayers, selectedSnapshot, new Date().toISOString())
+
+          if (!result.changed) {
+            saved = true
+            persistedLayers = result.packages
+          } else {
+            const saveResult = await saveOperationsBlueprintScopeLayers(backup, blueprintSetId, result.packages)
+            saved = saveResult.cloudSynced || saveResult.localSaved
+            if (saveResult.cloudSynced) {
+              clearStaleSyncMessages()
+            } else if (saveResult.localSaved) {
+              if (saveResult.warning) showSyncPausedNoticeOnce()
+            } else {
+              throw new Error(saveResult.error || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG)
+            }
+            persistedLayers = result.packages
+          }
+        } catch (e: any) {
+          if (scopeLayerScopedGenerationRef.current.get(blueprintSetId) === generation) {
+            setActionMsg({
+              type: 'warning',
+              text: e?.message || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
+            })
+          }
+        } finally {
+          if (scopeLayerScopedGenerationRef.current.get(blueprintSetId) === generation) {
+            if (saved && persistedLayers) {
+              const orderedPersistedLayers = sortWorkPackages(persistedLayers)
+              const scopedIds = scopedIdsFromWorkPackages(orderedPersistedLayers)
+              setScopeLayers(orderedPersistedLayers)
+              setIsolatedScopeLayerIds(scopedIds)
+              isolatedScopeLayerIdsRef.current = scopedIds
+            } else {
+              setActionMsg((previous) => previous || {
+                type: 'warning',
+                text: SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
+              })
+              loadScopeLayers()
+            }
+          }
+        }
+      })
+  }, [
+    blueprint?.id,
+    clearStaleSyncMessages,
+    loadScopeLayers,
+    showSyncPausedNoticeOnce,
+  ])
+
+  // Multi-package scoped toggle. Adds/removes a package from the persisted Scoped View set.
+  // Empty set = General View (handled by isolatedAnnotationIdSet).
+  const toggleScopeLayerIsolation = useCallback((layerId: string) => {
+    const next = new Set(isolatedScopeLayerIdsRef.current)
+    if (next.has(layerId)) next.delete(layerId)
+    else next.add(layerId)
+    applyOptimisticScopeLayerScopedSelection(next)
+    saveScopeLayerScopedSelection(next, layerId)
+  }, [applyOptimisticScopeLayerScopedSelection, saveScopeLayerScopedSelection])
+
   const clearScopeLayerVisibilityFilter = useCallback(() => {
-    setIsolatedScopeLayerIds(new Set())
-  }, [])
+    const next = new Set<string>()
+    applyOptimisticScopeLayerScopedSelection(next)
+    saveScopeLayerScopedSelection(next)
+  }, [applyOptimisticScopeLayerScopedSelection, saveScopeLayerScopedSelection])
 
   const applyOptimisticScopeLayerVisibility = useCallback((layerId: string, visible: boolean) => {
     setHiddenWorkPackageIds((prev) => {
