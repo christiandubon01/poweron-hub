@@ -3,11 +3,17 @@
  * EmployeeMyTasksPanel — employee-facing assigned work packages (Feature 1 WS2).
  *
  * Lead privacy: never shows lead_employee_id or any lead/collaborator badge.
- * can_complete (from RPC) gates notes + status controls without revealing why.
+ * can_complete (from RPC) gates the completion controls without revealing why.
+ *
+ * Completion flow (EMS-Phase-3):
+ *   - Lead sees: optional notes textarea + "Mark Complete" primary button
+ *   - In-progress toggle available as secondary action when status = assigned
+ *   - Once completed: "Completed [date]" badge only — no re-complete form
+ *   - Non-lead: read-only view of notes and status chip
  */
 
-import React, { useCallback, useEffect, useState } from 'react'
-import { ClipboardList, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { ClipboardList, Loader2, AlertCircle, CheckCircle2, Circle } from 'lucide-react'
 import {
   getMyEmployeeTasks,
   updateMyEmployeeTask,
@@ -30,13 +36,26 @@ function formatDue(date: string | null | undefined): string {
   })
 }
 
+function formatTimestamp(iso: string | null | undefined): string {
+  if (!iso) return ''
+  try {
+    return new Date(iso).toLocaleDateString([], {
+      month: 'short', day: 'numeric', year: 'numeric',
+    })
+  } catch {
+    return ''
+  }
+}
+
 export default function EmployeeMyTasksPanel() {
   const [tasks, setTasks] = useState<EmployeeMyTask[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [savingId, setSavingId] = useState<string | null>(null)
   const [draftNotes, setDraftNotes] = useState<Record<string, string>>({})
-  const [draftStatus, setDraftStatus] = useState<Record<string, TaskAssignmentStatus>>({})
+
+  // Track optimistic completed state to avoid flicker during reload
+  const optimisticCompleted = useRef<Set<string>>(new Set())
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -45,13 +64,10 @@ export default function EmployeeMyTasksPanel() {
     if (res.success) {
       setTasks(res.data)
       const notes: Record<string, string> = {}
-      const statuses: Record<string, TaskAssignmentStatus> = {}
       for (const t of res.data) {
         notes[t.id] = t.completion_notes || ''
-        statuses[t.id] = t.status
       }
       setDraftNotes(notes)
-      setDraftStatus(statuses)
     } else {
       setTasks([])
       setError(res.error || 'Could not load your tasks.')
@@ -63,14 +79,13 @@ export default function EmployeeMyTasksPanel() {
     load()
   }, [load])
 
-  const saveTask = async (task: EmployeeMyTask) => {
+  const markInProgress = async (task: EmployeeMyTask) => {
     if (!task.can_complete || savingId) return
     setSavingId(task.id)
     setError('')
     const res = await updateMyEmployeeTask({
       assignmentId: task.id,
-      status: draftStatus[task.id] || task.status,
-      completionNotes: draftNotes[task.id] ?? '',
+      status: 'in_progress',
     })
     setSavingId(null)
     if (!res.success) {
@@ -78,6 +93,40 @@ export default function EmployeeMyTasksPanel() {
       return
     }
     await load()
+  }
+
+  const markComplete = async (task: EmployeeMyTask) => {
+    if (!task.can_complete || savingId) return
+    setSavingId(task.id)
+    setError('')
+    optimisticCompleted.current.add(task.id)
+    const res = await updateMyEmployeeTask({
+      assignmentId: task.id,
+      status: 'completed',
+      completionNotes: draftNotes[task.id] ?? '',
+    })
+    setSavingId(null)
+    if (!res.success) {
+      optimisticCompleted.current.delete(task.id)
+      setError(res.error || 'Could not complete task.')
+      return
+    }
+    await load()
+    optimisticCompleted.current.delete(task.id)
+  }
+
+  const saveNotes = async (task: EmployeeMyTask) => {
+    if (!task.can_complete || savingId) return
+    setSavingId(task.id)
+    setError('')
+    const res = await updateMyEmployeeTask({
+      assignmentId: task.id,
+      completionNotes: draftNotes[task.id] ?? '',
+    })
+    setSavingId(null)
+    if (!res.success) {
+      setError(res.error || 'Could not save notes.')
+    }
   }
 
   return (
@@ -113,8 +162,13 @@ export default function EmployeeMyTasksPanel() {
 
       {!loading && tasks.map((task) => {
         const busy = savingId === task.id
+        const isOptimisticallyComplete = optimisticCompleted.current.has(task.id)
+        const isCompleted = task.status === 'completed' || isOptimisticallyComplete
+        const completedDate = formatTimestamp(task.completed_at)
+
         return (
           <div key={task.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm space-y-3">
+            {/* Header row */}
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-base font-bold text-gray-900">{task.work_package_name}</p>
@@ -126,58 +180,96 @@ export default function EmployeeMyTasksPanel() {
               </span>
             </div>
 
+            {/* Lead controls */}
             {task.can_complete ? (
-              <div className="space-y-3 border-t border-gray-100 pt-3">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-800 mb-1.5" htmlFor={`notes-${task.id}`}>
-                    Completion notes
-                  </label>
-                  <textarea
-                    id={`notes-${task.id}`}
-                    value={draftNotes[task.id] ?? ''}
-                    onChange={(e) => setDraftNotes((d) => ({ ...d, [task.id]: e.target.value }))}
-                    rows={3}
-                    disabled={busy}
-                    className="w-full rounded-xl border border-gray-300 bg-white px-3 py-3 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-60"
-                    style={{ minHeight: 88, fontSize: 16 }}
-                    placeholder="What was completed?"
-                  />
+              isCompleted ? (
+                /* Completed state — no re-complete */
+                <div className="flex items-center gap-2 border-t border-gray-100 pt-3">
+                  <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+                  <span className="text-sm font-semibold text-green-700">
+                    Completed{completedDate ? ` · ${completedDate}` : ''}
+                  </span>
                 </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-800 mb-1.5" htmlFor={`status-${task.id}`}>
-                    Status
-                  </label>
-                  <select
-                    id={`status-${task.id}`}
-                    value={draftStatus[task.id] || task.status}
-                    onChange={(e) => setDraftStatus((d) => ({ ...d, [task.id]: e.target.value as TaskAssignmentStatus }))}
+              ) : (
+                /* Active lead controls */
+                <div className="space-y-3 border-t border-gray-100 pt-3">
+                  <div>
+                    <label
+                      className="block text-sm font-semibold text-gray-800 mb-1.5"
+                      htmlFor={`notes-${task.id}`}
+                    >
+                      Completion notes <span className="text-gray-400 font-normal">(optional)</span>
+                    </label>
+                    <textarea
+                      id={`notes-${task.id}`}
+                      value={draftNotes[task.id] ?? ''}
+                      onChange={(e) => setDraftNotes((d) => ({ ...d, [task.id]: e.target.value }))}
+                      rows={3}
+                      disabled={busy}
+                      className="w-full rounded-xl border border-gray-300 bg-white px-3 py-3 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-60"
+                      style={{ minHeight: 88, fontSize: 16 }}
+                      placeholder="What was completed?"
+                    />
+                  </div>
+
+                  {/* Secondary: in-progress toggle */}
+                  {task.status === 'assigned' && (
+                    <button
+                      type="button"
+                      onClick={() => markInProgress(task)}
+                      disabled={busy}
+                      className="flex items-center gap-1.5 text-sm text-amber-600 font-semibold disabled:opacity-50"
+                    >
+                      <Circle size={14} />
+                      Start (mark in progress)
+                    </button>
+                  )}
+
+                  {/* Primary: mark complete */}
+                  <button
+                    type="button"
+                    onClick={() => markComplete(task)}
                     disabled={busy}
-                    className="w-full rounded-xl border border-gray-300 bg-white px-3 py-3 text-gray-900"
-                    style={{ fontSize: 16, minHeight: 44 }}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-green-600 hover:bg-green-500 text-white font-bold text-base disabled:opacity-60"
+                    style={{ minHeight: 44 }}
                   >
-                    <option value="assigned">Assigned</option>
-                    <option value="in_progress">In progress</option>
-                    <option value="completed">Completed</option>
-                  </select>
+                    {busy
+                      ? <Loader2 size={16} className="animate-spin" />
+                      : <CheckCircle2 size={16} />}
+                    {busy ? 'Saving…' : 'Mark Complete'}
+                  </button>
+
+                  {/* Save notes without completing */}
+                  {(draftNotes[task.id] ?? '') !== (task.completion_notes || '') && !busy && (
+                    <button
+                      type="button"
+                      onClick={() => saveNotes(task)}
+                      disabled={busy}
+                      className="w-full text-sm text-gray-500 font-semibold hover:text-gray-700 disabled:opacity-50"
+                    >
+                      Save notes only
+                    </button>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => saveTask(task)}
-                  disabled={busy}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-green-600 hover:bg-green-500 text-white font-bold text-base disabled:opacity-60"
-                  style={{ minHeight: 44 }}
-                >
-                  {busy ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-                  {busy ? 'Saving…' : 'Save updates'}
-                </button>
-              </div>
+              )
             ) : (
-              task.completion_notes ? (
-                <div className="border-t border-gray-100 pt-3">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Notes</p>
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.completion_notes}</p>
-                </div>
-              ) : null
+              /* Non-lead: read-only */
+              <div className="border-t border-gray-100 pt-3 space-y-1.5">
+                {isCompleted && (
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+                    <span className="text-sm font-semibold text-green-700">
+                      Completed{completedDate ? ` · ${completedDate}` : ''}
+                    </span>
+                  </div>
+                )}
+                {task.completion_notes ? (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Notes</p>
+                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.completion_notes}</p>
+                  </div>
+                ) : null}
+              </div>
             )}
           </div>
         )
