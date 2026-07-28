@@ -122,8 +122,10 @@ import {
 } from '@/features/blueprint-wire-quantities'
 import {
   assignNewWorkPackageOrder,
+  applyWorkPackageVisibility,
   decideWorkPackageRemoteRefreshApply,
   getVisibleWorkPackageMoveState,
+  hiddenIdsFromWorkPackages,
   moveWorkPackageById,
   reorderVisibleWorkPackagesById,
   shouldRunDeferredWorkPackageRefresh,
@@ -2395,11 +2397,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
    *  Set-based so multiple work packages can be made visible at once (multi-package
    *  visibility filter). Empty set = no filter = show all annotations. */
   const [isolatedScopeLayerIds, setIsolatedScopeLayerIds] = useState<Set<string>>(new Set())
-  /** Local UI only — "Hide from General View" mode. Each work package id in this set has its
-   *  selected annotations hidden while in General View (no package scoped/isolated). Independent
-   *  per card; multiple packages can be hidden at once. Session-only, never written to annotation
-   *  data or the cloud. Scoped/isolate view overrides this (see hiddenAnnotationIdSet precedence). */
+  /** Mirrors persisted BlueprintScopeLayer.visible values for General View hiding.
+   *  visible:false adds the package id here so its annotations are hidden from General View.
+   *  Temporary scoped/isolate viewing remains session-only and overrides this while active. */
   const [hiddenWorkPackageIds, setHiddenWorkPackageIds] = useState<Set<string>>(new Set())
+  const hiddenWorkPackageIdsRef = useRef(hiddenWorkPackageIds)
+  hiddenWorkPackageIdsRef.current = hiddenWorkPackageIds
   /** Local UI only — when off (default), the Work Package panel shows only packages whose
    *  pageNumber matches the current page plus unscoped packages; when on, shows every package. */
   const [scopeLayerShowAllPages, setScopeLayerShowAllPages] = useState(false)
@@ -2444,6 +2447,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [isScopeLayerOrderSaving, setIsScopeLayerOrderSaving] = useState(false)
   const isScopeLayerOrderSavingRef = useRef(false)
   const scopeLayerOrderSaveIdRef = useRef(0)
+  const scopeLayerVisibilitySaveQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const scopeLayerVisibilityGenerationRef = useRef<Map<string, number>>(new Map())
   const deferredScopeLayerRefreshRef = useRef(false)
   const isViewerMountedRef = useRef(true)
   const [scopeLayerModal, setScopeLayerModal] = useState<{ open: boolean; mode: 'create' | 'edit'; layerId?: string }>({ open: false, mode: 'create' })
@@ -3716,6 +3721,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const loadScopeLayers = useCallback(() => {
     if (!blueprint?.id) {
       setScopeLayers([])
+      setHiddenWorkPackageIds(new Set())
       return
     }
     try {
@@ -3723,11 +3729,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       const items = getOperationsBlueprintScopeLayers(backup || {}, blueprint.id)
       const orderedItems = sortWorkPackages(Array.isArray(items) ? items : [])
       setScopeLayers(orderedItems)
+      setHiddenWorkPackageIds(hiddenIdsFromWorkPackages(orderedItems))
       const liveIds = new Set(orderedItems.map((item) => item.id))
       setDraggingScopeLayerId((id) => id && liveIds.has(id) ? id : null)
       setDragOverScopeLayerId((id) => id && liveIds.has(id) ? id : null)
     } catch {
       setScopeLayers([])
+      setHiddenWorkPackageIds(new Set())
       setDraggingScopeLayerId(null)
       setDragOverScopeLayerId(null)
     }
@@ -3904,6 +3912,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       setError(null)
       setAllAnnotations([])
       setScopeLayers([])
+      setHiddenWorkPackageIds(new Set())
       return
     }
     loadAnnotations()
@@ -5053,20 +5062,88 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setIsolatedScopeLayerIds(new Set())
   }, [])
 
-  // "Hide from General View" toggle — per package, independent of the isolate/scoped filter.
-  // Visual-only session state; never touches annotation data or package membership.
-  const toggleScopeLayerHidden = useCallback((layerId: string) => {
+  const applyOptimisticScopeLayerVisibility = useCallback((layerId: string, visible: boolean) => {
     setHiddenWorkPackageIds((prev) => {
       const next = new Set(prev)
-      if (next.has(layerId)) next.delete(layerId)
+      if (visible) next.delete(layerId)
       else next.add(layerId)
+      hiddenWorkPackageIdsRef.current = next
       return next
     })
+    setScopeLayers((prev) => sortWorkPackages(prev.map((layer) => (
+      layer.id === layerId ? { ...layer, visible } : layer
+    ))))
   }, [])
 
+  // "Hide from General View" toggle — per package, independent of the isolate/scoped filter.
+  // Persists only BlueprintScopeLayer.visible on a fresh complete live Work Package array.
+  const saveScopeLayerVisibility = useCallback((layerId: string, visible: boolean) => {
+    if (!blueprint?.id) return
+    const blueprintSetId = blueprint.id
+    const key = `${blueprintSetId}:${layerId}`
+    const generation = (scopeLayerVisibilityGenerationRef.current.get(key) || 0) + 1
+    scopeLayerVisibilityGenerationRef.current.set(key, generation)
+
+    scopeLayerVisibilitySaveQueueRef.current = scopeLayerVisibilitySaveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (scopeLayerVisibilityGenerationRef.current.get(key) !== generation) return
+        let saved = false
+        try {
+          const backup = getBackupData()
+          if (!backup) throw new Error('No local backup data available.')
+          const liveLayers = sortWorkPackages(getOperationsBlueprintScopeLayers(backup || {}, blueprintSetId))
+          const result = applyWorkPackageVisibility(liveLayers, layerId, visible, new Date().toISOString())
+          if (!result.changed) throw new Error('The work package no longer exists.')
+          const saveResult = await saveOperationsBlueprintScopeLayers(backup, blueprintSetId, result.packages)
+          saved = saveResult.cloudSynced || saveResult.localSaved
+          if (saveResult.cloudSynced) {
+            clearStaleSyncMessages()
+          } else if (saveResult.localSaved) {
+            if (saveResult.warning) showSyncPausedNoticeOnce()
+          } else {
+            throw new Error(saveResult.error || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG)
+          }
+        } catch (e: any) {
+          if (scopeLayerVisibilityGenerationRef.current.get(key) === generation) {
+            setActionMsg({
+              type: 'warning',
+              text: e?.message || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
+            })
+          }
+        } finally {
+          if (scopeLayerVisibilityGenerationRef.current.get(key) === generation) {
+            if (!saved) {
+              setActionMsg((previous) => previous || {
+                type: 'warning',
+                text: SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
+              })
+            }
+            loadScopeLayers()
+          }
+        }
+      })
+  }, [
+    blueprint?.id,
+    clearStaleSyncMessages,
+    loadScopeLayers,
+    showSyncPausedNoticeOnce,
+  ])
+
+  const toggleScopeLayerHidden = useCallback((layerId: string) => {
+    const nextVisible = hiddenWorkPackageIdsRef.current.has(layerId)
+    applyOptimisticScopeLayerVisibility(layerId, nextVisible)
+    saveScopeLayerVisibility(layerId, nextVisible)
+  }, [applyOptimisticScopeLayerVisibility, saveScopeLayerVisibility])
+
   const clearHiddenScopeLayers = useCallback(() => {
-    setHiddenWorkPackageIds(new Set())
-  }, [])
+    const ids = Array.from(hiddenWorkPackageIdsRef.current)
+    if (ids.length === 0) return
+    ids.forEach((layerId) => {
+      applyOptimisticScopeLayerVisibility(layerId, true)
+      saveScopeLayerVisibility(layerId, true)
+    })
+  }, [applyOptimisticScopeLayerVisibility, saveScopeLayerVisibility])
 
   // ── Work Package / Scope Layer reordering ──
   const persistReorderedScopeLayers = useCallback(async (nextLayers: BlueprintScopeLayer[]) => {
