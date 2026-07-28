@@ -453,6 +453,8 @@ type ShapeKind =
   | 'electrical-emergency-exit-sign'
   | 'electrical-led-panel-2x2'
   | 'electrical-led-panel-2x4'
+  | 'electrical-led-strip'
+  | 'electrical-low-voltage-transformer'
   | 'electrical-panel'
   | 'electrical-sub-panel'
   | 'electrical-switchboard'
@@ -719,7 +721,7 @@ function getShapeKindLabel(kind: any, meta: Record<string, any> = {}) {
 // Shape kinds placed by successive clicks (Stop/Cancel pill flow) rather than a single
 // press-drag-release. They share draft state, the rubber band, and the hit-test bypass.
 function isMultiPointShapeKind(kind: any): boolean {
-  return kind === 'polyline' || kind === 'circuit-path' || kind === 'circuit-arc'
+  return kind === 'polyline' || kind === 'circuit-path' || kind === 'circuit-arc' || kind === 'electrical-led-strip'
 }
 
 // Geometry a move has to carry along with the bounding box. Line endpoints, the arch control
@@ -766,6 +768,20 @@ export function shouldRenderCircuitMeasurementLabel(options: {
     && typeof options.distanceLabel === 'string'
     && options.distanceLabel.length > 0
     && options.localPointCount > 0
+}
+
+function getMultiPointDraftLabel(kind: ShapeKind) {
+  if (kind === 'electrical-led-strip') return 'LED Strip'
+  if (kind === 'circuit-arc') return 'Circuit Arc Path'
+  if (kind === 'circuit-path') return 'Circuit Path'
+  return 'Polyline'
+}
+
+function getMultiPointStopLabel(kind: ShapeKind) {
+  if (kind === 'electrical-led-strip') return 'Stop LED Strip'
+  if (kind === 'circuit-arc') return 'Stop Circuit Arc'
+  if (kind === 'circuit-path') return 'Stop Circuit Path'
+  return 'Stop Drawing'
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Measurement & calibration types Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -1354,6 +1370,7 @@ function getLightKelvinColor(kelvin: number) {
 
 function getLightFixtureRefRadius(shapeKind: ShapeKind) {
   switch (shapeKind) {
+    case 'electrical-led-strip': return 58
     case 'electrical-led-panel-2x4': return 54
     case 'electrical-led-panel-2x2': return 42
     case 'electrical-pendant-light': return 44
@@ -1395,6 +1412,67 @@ function renderLightOutputGlowSvg(
         r={metrics.outputOverlayR}
         fill={`url(#${glowId})`}
         stroke="none"
+        style={{ pointerEvents: 'none' }}
+      />
+    </>
+  )
+}
+
+function renderLedStripPathGlowSvg(
+  points: string,
+  metrics: ReturnType<typeof getLightOutputGlowMetrics>,
+  visible: boolean,
+  baseStrokeWidth: number,
+) {
+  const coreWidth = Math.max(2.2, baseStrokeWidth * 0.85)
+  if (!visible) {
+    return (
+      <polyline
+        points={points}
+        fill="none"
+        stroke={metrics.kelvinColor}
+        strokeWidth={coreWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity={0.24}
+        vectorEffect="non-scaling-stroke"
+        style={{ pointerEvents: 'none' }}
+      />
+    )
+  }
+  return (
+    <>
+      <polyline
+        points={points}
+        fill="none"
+        stroke={metrics.kelvinColor}
+        strokeWidth={Math.max(12, baseStrokeWidth * 4.8)}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity={0.16}
+        vectorEffect="non-scaling-stroke"
+        style={{ pointerEvents: 'none' }}
+      />
+      <polyline
+        points={points}
+        fill="none"
+        stroke={metrics.kelvinColor}
+        strokeWidth={Math.max(7, baseStrokeWidth * 2.7)}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity={0.34}
+        vectorEffect="non-scaling-stroke"
+        style={{ pointerEvents: 'none' }}
+      />
+      <polyline
+        points={points}
+        fill="none"
+        stroke="#fff7ad"
+        strokeWidth={coreWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity={0.92}
+        vectorEffect="non-scaling-stroke"
         style={{ pointerEvents: 'none' }}
       />
     </>
@@ -6368,12 +6446,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       points,
       ...(topology ? { pointIds: topology.pointIds, segmentIds: topology.segmentIds } : {}),
       ...(arcCtrls ? { arcCtrls } : {}),
-      pathType: isArc ? 'circuit-arc' : isCircuit ? 'circuit' : 'polyline',
+      pathType: shapeKind === 'electrical-led-strip' ? 'led-strip' : isArc ? 'circuit-arc' : isCircuit ? 'circuit' : 'polyline',
       closed: false,
       borderColor: shapeOptions.borderColor,
       borderThickness: shapeOptions.borderThickness,
       borderStyle: shapeOptions.borderStyle,
       fillOpacity: shapeOptions.fillOpacity,
+      ...(isElectricalShapeKind(shapeKind) ? getElectricalSymbolMetadataStamp(shapeKind) : {}),
       ...(isCircuit ? { totalDistance, distanceUnit, distanceLabel } : {}),
     }
 
@@ -6431,7 +6510,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     } as BlueprintAnnotation
     setAllAnnotations((prev) => [...prev, ann])
     setFocusedAnnotationId(ann.id)
-    setToolMode('select')
+    if (shapeKind !== 'electrical-led-strip') setToolMode('select')
     clearActiveQuickAccessSession()
     void persistAnnotation(ann)
   }, [blueprint, currentPage, shapeKind, shapeOptions, persistAnnotation, showTransientSyncNotice, getPageSizeInches, getEffectiveCalibrationForPage, displaySize.w, displaySize.h, activeQuickAccessSession, clearActiveQuickAccessSession])
@@ -10091,7 +10170,7 @@ const annotationPanelSizeClass =
         <div className="pointer-events-none absolute left-1/2 bottom-4 z-[100050] -translate-x-1/2">
           <div className="pointer-events-auto flex items-center gap-3 rounded-full border border-cyan-500/50 bg-[#0f1624]/95 px-4 py-2 shadow-2xl">
             <span className="text-xs text-cyan-200">
-              {shapeKind === 'circuit-arc' ? 'Circuit Arc Path' : shapeKind === 'circuit-path' ? 'Circuit Path' : 'Polyline'} — {pathDraftPoints.length} point{pathDraftPoints.length === 1 ? '' : 's'}
+              {getMultiPointDraftLabel(shapeKind)} — {pathDraftPoints.length} point{pathDraftPoints.length === 1 ? '' : 's'}
             </span>
             <button
               type="button"
@@ -10100,7 +10179,7 @@ const annotationPanelSizeClass =
               title="Or press Spacebar"
               className="inline-flex items-center gap-1.5 rounded-full bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <Check size={12} /> {shapeKind === 'circuit-arc' ? 'Stop Circuit Arc' : shapeKind === 'circuit-path' ? 'Stop Circuit Path' : 'Stop Drawing'}
+              <Check size={12} /> {getMultiPointStopLabel(shapeKind)}
             </button>
             <button
               type="button"
@@ -11732,7 +11811,7 @@ const annotationPanelSizeClass =
                               </div>
                             )
                           }
-                          if (kind === 'polyline' || kind === 'circuit-path') {
+                          if (kind === 'polyline' || kind === 'circuit-path' || kind === 'electrical-led-strip') {
                             // Same clamped-rect and finite-geometry rules as circuit-arc below.
                             const prect = rect
                             const rawPoints: Array<{ x: number; y: number }> = Array.isArray(meta.points) ? meta.points : []
@@ -11745,20 +11824,32 @@ const annotationPanelSizeClass =
                             }))
                             const svgPts = localPts.map((p) => `${p.vx},${p.vy}`).join(' ')
                             const isCircuit = kind === 'circuit-path'
+                            const isLedStrip = kind === 'electrical-led-strip'
+                            const glowMetrics = isLedStrip ? getLightOutputGlowMetrics(kind, meta) : null
+                            const ledStripGlowVisible = lightingEffectsVisible && !animationPlaybackAnnotationIds.has(a.id)
                             return (
-                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onPointerDown={selectAnnotation} onClick={selectAnnotation}>
+                              <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onPointerDown={isLedStrip ? undefined : selectAnnotation} onClick={isLedStrip ? undefined : selectAnnotation}>
                                 <svg className="absolute inset-0 overflow-visible" viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none">
-                                  <polyline
-                                    points={svgPts}
-                                    fill="none"
-                                    stroke={borderColor}
-                                    strokeWidth={borderThickness}
-                                    strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined}
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    opacity={fillOpacity}
-                                    vectorEffect="non-scaling-stroke"
-                                  />
+                                  {isLedStrip ? (
+                                    <>
+                                      {glowMetrics && renderLedStripPathGlowSvg(svgPts, glowMetrics, ledStripGlowVisible, borderThickness)}
+                                      <polyline points={svgPts} fill="none" stroke={borderColor} strokeWidth={Math.max(4, borderThickness * 1.7)} strokeLinecap="round" strokeLinejoin="round" opacity={0.82} vectorEffect="non-scaling-stroke" style={{ pointerEvents: 'none' }} />
+                                      <polyline points={svgPts} fill="none" stroke="#fff7ad" strokeWidth={Math.max(1.2, borderThickness * 0.55)} strokeLinecap="round" strokeLinejoin="round" opacity={0.72} strokeDasharray="1 9" vectorEffect="non-scaling-stroke" style={{ pointerEvents: 'none' }} />
+                                      <polyline data-annotation-id={a.id} points={svgPts} fill="none" stroke="transparent" strokeWidth={18} strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'stroke', cursor: isLayoutEditing ? 'move' : 'pointer', touchAction: 'none' }} onPointerDown={isLayoutEditing ? (e) => startAnnotationLayoutDrag(e as any, a, 'move') : selectAnnotation as any} onClick={selectAnnotation as any} />
+                                    </>
+                                  ) : (
+                                    <polyline
+                                      points={svgPts}
+                                      fill="none"
+                                      stroke={borderColor}
+                                      strokeWidth={borderThickness}
+                                      strokeDasharray={borderStyle === 'dashed' ? '8 5' : borderStyle === 'dotted' ? '2 5' : undefined}
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      opacity={fillOpacity}
+                                      vectorEffect="non-scaling-stroke"
+                                    />
+                                  )}
                                 </svg>
                                 {isCircuit && localPts.map((p, i) => (
                                   <div
@@ -11772,6 +11863,23 @@ const annotationPanelSizeClass =
                                       transform: 'translate(-50%, -50%)',
                                       backgroundColor: borderColor,
                                       opacity: fillOpacity * 0.7,
+                                    }}
+                                  />
+                                ))}
+                                {isLedStrip && localPts.map((p, i) => (
+                                  <div
+                                    key={i}
+                                    className="absolute rounded-full pointer-events-none"
+                                    style={{
+                                      left: `${p.vx}%`,
+                                      top: `${p.vy}%`,
+                                      width: 6,
+                                      height: 6,
+                                      transform: 'translate(-50%, -50%)',
+                                      backgroundColor: i === 0 ? '#fde68a' : i === localPts.length - 1 ? '#bbf7d0' : '#fff7ad',
+                                      border: '1px solid rgba(15,23,42,0.8)',
+                                      boxShadow: '0 0 5px rgba(250,204,21,0.55)',
+                                      opacity: 0.95,
                                     }}
                                   />
                                 ))}
@@ -11803,7 +11911,7 @@ const annotationPanelSizeClass =
                                     {meta.distanceLabel}
                                   </div>
                                 )}
-                                {isLayoutEditing && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" style={{ zIndex: 1 }} />}
+                                {isLayoutEditing && !isLedStrip && <div onPointerDown={(e) => startAnnotationLayoutDrag(e, a, 'move')} onPointerMove={handleAnnotationLayoutPointerMove} onPointerUp={handleAnnotationLayoutPointerUp} className="absolute inset-0 cursor-move" style={{ zIndex: 1 }} />}
                               </div>
                             )
                           }
@@ -12645,12 +12753,12 @@ const annotationPanelSizeClass =
                       {displaySize.w > 0 && pathDraftPoints.length > 0 && effectiveTool === 'shape' && isMultiPointShapeKind(shapeKind) && pageOverlaySvgProps && (
                         <svg className="absolute inset-0 pointer-events-none overflow-visible" {...pageOverlaySvgProps}>
                           {(() => {
-                            const col = shapeOptions.borderColor || '#facc15'
+                            const col = shapeKind === 'electrical-led-strip' ? '#fbbf24' : shapeOptions.borderColor || '#facc15'
                             const pxPts = pathDraftPoints.map(p => ({ px: p.x * displaySize.w, py: p.y * displaySize.h }))
                             return (
                               <>
                                 {pxPts.length >= 2 && (
-                                  <polyline points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke={col} strokeWidth={shapeOptions.borderThickness || 2} strokeDasharray="5,3" opacity={0.85} />
+                                  <polyline points={pxPts.map(p => `${p.px},${p.py}`).join(' ')} fill="none" stroke={col} strokeWidth={shapeKind === 'electrical-led-strip' ? Math.max(4, shapeOptions.borderThickness || 2) : shapeOptions.borderThickness || 2} strokeDasharray={shapeKind === 'electrical-led-strip' ? '2,7' : '5,3'} opacity={0.85} />
                                 )}
                                 {pxPts.map((p, i) => <circle key={i} cx={p.px} cy={p.py} r={4} fill={col} opacity={0.9} />)}
                                 {pathCursorPx && pxPts.length >= 1 && (

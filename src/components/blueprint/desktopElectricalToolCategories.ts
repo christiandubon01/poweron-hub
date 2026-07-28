@@ -64,6 +64,8 @@ export const DESKTOP_LIGHTING_KINDS = [
   'electrical-led-panel-2x4',
   'electrical-sconce',
   'electrical-pendant-light',
+  'electrical-led-strip',
+  'electrical-low-voltage-transformer',
 ] as const satisfies readonly ElectricalSymbolKind[]
 
 const DESKTOP_LIGHTING_KIND_SET = new Set<ElectricalSymbolKind>(DESKTOP_LIGHTING_KINDS)
@@ -91,6 +93,8 @@ const LEGACY_NON_DESKTOP_HIDDEN_KIND_SET = new Set<ElectricalSymbolKind>([
   'electrical-switchgear',
   'electrical-ats',
   'electrical-transformer',
+  'electrical-led-strip',
+  'electrical-low-voltage-transformer',
 ])
 
 export type DesktopElectricalToolCategory = {

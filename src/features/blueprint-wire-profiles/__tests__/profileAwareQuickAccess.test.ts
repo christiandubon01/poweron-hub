@@ -51,6 +51,7 @@ describe('supportsWireProfileAssignment', () => {
     expect(supportsWireProfileAssignment({ toolType: 'shape', toolVariant: 'circuit-path' })).toBe(true)
     expect(supportsWireProfileAssignment({ toolType: 'shape', toolVariant: 'circuit-arc' })).toBe(true)
     expect(supportsWireProfileAssignment({ toolType: 'shape', toolVariant: 'square' })).toBe(false)
+    expect(supportsWireProfileAssignment({ toolType: 'shape', toolVariant: 'electrical-led-strip' })).toBe(false)
     expect(supportsWireProfileAssignment({ toolType: 'shape', toolVariant: 'electrical-receptacle' })).toBe(false)
     expect(supportsWireProfileAssignment({ toolType: 'pen', toolVariant: 'circuit-path' })).toBe(false)
     expect(supportsWireProfileAssignment({ toolType: 'note' })).toBe(false)

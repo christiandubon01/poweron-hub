@@ -87,6 +87,8 @@ const LIGHTING_EXPECTATIONS = [
   ['electrical-led-panel-2x4', '2x4 LED Panel', '2x4', 'led-panel-2x4', 'led-panel-2x4', false],
   ['electrical-sconce', 'Sconce', 'SC', 'sconce', 'sconce', true],
   ['electrical-pendant-light', 'Pendant Light', 'P', 'pendant-light', 'pendant-light', false],
+  ['electrical-led-strip', 'LED Strip', 'LED', 'led-strip', 'led-strip', false],
+  ['electrical-low-voltage-transformer', 'Low Voltage Transformer', 'LVT', 'electrical-low-voltage-transformer', 'electrical-low-voltage-transformer', false],
 ] as const
 
 const ELECTRICAL_PANEL_EXPECTATIONS = [
@@ -209,6 +211,8 @@ describe('desktop recessed light registered variants', () => {
       'electrical-led-panel-2x4',
       'electrical-sconce',
       'electrical-pendant-light',
+      'electrical-led-strip',
+      'electrical-low-voltage-transformer',
     ])
     expect(DESKTOP_ELECTRICAL_PANEL_KINDS).toEqual([
       'electrical-panel',
@@ -317,7 +321,7 @@ describe('desktop recessed light registered variants', () => {
       })
       expect(isDesktopLightingKind(kind)).toBe(true)
       expect(isDesktopElectricalCategoryChildKind(kind)).toBe(true)
-      expect(isLightOutputShapeKind(kind)).toBe(true)
+      expect(isLightOutputShapeKind(kind)).toBe(kind !== 'electrical-low-voltage-transformer')
       expect(isRotatableElectricalShapeKind(kind)).toBe(isRotatable)
     }
     for (const [kind, displayName, shortLabel, materialKey, laborKey] of ELECTRICAL_PANEL_EXPECTATIONS) {
@@ -446,7 +450,7 @@ describe('desktop recessed light registered variants', () => {
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-hdmi')).toBe(true)
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-data')).toBe(true)
     for (const [kind] of LIGHTING_EXPECTATIONS) {
-      expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar(kind)).toBe(true)
+      expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar(kind)).toBe(kind !== 'electrical-led-strip' && kind !== 'electrical-low-voltage-transformer')
     }
     expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-panel')).toBe(true)
     for (const [kind, , , , , isLegacyVisible] of ELECTRICAL_PANEL_EXPECTATIONS) {
@@ -502,8 +506,8 @@ describe('desktop recessed light registered variants', () => {
       if (kind === 'electrical-sconce') expect(markup).toContain('M26 30 A24 20')
       else if (kind === 'electrical-pendant-light') expect(markup).toContain('Q50 72 70 54')
       else expect(markup).toContain(getElectricalSymbolMetadata(kind)?.shortLabel)
-      expect(isRouteBuilderLoadKind(kind)).toBe(true)
-      expect(inferRouteBuilderNodeRoles(kind)).toEqual(['load'])
+      expect(isRouteBuilderLoadKind(kind)).toBe(kind !== 'electrical-low-voltage-transformer')
+      expect(inferRouteBuilderNodeRoles(kind)).toEqual(kind === 'electrical-low-voltage-transformer' ? [] : ['load'])
       expect(isRouteBuilderSourceKind(kind)).toBe(false)
       expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
     }

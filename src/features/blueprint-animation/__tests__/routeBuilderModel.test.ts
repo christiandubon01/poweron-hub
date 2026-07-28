@@ -304,6 +304,55 @@ describe('routeBuilderModel', () => {
     })
   })
 
+  it('allows LED Strip as a downstream light-output load while keeping Low Voltage Transformer animation-neutral', () => {
+    const ledStrip: RouteBuilderAnnotation = {
+      id: 'led-strip',
+      pageNumber: 1,
+      label: 'LED Strip',
+      shapeKind: 'electrical-led-strip',
+      rect: { x: 0.76, y: 0.42, w: 0.12, h: 0.08 },
+      points: [{ x: 0.76, y: 0.44 }, { x: 0.82, y: 0.47 }, { x: 0.88, y: 0.43 }],
+    }
+    const lvt: RouteBuilderAnnotation = {
+      id: 'lvt',
+      pageNumber: 1,
+      label: 'Low Voltage Transformer',
+      shapeKind: 'electrical-low-voltage-transformer',
+      rect: { x: 0.3, y: 0.42, w: 0.05, h: 0.05 },
+    }
+    const base = empty({ annotations: [source, ledStrip, lvt], packageAnnotationIds: ['source', 'led-strip', 'lvt'] })
+
+    expect(isRouteBuilderLoadKind('electrical-led-strip')).toBe(true)
+    expect(isRouteBuilderSourceKind('electrical-led-strip')).toBe(false)
+    expect(inferRouteBuilderNodeRoles('electrical-led-strip')).toEqual(['load'])
+    expect(inferRouteBuilderDefaultChannel('electrical-led-strip')).toBe('generic-route')
+
+    expect(isRouteBuilderDeviceKind('electrical-low-voltage-transformer')).toBe(false)
+    expect(isRouteBuilderLoadKind('electrical-low-voltage-transformer')).toBe(false)
+    expect(isRouteBuilderSourceKind('electrical-low-voltage-transformer')).toBe(false)
+    expect(inferRouteBuilderNodeRoles('electrical-low-voltage-transformer')).toEqual([])
+
+    const draft = sourceDraft(base)
+    const acceptedLoad = dispatchPackageAnimationRoutePick(draft, {
+      kind: 'annotation',
+      annotationId: 'led-strip',
+      clickedPoint: { x: 0.82, y: 0.45 },
+      allowPrimaryDirectTransition: true,
+    })
+    expect(acceptedLoad.accepted).toBe(true)
+    expect(resolvePackageAnimationRouteDraft(acceptedLoad.draft).nodes.find((node) => node.anchor.kind === 'annotation-center' && node.anchor.annotationId === 'led-strip')).toMatchObject({
+      roles: ['load'],
+      anchor: { kind: 'annotation-center', annotationId: 'led-strip' },
+    })
+
+    const rejectedLvt = dispatchPackageAnimationRoutePick(draft, { kind: 'annotation', annotationId: 'lvt', allowPrimaryDirectTransition: true })
+    expect(rejectedLvt.accepted).toBe(false)
+    expect(rejectedLvt.draft.notice).toMatchObject({
+      code: 'ineligible-route-item',
+      message: 'That annotation is not an eligible route source, circuit segment, control, or light fixture.',
+    })
+  })
+
   it('treats a Main Panel as an eligible source with source-only roles and constant power', () => {
     const panel: RouteBuilderAnnotation = {
       id: 'panel',

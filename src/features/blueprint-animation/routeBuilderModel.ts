@@ -61,6 +61,7 @@ export const ROUTE_BUILDER_LOAD_KINDS = [
   'electrical-emergency-exit-sign',
   'electrical-led-panel-2x2',
   'electrical-led-panel-2x4',
+  'electrical-led-strip',
 ] as const
 
 export const ROUTE_BUILDER_CHANNEL_OPTIONS: Array<{ value: BlueprintAnimationChannelType; label: string }> = [

@@ -18,6 +18,8 @@ export type ElectricalSymbolKind =
   | 'electrical-emergency-exit-sign'
   | 'electrical-led-panel-2x2'
   | 'electrical-led-panel-2x4'
+  | 'electrical-led-strip'
+  | 'electrical-low-voltage-transformer'
   | 'electrical-panel'
   | 'electrical-sub-panel'
   | 'electrical-switchboard'
@@ -239,6 +241,28 @@ export const ELECTRICAL_SYMBOL_METADATA: Record<ElectricalSymbolKind, Electrical
     defaultPhase: 'electrical',
     materialKey: 'led-panel-2x4',
     laborKey: 'led-panel-2x4',
+    isElectricalSymbol: true,
+  },
+  'electrical-led-strip': {
+    symbolKind: 'electrical-led-strip',
+    displayName: 'LED Strip',
+    shortLabel: 'LED',
+    category: 'lighting',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'led-strip',
+    laborKey: 'led-strip',
+    isElectricalSymbol: true,
+  },
+  'electrical-low-voltage-transformer': {
+    symbolKind: 'electrical-low-voltage-transformer',
+    displayName: 'Low Voltage Transformer',
+    shortLabel: 'LVT',
+    category: 'lighting',
+    countValue: 1,
+    defaultPhase: 'electrical',
+    materialKey: 'electrical-low-voltage-transformer',
+    laborKey: 'electrical-low-voltage-transformer',
     isElectricalSymbol: true,
   },
   'electrical-panel': {
@@ -531,6 +555,7 @@ const LIGHT_OUTPUT_SHAPE_KINDS = new Set<ElectricalSymbolKind>([
   'electrical-emergency-exit-sign',
   'electrical-led-panel-2x2',
   'electrical-led-panel-2x4',
+  'electrical-led-strip',
 ])
 
 export function isLightOutputShapeKind(shapeKind: unknown): shapeKind is ElectricalSymbolKind {
@@ -575,6 +600,7 @@ const ELECTRICAL_SYMBOL_VISUAL_BOUNDS: Partial<Record<ElectricalSymbolKind, { x:
   'electrical-switchgear': { x: 12, y: 12, w: 76, h: 76 },
   'electrical-ats': { x: 16, y: 16, w: 68, h: 68 },
   'electrical-transformer': { x: 13, y: 16, w: 74, h: 66 },
+  'electrical-low-voltage-transformer': { x: 14, y: 18, w: 72, h: 62 },
   'electrical-gfci': { x: 25, y: 9, w: 50, h: 74 },
   'electrical-sconce': { x: 15, y: 15, w: 47, h: 68 },
   'electrical-emergency-exit-sign': { x: 12, y: 28, w: 76, h: 38 },
@@ -741,6 +767,29 @@ export function renderElectricalSymbolSvg(kind: unknown, meta: Record<string, an
       </>
     )
     label = externalLabel(panelLabel)
+  } else if (kind === 'electrical-led-strip') {
+    body = (
+      <>
+        <path d="M12 52 L26 38 L40 52 L54 38 L68 52 L84 38" fill="none" stroke={borderColor} strokeWidth={Math.max(3, borderThickness * 1.3)} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={dash} />
+        <path d="M12 45 L26 31 L40 45 L54 31 L68 45 L84 31" fill="none" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.65)} strokeLinecap="round" strokeLinejoin="round" opacity="0.45" />
+        <path d="M12 59 L26 45 L40 59 L54 45 L68 59 L84 45" fill="none" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.65)} strokeLinecap="round" strokeLinejoin="round" opacity="0.45" />
+        {[20, 34, 48, 62, 76].map((x) => (
+          <circle key={x} cx={x} cy={45} r="2.4" fill={borderColor} opacity="0.85" />
+        ))}
+      </>
+    )
+    label = externalLabel('LED')
+  } else if (kind === 'electrical-low-voltage-transformer') {
+    body = (
+      <>
+        <rect x="14" y="18" width="72" height="62" rx="7" fill={symbolFill} stroke={borderColor} strokeWidth={borderThickness} strokeDasharray={dash} />
+        <rect x="23" y="29" width="54" height="40" rx="4" fill="none" stroke={borderColor} strokeWidth={fineStroke} opacity="0.68" />
+        <path d="M30 42 H43 M57 42 H70 M36 55 H64" fill="none" stroke={borderColor} strokeWidth={Math.max(1, fineStroke * 0.85)} strokeLinecap="round" opacity="0.78" />
+        <circle cx="36" cy="42" r="2.5" fill={borderColor} opacity="0.85" />
+        <circle cx="64" cy="42" r="2.5" fill={borderColor} opacity="0.85" />
+        <text x="50" y="58" fontSize="18" letterSpacing="0" {...commonText}>LVT</text>
+      </>
+    )
   } else if (kind === 'electrical-panel') {
     body = (
       <>
