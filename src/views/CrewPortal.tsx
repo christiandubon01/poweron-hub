@@ -243,6 +243,17 @@ function DirectoryStatusDot({ status }: { status: UnifiedCrewMember['status'] })
   )
 }
 
+// ─── Archived status badge ────────────────────────────────────────────────────
+
+function ArchivedBadge() {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="w-2 h-2 rounded-full bg-gray-700" />
+      <span className="text-xs text-gray-600">Archived</span>
+    </span>
+  )
+}
+
 // ─── Unified Directory Panel ──────────────────────────────────────────────────
 
 function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }) {
@@ -250,11 +261,12 @@ function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedMember, setSelectedMember] = useState<UnifiedCrewMember | null>(null)
+  const [showArchived, setShowArchived] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
-    const result = await getUnifiedCrewDirectory()
+    const result = await getUnifiedCrewDirectory(showArchived)
     if (result.success) {
       setMembers(result.data)
     } else {
@@ -262,33 +274,41 @@ function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }
       setMembers([])
     }
     setLoading(false)
-  }, [])
+  }, [showArchived])
 
   useEffect(() => { void load() }, [load])
+
+  function handleProfileBack() {
+    setSelectedMember(null)
+  }
+
+  function handleProfileEvent() {
+    setSelectedMember(null)
+    void load()
+    onInviteClose?.()
+  }
 
   // Show full profile panel when a member is selected
   if (selectedMember) {
     return (
       <EmployeeProfilePanel
         member={selectedMember}
-        onBack={() => setSelectedMember(null)}
-        onInviteSent={() => {
-          setSelectedMember(null)
-          void load()
-          onInviteClose?.()
-        }}
+        onBack={handleProfileBack}
+        onInviteSent={handleProfileEvent}
+        onArchived={handleProfileEvent}
+        onDeleted={handleProfileEvent}
       />
     )
   }
 
   const activeCount = members.filter((m) => m.status === 'active').length
-  const portalCount = members.filter((m) => m.hasPortal).length
+  const portalCount = members.filter((m) => m.hasPortal && m.status !== 'inactive').length
   const totalHours = members.reduce((s, m) => s + (m.hoursThisWeek ?? 0), 0)
 
   return (
     <div className="space-y-5">
-      {/* Summary row */}
-      <div className="flex gap-4">
+      {/* Summary row + archived toggle */}
+      <div className="flex items-start gap-4 flex-wrap">
         <div className="flex-1 rounded-lg px-4 py-3 border" style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}>
           <p className="text-xs text-gray-500 mb-1">Portal Members</p>
           <p className="text-2xl font-bold text-teal-400">{portalCount}</p>
@@ -301,6 +321,21 @@ function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }
           <p className="text-xs text-gray-500 mb-1">Total Hours This Week</p>
           <p className="text-2xl font-bold text-blue-400">{Number.isFinite(totalHours) ? totalHours : 0}h</p>
         </div>
+      </div>
+
+      {/* Archived toggle */}
+      <div className="flex items-center justify-end">
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <span className="text-xs text-gray-500">Show archived</span>
+          <div
+            className={`relative w-8 h-4 rounded-full transition-colors ${showArchived ? 'bg-gray-600' : 'bg-gray-800'} border border-gray-700`}
+            onClick={() => setShowArchived((v) => !v)}
+          >
+            <span
+              className={`absolute top-0.5 w-3 h-3 rounded-full bg-gray-400 transition-transform ${showArchived ? 'translate-x-4' : 'translate-x-0.5'}`}
+            />
+          </div>
+        </label>
       </div>
 
       {loading && <p className="text-xs text-gray-600 py-2">Loading crew directory…</p>}
@@ -324,85 +359,93 @@ function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }
               </tr>
             </thead>
             <tbody>
-              {members.map((member, idx) => (
-                <tr
-                  key={member.key}
-                  className="cursor-pointer transition-colors"
-                  style={{
-                    backgroundColor: idx % 2 === 0 ? '#0a0b0f' : '#0c0d12',
-                    borderBottom: '1px solid #1a1c23',
-                  }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLTableRowElement).style.backgroundColor = '#101520' }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLTableRowElement).style.backgroundColor = idx % 2 === 0 ? '#0a0b0f' : '#0c0d12' }}
-                  onClick={() => setSelectedMember(member)}
-                >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <div
-                        className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-                        style={{ backgroundColor: '#1e3a5f', color: '#60a5fa' }}
-                      >
-                        {(member.name || 'U').slice(0, 2).toUpperCase()}
+              {members.map((member, idx) => {
+                const isArchived = member.status === 'inactive'
+                return (
+                  <tr
+                    key={member.key}
+                    className="cursor-pointer transition-colors"
+                    style={{
+                      backgroundColor: idx % 2 === 0 ? '#0a0b0f' : '#0c0d12',
+                      borderBottom: '1px solid #1a1c23',
+                      opacity: isArchived ? 0.6 : 1,
+                    }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLTableRowElement).style.backgroundColor = '#101520' }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLTableRowElement).style.backgroundColor = idx % 2 === 0 ? '#0a0b0f' : '#0c0d12' }}
+                    onClick={() => setSelectedMember(member)}
+                  >
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                          style={{ backgroundColor: '#1e3a5f', color: '#60a5fa' }}
+                        >
+                          {(member.name || 'U').slice(0, 2).toUpperCase()}
+                        </div>
+                        <span className="text-gray-200 font-medium text-xs">{member.name}</span>
                       </div>
-                      <span className="text-gray-200 font-medium text-xs">{member.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    {member.employeeRole
-                      ? <MemberRoleBadge employeeRole={member.employeeRole} fallbackRole="employee" />
-                      : <span className="text-xs text-gray-600">—</span>}
-                  </td>
-                  {/* Registrations — two pills, click stops row propagation */}
-                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <CostModelPill
-                        hasCostModel={member.hasCostModel}
-                        onClick={member.hasCostModel ? () => setSelectedMember(member) : undefined}
-                      />
-                      <PortalPill
-                        hasPortal={member.hasPortal}
-                        portalStatus={member.portalStatus}
-                        onClick={() => setSelectedMember(member)}
-                      />
-                    </div>
-                  </td>
-                  <td className="px-4 py-3"><DirectoryStatusDot status={member.status} /></td>
-                  <td className="px-4 py-3 text-gray-300 font-mono text-xs">
-                    {member.hoursThisWeek > 0 ? `${member.hoursThisWeek}h` : '—'}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {(member.assignedProjects ?? []).length === 0
-                        ? <span className="text-xs text-gray-600">None</span>
-                        : (member.assignedProjects ?? []).map((proj) => (
-                          <span key={proj} className="text-xs px-2 py-0.5 rounded-full border"
-                            style={{ backgroundColor: '#111827', borderColor: '#374151', color: '#9ca3af' }}>
-                            {proj}
-                          </span>
-                        ))}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                    {member.hasPortal ? (
-                      <button
-                        className="text-xs px-2 py-1 rounded border transition-colors hover:bg-blue-900/20"
-                        style={{ borderColor: '#1e40af55', color: '#60a5fa' }}
-                        onClick={() => setSelectedMember(member)}
-                      >
-                        View Profile
-                      </button>
-                    ) : (
-                      <button
-                        className="text-xs px-2 py-1 rounded border transition-colors hover:bg-teal-900/20"
-                        style={{ borderColor: '#134e4a55', color: '#2dd4bf' }}
-                        onClick={() => setSelectedMember(member)}
-                      >
-                        Invite to Portal
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-4 py-3">
+                      {member.employeeRole
+                        ? <MemberRoleBadge employeeRole={member.employeeRole} fallbackRole="employee" />
+                        : <span className="text-xs text-gray-600">—</span>}
+                    </td>
+                    {/* Registrations — two pills, click stops row propagation */}
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <CostModelPill
+                          hasCostModel={member.hasCostModel}
+                          onClick={member.hasCostModel ? () => setSelectedMember(member) : undefined}
+                        />
+                        <PortalPill
+                          hasPortal={member.hasPortal}
+                          portalStatus={member.portalStatus}
+                          onClick={() => setSelectedMember(member)}
+                        />
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {isArchived
+                        ? <ArchivedBadge />
+                        : <DirectoryStatusDot status={member.status} />}
+                    </td>
+                    <td className="px-4 py-3 text-gray-300 font-mono text-xs">
+                      {member.hoursThisWeek > 0 ? `${member.hoursThisWeek}h` : '—'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {(member.assignedProjects ?? []).length === 0
+                          ? <span className="text-xs text-gray-600">None</span>
+                          : (member.assignedProjects ?? []).map((proj) => (
+                            <span key={proj} className="text-xs px-2 py-0.5 rounded-full border"
+                              style={{ backgroundColor: '#111827', borderColor: '#374151', color: '#9ca3af' }}>
+                              {proj}
+                            </span>
+                          ))}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      {member.hasPortal ? (
+                        <button
+                          className="text-xs px-2 py-1 rounded border transition-colors hover:bg-blue-900/20"
+                          style={{ borderColor: '#1e40af55', color: '#60a5fa' }}
+                          onClick={() => setSelectedMember(member)}
+                        >
+                          View Profile
+                        </button>
+                      ) : (
+                        <button
+                          className="text-xs px-2 py-1 rounded border transition-colors hover:bg-teal-900/20"
+                          style={{ borderColor: '#134e4a55', color: '#2dd4bf' }}
+                          onClick={() => setSelectedMember(member)}
+                        >
+                          Invite to Portal
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

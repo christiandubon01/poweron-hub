@@ -659,8 +659,13 @@ export async function getProjectWithPhases(
  * Backup-only (no portal profile) → hasPortal false, hasCostModel true (source: 'cost_model').
  * Tombstoned BackupData employees (deletedAt set) are excluded.
  * Never auto-merges on name alone — names can collide.
+ *
+ * @param showArchived When true, includes active=false profiles (shown with 'inactive' status).
+ *                     Default false — archived profiles are excluded from the active directory.
  */
-export async function getUnifiedCrewDirectory(): Promise<ServiceResult<UnifiedCrewMember[]>> {
+export async function getUnifiedCrewDirectory(
+  showArchived = false,
+): Promise<ServiceResult<UnifiedCrewMember[]>> {
   try {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user?.id) return { success: false, error: 'Not authenticated' }
@@ -669,12 +674,17 @@ export async function getUnifiedCrewDirectory(): Promise<ServiceResult<UnifiedCr
     if (!orgResult.success) return { success: false, error: orgResult.error }
     const orgId = orgResult.data
 
+    let profileQuery = from('employee_profiles')
+      .select('id, user_id, display_name, employee_role, active, accepted_at, backup_employee_id, email, employment_type, portal_access')
+      .eq('org_id', orgId)
+      .order('display_name', { ascending: true })
+
+    if (!showArchived) {
+      profileQuery = profileQuery.eq('active', true)
+    }
+
     const [profilesRes, hoursByProfile, assignmentsResult] = await Promise.all([
-      from('employee_profiles')
-        .select('id, user_id, display_name, employee_role, active, accepted_at, backup_employee_id, email, employment_type, portal_access')
-        .eq('org_id', orgId)
-        .eq('active', true)
-        .order('display_name', { ascending: true }),
+      profileQuery,
       getWeeklyHoursByProfileId(orgId),
       listOrgTaskAssignments(),
     ])
@@ -714,8 +724,11 @@ export async function getUnifiedCrewDirectory(): Promise<ServiceResult<UnifiedCr
     const result: UnifiedCrewMember[] = []
 
     for (const profile of profiles) {
-      const portalStatus: 'active' | 'pending' = profile.user_id ? 'active' : 'pending'
-      const status: UnifiedCrewMember['status'] = profile.user_id ? 'active' : 'pending_invite'
+      const isArchived = profile.active === false
+      const portalStatus: 'active' | 'pending' = (!isArchived && profile.user_id) ? 'active' : 'pending'
+      const status: UnifiedCrewMember['status'] = isArchived
+        ? 'inactive'
+        : profile.user_id ? 'active' : 'pending_invite'
       const linkedBackup = profile.backup_employee_id
         ? (backupById.get(profile.backup_employee_id) ?? null)
         : null
@@ -807,6 +820,80 @@ export async function updateEmployeeDisplayName(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Network error'
     console.error('[crewPortalService.updateEmployeeDisplayName]', err)
+    return { success: false, error: message }
+  }
+}
+
+/**
+ * Archive an employee portal record (active = false).
+ * The record is preserved; time tracking history is intact.
+ * Owner only — RLS enforces org scope via the org_id filter.
+ */
+export async function archiveEmployee(
+  profileId: string,
+): Promise<ServiceResult<void>> {
+  try {
+    const orgResult = await getOwnerOrgId()
+    if (!orgResult.success) return { success: false, error: orgResult.error }
+    const orgId = orgResult.data
+
+    const { error } = await from('employee_profiles')
+      .update({ active: false })
+      .eq('id', profileId)
+      .eq('org_id', orgId)
+
+    if (error) return { success: false, error: error.message }
+    return { success: true, data: undefined }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[crewPortalService.archiveEmployee]', err)
+    return { success: false, error: message }
+  }
+}
+
+/**
+ * Permanently delete an employee portal record.
+ *
+ * Guard: only allowed when user_id IS NULL (pending invite) OR active = false (archived).
+ * If the employee has accepted (user_id set) and is still active, returns an error
+ * directing the owner to archive first — prevents accidental loss of time tracking data.
+ */
+export async function deleteEmployeePortalRecord(
+  profileId: string,
+): Promise<ServiceResult<void>> {
+  try {
+    const orgResult = await getOwnerOrgId()
+    if (!orgResult.success) return { success: false, error: orgResult.error }
+    const orgId = orgResult.data
+
+    const { data: row, error: fetchErr } = await from('employee_profiles')
+      .select('id, user_id, active')
+      .eq('id', profileId)
+      .eq('org_id', orgId)
+      .maybeSingle()
+
+    if (fetchErr) return { success: false, error: fetchErr.message }
+    if (!row) return { success: false, error: 'Employee profile not found.' }
+
+    const isActive = row.active !== false
+    const hasAccepted = !!row.user_id
+    if (isActive && hasAccepted) {
+      return {
+        success: false,
+        error: 'Cannot delete an active portal employee. Archive them first.',
+      }
+    }
+
+    const { error: delErr } = await from('employee_profiles')
+      .delete()
+      .eq('id', profileId)
+      .eq('org_id', orgId)
+
+    if (delErr) return { success: false, error: delErr.message }
+    return { success: true, data: undefined }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[crewPortalService.deleteEmployeePortalRecord]', err)
     return { success: false, error: message }
   }
 }

@@ -16,9 +16,16 @@ import {
   Edit2,
   Check,
   X,
+  Archive,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react'
 import { type UnifiedCrewMember } from '@/services/crewPortalService'
-import { updateEmployeeDisplayName } from '@/services/crewPortalService'
+import {
+  updateEmployeeDisplayName,
+  archiveEmployee,
+  deleteEmployeePortalRecord,
+} from '@/services/crewPortalService'
 import { resendEmployeeInvite } from '@/services/employeeInviteService'
 import EmployeeInviteModal from '@/components/admin/EmployeeInviteModal'
 import { TRADE_ROLE_LABELS, TRADE_ROLE_BADGE_CLASS } from '@/services/roleService'
@@ -396,24 +403,124 @@ function EditableName({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
+// ─── Inline confirm bar ───────────────────────────────────────────────────────
+
+function ConfirmBar({
+  message,
+  confirmLabel,
+  confirmRed,
+  onConfirm,
+  onCancel,
+  busy,
+  errorMsg,
+}: {
+  message: string
+  confirmLabel: string
+  confirmRed?: boolean
+  onConfirm: () => void
+  onCancel: () => void
+  busy: boolean
+  errorMsg?: string | null
+}) {
+  return (
+    <div
+      className="rounded-lg border p-3 space-y-2"
+      style={{ backgroundColor: '#150a0a', borderColor: '#7f1d1d55' }}
+    >
+      <p className="text-xs text-gray-300 leading-relaxed">{message}</p>
+      {errorMsg && (
+        <p className="text-xs text-red-400 flex items-center gap-1">
+          <AlertTriangle size={11} />
+          {errorMsg}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <button
+          disabled={busy}
+          onClick={onConfirm}
+          className="text-xs px-3 py-1.5 rounded border disabled:opacity-50 transition-colors"
+          style={confirmRed
+            ? { borderColor: '#7f1d1d', color: '#f87171', backgroundColor: '#450a0a' }
+            : { borderColor: '#78350f55', color: '#fbbf24', backgroundColor: '#451a0344' }}
+        >
+          {busy ? 'Working…' : confirmLabel}
+        </button>
+        <button
+          disabled={busy}
+          onClick={onCancel}
+          className="text-xs px-3 py-1.5 rounded border border-gray-700 text-gray-500 hover:text-gray-300 transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Props & main component ───────────────────────────────────────────────────
+
 interface EmployeeProfilePanelProps {
   member: UnifiedCrewMember
   onBack: () => void
   onInviteSent?: () => void
+  onArchived?: () => void
+  onDeleted?: () => void
 }
 
 export default function EmployeeProfilePanel({
   member: initialMember,
   onBack,
   onInviteSent,
+  onArchived,
+  onDeleted,
 }: EmployeeProfilePanelProps) {
   const [member, setMember] = useState(initialMember)
   const [showCostModal, setShowCostModal] = useState(false)
   const [showPortalModal, setShowPortalModal] = useState(false)
   const [showInviteModal, setShowInviteModal] = useState(false)
 
+  // Archive confirm state
+  const [confirmArchive, setConfirmArchive] = useState(false)
+  const [archiving, setArchiving] = useState(false)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
+
+  // Delete confirm state
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
   function handleNameSaved(newName: string) {
     setMember((m) => ({ ...m, name: newName }))
+  }
+
+  async function handleArchive() {
+    if (!member.profileId) return
+    setArchiving(true)
+    setArchiveError(null)
+    const res = await archiveEmployee(member.profileId)
+    setArchiving(false)
+    if (res.success) {
+      setConfirmArchive(false)
+      onArchived?.()
+      onBack()
+    } else {
+      setArchiveError(res.error)
+    }
+  }
+
+  async function handleDelete() {
+    if (!member.profileId) return
+    setDeleting(true)
+    setDeleteError(null)
+    const res = await deleteEmployeePortalRecord(member.profileId)
+    setDeleting(false)
+    if (res.success) {
+      setConfirmDelete(false)
+      onDeleted?.()
+      onBack()
+    } else {
+      setDeleteError(res.error)
+    }
   }
 
   const initials = member.name
@@ -421,6 +528,9 @@ export default function EmployeeProfilePanel({
     .slice(0, 2)
     .map((p) => p.charAt(0).toUpperCase())
     .join('')
+
+  const isActiveEmployee = member.hasPortal && !!member.userId && member.status !== 'inactive'
+  const canDelete = member.hasPortal && (member.portalStatus === 'pending' || member.status === 'inactive')
 
   return (
     <div className="space-y-5">
@@ -497,6 +607,11 @@ export default function EmployeeProfilePanel({
                 Pending
               </span>
             )}
+            {member.status === 'inactive' && (
+              <span className="text-[11px] text-gray-500 bg-gray-800/40 border border-gray-700/40 px-1.5 py-0.5 rounded-full">
+                Archived
+              </span>
+            )}
           </div>
           <div className="space-y-2.5">
             <Row label="Email" value={member.email || '—'} />
@@ -557,15 +672,17 @@ export default function EmployeeProfilePanel({
       )}
 
       {/* ── SECTION 4: Actions ── */}
-      {!member.hasPortal && (
-        <div
-          className="rounded-xl border p-5"
-          style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}
-        >
-          <div className="flex items-center gap-2 mb-3">
-            <Briefcase size={13} className="text-gray-500" />
-            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</h4>
-          </div>
+      <div
+        className="rounded-xl border p-5 space-y-3"
+        style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}
+      >
+        <div className="flex items-center gap-2 mb-1">
+          <Briefcase size={13} className="text-gray-500" />
+          <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</h4>
+        </div>
+
+        {/* Invite to Portal (no portal record) */}
+        {!member.hasPortal && (
           <button
             className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border transition-colors hover:bg-teal-900/20"
             style={{ borderColor: '#134e4a55', color: '#2dd4bf' }}
@@ -574,8 +691,63 @@ export default function EmployeeProfilePanel({
             <Mail size={12} />
             Invite to Portal
           </button>
-        </div>
-      )}
+        )}
+
+        {/* Archive Employee (all portal employees that aren't already archived) */}
+        {member.hasPortal && member.status !== 'inactive' && !confirmArchive && (
+          <button
+            className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border transition-colors hover:bg-orange-900/20"
+            style={{ borderColor: '#78350f55', color: '#fb923c' }}
+            onClick={() => { setConfirmArchive(true); setConfirmDelete(false) }}
+          >
+            <Archive size={12} />
+            Archive Employee
+          </button>
+        )}
+
+        {confirmArchive && (
+          <ConfirmBar
+            message={`Archive ${member.name}? They will be hidden from the active directory but their records are preserved. You can restore them by contacting support.`}
+            confirmLabel="Archive"
+            onConfirm={() => void handleArchive()}
+            onCancel={() => { setConfirmArchive(false); setArchiveError(null) }}
+            busy={archiving}
+            errorMsg={archiveError}
+          />
+        )}
+
+        {/* Delete Portal Record (pending or archived only) */}
+        {canDelete && !confirmDelete && (
+          <button
+            className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border transition-colors hover:bg-red-900/20"
+            style={{ borderColor: '#7f1d1d55', color: '#f87171' }}
+            onClick={() => { setConfirmDelete(true); setConfirmArchive(false) }}
+          >
+            <Trash2 size={12} />
+            Delete Portal Record
+          </button>
+        )}
+
+        {/* Guard message: active employee cannot be deleted */}
+        {isActiveEmployee && !canDelete && member.hasPortal && (
+          <p className="text-xs text-gray-600 flex items-center gap-1.5 pt-1">
+            <AlertTriangle size={11} className="text-gray-700" />
+            Archive this employee before deleting their portal record.
+          </p>
+        )}
+
+        {confirmDelete && (
+          <ConfirmBar
+            message={`Permanently delete ${member.name}'s portal record? This cannot be undone. Their time tracking history will be lost.`}
+            confirmLabel="Delete"
+            confirmRed
+            onConfirm={() => void handleDelete()}
+            onCancel={() => { setConfirmDelete(false); setDeleteError(null) }}
+            busy={deleting}
+            errorMsg={deleteError}
+          />
+        )}
+      </div>
 
       {/* ── Modals ── */}
       {showCostModal && (

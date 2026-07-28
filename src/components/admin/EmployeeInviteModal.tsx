@@ -10,13 +10,15 @@
  *         employment type (full_time | part_time | subcontractor | helper).
  */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { X, Send, CheckCircle, AlertCircle, UserPlus } from 'lucide-react'
 import {
   sendEmployeeInvite,
   type EmployeeInviteRole,
   type EmployeeEmploymentType,
 } from '@/services/employeeInviteService'
+import { getOwnerOrgId } from '@/services/crewPortalService'
+import { getOrgMembers } from '@/services/roleService'
 
 interface EmployeeInviteModalProps {
   /** Called when the modal should close */
@@ -50,18 +52,56 @@ export default function EmployeeInviteModal({ onClose, initialName }: EmployeeIn
   const [state, setState]                   = useState<ModalState>('idle')
   const [errorMsg, setErrorMsg]             = useState('')
   const [sentEmail, setSentEmail]           = useState('')
+  const [emailDupError, setEmailDupError]   = useState('')
+
+  // Existing org emails loaded on mount for client-side duplicate check.
+  const existingEmails = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const orgRes = await getOwnerOrgId()
+      if (cancelled || !orgRes.success) return
+      const membersRes = await getOrgMembers(orgRes.data)
+      if (cancelled || !membersRes.success) return
+      const set = new Set<string>()
+      for (const m of membersRes.data ?? []) {
+        if (m.email) set.add(m.email.trim().toLowerCase())
+      }
+      existingEmails.current = set
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  function checkEmailDuplicate(raw: string) {
+    const clean = raw.trim().toLowerCase()
+    if (clean && existingEmails.current.has(clean)) {
+      setEmailDupError(
+        'An employee with this email already exists. View their profile in the Crew Directory.',
+      )
+    } else {
+      setEmailDupError('')
+    }
+  }
 
   // ── Validation ─────────────────────────────────────────────────────────────
   const nameValid  = displayName.trim().length > 0
   const emailValid = EMAIL_RE.test(email.trim().toLowerCase())
-  const formValid  = nameValid && emailValid
+  const formValid  = nameValid && emailValid && !emailDupError
   const isLoading  = state === 'loading'
 
   // ── Submit handler ─────────────────────────────────────────────────────────
   const handleSend = async () => {
+    // Re-check duplicate synchronously on submit (guard against paste without blur)
+    const cleanEmail = email.trim().toLowerCase()
+    if (existingEmails.current.has(cleanEmail)) {
+      setEmailDupError(
+        'An employee with this email already exists. View their profile in the Crew Directory.',
+      )
+      return
+    }
     if (!formValid || isLoading) return
 
-    const cleanEmail = email.trim().toLowerCase()
     setState('loading')
     setErrorMsg('')
 
@@ -183,14 +223,28 @@ export default function EmployeeInviteModal({ onClose, initialName }: EmployeeIn
                 <input
                   type="email"
                   value={email}
-                  onChange={e => setEmail(e.target.value)}
+                  onChange={e => {
+                    setEmail(e.target.value)
+                    if (emailDupError) setEmailDupError('')
+                  }}
+                  onBlur={e => checkEmailDuplicate(e.target.value)}
                   disabled={isLoading}
                   placeholder="employee@example.com"
                   inputMode="email"
                   autoComplete="email"
                   className={inputCls}
-                  style={{ minHeight: '44px', fontSize: '16px' }}
+                  style={{
+                    minHeight: '44px',
+                    fontSize: '16px',
+                    borderColor: emailDupError ? '#ef4444' : undefined,
+                  }}
                 />
+                {emailDupError && (
+                  <p className="mt-1.5 flex items-start gap-1.5 text-xs text-red-400">
+                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                    {emailDupError}
+                  </p>
+                )}
               </div>
 
               {/* Role */}
