@@ -13,6 +13,7 @@ import {
   FolderOpen,
   ClipboardList,
   ChevronRight,
+  BarChart2,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import {
@@ -48,6 +49,7 @@ import {
 } from '../services/crewPortalService'
 import AdminTaskDelegationPanel from '../components/admin/AdminTaskDelegationPanel'
 import OwnerSchedulePanel from '../components/admin/OwnerSchedulePanel'
+import OwnerPerformancePanel from '../components/admin/OwnerPerformancePanel'
 import EmployeeInviteModal from '../components/admin/EmployeeInviteModal'
 import { resendEmployeeInvite } from '../services/employeeInviteService'
 
@@ -563,13 +565,14 @@ function ActiveProjectsPanel({ onAssignProject }: { onAssignProject: (projectId:
 
 // ─── Owner Panel (with sub-tabs) ──────────────────────────────────────────────
 
-type OwnerTab = 'directory' | 'projects' | 'tasks' | 'schedule'
+type OwnerTab = 'directory' | 'projects' | 'tasks' | 'schedule' | 'performance'
 
 const OWNER_TABS: { id: OwnerTab; label: string; icon: React.ReactNode }[] = [
-  { id: 'directory', label: 'Crew Directory', icon: <Users size={13} /> },
-  { id: 'projects',  label: 'Active Projects', icon: <FolderOpen size={13} /> },
-  { id: 'tasks',     label: 'Task Delegation', icon: <ClipboardList size={13} /> },
-  { id: 'schedule',  label: 'Schedule',        icon: <Clock size={13} /> },
+  { id: 'directory',   label: 'Crew Directory',  icon: <Users size={13} /> },
+  { id: 'projects',    label: 'Active Projects',  icon: <FolderOpen size={13} /> },
+  { id: 'tasks',       label: 'Task Delegation',  icon: <ClipboardList size={13} /> },
+  { id: 'schedule',    label: 'Schedule',         icon: <Clock size={13} /> },
+  { id: 'performance', label: 'Performance',      icon: <BarChart2 size={13} /> },
 ]
 
 function OwnerPanel() {
@@ -605,6 +608,7 @@ function OwnerPanel() {
       {tab === 'projects' && <ActiveProjectsPanel onAssignProject={handleAssignProject} />}
       {tab === 'tasks' && <AdminTaskDelegationPanel initialProjectId={taskProjectId} />}
       {tab === 'schedule' && <OwnerSchedulePanel />}
+      {tab === 'performance' && <OwnerPerformancePanel />}
     </div>
   )
 }
