@@ -216,6 +216,10 @@ import {
   shouldShowElectricalSymbolInDesktopMainGrid,
   shouldShowElectricalSymbolInLegacyNonDesktopToolbar,
 } from './desktopElectricalToolCategories'
+import {
+  readDesktopElectricalToolsOpen,
+  writeDesktopElectricalToolsOpen,
+} from './desktopElectricalToolsPreference'
 
 export {
   ELECTRICAL_SYMBOL_OPTIONS,
@@ -2739,6 +2743,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     editingAnnotationId?: string
   } | null>(null)
   const [openDesktopElectricalCategory, setOpenDesktopElectricalCategory] = useState<string | null>(null)
+  const [desktopElectricalToolsOpen, setDesktopElectricalToolsOpen] = useState(readDesktopElectricalToolsOpen)
 
   // Per-tool numeric options
   const [eraserSize, setEraserSize] = useState(20)
@@ -4347,6 +4352,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         setOpenDesktopElectricalCategory(null)
         return
       }
+      if (desktopElectricalToolsOpen) {
+        setDesktopElectricalToolsOpen(false)
+        writeDesktopElectricalToolsOpen(false)
+        return
+      }
       // Stop paste mode first (Fix 1, req 6) — before closing editors/fullscreen.
       // Keeps copiedAnnotationTemplate so the user can resume via Paste.
       if (pasteModeActive) {
@@ -4377,7 +4387,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover, openDesktopElectricalCategory, pasteModeActive, isWireProfileManagerOpen, wireSegmentPickSession, cancelWireSegmentPicker])
+  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover, openDesktopElectricalCategory, desktopElectricalToolsOpen, pasteModeActive, isWireProfileManagerOpen, wireSegmentPickSession, cancelWireSegmentPicker])
 
   useEffect(() => {
     pendingScrollResetRef.current = true
@@ -10909,27 +10919,104 @@ const annotationPanelSizeClass =
                     onClick={(e) => { setToolMode('shape'); setOpenPopover({ tool: 'shape', anchorEl: e.currentTarget, mode: 'tool' }) }}
                     className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                   ><Shapes size={12} /> Shapes{toolMode === 'shape' && <span className="text-gray-400 text-[10px] ml-0.5">({getShapeKindLabel(shapeKind)})</span>}</button>
-                  <button
-                    onClick={() => {
-                      // Manual tool selection remains Unassigned — clear preset-only binding.
-                      clearActiveQuickAccessSession()
-                      setToolMode('shape')
-                      setShapeKind('circuit-path')
-                      setOpenPopover(null)
-                    }}
-                    className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' && shapeKind === 'circuit-path' ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                    title="Click multiple symbols/points to connect them, then Stop Circuit Path"
-                  ><Waypoints size={12} /> Circuit Path</button>
-                  <button
-                    onClick={() => {
-                      clearActiveQuickAccessSession()
-                      setToolMode('shape')
-                      setShapeKind('circuit-arc')
-                      setOpenPopover(null)
-                    }}
-                    className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' && shapeKind === 'circuit-arc' ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                    title="Like Circuit Path, but each run is drawn as a curve with its own draggable curvature handle"
-                  ><Spline size={12} /> Circuit Arc</button>
+                  {useDesktopThreePaneLayout && (
+                    <div className="col-span-2 min-w-0" data-testid="desktop-electrical-tools-menu">
+                      <button
+                        type="button"
+                        aria-expanded={desktopElectricalToolsOpen}
+                        aria-controls="desktop-electrical-tools-panel"
+                        onClick={() => {
+                          const next = !desktopElectricalToolsOpen
+                          setDesktopElectricalToolsOpen(next)
+                          writeDesktopElectricalToolsOpen(next)
+                        }}
+                        className={`w-full inline-flex items-center gap-1.5 min-h-8 text-xs px-2 py-1 rounded-md border text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${toolMode === 'shape' && (shapeKind === 'circuit-path' || shapeKind === 'circuit-arc') ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                        title="Electrical Tools"
+                        aria-label="Electrical Tools"
+                      >
+                        <ChevronDown size={12} className={`shrink-0 transition-transform ${desktopElectricalToolsOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+                        <span className="min-w-0 flex-1 whitespace-normal break-words font-medium">Electrical Tools</span>
+                        {toolMode === 'shape' && (shapeKind === 'circuit-path' || shapeKind === 'circuit-arc') && (
+                          <span className="hidden min-w-0 max-w-[45%] truncate text-[10px] text-cyan-200/80 sm:inline">
+                            {shapeKind === 'circuit-path' ? 'Circuit Path' : 'Circuit Arc'}
+                          </span>
+                        )}
+                      </button>
+                      {desktopElectricalToolsOpen && (
+                        <div id="desktop-electrical-tools-panel" className="mt-1 grid grid-cols-1 gap-1 rounded-md border border-gray-800 bg-gray-950/40 p-1">
+                          <div className="rounded-md border border-gray-800 bg-gray-900/50 p-1.5" data-testid="desktop-electrical-tools-wire-profiles">
+                            <div className="mb-1 flex items-center justify-between gap-2">
+                              <span className="text-[10px] uppercase tracking-wide text-gray-500">Wire Profiles</span>
+                              {activeQuickAccessSession && (
+                                <span className="min-w-0 truncate text-[10px] text-gray-400" title={resolveQuickAccessWireProfileDisplay(activeQuickAccessSession.wireProfileId, projectWireProfiles).label}>
+                                  {resolveQuickAccessWireProfileDisplay(activeQuickAccessSession.wireProfileId, projectWireProfiles).label}
+                                </span>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={openWireProfileManager}
+                              disabled={!blueprint?.projectId}
+                              className="w-full inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2 text-xs font-medium text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                              title={blueprint?.projectId ? 'Manage wire profiles' : 'Wire Profiles need a project id'}
+                              aria-label="Manage wire profiles"
+                            >
+                              <Cable size={12} />
+                              Wire Profiles
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              // Manual tool selection remains Unassigned — clear preset-only binding.
+                              clearActiveQuickAccessSession()
+                              setToolMode('shape')
+                              setShapeKind('circuit-path')
+                              setOpenPopover(null)
+                            }}
+                            className={`w-full inline-flex items-center gap-1.5 min-h-8 rounded-md border px-2 py-1 text-left text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${toolMode === 'shape' && shapeKind === 'circuit-path' ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                            title="Click multiple symbols/points to connect them, then Stop Circuit Path"
+                          ><Waypoints size={12} /> Circuit Path</button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              clearActiveQuickAccessSession()
+                              setToolMode('shape')
+                              setShapeKind('circuit-arc')
+                              setOpenPopover(null)
+                            }}
+                            className={`w-full inline-flex items-center gap-1.5 min-h-8 rounded-md border px-2 py-1 text-left text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${toolMode === 'shape' && shapeKind === 'circuit-arc' ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                            title="Like Circuit Path, but each run is drawn as a curve with its own draggable curvature handle"
+                          ><Spline size={12} /> Circuit Arc</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {!useDesktopThreePaneLayout && (
+                    <>
+                      <button
+                        onClick={() => {
+                          // Manual tool selection remains Unassigned — clear preset-only binding.
+                          clearActiveQuickAccessSession()
+                          setToolMode('shape')
+                          setShapeKind('circuit-path')
+                          setOpenPopover(null)
+                        }}
+                        className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' && shapeKind === 'circuit-path' ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                        title="Click multiple symbols/points to connect them, then Stop Circuit Path"
+                      ><Waypoints size={12} /> Circuit Path</button>
+                      <button
+                        onClick={() => {
+                          clearActiveQuickAccessSession()
+                          setToolMode('shape')
+                          setShapeKind('circuit-arc')
+                          setOpenPopover(null)
+                        }}
+                        className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${toolMode === 'shape' && shapeKind === 'circuit-arc' ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                        title="Like Circuit Path, but each run is drawn as a curve with its own draggable curvature handle"
+                      ><Spline size={12} /> Circuit Arc</button>
+                    </>
+                  )}
                   <button
                     type="button"
                     onClick={() => setShowCircuitMeasurementLabels((v) => !v)}
@@ -11322,17 +11409,6 @@ const annotationPanelSizeClass =
                     aria-label="Quick Access settings"
                   >
                     <Settings size={15} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={openWireProfileManager}
-                    disabled={!blueprint?.projectId}
-                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2.5 text-xs font-medium text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                    title={blueprint?.projectId ? 'Manage wire profiles' : 'Wire Profiles need a project id'}
-                    aria-label="Manage wire profiles"
-                  >
-                    <Cable size={14} />
-                    Wire Profiles
                   </button>
                 </div>
                 <div className="grid grid-cols-2 gap-1.5">
