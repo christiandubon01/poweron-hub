@@ -21,6 +21,8 @@ import {
 interface EmployeeInviteModalProps {
   /** Called when the modal should close */
   onClose: () => void
+  /** Pre-fill the display name field (e.g. from a Cost Model entry) */
+  initialName?: string
 }
 
 type ModalState = 'idle' | 'loading' | 'success' | 'error'
@@ -40,8 +42,8 @@ const EMPLOYMENT_OPTIONS: { value: EmployeeEmploymentType; label: string }[] = [
   { value: 'helper', label: 'Helper' },
 ]
 
-export default function EmployeeInviteModal({ onClose }: EmployeeInviteModalProps) {
-  const [displayName, setDisplayName]       = useState('')
+export default function EmployeeInviteModal({ onClose, initialName }: EmployeeInviteModalProps) {
+  const [displayName, setDisplayName]       = useState(initialName ?? '')
   const [email, setEmail]                   = useState('')
   const [role, setRole]                     = useState<EmployeeInviteRole>('employee')
   const [employmentType, setEmploymentType] = useState<EmployeeEmploymentType>('full_time')
