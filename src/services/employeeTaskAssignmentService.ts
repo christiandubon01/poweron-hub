@@ -32,6 +32,32 @@ export interface AssignableWorkPackage {
   blueprintTitle: string
 }
 
+export interface AssignableProject {
+  id: string
+  name: string
+  status: string
+}
+
+export interface AssignableBlueprint {
+  blueprintSetId: string
+  title: string
+  projectId: string
+  projectName: string
+}
+
+/** Active / open project statuses for the delegation picker (excludes terminal). */
+const ACTIVE_PROJECT_STATUSES = [
+  'lead',
+  'estimate',
+  'pending',
+  'approved',
+  'in_progress',
+  'on_hold',
+  'punch_list',
+  'closeout',
+] as const
+
+
 export interface EmployeeTaskAssignment {
   id: string
   org_id: string
@@ -131,6 +157,94 @@ export function listAssignableWorkPackages(backup?: unknown): AssignableWorkPack
   })
   return out
 }
+
+/**
+ * SQL projects for Step 1 of the cascading picker.
+ * Active/open only (excludes completed / canceled). Org-scoped via RLS + org_id.
+ */
+export async function listAssignableProjects(): Promise<Result<AssignableProject[]>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+
+    const { data, error } = await from('projects')
+      .select('id, name, status')
+      .in('status', [...ACTIVE_PROJECT_STATUSES])
+      .order('name', { ascending: true })
+
+    if (error) return { success: false, error: error.message }
+    return {
+      success: true,
+      data: ((data ?? []) as AssignableProject[]).map((p) => ({
+        id: String(p.id),
+        name: String(p.name || 'Untitled project'),
+        status: String(p.status || ''),
+      })),
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[employeeTaskAssignmentService.listAssignableProjects]', err)
+    return { success: false, error: message }
+  }
+}
+
+/**
+ * Blueprint documents for a SQL project id — same read pattern as Feature 1:
+ * getBackupData() → getOperationsBlueprintLibrary(backup) filtered by projectId.
+ */
+export function listBlueprintsForProject(
+  projectId: string,
+  backup?: unknown,
+): AssignableBlueprint[] {
+  const cleanProjectId = String(projectId || '').trim()
+  if (!cleanProjectId) return []
+
+  const data = backup ?? getBackupData()
+  const library = getOperationsBlueprintLibrary(data).filter(
+    (item) =>
+      String(item.projectId || '').trim() === cleanProjectId &&
+      item.status !== 'archived' &&
+      !(item as { deletedAt?: string }).deletedAt,
+  )
+
+  return library
+    .map((set) => ({
+      blueprintSetId: set.id,
+      title: set.title || set.id,
+      projectId: set.projectId,
+      projectName: set.projectName || set.projectId,
+    }))
+    .sort((a, b) => a.title.localeCompare(b.title))
+}
+
+/**
+ * Work packages for a blueprint set — getOperationsBlueprintScopeLayers(backup, setId).
+ */
+export function listWorkPackagesForBlueprint(
+  blueprintSetId: string,
+  backup?: unknown,
+): AssignableWorkPackage[] {
+  const cleanSetId = String(blueprintSetId || '').trim()
+  if (!cleanSetId) return []
+
+  const data = backup ?? getBackupData()
+  const library = getOperationsBlueprintLibrary(data)
+  const set = library.find((item) => item.id === cleanSetId)
+  const layers = getOperationsBlueprintScopeLayers(data, cleanSetId)
+
+  return layers
+    .filter((layer) => layer?.id && layer?.name)
+    .map((layer) => ({
+      workPackageId: layer.id,
+      workPackageName: layer.name,
+      projectId: set?.projectId || '',
+      projectName: set?.projectName || set?.projectId || '',
+      blueprintSetId: cleanSetId,
+      blueprintTitle: set?.title || cleanSetId,
+    }))
+    .sort((a, b) => a.workPackageName.localeCompare(b.workPackageName))
+}
+
 
 // ── Owner admin CRUD ──────────────────────────────────────────────────────────
 
