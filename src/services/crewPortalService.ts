@@ -447,13 +447,31 @@ export interface UnifiedCrewMember {
   key: string
   name: string
   employeeRole: EmployeeTradeRole | null
-  source: 'portal' | 'cost_model'
+  source: 'portal' | 'cost_model' | 'both'
   status: 'active' | 'pending_invite' | 'cost_model_only' | 'inactive'
-  hoursThisWeek: number
-  assignedProjects: string[]
+
+  // Dual registration flags
+  hasPortal: boolean
+  portalStatus: 'active' | 'pending' | null
+  hasCostModel: boolean
+
+  // Portal record details (from employee_profiles)
   profileId: string | null
   userId: string | null
+  email: string | null
+  portalRole: string | null
+  employmentType: string | null
+  portalAccess: Record<string, unknown> | null
+  acceptedAt: string | null
+
+  // Cost model record details (from BackupData employees[])
   backupEmployeeId: string | null
+  backupRole: string | null
+  backupBillRate: number | null
+  backupCostRate: number | null
+
+  hoursThisWeek: number
+  assignedProjects: string[]
 }
 
 export interface PhaseChecklistItem {
@@ -633,11 +651,14 @@ export async function getProjectWithPhases(
 }
 
 /**
- * Unified Crew Directory: merges SQL employee_profiles with BackupData employees[].
+ * Unified Crew Directory: one row per person — merges SQL employee_profiles with BackupData employees[].
  *
  * Match key: employee_profiles.backup_employee_id = BackupEmployee.id.
- * Portal-only → source: 'portal'. BackupData-only (no linked profile) → source: 'cost_model'.
+ * When matched → one row with both hasPortal and hasCostModel true (source: 'both').
+ * Portal-only (no backup link) → hasPortal true, hasCostModel false (source: 'portal').
+ * Backup-only (no portal profile) → hasPortal false, hasCostModel true (source: 'cost_model').
  * Tombstoned BackupData employees (deletedAt set) are excluded.
+ * Never auto-merges on name alone — names can collide.
  */
 export async function getUnifiedCrewDirectory(): Promise<ServiceResult<UnifiedCrewMember[]>> {
   try {
@@ -650,7 +671,7 @@ export async function getUnifiedCrewDirectory(): Promise<ServiceResult<UnifiedCr
 
     const [profilesRes, hoursByProfile, assignmentsResult] = await Promise.all([
       from('employee_profiles')
-        .select('id, user_id, display_name, employee_role, active, accepted_at, backup_employee_id')
+        .select('id, user_id, display_name, employee_role, active, accepted_at, backup_employee_id, email, employment_type, portal_access')
         .eq('org_id', orgId)
         .eq('active', true)
         .order('display_name', { ascending: true }),
@@ -668,6 +689,9 @@ export async function getUnifiedCrewDirectory(): Promise<ServiceResult<UnifiedCr
       active: boolean
       accepted_at: string | null
       backup_employee_id: string | null
+      email: string | null
+      employment_type: string | null
+      portal_access: Record<string, unknown> | null
     }>
 
     const projectsByEmployee = assignmentsResult.success
@@ -677,6 +701,11 @@ export async function getUnifiedCrewDirectory(): Promise<ServiceResult<UnifiedCr
     const backupEmployees: BackupEmployee[] = (getBackupData()?.employees ?? [])
       .filter((e: BackupEmployee) => !e.deletedAt)
 
+    const backupById = new Map<string, BackupEmployee>()
+    for (const emp of backupEmployees) {
+      backupById.set(emp.id, emp)
+    }
+
     const matchedBackupIds = new Set<string>()
     for (const p of profiles) {
       if (p.backup_employee_id) matchedBackupIds.add(p.backup_employee_id)
@@ -685,21 +714,35 @@ export async function getUnifiedCrewDirectory(): Promise<ServiceResult<UnifiedCr
     const result: UnifiedCrewMember[] = []
 
     for (const profile of profiles) {
-      const status: UnifiedCrewMember['status'] = profile.user_id
-        ? 'active'
-        : 'pending_invite'
+      const portalStatus: 'active' | 'pending' = profile.user_id ? 'active' : 'pending'
+      const status: UnifiedCrewMember['status'] = profile.user_id ? 'active' : 'pending_invite'
+      const linkedBackup = profile.backup_employee_id
+        ? (backupById.get(profile.backup_employee_id) ?? null)
+        : null
+      const hasCostModel = linkedBackup !== null
 
       result.push({
         key: `portal-${profile.id}`,
         name: profile.display_name || 'Unknown',
         employeeRole: toTradeRole(profile.employee_role),
-        source: 'portal',
+        source: hasCostModel ? 'both' : 'portal',
         status,
-        hoursThisWeek: hoursByProfile.get(profile.id) ?? 0,
-        assignedProjects: projectsByEmployee.get(profile.id) ?? [],
+        hasPortal: true,
+        portalStatus,
+        hasCostModel,
         profileId: profile.id,
         userId: profile.user_id,
+        email: profile.email,
+        portalRole: profile.employee_role,
+        employmentType: profile.employment_type,
+        portalAccess: profile.portal_access,
+        acceptedAt: profile.accepted_at,
         backupEmployeeId: profile.backup_employee_id,
+        backupRole: linkedBackup?.role ?? null,
+        backupBillRate: linkedBackup ? linkedBackup.billRate : null,
+        backupCostRate: linkedBackup ? linkedBackup.costRate : null,
+        hoursThisWeek: hoursByProfile.get(profile.id) ?? 0,
+        assignedProjects: projectsByEmployee.get(profile.id) ?? [],
       })
     }
 
@@ -711,11 +754,22 @@ export async function getUnifiedCrewDirectory(): Promise<ServiceResult<UnifiedCr
         employeeRole: null,
         source: 'cost_model',
         status: 'cost_model_only',
-        hoursThisWeek: 0,
-        assignedProjects: [],
+        hasPortal: false,
+        portalStatus: null,
+        hasCostModel: true,
         profileId: null,
         userId: null,
+        email: null,
+        portalRole: null,
+        employmentType: null,
+        portalAccess: null,
+        acceptedAt: null,
         backupEmployeeId: emp.id,
+        backupRole: emp.role,
+        backupBillRate: emp.billRate,
+        backupCostRate: emp.costRate,
+        hoursThisWeek: 0,
+        assignedProjects: [],
       })
     }
 
@@ -731,6 +785,28 @@ export async function getUnifiedCrewDirectory(): Promise<ServiceResult<UnifiedCr
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Network error'
     console.error('[crewPortalService.getUnifiedCrewDirectory]', err)
+    return { success: false, error: message }
+  }
+}
+
+/** Update display_name on employee_profiles. Owner only — RLS enforces org scope. */
+export async function updateEmployeeDisplayName(
+  profileId: string,
+  displayName: string,
+): Promise<ServiceResult<void>> {
+  try {
+    const trimmed = displayName.trim()
+    if (!trimmed) return { success: false, error: 'Name cannot be empty' }
+
+    const { error } = await from('employee_profiles')
+      .update({ display_name: trimmed })
+      .eq('id', profileId)
+
+    if (error) return { success: false, error: error.message }
+    return { success: true, data: undefined }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[crewPortalService.updateEmployeeDisplayName]', err)
     return { success: false, error: message }
   }
 }

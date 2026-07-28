@@ -51,7 +51,7 @@ import AdminTaskDelegationPanel from '../components/admin/AdminTaskDelegationPan
 import OwnerSchedulePanel from '../components/admin/OwnerSchedulePanel'
 import OwnerPerformancePanel from '../components/admin/OwnerPerformancePanel'
 import EmployeeInviteModal from '../components/admin/EmployeeInviteModal'
-import { resendEmployeeInvite } from '../services/employeeInviteService'
+import EmployeeProfilePanel, { CostModelPill, PortalPill } from '../components/admin/EmployeeProfilePanel'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -208,24 +208,9 @@ function ActiveStatusDot({ active }: { active: boolean }) {
   )
 }
 
-// ─── Source Badge ─────────────────────────────────────────────────────────────
+// ─── Directory row status dot (overall) ──────────────────────────────────────
 
-function SourceBadge({ source }: { source: UnifiedCrewMember['source'] }) {
-  if (source === 'cost_model') {
-    return (
-      <span className="text-xs font-medium px-2 py-0.5 rounded-full border text-purple-300 bg-purple-900/20 border-purple-700/40">
-        Cost Model
-      </span>
-    )
-  }
-  return (
-    <span className="text-xs font-medium px-2 py-0.5 rounded-full border text-teal-300 bg-teal-900/20 border-teal-700/40">
-      Portal
-    </span>
-  )
-}
-
-function DirectoryStatusBadge({ status }: { status: UnifiedCrewMember['status'] }) {
+function DirectoryStatusDot({ status }: { status: UnifiedCrewMember['status'] }) {
   if (status === 'active') {
     return (
       <span className="flex items-center gap-1.5">
@@ -238,7 +223,7 @@ function DirectoryStatusBadge({ status }: { status: UnifiedCrewMember['status'] 
     return (
       <span className="flex items-center gap-1.5">
         <span className="w-2 h-2 rounded-full bg-amber-500" />
-        <span className="text-xs text-amber-400">Pending Invite</span>
+        <span className="text-xs text-amber-400">Pending</span>
       </span>
     )
   }
@@ -246,7 +231,7 @@ function DirectoryStatusBadge({ status }: { status: UnifiedCrewMember['status'] 
     return (
       <span className="flex items-center gap-1.5">
         <span className="w-2 h-2 rounded-full bg-gray-600" />
-        <span className="text-xs text-gray-500">No Portal Account</span>
+        <span className="text-xs text-gray-500">No Portal</span>
       </span>
     )
   }
@@ -264,10 +249,7 @@ function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }
   const [members, setMembers] = useState<UnifiedCrewMember[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [inviteTarget, setInviteTarget] = useState<{ name: string } | null>(null)
-  const [showInvite, setShowInvite] = useState(false)
-  const [resendingId, setResendingId] = useState<string | null>(null)
-  const [resendMsg, setResendMsg] = useState<{ id: string; ok: boolean; text: string } | null>(null)
+  const [selectedMember, setSelectedMember] = useState<UnifiedCrewMember | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -284,8 +266,23 @@ function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }
 
   useEffect(() => { void load() }, [load])
 
+  // Show full profile panel when a member is selected
+  if (selectedMember) {
+    return (
+      <EmployeeProfilePanel
+        member={selectedMember}
+        onBack={() => setSelectedMember(null)}
+        onInviteSent={() => {
+          setSelectedMember(null)
+          void load()
+          onInviteClose?.()
+        }}
+      />
+    )
+  }
+
   const activeCount = members.filter((m) => m.status === 'active').length
-  const portalCount = members.filter((m) => m.source === 'portal').length
+  const portalCount = members.filter((m) => m.hasPortal).length
   const totalHours = members.reduce((s, m) => s + (m.hoursThisWeek ?? 0), 0)
 
   return (
@@ -319,7 +316,7 @@ function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }
               <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
                 <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Name</th>
                 <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Role</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Source</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Registrations</th>
                 <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Status</th>
                 <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Hours</th>
                 <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Projects</th>
@@ -330,10 +327,14 @@ function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }
               {members.map((member, idx) => (
                 <tr
                   key={member.key}
+                  className="cursor-pointer transition-colors"
                   style={{
                     backgroundColor: idx % 2 === 0 ? '#0a0b0f' : '#0c0d12',
                     borderBottom: '1px solid #1a1c23',
                   }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLTableRowElement).style.backgroundColor = '#101520' }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLTableRowElement).style.backgroundColor = idx % 2 === 0 ? '#0a0b0f' : '#0c0d12' }}
+                  onClick={() => setSelectedMember(member)}
                 >
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2.5">
@@ -351,8 +352,21 @@ function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }
                       ? <MemberRoleBadge employeeRole={member.employeeRole} fallbackRole="employee" />
                       : <span className="text-xs text-gray-600">—</span>}
                   </td>
-                  <td className="px-4 py-3"><SourceBadge source={member.source} /></td>
-                  <td className="px-4 py-3"><DirectoryStatusBadge status={member.status} /></td>
+                  {/* Registrations — two pills, click stops row propagation */}
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <CostModelPill
+                        hasCostModel={member.hasCostModel}
+                        onClick={member.hasCostModel ? () => setSelectedMember(member) : undefined}
+                      />
+                      <PortalPill
+                        hasPortal={member.hasPortal}
+                        portalStatus={member.portalStatus}
+                        onClick={() => setSelectedMember(member)}
+                      />
+                    </div>
+                  </td>
+                  <td className="px-4 py-3"><DirectoryStatusDot status={member.status} /></td>
                   <td className="px-4 py-3 text-gray-300 font-mono text-xs">
                     {member.hoursThisWeek > 0 ? `${member.hoursThisWeek}h` : '—'}
                   </td>
@@ -368,54 +382,20 @@ function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }
                         ))}
                     </div>
                   </td>
-                  <td className="px-4 py-3">
-                    {member.status === 'pending_invite' && (
-                      <div className="flex flex-col gap-1">
-                        <button
-                          className="text-xs px-2 py-1 rounded border transition-colors hover:bg-amber-900/20 disabled:opacity-50"
-                          style={{ borderColor: '#78350f55', color: '#fbbf24' }}
-                          disabled={resendingId === member.profileId || !member.profileId}
-                          onClick={async () => {
-                            if (!member.profileId) return
-                            setResendingId(member.profileId)
-                            setResendMsg(null)
-                            const res = await resendEmployeeInvite(member.profileId)
-                            setResendingId(null)
-                            setResendMsg({
-                              id: member.profileId,
-                              ok: res.success,
-                              text: res.success
-                                ? `Invite resent to ${res.email || 'employee'}`
-                                : (res.error || 'Failed to resend'),
-                            })
-                            if (res.success) {
-                              setTimeout(() => {
-                                setResendMsg(null)
-                                void load()
-                              }, 3000)
-                            }
-                          }}
-                        >
-                          {resendingId === member.profileId ? 'Sending…' : 'Resend Invite'}
-                        </button>
-                        {resendMsg?.id === member.profileId && (
-                          <span
-                            className="text-xs"
-                            style={{ color: resendMsg.ok ? '#4ade80' : '#f87171' }}
-                          >
-                            {resendMsg.text}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {member.status === 'cost_model_only' && (
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    {member.hasPortal ? (
+                      <button
+                        className="text-xs px-2 py-1 rounded border transition-colors hover:bg-blue-900/20"
+                        style={{ borderColor: '#1e40af55', color: '#60a5fa' }}
+                        onClick={() => setSelectedMember(member)}
+                      >
+                        View Profile
+                      </button>
+                    ) : (
                       <button
                         className="text-xs px-2 py-1 rounded border transition-colors hover:bg-teal-900/20"
                         style={{ borderColor: '#134e4a55', color: '#2dd4bf' }}
-                        onClick={() => {
-                          setInviteTarget({ name: member.name })
-                          setShowInvite(true)
-                        }}
+                        onClick={() => setSelectedMember(member)}
                       >
                         Invite to Portal
                       </button>
@@ -426,18 +406,6 @@ function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }
             </tbody>
           </table>
         </div>
-      )}
-
-      {showInvite && (
-        <EmployeeInviteModal
-          initialName={inviteTarget?.name ?? ''}
-          onClose={() => {
-            setShowInvite(false)
-            setInviteTarget(null)
-            void load()
-            onInviteClose?.()
-          }}
-        />
       )}
     </div>
   )

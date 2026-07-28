@@ -1,0 +1,640 @@
+// @ts-nocheck
+/**
+ * EmployeeProfilePanel — full profile view for a single crew member.
+ * CREW-DIRECTORY-PROFILE-1: dual registration status, identity, portal + cost model sections.
+ */
+
+import React, { useState } from 'react'
+import {
+  ArrowLeft,
+  DollarSign,
+  Mail,
+  User,
+  CheckCircle,
+  Clock,
+  Briefcase,
+  Edit2,
+  Check,
+  X,
+} from 'lucide-react'
+import { type UnifiedCrewMember } from '@/services/crewPortalService'
+import { updateEmployeeDisplayName } from '@/services/crewPortalService'
+import { resendEmployeeInvite } from '@/services/employeeInviteService'
+import EmployeeInviteModal from '@/components/admin/EmployeeInviteModal'
+import { TRADE_ROLE_LABELS, TRADE_ROLE_BADGE_CLASS } from '@/services/roleService'
+
+// ─── Registration pills (shared with directory row) ──────────────────────────
+
+export function CostModelPill({
+  hasCostModel,
+  onClick,
+}: {
+  hasCostModel: boolean
+  onClick?: () => void
+}) {
+  if (hasCostModel) {
+    return (
+      <button
+        onClick={onClick}
+        className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full border transition-colors hover:bg-purple-900/30"
+        style={{ color: '#c084fc', borderColor: '#7e22ce55', backgroundColor: '#3b0764aa' }}
+        title="View cost model record"
+      >
+        <DollarSign size={10} />
+        Cost Model
+      </button>
+    )
+  }
+  return (
+    <span
+      className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full border"
+      style={{ color: '#4b5563', borderColor: '#374151', backgroundColor: 'transparent' }}
+      title="Not in cost model"
+    >
+      <DollarSign size={10} />
+      Cost Model
+    </span>
+  )
+}
+
+export function PortalPill({
+  hasPortal,
+  portalStatus,
+  onClick,
+}: {
+  hasPortal: boolean
+  portalStatus: 'active' | 'pending' | null
+  onClick?: () => void
+}) {
+  if (!hasPortal) {
+    return (
+      <button
+        onClick={onClick}
+        className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full border transition-colors hover:bg-teal-900/20"
+        style={{ color: '#4b5563', borderColor: '#374151', backgroundColor: 'transparent' }}
+        title="Invite to portal"
+      >
+        <Mail size={10} />
+        Portal
+      </button>
+    )
+  }
+  if (portalStatus === 'pending') {
+    return (
+      <button
+        onClick={onClick}
+        className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full border transition-colors hover:bg-amber-900/30"
+        style={{ color: '#fbbf24', borderColor: '#78350f55', backgroundColor: '#451a0344' }}
+        title="View portal record (invite pending)"
+      >
+        <Clock size={10} />
+        Portal
+      </button>
+    )
+  }
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full border transition-colors hover:bg-teal-900/30"
+      style={{ color: '#2dd4bf', borderColor: '#134e4a55', backgroundColor: '#042f2e44' }}
+      title="View portal record"
+    >
+      <CheckCircle size={10} />
+      Portal
+    </button>
+  )
+}
+
+// ─── Cost Model modal ─────────────────────────────────────────────────────────
+
+function CostModelModal({
+  member,
+  onClose,
+}: {
+  member: UnifiedCrewMember
+  onClose: () => void
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ backgroundColor: 'rgba(0,0,0,0.65)' }}
+      onClick={onClose}
+    >
+      <div
+        className="relative rounded-xl border p-6 w-full max-w-md"
+        style={{ backgroundColor: '#0d1117', borderColor: '#1e2128', boxShadow: '0 8px 32px #000000aa' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="absolute top-4 right-4 text-gray-500 hover:text-gray-300"
+          onClick={onClose}
+        >
+          <X size={16} />
+        </button>
+
+        <div className="flex items-center gap-2 mb-5">
+          <DollarSign size={14} className="text-purple-400" />
+          <h3 className="text-sm font-semibold text-gray-200">Cost Model Record</h3>
+        </div>
+
+        <div className="space-y-3">
+          <Row label="Name" value={member.name} />
+          <Row label="Role" value={member.backupRole || '—'} />
+          <Row
+            label="Bill Rate"
+            value={member.backupBillRate != null ? `$${member.backupBillRate}/hr` : '—'}
+          />
+          <Row
+            label="Cost Rate"
+            value={member.backupCostRate != null ? `$${member.backupCostRate}/hr` : '—'}
+          />
+          <Row label="ID" value={member.backupEmployeeId || '—'} dim />
+        </div>
+
+        <p className="text-[11px] text-gray-700 mt-5">Read only — edit rates in the Team cost model.</p>
+      </div>
+    </div>
+  )
+}
+
+// ─── Portal modal ─────────────────────────────────────────────────────────────
+
+function PortalModal({
+  member,
+  onClose,
+  onResent,
+}: {
+  member: UnifiedCrewMember
+  onClose: () => void
+  onResent?: () => void
+}) {
+  const [resending, setResending] = useState(false)
+  const [resendMsg, setResendMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  async function handleResend() {
+    if (!member.profileId) return
+    setResending(true)
+    setResendMsg(null)
+    const res = await resendEmployeeInvite(member.profileId)
+    setResending(false)
+    setResendMsg({
+      ok: res.success,
+      text: res.success
+        ? `Invite resent to ${res.email || member.email || 'employee'}`
+        : (res.error || 'Failed to resend'),
+    })
+    if (res.success) onResent?.()
+  }
+
+  const joinedDate = member.acceptedAt
+    ? new Date(member.acceptedAt).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+      })
+    : null
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ backgroundColor: 'rgba(0,0,0,0.65)' }}
+      onClick={onClose}
+    >
+      <div
+        className="relative rounded-xl border p-6 w-full max-w-md"
+        style={{ backgroundColor: '#0d1117', borderColor: '#1e2128', boxShadow: '0 8px 32px #000000aa' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="absolute top-4 right-4 text-gray-500 hover:text-gray-300"
+          onClick={onClose}
+        >
+          <X size={16} />
+        </button>
+
+        <div className="flex items-center gap-2 mb-5">
+          <Mail size={14} className="text-teal-400" />
+          <h3 className="text-sm font-semibold text-gray-200">Portal Record</h3>
+          {member.portalStatus === 'pending' && (
+            <span className="text-[11px] text-amber-400 bg-amber-900/20 border border-amber-700/40 px-2 py-0.5 rounded-full">
+              Pending Invite
+            </span>
+          )}
+          {member.portalStatus === 'active' && (
+            <span className="text-[11px] text-green-400 bg-green-900/20 border border-green-700/40 px-2 py-0.5 rounded-full">
+              Active
+            </span>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <Row label="Email" value={member.email || '—'} />
+          <Row label="Portal Role" value={member.portalRole || '—'} />
+          {member.employeeRole && (
+            <Row label="Trade Role" value={TRADE_ROLE_LABELS[member.employeeRole] || member.employeeRole} />
+          )}
+          <Row label="Employment Type" value={formatEmploymentType(member.employmentType)} />
+          <Row label="Joined" value={joinedDate || '—'} />
+        </div>
+
+        {member.portalAccess && (
+          <div className="mt-4">
+            <p className="text-[11px] text-gray-500 uppercase tracking-wider mb-1.5">Portal Access</p>
+            <PortalAccessList access={member.portalAccess} />
+          </div>
+        )}
+
+        {member.portalStatus === 'pending' && member.profileId && (
+          <div className="mt-5 pt-4 border-t" style={{ borderColor: '#1e2128' }}>
+            <button
+              className="text-xs px-3 py-1.5 rounded border transition-colors hover:bg-amber-900/20 disabled:opacity-50"
+              style={{ borderColor: '#78350f55', color: '#fbbf24' }}
+              disabled={resending}
+              onClick={handleResend}
+            >
+              {resending ? 'Sending…' : 'Resend Invite'}
+            </button>
+            {resendMsg && (
+              <p
+                className="text-xs mt-2"
+                style={{ color: resendMsg.ok ? '#4ade80' : '#f87171' }}
+              >
+                {resendMsg.text}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function Row({ label, value, dim }: { label: string; value: string; dim?: boolean }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="text-xs text-gray-500 flex-shrink-0 w-28">{label}</span>
+      <span className={`text-xs font-medium text-right ${dim ? 'text-gray-600 font-mono' : 'text-gray-200'}`}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
+function formatEmploymentType(type: string | null): string {
+  if (!type) return '—'
+  const map: Record<string, string> = {
+    full_time: 'Full Time',
+    part_time: 'Part Time',
+    subcontractor: 'Subcontractor',
+    helper: 'Helper',
+  }
+  return map[type] || type
+}
+
+function PortalAccessList({ access }: { access: Record<string, unknown> | null }) {
+  const enabled = Object.entries(access ?? {})
+    .filter(([, v]) => v === true || v === 'true')
+    .map(([k]) => k.split('_').map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' '))
+
+  if (enabled.length === 0) {
+    return <span className="text-xs text-gray-700 italic">None</span>
+  }
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {enabled.map((label) => (
+        <span
+          key={label}
+          className="text-[11px] font-medium px-2 py-0.5 rounded-full border text-green-300 bg-green-900/20 border-green-700/40"
+        >
+          {label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+// ─── Editable display name ────────────────────────────────────────────────────
+
+function EditableName({
+  name,
+  profileId,
+  onSaved,
+}: {
+  name: string
+  profileId: string | null
+  onSaved: (newName: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(name)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function save() {
+    if (!profileId) return
+    setSaving(true)
+    setError(null)
+    const res = await updateEmployeeDisplayName(profileId, draft)
+    setSaving(false)
+    if (res.success) {
+      onSaved(draft.trim())
+      setEditing(false)
+    } else {
+      setError(res.error)
+    }
+  }
+
+  function cancel() {
+    setDraft(name)
+    setError(null)
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-2">
+        <input
+          className="text-xl font-bold text-gray-100 bg-transparent border-b border-green-600 focus:outline-none w-48"
+          value={draft}
+          autoFocus
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void save()
+            if (e.key === 'Escape') cancel()
+          }}
+        />
+        <button
+          onClick={() => void save()}
+          disabled={saving}
+          className="text-green-400 hover:text-green-300 disabled:opacity-40"
+          title="Save"
+        >
+          <Check size={14} />
+        </button>
+        <button onClick={cancel} className="text-gray-500 hover:text-gray-300" title="Cancel">
+          <X size={14} />
+        </button>
+        {error && <span className="text-xs text-red-400">{error}</span>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <h2 className="text-xl font-bold text-gray-100">{name}</h2>
+      {profileId && (
+        <button
+          onClick={() => { setDraft(name); setEditing(true) }}
+          className="text-gray-600 hover:text-gray-400 mt-0.5"
+          title="Edit display name"
+        >
+          <Edit2 size={13} />
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
+interface EmployeeProfilePanelProps {
+  member: UnifiedCrewMember
+  onBack: () => void
+  onInviteSent?: () => void
+}
+
+export default function EmployeeProfilePanel({
+  member: initialMember,
+  onBack,
+  onInviteSent,
+}: EmployeeProfilePanelProps) {
+  const [member, setMember] = useState(initialMember)
+  const [showCostModal, setShowCostModal] = useState(false)
+  const [showPortalModal, setShowPortalModal] = useState(false)
+  const [showInviteModal, setShowInviteModal] = useState(false)
+
+  function handleNameSaved(newName: string) {
+    setMember((m) => ({ ...m, name: newName }))
+  }
+
+  const initials = member.name
+    .split(' ')
+    .slice(0, 2)
+    .map((p) => p.charAt(0).toUpperCase())
+    .join('')
+
+  return (
+    <div className="space-y-5">
+      {/* Back link */}
+      <button
+        onClick={onBack}
+        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+      >
+        <ArrowLeft size={13} />
+        Back to Directory
+      </button>
+
+      {/* ── SECTION 1: Identity ── */}
+      <div
+        className="rounded-xl border p-5"
+        style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}
+      >
+        <div className="flex items-start gap-4">
+          {/* Avatar */}
+          <div
+            className="w-14 h-14 rounded-full flex items-center justify-center text-lg font-bold flex-shrink-0"
+            style={{ backgroundColor: '#1e3a5f', color: '#60a5fa' }}
+          >
+            {initials || <User size={20} />}
+          </div>
+
+          {/* Name + type + pills */}
+          <div className="flex-1 min-w-0">
+            <EditableName
+              name={member.name}
+              profileId={member.profileId}
+              onSaved={handleNameSaved}
+            />
+
+            {/* Employment type badge */}
+            {member.employmentType && (
+              <span
+                className="inline-block mt-1 text-[11px] font-medium px-2 py-0.5 rounded-full border"
+                style={{ color: '#9ca3af', borderColor: '#374151', backgroundColor: '#111827' }}
+              >
+                {formatEmploymentType(member.employmentType)}
+              </span>
+            )}
+
+            {/* Registration pills */}
+            <div className="flex items-center gap-2 mt-3">
+              <CostModelPill
+                hasCostModel={member.hasCostModel}
+                onClick={member.hasCostModel ? () => setShowCostModal(true) : undefined}
+              />
+              <PortalPill
+                hasPortal={member.hasPortal}
+                portalStatus={member.portalStatus}
+                onClick={member.hasPortal
+                  ? () => setShowPortalModal(true)
+                  : () => setShowInviteModal(true)}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── SECTION 2: Portal Details ── */}
+      {member.hasPortal && (
+        <div
+          className="rounded-xl border p-5"
+          style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}
+        >
+          <div className="flex items-center gap-2 mb-4">
+            <Mail size={13} className="text-teal-400" />
+            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Portal Account</h4>
+            {member.portalStatus === 'pending' && (
+              <span className="text-[11px] text-amber-400 bg-amber-900/20 border border-amber-700/30 px-1.5 py-0.5 rounded-full">
+                Pending
+              </span>
+            )}
+          </div>
+          <div className="space-y-2.5">
+            <Row label="Email" value={member.email || '—'} />
+            <Row label="Portal Role" value={member.portalRole || '—'} />
+            {member.employeeRole && (
+              <Row label="Trade Role" value={TRADE_ROLE_LABELS[member.employeeRole] || member.employeeRole} />
+            )}
+            <Row label="Employment Type" value={formatEmploymentType(member.employmentType)} />
+            <Row
+              label="Joined"
+              value={member.acceptedAt
+                ? new Date(member.acceptedAt).toLocaleDateString('en-US', {
+                    month: 'short', day: 'numeric', year: 'numeric',
+                  })
+                : '—'}
+            />
+          </div>
+
+          {member.portalAccess && (
+            <div className="mt-4 pt-4 border-t" style={{ borderColor: '#1a1c23' }}>
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider mb-2">Portal Access</p>
+              <PortalAccessList access={member.portalAccess} />
+            </div>
+          )}
+
+          {/* Resend invite (pending only) */}
+          {member.portalStatus === 'pending' && member.profileId && (
+            <div className="mt-4 pt-4 border-t" style={{ borderColor: '#1a1c23' }}>
+              <ResendInviteButton profileId={member.profileId} email={member.email} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── SECTION 3: Cost Model Details ── */}
+      {member.hasCostModel && (
+        <div
+          className="rounded-xl border p-5"
+          style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}
+        >
+          <div className="flex items-center gap-2 mb-4">
+            <DollarSign size={13} className="text-purple-400" />
+            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Cost Model</h4>
+          </div>
+          <div className="space-y-2.5">
+            <Row label="Role" value={member.backupRole || '—'} />
+            <Row
+              label="Bill Rate"
+              value={member.backupBillRate != null ? `$${member.backupBillRate}/hr` : '—'}
+            />
+            <Row
+              label="Cost Rate"
+              value={member.backupCostRate != null ? `$${member.backupCostRate}/hr` : '—'}
+            />
+          </div>
+          <p className="text-[11px] text-gray-700 mt-4">Read only — edit rates in the Team cost model.</p>
+        </div>
+      )}
+
+      {/* ── SECTION 4: Actions ── */}
+      {!member.hasPortal && (
+        <div
+          className="rounded-xl border p-5"
+          style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <Briefcase size={13} className="text-gray-500" />
+            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</h4>
+          </div>
+          <button
+            className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border transition-colors hover:bg-teal-900/20"
+            style={{ borderColor: '#134e4a55', color: '#2dd4bf' }}
+            onClick={() => setShowInviteModal(true)}
+          >
+            <Mail size={12} />
+            Invite to Portal
+          </button>
+        </div>
+      )}
+
+      {/* ── Modals ── */}
+      {showCostModal && (
+        <CostModelModal member={member} onClose={() => setShowCostModal(false)} />
+      )}
+      {showPortalModal && (
+        <PortalModal
+          member={member}
+          onClose={() => setShowPortalModal(false)}
+          onResent={() => setShowPortalModal(false)}
+        />
+      )}
+      {showInviteModal && (
+        <EmployeeInviteModal
+          initialName={member.name}
+          onClose={() => {
+            setShowInviteModal(false)
+            onInviteSent?.()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Inline resend button (used in portal section) ────────────────────────────
+
+function ResendInviteButton({ profileId, email }: { profileId: string; email: string | null }) {
+  const [sending, setSending] = useState(false)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  async function handleResend() {
+    setSending(true)
+    setMsg(null)
+    const res = await resendEmployeeInvite(profileId)
+    setSending(false)
+    setMsg({
+      ok: res.success,
+      text: res.success
+        ? `Invite resent to ${res.email || email || 'employee'}`
+        : (res.error || 'Failed to resend'),
+    })
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <button
+        className="self-start text-xs px-3 py-1.5 rounded border transition-colors hover:bg-amber-900/20 disabled:opacity-50"
+        style={{ borderColor: '#78350f55', color: '#fbbf24' }}
+        disabled={sending}
+        onClick={handleResend}
+      >
+        {sending ? 'Sending…' : 'Resend Invite'}
+      </button>
+      {msg && (
+        <p className="text-xs" style={{ color: msg.ok ? '#4ade80' : '#f87171' }}>
+          {msg.text}
+        </p>
+      )}
+    </div>
+  )
+}
