@@ -2744,6 +2744,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   } | null>(null)
   const [openDesktopElectricalCategory, setOpenDesktopElectricalCategory] = useState<string | null>(null)
   const [desktopElectricalToolsOpen, setDesktopElectricalToolsOpen] = useState(readDesktopElectricalToolsOpen)
+  const [desktopLabelOptionsOpen, setDesktopLabelOptionsOpen] = useState(false)
 
   // Per-tool numeric options
   const [eraserSize, setEraserSize] = useState(20)
@@ -4348,8 +4349,16 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         cancelWireSegmentPicker()
         return
       }
+      if (isSymbolSizePanelOpen) {
+        setIsSymbolSizePanelOpen(false)
+        return
+      }
       if (openDesktopElectricalCategory) {
         setOpenDesktopElectricalCategory(null)
+        return
+      }
+      if (desktopLabelOptionsOpen) {
+        setDesktopLabelOptionsOpen(false)
         return
       }
       if (desktopElectricalToolsOpen) {
@@ -4387,7 +4396,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover, openDesktopElectricalCategory, desktopElectricalToolsOpen, pasteModeActive, isWireProfileManagerOpen, wireSegmentPickSession, cancelWireSegmentPicker])
+  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover, openDesktopElectricalCategory, desktopLabelOptionsOpen, desktopElectricalToolsOpen, isSymbolSizePanelOpen, pasteModeActive, isWireProfileManagerOpen, wireSegmentPickSession, cancelWireSegmentPicker])
 
   useEffect(() => {
     pendingScrollResetRef.current = true
@@ -10928,6 +10937,7 @@ const annotationPanelSizeClass =
                         onClick={() => {
                           const next = !desktopElectricalToolsOpen
                           setDesktopElectricalToolsOpen(next)
+                          if (!next) setDesktopLabelOptionsOpen(false)
                           writeDesktopElectricalToolsOpen(next)
                         }}
                         className={`w-full inline-flex items-center gap-1.5 min-h-8 text-xs px-2 py-1 rounded-md border text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${toolMode === 'shape' && (shapeKind === 'circuit-path' || shapeKind === 'circuit-arc') ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
@@ -10988,6 +10998,57 @@ const annotationPanelSizeClass =
                             className={`w-full inline-flex items-center gap-1.5 min-h-8 rounded-md border px-2 py-1 text-left text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${toolMode === 'shape' && shapeKind === 'circuit-arc' ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                             title="Like Circuit Path, but each run is drawn as a curve with its own draggable curvature handle"
                           ><Spline size={12} /> Circuit Arc</button>
+                          <button
+                            type="button"
+                            onClick={() => setShowCircuitMeasurementLabels((v) => !v)}
+                            aria-pressed={showCircuitMeasurementLabels}
+                            className={`w-full inline-flex items-center gap-1.5 min-h-8 rounded-md border px-2 py-1 text-left text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${showCircuitMeasurementLabels ? 'border-gray-700 text-gray-300 hover:text-white' : 'border-amber-500 text-amber-300 bg-amber-900/20'}`}
+                            title={showCircuitMeasurementLabels ? 'Hide Circuit Path and Circuit Arc measurement labels' : 'Show Circuit Path and Circuit Arc measurement labels'}
+                          >
+                            {showCircuitMeasurementLabels ? <Eye size={12} /> : <EyeOff size={12} />}
+                            Circuit Labels {showCircuitMeasurementLabels ? 'On' : 'Off'}
+                          </button>
+                          <div className="min-w-0" data-testid="desktop-label-options-menu">
+                            <button
+                              type="button"
+                              aria-expanded={desktopLabelOptionsOpen}
+                              aria-controls="desktop-label-options-panel"
+                              onClick={() => setDesktopLabelOptionsOpen((open) => !open)}
+                              className={`w-full inline-flex items-center gap-1.5 min-h-8 rounded-md border px-2 py-1 text-left text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${isSymbolSizePanelOpen ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                              title="Label Options"
+                              aria-label="Label Options"
+                            >
+                              <ChevronDown size={12} className={`shrink-0 transition-transform ${desktopLabelOptionsOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+                              <span className="min-w-0 flex-1 whitespace-normal break-words font-medium">Label Options</span>
+                              <span className="hidden min-w-0 max-w-[45%] truncate text-[10px] text-gray-400 sm:inline">
+                                {Math.round(symbolLabelScale * 100)}%
+                              </span>
+                            </button>
+                            {desktopLabelOptionsOpen && (
+                              <div id="desktop-label-options-panel" className="mt-1 grid grid-cols-1 gap-1 rounded-md border border-gray-800 bg-gray-950/40 p-1" data-testid="desktop-label-options-panel">
+                                <button
+                                  type="button"
+                                  onClick={() => setElectricalSymbolLabelsVisible((v) => !v)}
+                                  className={`w-full inline-flex items-center justify-center gap-1.5 min-h-8 rounded-md border px-2 py-1 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${electricalSymbolLabelsVisible ? 'border-gray-700 text-gray-300 hover:text-white' : 'border-amber-500 text-amber-300 bg-amber-900/20'}`}
+                                  title={electricalSymbolLabelsVisible ? 'Hide electrical symbol corner labels' : 'Show electrical symbol corner labels'}
+                                  aria-label={electricalSymbolLabelsVisible ? 'Hide Labels' : 'Show Labels'}
+                                >
+                                  {electricalSymbolLabelsVisible ? <EyeOff size={12} /> : <Eye size={12} />}
+                                  {electricalSymbolLabelsVisible ? 'Hide Labels' : 'Show Labels'}
+                                </button>
+                                <button
+                                  ref={symbolSizeButtonRef}
+                                  type="button"
+                                  onClick={openSymbolSizePanel}
+                                  className={`w-full inline-flex items-center justify-center gap-1.5 min-h-8 rounded-md border px-2 py-1 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${isSymbolSizePanelOpen ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                                  title="Adjust symbol LABEL text size (does not resize symbols)"
+                                  aria-label={`Symbols Size (${Math.round(symbolLabelScale * 100)}%)`}
+                                >
+                                  <Type size={12} /> Symbols Size ({Math.round(symbolLabelScale * 100)}%)
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -11017,16 +11078,18 @@ const annotationPanelSizeClass =
                       ><Spline size={12} /> Circuit Arc</button>
                     </>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setShowCircuitMeasurementLabels((v) => !v)}
-                    aria-pressed={showCircuitMeasurementLabels}
-                    className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${showCircuitMeasurementLabels ? 'border-gray-700 text-gray-300 hover:text-white' : 'border-amber-500 text-amber-300 bg-amber-900/20'}`}
-                    title={showCircuitMeasurementLabels ? 'Hide Circuit Path and Circuit Arc measurement labels' : 'Show Circuit Path and Circuit Arc measurement labels'}
-                  >
-                    {showCircuitMeasurementLabels ? <Eye size={12} /> : <EyeOff size={12} />}
-                    Circuit Labels {showCircuitMeasurementLabels ? 'On' : 'Off'}
-                  </button>
+                  {!useDesktopThreePaneLayout && (
+                    <button
+                      type="button"
+                      onClick={() => setShowCircuitMeasurementLabels((v) => !v)}
+                      aria-pressed={showCircuitMeasurementLabels}
+                      className={`w-full inline-flex items-center gap-1.5 h-8 text-xs px-2 rounded-md border ${showCircuitMeasurementLabels ? 'border-gray-700 text-gray-300 hover:text-white' : 'border-amber-500 text-amber-300 bg-amber-900/20'}`}
+                      title={showCircuitMeasurementLabels ? 'Hide Circuit Path and Circuit Arc measurement labels' : 'Show Circuit Path and Circuit Arc measurement labels'}
+                    >
+                      {showCircuitMeasurementLabels ? <Eye size={12} /> : <EyeOff size={12} />}
+                      Circuit Labels {showCircuitMeasurementLabels ? 'On' : 'Off'}
+                    </button>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <div className="text-[10px] uppercase tracking-wide text-gray-500">Electrical Symbols</div>
@@ -11091,24 +11154,28 @@ const annotationPanelSizeClass =
                       </button>
                     ))}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setElectricalSymbolLabelsVisible((v) => !v)}
-                    className={`w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border ${electricalSymbolLabelsVisible ? 'border-gray-700 text-gray-300 hover:text-white' : 'border-amber-500 text-amber-300 bg-amber-900/20'}`}
-                    title={electricalSymbolLabelsVisible ? 'Hide electrical symbol corner labels' : 'Show electrical symbol corner labels'}
-                  >
-                    {electricalSymbolLabelsVisible ? <EyeOff size={12} /> : <Eye size={12} />}
-                    {electricalSymbolLabelsVisible ? 'Hide Labels' : 'Show Labels'}
-                  </button>
-                  <button
-                    ref={symbolSizeButtonRef}
-                    type="button"
-                    onClick={openSymbolSizePanel}
-                    className={`w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border ${isSymbolSizePanelOpen ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                    title="Adjust symbol LABEL text size (does not resize symbols)"
-                  >
-                    <Type size={12} /> Symbols Size ({Math.round(symbolLabelScale * 100)}%)
-                  </button>
+                  {!useDesktopThreePaneLayout && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setElectricalSymbolLabelsVisible((v) => !v)}
+                        className={`w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border ${electricalSymbolLabelsVisible ? 'border-gray-700 text-gray-300 hover:text-white' : 'border-amber-500 text-amber-300 bg-amber-900/20'}`}
+                        title={electricalSymbolLabelsVisible ? 'Hide electrical symbol corner labels' : 'Show electrical symbol corner labels'}
+                      >
+                        {electricalSymbolLabelsVisible ? <EyeOff size={12} /> : <Eye size={12} />}
+                        {electricalSymbolLabelsVisible ? 'Hide Labels' : 'Show Labels'}
+                      </button>
+                      <button
+                        ref={symbolSizeButtonRef}
+                        type="button"
+                        onClick={openSymbolSizePanel}
+                        className={`w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs px-2 rounded-md border ${isSymbolSizePanelOpen ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                        title="Adjust symbol LABEL text size (does not resize symbols)"
+                      >
+                        <Type size={12} /> Symbols Size ({Math.round(symbolLabelScale * 100)}%)
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             )}
