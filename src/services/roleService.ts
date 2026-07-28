@@ -61,6 +61,7 @@ export interface OrgMember {
   email: string
   role: EmployeePortalRole
   employeeRole: EmployeeTradeRole | null
+  portalAccess: Record<string, unknown> | null
   active: boolean
   assigned_at: string
   avatarInitials?: string
@@ -247,7 +248,7 @@ export async function getOrgMembers(
     if (!user?.id) return { success: false, error: 'Not authenticated' }
 
     const { data, error } = await from('employee_profiles')
-      .select('id, user_id, org_id, display_name, email, role, employee_role, active, invited_at, created_at, accepted_at')
+      .select('id, user_id, org_id, display_name, email, role, employee_role, portal_access, active, invited_at, created_at, accepted_at')
       .eq('org_id', orgId)
       .order('display_name', { ascending: true })
 
@@ -263,6 +264,7 @@ export async function getOrgMembers(
       email: string | null
       role: string
       employee_role: string | null
+      portal_access: Record<string, unknown> | null
       active: boolean
       invited_at: string | null
       created_at: string
@@ -274,6 +276,7 @@ export async function getOrgMembers(
       email: p.email || '',
       role: toPortalRole(p.role),
       employeeRole: toTradeRole(p.employee_role),
+      portalAccess: p.portal_access ?? null,
       active: p.active !== false,
       assigned_at: p.accepted_at || p.invited_at || p.created_at,
       avatarInitials: initials(p.display_name || 'U'),

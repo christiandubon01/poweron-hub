@@ -141,6 +141,42 @@ function RoleBadge({ role }: { role: string }) {
   )
 }
 
+const PORTAL_ACCESS_LABELS: Record<string, string> = {
+  time_tracking: 'Time Tracking',
+}
+
+function formatPortalAccessLabel(flag: string): string {
+  return PORTAL_ACCESS_LABELS[flag]
+    ?? flag
+      .split('_')
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ')
+}
+
+function PortalAccessChips({ access }: { access?: Record<string, unknown> | null }) {
+  const enabled = Object.entries(access ?? {})
+    .filter(([, value]) => value === true || value === 'true')
+    .map(([flag]) => flag)
+
+  if (enabled.length === 0) {
+    return <span className="text-xs text-gray-700 italic">None</span>
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {enabled.map((flag) => (
+        <span
+          key={flag}
+          className="text-[11px] font-medium px-2 py-0.5 rounded-full border text-green-300 bg-green-900/20 border-green-700/40"
+        >
+          {formatPortalAccessLabel(flag)}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 /** Prefer trade role badge when set; otherwise fall back to portal/system role. Never both. */
 function MemberRoleBadge({
   employeeRole,
@@ -1142,6 +1178,9 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                 <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Role</th>
                 <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Status</th>
                 {isOwner && (
+                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Portal Access</th>
+                )}
+                {isOwner && (
                   <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Access Level</th>
                 )}
                 {isOwner && (
@@ -1153,7 +1192,7 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
             <tbody>
               {(members ?? []).length === 0 ? (
                 <tr>
-                  <td colSpan={isOwner ? 7 : 5} className="px-4 py-4 text-xs text-gray-600">
+                  <td colSpan={isOwner ? 8 : 5} className="px-4 py-4 text-xs text-gray-600">
                     No employees yet. Invite to add to the roster.
                   </td>
                 </tr>
@@ -1192,6 +1231,12 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                     <td className="px-4 py-3">
                       <ActiveStatusDot active={member.active} />
                     </td>
+
+                    {isOwner && (
+                      <td className="px-4 py-3">
+                        <PortalAccessChips access={member.portalAccess} />
+                      </td>
+                    )}
 
                     {isOwner && (
                       <td className="px-4 py-3">
@@ -1318,65 +1363,95 @@ function PermissionMatrix() {
   )
 }
 
-// ─── Role Switcher ───────────────────────────────────────────────────────────
+// ─── Owner Preview Control ───────────────────────────────────────────────────
 
-const ROLE_TABS: { role: PortalViewRole; label: string; icon: React.ReactNode }[] = [
-  { role: 'owner', label: 'Owner View', icon: <Shield size={13} /> },
-  { role: 'crew', label: 'Crew View', icon: <Users size={13} /> },
-  { role: 'guest', label: 'Guest View', icon: <Eye size={13} /> },
+const PREVIEW_OPTIONS: { role: PortalViewRole; label: string }[] = [
+  { role: 'owner', label: 'Owner' },
+  { role: 'crew', label: 'Crew' },
+  { role: 'guest', label: 'Guest' },
 ]
+
+function OwnerPreviewControl({
+  previewRole,
+  onChange,
+}: {
+  previewRole: PortalViewRole
+  onChange: (role: PortalViewRole) => void
+}) {
+  return (
+    <div
+      className="flex flex-wrap items-center justify-end gap-2 rounded-lg border px-3 py-2"
+      style={{ backgroundColor: '#0d0e14', borderColor: '#1e2128' }}
+    >
+      <div className="flex items-center gap-1.5">
+        <Eye size={12} className="text-amber-400" />
+        <span className="text-xs font-medium text-gray-400">Preview as:</span>
+      </div>
+      <div className="flex items-center gap-1">
+        {PREVIEW_OPTIONS.map(({ role, label }) => (
+          <button
+            key={role}
+            onClick={() => onChange(role)}
+            className={`px-2.5 py-1 rounded-md border text-xs font-medium transition-colors ${
+              previewRole === role
+                ? 'text-amber-300 bg-amber-900/20 border-amber-700/50'
+                : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-gray-800/40'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <span className="text-[10px] uppercase tracking-wider text-gray-600">preview only</span>
+    </div>
+  )
+}
 
 // ─── Main View ───────────────────────────────────────────────────────────────
 
 export default function CrewPortal() {
-  const [activeRole, setActiveRole] = useState<PortalViewRole>('owner')
+  const authStatus = useAuthStore((s) => s.status)
+  const authRole = useAuthStore((s) => s.role)
+  const profileRole = useAuthStore((s) => s.profile?.role)
+  const [previewRole, setPreviewRole] = useState<PortalViewRole>('owner')
 
-  const roleStyles: Record<PortalViewRole, { active: string; inactive: string }> = {
-    owner: {
-      active: 'border-green-600 text-green-400 bg-green-900/20',
-      inactive: 'border-transparent text-gray-500 hover:text-gray-300 hover:bg-gray-800/30',
-    },
-    crew: {
-      active: 'border-blue-600 text-blue-400 bg-blue-900/20',
-      inactive: 'border-transparent text-gray-500 hover:text-gray-300 hover:bg-gray-800/30',
-    },
-    guest: {
-      active: 'border-gray-500 text-gray-300 bg-gray-800/30',
-      inactive: 'border-transparent text-gray-500 hover:text-gray-300 hover:bg-gray-800/30',
-    },
+  const isOwnerOrAdmin = authRole === 'owner' || profileRole === 'owner' || profileRole === 'admin'
+  const realPortalRole: PortalViewRole = isOwnerOrAdmin
+    ? 'owner'
+    : authRole === 'employee'
+      ? 'crew'
+      : 'guest'
+  const activeRole = isOwnerOrAdmin ? previewRole : realPortalRole
+
+  if (authStatus === 'loading' || authStatus === 'hydrating_user_data') {
+    return (
+      <div className="p-6 max-w-5xl mx-auto">
+        <div
+          className="rounded-xl border p-6 flex items-center gap-3 text-sm text-gray-500"
+          style={{ backgroundColor: '#0d0e14', borderColor: '#1e2128' }}
+        >
+          <div className="w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+          Loading Crew Portal...
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <div className="mb-6">
-        <h2 className="text-lg font-semibold text-gray-100 flex items-center gap-2">
-          <Users size={18} className="text-green-500" />
-          Crew Portal
-        </h2>
-        <p className="text-xs text-gray-600 mt-1">
-          Live org data from employee_profiles, task assignments, and time entries.
-        </p>
-      </div>
-
-      <div
-        className="rounded-xl border p-4 mb-6"
-        style={{ backgroundColor: '#0d0e14', borderColor: '#1e2128' }}
-      >
-        <div className="flex gap-2 mb-3">
-          {ROLE_TABS.map(({ role, label, icon }) => (
-            <button
-              key={role}
-              onClick={() => setActiveRole(role)}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg border text-sm font-medium transition-all ${
-                activeRole === role ? roleStyles[role].active : roleStyles[role].inactive
-              }`}
-              style={{ borderWidth: '1px' }}
-            >
-              {icon}
-              {label}
-            </button>
-          ))}
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-100 flex items-center gap-2">
+            <Users size={18} className="text-green-500" />
+            Crew Portal
+          </h2>
+          <p className="text-xs text-gray-600 mt-1">
+            Live org data from employee_profiles, task assignments, and time entries.
+          </p>
         </div>
+        {isOwnerOrAdmin && (
+          <OwnerPreviewControl previewRole={previewRole} onChange={setPreviewRole} />
+        )}
       </div>
 
       <div
@@ -1398,7 +1473,7 @@ export default function CrewPortal() {
 
       <PermissionMatrix />
 
-      <RoleManager isOwner={activeRole === 'owner'} />
+      {isOwnerOrAdmin && <RoleManager isOwner={isOwnerOrAdmin} />}
     </div>
   )
 }
