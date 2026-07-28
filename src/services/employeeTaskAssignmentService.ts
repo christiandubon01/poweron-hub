@@ -174,7 +174,7 @@ export async function listAssignableProjects(): Promise<Result<AssignableProject
       .filter((p) =>
         !p.deletedAt &&
         !(p as any).archived &&
-        ACTIVE_PROJECT_STATUSES.includes(p.status as any)
+        p.status === 'active' || ACTIVE_PROJECT_STATUSES.includes(p.status as any)
       )
       .map((p) => ({
         id: String(p.id),
