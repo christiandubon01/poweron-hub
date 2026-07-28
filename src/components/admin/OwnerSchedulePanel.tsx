@@ -7,57 +7,33 @@
  * Click cell → slide-out form to add/edit an item.
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
-  ChevronLeft,
-  ChevronRight,
-  Plus,
   X,
   AlertTriangle,
   Loader2,
-  Calendar,
 } from 'lucide-react'
 import {
-  getScheduleForWeek,
   createScheduleItem,
   updateScheduleItem,
   deleteScheduleItem,
   checkConflicts,
-  weekStart,
-  weekEnd,
   type ScheduleItem,
   type ScheduleStatus,
 } from '@/services/employeeScheduleService'
 import {
   getOwnerCrewRoster,
+  getActiveProjects,
   type CrewRosterMember,
+  type ActiveProject,
 } from '@/services/crewPortalService'
 import {
   listOrgTaskAssignments,
   type EmployeeTaskAssignment,
 } from '@/services/employeeTaskAssignmentService'
+import GanttPanel, { type GanttOpenAddPrefill } from '@/components/admin/GanttPanel'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-
-function addDays(isoDate: string, n: number): string {
-  const d = new Date(isoDate)
-  d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
-}
-
-function formatDate(isoDate: string): string {
-  try {
-    const [y, m, day] = isoDate.split('-').map(Number)
-    return new Date(y, m - 1, day).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-    })
-  } catch {
-    return isoDate
-  }
-}
 
 function formatTime(t: string | null): string {
   if (!t) return ''
@@ -65,43 +41,6 @@ function formatTime(t: string | null): string {
   const ampm = h >= 12 ? 'pm' : 'am'
   const hr = h % 12 || 12
   return `${hr}:${String(m).padStart(2, '0')}${ampm}`
-}
-
-function minutesToHours(min: number | null): string {
-  if (!min) return ''
-  const h = Math.floor(min / 60)
-  const m = min % 60
-  return m ? `${h}h ${m}m` : `${h}h`
-}
-
-const STATUS_CHIP: Record<ScheduleStatus, string> = {
-  scheduled:   'bg-blue-900/40 text-blue-300 border-blue-700/40',
-  in_progress: 'bg-amber-900/30 text-amber-300 border-amber-700/40',
-  done:        'bg-green-900/30 text-green-300 border-green-700/40',
-  cancelled:   'bg-gray-800/40 text-gray-500 border-gray-700/40',
-}
-
-// ── ScheduleChip ──────────────────────────────────────────────────────────────
-
-function ScheduleChip({
-  item,
-  onClick,
-}: {
-  item: ScheduleItem
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); onClick() }}
-      className={`w-full text-left text-[10px] px-1.5 py-1 rounded border leading-tight truncate transition-opacity hover:opacity-80 ${STATUS_CHIP[item.status]}`}
-    >
-      <span className="block font-medium truncate">{item.work_package_name || 'Task'}</span>
-      {item.start_time && (
-        <span className="opacity-70">{formatTime(item.start_time)}{item.end_time ? `–${formatTime(item.end_time)}` : ''}</span>
-      )}
-    </button>
-  )
 }
 
 // ── Form ──────────────────────────────────────────────────────────────────────
@@ -148,7 +87,7 @@ interface ScheduleFormPanelProps {
   employees: CrewRosterMember[]
   assignments: EmployeeTaskAssignment[]
   initial?: ScheduleItem | null
-  prefill?: { employeeProfileId: string; workDate: string }
+  prefill?: GanttOpenAddPrefill
   onSaved: () => void
   onCancel: () => void
 }
@@ -167,6 +106,7 @@ function ScheduleFormPanel({
       ...EMPTY_FORM,
       employeeProfileId: prefill?.employeeProfileId ?? '',
       workDate: prefill?.workDate ?? '',
+      projectName: prefill?.projectName ?? '',
     }
   })
   const [saving, setSaving] = useState(false)
@@ -291,7 +231,7 @@ function ScheduleFormPanel({
             style={inputStyle}
             value={form.employeeProfileId}
             onChange={set('employeeProfileId')}
-            disabled={!!prefill && !initial}
+            disabled={!!prefill?.employeeProfileId && !initial}
           >
             <option value="">— Select employee</option>
             {employees.filter((e) => e.active).map((e) => (
@@ -457,45 +397,38 @@ function ScheduleFormPanel({
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 export default function OwnerSchedulePanel() {
-  const [anchorDate, setAnchorDate] = useState<string>(() => weekStart(new Date()))
-  const [items, setItems] = useState<ScheduleItem[]>([])
-  const [employees, setEmployees] = useState<CrewRosterMember[]>([])
-  const [assignments, setAssignments] = useState<EmployeeTaskAssignment[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [employees,    setEmployees]    = useState<CrewRosterMember[]>([])
+  const [projects,     setProjects]     = useState<ActiveProject[]>([])
+  const [assignments,  setAssignments]  = useState<EmployeeTaskAssignment[]>([])
+  const [bootstrapped, setBootstrapped] = useState(false)
+  const [refreshKey,   setRefreshKey]   = useState(0)
 
   // Form state
-  const [formOpen, setFormOpen] = useState(false)
-  const [editItem, setEditItem] = useState<ScheduleItem | null>(null)
-  const [formPrefill, setFormPrefill] = useState<{ employeeProfileId: string; workDate: string } | null>(null)
+  const [formOpen,    setFormOpen]    = useState(false)
+  const [editItem,    setEditItem]    = useState<ScheduleItem | null>(null)
+  const [formPrefill, setFormPrefill] = useState<GanttOpenAddPrefill | null>(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    const [schedResult, empResult, taskResult] = await Promise.all([
-      getScheduleForWeek(anchorDate),
-      getOwnerCrewRoster(),
-      listOrgTaskAssignments(),
-    ])
+  // Boot: load employees, projects, assignments once (shared by GanttPanel + form)
+  useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      const [empResult, projResult, taskResult] = await Promise.all([
+        getOwnerCrewRoster(),
+        getActiveProjects(),
+        listOrgTaskAssignments(),
+      ])
+      if (!mounted) return
+      if (empResult.success)  setEmployees(empResult.data)
+      if (projResult.success) setProjects(projResult.data)
+      if (taskResult.success) setAssignments(taskResult.data)
+      setBootstrapped(true)
+    })()
+    return () => { mounted = false }
+  }, [])
 
-    if (schedResult.success) setItems(schedResult.data)
-    else setError(schedResult.error)
-
-    if (empResult.success) setEmployees(empResult.data)
-
-    if (taskResult.success) setAssignments(taskResult.data)
-
-    setLoading(false)
-  }, [anchorDate])
-
-  useEffect(() => { void load() }, [load])
-
-  function prevWeek() { setAnchorDate((d) => addDays(d, -7)) }
-  function nextWeek() { setAnchorDate((d) => addDays(d, 7)) }
-
-  function openAdd(employeeProfileId: string, workDate: string) {
+  function openAdd(prefill: GanttOpenAddPrefill) {
     setEditItem(null)
-    setFormPrefill({ employeeProfileId, workDate })
+    setFormPrefill(prefill)
     setFormOpen(true)
   }
 
@@ -511,137 +444,31 @@ export default function OwnerSchedulePanel() {
     setFormPrefill(null)
   }
 
-  async function handleSaved() {
+  function handleSaved() {
     closeForm()
-    await load()
+    setRefreshKey((k) => k + 1)
   }
 
-  // Build column dates
-  const colDates = Array.from({ length: 7 }, (_, i) => addDays(anchorDate, i))
-
-  // Active employees only (portal-linked)
   const activeEmployees = employees.filter((e) => e.active)
 
-  const today = new Date().toISOString().slice(0, 10)
+  if (!bootstrapped) {
+    return (
+      <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
+        <Loader2 size={14} className="animate-spin text-green-500" />
+        Loading schedule…
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">
-      {/* Week navigation */}
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={prevWeek}
-          className="p-1.5 rounded border text-gray-400 hover:text-gray-200 hover:bg-gray-800/40 transition-colors"
-          style={{ borderColor: '#2d3140' }}
-        >
-          <ChevronLeft size={14} />
-        </button>
-        <span className="text-sm font-medium text-gray-300 flex items-center gap-1.5">
-          <Calendar size={13} className="text-gray-500" />
-          {formatDate(anchorDate)} – {formatDate(addDays(anchorDate, 6))}
-        </span>
-        <button
-          type="button"
-          onClick={nextWeek}
-          className="p-1.5 rounded border text-gray-400 hover:text-gray-200 hover:bg-gray-800/40 transition-colors"
-          style={{ borderColor: '#2d3140' }}
-        >
-          <ChevronRight size={14} />
-        </button>
-      </div>
-
-      {loading && (
-        <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
-          <Loader2 size={14} className="animate-spin text-green-500" />
-          Loading schedule…
-        </div>
-      )}
-
-      {error && (
-        <p className="text-xs text-red-400 rounded border border-red-800/40 px-3 py-2 bg-red-900/20">{error}</p>
-      )}
-
-      {!loading && activeEmployees.length === 0 && (
-        <p className="text-xs text-gray-600 py-4">No active employees found. Invite employees to enable scheduling.</p>
-      )}
-
-      {!loading && activeEmployees.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border" style={{ borderColor: '#1e2128' }}>
-          <table className="w-full text-xs" style={{ minWidth: '640px' }}>
-            <thead>
-              <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
-                <th className="text-left font-semibold text-gray-500 uppercase tracking-wider px-3 py-2 w-28 sticky left-0 z-10" style={{ backgroundColor: '#0d0e14' }}>
-                  Employee
-                </th>
-                {colDates.map((date, i) => {
-                  const isToday = date === today
-                  return (
-                    <th
-                      key={date}
-                      className={`text-center font-semibold uppercase tracking-wider px-2 py-2 min-w-[110px] ${isToday ? 'text-green-400' : 'text-gray-500'}`}
-                    >
-                      <span>{DAY_LABELS[i]}</span>
-                      <span className={`block text-[10px] font-normal ${isToday ? 'text-green-500' : 'text-gray-600'}`}>{formatDate(date)}</span>
-                    </th>
-                  )
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {activeEmployees.map((emp, empIdx) => (
-                <tr
-                  key={emp.id}
-                  style={{
-                    backgroundColor: empIdx % 2 === 0 ? '#0a0b0f' : '#0c0d12',
-                    borderBottom: '1px solid #1a1c23',
-                  }}
-                >
-                  {/* Employee name */}
-                  <td className="px-3 py-2 sticky left-0 z-10 align-top" style={{ backgroundColor: empIdx % 2 === 0 ? '#0a0b0f' : '#0c0d12' }}>
-                    <div className="flex items-center gap-1.5">
-                      <div
-                        className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0"
-                        style={{ backgroundColor: '#1e3a5f', color: '#60a5fa' }}
-                      >
-                        {(emp.name || 'U').slice(0, 2).toUpperCase()}
-                      </div>
-                      <span className="text-gray-300 font-medium truncate max-w-[80px]">{emp.name}</span>
-                    </div>
-                  </td>
-
-                  {colDates.map((date) => {
-                    const cellItems = items.filter(
-                      (it) => it.employee_profile_id === emp.id && it.work_date === date,
-                    )
-                    const isToday = date === today
-                    return (
-                      <td
-                        key={date}
-                        className="px-1.5 py-1.5 align-top cursor-pointer hover:bg-white/[0.02] transition-colors"
-                        style={isToday ? { backgroundColor: 'rgba(74,222,128,0.03)' } : {}}
-                        onClick={() => openAdd(emp.id, date)}
-                      >
-                        <div className="space-y-1 min-h-[32px]">
-                          {cellItems.map((item) => (
-                            <ScheduleChip key={item.id} item={item} onClick={() => openEdit(item)} />
-                          ))}
-                          {cellItems.length === 0 && (
-                            <span className="flex items-center justify-center opacity-0 group-hover:opacity-100 text-gray-700 hover:text-gray-400">
-                              <Plus size={11} />
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <p className="text-[10px] text-gray-700">Click any cell to schedule an item. Click an existing chip to edit.</p>
+      <GanttPanel
+        employees={employees}
+        projects={projects}
+        refreshKey={refreshKey}
+        onOpenAdd={openAdd}
+        onOpenEdit={openEdit}
+      />
 
       {formOpen && (
         <div className="fixed inset-0 z-40" onClick={closeForm} aria-hidden="true">

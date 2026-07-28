@@ -279,6 +279,35 @@ export async function checkConflicts(
   }
 }
 
+export async function getScheduleForMonth(
+  monthStart: string,
+  monthEnd: string,
+): Promise<Result<ScheduleItem[]>> {
+  try {
+    const orgResult = await getOwnerOrgId()
+    if (!orgResult.success) return { success: false, error: orgResult.error }
+
+    const { data, error } = await from('employee_schedules')
+      .select('*, employee_profiles(display_name)')
+      .eq('org_id', orgResult.data)
+      .gte('work_date', toIso(monthStart))
+      .lte('work_date', toIso(monthEnd))
+      .order('work_date', { ascending: true })
+      .order('start_time', { ascending: true, nullsFirst: false })
+
+    if (error) return { success: false, error: error.message }
+
+    const items: ScheduleItem[] = (data ?? []).map((row: any) => ({
+      ...row,
+      employee_name: row.employee_profiles?.display_name ?? undefined,
+      employee_profiles: undefined,
+    }))
+    return { success: true, data: items }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Network error' }
+  }
+}
+
 // ── Employee functions (RPC path) ─────────────────────────────────────────────
 
 export async function getMySchedule(date: string): Promise<Result<ScheduleItem[]>> {
