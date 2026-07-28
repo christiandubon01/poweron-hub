@@ -51,18 +51,19 @@ export function getLedStripAppearanceMetrics(options: {
   const energized = options.energized !== false
   const offCeiling = energized ? 1 : 0.34
   const visibleOutput = output * offCeiling
+  const brightness = Math.pow(visibleOutput, 0.22)
 
   return {
     colorMode: resolveLedStripLightColorMode(options.lightColorMode),
     normalizedOutput: output,
     kelvinColor: options.kelvinColor,
-    outerStrokeWidth: Math.min(16, Math.max(9, baseStrokeWidth * (3.4 + visibleOutput * 1.4))),
-    outerOpacity: 0.035 + visibleOutput * 0.145,
-    middleStrokeWidth: Math.min(9, Math.max(5.5, baseStrokeWidth * (2.05 + visibleOutput * 0.65))),
-    middleOpacity: 0.11 + visibleOutput * 0.25,
+    outerStrokeWidth: Math.min(16, Math.max(8, baseStrokeWidth * 4.5 + visibleOutput * 12)),
+    outerOpacity: 0.04 + brightness * 0.17,
+    middleStrokeWidth: Math.min(9, Math.max(5, baseStrokeWidth * 2.75 + visibleOutput * 6)),
+    middleOpacity: 0.11 + brightness * 0.28,
     coreStrokeWidth: Math.max(2.2, baseStrokeWidth * 0.85),
-    coreOpacity: 0.28 + visibleOutput * 0.66,
-    diodeOpacity: 0.34 + visibleOutput * 0.54,
+    coreOpacity: 0.28 + brightness * 0.66,
+    diodeOpacity: 0.34 + brightness * 0.54,
     animationEnabled: options.preview === true && energized,
     animationDuration: LED_STRIP_RGB_FLOW_DURATION,
   }

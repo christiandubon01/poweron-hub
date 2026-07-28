@@ -34,6 +34,11 @@ const viewerSource = readFileSync(
   'utf8',
 )
 
+const playbackControlsSource = readFileSync(
+  join(process.cwd(), 'src/features/blueprint-animation/PackageAnimationPlaybackControls.tsx'),
+  'utf8',
+)
+
 function ledStripAnnotation(id = 'led-strip-1', points = [{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.7, y: 0.3 }]): BlueprintAnnotation {
   const meta = {
     shapeKind: 'electrical-led-strip',
@@ -136,7 +141,7 @@ describe('LED Strip lighting symbol', () => {
     expect(viewerSource).toContain("kind === 'polyline' || kind === 'circuit-path' || kind === 'circuit-arc' || kind === 'electrical-led-strip'")
     expect(viewerSource).toContain("pathType: shapeKind === 'electrical-led-strip' ? 'led-strip'")
     expect(viewerSource).toContain("closed: false")
-    expect(viewerSource).toContain("if (shapeKind !== 'electrical-led-strip') setToolMode('select')")
+    expect(viewerSource).toContain('shouldDeactivateAfterMultiPointFinalize(shapeKind)')
     expect(viewerSource).toContain("getMultiPointDraftLabel(kind: ShapeKind)")
     expect(viewerSource).toContain("if (kind === 'electrical-led-strip') return 'LED Strip'")
     expect(viewerSource).toContain("getMultiPointStopLabel(kind: ShapeKind)")
@@ -156,7 +161,8 @@ describe('LED Strip lighting symbol', () => {
     expect(helperSource).toContain('points={points}')
     expect((helperSource.match(/<polyline/g) ?? []).length).toBeGreaterThanOrEqual(4)
     expect(helperSource).not.toContain('<circle')
-    expect(helperSource).not.toContain('url(#')
+    expect(viewerSource).toContain("resolveLedStripLightColorMode(meta.lightColorMode)")
+    expect(helperSource).toContain('getLedStripAppearanceMetrics({')
     expect(helperSource).not.toContain('Z')
     expect(helperSource).toContain("strokeLinecap=\"round\"")
     expect(helperSource).toContain("strokeLinejoin=\"round\"")
@@ -165,7 +171,7 @@ describe('LED Strip lighting symbol', () => {
     const ledBranchStart = viewerSource.indexOf("const isLedStrip = kind === 'electrical-led-strip'")
     const ledBranchEnd = viewerSource.indexOf('{isCircuit && localPts.map', ledBranchStart)
     const ledBranchSource = viewerSource.slice(ledBranchStart, ledBranchEnd)
-    expect(ledBranchSource).toContain('renderLedStripPathGlowSvg(svgPts, glowMetrics, ledStripGlowVisible, borderThickness)')
+    expect(ledBranchSource).toContain('renderLedStripPathGlowSvg(svgPts, glowMetrics, ledStripGlowVisible, borderThickness, ledStripGradientId)')
     expect(ledBranchSource).not.toContain('renderLightOutputGlowSvg')
     expect(ledBranchSource).toContain("strokeWidth={18}")
     expect(ledBranchSource).toContain("pointerEvents: 'stroke'")
@@ -174,6 +180,53 @@ describe('LED Strip lighting symbol', () => {
     expect(viewerSource).toContain("const isCircuit = kind === 'circuit-path'")
     expect(viewerSource).toContain("if (isCanLightShape(a))")
     expect(viewerSource).toContain('renderLightOutputGlowSvg(glowId, glowMetrics, lightingEffectsVisible && !animationPlaybackAnnotationIds.has(a.id))')
+  })
+
+  it('uses Light Output for bounded Kelvin and RGB path appearance without touching geometry or hit testing', () => {
+    expect(viewerSource).toContain('meta.lightIntensity ?? LIGHT_OUTPUT_BASE')
+    expect(viewerSource).toContain('LIGHT_OUTPUT_MIN, LIGHT_OUTPUT_MAX')
+    expect(viewerSource).toContain('outerStrokeWidth')
+    expect(viewerSource).toContain('middleOpacity')
+    expect(viewerSource).toContain('coreOpacity')
+    expect(viewerSource).toContain('diodeOpacity')
+    expect(viewerSource).toContain('strokeWidth={18}')
+    expect(viewerSource).not.toContain('ledStripIntensity')
+    expect(viewerSource).not.toContain('glowIntensity')
+    expect(viewerSource).not.toContain('rgbIntensity')
+  })
+
+  it('adds LED Strip-only RGB Flow mode while preserving Kelvin metadata', () => {
+    expect(viewerSource).toContain("lightColorMode: resolveLedStripLightColorMode(meta.lightColorMode)")
+    expect(viewerSource).toContain("currentKind === 'electrical-led-strip' ? 'Color / Temperature' : 'Color Temperature'")
+    expect(viewerSource).toContain("data-led-strip-rgb-flow-option={selected ? 'selected' : 'available'}")
+    expect(viewerSource).toContain("persistEditAnnotationMeta({ lightColorMode: 'rgb-flow' })")
+    expect(viewerSource).toContain("persistEditAnnotationMeta(currentKind === 'electrical-led-strip' ? { lightColorMode: 'kelvin', lightKelvin: k } : { lightKelvin: k })")
+    expect(viewerSource).toContain('RGB Flow')
+    expect(viewerSource).not.toContain('lightKelvin: 0')
+    expect(viewerSource).not.toContain('lightKelvin: -1')
+    expect(viewerSource).not.toContain('lightKelvin: 9999')
+  })
+
+  it('renders RGB Flow as animated open-path SVG layers with stable per-annotation ids', () => {
+    const helperStart = viewerSource.indexOf('function renderLedStripPathGlowSvg(')
+    const helperEnd = viewerSource.indexOf('function hexWithAlpha', helperStart)
+    const helperSource = viewerSource.slice(helperStart, helperEnd)
+    expect(helperSource).toContain("appearance.colorMode === 'rgb-flow'")
+    expect(helperSource).toContain('linearGradient id={gradientId}')
+    expect(helperSource).toContain('gradientUnits="userSpaceOnUse"')
+    expect(helperSource).toContain('spreadMethod="repeat"')
+    expect(helperSource).toContain('animateTransform')
+    expect(helperSource).toContain('dur={appearance.animationDuration}')
+    expect(helperSource).toContain('data-led-strip-rgb-layer="outer"')
+    expect(helperSource).toContain('data-led-strip-rgb-layer="middle"')
+    expect(helperSource).toContain('data-led-strip-rgb-layer="core"')
+    expect(helperSource).not.toContain('<rect')
+    expect(helperSource).not.toContain('<circle')
+    expect(helperSource).not.toContain('requestAnimationFrame')
+
+    expect(viewerSource).toContain("`led-strip-rgb-${sanitizeLedStripSvgId(`${currentPage}-${a.id}`)}`")
+    expect(viewerSource).toContain("points={svgPts}")
+    expect(viewerSource).not.toContain('points={`${svgPts} ${svgPts.split')
   })
 
   it('counts once per finalized annotation and never contributes wire quantities', () => {
@@ -213,5 +266,64 @@ describe('LED Strip lighting symbol', () => {
     expect(isRouteBuilderSourceKind('electrical-led-strip')).toBe(false)
     expect(inferRouteBuilderNodeRoles('electrical-led-strip')).toEqual(['load'])
     expect(inferRouteBuilderDefaultChannel('electrical-led-strip')).toBe('generic-route')
+  })
+
+  it('keeps animation route logic isolated while giving energized RGB strips a path overlay', () => {
+    expect(viewerSource).toContain('ledStrip: {')
+    expect(viewerSource).toContain('points: ledStripPoints')
+    expect(viewerSource).toContain("gradientId: `playback-led-strip-rgb-${sanitizeLedStripSvgId(`${annotation.pageNumber}-${annotation.id}`)}`")
+    expect(playbackControlsSource).toContain('const ledStrip = (appearance as')
+    expect(playbackControlsSource).toContain("preserveAspectRatio={ledStrip ? 'none' : 'xMidYMid meet'}")
+    expect(playbackControlsSource).toContain('data-playback-led-strip-layer="outer"')
+    expect(playbackControlsSource).toContain('data-playback-led-strip-layer="middle"')
+    expect(playbackControlsSource).toContain('data-playback-led-strip-layer="core"')
+    expect(playbackControlsSource).toContain('visual.glowOpacity')
+  })
+
+  it('deactivates the LED Strip tool after Space or Finish/Stop finalization without duplicating the strip', () => {
+    const helperStart = viewerSource.indexOf('function shouldDeactivateAfterMultiPointFinalize(')
+    const helperEnd = viewerSource.indexOf('//', helperStart)
+    const helperSource = viewerSource.slice(helperStart, helperEnd)
+    expect(helperSource).toContain("return kind === 'electrical-led-strip'")
+    expect(helperSource).not.toContain("kind === 'circuit-path'")
+    expect(helperSource).not.toContain("kind === 'circuit-arc'")
+
+    const finalizeStart = viewerSource.indexOf('const finalizePathDraft = useCallback(() => {')
+    const finalizeEnd = viewerSource.indexOf('// ── Spacebar finishes a multi-point shape draft', finalizeStart)
+    const finalizeSource = viewerSource.slice(finalizeStart, finalizeEnd)
+    expect(finalizeSource).toContain('const points = [...pathDraftRef.current]')
+    expect(finalizeSource).toContain('if (points.length < 2 || !blueprint)')
+    expect(finalizeSource).toContain('const ann: BlueprintAnnotation = {')
+    expect(finalizeSource).toContain('setAllAnnotations((prev) => [...prev, ann])')
+    expect((finalizeSource.match(/setAllAnnotations\(\(prev\) => \[\.\.\.prev, ann\]\)/g) ?? []).length).toBe(1)
+    expect(finalizeSource).toContain('pathDraftRef.current = []')
+    expect(finalizeSource).toContain('setPathDraftPoints([])')
+    expect(finalizeSource).toContain('setPathCursorPx(null)')
+    expect(finalizeSource).toContain("pathType: shapeKind === 'electrical-led-strip' ? 'led-strip'")
+    expect(finalizeSource).toContain("setToolMode('select')")
+    expect(finalizeSource).toContain('clearActiveQuickAccessSession()')
+
+    const spaceStart = viewerSource.indexOf('// ── Spacebar finishes a multi-point shape draft')
+    const spaceEnd = viewerSource.indexOf('// Recomputes a Circuit Arc', spaceStart)
+    const spaceSource = viewerSource.slice(spaceStart, spaceEnd)
+    expect(spaceSource).toContain("if (e.key !== ' ' && e.code !== 'Space') return")
+    expect(spaceSource).toContain('if (pathDraftRef.current.length < 2) return')
+    expect(spaceSource).toContain('finalizePathDraft()')
+  })
+
+  it('cancels incomplete LED Strip drafts into select mode while preserving unrelated multipoint behavior', () => {
+    expect(viewerSource).toContain("const deactivateLedStrip = effectiveTool === 'shape' && shouldDeactivateAfterMultiPointFinalize(shapeKind)")
+    expect(viewerSource).toContain('pathDraftRef.current = []')
+    expect(viewerSource).toContain('setPathDraftPoints([])')
+    expect(viewerSource).toContain('setPathCursorPx(null)')
+    expect(viewerSource).toContain("if (deactivateLedStrip) setToolMode('select')")
+
+    const stopPillStart = viewerSource.indexOf('{/* Circuit Path / Polyline active-mode Stop button')
+    const stopPillEnd = viewerSource.indexOf('{/* Multi-Point Measure (Perimeter) active-mode Stop button', stopPillStart)
+    const stopPillSource = viewerSource.slice(stopPillStart, stopPillEnd)
+    expect(stopPillSource).toContain('onClick={finalizePathDraft}')
+    expect(stopPillSource).toContain('disabled={pathDraftPoints.length < 2}')
+    expect(stopPillSource).toContain('if (shouldDeactivateAfterMultiPointFinalize(shapeKind)) setToolMode(\'select\')')
+    expect(stopPillSource).not.toContain("setOpenDesktopElectricalCategory(null)")
   })
 })

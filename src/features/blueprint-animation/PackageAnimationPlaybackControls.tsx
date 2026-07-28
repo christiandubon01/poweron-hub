@@ -22,6 +22,7 @@ import {
   resolvePlaybackPathState,
   type PlaybackRouteEdgeAppearance,
 } from './playbackPathAppearance'
+import { getLedStripAppearanceMetrics } from '@/components/blueprint/ledStripAppearance'
 
 type PlaybackStatus = 'idle' | 'playing' | 'paused' | 'complete'
 
@@ -350,6 +351,16 @@ export function PackageAnimationPlaybackControls({
             if (visual.kind === 'none') return null
             const annotationId = prepared.nodeAnnotationIds.get(device.nodeId)
             const appearance = annotationId ? fixtureAppearances?.[annotationId] : undefined
+            const ledStrip = (appearance as (PlaybackFixtureAppearance & {
+              ledStrip?: {
+                points: string
+                gradientId: string
+                lightIntensity: unknown
+                lightColorMode: unknown
+                kelvinColor: string
+                baseStrokeWidth: number
+              }
+            }) | undefined)?.ledStrip
             const ringColor = DEVICE_RING_COLORS[visual.kind]
             const isPulse = visual.kind === 'source-pulse'
             // The source pulse expands as it fades; every other ring grows into its treatment.
@@ -377,27 +388,62 @@ export function PackageAnimationPlaybackControls({
                       viewBox="0 0 100 100"
                       width="100%"
                       height="100%"
-                      preserveAspectRatio="xMidYMid meet"
+                      preserveAspectRatio={ledStrip ? 'none' : 'xMidYMid meet'}
                     >
-                      <defs>
-                        <radialGradient id={`playback-glow-${device.nodeId}`} cx="50%" cy="50%" r="50%">
-                          {GLOW_STOPS.map((stop) => (
-                            <stop
-                              key={stop.offset}
-                              offset={stop.offset}
-                              stopColor={appearance.glowColor}
-                              stopOpacity={stop.opacity * visual.glowOpacity}
-                            />
-                          ))}
-                        </radialGradient>
-                      </defs>
-                      <circle
-                        cx={50}
-                        cy={50}
-                        r={appearance.glowRadius * visual.glowRadiusFraction}
-                        fill={`url(#playback-glow-${device.nodeId})`}
-                        stroke="none"
-                      />
+                      {ledStrip ? (() => {
+                        const ledMetrics = getLedStripAppearanceMetrics({
+                          lightIntensity: ledStrip.lightIntensity,
+                          lightColorMode: ledStrip.lightColorMode,
+                          kelvinColor: ledStrip.kelvinColor,
+                          baseStrokeWidth: ledStrip.baseStrokeWidth,
+                          energized: true,
+                          preview: true,
+                        })
+                        const stroke = ledMetrics.colorMode === 'rgb-flow' ? `url(#${ledStrip.gradientId})` : ledMetrics.kelvinColor
+                        return (
+                          <>
+                            {ledMetrics.colorMode === 'rgb-flow' && (
+                              <defs>
+                                <linearGradient id={ledStrip.gradientId} gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="0" spreadMethod="repeat">
+                                  <stop offset="0%" stopColor="#ff1744" />
+                                  <stop offset="16%" stopColor="#ff9100" />
+                                  <stop offset="32%" stopColor="#ffea00" />
+                                  <stop offset="48%" stopColor="#00e676" />
+                                  <stop offset="64%" stopColor="#00b0ff" />
+                                  <stop offset="82%" stopColor="#651fff" />
+                                  <stop offset="100%" stopColor="#ff1744" />
+                                  <animateTransform attributeName="gradientTransform" type="translate" from="0 0" to="100 0" dur={ledMetrics.animationDuration} repeatCount="indefinite" />
+                                </linearGradient>
+                              </defs>
+                            )}
+                            <polyline points={ledStrip.points} fill="none" stroke={stroke} strokeWidth={ledMetrics.outerStrokeWidth} strokeLinecap="round" strokeLinejoin="round" opacity={ledMetrics.outerOpacity * visual.glowOpacity} vectorEffect="non-scaling-stroke" style={{ pointerEvents: 'none' }} data-playback-led-strip-layer="outer" />
+                            <polyline points={ledStrip.points} fill="none" stroke={stroke} strokeWidth={ledMetrics.middleStrokeWidth} strokeLinecap="round" strokeLinejoin="round" opacity={ledMetrics.middleOpacity * visual.glowOpacity} vectorEffect="non-scaling-stroke" style={{ pointerEvents: 'none' }} data-playback-led-strip-layer="middle" />
+                            <polyline points={ledStrip.points} fill="none" stroke={ledMetrics.colorMode === 'rgb-flow' ? stroke : '#fff7ad'} strokeWidth={ledMetrics.coreStrokeWidth} strokeLinecap="round" strokeLinejoin="round" opacity={ledMetrics.coreOpacity * visual.glowOpacity} vectorEffect="non-scaling-stroke" style={{ pointerEvents: 'none' }} data-playback-led-strip-layer="core" />
+                          </>
+                        )
+                      })() : (
+                        <>
+                          <defs>
+                            <radialGradient id={`playback-glow-${device.nodeId}`} cx="50%" cy="50%" r="50%">
+                              {GLOW_STOPS.map((stop) => (
+                                <stop
+                                  key={stop.offset}
+                                  offset={stop.offset}
+                                  stopColor={appearance.glowColor}
+                                  stopOpacity={stop.opacity * visual.glowOpacity}
+                                />
+                              ))}
+                            </radialGradient>
+                          </defs>
+                          <circle
+                            cx={50}
+                            cy={50}
+                            r={appearance.glowRadius * visual.glowRadiusFraction}
+                            fill={`url(#playback-glow-${device.nodeId})`}
+                            stroke="none"
+                          />
+                        </>
+                      )}
                     </svg>
                   </div>
                 )}

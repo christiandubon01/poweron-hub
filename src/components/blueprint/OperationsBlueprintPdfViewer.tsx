@@ -70,6 +70,7 @@ import {
 import { getBackupData } from '@/services/backupDataService'
 import { setDirtyScope } from '@/services/liveCloudRefreshService'
 import { createAnnotationMutationCoordinator, type AnnotationMutationCoordinator } from './annotationMutationCoordinator'
+import { getLedStripAppearanceMetrics, resolveLedStripLightColorMode, sanitizeLedStripSvgId } from './ledStripAppearance'
 import { ToolPopover, ColorRow, Stepper, LabeledSelect, ToggleRow } from './ToolPopover'
 import { useAuth } from '@/hooks/useAuth'
 import { useRemoteDataRefresh } from '@/hooks/useRemoteDataRefresh'
@@ -784,6 +785,10 @@ function getMultiPointStopLabel(kind: ShapeKind) {
   return 'Stop Drawing'
 }
 
+function shouldDeactivateAfterMultiPointFinalize(kind: ShapeKind) {
+  return kind === 'electrical-led-strip'
+}
+
 // Ã¢â€â‚¬Ã¢â€â‚¬ Measurement & calibration types Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 type CalibrationUnit = 'ft' | 'm' | 'in' | 'cm' | 'mm'
 type CalibrationStatus = 'none' | 'pending' | 'saved'
@@ -1386,6 +1391,8 @@ function getLightOutputGlowMetrics(shapeKind: ShapeKind, meta: Record<string, an
   return {
     cx: 50,
     cy: 50,
+    lightIntensity,
+    lightColorMode: resolveLedStripLightColorMode(meta.lightColorMode),
     outputOverlayR: fixtureRefR * lightIntensity,
     kelvinColor: getLightKelvinColor(meta.lightKelvin ?? DEFAULT_CAN_LIGHT_KELVIN),
   }
@@ -1423,21 +1430,70 @@ function renderLedStripPathGlowSvg(
   metrics: ReturnType<typeof getLightOutputGlowMetrics>,
   visible: boolean,
   baseStrokeWidth: number,
+  gradientId: string,
 ) {
-  const coreWidth = Math.max(2.2, baseStrokeWidth * 0.85)
-  if (!visible) {
+  const appearance = getLedStripAppearanceMetrics({
+    lightIntensity: metrics.lightIntensity,
+    lightColorMode: metrics.lightColorMode,
+    kelvinColor: metrics.kelvinColor,
+    baseStrokeWidth,
+    energized: visible,
+    preview: visible,
+  })
+  if (appearance.colorMode === 'rgb-flow') {
     return (
-      <polyline
-        points={points}
-        fill="none"
-        stroke={metrics.kelvinColor}
-        strokeWidth={coreWidth}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        opacity={0.24}
-        vectorEffect="non-scaling-stroke"
-        style={{ pointerEvents: 'none' }}
-      />
+      <>
+        <defs>
+          <linearGradient id={gradientId} gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="0" spreadMethod="repeat">
+            <stop offset="0%" stopColor="#ff1744" />
+            <stop offset="16%" stopColor="#ff9100" />
+            <stop offset="32%" stopColor="#ffea00" />
+            <stop offset="48%" stopColor="#00e676" />
+            <stop offset="64%" stopColor="#00b0ff" />
+            <stop offset="82%" stopColor="#651fff" />
+            <stop offset="100%" stopColor="#ff1744" />
+            {appearance.animationEnabled && (
+              <animateTransform attributeName="gradientTransform" type="translate" from="0 0" to="100 0" dur={appearance.animationDuration} repeatCount="indefinite" />
+            )}
+          </linearGradient>
+        </defs>
+        <polyline
+          points={points}
+          fill="none"
+          stroke={`url(#${gradientId})`}
+          strokeWidth={appearance.outerStrokeWidth}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity={appearance.outerOpacity}
+          vectorEffect="non-scaling-stroke"
+          style={{ pointerEvents: 'none' }}
+          data-led-strip-rgb-layer="outer"
+        />
+        <polyline
+          points={points}
+          fill="none"
+          stroke={`url(#${gradientId})`}
+          strokeWidth={appearance.middleStrokeWidth}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity={appearance.middleOpacity}
+          vectorEffect="non-scaling-stroke"
+          style={{ pointerEvents: 'none' }}
+          data-led-strip-rgb-layer="middle"
+        />
+        <polyline
+          points={points}
+          fill="none"
+          stroke={`url(#${gradientId})`}
+          strokeWidth={appearance.coreStrokeWidth}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity={appearance.coreOpacity}
+          vectorEffect="non-scaling-stroke"
+          style={{ pointerEvents: 'none' }}
+          data-led-strip-rgb-layer="core"
+        />
+      </>
     )
   }
   return (
@@ -1445,22 +1501,22 @@ function renderLedStripPathGlowSvg(
       <polyline
         points={points}
         fill="none"
-        stroke={metrics.kelvinColor}
-        strokeWidth={Math.max(12, baseStrokeWidth * 4.8)}
+        stroke={appearance.kelvinColor}
+        strokeWidth={appearance.outerStrokeWidth}
         strokeLinecap="round"
         strokeLinejoin="round"
-        opacity={0.16}
+        opacity={appearance.outerOpacity}
         vectorEffect="non-scaling-stroke"
         style={{ pointerEvents: 'none' }}
       />
       <polyline
         points={points}
         fill="none"
-        stroke={metrics.kelvinColor}
-        strokeWidth={Math.max(7, baseStrokeWidth * 2.7)}
+        stroke={appearance.kelvinColor}
+        strokeWidth={appearance.middleStrokeWidth}
         strokeLinecap="round"
         strokeLinejoin="round"
-        opacity={0.34}
+        opacity={appearance.middleOpacity}
         vectorEffect="non-scaling-stroke"
         style={{ pointerEvents: 'none' }}
       />
@@ -1468,10 +1524,10 @@ function renderLedStripPathGlowSvg(
         points={points}
         fill="none"
         stroke="#fff7ad"
-        strokeWidth={coreWidth}
+        strokeWidth={appearance.coreStrokeWidth}
         strokeLinecap="round"
         strokeLinejoin="round"
-        opacity={0.92}
+        opacity={appearance.coreOpacity}
         vectorEffect="non-scaling-stroke"
         style={{ pointerEvents: 'none' }}
       />
@@ -3432,6 +3488,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        const deactivateLedStrip = effectiveTool === 'shape' && shouldDeactivateAfterMultiPointFinalize(shapeKind)
         measureDraftRef.current = []
         setMeasureDraftPoints([])
         setMeasureCursorPx(null)
@@ -3444,6 +3501,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         pathDraftRef.current = []
         setPathDraftPoints([])
         setPathCursorPx(null)
+        if (deactivateLedStrip) setToolMode('select')
         clearAlignmentGuides()
       }
       // BLUEPRINT-6N — finalize the Multi-Point / Perimeter draft. Enter (existing) and
@@ -3474,7 +3532,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [effectiveTool, calibrateInput, clearAlignmentGuides])
+  }, [effectiveTool, shapeKind, calibrateInput, clearAlignmentGuides])
 
   // Declared before the keyboard effect below so it is initialized before that effect's
   // dependency array is evaluated during render (avoids a const temporal-dead-zone crash).
@@ -4516,10 +4574,29 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       const meta = getAnnotationMeta(annotation)
       if (!isLightOutputShapeKind(meta.shapeKind)) return
       const metrics = getLightOutputGlowMetrics(meta.shapeKind, meta)
+      const isLedStrip = meta.shapeKind === 'electrical-led-strip'
+      const ledStripPoints = isLedStrip && Array.isArray(meta.points) && hasFinitePointGeometry(meta.points, annotation.rect as any)
+        ? meta.points.map((point: { x: number; y: number }) => {
+          const rect = annotation.rect as any
+          const pw = Math.max(rect.w, 0.0001)
+          const ph = Math.max(rect.h, 0.0001)
+          return `${((point.x - rect.x) / pw) * 100},${((point.y - rect.y) / ph) * 100}`
+        }).join(' ')
+        : ''
       appearances[annotation.id] = {
         rect: clampRectToPage(annotation.rect as any),
         glowRadius: metrics.outputOverlayR,
         glowColor: metrics.kelvinColor,
+        ...(isLedStrip && ledStripPoints ? {
+          ledStrip: {
+            points: ledStripPoints,
+            gradientId: `playback-led-strip-rgb-${sanitizeLedStripSvgId(`${annotation.pageNumber}-${annotation.id}`)}`,
+            lightIntensity: metrics.lightIntensity,
+            lightColorMode: metrics.lightColorMode,
+            kelvinColor: metrics.kelvinColor,
+            baseStrokeWidth: Number(meta.borderThickness ?? 2) || 2,
+          },
+        } : {}),
       }
     })
     return appearances
@@ -6398,10 +6475,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // silently discards the draft if fewer than 2 points were placed.
   const finalizePathDraft = useCallback(() => {
     const points = [...pathDraftRef.current]
-    pathDraftRef.current = []
-    setPathDraftPoints([])
-    setPathCursorPx(null)
     if (points.length < 2 || !blueprint) {
+      pathDraftRef.current = []
+      setPathDraftPoints([])
+      setPathCursorPx(null)
       setToolMode('select')
       return
     }
@@ -6508,9 +6585,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       createdAt: now,
       updatedAt: now,
     } as BlueprintAnnotation
+    pathDraftRef.current = []
+    setPathDraftPoints([])
+    setPathCursorPx(null)
     setAllAnnotations((prev) => [...prev, ann])
     setFocusedAnnotationId(ann.id)
-    if (shapeKind !== 'electrical-led-strip') setToolMode('select')
+    setToolMode('select')
     clearActiveQuickAccessSession()
     void persistAnnotation(ann)
   }, [blueprint, currentPage, shapeKind, shapeOptions, persistAnnotation, showTransientSyncNotice, getPageSizeInches, getEffectiveCalibrationForPage, displaySize.w, displaySize.h, activeQuickAccessSession, clearActiveQuickAccessSession])
@@ -9737,15 +9817,15 @@ const annotationPanelSizeClass =
                 {/* Color temperature (Kelvin) — tints the output overlay only; size/intensity
                     stays on Light Output. Discrete options persist + update the overlay live.
                     No lumen numbers. Default 3000K when unset (Fix 2). */}
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Color Temperature</div>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>{currentKind === 'electrical-led-strip' ? 'Color / Temperature' : 'Color Temperature'}</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {CAN_LIGHT_KELVIN_OPTIONS.map((k) => {
-                    const selected = Number(eMeta.lightKelvin ?? DEFAULT_CAN_LIGHT_KELVIN) === k
+                    const selected = (currentKind !== 'electrical-led-strip' || resolveLedStripLightColorMode(eMeta.lightColorMode) === 'kelvin') && Number(eMeta.lightKelvin ?? DEFAULT_CAN_LIGHT_KELVIN) === k
                     return (
                       <button
                         key={k}
                         type="button"
-                        onClick={() => persistEditAnnotationMeta({ lightKelvin: k })}
+                        onClick={() => persistEditAnnotationMeta(currentKind === 'electrical-led-strip' ? { lightColorMode: 'kelvin', lightKelvin: k } : { lightKelvin: k })}
                         title={`${k}K color temperature`}
                         style={{
                           display: 'inline-flex', alignItems: 'center', gap: 5,
@@ -9761,6 +9841,29 @@ const annotationPanelSizeClass =
                       </button>
                     )
                   })}
+                  {currentKind === 'electrical-led-strip' && (() => {
+                    const selected = resolveLedStripLightColorMode(eMeta.lightColorMode) === 'rgb-flow'
+                    return (
+                      <button
+                        key="rgb-flow"
+                        type="button"
+                        onClick={() => persistEditAnnotationMeta({ lightColorMode: 'rgb-flow' })}
+                        title="RGB Flow"
+                        data-led-strip-rgb-flow-option={selected ? 'selected' : 'available'}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 5,
+                          padding: '4px 8px', borderRadius: 6, cursor: 'pointer',
+                          border: selected ? '1px solid rgba(96,165,250,0.9)' : '1px solid rgba(255,255,255,0.12)',
+                          background: selected ? 'linear-gradient(90deg, rgba(239,68,68,0.28), rgba(245,158,11,0.24), rgba(34,197,94,0.24), rgba(59,130,246,0.28))' : 'rgba(255,255,255,0.05)',
+                          color: selected ? 'rgba(255,255,255,1)' : 'rgba(255,255,255,0.8)',
+                          fontSize: 11,
+                        }}
+                      >
+                        <span style={{ width: 28, height: 10, borderRadius: 999, background: 'linear-gradient(90deg, #ff1744, #ffea00, #00e676, #00b0ff, #651fff)', border: '1px solid rgba(0,0,0,0.35)', flexShrink: 0 }} />
+                        RGB Flow
+                      </button>
+                    )
+                  })()}
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>
                   <span>Warm</span><span>Neutral</span><span>Cool</span>
@@ -10187,6 +10290,7 @@ const annotationPanelSizeClass =
                 pathDraftRef.current = []
                 setPathDraftPoints([])
                 setPathCursorPx(null)
+                if (shouldDeactivateAfterMultiPointFinalize(shapeKind)) setToolMode('select')
               }}
               className="inline-flex items-center gap-1 rounded-full border border-gray-600 px-2.5 py-1.5 text-xs text-gray-300 hover:bg-white/5"
             >
@@ -11827,14 +11931,15 @@ const annotationPanelSizeClass =
                             const isLedStrip = kind === 'electrical-led-strip'
                             const glowMetrics = isLedStrip ? getLightOutputGlowMetrics(kind, meta) : null
                             const ledStripGlowVisible = lightingEffectsVisible && !animationPlaybackAnnotationIds.has(a.id)
+                            const ledStripGradientId = isLedStrip ? `led-strip-rgb-${sanitizeLedStripSvgId(`${currentPage}-${a.id}`)}` : ''
                             return (
                               <div key={a.id} data-annotation-id={a.id} className={`absolute group ${isFocused ? 'ring-2 ring-white/80' : ''}`} style={{ left, top, width, height }} onPointerDown={isLedStrip ? undefined : selectAnnotation} onClick={isLedStrip ? undefined : selectAnnotation}>
                                 <svg className="absolute inset-0 overflow-visible" viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none">
                                   {isLedStrip ? (
                                     <>
-                                      {glowMetrics && renderLedStripPathGlowSvg(svgPts, glowMetrics, ledStripGlowVisible, borderThickness)}
+                                      {glowMetrics && renderLedStripPathGlowSvg(svgPts, glowMetrics, ledStripGlowVisible, borderThickness, ledStripGradientId)}
                                       <polyline points={svgPts} fill="none" stroke={borderColor} strokeWidth={Math.max(4, borderThickness * 1.7)} strokeLinecap="round" strokeLinejoin="round" opacity={0.82} vectorEffect="non-scaling-stroke" style={{ pointerEvents: 'none' }} />
-                                      <polyline points={svgPts} fill="none" stroke="#fff7ad" strokeWidth={Math.max(1.2, borderThickness * 0.55)} strokeLinecap="round" strokeLinejoin="round" opacity={0.72} strokeDasharray="1 9" vectorEffect="non-scaling-stroke" style={{ pointerEvents: 'none' }} />
+                                      <polyline points={svgPts} fill="none" stroke="#fff7ad" strokeWidth={Math.max(1.2, borderThickness * 0.55)} strokeLinecap="round" strokeLinejoin="round" opacity={glowMetrics ? getLedStripAppearanceMetrics({ lightIntensity: glowMetrics.lightIntensity, lightColorMode: glowMetrics.lightColorMode, kelvinColor: glowMetrics.kelvinColor, baseStrokeWidth: borderThickness, energized: ledStripGlowVisible }).diodeOpacity : 0.72} strokeDasharray="1 9" vectorEffect="non-scaling-stroke" style={{ pointerEvents: 'none' }} />
                                       <polyline data-annotation-id={a.id} points={svgPts} fill="none" stroke="transparent" strokeWidth={18} strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'stroke', cursor: isLayoutEditing ? 'move' : 'pointer', touchAction: 'none' }} onPointerDown={isLayoutEditing ? (e) => startAnnotationLayoutDrag(e as any, a, 'move') : selectAnnotation as any} onClick={selectAnnotation as any} />
                                     </>
                                   ) : (
