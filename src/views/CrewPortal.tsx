@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Users,
   Clock,
@@ -10,6 +10,9 @@ import {
   Shield,
   UserPlus,
   ChevronDown,
+  FolderOpen,
+  ClipboardList,
+  ChevronRight,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import {
@@ -34,10 +37,16 @@ import {
   getCrewSelfView,
   getGuestProjectPlaceholder,
   getOwnerOrgId,
+  getUnifiedCrewDirectory,
+  getActiveProjects,
   type CrewRosterMember,
   type CrewSelfView,
   type GuestProjectView,
+  type UnifiedCrewMember,
+  type ActiveProject,
+  type ProjectPhaseRow,
 } from '../services/crewPortalService'
+import AdminTaskDelegationPanel from '../components/admin/AdminTaskDelegationPanel'
 import EmployeeInviteModal from '../components/admin/EmployeeInviteModal'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -159,10 +168,333 @@ function ActiveStatusDot({ active }: { active: boolean }) {
   )
 }
 
-// ─── Owner Panel ─────────────────────────────────────────────────────────────
+// ─── Source Badge ─────────────────────────────────────────────────────────────
 
-function OwnerPanel() {
-  const [crew, setCrew] = useState<CrewRosterMember[]>([])
+function SourceBadge({ source }: { source: UnifiedCrewMember['source'] }) {
+  if (source === 'cost_model') {
+    return (
+      <span className="text-xs font-medium px-2 py-0.5 rounded-full border text-purple-300 bg-purple-900/20 border-purple-700/40">
+        Cost Model
+      </span>
+    )
+  }
+  return (
+    <span className="text-xs font-medium px-2 py-0.5 rounded-full border text-teal-300 bg-teal-900/20 border-teal-700/40">
+      Portal
+    </span>
+  )
+}
+
+function DirectoryStatusBadge({ status }: { status: UnifiedCrewMember['status'] }) {
+  if (status === 'active') {
+    return (
+      <span className="flex items-center gap-1.5">
+        <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+        <span className="text-xs text-green-400">Active</span>
+      </span>
+    )
+  }
+  if (status === 'pending_invite') {
+    return (
+      <span className="flex items-center gap-1.5">
+        <span className="w-2 h-2 rounded-full bg-amber-500" />
+        <span className="text-xs text-amber-400">Pending Invite</span>
+      </span>
+    )
+  }
+  if (status === 'cost_model_only') {
+    return (
+      <span className="flex items-center gap-1.5">
+        <span className="w-2 h-2 rounded-full bg-gray-600" />
+        <span className="text-xs text-gray-500">No Portal Account</span>
+      </span>
+    )
+  }
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="w-2 h-2 rounded-full bg-gray-700" />
+      <span className="text-xs text-gray-600">Inactive</span>
+    </span>
+  )
+}
+
+// ─── Unified Directory Panel ──────────────────────────────────────────────────
+
+function UnifiedDirectoryPanel({ onInviteClose }: { onInviteClose?: () => void }) {
+  const [members, setMembers] = useState<UnifiedCrewMember[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [inviteTarget, setInviteTarget] = useState<{ name: string } | null>(null)
+  const [showInvite, setShowInvite] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    const result = await getUnifiedCrewDirectory()
+    if (result.success) {
+      setMembers(result.data)
+    } else {
+      setError(result.error)
+      setMembers([])
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  const activeCount = members.filter((m) => m.status === 'active').length
+  const portalCount = members.filter((m) => m.source === 'portal').length
+  const totalHours = members.reduce((s, m) => s + (m.hoursThisWeek ?? 0), 0)
+
+  return (
+    <div className="space-y-5">
+      {/* Summary row */}
+      <div className="flex gap-4">
+        <div className="flex-1 rounded-lg px-4 py-3 border" style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}>
+          <p className="text-xs text-gray-500 mb-1">Portal Members</p>
+          <p className="text-2xl font-bold text-teal-400">{portalCount}</p>
+        </div>
+        <div className="flex-1 rounded-lg px-4 py-3 border" style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}>
+          <p className="text-xs text-gray-500 mb-1">Active This Week</p>
+          <p className="text-2xl font-bold text-green-400">{activeCount}</p>
+        </div>
+        <div className="flex-1 rounded-lg px-4 py-3 border" style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}>
+          <p className="text-xs text-gray-500 mb-1">Total Hours This Week</p>
+          <p className="text-2xl font-bold text-blue-400">{Number.isFinite(totalHours) ? totalHours : 0}h</p>
+        </div>
+      </div>
+
+      {loading && <p className="text-xs text-gray-600 py-2">Loading crew directory…</p>}
+      {error && <p className="text-xs text-red-400 py-2">{error}</p>}
+      {!loading && !error && members.length === 0 && (
+        <p className="text-xs text-gray-600 py-2">No team members found. Invite employees or add them via the Team cost model.</p>
+      )}
+
+      {!loading && members.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border" style={{ borderColor: '#1e2128' }}>
+          <table className="w-full text-sm">
+            <thead>
+              <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Name</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Role</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Source</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Status</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Hours</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Projects</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {members.map((member, idx) => (
+                <tr
+                  key={member.key}
+                  style={{
+                    backgroundColor: idx % 2 === 0 ? '#0a0b0f' : '#0c0d12',
+                    borderBottom: '1px solid #1a1c23',
+                  }}
+                >
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                        style={{ backgroundColor: '#1e3a5f', color: '#60a5fa' }}
+                      >
+                        {(member.name || 'U').slice(0, 2).toUpperCase()}
+                      </div>
+                      <span className="text-gray-200 font-medium text-xs">{member.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {member.employeeRole
+                      ? <MemberRoleBadge employeeRole={member.employeeRole} fallbackRole="employee" />
+                      : <span className="text-xs text-gray-600">—</span>}
+                  </td>
+                  <td className="px-4 py-3"><SourceBadge source={member.source} /></td>
+                  <td className="px-4 py-3"><DirectoryStatusBadge status={member.status} /></td>
+                  <td className="px-4 py-3 text-gray-300 font-mono text-xs">
+                    {member.hoursThisWeek > 0 ? `${member.hoursThisWeek}h` : '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {(member.assignedProjects ?? []).length === 0
+                        ? <span className="text-xs text-gray-600">None</span>
+                        : (member.assignedProjects ?? []).map((proj) => (
+                          <span key={proj} className="text-xs px-2 py-0.5 rounded-full border"
+                            style={{ backgroundColor: '#111827', borderColor: '#374151', color: '#9ca3af' }}>
+                            {proj}
+                          </span>
+                        ))}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {member.status === 'pending_invite' && (
+                      <button
+                        className="text-xs px-2 py-1 rounded border transition-colors hover:bg-amber-900/20"
+                        style={{ borderColor: '#78350f55', color: '#fbbf24' }}
+                        onClick={() => {
+                          // TODO: wire to resend RPC — no resend endpoint exists yet (EMS-PHASE-3)
+                          alert('Resend invite not yet available. The employee can use the original invite link.')
+                        }}
+                      >
+                        Resend Invite
+                      </button>
+                    )}
+                    {member.status === 'cost_model_only' && (
+                      <button
+                        className="text-xs px-2 py-1 rounded border transition-colors hover:bg-teal-900/20"
+                        style={{ borderColor: '#134e4a55', color: '#2dd4bf' }}
+                        onClick={() => {
+                          setInviteTarget({ name: member.name })
+                          setShowInvite(true)
+                        }}
+                      >
+                        Invite to Portal
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {showInvite && (
+        <EmployeeInviteModal
+          initialName={inviteTarget?.name ?? ''}
+          onClose={() => {
+            setShowInvite(false)
+            setInviteTarget(null)
+            void load()
+            onInviteClose?.()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Active Projects Panel ────────────────────────────────────────────────────
+
+const PHASE_STATUS_CHIP: Record<string, string> = {
+  pending:     'text-gray-500 bg-gray-800/40 border-gray-700/40',
+  in_progress: 'text-amber-400 bg-amber-900/20 border-amber-700/40',
+  completed:   'text-green-400 bg-green-900/20 border-green-700/40',
+  skipped:     'text-gray-600 bg-gray-900/40 border-gray-800/40',
+}
+
+function PhaseRow({ phase, onAssign }: { phase: ProjectPhaseRow; onAssign?: () => void }) {
+  const items = Array.isArray(phase.checklist) ? phase.checklist : []
+  const done = items.filter((i) => i?.completed === true).length
+  const chipCls = PHASE_STATUS_CHIP[phase.status] || PHASE_STATUS_CHIP.pending
+
+  return (
+    <div className="flex items-center gap-3 px-3 py-2 rounded border" style={{ backgroundColor: '#0a0b0f', borderColor: '#1a1c23' }}>
+      <span className={`text-xs font-medium px-2 py-0.5 rounded-full border capitalize flex-shrink-0 ${chipCls}`}>
+        {phase.status.replace('_', ' ')}
+      </span>
+      <span className="text-xs text-gray-300 flex-1 truncate">{phase.name}</span>
+      {items.length > 0 && (
+        <span className="text-xs text-gray-500 flex-shrink-0 font-mono">{done}/{items.length}</span>
+      )}
+      {onAssign && (phase.status === 'pending' || phase.status === 'in_progress') && (
+        <button
+          onClick={onAssign}
+          className="text-[11px] px-2 py-0.5 rounded border flex-shrink-0 transition-colors hover:bg-blue-900/20"
+          style={{ borderColor: '#1e40af55', color: '#60a5fa' }}
+        >
+          Assign
+        </button>
+      )}
+    </div>
+  )
+}
+
+function ProjectCard({
+  project,
+  onAssignProject,
+}: {
+  project: ActiveProject
+  onAssignProject: (projectId: string) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const visiblePhases = project.phases.filter((p) => p.status !== 'skipped')
+
+  return (
+    <div className="rounded-lg border" style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}>
+      {/* Header row */}
+      <button
+        className="w-full flex items-center gap-3 px-4 py-3 text-left"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <ChevronRight
+          size={13}
+          className={`text-gray-500 flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+        />
+        <span className="text-sm font-medium text-gray-100 flex-1 truncate">{project.name}</span>
+
+        {/* Status badge */}
+        <span
+          className="text-xs font-medium px-2 py-0.5 rounded-full border capitalize flex-shrink-0"
+          style={{
+            color: project.status === 'in_progress' ? '#fbbf24' : '#9ca3af',
+            borderColor: project.status === 'in_progress' ? '#78350f55' : '#374151',
+            backgroundColor: project.status === 'in_progress' ? '#451a0322' : '#11182733',
+          }}
+        >
+          {project.status.replace(/_/g, ' ')}
+        </span>
+
+        {/* Health bar (inline) */}
+        {project.healthPercent != null && (
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <div
+              className="w-16 h-1.5 rounded-full overflow-hidden"
+              style={{ background: 'rgba(255,255,255,0.07)' }}
+            >
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${project.healthPercent}%`,
+                  background: 'linear-gradient(90deg, #16a34a, #4ade80)',
+                }}
+              />
+            </div>
+            <span className="text-xs text-green-400 font-mono">{project.healthPercent}%</span>
+          </div>
+        )}
+
+        {/* Dates */}
+        {(project.estimated_start || project.estimated_end) && (
+          <span className="text-xs text-gray-600 flex-shrink-0 hidden sm:inline">
+            {project.estimated_start ?? '?'} → {project.estimated_end ?? '?'}
+          </span>
+        )}
+      </button>
+
+      {/* Expanded phases */}
+      {expanded && (
+        <div className="px-4 pb-3 space-y-1.5 border-t" style={{ borderColor: '#1a1c23' }}>
+          <p className="text-xs text-gray-600 pt-2 mb-2">
+            Phases ({visiblePhases.length}) — click Assign to delegate a task
+          </p>
+          {visiblePhases.length === 0
+            ? <p className="text-xs text-gray-600">No phases configured.</p>
+            : visiblePhases.map((phase) => (
+              <PhaseRow
+                key={phase.id}
+                phase={phase}
+                onAssign={() => onAssignProject(project.id)}
+              />
+            ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ActiveProjectsPanel({ onAssignProject }: { onAssignProject: (projectId: string) => void }) {
+  const [projects, setProjects] = useState<ActiveProject[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -171,125 +503,75 @@ function OwnerPanel() {
     ;(async () => {
       setLoading(true)
       setError(null)
-      const result = await getOwnerCrewRoster()
+      const result = await getActiveProjects()
       if (cancelled) return
       if (result.success) {
-        setCrew(result.data)
+        setProjects(result.data)
       } else {
         setError(result.error)
-        setCrew([])
+        setProjects([])
       }
       setLoading(false)
     })()
     return () => { cancelled = true }
   }, [])
 
-  const totalHoursRaw = crew.reduce((sum, m) => sum + (m.hoursThisWeek ?? 0), 0)
-  const totalHours = Number.isFinite(totalHoursRaw) ? totalHoursRaw : 0
-  const activeMembers = crew.filter((m) => m.active)
-  const avgHoursRaw =
-    activeMembers.length > 0
-      ? activeMembers.reduce((sum, m) => sum + (m.hoursThisWeek ?? 0), 0) / activeMembers.length
-      : 0
-  const avgHours = Number.isFinite(avgHoursRaw) ? avgHoursRaw.toFixed(1) : '0'
+  return (
+    <div className="space-y-3">
+      {loading && <p className="text-xs text-gray-600 py-2">Loading active projects…</p>}
+      {error && <p className="text-xs text-red-400 py-2">{error}</p>}
+      {!loading && !error && projects.length === 0 && (
+        <p className="text-xs text-gray-600 py-2">No active projects found.</p>
+      )}
+      {projects.map((project) => (
+        <ProjectCard key={project.id} project={project} onAssignProject={onAssignProject} />
+      ))}
+    </div>
+  )
+}
+
+// ─── Owner Panel (with sub-tabs) ──────────────────────────────────────────────
+
+type OwnerTab = 'directory' | 'projects' | 'tasks'
+
+const OWNER_TABS: { id: OwnerTab; label: string; icon: React.ReactNode }[] = [
+  { id: 'directory', label: 'Crew Directory', icon: <Users size={13} /> },
+  { id: 'projects',  label: 'Active Projects', icon: <FolderOpen size={13} /> },
+  { id: 'tasks',     label: 'Task Delegation', icon: <ClipboardList size={13} /> },
+]
+
+function OwnerPanel() {
+  const [tab, setTab] = useState<OwnerTab>('directory')
+  const [taskProjectId, setTaskProjectId] = useState<string | undefined>(undefined)
+
+  function handleAssignProject(projectId: string) {
+    setTaskProjectId(projectId)
+    setTab('tasks')
+  }
 
   return (
-    <div className="space-y-5">
-      <div className="flex gap-4">
-        <div
-          className="flex-1 rounded-lg px-4 py-3 border"
-          style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}
-        >
-          <p className="text-xs text-gray-500 mb-1">Total Crew Hours This Week</p>
-          <p className="text-2xl font-bold text-green-400">{totalHours}h</p>
-        </div>
-        <div
-          className="flex-1 rounded-lg px-4 py-3 border"
-          style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}
-        >
-          <p className="text-xs text-gray-500 mb-1">Avg Hours / Active Member</p>
-          <p className="text-2xl font-bold text-blue-400">{avgHours}h</p>
-        </div>
-        <div
-          className="flex-1 rounded-lg px-4 py-3 border"
-          style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}
-        >
-          <p className="text-xs text-gray-500 mb-1">Active Members</p>
-          <p className="text-2xl font-bold text-gray-200">{activeMembers.length}</p>
-        </div>
+    <div className="space-y-4">
+      {/* Sub-tabs */}
+      <div className="flex gap-1.5 flex-wrap">
+        {OWNER_TABS.map(({ id, label, icon }) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+              tab === id
+                ? 'border-green-600 text-green-400 bg-green-900/20'
+                : 'border-transparent text-gray-500 hover:text-gray-300 hover:bg-gray-800/30'
+            }`}
+          >
+            {icon}
+            {label}
+          </button>
+        ))}
       </div>
 
-      {loading && <p className="text-xs text-gray-600 py-2">Loading crew roster…</p>}
-      {error && <p className="text-xs text-red-400 py-2">{error}</p>}
-
-      {!loading && !error && crew.length === 0 && (
-        <p className="text-xs text-gray-600 py-2">No employees in this org yet. Invite from Role Manager.</p>
-      )}
-
-      {!loading && crew.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border" style={{ borderColor: '#1e2128' }}>
-          <table className="w-full text-sm">
-            <thead>
-              <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">
-                  Name
-                </th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">
-                  Role
-                </th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">
-                  Assigned Projects
-                </th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">
-                  Hours This Week
-                </th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">
-                  Status
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {crew.map((member, idx) => (
-                <tr
-                  key={member.id}
-                  style={{
-                    backgroundColor: idx % 2 === 0 ? '#0a0b0f' : '#0c0d12',
-                    borderBottom: '1px solid #1a1c23',
-                  }}
-                >
-                  <td className="px-4 py-3 font-medium text-gray-200">{member.name}</td>
-                  <td className="px-4 py-3">
-                    <MemberRoleBadge employeeRole={member.employeeRole} fallbackRole={member.role} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {(member.assignedProjects ?? []).length === 0 ? (
-                        <span className="text-xs text-gray-600">None</span>
-                      ) : (
-                        (member.assignedProjects ?? []).map((proj) => (
-                          <span
-                            key={proj}
-                            className="text-xs px-2 py-0.5 rounded-full border"
-                            style={{ backgroundColor: '#111827', borderColor: '#374151', color: '#9ca3af' }}
-                          >
-                            {proj}
-                          </span>
-                        ))
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-gray-300 font-mono">
-                    {Number.isFinite(member.hoursThisWeek) ? member.hoursThisWeek : 0}h
-                  </td>
-                  <td className="px-4 py-3">
-                    <ActiveStatusDot active={member.active} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {tab === 'directory' && <UnifiedDirectoryPanel />}
+      {tab === 'projects' && <ActiveProjectsPanel onAssignProject={handleAssignProject} />}
+      {tab === 'tasks' && <AdminTaskDelegationPanel initialProjectId={taskProjectId} />}
     </div>
   )
 }
@@ -1058,9 +1340,6 @@ export default function CrewPortal() {
             </button>
           ))}
         </div>
-        <p className="text-xs text-gray-600">
-          Role Switcher — Prototype Only. Real roles set via auth during integration.
-        </p>
       </div>
 
       <div

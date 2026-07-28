@@ -1,6 +1,7 @@
 /**
  * crewPortalService.ts — Crew Portal (TEAM sidebar) live data
  * CREW-PORTAL-LIVE-1 + LIVE-2 (health % from project_phases, employee_role).
+ * EMS-PHASE-2: unified crew directory + active project visibility.
  *
  * Owner / crew / guest reads for src/views/CrewPortal.tsx.
  * Does not touch Guardian, field CrewPortal, or protected backup/blueprint services.
@@ -10,6 +11,7 @@
  */
 
 import { supabase } from '@/lib/supabase'
+import { getBackupData, type BackupEmployee } from '@/services/backupDataService'
 import { getActiveEmployeeProfiles, type AdminEmployeeProfile } from '@/services/adminTimecardService'
 import {
   getCurrentWeekRangeFromTenantDate,
@@ -124,10 +126,13 @@ export function mapProjectStatusToPhaseLabel(status: string, phase?: string | nu
 /**
  * Project health % from project_phases (read-only).
  *
- * Active / started phases = percent_complete > 0
- *   OR status IN ('in_progress', 'completed')
- *   (excludes pending / skipped with 0%).
- * Returns rounded average of percent_complete (0–100), or null if none.
+ * Excludes skipped phases. Shows bar only when at least one phase is
+ * in_progress or completed. Per-phase score:
+ *   completed  → 100
+ *   in_progress with checklist items → (done / total) * 100
+ *   in_progress with no checklist   → 50
+ *   pending    → 0
+ * Returns rounded average across non-skipped phases, or null if none are started.
  */
 export async function getProjectHealthPercent(
   projectId: string,
@@ -137,7 +142,7 @@ export async function getProjectHealthPercent(
     if (!cleanId) return { success: true, data: null }
 
     const { data, error } = await from('project_phases')
-      .select('percent_complete, status, started_at')
+      .select('status, checklist')
       .eq('project_id', cleanId)
 
     if (error) {
@@ -146,29 +151,39 @@ export async function getProjectHealthPercent(
     }
 
     const rows = (data ?? []) as Array<{
-      percent_complete: number | null
       status: string | null
-      started_at: string | null
+      checklist: Array<{ completed?: boolean }> | null
     }>
 
-    const started = rows.filter((row) => {
-      const status = String(row.status || '').toLowerCase()
-      if (status === 'skipped') return false
-      const pct = typeof row.percent_complete === 'number' ? row.percent_complete : 0
-      if (pct > 0) return true
-      if (status === 'in_progress' || status === 'completed') return true
-      if (row.started_at) return true
-      return false
+    const nonSkipped = rows.filter(
+      (row) => String(row.status || '').toLowerCase() !== 'skipped',
+    )
+
+    const hasStarted = nonSkipped.some((row) => {
+      const s = String(row.status || '').toLowerCase()
+      return s === 'in_progress' || s === 'completed'
     })
 
-    if (started.length === 0) return { success: true, data: null }
+    if (!hasStarted) return { success: true, data: null }
 
     let sum = 0
-    for (const row of started) {
-      const pct = typeof row.percent_complete === 'number' ? row.percent_complete : 0
-      sum += Math.max(0, Math.min(100, pct))
+    for (const row of nonSkipped) {
+      const s = String(row.status || '').toLowerCase()
+      if (s === 'completed') {
+        sum += 100
+      } else if (s === 'in_progress') {
+        const items = Array.isArray(row.checklist) ? row.checklist : []
+        if (items.length > 0) {
+          const done = items.filter((i) => i?.completed === true).length
+          sum += Math.round((done / items.length) * 100)
+        } else {
+          sum += 50
+        }
+      }
+      // pending → 0, already accounted for by adding nothing
     }
-    const avg = Math.round(sum / started.length)
+
+    const avg = Math.round(sum / nonSkipped.length)
     return { success: true, data: Math.max(0, Math.min(100, avg)) }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Network error'
@@ -424,4 +439,318 @@ export async function listPortalEmployees(): Promise<ServiceResult<AdminEmployee
     return { success: false, error: res.error || 'Could not load employees' }
   }
   return { success: true, data: res.data }
+}
+
+// ─── EMS-PHASE-2: Unified Crew Directory + Active Projects ───────────────────
+
+export interface UnifiedCrewMember {
+  key: string
+  name: string
+  employeeRole: EmployeeTradeRole | null
+  source: 'portal' | 'cost_model'
+  status: 'active' | 'pending_invite' | 'cost_model_only' | 'inactive'
+  hoursThisWeek: number
+  assignedProjects: string[]
+  profileId: string | null
+  userId: string | null
+  backupEmployeeId: string | null
+}
+
+export interface PhaseChecklistItem {
+  item?: string
+  completed?: boolean
+  completed_by?: string
+  completed_at?: string
+}
+
+export interface ProjectPhaseRow {
+  id: string
+  name: string
+  order_index: number
+  status: string
+  checklist: PhaseChecklistItem[] | null
+  started_at: string | null
+  completed_at: string | null
+  notes: string | null
+}
+
+export interface ActiveProject {
+  id: string
+  name: string
+  status: string
+  estimated_start: string | null
+  estimated_end: string | null
+  phases: ProjectPhaseRow[]
+  healthPercent: number | null
+}
+
+/** Shared in-memory health % logic — avoids N+1 queries in getActiveProjects. */
+function computeHealthFromPhases(
+  phases: Array<{ status: string | null; checklist: Array<{ completed?: boolean }> | null }>,
+): number | null {
+  const nonSkipped = phases.filter((p) => String(p.status || '').toLowerCase() !== 'skipped')
+  const hasStarted = nonSkipped.some((p) => {
+    const s = String(p.status || '').toLowerCase()
+    return s === 'in_progress' || s === 'completed'
+  })
+  if (!hasStarted) return null
+  let sum = 0
+  for (const p of nonSkipped) {
+    const s = String(p.status || '').toLowerCase()
+    if (s === 'completed') {
+      sum += 100
+    } else if (s === 'in_progress') {
+      const items = Array.isArray(p.checklist) ? p.checklist : []
+      sum += items.length > 0
+        ? Math.round((items.filter((i) => i?.completed === true).length / items.length) * 100)
+        : 50
+    }
+  }
+  return Math.max(0, Math.min(100, Math.round(sum / nonSkipped.length)))
+}
+
+/**
+ * All active/open SQL projects for this org, each with their non-skipped phases.
+ * Two queries: one for projects, one batch-fetch of all phases (no N+1).
+ * Read-only. No financial columns.
+ */
+export async function getActiveProjects(): Promise<ServiceResult<ActiveProject[]>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+
+    const orgResult = await getOwnerOrgId()
+    if (!orgResult.success) return { success: false, error: orgResult.error }
+
+    const { data: projects, error: projError } = await from('projects')
+      .select('id, name, status, estimated_start, estimated_end')
+      .eq('org_id', orgResult.data)
+      .in('status', [...ACTIVE_PROJECT_STATUSES])
+      .order('name', { ascending: true })
+
+    if (projError) return { success: false, error: projError.message }
+    if (!projects || projects.length === 0) return { success: true, data: [] }
+
+    const projectIds = (projects as Array<{ id: string }>).map((p) => p.id)
+
+    const { data: allPhases, error: phaseError } = await from('project_phases')
+      .select('id, project_id, name, order_index, status, checklist, started_at, completed_at, notes')
+      .in('project_id', projectIds)
+      .order('order_index', { ascending: true })
+
+    if (phaseError) {
+      console.warn('[crewPortalService.getActiveProjects] phases query:', phaseError.message)
+    }
+
+    const phasesByProject = new Map<string, ProjectPhaseRow[]>()
+    for (const phase of (allPhases ?? []) as Array<{
+      id: string; project_id: string; name: string; order_index: number;
+      status: string; checklist: unknown; started_at: string | null;
+      completed_at: string | null; notes: string | null;
+    }>) {
+      const rows = phasesByProject.get(phase.project_id) ?? []
+      rows.push({
+        id: phase.id,
+        name: phase.name,
+        order_index: phase.order_index,
+        status: phase.status,
+        checklist: Array.isArray(phase.checklist) ? phase.checklist as PhaseChecklistItem[] : null,
+        started_at: phase.started_at,
+        completed_at: phase.completed_at,
+        notes: phase.notes,
+      })
+      phasesByProject.set(phase.project_id, rows)
+    }
+
+    const result: ActiveProject[] = (projects as Array<{
+      id: string; name: string; status: string;
+      estimated_start: string | null; estimated_end: string | null;
+    }>).map((p) => {
+      const phases = phasesByProject.get(p.id) ?? []
+      return {
+        id: p.id,
+        name: p.name || 'Untitled',
+        status: p.status,
+        estimated_start: p.estimated_start,
+        estimated_end: p.estimated_end,
+        phases,
+        healthPercent: computeHealthFromPhases(phases),
+      }
+    })
+
+    return { success: true, data: result }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[crewPortalService.getActiveProjects]', err)
+    return { success: false, error: message }
+  }
+}
+
+/**
+ * Single project with all its phases. Used by Task Delegation drill-in.
+ * Returns null when the project is not found or not active.
+ */
+export async function getProjectWithPhases(
+  projectId: string,
+): Promise<ServiceResult<ActiveProject | null>> {
+  try {
+    const cleanId = String(projectId || '').trim()
+    if (!cleanId) return { success: true, data: null }
+
+    const orgResult = await getOwnerOrgId()
+    if (!orgResult.success) return { success: false, error: orgResult.error }
+
+    const { data: project, error: projError } = await from('projects')
+      .select('id, name, status, estimated_start, estimated_end')
+      .eq('id', cleanId)
+      .eq('org_id', orgResult.data)
+      .maybeSingle()
+
+    if (projError) return { success: false, error: projError.message }
+    if (!project) return { success: true, data: null }
+
+    const { data: phases, error: phaseError } = await from('project_phases')
+      .select('id, project_id, name, order_index, status, checklist, started_at, completed_at, notes')
+      .eq('project_id', cleanId)
+      .order('order_index', { ascending: true })
+
+    if (phaseError) {
+      console.warn('[crewPortalService.getProjectWithPhases] phases query:', phaseError.message)
+    }
+
+    const phaseRows: ProjectPhaseRow[] = ((phases ?? []) as Array<{
+      id: string; project_id: string; name: string; order_index: number;
+      status: string; checklist: unknown; started_at: string | null;
+      completed_at: string | null; notes: string | null;
+    }>).map((ph) => ({
+      id: ph.id,
+      name: ph.name,
+      order_index: ph.order_index,
+      status: ph.status,
+      checklist: Array.isArray(ph.checklist) ? ph.checklist as PhaseChecklistItem[] : null,
+      started_at: ph.started_at,
+      completed_at: ph.completed_at,
+      notes: ph.notes,
+    }))
+
+    return {
+      success: true,
+      data: {
+        id: String(project.id),
+        name: String(project.name || 'Untitled'),
+        status: String(project.status),
+        estimated_start: project.estimated_start ?? null,
+        estimated_end: project.estimated_end ?? null,
+        phases: phaseRows,
+        healthPercent: computeHealthFromPhases(phaseRows),
+      },
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[crewPortalService.getProjectWithPhases]', err)
+    return { success: false, error: message }
+  }
+}
+
+/**
+ * Unified Crew Directory: merges SQL employee_profiles with BackupData employees[].
+ *
+ * Match key: employee_profiles.backup_employee_id = BackupEmployee.id.
+ * Portal-only → source: 'portal'. BackupData-only (no linked profile) → source: 'cost_model'.
+ * Tombstoned BackupData employees (deletedAt set) are excluded.
+ */
+export async function getUnifiedCrewDirectory(): Promise<ServiceResult<UnifiedCrewMember[]>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+
+    const orgResult = await getOwnerOrgId()
+    if (!orgResult.success) return { success: false, error: orgResult.error }
+    const orgId = orgResult.data
+
+    const [profilesRes, hoursByProfile, assignmentsResult] = await Promise.all([
+      from('employee_profiles')
+        .select('id, user_id, display_name, employee_role, active, accepted_at, backup_employee_id')
+        .eq('org_id', orgId)
+        .eq('active', true)
+        .order('display_name', { ascending: true }),
+      getWeeklyHoursByProfileId(orgId),
+      listOrgTaskAssignments(),
+    ])
+
+    if (profilesRes.error) return { success: false, error: profilesRes.error.message }
+
+    const profiles = (profilesRes.data ?? []) as Array<{
+      id: string
+      user_id: string | null
+      display_name: string
+      employee_role: string | null
+      active: boolean
+      accepted_at: string | null
+      backup_employee_id: string | null
+    }>
+
+    const projectsByEmployee = assignmentsResult.success
+      ? projectNamesByEmployee(assignmentsResult.data)
+      : new Map<string, string[]>()
+
+    const backupEmployees: BackupEmployee[] = (getBackupData()?.employees ?? [])
+      .filter((e: BackupEmployee) => !e.deletedAt)
+
+    const matchedBackupIds = new Set<string>()
+    for (const p of profiles) {
+      if (p.backup_employee_id) matchedBackupIds.add(p.backup_employee_id)
+    }
+
+    const result: UnifiedCrewMember[] = []
+
+    for (const profile of profiles) {
+      const status: UnifiedCrewMember['status'] = profile.user_id
+        ? 'active'
+        : 'pending_invite'
+
+      result.push({
+        key: `portal-${profile.id}`,
+        name: profile.display_name || 'Unknown',
+        employeeRole: toTradeRole(profile.employee_role),
+        source: 'portal',
+        status,
+        hoursThisWeek: hoursByProfile.get(profile.id) ?? 0,
+        assignedProjects: projectsByEmployee.get(profile.id) ?? [],
+        profileId: profile.id,
+        userId: profile.user_id,
+        backupEmployeeId: profile.backup_employee_id,
+      })
+    }
+
+    for (const emp of backupEmployees) {
+      if (matchedBackupIds.has(emp.id)) continue
+      result.push({
+        key: `backup-${emp.id}`,
+        name: emp.name || 'Unknown',
+        employeeRole: null,
+        source: 'cost_model',
+        status: 'cost_model_only',
+        hoursThisWeek: 0,
+        assignedProjects: [],
+        profileId: null,
+        userId: null,
+        backupEmployeeId: emp.id,
+      })
+    }
+
+    const STATUS_ORDER: Record<UnifiedCrewMember['status'], number> = {
+      active: 0, pending_invite: 1, cost_model_only: 2, inactive: 3,
+    }
+    result.sort((a, b) => {
+      const diff = (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9)
+      return diff !== 0 ? diff : a.name.localeCompare(b.name)
+    })
+
+    return { success: true, data: result }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[crewPortalService.getUnifiedCrewDirectory]', err)
+    return { success: false, error: message }
+  }
 }

@@ -201,7 +201,7 @@ function SearchablePicker({
   )
 }
 
-export default function AdminTaskDelegationPanel() {
+export default function AdminTaskDelegationPanel({ initialProjectId }: { initialProjectId?: string } = {}) {
   const { profile } = useAuth()
   const orgId = profile?.org_id || ''
 
@@ -281,6 +281,30 @@ export default function AdminTaskDelegationPanel() {
   useEffect(() => {
     load()
   }, [load])
+
+  // When initialProjectId is provided, auto-open the create form pre-filtered to that project.
+  const autoOpenRef = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    if (!initialProjectId || loading || autoOpenRef.current === initialProjectId) return
+    autoOpenRef.current = initialProjectId
+    setEditingId(null)
+    setForm(emptyForm())
+    setBlueprints([])
+    setWorkPackages([])
+    setFormOpen(true)
+    setError('')
+    setProjectsLoading(true)
+    listAssignableProjects().then((res) => {
+      setProjectsLoading(false)
+      if (!res.success) return
+      setProjects(res.data)
+      const match = res.data.find((p) => p.id === initialProjectId)
+      if (match) {
+        setForm((f) => ({ ...f, projectId: match.id, projectName: match.name }))
+        loadBlueprintsFor(match.id)
+      }
+    })
+  }, [initialProjectId, loading, loadBlueprintsFor])
 
   const loadProjects = useCallback(async () => {
     setProjectsLoading(true)
