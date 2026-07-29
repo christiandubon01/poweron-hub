@@ -42,6 +42,7 @@ import {
   type AdminEmployeeProfile,
 } from '@/services/adminTimecardService'
 import { listOrgTaskAssignments } from '@/services/employeeTaskAssignmentService'
+import { AllEmployeesCharts, EmployeeDetailCharts } from '@/components/admin/PerformanceCharts'
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -785,9 +786,9 @@ export default function OwnerPerformancePanel({ initialEmployeeId }: { initialEm
     })()
   }, [])
 
-  // Keep snapshots in sync when employee changes (for compensation form)
+  // Keep snapshots in sync when employee changes (for compensation form + detail charts)
   useEffect(() => {
-    if (!selectedId) { setSnapshots([]); return }
+    if (!selectedId || selectedId === '__all__') { setSnapshots([]); return }
     getSnapshots(selectedId).then((res) => {
       if (res.success) setSnapshots(res.data)
     })
@@ -816,6 +817,7 @@ export default function OwnerPerformancePanel({ initialEmployeeId }: { initialEm
               style={{ borderColor: '#2a2d36', backgroundColor: '#0a0b0f' }}
             >
               <option value="">— Select an employee —</option>
+              <option value="__all__">All Employees (Overview)</option>
               {employees.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.display_name}{e.employee_role ? ` · ${e.employee_role}` : ''}
@@ -829,6 +831,11 @@ export default function OwnerPerformancePanel({ initialEmployeeId }: { initialEm
           <p className="text-xs text-gray-600">No active portal employees found.</p>
         )}
       </div>
+
+      {/* All-Employees Overview */}
+      {selectedId === '__all__' && !loadingEmps && (
+        <AllEmployeesCharts employees={employees} />
+      )}
 
       {/* Employee performance view */}
       {selected && (
@@ -854,6 +861,12 @@ export default function OwnerPerformancePanel({ initialEmployeeId }: { initialEm
             <SnapshotSection profileId={selected.id} />
           </div>
 
+          {/* Performance Charts */}
+          <EmployeeDetailCharts
+            profileId={selected.id}
+            latestSnapshot={snapshots[0] ?? null}
+          />
+
           {/* Section 3: Quality Ratings */}
           <div
             className="rounded-xl border p-4"
@@ -872,7 +885,7 @@ export default function OwnerPerformancePanel({ initialEmployeeId }: { initialEm
         </div>
       )}
 
-      {!selected && !loadingEmps && employees.length > 0 && (
+      {!selected && selectedId !== '__all__' && !loadingEmps && employees.length > 0 && (
         <p className="text-xs text-gray-600">Select an employee above to view their performance data.</p>
       )}
     </div>
