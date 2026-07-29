@@ -230,13 +230,21 @@ export function EmployeeMyTimePanel() {
             const e = day.entry
             const isEmpty = !e && day.punches.length === 0
             if (isEmpty) return null
+            const hasAdminEdit = day.punches.some(p => p.source === 'admin_edit')
             return (
               <div key={day.workDate} className="border border-gray-200 rounded-xl p-3">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-bold text-gray-900">{formatDayLabel(day.workDate)}</p>
-                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${pill.cls}`}>
-                    {pill.label}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {hasAdminEdit && (
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-200">
+                        Admin Edited
+                      </span>
+                    )}
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${pill.cls}`}>
+                      {pill.label}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-4 gap-1.5 mt-2.5 text-center">
@@ -264,7 +272,14 @@ export function EmployeeMyTimePanel() {
                     {day.punches.map(p => (
                       <li key={p.id} className="flex items-center justify-between text-xs">
                         <span className="text-gray-500">{PUNCH_LABEL[p.punch_type] ?? p.punch_type}</span>
-                        <span className="text-gray-800 font-medium tabular-nums">{formatTime(p.punched_at)}</span>
+                        <div className="flex items-center gap-2">
+                          {p.source === 'admin_edit' && (
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">
+                              Admin Edited
+                            </span>
+                          )}
+                          <span className="text-gray-800 font-medium tabular-nums">{formatTime(p.punched_at)}</span>
+                        </div>
                       </li>
                     ))}
                   </ul>
