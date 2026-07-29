@@ -56,7 +56,9 @@ BEGIN
     RAISE EXCEPTION 'Not authorized';
   END IF;
 
-  -- Hours worked from approved/closed time entries
+  -- Hours worked from completed time entries. Filter paid_minutes > 0 to
+  -- exclude phantom zero-hour entries created when an admin correction
+  -- shifts a punch to a different work_date.
   SELECT
     COALESCE(SUM(paid_minutes), 0),
     COUNT(DISTINCT work_date)
@@ -64,7 +66,8 @@ BEGIN
   FROM public.time_entries
   WHERE employee_profile_id = p_employee_profile_id
     AND work_date BETWEEN p_period_start AND p_period_end
-    AND status IN ('complete', 'corrected', 'auto_closed');
+    AND status IN ('complete', 'corrected', 'auto_closed')
+    AND paid_minutes > 0;
 
   -- Task metrics from employee_task_assignments
   SELECT

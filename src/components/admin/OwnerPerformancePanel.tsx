@@ -176,11 +176,20 @@ function SnapshotSection({ profileId }: { profileId: string }) {
     if (!range) { setErr('Select a date range'); return }
     setErr(null)
     setGenerating(true)
-    const res = await generateSnapshot(profileId, range[0], range[1])
-    setGenerating(false)
-    if (!res.success) { setErr(res.error); return }
-    setSnapshot(res.data)
-    void loadHistory()
+    try {
+      const res = await generateSnapshot(profileId, range[0], range[1])
+      if (!res.success) {
+        setErr(res.error || 'Failed to generate report')
+        return
+      }
+      setSnapshot(res.data)
+      void loadHistory()
+    } catch (e: unknown) {
+      setErr((e as Error).message || 'Unexpected error — check console')
+      console.error('[OwnerPerformancePanel] generateSnapshot threw:', e)
+    } finally {
+      setGenerating(false)
+    }
   }
 
   const displaySnap = snapshot ?? snapshots[0] ?? null
