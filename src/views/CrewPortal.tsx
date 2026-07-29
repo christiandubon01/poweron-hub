@@ -1485,6 +1485,7 @@ export default function CrewPortal() {
   const authRole = useAuthStore((s) => s.role)
   const profileRole = useAuthStore((s) => s.profile?.role)
   const [previewRole, setPreviewRole] = useState<PortalViewRole>('owner')
+  const [showPermissionModal, setShowPermissionModal] = useState(false)
 
   const isOwnerOrAdmin = authRole === 'owner' || profileRole === 'owner' || profileRole === 'admin'
   const realPortalRole: PortalViewRole = isOwnerOrAdmin
@@ -1520,6 +1521,16 @@ export default function CrewPortal() {
             Live org data from employee_profiles, task assignments, and time entries.
           </p>
         </div>
+        {isOwnerOrAdmin && (
+          <button
+            onClick={() => setShowPermissionModal(true)}
+            className="flex items-center gap-2 rounded-full border border-gray-700/50 bg-slate-950/70 px-4 py-2 text-xs font-semibold text-gray-300 shadow-lg transition-colors hover:bg-gray-800/60 self-start"
+          >
+            <span className="h-2.5 w-2.5 rounded-full bg-gray-600 flex-shrink-0" />
+            <Shield size={13} className="flex-shrink-0" />
+            Permission Matrix
+          </button>
+        )}
       </div>
 
       {isOwnerOrAdmin && (
@@ -1543,9 +1554,36 @@ export default function CrewPortal() {
         {activeRole === 'guest' && <GuestPanel />}
       </div>
 
-      <PermissionMatrix />
-
       {isOwnerOrAdmin && <RoleManager isOwner={isOwnerOrAdmin} />}
+
+      {showPermissionModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowPermissionModal(false) }}
+        >
+          <div
+            className="relative w-full max-w-lg rounded-xl border overflow-hidden shadow-2xl"
+            style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}
+          >
+            <div
+              className="flex items-center justify-between px-5 py-4 border-b"
+              style={{ borderColor: '#1e2128' }}
+            >
+              <div className="flex items-center gap-2">
+                <Shield size={15} className="text-green-500" />
+                <h3 className="text-sm font-semibold text-gray-200">Permission Matrix</h3>
+              </div>
+              <button
+                onClick={() => setShowPermissionModal(false)}
+                className="p-1.5 rounded-md hover:bg-gray-800/60 transition-colors"
+              >
+                <X size={14} className="text-gray-500" />
+              </button>
+            </div>
+            <PermissionMatrix />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
