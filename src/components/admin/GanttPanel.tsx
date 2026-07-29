@@ -2,8 +2,8 @@
 /**
  * GanttPanel — Four-view schedule visualization for EMS Phase 5.
  *
- * Toggle 1 (time range): Week | Month
- * Toggle 2 (row org):    By Employee | By Project
+ * Toggle 1 (time range): Week | Month  — persisted in localStorage 'crew_portal_schedule_view'
+ * Toggle 2 (row org):    By Employee | By Project — persisted in localStorage 'crew_portal_schedule_rows'
  *
  * Week views: one query per week change (getScheduleForWeek)
  * Month views: one query per month change (getScheduleForMonth)
@@ -11,6 +11,8 @@
  *
  * Mobile (<768px): month views collapse to list fallback.
  * Tablet (768–1023px): month views also use list fallback.
+ *
+ * Week Employee view: supports multi-day drag selection.
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
@@ -33,6 +35,7 @@ type ViewOrg   = 'employee' | 'project'
 export interface GanttOpenAddPrefill {
   employeeProfileId?: string
   workDate: string
+  endWorkDate?: string  // multi-day range end (inclusive)
   projectName?: string
 }
 
@@ -53,7 +56,7 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ]
 
-// Ten distinct hues cycling for employee avatars in project view
+// Ten distinct hues cycling for employee avatars / bars
 const EMP_PALETTE = [
   { bg: '#1e3a5f', text: '#60a5fa' },
   { bg: '#3b1f5e', text: '#c084fc' },
@@ -67,11 +70,11 @@ const EMP_PALETTE = [
   { bg: '#2e2d1c', text: '#fbbf24' },
 ]
 
-const STATUS_BAR: Record<ScheduleStatus, { bar: string; dot: string }> = {
-  scheduled:   { bar: 'bg-blue-900/50 border-blue-700/50 text-blue-200',   dot: '#3b82f6' },
-  in_progress: { bar: 'bg-amber-900/40 border-amber-700/50 text-amber-200', dot: '#f59e0b' },
-  done:        { bar: 'bg-green-900/40 border-green-700/50 text-green-200', dot: '#22c55e' },
-  cancelled:   { bar: 'bg-gray-800/30 border-gray-700/30 text-gray-600',    dot: '#6b7280' },
+const STATUS_BAR: Record<ScheduleStatus, { bar: string; dot: string; statusBg: string; statusBorder: string }> = {
+  scheduled:   { bar: 'bg-blue-900/50 border-blue-700/50 text-blue-200',   dot: '#3b82f6', statusBg: 'rgba(59,130,246,0.10)',  statusBorder: '#3b82f6' },
+  in_progress: { bar: 'bg-amber-900/40 border-amber-700/50 text-amber-200', dot: '#f59e0b', statusBg: 'rgba(245,158,11,0.10)', statusBorder: '#f59e0b' },
+  done:        { bar: 'bg-green-900/40 border-green-700/50 text-green-200', dot: '#22c55e', statusBg: 'rgba(34,197,94,0.10)',  statusBorder: '#22c55e' },
+  cancelled:   { bar: 'bg-gray-800/30 border-gray-700/30 text-gray-600',    dot: '#6b7280', statusBg: 'rgba(107,114,128,0.05)', statusBorder: '#374151' },
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -151,14 +154,58 @@ function useIsNarrow(breakpoint = 1024): boolean {
 
 // ── Shared cell/bar primitives ────────────────────────────────────────────────
 
-function WeekBar({ item, onClick }: { item: ScheduleItem; onClick: () => void }) {
-  const cls = STATUS_BAR[item.status]?.bar ?? STATUS_BAR.scheduled.bar
+/**
+ * WeekBar — renders a schedule chip in week view.
+ * When empColorIdx is provided (employee org view), uses employee palette color
+ * for the left accent border, with status-tinted background.
+ * Without empColorIdx (project org view), uses plain status color classes.
+ */
+function WeekBar({
+  item,
+  empColorIdx,
+  onClick,
+}: {
+  item: ScheduleItem
+  empColorIdx?: number
+  onClick: () => void
+}) {
   const isCancelled = item.status === 'cancelled'
+  const title = `${item.work_package_name || 'Task'}${item.start_time ? ' · ' + formatTime(item.start_time) : ''}${item.end_time ? '–' + formatTime(item.end_time) : ''}`
+
+  if (empColorIdx !== undefined) {
+    const { text } = empColor(empColorIdx)
+    const { statusBg, statusBorder } = STATUS_BAR[item.status] ?? STATUS_BAR.scheduled
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onClick() }}
+        title={title}
+        className={`w-full text-left text-[10px] px-1.5 py-1 rounded leading-tight transition-opacity hover:opacity-80 ${isCancelled ? 'opacity-40' : ''}`}
+        style={{
+          backgroundColor: statusBg,
+          borderLeft: `3px solid ${text}`,
+          borderTop: `1px solid ${statusBorder}`,
+          borderRight: `1px solid ${statusBorder}`,
+          borderBottom: `1px solid ${statusBorder}`,
+          color: text,
+        }}
+      >
+        <span className="block font-semibold truncate">{item.work_package_name || 'Task'}</span>
+        {item.start_time && (
+          <span className="opacity-60 block">
+            {formatTime(item.start_time)}{item.end_time ? `–${formatTime(item.end_time)}` : ''}
+          </span>
+        )}
+      </button>
+    )
+  }
+
+  const cls = STATUS_BAR[item.status]?.bar ?? STATUS_BAR.scheduled.bar
   return (
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onClick() }}
-      title={`${item.work_package_name || 'Task'}${item.start_time ? ' · ' + formatTime(item.start_time) : ''}${item.end_time ? '–' + formatTime(item.end_time) : ''}`}
+      title={title}
       className={`w-full text-left text-[10px] px-1.5 py-1 rounded border leading-tight transition-opacity hover:opacity-75 ${cls} ${isCancelled ? 'opacity-40' : ''}`}
     >
       <span className="block font-medium truncate">{item.work_package_name || 'Task'}</span>
@@ -209,7 +256,15 @@ function EmpChip({
   )
 }
 
-// ── Week × Employee grid ──────────────────────────────────────────────────────
+// ── Drag state types ──────────────────────────────────────────────────────────
+
+interface DragSel {
+  empId: string
+  startDate: string
+  endDate: string
+}
+
+// ── Week × Employee grid (supports multi-day drag) ────────────────────────────
 
 function WeekEmployeeGrid({
   days,
@@ -226,23 +281,76 @@ function WeekEmployeeGrid({
   onOpenAdd: (p: GanttOpenAddPrefill) => void
   onOpenEdit: (i: ScheduleItem) => void
 }) {
+  const [dragSel, setDragSel] = useState<DragSel | null>(null)
+  const isDragging = useRef(false)
+
+  // Sort dates in a range
+  function sortedRange(a: string, b: string): [string, string] {
+    return a <= b ? [a, b] : [b, a]
+  }
+
+  function isInDragRange(empId: string, date: string): boolean {
+    if (!dragSel || dragSel.empId !== empId) return false
+    const [s, e] = sortedRange(dragSel.startDate, dragSel.endDate)
+    return date >= s && date <= e
+  }
+
+  function handleCellMouseDown(empId: string, date: string) {
+    isDragging.current = true
+    setDragSel({ empId, startDate: date, endDate: date })
+  }
+
+  function handleCellMouseEnter(empId: string, date: string) {
+    if (!isDragging.current || !dragSel || dragSel.empId !== empId) return
+    setDragSel((prev) => prev ? { ...prev, endDate: date } : null)
+  }
+
+  function handleCellMouseUp(empId: string, date: string) {
+    if (!isDragging.current || !dragSel) {
+      isDragging.current = false
+      return
+    }
+    isDragging.current = false
+    const finalEndDate = dragSel.empId === empId ? date : dragSel.endDate
+    const [startDate, endDate] = sortedRange(dragSel.startDate, finalEndDate)
+    setDragSel(null)
+    if (startDate === endDate) {
+      onOpenAdd({ employeeProfileId: empId, workDate: startDate })
+    } else {
+      onOpenAdd({ employeeProfileId: empId, workDate: startDate, endWorkDate: endDate })
+    }
+  }
+
+  // Cancel drag on mouse leave from table
+  function handleTableMouseLeave() {
+    if (isDragging.current && dragSel) {
+      isDragging.current = false
+      setDragSel(null)
+    }
+  }
+
   if (employees.length === 0) return (
     <p className="text-xs text-gray-600 py-4">No active employees.</p>
   )
   return (
     <div className="overflow-x-auto rounded-lg border" style={{ borderColor: '#1e2128' }}>
-      <table className="w-full text-xs" style={{ minWidth: `${120 + days.length * 110}px` }}>
+      <table
+        className="w-full text-xs select-none"
+        style={{ minWidth: `${160 + days.length * 130}px` }}
+        onMouseLeave={handleTableMouseLeave}
+      >
         <thead>
           <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
-            <th className="text-left font-semibold text-gray-500 uppercase tracking-wider px-3 py-2 w-28 sticky left-0 z-10" style={{ backgroundColor: '#0d0e14' }}>
+            <th className="text-left font-semibold text-gray-500 uppercase tracking-wider px-4 py-3 w-40 sticky left-0 z-10" style={{ backgroundColor: '#0d0e14' }}>
               Employee
             </th>
             {days.map((date, i) => {
               const isToday = date === today
+              const dayNum = parseInt(date.slice(8), 10)
               return (
-                <th key={date} className={`text-center font-semibold uppercase tracking-wider px-2 py-2 min-w-[110px] ${isToday ? 'text-green-400' : 'text-gray-500'}`}>
+                <th key={date} className={`text-center font-semibold uppercase tracking-wider px-2 py-2 min-w-[130px] ${isToday ? 'text-green-400' : 'text-gray-500'}`}>
                   {DAY_LABELS[i] ?? date.slice(8)}
-                  <span className={`block text-[10px] font-normal ${isToday ? 'text-green-500' : 'text-gray-600'}`}>{formatShort(date)}</span>
+                  <span className={`block text-[11px] font-semibold mt-0.5 ${isToday ? 'text-green-400' : 'text-gray-400'}`}>{dayNum}</span>
                 </th>
               )
             })}
@@ -251,23 +359,41 @@ function WeekEmployeeGrid({
         <tbody>
           {employees.map((emp, empIdx) => (
             <tr key={emp.id} style={{ backgroundColor: empIdx % 2 === 0 ? '#0a0b0f' : '#0c0d12', borderBottom: '1px solid #1a1c23' }}>
-              <td className="px-3 py-2 sticky left-0 z-10 align-top" style={{ backgroundColor: empIdx % 2 === 0 ? '#0a0b0f' : '#0c0d12' }}>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0" style={{ backgroundColor: empColor(empIdx).bg, color: empColor(empIdx).text }}>
+              <td className="px-4 py-3 sticky left-0 z-10 align-top" style={{ backgroundColor: empIdx % 2 === 0 ? '#0a0b0f' : '#0c0d12' }}>
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0" style={{ backgroundColor: empColor(empIdx).bg, color: empColor(empIdx).text }}>
                     {initials(emp.name)}
                   </div>
-                  <span className="text-gray-300 font-medium truncate max-w-[80px]">{emp.name}</span>
+                  <span className="text-gray-200 font-medium truncate max-w-[110px] text-[11px]">{emp.name}</span>
                 </div>
               </td>
               {days.map((date) => {
                 const cellItems = items.filter((it) => it.employee_profile_id === emp.id && it.work_date === date)
                 const isToday = date === today
+                const inRange = isInDragRange(emp.id, date)
                 return (
-                  <td key={date} className="px-1.5 py-1.5 align-top cursor-pointer hover:bg-white/[0.02] transition-colors" style={isToday ? { backgroundColor: 'rgba(74,222,128,0.03)' } : {}}
-                    onClick={() => onOpenAdd({ employeeProfileId: emp.id, workDate: date })}>
-                    <div className="space-y-1 min-h-[32px]">
+                  <td
+                    key={date}
+                    className="px-1.5 py-2 align-top cursor-pointer transition-colors"
+                    style={{
+                      ...(inRange
+                        ? { backgroundColor: 'rgba(96,165,250,0.12)', outline: '1px solid rgba(96,165,250,0.3)' }
+                        : isToday
+                          ? { backgroundColor: 'rgba(74,222,128,0.03)' }
+                          : {}),
+                    }}
+                    onMouseDown={() => handleCellMouseDown(emp.id, date)}
+                    onMouseEnter={() => handleCellMouseEnter(emp.id, date)}
+                    onMouseUp={() => handleCellMouseUp(emp.id, date)}
+                  >
+                    <div className="space-y-1 min-h-[80px]">
                       {cellItems.map((item) => (
-                        <WeekBar key={item.id} item={item} onClick={() => onOpenEdit(item)} />
+                        <WeekBar
+                          key={item.id}
+                          item={item}
+                          empColorIdx={empIdx}
+                          onClick={() => onOpenEdit(item)}
+                        />
                       ))}
                     </div>
                   </td>
@@ -308,18 +434,19 @@ function WeekProjectGrid({
   )
   return (
     <div className="overflow-x-auto rounded-lg border" style={{ borderColor: '#1e2128' }}>
-      <table className="w-full text-xs" style={{ minWidth: `${120 + days.length * 110}px` }}>
+      <table className="w-full text-xs" style={{ minWidth: `${160 + days.length * 130}px` }}>
         <thead>
           <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
-            <th className="text-left font-semibold text-gray-500 uppercase tracking-wider px-3 py-2 w-32 sticky left-0 z-10" style={{ backgroundColor: '#0d0e14' }}>
+            <th className="text-left font-semibold text-gray-500 uppercase tracking-wider px-4 py-3 w-40 sticky left-0 z-10" style={{ backgroundColor: '#0d0e14' }}>
               Project
             </th>
             {days.map((date, i) => {
               const isToday = date === today
+              const dayNum = parseInt(date.slice(8), 10)
               return (
-                <th key={date} className={`text-center font-semibold uppercase tracking-wider px-2 py-2 min-w-[110px] ${isToday ? 'text-green-400' : 'text-gray-500'}`}>
+                <th key={date} className={`text-center font-semibold uppercase tracking-wider px-2 py-2 min-w-[130px] ${isToday ? 'text-green-400' : 'text-gray-500'}`}>
                   {DAY_LABELS[i] ?? date.slice(8)}
-                  <span className={`block text-[10px] font-normal ${isToday ? 'text-green-500' : 'text-gray-600'}`}>{formatShort(date)}</span>
+                  <span className={`block text-[11px] font-semibold mt-0.5 ${isToday ? 'text-green-400' : 'text-gray-400'}`}>{dayNum}</span>
                 </th>
               )
             })}
@@ -328,16 +455,16 @@ function WeekProjectGrid({
         <tbody>
           {projects.map((proj, projIdx) => (
             <tr key={proj.id} style={{ backgroundColor: projIdx % 2 === 0 ? '#0a0b0f' : '#0c0d12', borderBottom: '1px solid #1a1c23' }}>
-              <td className="px-3 py-2 sticky left-0 z-10 align-top" style={{ backgroundColor: projIdx % 2 === 0 ? '#0a0b0f' : '#0c0d12' }}>
-                <span className="text-gray-300 font-medium text-[11px] truncate block max-w-[110px]">{proj.name}</span>
+              <td className="px-4 py-3 sticky left-0 z-10 align-top" style={{ backgroundColor: projIdx % 2 === 0 ? '#0a0b0f' : '#0c0d12' }}>
+                <span className="text-gray-300 font-medium text-[11px] truncate block max-w-[130px]">{proj.name}</span>
               </td>
               {days.map((date) => {
                 const cellItems = items.filter((it) => it.project_name === proj.name && it.work_date === date)
                 const isToday = date === today
                 return (
-                  <td key={date} className="px-1.5 py-1.5 align-top cursor-pointer hover:bg-white/[0.02] transition-colors" style={isToday ? { backgroundColor: 'rgba(74,222,128,0.03)' } : {}}
+                  <td key={date} className="px-1.5 py-2 align-top cursor-pointer hover:bg-white/[0.02] transition-colors" style={isToday ? { backgroundColor: 'rgba(74,222,128,0.03)' } : {}}
                     onClick={() => onOpenAdd({ workDate: date, projectName: proj.name })}>
-                    <div className="flex flex-wrap gap-1 min-h-[28px]">
+                    <div className="flex flex-wrap gap-1 min-h-[80px]">
                       {cellItems.map((item) => {
                         const emp = employees.find((e) => e.id === item.employee_profile_id)
                         const colorIdx = emp ? (empIndexMap.get(emp.id) ?? 0) : 0
@@ -381,15 +508,15 @@ function MonthEmployeeGrid({
   )
   return (
     <div className="overflow-x-auto rounded-lg border" style={{ borderColor: '#1e2128' }}>
-      <table className="w-full text-xs" style={{ minWidth: `${120 + days.length * 32}px` }}>
+      <table className="w-full text-xs" style={{ minWidth: `${160 + days.length * 32}px` }}>
         <thead>
           <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
-            <th className="text-left font-semibold text-gray-500 uppercase tracking-wider px-3 py-2 w-28 sticky left-0 z-10" style={{ backgroundColor: '#0d0e14' }}>
+            <th className="text-left font-semibold text-gray-500 uppercase tracking-wider px-4 py-3 w-40 sticky left-0 z-10" style={{ backgroundColor: '#0d0e14' }}>
               Employee
             </th>
             {days.map((date) => {
               const isToday = date === today
-              const dayNum = date.slice(8)
+              const dayNum = parseInt(date.slice(8), 10)
               return (
                 <th key={date} className={`text-center font-semibold px-0 py-1.5 w-8 min-w-[28px] ${isToday ? 'text-green-400' : 'text-gray-600'}`}>
                   {dayNum}
@@ -401,12 +528,12 @@ function MonthEmployeeGrid({
         <tbody>
           {employees.map((emp, empIdx) => (
             <tr key={emp.id} style={{ backgroundColor: empIdx % 2 === 0 ? '#0a0b0f' : '#0c0d12', borderBottom: '1px solid #1a1c23' }}>
-              <td className="px-3 py-1.5 sticky left-0 z-10 align-middle" style={{ backgroundColor: empIdx % 2 === 0 ? '#0a0b0f' : '#0c0d12' }}>
-                <div className="flex items-center gap-1.5">
+              <td className="px-4 py-1.5 sticky left-0 z-10 align-middle" style={{ backgroundColor: empIdx % 2 === 0 ? '#0a0b0f' : '#0c0d12' }}>
+                <div className="flex items-center gap-2">
                   <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0" style={{ backgroundColor: empColor(empIdx).bg, color: empColor(empIdx).text }}>
                     {initials(emp.name)}
                   </div>
-                  <span className="text-gray-300 font-medium truncate max-w-[80px]">{emp.name}</span>
+                  <span className="text-gray-300 font-medium truncate max-w-[110px] text-[11px]">{emp.name}</span>
                 </div>
               </td>
               {days.map((date) => {
@@ -456,17 +583,18 @@ function MonthProjectGrid({
   )
   return (
     <div className="overflow-x-auto rounded-lg border" style={{ borderColor: '#1e2128' }}>
-      <table className="w-full text-xs" style={{ minWidth: `${130 + days.length * 32}px` }}>
+      <table className="w-full text-xs" style={{ minWidth: `${160 + days.length * 32}px` }}>
         <thead>
           <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
-            <th className="text-left font-semibold text-gray-500 uppercase tracking-wider px-3 py-2 w-32 sticky left-0 z-10" style={{ backgroundColor: '#0d0e14' }}>
+            <th className="text-left font-semibold text-gray-500 uppercase tracking-wider px-4 py-3 w-40 sticky left-0 z-10" style={{ backgroundColor: '#0d0e14' }}>
               Project
             </th>
             {days.map((date) => {
               const isToday = date === today
+              const dayNum = parseInt(date.slice(8), 10)
               return (
                 <th key={date} className={`text-center font-semibold px-0 py-1.5 w-8 min-w-[28px] ${isToday ? 'text-green-400' : 'text-gray-600'}`}>
-                  {date.slice(8)}
+                  {dayNum}
                 </th>
               )
             })}
@@ -475,8 +603,8 @@ function MonthProjectGrid({
         <tbody>
           {projects.map((proj, projIdx) => (
             <tr key={proj.id} style={{ backgroundColor: projIdx % 2 === 0 ? '#0a0b0f' : '#0c0d12', borderBottom: '1px solid #1a1c23' }}>
-              <td className="px-3 py-1.5 sticky left-0 z-10 align-middle" style={{ backgroundColor: projIdx % 2 === 0 ? '#0a0b0f' : '#0c0d12' }}>
-                <span className="text-gray-300 font-medium text-[11px] truncate block max-w-[110px]">{proj.name}</span>
+              <td className="px-4 py-1.5 sticky left-0 z-10 align-middle" style={{ backgroundColor: projIdx % 2 === 0 ? '#0a0b0f' : '#0c0d12' }}>
+                <span className="text-gray-300 font-medium text-[11px] truncate block max-w-[130px]">{proj.name}</span>
               </td>
               {days.map((date) => {
                 const cellItems = items.filter((it) => it.project_name === proj.name && it.work_date === date)
@@ -612,15 +740,15 @@ function ListFallback({
 function SkeletonRows({ cols }: { cols: number }) {
   return (
     <div className="overflow-x-auto rounded-lg border" style={{ borderColor: '#1e2128' }}>
-      <table className="w-full text-xs" style={{ minWidth: `${120 + cols * 60}px` }}>
+      <table className="w-full text-xs" style={{ minWidth: `${160 + cols * 60}px` }}>
         <tbody>
           {[1, 2, 3].map((r) => (
             <tr key={r} style={{ borderBottom: '1px solid #1a1c23' }}>
-              <td className="px-3 py-3 w-28">
-                <div className="h-2 bg-gray-800 rounded animate-pulse w-20" />
+              <td className="px-4 py-4 w-40">
+                <div className="h-2 bg-gray-800 rounded animate-pulse w-24" />
               </td>
               {Array.from({ length: cols }, (_, c) => (
-                <td key={c} className="px-1.5 py-3">
+                <td key={c} className="px-1.5 py-4">
                   <div className="h-2 bg-gray-800/50 rounded animate-pulse" />
                 </td>
               ))}
@@ -641,8 +769,15 @@ export default function GanttPanel({
   onOpenAdd,
   onOpenEdit,
 }: GanttPanelProps) {
-  const [viewRange, setViewRange] = useState<ViewRange>('week')
-  const [viewOrg,   setViewOrg]   = useState<ViewOrg>('employee')
+  // Persist view preference in localStorage
+  const [viewRange, setViewRange] = useState<ViewRange>(() => {
+    try { return (localStorage.getItem('crew_portal_schedule_view') as ViewRange) || 'week' }
+    catch { return 'week' }
+  })
+  const [viewOrg, setViewOrg] = useState<ViewOrg>(() => {
+    try { return (localStorage.getItem('crew_portal_schedule_rows') as ViewOrg) || 'employee' }
+    catch { return 'employee' }
+  })
 
   // Week anchor = ISO Monday; Month anchor = ISO first-of-month
   const [weekAnchor,  setWeekAnchor]  = useState<string>(() => weekStart(new Date()))
@@ -657,6 +792,16 @@ export default function GanttPanel({
   const today = new Date().toISOString().slice(0, 10)
 
   const activeEmployees = employees.filter((e) => e.active)
+
+  // Persist on change
+  function changeViewRange(v: ViewRange) {
+    setViewRange(v)
+    try { localStorage.setItem('crew_portal_schedule_view', v) } catch {}
+  }
+  function changeViewOrg(v: ViewOrg) {
+    setViewOrg(v)
+    try { localStorage.setItem('crew_portal_schedule_rows', v) } catch {}
+  }
 
   // ── Data loading ────────────────────────────────────────────────────────────
 
@@ -720,16 +865,16 @@ export default function GanttPanel({
       <div className="flex flex-wrap items-center gap-2">
         {/* Time range toggle */}
         <div className="flex items-center gap-0.5 rounded-lg border p-0.5" style={{ borderColor: '#1e2128', backgroundColor: '#0a0b0f' }}>
-          <button type="button" className={toggleCls(viewRange === 'week')}  onClick={() => setViewRange('week')}>Week</button>
-          <button type="button" className={toggleCls(viewRange === 'month')} onClick={() => setViewRange('month')}>Month</button>
+          <button type="button" className={toggleCls(viewRange === 'week')}  onClick={() => changeViewRange('week')}>Week</button>
+          <button type="button" className={toggleCls(viewRange === 'month')} onClick={() => changeViewRange('month')}>Month</button>
         </div>
 
         {/* Row organization toggle */}
         <div className="flex items-center gap-0.5 rounded-lg border p-0.5" style={{ borderColor: '#1e2128', backgroundColor: '#0a0b0f' }}>
-          <button type="button" className={`${toggleCls(viewOrg === 'employee')} flex items-center gap-1`} onClick={() => setViewOrg('employee')}>
+          <button type="button" className={`${toggleCls(viewOrg === 'employee')} flex items-center gap-1`} onClick={() => changeViewOrg('employee')}>
             <Users size={10} /> Employee
           </button>
-          <button type="button" className={`${toggleCls(viewOrg === 'project')} flex items-center gap-1`} onClick={() => setViewOrg('project')}>
+          <button type="button" className={`${toggleCls(viewOrg === 'project')} flex items-center gap-1`} onClick={() => changeViewOrg('project')}>
             <FolderOpen size={10} /> Project
           </button>
         </div>
@@ -750,6 +895,12 @@ export default function GanttPanel({
           </button>
         </div>
       </div>
+
+      {viewRange === 'week' && viewOrg === 'employee' && (
+        <p className="text-[10px] text-gray-600">
+          Click a cell to add · drag across days to schedule a multi-day range · click a bar to view/edit
+        </p>
+      )}
 
       {/* Error */}
       {error && (
@@ -785,7 +936,9 @@ export default function GanttPanel({
         </p>
       )}
 
-      <p className="text-[10px] text-gray-700">Click any cell to schedule · click a bar or chip to edit</p>
+      {viewRange !== 'week' || viewOrg !== 'employee' ? (
+        <p className="text-[10px] text-gray-700">Click any cell to schedule · click a bar or chip to edit</p>
+      ) : null}
     </div>
   )
 }

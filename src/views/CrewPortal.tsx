@@ -10,6 +10,7 @@ import {
   Shield,
   UserPlus,
   ChevronDown,
+  ChevronUp,
   FolderOpen,
   ClipboardList,
   ChevronRight,
@@ -316,17 +317,17 @@ function UnifiedDirectoryPanel({
     <div className="space-y-5">
       {/* Summary row + archived toggle */}
       <div className="flex items-start gap-4 flex-wrap">
-        <div className="flex-1 rounded-lg px-4 py-3 border" style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}>
-          <p className="text-xs text-gray-500 mb-1">Portal Members</p>
-          <p className="text-2xl font-bold text-teal-400">{portalCount}</p>
+        <div className="flex-1 rounded-lg px-6 py-5 border" style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}>
+          <p className="text-xs text-gray-500 mb-2 uppercase tracking-wider">Portal Members</p>
+          <p className="text-3xl font-bold text-teal-400">{portalCount}</p>
         </div>
-        <div className="flex-1 rounded-lg px-4 py-3 border" style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}>
-          <p className="text-xs text-gray-500 mb-1">Active This Week</p>
-          <p className="text-2xl font-bold text-green-400">{activeCount}</p>
+        <div className="flex-1 rounded-lg px-6 py-5 border" style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}>
+          <p className="text-xs text-gray-500 mb-2 uppercase tracking-wider">Active This Week</p>
+          <p className="text-3xl font-bold text-green-400">{activeCount}</p>
         </div>
-        <div className="flex-1 rounded-lg px-4 py-3 border" style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}>
-          <p className="text-xs text-gray-500 mb-1">Total Hours This Week</p>
-          <p className="text-2xl font-bold text-blue-400">{Number.isFinite(totalHours) ? totalHours : 0}h</p>
+        <div className="flex-1 rounded-lg px-6 py-5 border" style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}>
+          <p className="text-xs text-gray-500 mb-2 uppercase tracking-wider">Total Hours This Week</p>
+          <p className="text-3xl font-bold text-blue-400">{Number.isFinite(totalHours) ? totalHours : 0}h</p>
         </div>
       </div>
 
@@ -356,13 +357,13 @@ function UnifiedDirectoryPanel({
           <table className="w-full text-sm">
             <thead>
               <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Name</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Role</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Registrations</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Status</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Hours</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Projects</th>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Action</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-5 py-4">Name</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-5 py-4">Role</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-5 py-4">Registrations</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-5 py-4">Status</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-5 py-4">Hours</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-5 py-4">Projects</th>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-5 py-4">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -381,24 +382,24 @@ function UnifiedDirectoryPanel({
                     onMouseLeave={(e) => { (e.currentTarget as HTMLTableRowElement).style.backgroundColor = idx % 2 === 0 ? '#0a0b0f' : '#0c0d12' }}
                     onClick={() => setSelectedMember(member)}
                   >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-3">
                         <div
-                          className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
                           style={{ backgroundColor: '#1e3a5f', color: '#60a5fa' }}
                         >
                           {(member.name || 'U').slice(0, 2).toUpperCase()}
                         </div>
-                        <span className="text-gray-200 font-medium text-xs">{member.name}</span>
+                        <span className="text-gray-200 font-semibold text-sm">{member.name}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-5 py-4">
                       {member.employeeRole
                         ? <MemberRoleBadge employeeRole={member.employeeRole} fallbackRole="employee" />
                         : <span className="text-xs text-gray-600">—</span>}
                     </td>
                     {/* Registrations — two pills, click stops row propagation */}
-                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <CostModelPill
                           hasCostModel={member.hasCostModel}
@@ -411,15 +412,15 @@ function UnifiedDirectoryPanel({
                         />
                       </div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-5 py-4">
                       {isArchived
                         ? <ArchivedBadge />
                         : <DirectoryStatusDot status={member.status} />}
                     </td>
-                    <td className="px-4 py-3 text-gray-300 font-mono text-xs">
+                    <td className="px-5 py-4 text-gray-300 font-mono text-sm font-semibold">
                       {member.hoursThisWeek > 0 ? `${member.hoursThisWeek}h` : '—'}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-5 py-4">
                       <div className="flex flex-wrap gap-1">
                         {(member.assignedProjects ?? []).length === 0
                           ? <span className="text-xs text-gray-600">None</span>
@@ -431,10 +432,10 @@ function UnifiedDirectoryPanel({
                           ))}
                       </div>
                     </td>
-                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
                       {member.hasPortal ? (
                         <button
-                          className="text-xs px-2 py-1 rounded border transition-colors hover:bg-blue-900/20"
+                          className="text-xs px-3 py-1.5 rounded border transition-colors hover:bg-blue-900/20"
                           style={{ borderColor: '#1e40af55', color: '#60a5fa' }}
                           onClick={() => setSelectedMember(member)}
                         >
@@ -442,7 +443,7 @@ function UnifiedDirectoryPanel({
                         </button>
                       ) : (
                         <button
-                          className="text-xs px-2 py-1 rounded border transition-colors hover:bg-teal-900/20"
+                          className="text-xs px-3 py-1.5 rounded border transition-colors hover:bg-teal-900/20"
                           style={{ borderColor: '#134e4a55', color: '#2dd4bf' }}
                           onClick={() => setSelectedMember(member)}
                         >
@@ -476,7 +477,7 @@ function PhaseRow({ phase, onAssign }: { phase: ProjectPhaseRow; onAssign?: () =
   const chipCls = PHASE_STATUS_CHIP[phase.status] || PHASE_STATUS_CHIP.pending
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2 rounded border" style={{ backgroundColor: '#0a0b0f', borderColor: '#1a1c23' }}>
+    <div className="flex items-center gap-3 px-4 py-3 rounded border" style={{ backgroundColor: '#0a0b0f', borderColor: '#1a1c23' }}>
       <span className={`text-xs font-medium px-2 py-0.5 rounded-full border capitalize flex-shrink-0 ${chipCls}`}>
         {phase.status.replace('_', ' ')}
       </span>
@@ -511,7 +512,7 @@ function ProjectCard({
     <div className="rounded-lg border" style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}>
       {/* Header row */}
       <button
-        className="w-full flex items-center gap-3 px-4 py-3 text-left"
+        className="w-full flex items-center gap-3 px-5 py-4 text-left"
         onClick={() => setExpanded((v) => !v)}
       >
         <ChevronRight
@@ -644,6 +645,10 @@ function OwnerPanel() {
     setTab('performance')
   }
 
+  function handleNavigateToTask(_assignmentId: string) {
+    setTab('tasks')
+  }
+
   return (
     <div className="space-y-4">
       {/* Sub-tabs */}
@@ -667,7 +672,7 @@ function OwnerPanel() {
       {tab === 'directory' && <UnifiedDirectoryPanel onNavigateToPerformance={handleNavigateToPerformance} />}
       {tab === 'projects' && <ActiveProjectsPanel onAssignProject={handleAssignProject} />}
       {tab === 'tasks' && <AdminTaskDelegationPanel initialProjectId={taskProjectId} />}
-      {tab === 'schedule' && <OwnerSchedulePanel />}
+      {tab === 'schedule' && <OwnerSchedulePanel onNavigateToTask={handleNavigateToTask} />}
       {tab === 'performance' && <OwnerPerformancePanel initialEmployeeId={initialPerfEmployeeId} />}
     </div>
   )
@@ -721,7 +726,7 @@ function CrewPanel() {
   const hours = Number.isFinite(self.hoursThisWeek) ? self.hoursThisWeek : 0
 
   return (
-    <div className="space-y-5 max-w-xl">
+    <div className="space-y-5">
       <div
         className="flex items-center gap-4 rounded-lg px-5 py-4 border"
         style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}
@@ -855,7 +860,7 @@ function GuestPanel() {
   }, [])
 
   return (
-    <div className="space-y-5 max-w-sm">
+    <div className="space-y-5">
       <div
         className="rounded-lg px-5 py-5 border"
         style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}
@@ -1324,9 +1329,21 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
   )
 }
 
-// ─── Permission Matrix ───────────────────────────────────────────────────────
+// ─── Permission Matrix (collapsible, localStorage-persisted) ─────────────────
 
 function PermissionMatrix() {
+  const [open, setOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem('crew_portal_permission_matrix_open') === 'true' }
+    catch { return false }
+  })
+
+  function toggle() {
+    const next = !open
+    setOpen(next)
+    try { localStorage.setItem('crew_portal_permission_matrix_open', String(next)) }
+    catch {}
+  }
+
   function Check({ allowed }: { allowed: boolean }) {
     return allowed ? (
       <span className="text-green-400 font-bold">✓</span>
@@ -1337,52 +1354,55 @@ function PermissionMatrix() {
 
   return (
     <div className="mt-8">
-      <div className="flex items-center gap-2 mb-3">
-        <Shield size={14} className="text-green-500" />
-        <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Permission Matrix</h3>
-      </div>
-      <div className="overflow-x-auto rounded-lg border" style={{ borderColor: '#1e2128' }}>
-        <table className="w-full text-sm">
-          <thead>
-            <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
-              <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3 w-1/2">
-                Permission
-              </th>
-              <th className="text-center text-xs font-semibold text-green-600 uppercase tracking-wider px-4 py-3">
-                Owner
-              </th>
-              <th className="text-center text-xs font-semibold text-blue-600 uppercase tracking-wider px-4 py-3">
-                Crew
-              </th>
-              <th className="text-center text-xs font-semibold text-gray-600 uppercase tracking-wider px-4 py-3">
-                Guest
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {PERMISSION_MATRIX.map((row, idx) => (
-              <tr
-                key={row.permission}
-                style={{
-                  backgroundColor: idx % 2 === 0 ? '#0a0b0f' : '#0c0d12',
-                  borderBottom: '1px solid #1a1c23',
-                }}
-              >
-                <td className="px-4 py-2.5 text-gray-300">{row.permission}</td>
-                <td className="px-4 py-2.5 text-center">
-                  <Check allowed={row.owner} />
-                </td>
-                <td className="px-4 py-2.5 text-center">
-                  <Check allowed={row.crew} />
-                </td>
-                <td className="px-4 py-2.5 text-center">
-                  <Check allowed={row.guest} />
-                </td>
+      <button
+        onClick={toggle}
+        className="flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium text-gray-400 border-gray-700/40 hover:text-gray-300 hover:bg-gray-800/30 transition-colors"
+      >
+        <Shield size={13} className="text-green-600 flex-shrink-0" />
+        <span>Permission Matrix</span>
+        {open
+          ? <ChevronUp size={12} className="text-gray-500 ml-1" />
+          : <ChevronDown size={12} className="text-gray-500 ml-1" />}
+      </button>
+
+      {open && (
+        <div className="mt-3 overflow-x-auto rounded-lg border" style={{ borderColor: '#1e2128' }}>
+          <table className="w-full text-sm">
+            <thead>
+              <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
+                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3 w-1/2">
+                  Permission
+                </th>
+                <th className="text-center text-xs font-semibold text-green-600 uppercase tracking-wider px-4 py-3">
+                  Owner
+                </th>
+                <th className="text-center text-xs font-semibold text-blue-600 uppercase tracking-wider px-4 py-3">
+                  Crew
+                </th>
+                <th className="text-center text-xs font-semibold text-gray-600 uppercase tracking-wider px-4 py-3">
+                  Guest
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {PERMISSION_MATRIX.map((row, idx) => (
+                <tr
+                  key={row.permission}
+                  style={{
+                    backgroundColor: idx % 2 === 0 ? '#0a0b0f' : '#0c0d12',
+                    borderBottom: '1px solid #1a1c23',
+                  }}
+                >
+                  <td className="px-4 py-2.5 text-gray-300">{row.permission}</td>
+                  <td className="px-4 py-2.5 text-center"><Check allowed={row.owner} /></td>
+                  <td className="px-4 py-2.5 text-center"><Check allowed={row.crew} /></td>
+                  <td className="px-4 py-2.5 text-center"><Check allowed={row.guest} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
@@ -1449,7 +1469,7 @@ export default function CrewPortal() {
 
   if (authStatus === 'loading' || authStatus === 'hydrating_user_data') {
     return (
-      <div className="p-6 max-w-5xl mx-auto">
+      <div className="px-4 py-6 w-full">
         <div
           className="rounded-xl border p-6 flex items-center gap-3 text-sm text-gray-500"
           style={{ backgroundColor: '#0d0e14', borderColor: '#1e2128' }}
@@ -1462,7 +1482,7 @@ export default function CrewPortal() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="px-4 py-6 w-full">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-gray-100 flex items-center gap-2">
@@ -1479,7 +1499,7 @@ export default function CrewPortal() {
       </div>
 
       <div
-        className="rounded-xl border p-5 mb-2"
+        className="rounded-xl border p-6 mb-2 w-full"
         style={{ backgroundColor: '#0d0e14', borderColor: '#1e2128' }}
       >
         <div className="flex items-center gap-2 mb-5">
