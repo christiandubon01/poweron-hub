@@ -5,6 +5,7 @@ import {
   ArrowUpRight,
   Bold,
   Cable,
+  Camera,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -199,6 +200,13 @@ import {
   ElectricalSymbolCountSummary,
   ElectricalSymbolTotalsDialog,
 } from '@/features/blueprint-symbol-counts'
+import {
+  BlueprintSnapshotCaptureDialog,
+  BlueprintSnapshotCaptureError,
+  captureBlueprintSnapshot,
+  resolveBlueprintSnapshotWorkPackageTag,
+  type BlueprintSnapshotCaptureResult,
+} from '@/features/blueprint-snapshots'
 import {
   ELECTRICAL_SYMBOL_OPTIONS,
   formatElectricalSymbolCategory,
@@ -2170,7 +2178,7 @@ export default function OperationsBlueprintPdfViewer({
   onPageChange,
   onGenerateQuestion,
 }: OperationsBlueprintPdfViewerProps) {
-  const { profile } = useAuth()
+  const { profile, user } = useAuth()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const pdfDocRef = useRef<any>(null)
@@ -2475,6 +2483,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [submittingRfi, setSubmittingRfi] = useState(false)
   const [submittingCord, setSubmittingCord] = useState(false)
   const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'warning' | 'error'; text: string; key?: string } | null>(null)
+  const [snapshotCapture, setSnapshotCapture] = useState<BlueprintSnapshotCaptureResult | null>(null)
+  const [isSnapshotPreviewOpen, setIsSnapshotPreviewOpen] = useState(false)
+  const [isSnapshotCapturing, setIsSnapshotCapturing] = useState(false)
+  const snapshotCaptureRequestIdRef = useRef(0)
+  const snapshotCaptureButtonRef = useRef<HTMLButtonElement | null>(null)
   const [packageAnimationRouteNotices, setPackageAnimationRouteNotices] = useState<Record<string, PackageAnimationRouteNotice>>({})
   const [animationRouteReviewConflicts, setAnimationRouteReviewConflicts] = useState<Record<string, PackageAnimationRouteConflictState & { operationId?: number }>>({})
   const [syncNotice, setSyncNotice] = useState<string | null>(null)
@@ -4571,6 +4584,82 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     if (hiddenAnnotationIdSet) return pageAnnotations.filter((annotation) => !hiddenAnnotationIdSet.has(annotation.id))
     return pageAnnotations
   }, [pageAnnotations, isolatedAnnotationIdSet, hiddenAnnotationIdSet])
+
+  const snapshotViewMode = isolatedScopeLayers.length > 0 ? 'scoped' : 'general'
+  const snapshotScopedWorkPackageIds = useMemo(
+    () => isolatedScopeLayers.map((layer) => layer.id).filter(Boolean),
+    [isolatedScopeLayers],
+  )
+  const snapshotWorkPackageTag = useMemo(
+    () => resolveBlueprintSnapshotWorkPackageTag({
+      viewMode: snapshotViewMode,
+      scopedWorkPackages: isolatedScopeLayers.map((layer) => ({ id: layer.id, name: layer.name })),
+    }),
+    [isolatedScopeLayers, snapshotViewMode],
+  )
+
+  const canCaptureSnapshot = Boolean(canRender && !isRendering && !isSnapshotCapturing && pdfDoc && currentPage > 0)
+
+  const handleCaptureSnapshot = useCallback(async () => {
+    const snapshotAnnotations = annotationsVisible ? canvasPageAnnotations : []
+    if (!pdfDoc || !canRender || (snapshotAnnotations.length > 0 && !overlayRef.current)) {
+      setActionMsg({ type: 'error', text: 'The current PDF page is not ready for snapshot capture.' })
+      return
+    }
+    const requestId = snapshotCaptureRequestIdRef.current + 1
+    snapshotCaptureRequestIdRef.current = requestId
+    const captureBlueprintId = blueprint?.id
+    const captureProjectId = blueprint?.projectId
+    const capturePageNumber = currentPage
+    setIsSnapshotCapturing(true)
+    setActionMsg(null)
+    try {
+      const page = await pdfDoc.getPage(capturePageNumber)
+      const result = await captureBlueprintSnapshot({
+        page,
+        pageNumber: capturePageNumber,
+        rotation: Number(page?.rotate ?? 0),
+        annotations: snapshotAnnotations,
+        overlayElement: snapshotAnnotations.length > 0 ? overlayRef.current : null,
+        viewMode: snapshotViewMode,
+        scopedWorkPackageIds: snapshotScopedWorkPackageIds,
+        labelsVisible: Boolean(electricalSymbolLabelsVisible || measurementLabelsVisible),
+        circuitLabelsVisible: Boolean(showCircuitMeasurementLabels),
+      })
+      const isStale = snapshotCaptureRequestIdRef.current !== requestId
+        || currentPageRef.current !== capturePageNumber
+        || blueprintIdentityRef.current.blueprintSetId !== captureBlueprintId
+        || blueprintIdentityRef.current.projectId !== captureProjectId
+      if (isStale || !isViewerMountedRef.current) return
+      setSnapshotCapture(result)
+      setIsSnapshotPreviewOpen(true)
+    } catch (error) {
+      if (snapshotCaptureRequestIdRef.current === requestId && isViewerMountedRef.current) {
+        setActionMsg({
+          type: 'error',
+          text: 'Snapshot capture failed before preview. No image was uploaded.',
+          key: error instanceof BlueprintSnapshotCaptureError ? error.stage : 'CAPTURE_FAILED',
+        })
+      }
+    } finally {
+      if (snapshotCaptureRequestIdRef.current === requestId && isViewerMountedRef.current) {
+        setIsSnapshotCapturing(false)
+      }
+    }
+  }, [
+    annotationsVisible,
+    blueprint?.id,
+    blueprint?.projectId,
+    canRender,
+    canvasPageAnnotations,
+    currentPage,
+    electricalSymbolLabelsVisible,
+    measurementLabelsVisible,
+    pdfDoc,
+    showCircuitMeasurementLabels,
+    snapshotScopedWorkPackageIds,
+    snapshotViewMode,
+  ])
 
   const animationRouteAnnotations = useMemo<RouteBuilderAnnotation[]>(() => allAnnotations.map((annotation) => {
     const meta = getAnnotationMeta(annotation)
@@ -10646,6 +10735,18 @@ const annotationPanelSizeClass =
               <Cable size={12} />
               <span className="hidden sm:inline">Wire Profiles</span>
             </button>
+            <button
+              ref={snapshotCaptureButtonRef}
+              type="button"
+              onClick={() => void handleCaptureSnapshot()}
+              disabled={!canCaptureSnapshot}
+              className="shrink-0 inline-flex min-h-10 items-center justify-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              title={canCaptureSnapshot ? 'Capture Snapshot' : 'Snapshot capture is available after the PDF page renders'}
+              aria-label="Capture Snapshot"
+            >
+              {isSnapshotCapturing ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
+              <span className="hidden sm:inline">Capture Snapshot</span>
+            </button>
           </div>
         </div>
       )}
@@ -10739,6 +10840,18 @@ const annotationPanelSizeClass =
                 >
                   <Cable size={12} />
                   <span className="hidden sm:inline">Wire Profiles</span>
+                </button>
+                <button
+                  ref={snapshotCaptureButtonRef}
+                  type="button"
+                  onClick={() => void handleCaptureSnapshot()}
+                  disabled={!canCaptureSnapshot}
+                  className="shrink-0 inline-flex min-h-10 items-center justify-center gap-1 rounded-md border border-gray-700 px-2 text-xs text-gray-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  title={canCaptureSnapshot ? 'Capture Snapshot' : 'Snapshot capture is available after the PDF page renders'}
+                  aria-label="Capture Snapshot"
+                >
+                  {isSnapshotCapturing ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
+                  <span className="hidden sm:inline">Capture</span>
                 </button>
               </div>
 
@@ -11829,6 +11942,17 @@ const annotationPanelSizeClass =
                 aria-label={isFullScreenView || isTabletImmersiveFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
               >
                 {isFullScreenView || isTabletImmersiveFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              </button>
+              <button
+                ref={snapshotCaptureButtonRef}
+                type="button"
+                onClick={() => void handleCaptureSnapshot()}
+                disabled={!canCaptureSnapshot}
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-gray-700 text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                title={canCaptureSnapshot ? 'Capture Snapshot' : 'Snapshot capture is available after the PDF page renders'}
+                aria-label="Capture Snapshot"
+              >
+                {isSnapshotCapturing ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
               </button>
             </div>
           </div>
@@ -15436,6 +15560,31 @@ const annotationPanelSizeClass =
         </div>,
         viewerPortalTarget
       )}
+
+      <BlueprintSnapshotCaptureDialog
+        open={isSnapshotPreviewOpen}
+        capture={snapshotCapture}
+        orgId={profile?.org_id}
+        userId={user?.id}
+        projectId={blueprint?.projectId}
+        projectName={blueprint?.projectName || blueprint?.title}
+        blueprintSetId={blueprint?.id}
+        workPackageTag={snapshotWorkPackageTag}
+        onCancel={() => {
+          setIsSnapshotPreviewOpen(false)
+          setSnapshotCapture(null)
+          setTimeout(() => snapshotCaptureButtonRef.current?.focus(), 0)
+        }}
+        onSaved={() => {
+          setIsSnapshotPreviewOpen(false)
+          setSnapshotCapture(null)
+          setActionMsg({ type: 'success', text: 'Snapshot saved to private storage.' })
+          setTimeout(() => snapshotCaptureButtonRef.current?.focus(), 0)
+        }}
+        onFailure={(message) => {
+          setActionMsg({ type: 'error', text: message })
+        }}
+      />
 
       {/* ── All Pages Index Modal ── */}
       {indexModalOpen && createPortal(
