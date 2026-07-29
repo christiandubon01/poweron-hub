@@ -13,10 +13,13 @@
 import { supabase } from '@/lib/supabase'
 import { getBackupData } from '@/services/backupDataService'
 import {
+  getOperationsBlueprintAnnotations,
   getOperationsBlueprintLibrary,
   getOperationsBlueprintScopeLayers,
+  getOperationsBlueprintWireProfiles,
 } from '@/services/blueprintLibraryService'
 import { getActiveEmployeeProfiles, type AdminEmployeeProfile } from '@/services/adminTimecardService'
+import { buildWorkOrderPayloadV1Draft, type WorkOrderPayloadV1Draft } from '@/features/work-orders'
 
 const from = supabase.from as any
 const rpc = supabase.rpc as any
@@ -61,6 +64,7 @@ const ACTIVE_PROJECT_STATUSES = [
 export interface EmployeeTaskAssignment {
   id: string
   org_id: string
+  client_request_id?: string | null
   work_package_id: string
   work_package_name: string
   project_id: string | null
@@ -78,6 +82,7 @@ export interface EmployeeTaskAssignment {
   completed_by: string | null
   updated_at: string
   created_at?: string
+  current_work_order_version?: number | null
 }
 
 /** Employee-facing row — never includes lead_employee_id. */
@@ -112,6 +117,13 @@ export interface CreateTaskAssignmentInput {
   status?: TaskAssignmentStatus
 }
 
+export interface CreateTaskAssignmentWithWorkOrderInput extends CreateTaskAssignmentInput {
+  assignmentId: string
+  clientRequestId: string
+  blueprintTitle?: string | null
+  workOrderPayload: WorkOrderPayloadV1Draft
+}
+
 export interface UpdateTaskAssignmentInput {
   leadEmployeeId?: string
   assignedEmployeeIds?: string[]
@@ -125,7 +137,7 @@ export interface UpdateTaskAssignmentInput {
 type Result<T> = { success: true; data: T } | { success: false; error: string }
 
 const ASSIGNMENT_COLS =
-  'id, org_id, work_package_id, work_package_name, project_id, project_name, blueprint_set_id, lead_employee_id, assigned_employee_ids, assigned_by, assigned_at, due_date, status, completion_notes, hours_spent, completed_at, completed_by, updated_at, created_at'
+  'id, org_id, client_request_id, work_package_id, work_package_name, project_id, project_name, blueprint_set_id, lead_employee_id, assigned_employee_ids, assigned_by, assigned_at, due_date, status, completion_notes, hours_spent, completed_at, completed_by, updated_at, created_at, current_work_order_version'
 
 // ── Work package catalog (BackupData read-only) ───────────────────────────────
 
@@ -315,6 +327,106 @@ export async function createTaskAssignment(
   }
 }
 
+export async function createTaskAssignmentWithWorkOrder(
+  input: CreateTaskAssignmentWithWorkOrderInput,
+): Promise<Result<{
+  assignment: EmployeeTaskAssignment
+  workOrderVersion: 1
+  idempotentReplay: boolean
+}>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+
+    const assigned = uniqueIds(input.assignedEmployeeIds)
+    if (assigned.length === 0) {
+      return { success: false, error: 'Select at least one employee' }
+    }
+    if (!assigned.includes(input.leadEmployeeId)) {
+      return { success: false, error: 'Primary assignee must be one of the selected employees' }
+    }
+
+    const { data, error } = await rpc('create_employee_task_assignment_with_work_order', {
+      p_client_request_id: input.clientRequestId,
+      p_assignment_id: input.assignmentId,
+      p_work_package_id: input.workPackageId,
+      p_work_package_name: input.workPackageName,
+      p_project_id: input.projectId ?? '',
+      p_project_name: input.projectName ?? '',
+      p_blueprint_set_id: input.blueprintSetId ?? '',
+      p_blueprint_title: input.blueprintTitle ?? null,
+      p_lead_employee_id: input.leadEmployeeId,
+      p_assigned_employee_ids: assigned,
+      p_due_date: input.dueDate || null,
+      p_status: input.status || 'assigned',
+      p_work_order_payload: input.workOrderPayload,
+    })
+
+    if (error) return { success: false, error: safeAssignmentError(error.message) }
+
+    const result = data as {
+      assignment?: EmployeeTaskAssignment
+      workOrderVersion?: number
+      idempotentReplay?: boolean
+    } | null
+    if (!result?.assignment || result.workOrderVersion !== 1) {
+      return { success: false, error: 'Could not create assignment.' }
+    }
+
+    return {
+      success: true,
+      data: {
+        assignment: result.assignment,
+        workOrderVersion: 1,
+        idempotentReplay: !!result.idempotentReplay,
+      },
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[employeeTaskAssignmentService.createTaskAssignmentWithWorkOrder]', err)
+    return { success: false, error: safeAssignmentError(message) }
+  }
+}
+
+export function buildTaskAssignmentWorkOrderDraft(input: {
+  projectId: string
+  projectName: string
+  blueprintSetId: string
+  blueprintTitle?: string | null
+  workPackageId: string
+}): Result<WorkOrderPayloadV1Draft> {
+  try {
+    const backup = getBackupData()
+    if (!backup) return { success: false, error: 'Could not load Work Order source data.' }
+
+    const workPackage = getOperationsBlueprintScopeLayers(backup, input.blueprintSetId)
+      .find((layer) => layer.id === input.workPackageId)
+    if (!workPackage) return { success: false, error: 'Selected work package was not found.' }
+
+    const library = getOperationsBlueprintLibrary(backup)
+    const blueprint = library.find((item) => item.id === input.blueprintSetId)
+    const annotations = getOperationsBlueprintAnnotations(backup, input.blueprintSetId)
+    const wireProfiles = getOperationsBlueprintWireProfiles(backup, input.projectId)
+
+    return {
+      success: true,
+      data: buildWorkOrderPayloadV1Draft({
+        projectId: input.projectId,
+        projectName: input.projectName,
+        blueprintSetId: input.blueprintSetId,
+        blueprintTitle: input.blueprintTitle || blueprint?.title || input.blueprintSetId,
+        workPackage,
+        blueprint,
+        annotations,
+        wireProfiles,
+      }),
+    }
+  } catch (err: unknown) {
+    console.error('[employeeTaskAssignmentService.buildTaskAssignmentWorkOrderDraft]', err)
+    return { success: false, error: 'Could not build Work Order.' }
+  }
+}
+
 export async function updateTaskAssignment(
   assignmentId: string,
   patch: UpdateTaskAssignmentInput,
@@ -440,3 +552,15 @@ export async function updateMyEmployeeTask(input: {
 function uniqueIds(ids: string[]): string[] {
   return [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))]
 }
+
+function safeAssignmentError(message: string): string {
+  if (/not authenticated/i.test(message)) return 'Not authenticated'
+  if (/not authorized/i.test(message)) return 'Not authorized'
+  if (/select at least one employee/i.test(message)) return 'Select at least one employee'
+  if (/primary assignee/i.test(message)) return 'Primary assignee must be one of the selected employees'
+  if (/invalid assigned employee/i.test(message)) return 'One or more selected employees can no longer be assigned'
+  if (/work order payload/i.test(message)) return 'Could not create the Work Order for this assignment'
+  if (/assignment request/i.test(message)) return 'Check the assignment details and try again'
+  return 'Could not create assignment.'
+}
+

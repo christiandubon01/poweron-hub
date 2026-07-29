@@ -22,7 +22,8 @@ import {
   listWorkPackagesForBlueprint,
   listAssignableEmployees,
   listOrgTaskAssignments,
-  createTaskAssignment,
+  buildTaskAssignmentWorkOrderDraft,
+  createTaskAssignmentWithWorkOrder,
   updateTaskAssignment,
   revokeTaskAssignment,
   type AssignableProject,
@@ -72,6 +73,11 @@ const emptyForm = (): FormState => ({
   primaryEmployeeId: '',
   dueDate: '',
   status: 'assigned',
+})
+
+const createAttemptIds = () => ({
+  assignmentId: crypto.randomUUID(),
+  clientRequestId: crypto.randomUUID(),
 })
 
 // ── Searchable picker (filterable list — used when lists can exceed ~10) ───────
@@ -361,6 +367,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
   const [packagesLoading, setPackagesLoading] = useState(false)
   const [blueprints, setBlueprints] = useState<AssignableBlueprint[]>([])
   const [workPackages, setWorkPackages] = useState<AssignableWorkPackage[]>([])
+  const [createIds, setCreateIds] = useState(createAttemptIds)
 
   const empById = useMemo(() => {
     const map = new Map<string, AdminEmployeeProfile>()
@@ -440,6 +447,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
     autoOpenRef.current = initialProjectId
     setEditingId(null)
     setForm(emptyForm())
+    setCreateIds(createAttemptIds())
     setBlueprints([])
     setWorkPackages([])
     setFormOpen(true)
@@ -496,6 +504,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
   const openCreate = () => {
     setEditingId(null)
     setForm(emptyForm())
+    setCreateIds(createAttemptIds())
     setBlueprints([])
     setWorkPackages([])
     setFormOpen(true)
@@ -528,6 +537,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
     setFormOpen(false)
     setEditingId(null)
     setForm(emptyForm())
+    setCreateIds(createAttemptIds())
     setBlueprints([])
     setWorkPackages([])
   }
@@ -582,6 +592,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
   }
 
   const submit = async () => {
+    if (saving) return
     if (!orgId) {
       setError('Missing organization.')
       return
@@ -625,17 +636,34 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
         return
       }
     } else {
-      const res = await createTaskAssignment({
+      const draft = buildTaskAssignmentWorkOrderDraft({
+        projectId: form.projectId,
+        projectName: form.projectName,
+        blueprintSetId: form.blueprintSetId,
+        blueprintTitle: form.blueprintTitle,
+        workPackageId: form.workPackageId,
+      })
+      if (!draft.success) {
+        setSaving(false)
+        setError(draft.error || 'Could not build Work Order.')
+        return
+      }
+
+      const res = await createTaskAssignmentWithWorkOrder({
+        assignmentId: createIds.assignmentId,
+        clientRequestId: createIds.clientRequestId,
         orgId,
         workPackageId: form.workPackageId,
         workPackageName: form.workPackageName,
         projectId: form.projectId,
         projectName: form.projectName,
         blueprintSetId: form.blueprintSetId,
+        blueprintTitle: form.blueprintTitle,
         leadEmployeeId: form.primaryEmployeeId,
         assignedEmployeeIds: form.employeeIds,
         dueDate: form.dueDate || null,
         status: form.status,
+        workOrderPayload: draft.data,
       })
       setSaving(false)
       if (!res.success) {
@@ -647,6 +675,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
     setFormOpen(false)
     setEditingId(null)
     setForm(emptyForm())
+    setCreateIds(createAttemptIds())
     setBlueprints([])
     setWorkPackages([])
     await load()
