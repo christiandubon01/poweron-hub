@@ -5,6 +5,8 @@
  *
  * Shows Mon–Sun grid, each cell = one employee's items for that day.
  * Click cell → slide-out form to add/edit an item.
+ * Click existing chip → detail panel (with Edit + View Task Assignment link).
+ * Multi-day drag → form pre-filled with date range, creates one item per day.
  */
 
 import React, { useState, useEffect, useRef } from 'react'
@@ -12,6 +14,12 @@ import {
   X,
   AlertTriangle,
   Loader2,
+  Edit2,
+  ExternalLink,
+  Clock,
+  Briefcase,
+  User,
+  CheckSquare,
 } from 'lucide-react'
 import {
   createScheduleItem,
@@ -30,6 +38,7 @@ import {
 import {
   listOrgTaskAssignments,
   type EmployeeTaskAssignment,
+  type TaskAssignmentStatus,
 } from '@/services/employeeTaskAssignmentService'
 import GanttPanel, { type GanttOpenAddPrefill } from '@/components/admin/GanttPanel'
 
@@ -41,6 +50,228 @@ function formatTime(t: string | null): string {
   const ampm = h >= 12 ? 'pm' : 'am'
   const hr = h % 12 || 12
   return `${hr}:${String(m).padStart(2, '0')}${ampm}`
+}
+
+function addDays(isoDate: string, n: number): string {
+  const d = new Date(isoDate)
+  d.setDate(d.getDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+
+function formatDate(iso: string): string {
+  const [y, m, day] = iso.split('-').map(Number)
+  const d = new Date(y, m - 1, day)
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function datesInRange(startDate: string, endDate: string): string[] {
+  const dates: string[] = []
+  let cur = startDate
+  while (cur <= endDate) {
+    dates.push(cur)
+    cur = addDays(cur, 1)
+  }
+  return dates
+}
+
+// ── Task Detail Panel ─────────────────────────────────────────────────────────
+
+const STATUS_LABELS: Record<ScheduleStatus, string> = {
+  scheduled:   'Scheduled',
+  in_progress: 'In Progress',
+  done:        'Done',
+  cancelled:   'Cancelled',
+}
+
+const TASK_STATUS_LABELS: Record<TaskAssignmentStatus, string> = {
+  assigned:    'Assigned',
+  in_progress: 'In Progress',
+  completed:   'Completed',
+}
+
+const TASK_STATUS_CLS: Record<TaskAssignmentStatus, string> = {
+  assigned:    'text-blue-300 bg-blue-900/30 border-blue-700/40',
+  in_progress: 'text-amber-300 bg-amber-900/20 border-amber-700/40',
+  completed:   'text-green-300 bg-green-900/20 border-green-700/40',
+}
+
+const SCHEDULE_STATUS_CLS: Record<ScheduleStatus, string> = {
+  scheduled:   'text-blue-300 bg-blue-900/30 border-blue-700/40',
+  in_progress: 'text-amber-300 bg-amber-900/20 border-amber-700/40',
+  done:        'text-green-300 bg-green-900/20 border-green-700/40',
+  cancelled:   'text-gray-500 bg-gray-800/20 border-gray-700/30',
+}
+
+interface TaskDetailPanelProps {
+  item: ScheduleItem
+  employees: CrewRosterMember[]
+  assignments: EmployeeTaskAssignment[]
+  onEdit: () => void
+  onNavigateToTask?: (assignmentId: string) => void
+  onClose: () => void
+}
+
+function TaskDetailPanel({
+  item,
+  employees,
+  assignments,
+  onEdit,
+  onNavigateToTask,
+  onClose,
+}: TaskDetailPanelProps) {
+  const emp = employees.find((e) => e.id === item.employee_profile_id)
+  const empName = emp?.name ?? item.employee_name ?? 'Unknown Employee'
+  const linkedAssignment = item.assignment_id
+    ? assignments.find((a) => a.id === item.assignment_id)
+    : null
+
+  const rowCls = 'text-xs'
+  const labelCls = 'text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-0.5'
+
+  return (
+    <div
+      className="fixed right-0 top-0 h-full w-full max-w-sm z-50 flex flex-col border-l shadow-2xl overflow-y-auto"
+      style={{ backgroundColor: '#0d0e14', borderColor: '#1e2128' }}
+    >
+      {/* Header */}
+      <div
+        className="flex items-center justify-between px-4 py-3 border-b sticky top-0 z-10"
+        style={{ backgroundColor: '#0d0e14', borderColor: '#1e2128' }}
+      >
+        <span className="text-sm font-semibold text-gray-200">Schedule Detail</span>
+        <button onClick={onClose} className="text-gray-500 hover:text-gray-300 p-1 rounded">
+          <X size={15} />
+        </button>
+      </div>
+
+      <div className="flex-1 p-4 space-y-5">
+        {/* Status badge */}
+        <div className="flex items-center gap-2">
+          <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border capitalize ${SCHEDULE_STATUS_CLS[item.status]}`}>
+            {STATUS_LABELS[item.status]}
+          </span>
+        </div>
+
+        {/* Employee */}
+        <div>
+          <p className={labelCls}>Employee</p>
+          <div className="flex items-center gap-2">
+            <User size={13} className="text-blue-400 flex-shrink-0" />
+            <span className="text-gray-200 font-medium text-sm">{empName}</span>
+          </div>
+        </div>
+
+        {/* Date & Time */}
+        <div>
+          <p className={labelCls}>Date</p>
+          <div className="flex items-center gap-2">
+            <Clock size={13} className="text-gray-500 flex-shrink-0" />
+            <span className={`${rowCls} text-gray-300`}>{formatDate(item.work_date)}</span>
+          </div>
+          {(item.start_time || item.end_time) && (
+            <p className="text-xs text-gray-500 mt-1 pl-5">
+              {formatTime(item.start_time)}{item.end_time ? ` – ${formatTime(item.end_time)}` : ''}
+              {item.estimated_minutes ? ` · ${(item.estimated_minutes / 60).toFixed(1)}h est.` : ''}
+            </p>
+          )}
+        </div>
+
+        {/* Work Package & Project */}
+        {(item.work_package_name || item.project_name) && (
+          <div>
+            <p className={labelCls}>Work Package</p>
+            <div className="flex items-start gap-2">
+              <Briefcase size={13} className="text-green-500 flex-shrink-0 mt-0.5" />
+              <div>
+                {item.work_package_name && (
+                  <p className="text-sm text-gray-200 font-medium">{item.work_package_name}</p>
+                )}
+                {item.project_name && (
+                  <p className="text-xs text-gray-500 mt-0.5">{item.project_name}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Notes */}
+        {item.notes && (
+          <div>
+            <p className={labelCls}>Notes</p>
+            <p className="text-xs text-gray-400 leading-relaxed">{item.notes}</p>
+          </div>
+        )}
+
+        {/* Linked Assignment */}
+        {linkedAssignment && (
+          <div
+            className="rounded-lg border p-3 space-y-2"
+            style={{ backgroundColor: '#0a0b10', borderColor: '#1e2940' }}
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <CheckSquare size={12} className="text-blue-400" />
+              <p className="text-[10px] font-semibold text-blue-300 uppercase tracking-wider">Linked Task Assignment</p>
+            </div>
+
+            <p className="text-sm text-gray-200 font-medium">{linkedAssignment.work_package_name}</p>
+            {linkedAssignment.project_name && (
+              <p className="text-xs text-gray-500">{linkedAssignment.project_name}</p>
+            )}
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${TASK_STATUS_CLS[linkedAssignment.status]}`}>
+                {TASK_STATUS_LABELS[linkedAssignment.status]}
+              </span>
+              {linkedAssignment.due_date && (
+                <span className="text-[10px] text-gray-500">
+                  Due {formatDate(linkedAssignment.due_date)}
+                </span>
+              )}
+            </div>
+
+            {linkedAssignment.completion_notes && (
+              <div>
+                <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-0.5">Completion Notes</p>
+                <p className="text-xs text-gray-400 leading-relaxed">{linkedAssignment.completion_notes}</p>
+              </div>
+            )}
+
+            {onNavigateToTask && (
+              <button
+                onClick={() => onNavigateToTask(linkedAssignment.id)}
+                className="flex items-center gap-1.5 text-[11px] text-blue-400 hover:text-blue-300 transition-colors mt-1"
+              >
+                <ExternalLink size={11} />
+                View Task Assignment
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div
+        className="px-4 py-3 border-t flex gap-2 sticky bottom-0"
+        style={{ backgroundColor: '#0d0e14', borderColor: '#1e2128' }}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-3 py-1.5 rounded-lg border text-xs font-medium text-gray-400 border-gray-700/40 hover:bg-gray-800/40"
+        >
+          Close
+        </button>
+        <button
+          type="button"
+          onClick={onEdit}
+          className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold bg-green-700/30 border border-green-600/40 text-green-300 hover:bg-green-700/50"
+        >
+          <Edit2 size={11} />
+          Edit
+        </button>
+      </div>
+    </div>
+  )
 }
 
 // ── Form ──────────────────────────────────────────────────────────────────────
@@ -115,10 +346,13 @@ function ScheduleFormPanel({
   const [conflicts, setConflicts] = useState<ScheduleItem[]>([])
   const conflictTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const isMultiDay = !initial && !!prefill?.endWorkDate && prefill.endWorkDate > (prefill?.workDate ?? '')
+  const multiDayDates = isMultiDay ? datesInRange(prefill!.workDate, prefill!.endWorkDate!) : []
+  const multiDayCount = multiDayDates.length
+
   const set = (k: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm((prev) => ({ ...prev, [k]: e.target.value }))
 
-  // Fill name/project from selected assignment
   const handleAssignmentChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const id = e.target.value
     setForm((prev) => ({ ...prev, assignmentId: id }))
@@ -135,10 +369,9 @@ function ScheduleFormPanel({
     }
   }
 
-  // Conflict check when times / employee / date change
   useEffect(() => {
     if (conflictTimer.current) clearTimeout(conflictTimer.current)
-    if (!form.employeeProfileId || !form.workDate) {
+    if (!form.employeeProfileId || !form.workDate || isMultiDay) {
       setConflicts([])
       return
     }
@@ -153,7 +386,7 @@ function ScheduleFormPanel({
       if (result.success) setConflicts(result.data)
     }, 400)
     return () => { if (conflictTimer.current) clearTimeout(conflictTimer.current) }
-  }, [form.employeeProfileId, form.workDate, form.startTime, form.endTime, initial?.id])
+  }, [form.employeeProfileId, form.workDate, form.startTime, form.endTime, initial?.id, isMultiDay])
 
   const empAssignments = assignments.filter(
     (a) =>
@@ -168,9 +401,9 @@ function ScheduleFormPanel({
     }
     setSaving(true)
     setError(null)
-    const payload = {
+
+    const basePayload = {
       employee_profile_id: form.employeeProfileId,
-      work_date: form.workDate,
       start_time: form.startTime || null,
       end_time: form.endTime || null,
       estimated_minutes: form.estimatedHours ? Math.round(parseFloat(form.estimatedHours) * 60) : null,
@@ -179,14 +412,31 @@ function ScheduleFormPanel({
       project_name: form.projectName.trim() || null,
       notes: form.notes.trim() || null,
     }
-    const result = initial
-      ? await updateScheduleItem(initial.id, payload)
-      : await createScheduleItem(payload)
 
-    if (result.success) {
+    if (isMultiDay) {
+      // Create one item per date in the range
+      const results = await Promise.all(
+        multiDayDates.map((date) =>
+          createScheduleItem({ ...basePayload, work_date: date }),
+        ),
+      )
+      const firstError = results.find((r) => !r.success)
+      if (firstError) {
+        setError(firstError.error)
+        setSaving(false)
+        return
+      }
       onSaved()
     } else {
-      setError(result.error)
+      const payload = { ...basePayload, work_date: form.workDate }
+      const result = initial
+        ? await updateScheduleItem(initial.id, payload)
+        : await createScheduleItem(payload)
+      if (result.success) {
+        onSaved()
+      } else {
+        setError(result.error)
+      }
     }
     setSaving(false)
   }
@@ -215,7 +465,7 @@ function ScheduleFormPanel({
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 z-10" style={{ backgroundColor: '#0d0e14', borderColor: '#1e2128' }}>
         <span className="text-sm font-semibold text-gray-200">
-          {initial ? 'Edit Schedule Item' : 'Add Schedule Item'}
+          {initial ? 'Edit Schedule Item' : isMultiDay ? `Add ${multiDayCount} Schedule Items` : 'Add Schedule Item'}
         </span>
         <button onClick={onCancel} className="text-gray-500 hover:text-gray-300 p-1 rounded">
           <X size={15} />
@@ -223,6 +473,20 @@ function ScheduleFormPanel({
       </div>
 
       <div className="flex-1 p-4 space-y-4">
+        {/* Multi-day range indicator */}
+        {isMultiDay && (
+          <div
+            className="rounded-lg border px-3 py-2.5 text-xs"
+            style={{ backgroundColor: '#0d1a2d', borderColor: '#1e40af55', color: '#93c5fd' }}
+          >
+            <p className="font-semibold mb-0.5">Multi-day schedule</p>
+            <p className="opacity-80">
+              {prefill!.workDate} → {prefill!.endWorkDate} ({multiDayCount} days)
+            </p>
+            <p className="opacity-60 mt-1 text-[10px]">One item will be created for each day in the range.</p>
+          </div>
+        )}
+
         {/* Employee */}
         <div>
           <label className={labelCls}>Employee *</label>
@@ -240,17 +504,29 @@ function ScheduleFormPanel({
           </select>
         </div>
 
-        {/* Date */}
-        <div>
-          <label className={labelCls}>Date *</label>
-          <input
-            type="date"
-            className={inputCls}
-            style={inputStyle}
-            value={form.workDate}
-            onChange={set('workDate')}
-          />
-        </div>
+        {/* Date (single) or display range */}
+        {!isMultiDay ? (
+          <div>
+            <label className={labelCls}>Date *</label>
+            <input
+              type="date"
+              className={inputCls}
+              style={inputStyle}
+              value={form.workDate}
+              onChange={set('workDate')}
+            />
+          </div>
+        ) : (
+          <div>
+            <label className={labelCls}>Date Range</label>
+            <div
+              className="w-full rounded border text-xs px-2.5 py-1.5"
+              style={{ ...inputStyle, color: '#9ca3af' }}
+            >
+              {prefill!.workDate} → {prefill!.endWorkDate}
+            </div>
+          </div>
+        )}
 
         {/* Times */}
         <div className="grid grid-cols-2 gap-3">
@@ -266,7 +542,7 @@ function ScheduleFormPanel({
 
         {/* Estimated hours */}
         <div>
-          <label className={labelCls}>Estimated hours</label>
+          <label className={labelCls}>Estimated hours {isMultiDay ? '(per day)' : ''}</label>
           <input
             type="number"
             min="0.25"
@@ -328,7 +604,7 @@ function ScheduleFormPanel({
 
         {/* Notes */}
         <div>
-          <label className={labelCls}>Notes</label>
+          <label className={labelCls}>Notes {isMultiDay ? '(applied to all days)' : ''}</label>
           <textarea
             rows={3}
             placeholder="Any instructions…"
@@ -339,8 +615,8 @@ function ScheduleFormPanel({
           />
         </div>
 
-        {/* Conflict warning */}
-        {conflicts.length > 0 && (
+        {/* Conflict warning (single-day only) */}
+        {!isMultiDay && conflicts.length > 0 && (
           <div className="flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs"
             style={{ backgroundColor: '#2c1600', borderColor: '#92400e55', color: '#fbbf24' }}>
             <AlertTriangle size={13} className="flex-shrink-0 mt-0.5" />
@@ -387,7 +663,7 @@ function ScheduleFormPanel({
           className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 flex items-center gap-1.5"
         >
           {saving && <Loader2 size={11} className="animate-spin" />}
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? 'Saving…' : isMultiDay ? `Create ${multiDayCount} Items` : 'Save'}
         </button>
       </div>
     </div>
@@ -396,12 +672,19 @@ function ScheduleFormPanel({
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
-export default function OwnerSchedulePanel() {
+interface OwnerSchedulePanelProps {
+  onNavigateToTask?: (assignmentId: string) => void
+}
+
+export default function OwnerSchedulePanel({ onNavigateToTask }: OwnerSchedulePanelProps) {
   const [employees,    setEmployees]    = useState<CrewRosterMember[]>([])
   const [projects,     setProjects]     = useState<ActiveProject[]>([])
   const [assignments,  setAssignments]  = useState<EmployeeTaskAssignment[]>([])
   const [bootstrapped, setBootstrapped] = useState(false)
   const [refreshKey,   setRefreshKey]   = useState(0)
+
+  // Detail panel state
+  const [detailItem,  setDetailItem]  = useState<ScheduleItem | null>(null)
 
   // Form state
   const [formOpen,    setFormOpen]    = useState(false)
@@ -427,29 +710,42 @@ export default function OwnerSchedulePanel() {
   }, [])
 
   function openAdd(prefill: GanttOpenAddPrefill) {
+    setDetailItem(null)
     setEditItem(null)
     setFormPrefill(prefill)
     setFormOpen(true)
   }
 
+  // Clicking an existing chip shows the detail panel first
   function openEdit(item: ScheduleItem) {
-    setEditItem(item)
-    setFormPrefill(null)
-    setFormOpen(true)
-  }
-
-  function closeForm() {
+    setDetailItem(item)
     setFormOpen(false)
     setEditItem(null)
     setFormPrefill(null)
   }
 
+  function openEditFromDetail() {
+    if (!detailItem) return
+    setEditItem(detailItem)
+    setDetailItem(null)
+    setFormPrefill(null)
+    setFormOpen(true)
+  }
+
+  function closeAll() {
+    setFormOpen(false)
+    setEditItem(null)
+    setFormPrefill(null)
+    setDetailItem(null)
+  }
+
   function handleSaved() {
-    closeForm()
+    closeAll()
     setRefreshKey((k) => k + 1)
   }
 
   const activeEmployees = employees.filter((e) => e.active)
+  const anyPanelOpen = formOpen || !!detailItem
 
   if (!bootstrapped) {
     return (
@@ -470,11 +766,26 @@ export default function OwnerSchedulePanel() {
         onOpenEdit={openEdit}
       />
 
-      {formOpen && (
-        <div className="fixed inset-0 z-40" onClick={closeForm} aria-hidden="true">
+      {/* Backdrop */}
+      {anyPanelOpen && (
+        <div className="fixed inset-0 z-40" onClick={closeAll} aria-hidden="true">
           <div className="absolute inset-0 bg-black/40" />
         </div>
       )}
+
+      {/* Task Detail Panel */}
+      {detailItem && (
+        <TaskDetailPanel
+          item={detailItem}
+          employees={activeEmployees}
+          assignments={assignments}
+          onEdit={openEditFromDetail}
+          onNavigateToTask={onNavigateToTask}
+          onClose={closeAll}
+        />
+      )}
+
+      {/* Schedule Form Panel */}
       {formOpen && (
         <ScheduleFormPanel
           employees={activeEmployees}
@@ -482,7 +793,7 @@ export default function OwnerSchedulePanel() {
           initial={editItem}
           prefill={formPrefill ?? undefined}
           onSaved={handleSaved}
-          onCancel={closeForm}
+          onCancel={closeAll}
         />
       )}
     </div>
