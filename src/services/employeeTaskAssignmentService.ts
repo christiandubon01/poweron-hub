@@ -20,6 +20,7 @@ import {
 } from '@/services/blueprintLibraryService'
 import { getActiveEmployeeProfiles, type AdminEmployeeProfile } from '@/services/adminTimecardService'
 import { buildWorkOrderPayloadV1Draft, type WorkOrderPayloadV1Draft } from '@/features/work-orders'
+import { isValidPageSizeInches, type CalibrationData, type DetectedScaleResult, type PageSizeInches } from '@/features/blueprint-measurements'
 
 const from = supabase.from as any
 const rpc = supabase.rpc as any
@@ -77,7 +78,7 @@ export interface EmployeeTaskAssignment {
   due_date: string | null
   status: TaskAssignmentStatus
   completion_notes: string | null
-  hours_spent: number | null
+  hours_spent?: number | null
   completed_at: string | null
   completed_by: string | null
   updated_at: string
@@ -96,7 +97,7 @@ export interface EmployeeMyTask {
   due_date: string | null
   status: TaskAssignmentStatus
   completion_notes: string | null
-  hours_spent: number | null
+  hours_spent?: number | null
   completed_at: string | null
   assigned_at: string
   updated_at: string
@@ -136,8 +137,9 @@ export interface UpdateTaskAssignmentInput {
 
 type Result<T> = { success: true; data: T } | { success: false; error: string }
 
-const ASSIGNMENT_COLS =
-  'id, org_id, client_request_id, work_package_id, work_package_name, project_id, project_name, blueprint_set_id, lead_employee_id, assigned_employee_ids, assigned_by, assigned_at, due_date, status, completion_notes, hours_spent, completed_at, completed_by, updated_at, created_at, current_work_order_version'
+/** Pre-092/pre-093 projection. Do not add 092/093 columns without a compatibility plan. */
+const ASSIGNMENT_BASE_COLS =
+  'id, org_id, work_package_id, work_package_name, project_id, project_name, blueprint_set_id, lead_employee_id, assigned_employee_ids, assigned_by, assigned_at, due_date, status, completion_notes, completed_at, completed_by, updated_at, created_at'
 
 // ── Work package catalog (BackupData read-only) ───────────────────────────────
 
@@ -271,7 +273,7 @@ export async function listOrgTaskAssignments(): Promise<Result<EmployeeTaskAssig
     if (!user?.id) return { success: false, error: 'Not authenticated' }
 
     const { data, error } = await from('employee_task_assignments')
-      .select(ASSIGNMENT_COLS)
+      .select(ASSIGNMENT_BASE_COLS)
       .order('assigned_at', { ascending: false })
 
     if (error) return { success: false, error: error.message }
@@ -315,7 +317,7 @@ export async function createTaskAssignment(
 
     const { data, error } = await from('employee_task_assignments')
       .insert(row)
-      .select(ASSIGNMENT_COLS)
+      .select(ASSIGNMENT_BASE_COLS)
       .single()
 
     if (error) return { success: false, error: error.message }
@@ -331,8 +333,9 @@ export async function createTaskAssignmentWithWorkOrder(
   input: CreateTaskAssignmentWithWorkOrderInput,
 ): Promise<Result<{
   assignment: EmployeeTaskAssignment
-  workOrderVersion: 1
+  workOrderVersion?: 1
   idempotentReplay: boolean
+  workOrderCreated: boolean
 }>> {
   try {
     const { data: { user } } = await supabase.auth.getUser()
@@ -362,7 +365,33 @@ export async function createTaskAssignmentWithWorkOrder(
       p_work_order_payload: input.workOrderPayload,
     })
 
-    if (error) return { success: false, error: safeAssignmentError(error.message) }
+    if (error) {
+      // Pre-093 only: fall back to legacy assignment insert when the atomic RPC is absent.
+      if (isMissingSupabaseRpcError(error, 'create_employee_task_assignment_with_work_order')) {
+        const legacy = await createTaskAssignment({
+          orgId: input.orgId,
+          workPackageId: input.workPackageId,
+          workPackageName: input.workPackageName,
+          projectId: input.projectId,
+          projectName: input.projectName,
+          blueprintSetId: input.blueprintSetId,
+          leadEmployeeId: input.leadEmployeeId,
+          assignedEmployeeIds: assigned,
+          dueDate: input.dueDate,
+          status: input.status,
+        })
+        if (!legacy.success) return legacy
+        return {
+          success: true,
+          data: {
+            assignment: legacy.data,
+            idempotentReplay: false,
+            workOrderCreated: false,
+          },
+        }
+      }
+      return { success: false, error: safeAssignmentError(error.message) }
+    }
 
     const result = data as {
       assignment?: EmployeeTaskAssignment
@@ -379,6 +408,7 @@ export async function createTaskAssignmentWithWorkOrder(
         assignment: result.assignment,
         workOrderVersion: 1,
         idempotentReplay: !!result.idempotentReplay,
+        workOrderCreated: true,
       },
     }
   } catch (err: unknown) {
@@ -407,6 +437,9 @@ export function buildTaskAssignmentWorkOrderDraft(input: {
     const blueprint = library.find((item) => item.id === input.blueprintSetId)
     const annotations = getOperationsBlueprintAnnotations(backup, input.blueprintSetId)
     const wireProfiles = getOperationsBlueprintWireProfiles(backup, input.projectId)
+    const savedCalibrations = readStoredBlueprintCalibrations(input.blueprintSetId)
+    const detectedScales = readStoredBlueprintDetectedScales(input.blueprintSetId)
+    const getPageSizeInches = buildStoredPageSizeResolver(blueprint, savedCalibrations)
 
     return {
       success: true,
@@ -419,6 +452,9 @@ export function buildTaskAssignmentWorkOrderDraft(input: {
         blueprint,
         annotations,
         wireProfiles,
+        savedCalibrations,
+        detectedScales,
+        getPageSizeInches,
       }),
     }
   } catch (err: unknown) {
@@ -464,7 +500,7 @@ export async function updateTaskAssignment(
     const { data, error } = await from('employee_task_assignments')
       .update(updates)
       .eq('id', assignmentId)
-      .select(ASSIGNMENT_COLS)
+      .select(ASSIGNMENT_BASE_COLS)
       .single()
 
     if (error) return { success: false, error: error.message }
@@ -481,16 +517,29 @@ export async function revokeTaskAssignment(assignmentId: string): Promise<Result
     const { data: { user } } = await supabase.auth.getUser()
     if (!user?.id) return { success: false, error: 'Not authenticated' }
 
-    const { error } = await from('employee_task_assignments')
-      .delete()
-      .eq('id', assignmentId)
+    const { data, error } = await rpc('revoke_employee_task_assignment', {
+      p_assignment_id: assignmentId,
+    })
 
-    if (error) return { success: false, error: error.message }
+    if (error) {
+      // Pre-093 only: no Work Order children exist yet — direct parent delete is safe.
+      if (isMissingSupabaseRpcError(error, 'revoke_employee_task_assignment')) {
+        const { error: deleteError } = await from('employee_task_assignments')
+          .delete()
+          .eq('id', assignmentId)
+        if (deleteError) return { success: false, error: safeRevokeError(deleteError.message) }
+        return { success: true, data: true }
+      }
+      return { success: false, error: safeRevokeError(error.message) }
+    }
+    if (data && typeof data === 'object' && (data as { revoked?: boolean }).revoked === false) {
+      return { success: false, error: 'Assignment not found' }
+    }
     return { success: true, data: true }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Network error'
     console.error('[employeeTaskAssignmentService.revokeTaskAssignment]', err)
-    return { success: false, error: message }
+    return { success: false, error: safeRevokeError(message) }
   }
 }
 
@@ -553,6 +602,75 @@ function uniqueIds(ids: string[]): string[] {
   return [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))]
 }
 
+/**
+ * True only when the error specifically proves the named RPC is absent
+ * (PostgREST schema-cache / PostgreSQL undefined_function). Does not match
+ * auth, validation, or network failures.
+ */
+export function isMissingSupabaseRpcError(error: unknown, functionName: string): boolean {
+  if (!error || typeof error !== 'object') return false
+  const err = error as {
+    code?: string | number
+    message?: string
+    details?: string
+    hint?: string
+  }
+  const code = String(err.code ?? '').trim()
+  const fn = String(functionName || '').trim().toLowerCase()
+  if (!fn) return false
+
+  const message = String(err.message ?? '')
+  const details = String(err.details ?? '')
+  const hint = String(err.hint ?? '')
+  const haystack = `${message}\n${details}\n${hint}`.toLowerCase()
+
+  // Never treat auth / permission failures as missing RPC.
+  if (
+    code === '42501' ||
+    code === 'PGRST301' ||
+    /not (authenticated|authorized)|permission denied|row[- ]level security|jwt/i.test(haystack)
+  ) {
+    return false
+  }
+
+  // Never treat validation / check / constraint failures as missing RPC.
+  if (
+    code === '23514' ||
+    code === '23502' ||
+    code === '23503' ||
+    code === '23505' ||
+    code === '22P02' ||
+    /violates (check|not-null|foreign key|unique) constraint|invalid input|validation/i.test(haystack)
+  ) {
+    return false
+  }
+
+  // Never treat network / transport failures as missing RPC.
+  if (/failed to fetch|networkerror|network request failed|timeout|econnrefused|enotfound/i.test(haystack)) {
+    return false
+  }
+
+  const namesFunction = haystack.includes(fn) || haystack.includes(`public.${fn}`)
+
+  // PostgREST: function missing from schema cache (require RPC name).
+  if (code === 'PGRST202') {
+    return namesFunction
+  }
+
+  // PostgreSQL undefined_function (require RPC name when message names it).
+  if (code === '42883') {
+    return namesFunction
+  }
+
+  // Message-shaped missing-function errors (require the RPC name).
+  if (!namesFunction) return false
+  if (/could not find the (?:function|rpc)/i.test(message)) return true
+  if (/function .* does not exist/i.test(message)) return true
+  if (/schema cache/i.test(haystack) && /could not find/i.test(haystack)) return true
+
+  return false
+}
+
 function safeAssignmentError(message: string): string {
   if (/not authenticated/i.test(message)) return 'Not authenticated'
   if (/not authorized/i.test(message)) return 'Not authorized'
@@ -562,5 +680,86 @@ function safeAssignmentError(message: string): string {
   if (/work order payload/i.test(message)) return 'Could not create the Work Order for this assignment'
   if (/assignment request/i.test(message)) return 'Check the assignment details and try again'
   return 'Could not create assignment.'
+}
+
+function safeRevokeError(message: string): string {
+  if (/not authenticated/i.test(message)) return 'Not authenticated'
+  if (/not authorized/i.test(message)) return 'Not authorized'
+  if (/not[_ -]?found|assignment not found/i.test(message)) return 'Assignment not found'
+  return 'Could not revoke assignment.'
+}
+
+function readStoredBlueprintCalibrations(blueprintSetId: string): Record<number, CalibrationData | undefined> {
+  return readNumberKeyedLocalStorageRecord<CalibrationData>(`blueprint_calibrations_${blueprintSetId}`)
+}
+
+function readStoredBlueprintDetectedScales(blueprintSetId: string): Record<number, DetectedScaleResult | undefined> {
+  return readNumberKeyedLocalStorageRecord<DetectedScaleResult>(`blueprint_detected_scales_v2_${blueprintSetId}`)
+}
+
+function readNumberKeyedLocalStorageRecord<T>(key: string): Record<number, T | undefined> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(key) || '{}')
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const out: Record<number, T | undefined> = {}
+    for (const [rawKey, value] of Object.entries(parsed)) {
+      const pageNumber = Math.max(1, Math.floor(Number(rawKey) || 0))
+      if (pageNumber > 0 && value && typeof value === 'object') out[pageNumber] = value as T
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+function buildStoredPageSizeResolver(
+  blueprint: unknown,
+  savedCalibrations: Record<number, CalibrationData | undefined>,
+): (pageNumber: number) => PageSizeInches | null {
+  return (pageNumber: number) => {
+    const cleanPage = Math.max(1, Math.floor(Number(pageNumber) || 1))
+    const fromBlueprint = resolveBlueprintPageSizeInches(blueprint, cleanPage)
+    if (fromBlueprint) return fromBlueprint
+    const cal = savedCalibrations[cleanPage]
+    if (cal && isValidPageSizeInches({ pageWidthInches: Number(cal.pageWidthInches), pageHeightInches: Number(cal.pageHeightInches) })) {
+      return { pageWidthInches: Number(cal.pageWidthInches), pageHeightInches: Number(cal.pageHeightInches) }
+    }
+    return null
+  }
+}
+
+function resolveBlueprintPageSizeInches(blueprint: unknown, pageNumber: number): PageSizeInches | null {
+  const source = blueprint as any
+  const candidates = [
+    source?.pageSizesInches?.[pageNumber],
+    source?.pageSizesInches?.[String(pageNumber)],
+    source?.pageDimensionsInches?.[pageNumber],
+    source?.pageDimensionsInches?.[String(pageNumber)],
+    source?.pdfPageSizesInches?.[pageNumber],
+    source?.pdfPageSizesInches?.[String(pageNumber)],
+    Array.isArray(source?.pages) ? source.pages.find((page: any) => Number(page?.pageNumber) === pageNumber) : null,
+    Array.isArray(source?.pageDimensions) ? source.pageDimensions.find((page: any) => Number(page?.pageNumber) === pageNumber) : null,
+  ]
+  for (const candidate of candidates) {
+    const size = normalizePageSizeCandidate(candidate)
+    if (size) return size
+  }
+  return null
+}
+
+function normalizePageSizeCandidate(candidate: unknown): PageSizeInches | null {
+  const item = candidate as any
+  if (!item || typeof item !== 'object') return null
+  const direct = {
+    pageWidthInches: Number(item.pageWidthInches ?? item.widthInches),
+    pageHeightInches: Number(item.pageHeightInches ?? item.heightInches),
+  }
+  if (isValidPageSizeInches(direct)) return direct
+  const pts = {
+    pageWidthInches: Number(item.pageWidthPts ?? item.widthPts ?? item.width) / 72,
+    pageHeightInches: Number(item.pageHeightPts ?? item.heightPts ?? item.height) / 72,
+  }
+  return isValidPageSizeInches(pts) ? pts : null
 }
 
