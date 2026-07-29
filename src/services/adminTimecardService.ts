@@ -17,6 +17,7 @@ import { supabase } from '@/lib/supabase'
 import {
   deriveClockPhase,
   type ClockPhase,
+  type PunchType,
   type TimePunchEvent,
   type TimeEntry,
 } from '@/services/employeeTimeService'
@@ -25,7 +26,8 @@ import {
 export { getTenantWorkDate } from '@/services/employeeTimeService'
 export type { ClockPhase, TimePunchEvent, TimeEntry } from '@/services/employeeTimeService'
 
-// Time tables aren't in the generated db types yet — cast the query builder.
+// Time tables and admin RPCs aren't in the generated db types yet.
+const rpc  = supabase.rpc as any
 const from = supabase.from as any
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -76,9 +78,9 @@ interface Result<T> {
 const PROFILE_COLS =
   'id, user_id, org_id, display_name, email, role, employee_role, employment_type, active, portal_access, accepted_at'
 const ENTRY_COLS =
-  'id, org_id, employee_user_id, employee_profile_id, work_date, clock_in_at, lunch_out_at, lunch_in_at, clock_out_at, total_minutes, lunch_minutes, paid_minutes, status'
+  'id, org_id, employee_user_id, employee_profile_id, work_date, clock_in_at, lunch_out_at, lunch_in_at, clock_out_at, total_minutes, lunch_minutes, paid_minutes, status, approval_status'
 const PUNCH_COLS =
-  'id, org_id, employee_user_id, employee_profile_id, work_date, punch_type, punched_at, source, is_void, end_of_day_summary'
+  'id, org_id, employee_user_id, employee_profile_id, work_date, punch_type, punched_at, source, is_void, notes, supersedes_id, end_of_day_summary'
 
 // ── A. getActiveEmployeeProfiles ────────────────────────────────────────────────
 
@@ -260,6 +262,144 @@ export async function getOpenPriorDayEntries(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Network error'
     console.error('[adminTimecardService.getOpenPriorDayEntries] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── E. getPunchesForDay — all punches including voided (admin audit view) ──────
+
+export async function getPunchesForDay(
+  employeeProfileId: string,
+  workDate: string,
+): Promise<Result<TimePunchEvent[]>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) {
+      return { success: false, error: 'Not authenticated' }
+    }
+
+    const { data, error } = await from('time_punch_events')
+      .select(PUNCH_COLS)
+      .eq('employee_profile_id', employeeProfileId)
+      .eq('work_date', workDate)
+      .order('punched_at', { ascending: true })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: (data ?? []) as TimePunchEvent[] }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.getPunchesForDay] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── F. getTimeEntryForDay — targeted entry fetch for the modal ─────────────────
+
+export async function getTimeEntryForDay(
+  employeeProfileId: string,
+  workDate: string,
+): Promise<Result<TimeEntry | null>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) {
+      return { success: false, error: 'Not authenticated' }
+    }
+
+    const { data, error } = await from('time_entries')
+      .select(ENTRY_COLS)
+      .eq('employee_profile_id', employeeProfileId)
+      .eq('work_date', workDate)
+      .maybeSingle()
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: (data ?? null) as TimeEntry | null }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.getTimeEntryForDay] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── G. adminRecordPunch — insert or correct a punch via migration 090 RPC ─────
+
+export async function adminRecordPunch(
+  employeeProfileId: string,
+  punchType: PunchType,
+  punchedAt: string,
+  workDate: string,
+  notes?: string,
+  supersedesId?: string,
+): Promise<Result<TimePunchEvent>> {
+  try {
+    const { data, error } = await rpc('admin_record_punch', {
+      p_employee_profile_id: employeeProfileId,
+      p_punch_type:          punchType,
+      p_punched_at:          punchedAt,
+      p_work_date:           workDate,
+      p_notes:               notes ?? null,
+      p_supersedes_id:       supersedesId ?? null,
+    })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: data as TimePunchEvent }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.adminRecordPunch] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── H. adminVoidPunch — void a punch via migration 090 RPC ────────────────────
+
+export async function adminVoidPunch(
+  punchId: string,
+): Promise<Result<TimePunchEvent>> {
+  try {
+    const { data, error } = await rpc('admin_void_punch', {
+      p_punch_id: punchId,
+    })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: data as TimePunchEvent }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.adminVoidPunch] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── I. adminUpdateApprovalStatus — approve/reject via migration 090 RPC ───────
+
+export async function adminUpdateApprovalStatus(
+  timeEntryId: string,
+  approvalStatus: string,
+): Promise<Result<TimeEntry>> {
+  try {
+    const { data, error } = await rpc('admin_update_approval_status', {
+      p_time_entry_id:   timeEntryId,
+      p_approval_status: approvalStatus,
+    })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: data as TimeEntry }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.adminUpdateApprovalStatus] Error:', err)
     return { success: false, error: message }
   }
 }

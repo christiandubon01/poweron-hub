@@ -42,6 +42,8 @@ export interface TimePunchEvent {
   punched_at: string
   source: string
   is_void: boolean
+  notes?: string | null
+  supersedes_id?: string | null
   end_of_day_summary?: string | null
 }
 
@@ -59,6 +61,7 @@ export interface TimeEntry {
   lunch_minutes: number | null
   paid_minutes: number | null
   status: string
+  approval_status?: string
 }
 
 export interface TodayTimeStatus {

@@ -8,7 +8,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react'
-import { Clock, Loader2, AlertCircle, ChevronLeft, ChevronRight, ListChecks } from 'lucide-react'
+import { Clock, Loader2, AlertCircle, ChevronLeft, ChevronRight, Pencil } from 'lucide-react'
 import {
   getAdminTimecardsForDate,
   getTenantWorkDate,
@@ -129,7 +129,6 @@ export default function AdminTimecardsPanel() {
         <div className="flex items-center gap-2">
           <Clock className="w-5 h-5 text-blue-400" />
           <h2 className="text-lg font-bold text-gray-100">Timecards Overview</h2>
-          <span className="text-[11px] text-gray-500 uppercase tracking-wide">Read only</span>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -290,8 +289,8 @@ export default function AdminTimecardsPanel() {
                         onClick={() => setModalRow(row)}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs font-semibold transition"
                       >
-                        <ListChecks className="w-3.5 h-3.5" />
-                        View punches
+                        <Pencil className="w-3.5 h-3.5" />
+                        Manage Punches
                       </button>
                     </div>
                   </>
@@ -306,9 +305,12 @@ export default function AdminTimecardsPanel() {
       {modalRow && (
         <AdminPunchHistoryModal
           employeeName={modalRow.profile.display_name}
+          employeeProfileId={modalRow.profile.id}
           workDate={selectedDate}
-          punches={modalRow.punches}
+          initialPunches={modalRow.punches}
+          initialEntry={modalRow.entry}
           onClose={() => setModalRow(null)}
+          onRefresh={() => load(selectedDate)}
         />
       )}
     </div>
