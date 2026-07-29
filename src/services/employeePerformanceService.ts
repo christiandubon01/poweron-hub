@@ -77,10 +77,11 @@ export async function generateSnapshot(
       p_period_start: periodStart,
       p_period_end: periodEnd,
     })
-    if (error) return { success: false, error: error.message }
+    if (error) return { success: false, error: error.message || error.details || error.hint || 'Failed to generate report' }
+    if (!data) return { success: false, error: 'Report generated but no data returned — try again' }
     return { success: true, data: data as PerformanceSnapshot }
   } catch (e: unknown) {
-    return { success: false, error: (e as Error).message ?? 'Unknown error' }
+    return { success: false, error: (e as Error).message || 'Unexpected error generating report' }
   }
 }
 
