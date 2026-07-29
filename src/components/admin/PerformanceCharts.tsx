@@ -22,18 +22,12 @@ import {
   listOrgTaskAssignments,
   type EmployeeTaskAssignment,
 } from '@/services/employeeTaskAssignmentService'
-import type { AdminEmployeeProfile } from '@/services/adminTimecardService'
+import { getActiveEmployeeProfiles, type AdminEmployeeProfile } from '@/services/adminTimecardService'
 
 // ── Shared constants & helpers ─────────────────────────────────────────────────
 
 const DARK_BG = '#090a0e'
 const BORDER = '#1e2128'
-
-const STATUS_COLORS: Record<string, string> = {
-  completed: '#4ade80',
-  in_progress: '#60a5fa',
-  assigned: '#fbbf24',
-}
 
 const DARK_TOOLTIP = {
   contentStyle: { backgroundColor: '#0d1117', borderColor: '#1e2128', fontSize: 11, borderRadius: 6 },
@@ -148,117 +142,141 @@ function DonutChart({
   )
 }
 
-// ── Gantt Timeline ─────────────────────────────────────────────────────────────
+// ── Global Hours-Based Gantt (all employees, completed tasks only) ─────────────
 
-function GanttTimeline({
-  assignments,
-  profileId,
-}: {
-  assignments: EmployeeTaskAssignment[]
-  profileId: string
-}) {
-  const tasks = assignments
-    .filter((a) => a.assigned_employee_ids?.includes(profileId))
-    .sort((a, b) => a.assigned_at.localeCompare(b.assigned_at))
-    .slice(0, 20)
+export function GlobalHoursGantt() {
+  const [loading, setLoading] = useState(true)
+  const [assignments, setAssignments] = useState<EmployeeTaskAssignment[]>([])
+  const [empMap, setEmpMap] = useState<Record<string, string>>({})
 
-  if (tasks.length === 0) {
-    return <EmptyChart message="No task assignments found for this employee." />
+  useEffect(() => {
+    ;(async () => {
+      setLoading(true)
+      const [asgRes, empRes] = await Promise.all([
+        listOrgTaskAssignments(),
+        getActiveEmployeeProfiles(),
+      ])
+      if (asgRes.success) setAssignments(asgRes.data)
+      if (empRes.success) {
+        setEmpMap(Object.fromEntries(empRes.data.map((e) => [e.id, e.display_name])))
+      }
+      setLoading(false)
+    })()
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-gray-500" style={{ height: 60 }}>
+        <Loader2 size={11} className="animate-spin" /> Loading task hours…
+      </div>
+    )
   }
 
-  const now = Date.now()
-  const allTimes = tasks.flatMap((t) => [
-    new Date(t.assigned_at).getTime(),
-    t.due_date ? new Date(t.due_date).getTime() : now,
-  ])
-  const minT = Math.min(...allTimes)
-  const maxT = Math.max(...allTimes, now)
-  const span = maxT - minT || 86_400_000
+  const withHours = assignments.filter(
+    (a) => a.status === 'completed' && a.hours_spent != null && a.hours_spent > 0,
+  )
+  const missingCount = assignments.filter(
+    (a) => a.status === 'completed' && (a.hours_spent == null || a.hours_spent === 0),
+  ).length
 
+  if (withHours.length === 0) {
+    return (
+      <div className="space-y-1">
+        <EmptyChart message="No completed tasks with hours logged yet." />
+        {missingCount > 0 && (
+          <p className="text-[10px] text-gray-600 text-center">
+            {missingCount} completed task{missingCount > 1 ? 's' : ''} — hours not logged yet
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  const rows = [...withHours]
+    .sort((a, b) => (b.hours_spent ?? 0) - (a.hours_spent ?? 0))
+    .slice(0, 30)
+    .map((a) => {
+      const empName = empMap[a.lead_employee_id] ?? 'Employee'
+      const rawLabel = `${empName} — ${a.work_package_name ?? ''}`
+      const label = rawLabel.length > 24 ? rawLabel.slice(0, 23) + '…' : rawLabel
+      return { id: a.id, label, hours: a.hours_spent ?? 0 }
+    })
+
+  const maxH = Math.max(...rows.map((r) => r.hours), 1)
   const BAR_H = 20
   const GAP = 6
-  const LABEL_W = 110
-  const CHART_W = 260
-  const totalH = tasks.length * (BAR_H + GAP)
+  const LABEL_W = 165
+  const CHART_W = 230
+  const HOURS_PAD = 36
+  const totalH = rows.length * (BAR_H + GAP)
 
-  function fmtTick(t: number) {
-    const d = new Date(t)
-    return `${d.getMonth() + 1}/${d.getDate()}`
-  }
-
-  const axisTicks = [minT, minT + span * 0.5, maxT].map((t) => ({
-    t,
-    x: LABEL_W + ((t - minT) / span) * CHART_W,
-    label: fmtTick(t),
-  }))
+  const axisPcts = [0, 0.25, 0.5, 0.75, 1]
 
   return (
-    <div className="overflow-x-auto">
-      <svg
-        width={LABEL_W + CHART_W + 20}
-        height={totalH + 28}
-        style={{ minWidth: LABEL_W + CHART_W + 20 }}
-      >
-        {/* Vertical grid lines */}
-        {axisTicks.map(({ x }, i) => (
-          <line key={i} x1={x} y1={0} x2={x} y2={totalH} stroke="#1e2128" strokeWidth={1} />
-        ))}
+    <div className="space-y-2">
+      <div className="overflow-x-auto">
+        <svg
+          width={LABEL_W + CHART_W + HOURS_PAD}
+          height={totalH + 24}
+          style={{ minWidth: LABEL_W + CHART_W + HOURS_PAD }}
+        >
+          {/* Grid lines + axis labels */}
+          {axisPcts.map((pct) => {
+            const x = LABEL_W + pct * CHART_W
+            const hLabel = (pct * maxH).toFixed(1) + 'h'
+            return (
+              <g key={pct}>
+                <line x1={x} y1={0} x2={x} y2={totalH} stroke="#1e2128" strokeWidth={1} />
+                <text
+                  x={x}
+                  y={totalH + 16}
+                  textAnchor="middle"
+                  fontSize={9}
+                  fill="#4b5563"
+                  fontFamily="sans-serif"
+                >
+                  {hLabel}
+                </text>
+              </g>
+            )
+          })}
 
-        {/* Task bars */}
-        {tasks.map((task, i) => {
-          const startT = new Date(task.assigned_at).getTime()
-          const endT = task.due_date ? new Date(task.due_date).getTime() : now
-          const x = LABEL_W + ((startT - minT) / span) * CHART_W
-          const w = Math.max(6, ((endT - startT) / span) * CHART_W)
-          const y = i * (BAR_H + GAP)
-          const color = STATUS_COLORS[task.status] ?? '#6b7280'
-          const rawLabel = task.work_package_name ?? ''
-          const label = rawLabel.length > 14 ? rawLabel.slice(0, 13) + '…' : rawLabel
-
-          return (
-            <g key={task.id}>
-              <text
-                x={LABEL_W - 5}
-                y={y + BAR_H / 2 + 4}
-                textAnchor="end"
-                fontSize={9}
-                fill="#6b7280"
-                fontFamily="sans-serif"
-              >
-                {label}
-              </text>
-              <rect x={x} y={y} width={w} height={BAR_H} rx={3} fill={color} opacity={0.75} />
-            </g>
-          )
-        })}
-
-        {/* Date axis labels */}
-        {axisTicks.map(({ x, label }, i) => (
-          <text
-            key={i}
-            x={x}
-            y={totalH + 16}
-            textAnchor="middle"
-            fontSize={9}
-            fill="#4b5563"
-            fontFamily="sans-serif"
-          >
-            {label}
-          </text>
-        ))}
-      </svg>
-
-      <div className="flex gap-4 mt-2 flex-wrap">
-        {(['assigned', 'in_progress', 'completed'] as const).map((s) => (
-          <div key={s} className="flex items-center gap-1">
-            <span
-              className="w-2.5 h-2.5 rounded-sm inline-block"
-              style={{ backgroundColor: STATUS_COLORS[s] }}
-            />
-            <span className="text-[10px] text-gray-500 capitalize">{s.replace('_', ' ')}</span>
-          </div>
-        ))}
+          {/* Task bars */}
+          {rows.map((row, i) => {
+            const w = Math.max(4, (row.hours / maxH) * CHART_W)
+            const y = i * (BAR_H + GAP)
+            return (
+              <g key={row.id}>
+                <text
+                  x={LABEL_W - 5}
+                  y={y + BAR_H / 2 + 4}
+                  textAnchor="end"
+                  fontSize={9}
+                  fill="#6b7280"
+                  fontFamily="sans-serif"
+                >
+                  {row.label}
+                </text>
+                <rect x={LABEL_W} y={y} width={w} height={BAR_H} rx={3} fill="#2dd4bf" opacity={0.7} />
+                <text
+                  x={LABEL_W + w + 4}
+                  y={y + BAR_H / 2 + 4}
+                  fontSize={9}
+                  fill="#6b7280"
+                  fontFamily="sans-serif"
+                >
+                  {row.hours}h
+                </text>
+              </g>
+            )
+          })}
+        </svg>
       </div>
+      {missingCount > 0 && (
+        <p className="text-[10px] text-gray-600">
+          {missingCount} completed task{missingCount > 1 ? 's' : ''} excluded — hours not logged yet
+        </p>
+      )}
     </div>
   )
 }
@@ -514,16 +532,6 @@ export function EmployeeDetailCharts({
         </ChartSection>
       </div>
 
-      {/* Gantt Timeline */}
-      <ChartSection title="Task / Schedule Timeline" dotColor="#60a5fa">
-        {loading ? (
-          <div className="flex items-center gap-2 text-xs text-gray-500" style={{ height: 80 }}>
-            <Loader2 size={11} className="animate-spin" /> Loading tasks…
-          </div>
-        ) : (
-          <GanttTimeline assignments={assignments} profileId={profileId} />
-        )}
-      </ChartSection>
     </div>
   )
 }

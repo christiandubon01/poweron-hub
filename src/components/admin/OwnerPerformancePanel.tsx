@@ -42,7 +42,7 @@ import {
   type AdminEmployeeProfile,
 } from '@/services/adminTimecardService'
 import { listOrgTaskAssignments } from '@/services/employeeTaskAssignmentService'
-import { AllEmployeesCharts, EmployeeDetailCharts } from '@/components/admin/PerformanceCharts'
+import { AllEmployeesCharts, EmployeeDetailCharts, GlobalHoursGantt } from '@/components/admin/PerformanceCharts'
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -887,6 +887,21 @@ export default function OwnerPerformancePanel({ initialEmployeeId }: { initialEm
 
       {!selected && selectedId !== '__all__' && !loadingEmps && employees.length > 0 && (
         <p className="text-xs text-gray-600">Select an employee above to view their performance data.</p>
+      )}
+
+      {/* Global Hours Gantt — always visible, all employees */}
+      {!loadingEmps && employees.length > 0 && (
+        <div
+          className="rounded-xl border p-4 space-y-3"
+          style={{ backgroundColor: '#090a0e', borderColor: '#1e2128' }}
+        >
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: '#2dd4bf' }} />
+            <p className="text-sm font-semibold text-gray-300">All-Team Hours by Task</p>
+            <span className="text-xs text-gray-600 ml-auto">Completed tasks · hours logged</span>
+          </div>
+          <GlobalHoursGantt />
+        </div>
       )}
     </div>
   )

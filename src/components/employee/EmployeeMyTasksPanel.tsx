@@ -53,6 +53,7 @@ export default function EmployeeMyTasksPanel() {
   const [error, setError] = useState('')
   const [savingId, setSavingId] = useState<string | null>(null)
   const [draftNotes, setDraftNotes] = useState<Record<string, string>>({})
+  const [draftHours, setDraftHours] = useState<Record<string, string>>({})
 
   // Track optimistic completed state to avoid flicker during reload
   const optimisticCompleted = useRef<Set<string>>(new Set())
@@ -64,10 +65,13 @@ export default function EmployeeMyTasksPanel() {
     if (res.success) {
       setTasks(res.data)
       const notes: Record<string, string> = {}
+      const hours: Record<string, string> = {}
       for (const t of res.data) {
         notes[t.id] = t.completion_notes || ''
+        hours[t.id] = t.hours_spent != null ? String(t.hours_spent) : ''
       }
       setDraftNotes(notes)
+      setDraftHours(hours)
     } else {
       setTasks([])
       setError(res.error || 'Could not load your tasks.')
@@ -97,6 +101,12 @@ export default function EmployeeMyTasksPanel() {
 
   const markComplete = async (task: EmployeeMyTask) => {
     if (!task.can_complete || savingId) return
+    const rawHours = draftHours[task.id]?.trim() ?? ''
+    const hrs = parseFloat(rawHours)
+    if (!rawHours || isNaN(hrs) || hrs <= 0) {
+      setError('Enter the hours worked before marking complete.')
+      return
+    }
     setSavingId(task.id)
     setError('')
     optimisticCompleted.current.add(task.id)
@@ -104,6 +114,7 @@ export default function EmployeeMyTasksPanel() {
       assignmentId: task.id,
       status: 'completed',
       completionNotes: draftNotes[task.id] ?? '',
+      hoursSpent: hrs,
     })
     setSavingId(null)
     if (!res.success) {
@@ -184,11 +195,16 @@ export default function EmployeeMyTasksPanel() {
             {task.can_complete ? (
               isCompleted ? (
                 /* Completed state — no re-complete */
-                <div className="flex items-center gap-2 border-t border-gray-100 pt-3">
-                  <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
-                  <span className="text-sm font-semibold text-green-700">
-                    Completed{completedDate ? ` · ${completedDate}` : ''}
-                  </span>
+                <div className="border-t border-gray-100 pt-3 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+                    <span className="text-sm font-semibold text-green-700">
+                      Completed{completedDate ? ` · ${completedDate}` : ''}
+                    </span>
+                    {task.hours_spent != null && (
+                      <span className="text-xs text-gray-500 ml-auto">{task.hours_spent}h logged</span>
+                    )}
+                  </div>
                 </div>
               ) : (
                 /* Active lead controls */
@@ -196,9 +212,29 @@ export default function EmployeeMyTasksPanel() {
                   <div>
                     <label
                       className="block text-sm font-semibold text-gray-800 mb-1.5"
+                      htmlFor={`hours-${task.id}`}
+                    >
+                      Hours worked <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      id={`hours-${task.id}`}
+                      type="number"
+                      step="0.5"
+                      min="0.5"
+                      value={draftHours[task.id] ?? ''}
+                      onChange={(e) => setDraftHours((d) => ({ ...d, [task.id]: e.target.value }))}
+                      disabled={busy}
+                      className="w-full rounded-xl border border-gray-300 bg-white px-3 py-3 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-60"
+                      style={{ fontSize: 16, minHeight: 44 }}
+                      placeholder="e.g. 2.5"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      className="block text-sm font-semibold text-gray-800 mb-1.5"
                       htmlFor={`notes-${task.id}`}
                     >
-                      Completion notes <span className="text-gray-400 font-normal">(optional)</span>
+                      Notes / reason <span className="text-gray-400 font-normal">(optional)</span>
                     </label>
                     <textarea
                       id={`notes-${task.id}`}
@@ -208,7 +244,7 @@ export default function EmployeeMyTasksPanel() {
                       disabled={busy}
                       className="w-full rounded-xl border border-gray-300 bg-white px-3 py-3 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-60"
                       style={{ minHeight: 88, fontSize: 16 }}
-                      placeholder="What was completed?"
+                      placeholder="What was completed? Any delays or issues?"
                     />
                   </div>
 

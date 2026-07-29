@@ -9,7 +9,12 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ClipboardList, Loader2, AlertCircle, Plus, Trash2, Pencil, X, ChevronDown, RotateCcw } from 'lucide-react'
+import { ClipboardList, Loader2, AlertCircle, Plus, Trash2, Pencil, X, ChevronDown, RotateCcw, Star } from 'lucide-react'
+import {
+  addQualityRating,
+  getQualityRatings,
+  type QualityRating,
+} from '@/services/employeePerformanceService'
 import { useAuth } from '@/hooks/useAuth'
 import {
   listAssignableProjects,
@@ -197,6 +202,140 @@ function SearchablePicker({
           </ul>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Quality rating on completed task cards ────────────────────────────────────
+
+function StarRow({ value, onChange, readonly }: { value: number; onChange?: (n: number) => void; readonly?: boolean }) {
+  return (
+    <div className="flex gap-0.5">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n}
+          type="button"
+          disabled={readonly}
+          onClick={() => onChange?.(n)}
+          className={`transition-transform ${readonly ? 'cursor-default' : 'hover:scale-110'}`}
+        >
+          <Star
+            size={15}
+            className={n <= value ? 'text-amber-400 fill-amber-400' : 'text-gray-600'}
+          />
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function TaskCardRating({
+  assignmentId,
+  leadEmployeeId,
+}: {
+  assignmentId: string
+  leadEmployeeId: string
+}) {
+  const [loading, setLoading] = useState(true)
+  const [existing, setExisting] = useState<QualityRating | null>(null)
+  const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [score, setScore] = useState(5)
+  const [notes, setNotes] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    getQualityRatings(leadEmployeeId).then((res) => {
+      if (res.success) {
+        setExisting(res.data.find((r) => r.assignment_id === assignmentId) ?? null)
+      }
+      setLoading(false)
+    })
+  }, [assignmentId, leadEmployeeId])
+
+  const handleSubmit = async () => {
+    setSubmitting(true)
+    setErr(null)
+    const res = await addQualityRating(leadEmployeeId, assignmentId, score, notes.trim() || null)
+    setSubmitting(false)
+    if (!res.success) { setErr(res.error || 'Failed to save rating'); return }
+    setExisting(res.data)
+    setOpen(false)
+    setEditing(false)
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-1 mt-2 text-xs text-gray-600">
+        <Loader2 size={10} className="animate-spin" /> Loading rating…
+      </div>
+    )
+  }
+
+  if (existing && !editing) {
+    return (
+      <div className="flex items-center gap-2 mt-2 flex-wrap">
+        <StarRow value={existing.score} readonly />
+        <span className="text-xs text-gray-400">{existing.score}/5</span>
+        <button
+          type="button"
+          onClick={() => { setScore(existing.score); setNotes(existing.notes ?? ''); setEditing(true) }}
+          className="text-xs text-gray-500 hover:text-gray-300 underline ml-1"
+        >
+          Edit rating
+        </button>
+      </div>
+    )
+  }
+
+  if (!open && !editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-1 mt-2 text-xs text-amber-400 hover:text-amber-300 font-semibold"
+      >
+        <Star size={11} className="text-amber-400" />
+        Rate quality
+      </button>
+    )
+  }
+
+  return (
+    <div className="mt-2 space-y-2 border-t border-gray-700/40 pt-2">
+      {err && <p className="text-xs text-red-400">{err}</p>}
+      <div className="flex items-center gap-3">
+        <StarRow value={score} onChange={setScore} />
+        <span className="text-xs text-gray-400">{score} / 5</span>
+      </div>
+      <textarea
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        placeholder="Notes (optional)"
+        rows={2}
+        className="w-full rounded-lg border border-gray-700 bg-transparent text-gray-300 px-2 py-1.5 text-xs resize-none"
+      />
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={submitting}
+          className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-600/20 border border-amber-700/50 text-amber-300 disabled:opacity-50"
+          style={{ minHeight: 32 }}
+        >
+          {submitting ? <Loader2 size={10} className="animate-spin" /> : <Star size={10} />}
+          {submitting ? 'Saving…' : 'Save rating'}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setOpen(false); setEditing(false) }}
+          className="px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:text-gray-300"
+          style={{ minHeight: 32 }}
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   )
 }
@@ -644,11 +783,18 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
                       {row.status === 'completed' && completedByName && (
                         <p className="text-xs text-green-400/80 mt-1">
                           Completed by {completedByName}{completedDate ? ` · ${completedDate}` : ''}
+                          {row.hours_spent != null ? ` · ${row.hours_spent}h` : ''}
                         </p>
                       )}
                       {row.completion_notes ? (
                         <p className="text-sm text-gray-300 mt-2 whitespace-pre-wrap">{row.completion_notes}</p>
                       ) : null}
+                      {row.status === 'completed' && (
+                        <TaskCardRating
+                          assignmentId={row.id}
+                          leadEmployeeId={row.lead_employee_id}
+                        />
+                      )}
                     </div>
                     <div className="flex flex-col items-end gap-2">
                       <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border capitalize ${STATUS_PILL[row.status]}`}>
