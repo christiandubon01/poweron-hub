@@ -300,6 +300,22 @@ function SnapshotSection({ profileId }: { profileId: string }) {
               value={displaySnap.completion_rate != null ? `${displaySnap.completion_rate}%` : '—'}
               color={rateColor(displaySnap.completion_rate)}
             />
+            <StatCard
+              label="Punch Corrections"
+              value={
+                (displaySnap.admin_corrections ?? 0) === 0
+                  ? 'Clean'
+                  : String(displaySnap.admin_corrections ?? 0)
+              }
+              sub="admin corrections this period"
+              color={
+                (displaySnap.admin_corrections ?? 0) === 0
+                  ? 'text-green-400'
+                  : (displaySnap.admin_corrections ?? 0) <= 2
+                    ? 'text-amber-400'
+                    : 'text-red-400'
+              }
+            />
           </div>
         </div>
       )}
@@ -312,18 +328,34 @@ function SnapshotSection({ profileId }: { profileId: string }) {
             {snapshots.length - 1} prior report{snapshots.length > 2 ? 's' : ''}
           </summary>
           <div className="mt-2 space-y-1">
-            {snapshots.slice(1).map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => setSnapshot(s)}
-                className="w-full text-left px-3 py-2 rounded border text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800/30 transition-colors"
-                style={{ borderColor: '#1e2128' }}
-              >
-                {fmtDate(s.period_start)} – {fmtDate(s.period_end)} ·{' '}
-                {fmtMinutes(s.paid_minutes)} · CR {s.completion_rate ?? '—'}%
-              </button>
-            ))}
+            {snapshots.slice(1).map((s) => {
+              const corrections = s.admin_corrections ?? 0
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setSnapshot(s)}
+                  className="w-full text-left px-3 py-2 rounded border text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800/30 transition-colors flex items-center gap-2 flex-wrap"
+                  style={{ borderColor: '#1e2128' }}
+                >
+                  <span>
+                    {fmtDate(s.period_start)} – {fmtDate(s.period_end)} ·{' '}
+                    {fmtMinutes(s.paid_minutes)} · CR {s.completion_rate ?? '—'}%
+                  </span>
+                  <span
+                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full border ${
+                      corrections === 0
+                        ? 'text-green-400 bg-green-900/20 border-green-700/40'
+                        : corrections <= 2
+                          ? 'text-amber-400 bg-amber-900/20 border-amber-700/40'
+                          : 'text-red-400 bg-red-900/20 border-red-700/40'
+                    }`}
+                  >
+                    {corrections === 0 ? '✓ Clean' : `${corrections} correction${corrections > 1 ? 's' : ''}`}
+                  </span>
+                </button>
+              )
+            })}
           </div>
         </details>
       )}

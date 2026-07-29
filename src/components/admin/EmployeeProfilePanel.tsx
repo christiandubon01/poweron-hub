@@ -587,6 +587,32 @@ function PerformanceSummarySection({
               <span className="text-xs text-gray-500">{avgRating} avg quality rating</span>
             </div>
           )}
+
+          {(() => {
+            const corrections = snapshot?.admin_corrections
+            if (corrections == null) {
+              return (
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" />
+                  <span className="text-xs text-gray-600">Reliability: No data</span>
+                </div>
+              )
+            }
+            const { dot, label } = corrections === 0
+              ? { dot: 'bg-green-500', label: 'Reliable' }
+              : corrections <= 2
+                ? { dot: 'bg-amber-500', label: 'Minor issues' }
+                : { dot: 'bg-red-500',   label: 'Needs attention' }
+            return (
+              <div className="flex items-center gap-2 pt-1">
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot}`} />
+                <span className="text-xs text-gray-500">
+                  Reliability: <span className={corrections === 0 ? 'text-green-400' : corrections <= 2 ? 'text-amber-400' : 'text-red-400'}>{label}</span>
+                  {corrections > 0 && <span className="text-gray-600"> ({corrections} correction{corrections > 1 ? 's' : ''})</span>}
+                </span>
+              </div>
+            )
+          })()}
         </div>
       )}
 

@@ -422,18 +422,202 @@ export default function AdminPunchHistoryModal({
           <div>
             <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-2">Punches</p>
 
-            {allSorted.length === 0 ? (
+            {renderItems.length === 0 ? (
               <p className="text-sm text-gray-500 text-center py-4">
                 No punches recorded for this day.
               </p>
             ) : (
               <ul className="space-y-2">
-                {allSorted.map(punch => {
+                {renderItems.map(item => {
+                  if (item.kind === 'pair') {
+                    const { correction, voided } = item
+                    const correctionBadge = SOURCE_BADGE.admin_edit
+                    const isEditing     = editingId === correction.id
+                    const isVoidConfirm = voidConfirmId === correction.id
+                    const corrSummary   = (correction.end_of_day_summary ?? '').trim()
+
+                    return (
+                      <li key={correction.id} className="space-y-0">
+                        {/* Correction punch */}
+                        <div className="border rounded-t-xl overflow-hidden bg-[var(--bg-secondary,#11141c)] border-gray-700/60 border-b-0">
+                          <div className="px-4 py-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="text-sm font-semibold text-gray-200">
+                                    {PUNCH_LABEL[correction.punch_type] ?? correction.punch_type}
+                                  </p>
+                                  <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${correctionBadge.cls}`}>
+                                    {correctionBadge.label}
+                                  </span>
+                                </div>
+                                {correction.notes && (
+                                  <p className="text-[11px] text-gray-500 mt-0.5 italic">{correction.notes}</p>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <span className="text-sm text-gray-100 font-medium tabular-nums">
+                                  {formatTime(correction.punched_at)}
+                                </span>
+                                {!isEditing && (
+                                  <>
+                                    <button
+                                      onClick={() => startEdit(correction)}
+                                      className="p-1.5 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition"
+                                      aria-label="Edit punch"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setVoidConfirmId(prev => prev === correction.id ? null : correction.id)
+                                        setEditingId(null)
+                                      }}
+                                      className="p-1.5 rounded-lg hover:bg-red-900/30 text-gray-500 hover:text-red-400 transition"
+                                      aria-label="Void punch"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                            {corrSummary ? (
+                              <p className="mt-2 text-sm text-gray-300 leading-relaxed whitespace-pre-wrap border-t border-gray-700/50 pt-2">
+                                {corrSummary}
+                              </p>
+                            ) : null}
+                          </div>
+
+                          {isEditing && (
+                            <div className="border-t border-gray-700/60 px-4 py-3 bg-[var(--bg-card,#1e2433)] space-y-3">
+                              <p className="text-[10px] font-bold text-amber-400 uppercase tracking-wide">Edit Punch</p>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="text-[10px] text-gray-500 uppercase block mb-1">Date</label>
+                                  <input
+                                    type="date"
+                                    value={editDate}
+                                    onChange={e => setEditDate(e.target.value)}
+                                    className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-gray-500 uppercase block mb-1">Time</label>
+                                  <input
+                                    type="time"
+                                    value={editTime}
+                                    onChange={e => setEditTime(e.target.value)}
+                                    className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500"
+                                  />
+                                </div>
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-gray-500 uppercase block mb-1">Reason (required)</label>
+                                <input
+                                  type="text"
+                                  value={editNotes}
+                                  onChange={e => setEditNotes(e.target.value)}
+                                  placeholder="Explain the correction…"
+                                  className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-600"
+                                />
+                              </div>
+                              {editError && <p className="text-xs text-red-400">{editError}</p>}
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={saveEdit}
+                                  disabled={saving}
+                                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition disabled:opacity-50"
+                                >
+                                  {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                  Save
+                                </button>
+                                <button
+                                  onClick={cancelEdit}
+                                  disabled={saving}
+                                  className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-semibold transition"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {isVoidConfirm && (
+                            <div className="border-t border-gray-700/60 px-4 py-3 bg-red-900/10 space-y-3">
+                              <p className="text-sm text-red-300 font-semibold">Void this punch?</p>
+                              <p className="text-xs text-gray-400">
+                                It will be removed from the daily total. This cannot be undone.
+                              </p>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => voidPunch(correction.id)}
+                                  disabled={voiding}
+                                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition disabled:opacity-50"
+                                >
+                                  {voiding && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                  Void Punch
+                                </button>
+                                <button
+                                  onClick={() => setVoidConfirmId(null)}
+                                  disabled={voiding}
+                                  className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-semibold transition"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Pair connector */}
+                        <div className="px-4 py-1 bg-gray-800/20 border-x border-gray-700/40 flex items-center gap-1.5">
+                          <span className="text-[10px] text-gray-600 select-none">↳</span>
+                          <span className="text-[10px] text-gray-600 italic">replaces original</span>
+                        </div>
+
+                        {/* Voided original */}
+                        <div className="border rounded-b-xl overflow-hidden opacity-40 bg-gray-800/30 border-gray-700/30">
+                          <div className="px-4 py-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="text-sm font-semibold text-gray-200">
+                                    {PUNCH_LABEL[voided.punch_type] ?? voided.punch_type}
+                                  </p>
+                                  <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${(SOURCE_BADGE[voided.source] ?? SOURCE_BADGE.employee_portal).cls}`}>
+                                    {(SOURCE_BADGE[voided.source] ?? SOURCE_BADGE.employee_portal).label}
+                                  </span>
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-red-900/30 text-red-400 border-red-800/60">
+                                    Voided
+                                  </span>
+                                  <span className="text-[10px] text-gray-500 px-1.5 py-0.5 rounded border border-gray-700/40">
+                                    Original
+                                  </span>
+                                </div>
+                                {voided.notes && (
+                                  <p className="text-[11px] text-gray-500 mt-0.5 italic">{voided.notes}</p>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <span className="text-sm text-gray-400 font-medium tabular-nums line-through decoration-red-600/60">
+                                  {formatTime(voided.punched_at)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </li>
+                    )
+                  }
+
+                  // Single punch (unpaired)
+                  const punch = item.punch
                   const isVoid    = punch.is_void
                   const isEditing = editingId === punch.id
                   const isVoidConfirm = voidConfirmId === punch.id
-                  const sourceBadge  = SOURCE_BADGE[punch.source] ?? SOURCE_BADGE.employee_portal
-                  const summary      = (punch.end_of_day_summary ?? '').trim()
+                  const sourceBadge   = SOURCE_BADGE[punch.source] ?? SOURCE_BADGE.employee_portal
+                  const summary       = (punch.end_of_day_summary ?? '').trim()
 
                   return (
                     <li
@@ -444,7 +628,6 @@ export default function AdminPunchHistoryModal({
                           : 'bg-[var(--bg-secondary,#11141c)] border-gray-700/60'
                       }`}
                     >
-                      {/* Punch row */}
                       <div className="px-4 py-3">
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0 flex-1">
@@ -500,7 +683,6 @@ export default function AdminPunchHistoryModal({
                         ) : null}
                       </div>
 
-                      {/* Inline edit form */}
                       {isEditing && (
                         <div className="border-t border-gray-700/60 px-4 py-3 bg-[var(--bg-card,#1e2433)] space-y-3">
                           <p className="text-[10px] font-bold text-amber-400 uppercase tracking-wide">Edit Punch</p>
@@ -555,7 +737,6 @@ export default function AdminPunchHistoryModal({
                         </div>
                       )}
 
-                      {/* Void confirm */}
                       {isVoidConfirm && (
                         <div className="border-t border-gray-700/60 px-4 py-3 bg-red-900/10 space-y-3">
                           <p className="text-sm text-red-300 font-semibold">Void this punch?</p>
