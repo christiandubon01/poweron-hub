@@ -1329,11 +1329,9 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
   )
 }
 
-// ─── Permission Matrix — pill trigger + modal ─────────────────────────────────
+// ─── Permission Matrix content (rendered inside modal) ───────────────────────
 
 function PermissionMatrix() {
-  const [open, setOpen] = useState(false)
-
   function Check({ allowed }: { allowed: boolean }) {
     return allowed ? (
       <span className="text-green-400 font-bold">✓</span>
@@ -1343,98 +1341,41 @@ function PermissionMatrix() {
   }
 
   return (
-    <div className="mt-6">
-      {/* Pill trigger — styled after Settings Hub "Admin Tools Off" */}
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="flex items-center gap-2 rounded-full border border-gray-700/50 bg-slate-950/70 px-4 py-2 text-xs font-semibold text-gray-400 shadow-lg transition-colors hover:bg-gray-800/60 hover:text-gray-300"
-      >
-        <span className="h-2.5 w-2.5 rounded-full bg-gray-600 flex-shrink-0" />
-        <Shield size={13} className="flex-shrink-0 text-green-700" />
-        Permission Matrix
-      </button>
-
-      {/* Modal */}
-      {open && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
-          onClick={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
-        >
-          <div
-            className="relative w-full max-w-2xl rounded-xl border overflow-hidden shadow-2xl"
-            style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}
-          >
-            {/* Modal header */}
-            <div
-              className="flex items-center justify-between px-6 py-4 border-b"
-              style={{ borderColor: '#1e2128' }}
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
+            <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-6 py-3 w-1/2">
+              Permission
+            </th>
+            <th className="text-center text-xs font-semibold text-green-600 uppercase tracking-wider px-6 py-3">
+              Owner
+            </th>
+            <th className="text-center text-xs font-semibold text-blue-600 uppercase tracking-wider px-6 py-3">
+              Crew
+            </th>
+            <th className="text-center text-xs font-semibold text-gray-600 uppercase tracking-wider px-6 py-3">
+              Guest
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {PERMISSION_MATRIX.map((row, idx) => (
+            <tr
+              key={row.permission}
+              style={{
+                backgroundColor: idx % 2 === 0 ? '#0a0b0f' : '#0c0d12',
+                borderBottom: '1px solid #1a1c23',
+              }}
             >
-              <div className="flex items-center gap-2">
-                <Shield size={15} className="text-green-500" />
-                <h3 className="text-sm font-semibold text-gray-200">Permission Matrix</h3>
-              </div>
-              <button
-                onClick={() => setOpen(false)}
-                className="p-1.5 rounded-md hover:bg-gray-800/60 transition-colors"
-              >
-                <X size={14} className="text-gray-500" />
-              </button>
-            </div>
-
-            {/* Modal body — full table */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
-                    <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-6 py-3 w-1/2">
-                      Permission
-                    </th>
-                    <th className="text-center text-xs font-semibold text-green-600 uppercase tracking-wider px-6 py-3">
-                      Owner
-                    </th>
-                    <th className="text-center text-xs font-semibold text-blue-600 uppercase tracking-wider px-6 py-3">
-                      Crew
-                    </th>
-                    <th className="text-center text-xs font-semibold text-gray-600 uppercase tracking-wider px-6 py-3">
-                      Guest
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {PERMISSION_MATRIX.map((row, idx) => (
-                    <tr
-                      key={row.permission}
-                      style={{
-                        backgroundColor: idx % 2 === 0 ? '#0a0b0f' : '#0c0d12',
-                        borderBottom: '1px solid #1a1c23',
-                      }}
-                    >
-                      <td className="px-6 py-3 text-gray-300">{row.permission}</td>
-                      <td className="px-6 py-3 text-center"><Check allowed={row.owner} /></td>
-                      <td className="px-6 py-3 text-center"><Check allowed={row.crew} /></td>
-                      <td className="px-6 py-3 text-center"><Check allowed={row.guest} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Modal footer */}
-            <div
-              className="flex justify-end px-6 py-4 border-t"
-              style={{ borderColor: '#1e2128', backgroundColor: '#0a0b0f' }}
-            >
-              <button
-                onClick={() => setOpen(false)}
-                className="px-4 py-2 rounded-lg text-xs font-medium text-gray-400 border border-gray-700/50 hover:bg-gray-800/60 hover:text-gray-300 transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              <td className="px-6 py-3 text-gray-300">{row.permission}</td>
+              <td className="px-6 py-3 text-center"><Check allowed={row.owner} /></td>
+              <td className="px-6 py-3 text-center"><Check allowed={row.crew} /></td>
+              <td className="px-6 py-3 text-center"><Check allowed={row.guest} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
