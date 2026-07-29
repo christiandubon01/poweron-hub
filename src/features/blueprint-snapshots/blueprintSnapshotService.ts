@@ -3,10 +3,26 @@ import {
   BLUEPRINT_SNAPSHOT_BUCKET,
   BLUEPRINT_SNAPSHOT_MAX_EDGE,
   BLUEPRINT_SNAPSHOT_MAX_FILE_SIZE_BYTES,
+  type BlueprintSnapshotCaptionUpdateResult,
+  type BlueprintSnapshotLibraryItem,
+  type BlueprintSnapshotListFilters,
+  type BlueprintSnapshotListResult,
+  type BlueprintSnapshotPreviewResult,
   type BlueprintSnapshotSaveInput,
   type BlueprintSnapshotSavedResult,
   type BlueprintSnapshotWorkPackageTag,
 } from './types'
+
+const SNAPSHOT_LIBRARY_UNAVAILABLE = 'Snapshot library is not available yet.'
+const SNAPSHOT_PREVIEW_UNAVAILABLE = 'Preview unavailable.'
+const SNAPSHOT_CAPTION_FAILURE = 'Could not update caption.'
+const SNAPSHOT_NETWORK_FAILURE = 'Network error. Try again.'
+const SNAPSHOT_PREVIEW_TTL_SECONDS = 600
+const SNAPSHOT_PREVIEW_CACHE_SAFETY_MS = 30_000
+const DEFAULT_SNAPSHOT_LIBRARY_LIMIT = 24
+const MAX_SNAPSHOT_LIBRARY_LIMIT = 48
+
+const previewUrlCache = new Map<string, { signedUrl: string; expiresAt: number }>()
 
 export class BlueprintSnapshotSaveError extends Error {
   code: string
@@ -155,8 +171,278 @@ export async function saveBlueprintSnapshot(input: BlueprintSnapshotSaveInput): 
   }
 }
 
+export async function listBlueprintSnapshots(
+  filters: BlueprintSnapshotListFilters = {},
+): Promise<BlueprintSnapshotListResult> {
+  try {
+    const limit = normalizeLimit(filters.limit)
+    let query = (supabase as any)
+      .from('blueprint_snapshots')
+      .select([
+        'id',
+        'project_id',
+        'project_name',
+        'blueprint_set_id',
+        'work_package_id',
+        'work_package_name',
+        'page_number',
+        'caption',
+        'capture_metadata',
+        'width',
+        'height',
+        'file_size_bytes',
+        'captured_at',
+        'created_at',
+      ].join(', '))
+      .is('deleted_at', null)
+      .order('captured_at', { ascending: false })
+      .order('id', { ascending: false })
+
+    if (filters.projectId) query = query.eq('project_id', filters.projectId)
+    if (filters.blueprintSetId) query = query.eq('blueprint_set_id', filters.blueprintSetId)
+    if (filters.pageNumber) query = query.eq('page_number', filters.pageNumber)
+    if (filters.captureMode) query = query.eq('capture_metadata->>captureMode', filters.captureMode)
+    if (filters.workPackageMode === 'untagged-or-matching' && filters.workPackageId) {
+      query = query.or(`work_package_id.is.null,work_package_id.eq.${escapePostgrestValue(filters.workPackageId)}`)
+    } else if (filters.workPackageId) {
+      query = query.eq('work_package_id', filters.workPackageId)
+    }
+    if (filters.cursor) {
+      const cursor = decodeSnapshotCursor(filters.cursor)
+      if (cursor) {
+        query = query.or(`captured_at.lt.${escapePostgrestValue(cursor.capturedAt)},and(captured_at.eq.${escapePostgrestValue(cursor.capturedAt)},id.lt.${escapePostgrestValue(cursor.id)})`)
+      }
+    }
+
+    const { data, error } = await query.limit(limit + 1)
+    if (error) return classifySnapshotServiceError(error, SNAPSHOT_LIBRARY_UNAVAILABLE)
+
+    const rows = Array.isArray(data) ? data : []
+    const page = rows.slice(0, limit).map(mapSnapshotLibraryRow)
+    const extra = rows.length > limit ? rows[limit - 1] : null
+    return {
+      status: 'available',
+      snapshots: page,
+      nextCursor: extra ? encodeSnapshotCursor(extra) : null,
+    }
+  } catch (err: unknown) {
+    console.error('[blueprintSnapshotService.listBlueprintSnapshots]', err)
+    return { status: 'error', message: SNAPSHOT_NETWORK_FAILURE }
+  }
+}
+
+export async function getBlueprintSnapshotsByIds(snapshotIds: string[]): Promise<BlueprintSnapshotListResult> {
+  const ids = uniqueSnapshotIds(snapshotIds)
+  if (ids.length === 0) return { status: 'available', snapshots: [], nextCursor: null }
+  try {
+    const { data, error } = await (supabase as any)
+      .from('blueprint_snapshots')
+      .select([
+        'id',
+        'project_id',
+        'project_name',
+        'blueprint_set_id',
+        'work_package_id',
+        'work_package_name',
+        'page_number',
+        'caption',
+        'capture_metadata',
+        'width',
+        'height',
+        'file_size_bytes',
+        'captured_at',
+        'created_at',
+      ].join(', '))
+      .in('id', ids)
+      .is('deleted_at', null)
+
+    if (error) return classifySnapshotServiceError(error, SNAPSHOT_LIBRARY_UNAVAILABLE)
+    const byId = new Map((data || []).map((row: any) => [String(row.id), mapSnapshotLibraryRow(row)]))
+    return {
+      status: 'available',
+      snapshots: ids.map((id) => byId.get(id)).filter(Boolean) as BlueprintSnapshotLibraryItem[],
+      nextCursor: null,
+    }
+  } catch (err: unknown) {
+    console.error('[blueprintSnapshotService.getBlueprintSnapshotsByIds]', err)
+    return { status: 'error', message: SNAPSHOT_NETWORK_FAILURE }
+  }
+}
+
+export async function getBlueprintSnapshotPreviewUrl(snapshotId: string): Promise<BlueprintSnapshotPreviewResult> {
+  const cleanId = String(snapshotId || '').trim()
+  if (!cleanId) return { status: 'error', message: SNAPSHOT_PREVIEW_UNAVAILABLE }
+
+  const cached = previewUrlCache.get(cleanId)
+  if (cached && cached.expiresAt - SNAPSHOT_PREVIEW_CACHE_SAFETY_MS > Date.now()) {
+    return { status: 'available', snapshotId: cleanId, signedUrl: cached.signedUrl, expiresAt: cached.expiresAt }
+  }
+
+  try {
+    const { data, error } = await (supabase as any)
+      .from('blueprint_snapshots')
+      .select('id, storage_path')
+      .eq('id', cleanId)
+      .is('deleted_at', null)
+      .single()
+
+    if (error) return classifySnapshotServiceError(error, SNAPSHOT_LIBRARY_UNAVAILABLE, SNAPSHOT_PREVIEW_UNAVAILABLE)
+    const storagePath = String(data?.storage_path || '').trim()
+    if (!storagePath) return { status: 'error', message: SNAPSHOT_PREVIEW_UNAVAILABLE }
+
+    const signed = await supabase.storage
+      .from(BLUEPRINT_SNAPSHOT_BUCKET)
+      .createSignedUrl(storagePath, SNAPSHOT_PREVIEW_TTL_SECONDS)
+
+    if (signed.error || !signed.data?.signedUrl) {
+      return { status: 'error', message: SNAPSHOT_PREVIEW_UNAVAILABLE }
+    }
+
+    const expiresAt = Date.now() + SNAPSHOT_PREVIEW_TTL_SECONDS * 1000
+    previewUrlCache.set(cleanId, { signedUrl: signed.data.signedUrl, expiresAt })
+    prunePreviewUrlCache()
+    return { status: 'available', snapshotId: cleanId, signedUrl: signed.data.signedUrl, expiresAt }
+  } catch (err: unknown) {
+    console.error('[blueprintSnapshotService.getBlueprintSnapshotPreviewUrl]', err)
+    return { status: 'error', message: SNAPSHOT_NETWORK_FAILURE }
+  }
+}
+
+export async function updateBlueprintSnapshotCaption(
+  snapshotId: string,
+  caption: string,
+): Promise<BlueprintSnapshotCaptionUpdateResult> {
+  try {
+    const cleanCaption = sanitizeSnapshotCaption(caption)
+    const { data, error } = await (supabase as any)
+      .from('blueprint_snapshots')
+      .update({ caption: cleanCaption })
+      .eq('id', snapshotId)
+      .is('deleted_at', null)
+      .select([
+        'id',
+        'project_id',
+        'project_name',
+        'blueprint_set_id',
+        'work_package_id',
+        'work_package_name',
+        'page_number',
+        'caption',
+        'capture_metadata',
+        'width',
+        'height',
+        'file_size_bytes',
+        'captured_at',
+        'created_at',
+      ].join(', '))
+      .single()
+
+    if (error) return classifySnapshotServiceError(error, SNAPSHOT_LIBRARY_UNAVAILABLE, SNAPSHOT_CAPTION_FAILURE)
+    return { status: 'available', snapshot: mapSnapshotLibraryRow(data) }
+  } catch (err: unknown) {
+    console.error('[blueprintSnapshotService.updateBlueprintSnapshotCaption]', err)
+    return { status: 'error', message: SNAPSHOT_NETWORK_FAILURE }
+  }
+}
+
+export function clearBlueprintSnapshotPreviewUrlCache(snapshotId?: string): void {
+  if (snapshotId) previewUrlCache.delete(snapshotId)
+  else previewUrlCache.clear()
+}
+
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim())
+}
+
+function normalizeLimit(limit: number | null | undefined): number {
+  const n = Math.floor(Number(limit) || DEFAULT_SNAPSHOT_LIBRARY_LIMIT)
+  return Math.max(1, Math.min(MAX_SNAPSHOT_LIBRARY_LIMIT, n))
+}
+
+function mapSnapshotLibraryRow(row: any): BlueprintSnapshotLibraryItem {
+  const metadata = row?.capture_metadata && typeof row.capture_metadata === 'object' ? row.capture_metadata : {}
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id || ''),
+    projectName: String(row.project_name || ''),
+    blueprintSetId: String(row.blueprint_set_id || ''),
+    blueprintTitle: typeof metadata.blueprintTitle === 'string' ? metadata.blueprintTitle : null,
+    workPackageId: row.work_package_id ?? null,
+    workPackageName: row.work_package_name ?? null,
+    pageNumber: row.page_number == null ? null : Number(row.page_number),
+    caption: row.caption ?? null,
+    captureMode: metadata.captureMode === 'area' || metadata.captureMode === 'full-page' ? metadata.captureMode : null,
+    width: row.width == null ? null : Number(row.width),
+    height: row.height == null ? null : Number(row.height),
+    fileSizeBytes: row.file_size_bytes == null ? null : Number(row.file_size_bytes),
+    annotationCount: metadata.annotationCount == null ? null : Number(metadata.annotationCount),
+    capturedAt: row.captured_at ?? null,
+    createdAt: row.created_at ?? null,
+  }
+}
+
+function classifySnapshotServiceError(
+  error: unknown,
+  unavailableMessage: string,
+  fallbackMessage = SNAPSHOT_NETWORK_FAILURE,
+): { status: 'unavailable'; message: string } | { status: 'error'; message: string } {
+  if (isMissingSnapshotTableError(error)) return { status: 'unavailable', message: unavailableMessage }
+  if (isNetworkLikeError(error)) return { status: 'error', message: SNAPSHOT_NETWORK_FAILURE }
+  return { status: 'error', message: fallbackMessage }
+}
+
+export function isMissingSnapshotTableError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const err = error as { code?: string | number; message?: string; details?: string }
+  const code = String(err.code ?? '')
+  const haystack = `${err.message ?? ''}\n${err.details ?? ''}`.toLowerCase()
+  if (code === '42P01' && haystack.includes('blueprint_snapshots')) return true
+  if (code === 'PGRST205' && haystack.includes('blueprint_snapshots')) return true
+  if (/relation ["']?public\.blueprint_snapshots["']? does not exist/i.test(haystack)) return true
+  return false
+}
+
+function isNetworkLikeError(error: unknown): boolean {
+  const haystack = error instanceof Error
+    ? error.message
+    : typeof error === 'object' && error
+      ? `${(error as any).message ?? ''}\n${(error as any).details ?? ''}`
+      : String(error || '')
+  return /failed to fetch|networkerror|network request failed|timeout|econnrefused|enotfound/i.test(haystack)
+}
+
+function uniqueSnapshotIds(ids: string[]): string[] {
+  return [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))]
+}
+
+function encodeSnapshotCursor(row: any): string | null {
+  const capturedAt = String(row?.captured_at || '')
+  const id = String(row?.id || '')
+  if (!capturedAt || !id) return null
+  return btoa(JSON.stringify({ capturedAt, id }))
+}
+
+function decodeSnapshotCursor(cursor: string): { capturedAt: string; id: string } | null {
+  try {
+    const parsed = JSON.parse(atob(cursor))
+    if (!parsed?.capturedAt || !parsed?.id) return null
+    return { capturedAt: String(parsed.capturedAt), id: String(parsed.id) }
+  } catch {
+    return null
+  }
+}
+
+function escapePostgrestValue(value: string): string {
+  return `"${String(value).replace(/"/g, '\\"')}"`
+}
+
+function prunePreviewUrlCache(): void {
+  const now = Date.now()
+  for (const [id, cached] of previewUrlCache) {
+    if (cached.expiresAt - SNAPSHOT_PREVIEW_CACHE_SAFETY_MS <= now || previewUrlCache.size > 64) {
+      previewUrlCache.delete(id)
+    }
+  }
 }
 
 function base64UrlEncode(value: string): string {

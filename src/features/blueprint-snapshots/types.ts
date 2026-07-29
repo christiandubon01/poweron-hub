@@ -125,6 +125,58 @@ export interface BlueprintSnapshotSavedResult {
   workPackageName: string | null
 }
 
+export interface BlueprintSnapshotLibraryItem {
+  id: string
+  projectId: string
+  projectName: string
+  blueprintSetId: string
+  blueprintTitle: string | null
+  workPackageId: string | null
+  workPackageName: string | null
+  pageNumber: number | null
+  caption: string | null
+  captureMode: BlueprintSnapshotCaptureMode | null
+  width: number | null
+  height: number | null
+  fileSizeBytes: number | null
+  annotationCount: number | null
+  capturedAt: string | null
+  createdAt: string | null
+}
+
+export interface BlueprintSnapshotListFilters {
+  projectId?: string | null
+  blueprintSetId?: string | null
+  pageNumber?: number | null
+  workPackageId?: string | null
+  workPackageMode?: 'any' | 'untagged-or-matching'
+  captureMode?: BlueprintSnapshotCaptureMode | null
+  cursor?: string | null
+  limit?: number | null
+}
+
+export type BlueprintSnapshotListResult =
+  | { status: 'available'; snapshots: BlueprintSnapshotLibraryItem[]; nextCursor: string | null }
+  | { status: 'unavailable'; message: string }
+  | { status: 'error'; message: string }
+
+export interface BlueprintSnapshotPreviewUrlResult {
+  status: 'available'
+  snapshotId: string
+  signedUrl: string
+  expiresAt: number
+}
+
+export type BlueprintSnapshotPreviewResult =
+  | BlueprintSnapshotPreviewUrlResult
+  | { status: 'unavailable'; message: string }
+  | { status: 'error'; message: string }
+
+export type BlueprintSnapshotCaptionUpdateResult =
+  | { status: 'available'; snapshot: BlueprintSnapshotLibraryItem }
+  | { status: 'unavailable'; message: string }
+  | { status: 'error'; message: string }
+
 export interface BlueprintSnapshotCaptureContext {
   page: {
     getViewport: (params: { scale: number; rotation?: number }) => { width: number; height: number }

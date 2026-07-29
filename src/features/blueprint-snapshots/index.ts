@@ -1,5 +1,7 @@
 export * from './BlueprintSnapshotCaptureDialog'
 export * from './BlueprintSnapshotPreviewViewport'
+export * from './SnapshotAssignmentPicker'
+export * from './SnapshotLibraryDialog'
 export * from './blueprintSnapshotCapture'
 export * from './blueprintSnapshotLabelStyle'
 export * from './blueprintSnapshotService'

@@ -125,6 +125,10 @@ export interface CreateTaskAssignmentWithWorkOrderInput extends CreateTaskAssign
   workOrderPayload: WorkOrderPayloadV1Draft
 }
 
+export interface CreateTaskAssignmentWithWorkOrderAndSnapshotsInput extends CreateTaskAssignmentWithWorkOrderInput {
+  snapshotIds?: string[]
+}
+
 export interface UpdateTaskAssignmentInput {
   leadEmployeeId?: string
   assignedEmployeeIds?: string[]
@@ -334,6 +338,107 @@ export async function createTaskAssignmentWithWorkOrder(
 ): Promise<Result<{
   assignment: EmployeeTaskAssignment
   workOrderVersion?: 1
+  attachmentCount: number
+  orderedSnapshotIds: string[]
+  idempotentReplay: boolean
+  workOrderCreated: boolean
+}>> {
+  return createTaskAssignmentWithWorkOrderAndSnapshots({ ...input, snapshotIds: [] })
+}
+
+export async function createTaskAssignmentWithWorkOrderAndSnapshots(
+  input: CreateTaskAssignmentWithWorkOrderAndSnapshotsInput,
+): Promise<Result<{
+  assignment: EmployeeTaskAssignment
+  workOrderVersion?: 1
+  attachmentCount: number
+  orderedSnapshotIds: string[]
+  idempotentReplay: boolean
+  workOrderCreated: boolean
+}>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+
+    const assigned = uniqueIds(input.assignedEmployeeIds)
+    const submittedSnapshotIds = input.snapshotIds ?? []
+    const snapshotIds = uniqueIds(submittedSnapshotIds)
+    if (assigned.length === 0) {
+      return { success: false, error: 'Select at least one employee' }
+    }
+    if (!assigned.includes(input.leadEmployeeId)) {
+      return { success: false, error: 'Primary assignee must be one of the selected employees' }
+    }
+    if (snapshotIds.length !== submittedSnapshotIds.map((id) => String(id || '').trim()).filter(Boolean).length) {
+      return { success: false, error: 'A selected snapshot is no longer available.' }
+    }
+    if (snapshotIds.length > 8) {
+      return { success: false, error: 'Maximum of 8 snapshots.' }
+    }
+
+    const { data, error } = await rpc('create_employee_task_assignment_with_work_order_and_snapshots', {
+      p_client_request_id: input.clientRequestId,
+      p_assignment_id: input.assignmentId,
+      p_work_package_id: input.workPackageId,
+      p_work_package_name: input.workPackageName,
+      p_project_id: input.projectId ?? '',
+      p_project_name: input.projectName ?? '',
+      p_blueprint_set_id: input.blueprintSetId ?? '',
+      p_blueprint_title: input.blueprintTitle ?? null,
+      p_lead_employee_id: input.leadEmployeeId,
+      p_assigned_employee_ids: assigned,
+      p_due_date: input.dueDate || null,
+      p_status: input.status || 'assigned',
+      p_work_order_payload: input.workOrderPayload,
+      p_snapshot_ids: snapshotIds,
+    })
+
+    if (error) {
+      if (isMissingSupabaseRpcError(error, 'create_employee_task_assignment_with_work_order_and_snapshots')) {
+        if (snapshotIds.length > 0) {
+          return { success: false, error: 'Snapshot assignment storage is not available yet.' }
+        }
+        return createTaskAssignmentWithWorkOrder1C({ ...input, assignedEmployeeIds: assigned })
+      }
+      return { success: false, error: safeSnapshotAssignmentError(error.message) }
+    }
+
+    const result = data as {
+      assignment?: EmployeeTaskAssignment
+      workOrderVersion?: number
+      attachmentCount?: number
+      orderedSnapshotIds?: string[]
+      idempotentReplay?: boolean
+    } | null
+    if (!result?.assignment || result.workOrderVersion !== 1) {
+      return { success: false, error: snapshotIds.length > 0 ? 'Could not create assignment with snapshots.' : 'Could not create assignment.' }
+    }
+
+    return {
+      success: true,
+      data: {
+        assignment: result.assignment,
+        workOrderVersion: 1,
+        attachmentCount: Number(result.attachmentCount || 0),
+        orderedSnapshotIds: Array.isArray(result.orderedSnapshotIds) ? result.orderedSnapshotIds.map(String) : [],
+        idempotentReplay: !!result.idempotentReplay,
+        workOrderCreated: true,
+      },
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[employeeTaskAssignmentService.createTaskAssignmentWithWorkOrderAndSnapshots]', err)
+    return { success: false, error: safeSnapshotAssignmentError(message) }
+  }
+}
+
+async function createTaskAssignmentWithWorkOrder1C(
+  input: CreateTaskAssignmentWithWorkOrderInput,
+): Promise<Result<{
+  assignment: EmployeeTaskAssignment
+  workOrderVersion?: 1
+  attachmentCount: number
+  orderedSnapshotIds: string[]
   idempotentReplay: boolean
   workOrderCreated: boolean
 }>> {
@@ -385,6 +490,8 @@ export async function createTaskAssignmentWithWorkOrder(
           success: true,
           data: {
             assignment: legacy.data,
+            attachmentCount: 0,
+            orderedSnapshotIds: [],
             idempotentReplay: false,
             workOrderCreated: false,
           },
@@ -407,6 +514,8 @@ export async function createTaskAssignmentWithWorkOrder(
       data: {
         assignment: result.assignment,
         workOrderVersion: 1,
+        attachmentCount: 0,
+        orderedSnapshotIds: [],
         idempotentReplay: !!result.idempotentReplay,
         workOrderCreated: true,
       },
@@ -680,6 +789,18 @@ function safeAssignmentError(message: string): string {
   if (/work order payload/i.test(message)) return 'Could not create the Work Order for this assignment'
   if (/assignment request/i.test(message)) return 'Check the assignment details and try again'
   return 'Could not create assignment.'
+}
+
+function safeSnapshotAssignmentError(message: string): string {
+  if (/snapshot assignment storage is not available/i.test(message)) return 'Snapshot assignment storage is not available yet.'
+  if (/maximum of 8 snapshots|more than 8 snapshots/i.test(message)) return 'Maximum of 8 snapshots.'
+  if (/selected snapshot|snapshot.*no longer available|duplicate snapshot|replay snapshot list/i.test(message)) return 'A selected snapshot is no longer available.'
+  if (/not authenticated/i.test(message)) return 'Not authenticated'
+  if (/not authorized/i.test(message)) return 'Not authorized'
+  if (/failed to fetch|networkerror|network request failed|timeout/i.test(message)) return 'Network error. Try again.'
+  if (/work order payload/i.test(message)) return 'Could not create the Work Order for this assignment'
+  if (/assignment request|invalid/i.test(message)) return 'Check the assignment details and try again'
+  return 'Could not create assignment with snapshots.'
 }
 
 function safeRevokeError(message: string): string {

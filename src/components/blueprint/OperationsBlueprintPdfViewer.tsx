@@ -202,6 +202,7 @@ import {
 } from '@/features/blueprint-symbol-counts'
 import {
   BlueprintSnapshotCaptureDialog,
+  SnapshotLibraryDialog,
   BlueprintSnapshotCaptureError,
   captureBlueprintSnapshot,
   createBlueprintSnapshotPreviewState,
@@ -2489,6 +2490,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'warning' | 'error'; text: string; key?: string } | null>(null)
   const [snapshotPreview, setSnapshotPreview] = useState<BlueprintSnapshotPreviewState | null>(null)
   const [isSnapshotPreviewOpen, setIsSnapshotPreviewOpen] = useState(false)
+  const [isSnapshotLibraryOpen, setIsSnapshotLibraryOpen] = useState(false)
   const [isSnapshotCapturing, setIsSnapshotCapturing] = useState(false)
   const [isSnapshotAreaSelecting, setIsSnapshotAreaSelecting] = useState(false)
   const [snapshotAreaDraft, setSnapshotAreaDraft] = useState<null | { startX: number; startY: number; endX: number; endY: number }>(null)
@@ -10874,6 +10876,16 @@ const annotationPanelSizeClass =
               <Maximize2 size={12} />
               <span className="hidden sm:inline">Full Page</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setIsSnapshotLibraryOpen(true)}
+              className="shrink-0 inline-flex min-h-10 items-center justify-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
+              title="Open Snapshot Library"
+              aria-label="Open Snapshot Library"
+            >
+              <Layers size={12} />
+              <span className="hidden sm:inline">Library</span>
+            </button>
           </div>
         </div>
       )}
@@ -10990,6 +11002,16 @@ const annotationPanelSizeClass =
                 >
                   <Maximize2 size={12} />
                   <span className="hidden sm:inline">Full Page</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsSnapshotLibraryOpen(true)}
+                  className="shrink-0 inline-flex min-h-10 items-center justify-center gap-1 rounded-md border border-gray-700 px-2 text-xs text-gray-300 hover:text-white"
+                  title="Open Snapshot Library"
+                  aria-label="Open Snapshot Library"
+                >
+                  <Layers size={12} />
+                  <span className="hidden sm:inline">Library</span>
                 </button>
               </div>
 
@@ -12101,6 +12123,16 @@ const annotationPanelSizeClass =
                 aria-label="Capture Full Page"
               >
                 <Maximize2 size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsSnapshotLibraryOpen(true)}
+                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-gray-700 px-3 text-sm text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
+                title="Open Snapshot Library"
+                aria-label="Open Snapshot Library"
+              >
+                <Layers size={16} />
+                <span>Library</span>
               </button>
             </div>
           </div>
@@ -15788,6 +15820,15 @@ const annotationPanelSizeClass =
         onFailure={(message) => {
           setActionMsg({ type: 'error', text: message })
         }}
+      />
+
+      <SnapshotLibraryDialog
+        open={isSnapshotLibraryOpen}
+        initialFilters={{
+          projectId: blueprint?.projectId,
+          blueprintSetId: blueprint?.id,
+        }}
+        onClose={() => setIsSnapshotLibraryOpen(false)}
       />
 
       {/* ── All Pages Index Modal ── */}

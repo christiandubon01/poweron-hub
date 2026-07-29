@@ -23,7 +23,7 @@ import {
   listAssignableEmployees,
   listOrgTaskAssignments,
   buildTaskAssignmentWorkOrderDraft,
-  createTaskAssignmentWithWorkOrder,
+  createTaskAssignmentWithWorkOrderAndSnapshots,
   updateTaskAssignment,
   revokeTaskAssignment,
   type AssignableProject,
@@ -33,6 +33,7 @@ import {
   type TaskAssignmentStatus,
 } from '@/services/employeeTaskAssignmentService'
 import type { AdminEmployeeProfile } from '@/services/adminTimecardService'
+import { SnapshotAssignmentPicker } from '@/features/blueprint-snapshots'
 
 const STATUS_OPTIONS: TaskAssignmentStatus[] = ['assigned', 'in_progress', 'completed']
 
@@ -368,6 +369,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
   const [blueprints, setBlueprints] = useState<AssignableBlueprint[]>([])
   const [workPackages, setWorkPackages] = useState<AssignableWorkPackage[]>([])
   const [createIds, setCreateIds] = useState(createAttemptIds)
+  const [selectedSnapshotIds, setSelectedSnapshotIds] = useState<string[]>([])
 
   const empById = useMemo(() => {
     const map = new Map<string, AdminEmployeeProfile>()
@@ -448,6 +450,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
     setEditingId(null)
     setForm(emptyForm())
     setCreateIds(createAttemptIds())
+    setSelectedSnapshotIds([])
     setBlueprints([])
     setWorkPackages([])
     setFormOpen(true)
@@ -499,12 +502,14 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
     setWorkPackages([])
     setBlueprintsLoading(false)
     setPackagesLoading(false)
+    setSelectedSnapshotIds([])
   }
 
   const openCreate = () => {
     setEditingId(null)
     setForm(emptyForm())
     setCreateIds(createAttemptIds())
+    setSelectedSnapshotIds([])
     setBlueprints([])
     setWorkPackages([])
     setFormOpen(true)
@@ -538,6 +543,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
     setEditingId(null)
     setForm(emptyForm())
     setCreateIds(createAttemptIds())
+    setSelectedSnapshotIds([])
     setBlueprints([])
     setWorkPackages([])
   }
@@ -567,6 +573,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
       workPackageName: '',
     }))
     setWorkPackages([])
+    setSelectedSnapshotIds([])
     if (id) loadBlueprintsFor(id)
     else setBlueprints([])
   }
@@ -579,6 +586,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
       workPackageId: '',
       workPackageName: '',
     }))
+    setSelectedSnapshotIds([])
     if (id) loadPackagesFor(id)
     else setWorkPackages([])
   }
@@ -589,6 +597,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
       workPackageId: id,
       workPackageName: option?.label || '',
     }))
+    setSelectedSnapshotIds([])
   }
 
   const submit = async () => {
@@ -649,7 +658,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
         return
       }
 
-      const res = await createTaskAssignmentWithWorkOrder({
+      const res = await createTaskAssignmentWithWorkOrderAndSnapshots({
         assignmentId: createIds.assignmentId,
         clientRequestId: createIds.clientRequestId,
         orgId,
@@ -664,6 +673,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
         dueDate: form.dueDate || null,
         status: form.status,
         workOrderPayload: draft.data,
+        snapshotIds: selectedSnapshotIds,
       })
       setSaving(false)
       if (!res.success) {
@@ -676,6 +686,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
     setEditingId(null)
     setForm(emptyForm())
     setCreateIds(createAttemptIds())
+    setSelectedSnapshotIds([])
     setBlueprints([])
     setWorkPackages([])
     await load()
@@ -942,6 +953,13 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
                   {noPackages && (
                     <p className="text-sm text-amber-300/90 -mt-1">No work packages found</p>
                   )}
+                  <SnapshotAssignmentPicker
+                    projectId={form.projectId}
+                    blueprintSetId={form.blueprintSetId}
+                    workPackageId={form.workPackageId}
+                    selectedIds={selectedSnapshotIds}
+                    onChange={setSelectedSnapshotIds}
+                  />
                 </div>
               )}
 

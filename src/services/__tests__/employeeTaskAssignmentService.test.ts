@@ -42,6 +42,7 @@ vi.mock('@/services/adminTimecardService', () => ({
 }))
 
 const {
+  createTaskAssignmentWithWorkOrderAndSnapshots,
   createTaskAssignmentWithWorkOrder,
   isMissingSupabaseRpcError,
   listOrgTaskAssignments,
@@ -142,6 +143,15 @@ function missingCreateRpcError() {
   }
 }
 
+function missingCreateWithSnapshotsRpcError() {
+  return {
+    code: 'PGRST202',
+    message: 'Could not find the function public.create_employee_task_assignment_with_work_order_and_snapshots in the schema cache',
+    details: 'Searched for the function public.create_employee_task_assignment_with_work_order_and_snapshots with parameters...',
+    hint: null,
+  }
+}
+
 function missingRevokeRpcError() {
   return {
     code: 'PGRST202',
@@ -205,11 +215,13 @@ describe('employeeTaskAssignmentService', () => {
     }
   })
 
-  it('attempts atomic create RPC first and performs no direct insert on success', async () => {
+  it('zero snapshots attempts 1D create RPC first and performs no direct insert on success', async () => {
     mocks.rpc.mockResolvedValueOnce({
       data: {
         assignment: assignment({ current_work_order_version: 1 }),
         workOrderVersion: 1,
+        attachmentCount: 0,
+        orderedSnapshotIds: [],
         idempotentReplay: false,
       },
       error: null,
@@ -221,17 +233,22 @@ describe('employeeTaskAssignmentService', () => {
     if (result.success) {
       expect(result.data.workOrderCreated).toBe(true)
       expect(result.data.workOrderVersion).toBe(1)
+      expect(result.data.attachmentCount).toBe(0)
+      expect(result.data.orderedSnapshotIds).toEqual([])
     }
     expect(mocks.rpc).toHaveBeenCalledTimes(1)
-    expect(mocks.rpc).toHaveBeenCalledWith('create_employee_task_assignment_with_work_order', expect.objectContaining({
+    expect(mocks.rpc).toHaveBeenCalledWith('create_employee_task_assignment_with_work_order_and_snapshots', expect.objectContaining({
       p_assignment_id: 'assignment-1',
       p_work_order_payload: expect.objectContaining({ wireQuantities: [] }),
+      p_snapshot_ids: [],
     }))
     expect(mocks.from).not.toHaveBeenCalled()
   })
 
-  it('falls back to exactly one legacy insert when create RPC is proven missing', async () => {
-    mocks.rpc.mockResolvedValueOnce({ data: null, error: missingCreateRpcError() })
+  it('missing 1D with zero snapshots calls 1C, then missing 1C can use legacy create', async () => {
+    mocks.rpc
+      .mockResolvedValueOnce({ data: null, error: missingCreateWithSnapshotsRpcError() })
+      .mockResolvedValueOnce({ data: null, error: missingCreateRpcError() })
     const { insert } = mockLegacyInsertSuccess(assignment({ id: 'legacy-assignment-1' }))
 
     const result = await createTaskAssignmentWithWorkOrder(createInput())
@@ -240,9 +257,11 @@ describe('employeeTaskAssignmentService', () => {
     if (result.success) {
       expect(result.data.workOrderCreated).toBe(false)
       expect(result.data.workOrderVersion).toBeUndefined()
+      expect(result.data.attachmentCount).toBe(0)
+      expect(result.data.orderedSnapshotIds).toEqual([])
       expect(result.data.assignment.id).toBe('legacy-assignment-1')
     }
-    expect(mocks.rpc).toHaveBeenCalledTimes(1)
+    expect(mocks.rpc).toHaveBeenCalledTimes(2)
     expect(mocks.from).toHaveBeenCalledTimes(1)
     expect(insert).toHaveBeenCalledTimes(1)
     const inserted = insert.mock.calls[0]?.[0] as Record<string, unknown>
@@ -283,12 +302,14 @@ describe('employeeTaskAssignmentService', () => {
 
     const result = await createTaskAssignmentWithWorkOrder(createInput())
 
-    expect(result).toEqual({ success: false, error: 'Could not create assignment.' })
+    expect(result).toEqual({ success: false, error: 'Network error. Try again.' })
     expect(mocks.from).not.toHaveBeenCalled()
   })
 
   it('does not create a Work Order claim on missing-RPC create fallback', async () => {
-    mocks.rpc.mockResolvedValueOnce({ data: null, error: missingCreateRpcError() })
+    mocks.rpc
+      .mockResolvedValueOnce({ data: null, error: missingCreateWithSnapshotsRpcError() })
+      .mockResolvedValueOnce({ data: null, error: missingCreateRpcError() })
     mockLegacyInsertSuccess()
 
     const result = await createTaskAssignmentWithWorkOrder(createInput())
@@ -302,7 +323,7 @@ describe('employeeTaskAssignmentService', () => {
 
   it('does not duplicate create when atomic RPC succeeds', async () => {
     mocks.rpc.mockResolvedValueOnce({
-      data: { assignment: assignment(), workOrderVersion: 1, idempotentReplay: false },
+      data: { assignment: assignment(), workOrderVersion: 1, attachmentCount: 0, orderedSnapshotIds: [], idempotentReplay: false },
       error: null,
     })
 
@@ -313,6 +334,68 @@ describe('employeeTaskAssignmentService', () => {
     }))
 
     expect(mocks.rpc).toHaveBeenCalledTimes(2)
+    expect(mocks.from).not.toHaveBeenCalled()
+  })
+
+  it('selected snapshots call 1D RPC only and pass ordered IDs unchanged', async () => {
+    mocks.rpc.mockResolvedValueOnce({
+      data: {
+        assignment: assignment(),
+        workOrderVersion: 1,
+        attachmentCount: 2,
+        orderedSnapshotIds: ['snap-2', 'snap-1'],
+        idempotentReplay: true,
+      },
+      error: null,
+    })
+
+    const result = await createTaskAssignmentWithWorkOrderAndSnapshots(createInput({
+      snapshotIds: ['snap-2', 'snap-1'],
+    }))
+
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.attachmentCount).toBe(2)
+      expect(result.data.orderedSnapshotIds).toEqual(['snap-2', 'snap-1'])
+      expect(result.data.idempotentReplay).toBe(true)
+    }
+    expect(mocks.rpc).toHaveBeenCalledTimes(1)
+    expect(mocks.rpc).toHaveBeenCalledWith('create_employee_task_assignment_with_work_order_and_snapshots', expect.objectContaining({
+      p_snapshot_ids: ['snap-2', 'snap-1'],
+    }))
+    expect(mocks.from).not.toHaveBeenCalled()
+  })
+
+  it('selected snapshots never use 1C or legacy fallback when 1D is missing', async () => {
+    mocks.rpc.mockResolvedValueOnce({ data: null, error: missingCreateWithSnapshotsRpcError() })
+
+    const result = await createTaskAssignmentWithWorkOrderAndSnapshots(createInput({
+      snapshotIds: ['snap-1'],
+    }))
+
+    expect(result).toEqual({ success: false, error: 'Snapshot assignment storage is not available yet.' })
+    expect(mocks.rpc).toHaveBeenCalledTimes(1)
+    expect(mocks.from).not.toHaveBeenCalled()
+  })
+
+  it('selected snapshots do not fall back on validation, authorization, or network errors', async () => {
+    mocks.rpc.mockResolvedValueOnce({ data: null, error: { code: '42501', message: 'Not authorized' } })
+    await expect(createTaskAssignmentWithWorkOrderAndSnapshots(createInput({ snapshotIds: ['snap-1'] }))).resolves.toEqual({
+      success: false,
+      error: 'Not authorized',
+    })
+
+    mocks.rpc.mockResolvedValueOnce({ data: null, error: { code: '23514', message: 'A selected snapshot is no longer available' } })
+    await expect(createTaskAssignmentWithWorkOrderAndSnapshots(createInput({ snapshotIds: ['snap-1'] }))).resolves.toEqual({
+      success: false,
+      error: 'A selected snapshot is no longer available.',
+    })
+
+    mocks.rpc.mockRejectedValueOnce(new Error('Failed to fetch'))
+    await expect(createTaskAssignmentWithWorkOrderAndSnapshots(createInput({ snapshotIds: ['snap-1'] }))).resolves.toEqual({
+      success: false,
+      error: 'Network error. Try again.',
+    })
     expect(mocks.from).not.toHaveBeenCalled()
   })
 

@@ -133,8 +133,11 @@ describe('Work Order assignment service/UI contract', () => {
   it('attempts the atomic create RPC first and only falls back on proven missing-RPC', () => {
     const atomicStart = service.indexOf('export async function createTaskAssignmentWithWorkOrder')
     const atomicBody = service.slice(atomicStart, service.indexOf('export function buildTaskAssignmentWorkOrderDraft'))
+    expect(atomicBody).toContain("rpc('create_employee_task_assignment_with_work_order_and_snapshots'")
+    expect(atomicBody).toContain("isMissingSupabaseRpcError(error, 'create_employee_task_assignment_with_work_order_and_snapshots')")
     expect(atomicBody).toContain("rpc('create_employee_task_assignment_with_work_order'")
     expect(atomicBody).toContain("isMissingSupabaseRpcError(error, 'create_employee_task_assignment_with_work_order')")
+    expect(atomicBody).toContain('Snapshot assignment storage is not available yet.')
     expect(atomicBody).toContain('createTaskAssignment({')
     expect(atomicBody).toContain('workOrderCreated: false')
     expect(atomicBody).toContain('workOrderCreated: true')
@@ -157,7 +160,7 @@ describe('Work Order assignment service/UI contract', () => {
     expect(panel).toContain('revokeTaskAssignment(id)')
     const editBranch = panel.slice(panel.indexOf('if (editingId)'), panel.indexOf('} else {', panel.indexOf('if (editingId)')))
     expect(editBranch).not.toContain('buildTaskAssignmentWorkOrderDraft')
-    expect(editBranch).not.toContain('createTaskAssignmentWithWorkOrder')
+    expect(editBranch).not.toContain('createTaskAssignmentWithWorkOrderAndSnapshots')
   })
 
   it('keeps list/read projections free of undeployed 092/093 columns', () => {
@@ -172,6 +175,8 @@ describe('Work Order assignment service/UI contract', () => {
     expect(panel).toContain('const [createIds, setCreateIds] = useState(createAttemptIds)')
     expect(panel).toContain('assignmentId: createIds.assignmentId')
     expect(panel).toContain('clientRequestId: createIds.clientRequestId')
+    expect(panel).toContain('const [selectedSnapshotIds, setSelectedSnapshotIds] = useState<string[]>([])')
+    expect(panel).toContain('snapshotIds: selectedSnapshotIds')
     expect(panel).toContain('if (!res.success) {')
     expect(panel).toContain("setError(res.error || 'Could not create assignment.')")
     expect(panel).toContain('setCreateIds(createAttemptIds())')
