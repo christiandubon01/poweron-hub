@@ -280,9 +280,42 @@ export default function AdminPunchHistoryModal({
   const approvalDisplay =
     APPROVAL_DISPLAY[entry?.approval_status ?? 'none'] ?? APPROVAL_DISPLAY.none
 
-  const allSorted = [...punches].sort(
-    (a, b) => new Date(a.punched_at).getTime() - new Date(b.punched_at).getTime(),
-  )
+  // Build correction pairs: admin_edit punch → its voided original
+  type PairItem =
+    | { kind: 'single'; punch: TimePunchEvent; sortTime: number }
+    | { kind: 'pair'; correction: TimePunchEvent; voided: TimePunchEvent; sortTime: number }
+
+  const renderItems = (() => {
+    // Map voidedId → correction punch
+    const correctionMap = new Map<string, TimePunchEvent>()
+    for (const p of punches) {
+      if (p.source === 'admin_edit' && p.supersedes_id && !p.is_void) {
+        correctionMap.set(p.supersedes_id, p)
+      }
+    }
+    const pairedVoidedIds   = new Set(correctionMap.keys())
+    const pairedCorrectionIds = new Set(Array.from(correctionMap.values()).map(p => p.id))
+
+    const items: PairItem[] = []
+
+    // Single punches (not part of any pair)
+    for (const p of punches) {
+      if (pairedVoidedIds.has(p.id) || pairedCorrectionIds.has(p.id)) continue
+      items.push({ kind: 'single', punch: p, sortTime: new Date(p.punched_at).getTime() })
+    }
+
+    // Paired items: correction + voided
+    for (const [voidedId, correction] of correctionMap) {
+      const voided = punches.find(p => p.id === voidedId)
+      if (voided) {
+        items.push({ kind: 'pair', correction, voided, sortTime: new Date(correction.punched_at).getTime() })
+      } else {
+        items.push({ kind: 'single', punch: correction, sortTime: new Date(correction.punched_at).getTime() })
+      }
+    }
+
+    return items.sort((a, b) => a.sortTime - b.sortTime)
+  })()
 
   // ── Render ───────────────────────────────────────────────────────────────────
 

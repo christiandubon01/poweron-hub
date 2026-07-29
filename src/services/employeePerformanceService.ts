@@ -30,6 +30,7 @@ export interface PerformanceSnapshot {
   avg_daily_hours: number | null
   on_time_rate: number | null
   completion_rate: number | null
+  admin_corrections: number
   metrics: Record<string, unknown>
   generated_at: string
   generated_by: string | null
