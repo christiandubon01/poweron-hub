@@ -10,7 +10,7 @@ import {
   Shield,
   UserPlus,
   ChevronDown,
-  ChevronUp,
+  X,
   FolderOpen,
   ClipboardList,
   ChevronRight,
@@ -1329,20 +1329,10 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
   )
 }
 
-// ─── Permission Matrix (collapsible, localStorage-persisted) ─────────────────
+// ─── Permission Matrix — pill trigger + modal ─────────────────────────────────
 
 function PermissionMatrix() {
-  const [open, setOpen] = useState<boolean>(() => {
-    try { return localStorage.getItem('crew_portal_permission_matrix_open') === 'true' }
-    catch { return false }
-  })
-
-  function toggle() {
-    const next = !open
-    setOpen(next)
-    try { localStorage.setItem('crew_portal_permission_matrix_open', String(next)) }
-    catch {}
-  }
+  const [open, setOpen] = useState(false)
 
   function Check({ allowed }: { allowed: boolean }) {
     return allowed ? (
@@ -1353,54 +1343,96 @@ function PermissionMatrix() {
   }
 
   return (
-    <div className="mt-8">
+    <div className="mt-6">
+      {/* Pill trigger — styled after Settings Hub "Admin Tools Off" */}
       <button
-        onClick={toggle}
-        className="flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium text-gray-400 border-gray-700/40 hover:text-gray-300 hover:bg-gray-800/30 transition-colors"
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-2 rounded-full border border-gray-700/50 bg-slate-950/70 px-4 py-2 text-xs font-semibold text-gray-400 shadow-lg transition-colors hover:bg-gray-800/60 hover:text-gray-300"
       >
-        <Shield size={13} className="text-green-600 flex-shrink-0" />
-        <span>Permission Matrix</span>
-        {open
-          ? <ChevronUp size={12} className="text-gray-500 ml-1" />
-          : <ChevronDown size={12} className="text-gray-500 ml-1" />}
+        <span className="h-2.5 w-2.5 rounded-full bg-gray-600 flex-shrink-0" />
+        <Shield size={13} className="flex-shrink-0 text-green-700" />
+        Permission Matrix
       </button>
 
+      {/* Modal */}
       {open && (
-        <div className="mt-3 overflow-x-auto rounded-lg border" style={{ borderColor: '#1e2128' }}>
-          <table className="w-full text-sm">
-            <thead>
-              <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
-                <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3 w-1/2">
-                  Permission
-                </th>
-                <th className="text-center text-xs font-semibold text-green-600 uppercase tracking-wider px-4 py-3">
-                  Owner
-                </th>
-                <th className="text-center text-xs font-semibold text-blue-600 uppercase tracking-wider px-4 py-3">
-                  Crew
-                </th>
-                <th className="text-center text-xs font-semibold text-gray-600 uppercase tracking-wider px-4 py-3">
-                  Guest
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {PERMISSION_MATRIX.map((row, idx) => (
-                <tr
-                  key={row.permission}
-                  style={{
-                    backgroundColor: idx % 2 === 0 ? '#0a0b0f' : '#0c0d12',
-                    borderBottom: '1px solid #1a1c23',
-                  }}
-                >
-                  <td className="px-4 py-2.5 text-gray-300">{row.permission}</td>
-                  <td className="px-4 py-2.5 text-center"><Check allowed={row.owner} /></td>
-                  <td className="px-4 py-2.5 text-center"><Check allowed={row.crew} /></td>
-                  <td className="px-4 py-2.5 text-center"><Check allowed={row.guest} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
+        >
+          <div
+            className="relative w-full max-w-2xl rounded-xl border overflow-hidden shadow-2xl"
+            style={{ backgroundColor: '#0d1117', borderColor: '#1e2128' }}
+          >
+            {/* Modal header */}
+            <div
+              className="flex items-center justify-between px-6 py-4 border-b"
+              style={{ borderColor: '#1e2128' }}
+            >
+              <div className="flex items-center gap-2">
+                <Shield size={15} className="text-green-500" />
+                <h3 className="text-sm font-semibold text-gray-200">Permission Matrix</h3>
+              </div>
+              <button
+                onClick={() => setOpen(false)}
+                className="p-1.5 rounded-md hover:bg-gray-800/60 transition-colors"
+              >
+                <X size={14} className="text-gray-500" />
+              </button>
+            </div>
+
+            {/* Modal body — full table */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr style={{ backgroundColor: '#0d0e14', borderBottom: '1px solid #1e2128' }}>
+                    <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-6 py-3 w-1/2">
+                      Permission
+                    </th>
+                    <th className="text-center text-xs font-semibold text-green-600 uppercase tracking-wider px-6 py-3">
+                      Owner
+                    </th>
+                    <th className="text-center text-xs font-semibold text-blue-600 uppercase tracking-wider px-6 py-3">
+                      Crew
+                    </th>
+                    <th className="text-center text-xs font-semibold text-gray-600 uppercase tracking-wider px-6 py-3">
+                      Guest
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {PERMISSION_MATRIX.map((row, idx) => (
+                    <tr
+                      key={row.permission}
+                      style={{
+                        backgroundColor: idx % 2 === 0 ? '#0a0b0f' : '#0c0d12',
+                        borderBottom: '1px solid #1a1c23',
+                      }}
+                    >
+                      <td className="px-6 py-3 text-gray-300">{row.permission}</td>
+                      <td className="px-6 py-3 text-center"><Check allowed={row.owner} /></td>
+                      <td className="px-6 py-3 text-center"><Check allowed={row.crew} /></td>
+                      <td className="px-6 py-3 text-center"><Check allowed={row.guest} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Modal footer */}
+            <div
+              className="flex justify-end px-6 py-4 border-t"
+              style={{ borderColor: '#1e2128', backgroundColor: '#0a0b0f' }}
+            >
+              <button
+                onClick={() => setOpen(false)}
+                className="px-4 py-2 rounded-lg text-xs font-medium text-gray-400 border border-gray-700/50 hover:bg-gray-800/60 hover:text-gray-300 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -1423,30 +1455,25 @@ function OwnerPreviewControl({
   onChange: (role: PortalViewRole) => void
 }) {
   return (
-    <div
-      className="flex flex-wrap items-center justify-end gap-2 rounded-lg border px-3 py-2"
-      style={{ backgroundColor: '#0d0e14', borderColor: '#1e2128' }}
-    >
-      <div className="flex items-center gap-1.5">
-        <Eye size={12} className="text-amber-400" />
-        <span className="text-xs font-medium text-gray-400">Preview as:</span>
-      </div>
-      <div className="flex items-center gap-1">
+    <div className="flex items-center gap-2 mb-4">
+      <Eye size={11} className="text-gray-600 flex-shrink-0" />
+      <span className="text-[11px] font-medium text-gray-600 select-none">Dev Preview:</span>
+      <div className="flex items-center gap-0.5">
         {PREVIEW_OPTIONS.map(({ role, label }) => (
           <button
             key={role}
             onClick={() => onChange(role)}
-            className={`px-2.5 py-1 rounded-md border text-xs font-medium transition-colors ${
+            className={`px-2 py-1 rounded border text-[11px] font-medium transition-colors ${
               previewRole === role
-                ? 'text-amber-300 bg-amber-900/20 border-amber-700/50'
-                : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-gray-800/40'
+                ? 'text-gray-300 bg-gray-800/70 border-gray-600/50'
+                : 'text-gray-600 border-transparent hover:text-gray-400 hover:bg-gray-800/30'
             }`}
           >
             {label}
           </button>
         ))}
       </div>
-      <span className="text-[10px] uppercase tracking-wider text-gray-600">preview only</span>
+      <span className="text-[9px] uppercase tracking-widest text-gray-700 select-none ml-1">preview only</span>
     </div>
   )
 }
@@ -1483,7 +1510,7 @@ export default function CrewPortal() {
 
   return (
     <div className="px-4 py-6 w-full">
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-gray-100 flex items-center gap-2">
             <Users size={18} className="text-green-500" />
@@ -1493,10 +1520,11 @@ export default function CrewPortal() {
             Live org data from employee_profiles, task assignments, and time entries.
           </p>
         </div>
-        {isOwnerOrAdmin && (
-          <OwnerPreviewControl previewRole={previewRole} onChange={setPreviewRole} />
-        )}
       </div>
+
+      {isOwnerOrAdmin && (
+        <OwnerPreviewControl previewRole={previewRole} onChange={setPreviewRole} />
+      )}
 
       <div
         className="rounded-xl border p-6 mb-2 w-full"
