@@ -204,8 +204,12 @@ import {
   BlueprintSnapshotCaptureDialog,
   BlueprintSnapshotCaptureError,
   captureBlueprintSnapshot,
+  createBlueprintSnapshotPreviewState,
+  formatBlueprintSnapshotCaptureFailureMessage,
+  isBlueprintSnapshotCaptureStillCurrent,
+  revokeBlueprintSnapshotPreviewState,
   resolveBlueprintSnapshotWorkPackageTag,
-  type BlueprintSnapshotCaptureResult,
+  type BlueprintSnapshotPreviewState,
 } from '@/features/blueprint-snapshots'
 import {
   ELECTRICAL_SYMBOL_OPTIONS,
@@ -2483,11 +2487,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [submittingRfi, setSubmittingRfi] = useState(false)
   const [submittingCord, setSubmittingCord] = useState(false)
   const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'warning' | 'error'; text: string; key?: string } | null>(null)
-  const [snapshotCapture, setSnapshotCapture] = useState<BlueprintSnapshotCaptureResult | null>(null)
+  const [snapshotPreview, setSnapshotPreview] = useState<BlueprintSnapshotPreviewState | null>(null)
   const [isSnapshotPreviewOpen, setIsSnapshotPreviewOpen] = useState(false)
   const [isSnapshotCapturing, setIsSnapshotCapturing] = useState(false)
+  const [isSnapshotAreaSelecting, setIsSnapshotAreaSelecting] = useState(false)
+  const [snapshotAreaDraft, setSnapshotAreaDraft] = useState<null | { startX: number; startY: number; endX: number; endY: number }>(null)
   const snapshotCaptureRequestIdRef = useRef(0)
   const snapshotCaptureButtonRef = useRef<HTMLButtonElement | null>(null)
+  const snapshotPreviewRef = useRef<BlueprintSnapshotPreviewState | null>(null)
   const [packageAnimationRouteNotices, setPackageAnimationRouteNotices] = useState<Record<string, PackageAnimationRouteNotice>>({})
   const [animationRouteReviewConflicts, setAnimationRouteReviewConflicts] = useState<Record<string, PackageAnimationRouteConflictState & { operationId?: number }>>({})
   const [syncNotice, setSyncNotice] = useState<string | null>(null)
@@ -3931,7 +3938,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   useEffect(() => {
     isViewerMountedRef.current = true
-    return () => { isViewerMountedRef.current = false }
+    return () => {
+      isViewerMountedRef.current = false
+      revokeBlueprintSnapshotPreviewState(snapshotPreviewRef.current, 'unmount')
+      snapshotPreviewRef.current = null
+    }
   }, [])
 
   useEffect(() => {
@@ -4600,45 +4611,89 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   const canCaptureSnapshot = Boolean(canRender && !isRendering && !isSnapshotCapturing && pdfDoc && currentPage > 0)
 
-  const handleCaptureSnapshot = useCallback(async () => {
+  const handleCaptureSnapshot = useCallback(async (cropRect?: { x: number; y: number; w: number; h: number } | null) => {
     const snapshotAnnotations = annotationsVisible ? canvasPageAnnotations : []
     if (!pdfDoc || !canRender || (snapshotAnnotations.length > 0 && !overlayRef.current)) {
-      setActionMsg({ type: 'error', text: 'The current PDF page is not ready for snapshot capture.' })
+      setActionMsg({
+        type: 'error',
+        text: formatBlueprintSnapshotCaptureFailureMessage(new BlueprintSnapshotCaptureError(
+          'CONTEXT_VALIDATION',
+          snapshotAnnotations.length > 0 && !overlayRef.current ? 'OVERLAY_ROOT_MISSING' : 'PAGE_UNAVAILABLE',
+        )),
+      })
       return
     }
     const requestId = snapshotCaptureRequestIdRef.current + 1
     snapshotCaptureRequestIdRef.current = requestId
     const captureBlueprintId = blueprint?.id
-    const captureProjectId = blueprint?.projectId
     const capturePageNumber = currentPage
     setIsSnapshotCapturing(true)
     setActionMsg(null)
     try {
-      const page = await pdfDoc.getPage(capturePageNumber)
+      let page
+      try {
+        page = await pdfDoc.getPage(capturePageNumber)
+      } catch {
+        throw new BlueprintSnapshotCaptureError('PDF_PAGE_RESOLUTION', 'PDF_PAGE_UNAVAILABLE', undefined, {
+          pageNumber: capturePageNumber,
+          captureRequestGeneration: requestId,
+        })
+      }
       const result = await captureBlueprintSnapshot({
         page,
         pageNumber: capturePageNumber,
         rotation: Number(page?.rotate ?? 0),
         annotations: snapshotAnnotations,
         overlayElement: snapshotAnnotations.length > 0 ? overlayRef.current : null,
+        cropRect: cropRect || null,
         viewMode: snapshotViewMode,
         scopedWorkPackageIds: snapshotScopedWorkPackageIds,
         labelsVisible: Boolean(electricalSymbolLabelsVisible || measurementLabelsVisible),
+        symbolLabelSettings: {
+          symbolLabelsVisible: Boolean(electricalSymbolLabelsVisible),
+          symbolLabelScale,
+          customLabelColorsEnabled: Boolean(symbolLabelCustomColorsEnabled),
+          resolvedLabelColors: {
+            textColor: symbolLabelTextColor,
+            borderColor: symbolLabelBorderColor,
+            fillColor: symbolLabelFillColor,
+          },
+        },
         circuitLabelsVisible: Boolean(showCircuitMeasurementLabels),
       })
-      const isStale = snapshotCaptureRequestIdRef.current !== requestId
-        || currentPageRef.current !== capturePageNumber
-        || blueprintIdentityRef.current.blueprintSetId !== captureBlueprintId
-        || blueprintIdentityRef.current.projectId !== captureProjectId
-      if (isStale || !isViewerMountedRef.current) return
-      setSnapshotCapture(result)
+      const isCurrent = isBlueprintSnapshotCaptureStillCurrent({
+        requestGeneration: requestId,
+        currentRequestGeneration: snapshotCaptureRequestIdRef.current,
+        pageNumber: capturePageNumber,
+        currentPageNumber: currentPageRef.current,
+        blueprintSetId: captureBlueprintId,
+        currentBlueprintSetId: blueprintIdentityRef.current.blueprintSetId,
+        viewerMounted: isViewerMountedRef.current,
+      })
+      if (!isCurrent) return
+      const preview = await createBlueprintSnapshotPreviewState(result, {
+        generation: requestId,
+        currentGeneration: snapshotCaptureRequestIdRef.current,
+        pageNumber: capturePageNumber,
+        currentPageNumber: currentPageRef.current,
+        blueprintSetId: captureBlueprintId,
+        currentBlueprintSetId: blueprintIdentityRef.current.blueprintSetId,
+        viewerMounted: isViewerMountedRef.current,
+      })
+      setSnapshotPreview((previous) => {
+        revokeBlueprintSnapshotPreviewState(previous, 'replace')
+        snapshotPreviewRef.current = preview
+        return preview
+      })
       setIsSnapshotPreviewOpen(true)
+      setIsSnapshotAreaSelecting(false)
+      setSnapshotAreaDraft(null)
     } catch (error) {
       if (snapshotCaptureRequestIdRef.current === requestId && isViewerMountedRef.current) {
         setActionMsg({
           type: 'error',
-          text: 'Snapshot capture failed before preview. No image was uploaded.',
-          key: error instanceof BlueprintSnapshotCaptureError ? error.stage : 'CAPTURE_FAILED',
+          text: formatBlueprintSnapshotCaptureFailureMessage(error),
+          key: error instanceof BlueprintSnapshotCaptureError ? `${error.stage}:${error.code}` : 'CAPTURE_FAILED',
         })
       }
     } finally {
@@ -4657,9 +4712,70 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     measurementLabelsVisible,
     pdfDoc,
     showCircuitMeasurementLabels,
+    symbolLabelBorderColor,
+    symbolLabelCustomColorsEnabled,
+    symbolLabelFillColor,
+    symbolLabelScale,
+    symbolLabelTextColor,
     snapshotScopedWorkPackageIds,
     snapshotViewMode,
   ])
+
+  const beginSnapshotAreaSelection = useCallback(() => {
+    if (!canCaptureSnapshot) return
+    setIsSnapshotAreaSelecting(true)
+    setSnapshotAreaDraft(null)
+    setActionMsg({ type: 'warning', text: 'Drag over the blueprint to capture an area.' })
+  }, [canCaptureSnapshot])
+
+  const getSnapshotAreaPoint = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    const rect = overlayRef.current?.getBoundingClientRect()
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null
+    return {
+      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+      y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+    }
+  }, [])
+
+  const handleSnapshotAreaPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!isSnapshotAreaSelecting) return
+    const point = getSnapshotAreaPoint(event)
+    if (!point) return
+    event.preventDefault()
+    event.stopPropagation()
+    setSnapshotAreaDraft({ startX: point.x, startY: point.y, endX: point.x, endY: point.y })
+    try { event.currentTarget.setPointerCapture(event.pointerId) } catch {}
+  }, [getSnapshotAreaPoint, isSnapshotAreaSelecting])
+
+  const handleSnapshotAreaPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!isSnapshotAreaSelecting || !snapshotAreaDraft) return
+    const point = getSnapshotAreaPoint(event)
+    if (!point) return
+    event.preventDefault()
+    event.stopPropagation()
+    setSnapshotAreaDraft((previous) => previous ? { ...previous, endX: point.x, endY: point.y } : previous)
+  }, [getSnapshotAreaPoint, isSnapshotAreaSelecting, snapshotAreaDraft])
+
+  const handleSnapshotAreaPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!isSnapshotAreaSelecting || !snapshotAreaDraft) return
+    const point = getSnapshotAreaPoint(event)
+    event.preventDefault()
+    event.stopPropagation()
+    try { event.currentTarget.releasePointerCapture(event.pointerId) } catch {}
+    const endX = point?.x ?? snapshotAreaDraft.endX
+    const endY = point?.y ?? snapshotAreaDraft.endY
+    const x = Math.min(snapshotAreaDraft.startX, endX)
+    const y = Math.min(snapshotAreaDraft.startY, endY)
+    const w = Math.abs(endX - snapshotAreaDraft.startX)
+    const h = Math.abs(endY - snapshotAreaDraft.startY)
+    if (w < 0.01 || h < 0.01) {
+      setSnapshotAreaDraft(null)
+      setActionMsg({ type: 'warning', text: 'Drag a larger area to capture a snapshot.' })
+      return
+    }
+    setActionMsg(null)
+    void handleCaptureSnapshot({ x, y, w, h })
+  }, [getSnapshotAreaPoint, handleCaptureSnapshot, isSnapshotAreaSelecting, snapshotAreaDraft])
 
   const animationRouteAnnotations = useMemo<RouteBuilderAnnotation[]>(() => allAnnotations.map((annotation) => {
     const meta = getAnnotationMeta(annotation)
@@ -10738,14 +10854,25 @@ const annotationPanelSizeClass =
             <button
               ref={snapshotCaptureButtonRef}
               type="button"
-              onClick={() => void handleCaptureSnapshot()}
+              onClick={beginSnapshotAreaSelection}
               disabled={!canCaptureSnapshot}
-              className="shrink-0 inline-flex min-h-10 items-center justify-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-              title={canCaptureSnapshot ? 'Capture Snapshot' : 'Snapshot capture is available after the PDF page renders'}
-              aria-label="Capture Snapshot"
+              className={`shrink-0 inline-flex min-h-10 items-center justify-center gap-1 text-xs px-2 py-1 rounded-md border ${isSnapshotAreaSelecting ? 'border-cyan-400 text-cyan-200 bg-cyan-950/40' : 'border-gray-700 text-gray-300 hover:text-white'} disabled:cursor-not-allowed disabled:opacity-40`}
+              title={canCaptureSnapshot ? 'Drag a rectangle to capture a blueprint area' : 'Snapshot capture is available after the PDF page renders'}
+              aria-label="Capture Area"
             >
               {isSnapshotCapturing ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
-              <span className="hidden sm:inline">Capture Snapshot</span>
+              <span className="hidden sm:inline">Capture Area</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleCaptureSnapshot(null)}
+              disabled={!canCaptureSnapshot}
+              className="shrink-0 inline-flex min-h-10 items-center justify-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              title={canCaptureSnapshot ? 'Capture the full current blueprint sheet' : 'Snapshot capture is available after the PDF page renders'}
+              aria-label="Capture Full Page"
+            >
+              <Maximize2 size={12} />
+              <span className="hidden sm:inline">Full Page</span>
             </button>
           </div>
         </div>
@@ -10844,14 +10971,25 @@ const annotationPanelSizeClass =
                 <button
                   ref={snapshotCaptureButtonRef}
                   type="button"
-                  onClick={() => void handleCaptureSnapshot()}
+                  onClick={beginSnapshotAreaSelection}
                   disabled={!canCaptureSnapshot}
-                  className="shrink-0 inline-flex min-h-10 items-center justify-center gap-1 rounded-md border border-gray-700 px-2 text-xs text-gray-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                  title={canCaptureSnapshot ? 'Capture Snapshot' : 'Snapshot capture is available after the PDF page renders'}
-                  aria-label="Capture Snapshot"
+                  className={`shrink-0 inline-flex min-h-10 items-center justify-center gap-1 rounded-md border px-2 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${isSnapshotAreaSelecting ? 'border-cyan-400 bg-cyan-950/40 text-cyan-200' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  title={canCaptureSnapshot ? 'Drag a rectangle to capture a blueprint area' : 'Snapshot capture is available after the PDF page renders'}
+                  aria-label="Capture Area"
                 >
                   {isSnapshotCapturing ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
-                  <span className="hidden sm:inline">Capture</span>
+                  <span className="hidden sm:inline">Capture Area</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCaptureSnapshot(null)}
+                  disabled={!canCaptureSnapshot}
+                  className="shrink-0 inline-flex min-h-10 items-center justify-center gap-1 rounded-md border border-gray-700 px-2 text-xs text-gray-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  title={canCaptureSnapshot ? 'Capture the full current blueprint sheet' : 'Snapshot capture is available after the PDF page renders'}
+                  aria-label="Capture Full Page"
+                >
+                  <Maximize2 size={12} />
+                  <span className="hidden sm:inline">Full Page</span>
                 </button>
               </div>
 
@@ -11946,13 +12084,23 @@ const annotationPanelSizeClass =
               <button
                 ref={snapshotCaptureButtonRef}
                 type="button"
-                onClick={() => void handleCaptureSnapshot()}
+                onClick={beginSnapshotAreaSelection}
                 disabled={!canCaptureSnapshot}
-                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-gray-700 text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                title={canCaptureSnapshot ? 'Capture Snapshot' : 'Snapshot capture is available after the PDF page renders'}
-                aria-label="Capture Snapshot"
+                className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${isSnapshotAreaSelecting ? 'border-cyan-400 bg-cyan-950/40 text-cyan-200' : 'border-gray-700 text-gray-300 hover:border-gray-500 hover:text-white'}`}
+                title={canCaptureSnapshot ? 'Drag a rectangle to capture a blueprint area' : 'Snapshot capture is available after the PDF page renders'}
+                aria-label="Capture Area"
               >
                 {isSnapshotCapturing ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleCaptureSnapshot(null)}
+                disabled={!canCaptureSnapshot}
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-gray-700 text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                title={canCaptureSnapshot ? 'Capture the full current blueprint sheet' : 'Snapshot capture is available after the PDF page renders'}
+                aria-label="Capture Full Page"
+              >
+                <Maximize2 size={16} />
               </button>
             </div>
           </div>
@@ -12091,6 +12239,47 @@ const annotationPanelSizeClass =
                     onPointerUp={handlePointerUp}
                     onPointerCancel={handlePointerCancel}
                   >
+                      {isSnapshotAreaSelecting && (
+                        <div
+                          className="absolute inset-0 z-[80] cursor-crosshair"
+                          style={{ background: snapshotAreaDraft ? 'rgba(8,13,24,0.18)' : 'rgba(8,13,24,0.08)' }}
+                          onPointerDown={handleSnapshotAreaPointerDown}
+                          onPointerMove={handleSnapshotAreaPointerMove}
+                          onPointerUp={handleSnapshotAreaPointerUp}
+                          onPointerCancel={() => setSnapshotAreaDraft(null)}
+                        >
+                          <button
+                            type="button"
+                            className="absolute right-3 top-3 z-[82] rounded-md border border-gray-600 bg-gray-950/90 px-3 py-1.5 text-xs font-semibold text-gray-100 shadow-lg hover:border-gray-400"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              setIsSnapshotAreaSelecting(false)
+                              setSnapshotAreaDraft(null)
+                            }}
+                          >
+                            Cancel
+                          </button>
+                          {snapshotAreaDraft && (() => {
+                            const left = Math.min(snapshotAreaDraft.startX, snapshotAreaDraft.endX) * 100
+                            const top = Math.min(snapshotAreaDraft.startY, snapshotAreaDraft.endY) * 100
+                            const width = Math.abs(snapshotAreaDraft.endX - snapshotAreaDraft.startX) * 100
+                            const height = Math.abs(snapshotAreaDraft.endY - snapshotAreaDraft.startY) * 100
+                            return (
+                              <div
+                                className="absolute z-[81] border-2 border-cyan-300 bg-cyan-300/10 shadow-[0_0_0_9999px_rgba(8,13,24,0.36)]"
+                                style={{
+                                  left: `${left}%`,
+                                  top: `${top}%`,
+                                  width: `${Math.max(0.1, width)}%`,
+                                  height: `${Math.max(0.1, height)}%`,
+                                }}
+                              />
+                            )
+                          })()}
+                        </div>
+                      )}
                       {canvasPageAnnotations.map((a) => {
                         // Visibility toggle (Fix 2): skip drawing overlays while hidden.
                         // Annotations stay in state/persistence — only the canvas layer is suppressed.
@@ -15563,21 +15752,36 @@ const annotationPanelSizeClass =
 
       <BlueprintSnapshotCaptureDialog
         open={isSnapshotPreviewOpen}
-        capture={snapshotCapture}
+        capture={snapshotPreview?.capture ?? null}
+        preview={snapshotPreview}
         orgId={profile?.org_id}
         userId={user?.id}
         projectId={blueprint?.projectId}
         projectName={blueprint?.projectName || blueprint?.title}
         blueprintSetId={blueprint?.id}
         workPackageTag={snapshotWorkPackageTag}
-        onCancel={() => {
+        onRetake={() => {
+          const preview = snapshotPreviewRef.current
+          revokeBlueprintSnapshotPreviewState(preview, 'retake')
+          snapshotPreviewRef.current = null
           setIsSnapshotPreviewOpen(false)
-          setSnapshotCapture(null)
+          setSnapshotPreview(null)
+          beginSnapshotAreaSelection()
+        }}
+        onCancel={() => {
+          const preview = snapshotPreviewRef.current
+          revokeBlueprintSnapshotPreviewState(preview, 'cancel')
+          snapshotPreviewRef.current = null
+          setIsSnapshotPreviewOpen(false)
+          setSnapshotPreview(null)
           setTimeout(() => snapshotCaptureButtonRef.current?.focus(), 0)
         }}
         onSaved={() => {
+          const preview = snapshotPreviewRef.current
+          revokeBlueprintSnapshotPreviewState(preview, 'saved')
+          snapshotPreviewRef.current = null
           setIsSnapshotPreviewOpen(false)
-          setSnapshotCapture(null)
+          setSnapshotPreview(null)
           setActionMsg({ type: 'success', text: 'Snapshot saved to private storage.' })
           setTimeout(() => snapshotCaptureButtonRef.current?.focus(), 0)
         }}

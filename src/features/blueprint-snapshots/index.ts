@@ -1,4 +1,6 @@
 export * from './BlueprintSnapshotCaptureDialog'
+export * from './BlueprintSnapshotPreviewViewport'
 export * from './blueprintSnapshotCapture'
+export * from './blueprintSnapshotLabelStyle'
 export * from './blueprintSnapshotService'
 export * from './types'

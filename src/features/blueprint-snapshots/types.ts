@@ -6,6 +6,14 @@ export const BLUEPRINT_SNAPSHOT_TARGET_DPI = 150
 export const BLUEPRINT_SNAPSHOT_MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
 
 export type BlueprintSnapshotViewMode = 'general' | 'scoped'
+export type BlueprintSnapshotCaptureMode = 'area' | 'full-page'
+
+export interface BlueprintSnapshotCropRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
 
 export interface BlueprintSnapshotDimensions {
   width: number
@@ -18,7 +26,7 @@ export interface BlueprintSnapshotDimensions {
 
 export interface BlueprintSnapshotCaptureMetadata {
   schemaVersion: 1
-  captureMode: 'full-page'
+  captureMode: BlueprintSnapshotCaptureMode
   pageNumber: number
   rotation: number
   targetDpi: number
@@ -29,18 +37,60 @@ export interface BlueprintSnapshotCaptureMetadata {
   viewMode: BlueprintSnapshotViewMode
   scopedWorkPackageIds: string[]
   labelsVisible: boolean
+  symbolLabelsVisible?: boolean
+  symbolLabelScale?: number
+  symbolLabelCustomColorsEnabled?: boolean
+  symbolLabelTextColor?: string
+  symbolLabelBorderColor?: string
+  symbolLabelFillColor?: string
   circuitLabelsVisible: boolean
   annotationCount: number
+  cropRect?: BlueprintSnapshotCropRect
+}
+
+export interface BlueprintSnapshotExportQualityDiagnostics {
+  sourcePageWidth: number
+  sourcePageHeight: number
+  selectedPdfWidth: number
+  selectedPdfHeight: number
+  outputWidth: number
+  outputHeight: number
+  pdfRenderScale: number
+  exportScaleX: number
+  exportScaleY: number
+  annotationRenderScaleX: number
+  annotationRenderScaleY: number
+  annotationVisualScale: number
+  annotationBackingWidth: number
+  annotationBackingHeight: number
+  annotationPaintSource: 'final-canvas-vector-geometry'
+  usesCssOverlaySource: false
+  usesPreviewCanvasSource: false
 }
 
 export interface BlueprintSnapshotCaptureResult {
   blob: Blob
+  previewCanvas: HTMLCanvasElement
   width: number
   height: number
   pageNumber: number
   rotation: number
   annotationCount: number
   captureMetadata: BlueprintSnapshotCaptureMetadata
+  qualityDiagnostics?: BlueprintSnapshotExportQualityDiagnostics
+}
+
+export interface BlueprintSnapshotPreviewState {
+  capture: BlueprintSnapshotCaptureResult
+  previewCanvas: HTMLCanvasElement
+  generation: number
+  blobType: string
+  blobSize: number
+  pngSignatureValid: boolean
+  createImageBitmapAvailable: boolean
+  bitmapDecodeSucceeded: boolean | null
+  decodedWidth: number | null
+  decodedHeight: number | null
 }
 
 export interface BlueprintSnapshotWorkPackageTag {
@@ -84,9 +134,20 @@ export interface BlueprintSnapshotCaptureContext {
   rotation: number
   annotations: BlueprintAnnotation[]
   overlayElement: HTMLElement | null
+  cropRect?: BlueprintSnapshotCropRect | null
   viewMode: BlueprintSnapshotViewMode
   scopedWorkPackageIds: string[]
   labelsVisible: boolean
+  symbolLabelSettings?: {
+    symbolLabelsVisible: boolean
+    symbolLabelScale: number
+    customLabelColorsEnabled: boolean
+    resolvedLabelColors: {
+      textColor: string
+      borderColor: string
+      fillColor: string
+    }
+  }
   circuitLabelsVisible: boolean
 }
 
