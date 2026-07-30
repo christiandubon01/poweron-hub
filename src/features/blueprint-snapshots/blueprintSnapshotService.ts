@@ -23,7 +23,7 @@ const SNAPSHOT_NETWORK_FAILURE = 'Network error. Try again.'
 const SNAPSHOT_DELETE_REJECTED = 'Snapshot can no longer be deleted. Untag it first and make sure it is not attached to an issued Work Order.'
 const SNAPSHOT_PREVIEW_TTL_SECONDS = 600
 const SNAPSHOT_PREVIEW_CACHE_SAFETY_MS = 30_000
-const DEFAULT_SNAPSHOT_LIBRARY_LIMIT = 24
+export const BLUEPRINT_SNAPSHOT_PAGE_SIZE = 24
 const MAX_SNAPSHOT_LIBRARY_LIMIT = 48
 
 const previewUrlCache = new Map<string, { signedUrl: string; expiresAt: number }>()
@@ -196,6 +196,7 @@ export async function listBlueprintSnapshots(
 ): Promise<BlueprintSnapshotListResult> {
   try {
     const limit = normalizeLimit(filters.limit)
+    const decodedCursor = filters.cursor ? decodeSnapshotCursor(filters.cursor) : null
     let query = (supabase as any)
       .from('blueprint_snapshots')
       .select([
@@ -214,7 +215,7 @@ export async function listBlueprintSnapshots(
         'captured_at',
         'created_at',
         'assignment_snapshots(snapshot_id)',
-      ].join(', '))
+      ].join(', '), { count: 'exact' })
       .is('deleted_at', null)
       .order('captured_at', { ascending: false })
       .order('id', { ascending: false })
@@ -230,23 +231,23 @@ export async function listBlueprintSnapshots(
     } else if (filters.workPackageId) {
       query = query.eq('work_package_id', filters.workPackageId)
     }
-    if (filters.cursor) {
-      const cursor = decodeSnapshotCursor(filters.cursor)
-      if (cursor) {
-        query = query.or(`captured_at.lt.${escapePostgrestValue(cursor.capturedAt)},and(captured_at.eq.${escapePostgrestValue(cursor.capturedAt)},id.lt.${escapePostgrestValue(cursor.id)})`)
-      }
+    if (decodedCursor) {
+      query = query.or(`captured_at.lt.${escapePostgrestValue(decodedCursor.capturedAt)},and(captured_at.eq.${escapePostgrestValue(decodedCursor.capturedAt)},id.lt.${escapePostgrestValue(decodedCursor.id)})`)
     }
 
-    const { data, error } = await query.limit(limit + 1)
+    const { data, error, count } = await query.limit(limit + 1)
     if (error) return classifySnapshotServiceError(error, SNAPSHOT_LIBRARY_UNAVAILABLE)
 
     const rows = Array.isArray(data) ? data : []
     const page = rows.slice(0, limit).map(mapSnapshotLibraryRow)
-    const extra = rows.length > limit ? rows[limit - 1] : null
+    const lastVisible = rows.length > limit ? rows[limit - 1] : null
+    const totalCount = decodedCursor?.totalCount ?? (typeof count === 'number' ? count : page.length)
     return {
       status: 'available',
       snapshots: page,
-      nextCursor: extra ? encodeSnapshotCursor(extra) : null,
+      totalCount,
+      nextCursor: lastVisible ? encodeSnapshotCursor(lastVisible, totalCount) : null,
+      hasMore: Boolean(lastVisible),
     }
   } catch (err: unknown) {
     console.error('[blueprintSnapshotService.listBlueprintSnapshots]', err)
@@ -256,7 +257,9 @@ export async function listBlueprintSnapshots(
 
 export async function getBlueprintSnapshotsByIds(snapshotIds: string[]): Promise<BlueprintSnapshotListResult> {
   const ids = uniqueSnapshotIds(snapshotIds)
-  if (ids.length === 0) return { status: 'available', snapshots: [], nextCursor: null }
+  if (ids.length === 0) {
+    return { status: 'available', snapshots: [], totalCount: 0, nextCursor: null, hasMore: false }
+  }
   try {
     const { data, error } = await (supabase as any)
       .from('blueprint_snapshots')
@@ -285,7 +288,9 @@ export async function getBlueprintSnapshotsByIds(snapshotIds: string[]): Promise
     return {
       status: 'available',
       snapshots: ids.map((id) => byId.get(id)).filter(Boolean) as BlueprintSnapshotLibraryItem[],
+      totalCount: byId.size,
       nextCursor: null,
+      hasMore: false,
     }
   } catch (err: unknown) {
     console.error('[blueprintSnapshotService.getBlueprintSnapshotsByIds]', err)
@@ -477,12 +482,28 @@ export function notifyBlueprintSnapshotLibraryChanged(event: BlueprintSnapshotLi
   libraryChangeListeners.forEach((listener) => listener(event))
 }
 
+export function snapshotMatchesBlueprintSnapshotFilters(
+  item: BlueprintSnapshotLibraryItem,
+  filters: BlueprintSnapshotListFilters,
+): boolean {
+  if (filters.projectId && item.projectId !== filters.projectId) return false
+  if (filters.blueprintSetId && item.blueprintSetId !== filters.blueprintSetId) return false
+  if (filters.pageNumber && item.pageNumber !== filters.pageNumber) return false
+  if (filters.captureMode && item.captureMode !== filters.captureMode) return false
+  if (filters.workPackageMode === 'untagged') return item.workPackageId == null
+  if (filters.workPackageMode === 'untagged-or-matching' && filters.workPackageId) {
+    return item.workPackageId == null || item.workPackageId === filters.workPackageId
+  }
+  if (filters.workPackageId) return item.workPackageId === filters.workPackageId
+  return true
+}
+
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim())
 }
 
 function normalizeLimit(limit: number | null | undefined): number {
-  const n = Math.floor(Number(limit) || DEFAULT_SNAPSHOT_LIBRARY_LIMIT)
+  const n = Math.floor(Number(limit) || BLUEPRINT_SNAPSHOT_PAGE_SIZE)
   return Math.max(1, Math.min(MAX_SNAPSHOT_LIBRARY_LIMIT, n))
 }
 
@@ -549,18 +570,24 @@ function uniqueSnapshotIds(ids: string[]): string[] {
   return [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))]
 }
 
-function encodeSnapshotCursor(row: any): string | null {
+function encodeSnapshotCursor(row: any, totalCount: number): string | null {
   const capturedAt = String(row?.captured_at || '')
   const id = String(row?.id || '')
   if (!capturedAt || !id) return null
-  return btoa(JSON.stringify({ capturedAt, id }))
+  return btoa(JSON.stringify({ capturedAt, id, totalCount }))
 }
 
-function decodeSnapshotCursor(cursor: string): { capturedAt: string; id: string } | null {
+function decodeSnapshotCursor(cursor: string): { capturedAt: string; id: string; totalCount: number | null } | null {
   try {
     const parsed = JSON.parse(atob(cursor))
     if (!parsed?.capturedAt || !parsed?.id) return null
-    return { capturedAt: String(parsed.capturedAt), id: String(parsed.id) }
+    return {
+      capturedAt: String(parsed.capturedAt),
+      id: String(parsed.id),
+      totalCount: Number.isFinite(Number(parsed.totalCount))
+        ? Math.max(0, Math.floor(Number(parsed.totalCount)))
+        : null,
+    }
   } catch {
     return null
   }

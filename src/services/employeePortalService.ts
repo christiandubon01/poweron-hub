@@ -10,6 +10,7 @@
  * Public API:
  *   getCurrentWeekRangeFromTenantDate()          — {startDate,endDate} Mon–Sun for today
  *   shiftWeekRange(range, weeks)                  — move a week range by ±N weeks
+ *   addDaysToWorkDate(ymd, days)                  — shared YYYY-MM-DD day math
  *   getMyTimeSummary(startDate, endDate)          — own time entries + punches for a range
  */
 
@@ -110,6 +111,14 @@ export function getCurrentWeekRangeFromTenantDate(): WeekRange {
   const startDate = addDays(today, offsetToMonday)
   const endDate = addDays(startDate, 6)
   return { startDate, endDate }
+}
+
+/**
+ * Shared day math for portal week views (My Time, weekly task board) so every
+ * employee surface derives its days from the same Monday-start convention.
+ */
+export function addDaysToWorkDate(ymd: string, days: number): string {
+  return addDays(ymd, days)
 }
 
 /** Move a week range by ±N whole weeks. */

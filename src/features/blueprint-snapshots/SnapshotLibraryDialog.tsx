@@ -6,6 +6,7 @@ import {
   deleteBlueprintSnapshot,
   getBlueprintSnapshotPreviewUrl,
   listBlueprintSnapshots,
+  snapshotMatchesBlueprintSnapshotFilters,
   subscribeBlueprintSnapshotLibraryChanges,
   updateBlueprintSnapshotCaption,
   updateBlueprintSnapshotWorkPackage,
@@ -17,8 +18,22 @@ import type {
   BlueprintSnapshotListFilters,
 } from './types'
 
-const MAX_SELECTED_SNAPSHOTS = 8
+const MAX_SELECTED_SNAPSHOTS = 15
 type SnapshotBrowserMode = 'manage' | 'select'
+
+export function toggleSnapshotSelection(currentIds: string[], snapshotId: string): {
+  ids: string[]
+  limitReached: boolean
+} {
+  const orderedIds = Array.isArray(currentIds) ? currentIds : []
+  if (orderedIds.includes(snapshotId)) {
+    return { ids: orderedIds.filter((id) => id !== snapshotId), limitReached: false }
+  }
+  if (orderedIds.length >= MAX_SELECTED_SNAPSHOTS) {
+    return { ids: orderedIds, limitReached: true }
+  }
+  return { ids: [...orderedIds, snapshotId], limitReached: false }
+}
 
 export interface SnapshotFilterOption {
   id: string
@@ -34,7 +49,8 @@ interface SnapshotLibraryDialogProps {
   blueprintOptions?: SnapshotFilterOption[]
   workPackageOptions?: SnapshotFilterOption[]
   selectedIds?: string[]
-  onSelectedIdsChange?: (ids: string[]) => void
+  onSelectedIdsChange?: React.Dispatch<React.SetStateAction<string[]>>
+  onSaveSelectedIds?: () => void
   onClose: () => void
 }
 
@@ -58,26 +74,34 @@ export function WorkPackageSnapshotSection({
   workPackageOptions = [],
 }: WorkPackageSnapshotSectionProps) {
   const [items, setItems] = useState<BlueprintSnapshotLibraryItem[]>([])
-  const [status, setStatus] = useState<'idle' | 'loading' | 'unavailable' | 'error'>('idle')
+  const [totalCount, setTotalCount] = useState(0)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [status, setStatus] = useState<'idle' | 'loading' | 'loading-more' | 'unavailable' | 'error'>('idle')
   const [message, setMessage] = useState('')
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({})
   const [previewId, setPreviewId] = useState<string | null>(null)
   const [libraryOpen, setLibraryOpen] = useState(false)
   const contextReady = Boolean(projectId && blueprintSetId && workPackageId)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (background = false) => {
     if (!contextReady) {
       setItems([])
+      setTotalCount(0)
+      setNextCursor(null)
       return
     }
-    setStatus('loading')
-    const res = await listBlueprintSnapshots({ projectId, blueprintSetId, workPackageId, limit: 12 })
+    if (!background) setStatus('loading')
+    const res = await listBlueprintSnapshots({ projectId, blueprintSetId, workPackageId })
     if (res.status === 'available') {
       setItems(res.snapshots)
+      setTotalCount(res.totalCount)
+      setNextCursor(res.nextCursor)
       setStatus('idle')
       setMessage('')
     } else {
       setItems([])
+      setTotalCount(0)
+      setNextCursor(null)
       setStatus(res.status)
       setMessage(res.message)
     }
@@ -85,15 +109,36 @@ export function WorkPackageSnapshotSection({
 
   useEffect(() => { void load() }, [load])
 
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || status === 'loading' || status === 'loading-more') return
+    setStatus('loading-more')
+    const res = await listBlueprintSnapshots({ projectId, blueprintSetId, workPackageId, cursor: nextCursor })
+    if (res.status === 'available') {
+      setItems((prev) => dedupeSnapshotItems([...prev, ...res.snapshots]))
+      setTotalCount(res.totalCount)
+      setNextCursor(res.nextCursor)
+      setStatus('idle')
+      setMessage('')
+    } else {
+      setStatus(res.status)
+      setMessage(res.message)
+    }
+  }, [blueprintSetId, nextCursor, projectId, status, workPackageId])
+
   useEffect(() => {
     return subscribeBlueprintSnapshotLibraryChanges((event) => {
       if (event.type === 'delete') {
-        setItems((prev) => prev.filter((row) => row.id !== event.snapshotId))
+        setItems((prev) => {
+          const existed = prev.some((row) => row.id === event.snapshotId)
+          if (existed) setTotalCount((count) => Math.max(0, count - 1))
+          return prev.filter((row) => row.id !== event.snapshotId)
+        })
         setThumbnailUrls((prev) => {
           const next = { ...prev }
           delete next[event.snapshotId]
           return next
         })
+        void load(true)
         return
       }
       if (event.type === 'upsert') {
@@ -102,9 +147,13 @@ export function WorkPackageSnapshotSection({
             && event.snapshot.projectId === projectId
             && event.snapshot.blueprintSetId === blueprintSetId
             && event.snapshot.workPackageId === workPackageId
+          const existed = prev.some((row) => row.id === event.snapshot.id)
           const without = prev.filter((row) => row.id !== event.snapshot.id)
+          if (matches && !existed) setTotalCount((count) => count + 1)
+          if (!matches && existed) setTotalCount((count) => Math.max(0, count - 1))
           return matches ? [event.snapshot, ...without] : without
         })
+        void load(true)
         return
       }
       setThumbnailUrls({})
@@ -127,14 +176,13 @@ export function WorkPackageSnapshotSection({
   const removeFromWorkPackage = async (item: BlueprintSnapshotLibraryItem) => {
     const res = await updateBlueprintSnapshotWorkPackage(item.id, { workPackageId: null, workPackageName: null })
     if (res.status !== 'available') setMessage(res.message || 'Could not update Work Package.')
-    else setItems((prev) => prev.filter((row) => row.id !== item.id))
   }
 
   return (
     <div className="mt-3 rounded-lg border border-gray-800 bg-gray-950/30 p-2">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <div className="text-[11px] font-semibold text-gray-300">Snapshots</div>
+          <div className="text-[11px] font-semibold text-gray-300">Snapshots ({totalCount})</div>
           <div className="mt-0.5 text-[10px] text-gray-500">{workPackageName || 'Work Package'} snapshot organization</div>
         </div>
         <button type="button" onClick={() => setLibraryOpen(true)} disabled={!contextReady} className="rounded border border-gray-700 px-2 py-1 text-[10px] font-semibold text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50">
@@ -162,6 +210,11 @@ export function WorkPackageSnapshotSection({
             </div>
           ))}
         </div>
+      ) : null}
+      {nextCursor ? (
+        <button type="button" onClick={() => void loadMore()} disabled={status === 'loading-more'} className="mt-2 rounded border border-gray-700 px-2 py-1 text-[10px] font-semibold text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50">
+          {status === 'loading-more' ? 'Loading more...' : `Load more (${items.length} of ${totalCount})`}
+        </button>
       ) : null}
       <SnapshotLibraryDialog
         open={libraryOpen}
@@ -199,11 +252,13 @@ export function SnapshotLibraryDialog({
   workPackageOptions = [],
   selectedIds = [],
   onSelectedIdsChange,
+  onSaveSelectedIds,
   onClose,
 }: SnapshotLibraryDialogProps) {
   const browserMode: SnapshotBrowserMode = mode === 'picker' ? 'select' : mode === 'library' ? 'manage' : mode
   const [filters, setFilters] = useState<BlueprintSnapshotListFilters>(initialFilters || {})
   const [items, setItems] = useState<BlueprintSnapshotLibraryItem[]>([])
+  const [totalCount, setTotalCount] = useState(0)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'loading-more' | 'unavailable' | 'error'>('idle')
   const [message, setMessage] = useState('')
@@ -245,26 +300,27 @@ export function SnapshotLibraryDialog({
     filtersRef.current = filters
   }, [filters])
 
-  const loadInitialSnapshots = useCallback(async () => {
+  const loadInitialSnapshots = useCallback(async (options?: { background?: boolean }) => {
     if (loadingRef.current) return
     const requestId = requestRef.current + 1
     requestRef.current = requestId
     loadingRef.current = true
-    setStatus('loading')
+    if (!options?.background) setStatus('loading')
     setMessage('')
     const res = await listBlueprintSnapshots({
       ...filters,
       cursor: null,
-      limit: 24,
     })
     if (requestRef.current !== requestId) return
     loadingRef.current = false
     if (res.status === 'available') {
       setItems(res.snapshots)
+      setTotalCount(res.totalCount)
       setNextCursor(res.nextCursor)
       setStatus('idle')
     } else {
       setItems([])
+      setTotalCount(0)
       setNextCursor(null)
       setStatus(res.status)
       setMessage(res.message)
@@ -281,12 +337,12 @@ export function SnapshotLibraryDialog({
     const res = await listBlueprintSnapshots({
       ...filters,
       cursor: nextCursor,
-      limit: 24,
     })
     if (requestRef.current !== requestId) return
     loadingRef.current = false
     if (res.status === 'available') {
       setItems((prev) => dedupeSnapshotItems([...prev, ...res.snapshots]))
+      setTotalCount(res.totalCount)
       setNextCursor(res.nextCursor)
       setStatus('idle')
     } else {
@@ -298,7 +354,11 @@ export function SnapshotLibraryDialog({
   const applyLibraryChange = useCallback((event: BlueprintSnapshotLibraryChangeEvent) => {
     if (event.type === 'delete') {
       clearBlueprintSnapshotPreviewUrlCache(event.snapshotId)
-      setItems((prev) => prev.filter((row) => row.id !== event.snapshotId))
+      setItems((prev) => {
+        const existed = prev.some((row) => row.id === event.snapshotId)
+        if (existed) setTotalCount((count) => Math.max(0, count - 1))
+        return prev.filter((row) => row.id !== event.snapshotId)
+      })
       setThumbnailUrls((prev) => {
         const next = { ...prev }
         delete next[event.snapshotId]
@@ -314,9 +374,12 @@ export function SnapshotLibraryDialog({
       return
     }
     if (event.type === 'upsert') {
-      const matches = snapshotMatchesFilters(event.snapshot, filtersRef.current)
+      const matches = snapshotMatchesBlueprintSnapshotFilters(event.snapshot, filtersRef.current)
       setItems((prev) => {
+        const existed = prev.some((row) => row.id === event.snapshot.id)
         const without = prev.filter((row) => row.id !== event.snapshot.id)
+        if (matches && !existed) setTotalCount((count) => count + 1)
+        if (!matches && existed) setTotalCount((count) => Math.max(0, count - 1))
         return matches ? [event.snapshot, ...without] : without
       })
     }
@@ -336,12 +399,13 @@ export function SnapshotLibraryDialog({
         return
       }
       applyLibraryChange(event)
+      void loadInitialSnapshots({ background: true })
     })
   }, [applyLibraryChange, loadInitialSnapshots, open])
 
   useEffect(() => {
     if (!open) return
-    const visible = items.slice(0, 12).filter((item) => !thumbnailUrls[item.id])
+    const visible = items.filter((item) => !thumbnailUrls[item.id])
     if (visible.length === 0) return
     let cancelled = false
     visible.forEach((item) => {
@@ -378,15 +442,15 @@ export function SnapshotLibraryDialog({
 
   const toggleSelected = (id: string) => {
     if (!onSelectedIdsChange) return
-    if (selectedSet.has(id)) {
-      onSelectedIdsChange(selectedIds.filter((x) => x !== id))
-      return
-    }
-    if (selectedIds.length >= MAX_SELECTED_SNAPSHOTS) {
-      setMessage('Maximum of 8 snapshots.')
-      return
-    }
-    onSelectedIdsChange([...selectedIds, id])
+    onSelectedIdsChange((current) => {
+      const result = toggleSnapshotSelection(current, id)
+      if (result.limitReached) {
+        setMessage('Maximum of 15 snapshots.')
+      } else {
+        setMessage('')
+      }
+      return result.ids
+    })
   }
 
   const saveCaption = async (item: BlueprintSnapshotLibraryItem) => {
@@ -463,7 +527,12 @@ export function SnapshotLibraryDialog({
         <div className="flex items-center justify-between gap-3 border-b border-gray-700 px-4 py-3">
           <div>
             <h2 className="text-sm font-semibold text-gray-100">{title || (browserMode === 'select' ? 'Attach snapshots' : 'Snapshot Library')}</h2>
-            {browserMode === 'select' ? <p className="text-xs text-gray-500">{selectedIds.length}/8 selected</p> : null}
+            {browserMode === 'select' ? (
+              <div className="flex gap-3 text-xs text-gray-500">
+                <span>{selectedIds.length}/15 selected</span>
+                <span>{totalCount} available</span>
+              </div>
+            ) : <p className="text-xs text-gray-500">{totalCount} snapshots</p>}
           </div>
           <button type="button" onClick={onClose} className="rounded-md p-2 text-gray-400 hover:bg-white/5 hover:text-white" aria-label="Close snapshot library">
             <X size={18} />
@@ -649,6 +718,15 @@ export function SnapshotLibraryDialog({
             </div>
           </div>
         ) : null}
+        {browserMode === 'select' ? (
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-gray-700 px-4 py-3">
+            <p className="text-xs text-gray-500">{selectedIds.length}/15 selected</p>
+            <div className="flex gap-2">
+              <button type="button" onClick={onClose} className="min-h-10 rounded-md border border-gray-700 px-3 text-sm font-semibold text-gray-300 hover:bg-white/5">Cancel</button>
+              <button type="button" onClick={onSaveSelectedIds} className="min-h-10 rounded-md bg-cyan-600 px-4 text-sm font-semibold text-white hover:bg-cyan-500">Save</button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -807,19 +885,6 @@ function dedupeSnapshotItems(items: BlueprintSnapshotLibraryItem[]): BlueprintSn
     deduped.push(item)
   })
   return deduped
-}
-
-function snapshotMatchesFilters(item: BlueprintSnapshotLibraryItem, filters: BlueprintSnapshotListFilters): boolean {
-  if (filters.projectId && item.projectId !== filters.projectId) return false
-  if (filters.blueprintSetId && item.blueprintSetId !== filters.blueprintSetId) return false
-  if (filters.pageNumber && item.pageNumber !== filters.pageNumber) return false
-  if (filters.captureMode && item.captureMode !== filters.captureMode) return false
-  if (filters.workPackageMode === 'untagged') return item.workPackageId == null
-  if (filters.workPackageMode === 'untagged-or-matching' && filters.workPackageId) {
-    return item.workPackageId == null || item.workPackageId === filters.workPackageId
-  }
-  if (filters.workPackageId) return item.workPackageId === filters.workPackageId
-  return true
 }
 
 function formatDate(value: string | null): string {

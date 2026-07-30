@@ -1,3 +1,5 @@
+import type { EmployeeAnimationPresentationV1 } from './employeeAnimationPresentation'
+
 export type WorkOrderPayloadV1 = {
   schemaVersion: 1
   workOrderVersion: 1
@@ -21,7 +23,7 @@ export type WorkOrderPayloadV1 = {
   scope: {
     title: string
     description: string
-    crewNotes: string
+    crewNotes?: string
   }
   labor: {
     roughInHours: number
@@ -62,6 +64,7 @@ export type WorkOrderPayloadV1 = {
     }>
     terminalLabels?: string[]
   }
+  animationPresentation?: EmployeeAnimationPresentationV1 | null
 }
 
 export type WorkOrderPayloadV1Draft = Omit<

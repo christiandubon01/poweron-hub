@@ -139,9 +139,19 @@ export function EmployeePortal() {
         </button>
       </header>
 
-      <main className="flex-1 px-4 py-6 max-w-lg mx-auto w-full space-y-5">
+      {/* The weekly task board and the monthly schedule calendar both need room
+          for seven equal day columns on one row, so My Tasks and Schedule opt
+          into the full practical content width. Clock and My Time keep the
+          phone-first max-w-lg column. */}
+      <main
+        className={`flex-1 px-4 py-6 mx-auto w-full space-y-5 ${
+          activeSection === 'assignments' || activeSection === 'schedule'
+            ? 'max-w-lg lg:max-w-[1680px]'
+            : 'max-w-lg'
+        }`}
+      >
         {/* Signed-in status */}
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm mx-auto w-full max-w-lg">
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-gray-500">
               <Loader2 size={16} className="animate-spin text-green-600" />
@@ -162,7 +172,7 @@ export function EmployeePortal() {
         </div>
 
         {/* Section switcher */}
-        <nav className="grid grid-cols-4 gap-2">
+        <nav className="grid grid-cols-4 gap-2 mx-auto w-full max-w-lg">
           {SECTIONS.map(({ key, label, icon: Icon }) => {
             const active = activeSection === key
             return (

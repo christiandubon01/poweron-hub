@@ -1,60 +1,53 @@
 // @ts-nocheck
 /**
- * EmployeeSchedulePanel — Employee day view for the Schedule tab.
- * EMS Phase 4 (Workstream 4).
+ * EmployeeSchedulePanel — Employee monthly performance calendar for the Schedule
+ * tab (EMPLOYEE-SCHEDULE-MONTH-VIEW-1, replacing the EMS Phase 4 day view).
  *
- * Shows today's schedule items by default. Employee can:
- *  - Navigate ← Yesterday / Tomorrow →
- *  - Start (scheduled→in_progress) / Done (in_progress→done) each item
- * Uses get_my_schedule and update_my_schedule_status RPCs.
+ * One workflow, existing data paths only. This panel owns the month anchor, the
+ * selected day, the three range reads and the schedule status writes; the grid
+ * presentation lives in EmployeeMonthCalendar and every derivation in the pure
+ * employeeMonthMetrics helper.
+ *
+ * Reads (one request per data domain for the whole visible grid — never one per
+ * day):
+ *   getMyScheduleRange(visibleStart, visibleEnd) — employee_schedules, RLS-scoped
+ *   getMyTimeSummary(visibleStart, visibleEnd)   — the same paid_minutes My Time
+ *                                                  displays, per work_date
+ *   getMyEmployeeTasks()                         — every assignment in one call
+ *
+ * Writes: only update_my_schedule_status, exactly as the day view did. The
+ * Start/Done controls and their card are preserved and now sit under the
+ * calendar as the selected day's detail.
  */
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { CalendarRange, CheckCircle2, Loader2, Play } from 'lucide-react'
 import {
-  ChevronLeft,
-  ChevronRight,
-  Loader2,
-  CalendarRange,
-  CheckCircle2,
-  Play,
-} from 'lucide-react'
-import {
-  getMySchedule,
+  getMyScheduleRange,
   updateMyScheduleStatus,
   type ScheduleItem,
   type ScheduleStatus,
 } from '@/services/employeeScheduleService'
+import { getMyTimeSummary } from '@/services/employeePortalService'
+import { getMyEmployeeTasks, type EmployeeMyTask } from '@/services/employeeTaskAssignmentService'
+import { getTenantWorkDate } from '@/services/employeeTimeService'
+import { EmployeeMonthCalendar } from './EmployeeMonthCalendar'
+import {
+  aggregateMonthMetrics,
+  buildMonthGrid,
+  formatFullDayLabel,
+  isSameMonth,
+  resolveSelectedDate,
+  shiftMonth,
+  type MonthDayMetrics,
+} from './employeeMonthMetrics'
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10)
-}
-
-function addDays(isoDate: string, n: number): string {
-  const d = new Date(isoDate)
-  d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
-}
-
-function formatDate(isoDate: string): string {
-  const today = todayIso()
-  const yesterday = addDays(today, -1)
-  const tomorrow = addDays(today, 1)
-  if (isoDate === today) return 'Today'
-  if (isoDate === yesterday) return 'Yesterday'
-  if (isoDate === tomorrow) return 'Tomorrow'
-  const [y, m, day] = isoDate.split('-').map(Number)
-  return new Date(y, m - 1, day).toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  })
-}
+// -- Helpers (unchanged formatting from the day view) -------------------------
 
 function formatTime(t: string | null): string {
   if (!t) return ''
   const [h, m] = t.split(':').map(Number)
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return ''
   const ampm = h >= 12 ? 'pm' : 'am'
   const hr = h % 12 || 12
   return `${hr}:${String(m).padStart(2, '0')} ${ampm}`
@@ -75,7 +68,17 @@ function formatTimestamp(ts: string): string {
   }
 }
 
-// ── Status chip ───────────────────────────────────────────────────────────────
+/** One safe banner message — never raw database or policy text. */
+function safeScheduleError(message: string): string {
+  const text = String(message || '')
+  if (/not authenticated/i.test(text)) return 'Please sign in again to see your schedule.'
+  if (/failed to fetch|networkerror|network request failed|timeout/i.test(text)) {
+    return 'Network error. Check your connection and try again.'
+  }
+  return 'Could not load this month. Try again.'
+}
+
+// -- Status chip (unchanged) --------------------------------------------------
 
 const STATUS_STYLES: Record<ScheduleStatus, string> = {
   scheduled:   'text-blue-700 bg-blue-50 border-blue-200',
@@ -91,9 +94,15 @@ const STATUS_LABELS: Record<ScheduleStatus, string> = {
   cancelled:   'Cancelled',
 }
 
-// ── Schedule item card ────────────────────────────────────────────────────────
+// -- Schedule item card (unchanged Start/Done behavior) ----------------------
 
-function ScheduleCard({ item, onStatusChange }: { item: ScheduleItem; onStatusChange: (id: string, status: ScheduleStatus) => void }) {
+function ScheduleCard({
+  item,
+  onStatusChange,
+}: {
+  item: ScheduleItem
+  onStatusChange: (id: string, status: ScheduleStatus) => void
+}) {
   const [busy, setBusy] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
 
@@ -114,7 +123,6 @@ function ScheduleCard({ item, onStatusChange }: { item: ScheduleItem; onStatusCh
 
   return (
     <div className={`bg-white border border-gray-200 rounded-2xl p-4 shadow-sm space-y-2 ${isCancelled ? 'opacity-50' : ''}`}>
-      {/* Header row */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <p className={`text-sm font-bold leading-snug ${isCancelled ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
@@ -124,18 +132,17 @@ function ScheduleCard({ item, onStatusChange }: { item: ScheduleItem; onStatusCh
             <p className="text-xs text-gray-500 mt-0.5">{item.project_name}</p>
           )}
         </div>
-        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border flex-shrink-0 ${STATUS_STYLES[item.status]}`}>
+        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border flex-shrink-0 ${STATUS_STYLES[item.status]}`}>
           {STATUS_LABELS[item.status]}
         </span>
       </div>
 
-      {/* Time / estimate row */}
       {(item.start_time || item.estimated_minutes) && (
-        <div className="flex flex-wrap gap-3 text-xs text-gray-500">
+        <div className="flex flex-wrap gap-3 text-xs text-gray-600">
           {item.start_time && (
             <span>
               {formatTime(item.start_time)}
-              {item.end_time ? ` – ${formatTime(item.end_time)}` : ''}
+              {item.end_time ? ` - ${formatTime(item.end_time)}` : ''}
             </span>
           )}
           {item.estimated_minutes && (
@@ -144,14 +151,12 @@ function ScheduleCard({ item, onStatusChange }: { item: ScheduleItem; onStatusCh
         </div>
       )}
 
-      {/* Notes */}
       {item.notes && (
-        <p className="text-xs text-gray-500 leading-relaxed bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
+        <p className="text-xs text-gray-600 leading-relaxed bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
           {item.notes}
         </p>
       )}
 
-      {/* Done stamp */}
       {isDone && (
         <div className="flex items-center gap-1.5 text-xs text-green-600">
           <CheckCircle2 size={13} />
@@ -159,7 +164,6 @@ function ScheduleCard({ item, onStatusChange }: { item: ScheduleItem; onStatusCh
         </div>
       )}
 
-      {/* Action controls */}
       {!isCancelled && !isDone && (
         <div className="flex gap-2 pt-1">
           {item.status === 'scheduled' && (
@@ -187,107 +191,171 @@ function ScheduleCard({ item, onStatusChange }: { item: ScheduleItem; onStatusCh
         </div>
       )}
 
-      {localError && (
-        <p className="text-[11px] text-red-500">{localError}</p>
-      )}
+      {localError && <p className="text-[11px] text-red-500">{localError}</p>}
     </div>
   )
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
+// -- Main component ----------------------------------------------------------
 
 export default function EmployeeSchedulePanel() {
-  const [date, setDate] = useState<string>(todayIso)
-  const [items, setItems] = useState<ScheduleItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const today = useMemo(() => getTenantWorkDate(), [])
+  const [monthAnchor, setMonthAnchor] = useState<string>(() => getTenantWorkDate())
+  const [selectedDate, setSelectedDate] = useState<string>(() => getTenantWorkDate())
 
-  const load = useCallback(async (d: string) => {
+  const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>([])
+  const [timeDays, setTimeDays] = useState<EmployeeMyTimeDay[]>([])
+  const [tasks, setTasks] = useState<EmployeeMyTask[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  // Only the newest month load may apply its response.
+  const loadSeq = useRef(0)
+
+  const grid = useMemo(() => buildMonthGrid(monthAnchor), [monthAnchor])
+
+  const load = useCallback(async (visibleStart: string, visibleEnd: string) => {
+    const seq = loadSeq.current + 1
+    loadSeq.current = seq
     setLoading(true)
-    setError(null)
-    const result = await getMySchedule(d)
-    if (result.success) {
-      setItems(result.data)
-    } else {
-      setError(result.error)
-      setItems([])
+    setError('')
+
+    // One request per data domain for the whole visible grid.
+    const [scheduleRes, timeRes, taskRes] = await Promise.all([
+      getMyScheduleRange(visibleStart, visibleEnd),
+      getMyTimeSummary(visibleStart, visibleEnd),
+      getMyEmployeeTasks(),
+    ])
+
+    // A superseded month must never paint under the newer heading.
+    if (loadSeq.current !== seq) return
+
+    if (!scheduleRes.success || !timeRes.success || !taskRes.success) {
+      const firstError =
+        (!scheduleRes.success && scheduleRes.error) ||
+        (!timeRes.success && timeRes.error) ||
+        (!taskRes.success && taskRes.error) ||
+        ''
+      // Drop everything so no stale month's values read as this month's.
+      setScheduleItems([])
+      setTimeDays([])
+      setTasks([])
+      setError(safeScheduleError(String(firstError)))
+      setLoading(false)
+      return
     }
+
+    setScheduleItems(scheduleRes.data)
+    setTimeDays(timeRes.data.days)
+    setTasks(taskRes.data)
     setLoading(false)
   }, [])
 
-  useEffect(() => { void load(date) }, [date, load])
+  useEffect(() => {
+    void load(grid.visibleStart, grid.visibleEnd)
+  }, [grid.visibleStart, grid.visibleEnd, load])
 
-  function handleStatusChange(id: string, status: ScheduleStatus) {
-    setItems((prev) => prev.map((it) => it.id === id ? { ...it, status, updated_at: new Date().toISOString() } : it))
+  const days: MonthDayMetrics[] = useMemo(
+    () =>
+      aggregateMonthMetrics({
+        visibleDates: grid.dates,
+        monthAnchor,
+        todayKey: today,
+        scheduleItems,
+        timeDays,
+        tasks,
+      }),
+    [grid.dates, monthAnchor, today, scheduleItems, timeDays, tasks],
+  )
+
+  const goToMonth = (nextAnchor: string) => {
+    setMonthAnchor(nextAnchor)
+    setSelectedDate((current) =>
+      resolveSelectedDate(buildMonthGrid(nextAnchor), today, current),
+    )
   }
 
-  const nonCancelled = items.filter((it) => it.status !== 'cancelled')
-  const cancelled = items.filter((it) => it.status === 'cancelled')
+  const handleStatusChange = (id: string, status: ScheduleStatus) => {
+    setScheduleItems((prev) =>
+      prev.map((it) =>
+        it.id === id ? { ...it, status, updated_at: new Date().toISOString() } : it,
+      ),
+    )
+  }
+
+  const isCurrentMonth = isSameMonth(today, monthAnchor)
+
+  // The selected day's schedule items come from the month range already loaded.
+  const selectedItems = useMemo(
+    () => scheduleItems.filter((item) => String(item.work_date || '').slice(0, 10) === selectedDate),
+    [scheduleItems, selectedDate],
+  )
+  const selectedActive = selectedItems.filter((it) => it.status !== 'cancelled')
+  const selectedCancelled = selectedItems.filter((it) => it.status === 'cancelled')
 
   return (
     <div className="space-y-4">
-      {/* Date navigation */}
-      <div className="bg-white border border-gray-200 rounded-2xl p-3 shadow-sm flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setDate((d) => addDays(d, -1))}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-          aria-label="Previous day"
-        >
-          <ChevronLeft size={16} />
-        </button>
-        <div className="flex-1 text-center">
-          <p className="text-sm font-bold text-gray-900">{formatDate(date)}</p>
-          <p className="text-[10px] text-gray-400">{date}</p>
+      <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+        <div className="flex items-center gap-2 mb-1">
+          <CalendarRange className="w-5 h-5 text-green-600" />
+          <h2 className="text-base font-bold text-gray-900">Schedule</h2>
         </div>
-        <button
-          type="button"
-          onClick={() => setDate((d) => addDays(d, 1))}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-          aria-label="Next day"
-        >
-          <ChevronRight size={16} />
-        </button>
+        <p className="text-sm text-gray-500">
+          Your scheduled hours, worked hours and task activity for the month.
+        </p>
       </div>
 
-      {/* Loading */}
-      {loading && (
-        <div className="flex items-center gap-2 py-4 text-sm text-gray-400">
-          <Loader2 size={15} className="animate-spin text-green-600" />
-          Loading schedule…
-        </div>
-      )}
+      <EmployeeMonthCalendar
+        grid={grid}
+        days={days}
+        monthAnchor={monthAnchor}
+        todayKey={today}
+        selectedDate={selectedDate}
+        isCurrentMonth={isCurrentMonth}
+        loading={loading}
+        errorMessage={error}
+        onPreviousMonth={() => goToMonth(shiftMonth(monthAnchor, -1))}
+        onNextMonth={() => goToMonth(shiftMonth(monthAnchor, 1))}
+        onToday={() => goToMonth(getTenantWorkDate())}
+        onSelectDate={setSelectedDate}
+      >
+        {/* Existing day detail: the same schedule cards and Start/Done controls */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-base font-bold text-gray-900">
+              {formatFullDayLabel(selectedDate)}
+            </p>
+            <span className="text-sm font-bold text-gray-600">
+              {selectedItems.length} {selectedItems.length === 1 ? 'item' : 'items'}
+            </span>
+          </div>
 
-      {/* Error */}
-      {!loading && error && (
-        <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-sm text-red-600">
-          {error}
-        </div>
-      )}
+          {!loading && !error && selectedItems.length === 0 && (
+            <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm text-center">
+              <CalendarRange size={28} className="text-gray-400 mx-auto mb-3" />
+              <p className="text-sm font-semibold text-gray-700">No work scheduled</p>
+              <p className="text-xs text-gray-500 mt-1">
+                Nothing scheduled for {formatFullDayLabel(selectedDate)}.
+              </p>
+            </div>
+          )}
 
-      {/* Empty state */}
-      {!loading && !error && items.length === 0 && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm text-center">
-          <CalendarRange size={28} className="text-gray-300 mx-auto mb-3" />
-          <p className="text-sm font-semibold text-gray-700">No work scheduled</p>
-          <p className="text-xs text-gray-400 mt-1">Nothing scheduled for {formatDate(date)}.</p>
-        </div>
-      )}
-
-      {/* Items */}
-      {!loading && !error && nonCancelled.map((item) => (
-        <ScheduleCard key={item.id} item={item} onStatusChange={handleStatusChange} />
-      ))}
-
-      {/* Cancelled (dimmed, at bottom) */}
-      {!loading && !error && cancelled.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide px-1">Cancelled</p>
-          {cancelled.map((item) => (
+          {selectedActive.map((item) => (
             <ScheduleCard key={item.id} item={item} onStatusChange={handleStatusChange} />
           ))}
+
+          {selectedCancelled.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-1">
+                Cancelled
+              </p>
+              {selectedCancelled.map((item) => (
+                <ScheduleCard key={item.id} item={item} onStatusChange={handleStatusChange} />
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </EmployeeMonthCalendar>
     </div>
   )
 }

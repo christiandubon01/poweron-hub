@@ -12,7 +12,7 @@ interface SnapshotAssignmentPickerProps {
   blueprintName?: string
   workPackageName?: string
   selectedIds: string[]
-  onChange: (ids: string[]) => void
+  onChange: React.Dispatch<React.SetStateAction<string[]>>
 }
 
 export function SnapshotAssignmentPicker({
@@ -26,6 +26,7 @@ export function SnapshotAssignmentPicker({
   onChange,
 }: SnapshotAssignmentPickerProps) {
   const [open, setOpen] = useState(false)
+  const [draftIds, setDraftIds] = useState<string[]>([])
   const [items, setItems] = useState<BlueprintSnapshotLibraryItem[]>([])
   const [message, setMessage] = useState('')
   const contextReady = !!projectId && !!blueprintSetId && !!workPackageId
@@ -60,12 +61,15 @@ export function SnapshotAssignmentPicker({
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase text-gray-400">Snapshots</p>
-          <p className="text-xs text-gray-500">{selectedIds.length}/8 selected</p>
+          <p className="text-xs text-gray-500">{selectedIds.length}/15 selected</p>
         </div>
         <button
           type="button"
           disabled={!contextReady}
-          onClick={() => setOpen(true)}
+          onClick={() => {
+            setDraftIds([...selectedIds])
+            setOpen(true)
+          }}
           className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-gray-600 px-3 text-sm font-semibold text-gray-200 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Paperclip size={15} /> Attach snapshots
@@ -108,10 +112,14 @@ export function SnapshotAssignmentPicker({
       <SnapshotLibraryDialog
         open={open}
         mode="select"
-        selectedIds={selectedIds}
-        onSelectedIdsChange={(ids) => {
+        selectedIds={draftIds}
+        onSelectedIdsChange={(update) => {
           setMessage('')
-          onChange(ids)
+          setDraftIds(update)
+        }}
+        onSaveSelectedIds={() => {
+          onChange([...draftIds])
+          setOpen(false)
         }}
         initialFilters={{
           projectId,

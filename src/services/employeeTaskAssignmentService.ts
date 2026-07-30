@@ -5,6 +5,11 @@
  * Employee path: get_my_employee_tasks / update_my_employee_task RPCs only —
  * those omit lead_employee_id and expose can_complete instead.
  *
+ * update_my_employee_task has two live signatures in the wild: the three-argument
+ * one from 085 and the four-argument p_hours_spent one from 092. Overloads are
+ * resolved by argument NAME, so updateMyEmployeeTask sends only the parameters it
+ * is actually changing — see buildUpdateMyEmployeeTaskArgs.
+ *
  * Work packages are read from BackupData JSON (operationsBlueprintScopeLayers);
  * there is no SQL work_packages table. Assignments store denormalized name /
  * project context. Does not modify backupDataService or blueprintLibraryService.
@@ -19,7 +24,13 @@ import {
   getOperationsBlueprintWireProfiles,
 } from '@/services/blueprintLibraryService'
 import { getActiveEmployeeProfiles, type AdminEmployeeProfile } from '@/services/adminTimecardService'
-import { buildWorkOrderPayloadV1Draft, type WorkOrderPayloadV1Draft } from '@/features/work-orders'
+import {
+  addEmployeeAnimationBackgrounds,
+  buildWorkOrderPayloadV1Draft,
+  parseEmployeeAnimationPresentation,
+  type WorkOrderPayloadV1Draft,
+} from '@/features/work-orders'
+import { getBlueprintSnapshotsByIds } from '@/features/blueprint-snapshots/blueprintSnapshotService'
 import { isValidPageSizeInches, type CalibrationData, type DetectedScaleResult, type PageSizeInches } from '@/features/blueprint-measurements'
 
 const from = supabase.from as any
@@ -103,6 +114,39 @@ export interface EmployeeMyTask {
   updated_at: string
   /** True only for the private primary assignee; does not reveal who that is to others. */
   can_complete: boolean
+}
+
+export interface EmployeeWorkOrderAssignmentHeader {
+  id: string
+  workPackageId: string
+  workPackageName: string
+  projectId: string | null
+  projectName: string | null
+  blueprintSetId: string | null
+  dueDate: string | null
+  status: TaskAssignmentStatus
+}
+
+export interface EmployeeWorkOrderSnapshotMetadata {
+  snapshotId: string
+  displayOrder: number
+  caption: string | null
+  pageNumber: number | null
+  captureMode: string | null
+}
+
+export interface EmployeeWorkOrderVersion {
+  version: number
+  schemaVersion: number
+  issuedAt: string
+  payload: unknown
+}
+
+export interface EmployeeWorkOrderRead {
+  available: boolean
+  assignment: EmployeeWorkOrderAssignmentHeader | null
+  workOrder: EmployeeWorkOrderVersion | null
+  snapshots: EmployeeWorkOrderSnapshotMetadata[]
 }
 
 export interface CreateTaskAssignmentInput {
@@ -362,19 +406,17 @@ export async function createTaskAssignmentWithWorkOrderAndSnapshots(
 
     const assigned = uniqueIds(input.assignedEmployeeIds)
     const submittedSnapshotIds = input.snapshotIds ?? []
-    const snapshotIds = uniqueIds(submittedSnapshotIds)
+    const snapshotIds = submittedSnapshotIds.map((id) => String(id || '').trim()).filter(Boolean)
     if (assigned.length === 0) {
       return { success: false, error: 'Select at least one employee' }
     }
     if (!assigned.includes(input.leadEmployeeId)) {
       return { success: false, error: 'Primary assignee must be one of the selected employees' }
     }
-    if (snapshotIds.length !== submittedSnapshotIds.map((id) => String(id || '').trim()).filter(Boolean).length) {
-      return { success: false, error: 'A selected snapshot is no longer available.' }
+    if (snapshotIds.length > 15) {
+      return { success: false, error: 'Maximum of 15 snapshots.' }
     }
-    if (snapshotIds.length > 8) {
-      return { success: false, error: 'Maximum of 8 snapshots.' }
-    }
+    const workOrderPayload = await captureAnimationBackgroundReferences(input.workOrderPayload, snapshotIds)
 
     const { data, error } = await rpc('create_employee_task_assignment_with_work_order_and_snapshots', {
       p_client_request_id: input.clientRequestId,
@@ -389,7 +431,7 @@ export async function createTaskAssignmentWithWorkOrderAndSnapshots(
       p_assigned_employee_ids: assigned,
       p_due_date: input.dueDate || null,
       p_status: input.status || 'assigned',
-      p_work_order_payload: input.workOrderPayload,
+      p_work_order_payload: workOrderPayload,
       p_snapshot_ids: snapshotIds,
     })
 
@@ -429,6 +471,39 @@ export async function createTaskAssignmentWithWorkOrderAndSnapshots(
     const message = err instanceof Error ? err.message : 'Network error'
     console.error('[employeeTaskAssignmentService.createTaskAssignmentWithWorkOrderAndSnapshots]', err)
     return { success: false, error: safeSnapshotAssignmentError(message) }
+  }
+}
+
+async function captureAnimationBackgroundReferences(
+  payload: WorkOrderPayloadV1Draft,
+  orderedSnapshotIds: string[],
+): Promise<WorkOrderPayloadV1Draft> {
+  const presentation = parseEmployeeAnimationPresentation(payload.animationPresentation)
+  if (!presentation) return payload
+  if (orderedSnapshotIds.length === 0) {
+    return {
+      ...payload,
+      animationPresentation: addEmployeeAnimationBackgrounds(presentation, [], []),
+    }
+  }
+  const snapshots = await getBlueprintSnapshotsByIds(orderedSnapshotIds)
+  if (snapshots.status !== 'available') {
+    return {
+      ...payload,
+      animationPresentation: addEmployeeAnimationBackgrounds(presentation, [], []),
+    }
+  }
+  return {
+    ...payload,
+    animationPresentation: addEmployeeAnimationBackgrounds(
+      presentation,
+      snapshots.snapshots.map((snapshot) => ({
+        id: snapshot.id,
+        pageNumber: snapshot.pageNumber,
+        captureMode: snapshot.captureMode,
+      })),
+      orderedSnapshotIds,
+    ),
   }
 }
 
@@ -681,30 +756,244 @@ export async function getMyEmployeeTasks(): Promise<Result<EmployeeMyTask[]>> {
   }
 }
 
-export async function updateMyEmployeeTask(input: {
+export async function getMyEmployeeWorkOrder(assignmentId: string): Promise<Result<EmployeeWorkOrderRead>> {
+  try {
+    const cleanAssignmentId = String(assignmentId || '').trim()
+    if (!cleanAssignmentId) return { success: true, data: unavailableEmployeeWorkOrder() }
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+
+    const { data, error } = await rpc('get_my_employee_work_order', {
+      p_assignment_id: cleanAssignmentId,
+    })
+
+    if (error) return { success: true, data: unavailableEmployeeWorkOrder() }
+    return { success: true, data: normalizeEmployeeWorkOrderRead(data) }
+  } catch (err: unknown) {
+    console.error('[employeeTaskAssignmentService.getMyEmployeeWorkOrder]', err)
+    return { success: true, data: unavailableEmployeeWorkOrder() }
+  }
+}
+
+export interface UpdateMyEmployeeTaskInput {
   assignmentId: string
   status?: TaskAssignmentStatus
   completionNotes?: string | null
   hoursSpent?: number | null
-}): Promise<Result<true>> {
+}
+
+/** Named arguments actually posted to public.update_my_employee_task. */
+export interface UpdateMyEmployeeTaskArgs {
+  p_assignment_id: string
+  p_status?: TaskAssignmentStatus
+  p_completion_notes?: string
+  p_hours_spent?: number
+}
+
+/**
+ * Builds the named argument set for public.update_my_employee_task.
+ *
+ * PostgREST resolves an RPC overload from the exact set of argument NAMES in the
+ * request body, so an argument that is present-but-null still has to exist in the
+ * target signature. Sending p_hours_spent unconditionally therefore fails with
+ * PGRST202 ('Could not find the function public.update_my_employee_task(...) in
+ * the schema cache') against any database still on the pre-092 three-argument
+ * signature — including a Start Task call that carries no hours at all.
+ *
+ * The function treats a NULL parameter as 'no change', so omitting an unchanged
+ * parameter is behaviorally identical to passing NULL while staying compatible
+ * with both the three- and four-argument signatures.
+ */
+export function buildUpdateMyEmployeeTaskArgs(
+  input: UpdateMyEmployeeTaskInput,
+): Result<UpdateMyEmployeeTaskArgs> {
+  const assignmentId = String(input?.assignmentId || '').trim()
+  if (!assignmentId) return { success: false, error: 'Assignment not found' }
+
+  const args: UpdateMyEmployeeTaskArgs = { p_assignment_id: assignmentId }
+
+  if (input.status != null) {
+    const status = cleanStatus(input.status)
+    if (!status) return { success: false, error: 'Invalid task status' }
+    args.p_status = status
+  }
+
+  if (input.completionNotes != null) {
+    args.p_completion_notes = String(input.completionNotes)
+  }
+
+  // Mirrors the function's own hours guard so a rejected value costs no round trip.
+  if (input.hoursSpent != null) {
+    const hours = Number(input.hoursSpent)
+    if (!Number.isFinite(hours) || hours <= 0) {
+      return { success: false, error: 'Enter the hours worked as a number greater than zero.' }
+    }
+    args.p_hours_spent = hours
+  }
+
+  return { success: true, data: args }
+}
+
+export async function updateMyEmployeeTask(input: UpdateMyEmployeeTaskInput): Promise<Result<true>> {
+  const built = buildUpdateMyEmployeeTaskArgs(input)
+  if (!built.success) return built
+  const args = built.data
+
   try {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user?.id) return { success: false, error: 'Not authenticated' }
 
-    const { error } = await rpc('update_my_employee_task', {
-      p_assignment_id: input.assignmentId,
-      p_status: input.status ?? null,
-      p_completion_notes: input.completionNotes === undefined ? null : input.completionNotes,
-      p_hours_spent: input.hoursSpent === undefined ? null : input.hoursSpent,
-    })
-
-    if (error) return { success: false, error: error.message }
+    const { error } = await rpc('update_my_employee_task', args)
+    if (error) return { success: false, error: safeTaskUpdateError(error, args) }
     return { success: true, data: true }
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Network error'
     console.error('[employeeTaskAssignmentService.updateMyEmployeeTask]', err)
-    return { success: false, error: message }
+    const message = err instanceof Error ? err.message : 'Network error'
+    return { success: false, error: safeTaskUpdateError({ message }, args) }
   }
+}
+
+/**
+ * Employee-facing message for a failed task update.
+ *
+ * Never retries a rejected write with fewer arguments: dropping p_hours_spent to
+ * satisfy an older signature would silently discard hours the employee typed and
+ * report a completion that recorded no time.
+ */
+function safeTaskUpdateError(error: unknown, args: UpdateMyEmployeeTaskArgs): string {
+  const message = String((error as { message?: string })?.message ?? '')
+
+  if (isMissingSupabaseRpcError(error, 'update_my_employee_task')) {
+    return args.p_hours_spent === undefined
+      ? 'Task updates are not available on this database yet. Ask your administrator.'
+      : 'Recording task hours is not available on this database yet. Ask your administrator to finish the task-hours update.'
+  }
+
+  if (/not authenticated/i.test(message)) return 'Not authenticated'
+  if (/no active employee profile/i.test(message)) return 'Your employee profile is no longer active.'
+  if (/assignment not found/i.test(message)) return 'Assignment not found'
+  if (/only the primary assignee/i.test(message)) return 'Only the primary assignee can update this task'
+  if (/not assigned to this task/i.test(message)) return 'You are no longer assigned to this task'
+  if (/invalid status/i.test(message)) return 'Invalid task status'
+  if (/hours_spent must be greater than zero/i.test(message)) {
+    return 'Enter the hours worked as a number greater than zero.'
+  }
+  if (/failed to fetch|networkerror|network request failed|timeout/i.test(message)) {
+    return 'Network error. Try again.'
+  }
+  return 'Could not update task.'
+}
+
+function normalizeEmployeeWorkOrderRead(value: unknown): EmployeeWorkOrderRead {
+  if (!isPlainObject(value)) return unavailableEmployeeWorkOrder()
+  const available = value.available === true
+  const assignment = normalizeEmployeeWorkOrderAssignment(value.assignment)
+  const workOrder = normalizeEmployeeWorkOrderVersion(value.workOrder)
+  const snapshots = normalizeEmployeeWorkOrderSnapshots(value.snapshots)
+
+  if (!available || !assignment || !workOrder) {
+    return {
+      available: false,
+      assignment,
+      workOrder: null,
+      snapshots: [],
+    }
+  }
+
+  return {
+    available: true,
+    assignment,
+    workOrder,
+    snapshots,
+  }
+}
+
+function unavailableEmployeeWorkOrder(): EmployeeWorkOrderRead {
+  return {
+    available: false,
+    assignment: null,
+    workOrder: null,
+    snapshots: [],
+  }
+}
+
+function normalizeEmployeeWorkOrderAssignment(value: unknown): EmployeeWorkOrderAssignmentHeader | null {
+  if (!isPlainObject(value)) return null
+  const id = cleanString(value.id)
+  const workPackageId = cleanString(value.workPackageId)
+  const workPackageName = cleanString(value.workPackageName)
+  const status = cleanStatus(value.status)
+  if (!id || !workPackageId || !workPackageName || !status) return null
+  return {
+    id,
+    workPackageId,
+    workPackageName,
+    projectId: nullableString(value.projectId),
+    projectName: nullableString(value.projectName),
+    blueprintSetId: nullableString(value.blueprintSetId),
+    dueDate: nullableString(value.dueDate),
+    status,
+  }
+}
+
+function normalizeEmployeeWorkOrderVersion(value: unknown): EmployeeWorkOrderVersion | null {
+  if (!isPlainObject(value) || !isPlainObject(value.payload)) return null
+  const version = Number(value.version)
+  const schemaVersion = Number(value.schemaVersion)
+  const issuedAt = cleanString(value.issuedAt)
+  if (!Number.isInteger(version) || version < 1 || !Number.isInteger(schemaVersion) || schemaVersion < 1 || !issuedAt) {
+    return null
+  }
+  return {
+    version,
+    schemaVersion,
+    issuedAt,
+    payload: value.payload,
+  }
+}
+
+function normalizeEmployeeWorkOrderSnapshots(value: unknown): EmployeeWorkOrderSnapshotMetadata[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((entry) => {
+      if (!isPlainObject(entry)) return null
+      const snapshotId = cleanString(entry.snapshotId)
+      const displayOrder = Number(entry.displayOrder)
+      if (!snapshotId || !Number.isFinite(displayOrder)) return null
+      return {
+        snapshotId,
+        displayOrder,
+        caption: nullableString(entry.caption),
+        pageNumber: nullablePositiveInteger(entry.pageNumber),
+        captureMode: nullableString(entry.captureMode),
+      } satisfies EmployeeWorkOrderSnapshotMetadata
+    })
+    .filter((entry): entry is EmployeeWorkOrderSnapshotMetadata => Boolean(entry))
+    .sort((a, b) => a.displayOrder - b.displayOrder)
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function cleanString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function nullableString(value: unknown): string | null {
+  const text = cleanString(value)
+  return text || null
+}
+
+function nullablePositiveInteger(value: unknown): number | null {
+  if (value == null) return null
+  const next = Number(value)
+  return Number.isInteger(next) && next > 0 ? next : null
+}
+
+function cleanStatus(value: unknown): TaskAssignmentStatus | null {
+  return value === 'assigned' || value === 'in_progress' || value === 'completed' ? value : null
 }
 
 function uniqueIds(ids: string[]): string[] {
@@ -793,7 +1082,7 @@ function safeAssignmentError(message: string): string {
 
 function safeSnapshotAssignmentError(message: string): string {
   if (/snapshot assignment storage is not available/i.test(message)) return 'Snapshot assignment storage is not available yet.'
-  if (/maximum of 8 snapshots|more than 8 snapshots/i.test(message)) return 'Maximum of 8 snapshots.'
+  if (/maximum of (?:8|15) snapshots|more than (?:8|15) snapshots|sixteenth attachment/i.test(message)) return 'Maximum of 15 snapshots.'
   if (/selected snapshot|snapshot.*no longer available|duplicate snapshot|replay snapshot list/i.test(message)) return 'A selected snapshot is no longer available.'
   if (/not authenticated/i.test(message)) return 'Not authenticated'
   if (/not authorized/i.test(message)) return 'Not authorized'

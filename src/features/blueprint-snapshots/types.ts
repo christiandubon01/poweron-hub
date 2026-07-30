@@ -157,7 +157,13 @@ export interface BlueprintSnapshotListFilters {
 }
 
 export type BlueprintSnapshotListResult =
-  | { status: 'available'; snapshots: BlueprintSnapshotLibraryItem[]; nextCursor: string | null }
+  | {
+      status: 'available'
+      snapshots: BlueprintSnapshotLibraryItem[]
+      totalCount: number
+      nextCursor: string | null
+      hasMore: boolean
+    }
   | { status: 'unavailable'; message: string }
   | { status: 'error'; message: string }
 

@@ -65,7 +65,7 @@ describe('SnapshotLibraryDialog loading contract', () => {
 
     expect(confirmBlock).toContain("res.status === 'deleted'")
     expect(confirmBlock).not.toContain('setItems((prev) => prev.filter')
-    expect(changeBlock).toContain('setItems((prev) => prev.filter((row) => row.id !== event.snapshotId))')
+    expect(changeBlock).toContain('return prev.filter((row) => row.id !== event.snapshotId)')
     expect(changeBlock).toContain('delete next[event.snapshotId]')
     expect(changeBlock).toContain('current !== event.snapshotId')
     expect(changeBlock).toContain('setPreviewUrl(null)')
@@ -76,11 +76,42 @@ describe('SnapshotLibraryDialog loading contract', () => {
   it('upserts matching capture or metadata rows immediately and dedupes repeated notifications', () => {
     const changeBlock = dialog.slice(dialog.indexOf('const applyLibraryChange'), dialog.indexOf('useEffect(() => {', dialog.indexOf('const applyLibraryChange')))
 
-    expect(changeBlock).toContain('snapshotMatchesFilters(event.snapshot, filtersRef.current)')
+    expect(changeBlock).toContain('snapshotMatchesBlueprintSnapshotFilters(event.snapshot, filtersRef.current)')
     expect(changeBlock).toContain('const without = prev.filter((row) => row.id !== event.snapshot.id)')
     expect(changeBlock).toContain('return matches ? [event.snapshot, ...without] : without')
     expect(dialog).toContain('function dedupeSnapshotItems')
-    expect(dialog).toContain('function snapshotMatchesFilters')
+    expect(dialog).toContain('snapshotMatchesBlueprintSnapshotFilters')
+  })
+
+  it('uses the shared service page size and exposes complete counts in both consumers', () => {
+    expect(dialog).not.toContain('limit: 12')
+    expect(dialog).not.toContain('limit: 24')
+    expect(dialog).not.toContain('items.slice(0, 12)')
+    expect(dialog).toContain('Snapshots ({totalCount})')
+    expect(dialog).toContain('Load more (${items.length} of ${totalCount})')
+    expect(dialog).toContain('{totalCount} available')
+    expect(dialog).toContain('setTotalCount(res.totalCount)')
+  })
+
+  it('keeps Work Package organization uncapped and updates its complete count on tag changes', () => {
+    const section = namedFunctionBody('WorkPackageSnapshotSection')
+    expect(section).toContain('Snapshots ({totalCount})')
+    expect(section).toContain('setNextCursor(res.nextCursor)')
+    expect(section).toContain('dedupeSnapshotItems([...prev, ...res.snapshots])')
+    expect(section).toContain('event.snapshot.workPackageId === workPackageId')
+    expect(section).toContain('if (matches && !existed) setTotalCount((count) => count + 1)')
+    expect(section).toContain('if (!matches && existed) setTotalCount((count) => Math.max(0, count - 1))')
+    expect(section).toContain('updateBlueprintSnapshotWorkPackage(item.id, { workPackageId: null, workPackageName: null })')
+    expect(section).not.toContain('MAX_SELECTED_SNAPSHOTS')
+    expect(section).not.toContain('slice(0, 12)')
+  })
+
+  it('reconciles local upsert, untag, and delete notifications through both mounted consumers', () => {
+    expect((dialog.match(/subscribeBlueprintSnapshotLibraryChanges/g) || []).length).toBeGreaterThanOrEqual(3)
+    expect(dialog).toContain('void load(true)')
+    expect(dialog).toContain('void loadInitialSnapshots({ background: true })')
+    expect(dialog).toContain('const without = prev.filter((row) => row.id !== event.snapshot.id)')
+    expect(dialog).toContain('dedupeSnapshotItems([...prev, ...res.snapshots])')
   })
 
   it('uses one shared full-width filter toolbar with the required responsive grid', () => {

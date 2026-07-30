@@ -123,6 +123,26 @@ describe('buildWorkOrderPayloadV1Draft', () => {
     expect(final.labor).toEqual({ roughInHours: 1.23, trimHours: 2.35, testingHours: 0, cleanupHours: 0, totalHours: 3.58 })
   })
 
+  it('preserves meaningful Crew Notes line breaks and omits blank notes', () => {
+    const notes = build({ crewNotes: '  Pull home runs first.\n\nLeave two loops at the panel.  ' })
+    expect(notes.scope.crewNotes).toBe('Pull home runs first.\n\nLeave two loops at the panel.')
+    const blank = build({ crewNotes: ' \n\t ' })
+    expect(blank.scope).not.toHaveProperty('crewNotes')
+  })
+
+  it('captures Crew Notes by value so later owner edits cannot change the issued draft', () => {
+    const sourcePackage = pkg({ crewNotes: 'First line\nSecond line' })
+    const draft = buildWorkOrderPayloadV1Draft({
+      projectId: 'project-1',
+      projectName: 'Project One',
+      blueprintSetId: 'set-1',
+      workPackage: sourcePackage,
+      annotations: [],
+    })
+    sourcePackage.crewNotes = 'Changed after issuance'
+    expect(draft.scope.crewNotes).toBe('First line\nSecond line')
+  })
+
   it('freezes sorted items, package symbol counts, and package wire rollups only', () => {
     const draft = build()
     expect(draft.items).toEqual([

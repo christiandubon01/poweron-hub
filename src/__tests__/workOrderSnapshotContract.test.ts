@@ -69,7 +69,63 @@ describe('getAssignmentSnapshotUrls Edge Function contract', () => {
     expect(edgeFunction).toContain("req.method !== 'POST'")
     expect(edgeFunction).toContain('Authentication required')
     expect(edgeFunction).toContain('Valid assignment_id is required')
+    expect(edgeFunction).toContain('Valid snapshot_id is required')
     expect(edgeFunction).toContain('auth.getUser(jwt)')
+  })
+
+  it('handles CORS preflight before auth and JSON parsing with the shared contract headers', () => {
+    const optionsIndex = edgeFunction.indexOf("if (req.method === 'OPTIONS')")
+    const authIndex = edgeFunction.indexOf("req.headers.get('authorization')")
+    const jsonParseIndex = edgeFunction.indexOf('await req.json()')
+    expect(optionsIndex).toBeGreaterThan(-1)
+    expect(optionsIndex).toBeLessThan(authIndex)
+    expect(optionsIndex).toBeLessThan(jsonParseIndex)
+
+    const optionsBlock = edgeFunction.slice(optionsIndex, edgeFunction.indexOf("if (req.method !== 'POST')", optionsIndex))
+    expect(optionsBlock).toContain("return new Response('ok'")
+    expect(optionsBlock).toContain('status: 200')
+    expect(optionsBlock).toContain('headers: corsHeaders')
+
+    expect(edgeFunction).toContain("const corsHeaders = {")
+    expect(edgeFunction).toContain("'Access-Control-Allow-Origin': '*'")
+    expect(edgeFunction).toContain("'Access-Control-Allow-Methods': 'POST, OPTIONS'")
+    expect(edgeFunction).toContain('Access-Control-Allow-Headers')
+    expect(edgeFunction).toContain('authorization, x-client-info, apikey, content-type')
+    expect(edgeFunction).toContain('x-supabase-client-platform')
+    expect(edgeFunction).toContain('x-supabase-client-platform-version')
+    expect(edgeFunction).toContain('x-supabase-client-runtime')
+    expect(edgeFunction).toContain('x-supabase-client-runtime-version')
+    expect(edgeFunction).not.toContain('CORS_ALLOWED_ORIGINS')
+    expect(edgeFunction).not.toContain("headers: corsHeaders(req)")
+  })
+
+  it('allows the supabase-js browser platform headers that functions.invoke sends on preflight', () => {
+    const corsBlock = edgeFunction.slice(
+      edgeFunction.indexOf('const corsHeaders = {'),
+      edgeFunction.indexOf('}', edgeFunction.indexOf('Access-Control-Allow-Methods')) + 1,
+    )
+    expect(corsBlock).toMatch(/Access-Control-Allow-Headers/i)
+    expect(corsBlock).toMatch(/authorization/i)
+    expect(corsBlock).toMatch(/x-client-info/i)
+    expect(corsBlock).toMatch(/apikey/i)
+    expect(corsBlock).toMatch(/content-type/i)
+    expect(corsBlock).toMatch(/x-supabase-client-platform/i)
+    expect(corsBlock).toMatch(/x-supabase-client-platform-version/i)
+    expect(corsBlock).toMatch(/x-supabase-client-runtime/i)
+    expect(corsBlock).toMatch(/x-supabase-client-runtime-version/i)
+  })
+
+  it('routes every JSON response through the shared CORS headers', () => {
+    const jsonHelper = edgeFunction.slice(edgeFunction.indexOf('function json('), edgeFunction.indexOf('function isUuid'))
+    expect(jsonHelper).toContain("headers: { ...corsHeaders, 'Content-Type': 'application/json' }")
+
+    const responseCalls = edgeFunction.match(/return json\(/g) || []
+    expect(responseCalls.length).toBeGreaterThanOrEqual(12)
+    expect(edgeFunction).not.toContain('return json(req,')
+    expect(edgeFunction).toContain("return json(401, { error: 'Authentication required' })")
+    expect(edgeFunction).toContain("return json(403, { error: 'Not authorized' })")
+    expect(edgeFunction).toContain("return json(502, { error: 'Unable to sign snapshot URL' })")
+    expect(edgeFunction).toContain("return json(500, { error: 'Unexpected error' })")
   })
 
   it('authorizes owner/admins and currently assigned active employees only', () => {
@@ -91,5 +147,12 @@ describe('getAssignmentSnapshotUrls Edge Function contract', () => {
     expect(edgeFunction).not.toContain('attached_by')
     expect(responseShape).not.toMatch(/storage_path:/)
     expect(responseShape).not.toContain('assigned_employee_ids')
+  })
+
+  it('supports retrying one attached snapshot without creating another endpoint', () => {
+    expect(edgeFunction).toContain('snapshot_id?: unknown')
+    expect(edgeFunction).toContain("attachmentQuery = attachmentQuery.eq('snapshot_id', body.snapshot_id)")
+    expect(edgeFunction).toContain("return json(200, {")
+    expect((edgeFunction.match(/serve\(/g) || []).length).toBe(1)
   })
 })

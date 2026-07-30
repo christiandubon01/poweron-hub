@@ -9,6 +9,7 @@ import {
   loadPackageAnimationRouteDraft,
 } from '@/features/blueprint-animation/routeBuilderModel'
 import type { WorkOrderPayloadV1, WorkOrderPayloadV1Draft, WorkOrderServerIdentity } from './types'
+import { projectEmployeeAnimationPresentation } from './employeeAnimationPresentation'
 
 const MAX_PAYLOAD_BYTES = 512000
 
@@ -55,7 +56,9 @@ export function buildWorkOrderPayloadV1Draft(input: BuildWorkOrderPayloadV1Draft
     scope: {
       title: cleanRequiredText(workPackage.name, 200),
       description: cleanText(workPackage.description, 4000),
-      crewNotes: cleanText(workPackage.crewNotes, 4000),
+      ...(cleanMultilineText(workPackage.crewNotes, 4000)
+        ? { crewNotes: cleanMultilineText(workPackage.crewNotes, 4000) }
+        : {}),
     },
     labor: normalizeLabor(workPackage),
     items: normalizeItems(workPackage.itemRefs),
@@ -76,6 +79,15 @@ export function buildWorkOrderPayloadV1Draft(input: BuildWorkOrderPayloadV1Draft
       getPageSizeInches: input.getPageSizeInches,
     }),
     animationRoute: buildAnimationRoute(workPackage, annotations),
+    animationPresentation: projectEmployeeAnimationPresentation({
+      workPackage,
+      annotations,
+      getPageAspect: (pageNumber) => {
+        const pageSize = input.getPageSizeInches?.(pageNumber)
+        if (!pageSize || pageSize.pageHeightInches <= 0) return null
+        return pageSize.pageWidthInches / pageSize.pageHeightInches
+      },
+    }),
   }
 }
 
@@ -288,4 +300,9 @@ function cleanOptionalText(value: unknown, max: number): string | undefined {
 function cleanText(value: unknown, max: number): string {
   const text = value == null ? '' : String(value)
   return text.trim().replace(/\s+/g, ' ').slice(0, max)
+}
+
+function cleanMultilineText(value: unknown, max: number): string {
+  const text = value == null ? '' : String(value)
+  return text.trim().slice(0, max)
 }

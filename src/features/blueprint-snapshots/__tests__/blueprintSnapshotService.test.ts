@@ -50,6 +50,7 @@ import {
   resolveBlueprintSnapshotWorkPackageTag,
   sanitizeSnapshotCaption,
   saveBlueprintSnapshot,
+  snapshotMatchesBlueprintSnapshotFilters,
   subscribeBlueprintSnapshotLibraryChanges,
   updateBlueprintSnapshotCaption,
 } from '@/features/blueprint-snapshots'
@@ -166,6 +167,13 @@ describe('blueprint snapshot service', () => {
     expect(sanitizeSnapshotCaption('  panel A  ')).toBe('panel A')
     expect(sanitizeSnapshotCaption('   ')).toBeNull()
     expect(sanitizeSnapshotCaption('x'.repeat(300))).toHaveLength(240)
+  })
+
+  it('owns the single shared page size without assignment or card-count availability caps', () => {
+    expect(serviceSource).toContain('export const BLUEPRINT_SNAPSHOT_PAGE_SIZE = 24')
+    expect(serviceSource).toContain("{ count: 'exact' }")
+    expect(serviceSource).not.toContain('DEFAULT_SNAPSHOT_LIBRARY_LIMIT')
+    expect(serviceSource).not.toMatch(/limit\s*=\s*(9|12|15)\b/)
   })
 
   it('tags exactly one scoped work package and leaves general or multi scoped untagged', () => {
@@ -306,8 +314,10 @@ describe('blueprint snapshot service', () => {
         file_size_bytes: 10,
         captured_at: '2026-01-02T00:00:00.000Z',
         created_at: '2026-01-02T00:00:00.000Z',
+        assignment_snapshots: [{ snapshot_id: snapshotId }],
       }],
       error: null,
+      count: 16,
     })
 
     const result = await listBlueprintSnapshots({
@@ -326,7 +336,10 @@ describe('blueprint snapshot service', () => {
         projectId: 'project-1',
         captureMode: 'area',
         annotationCount: 3,
+        attachedToIssuedWorkOrder: true,
       })
+      expect(result.totalCount).toBe(16)
+      expect(result.hasMore).toBe(false)
       expect(result.snapshots[0]).not.toHaveProperty('storagePath')
       expect(result.snapshots[0]).not.toHaveProperty('signedUrl')
     }
@@ -339,6 +352,95 @@ describe('blueprint snapshot service', () => {
     expect(query.eq).toHaveBeenCalledWith('page_number', 2)
     expect(query.eq).toHaveBeenCalledWith('capture_metadata->>captureMode', 'area')
     expect(query.or).toHaveBeenCalledWith(expect.stringContaining('work_package_id.is.null'))
+    expect(query.select).toHaveBeenCalledWith(expect.any(String), { count: 'exact' })
+  })
+
+  it('keeps complete matching count distinct from loaded pages and preserves it across cursors', async () => {
+    const rows = Array.from({ length: 25 }, (_, index) => ({
+      id: `snapshot-${String(index).padStart(2, '0')}`,
+      project_id: 'project-1',
+      project_name: 'Project One',
+      blueprint_set_id: 'set-1',
+      work_package_id: 'wp-test',
+      work_package_name: 'Test Package',
+      page_number: index + 1,
+      caption: `Snapshot ${index + 1}`,
+      capture_metadata: metadata(),
+      width: 100,
+      height: 80,
+      file_size_bytes: 10,
+      captured_at: new Date(Date.UTC(2026, 0, 31 - index)).toISOString(),
+      created_at: new Date(Date.UTC(2026, 0, 31 - index)).toISOString(),
+      assignment_snapshots: [],
+    }))
+    supabaseState.query.limit
+      .mockResolvedValueOnce({ data: rows, error: null, count: 30 })
+      .mockResolvedValueOnce({ data: rows.slice(0, 6), error: null, count: 6 })
+
+    const first = await listBlueprintSnapshots({
+      projectId: 'project-1',
+      blueprintSetId: 'set-1',
+      workPackageId: 'wp-test',
+    })
+    expect(first.status).toBe('available')
+    if (first.status !== 'available') return
+    expect(first.snapshots).toHaveLength(24)
+    expect(first.totalCount).toBe(30)
+    expect(first.hasMore).toBe(true)
+    expect(first.nextCursor).toEqual(expect.any(String))
+
+    const second = await listBlueprintSnapshots({
+      projectId: 'project-1',
+      blueprintSetId: 'set-1',
+      workPackageId: 'wp-test',
+      cursor: first.nextCursor,
+    })
+    expect(second.status).toBe('available')
+    if (second.status !== 'available') return
+    expect(second.snapshots).toHaveLength(6)
+    expect(second.totalCount).toBe(30)
+    expect(second.hasMore).toBe(false)
+  })
+
+  it('uses the same stable-id filter semantics for query results and live upserts', () => {
+    const item = {
+      id: snapshotId,
+      projectId: 'project-1',
+      projectName: 'Project One',
+      blueprintSetId: 'set-1',
+      blueprintTitle: 'Blueprint One',
+      workPackageId: 'wp-test',
+      workPackageName: 'Test Package',
+      pageNumber: 3,
+      caption: null,
+      captureMode: 'area' as const,
+      width: 100,
+      height: 80,
+      fileSizeBytes: 10,
+      annotationCount: 0,
+      attachedToIssuedWorkOrder: true,
+      capturedAt: '2026-01-01T00:00:00.000Z',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    }
+
+    expect(snapshotMatchesBlueprintSnapshotFilters(item, {
+      projectId: 'project-1',
+      blueprintSetId: 'set-1',
+      workPackageId: 'wp-test',
+      pageNumber: 3,
+      captureMode: 'area',
+    })).toBe(true)
+    expect(snapshotMatchesBlueprintSnapshotFilters(item, {
+      projectId: 'project-1',
+      blueprintSetId: 'set-1',
+      workPackageId: 'same-readable-name-different-id',
+    })).toBe(false)
+    expect(snapshotMatchesBlueprintSnapshotFilters({ ...item, workPackageId: null }, {
+      projectId: 'project-1',
+      blueprintSetId: 'set-1',
+      workPackageId: 'wp-test',
+      workPackageMode: 'untagged-or-matching',
+    })).toBe(true)
   })
 
   it('returns unavailable only for narrow missing snapshot-table errors', async () => {

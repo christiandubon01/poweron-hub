@@ -2,7 +2,9 @@
  * employeeScheduleService.ts — Employee daily scheduling (EMS Phase 4)
  *
  * Owner path: direct table CRUD on employee_schedules (RLS owner/admin).
- * Employee path: get_my_schedule / update_my_schedule_status RPCs only.
+ * Employee path: get_my_schedule / update_my_schedule_status RPCs, plus
+ * getMyScheduleRange for the monthly calendar (read-only, RLS-scoped — see its
+ * doc comment for why a direct range select is used instead of 42 RPC calls).
  *
  * Does not modify backupDataService, blueprintLibraryService, or any
  * protected services. Conflict detection is client-side only (no server lock).
@@ -315,6 +317,45 @@ export async function getMySchedule(date: string): Promise<Result<ScheduleItem[]
     const { data, error } = await rpc('get_my_schedule', { p_date: toIso(date) })
     if (error) return { success: false, error: error.message }
     return { success: true, data: data ?? [] }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Network error' }
+  }
+}
+
+/**
+ * Read-only range read of the caller's own schedule rows.
+ *
+ * get_my_schedule takes a single p_date, so a monthly calendar grid would need
+ * up to 42 round trips. There is no employee-facing range RPC, so this reads
+ * employee_schedules directly and relies on the deployed RLS policy
+ * es_employee_select_own (migration 086), which restricts SELECT to rows whose
+ * employee_profile_id belongs to the signed-in active employee — the same rows
+ * get_my_schedule returns. Never writes, and never widens the row set: the
+ * status transition path stays on update_my_schedule_status.
+ */
+export async function getMyScheduleRange(
+  startDate: string,
+  endDate: string,
+): Promise<Result<ScheduleItem[]>> {
+  try {
+    const start = toIso(startDate)
+    const end = toIso(endDate)
+    if (!start || !end || start > end) {
+      return { success: false, error: 'Invalid date range' }
+    }
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+
+    const { data, error } = await from('employee_schedules')
+      .select('*')
+      .gte('work_date', start)
+      .lte('work_date', end)
+      .order('work_date', { ascending: true })
+      .order('start_time', { ascending: true, nullsFirst: false })
+
+    if (error) return { success: false, error: error.message }
+    return { success: true, data: (data ?? []) as ScheduleItem[] }
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : 'Network error' }
   }
