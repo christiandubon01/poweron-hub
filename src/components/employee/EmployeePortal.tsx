@@ -51,6 +51,9 @@ export function EmployeePortal() {
   const [profileSummary, setProfileSummary] = useState<EmployeeProfileSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeSection, setActiveSection] = useState<EmployeePortalSection>('clock')
+  // Incremented by EmployeeTimeClock after a successful punch so EmployeeMyTimePanel
+  // re-fetches without a page reload, even when both components are mounted simultaneously.
+  const [timeRefreshKey, setTimeRefreshKey] = useState(0)
 
   // Employee logout returns to the dedicated employee login page — not the
   // contractor/admin LoginFlow landing page. signOut() clears auth but does not
@@ -145,7 +148,7 @@ export function EmployeePortal() {
           phone-first max-w-lg column. */}
       <main
         className={`flex-1 px-4 py-6 mx-auto w-full space-y-5 ${
-          activeSection === 'assignments' || activeSection === 'schedule'
+          activeSection === 'assignments' || activeSection === 'schedule' || activeSection === 'my-time'
             ? 'max-w-lg lg:max-w-[1680px]'
             : 'max-w-lg'
         }`}
@@ -195,8 +198,10 @@ export function EmployeePortal() {
         </nav>
 
         {/* Active section */}
-        {activeSection === 'clock' && <EmployeeTimeClock />}
-        {activeSection === 'my-time' && <EmployeeMyTimePanel />}
+        {activeSection === 'clock' && (
+          <EmployeeTimeClock onPunchSuccess={() => setTimeRefreshKey(k => k + 1)} />
+        )}
+        {activeSection === 'my-time' && <EmployeeMyTimePanel refreshKey={timeRefreshKey} />}
         {activeSection === 'assignments' && <EmployeeMyTasksPanel />}
         {activeSection === 'schedule' && <EmployeeSchedulePanel />}
       </main>

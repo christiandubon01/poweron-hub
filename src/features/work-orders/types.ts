@@ -2,7 +2,7 @@ import type { EmployeeAnimationPresentationV1 } from './employeeAnimationPresent
 
 export type WorkOrderPayloadV1 = {
   schemaVersion: 1
-  workOrderVersion: 1
+  workOrderVersion: number
   identity: {
     assignmentId: string
     orgId: string
@@ -11,6 +11,7 @@ export type WorkOrderPayloadV1 = {
     workPackageId: string
     blueprintSetId: string
     blueprintTitle?: string
+    dueDate?: string
     sourcePageNumber?: number
     createdAt: string
     createdBy: string
@@ -25,6 +26,7 @@ export type WorkOrderPayloadV1 = {
     description: string
     crewNotes?: string
   }
+  workOrderInstructions?: string
   labor: {
     roughInHours: number
     trimHours: number

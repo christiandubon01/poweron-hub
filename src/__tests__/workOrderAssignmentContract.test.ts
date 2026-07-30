@@ -146,8 +146,9 @@ describe('Work Order assignment service/UI contract', () => {
     expect(atomicBody).not.toContain('.insert(')
   })
 
-  it('preserves edit behavior and uses secure revoke with legacy delete only on missing RPC', () => {
+  it('replaces unsafe panel edits with atomic reissue while retaining the reviewed legacy service APIs', () => {
     expect(service).toContain('export async function updateTaskAssignment')
+    expect(service).toContain('export async function updateTaskAssignmentWithWorkOrderAndSnapshots')
     expect(service).toContain('export async function revokeTaskAssignment')
     expect(service).toContain('export function isMissingSupabaseRpcError')
     const revokeStart = service.indexOf('export async function revokeTaskAssignment')
@@ -156,11 +157,10 @@ describe('Work Order assignment service/UI contract', () => {
     expect(revokeBody).toContain("isMissingSupabaseRpcError(error, 'revoke_employee_task_assignment')")
     expect(revokeBody).toContain('.delete()')
     expect(revokeBody).toContain("from('employee_task_assignments')")
-    expect(panel).toContain('updateTaskAssignment(editingId')
-    expect(panel).toContain('revokeTaskAssignment(id)')
-    const editBranch = panel.slice(panel.indexOf('if (editingId)'), panel.indexOf('} else {', panel.indexOf('if (editingId)')))
-    expect(editBranch).not.toContain('buildTaskAssignmentWorkOrderDraft')
-    expect(editBranch).not.toContain('createTaskAssignmentWithWorkOrderAndSnapshots')
+    expect(panel).toContain('updateTaskAssignmentWithWorkOrderAndSnapshots({')
+    expect(panel).toContain('buildTaskAssignmentWorkOrderDraftForEdit({')
+    expect(panel).not.toContain('updateTaskAssignment(')
+    expect(panel).not.toContain('revokeTaskAssignment(')
   })
 
   it('keeps list/read projections free of undeployed 092/093 columns', () => {
@@ -172,14 +172,14 @@ describe('Work Order assignment service/UI contract', () => {
   })
 
   it('keeps retry IDs stable for an open failed create and refreshes them for a new modal', () => {
-    expect(panel).toContain('const [createIds, setCreateIds] = useState(createAttemptIds)')
-    expect(panel).toContain('assignmentId: createIds.assignmentId')
-    expect(panel).toContain('clientRequestId: createIds.clientRequestId')
+    expect(panel).toContain('const [requestIds, setRequestIds] = useState(newRequestIds)')
+    expect(panel).toContain('assignmentId: requestIds.assignmentId')
+    expect(panel).toContain('clientRequestId: requestIds.clientRequestId')
     expect(panel).toContain('const [selectedSnapshotIds, setSelectedSnapshotIds] = useState<string[]>([])')
     expect(panel).toContain('snapshotIds: selectedSnapshotIds')
-    expect(panel).toContain('if (!res.success) {')
-    expect(panel).toContain("setError(res.error || 'Could not create assignment.')")
-    expect(panel).toContain('setCreateIds(createAttemptIds())')
+    expect(panel).toContain('if (!result.success) {')
+    expect(panel).toContain("setFormError(result.error || (editing ? 'Could not save changes.' : 'Could not assign Work Order.'))")
+    expect(panel).toContain('setRequestIds(newRequestIds())')
     expect(panel).toContain('if (saving) return')
   })
 })

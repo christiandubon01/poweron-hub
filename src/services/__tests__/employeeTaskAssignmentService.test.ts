@@ -48,14 +48,17 @@ vi.mock('@/features/blueprint-snapshots/blueprintSnapshotService', () => ({
 
 const {
   buildUpdateMyEmployeeTaskArgs,
+  buildTaskAssignmentWorkOrderDraftForEdit,
   createTaskAssignmentWithWorkOrderAndSnapshots,
   createTaskAssignmentWithWorkOrder,
   getMyEmployeeWorkOrder,
   isMissingSupabaseRpcError,
+  listAdminWorkOrderAssignments,
   listOrgTaskAssignments,
   revokeTaskAssignment,
   updateMyEmployeeTask,
   updateTaskAssignment,
+  updateTaskAssignmentWithWorkOrderAndSnapshots,
 } = await import('../employeeTaskAssignmentService')
 
 const serviceSource = readFileSync(
@@ -228,6 +231,109 @@ describe('employeeTaskAssignmentService', () => {
       expect(result.data[0].client_request_id).toBeUndefined()
       expect(result.data[0].current_work_order_version).toBeUndefined()
     }
+  })
+
+  it('loads the enriched admin board through the secure read RPC', async () => {
+    const row = assignment({
+      current_work_order_version: 2,
+      scheduled_by_name: 'Office Manager',
+      completed_by_name: null,
+      assigned_hours: 7.5,
+      work_order_instructions: 'Coordinate access',
+      current_snapshot_ids: ['snapshot-2', 'snapshot-1'],
+    })
+    mocks.rpc.mockResolvedValueOnce({ data: [row], error: null })
+
+    const result = await listAdminWorkOrderAssignments()
+
+    expect(result).toEqual({ success: true, data: [row] })
+    expect(mocks.rpc).toHaveBeenCalledWith('get_admin_task_assignment_board')
+    expect(mocks.from).not.toHaveBeenCalled()
+  })
+
+  it('prepares same-source edits from the issued payload without pulling newer Work Package content', () => {
+    const result = buildTaskAssignmentWorkOrderDraftForEdit({
+      assignment: assignment({
+        current_work_order_payload: {
+          ...workOrderPayload,
+          schemaVersion: 1,
+          workOrderVersion: 3,
+          identity: {
+            ...workOrderPayload.identity,
+            assignmentId: 'assignment-1',
+            orgId: 'org-1',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            createdBy: 'user-1',
+          },
+          scope: { title: 'Frozen title', description: 'Frozen scope', crewNotes: 'Frozen crew notes' },
+        },
+      }) as any,
+      projectId: 'project-1',
+      projectName: 'Project One',
+      blueprintSetId: 'set-1',
+      blueprintTitle: 'E1',
+      workPackageId: 'package-1',
+      dueDate: '2026-07-31',
+      workOrderInstructions: '  First line\n\nSecond line  ',
+    })
+
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data).not.toHaveProperty('schemaVersion')
+      expect(result.data).not.toHaveProperty('workOrderVersion')
+      expect(result.data.identity).not.toHaveProperty('assignmentId')
+      expect(result.data.scope).toEqual({ title: 'Frozen title', description: 'Frozen scope', crewNotes: 'Frozen crew notes' })
+      expect(result.data.workOrderInstructions).toBe('First line\n\nSecond line')
+      expect(result.data.identity.dueDate).toBe('2026-07-31')
+    }
+    expect(mocks.getBackupData).not.toHaveBeenCalled()
+  })
+
+  it('submits complete stale-safe atomic edit arguments and preserves snapshot order', async () => {
+    mocks.rpc.mockResolvedValueOnce({
+      data: {
+        assignment: assignment({ current_work_order_version: 2 }),
+        workOrderVersion: 2,
+        attachmentCount: 2,
+        orderedSnapshotIds: ['snapshot-2', 'snapshot-1'],
+        reissued: true,
+        idempotentReplay: false,
+      },
+      error: null,
+    })
+
+    const result = await updateTaskAssignmentWithWorkOrderAndSnapshots({
+      assignmentId: 'assignment-1',
+      clientRequestId: 'request-2',
+      expectedUpdatedAt: '2026-01-01T00:00:00.000Z',
+      expectedWorkOrderVersion: 1,
+      workPackageId: 'package-1',
+      workPackageName: 'Kitchen',
+      projectId: 'project-1',
+      projectName: 'Project One',
+      blueprintSetId: 'set-1',
+      blueprintTitle: 'E1',
+      leadEmployeeId: 'employee-1',
+      assignedEmployeeIds: ['employee-1'],
+      dueDate: '2026-07-31',
+      status: 'in_progress',
+      workOrderPayload,
+      snapshotIds: ['snapshot-2', 'snapshot-1'],
+    })
+
+    expect(result.success).toBe(true)
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      'update_employee_task_assignment_with_work_order_and_snapshots',
+      expect.objectContaining({
+        p_assignment_id: 'assignment-1',
+        p_client_request_id: 'request-2',
+        p_expected_updated_at: '2026-01-01T00:00:00.000Z',
+        p_expected_work_order_version: 1,
+        p_snapshot_ids: ['snapshot-2', 'snapshot-1'],
+        p_status: 'in_progress',
+      }),
+    )
+    expect(mocks.from).not.toHaveBeenCalled()
   })
 
   it('zero snapshots attempts 1D create RPC first and performs no direct insert on success', async () => {

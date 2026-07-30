@@ -80,7 +80,7 @@ const PROFILE_COLS =
 const ENTRY_COLS =
   'id, org_id, employee_user_id, employee_profile_id, work_date, clock_in_at, lunch_out_at, lunch_in_at, clock_out_at, total_minutes, lunch_minutes, paid_minutes, status, approval_status'
 const PUNCH_COLS =
-  'id, org_id, employee_user_id, employee_profile_id, work_date, punch_type, punched_at, source, is_void, notes, supersedes_id, end_of_day_summary'
+  'id, org_id, employee_user_id, employee_profile_id, work_date, punch_type, punched_at, source, is_void, session_id, notes, supersedes_id, end_of_day_summary'
 
 // ── A. getActiveEmployeeProfiles ────────────────────────────────────────────────
 
@@ -381,6 +381,164 @@ export async function adminVoidPunch(
 }
 
 // ── I. adminUpdateApprovalStatus — approve/reject via migration 090 RPC ───────
+
+export type { PunchEditRequest } from '@/services/employeePortalService'
+import type { PunchEditRequest } from '@/services/employeePortalService'
+
+// ── J. getPunchEditRequestsForDay — admin view of employee requests ────────────
+
+const PUNCH_EDIT_REQ_ADMIN_COLS =
+  'id, org_id, employee_profile_id, time_entry_id, session_id, punch_event_id, punch_type, ' +
+  'original_time, requested_time, employee_reason, status, requested_at, ' +
+  'reviewed_by, reviewed_at, created_at, updated_at'
+
+/** Per-session record for admin visibility (migration 099). */
+export interface AdminWorkSession {
+  id: string
+  assignment_id: string | null
+  project_name: string | null
+  work_package_name: string | null
+  work_date: string
+  clock_in_at: string | null
+  lunch_out_at: string | null
+  lunch_in_at: string | null
+  clock_out_at: string | null
+  total_minutes: number | null
+  lunch_minutes: number | null
+  paid_minutes: number | null
+  status: string
+}
+
+const ADMIN_SESSION_COLS =
+  'id, assignment_id, project_name, work_package_name, work_date, ' +
+  'clock_in_at, lunch_out_at, lunch_in_at, clock_out_at, ' +
+  'total_minutes, lunch_minutes, paid_minutes, status'
+
+export async function getPunchEditRequestsForDay(
+  employeeProfileId: string,
+  workDate: string,
+): Promise<Result<PunchEditRequest[]>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) {
+      return { success: false, error: 'Not authenticated' }
+    }
+
+    // RLS restricts to same org for owner/admin. Join through time_entries to filter by work_date.
+    const { data: entryData } = await from('time_entries')
+      .select('id')
+      .eq('employee_profile_id', employeeProfileId)
+      .eq('work_date', workDate)
+      .maybeSingle()
+
+    if (!entryData?.id) return { success: true, data: [] }
+
+    const { data, error } = await from('time_punch_edit_requests')
+      .select(PUNCH_EDIT_REQ_ADMIN_COLS)
+      .eq('time_entry_id', entryData.id)
+      .order('requested_at', { ascending: false })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: (data ?? []) as PunchEditRequest[] }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.getPunchEditRequestsForDay] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── K. adminReviewPunchEditRequest — approve/reject via migration 097 RPC ─────
+
+export async function adminReviewPunchEditRequest(
+  requestId: string,
+  status: 'approved' | 'rejected',
+): Promise<Result<PunchEditRequest>> {
+  try {
+    const { data, error } = await rpc('admin_review_punch_edit_request', {
+      p_request_id: requestId,
+      p_status:     status,
+    })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: data as PunchEditRequest }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.adminReviewPunchEditRequest] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── L. getSessionsForDay — read employee sessions for admin modal (mig 099) ────
+
+export async function getSessionsForDay(
+  employeeProfileId: string,
+  workDate: string,
+): Promise<Result<AdminWorkSession[]>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) {
+      return { success: false, error: 'Not authenticated' }
+    }
+
+    const { data, error } = await from('employee_work_sessions')
+      .select(ADMIN_SESSION_COLS)
+      .eq('employee_profile_id', employeeProfileId)
+      .eq('work_date', workDate)
+      .order('created_at', { ascending: true })
+
+    if (error) {
+      // Non-fatal: table absent on older installs (pre-099)
+      console.warn('[adminTimecardService.getSessionsForDay] sessions unavailable:', error.message)
+      return { success: true, data: [] }
+    }
+
+    return { success: true, data: (data ?? []) as AdminWorkSession[] }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.getSessionsForDay] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── M. adminRecordSessionPunch — session-aware correction (mig 099) ────────────
+// Use this instead of adminRecordPunch when the punch has a session_id.
+// The RPC updates the employee_work_sessions row, recomputes minutes, voids the
+// old punch event, writes a new admin_edit event with session_id, and triggers
+// sync_time_entry_from_sessions to rebuild the daily time_entries aggregate.
+
+export async function adminRecordSessionPunch(
+  sessionId: string,
+  punchType: PunchType,
+  punchedAt: string,
+  notes?: string,
+  supersedesId?: string,
+): Promise<Result<AdminWorkSession>> {
+  try {
+    const { data, error } = await rpc('admin_record_session_punch', {
+      p_session_id:    sessionId,
+      p_punch_type:    punchType,
+      p_punched_at:    punchedAt,
+      p_supersedes_id: supersedesId ?? null,
+      p_notes:         notes ?? null,
+    })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: data as AdminWorkSession }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.adminRecordSessionPunch] Error:', err)
+    return { success: false, error: message }
+  }
+}
 
 export async function adminUpdateApprovalStatus(
   timeEntryId: string,

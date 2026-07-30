@@ -130,6 +130,32 @@ describe('buildWorkOrderPayloadV1Draft', () => {
     expect(blank.scope).not.toHaveProperty('crewNotes')
   })
 
+  it('captures assignment-specific Work Order Instructions independently from Crew Notes', () => {
+    const withInstructions = buildWorkOrderPayloadV1Draft({
+      projectId: 'project-1',
+      projectName: 'Project One',
+      blueprintSetId: 'set-1',
+      blueprintTitle: 'E1',
+      dueDate: '2026-07-31',
+      workOrderInstructions: '  Coordinate shutdown.\n\nCall the foreman before energizing.  ',
+      workPackage: pkg({ crewNotes: 'Package-level note' }),
+      annotations: [],
+    })
+    expect(withInstructions.identity.dueDate).toBe('2026-07-31')
+    expect(withInstructions.scope.crewNotes).toBe('Package-level note')
+    expect(withInstructions.workOrderInstructions).toBe('Coordinate shutdown.\n\nCall the foreman before energizing.')
+
+    const blank = buildWorkOrderPayloadV1Draft({
+      projectId: 'project-1',
+      projectName: 'Project One',
+      blueprintSetId: 'set-1',
+      workOrderInstructions: ' \n\t ',
+      workPackage: pkg(),
+      annotations: [],
+    })
+    expect(blank).not.toHaveProperty('workOrderInstructions')
+  })
+
   it('captures Crew Notes by value so later owner edits cannot change the issued draft', () => {
     const sourcePackage = pkg({ crewNotes: 'First line\nSecond line' })
     const draft = buildWorkOrderPayloadV1Draft({

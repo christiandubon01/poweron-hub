@@ -417,15 +417,18 @@ describe('regression guards', () => {
       expect(source).not.toContain('employeeMonthMetrics')
       expect(source).not.toContain('getMyScheduleRange')
     }
-    // My Time still owns the authoritative paid-minutes display.
-    expect(myTime).toContain('formatMinutes(day.paidMinutes)')
-    expect(clock).toContain('recordTimePunch')
+    // My Time still owns the authoritative paid-minutes display (weekly totals in the
+    // navigation header; per-day totals delegate to EmployeeTimeWeekBoard).
+    expect(myTime).toContain('formatMinutes(data.totalPaidMinutes)')
+    expect(clock).toContain('recordSessionPunch')
   })
 
   it('adds no migration and no snapshot or Work Order change', () => {
     const migrations = readdirSync(join(process.cwd(), 'supabase/migrations'))
     expect(existsSync(join(process.cwd(), 'supabase/migrations/096_work_order_snapshot_delivery.sql'))).toBe(true)
-    expect(migrations.filter((name) => /^09[7-9]|^1\d\d_/.test(name))).toEqual([])
+    // 097 is punch-edit-requests (EMPLOYEE-MY-TIME-WEEK-1); 098/099 are job-linked sessions
+    // (EMPLOYEE-JOB-CLOCK-SESSIONS-1). Guard against anything beyond 099.
+    expect(migrations.filter((name) => /^1\d\d_/.test(name))).toEqual([])
     expect(migrations).toContain('086_employee_schedules.sql')
     for (const source of [panel, calendar, logic, scheduleService]) {
       expect(source).not.toContain('ALTER TABLE')

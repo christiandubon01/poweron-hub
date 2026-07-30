@@ -1,24 +1,25 @@
 /**
- * employeePortalService.ts — Employee-facing read-only portal data (TIME-5)
+ * employeePortalService.ts — Employee-facing portal data (TIME-5 + MY-TIME-WEEK-1)
  *
- * READ ONLY. SELECT queries only. This service never writes: no record_time_punch,
- * no write RPC, no insert/update/delete/upsert. Every query is scoped to the
- * signed-in employee via employee_user_id = auth.uid() (RLS te_employee_select_own
- * / tpe_employee_select_own from migration 081). No backupDataService, no
- * localStorage.
+ * Reads: SELECT queries scoped to the signed-in employee via RLS.
+ * Writes: only submitPunchEditRequest (calls SECURITY DEFINER RPC, migration 097).
+ * No direct table inserts/updates/deletes. No backupDataService, no localStorage.
  *
  * Public API:
  *   getCurrentWeekRangeFromTenantDate()          — {startDate,endDate} Mon–Sun for today
  *   shiftWeekRange(range, weeks)                  — move a week range by ±N weeks
  *   addDaysToWorkDate(ymd, days)                  — shared YYYY-MM-DD day math
  *   getMyTimeSummary(startDate, endDate)          — own time entries + punches for a range
+ *   getMyPunchEditRequests(entryIds)              — own punch edit requests for given entries
+ *   submitPunchEditRequest(...)                   — employee submits a correction request
  */
 
 import { supabase } from '@/lib/supabase'
 import { getTenantWorkDate } from '@/services/employeeTimeService'
 
-// Time tables aren't in the generated db types yet — cast the query builder.
+// Time tables and punch-edit RPC aren't in generated db types yet.
 const from = supabase.from as any
+const rpc  = supabase.rpc as any
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -46,11 +47,31 @@ export interface EmployeeMyTimePunch {
   punched_at: string
   source: string
   is_void: boolean
+  session_id: string | null
+}
+
+/** Per-session record returned by getMyTimeSummary (migration 099). */
+export interface EmployeeWorkSession {
+  id: string
+  assignment_id: string | null
+  project_name: string | null
+  work_package_name: string | null
+  work_date: string
+  clock_in_at: string | null
+  lunch_out_at: string | null
+  lunch_in_at: string | null
+  clock_out_at: string | null
+  total_minutes: number | null
+  lunch_minutes: number | null
+  paid_minutes: number | null
+  status: string
+  created_at: string
 }
 
 export interface EmployeeMyTimeDay {
   workDate: string
   entry: EmployeeMyTimeEntry | null
+  sessions: EmployeeWorkSession[]
   punches: EmployeeMyTimePunch[]
   paidMinutes: number | null
   lunchMinutes: number | null
@@ -73,7 +94,11 @@ export interface WeekRange {
 const ENTRY_COLS =
   'id, work_date, clock_in_at, lunch_out_at, lunch_in_at, clock_out_at, total_minutes, lunch_minutes, paid_minutes, status'
 const PUNCH_COLS =
-  'id, work_date, punch_type, punched_at, source, is_void'
+  'id, work_date, punch_type, punched_at, source, is_void, session_id'
+const SESSION_COLS =
+  'id, assignment_id, project_name, work_package_name, work_date, ' +
+  'clock_in_at, lunch_out_at, lunch_in_at, clock_out_at, ' +
+  'total_minutes, lunch_minutes, paid_minutes, status, created_at'
 
 // ── Date helpers (YYYY-MM-DD, timezone-drift free) ─────────────────────────────
 
@@ -181,8 +206,22 @@ export async function getMyTimeSummary(
       return { success: false, error: punchError.message }
     }
 
+    // Fetch sessions (migration 099) — RLS scopes to this employee automatically
+    const { data: sessionData, error: sessionError } = await from('employee_work_sessions')
+      .select(SESSION_COLS)
+      .gte('work_date', startDate)
+      .lte('work_date', endDate)
+      .order('work_date', { ascending: true })
+      .order('created_at', { ascending: true })
+
+    if (sessionError) {
+      // Non-fatal: older installs without migration 099 — fall back to no sessions
+      console.warn('[employeePortalService.getMyTimeSummary] sessions fetch skipped:', sessionError.message)
+    }
+
     const entries = (entryData ?? []) as EmployeeMyTimeEntry[]
     const punches = (punchData ?? []) as EmployeeMyTimePunch[]
+    const sessions = (sessionData ?? []) as EmployeeWorkSession[]
 
     // Index by work_date for the merge.
     const entryByDate = new Map<string, EmployeeMyTimeEntry>()
@@ -195,25 +234,52 @@ export async function getMyTimeSummary(
       punchesByDate.set(p.work_date, list)
     }
 
+    const sessionsByDate = new Map<string, EmployeeWorkSession[]>()
+    for (const s of sessions) {
+      const list = sessionsByDate.get(s.work_date) ?? []
+      list.push(s)
+      sessionsByDate.set(s.work_date, list)
+    }
+
     // Build one row per calendar day so empty days still render.
     const days: EmployeeMyTimeDay[] = eachDate(startDate, endDate).map(workDate => {
       const entry = entryByDate.get(workDate) ?? null
       const dayPunches = punchesByDate.get(workDate) ?? []
+      const daySessions = sessionsByDate.get(workDate) ?? []
+
+      // Aggregate paid/lunch minutes: sum sessions when present, else use entry
+      const paidMinutes = daySessions.length > 0
+        ? daySessions.reduce((sum, s) => sum + (s.paid_minutes ?? 0), 0)
+        : (entry?.paid_minutes ?? null)
+      const lunchMinutes = daySessions.length > 0
+        ? daySessions.reduce((sum, s) => sum + (s.lunch_minutes ?? 0), 0)
+        : (entry?.lunch_minutes ?? null)
+
       return {
         workDate,
         entry,
+        sessions: daySessions,
         punches: dayPunches,
-        paidMinutes: entry?.paid_minutes ?? null,
-        lunchMinutes: entry?.lunch_minutes ?? null,
-        status: entry?.status ?? 'none',
+        paidMinutes,
+        lunchMinutes,
+        status: entry?.status ?? (daySessions.length > 0 ? daySessions[daySessions.length - 1].status : 'none'),
       }
     })
 
     let totalPaidMinutes = 0
     let totalLunchMinutes = 0
-    for (const e of entries) {
-      if (typeof e.paid_minutes === 'number') totalPaidMinutes += e.paid_minutes
-      if (typeof e.lunch_minutes === 'number') totalLunchMinutes += e.lunch_minutes
+    if (sessions.length > 0) {
+      // Multi-session: aggregate from sessions directly
+      for (const s of sessions) {
+        if (typeof s.paid_minutes === 'number') totalPaidMinutes += s.paid_minutes
+        if (typeof s.lunch_minutes === 'number') totalLunchMinutes += s.lunch_minutes
+      }
+    } else {
+      // Legacy: aggregate from time_entries
+      for (const e of entries) {
+        if (typeof e.paid_minutes === 'number') totalPaidMinutes += e.paid_minutes
+        if (typeof e.lunch_minutes === 'number') totalLunchMinutes += e.lunch_minutes
+      }
     }
 
     return {
@@ -229,6 +295,96 @@ export async function getMyTimeSummary(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Network error'
     console.error('[employeePortalService.getMyTimeSummary] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── PunchEditRequest (migration 097) ──────────────────────────────────────────
+
+export interface PunchEditRequest {
+  id: string
+  org_id: string
+  employee_profile_id: string
+  time_entry_id: string
+  session_id: string | null
+  punch_event_id: string | null
+  punch_type: 'clock_in' | 'lunch_out' | 'lunch_in' | 'clock_out'
+  original_time: string | null
+  requested_time: string
+  employee_reason: string
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled'
+  requested_at: string
+  reviewed_by: string | null
+  reviewed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+const PUNCH_EDIT_REQ_COLS =
+  'id, org_id, employee_profile_id, time_entry_id, session_id, punch_event_id, punch_type, ' +
+  'original_time, requested_time, employee_reason, status, requested_at, ' +
+  'reviewed_by, reviewed_at, created_at, updated_at'
+
+/**
+ * Read the employee's own punch edit requests for the given time_entry IDs.
+ * RLS restricts rows to the signed-in employee's profile.
+ */
+export async function getMyPunchEditRequests(
+  entryIds: string[],
+): Promise<ServiceResult<PunchEditRequest[]>> {
+  if (entryIds.length === 0) return { success: true, data: [] }
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) {
+      return { success: false, error: 'Not authenticated' }
+    }
+
+    const { data, error } = await from('time_punch_edit_requests')
+      .select(PUNCH_EDIT_REQ_COLS)
+      .in('time_entry_id', entryIds)
+      .order('requested_at', { ascending: false })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: (data ?? []) as PunchEditRequest[] }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[employeePortalService.getMyPunchEditRequests] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+/**
+ * Submit a punch edit request via the submit_punch_edit_request RPC (migration 097/099).
+ * sessionId (optional): targets a specific session when multiple sessions exist for the day.
+ * The RPC captures the authoritative original_time from the server.
+ */
+export async function submitPunchEditRequest(
+  timeEntryId: string,
+  punchType: 'clock_in' | 'lunch_out' | 'lunch_in' | 'clock_out',
+  requestedTime: string,
+  employeeReason: string,
+  sessionId?: string | null,
+): Promise<ServiceResult<PunchEditRequest>> {
+  try {
+    const { data, error } = await rpc('submit_punch_edit_request', {
+      p_time_entry_id:   timeEntryId,
+      p_punch_type:      punchType,
+      p_requested_time:  requestedTime,
+      p_employee_reason: employeeReason,
+      ...(sessionId ? { p_session_id: sessionId } : {}),
+    })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: data as PunchEditRequest }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[employeePortalService.submitPunchEditRequest] Error:', err)
     return { success: false, error: message }
   }
 }

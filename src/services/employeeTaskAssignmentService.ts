@@ -95,6 +95,14 @@ export interface EmployeeTaskAssignment {
   updated_at: string
   created_at?: string
   current_work_order_version?: number | null
+  blueprint_title?: string | null
+  scheduled_by_name?: string | null
+  completed_by_name?: string | null
+  assigned_hours?: number | null
+  work_order_instructions?: string | null
+  current_snapshot_ids?: string[]
+  current_work_order_payload?: unknown
+  work_order_issued_at?: string | null
 }
 
 /** Employee-facing row — never includes lead_employee_id. */
@@ -181,6 +189,25 @@ export interface UpdateTaskAssignmentInput {
   completionNotes?: string | null
   workPackageName?: string
   projectName?: string | null
+}
+
+export interface UpdateTaskAssignmentWithWorkOrderAndSnapshotsInput {
+  assignmentId: string
+  clientRequestId: string
+  expectedUpdatedAt: string
+  expectedWorkOrderVersion: number
+  workPackageId: string
+  workPackageName: string
+  projectId: string
+  projectName: string
+  blueprintSetId: string
+  blueprintTitle?: string | null
+  leadEmployeeId: string
+  assignedEmployeeIds: string[]
+  dueDate: string | null
+  status: TaskAssignmentStatus
+  workOrderPayload: WorkOrderPayloadV1Draft
+  snapshotIds: string[]
 }
 
 type Result<T> = { success: true; data: T } | { success: false; error: string }
@@ -330,6 +357,30 @@ export async function listOrgTaskAssignments(): Promise<Result<EmployeeTaskAssig
     const message = err instanceof Error ? err.message : 'Network error'
     console.error('[employeeTaskAssignmentService.listOrgTaskAssignments]', err)
     return { success: false, error: message }
+  }
+}
+
+/**
+ * Owner/admin calendar projection. The secure RPC resolves scheduler/completer
+ * names and reads only the current immutable Work Order version.
+ */
+export async function listAdminWorkOrderAssignments(): Promise<Result<EmployeeTaskAssignment[]>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+
+    const { data, error } = await rpc('get_admin_task_assignment_board')
+    if (error) {
+      if (isMissingSupabaseRpcError(error, 'get_admin_task_assignment_board')) {
+        return { success: false, error: 'The admin Work Order board backend has not been deployed yet.' }
+      }
+      return { success: false, error: safeAdminAssignmentReadError(error.message) }
+    }
+    if (!Array.isArray(data)) return { success: true, data: [] }
+    return { success: true, data: data as EmployeeTaskAssignment[] }
+  } catch (err: unknown) {
+    console.error('[employeeTaskAssignmentService.listAdminWorkOrderAssignments]', err)
+    return { success: false, error: 'Could not load Task Assignments.' }
   }
 }
 
@@ -608,6 +659,8 @@ export function buildTaskAssignmentWorkOrderDraft(input: {
   blueprintSetId: string
   blueprintTitle?: string | null
   workPackageId: string
+  dueDate?: string | null
+  workOrderInstructions?: string | null
 }): Result<WorkOrderPayloadV1Draft> {
   try {
     const backup = getBackupData()
@@ -632,6 +685,8 @@ export function buildTaskAssignmentWorkOrderDraft(input: {
         projectName: input.projectName,
         blueprintSetId: input.blueprintSetId,
         blueprintTitle: input.blueprintTitle || blueprint?.title || input.blueprintSetId,
+        dueDate: input.dueDate,
+        workOrderInstructions: input.workOrderInstructions,
         workPackage,
         blueprint,
         annotations,
@@ -644,6 +699,125 @@ export function buildTaskAssignmentWorkOrderDraft(input: {
   } catch (err: unknown) {
     console.error('[employeeTaskAssignmentService.buildTaskAssignmentWorkOrderDraft]', err)
     return { success: false, error: 'Could not build Work Order.' }
+  }
+}
+
+export function buildTaskAssignmentWorkOrderDraftForEdit(input: {
+  assignment: EmployeeTaskAssignment
+  projectId: string
+  projectName: string
+  blueprintSetId: string
+  blueprintTitle?: string | null
+  workPackageId: string
+  dueDate?: string | null
+  workOrderInstructions?: string | null
+}): Result<WorkOrderPayloadV1Draft> {
+  const sameSource =
+    input.assignment.project_id === input.projectId &&
+    input.assignment.blueprint_set_id === input.blueprintSetId &&
+    input.assignment.work_package_id === input.workPackageId
+
+  if (!sameSource || !isPlainObject(input.assignment.current_work_order_payload)) {
+    return buildTaskAssignmentWorkOrderDraft(input)
+  }
+
+  try {
+    const draft = JSON.parse(JSON.stringify(input.assignment.current_work_order_payload)) as Record<string, unknown>
+    delete draft.schemaVersion
+    delete draft.workOrderVersion
+    const identity = isPlainObject(draft.identity) ? { ...draft.identity } : {}
+    delete identity.assignmentId
+    delete identity.orgId
+    delete identity.createdAt
+    delete identity.createdBy
+    identity.projectId = input.projectId
+    identity.projectName = input.projectName
+    identity.blueprintSetId = input.blueprintSetId
+    identity.workPackageId = input.workPackageId
+    if (input.blueprintTitle?.trim()) identity.blueprintTitle = input.blueprintTitle.trim()
+    else delete identity.blueprintTitle
+    if (input.dueDate) identity.dueDate = input.dueDate
+    else delete identity.dueDate
+    draft.identity = identity
+    const instructions = normalizeWorkOrderInstructions(input.workOrderInstructions)
+    if (instructions) draft.workOrderInstructions = instructions
+    else delete draft.workOrderInstructions
+    return { success: true, data: draft as WorkOrderPayloadV1Draft }
+  } catch (err) {
+    console.error('[employeeTaskAssignmentService.buildTaskAssignmentWorkOrderDraftForEdit]', err)
+    return { success: false, error: 'Could not prepare the issued Work Order for editing.' }
+  }
+}
+
+export async function updateTaskAssignmentWithWorkOrderAndSnapshots(
+  input: UpdateTaskAssignmentWithWorkOrderAndSnapshotsInput,
+): Promise<Result<{
+  assignment: EmployeeTaskAssignment
+  workOrderVersion: number
+  attachmentCount: number
+  orderedSnapshotIds: string[]
+  reissued: boolean
+  idempotentReplay: boolean
+}>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+    const assigned = uniqueIds(input.assignedEmployeeIds)
+    const snapshots = input.snapshotIds.map((id) => String(id || '').trim()).filter(Boolean)
+    if (assigned.length === 0) return { success: false, error: 'Select at least one employee' }
+    if (!assigned.includes(input.leadEmployeeId)) {
+      return { success: false, error: 'Primary assignee must be one of the selected employees' }
+    }
+    if (snapshots.length > 15) return { success: false, error: 'Maximum of 15 snapshots.' }
+    if (new Set(snapshots).size !== snapshots.length) {
+      return { success: false, error: 'Duplicate snapshot attachments are not allowed.' }
+    }
+
+    const workOrderPayload = await captureAnimationBackgroundReferences(input.workOrderPayload, snapshots)
+    const { data, error } = await rpc('update_employee_task_assignment_with_work_order_and_snapshots', {
+      p_assignment_id: input.assignmentId,
+      p_client_request_id: input.clientRequestId,
+      p_expected_updated_at: input.expectedUpdatedAt,
+      p_expected_work_order_version: input.expectedWorkOrderVersion,
+      p_work_package_id: input.workPackageId,
+      p_work_package_name: input.workPackageName,
+      p_project_id: input.projectId,
+      p_project_name: input.projectName,
+      p_blueprint_set_id: input.blueprintSetId,
+      p_blueprint_title: input.blueprintTitle ?? null,
+      p_lead_employee_id: input.leadEmployeeId,
+      p_assigned_employee_ids: assigned,
+      p_due_date: input.dueDate,
+      p_status: input.status,
+      p_work_order_payload: workOrderPayload,
+      p_snapshot_ids: snapshots,
+    })
+    if (error) return { success: false, error: safeAssignmentUpdateError(error) }
+    const result = data as {
+      assignment?: EmployeeTaskAssignment
+      workOrderVersion?: number
+      attachmentCount?: number
+      orderedSnapshotIds?: string[]
+      reissued?: boolean
+      idempotentReplay?: boolean
+    } | null
+    if (!result?.assignment || !Number.isInteger(result.workOrderVersion)) {
+      return { success: false, error: 'Could not save Work Order Assignment changes.' }
+    }
+    return {
+      success: true,
+      data: {
+        assignment: result.assignment,
+        workOrderVersion: Number(result.workOrderVersion),
+        attachmentCount: Number(result.attachmentCount || 0),
+        orderedSnapshotIds: Array.isArray(result.orderedSnapshotIds) ? result.orderedSnapshotIds.map(String) : [],
+        reissued: !!result.reissued,
+        idempotentReplay: !!result.idempotentReplay,
+      },
+    }
+  } catch (err: unknown) {
+    console.error('[employeeTaskAssignmentService.updateTaskAssignmentWithWorkOrderAndSnapshots]', err)
+    return { success: false, error: safeAssignmentUpdateError(err) }
   }
 }
 
@@ -1078,6 +1252,45 @@ function safeAssignmentError(message: string): string {
   if (/work order payload/i.test(message)) return 'Could not create the Work Order for this assignment'
   if (/assignment request/i.test(message)) return 'Check the assignment details and try again'
   return 'Could not create assignment.'
+}
+
+function safeAdminAssignmentReadError(message: string): string {
+  if (/not authenticated/i.test(message)) return 'Not authenticated'
+  if (/not authorized/i.test(message)) return 'Not authorized'
+  if (/failed to fetch|networkerror|network request failed|timeout/i.test(message)) return 'Network error. Try again.'
+  return 'Could not load Task Assignments.'
+}
+
+function safeAssignmentUpdateError(error: unknown): string {
+  const message = String(
+    error instanceof Error
+      ? error.message
+      : (error as { message?: unknown } | null)?.message ?? '',
+  )
+  if (/assignment changed|stale assignment|concurrent edit/i.test(message)) {
+    return 'This assignment changed while you were editing it. Refresh the assignment and try again; your draft is still open.'
+  }
+  if (/completed assignments cannot be edited/i.test(message)) {
+    return 'Completed Work Orders are historical records and cannot be edited.'
+  }
+  if (/not authenticated/i.test(message)) return 'Not authenticated'
+  if (/not authorized/i.test(message)) return 'Not authorized'
+  if (/assignment not found/i.test(message)) return 'Assignment not found'
+  if (/maximum of 15|more than 15|sixteenth snapshot/i.test(message)) return 'Maximum of 15 snapshots.'
+  if (/duplicate snapshot/i.test(message)) return 'Duplicate snapshot attachments are not allowed.'
+  if (/selected snapshot|snapshot.*no longer available/i.test(message)) return 'A selected snapshot is no longer available.'
+  if (/invalid assigned employee/i.test(message)) return 'One or more selected employees can no longer be assigned.'
+  if (/invalid work order payload|work order payload/i.test(message)) return 'Could not save the employee Work Order content.'
+  if (/failed to fetch|networkerror|network request failed|timeout/i.test(message)) return 'Network error. Try again.'
+  if (isMissingSupabaseRpcError(error, 'update_employee_task_assignment_with_work_order_and_snapshots')) {
+    return 'Work Order Assignment editing is not available until the admin board backend is deployed.'
+  }
+  return 'Could not save Work Order Assignment changes.'
+}
+
+function normalizeWorkOrderInstructions(value: string | null | undefined): string | null {
+  const text = String(value ?? '').trim().slice(0, 4000)
+  return text || null
 }
 
 function safeSnapshotAssignmentError(message: string): string {

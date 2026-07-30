@@ -18,6 +18,8 @@ export interface BuildWorkOrderPayloadV1DraftInput {
   projectName: string
   blueprintSetId: string
   blueprintTitle?: string
+  dueDate?: string | null
+  workOrderInstructions?: string | null
   workPackage: BlueprintScopeLayer
   blueprint?: Pick<BlueprintLibraryItem, 'updatedAt'>
   annotations?: readonly BlueprintAnnotation[]
@@ -39,6 +41,7 @@ export function buildWorkOrderPayloadV1Draft(input: BuildWorkOrderPayloadV1Draft
       workPackageId: cleanRequiredText(workPackage.id, 200),
       blueprintSetId: cleanRequiredText(input.blueprintSetId, 200),
       ...(cleanOptionalText(input.blueprintTitle, 200) ? { blueprintTitle: cleanOptionalText(input.blueprintTitle, 200) } : {}),
+      ...(cleanOptionalText(input.dueDate, 10) ? { dueDate: cleanOptionalText(input.dueDate, 10) } : {}),
       ...(Number.isFinite(workPackage.pageNumber) && Number(workPackage.pageNumber) > 0
         ? { sourcePageNumber: Math.floor(Number(workPackage.pageNumber)) }
         : {}),
@@ -60,6 +63,9 @@ export function buildWorkOrderPayloadV1Draft(input: BuildWorkOrderPayloadV1Draft
         ? { crewNotes: cleanMultilineText(workPackage.crewNotes, 4000) }
         : {}),
     },
+    ...(cleanMultilineText(input.workOrderInstructions, 4000)
+      ? { workOrderInstructions: cleanMultilineText(input.workOrderInstructions, 4000) }
+      : {}),
     labor: normalizeLabor(workPackage),
     items: normalizeItems(workPackage.itemRefs),
     electricalSymbols: buildElectricalSymbols({

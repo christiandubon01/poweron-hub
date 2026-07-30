@@ -1,30 +1,32 @@
 // @ts-nocheck
 /**
- * EmployeeTimeClock — Employee-side time clock card (TIME-3 + TIME-6 polish).
+ * EmployeeTimeClock — Employee-side time clock card (TIME-3 + SESSIONS-1).
  *
- * Loads today's status on mount and after every successful punch. All writes
- * go through recordTimePunch (record_time_punch RPC). No optimistic inserts,
- * no localStorage, no direct table writes.
+ * Multi-session, job-linked clock:
+ *   • When no active session: job picker + disabled Clock In button.
+ *   • When session active: active project/work order display + punch actions.
+ *   • After Clock Out: job picker reappears (selection cleared).
  *
- * TIME-6 UX polish (UI-only — no RPC / DB / calculation changes):
- *   - Per-phase button colors + animation (green clock-in, amber lunch, done glow).
- *   - Live client-side timers derived from existing punch/entry timestamps.
- *   - Instant "Clocking in…/Starting lunch…" pending feedback so punches feel
- *     responsive; buttons disable while a punch is in flight (dup-click guard).
- *   - Animated "Done for the Day" success state at end of day.
- * Timers are visual only — they never write to the DB and the end-of-day summary
- * still uses the server entry's paid_minutes / lunch_minutes.
+ * All writes go through recordSessionPunch (record_session_punch RPC, mig 099).
+ * No optimistic inserts, no localStorage, no direct table writes.
+ * Live timers are visual only and never write to the DB.
  */
 
 import React, { useCallback, useEffect, useState } from 'react'
-import { Clock, Loader2, AlertCircle, CheckCircle2, Play, Coffee, Square } from 'lucide-react'
+import { Clock, Loader2, AlertCircle, CheckCircle2, Play, Coffee, Square, Briefcase } from 'lucide-react'
 import {
-  getTodayTimeStatus,
-  recordTimePunch,
-  type TodayTimeStatus,
+  getTodaySessions,
+  getMyEligibleAssignments,
+  deriveSessionPhase,
+  getNextSessionActions,
+  recordSessionPunch,
+  PUNCH_DISPLAY_ORDER,
+  type WorkSession,
+  type EligibleAssignment,
   type PunchType,
   type ClockPhase,
 } from '@/services/employeeTimeService'
+import { EmployeeJobPicker } from './EmployeeJobPicker'
 
 // ── Presentation maps ─────────────────────────────────────────────────────────
 
@@ -36,14 +38,6 @@ const PHASE_PILL: Record<ClockPhase, { label: string; cls: string }> = {
   done:            { label: 'Complete',        cls: 'bg-blue-100 text-blue-700 border-blue-200' },
 }
 
-const PUNCH_LABEL: Record<PunchType, string> = {
-  clock_in:  'Clock In',
-  lunch_out: 'Lunch Out',
-  lunch_in:  'Lunch In',
-  clock_out: 'Clock Out',
-}
-
-// Primary action button copy per punch type.
 const ACTION_LABEL: Record<PunchType, string> = {
   clock_in:  'Clock In',
   lunch_out: 'Start Lunch',
@@ -51,7 +45,6 @@ const ACTION_LABEL: Record<PunchType, string> = {
   clock_out: 'Clock Out',
 }
 
-// Instant pending copy while a punch is in flight (TIME-6 lag feedback).
 const PENDING_LABEL: Record<PunchType, string> = {
   clock_in:  'Clocking in…',
   lunch_out: 'Starting lunch…',
@@ -66,8 +59,6 @@ const ACTION_ICON: Record<PunchType, React.ComponentType<{ className?: string; s
   clock_out: Square,
 }
 
-// Solid style for the *primary* action, keyed by phase so the accent matches
-// the state (green start, amber lunch, blue clock-out after lunch).
 const PRIMARY_BTN: Record<ClockPhase, string> = {
   off_clock:       'bg-green-600 hover:bg-green-500 active:bg-green-700 text-white shadow-md shadow-green-600/25',
   working:         'bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-white shadow-md shadow-amber-500/25',
@@ -89,7 +80,6 @@ function formatTime(iso: string | null | undefined): string {
 
 function formatWorkDate(workDate: string | undefined): string {
   if (!workDate) return ''
-  // Parse YYYY-MM-DD as a local date (avoid UTC shift from the Date string ctor).
   const [y, m, d] = workDate.split('-').map(Number)
   if (!y || !m || !d) return workDate
   return new Date(y, m - 1, d).toLocaleDateString([], {
@@ -106,12 +96,10 @@ function formatMinutes(mins: number | null | undefined): string {
   return `${m}m`
 }
 
-// Duration from milliseconds → "Xh Ym" (visual only).
 function formatHM(ms: number): string {
   return formatMinutes(Math.max(0, ms) / 60000)
 }
 
-// Duration from milliseconds → "H:MM:SS" for the ticking live timer.
 function formatClock(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
   const h = Math.floor(total / 3600)
@@ -126,49 +114,40 @@ function toMs(iso: string | null | undefined): number | null {
   return isNaN(t) ? null : t
 }
 
-// Main status text derived from phase + entry timestamps.
-function mainStatusText(status: TodayTimeStatus): string {
-  const e = status.entry
-  switch (status.phase) {
-    case 'off_clock':       return 'Not clocked in yet'
-    case 'working':         return `Clocked in at ${formatTime(e?.clock_in_at)}`
-    case 'on_lunch':        return `Lunch started at ${formatTime(e?.lunch_out_at)}`
-    case 'back_from_lunch': return `Back from lunch at ${formatTime(e?.lunch_in_at)}`
-    case 'done':            return `Clocked out at ${formatTime(e?.clock_out_at)}`
-    default:                return ''
-  }
-}
-
-// Prefer the entry's timestamps; fall back to raw punches so the live timer still
-// runs during the brief window before the summary trigger updates time_entries.
-function resolveTimestamps(status: TodayTimeStatus | null) {
-  const e = status?.entry ?? null
-  const punchAt = (t: PunchType): string | null =>
-    status?.punches.find(p => p.punch_type === t && !p.is_void)?.punched_at ?? null
-  return {
-    clockIn:  toMs(e?.clock_in_at) ?? toMs(punchAt('clock_in')),
-    lunchOut: toMs(e?.lunch_out_at) ?? toMs(punchAt('lunch_out')),
-    lunchIn:  toMs(e?.lunch_in_at) ?? toMs(punchAt('lunch_in')),
-    clockOut: toMs(e?.clock_out_at) ?? toMs(punchAt('clock_out')),
-  }
+const SESSION_PUNCH_KEY: Record<PunchType, keyof WorkSession> = {
+  clock_in:  'clock_in_at',
+  lunch_out: 'lunch_out_at',
+  lunch_in:  'lunch_in_at',
+  clock_out: 'clock_out_at',
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-export function EmployeeTimeClock() {
-  const [status, setStatus]       = useState<TodayTimeStatus | null>(null)
-  const [loading, setLoading]     = useState(true)              // initial / refetch load
-  const [pending, setPending]     = useState<PunchType | null>(null) // punch in flight
-  const [error, setError]         = useState('')
-  const [nowTs, setNowTs]         = useState(() => Date.now())
-  const [showClockOutSummary, setShowClockOutSummary] = useState(false)
-  const [clockOutSummary, setClockOutSummary] = useState('')
+export interface EmployeeTimeClockProps {
+  onPunchSuccess?: () => void
+}
 
-  const loadStatus = useCallback(async () => {
+export function EmployeeTimeClock({ onPunchSuccess }: EmployeeTimeClockProps = {}) {
+  const [activeSession, setActiveSession]         = useState<WorkSession | null>(null)
+  const [todaySessions, setTodaySessions]         = useState<WorkSession[]>([])
+  const [assignments, setAssignments]             = useState<EligibleAssignment[]>([])
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null)
+  const [loading, setLoading]                     = useState(true)
+  const [assignmentsLoading, setAssignmentsLoading] = useState(false)
+  const [pending, setPending]                     = useState<PunchType | null>(null)
+  const [error, setError]                         = useState('')
+  const [nowTs, setNowTs]                         = useState(() => Date.now())
+  const [workDate, setWorkDate]                   = useState('')
+
+  const loadSessions = useCallback(async () => {
     setLoading(true)
-    const res = await getTodayTimeStatus()
-    if (res.success && res.status) {
-      setStatus(res.status)
+    const res = await getTodaySessions()
+    if (res.success && res.sessions) {
+      const all = res.sessions
+      setTodaySessions(all)
+      const active = all.find(s => s.clock_in_at && !s.clock_out_at) ?? null
+      setActiveSession(active)
+      if (all.length > 0) setWorkDate(all[0].work_date)
       setError('')
     } else {
       setError(res.error || 'Could not load your time status.')
@@ -176,15 +155,29 @@ export function EmployeeTimeClock() {
     setLoading(false)
   }, [])
 
-  useEffect(() => {
-    loadStatus()
-  }, [loadStatus])
+  const loadAssignments = useCallback(async () => {
+    setAssignmentsLoading(true)
+    const res = await getMyEligibleAssignments()
+    setAssignments(res.success ? (res.assignments ?? []) : [])
+    setAssignmentsLoading(false)
+  }, [])
 
-  const phase     = status?.phase ?? 'off_clock'
+  useEffect(() => {
+    loadSessions()
+  }, [loadSessions])
+
+  const phase = deriveSessionPhase(activeSession)
+
+  // Load assignments whenever we need the job picker (no active session)
+  useEffect(() => {
+    if (phase === 'off_clock') {
+      loadAssignments()
+    }
+  }, [phase, loadAssignments])
+
   const isRunning = phase === 'working' || phase === 'on_lunch' || phase === 'back_from_lunch'
 
-  // Live timer tick — only while a timer is actually running. Cleared on unmount
-  // and whenever the phase changes. Visual only; never refetches, never writes.
+  // Live timer tick — only while a session is running
   useEffect(() => {
     if (!isRunning) return
     setNowTs(Date.now())
@@ -192,49 +185,44 @@ export function EmployeeTimeClock() {
     return () => clearInterval(id)
   }, [isRunning, phase])
 
-  const handlePunch = async (punchType: PunchType, endOfDaySummary?: string | null) => {
-    // Dup-click guard: ignore while a punch or a load is already in flight.
+  const handlePunch = async (punchType: PunchType) => {
     if (pending || loading) return
 
-    // Clock-out: collect optional end-of-day summary before submitting the punch.
-    if (punchType === 'clock_out' && endOfDaySummary === undefined && !showClockOutSummary) {
-      setShowClockOutSummary(true)
-      setClockOutSummary('')
-      setError('')
+    const assignmentId = punchType === 'clock_in' ? selectedAssignmentId : null
+
+    // Require assignment selection for Clock In
+    if (punchType === 'clock_in' && !assignmentId) {
+      setError('Please select a Work Job before clocking in.')
       return
     }
 
-    setPending(punchType)          // instant feedback before the network round-trip
+    setPending(punchType)
     setError('')
 
-    const res = await recordTimePunch(
-      punchType,
-      punchType === 'clock_out' ? { endOfDaySummary: endOfDaySummary ?? clockOutSummary } : undefined,
-    )
+    const res = await recordSessionPunch(punchType, assignmentId ?? undefined)
 
     if (res.success) {
-      setShowClockOutSummary(false)
-      setClockOutSummary('')
-      // Re-sync from the server (trigger updates the summary entry).
-      await loadStatus()
+      // Clear selection after successful Clock In (locked to session now)
+      if (punchType === 'clock_in') {
+        setSelectedAssignmentId(null)
+      }
+      // Clear selection after Clock Out (ready for next job)
+      if (punchType === 'clock_out') {
+        setSelectedAssignmentId(null)
+      }
+      await loadSessions()
+      onPunchSuccess?.()
     } else {
       setError(res.error || 'Could not record punch.')
-      // Re-fetch once so the UI reflects any server-side state after a rejection.
-      await loadStatus()
+      await loadSessions()
     }
     setPending(null)
   }
 
-  const cancelClockOutSummary = () => {
-    if (pending) return
-    setShowClockOutSummary(false)
-    setClockOutSummary('')
-  }
-
   const busy = loading || pending != null
 
-  // ── Loading (first load, no data yet) ──
-  if (loading && !status) {
+  // ── Loading (first load) ──
+  if (loading && todaySessions.length === 0 && !activeSession) {
     return (
       <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
         <div className="flex items-center gap-2 text-sm text-gray-500">
@@ -246,11 +234,16 @@ export function EmployeeTimeClock() {
   }
 
   const pill    = PHASE_PILL[phase]
-  const actions = status?.nextActions ?? []
-  const entry   = status?.entry ?? null
-  const ts      = resolveTimestamps(status)
+  const actions = getNextSessionActions(phase)
 
-  // ── Live durations (visual only) ──
+  // ── Live durations (visual only, from active session) ──
+  const ts = {
+    clockIn:  toMs(activeSession?.clock_in_at),
+    lunchOut: toMs(activeSession?.lunch_out_at),
+    lunchIn:  toMs(activeSession?.lunch_in_at),
+    clockOut: toMs(activeSession?.clock_out_at),
+  }
+
   let workedMs = 0
   let lunchMs  = 0
   if (phase === 'working') {
@@ -262,9 +255,6 @@ export function EmployeeTimeClock() {
     const lunchDur = (ts.lunchOut != null && ts.lunchIn != null) ? ts.lunchIn - ts.lunchOut : 0
     workedMs = ts.clockIn != null ? (nowTs - ts.clockIn) - lunchDur : 0
     lunchMs  = lunchDur
-  } else if (phase === 'done') {
-    workedMs = (entry?.paid_minutes ?? 0) * 60000
-    lunchMs  = (entry?.lunch_minutes ?? 0) * 60000
   }
   workedMs = Math.max(0, workedMs)
   lunchMs  = Math.max(0, lunchMs)
@@ -275,9 +265,12 @@ export function EmployeeTimeClock() {
     ? { box: 'bg-amber-50 border-amber-200', label: 'text-amber-700', value: 'text-amber-800', dot: 'bg-amber-500' }
     : { box: 'bg-green-50 border-green-200', label: 'text-green-700', value: 'text-green-800', dot: 'bg-green-500' }
 
+  // Selected assignment for confirmation summary
+  const selectedAssignment = assignments.find(a => a.id === selectedAssignmentId)
+
   return (
     <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm space-y-4">
-      {/* Scoped animations (respect reduced-motion). */}
+      {/* Scoped animations */}
       <style>{`
         @keyframes eclockPulse {
           0%, 100% { box-shadow: 0 0 0 0 rgba(22,163,74,0.35), 0 6px 18px rgba(22,163,74,0.22); }
@@ -312,17 +305,28 @@ export function EmployeeTimeClock() {
         </span>
       </div>
 
-      {/* Date + main status */}
-      <div>
-        <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">
-          {formatWorkDate(status?.workDate)}
-        </p>
-        <p className="text-lg font-bold text-gray-900 mt-0.5">
-          {status ? mainStatusText(status) : 'Not clocked in yet'}
-        </p>
-      </div>
+      {/* Date */}
+      <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">
+        {formatWorkDate(workDate || (new Date()).toLocaleDateString('en-CA'))}
+      </p>
 
-      {/* Live timer panel — only while a timer is running */}
+      {/* Active session info */}
+      {activeSession && phase !== 'off_clock' && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-3 flex items-start gap-2">
+          <Briefcase className="w-4 h-4 text-gray-500 mt-0.5 flex-shrink-0" />
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Active Job</p>
+            {activeSession.project_name && (
+              <p className="text-xs text-gray-500 truncate">{activeSession.project_name}</p>
+            )}
+            <p className="text-sm font-bold text-gray-900 truncate">
+              {activeSession.work_package_name ?? 'Unknown Work Order'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Live timer panel */}
       {isRunning && (
         <div className={`rounded-xl border px-4 py-3 ${timerAccent.box}`}>
           <div className="flex items-center justify-between">
@@ -338,7 +342,7 @@ export function EmployeeTimeClock() {
             {formatClock(liveMs)}
           </p>
           <div className="mt-2.5 flex items-center gap-4 text-xs text-gray-500">
-            <span>Worked today <b className="text-gray-800 tabular-nums">{formatHM(workedMs)}</b></span>
+            <span>Worked <b className="text-gray-800 tabular-nums">{formatHM(workedMs)}</b></span>
             <span>Lunch <b className="text-gray-800 tabular-nums">{formatHM(lunchMs)}</b></span>
           </div>
         </div>
@@ -352,120 +356,133 @@ export function EmployeeTimeClock() {
         </div>
       )}
 
-      {/* Actions / Done state / Clock-out summary */}
-      {phase === 'done' ? (
-        <div
-          className="eclock-done relative overflow-hidden w-full py-4 rounded-xl bg-gradient-to-r from-green-600 to-emerald-500 text-white font-bold text-base flex items-center justify-center gap-2 select-none"
-          role="status"
-        >
-          <CheckCircle2 className="w-5 h-5" />
-          Done for the Day
-          <span
-            className="eclock-shimmer pointer-events-none absolute inset-y-0 -left-1/3 w-1/3"
-            style={{ background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.45), transparent)' }}
-          />
-        </div>
-      ) : showClockOutSummary ? (
+      {/* Job picker — visible when no active session */}
+      {phase === 'off_clock' && (
         <div className="space-y-3">
-          <div>
-            <label htmlFor="eod-summary" className="block text-sm font-semibold text-gray-800 mb-1.5">
-              What did you get done today?
-            </label>
-            <textarea
-              id="eod-summary"
-              value={clockOutSummary}
-              onChange={(e) => setClockOutSummary(e.target.value)}
-              placeholder="Optional — brief end-of-day summary"
-              rows={4}
-              disabled={busy}
-              className="w-full rounded-xl border border-gray-300 bg-white px-3 py-3 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-60"
-              style={{ minHeight: 96, fontSize: 16 }}
+          {assignmentsLoading ? (
+            <div className="flex items-center gap-2 text-sm text-gray-400 py-2">
+              <Loader2 size={14} className="animate-spin" />
+              Loading available jobs…
+            </div>
+          ) : (
+            <EmployeeJobPicker
+              assignments={assignments}
+              selectedId={selectedAssignmentId}
+              onSelect={id => {
+                setSelectedAssignmentId(id)
+                setError('')
+              }}
             />
-            <p className="text-[11px] text-gray-400 mt-1">Optional — you can clock out without a summary.</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => handlePunch('clock_out', clockOutSummary)}
-            disabled={busy}
-            aria-busy={pending === 'clock_out'}
-            className="w-full flex items-center justify-center gap-2 rounded-xl font-bold text-base transition disabled:opacity-60 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white shadow-md shadow-blue-600/25"
-            style={{ minHeight: 44 }}
-          >
-            {pending === 'clock_out'
-              ? <Loader2 size={16} className="animate-spin" />
-              : <Square size={16} />}
-            {pending === 'clock_out' ? PENDING_LABEL.clock_out : 'Submit Clock Out'}
-          </button>
-          <button
-            type="button"
-            onClick={cancelClockOutSummary}
-            disabled={busy}
-            className="w-full py-3 rounded-xl font-semibold text-sm text-gray-600 bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-60"
-            style={{ minHeight: 44 }}
-          >
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {actions.map((action, idx) => {
-            const isPrimary  = idx === 0
-            const isPending  = pending === action
-            const Icon       = ACTION_ICON[action]
-            const base       = 'w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-base transition disabled:opacity-60 disabled:cursor-not-allowed'
-            const style      = isPrimary ? PRIMARY_BTN[phase] : SECONDARY_BTN
-            // Subtle idle pulse only on the standalone Clock In call-to-action.
-            const pulse      = phase === 'off_clock' && isPrimary && !busy ? 'eclock-pulse' : ''
-            return (
-              <button
-                key={action}
-                type="button"
-                onClick={() => handlePunch(action)}
-                disabled={busy}
-                aria-busy={isPending}
-                className={`${base} ${style} ${pulse}`}
-                style={{ minHeight: 44 }}
-              >
-                {isPending
-                  ? <Loader2 size={16} className="animate-spin" />
-                  : <Icon size={16} />}
-                {isPending ? PENDING_LABEL[action] : ACTION_LABEL[action]}
-              </button>
-            )
-          })}
+          )}
+
+          {/* Confirmation summary before Clock In */}
+          {selectedAssignment && (
+            <div className="bg-green-50 border border-green-200 rounded-xl px-3 py-3 space-y-0.5">
+              <p className="text-[10px] font-bold text-green-700 uppercase tracking-wide">
+                Ready to clock in
+              </p>
+              {selectedAssignment.project_name && (
+                <p className="text-xs text-green-800 truncate">{selectedAssignment.project_name}</p>
+              )}
+              <p className="text-sm font-bold text-green-900 truncate">
+                {selectedAssignment.work_package_name}
+              </p>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Today's punches */}
-      {status && status.punches.length > 0 && (
+      {/* Punch action buttons */}
+      <div className="space-y-2">
+        {actions.map((action, idx) => {
+          const isPrimary = idx === 0
+          const isPending = pending === action
+          const Icon      = ACTION_ICON[action]
+          const isClockIn = action === 'clock_in'
+          const disabled  = busy || (isClockIn && !selectedAssignmentId)
+          const base      = 'w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-base transition disabled:opacity-60 disabled:cursor-not-allowed'
+          const style     = isPrimary ? PRIMARY_BTN[phase] : SECONDARY_BTN
+          const pulse     = phase === 'off_clock' && isPrimary && !busy && selectedAssignmentId
+            ? 'eclock-pulse' : ''
+          return (
+            <button
+              key={action}
+              type="button"
+              onClick={() => handlePunch(action)}
+              disabled={disabled}
+              aria-busy={isPending}
+              className={`${base} ${style} ${pulse}`}
+              style={{ minHeight: 44 }}
+            >
+              {isPending
+                ? <Loader2 size={16} className="animate-spin" />
+                : <Icon size={16} />}
+              {isPending ? PENDING_LABEL[action] : ACTION_LABEL[action]}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Today's punch summary (active session, fixed visual order) */}
+      {activeSession && (
         <div className="border-t border-gray-100 pt-3">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Today's punches</p>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+            Today's punches
+          </p>
           <ul className="space-y-1.5">
-            {status.punches.map(p => (
-              <li key={p.id} className="flex items-center justify-between text-sm">
-                <span className="text-gray-600">{PUNCH_LABEL[p.punch_type] ?? p.punch_type}</span>
-                <span className="text-gray-900 font-medium tabular-nums">{formatTime(p.punched_at)}</span>
-              </li>
-            ))}
+            {PUNCH_DISPLAY_ORDER.map(({ type, label }) => {
+              const timeIso = activeSession[SESSION_PUNCH_KEY[type]] as string | null
+              const time = formatTime(timeIso)
+              return (
+                <li key={type} className="flex items-center justify-between text-sm">
+                  <span className="text-gray-600">{label}</span>
+                  <span className={`font-medium tabular-nums ${time === '—' ? 'text-gray-300' : 'text-gray-900'}`}>
+                    {time}
+                  </span>
+                </li>
+              )
+            })}
           </ul>
+          {(activeSession.paid_minutes != null || activeSession.lunch_minutes != null) && (
+            <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-3 gap-2 text-center">
+              <div>
+                <p className="text-[10px] text-gray-400 uppercase tracking-wide">Paid</p>
+                <p className="text-sm font-bold text-gray-900">{formatMinutes(activeSession.paid_minutes)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-gray-400 uppercase tracking-wide">Lunch</p>
+                <p className="text-sm font-bold text-gray-900">{formatMinutes(activeSession.lunch_minutes)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-gray-400 uppercase tracking-wide">Status</p>
+                <p className="text-sm font-bold text-gray-900 capitalize">{activeSession.status}</p>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Summary (server values — authoritative end-of-day totals) */}
-      {entry && (entry.paid_minutes != null || entry.lunch_minutes != null || entry.status) && (
-        <div className="border-t border-gray-100 pt-3 grid grid-cols-3 gap-2 text-center">
-          <div>
-            <p className="text-[10px] text-gray-400 uppercase tracking-wide">Paid</p>
-            <p className="text-sm font-bold text-gray-900">{formatMinutes(entry.paid_minutes)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] text-gray-400 uppercase tracking-wide">Lunch</p>
-            <p className="text-sm font-bold text-gray-900">{formatMinutes(entry.lunch_minutes)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] text-gray-400 uppercase tracking-wide">Status</p>
-            <p className="text-sm font-bold text-gray-900 capitalize">{entry.status ?? '—'}</p>
-          </div>
+      {/* Completed sessions for today */}
+      {todaySessions.filter(s => s.clock_out_at).length > 0 && (
+        <div className="border-t border-gray-100 pt-3 space-y-2">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+            Completed today ({todaySessions.filter(s => s.clock_out_at).length})
+          </p>
+          {todaySessions.filter(s => s.clock_out_at).map(s => (
+            <div key={s.id} className="flex items-center justify-between text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-gray-700 truncate">
+                  {s.work_package_name ?? 'Session'}
+                </p>
+                <p className="text-gray-400">
+                  {formatTime(s.clock_in_at)} – {formatTime(s.clock_out_at)}
+                </p>
+              </div>
+              <div className="text-right flex-shrink-0 ml-2">
+                <p className="font-bold text-green-700">{formatMinutes(s.paid_minutes)}</p>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

@@ -41,6 +41,7 @@ type SnapshotUrlsResponse = {
 type ParsedPayload = {
   blueprintTitle: string | null
   scope: { title: string; description: string; crewNotes: string }
+  workOrderInstructions: string
   labor: Array<{ label: string; value: string }>
   items: Array<{ name: string; quantity: string; unit: string | null }>
   symbols: Array<{ name: string; count: string; pages: string | null; glyph: string }>
@@ -353,6 +354,12 @@ function WorkOrderSections({ parsedPayload }: { parsedPayload: ParsedPayload }) 
       {parsedPayload.scope.crewNotes && (
         <Section title="Crew Notes">
           <p className="whitespace-pre-wrap break-words text-sm text-gray-800">{parsedPayload.scope.crewNotes}</p>
+        </Section>
+      )}
+
+      {parsedPayload.workOrderInstructions && (
+        <Section title="Work Order Instructions">
+          <p className="whitespace-pre-wrap break-words text-sm text-gray-800">{parsedPayload.workOrderInstructions}</p>
         </Section>
       )}
 
@@ -750,6 +757,7 @@ function parseWorkOrderPayload(workOrder: EmployeeWorkOrderVersion | null): Pars
       description: text(scope.description) || '',
       crewNotes: text(scope.crewNotes) || '',
     },
+    workOrderInstructions: text(payload.workOrderInstructions) || '',
     labor: [
       { label: 'Rough-in', value: hours(labor.roughInHours) },
       { label: 'Trim', value: hours(labor.trimHours) },

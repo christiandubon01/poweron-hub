@@ -27,6 +27,12 @@ import {
   adminRecordPunch,
   adminVoidPunch,
   adminUpdateApprovalStatus,
+  getPunchEditRequestsForDay,
+  adminReviewPunchEditRequest,
+  getSessionsForDay,
+  adminRecordSessionPunch,
+  type PunchEditRequest,
+  type AdminWorkSession,
 } from '@/services/adminTimecardService'
 
 // ── Props ──────────────────────────────────────────────────────────────────────
@@ -155,17 +161,29 @@ export default function AdminPunchHistoryModal({
   const [approving, setApproving]   = useState(false)
   const [globalError, setGlobalError] = useState('')
 
+  // Punch edit request state (migration 097)
+  const [editRequests, setEditRequests]         = useState<PunchEditRequest[]>([])
+  const [reviewingRequestId, setReviewingRequestId] = useState<string | null>(null)
+  const [reviewError, setReviewError]           = useState('')
+
+  // Session state (migration 099) — for routing pencil edits and labelling requests
+  const [sessions, setSessions] = useState<AdminWorkSession[]>([])
+
   // ── Refresh: fetches all punches (including voided) + entry ─────────────────
 
   const refresh = useCallback(async () => {
     setRefreshing(true)
     setGlobalError('')
-    const [punchRes, entryRes] = await Promise.all([
+    const [punchRes, entryRes, reqRes, sessionRes] = await Promise.all([
       getPunchesForDay(employeeProfileId, workDate),
       getTimeEntryForDay(employeeProfileId, workDate),
+      getPunchEditRequestsForDay(employeeProfileId, workDate),
+      getSessionsForDay(employeeProfileId, workDate),
     ])
     if (punchRes.success && punchRes.data) setPunches(punchRes.data)
     if (entryRes.success) setEntry(entryRes.data ?? null)
+    if (reqRes.success && reqRes.data) setEditRequests(reqRes.data)
+    if (sessionRes.success && sessionRes.data) setSessions(sessionRes.data)
     setRefreshing(false)
   }, [employeeProfileId, workDate])
 
@@ -197,14 +215,29 @@ export default function AdminPunchHistoryModal({
     if (!punch) return
     setSaving(true)
     setEditError('')
-    const res = await adminRecordPunch(
-      employeeProfileId,
-      punch.punch_type,
-      combineDateTime(editDate, editTime),
-      editDate,
-      editNotes.trim(),
-      editingId!,
-    )
+
+    const newTime = combineDateTime(editDate, editTime)
+    const res = punch.session_id
+      // Session-linked punch: update the session row directly (migration 099).
+      // The RPC voids the original punch, writes an admin_edit event with session_id,
+      // and triggers sync_time_entry_from_sessions to rebuild the daily aggregate.
+      ? await adminRecordSessionPunch(
+          punch.session_id,
+          punch.punch_type,
+          newTime,
+          editNotes.trim(),
+          editingId!,
+        )
+      // Legacy punch (no session): use the migration 090 admin_record_punch path.
+      : await adminRecordPunch(
+          employeeProfileId,
+          punch.punch_type,
+          newTime,
+          editDate,
+          editNotes.trim(),
+          editingId!,
+        )
+
     if (res.success) {
       setEditingId(null)
       await refresh()
@@ -273,6 +306,25 @@ export default function AdminPunchHistoryModal({
       setGlobalError(res.error ?? 'Failed to update approval')
     }
     setApproving(false)
+  }
+
+  // ── Review punch edit request ────────────────────────────────────────────────
+
+  async function reviewRequest(requestId: string, status: 'approved' | 'rejected') {
+    setReviewingRequestId(requestId)
+    setReviewError('')
+    const res = await adminReviewPunchEditRequest(requestId, status)
+    if (res.success && res.data) {
+      setEditRequests(prev => prev.map(r => r.id === requestId ? res.data! : r))
+      if (status === 'approved') {
+        // Re-fetch punches/entry so the admin sees the updated data
+        await refresh()
+        onRefresh?.()
+      }
+    } else {
+      setReviewError(res.error ?? 'Failed to update request')
+    }
+    setReviewingRequestId(null)
   }
 
   // ── Derived ──────────────────────────────────────────────────────────────────
@@ -768,6 +820,119 @@ export default function AdminPunchHistoryModal({
               </ul>
             )}
           </div>
+
+          {/* ── Pending Punch Edit Requests (migration 097) ── */}
+          {editRequests.length > 0 && (
+            <div>
+              <p className="text-[10px] font-bold text-purple-400 uppercase tracking-wide mb-2">
+                Employee Punch Edit Requests
+              </p>
+              {reviewError && (
+                <p className="text-xs text-red-400 mb-2">{reviewError}</p>
+              )}
+              <ul className="space-y-2">
+                {editRequests.map(req => {
+                  const isPending   = req.status === 'pending'
+                  const isApproved  = req.status === 'approved'
+                  const isRejected  = req.status === 'rejected'
+                  const isBusy      = reviewingRequestId === req.id
+                  const statusCls = isPending  ? 'bg-purple-600/20 text-purple-300 border-purple-700/50'
+                                  : isApproved ? 'bg-green-600/20 text-green-300 border-green-700/50'
+                                  : isRejected ? 'bg-red-600/20 text-red-300 border-red-700/50'
+                                  : 'bg-gray-600/20 text-gray-400 border-gray-600'
+                  const statusLabel = isPending ? 'Pending' : isApproved ? 'Approved' : isRejected ? 'Rejected' : req.status
+
+                  const PUNCH_TYPE_LABEL: Record<string, string> = {
+                    clock_in: 'Clock In', lunch_out: 'Lunch Out', lunch_in: 'Lunch In', clock_out: 'Clock Out',
+                  }
+
+                  const reqSession = req.session_id
+                    ? sessions.find(s => s.id === req.session_id)
+                    : undefined
+
+                  return (
+                    <li
+                      key={req.id}
+                      className="border border-purple-700/30 rounded-xl overflow-hidden bg-[var(--bg-secondary,#11141c)]"
+                    >
+                      <div className="px-4 py-3 space-y-2">
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-semibold text-gray-200">
+                              {PUNCH_TYPE_LABEL[req.punch_type] ?? req.punch_type}
+                            </p>
+                            <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${statusCls}`}>
+                              {statusLabel}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Job identity — shown when the request targets a session (mig 099) */}
+                        {reqSession && (
+                          <div className="bg-blue-900/20 border border-blue-700/30 rounded-lg px-3 py-2">
+                            <p className="text-[10px] text-blue-400 uppercase tracking-wide mb-0.5">Job</p>
+                            <p className="text-xs font-semibold text-blue-200">
+                              {reqSession.project_name ?? '—'} · {reqSession.work_package_name ?? '—'}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Current vs Requested */}
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="bg-gray-800/60 rounded-lg px-3 py-2">
+                            <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Current</p>
+                            <p className="text-sm font-bold text-gray-300 tabular-nums">
+                              {req.original_time
+                                ? new Date(req.original_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                                : 'Missing'}
+                            </p>
+                          </div>
+                          <div className="bg-purple-900/20 rounded-lg px-3 py-2">
+                            <p className="text-[10px] text-purple-400 uppercase tracking-wide mb-0.5">Requested</p>
+                            <p className="text-sm font-bold text-purple-200 tabular-nums">
+                              {new Date(req.requested_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Employee reason */}
+                        <div className="bg-gray-800/40 rounded-lg px-3 py-2">
+                          <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Reason</p>
+                          <p className="text-xs text-gray-300 leading-relaxed">{req.employee_reason}</p>
+                        </div>
+
+                        <p className="text-[10px] text-gray-600">
+                          Submitted {new Date(req.requested_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                        </p>
+
+                        {/* Approve / Reject controls (pending only) */}
+                        {isPending && (
+                          <div className="flex gap-2 pt-1">
+                            <button
+                              onClick={() => reviewRequest(req.id, 'approved')}
+                              disabled={isBusy}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600/20 hover:bg-green-600/40 text-green-300 text-xs font-bold border border-green-700/50 transition disabled:opacity-50"
+                            >
+                              {isBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => reviewRequest(req.id, 'rejected')}
+                              disabled={isBusy}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-300 text-xs font-bold border border-red-700/50 transition disabled:opacity-50"
+                            >
+                              {isBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />}
+                              Reject
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )}
 
           {/* ── Add Punch ── */}
           {!showAddForm ? (

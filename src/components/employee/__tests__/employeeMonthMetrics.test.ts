@@ -66,6 +66,7 @@ function timeDay(workDate: string, paidMinutes: number | null): EmployeeMyTimeDa
   return {
     workDate,
     entry: null,
+    sessions: [],
     punches: [],
     paidMinutes,
     lunchMinutes: null,

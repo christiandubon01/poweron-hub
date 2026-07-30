@@ -8,12 +8,14 @@ const library = readFileSync(join(process.cwd(), 'src/features/blueprint-snapsho
 const viewport = readFileSync(join(process.cwd(), 'src/features/blueprint-snapshots/BlueprintSnapshotPreviewViewport.tsx'), 'utf8')
 const service = readFileSync(join(process.cwd(), 'src/features/blueprint-snapshots/blueprintSnapshotService.ts'), 'utf8')
 const panel = readFileSync(join(process.cwd(), 'src/components/admin/AdminTaskDelegationPanel.tsx'), 'utf8')
+const form = readFileSync(join(process.cwd(), 'src/components/admin/AdminWorkOrderAssignmentForm.tsx'), 'utf8')
 
 describe('Snapshot assignment picker UI contract', () => {
-  it('renders only in create mode and gates missing assignment context', () => {
-    expect(panel).toContain('<SnapshotAssignmentPicker')
-    const editBlock = panel.slice(panel.indexOf('{editingId ? ('), panel.indexOf(') : (', panel.indexOf('{editingId ? (')))
-    expect(editBlock).not.toContain('SnapshotAssignmentPicker')
+  it('reuses the same picker in create and edit mode and gates missing assignment context', () => {
+    expect(panel).toContain('<AdminWorkOrderAssignmentForm')
+    expect(panel).toContain("mode={editing ? 'edit' : 'create'}")
+    expect(form).toContain('<SnapshotAssignmentPicker')
+    expect(form.match(/<SnapshotAssignmentPicker/g)).toHaveLength(1)
     expect(picker).toContain('Select a project, Blueprint, and Work Package before attaching snapshots.')
     expect(picker).toContain('disabled={!contextReady}')
   })
@@ -67,9 +69,9 @@ describe('Snapshot assignment picker UI contract', () => {
     expect(library).toContain('onSaveSelectedIds?: () => void')
     expect(library).toContain('Save')
     expect(library).toContain('Cancel')
-    expect(panel).toContain('if (!res.success) {')
-    const createCall = panel.indexOf('const res = await createTaskAssignmentWithWorkOrderAndSnapshots')
-    const failureBranch = panel.slice(panel.indexOf('if (!res.success) {', createCall), panel.indexOf('setFormOpen(false)', createCall))
+    expect(panel).toContain('if (!result.success) {')
+    const submitCall = panel.indexOf('const result = editing')
+    const failureBranch = panel.slice(panel.indexOf('if (!result.success) {', submitCall), panel.indexOf('setFormOpen(false)', submitCall))
     expect(failureBranch).not.toContain('setSelectedSnapshotIds([])')
     expect(panel).toContain('setSelectedSnapshotIds([])')
     expect(panel).toContain('snapshotIds: selectedSnapshotIds')

@@ -722,9 +722,9 @@ describe('regression guards', () => {
   it('adds no migration in this phase', () => {
     const migrations = readdirSync(join(process.cwd(), 'supabase/migrations'))
     expect(existsSync(join(process.cwd(), 'supabase/migrations/096_work_order_snapshot_delivery.sql'))).toBe(true)
-    // The live four-argument RPC is restored by deploying the existing 092, not by
-    // authoring a new migration here.
-    expect(migrations.filter((name) => /^09[7-9]|^1\d\d_/.test(name))).toEqual([])
+    // 097 is punch-edit-requests (EMPLOYEE-MY-TIME-WEEK-1); 098/099 are job-linked sessions
+    // (EMPLOYEE-JOB-CLOCK-SESSIONS-1). Guard against anything beyond 099.
+    expect(migrations.filter((name) => /^1\d\d_/.test(name))).toEqual([])
     expect(migrations).toContain('092_task_hours_spent.sql')
     for (const source of [panel, board, archive, logic]) {
       expect(source).not.toContain('ALTER TABLE')
