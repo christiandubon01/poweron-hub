@@ -42,6 +42,7 @@ vi.mock('@/lib/supabase', () => {
 import {
   buildBlueprintSnapshotStoragePath,
   clearBlueprintSnapshotPreviewUrlCache,
+  deleteBlueprintSnapshot,
   encodeSnapshotPathSegment,
   getBlueprintSnapshotPreviewUrl,
   isMissingSnapshotTableError,
@@ -49,6 +50,7 @@ import {
   resolveBlueprintSnapshotWorkPackageTag,
   sanitizeSnapshotCaption,
   saveBlueprintSnapshot,
+  subscribeBlueprintSnapshotLibraryChanges,
   updateBlueprintSnapshotCaption,
 } from '@/features/blueprint-snapshots'
 
@@ -209,6 +211,58 @@ describe('blueprint snapshot service', () => {
     expect(insertedRow.blueprint_set_id).toBe('set\\unsafe')
   })
 
+  it('saves selected Work Package metadata in the original snapshot insert and keeps Untagged as null', async () => {
+    await saveBlueprintSnapshot({
+      ...saveInput(),
+      workPackageTag: { workPackageId: 'wp-rough', workPackageName: 'Rough In' },
+    })
+    expect(supabaseState.insert.mock.calls[0][0]).toMatchObject({
+      work_package_id: 'wp-rough',
+      work_package_name: 'Rough In',
+    })
+
+    await saveBlueprintSnapshot(saveInput())
+    expect(supabaseState.insert.mock.calls[1][0]).toMatchObject({
+      work_package_id: null,
+      work_package_name: null,
+    })
+  })
+
+  it('emits complete upsert and delete events for open Snapshot Library state', async () => {
+    const events: unknown[] = []
+    const unsubscribe = subscribeBlueprintSnapshotLibraryChanges((event) => events.push(event))
+
+    await saveBlueprintSnapshot({
+      ...saveInput(),
+      workPackageTag: { workPackageId: 'wp-rough', workPackageName: 'Rough In' },
+    })
+    expect(events[0]).toMatchObject({
+      type: 'upsert',
+      source: 'save',
+      snapshot: {
+        id: snapshotId,
+        width: 100,
+        height: 80,
+        workPackageId: null,
+        attachedToIssuedWorkOrder: false,
+      },
+    })
+
+    const query = supabaseState.query
+    query.single
+      .mockResolvedValueOnce({
+        data: { id: snapshotId, work_package_id: null, assignment_snapshots: [] },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: { id: snapshotId },
+        error: null,
+      })
+    await deleteBlueprintSnapshot(snapshotId)
+    expect(events[events.length - 1]).toEqual({ type: 'delete', snapshotId, source: 'delete' })
+    unsubscribe()
+  })
+
   it('cleans up uploaded storage object when metadata insert fails', async () => {
     supabaseState.single.mockResolvedValueOnce({ data: null, error: { message: 'relation missing' } })
 
@@ -351,5 +405,50 @@ describe('blueprint snapshot service', () => {
 
     await updateBlueprintSnapshotCaption(snapshotId, '   ')
     expect(query.update.mock.calls[1][0]).toEqual({ caption: null })
+  })
+
+  it('soft-deletes only untagged and unattached snapshots without removing storage objects', async () => {
+    const query = supabaseState.query
+    query.single
+      .mockResolvedValueOnce({
+        data: { id: snapshotId, work_package_id: null, assignment_snapshots: [] },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: { id: snapshotId },
+        error: null,
+      })
+
+    const result = await deleteBlueprintSnapshot(snapshotId)
+
+    expect(result).toEqual({ status: 'deleted', snapshotId })
+    expect(query.update.mock.calls[0][0].deleted_at).toEqual(expect.any(String))
+    expect(query.eq).toHaveBeenCalledWith('id', snapshotId)
+    expect(query.is).toHaveBeenCalledWith('work_package_id', null)
+    expect(supabaseState.remove).not.toHaveBeenCalled()
+  })
+
+  it('rejects tagged snapshots before soft-delete', async () => {
+    supabaseState.query.single.mockResolvedValueOnce({
+      data: { id: snapshotId, work_package_id: 'wp-rough', assignment_snapshots: [] },
+      error: null,
+    })
+
+    const result = await deleteBlueprintSnapshot(snapshotId)
+
+    expect(result).toEqual({ status: 'rejected', message: 'Return this snapshot to Untagged before deleting it.' })
+    expect(supabaseState.query.update).not.toHaveBeenCalled()
+  })
+
+  it('rejects attached snapshots even when currently Untagged', async () => {
+    supabaseState.query.single.mockResolvedValueOnce({
+      data: { id: snapshotId, work_package_id: null, assignment_snapshots: [{ snapshot_id: snapshotId }] },
+      error: null,
+    })
+
+    const result = await deleteBlueprintSnapshot(snapshotId)
+
+    expect(result).toEqual({ status: 'rejected', message: 'Attached to an issued Work Order.' })
+    expect(supabaseState.query.update).not.toHaveBeenCalled()
   })
 })

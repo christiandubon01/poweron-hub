@@ -113,7 +113,7 @@ export interface BlueprintSnapshotSaveInput {
   workPackageTag: BlueprintSnapshotWorkPackageTag
 }
 
-export interface BlueprintSnapshotSavedResult {
+export interface BlueprintSnapshotSavedResult extends BlueprintSnapshotLibraryItem {
   id: string
   storagePath: string
   width: number
@@ -140,6 +140,7 @@ export interface BlueprintSnapshotLibraryItem {
   height: number | null
   fileSizeBytes: number | null
   annotationCount: number | null
+  attachedToIssuedWorkOrder: boolean
   capturedAt: string | null
   createdAt: string | null
 }
@@ -149,7 +150,7 @@ export interface BlueprintSnapshotListFilters {
   blueprintSetId?: string | null
   pageNumber?: number | null
   workPackageId?: string | null
-  workPackageMode?: 'any' | 'untagged-or-matching'
+  workPackageMode?: 'any' | 'untagged' | 'untagged-or-matching'
   captureMode?: BlueprintSnapshotCaptureMode | null
   cursor?: string | null
   limit?: number | null
@@ -176,6 +177,22 @@ export type BlueprintSnapshotCaptionUpdateResult =
   | { status: 'available'; snapshot: BlueprintSnapshotLibraryItem }
   | { status: 'unavailable'; message: string }
   | { status: 'error'; message: string }
+
+export type BlueprintSnapshotWorkPackageUpdateResult =
+  | { status: 'available'; snapshot: BlueprintSnapshotLibraryItem }
+  | { status: 'unavailable'; message: string }
+  | { status: 'error'; message: string }
+
+export type BlueprintSnapshotDeleteResult =
+  | { status: 'deleted'; snapshotId: string }
+  | { status: 'rejected'; message: string }
+  | { status: 'unavailable'; message: string }
+  | { status: 'error'; message: string }
+
+export type BlueprintSnapshotLibraryChangeEvent =
+  | { type: 'upsert'; snapshot: BlueprintSnapshotLibraryItem; source?: string }
+  | { type: 'delete'; snapshotId: string; source?: string }
+  | { type: 'refresh'; source?: string }
 
 export interface BlueprintSnapshotCaptureContext {
   page: {

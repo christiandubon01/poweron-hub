@@ -76,6 +76,7 @@ export function formatBlueprintSnapshotZoomPercent(zoom: number): string {
 
 export function BlueprintSnapshotPreviewViewport({
   sourceCanvas,
+  imageUrl,
   imageWidth,
   imageHeight,
   accessibleLabel,
@@ -83,7 +84,8 @@ export function BlueprintSnapshotPreviewViewport({
   onReady,
   onError,
 }: {
-  sourceCanvas: HTMLCanvasElement | null | undefined
+  sourceCanvas?: HTMLCanvasElement | null | undefined
+  imageUrl?: string | null | undefined
   imageWidth: number
   imageHeight: number
   accessibleLabel: string
@@ -153,7 +155,29 @@ export function BlueprintSnapshotPreviewViewport({
 
   useEffect(() => {
     const mount = imageMountRef.current
-    if (!mount || !sourceCanvas || sourceCanvas.width <= 0 || sourceCanvas.height <= 0) {
+    if (!mount) return
+    if (imageUrl) {
+      const img = document.createElement('img')
+      img.src = imageUrl
+      img.alt = ''
+      img.style.width = `${imageWidth}px`
+      img.style.height = `${imageHeight}px`
+      img.style.maxWidth = 'none'
+      img.style.maxHeight = 'none'
+      img.style.display = 'block'
+      img.style.objectFit = 'contain'
+      img.draggable = false
+      img.setAttribute('aria-hidden', 'true')
+      img.onload = () => onReady?.()
+      img.onerror = () => onError?.()
+      mount.replaceChildren(img)
+      return () => {
+        img.onload = null
+        img.onerror = null
+        if (mount.contains(img)) mount.removeChild(img)
+      }
+    }
+    if (!sourceCanvas || sourceCanvas.width <= 0 || sourceCanvas.height <= 0) {
       onError?.()
       return
     }
@@ -169,7 +193,7 @@ export function BlueprintSnapshotPreviewViewport({
     return () => {
       if (mount.contains(sourceCanvas)) mount.removeChild(sourceCanvas)
     }
-  }, [imageHeight, imageWidth, onError, onReady, sourceCanvas])
+  }, [imageHeight, imageUrl, imageWidth, onError, onReady, sourceCanvas])
 
   const zoomBy = useCallback((delta: number) => {
     setZoomAndPan(Math.round((zoom + delta) / ZOOM_STEP) * ZOOM_STEP)
@@ -272,29 +296,29 @@ export function BlueprintSnapshotPreviewViewport({
   }, [fitScale, isFit, setFit, setNative])
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-gray-700 bg-[#060910]">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 px-3 py-2">
-        <div className="flex items-center gap-1">
-          <button type="button" onClick={setFit} className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-semibold ${isFit ? 'border-cyan-400 bg-cyan-400/15 text-cyan-100' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}>
+    <div className="flex h-full min-h-[42vh] flex-1 flex-col rounded-lg border border-gray-700 bg-[#060910]">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-gray-800 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button type="button" onClick={setFit} className={`inline-flex min-h-8 shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-xs font-semibold ${isFit ? 'border-cyan-400 bg-cyan-400/15 text-cyan-100' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}>
             <Maximize2 size={13} />
             Fit
           </button>
-          <button type="button" onClick={setNative} className={`rounded-md border px-2 py-1 text-xs font-semibold ${isNative ? 'border-cyan-400 bg-cyan-400/15 text-cyan-100' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}>100%</button>
-          <button type="button" onClick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= fitScale + 0.005} className="rounded-md border border-gray-700 p-1 text-gray-300 hover:bg-white/5 disabled:opacity-40" aria-label="Zoom out" title="Zoom out">
+          <button type="button" onClick={setNative} className={`min-h-8 shrink-0 rounded-md border px-2 py-1 text-xs font-semibold ${isNative ? 'border-cyan-400 bg-cyan-400/15 text-cyan-100' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}>100%</button>
+          <button type="button" onClick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= fitScale + 0.005} className="min-h-8 shrink-0 rounded-md border border-gray-700 p-1 text-gray-300 hover:bg-white/5 disabled:opacity-40" aria-label="Zoom out" title="Zoom out">
             <Minus size={14} />
           </button>
-          <button type="button" onClick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM_SCALE - 0.005} className="rounded-md border border-gray-700 p-1 text-gray-300 hover:bg-white/5 disabled:opacity-40" aria-label="Zoom in" title="Zoom in">
+          <button type="button" onClick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM_SCALE - 0.005} className="min-h-8 shrink-0 rounded-md border border-gray-700 p-1 text-gray-300 hover:bg-white/5 disabled:opacity-40" aria-label="Zoom in" title="Zoom in">
             <Plus size={14} />
           </button>
         </div>
-        <div className="inline-flex items-center gap-2 text-xs font-semibold text-gray-300">
+        <div className="inline-flex min-h-8 shrink-0 items-center gap-2 rounded-md border border-gray-800 px-2 text-xs font-semibold text-gray-300">
           <Move size={13} className={isPannable ? 'text-cyan-200' : 'text-gray-600'} />
           <span aria-live="polite">{formatBlueprintSnapshotZoomPercent(zoom)}</span>
         </div>
       </div>
       <div
         ref={viewportRef}
-        className={`relative min-h-[42vh] flex-1 overflow-hidden bg-white ${isPannable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
+        className={`relative min-h-0 flex-1 overflow-hidden bg-white ${isPannable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
         role="img"
         aria-label={accessibleLabel}
         onWheel={handleWheel}

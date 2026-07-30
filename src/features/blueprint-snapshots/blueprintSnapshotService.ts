@@ -4,12 +4,15 @@ import {
   BLUEPRINT_SNAPSHOT_MAX_EDGE,
   BLUEPRINT_SNAPSHOT_MAX_FILE_SIZE_BYTES,
   type BlueprintSnapshotCaptionUpdateResult,
+  type BlueprintSnapshotDeleteResult,
   type BlueprintSnapshotLibraryItem,
+  type BlueprintSnapshotLibraryChangeEvent,
   type BlueprintSnapshotListFilters,
   type BlueprintSnapshotListResult,
   type BlueprintSnapshotPreviewResult,
   type BlueprintSnapshotSaveInput,
   type BlueprintSnapshotSavedResult,
+  type BlueprintSnapshotWorkPackageUpdateResult,
   type BlueprintSnapshotWorkPackageTag,
 } from './types'
 
@@ -17,12 +20,14 @@ const SNAPSHOT_LIBRARY_UNAVAILABLE = 'Snapshot library is not available yet.'
 const SNAPSHOT_PREVIEW_UNAVAILABLE = 'Preview unavailable.'
 const SNAPSHOT_CAPTION_FAILURE = 'Could not update caption.'
 const SNAPSHOT_NETWORK_FAILURE = 'Network error. Try again.'
+const SNAPSHOT_DELETE_REJECTED = 'Snapshot can no longer be deleted. Untag it first and make sure it is not attached to an issued Work Order.'
 const SNAPSHOT_PREVIEW_TTL_SECONDS = 600
 const SNAPSHOT_PREVIEW_CACHE_SAFETY_MS = 30_000
 const DEFAULT_SNAPSHOT_LIBRARY_LIMIT = 24
 const MAX_SNAPSHOT_LIBRARY_LIMIT = 48
 
 const previewUrlCache = new Map<string, { signedUrl: string; expiresAt: number }>()
+const libraryChangeListeners = new Set<(event: BlueprintSnapshotLibraryChangeEvent) => void>()
 
 export class BlueprintSnapshotSaveError extends Error {
   code: string
@@ -137,7 +142,23 @@ export async function saveBlueprintSnapshot(input: BlueprintSnapshotSaveInput): 
   const insertResult = await (supabase as any)
     .from('blueprint_snapshots')
     .insert(row)
-    .select('id, storage_path, width, height, file_size_bytes, page_number, caption, work_package_id, work_package_name')
+    .select([
+      'id',
+      'project_id',
+      'project_name',
+      'blueprint_set_id',
+      'work_package_id',
+      'work_package_name',
+      'storage_path',
+      'page_number',
+      'caption',
+      'capture_metadata',
+      'width',
+      'height',
+      'file_size_bytes',
+      'captured_at',
+      'created_at',
+    ].join(', '))
     .single()
 
   if (insertResult.error) {
@@ -158,16 +179,15 @@ export async function saveBlueprintSnapshot(input: BlueprintSnapshotSaveInput): 
   }
 
   const saved = insertResult.data || row
+  const snapshot = mapSnapshotLibraryRow(saved)
+  notifyBlueprintSnapshotLibraryChanged({ type: 'upsert', snapshot, source: 'save' })
   return {
-    id: String(saved.id),
+    ...snapshot,
     storagePath: String(saved.storage_path),
     width: Number(saved.width),
     height: Number(saved.height),
     fileSizeBytes: Number(saved.file_size_bytes),
     pageNumber: Number(saved.page_number),
-    caption: saved.caption ?? null,
-    workPackageId: saved.work_package_id ?? null,
-    workPackageName: saved.work_package_name ?? null,
   }
 }
 
@@ -193,6 +213,7 @@ export async function listBlueprintSnapshots(
         'file_size_bytes',
         'captured_at',
         'created_at',
+        'assignment_snapshots(snapshot_id)',
       ].join(', '))
       .is('deleted_at', null)
       .order('captured_at', { ascending: false })
@@ -204,6 +225,8 @@ export async function listBlueprintSnapshots(
     if (filters.captureMode) query = query.eq('capture_metadata->>captureMode', filters.captureMode)
     if (filters.workPackageMode === 'untagged-or-matching' && filters.workPackageId) {
       query = query.or(`work_package_id.is.null,work_package_id.eq.${escapePostgrestValue(filters.workPackageId)}`)
+    } else if (filters.workPackageMode === 'untagged') {
+      query = query.is('work_package_id', null)
     } else if (filters.workPackageId) {
       query = query.eq('work_package_id', filters.workPackageId)
     }
@@ -252,6 +275,7 @@ export async function getBlueprintSnapshotsByIds(snapshotIds: string[]): Promise
         'file_size_bytes',
         'captured_at',
         'created_at',
+        'assignment_snapshots(snapshot_id)',
       ].join(', '))
       .in('id', ids)
       .is('deleted_at', null)
@@ -269,12 +293,12 @@ export async function getBlueprintSnapshotsByIds(snapshotIds: string[]): Promise
   }
 }
 
-export async function getBlueprintSnapshotPreviewUrl(snapshotId: string): Promise<BlueprintSnapshotPreviewResult> {
+export async function getBlueprintSnapshotPreviewUrl(snapshotId: string, options?: { forceRefresh?: boolean }): Promise<BlueprintSnapshotPreviewResult> {
   const cleanId = String(snapshotId || '').trim()
   if (!cleanId) return { status: 'error', message: SNAPSHOT_PREVIEW_UNAVAILABLE }
 
   const cached = previewUrlCache.get(cleanId)
-  if (cached && cached.expiresAt - SNAPSHOT_PREVIEW_CACHE_SAFETY_MS > Date.now()) {
+  if (!options?.forceRefresh && cached && cached.expiresAt - SNAPSHOT_PREVIEW_CACHE_SAFETY_MS > Date.now()) {
     return { status: 'available', snapshotId: cleanId, signedUrl: cached.signedUrl, expiresAt: cached.expiresAt }
   }
 
@@ -334,13 +358,105 @@ export async function updateBlueprintSnapshotCaption(
         'file_size_bytes',
         'captured_at',
         'created_at',
+        'assignment_snapshots(snapshot_id)',
       ].join(', '))
       .single()
 
     if (error) return classifySnapshotServiceError(error, SNAPSHOT_LIBRARY_UNAVAILABLE, SNAPSHOT_CAPTION_FAILURE)
-    return { status: 'available', snapshot: mapSnapshotLibraryRow(data) }
+    const snapshot = mapSnapshotLibraryRow(data)
+    notifyBlueprintSnapshotLibraryChanged({ type: 'upsert', snapshot, source: 'caption' })
+    return { status: 'available', snapshot }
   } catch (err: unknown) {
     console.error('[blueprintSnapshotService.updateBlueprintSnapshotCaption]', err)
+    return { status: 'error', message: SNAPSHOT_NETWORK_FAILURE }
+  }
+}
+
+export async function updateBlueprintSnapshotWorkPackage(
+  snapshotId: string,
+  workPackage: BlueprintSnapshotWorkPackageTag,
+): Promise<BlueprintSnapshotWorkPackageUpdateResult> {
+  try {
+    const cleanWorkPackageId = String(workPackage.workPackageId || '').trim() || null
+    const cleanWorkPackageName = cleanWorkPackageId ? (String(workPackage.workPackageName || '').trim() || null) : null
+    const { data, error } = await (supabase as any)
+      .from('blueprint_snapshots')
+      .update({
+        work_package_id: cleanWorkPackageId,
+        work_package_name: cleanWorkPackageName,
+      })
+      .eq('id', snapshotId)
+      .is('deleted_at', null)
+      .select([
+        'id',
+        'project_id',
+        'project_name',
+        'blueprint_set_id',
+        'work_package_id',
+        'work_package_name',
+        'page_number',
+        'caption',
+        'capture_metadata',
+        'width',
+        'height',
+        'file_size_bytes',
+        'captured_at',
+        'created_at',
+        'assignment_snapshots(snapshot_id)',
+      ].join(', '))
+      .single()
+
+    if (error) return classifySnapshotServiceError(error, SNAPSHOT_LIBRARY_UNAVAILABLE, 'Could not update Work Package.')
+    const snapshot = mapSnapshotLibraryRow(data)
+    notifyBlueprintSnapshotLibraryChanged({ type: 'upsert', snapshot, source: 'work-package' })
+    return { status: 'available', snapshot }
+  } catch (err: unknown) {
+    console.error('[blueprintSnapshotService.updateBlueprintSnapshotWorkPackage]', err)
+    return { status: 'error', message: SNAPSHOT_NETWORK_FAILURE }
+  }
+}
+
+export async function deleteBlueprintSnapshot(snapshotId: string): Promise<BlueprintSnapshotDeleteResult> {
+  const cleanId = String(snapshotId || '').trim()
+  if (!cleanId) return { status: 'error', message: SNAPSHOT_DELETE_REJECTED }
+
+  try {
+    const { data: current, error: currentError } = await (supabase as any)
+      .from('blueprint_snapshots')
+      .select('id, work_package_id, assignment_snapshots(snapshot_id)')
+      .eq('id', cleanId)
+      .is('deleted_at', null)
+      .single()
+
+    if (currentError) return classifySnapshotServiceError(currentError, SNAPSHOT_LIBRARY_UNAVAILABLE, SNAPSHOT_DELETE_REJECTED)
+    if (current?.work_package_id) {
+      return { status: 'rejected', message: 'Return this snapshot to Untagged before deleting it.' }
+    }
+    if (hasAssignmentSnapshotAttachment(current)) {
+      return { status: 'rejected', message: 'Attached to an issued Work Order.' }
+    }
+
+    const { data, error } = await (supabase as any)
+      .from('blueprint_snapshots')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', cleanId)
+      .is('deleted_at', null)
+      .is('work_package_id', null)
+      .select('id')
+      .single()
+
+    if (error) {
+      return classifySnapshotServiceError(error, SNAPSHOT_LIBRARY_UNAVAILABLE, SNAPSHOT_DELETE_REJECTED)
+    }
+    if (!data?.id) {
+      return { status: 'rejected', message: SNAPSHOT_DELETE_REJECTED }
+    }
+
+    clearBlueprintSnapshotPreviewUrlCache(cleanId)
+    notifyBlueprintSnapshotLibraryChanged({ type: 'delete', snapshotId: cleanId, source: 'delete' })
+    return { status: 'deleted', snapshotId: cleanId }
+  } catch (err: unknown) {
+    console.error('[blueprintSnapshotService.deleteBlueprintSnapshot]', err)
     return { status: 'error', message: SNAPSHOT_NETWORK_FAILURE }
   }
 }
@@ -348,6 +464,17 @@ export async function updateBlueprintSnapshotCaption(
 export function clearBlueprintSnapshotPreviewUrlCache(snapshotId?: string): void {
   if (snapshotId) previewUrlCache.delete(snapshotId)
   else previewUrlCache.clear()
+}
+
+export function subscribeBlueprintSnapshotLibraryChanges(listener: (event: BlueprintSnapshotLibraryChangeEvent) => void): () => void {
+  libraryChangeListeners.add(listener)
+  return () => {
+    libraryChangeListeners.delete(listener)
+  }
+}
+
+export function notifyBlueprintSnapshotLibraryChanged(event: BlueprintSnapshotLibraryChangeEvent = { type: 'refresh' }): void {
+  libraryChangeListeners.forEach((listener) => listener(event))
 }
 
 function isUuid(value: string): boolean {
@@ -376,9 +503,16 @@ function mapSnapshotLibraryRow(row: any): BlueprintSnapshotLibraryItem {
     height: row.height == null ? null : Number(row.height),
     fileSizeBytes: row.file_size_bytes == null ? null : Number(row.file_size_bytes),
     annotationCount: metadata.annotationCount == null ? null : Number(metadata.annotationCount),
+    attachedToIssuedWorkOrder: hasAssignmentSnapshotAttachment(row),
     capturedAt: row.captured_at ?? null,
     createdAt: row.created_at ?? null,
   }
+}
+
+function hasAssignmentSnapshotAttachment(row: any): boolean {
+  const attached = row?.assignment_snapshots
+  if (Array.isArray(attached)) return attached.length > 0
+  return Boolean(attached)
 }
 
 function classifySnapshotServiceError(

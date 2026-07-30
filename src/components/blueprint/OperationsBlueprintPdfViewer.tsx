@@ -203,6 +203,7 @@ import {
 import {
   BlueprintSnapshotCaptureDialog,
   SnapshotLibraryDialog,
+  WorkPackageSnapshotSection,
   BlueprintSnapshotCaptureError,
   captureBlueprintSnapshot,
   createBlueprintSnapshotPreviewState,
@@ -4609,6 +4610,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       scopedWorkPackages: isolatedScopeLayers.map((layer) => ({ id: layer.id, name: layer.name })),
     }),
     [isolatedScopeLayers, snapshotViewMode],
+  )
+  const snapshotWorkPackageOptions = useMemo(
+    () => sortWorkPackages(scopeLayers).map((layer) => ({ id: layer.id, label: layer.name || 'Work Package' })),
+    [scopeLayers],
   )
 
   const canCaptureSnapshot = Boolean(canRender && !isRendering && !isSnapshotCapturing && pdfDoc && currentPage > 0)
@@ -10853,39 +10858,6 @@ const annotationPanelSizeClass =
               <Cable size={12} />
               <span className="hidden sm:inline">Wire Profiles</span>
             </button>
-            <button
-              ref={snapshotCaptureButtonRef}
-              type="button"
-              onClick={beginSnapshotAreaSelection}
-              disabled={!canCaptureSnapshot}
-              className={`shrink-0 inline-flex min-h-10 items-center justify-center gap-1 text-xs px-2 py-1 rounded-md border ${isSnapshotAreaSelecting ? 'border-cyan-400 text-cyan-200 bg-cyan-950/40' : 'border-gray-700 text-gray-300 hover:text-white'} disabled:cursor-not-allowed disabled:opacity-40`}
-              title={canCaptureSnapshot ? 'Drag a rectangle to capture a blueprint area' : 'Snapshot capture is available after the PDF page renders'}
-              aria-label="Capture Area"
-            >
-              {isSnapshotCapturing ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
-              <span className="hidden sm:inline">Capture Area</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleCaptureSnapshot(null)}
-              disabled={!canCaptureSnapshot}
-              className="shrink-0 inline-flex min-h-10 items-center justify-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-              title={canCaptureSnapshot ? 'Capture the full current blueprint sheet' : 'Snapshot capture is available after the PDF page renders'}
-              aria-label="Capture Full Page"
-            >
-              <Maximize2 size={12} />
-              <span className="hidden sm:inline">Full Page</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsSnapshotLibraryOpen(true)}
-              className="shrink-0 inline-flex min-h-10 items-center justify-center gap-1 text-xs px-2 py-1 rounded-md border border-gray-700 text-gray-300 hover:text-white"
-              title="Open Snapshot Library"
-              aria-label="Open Snapshot Library"
-            >
-              <Layers size={12} />
-              <span className="hidden sm:inline">Library</span>
-            </button>
           </div>
         </div>
       )}
@@ -11236,7 +11208,8 @@ const annotationPanelSizeClass =
               : 'px-3 sm:px-4 py-1 border-b border-gray-800 space-y-1 flex-shrink-0'}
           >
             <DesktopToolbarScrollContent enabled={useDesktopThreePaneLayout}>
-            <div className={`flex items-center gap-1.5 ${useDesktopThreePaneLayout ? 'border-b border-gray-800 pb-2' : 'overflow-x-auto'}`}>
+            {!useDesktopThreePaneLayout && (
+            <div className="flex items-center gap-1.5 overflow-x-auto">
               <button
                 type="button"
                 disabled={!activeUndoCommand || annotationHistoryInteractionBlocked}
@@ -11258,6 +11231,7 @@ const annotationPanelSizeClass =
                 <Redo2 size={13} /> Redo
               </button>
             </div>
+            )}
 
             {/* â"€â"€â"€â"€ Tablet: Compact single-row segmented bucket selector â"€â"€â"€â"€ */}
             {!useDesktopThreePaneLayout && !isTabletImmersiveFullscreen && (
@@ -11327,6 +11301,61 @@ const annotationPanelSizeClass =
                 </div>
                 <div className="text-[11px] text-gray-500">
                   Active: <span className="text-gray-300">{annotationLabel({ type: toolMode } as BlueprintAnnotation)}</span>{isEditorOpen ? ' (editing)' : ''}
+                </div>
+                <div className="rounded-lg border border-gray-800 bg-gray-950/30 p-2">
+                  <div className="mb-2 text-[11px] font-semibold uppercase text-gray-500">Snapshots &amp; History</div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      disabled={!activeUndoCommand || annotationHistoryInteractionBlocked}
+                      onClick={() => void applyAnnotationHistory('undo')}
+                      className="inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2 text-xs text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                      title={activeUndoCommand ? `Undo: ${activeUndoCommand.label} (Ctrl+Z)` : 'Nothing to undo'}
+                      aria-label={activeUndoCommand ? `Undo ${activeUndoCommand.label}` : 'Nothing to undo'}
+                    >
+                      <Undo2 size={13} /> Undo
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!activeRedoCommand || annotationHistoryInteractionBlocked}
+                      onClick={() => void applyAnnotationHistory('redo')}
+                      className="inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2 text-xs text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                      title={activeRedoCommand ? `Redo: ${activeRedoCommand.label} (Ctrl+Y / Ctrl+Shift+Z)` : 'Nothing to redo'}
+                      aria-label={activeRedoCommand ? `Redo ${activeRedoCommand.label}` : 'Nothing to redo'}
+                    >
+                      <Redo2 size={13} /> Redo
+                    </button>
+                    <button
+                      ref={snapshotCaptureButtonRef}
+                      type="button"
+                      onClick={beginSnapshotAreaSelection}
+                      disabled={!canCaptureSnapshot}
+                      className={`inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-md border px-2 text-xs transition-colors ${isSnapshotAreaSelecting ? 'border-cyan-400 text-cyan-200 bg-cyan-950/40' : 'border-gray-700 text-gray-300 hover:border-gray-500 hover:text-white'} disabled:cursor-not-allowed disabled:opacity-40`}
+                      title={canCaptureSnapshot ? 'Drag a rectangle to capture a blueprint area' : 'Snapshot capture is available after the PDF page renders'}
+                      aria-label="Capture Area"
+                    >
+                      {isSnapshotCapturing ? <Loader2 size={13} className="animate-spin" /> : <Camera size={13} />} Area
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleCaptureSnapshot(null)}
+                      disabled={!canCaptureSnapshot}
+                      className="inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2 text-xs text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                      title={canCaptureSnapshot ? 'Capture the full current blueprint sheet' : 'Snapshot capture is available after the PDF page renders'}
+                      aria-label="Capture Full Page"
+                    >
+                      <Maximize2 size={13} /> Full
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsSnapshotLibraryOpen(true)}
+                      className="col-span-2 inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2 text-xs text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
+                      title="Open Snapshot Library"
+                      aria-label="Open Snapshot Library"
+                    >
+                      <Layers size={13} /> Snapshot Library
+                    </button>
+                  </div>
                 </div>
               </>
             )}
@@ -15386,6 +15415,17 @@ const annotationPanelSizeClass =
                     />
                   </div>
                 )}
+                {scopeLayerModal.mode === 'edit' ? (
+                  <WorkPackageSnapshotSection
+                    projectId={blueprint?.projectId}
+                    blueprintSetId={blueprint?.id}
+                    projectName={blueprint?.projectName || blueprint?.title}
+                    blueprintName={blueprint?.title}
+                    workPackageId={scopeLayerModal.layerId}
+                    workPackageName={scopeLayerForm.name}
+                    workPackageOptions={snapshotWorkPackageOptions}
+                  />
+                ) : null}
               </div>
             </div>
             </div>
@@ -15792,6 +15832,7 @@ const annotationPanelSizeClass =
         projectName={blueprint?.projectName || blueprint?.title}
         blueprintSetId={blueprint?.id}
         workPackageTag={snapshotWorkPackageTag}
+        workPackageOptions={snapshotWorkPackageOptions}
         onRetake={() => {
           const preview = snapshotPreviewRef.current
           revokeBlueprintSnapshotPreviewState(preview, 'retake')
@@ -15828,6 +15869,9 @@ const annotationPanelSizeClass =
           projectId: blueprint?.projectId,
           blueprintSetId: blueprint?.id,
         }}
+        projectOptions={blueprint?.projectId ? [{ id: blueprint.projectId, label: blueprint.projectName || 'Project' }] : []}
+        blueprintOptions={blueprint?.id ? [{ id: blueprint.id, label: blueprint.title || 'Blueprint' }] : []}
+        workPackageOptions={snapshotWorkPackageOptions}
         onClose={() => setIsSnapshotLibraryOpen(false)}
       />
 

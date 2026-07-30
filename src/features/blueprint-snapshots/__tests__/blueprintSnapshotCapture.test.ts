@@ -1146,6 +1146,32 @@ describe('blueprint snapshot capture helpers', () => {
     expect(viewerSource).toContain('handleSnapshotAreaPointerUp')
   })
 
+  it('shows a Work Package picker in capture preview and saves the selected tag atomically', () => {
+    const dialogSource = fs.readFileSync(dialogSourcePath, 'utf8')
+    const viewerSource = fs.readFileSync(viewerSourcePath, 'utf8')
+    const saveBlock = dialogSource.slice(dialogSource.indexOf('const handleSave'), dialogSource.indexOf('} catch (error)', dialogSource.indexOf('const handleSave')))
+
+    expect(dialogSource).toContain('htmlFor="blueprint-snapshot-work-package"')
+    expect(dialogSource).toContain('<option value="">Untagged</option>')
+    expect(dialogSource).toContain('workPackageOptions.map')
+    expect(dialogSource).toContain('setSelectedWorkPackageId(workPackageTag.workPackageId || \'\')')
+    expect(saveBlock).toContain('workPackageTag: selectedWorkPackageTag')
+    expect(saveBlock).not.toContain('updateBlueprintSnapshotWorkPackage')
+    expect(viewerSource).toContain('workPackageOptions={snapshotWorkPackageOptions}')
+  })
+
+  it('preserves caption and selected Work Package across Retake while reset remains tied to cancel or save', () => {
+    const dialogSource = fs.readFileSync(dialogSourcePath, 'utf8')
+    const retakeButton = dialogSource.slice(dialogSource.indexOf('onClick={onRetake}'), dialogSource.indexOf('onClick={resetDraftAndCancel}'))
+
+    expect(dialogSource).toContain('draftInitializedRef')
+    expect(dialogSource).toContain('setCaption(\'\')')
+    expect(dialogSource).toContain('setSelectedWorkPackageId(\'\')')
+    expect(retakeButton).not.toContain('setCaption')
+    expect(retakeButton).not.toContain('setSelectedWorkPackageId')
+    expect(dialogSource).toContain('draftInitializedRef.current = false')
+  })
+
   it('keeps Package Pick and Scoped View from participating in stale-capture checks', () => {
     const viewerSource = fs.readFileSync(viewerSourcePath, 'utf8')
     const captureHandler = viewerSource.slice(

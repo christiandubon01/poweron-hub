@@ -8,6 +8,9 @@ interface SnapshotAssignmentPickerProps {
   projectId: string
   blueprintSetId: string
   workPackageId: string
+  projectName?: string
+  blueprintName?: string
+  workPackageName?: string
   selectedIds: string[]
   onChange: (ids: string[]) => void
 }
@@ -16,6 +19,9 @@ export function SnapshotAssignmentPicker({
   projectId,
   blueprintSetId,
   workPackageId,
+  projectName,
+  blueprintName,
+  workPackageName,
   selectedIds,
   onChange,
 }: SnapshotAssignmentPickerProps) {
@@ -101,7 +107,7 @@ export function SnapshotAssignmentPicker({
 
       <SnapshotLibraryDialog
         open={open}
-        mode="picker"
+        mode="select"
         selectedIds={selectedIds}
         onSelectedIdsChange={(ids) => {
           setMessage('')
@@ -113,6 +119,9 @@ export function SnapshotAssignmentPicker({
           workPackageId,
           workPackageMode: 'untagged-or-matching',
         }}
+        projectOptions={projectId ? [{ id: projectId, label: projectName || 'Project' }] : []}
+        blueprintOptions={blueprintSetId ? [{ id: blueprintSetId, label: blueprintName || 'Blueprint' }] : []}
+        workPackageOptions={workPackageId ? [{ id: workPackageId, label: workPackageName || 'Work Package' }] : []}
         onClose={() => setOpen(false)}
       />
     </div>

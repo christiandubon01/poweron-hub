@@ -5,23 +5,27 @@ import { describe, expect, it } from 'vitest'
 const viewer = readFileSync(join(process.cwd(), 'src/components/blueprint/OperationsBlueprintPdfViewer.tsx'), 'utf8')
 
 describe('desktop Snapshot Library entry contract', () => {
-  it('keeps Library in the desktop three-pane Capture Area / Full Page cluster', () => {
-    const desktopBlockStart = viewer.indexOf('ref={snapshotCaptureButtonRef}', viewer.indexOf('Row 2: zoom'))
-    const desktopBlock = viewer.slice(desktopBlockStart, viewer.indexOf('{(isLoading || isRendering)', desktopBlockStart))
-    const captureCluster = desktopBlock
+  it('keeps one desktop Snapshots & History section with history, capture, and library callbacks', () => {
+    expect((viewer.match(/Snapshots &amp; History/g) || []).length).toBe(1)
+    const sectionStart = viewer.indexOf('Snapshots &amp; History')
+    const section = viewer.slice(sectionStart, viewer.indexOf('{toolbarBucket ===', sectionStart))
 
-    expect(captureCluster).toContain('aria-label="Capture Area"')
-    expect(captureCluster).toContain('aria-label="Capture Full Page"')
-    expect(captureCluster).toContain('title="Open Snapshot Library"')
-    expect(captureCluster).toContain('aria-label="Open Snapshot Library"')
-    expect(captureCluster).toContain('onClick={() => setIsSnapshotLibraryOpen(true)}')
-    expect(captureCluster).toContain('<Layers size={16} />')
-    expect(captureCluster).toContain('<span>Library</span>')
-    expect(captureCluster.indexOf('aria-label="Capture Area"')).toBeLessThan(captureCluster.indexOf('aria-label="Capture Full Page"'))
-    expect(captureCluster.indexOf('aria-label="Capture Full Page"')).toBeLessThan(captureCluster.indexOf('aria-label="Open Snapshot Library"'))
+    expect(section).toContain("applyAnnotationHistory('undo')")
+    expect(section).toContain("applyAnnotationHistory('redo')")
+    expect(section).toContain('beginSnapshotAreaSelection')
+    expect(section).toContain('handleCaptureSnapshot(null)')
+    expect(section).toContain('setIsSnapshotLibraryOpen(true)')
+    expect(section.indexOf('aria-label="Capture Area"')).toBeLessThan(section.indexOf('aria-label="Capture Full Page"'))
+    expect(section.indexOf('aria-label="Capture Full Page"')).toBeLessThan(section.indexOf('aria-label="Open Snapshot Library"'))
   })
 
-  it('preserves compact/tablet Library actions and opens one shared dialog state', () => {
+  it('removes duplicate desktop title-strip controls while preserving compact/tablet Library actions', () => {
+    const titleStripStart = viewer.indexOf('{/* Title strip */}')
+    const titleStrip = viewer.slice(titleStripStart, viewer.indexOf('{!hasStoragePath', titleStripStart))
+
+    expect(titleStrip).not.toContain('aria-label="Capture Area"')
+    expect(titleStrip).not.toContain('aria-label="Capture Full Page"')
+    expect(titleStrip).not.toContain('aria-label="Open Snapshot Library"')
     expect((viewer.match(/setIsSnapshotLibraryOpen\(true\)/g) || []).length).toBeGreaterThanOrEqual(3)
     expect(viewer).toContain('<SnapshotLibraryDialog')
     expect(viewer).toContain('open={isSnapshotLibraryOpen}')
@@ -31,7 +35,7 @@ describe('desktop Snapshot Library entry contract', () => {
   })
 
   it('desktop Library action mutates only Snapshot Library dialog state', () => {
-    const buttonStart = viewer.indexOf('title="Open Snapshot Library"', viewer.indexOf('Row 2: zoom'))
+    const buttonStart = viewer.indexOf('title="Open Snapshot Library"', viewer.indexOf('Snapshots &amp; History'))
     const buttonBody = viewer.slice(viewer.lastIndexOf('<button', buttonStart), viewer.indexOf('</button>', buttonStart))
 
     expect(buttonBody).toContain('setIsSnapshotLibraryOpen(true)')

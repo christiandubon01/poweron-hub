@@ -957,6 +957,9 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
                     projectId={form.projectId}
                     blueprintSetId={form.blueprintSetId}
                     workPackageId={form.workPackageId}
+                    projectName={projectOptions.find((option) => option.id === form.projectId)?.label}
+                    blueprintName={blueprintOptions.find((option) => option.id === form.blueprintSetId)?.label}
+                    workPackageName={packageOptions.find((option) => option.id === form.workPackageId)?.label}
                     selectedIds={selectedSnapshotIds}
                     onChange={setSelectedSnapshotIds}
                   />
