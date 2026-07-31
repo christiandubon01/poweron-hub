@@ -170,14 +170,13 @@ describe('desktop seven-day week row', () => {
     expect(archive).not.toContain('overflow-x-scroll')
   })
 
-  it('gives My Tasks the full desktop content width and leaves narrow tabs alone', () => {
-    // My Tasks opts into the wide column. Schedule joined it in
-    // EMPLOYEE-SCHEDULE-MONTH-VIEW-1 for its own seven-column month grid.
+  it('gives all four tabs the full desktop content width', () => {
+    // EMPLOYEE-CLOCK-WORKSPACE-1: Clock joined My Tasks, Schedule, and My Time.
+    // Main is always-wide; profile card and nav retain their own max-w-lg constraint.
     expect(portal).toContain("activeSection === 'assignments'")
-    expect(portal).toContain("'max-w-lg lg:max-w-[1680px]'")
-    // Clock and My Time keep the phone-first column.
-    expect(portal).toContain(": 'max-w-lg'")
-    expect(occurrences(portal, "'max-w-lg lg:max-w-[1680px]'")).toBe(1)
+    expect(portal).toContain('max-w-lg lg:max-w-[1680px]')
+    // Profile card and nav remain narrow on all screen sizes.
+    expect(portal).toContain('mx-auto w-full max-w-lg')
   })
 
   it('shows all seven days plus Unscheduled without duplicating a task', () => {
@@ -723,8 +722,21 @@ describe('regression guards', () => {
     const migrations = readdirSync(join(process.cwd(), 'supabase/migrations'))
     expect(existsSync(join(process.cwd(), 'supabase/migrations/096_work_order_snapshot_delivery.sql'))).toBe(true)
     // 097 is punch-edit-requests (EMPLOYEE-MY-TIME-WEEK-1); 098/099 are job-linked sessions
-    // (EMPLOYEE-JOB-CLOCK-SESSIONS-1). Guard against anything beyond 099.
-    expect(migrations.filter((name) => /^1\d\d_/.test(name))).toEqual([])
+    // (EMPLOYEE-JOB-CLOCK-SESSIONS-1); 100 is project-only sessions (EMPLOYEE-CLOCK-WORKSPACE-1);
+    // 101 is project identity compat fix (PROJECT-IDENTITY-COMPAT-101);
+    // 102–105 are employee clock RPC repairs; 106 is session-aware admin void.
+    // Guard against anything beyond 106.
+    const beyond100 = migrations.filter((name) => /^1\d\d_/.test(name))
+      .filter((name) =>
+        !name.startsWith('100_') &&
+        !name.startsWith('101_') &&
+        !name.startsWith('102_') &&
+        !name.startsWith('103_') &&
+        !name.startsWith('104_') &&
+        !name.startsWith('105_') &&
+        !name.startsWith('106_')
+      )
+    expect(beyond100).toEqual([])
     expect(migrations).toContain('092_task_hours_spent.sql')
     for (const source of [panel, board, archive, logic]) {
       expect(source).not.toContain('ALTER TABLE')

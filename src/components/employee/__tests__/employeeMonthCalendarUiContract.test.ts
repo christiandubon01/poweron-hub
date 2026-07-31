@@ -222,8 +222,9 @@ describe('full-width month grid', () => {
   it('uses seven equal columns at full portal width on desktop', () => {
     expect(calendar).toContain('hidden lg:grid lg:grid-cols-7')
     expect(calendar).toContain('grid grid-cols-7 gap-1 lg:hidden')
-    expect(portal).toContain("activeSection === 'assignments' || activeSection === 'schedule'")
-    expect(portal).toContain("'max-w-lg lg:max-w-[1680px]'")
+    // EMPLOYEE-CLOCK-WORKSPACE-1: all four tabs are always-wide — no conditional.
+    expect(portal).toContain("activeSection === 'schedule'")
+    expect(portal).toContain('max-w-lg lg:max-w-[1680px]')
   })
 
   it('renders a Monday-first weekday header row', () => {
@@ -427,8 +428,21 @@ describe('regression guards', () => {
     const migrations = readdirSync(join(process.cwd(), 'supabase/migrations'))
     expect(existsSync(join(process.cwd(), 'supabase/migrations/096_work_order_snapshot_delivery.sql'))).toBe(true)
     // 097 is punch-edit-requests (EMPLOYEE-MY-TIME-WEEK-1); 098/099 are job-linked sessions
-    // (EMPLOYEE-JOB-CLOCK-SESSIONS-1). Guard against anything beyond 099.
-    expect(migrations.filter((name) => /^1\d\d_/.test(name))).toEqual([])
+    // (EMPLOYEE-JOB-CLOCK-SESSIONS-1); 100 is project-only sessions (EMPLOYEE-CLOCK-WORKSPACE-1);
+    // 101 is project identity compat fix (PROJECT-IDENTITY-COMPAT-101);
+    // 102–105 are employee clock RPC repairs; 106 is session-aware admin void.
+    // Guard against anything beyond 106.
+    const beyond100 = migrations.filter((name) => /^1\d\d_/.test(name))
+      .filter((name) =>
+        !name.startsWith('100_') &&
+        !name.startsWith('101_') &&
+        !name.startsWith('102_') &&
+        !name.startsWith('103_') &&
+        !name.startsWith('104_') &&
+        !name.startsWith('105_') &&
+        !name.startsWith('106_')
+      )
+    expect(beyond100).toEqual([])
     expect(migrations).toContain('086_employee_schedules.sql')
     for (const source of [panel, calendar, logic, scheduleService]) {
       expect(source).not.toContain('ALTER TABLE')

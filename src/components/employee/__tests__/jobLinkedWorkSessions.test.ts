@@ -28,6 +28,7 @@ const BASE_SESSION = {
   org_id: 'org-1',
   employee_profile_id: 'ep-1',
   assignment_id: 'assign-1',
+  project_id: null,
   work_order_version: 1,
   project_name: 'Alpha Project',
   work_package_name: 'Framing',

@@ -142,16 +142,11 @@ export function EmployeePortal() {
         </button>
       </header>
 
-      {/* The weekly task board and the monthly schedule calendar both need room
-          for seven equal day columns on one row, so My Tasks and Schedule opt
-          into the full practical content width. Clock and My Time keep the
-          phone-first max-w-lg column. */}
+      {/* Clock gets a wide two-column layout on desktop. My Tasks and Schedule
+          need full width for their seven-column day grids. My Time is also wide.
+          All four tabs share the same max-w-[1680px] workspace on large screens. */}
       <main
-        className={`flex-1 px-4 py-6 mx-auto w-full space-y-5 ${
-          activeSection === 'assignments' || activeSection === 'schedule' || activeSection === 'my-time'
-            ? 'max-w-lg lg:max-w-[1680px]'
-            : 'max-w-lg'
-        }`}
+        className="flex-1 px-4 py-6 mx-auto w-full space-y-5 max-w-lg lg:max-w-[1680px]"
       >
         {/* Signed-in status */}
         <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm mx-auto w-full max-w-lg">

@@ -260,16 +260,31 @@ describe('migration 098 unchanged', () => {
   })
 })
 
-// ── 14. No migrations beyond 099 ─────────────────────────────────────────────
+// ── 14. Migration guard (updated for 100) ────────────────────────────────────
 
 describe('migration guard', () => {
-  it('no migrations with a three-digit prefix beyond 099', () => {
-    const { readdirSync } = require('node:fs')
-    const migrations = readdirSync(migDir)
-    expect(migrations.filter((name: string) => /^1\d\d_/.test(name))).toEqual([])
-  })
-
   it('migration 099 exists', () => {
     expect(existsSync(join(migDir, '099_job_linked_work_sessions.sql'))).toBe(true)
+  })
+
+  it('migration 100 exists (project-only sessions)', () => {
+    expect(existsSync(join(migDir, '100_project_only_work_sessions.sql'))).toBe(true)
+  })
+
+  it('no migrations with a three-digit prefix beyond 106', () => {
+    const { readdirSync } = require('node:fs')
+    const migrations = readdirSync(migDir)
+    // 105 is session clock-out summary; 106 is session-aware admin void
+    const beyond106 = migrations.filter((name: string) => /^1\d\d_/.test(name))
+      .filter((name: string) =>
+        !name.startsWith('100_') &&
+        !name.startsWith('101_') &&
+        !name.startsWith('102_') &&
+        !name.startsWith('103_') &&
+        !name.startsWith('104_') &&
+        !name.startsWith('105_') &&
+        !name.startsWith('106_')
+      )
+    expect(beyond106).toEqual([])
   })
 })

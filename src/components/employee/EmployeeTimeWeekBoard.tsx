@@ -150,23 +150,33 @@ function SessionCard({ session, pendingRequests, onRequestPunchEdit, compact = f
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-      {/* Job identity */}
+      {/* Time Session identity — project + Work Package (not a Work Order label) */}
       <div className="px-3 pt-2.5 pb-1.5 bg-gray-50 border-b border-gray-100 flex items-start gap-2">
         <Briefcase className="w-3.5 h-3.5 text-gray-400 mt-0.5 flex-shrink-0" />
         <div className="min-w-0 flex-1">
           {session.project_name && (
-            <p className="text-[10px] text-gray-400 uppercase tracking-wide truncate leading-none mb-0.5">
+            <p className={`font-bold text-gray-900 truncate leading-tight ${compact ? 'text-xs' : 'text-sm'}`}>
               {session.project_name}
             </p>
           )}
-          <p className={`font-bold text-gray-900 truncate leading-tight ${compact ? 'text-xs' : 'text-sm'}`}>
-            {session.work_package_name ?? 'Session'}
+          <p className="text-[10px] text-gray-400 uppercase tracking-wide truncate leading-none mt-0.5">
+            Work Package
+          </p>
+          <p className={`truncate leading-tight ${compact ? 'text-xs' : 'text-sm'} ${
+            session.work_package_name ? 'font-semibold text-gray-800' : 'font-medium text-blue-600'
+          }`}>
+            {session.work_package_name ?? 'Not assigned yet'}
           </p>
         </div>
       </div>
 
       {/* Status badges */}
       <div className="flex flex-wrap items-center gap-1.5 px-3 pt-1.5 pb-0.5">
+        {!session.work_package_name && (
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full border bg-blue-50 text-blue-700 border-blue-200">
+            Project Only
+          </span>
+        )}
         {isActive && (
           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full border bg-green-50 text-green-700 border-green-200">
             Active

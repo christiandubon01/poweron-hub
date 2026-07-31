@@ -392,10 +392,11 @@ const PUNCH_EDIT_REQ_ADMIN_COLS =
   'original_time, requested_time, employee_reason, status, requested_at, ' +
   'reviewed_by, reviewed_at, created_at, updated_at'
 
-/** Per-session record for admin visibility (migration 099). */
+/** Per-session record for admin visibility (migration 099/100). */
 export interface AdminWorkSession {
   id: string
   assignment_id: string | null
+  project_id: string | null
   project_name: string | null
   work_package_name: string | null
   work_date: string
@@ -409,8 +410,15 @@ export interface AdminWorkSession {
   status: string
 }
 
+/** Assignment summary for the admin Attach Work Package dropdown. */
+export interface AdminProjectAssignment {
+  id: string
+  work_package_name: string
+  status: string
+}
+
 const ADMIN_SESSION_COLS =
-  'id, assignment_id, project_name, work_package_name, work_date, ' +
+  'id, assignment_id, project_id, project_name, work_package_name, work_date, ' +
   'clock_in_at, lunch_out_at, lunch_in_at, clock_out_at, ' +
   'total_minutes, lunch_minutes, paid_minutes, status'
 
@@ -536,6 +544,61 @@ export async function adminRecordSessionPunch(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Network error'
     console.error('[adminTimecardService.adminRecordSessionPunch] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── N. adminAttachSessionAssignment — attach a Work Package to a project-only session
+
+/**
+ * Owner/admin attaches an assignment (Work Package) to a project-only session.
+ * Preserves all punch timestamps and minute totals exactly.
+ * Calls admin_attach_session_assignment RPC (migration 100).
+ */
+export async function adminAttachSessionAssignment(
+  sessionId: string,
+  assignmentId: string,
+): Promise<Result<AdminWorkSession>> {
+  try {
+    const { data, error } = await rpc('admin_attach_session_assignment', {
+      p_session_id:    sessionId,
+      p_assignment_id: assignmentId,
+    })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: data as AdminWorkSession }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.adminAttachSessionAssignment] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── O. getProjectAssignmentsForAdmin — active assignments for Attach Work Package UI
+
+/**
+ * Returns active assignments for a project so the admin can pick one to attach.
+ * Calls get_project_assignments_for_admin RPC (migration 100).
+ */
+export async function getProjectAssignmentsForAdmin(
+  projectId: string,
+): Promise<Result<AdminProjectAssignment[]>> {
+  try {
+    const { data, error } = await rpc('get_project_assignments_for_admin', {
+      p_project_id: projectId,
+    })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: (data ?? []) as AdminProjectAssignment[] }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.getProjectAssignmentsForAdmin] Error:', err)
     return { success: false, error: message }
   }
 }
