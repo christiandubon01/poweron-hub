@@ -110,9 +110,9 @@ describe('Low Voltage Transformer lighting symbol', () => {
   })
 
   it('stays animation-neutral and separate from all route device classifications', () => {
-    expect(isRouteBuilderSourceKind('electrical-low-voltage-transformer')).toBe(false)
+    expect(isRouteBuilderSourceKind('electrical-low-voltage-transformer')).toBe(true)
     expect(isRouteBuilderLoadKind('electrical-low-voltage-transformer')).toBe(false)
-    expect(isRouteBuilderDeviceKind('electrical-low-voltage-transformer')).toBe(false)
+    expect(isRouteBuilderDeviceKind('electrical-low-voltage-transformer')).toBe(true)
     expect(inferRouteBuilderNodeRoles('electrical-low-voltage-transformer')).toEqual([])
     expect(inferRouteBuilderDefaultChannel('electrical-low-voltage-transformer')).toBe('generic-route')
     expect(ROUTE_BUILDER_LOAD_KINDS).not.toContain('electrical-low-voltage-transformer')

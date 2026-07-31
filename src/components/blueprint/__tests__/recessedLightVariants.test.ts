@@ -146,7 +146,7 @@ describe('desktop recessed light registered variants', () => {
       expect(isLightOutputShapeKind(kind)).toBe(true)
       expect(isRouteBuilderLoadKind(kind)).toBe(true)
       expect(inferRouteBuilderNodeRoles(kind)).toEqual(['load'])
-      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(isRouteBuilderSourceKind(kind)).toBe(true)
       expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
     }
   })
@@ -356,14 +356,14 @@ describe('desktop recessed light registered variants', () => {
     expect(isLightOutputShapeKind('electrical-emergency-exit-sign')).toBe(true)
     expect(isRouteBuilderLoadKind('electrical-emergency-exit-sign')).toBe(true)
     expect(inferRouteBuilderNodeRoles('electrical-emergency-exit-sign')).toEqual(['load'])
-    expect(isRouteBuilderSourceKind('electrical-emergency-exit-sign')).toBe(false)
+    expect(isRouteBuilderSourceKind('electrical-emergency-exit-sign')).toBe(true)
     expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain('electrical-emergency-exit-sign')
 
     for (const kind of ['electrical-co-alarm', 'electrical-smoke-alarm'] as const) {
       expect(isLightOutputShapeKind(kind)).toBe(false)
       expect(isRouteBuilderLoadKind(kind)).toBe(false)
       expect(inferRouteBuilderNodeRoles(kind)).toEqual([])
-      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(isRouteBuilderSourceKind(kind)).toBe(true)
       expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
     }
   })
@@ -480,7 +480,7 @@ describe('desktop recessed light registered variants', () => {
       expect(isRouteBuilderLoadKind(kind)).toBe(false)
       expect(isLightOutputShapeKind(kind)).toBe(false)
       expect(inferRouteBuilderNodeRoles(kind)).toEqual([])
-      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(isRouteBuilderSourceKind(kind)).toBe(true)
       expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
     }
   })
@@ -508,7 +508,7 @@ describe('desktop recessed light registered variants', () => {
       else expect(markup).toContain(getElectricalSymbolMetadata(kind)?.shortLabel)
       expect(isRouteBuilderLoadKind(kind)).toBe(kind !== 'electrical-low-voltage-transformer')
       expect(inferRouteBuilderNodeRoles(kind)).toEqual(kind === 'electrical-low-voltage-transformer' ? [] : ['load'])
-      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(isRouteBuilderSourceKind(kind)).toBe(true)
       expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
     }
   })

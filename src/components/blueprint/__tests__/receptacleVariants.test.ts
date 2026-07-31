@@ -182,7 +182,7 @@ describe('desktop receptacle variants', () => {
     for (const kind of RECEPTACLE_KINDS) {
       expect(isRouteBuilderLoadKind(kind)).toBe(true)
       expect(inferRouteBuilderNodeRoles(kind)).toEqual(['load'])
-      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(isRouteBuilderSourceKind(kind)).toBe(true)
       expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
       expect(inferRouteBuilderDefaultChannel(kind)).toBe('generic-route')
       expect(isLightOutputShapeKind(kind)).toBe(false)

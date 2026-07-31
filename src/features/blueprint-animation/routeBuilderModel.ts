@@ -10,6 +10,7 @@ import {
   parseBlueprintAnimationScene,
 } from './sceneSchema'
 import { mergeBlueprintScopeLayersById } from '@/services/blueprintLibraryService'
+import { isElectricalShapeKind } from '@/components/blueprint/electricalSymbolRegistry'
 import type {
   BlueprintAnimationChannelType,
   BlueprintAnimationBranchMode,
@@ -300,7 +301,7 @@ function isCircuitShapeKind(value: unknown): value is CircuitShapeKind {
 }
 
 export function isRouteBuilderSourceKind(shapeKind: unknown): boolean {
-  return typeof shapeKind === 'string' && SOURCE_KINDS.has(shapeKind)
+  return isElectricalShapeKind(shapeKind)
 }
 
 export function isRouteBuilderLoadKind(shapeKind: unknown): boolean {
@@ -670,7 +671,7 @@ export function resolvePackageAnimationRouteDraft(draft: PackageAnimationRouteDr
     } else if (!packageHas(draft, sourceAnnotation.id)) {
       issues.push(issue('error', 'source-not-in-package', 'The selected source is no longer in this work package.'))
     } else if (!isRouteBuilderSourceKind(sourceAnnotation.shapeKind)) {
-      issues.push(issue('error', 'invalid-source-kind', 'The source must be an electrical panel, switch, dimmer, timer, photocell, or occupancy sensor.'))
+      issues.push(issue('error', 'invalid-source-kind', 'The source must be a registered electrical device.'))
     } else {
       const sourceNode = annotationNode(draft, sourceAnnotation, true)
       if (!sourceNode) {
@@ -926,16 +927,11 @@ export function selectPackageAnimationRouteSource(
   const annotation = byId(draft).get(annotationId)
   if (!annotation) return { accepted: false, draft, message: 'That annotation no longer exists.' }
   if (!isRouteBuilderSourceKind(annotation.shapeKind)) {
-    const message = 'Select an electrical panel, switch, dimmer, timer, photocell, or occupancy sensor that belongs to this Work Package.'
+    const message = 'Select an electrical device that belongs to this Work Package.'
     return { accepted: false, draft: withNotice(draft, issue('error', 'invalid-source-kind', message)), message }
   }
   if (!packageHas(draft, annotationId)) {
-    const isSwitch = annotation.shapeKind === 'electrical-switch'
-      || annotation.shapeKind === 'electrical-switch-3way'
-      || annotation.shapeKind === 'electrical-switch-4way'
-    const message = isSwitch
-      ? 'This switch is not included in this Work Package. Add it to the package before using it as the animation source.'
-      : 'This source device is not included in this Work Package. Add it to the package before using it as the animation source.'
+    const message = 'This device is not included in this Work Package. Add it to the package before using it as the animation source.'
     return { accepted: false, draft: withNotice(draft, issue('error', 'source-not-in-package', message)), message }
   }
   const next: PackageAnimationRouteDraft = {

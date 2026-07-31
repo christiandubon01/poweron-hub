@@ -282,7 +282,7 @@ describe('ANIM-5.4 electrical panel symbol', () => {
     expect(inferRouteBuilderDefaultChannel('electrical-panel')).toBe('constant-line-voltage')
 
     for (const [kind] of EQUIPMENT_EXPECTATIONS) {
-      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(isRouteBuilderSourceKind(kind)).toBe(true)
       expect(isRouteBuilderLoadKind(kind)).toBe(false)
       expect(inferRouteBuilderNodeRoles(kind)).toEqual([])
       expect(inferRouteBuilderDefaultChannel(kind)).toBe('generic-route')

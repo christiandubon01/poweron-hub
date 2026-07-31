@@ -148,13 +148,13 @@ describe('routeBuilderModel', () => {
       }),
     )
 
-    expect(markup).toContain('Select one supported source on the blueprint: Main Panel, switch, dimmer, timer, photocell, or occupancy sensor.')
+    expect(markup).toContain('Select an electrical device in this Work Package as the animation source, then select connected Circuit Path/Arc segments in travel order.')
     expect(markup).not.toContain('Electrical Panel')
     expect(isRouteBuilderSourceKind('electrical-panel')).toBe(true)
     expect(inferRouteBuilderNodeRoles('electrical-panel', { selectedAsSource: true })).toEqual(['source'])
     expect(inferRouteBuilderDefaultChannel('electrical-panel')).toBe('constant-line-voltage')
     for (const kind of ['electrical-sub-panel', 'electrical-switchboard', 'electrical-switchgear', 'electrical-ats', 'electrical-transformer']) {
-      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(isRouteBuilderSourceKind(kind)).toBe(true)
     }
   })
 
@@ -173,26 +173,26 @@ describe('routeBuilderModel', () => {
     for (const kind of ['can-light-2', 'canless-light-2', 'can-light-4', 'canless-light-4', 'can-light-6', 'canless-light-6', 'canless-light-10']) {
       expect(inferRouteBuilderNodeRoles(kind)).toEqual(['load'])
       expect(isRouteBuilderLoadKind(kind)).toBe(true)
-      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(isRouteBuilderSourceKind(kind)).toBe(true)
       expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
     }
     for (const kind of ['electrical-receptacle', 'electrical-gfci', 'electrical-gfci-wp', 'electrical-receptacle-240v', 'electrical-single-receptacle', 'electrical-half-hot-receptacle']) {
       expect(inferRouteBuilderNodeRoles(kind)).toEqual(['load'])
       expect(isRouteBuilderLoadKind(kind)).toBe(true)
-      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(isRouteBuilderSourceKind(kind)).toBe(true)
       expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
     }
     for (const kind of ['electrical-sub-panel', 'electrical-switchboard', 'electrical-switchgear', 'electrical-ats', 'electrical-transformer']) {
       expect(inferRouteBuilderNodeRoles(kind)).toEqual([])
       expect(isRouteBuilderLoadKind(kind)).toBe(false)
-      expect(isRouteBuilderSourceKind(kind)).toBe(false)
+      expect(isRouteBuilderSourceKind(kind)).toBe(true)
       expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain(kind)
     }
     expect(inferRouteBuilderNodeRoles('electrical-emergency-exit-sign')).toEqual(['load'])
     expect(inferRouteBuilderNodeRoles(undefined, { junction: true })).toEqual(['junction'])
     expect(isRouteBuilderLoadKind('electrical-emergency-exit-sign')).toBe(true)
     expect(isRouteBuilderDeviceKind('electrical-emergency-exit-sign')).toBe(true)
-    expect(isRouteBuilderSourceKind('electrical-emergency-exit-sign')).toBe(false)
+    expect(isRouteBuilderSourceKind('electrical-emergency-exit-sign')).toBe(true)
     expect(ROUTE_BUILDER_SENSOR_KINDS).not.toContain('electrical-emergency-exit-sign')
   })
 
@@ -223,7 +223,7 @@ describe('routeBuilderModel', () => {
     expect(rejected.accepted).toBe(false)
     expect(rejected.draft.notice).toMatchObject({
       code: 'source-not-in-package',
-      message: 'This switch is not included in this Work Package. Add it to the package before using it as the animation source.',
+      message: 'This device is not included in this Work Package. Add it to the package before using it as the animation source.',
     })
   })
 
@@ -234,33 +234,29 @@ describe('routeBuilderModel', () => {
     expect(rejected.accepted).toBe(false)
     expect(rejected.draft.notice).toMatchObject({
       code: 'source-not-in-package',
-      message: 'This source device is not included in this Work Package. Add it to the package before using it as the animation source.',
+      message: 'This device is not included in this Work Package. Add it to the package before using it as the animation source.',
     })
   })
 
-  it('rejects an unsupported source annotation with the supported-source notice even outside the package', () => {
+  it('rejects a source annotation that is not included in the work package', () => {
     const draft = empty({ annotations: [fixture1], packageAnnotationIds: [] })
     const rejected = dispatchPackageAnimationRoutePick(draft, { kind: 'annotation', annotationId: 'fixture-1' })
 
     expect(rejected.accepted).toBe(false)
     expect(rejected.draft.notice).toMatchObject({
-      code: 'invalid-source-kind',
-      message: 'Select an electrical panel, switch, dimmer, timer, photocell, or occupancy sensor that belongs to this Work Package.',
+      code: 'source-not-in-package',
+      message: 'This device is not included in this Work Package. Add it to the package before using it as the animation source.',
     })
   })
 
-  it('keeps an emergency exit sign out of source mode while allowing it as a downstream load', () => {
+  it('accepts an emergency exit sign as source and allows it as a downstream load', () => {
     const base = empty({ annotations: [source, exitSign], packageAnnotationIds: ['source', 'exit-sign'] })
 
-    expect(getPackageAnimationSourceCandidates(base).map((candidate) => candidate.annotationId)).toEqual(['source'])
+    expect(getPackageAnimationSourceCandidates(base).map((candidate) => candidate.annotationId)).toEqual(['source', 'exit-sign'])
 
-    const rejectedSource = dispatchPackageAnimationRoutePick(base, { kind: 'annotation', annotationId: 'exit-sign' })
-    expect(rejectedSource).toMatchObject({ accepted: false, consumed: true, mode: 'primary-route', branchActive: false })
-    expect(rejectedSource.draft.source).toBeUndefined()
-    expect(rejectedSource.draft.notice).toMatchObject({
-      code: 'invalid-source-kind',
-      message: 'Select an electrical panel, switch, dimmer, timer, photocell, or occupancy sensor that belongs to this Work Package.',
-    })
+    const acceptedSource = dispatchPackageAnimationRoutePick(base, { kind: 'annotation', annotationId: 'exit-sign' })
+    expect(acceptedSource).toMatchObject({ accepted: true, consumed: true, mode: 'primary-route', branchActive: false })
+    expect(acceptedSource.draft.source?.annotationId).toBe('exit-sign')
 
     const draft = sourceDraft(base)
     const acceptedLoad = dispatchPackageAnimationRoutePick(draft, {
@@ -304,7 +300,7 @@ describe('routeBuilderModel', () => {
     })
   })
 
-  it('allows LED Strip as a downstream light-output load while keeping Low Voltage Transformer animation-neutral', () => {
+  it('allows LED Strip as a downstream light-output load and Low Voltage Transformer as an eligible route device', () => {
     const ledStrip: RouteBuilderAnnotation = {
       id: 'led-strip',
       pageNumber: 1,
@@ -323,13 +319,13 @@ describe('routeBuilderModel', () => {
     const base = empty({ annotations: [source, ledStrip, lvt], packageAnnotationIds: ['source', 'led-strip', 'lvt'] })
 
     expect(isRouteBuilderLoadKind('electrical-led-strip')).toBe(true)
-    expect(isRouteBuilderSourceKind('electrical-led-strip')).toBe(false)
+    expect(isRouteBuilderSourceKind('electrical-led-strip')).toBe(true)
     expect(inferRouteBuilderNodeRoles('electrical-led-strip')).toEqual(['load'])
     expect(inferRouteBuilderDefaultChannel('electrical-led-strip')).toBe('generic-route')
 
-    expect(isRouteBuilderDeviceKind('electrical-low-voltage-transformer')).toBe(false)
+    expect(isRouteBuilderDeviceKind('electrical-low-voltage-transformer')).toBe(true)
     expect(isRouteBuilderLoadKind('electrical-low-voltage-transformer')).toBe(false)
-    expect(isRouteBuilderSourceKind('electrical-low-voltage-transformer')).toBe(false)
+    expect(isRouteBuilderSourceKind('electrical-low-voltage-transformer')).toBe(true)
     expect(inferRouteBuilderNodeRoles('electrical-low-voltage-transformer')).toEqual([])
 
     const draft = sourceDraft(base)
@@ -345,12 +341,8 @@ describe('routeBuilderModel', () => {
       anchor: { kind: 'annotation-center', annotationId: 'led-strip' },
     })
 
-    const rejectedLvt = dispatchPackageAnimationRoutePick(draft, { kind: 'annotation', annotationId: 'lvt', allowPrimaryDirectTransition: true })
-    expect(rejectedLvt.accepted).toBe(false)
-    expect(rejectedLvt.draft.notice).toMatchObject({
-      code: 'ineligible-route-item',
-      message: 'That annotation is not an eligible route source, circuit segment, control, or light fixture.',
-    })
+    const acceptedLvt = dispatchPackageAnimationRoutePick(draft, { kind: 'annotation', annotationId: 'lvt', allowPrimaryDirectTransition: true })
+    expect(acceptedLvt.accepted).toBe(true)
   })
 
   it('treats a Main Panel as an eligible source with source-only roles and constant power', () => {
@@ -373,7 +365,7 @@ describe('routeBuilderModel', () => {
     const selected = selectPackageAnimationRouteSource(base, 'panel')
 
     expect(isRouteBuilderSourceKind('electrical-panel')).toBe(true)
-    expect(isRouteBuilderSourceKind('electrical-receptacle')).toBe(false)
+    expect(isRouteBuilderSourceKind('electrical-receptacle')).toBe(true)
     expect(selected.accepted).toBe(true)
     expect(selected.draft.source).toEqual({ annotationId: 'panel', channel: 'constant-line-voltage' })
     expect(formatRouteBuilderSourceLabel(panel)).toBe('Main Panel — Subpanel')
@@ -384,7 +376,7 @@ describe('routeBuilderModel', () => {
     expect(inferRouteBuilderNodeRoles('electrical-panel')).toEqual([])
     expect(inferRouteBuilderNodeRoles('electrical-panel', { selectedAsSource: true })).not.toEqual(expect.arrayContaining(['control', 'sensor', 'load', 'emergency-source']))
     expect(inferRouteBuilderDefaultChannel('electrical-panel')).toBe('constant-line-voltage')
-    expect(selectPackageAnimationRouteSource(base, 'receptacle')).toMatchObject({ accepted: false })
+    expect(selectPackageAnimationRouteSource(base, 'receptacle')).toMatchObject({ accepted: true })
 
     const resolved = resolvePackageAnimationRouteDraft(selected.draft)
     expect(resolved.nodes[0]).toMatchObject({

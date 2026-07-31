@@ -261,9 +261,9 @@ describe('LED Strip lighting symbol', () => {
     expect(supportsWireProfileAssignment({ toolType: 'shape', toolVariant: 'electrical-led-strip' })).toBe(false)
   })
 
-  it('is an animation load with annotation-center anchoring semantics, not a source', () => {
+  it('is an animation load with annotation-center anchoring semantics', () => {
     expect(isRouteBuilderLoadKind('electrical-led-strip')).toBe(true)
-    expect(isRouteBuilderSourceKind('electrical-led-strip')).toBe(false)
+    expect(isRouteBuilderSourceKind('electrical-led-strip')).toBe(true)
     expect(inferRouteBuilderNodeRoles('electrical-led-strip')).toEqual(['load'])
     expect(inferRouteBuilderDefaultChannel('electrical-led-strip')).toBe('generic-route')
   })
