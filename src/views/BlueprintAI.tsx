@@ -1,6 +1,6 @@
 ﻿// @ts-nocheck
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, CheckCircle2, FileText, Loader2, RotateCcw, Trash2, Upload } from 'lucide-react'
+import { Archive, CheckCircle2, FileImage, FileText, Loader2, RotateCcw, Trash2, Upload } from 'lucide-react'
 import { getBackupData } from '@/services/backupDataService'
 import OperationsBlueprintPdfViewer from '@/components/blueprint/OperationsBlueprintPdfViewer'
 import {
@@ -24,6 +24,7 @@ import {
   type BlueprintLibraryType,
 } from '@/services/blueprintLibraryService'
 import { extractSheetIndexCandidatesFromStorage, type DetectedSheetIndexRow } from '@/services/blueprintExtractor'
+import { convertImageToBlueprintPdf, ImageConversionError } from '@/services/imageToBlueprintPdfService'
 import {
   cleanupDerivedBlueprintStorageObject,
   createDerivedBlueprintSet,
@@ -141,7 +142,17 @@ export default function BlueprintAI() {
   const [vrPanelOpen, setVrPanelOpen] = useState(false)
   const [vrGeneratingError, setVrGeneratingError] = useState<string | null>(null)
   const [vrSourceSetIdByProject, setVrSourceSetIdByProject] = useState<Record<string, string>>({})
+  const [convertPanelOpen, setConvertPanelOpen] = useState(false)
+  const [convertProjectId, setConvertProjectId] = useState<string>(projects[0]?.id || '')
+  const [convertTitle, setConvertTitle] = useState('')
+  const [convertBpType, setConvertBpType] = useState<BlueprintLibraryType>('Electrical Only')
+  const [convertImgFile, setConvertImgFile] = useState<File | null>(null)
+  const [converting, setConverting] = useState(false)
+  const [convertedPdf, setConvertedPdf] = useState<File | null>(null)
+  const [uploadingConvert, setUploadingConvert] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const convertImgRef = useRef<HTMLInputElement>(null)
+  const lastAutoSuggestedTitle = useRef<string>('')
   const vrState = useBlueprintVRGeneration()
 
   useEffect(() => {
@@ -310,59 +321,47 @@ export default function BlueprintAI() {
     setLibrary(getOperationsBlueprintLibrary(freshBackup))
   }
 
-  async function handleUpload() {
-    setError(null)
-    setSuccess(null)
-    if (!selectedProjectId) {
-      setError('Select a project first.')
-      return
-    }
-    if (!title.trim()) {
-      setError('Blueprint title is required.')
-      return
-    }
-    if (!file) {
-      setError('Choose a PDF to upload.')
-      return
-    }
-
-    const valid = validateBlueprintPdf(file)
+  async function performBlueprintUpload(
+    fileToUpload: File,
+    projectId: string,
+    blueprintTitle: string,
+    type: BlueprintLibraryType,
+    setUploadingFn: (v: boolean) => void,
+    onSuccessCleanup: () => void,
+  ) {
+    const valid = validateBlueprintPdf(fileToUpload)
     if (!valid.ok) {
       setError(valid.error || 'Invalid file.')
       return
     }
-
-    const project = projects.find((p: any) => p.id === selectedProjectId)
+    const project = projects.find((p: any) => p.id === projectId)
     if (!project) {
       setError('Selected project not found.')
       return
     }
-
-    setUploading(true)
+    setUploadingFn(true)
+    setError(null)
+    setSuccess(null)
     let uploadedStoragePath: string | null = null
     try {
       const { storagePath } = await uploadBlueprintPdfToStorage({
-        file,
-        projectId: selectedProjectId,
+        file: fileToUpload,
+        projectId,
         orgId,
       })
       uploadedStoragePath = storagePath
-
       const item = await createBlueprintLibraryItem({
-        file,
-        projectId: selectedProjectId,
-        projectName: project.name || selectedProjectId,
-        title,
-        type: bpType,
+        file: fileToUpload,
+        projectId,
+        projectName: project.name || projectId,
+        title: blueprintTitle.trim(),
+        type,
         storagePath,
       })
-
       const next = [item, ...library]
       await persist(next)
       setSelectedId(item.id)
-      setTitle('')
-      setFile(null)
-      if (fileRef.current) fileRef.current.value = ''
+      onSuccessCleanup()
       setSuccess('Blueprint uploaded and linked successfully.')
     } catch (e: any) {
       if (uploadedStoragePath) {
@@ -372,8 +371,86 @@ export default function BlueprintAI() {
       setLibrary(getOperationsBlueprintLibrary(freshBackup))
       setError(e?.message || 'Upload failed.')
     } finally {
-      setUploading(false)
+      setUploadingFn(false)
     }
+  }
+
+  async function handleUpload() {
+    setError(null)
+    setSuccess(null)
+    if (!selectedProjectId) { setError('Select a project first.'); return }
+    if (!title.trim()) { setError('Blueprint title is required.'); return }
+    if (!file) { setError('Choose a PDF to upload.'); return }
+    await performBlueprintUpload(file, selectedProjectId, title, bpType, setUploading, () => {
+      setTitle('')
+      setFile(null)
+      if (fileRef.current) fileRef.current.value = ''
+    })
+  }
+
+  async function handleConvertImage() {
+    setError(null)
+    setSuccess(null)
+    if (!convertImgFile) return
+    // Clear any stale converted File before every attempt so a prior zero-byte
+    // or partial result can never remain Ready to upload / Upload as Blueprint.
+    setConvertedPdf(null)
+    setConverting(true)
+    try {
+      const pdf = await convertImageToBlueprintPdf(convertImgFile)
+      if (!pdf || pdf.size <= 0) {
+        setConvertedPdf(null)
+        setError('The generated PDF could not be preserved correctly.')
+        return
+      }
+      setConvertedPdf(pdf)
+    } catch (e: any) {
+      setConvertedPdf(null)
+      setError(
+        e instanceof ImageConversionError
+          ? e.message
+          : 'Image conversion failed. Please try a different image.',
+      )
+    } finally {
+      setConverting(false)
+    }
+  }
+
+  async function handleUploadConverted() {
+    setError(null)
+    setSuccess(null)
+    if (!convertProjectId) { setError('Select a project first.'); return }
+    if (!convertTitle.trim()) { setError('Blueprint title is required.'); return }
+    if (!convertedPdf || convertedPdf.size <= 0) {
+      setConvertedPdf(null)
+      setError('The selected PDF is empty.')
+      return
+    }
+    await performBlueprintUpload(
+      convertedPdf,
+      convertProjectId,
+      convertTitle,
+      convertBpType,
+      setUploadingConvert,
+      () => {
+        setConvertedPdf(null)
+        setConvertImgFile(null)
+        setConvertTitle('')
+        setConvertPanelOpen(false)
+        lastAutoSuggestedTitle.current = ''
+        if (convertImgRef.current) convertImgRef.current.value = ''
+      },
+    )
+  }
+
+  function closeConvertPanel() {
+    setConvertPanelOpen(false)
+    setConvertedPdf(null)
+    setConvertImgFile(null)
+    setConverting(false)
+    setConvertTitle('')
+    lastAutoSuggestedTitle.current = ''
+    if (convertImgRef.current) convertImgRef.current.value = ''
   }
 
   async function setArchiveState(item: BlueprintLibraryItem, archived: boolean) {
@@ -819,6 +896,107 @@ export default function BlueprintAI() {
         )}
       </div>
 
+      {(error || success) && (
+        <div className="space-y-2">
+          {error && <div className="text-sm text-red-300 bg-red-900/20 border border-red-800/40 rounded-md px-3 py-2">{error}</div>}
+          {success && <div className="text-sm text-green-300 bg-green-900/20 border border-green-800/40 rounded-md px-3 py-2">{success}</div>}
+        </div>
+      )}
+
+      {uploadPanelOpen && (
+        <div className="rounded-xl border p-5 flex flex-col gap-4" style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}>
+          <p className="text-xs text-gray-500 uppercase tracking-wide">Upload Blueprint</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Select Project</label>
+              <select
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+                className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
+              >
+                <option value="">Select a project</option>
+                {projects.map((p: any) => (
+                  <option key={p.id} value={p.id}>{p.name || p.id}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Blueprint Title</label>
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
+                placeholder="Example: Riverside Main Panel Set"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Blueprint Type</label>
+              <select
+                value={bpType}
+                onChange={(e) => setBpType(e.target.value as BlueprintLibraryType)}
+                className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
+              >
+                {BLUEPRINT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Upload PDF</label>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".pdf,application/pdf"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
+              />
+              <p className="text-xs text-gray-500 mt-1">Max size: {formatBytes(MAX_BLUEPRINT_FILE_SIZE_BYTES)}</p>
+            </div>
+          </div>
+
+          {file && (
+            <div className="text-xs text-gray-400">
+              Selected file: <span className="text-gray-200">{file.name}</span> ({formatBytes(file.size)})
+            </div>
+          )}
+
+          <button
+            onClick={handleUpload}
+            disabled={uploading}
+            className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold bg-green-600 hover:bg-green-500 text-white disabled:opacity-60"
+          >
+            {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+            {uploading ? 'Uploading...' : 'Upload Blueprint'}
+          </button>
+        </div>
+      )}
+
+      <div className="w-full max-w-none min-w-0">
+        <div className="mb-2 text-sm font-semibold text-gray-200">Blueprint Viewer</div>
+        <OperationsBlueprintPdfViewer
+          blueprint={selectedItem}
+          onAnnotationsChanged={() => setAnnotationRefreshToken((v) => v + 1)}
+          externalPage={viewerJumpPage ?? undefined}
+          initialPage={viewerInitialPage}
+          onPageChange={(page) => {
+            setCurrentViewerPage(page)
+            if (viewerJumpPage === page) setViewerJumpPage(null)
+          }}
+          selectedPageNumbers={selectedPages}
+          onSelectedPagesChange={(pages) => {
+            const clean = Array.isArray(pages)
+              ? pages.map((p) => Math.floor(Number(p))).filter((p) => Number.isFinite(p) && p >= 1)
+              : []
+            const seen = new Set<number>()
+            const ordered: number[] = []
+            for (const p of clean) {
+              if (seen.has(p)) continue
+              seen.add(p)
+              ordered.push(p)
+            }
+            setSelectedPages(ordered)
+          }}
+        />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="rounded-xl border p-4" style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}>
           <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">Blueprint / Project Totals</p>
@@ -924,6 +1102,17 @@ export default function BlueprintAI() {
           </button>
 
           <button
+            onClick={() => setConvertPanelOpen((v) => !v)}
+            className={`rounded-xl border px-4 py-3 text-left ${convertPanelOpen ? 'border-orange-700 bg-orange-950/20 text-orange-200' : 'border-gray-800 text-gray-300 hover:text-white'}`}
+          >
+            <div className="flex items-center gap-1.5">
+              <FileImage size={14} />
+              <p className="text-sm font-semibold">Convert Image to PDF</p>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">Convert a JPG or PNG into an annotatable Blueprint PDF</p>
+          </button>
+
+          <button
             onClick={() => setExportPanelOpen((v) => !v)}
             className={`rounded-xl border px-4 py-3 text-left ${exportPanelOpen ? 'border-blue-700 bg-blue-950/20 text-blue-200' : 'border-gray-800 text-gray-300 hover:text-white'}`}
           >
@@ -960,10 +1149,106 @@ export default function BlueprintAI() {
         </div>
       </div>
 
-      {(error || success) && (
-        <div className="space-y-2">
-          {error && <div className="text-sm text-red-300 bg-red-900/20 border border-red-800/40 rounded-md px-3 py-2">{error}</div>}
-          {success && <div className="text-sm text-green-300 bg-green-900/20 border border-green-800/40 rounded-md px-3 py-2">{success}</div>}
+      {convertPanelOpen && (
+        <div className="rounded-xl border p-5 flex flex-col gap-4" style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}>
+          <p className="text-xs text-gray-500 uppercase tracking-wide">Convert Image to Blueprint PDF</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Select Project</label>
+              <select
+                value={convertProjectId}
+                onChange={(e) => setConvertProjectId(e.target.value)}
+                className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
+              >
+                <option value="">Select a project</option>
+                {projects.map((p: any) => (
+                  <option key={p.id} value={p.id}>{p.name || p.id}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Blueprint Title</label>
+              <input
+                value={convertTitle}
+                onChange={(e) => setConvertTitle(e.target.value)}
+                className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
+                placeholder="Example: Electrical Panel Photo"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Blueprint Type</label>
+              <select
+                value={convertBpType}
+                onChange={(e) => setConvertBpType(e.target.value as BlueprintLibraryType)}
+                className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
+              >
+                {BLUEPRINT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Image File</label>
+              <input
+                ref={convertImgRef}
+                type="file"
+                accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                onChange={(e) => {
+                  const f = e.target.files?.[0] || null
+                  setConvertImgFile(f)
+                  setConvertedPdf(null)
+                  if (f) {
+                    const suggested = f.name.replace(/\.[^.]+$/, '')
+                    if (!convertTitle || convertTitle === lastAutoSuggestedTitle.current) {
+                      lastAutoSuggestedTitle.current = suggested
+                      setConvertTitle(suggested)
+                    }
+                  }
+                }}
+                className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
+              />
+              <p className="text-xs text-gray-500 mt-1">JPG, JPEG, PNG — max 50 MB</p>
+            </div>
+          </div>
+
+          {convertImgFile && !(convertedPdf && convertedPdf.size > 0) && (
+            <div className="text-xs text-gray-400">
+              Selected: <span className="text-gray-200">{convertImgFile.name}</span> ({formatBytes(convertImgFile.size)})
+            </div>
+          )}
+
+          {convertedPdf && convertedPdf.size > 0 && (
+            <div className="rounded-lg border border-green-900/50 bg-green-950/20 px-3 py-2 text-xs text-green-300">
+              Ready to upload: <span className="text-green-100 font-medium">{convertedPdf.name}</span> — 1 page — {formatBytes(convertedPdf.size)}
+            </div>
+          )}
+
+          <div className="flex items-center gap-3 flex-wrap">
+            {!(convertedPdf && convertedPdf.size > 0) && (
+              <button
+                onClick={() => void handleConvertImage()}
+                disabled={converting || !convertImgFile}
+                className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold bg-orange-600 hover:bg-orange-500 text-white disabled:opacity-60"
+              >
+                {converting ? <Loader2 size={14} className="animate-spin" /> : <FileImage size={14} />}
+                {converting ? 'Converting...' : 'Convert Image'}
+              </button>
+            )}
+            {convertedPdf && convertedPdf.size > 0 && (
+              <button
+                onClick={() => void handleUploadConverted()}
+                disabled={uploadingConvert}
+                className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold bg-green-600 hover:bg-green-500 text-white disabled:opacity-60"
+              >
+                {uploadingConvert ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                {uploadingConvert ? 'Uploading...' : 'Upload as Blueprint'}
+              </button>
+            )}
+            <button
+              onClick={closeConvertPanel}
+              className="text-xs px-3 py-2 rounded-lg border border-gray-700 text-gray-400 hover:text-white"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
@@ -1004,100 +1289,6 @@ export default function BlueprintAI() {
           )}
         </div>
       )}
-
-      {uploadPanelOpen && (
-        <div className="rounded-xl border p-5 flex flex-col gap-4" style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}>
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Upload Blueprint</p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-gray-500 block mb-1">Select Project</label>
-              <select
-                value={selectedProjectId}
-                onChange={(e) => setSelectedProjectId(e.target.value)}
-                className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
-              >
-                <option value="">Select a project</option>
-                {projects.map((p: any) => (
-                  <option key={p.id} value={p.id}>{p.name || p.id}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 block mb-1">Blueprint Title</label>
-              <input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
-                placeholder="Example: Riverside Main Panel Set"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 block mb-1">Blueprint Type</label>
-              <select
-                value={bpType}
-                onChange={(e) => setBpType(e.target.value as BlueprintLibraryType)}
-                className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
-              >
-                {BLUEPRINT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 block mb-1">Upload PDF</label>
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".pdf,application/pdf"
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
-                className="w-full rounded-lg border border-gray-700 bg-gray-900/50 text-gray-100 text-sm px-3 py-2"
-              />
-              <p className="text-xs text-gray-500 mt-1">Max size: {formatBytes(MAX_BLUEPRINT_FILE_SIZE_BYTES)}</p>
-            </div>
-          </div>
-
-          {file && (
-            <div className="text-xs text-gray-400">
-              Selected file: <span className="text-gray-200">{file.name}</span> ({formatBytes(file.size)})
-            </div>
-          )}
-
-          <button
-            onClick={handleUpload}
-            disabled={uploading}
-            className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold bg-green-600 hover:bg-green-500 text-white disabled:opacity-60"
-          >
-            {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-            {uploading ? 'Uploading...' : 'Upload Blueprint'}
-          </button>
-        </div>
-      )}
-
-      <div className="w-full max-w-none min-w-0">
-        <div className="mb-2 text-sm font-semibold text-gray-200">Blueprint Viewer</div>
-        <OperationsBlueprintPdfViewer
-          blueprint={selectedItem}
-          onAnnotationsChanged={() => setAnnotationRefreshToken((v) => v + 1)}
-          externalPage={viewerJumpPage ?? undefined}
-          initialPage={viewerInitialPage}
-          onPageChange={(page) => {
-            setCurrentViewerPage(page)
-            if (viewerJumpPage === page) setViewerJumpPage(null)
-          }}
-          selectedPageNumbers={selectedPages}
-          onSelectedPagesChange={(pages) => {
-            const clean = Array.isArray(pages)
-              ? pages.map((p) => Math.floor(Number(p))).filter((p) => Number.isFinite(p) && p >= 1)
-              : []
-            const seen = new Set<number>()
-            const ordered: number[] = []
-            for (const p of clean) {
-              if (seen.has(p)) continue
-              seen.add(p)
-              ordered.push(p)
-            }
-            setSelectedPages(ordered)
-          }}
-        />
-      </div>
 
       {derivedPanelOpen && (
         <div className="rounded-xl border p-4 flex flex-col gap-3" style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14' }}>

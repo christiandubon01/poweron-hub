@@ -11268,40 +11268,6 @@ const annotationPanelSizeClass =
             {/* â"€â"€â"€â"€ Desktop: 2Ã—2 grid + full-width Measure row â"€â"€â"€â"€ */}
             {useDesktopThreePaneLayout && (
               <>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {([
-                    ['annotate', 'Annotate'],
-                    ['draw', 'Draw / Mark'],
-                    ['generate', 'Generate'],
-                    ['view', 'View'],
-                  ] as Array<[ToolbarBucket, string]>).map(([bucket, label]) => (
-                    <button
-                      key={bucket}
-                      onClick={() => setToolbarBucket(bucket)}
-                      className={`w-full inline-flex items-center justify-center gap-1 h-8 text-xs rounded-md border truncate px-2 ${toolbarBucket === bucket ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                    >
-                      {bucket === 'annotate' && <Layers size={12} />}
-                      {bucket === 'draw' && <PenLine size={12} />}
-                      {bucket === 'generate' && <Sparkles size={12} />}
-                      {bucket === 'view' && <MousePointer2 size={12} />}
-                      {label}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => setToolbarBucket('measure')}
-                    className={`col-span-2 w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs rounded-md border px-2 ${toolbarBucket === 'measure' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                  >
-                    <Ruler size={12} /> Measure
-                    {calibrationStatus !== 'none' && (
-                      <span className={`ml-1 text-[10px] px-1.5 py-0 rounded-full border ${calibrationStatus === 'saved' ? 'border-green-600 text-green-400' : 'border-amber-600 text-amber-400'}`}>
-                        {calibrationStatus === 'saved' ? 'calibrated' : 'pending'}
-                      </span>
-                    )}
-                  </button>
-                </div>
-                <div className="text-[11px] text-gray-500">
-                  Active: <span className="text-gray-300">{annotationLabel({ type: toolMode } as BlueprintAnnotation)}</span>{isEditorOpen ? ' (editing)' : ''}
-                </div>
                 <div className="rounded-lg border border-gray-800 bg-gray-950/30 p-2">
                   <div className="mb-2 text-[11px] font-semibold uppercase text-gray-500">Snapshots &amp; History</div>
                   <div className="grid grid-cols-2 gap-1.5">
@@ -11356,6 +11322,40 @@ const annotationPanelSizeClass =
                       <Layers size={13} /> Snapshot Library
                     </button>
                   </div>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {([
+                    ['annotate', 'Annotate'],
+                    ['draw', 'Draw / Mark'],
+                    ['generate', 'Generate'],
+                    ['view', 'View'],
+                  ] as Array<[ToolbarBucket, string]>).map(([bucket, label]) => (
+                    <button
+                      key={bucket}
+                      onClick={() => setToolbarBucket(bucket)}
+                      className={`w-full inline-flex items-center justify-center gap-1 h-8 text-xs rounded-md border truncate px-2 ${toolbarBucket === bucket ? 'border-blue-500 text-blue-300 bg-blue-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                    >
+                      {bucket === 'annotate' && <Layers size={12} />}
+                      {bucket === 'draw' && <PenLine size={12} />}
+                      {bucket === 'generate' && <Sparkles size={12} />}
+                      {bucket === 'view' && <MousePointer2 size={12} />}
+                      {label}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setToolbarBucket('measure')}
+                    className={`col-span-2 w-full inline-flex items-center justify-center gap-1.5 h-8 text-xs rounded-md border px-2 ${toolbarBucket === 'measure' ? 'border-sky-500 text-sky-300 bg-sky-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                  >
+                    <Ruler size={12} /> Measure
+                    {calibrationStatus !== 'none' && (
+                      <span className={`ml-1 text-[10px] px-1.5 py-0 rounded-full border ${calibrationStatus === 'saved' ? 'border-green-600 text-green-400' : 'border-amber-600 text-amber-400'}`}>
+                        {calibrationStatus === 'saved' ? 'calibrated' : 'pending'}
+                      </span>
+                    )}
+                  </button>
+                </div>
+                <div className="text-[11px] text-gray-500">
+                  Active: <span className="text-gray-300">{annotationLabel({ type: toolMode } as BlueprintAnnotation)}</span>{isEditorOpen ? ' (editing)' : ''}
                 </div>
               </>
             )}
@@ -12131,37 +12131,6 @@ const annotationPanelSizeClass =
                 aria-label={isFullScreenView || isTabletImmersiveFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
               >
                 {isFullScreenView || isTabletImmersiveFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-              </button>
-              <button
-                ref={snapshotCaptureButtonRef}
-                type="button"
-                onClick={beginSnapshotAreaSelection}
-                disabled={!canCaptureSnapshot}
-                className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${isSnapshotAreaSelecting ? 'border-cyan-400 bg-cyan-950/40 text-cyan-200' : 'border-gray-700 text-gray-300 hover:border-gray-500 hover:text-white'}`}
-                title={canCaptureSnapshot ? 'Drag a rectangle to capture a blueprint area' : 'Snapshot capture is available after the PDF page renders'}
-                aria-label="Capture Area"
-              >
-                {isSnapshotCapturing ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleCaptureSnapshot(null)}
-                disabled={!canCaptureSnapshot}
-                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-gray-700 text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                title={canCaptureSnapshot ? 'Capture the full current blueprint sheet' : 'Snapshot capture is available after the PDF page renders'}
-                aria-label="Capture Full Page"
-              >
-                <Maximize2 size={16} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsSnapshotLibraryOpen(true)}
-                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-gray-700 px-3 text-sm text-gray-300 transition-colors hover:border-gray-500 hover:text-white"
-                title="Open Snapshot Library"
-                aria-label="Open Snapshot Library"
-              >
-                <Layers size={16} />
-                <span>Library</span>
               </button>
             </div>
           </div>

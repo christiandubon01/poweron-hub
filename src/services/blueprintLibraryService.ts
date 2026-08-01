@@ -179,6 +179,12 @@ export function validateBlueprintPdf(file: File): { ok: boolean; error?: string 
   if (!file) return { ok: false, error: 'Please choose a file.' }
   const isPdf = file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf'
   if (!isPdf) return { ok: false, error: 'Only PDF files are accepted.' }
+  if (file.size <= 0) {
+    return {
+      ok: false,
+      error: 'The selected PDF is empty.',
+    }
+  }
   if (file.size > MAX_BLUEPRINT_FILE_SIZE_BYTES) {
     return { ok: false, error: 'File too large. Maximum size is 512 MB. Please compress the PDF and try again.' }
   }
