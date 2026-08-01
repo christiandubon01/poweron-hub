@@ -386,11 +386,19 @@ export default function PortalTrackView() {
   useEffect(() => {
     if (!requestId) { setNotFound(true); setLoading(false); return }
 
-    async function load() {
-      const { data, error } = await (supabase as any)
-        .from('portal_requests').select('*').eq('id', requestId).single()
-      if (error || !data) { setNotFound(true); setLoading(false); return }
+    // SEC-0R: load portal request status via SECURITY DEFINER RPC.
+    // Direct anon SELECT on portal_requests is revoked; this RPC returns
+    // only customer-safe fields and never exposes notes, hunter_lead_id,
+    // review fields, or internal admin data.
+    async function loadRequestStatus() {
+      const { data } = await (supabase as any).rpc('get_portal_request_status', { p_id: requestId })
+      if (!data) { setNotFound(true); setLoading(false); return }
       setRequest(data as PortalRequest)
+      setLoading(false)
+    }
+
+    async function load() {
+      await loadRequestStatus()
 
       const { data: tlData } = await (supabase as any)
         .from('job_timeline').select('*')
@@ -402,19 +410,23 @@ export default function PortalTrackView() {
         .eq('portal_request_id', requestId).eq('is_active', true)
         .order('updated_at', { ascending: false }).limit(1).maybeSingle()
       if (techData) setTechLocation(techData as TechLocation)
-
-      setLoading(false)
     }
 
     load()
 
+    // Realtime: job_timeline and technician_location have anon SELECT (migration
+    // 075) and remain fully functional.  portal_requests realtime subscription
+    // is removed — anon has no SELECT on that table after SEC-0R.  When a
+    // job_timeline event fires, reload the request status via RPC so that
+    // STATUS_TO_MILESTONE-driven milestone display stays in sync.
     const channel = supabase.channel(`pt_${requestId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'job_timeline', filter: `portal_request_id=eq.${requestId}` },
-        (p) => setTimeline(prev => [...prev, p.new as JobTimeline]))
+        (p) => {
+          setTimeline(prev => [...prev, p.new as JobTimeline])
+          void loadRequestStatus()
+        })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'job_timeline', filter: `portal_request_id=eq.${requestId}` },
         (p) => setTimeline(prev => prev.map(t => t.id === (p.new as JobTimeline).id ? p.new as JobTimeline : t)))
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'portal_requests', filter: `id=eq.${requestId}` },
-        (p) => setRequest(prev => prev ? { ...prev, ...p.new } : prev))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'technician_location', filter: `portal_request_id=eq.${requestId}` },
         (p) => {
           if (p.new && (p.new as any).is_active) setTechLocation(p.new as TechLocation)

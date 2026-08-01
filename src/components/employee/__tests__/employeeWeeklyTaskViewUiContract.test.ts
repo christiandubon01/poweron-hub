@@ -734,7 +734,8 @@ describe('regression guards', () => {
         !name.startsWith('103_') &&
         !name.startsWith('104_') &&
         !name.startsWith('105_') &&
-        !name.startsWith('106_')
+        !name.startsWith('106_') &&
+        !name.startsWith('107_')
       )
     expect(beyond100).toEqual([])
     expect(migrations).toContain('092_task_hours_spent.sql')

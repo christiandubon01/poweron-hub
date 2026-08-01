@@ -32,8 +32,6 @@ function fireAdsConversion() {
 }
 
 const LOGO_URL = 'https://edxxbtyugohtowvslbfo.supabase.co/storage/v1/object/public/brand-assets/ChatGPT%20Image%20Jan%2030,%202026,%2010_40_53%20AM1.png'
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 
 type Tab = 'homeowner' | 'gc'
 
@@ -617,45 +615,47 @@ export default function CustomerPortalView() {
         }
       } catch { /* non-critical */ }
 
-      // Insert via direct REST API (bypasses auth session for mobile compatibility)
-      const { data, error: dbError } = await fetch(`${SUPABASE_URL}/rest/v1/portal_requests`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-          'Prefer': 'return=representation',
-        },
-        body: JSON.stringify(payload),
-      }).then(async (res) => {
-        const json = await res.json()
-        if (!res.ok) return { data: null, error: json }
-        return { data: Array.isArray(json) ? json[0] : json, error: null }
+      // SEC-0R: submit via SECURITY DEFINER RPC — returns {request_id, attach_token}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: submitResult, error: dbError } = await (supabase as any).rpc('submit_portal_request', {
+        p_name:             form.name.trim(),
+        p_phone:            form.phone.trim() || null,
+        p_email:            form.email.trim() || null,
+        p_address:          form.address.trim() || null,
+        p_city:             form.city.trim() || null,
+        p_request_type:     tab === 'gc' ? 'gc' : 'homeowner',
+        p_service_category: form.service_category || null,
+        p_description:      form.description.trim() || null,
+        p_preferred_date:   form.preferred_date || null,
+        p_preferred_time:   times || null,
+        p_notes:            payload.notes || null,
       })
 
-      if (dbError || !data?.id) {
+      const submitData = submitResult as { request_id: string; attach_token: string } | null
+      if (dbError || !submitData?.request_id) {
         setError('Something went wrong. Please try again or call us at (760) 623-8962.')
         return
       }
 
-      // Upload files if any
+      const requestId   = submitData.request_id
+      const attachToken = submitData.attach_token
+
+      // Upload files if any, then append URLs via one-time-capability RPC
       if (mediaFiles.length > 0 || pdfFiles.length > 0) {
-        const fileUrls = await uploadFiles(data.id)
-        if (fileUrls.length > 0) {
-          // Update the request with file URLs
-          await fetch(`${SUPABASE_URL}/rest/v1/portal_requests?id=eq.${data.id}`, {
-            method: 'PATCH',
-            headers: {
-              'Content-Type': 'application/json',
-              'apikey': SUPABASE_ANON_KEY,
-              'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            },
-            body: JSON.stringify({ notes: (payload.notes ? payload.notes + ' | ' : '') + `Files: ${fileUrls.join(', ')}` }),
+        const fileUrls = await uploadFiles(requestId)
+        if (fileUrls.length > 0 && attachToken) {
+          const filesSuffix = `Files: ${fileUrls.join(', ')}`
+          // SEC-0R: capability token required; one-time use; cannot change status
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase as any).rpc('append_portal_request_files', {
+            p_id:           requestId,
+            p_notes_suffix: filesSuffix,
+            p_attach_token: attachToken,
           })
         }
       }
 
-      setSubmittedId(data.id)
+      setSubmittedId(requestId)
       setSubmitted(true)
 
       // Google Ads conversion — fires only after confirmed DB save, no PII sent
@@ -666,7 +666,7 @@ export default function CustomerPortalView() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          requestId:     data.id,
+          requestId:     requestId,
           name:          form.name.trim(),
           phone:         form.phone.trim() || null,
           email:         form.email.trim() || null,
@@ -693,7 +693,7 @@ export default function CustomerPortalView() {
             action: 'send_submission_confirmation',
             customerEmail: form.email.trim(),
             customerName: form.name.trim(),
-            requestId: data.id,
+            requestId: requestId,
             serviceCategory: form.service_category,
           }),
         }).catch(err => console.error('Email error:', err))
