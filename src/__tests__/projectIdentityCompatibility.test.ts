@@ -518,7 +518,8 @@ describe('migration guard', () => {
         !name.startsWith('105_') &&
         !name.startsWith('106_') &&
         !name.startsWith('107_') &&
-        !name.startsWith('108_')
+        !name.startsWith('108_') &&
+        !name.startsWith('109_')
       )
     expect(beyondExpected).toEqual([])
   })

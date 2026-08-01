@@ -14,6 +14,7 @@ import {
   type QualityRating,
 } from '@/services/employeePerformanceService'
 import {
+  archiveTaskAssignment,
   buildTaskAssignmentWorkOrderDraft,
   buildTaskAssignmentWorkOrderDraftForEdit,
   createTaskAssignmentWithWorkOrderAndSnapshots,
@@ -22,12 +23,15 @@ import {
   listAssignableProjects,
   listBlueprintsForProject,
   listWorkPackagesForBlueprint,
+  restoreTaskAssignment,
+  revokeTaskAssignment,
   updateTaskAssignmentWithWorkOrderAndSnapshots,
   type AssignableBlueprint,
   type AssignableProject,
   type AssignableWorkPackage,
   type EmployeeTaskAssignment,
 } from '@/services/employeeTaskAssignmentService'
+import { parseAssignedHoursInput } from '@/features/work-orders'
 import type { AdminEmployeeProfile } from '@/services/adminTimecardService'
 import {
   AdminWorkOrderAssignmentForm,
@@ -47,6 +51,7 @@ const emptyForm = (): AdminWorkOrderAssignmentFormState => ({
   primaryEmployeeId: '',
   dueDate: '',
   status: 'assigned',
+  assignedHours: '',
   workOrderInstructions: '',
 })
 
@@ -164,7 +169,10 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
   }, [initialProjectId, loading, openCreate])
 
   const openEdit = useCallback(async (assignment: EmployeeTaskAssignment) => {
-    if (assignment.status === 'completed') return
+    if (assignment.archived_at) {
+      setBoardError('Archived Work Orders cannot be edited. Restore the Work Order first.')
+      return
+    }
     setEditing(assignment)
     setForm({
       projectId: assignment.project_id || '',
@@ -177,11 +185,16 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
       primaryEmployeeId: assignment.lead_employee_id,
       dueDate: assignment.due_date || '',
       status: assignment.status,
+      assignedHours:
+        assignment.assigned_hours != null && Number.isFinite(Number(assignment.assigned_hours))
+          ? String(assignment.assigned_hours)
+          : '',
       workOrderInstructions: assignment.work_order_instructions || '',
     })
     setSelectedSnapshotIds([...(assignment.current_snapshot_ids || [])])
     setRequestIds({ assignmentId: assignment.id, clientRequestId: crypto.randomUUID() })
     setFormError('')
+    setBoardError('')
     setFormOpen(true)
     await loadProjects()
     if (assignment.project_id) loadBlueprints(assignment.project_id)
@@ -268,6 +281,12 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
       return
     }
 
+    const hoursParse = parseAssignedHoursInput(form.assignedHours)
+    if (!hoursParse.ok) {
+      setFormError(hoursParse.error)
+      return
+    }
+
     const instructions = normalizeInstructions(form.workOrderInstructions)
     const draft = editing
       ? buildTaskAssignmentWorkOrderDraftForEdit({
@@ -279,6 +298,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
           workPackageId: form.workPackageId,
           dueDate: form.dueDate || null,
           workOrderInstructions: instructions,
+          assignedHours: hoursParse.value,
         })
       : buildTaskAssignmentWorkOrderDraft({
           projectId: form.projectId,
@@ -288,6 +308,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
           workPackageId: form.workPackageId,
           dueDate: form.dueDate || null,
           workOrderInstructions: instructions,
+          assignedHours: hoursParse.value,
         })
     if (!draft.success) {
       setFormError(draft.error || 'Could not build Work Order.')
@@ -311,7 +332,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
           leadEmployeeId: form.primaryEmployeeId,
           assignedEmployeeIds: form.employeeIds,
           dueDate: form.dueDate || null,
-          status: form.status,
+          status: editing.status === 'completed' ? 'completed' : form.status,
           workOrderPayload: draft.data,
           snapshotIds: selectedSnapshotIds,
         })
@@ -371,6 +392,46 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
           onFilterChange={setFilter}
           onAssign={() => void openCreate()}
           onEdit={(assignment) => void openEdit(assignment)}
+          onArchive={async (assignment) => {
+            if (saving) return { success: false, error: 'Another Work Order action is already in progress.' }
+            setSaving(true)
+            setBoardError('')
+            const result = await archiveTaskAssignment(assignment.id, assignment.updated_at)
+            setSaving(false)
+            if (!result.success) {
+              setBoardError(result.error || 'Could not archive Work Order.')
+              return { success: false, error: result.error }
+            }
+            await load()
+            return { success: true }
+          }}
+          onRestore={async (assignment) => {
+            if (saving) return { success: false, error: 'Another Work Order action is already in progress.' }
+            setSaving(true)
+            setBoardError('')
+            const result = await restoreTaskAssignment(assignment.id, assignment.updated_at)
+            setSaving(false)
+            if (!result.success) {
+              setBoardError(result.error || 'Could not restore Work Order.')
+              return { success: false, error: result.error }
+            }
+            await load()
+            return { success: true }
+          }}
+          onDelete={async (assignment) => {
+            if (saving) return { success: false, error: 'Another Work Order action is already in progress.' }
+            setSaving(true)
+            setBoardError('')
+            const result = await revokeTaskAssignment(assignment.id)
+            setSaving(false)
+            if (!result.success) {
+              setBoardError(result.error || 'Could not permanently delete Work Order.')
+              return { success: false, error: result.error }
+            }
+            await load()
+            return { success: true }
+          }}
+          actionBusy={saving}
           renderRating={(assignment) => (
             <TaskCardRating assignmentId={assignment.id} leadEmployeeId={assignment.lead_employee_id} />
           )}

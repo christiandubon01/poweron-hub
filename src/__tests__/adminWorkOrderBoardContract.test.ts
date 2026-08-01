@@ -36,6 +36,7 @@ describe('shared admin Work Order assignment integration', () => {
     expect(form).toContain('Assigned employees')
     expect(form).toContain('Due date')
     expect(form).toContain('Status')
+    expect(form).toContain('Assigned Hours')
     expect(form).toContain('Work Order Instructions')
     expect(`${panel}\n${board}\n${form}`).not.toMatch(/Assign work package/i)
   })
@@ -113,6 +114,43 @@ describe('Work Order Instructions and immutable edit contract', () => {
     expect(migration096).toContain('display_order >= 0 AND display_order <= 14')
     expect(migration096).toContain('Maximum of 15 snapshots')
   })
+
+describe('Work Order management 109 assigned hours / archive / delete contract', () => {
+  const migration109 = read('supabase/migrations/109_work_order_assigned_hours_archive_delete.sql')
+
+  it('adds soft-archive metadata and owner archive/restore RPCs without a second archive table', () => {
+    expect(migration109).toContain('ADD COLUMN IF NOT EXISTS archived_at')
+    expect(migration109).toContain('ADD COLUMN IF NOT EXISTS archived_by')
+    expect(migration109).toContain('CREATE OR REPLACE FUNCTION public.archive_employee_task_assignment')
+    expect(migration109).toContain('CREATE OR REPLACE FUNCTION public.restore_employee_task_assignment')
+    expect(migration109).not.toContain('CREATE TABLE public.archived_work_orders')
+    expect(migration109).toContain('AND t.archived_at IS NULL')
+  })
+
+  it('allows completed Work Order corrections while preserving completion facts', () => {
+    expect(migration109).toContain("IF v_assignment.status = 'completed' THEN")
+    expect(migration109).toContain("v_status := 'completed'")
+    expect(migration109).toContain('Archived assignments cannot be edited; restore first')
+    expect(migration109).not.toContain('Completed assignments cannot be edited')
+  })
+
+  it('wires Assigned Hours, variance, archive bucket, restore, and typed permanent delete in the shared admin surface', () => {
+    expect(form).toContain('Assigned Hours')
+    expect(form).toContain('assignment-assigned-hours')
+    expect(panel).toContain('parseAssignedHoursInput')
+    expect(panel).toContain('assignedHours: hoursParse.value')
+    expect(panel).toContain('archiveTaskAssignment')
+    expect(panel).toContain('restoreTaskAssignment')
+    expect(panel).toContain('revokeTaskAssignment')
+    expect(board).toContain('Archived Work Orders')
+    expect(board).toContain('presentAssignedActualVariance')
+    expect(board).toContain('Delete permanently')
+    expect(board).toContain('Type the Work Order title to confirm')
+    expect(service).toContain('applyAssignedHoursOverride')
+    expect(service).toContain("rpc('archive_employee_task_assignment'")
+    expect(service).toContain("rpc('restore_employee_task_assignment'")
+  })
+})
 
   it('classifies operational-only edits without issuing an unnecessary version', () => {
     expect(migration).toContain('v_reissue :=')

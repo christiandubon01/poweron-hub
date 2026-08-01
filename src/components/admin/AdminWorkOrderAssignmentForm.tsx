@@ -20,6 +20,8 @@ export interface AdminWorkOrderAssignmentFormState {
   primaryEmployeeId: string
   dueDate: string
   status: TaskAssignmentStatus
+  /** Optional Assigned Hours override (hours). Empty uses Work Package / existing payload default. */
+  assignedHours: string
   workOrderInstructions: string
 }
 
@@ -208,20 +210,38 @@ export function AdminWorkOrderAssignmentForm({
             <p className="mt-1.5 text-[11px] text-gray-500">Primary is private; employees do not see primary/collaborator metadata.</p>
           </section>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             <div>
-              <label className="mb-1.5 block text-xs font-semibold uppercase text-gray-400">Due date</label>
-              <input type="date" value={value.dueDate} onChange={(event) => onChange((current) => ({ ...current, dueDate: event.target.value }))} className="min-h-11 w-full rounded-xl border border-gray-600 bg-[var(--bg-secondary)] px-3 text-base text-gray-100" />
+              <label className="mb-1.5 block text-xs font-semibold uppercase text-gray-400" htmlFor="assignment-due-date">Due date</label>
+              <input id="assignment-due-date" type="date" value={value.dueDate} onChange={(event) => onChange((current) => ({ ...current, dueDate: event.target.value }))} className="min-h-11 w-full rounded-xl border border-gray-600 bg-[var(--bg-secondary)] px-3 text-base text-gray-100" />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-semibold uppercase text-gray-400">Status</label>
-              <select value={value.status} onChange={(event) => onChange((current) => ({ ...current, status: event.target.value as TaskAssignmentStatus }))} className="min-h-11 w-full rounded-xl border border-gray-600 bg-[var(--bg-secondary)] px-3 text-base capitalize text-gray-100">
+              <label className="mb-1.5 block text-xs font-semibold uppercase text-gray-400" htmlFor="assignment-status">Status</label>
+              <select id="assignment-status" value={value.status} onChange={(event) => onChange((current) => ({ ...current, status: event.target.value as TaskAssignmentStatus }))} className="min-h-11 w-full rounded-xl border border-gray-600 bg-[var(--bg-secondary)] px-3 text-base capitalize text-gray-100" disabled={value.status === 'completed'}>
                 {STATUS_OPTIONS.map((status) => (
                   <option key={status} value={status} disabled={status === 'completed' && value.status !== 'completed'}>
                     {status.replace('_', ' ')}
                   </option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold uppercase text-gray-400" htmlFor="assignment-assigned-hours">Assigned Hours</label>
+              <input
+                id="assignment-assigned-hours"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step={0.25}
+                value={value.assignedHours}
+                onChange={(event) => onChange((current) => ({ ...current, assignedHours: event.target.value }))}
+                placeholder="e.g. 4.5"
+                aria-describedby="assignment-assigned-hours-help"
+                className="min-h-11 w-full rounded-xl border border-gray-600 bg-[var(--bg-secondary)] px-3 text-base text-gray-100"
+              />
+              <p id="assignment-assigned-hours-help" className="mt-1 text-[11px] text-gray-500">
+                Optional. Leave blank to keep the Work Package labor total. Does not change recorded actual hours.
+              </p>
             </div>
           </div>
 

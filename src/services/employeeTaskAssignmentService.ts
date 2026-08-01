@@ -26,6 +26,7 @@ import {
 import { getActiveEmployeeProfiles, type AdminEmployeeProfile } from '@/services/adminTimecardService'
 import {
   addEmployeeAnimationBackgrounds,
+  applyAssignedHoursOverride,
   buildWorkOrderPayloadV1Draft,
   parseEmployeeAnimationPresentation,
   type WorkOrderPayloadV1Draft,
@@ -103,6 +104,9 @@ export interface EmployeeTaskAssignment {
   current_snapshot_ids?: string[]
   current_work_order_payload?: unknown
   work_order_issued_at?: string | null
+  archived_at?: string | null
+  archived_by?: string | null
+  archived_by_name?: string | null
 }
 
 /** Employee-facing row — never includes lead_employee_id. */
@@ -661,6 +665,8 @@ export function buildTaskAssignmentWorkOrderDraft(input: {
   workPackageId: string
   dueDate?: string | null
   workOrderInstructions?: string | null
+  /** When set, overrides payload.labor.totalHours (Assigned Hours). Null/omitted keeps package default. */
+  assignedHours?: number | null
 }): Result<WorkOrderPayloadV1Draft> {
   try {
     const backup = getBackupData()
@@ -678,24 +684,25 @@ export function buildTaskAssignmentWorkOrderDraft(input: {
     const detectedScales = readStoredBlueprintDetectedScales(input.blueprintSetId)
     const getPageSizeInches = buildStoredPageSizeResolver(blueprint, savedCalibrations)
 
-    return {
-      success: true,
-      data: buildWorkOrderPayloadV1Draft({
-        projectId: input.projectId,
-        projectName: input.projectName,
-        blueprintSetId: input.blueprintSetId,
-        blueprintTitle: input.blueprintTitle || blueprint?.title || input.blueprintSetId,
-        dueDate: input.dueDate,
-        workOrderInstructions: input.workOrderInstructions,
-        workPackage,
-        blueprint,
-        annotations,
-        wireProfiles,
-        savedCalibrations,
-        detectedScales,
-        getPageSizeInches,
-      }),
+    let draft = buildWorkOrderPayloadV1Draft({
+      projectId: input.projectId,
+      projectName: input.projectName,
+      blueprintSetId: input.blueprintSetId,
+      blueprintTitle: input.blueprintTitle || blueprint?.title || input.blueprintSetId,
+      dueDate: input.dueDate,
+      workOrderInstructions: input.workOrderInstructions,
+      workPackage,
+      blueprint,
+      annotations,
+      wireProfiles,
+      savedCalibrations,
+      detectedScales,
+      getPageSizeInches,
+    })
+    if (input.assignedHours != null) {
+      draft = applyAssignedHoursOverride(draft, input.assignedHours)
     }
+    return { success: true, data: draft }
   } catch (err: unknown) {
     console.error('[employeeTaskAssignmentService.buildTaskAssignmentWorkOrderDraft]', err)
     return { success: false, error: 'Could not build Work Order.' }
@@ -711,6 +718,8 @@ export function buildTaskAssignmentWorkOrderDraftForEdit(input: {
   workPackageId: string
   dueDate?: string | null
   workOrderInstructions?: string | null
+  /** When set, overrides payload.labor.totalHours (Assigned Hours). Null keeps current/package total. */
+  assignedHours?: number | null
 }): Result<WorkOrderPayloadV1Draft> {
   const sameSource =
     input.assignment.project_id === input.projectId &&
@@ -742,7 +751,11 @@ export function buildTaskAssignmentWorkOrderDraftForEdit(input: {
     const instructions = normalizeWorkOrderInstructions(input.workOrderInstructions)
     if (instructions) draft.workOrderInstructions = instructions
     else delete draft.workOrderInstructions
-    return { success: true, data: draft as WorkOrderPayloadV1Draft }
+    let next = draft as WorkOrderPayloadV1Draft
+    if (input.assignedHours != null) {
+      next = applyAssignedHoursOverride(next, input.assignedHours)
+    }
+    return { success: true, data: next }
   } catch (err) {
     console.error('[employeeTaskAssignmentService.buildTaskAssignmentWorkOrderDraftForEdit]', err)
     return { success: false, error: 'Could not prepare the issued Work Order for editing.' }
@@ -898,6 +911,72 @@ export async function revokeTaskAssignment(assignmentId: string): Promise<Result
     const message = err instanceof Error ? err.message : 'Network error'
     console.error('[employeeTaskAssignmentService.revokeTaskAssignment]', err)
     return { success: false, error: safeRevokeError(message) }
+  }
+}
+
+export async function archiveTaskAssignment(
+  assignmentId: string,
+  expectedUpdatedAt: string,
+): Promise<Result<{ assignment: EmployeeTaskAssignment; archived: boolean; idempotentReplay: boolean }>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+
+    const { data, error } = await rpc('archive_employee_task_assignment', {
+      p_assignment_id: assignmentId,
+      p_expected_updated_at: expectedUpdatedAt,
+    })
+    if (error) return { success: false, error: safeArchiveError(error) }
+    const result = data as {
+      assignment?: EmployeeTaskAssignment
+      archived?: boolean
+      idempotentReplay?: boolean
+    } | null
+    if (!result?.assignment) return { success: false, error: 'Could not archive Work Order.' }
+    return {
+      success: true,
+      data: {
+        assignment: result.assignment,
+        archived: !!result.archived,
+        idempotentReplay: !!result.idempotentReplay,
+      },
+    }
+  } catch (err: unknown) {
+    console.error('[employeeTaskAssignmentService.archiveTaskAssignment]', err)
+    return { success: false, error: safeArchiveError(err) }
+  }
+}
+
+export async function restoreTaskAssignment(
+  assignmentId: string,
+  expectedUpdatedAt: string,
+): Promise<Result<{ assignment: EmployeeTaskAssignment; restored: boolean; idempotentReplay: boolean }>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+
+    const { data, error } = await rpc('restore_employee_task_assignment', {
+      p_assignment_id: assignmentId,
+      p_expected_updated_at: expectedUpdatedAt,
+    })
+    if (error) return { success: false, error: safeArchiveError(error) }
+    const result = data as {
+      assignment?: EmployeeTaskAssignment
+      restored?: boolean
+      idempotentReplay?: boolean
+    } | null
+    if (!result?.assignment) return { success: false, error: 'Could not restore Work Order.' }
+    return {
+      success: true,
+      data: {
+        assignment: result.assignment,
+        restored: !!result.restored,
+        idempotentReplay: !!result.idempotentReplay,
+      },
+    }
+  } catch (err: unknown) {
+    console.error('[employeeTaskAssignmentService.restoreTaskAssignment]', err)
+    return { success: false, error: safeArchiveError(err) }
   }
 }
 
@@ -1270,6 +1349,9 @@ function safeAssignmentUpdateError(error: unknown): string {
   if (/assignment changed|stale assignment|concurrent edit/i.test(message)) {
     return 'This assignment changed while you were editing it. Refresh the assignment and try again; your draft is still open.'
   }
+  if (/archived assignments cannot be edited/i.test(message)) {
+    return 'Archived Work Orders cannot be edited. Restore the Work Order first.'
+  }
   if (/completed assignments cannot be edited/i.test(message)) {
     return 'Completed Work Orders are historical records and cannot be edited.'
   }
@@ -1286,6 +1368,26 @@ function safeAssignmentUpdateError(error: unknown): string {
     return 'Work Order Assignment editing is not available until the admin board backend is deployed.'
   }
   return 'Could not save Work Order Assignment changes.'
+}
+
+function safeArchiveError(error: unknown): string {
+  const message = String(
+    error instanceof Error
+      ? error.message
+      : (error as { message?: unknown } | null)?.message ?? '',
+  )
+  if (/stale archive|stale restore|assignment changed/i.test(message)) {
+    return 'This Work Order changed while you were working. Refresh and try again.'
+  }
+  if (/not authenticated/i.test(message)) return 'Not authenticated'
+  if (/not authorized/i.test(message)) return 'Not authorized'
+  if (/assignment not found/i.test(message)) return 'Assignment not found'
+  if (isMissingSupabaseRpcError(error, 'archive_employee_task_assignment')
+    || isMissingSupabaseRpcError(error, 'restore_employee_task_assignment')) {
+    return 'Archive/restore is not available until the Work Order management backend is deployed.'
+  }
+  if (/failed to fetch|networkerror|network request failed|timeout/i.test(message)) return 'Network error. Try again.'
+  return 'Could not update archive state.'
 }
 
 function normalizeWorkOrderInstructions(value: string | null | undefined): string | null {

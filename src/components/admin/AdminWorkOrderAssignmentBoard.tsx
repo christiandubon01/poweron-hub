@@ -1,17 +1,25 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
+  Archive,
+  ArchiveRestore,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
   Clock3,
   FileText,
   Pencil,
+  Trash2,
   Users,
   X,
 } from 'lucide-react'
 import { getTenantWorkDate } from '@/services/employeeTimeService'
 import type { AdminEmployeeProfile } from '@/services/adminTimecardService'
 import type { EmployeeTaskAssignment } from '@/services/employeeTaskAssignmentService'
+import {
+  formatWorkOrderHours,
+  isArchivedAssignment,
+  presentAssignedActualVariance,
+} from '@/features/work-orders'
 import {
   adminAssignmentWeekdayLabels,
   buildAdminAssignmentMonth,
@@ -27,6 +35,8 @@ import {
   type AdminAssignmentCalendarFilter,
   type AdminAssignmentCalendarView,
 } from './adminAssignmentCalendar'
+
+type BoardActionResult = { success: boolean; error?: string }
 
 const STATUS_PILL: Record<string, string> = {
   assigned: 'border-gray-600 bg-gray-700/60 text-gray-300',
@@ -44,6 +54,10 @@ interface AssignmentBoardProps {
   onFilterChange: (filter: AdminAssignmentCalendarFilter) => void
   onAssign: () => void
   onEdit: (assignment: EmployeeTaskAssignment) => void
+  onArchive: (assignment: EmployeeTaskAssignment) => Promise<BoardActionResult>
+  onRestore: (assignment: EmployeeTaskAssignment) => Promise<BoardActionResult>
+  onDelete: (assignment: EmployeeTaskAssignment) => Promise<BoardActionResult>
+  actionBusy?: boolean
   renderRating?: (assignment: EmployeeTaskAssignment) => React.ReactNode
 }
 
@@ -54,6 +68,10 @@ export function AdminWorkOrderAssignmentBoard({
   onFilterChange,
   onAssign,
   onEdit,
+  onArchive,
+  onRestore,
+  onDelete,
+  actionBusy = false,
   renderRating,
 }: AssignmentBoardProps) {
   const today = getTenantWorkDate()
@@ -62,14 +80,26 @@ export function AdminWorkOrderAssignmentBoard({
   const [monthAnchor, setMonthAnchor] = useState(today)
   const [selectedDay, setSelectedDay] = useState(today)
   const [details, setDetails] = useState<EmployeeTaskAssignment | null>(null)
+  const [archivedOpen, setArchivedOpen] = useState(false)
+  const [confirmArchive, setConfirmArchive] = useState<EmployeeTaskAssignment | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<EmployeeTaskAssignment | null>(null)
+  const [actionError, setActionError] = useState('')
 
   const employeesById = useMemo(
     () => new Map(employees.map((employee) => [employee.id, employee])),
     [employees],
   )
+  const activeAssignments = useMemo(
+    () => assignments.filter((assignment) => !isArchivedAssignment(assignment)),
+    [assignments],
+  )
+  const archivedAssignments = useMemo(
+    () => assignments.filter((assignment) => isArchivedAssignment(assignment)),
+    [assignments],
+  )
   const visibleAssignments = useMemo(
-    () => filterAdminAssignments(assignments, filter),
-    [assignments, filter],
+    () => filterAdminAssignments(activeAssignments, filter),
+    [activeAssignments, filter],
   )
   const grouped = useMemo(
     () => groupAdminAssignmentsByDueDate(visibleAssignments),
@@ -77,10 +107,16 @@ export function AdminWorkOrderAssignmentBoard({
   )
   const month = useMemo(() => buildAdminAssignmentMonth(monthAnchor), [monthAnchor])
   const filterCounts = useMemo(() => ({
-    all: filterAdminAssignments(assignments, 'all').length,
-    pending: filterAdminAssignments(assignments, 'pending').length,
-    completed: filterAdminAssignments(assignments, 'completed').length,
-  }), [assignments])
+    all: filterAdminAssignments(activeAssignments, 'all').length,
+    pending: filterAdminAssignments(activeAssignments, 'pending').length,
+    completed: filterAdminAssignments(activeAssignments, 'completed').length,
+  }), [activeAssignments])
+
+  useEffect(() => {
+    if (!details) return
+    const next = assignments.find((row) => row.id === details.id) ?? null
+    setDetails(next)
+  }, [assignments, details?.id])
 
   const goToday = () => {
     setSelectedDay(today)
@@ -124,14 +160,24 @@ export function AdminWorkOrderAssignmentBoard({
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onAssign}
-          className="min-h-11 rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-500"
-          aria-label="Assign Work Order"
-        >
-          Assign Work Order
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setArchivedOpen(true)}
+            className="min-h-11 rounded-xl border border-gray-600 bg-[var(--bg-secondary)] px-3 py-2.5 text-sm font-semibold text-gray-200 transition hover:border-teal-700/70 hover:text-teal-200"
+            aria-label={`Archived Work Orders (${archivedAssignments.length})`}
+          >
+            Archived Work Orders ({archivedAssignments.length})
+          </button>
+          <button
+            type="button"
+            onClick={onAssign}
+            className="min-h-11 rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-500"
+            aria-label="Assign Work Order"
+          >
+            Assign Work Order
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-700/60 bg-[var(--bg-secondary)] p-2">
@@ -234,12 +280,88 @@ export function AdminWorkOrderAssignmentBoard({
         <AdminWorkOrderAssignmentDetails
           assignment={details}
           employeesById={employeesById}
-          onClose={() => setDetails(null)}
-          onEdit={details.status === 'completed' ? undefined : () => {
+          onClose={() => {
+            setDetails(null)
+            setActionError('')
+          }}
+          onEdit={isArchivedAssignment(details) ? undefined : () => {
             setDetails(null)
             onEdit(details)
           }}
-          rating={details.status === 'completed' ? renderRating?.(details) : null}
+          onArchive={isArchivedAssignment(details) ? undefined : () => {
+            setActionError('')
+            setConfirmArchive(details)
+          }}
+          onRestore={isArchivedAssignment(details) ? () => {
+            setActionError('')
+            void (async () => {
+              const result = await onRestore(details)
+              if (!result.success) setActionError(result.error || 'Could not restore Work Order.')
+              else setDetails(null)
+            })()
+          } : undefined}
+          onDelete={() => {
+            setActionError('')
+            setConfirmDelete(details)
+          }}
+          actionBusy={actionBusy}
+          actionError={actionError}
+          rating={details.status === 'completed' && !isArchivedAssignment(details) ? renderRating?.(details) : null}
+        />
+      ) : null}
+
+      {archivedOpen ? (
+        <ArchivedWorkOrdersBucket
+          assignments={archivedAssignments}
+          employeesById={employeesById}
+          onClose={() => setArchivedOpen(false)}
+          onOpen={(assignment) => {
+            setArchivedOpen(false)
+            setDetails(assignment)
+          }}
+        />
+      ) : null}
+
+      {confirmArchive ? (
+        <ConfirmArchiveDialog
+          assignment={confirmArchive}
+          busy={actionBusy}
+          onCancel={() => setConfirmArchive(null)}
+          onConfirm={() => {
+            void (async () => {
+              const target = confirmArchive
+              const result = await onArchive(target)
+              if (!result.success) {
+                setActionError(result.error || 'Could not archive Work Order.')
+                setConfirmArchive(null)
+                return
+              }
+              setConfirmArchive(null)
+              setDetails(null)
+            })()
+          }}
+        />
+      ) : null}
+
+      {confirmDelete ? (
+        <ConfirmPermanentDeleteDialog
+          assignment={confirmDelete}
+          busy={actionBusy}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => {
+            void (async () => {
+              const target = confirmDelete
+              const result = await onDelete(target)
+              if (!result.success) {
+                setActionError(result.error || 'Could not permanently delete Work Order.')
+                setConfirmDelete(null)
+                return
+              }
+              setConfirmDelete(null)
+              setDetails(null)
+              setArchivedOpen(false)
+            })()
+          }}
         />
       ) : null}
 
@@ -581,16 +703,41 @@ export function AdminWorkOrderAssignmentDetails({
   employeesById,
   onClose,
   onEdit,
+  onArchive,
+  onRestore,
+  onDelete,
+  actionBusy = false,
+  actionError = '',
   rating,
 }: {
   assignment: EmployeeTaskAssignment
   employeesById: Map<string, AdminEmployeeProfile>
   onClose: () => void
   onEdit?: () => void
+  onArchive?: () => void
+  onRestore?: () => void
+  onDelete?: () => void
+  actionBusy?: boolean
+  actionError?: string
   rating?: React.ReactNode
 }) {
   const employeeNames = (assignment.assigned_employee_ids ?? [])
     .map((id) => employeesById.get(id)?.display_name || 'Employee')
+  const archived = isArchivedAssignment(assignment)
+  const comparison = presentAssignedActualVariance({
+    assignedHours: assignment.assigned_hours,
+    actualHours: assignment.hours_spent,
+    completed: assignment.status === 'completed',
+  })
+  const varianceToneClass =
+    comparison.varianceTone === 'over'
+      ? 'text-amber-300'
+      : comparison.varianceTone === 'under'
+        ? 'text-sky-300'
+        : comparison.varianceTone === 'on_target'
+          ? 'text-green-300'
+          : 'text-gray-400'
+
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 px-3 sm:items-center" onClick={(event) => {
       if (event.target === event.currentTarget) onClose()
@@ -598,7 +745,9 @@ export function AdminWorkOrderAssignmentDetails({
       <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-700 bg-[var(--bg-card,#1e2433)] shadow-2xl">
         <div className="flex items-start justify-between gap-3 border-b border-gray-700/60 px-5 py-4">
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-wide text-teal-400">Work Order Assignment</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-teal-400">
+              {archived ? 'Archived Work Order' : 'Work Order Assignment'}
+            </p>
             <h3 className="mt-1 text-lg font-bold text-gray-100">{assignment.work_package_name}</h3>
             <p className="text-sm text-gray-400">{assignment.project_name || 'Project'}</p>
           </div>
@@ -607,6 +756,10 @@ export function AdminWorkOrderAssignmentDetails({
           </button>
         </div>
         <div className="space-y-4 overflow-y-auto px-5 py-4">
+          {actionError ? (
+            <p className="rounded-xl border border-red-700/50 bg-red-900/20 px-3 py-2 text-sm text-red-300">{actionError}</p>
+          ) : null}
+
           <div className="grid gap-3 sm:grid-cols-2">
             <Detail label="Blueprint / Document" value={assignment.blueprint_title || assignment.blueprint_set_id || 'Not recorded'} icon={<FileText size={14} />} />
             <Detail label="Scheduled for" value={formatAdminAssignmentDay(assignment.due_date)} icon={<CalendarDays size={14} />} />
@@ -615,6 +768,24 @@ export function AdminWorkOrderAssignmentDetails({
             <Detail label="Assigned" value={formatDateTime(assignment.assigned_at)} />
             <Detail label="Scheduled by" value={assignment.scheduled_by_name || 'Owner / Admin'} />
           </div>
+
+          <section className="rounded-xl border border-gray-700/60 bg-[var(--bg-secondary)] p-3" aria-label="Assigned versus actual hours">
+            <h4 className="text-xs font-semibold uppercase text-gray-500">Hours comparison</h4>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+              <div>
+                <p className="text-[11px] font-semibold uppercase text-gray-500">Assigned</p>
+                <p className="mt-1 text-base font-bold text-gray-100">{comparison.assignedLabel}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase text-gray-500">Actual</p>
+                <p className="mt-1 text-base font-bold text-gray-100">{comparison.actualLabel}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase text-gray-500">Variance</p>
+                <p className={`mt-1 text-base font-bold ${varianceToneClass}`}>{comparison.varianceLabel}</p>
+              </div>
+            </div>
+          </section>
 
           <section>
             <h4 className="text-xs font-semibold uppercase text-gray-500">Assigned employees</h4>
@@ -650,7 +821,7 @@ export function AdminWorkOrderAssignmentDetails({
               <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
                 <CompletionFact label="Completed by" value={assignment.completed_by_name || 'Employee'} />
                 <CompletionFact label="Completed on" value={formatDateTime(assignment.completed_at)} />
-                <CompletionFact label="Recorded hours" value={formatHours(assignment.hours_spent)} />
+                <CompletionFact label="Recorded hours" value={assignment.hours_spent != null ? formatHours(assignment.hours_spent) : 'Not recorded'} />
               </dl>
               {assignment.completion_notes ? (
                 <div className="mt-3 border-t border-green-900/50 pt-3">
@@ -661,14 +832,39 @@ export function AdminWorkOrderAssignmentDetails({
               {rating ? <div className="mt-3 border-t border-green-900/50 pt-2">{rating}</div> : null}
             </section>
           ) : null}
+
+          {archived ? (
+            <section className="rounded-xl border border-gray-600/60 bg-gray-900/30 p-3">
+              <h4 className="text-xs font-semibold uppercase text-gray-400">Archive</h4>
+              <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+                <CompletionFact label="Archived on" value={formatDateTime(assignment.archived_at)} />
+                <CompletionFact label="Archived by" value={assignment.archived_by_name || 'Owner / Admin'} />
+              </dl>
+            </section>
+          ) : null}
         </div>
-        <div className="flex gap-2 border-t border-gray-700/60 px-5 py-4">
-          <button type="button" onClick={onClose} className="min-h-11 flex-1 rounded-xl bg-gray-700 px-4 text-sm font-semibold text-gray-200 hover:bg-gray-600">
+        <div className="flex flex-wrap gap-2 border-t border-gray-700/60 px-5 py-4">
+          <button type="button" onClick={onClose} disabled={actionBusy} className="min-h-11 flex-1 rounded-xl bg-gray-700 px-4 text-sm font-semibold text-gray-200 hover:bg-gray-600 disabled:opacity-50">
             Close
           </button>
           {onEdit ? (
-            <button type="button" onClick={onEdit} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 text-sm font-semibold text-white hover:bg-teal-500">
+            <button type="button" onClick={onEdit} disabled={actionBusy} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 text-sm font-semibold text-white hover:bg-teal-500 disabled:opacity-50">
               <Pencil size={15} /> Edit Assignment
+            </button>
+          ) : null}
+          {onArchive ? (
+            <button type="button" onClick={onArchive} disabled={actionBusy} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-gray-600 px-4 text-sm font-semibold text-gray-200 hover:bg-gray-700/60 disabled:opacity-50">
+              <Archive size={15} /> Archive
+            </button>
+          ) : null}
+          {onRestore ? (
+            <button type="button" onClick={onRestore} disabled={actionBusy} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 text-sm font-semibold text-white hover:bg-teal-500 disabled:opacity-50">
+              <ArchiveRestore size={15} /> Restore
+            </button>
+          ) : null}
+          {onDelete ? (
+            <button type="button" onClick={onDelete} disabled={actionBusy} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-red-800/70 bg-red-950/30 px-4 text-sm font-semibold text-red-300 hover:bg-red-900/40 disabled:opacity-50">
+              <Trash2 size={15} /> Delete
             </button>
           ) : null}
         </div>
@@ -711,9 +907,163 @@ function assignmentEmployeeLabel(
 }
 
 function formatHours(value: number | null | undefined): string {
-  const next = Number(value)
-  if (!Number.isFinite(next)) return '0h'
-  return `${Number.isInteger(next) ? next : Math.round(next * 100) / 100}h`
+  return formatWorkOrderHours(value)
+}
+
+function ArchivedWorkOrdersBucket({
+  assignments,
+  employeesById,
+  onClose,
+  onOpen,
+}: {
+  assignments: EmployeeTaskAssignment[]
+  employeesById: Map<string, AdminEmployeeProfile>
+  onClose: () => void
+  onOpen: (assignment: EmployeeTaskAssignment) => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 px-3 sm:items-center" onClick={(event) => {
+      if (event.target === event.currentTarget) onClose()
+    }}>
+      <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-700 bg-[var(--bg-card,#1e2433)] shadow-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-gray-700/60 px-5 py-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-teal-400">Task Assignments</p>
+            <h3 className="text-lg font-bold text-gray-100">Archived Work Orders ({assignments.length})</h3>
+            <p className="text-sm text-gray-400">Hidden from active boards and employee queues. Details remain fully readable.</p>
+          </div>
+          <button type="button" onClick={onClose} className="min-h-11 min-w-11 rounded-lg p-2 text-gray-500 hover:bg-gray-700/50 hover:text-gray-200" aria-label="Close archived Work Orders">
+            <X className="mx-auto h-5 w-5" />
+          </button>
+        </div>
+        <div className="space-y-2 overflow-y-auto px-5 py-4">
+          {assignments.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-gray-700 px-3 py-8 text-center text-sm text-gray-500">
+              No archived Work Orders.
+            </p>
+          ) : (
+            assignments.map((assignment) => {
+              const comparison = presentAssignedActualVariance({
+                assignedHours: assignment.assigned_hours,
+                actualHours: assignment.hours_spent,
+              })
+              return (
+                <button
+                  key={assignment.id}
+                  type="button"
+                  onClick={() => onOpen(assignment)}
+                  className="w-full rounded-xl border border-gray-700 bg-[#151b27] p-3 text-left transition hover:border-teal-700/70"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-bold text-gray-100">{assignment.work_package_name}</p>
+                    <span className="shrink-0 rounded-full border border-gray-600 px-2 py-0.5 text-[10px] font-bold uppercase text-gray-400">
+                      {assignment.status.replace('_', ' ')}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-400">{assignment.project_name || 'Project'}</p>
+                  <p className="mt-1 text-xs text-gray-300">{assignmentEmployeeLabel(assignment, employeesById)}</p>
+                  <p className="mt-1.5 text-xs text-gray-400">
+                    Assigned {comparison.assignedLabel}
+                    {' · '}
+                    Actual {comparison.actualLabel}
+                    {' · '}
+                    Archived {formatDateTime(assignment.archived_at)}
+                    {' · '}
+                    by {assignment.archived_by_name || 'Owner / Admin'}
+                  </p>
+                </button>
+              )
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ConfirmArchiveDialog({
+  assignment,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  assignment: EmployeeTaskAssignment
+  busy: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 px-3" onClick={(event) => {
+      if (event.target === event.currentTarget && !busy) onCancel()
+    }}>
+      <div className="w-full max-w-md rounded-2xl border border-gray-700 bg-[var(--bg-card,#1e2433)] p-5 shadow-2xl">
+        <h3 className="text-lg font-bold text-gray-100">Archive Work Order?</h3>
+        <p className="mt-2 text-sm text-gray-300">
+          “{assignment.work_package_name}” will leave active Work Order views. All details stay preserved, and you can restore it from Archived Work Orders.
+        </p>
+        <div className="mt-4 flex gap-2">
+          <button type="button" onClick={onCancel} disabled={busy} className="min-h-11 flex-1 rounded-xl bg-gray-700 text-sm font-semibold text-gray-200 disabled:opacity-50">Cancel</button>
+          <button type="button" onClick={onConfirm} disabled={busy} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-teal-600 text-sm font-semibold text-white disabled:opacity-50">
+            <Archive size={15} /> {busy ? 'Archiving…' : 'Archive'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ConfirmPermanentDeleteDialog({
+  assignment,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  assignment: EmployeeTaskAssignment
+  busy: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const [typed, setTyped] = useState('')
+  const expected = assignment.work_package_name.trim()
+  const matches = typed.trim() === expected
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 px-3" onClick={(event) => {
+      if (event.target === event.currentTarget && !busy) onCancel()
+    }}>
+      <div className="w-full max-w-md rounded-2xl border border-red-900/60 bg-[var(--bg-card,#1e2433)] p-5 shadow-2xl">
+        <h3 className="text-lg font-bold text-red-300">Delete permanently?</h3>
+        <p className="mt-2 text-sm text-gray-300">
+          This permanently removes the Work Order assignment “{assignment.work_package_name}”. This cannot be undone.
+        </p>
+        <p className="mt-2 text-xs text-gray-500">
+          Projects, Work Packages, Blueprints, source snapshots, and employee time/payroll history are preserved. Linked Time Sessions keep their project context and detach only the Work Order reference.
+        </p>
+        <label className="mt-4 block text-xs font-semibold uppercase text-gray-400" htmlFor="delete-work-order-confirm">
+          Type the Work Order title to confirm
+        </label>
+        <input
+          id="delete-work-order-confirm"
+          value={typed}
+          onChange={(event) => setTyped(event.target.value)}
+          disabled={busy}
+          className="mt-1.5 min-h-11 w-full rounded-xl border border-red-900/50 bg-[var(--bg-secondary)] px-3 text-base text-gray-100"
+          placeholder={expected}
+          autoComplete="off"
+        />
+        <div className="mt-4 flex gap-2">
+          <button type="button" onClick={onCancel} disabled={busy} className="min-h-11 flex-1 rounded-xl bg-gray-700 text-sm font-semibold text-gray-200 disabled:opacity-50">Cancel</button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy || !matches}
+            className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-red-700 text-sm font-semibold text-white hover:bg-red-600 disabled:opacity-50"
+          >
+            <Trash2 size={15} /> {busy ? 'Deleting…' : 'Delete permanently'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function formatDateTime(value: string | null | undefined): string {

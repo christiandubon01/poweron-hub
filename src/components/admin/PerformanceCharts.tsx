@@ -172,10 +172,11 @@ export function GlobalHoursGantt() {
     )
   }
 
-  const withHours = assignments.filter(
+  const activeAssignments = assignments.filter((a) => !a.archived_at)
+  const withHours = activeAssignments.filter(
     (a) => a.status === 'completed' && a.hours_spent != null && a.hours_spent > 0,
   )
-  const missingCount = assignments.filter(
+  const missingCount = activeAssignments.filter(
     (a) => a.status === 'completed' && (a.hours_spent == null || a.hours_spent === 0),
   ).length
 

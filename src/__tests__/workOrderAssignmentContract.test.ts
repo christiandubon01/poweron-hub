@@ -152,7 +152,11 @@ describe('Work Order assignment service/UI contract', () => {
     expect(service).toContain('export async function revokeTaskAssignment')
     expect(service).toContain('export function isMissingSupabaseRpcError')
     const revokeStart = service.indexOf('export async function revokeTaskAssignment')
-    const revokeBody = service.slice(revokeStart, service.indexOf('export async function listAssignableEmployees'))
+    const revokeEnd = service.indexOf('export async function archiveTaskAssignment')
+    const revokeBody = service.slice(
+      revokeStart,
+      revokeEnd > revokeStart ? revokeEnd : service.indexOf('export async function listAssignableEmployees'),
+    )
     expect(revokeBody).toContain("rpc('revoke_employee_task_assignment'")
     expect(revokeBody).toContain("isMissingSupabaseRpcError(error, 'revoke_employee_task_assignment')")
     expect(revokeBody).toContain('.delete()')
@@ -160,7 +164,7 @@ describe('Work Order assignment service/UI contract', () => {
     expect(panel).toContain('updateTaskAssignmentWithWorkOrderAndSnapshots({')
     expect(panel).toContain('buildTaskAssignmentWorkOrderDraftForEdit({')
     expect(panel).not.toContain('updateTaskAssignment(')
-    expect(panel).not.toContain('revokeTaskAssignment(')
+    expect(panel).toContain('revokeTaskAssignment(')
   })
 
   it('keeps list/read projections free of undeployed 092/093 columns', () => {

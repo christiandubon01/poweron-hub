@@ -442,7 +442,8 @@ describe('regression guards', () => {
         !name.startsWith('105_') &&
         !name.startsWith('106_') &&
         !name.startsWith('107_') &&
-        !name.startsWith('108_')
+        !name.startsWith('108_') &&
+        !name.startsWith('109_')
       )
     expect(beyond100).toEqual([])
     expect(migrations).toContain('086_employee_schedules.sql')
