@@ -8,8 +8,10 @@ export type WorkOrderPayloadV1 = {
     orgId: string
     projectId: string
     projectName: string
-    workPackageId: string
-    blueprintSetId: string
+    /** Absent for Project-only / Blueprint-only Work Orders. */
+    workPackageId?: string
+    /** Absent for Project-only Work Orders. */
+    blueprintSetId?: string
     blueprintTitle?: string
     dueDate?: string
     sourcePageNumber?: number

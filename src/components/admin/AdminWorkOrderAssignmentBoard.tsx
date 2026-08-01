@@ -761,7 +761,27 @@ export function AdminWorkOrderAssignmentDetails({
           ) : null}
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Detail label="Blueprint / Document" value={assignment.blueprint_title || assignment.blueprint_set_id || 'Not recorded'} icon={<FileText size={14} />} />
+            <Detail
+              label="Source"
+              value={
+                assignment.work_package_id
+                  ? 'Work Package Work Order'
+                  : assignment.blueprint_set_id
+                    ? 'Blueprint Work Order'
+                    : 'Project Work Order'
+              }
+            />
+            <Detail label="Project" value={assignment.project_name || 'Project'} />
+            {assignment.blueprint_set_id ? (
+              <Detail
+                label="Blueprint / Document"
+                value={assignment.blueprint_title || assignment.blueprint_set_id}
+                icon={<FileText size={14} />}
+              />
+            ) : null}
+            {assignment.work_package_id ? (
+              <Detail label="Work Package" value={assignment.work_package_name} />
+            ) : null}
             <Detail label="Scheduled for" value={formatAdminAssignmentDay(assignment.due_date)} icon={<CalendarDays size={14} />} />
             <Detail label="Assigned Hours" value={formatHours(assignment.assigned_hours)} icon={<Clock3 size={14} />} />
             <Detail label="Status" value={assignment.status.replace('_', ' ')} />

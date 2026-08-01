@@ -20,6 +20,8 @@ export interface BuildWorkOrderPayloadV1DraftInput {
   blueprintTitle?: string
   dueDate?: string | null
   workOrderInstructions?: string | null
+  /** Optional override for scope.title; defaults to the Work Package name. */
+  workOrderTitle?: string | null
   workPackage: BlueprintScopeLayer
   blueprint?: Pick<BlueprintLibraryItem, 'updatedAt'>
   annotations?: readonly BlueprintAnnotation[]
@@ -29,10 +31,23 @@ export interface BuildWorkOrderPayloadV1DraftInput {
   getPageSizeInches?: (pageNumber: number) => PageSizeInches | null
 }
 
+export interface BuildProjectScopedWorkOrderPayloadV1DraftInput {
+  projectId: string
+  projectName: string
+  workOrderTitle: string
+  blueprintSetId?: string | null
+  blueprintTitle?: string | null
+  dueDate?: string | null
+  workOrderInstructions?: string | null
+  /** Defaults to 0 when omitted. */
+  assignedHours?: number | null
+}
+
 export function buildWorkOrderPayloadV1Draft(input: BuildWorkOrderPayloadV1DraftInput): WorkOrderPayloadV1Draft {
   const workPackage = input.workPackage
   const annotations = Array.isArray(input.annotations) ? input.annotations : []
   const sourceRevision = finiteNonNegative((workPackage as any).animationSceneRevision, 0)
+  const title = cleanRequiredText(input.workOrderTitle || workPackage.name, 200)
 
   return {
     identity: {
@@ -57,7 +72,7 @@ export function buildWorkOrderPayloadV1Draft(input: BuildWorkOrderPayloadV1Draft
       }),
     },
     scope: {
-      title: cleanRequiredText(workPackage.name, 200),
+      title,
       description: cleanText(workPackage.description, 4000),
       ...(cleanMultilineText(workPackage.crewNotes, 4000)
         ? { crewNotes: cleanMultilineText(workPackage.crewNotes, 4000) }
@@ -117,6 +132,55 @@ export function finalizeWorkOrderPayloadV1(
   return payload
 }
 
+/** Project-only or Blueprint-only Work Order payload (no Work Package snapshot/items). */
+export function buildProjectScopedWorkOrderPayloadV1Draft(
+  input: BuildProjectScopedWorkOrderPayloadV1DraftInput,
+): WorkOrderPayloadV1Draft {
+  const projectId = cleanRequiredText(input.projectId, 200)
+  const projectName = cleanRequiredText(input.projectName, 200)
+  const title = cleanRequiredText(input.workOrderTitle, 200)
+  const blueprintSetId = cleanOptionalText(input.blueprintSetId, 200)
+  const blueprintTitle = cleanOptionalText(input.blueprintTitle, 200)
+  const assignedHours = input.assignedHours == null
+    ? 0
+    : round2(finiteNonNegative(input.assignedHours, 0))
+
+  return {
+    identity: {
+      projectId,
+      projectName,
+      ...(blueprintSetId ? { blueprintSetId } : {}),
+      ...(blueprintTitle ? { blueprintTitle } : {}),
+      ...(cleanOptionalText(input.dueDate, 10) ? { dueDate: cleanOptionalText(input.dueDate, 10) } : {}),
+    },
+    source: {
+      sourceFingerprint: buildProjectScopedSourceFingerprint({
+        projectId,
+        blueprintSetId,
+        title,
+      }),
+    },
+    scope: {
+      title,
+      description: '',
+    },
+    ...(cleanMultilineText(input.workOrderInstructions, 4000)
+      ? { workOrderInstructions: cleanMultilineText(input.workOrderInstructions, 4000) }
+      : {}),
+    labor: {
+      roughInHours: 0,
+      trimHours: 0,
+      testingHours: 0,
+      cleanupHours: 0,
+      totalHours: assignedHours,
+    },
+    items: [],
+    electricalSymbols: [],
+    wireQuantities: [],
+    animationRoute: null,
+  }
+}
+
 export function buildSourceFingerprint(input: {
   workPackageId: string
   workPackageUpdatedAt?: string
@@ -128,6 +192,19 @@ export function buildSourceFingerprint(input: {
     cleanText(input.workPackageUpdatedAt, 100),
     String(finiteNonNegative(input.animationSceneRevision, 0)),
     cleanRequiredText(input.blueprintSetId, 200),
+  ].join('|')
+}
+
+export function buildProjectScopedSourceFingerprint(input: {
+  projectId: string
+  blueprintSetId?: string | null
+  title: string
+}): string {
+  return [
+    'project',
+    cleanRequiredText(input.projectId, 200),
+    cleanText(input.blueprintSetId, 200),
+    cleanRequiredText(input.title, 200),
   ].join('|')
 }
 

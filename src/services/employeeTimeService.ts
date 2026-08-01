@@ -59,7 +59,8 @@ export interface EligibleAssignment {
   id: string
   project_id: string
   project_name: string
-  work_package_id: string
+  /** Null for Project-only / Blueprint-only Work Orders after migration 110. */
+  work_package_id: string | null
   work_package_name: string
   due_date: string | null
   status: string

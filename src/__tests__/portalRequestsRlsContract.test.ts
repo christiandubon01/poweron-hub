@@ -636,12 +636,13 @@ describe('[STATIC] 28. Eight migration guards remain narrowly scoped', () => {
     }
   })
 
-  it('each guard file allows migrations 103-109', () => {
+  it('each guard file allows migrations 103-110', () => {
     for (const rel of guardFiles) {
       const content = readFileSync(join(ROOT, rel), 'utf8')
       expect(content, `${rel} should exclude 107`).toContain("startsWith('107_')")
       expect(content, `${rel} should exclude 108`).toContain("startsWith('108_')")
       expect(content, `${rel} should exclude 109`).toContain("startsWith('109_')")
+      expect(content, `${rel} should exclude 110`).toContain("startsWith('110_')")
     }
   })
 
@@ -911,11 +912,12 @@ describe('[STATIC] 47. Eight migration guards updated to recognize migration 108
     }
   })
 
-  it('all eight guard files allow migration 109 and still reject migration 110 and later', () => {
+  it('all eight guard files allow migration 110 and still reject migration 111 and later', () => {
     for (const rel of guardFiles) {
       const content = readFileSync(join(ROOT, rel), 'utf8')
       expect(content, `${rel} should exclude 109`).toContain("startsWith('109_')")
-      expect(content, `${rel} should not allow 110+`).not.toContain("startsWith('110_')")
+      expect(content, `${rel} should exclude 110`).toContain("startsWith('110_')")
+      expect(content, `${rel} should not allow 111+`).not.toContain("startsWith('111_')")
     }
   })
 })

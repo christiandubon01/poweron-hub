@@ -223,11 +223,11 @@ describe('[STATIC] 17. PortalTrackView is unchanged', () => {
 // ── [STATIC] 18. No migration or database changes ────────────────────────────
 
 describe('[STATIC] 18. No migration or database changes', () => {
-  it('no new migration files introduced by this repair beyond the Work Order management phase', () => {
+  it('no new migration files introduced by this repair beyond Project-only Work Orders', () => {
     const migDir = join(ROOT, 'supabase/migrations')
-    // Service-worker repair must not invent migrations past the known Work Order management migration.
+    // Service-worker repair must not invent migrations past the known Project-only Work Order migration.
     const files = existsSync(migDir)
-      ? require('fs').readdirSync(migDir).filter((f: string) => f.startsWith('110_'))
+      ? require('fs').readdirSync(migDir).filter((f: string) => f.startsWith('111_'))
       : []
     expect(files).toHaveLength(0)
   })

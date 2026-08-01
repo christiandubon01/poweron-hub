@@ -8,6 +8,11 @@ import type {
 } from '@/services/employeeTaskAssignmentService'
 import type { AdminEmployeeProfile } from '@/services/adminTimecardService'
 import { SnapshotAssignmentPicker } from '@/features/blueprint-snapshots'
+import {
+  deriveWorkOrderSourceMode,
+  isValidWorkOrderTitle,
+  normalizeWorkOrderTitle,
+} from '@/features/work-orders'
 
 export interface AdminWorkOrderAssignmentFormState {
   projectId: string
@@ -16,6 +21,10 @@ export interface AdminWorkOrderAssignmentFormState {
   blueprintTitle: string
   workPackageId: string
   workPackageName: string
+  /** Owner-facing Work Order title (required for Project-only / Blueprint-only). */
+  workOrderTitle: string
+  /** True once the owner edits the title field; blocks auto-overwrite from Work Package. */
+  titleTouched: boolean
   employeeIds: string[]
   primaryEmployeeId: string
   dueDate: string
@@ -40,6 +49,11 @@ interface AssignmentFormProps {
   packagesLoading: boolean
   saving: boolean
   error: string
+  /**
+   * Migration-110 readiness for Project-only / Blueprint-only Assign.
+   * ready | not_ready | unknown (unknown must not enable Project-only).
+   */
+  projectOnlyBackendStatus?: 'ready' | 'not_ready' | 'unknown'
   onSelectProject: (id: string, label: string) => void
   onSelectBlueprint: (id: string, label: string) => void
   onSelectWorkPackage: (id: string, label: string) => void
@@ -65,6 +79,7 @@ export function AdminWorkOrderAssignmentForm({
   packagesLoading,
   saving,
   error,
+  projectOnlyBackendStatus = 'unknown',
   onSelectProject,
   onSelectBlueprint,
   onSelectWorkPackage,
@@ -76,22 +91,34 @@ export function AdminWorkOrderAssignmentForm({
     () => projects.map((project) => ({ id: project.id, label: project.name, sublabel: project.status.replace(/_/g, ' ') })),
     [projects],
   )
-  const blueprintOptions = useMemo(
-    () => blueprints.map((blueprint) => ({ id: blueprint.blueprintSetId, label: blueprint.title })),
-    [blueprints],
-  )
-  const packageOptions = useMemo(
-    () => workPackages.map((workPackage) => ({ id: workPackage.workPackageId, label: workPackage.workPackageName })),
-    [workPackages],
-  )
+  const blueprintOptions = useMemo(() => {
+    const rows = blueprints.map((blueprint) => ({ id: blueprint.blueprintSetId, label: blueprint.title }))
+    return value.projectId
+      ? [{ id: '', label: 'None (optional)' }, ...rows]
+      : rows
+  }, [blueprints, value.projectId])
+  const packageOptions = useMemo(() => {
+    const rows = workPackages.map((workPackage) => ({ id: workPackage.workPackageId, label: workPackage.workPackageName }))
+    return value.blueprintSetId
+      ? [{ id: '', label: 'None (optional)' }, ...rows]
+      : rows
+  }, [workPackages, value.blueprintSetId])
   const noBlueprints = !!value.projectId && !blueprintsLoading && blueprints.length === 0
   const noPackages = !!value.blueprintSetId && !packagesLoading && workPackages.length === 0
+  const sourceMode = deriveWorkOrderSourceMode({
+    blueprintSetId: value.blueprintSetId,
+    workPackageId: value.workPackageId,
+  })
+  const titleValid = isValidWorkOrderTitle(value.workOrderTitle)
+  const needsProjectOnlyBackend = sourceMode !== 'work-package'
+  const projectOnlyBackendReady = projectOnlyBackendStatus === 'ready'
+  const projectOnlyBlocked = needsProjectOnlyBackend && !projectOnlyBackendReady
   const canSubmit =
     !!value.projectId &&
-    !!value.blueprintSetId &&
-    !!value.workPackageId &&
+    titleValid &&
     value.employeeIds.length > 0 &&
-    !!value.primaryEmployeeId
+    !!value.primaryEmployeeId &&
+    !projectOnlyBlocked
 
   const toggleEmployee = (id: string) => {
     onChange((previous) => {
@@ -147,30 +174,76 @@ export function AdminWorkOrderAssignmentForm({
             />
             <SearchablePicker
               label="Blueprint / Document"
-              placeholder={value.projectId ? 'Select Blueprint…' : 'Select a project first'}
+              placeholder={value.projectId ? 'Optional Blueprint…' : 'Select a project first'}
               options={blueprintOptions}
               value={value.blueprintSetId}
               onChange={onSelectBlueprint}
               loading={!!value.projectId && blueprintsLoading}
-              disabled={!value.projectId || noBlueprints}
+              disabled={!value.projectId}
               emptyMessage="No Blueprints found"
             />
             <SearchablePicker
               label="Work Package"
-              placeholder={value.blueprintSetId ? 'Select Work Package…' : 'Select a Blueprint first'}
+              placeholder={value.blueprintSetId ? 'Optional Work Package…' : 'Select a Blueprint first'}
               options={packageOptions}
               value={value.workPackageId}
               onChange={onSelectWorkPackage}
               loading={!!value.blueprintSetId && packagesLoading}
-              disabled={!value.blueprintSetId || noPackages || noBlueprints}
+              disabled={!value.blueprintSetId}
               emptyMessage="No Work Packages found"
             />
           </div>
-          {noBlueprints || noPackages ? (
-            <p className="text-sm text-amber-300/90">
-              {noBlueprints ? 'No Blueprints found for this project.' : 'No Work Packages found for this Blueprint.'}
+          {value.projectId ? (
+            <p className="text-sm text-gray-400">
+              {sourceMode === 'project'
+                ? 'Optional: select a Blueprint or Work Package for more specific work.'
+                : sourceMode === 'blueprint'
+                  ? 'Optional: select a Work Package, or leave blank for a Blueprint-level Work Order.'
+                  : 'Work Package selected. Title defaults to the package name unless you edit it.'}
             </p>
           ) : null}
+          {projectOnlyBlocked ? (
+            <p className="rounded-xl border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-sm text-amber-200">
+              {projectOnlyBackendStatus === 'unknown'
+                ? 'Could not verify Project-only Work Order backend readiness. Select a Work Package to assign, or retry after reconnecting.'
+                : 'Project-only Work Orders will be available after the Work Order backend update is deployed. Select a Work Package to assign now.'}
+            </p>
+          ) : null}
+          {noBlueprints || noPackages ? (
+            <p className="text-sm text-amber-300/90">
+              {noBlueprints
+                ? 'No Blueprints found for this project. You can still assign a Project Work Order.'
+                : 'No Work Packages found for this Blueprint. You can still assign without a Work Package.'}
+            </p>
+          ) : null}
+
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold uppercase text-gray-400" htmlFor="assignment-work-order-title">
+              Work Order Title
+            </label>
+            <input
+              id="assignment-work-order-title"
+              type="text"
+              value={value.workOrderTitle}
+              maxLength={200}
+              onChange={(event) => onChange((current) => ({
+                ...current,
+                workOrderTitle: event.target.value,
+                titleTouched: true,
+              }))}
+              onBlur={() => onChange((current) => ({
+                ...current,
+                workOrderTitle: normalizeWorkOrderTitle(current.workOrderTitle),
+              }))}
+              placeholder="e.g. Install temporary power"
+              aria-required="true"
+              aria-invalid={!!value.projectId && !titleValid}
+              className="min-h-11 w-full rounded-xl border border-gray-600 bg-[var(--bg-secondary)] px-3 text-base text-gray-100"
+            />
+            <p className="mt-1 text-[11px] text-gray-500">
+              Required. For Work Package assignments, this is prefilled from the package name.
+            </p>
+          </div>
 
           <SnapshotAssignmentPicker
             projectId={value.projectId}
@@ -240,7 +313,9 @@ export function AdminWorkOrderAssignmentForm({
                 className="min-h-11 w-full rounded-xl border border-gray-600 bg-[var(--bg-secondary)] px-3 text-base text-gray-100"
               />
               <p id="assignment-assigned-hours-help" className="mt-1 text-[11px] text-gray-500">
-                Optional. Leave blank to keep the Work Package labor total. Does not change recorded actual hours.
+                {sourceMode === 'work-package'
+                  ? 'Optional. Leave blank to keep the Work Package labor total. Does not change recorded actual hours.'
+                  : 'Optional. Leave blank to use 0 Assigned Hours. Does not change recorded actual hours.'}
               </p>
             </div>
           </div>
@@ -256,7 +331,7 @@ export function AdminWorkOrderAssignmentForm({
               className="w-full resize-y rounded-xl border border-gray-600 bg-[var(--bg-secondary)] px-3 py-3 text-base leading-relaxed text-gray-100"
             />
             <p className="mt-1 text-[11px] text-gray-500">
-              Instructions specific to this employee Work Order. Work Package Crew Notes remain separate.
+              Instructions specific to this employee Work Order. Work Package Crew Notes remain separate when a package is selected.
             </p>
           </div>
         </div>
@@ -266,7 +341,7 @@ export function AdminWorkOrderAssignmentForm({
           <button
             type="button"
             onClick={onSubmit}
-            disabled={saving || !canSubmit || noBlueprints || noPackages}
+            disabled={saving || !canSubmit}
             className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-teal-600 text-sm font-semibold text-white hover:bg-teal-500 disabled:opacity-50"
             aria-label={mode === 'create' ? 'Assign Work Order' : 'Save Changes'}
           >
@@ -334,7 +409,9 @@ function SearchablePicker({
         className="flex min-h-11 w-full items-center justify-between gap-2 rounded-xl border border-gray-600 bg-[var(--bg-secondary)] px-3 text-left text-base text-gray-100 disabled:cursor-not-allowed"
         aria-expanded={open}
       >
-        <span className={`truncate ${selected ? 'text-gray-100' : 'text-gray-500'}`}>{loading ? 'Loading…' : selected?.label || placeholder}</span>
+        <span className={`truncate ${selected && selected.id !== '' ? 'text-gray-100' : selected?.id === '' ? 'text-gray-400' : 'text-gray-500'}`}>
+          {loading ? 'Loading…' : selected?.label || placeholder}
+        </span>
         {loading ? <Loader2 size={15} className="shrink-0 animate-spin text-teal-400" /> : <ChevronDown size={15} className="shrink-0 text-gray-500" />}
       </button>
       {open && !disabled && !loading ? (
@@ -344,8 +421,8 @@ function SearchablePicker({
           </div>
           <ul className="max-h-52 overflow-y-auto">
             {filtered.length === 0 ? <li className="px-3 py-3 text-sm text-gray-500">{emptyMessage}</li> : filtered.map((option) => (
-              <li key={option.id}>
-                <button type="button" onClick={() => { onChange(option.id, option.label); setOpen(false); setQuery('') }} className={`w-full px-3 py-2.5 text-left hover:bg-gray-700/50 ${option.id === value ? 'bg-teal-600/20 text-teal-200' : 'text-gray-200'}`}>
+              <li key={option.id || `${label}-none`}>
+                <button type="button" onClick={() => { onChange(option.id, option.id ? option.label : ''); setOpen(false); setQuery('') }} className={`w-full px-3 py-2.5 text-left hover:bg-gray-700/50 ${option.id === value ? 'bg-teal-600/20 text-teal-200' : 'text-gray-200'}`}>
                   <span className="block truncate text-sm font-medium">{option.label}</span>
                   {option.sublabel ? <span className="block truncate text-[11px] text-gray-500">{option.sublabel}</span> : null}
                 </button>

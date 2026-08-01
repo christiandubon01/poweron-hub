@@ -58,16 +58,20 @@ const adminAttachBlock = functionBlock(
 const assertionsBlock = migration109.slice(migration109.indexOf('-- ── 8. Transactional assertions'))
 
 describe('[STATIC SQL] Work Order management migration 109', () => {
-  it('is the sole next migration after 108 and no migration 110 exists', () => {
+  it('keeps migration 109 committed and allows focused migration 110 for Project-only Work Orders', () => {
     const migrations = readdirSync(join(process.cwd(), 'supabase/migrations'))
       .filter((name) => /^\d+_/.test(name))
       .sort()
-    expect(migrations[migrations.length - 1]).toBe('109_work_order_assigned_hours_archive_delete.sql')
     expect(existsSync(migration109Path)).toBe(true)
-    expect(migrations.filter((name) => name.startsWith('110_'))).toHaveLength(0)
     expect(migration109).toContain('BEGIN;')
     expect(migration109).toContain('COMMIT;')
     expect(migrations.filter((name) => name.startsWith('107_') || name.startsWith('108_'))).toHaveLength(2)
+    expect(migrations.filter((name) => name.startsWith('109_'))).toHaveLength(1)
+    expect(migrations.filter((name) => name.startsWith('110_'))).toEqual([
+      '110_project_only_work_orders.sql',
+    ])
+    expect(migrations.filter((name) => name.startsWith('111_'))).toHaveLength(0)
+    expect(migrations[migrations.length - 1]).toBe('110_project_only_work_orders.sql')
   })
 
   it('reuses payload.labor.totalHours for assigned hours and hours_spent for actual hours', () => {
@@ -257,6 +261,7 @@ describe('[UNIT] Assigned hours behavioral contract', () => {
 describe('[COMPONENT SOURCE] Archive / restore / delete UI + completed-edit wiring', () => {
   it('keeps Assigned Hours optional in the assign modal and editable afterward', () => {
     expect(form).toContain('Optional. Leave blank to keep the Work Package labor total')
+    expect(form).toContain('Optional. Leave blank to use 0 Assigned Hours')
     expect(form).toContain('type="number"')
     expect(form).toContain('min={0}')
     expect(form).toContain('step={0.25}')

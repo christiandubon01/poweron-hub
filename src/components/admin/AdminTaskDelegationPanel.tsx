@@ -18,6 +18,7 @@ import {
   buildTaskAssignmentWorkOrderDraft,
   buildTaskAssignmentWorkOrderDraftForEdit,
   createTaskAssignmentWithWorkOrderAndSnapshots,
+  getProjectOnlyWorkOrdersBackendReadiness,
   listAdminWorkOrderAssignments,
   listAssignableEmployees,
   listAssignableProjects,
@@ -30,6 +31,7 @@ import {
   type AssignableProject,
   type AssignableWorkPackage,
   type EmployeeTaskAssignment,
+  type ProjectOnlyBackendReadinessStatus,
 } from '@/services/employeeTaskAssignmentService'
 import { parseAssignedHoursInput } from '@/features/work-orders'
 import type { AdminEmployeeProfile } from '@/services/adminTimecardService'
@@ -47,6 +49,8 @@ const emptyForm = (): AdminWorkOrderAssignmentFormState => ({
   blueprintTitle: '',
   workPackageId: '',
   workPackageName: '',
+  workOrderTitle: '',
+  titleTouched: false,
   employeeIds: [],
   primaryEmployeeId: '',
   dueDate: '',
@@ -81,7 +85,16 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
   const [form, setForm] = useState<AdminWorkOrderAssignmentFormState>(emptyForm)
   const [selectedSnapshotIds, setSelectedSnapshotIds] = useState<string[]>([])
   const [requestIds, setRequestIds] = useState(newRequestIds)
+  const [projectOnlyBackendStatus, setProjectOnlyBackendStatus] =
+    useState<ProjectOnlyBackendReadinessStatus>('unknown')
   const autoOpenRef = useRef<string>()
+
+  const ensureProjectOnlyBackendReadiness = useCallback(async () => {
+    // Service caches ready/not_ready; unknown/network is not treated as ready and may retry on open.
+    const readiness = await getProjectOnlyWorkOrdersBackendReadiness()
+    setProjectOnlyBackendStatus(readiness.status)
+    return readiness.status
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -152,6 +165,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
     setRequestIds(newRequestIds())
     setFormError('')
     setFormOpen(true)
+    void ensureProjectOnlyBackendReadiness()
     const nextProjects = await loadProjects()
     if (projectId) {
       const project = nextProjects.find((row) => row.id === projectId)
@@ -160,7 +174,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
         loadBlueprints(project.id)
       }
     }
-  }, [loadBlueprints, loadProjects])
+  }, [ensureProjectOnlyBackendReadiness, loadBlueprints, loadProjects])
 
   useEffect(() => {
     if (!initialProjectId || loading || autoOpenRef.current === initialProjectId) return
@@ -179,8 +193,10 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
       projectName: assignment.project_name || '',
       blueprintSetId: assignment.blueprint_set_id || '',
       blueprintTitle: assignment.blueprint_title || '',
-      workPackageId: assignment.work_package_id,
-      workPackageName: assignment.work_package_name,
+      workPackageId: assignment.work_package_id || '',
+      workPackageName: assignment.work_package_id ? assignment.work_package_name : '',
+      workOrderTitle: assignment.work_package_name || '',
+      titleTouched: true,
       employeeIds: [...(assignment.assigned_employee_ids || [])],
       primaryEmployeeId: assignment.lead_employee_id,
       dueDate: assignment.due_date || '',
@@ -196,10 +212,11 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
     setFormError('')
     setBoardError('')
     setFormOpen(true)
+    void ensureProjectOnlyBackendReadiness()
     await loadProjects()
     if (assignment.project_id) loadBlueprints(assignment.project_id)
     if (assignment.blueprint_set_id) loadPackages(assignment.blueprint_set_id)
-  }, [loadBlueprints, loadPackages, loadProjects])
+  }, [ensureProjectOnlyBackendReadiness, loadBlueprints, loadPackages, loadProjects])
 
   const closeForm = () => {
     if (saving) return
@@ -222,6 +239,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
       blueprintTitle: '',
       workPackageId: '',
       workPackageName: '',
+      workOrderTitle: current.titleTouched ? current.workOrderTitle : '',
     }))
     setBlueprints([])
     setWorkPackages([])
@@ -237,6 +255,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
       blueprintTitle: '',
       workPackageId: '',
       workPackageName: '',
+      workOrderTitle: current.titleTouched ? current.workOrderTitle : '',
     }))
     setWorkPackages([])
     setSelectedSnapshotIds([])
@@ -251,6 +270,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
       blueprintTitle: label,
       workPackageId: '',
       workPackageName: '',
+      workOrderTitle: current.titleTouched ? current.workOrderTitle : '',
     }))
     setSelectedSnapshotIds([])
     if (id) loadPackages(id)
@@ -258,7 +278,14 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
   }
 
   const selectWorkPackage = (id: string, label: string) => {
-    setForm((current) => ({ ...current, workPackageId: id, workPackageName: label }))
+    setForm((current) => ({
+      ...current,
+      workPackageId: id,
+      workPackageName: label,
+      workOrderTitle: id
+        ? (current.titleTouched ? current.workOrderTitle : label)
+        : (current.titleTouched ? current.workOrderTitle : ''),
+    }))
     setSelectedSnapshotIds([])
   }
 
@@ -268,8 +295,17 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
       setFormError('Missing organization.')
       return
     }
-    if (!form.projectId || !form.projectName || !form.blueprintSetId || !form.workPackageId || !form.workPackageName) {
-      setFormError('Select a Project, Blueprint / Document, and Work Package.')
+    const workOrderTitle = form.workOrderTitle.trim().replace(/\s+/g, ' ')
+    if (!form.projectId || !form.projectName) {
+      setFormError('Select a Project.')
+      return
+    }
+    if (!workOrderTitle) {
+      setFormError('Enter a Work Order title.')
+      return
+    }
+    if (form.workPackageId && !form.blueprintSetId) {
+      setFormError('Select a Blueprint for the Work Package.')
       return
     }
     if (form.employeeIds.length === 0) {
@@ -279,6 +315,21 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
     if (!form.primaryEmployeeId || !form.employeeIds.includes(form.primaryEmployeeId)) {
       setFormError('Choose a primary assignee from the selected employees.')
       return
+    }
+    if (selectedSnapshotIds.length > 0 && (!form.blueprintSetId || !form.workPackageId)) {
+      setFormError('Snapshots require a Blueprint and Work Package. Clear snapshots or complete the source selection.')
+      return
+    }
+    if (!form.workPackageId) {
+      const readiness = await ensureProjectOnlyBackendReadiness()
+      if (readiness !== 'ready') {
+        setFormError(
+          readiness === 'unknown'
+            ? 'Could not verify Project-only Work Order backend readiness. Select a Work Package, or retry after reconnecting.'
+            : 'Project-only Work Orders will be available after the Work Order backend update is deployed.',
+        )
+        return
+      }
     }
 
     const hoursParse = parseAssignedHoursInput(form.assignedHours)
@@ -293,9 +344,10 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
           assignment: editing,
           projectId: form.projectId,
           projectName: form.projectName,
-          blueprintSetId: form.blueprintSetId,
-          blueprintTitle: form.blueprintTitle,
-          workPackageId: form.workPackageId,
+          blueprintSetId: form.blueprintSetId || null,
+          blueprintTitle: form.blueprintTitle || null,
+          workPackageId: form.workPackageId || null,
+          workOrderTitle,
           dueDate: form.dueDate || null,
           workOrderInstructions: instructions,
           assignedHours: hoursParse.value,
@@ -303,9 +355,10 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
       : buildTaskAssignmentWorkOrderDraft({
           projectId: form.projectId,
           projectName: form.projectName,
-          blueprintSetId: form.blueprintSetId,
-          blueprintTitle: form.blueprintTitle,
-          workPackageId: form.workPackageId,
+          blueprintSetId: form.blueprintSetId || null,
+          blueprintTitle: form.blueprintTitle || null,
+          workPackageId: form.workPackageId || null,
+          workOrderTitle,
           dueDate: form.dueDate || null,
           workOrderInstructions: instructions,
           assignedHours: hoursParse.value,
@@ -323,12 +376,12 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
           clientRequestId: requestIds.clientRequestId,
           expectedUpdatedAt: editing.updated_at,
           expectedWorkOrderVersion: editing.current_work_order_version ?? 0,
-          workPackageId: form.workPackageId,
-          workPackageName: form.workPackageName,
+          workPackageId: form.workPackageId || null,
+          workPackageName: workOrderTitle,
           projectId: form.projectId,
           projectName: form.projectName,
-          blueprintSetId: form.blueprintSetId,
-          blueprintTitle: form.blueprintTitle,
+          blueprintSetId: form.blueprintSetId || null,
+          blueprintTitle: form.blueprintTitle || null,
           leadEmployeeId: form.primaryEmployeeId,
           assignedEmployeeIds: form.employeeIds,
           dueDate: form.dueDate || null,
@@ -340,12 +393,12 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
           assignmentId: requestIds.assignmentId,
           clientRequestId: requestIds.clientRequestId,
           orgId,
-          workPackageId: form.workPackageId,
-          workPackageName: form.workPackageName,
+          workPackageId: form.workPackageId || null,
+          workPackageName: workOrderTitle,
           projectId: form.projectId,
           projectName: form.projectName,
-          blueprintSetId: form.blueprintSetId,
-          blueprintTitle: form.blueprintTitle,
+          blueprintSetId: form.blueprintSetId || null,
+          blueprintTitle: form.blueprintTitle || null,
           leadEmployeeId: form.primaryEmployeeId,
           assignedEmployeeIds: form.employeeIds,
           dueDate: form.dueDate || null,
@@ -454,6 +507,7 @@ export default function AdminTaskDelegationPanel({ initialProjectId }: { initial
           packagesLoading={packagesLoading}
           saving={saving}
           error={formError}
+          projectOnlyBackendStatus={projectOnlyBackendStatus}
           onSelectProject={selectProject}
           onSelectBlueprint={selectBlueprint}
           onSelectWorkPackage={selectWorkPackage}

@@ -128,7 +128,8 @@ describe('migration guard — allow 106 reject 107+', () => {
           !name.startsWith('106_') &&
           !name.startsWith('107_') &&
           !name.startsWith('108_') &&
-        !name.startsWith('109_'),
+          !name.startsWith('109_') &&
+          !name.startsWith('110_'),
       )
     expect(beyond).toEqual([])
     expect(migrations).toContain('105_session_clock_out_summary.sql')
@@ -217,10 +218,10 @@ describe('EmployeeTimeClock closeout UI', () => {
     expect(timeClock).toContain('Cancel')
   })
 
-  it('shows Project and Work Package / Not assigned yet for both session types', () => {
-    expect(timeClock).toContain('activeSession?.project_name')
-    expect(timeClock).toContain("'Not assigned yet'")
-    expect(timeClock).toContain('activeSession?.work_package_name')
+  it('shows Project and resolver-based identity / Not assigned yet for both session types', () => {
+    expect(timeClock).toContain('resolveTimeSessionIdentity')
+    expect(timeClock).toContain('timeSessionIdentityDisplayValue')
+    expect(timeClock).toContain('Work Package: Not assigned yet')
   })
 
   it('uses one shared form (no separate Project-only closeout component)', () => {

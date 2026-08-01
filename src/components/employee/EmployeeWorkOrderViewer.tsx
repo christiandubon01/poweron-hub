@@ -318,15 +318,30 @@ function WorkOrderHeader({
 }) {
   const assignment = result.assignment
   if (!assignment) return null
+  const sourceLabel = assignment.workPackageId
+    ? 'Work Package Work Order'
+    : assignment.blueprintSetId
+      ? 'Blueprint Work Order'
+      : 'Project Work Order'
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <p className="text-lg font-bold text-gray-900">{assignment.workPackageName}</p>
-          <p className="text-sm text-gray-500">{assignment.projectName || 'Project'}</p>
-          {parsedPayload.blueprintTitle && (
-            <p className="mt-1 text-sm font-medium text-gray-700">{parsedPayload.blueprintTitle}</p>
-          )}
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Source</p>
+          <p className="text-sm font-medium text-gray-700">{sourceLabel}</p>
+          <p className="mt-2 text-lg font-bold text-gray-900">{assignment.workPackageName}</p>
+          <p className="text-sm text-gray-500">
+            <span className="font-semibold text-gray-600">Project</span>
+            {' · '}
+            {assignment.projectName || 'Project'}
+          </p>
+          {parsedPayload.blueprintTitle && assignment.blueprintSetId ? (
+            <p className="mt-1 text-sm font-medium text-gray-700">
+              <span className="font-semibold text-gray-600">Blueprint</span>
+              {' · '}
+              {parsedPayload.blueprintTitle}
+            </p>
+          ) : null}
         </div>
         <span className={`w-fit rounded-full border px-2.5 py-1 text-xs font-semibold capitalize ${STATUS_PILL[assignment.status]}`}>
           {assignment.status.replace('_', ' ')}

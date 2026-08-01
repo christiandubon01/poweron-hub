@@ -30,6 +30,11 @@ import {
   Building2,
 } from 'lucide-react'
 import {
+  formatTimeSessionIdentityLine,
+  resolveTimeSessionIdentity,
+  timeSessionIdentityDisplayValue,
+} from '@/services/timeSessionIdentity'
+import {
   getTodaySessions,
   getMyEligibleAssignments,
   getEmployeeActiveProjects,
@@ -454,32 +459,39 @@ export function EmployeeTimeClock({ onPunchSuccess }: EmployeeTimeClockProps = {
           )}
 
           {/* Active job context */}
-          {activeSession && phase !== 'off_clock' && (
+          {activeSession && phase !== 'off_clock' && (() => {
+            const identity = resolveTimeSessionIdentity({
+              assignmentId: activeSession.assignment_id,
+              workPackageName: activeSession.work_package_name,
+              projectName: activeSession.project_name,
+            })
+            return (
             <div className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-3 flex items-start gap-2">
-              {activeSession.assignment_id
+              {identity.kind === 'work-order'
                 ? <Briefcase className="w-4 h-4 text-gray-500 mt-0.5 flex-shrink-0" />
                 : <Building2 className="w-4 h-4 text-blue-400 mt-0.5 flex-shrink-0" />}
               <div className="min-w-0">
                 <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Active Time Session</p>
-                {activeSession.project_name && (
-                  <p className="text-xs text-gray-500 truncate">{activeSession.project_name}</p>
+                {identity.projectName && (
+                  <p className="text-xs text-gray-500 truncate">{identity.projectName}</p>
                 )}
-                {activeSession.work_package_name ? (
-                  <>
-                    <p className="text-[10px] text-gray-400 uppercase tracking-wide mt-0.5">Work Package</p>
-                    <p className="text-sm font-bold text-gray-900 truncate">
-                      {activeSession.work_package_name}
-                    </p>
-                  </>
-                ) : (
+                {identity.kind === 'project-only' ? (
                   <>
                     <p className="text-sm font-semibold text-blue-600">Project Only</p>
                     <p className="text-[11px] text-gray-500">Work Package: Not assigned yet</p>
                   </>
+                ) : (
+                  <>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide mt-0.5">{identity.label}</p>
+                    <p className="text-sm font-bold text-gray-900 truncate">
+                      {timeSessionIdentityDisplayValue(identity)}
+                    </p>
+                  </>
                 )}
               </div>
             </div>
-          )}
+            )
+          })()}
 
           {/* Error banner */}
           {error && (
@@ -505,9 +517,12 @@ export function EmployeeTimeClock({ onPunchSuccess }: EmployeeTimeClockProps = {
                 {selection.projectName}
               </p>
               {selection.type === 'assignment' ? (
-                <p className="text-sm font-bold text-green-900 truncate">
-                  {selection.workPackageName}
-                </p>
+                <>
+                  <p className="text-[10px] text-green-700 uppercase tracking-wide">Work Order</p>
+                  <p className="text-sm font-bold text-green-900 truncate">
+                    {selection.workPackageName}
+                  </p>
+                </>
               ) : (
                 <p className="text-sm font-semibold text-blue-700">
                   Project Only — Work Package optional
@@ -519,23 +534,32 @@ export function EmployeeTimeClock({ onPunchSuccess }: EmployeeTimeClockProps = {
           {/* Punch actions OR end-of-day closeout (same form for assignment + Project-only) */}
           {showClockOutSummary ? (
             <div className="space-y-3">
+              {(() => {
+                const identity = resolveTimeSessionIdentity({
+                  assignmentId: activeSession?.assignment_id,
+                  workPackageName: activeSession?.work_package_name,
+                  projectName: activeSession?.project_name,
+                })
+                return (
               <div className="rounded-xl bg-gray-50 border border-gray-200 px-3 py-3 space-y-1">
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Clocking out</p>
                 <p className="text-[11px] text-gray-500">
                   Project
                 </p>
                 <p className="text-sm font-bold text-gray-900 truncate">
-                  {activeSession?.project_name ?? '—'}
+                  {identity.projectName ?? '—'}
                 </p>
                 <p className="text-[11px] text-gray-500 mt-1.5">
-                  Work Package
+                  {identity.kind === 'project-only' ? 'Work Package' : identity.label}
                 </p>
                 <p className={`text-sm font-semibold truncate ${
-                  activeSession?.work_package_name ? 'text-gray-900' : 'text-blue-600'
+                  identity.kind === 'project-only' ? 'text-blue-600' : 'text-gray-900'
                 }`}>
-                  {activeSession?.work_package_name ?? 'Not assigned yet'}
+                  {timeSessionIdentityDisplayValue(identity)}
                 </p>
               </div>
+                )
+              })()}
               <div>
                 <label htmlFor="eod-summary" className="block text-sm font-semibold text-gray-800 mb-1.5">
                   What did you get done today?
@@ -679,16 +703,25 @@ export function EmployeeTimeClock({ onPunchSuccess }: EmployeeTimeClockProps = {
               <p className="text-xs text-gray-500">
                 Work context is locked while a Time Session is active.
               </p>
-              {activeSession && (
+              {activeSession && (() => {
+                const identity = resolveTimeSessionIdentity({
+                  assignmentId: activeSession.assignment_id,
+                  workPackageName: activeSession.work_package_name,
+                  projectName: activeSession.project_name,
+                })
+                return (
                 <div className="rounded-xl bg-gray-50 border border-gray-200 px-4 py-3 space-y-1">
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Active Project</p>
-                  <p className="text-sm font-bold text-gray-900">{activeSession.project_name ?? '—'}</p>
-                  <p className="text-[10px] text-gray-400 uppercase tracking-wide mt-1">Work Package</p>
+                  <p className="text-sm font-bold text-gray-900">{identity.projectName ?? '—'}</p>
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide mt-1">
+                    {identity.kind === 'project-only' ? 'Work Package' : identity.label}
+                  </p>
                   <p className="text-[11px] text-gray-500">
-                    {activeSession.work_package_name ?? 'Not assigned yet'}
+                    {timeSessionIdentityDisplayValue(identity)}
                   </p>
                 </div>
-              )}
+                )
+              })()}
             </div>
           )}
 
@@ -698,14 +731,20 @@ export function EmployeeTimeClock({ onPunchSuccess }: EmployeeTimeClockProps = {
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
                 Completed Today ({todaySessions.filter(s => s.clock_out_at).length})
               </p>
-              {todaySessions.filter(s => s.clock_out_at).map(s => (
+              {todaySessions.filter(s => s.clock_out_at).map(s => {
+                const identity = resolveTimeSessionIdentity({
+                  assignmentId: s.assignment_id,
+                  workPackageName: s.work_package_name,
+                  projectName: s.project_name,
+                })
+                return (
                 <div key={s.id} className="flex items-center justify-between text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold text-gray-700 truncate">
-                      {s.project_name ?? 'Time Session'}
+                      {identity.projectName ?? 'Time Session'}
                     </p>
                     <p className="text-[10px] text-gray-400">
-                      Work Package: {s.work_package_name ?? 'Not assigned yet'}
+                      {formatTimeSessionIdentityLine(identity)}
                     </p>
                     <p className="text-gray-400">
                       {formatTime(s.clock_in_at)} – {formatTime(s.clock_out_at)}
@@ -713,12 +752,13 @@ export function EmployeeTimeClock({ onPunchSuccess }: EmployeeTimeClockProps = {
                   </div>
                   <div className="text-right flex-shrink-0 ml-2">
                     <p className="font-bold text-green-700">{formatMinutes(s.paid_minutes)}</p>
-                    {!s.work_package_name && (
+                    {identity.isProjectOnly && (
                       <p className="text-[10px] text-blue-500">Project Only</p>
                     )}
                   </div>
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>

@@ -273,6 +273,7 @@ describe('employeeTaskAssignmentService', () => {
       blueprintSetId: 'set-1',
       blueprintTitle: 'E1',
       workPackageId: 'package-1',
+      workOrderTitle: 'Frozen title',
       dueDate: '2026-07-31',
       workOrderInstructions: '  First line\n\nSecond line  ',
     })

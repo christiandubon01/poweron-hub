@@ -77,7 +77,7 @@ export function SnapshotAssignmentPicker({
       </div>
 
       {!contextReady ? (
-        <p className="mt-2 text-xs text-amber-300">Select a project, Blueprint, and Work Package before attaching snapshots.</p>
+        <p className="mt-2 text-xs text-amber-300">Select a Blueprint and Work Package before attaching snapshots.</p>
       ) : null}
       {message ? <p className="mt-2 text-xs text-red-300">{message}</p> : null}
 

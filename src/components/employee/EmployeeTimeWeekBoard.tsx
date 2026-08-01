@@ -28,6 +28,10 @@ import type {
 } from '@/services/employeePortalService'
 import { PUNCH_DISPLAY_ORDER, type PunchType } from '@/services/employeeTimeService'
 import {
+  resolveTimeSessionIdentity,
+  timeSessionIdentityDisplayValue,
+} from '@/services/timeSessionIdentity'
+import {
   buildWeekTimeDates,
   formatWeekTimeDayLabel,
   isTenantToday,
@@ -148,31 +152,37 @@ function SessionCard({ session, pendingRequests, onRequestPunchEdit, compact = f
   const isActive = !!session.clock_in_at && !session.clock_out_at
   const isDone   = !!session.clock_out_at
 
+  const identity = resolveTimeSessionIdentity({
+    assignmentId: session.assignment_id,
+    workPackageName: session.work_package_name,
+    projectName: session.project_name,
+  })
+
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-      {/* Time Session identity — project + Work Package (not a Work Order label) */}
+      {/* Time Session identity — assignment-linked sessions are Work Orders */}
       <div className="px-3 pt-2.5 pb-1.5 bg-gray-50 border-b border-gray-100 flex items-start gap-2">
         <Briefcase className="w-3.5 h-3.5 text-gray-400 mt-0.5 flex-shrink-0" />
         <div className="min-w-0 flex-1">
-          {session.project_name && (
+          {identity.projectName && (
             <p className={`font-bold text-gray-900 truncate leading-tight ${compact ? 'text-xs' : 'text-sm'}`}>
-              {session.project_name}
+              {identity.projectName}
             </p>
           )}
           <p className="text-[10px] text-gray-400 uppercase tracking-wide truncate leading-none mt-0.5">
-            Work Package
+            {identity.kind === 'project-only' ? 'Work Package' : identity.label}
           </p>
           <p className={`truncate leading-tight ${compact ? 'text-xs' : 'text-sm'} ${
-            session.work_package_name ? 'font-semibold text-gray-800' : 'font-medium text-blue-600'
+            identity.kind === 'project-only' ? 'font-medium text-blue-600' : 'font-semibold text-gray-800'
           }`}>
-            {session.work_package_name ?? 'Not assigned yet'}
+            {timeSessionIdentityDisplayValue(identity)}
           </p>
         </div>
       </div>
 
       {/* Status badges */}
       <div className="flex flex-wrap items-center gap-1.5 px-3 pt-1.5 pb-0.5">
-        {!session.work_package_name && (
+        {identity.isProjectOnly && (
           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full border bg-blue-50 text-blue-700 border-blue-200">
             Project Only
           </span>

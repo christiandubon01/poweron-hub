@@ -18,6 +18,7 @@ import { X, Clock, AlertCircle, Loader2 } from 'lucide-react'
 import type { EmployeeMyTimeDay, EmployeeWorkSession, PunchEditRequest } from '@/services/employeePortalService'
 import { submitPunchEditRequest } from '@/services/employeePortalService'
 import { PUNCH_DISPLAY_ORDER, type PunchType } from '@/services/employeeTimeService'
+import { formatTimeSessionIdentityLine, resolveTimeSessionIdentity } from '@/services/timeSessionIdentity'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -160,8 +161,18 @@ export function EmployeePunchEditRequestDialog({
   }
 
   // Session identity subtitle when editing a specific session
-  const sessionSubtitle = session?.work_package_name
-    ? `Session: ${session.work_package_name}`
+  const sessionSubtitle = session
+    ? (() => {
+        const identity = resolveTimeSessionIdentity({
+          assignmentId: session.assignment_id,
+          workPackageName: session.work_package_name,
+          projectName: session.project_name,
+        })
+        if (identity.kind === 'project-only') {
+          return identity.projectName ? `Project: ${identity.projectName}` : null
+        }
+        return formatTimeSessionIdentityLine(identity)
+      })()
     : null
 
   return (

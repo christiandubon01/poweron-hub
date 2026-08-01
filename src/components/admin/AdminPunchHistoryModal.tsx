@@ -23,6 +23,10 @@ import {
 } from 'lucide-react'
 import type { TimePunchEvent, PunchType, TimeEntry } from '@/services/employeeTimeService'
 import {
+  resolveTimeSessionIdentity,
+  timeSessionIdentityDisplayValue,
+} from '@/services/timeSessionIdentity'
+import {
   getPunchesForDay,
   getTimeEntryForDay,
   adminRecordPunch,
@@ -508,7 +512,12 @@ export default function AdminPunchHistoryModal({
             ) : (
               <ul className="space-y-2">
                 {sessions.map(sess => {
-                  const isProjectOnly = !sess.assignment_id
+                  const identity = resolveTimeSessionIdentity({
+                    assignmentId: sess.assignment_id,
+                    workPackageName: sess.work_package_name,
+                    projectName: sess.project_name,
+                  })
+                  const isProjectOnly = identity.isProjectOnly
                   const isAttaching = attachingSessionId === sess.id
 
                   return (
@@ -521,7 +530,7 @@ export default function AdminPunchHistoryModal({
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="text-sm font-semibold text-gray-200 truncate">
-                                {sess.project_name ?? '—'}
+                                {identity.projectName ?? '—'}
                               </p>
                               {isProjectOnly && (
                                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-blue-900/20 text-blue-300 border-blue-700/50">
@@ -530,10 +539,10 @@ export default function AdminPunchHistoryModal({
                               )}
                             </div>
                             <p className="text-[10px] text-gray-500 uppercase tracking-wide mt-1">
-                              Work Package
+                              {identity.kind === 'project-only' ? 'Work Package' : identity.label}
                             </p>
                             <p className="text-xs text-gray-300 mt-0.5">
-                              {sess.work_package_name ?? 'Not assigned yet'}
+                              {timeSessionIdentityDisplayValue(identity)}
                             </p>
                             <p className="text-[11px] text-gray-600 mt-1">
                               {formatTime(sess.clock_in_at)} – {formatTime(sess.clock_out_at)}
@@ -961,14 +970,24 @@ export default function AdminPunchHistoryModal({
                         </div>
 
                         {/* Job identity — shown when the request targets a session (mig 099) */}
-                        {reqSession && (
+                        {reqSession && (() => {
+                          const reqIdentity = resolveTimeSessionIdentity({
+                            assignmentId: reqSession.assignment_id,
+                            workPackageName: reqSession.work_package_name,
+                            projectName: reqSession.project_name,
+                          })
+                          return (
                           <div className="bg-blue-900/20 border border-blue-700/30 rounded-lg px-3 py-2">
                             <p className="text-[10px] text-blue-400 uppercase tracking-wide mb-0.5">Job</p>
                             <p className="text-xs font-semibold text-blue-200">
-                              {reqSession.project_name ?? '—'} · {reqSession.work_package_name ?? '—'}
+                              {reqIdentity.projectName ?? '—'}
+                              {reqIdentity.kind === 'project-only'
+                                ? ' · Not assigned yet'
+                                : ` · ${reqIdentity.label}: ${timeSessionIdentityDisplayValue(reqIdentity)}`}
                             </p>
                           </div>
-                        )}
+                          )
+                        })()}
 
                         {/* Current vs Requested */}
                         <div className="grid grid-cols-2 gap-2">

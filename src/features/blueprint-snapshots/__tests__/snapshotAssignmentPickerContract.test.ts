@@ -16,7 +16,7 @@ describe('Snapshot assignment picker UI contract', () => {
     expect(panel).toContain("mode={editing ? 'edit' : 'create'}")
     expect(form).toContain('<SnapshotAssignmentPicker')
     expect(form.match(/<SnapshotAssignmentPicker/g)).toHaveLength(1)
-    expect(picker).toContain('Select a project, Blueprint, and Work Package before attaching snapshots.')
+    expect(picker).toContain('Select a Blueprint and Work Package before attaching snapshots.')
     expect(picker).toContain('disabled={!contextReady}')
   })
 

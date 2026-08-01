@@ -55,8 +55,8 @@ describe('Admin Punch History — Time Sessions empty state', () => {
     expect(modal).toContain('Project Only')
     expect(modal).toContain('Work Package')
     expect(modal).toContain('Attach Work Package')
-    expect(modal).toContain('sess.work_package_name')
-    expect(modal).toContain('!sess.assignment_id')
+    expect(modal).toContain('resolveTimeSessionIdentity')
+    expect(modal).toContain('identity.isProjectOnly')
   })
 })
 

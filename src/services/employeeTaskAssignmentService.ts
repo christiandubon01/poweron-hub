@@ -27,7 +27,11 @@ import { getActiveEmployeeProfiles, type AdminEmployeeProfile } from '@/services
 import {
   addEmployeeAnimationBackgrounds,
   applyAssignedHoursOverride,
+  buildProjectScopedWorkOrderPayloadV1Draft,
   buildWorkOrderPayloadV1Draft,
+  cleanOptionalId,
+  isValidWorkOrderTitle,
+  normalizeWorkOrderTitle,
   parseEmployeeAnimationPresentation,
   type WorkOrderPayloadV1Draft,
 } from '@/features/work-orders'
@@ -36,6 +40,84 @@ import { isValidPageSizeInches, type CalibrationData, type DetectedScaleResult, 
 
 const from = supabase.from as any
 const rpc = supabase.rpc as any
+
+export type ProjectOnlyBackendReadinessStatus = 'ready' | 'not_ready' | 'unknown'
+
+export type ProjectOnlyBackendReadiness = {
+  status: ProjectOnlyBackendReadinessStatus
+  error?: string
+}
+
+const PROJECT_ONLY_BACKEND_UNAVAILABLE =
+  'Project-only Work Orders will be available after the Work Order backend update is deployed.'
+
+let projectOnlyBackendReadinessCache: ProjectOnlyBackendReadiness | null = null
+let projectOnlyBackendReadinessInflight: Promise<ProjectOnlyBackendReadiness> | null = null
+
+/**
+ * Cached probe for migration-110 nullable-source support.
+ * Missing RPC → not_ready. Auth/network → unknown (never treated as ready).
+ */
+export async function getProjectOnlyWorkOrdersBackendReadiness(
+  options?: { force?: boolean },
+): Promise<ProjectOnlyBackendReadiness> {
+  const force = options?.force === true
+  if (!force && projectOnlyBackendReadinessCache && projectOnlyBackendReadinessCache.status !== 'unknown') {
+    return projectOnlyBackendReadinessCache
+  }
+  if (!force && projectOnlyBackendReadinessInflight) {
+    return projectOnlyBackendReadinessInflight
+  }
+
+  projectOnlyBackendReadinessInflight = (async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user?.id) {
+        return { status: 'unknown', error: 'Not authenticated' }
+      }
+
+      const { data, error } = await rpc('project_only_work_orders_backend_ready')
+      if (error) {
+        if (isMissingSupabaseRpcError(error, 'project_only_work_orders_backend_ready')) {
+          projectOnlyBackendReadinessCache = { status: 'not_ready' }
+          return projectOnlyBackendReadinessCache
+        }
+        if (/not (authenticated|authorized)|permission denied|jwt|row[- ]level security/i.test(String(error.message || ''))) {
+          return { status: 'unknown', error: 'Not authorized' }
+        }
+        if (/failed to fetch|networkerror|network request failed|timeout/i.test(String(error.message || ''))) {
+          return { status: 'unknown', error: 'Network error. Try again.' }
+        }
+        return { status: 'unknown', error: 'Could not verify Work Order backend readiness.' }
+      }
+
+      projectOnlyBackendReadinessCache = data === true
+        ? { status: 'ready' }
+        : { status: 'not_ready' }
+      return projectOnlyBackendReadinessCache
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Network error'
+      if (/failed to fetch|networkerror|network request failed|timeout/i.test(message)) {
+        return { status: 'unknown', error: 'Network error. Try again.' }
+      }
+      return { status: 'unknown', error: message }
+    } finally {
+      projectOnlyBackendReadinessInflight = null
+    }
+  })()
+
+  return projectOnlyBackendReadinessInflight
+}
+
+/** Test-only: clear readiness cache between cases. */
+export function __resetProjectOnlyBackendReadinessCacheForTests() {
+  projectOnlyBackendReadinessCache = null
+  projectOnlyBackendReadinessInflight = null
+}
+
+export function isNullWorkPackageSource(workPackageId: unknown): boolean {
+  return cleanOptionalId(workPackageId) == null
+}
 
 export type TaskAssignmentStatus = 'assigned' | 'in_progress' | 'completed'
 
@@ -78,7 +160,9 @@ export interface EmployeeTaskAssignment {
   id: string
   org_id: string
   client_request_id?: string | null
-  work_package_id: string
+  /** Null for Project-only / Blueprint-only Work Orders. */
+  work_package_id: string | null
+  /** Work Order display title (package name or owner-entered title). */
   work_package_name: string
   project_id: string | null
   project_name: string | null
@@ -113,7 +197,7 @@ export interface EmployeeTaskAssignment {
 export interface EmployeeMyTask {
   id: string
   org_id: string
-  work_package_id: string
+  work_package_id: string | null
   work_package_name: string
   project_id: string | null
   project_name: string | null
@@ -130,7 +214,7 @@ export interface EmployeeMyTask {
 
 export interface EmployeeWorkOrderAssignmentHeader {
   id: string
-  workPackageId: string
+  workPackageId: string | null
   workPackageName: string
   projectId: string | null
   projectName: string | null
@@ -163,7 +247,7 @@ export interface EmployeeWorkOrderRead {
 
 export interface CreateTaskAssignmentInput {
   orgId: string
-  workPackageId: string
+  workPackageId?: string | null
   workPackageName: string
   projectId?: string | null
   projectName?: string | null
@@ -200,11 +284,11 @@ export interface UpdateTaskAssignmentWithWorkOrderAndSnapshotsInput {
   clientRequestId: string
   expectedUpdatedAt: string
   expectedWorkOrderVersion: number
-  workPackageId: string
+  workPackageId?: string | null
   workPackageName: string
   projectId: string
   projectName: string
-  blueprintSetId: string
+  blueprintSetId?: string | null
   blueprintTitle?: string | null
   leadEmployeeId: string
   assignedEmployeeIds: string[]
@@ -476,12 +560,12 @@ export async function createTaskAssignmentWithWorkOrderAndSnapshots(
     const { data, error } = await rpc('create_employee_task_assignment_with_work_order_and_snapshots', {
       p_client_request_id: input.clientRequestId,
       p_assignment_id: input.assignmentId,
-      p_work_package_id: input.workPackageId,
-      p_work_package_name: input.workPackageName,
-      p_project_id: input.projectId ?? '',
-      p_project_name: input.projectName ?? '',
-      p_blueprint_set_id: input.blueprintSetId ?? '',
-      p_blueprint_title: input.blueprintTitle ?? null,
+      p_work_package_id: cleanOptionalId(input.workPackageId),
+      p_work_package_name: normalizeWorkOrderTitle(input.workPackageName),
+      p_project_id: cleanOptionalId(input.projectId) ?? '',
+      p_project_name: String(input.projectName || '').trim(),
+      p_blueprint_set_id: cleanOptionalId(input.blueprintSetId),
+      p_blueprint_title: cleanOptionalId(input.blueprintTitle),
       p_lead_employee_id: input.leadEmployeeId,
       p_assigned_employee_ids: assigned,
       p_due_date: input.dueDate || null,
@@ -495,7 +579,16 @@ export async function createTaskAssignmentWithWorkOrderAndSnapshots(
         if (snapshotIds.length > 0) {
           return { success: false, error: 'Snapshot assignment storage is not available yet.' }
         }
+        // Project-only / Blueprint-only require migration 110 — never use legacy nonnullable paths.
+        if (isNullWorkPackageSource(input.workPackageId)) {
+          projectOnlyBackendReadinessCache = { status: 'not_ready' }
+          return { success: false, error: PROJECT_ONLY_BACKEND_UNAVAILABLE }
+        }
         return createTaskAssignmentWithWorkOrder1C({ ...input, assignedEmployeeIds: assigned })
+      }
+      if (isNullWorkPackageSource(input.workPackageId) && /invalid assignment request|work package|not null|null value/i.test(String(error.message || ''))) {
+        projectOnlyBackendReadinessCache = { status: 'not_ready' }
+        return { success: false, error: PROJECT_ONLY_BACKEND_UNAVAILABLE }
       }
       return { success: false, error: safeSnapshotAssignmentError(error.message) }
     }
@@ -587,12 +680,12 @@ async function createTaskAssignmentWithWorkOrder1C(
     const { data, error } = await rpc('create_employee_task_assignment_with_work_order', {
       p_client_request_id: input.clientRequestId,
       p_assignment_id: input.assignmentId,
-      p_work_package_id: input.workPackageId,
-      p_work_package_name: input.workPackageName,
-      p_project_id: input.projectId ?? '',
-      p_project_name: input.projectName ?? '',
-      p_blueprint_set_id: input.blueprintSetId ?? '',
-      p_blueprint_title: input.blueprintTitle ?? null,
+      p_work_package_id: cleanOptionalId(input.workPackageId),
+      p_work_package_name: normalizeWorkOrderTitle(input.workPackageName),
+      p_project_id: cleanOptionalId(input.projectId) ?? '',
+      p_project_name: String(input.projectName || '').trim(),
+      p_blueprint_set_id: cleanOptionalId(input.blueprintSetId),
+      p_blueprint_title: cleanOptionalId(input.blueprintTitle),
       p_lead_employee_id: input.leadEmployeeId,
       p_assigned_employee_ids: assigned,
       p_due_date: input.dueDate || null,
@@ -601,7 +694,13 @@ async function createTaskAssignmentWithWorkOrder1C(
     })
 
     if (error) {
+      // Null-WP sources must never fall back to legacy nonnullable insert/RPC paths.
+      if (isNullWorkPackageSource(input.workPackageId)) {
+        projectOnlyBackendReadinessCache = { status: 'not_ready' }
+        return { success: false, error: PROJECT_ONLY_BACKEND_UNAVAILABLE }
+      }
       // Pre-093 only: fall back to legacy assignment insert when the atomic RPC is absent.
+      // Full Work Package requests only — never for Project-only / Blueprint-only.
       if (isMissingSupabaseRpcError(error, 'create_employee_task_assignment_with_work_order')) {
         const legacy = await createTaskAssignment({
           orgId: input.orgId,
@@ -660,37 +759,71 @@ async function createTaskAssignmentWithWorkOrder1C(
 export function buildTaskAssignmentWorkOrderDraft(input: {
   projectId: string
   projectName: string
-  blueprintSetId: string
+  blueprintSetId?: string | null
   blueprintTitle?: string | null
-  workPackageId: string
+  workPackageId?: string | null
+  workOrderTitle: string
   dueDate?: string | null
   workOrderInstructions?: string | null
-  /** When set, overrides payload.labor.totalHours (Assigned Hours). Null/omitted keeps package default. */
+  /** When set, overrides payload.labor.totalHours (Assigned Hours). Null/omitted keeps package default or 0. */
   assignedHours?: number | null
 }): Result<WorkOrderPayloadV1Draft> {
   try {
+    const title = normalizeWorkOrderTitle(input.workOrderTitle)
+    if (!isValidWorkOrderTitle(title)) {
+      return { success: false, error: 'Enter a Work Order title.' }
+    }
+    const projectId = cleanOptionalId(input.projectId)
+    const projectName = String(input.projectName || '').trim()
+    if (!projectId || !projectName) {
+      return { success: false, error: 'Select a Project.' }
+    }
+    const blueprintSetId = cleanOptionalId(input.blueprintSetId)
+    const workPackageId = cleanOptionalId(input.workPackageId)
+    if (workPackageId && !blueprintSetId) {
+      return { success: false, error: 'Select a Blueprint for the Work Package.' }
+    }
+
+    if (!workPackageId) {
+      let draft = buildProjectScopedWorkOrderPayloadV1Draft({
+        projectId,
+        projectName,
+        workOrderTitle: title,
+        blueprintSetId,
+        blueprintTitle: input.blueprintTitle,
+        dueDate: input.dueDate,
+        workOrderInstructions: input.workOrderInstructions,
+        assignedHours: input.assignedHours ?? 0,
+      })
+      if (input.assignedHours != null) {
+        draft = applyAssignedHoursOverride(draft, input.assignedHours)
+      }
+      return { success: true, data: draft }
+    }
+
     const backup = getBackupData()
     if (!backup) return { success: false, error: 'Could not load Work Order source data.' }
 
-    const workPackage = getOperationsBlueprintScopeLayers(backup, input.blueprintSetId)
-      .find((layer) => layer.id === input.workPackageId)
+    const workPackage = getOperationsBlueprintScopeLayers(backup, blueprintSetId!)
+      .find((layer) => layer.id === workPackageId)
     if (!workPackage) return { success: false, error: 'Selected work package was not found.' }
 
     const library = getOperationsBlueprintLibrary(backup)
-    const blueprint = library.find((item) => item.id === input.blueprintSetId)
-    const annotations = getOperationsBlueprintAnnotations(backup, input.blueprintSetId)
-    const wireProfiles = getOperationsBlueprintWireProfiles(backup, input.projectId)
-    const savedCalibrations = readStoredBlueprintCalibrations(input.blueprintSetId)
-    const detectedScales = readStoredBlueprintDetectedScales(input.blueprintSetId)
+    const blueprint = library.find((item) => item.id === blueprintSetId)
+    const annotations = getOperationsBlueprintAnnotations(backup, blueprintSetId!)
+    const wireProfiles = getOperationsBlueprintWireProfiles(backup, projectId)
+    const savedCalibrations = readStoredBlueprintCalibrations(blueprintSetId!)
+    const detectedScales = readStoredBlueprintDetectedScales(blueprintSetId!)
     const getPageSizeInches = buildStoredPageSizeResolver(blueprint, savedCalibrations)
 
     let draft = buildWorkOrderPayloadV1Draft({
-      projectId: input.projectId,
-      projectName: input.projectName,
-      blueprintSetId: input.blueprintSetId,
-      blueprintTitle: input.blueprintTitle || blueprint?.title || input.blueprintSetId,
+      projectId,
+      projectName,
+      blueprintSetId: blueprintSetId!,
+      blueprintTitle: input.blueprintTitle || blueprint?.title || blueprintSetId!,
       dueDate: input.dueDate,
       workOrderInstructions: input.workOrderInstructions,
+      workOrderTitle: title,
       workPackage,
       blueprint,
       annotations,
@@ -713,20 +846,25 @@ export function buildTaskAssignmentWorkOrderDraftForEdit(input: {
   assignment: EmployeeTaskAssignment
   projectId: string
   projectName: string
-  blueprintSetId: string
+  blueprintSetId?: string | null
   blueprintTitle?: string | null
-  workPackageId: string
+  workPackageId?: string | null
+  workOrderTitle: string
   dueDate?: string | null
   workOrderInstructions?: string | null
   /** When set, overrides payload.labor.totalHours (Assigned Hours). Null keeps current/package total. */
   assignedHours?: number | null
 }): Result<WorkOrderPayloadV1Draft> {
+  const projectId = cleanOptionalId(input.projectId)
+  const blueprintSetId = cleanOptionalId(input.blueprintSetId)
+  const workPackageId = cleanOptionalId(input.workPackageId)
+  const title = normalizeWorkOrderTitle(input.workOrderTitle)
   const sameSource =
-    input.assignment.project_id === input.projectId &&
-    input.assignment.blueprint_set_id === input.blueprintSetId &&
-    input.assignment.work_package_id === input.workPackageId
+    cleanOptionalId(input.assignment.project_id) === projectId &&
+    cleanOptionalId(input.assignment.blueprint_set_id) === blueprintSetId &&
+    cleanOptionalId(input.assignment.work_package_id) === workPackageId
 
-  if (!sameSource || !isPlainObject(input.assignment.current_work_order_payload)) {
+  if (!sameSource || !isPlainObject(input.assignment.current_work_order_payload) || !isValidWorkOrderTitle(title)) {
     return buildTaskAssignmentWorkOrderDraft(input)
   }
 
@@ -739,15 +877,21 @@ export function buildTaskAssignmentWorkOrderDraftForEdit(input: {
     delete identity.orgId
     delete identity.createdAt
     delete identity.createdBy
-    identity.projectId = input.projectId
-    identity.projectName = input.projectName
-    identity.blueprintSetId = input.blueprintSetId
-    identity.workPackageId = input.workPackageId
-    if (input.blueprintTitle?.trim()) identity.blueprintTitle = input.blueprintTitle.trim()
+    identity.projectId = projectId
+    identity.projectName = String(input.projectName || '').trim()
+    if (blueprintSetId) identity.blueprintSetId = blueprintSetId
+    else delete identity.blueprintSetId
+    if (workPackageId) identity.workPackageId = workPackageId
+    else delete identity.workPackageId
+    if (input.blueprintTitle?.trim() && blueprintSetId) identity.blueprintTitle = input.blueprintTitle.trim()
     else delete identity.blueprintTitle
     if (input.dueDate) identity.dueDate = input.dueDate
     else delete identity.dueDate
     draft.identity = identity
+    const scope = isPlainObject(draft.scope) ? { ...draft.scope } : {}
+    scope.title = title
+    if (typeof scope.description !== 'string') scope.description = ''
+    draft.scope = scope
     const instructions = normalizeWorkOrderInstructions(input.workOrderInstructions)
     if (instructions) draft.workOrderInstructions = instructions
     else delete draft.workOrderInstructions
@@ -792,12 +936,12 @@ export async function updateTaskAssignmentWithWorkOrderAndSnapshots(
       p_client_request_id: input.clientRequestId,
       p_expected_updated_at: input.expectedUpdatedAt,
       p_expected_work_order_version: input.expectedWorkOrderVersion,
-      p_work_package_id: input.workPackageId,
-      p_work_package_name: input.workPackageName,
-      p_project_id: input.projectId,
-      p_project_name: input.projectName,
-      p_blueprint_set_id: input.blueprintSetId,
-      p_blueprint_title: input.blueprintTitle ?? null,
+      p_work_package_id: cleanOptionalId(input.workPackageId),
+      p_work_package_name: normalizeWorkOrderTitle(input.workPackageName),
+      p_project_id: cleanOptionalId(input.projectId) ?? input.projectId,
+      p_project_name: String(input.projectName || '').trim(),
+      p_blueprint_set_id: cleanOptionalId(input.blueprintSetId),
+      p_blueprint_title: cleanOptionalId(input.blueprintTitle),
       p_lead_employee_id: input.leadEmployeeId,
       p_assigned_employee_ids: assigned,
       p_due_date: input.dueDate,
@@ -1174,13 +1318,12 @@ function unavailableEmployeeWorkOrder(): EmployeeWorkOrderRead {
 function normalizeEmployeeWorkOrderAssignment(value: unknown): EmployeeWorkOrderAssignmentHeader | null {
   if (!isPlainObject(value)) return null
   const id = cleanString(value.id)
-  const workPackageId = cleanString(value.workPackageId)
   const workPackageName = cleanString(value.workPackageName)
   const status = cleanStatus(value.status)
-  if (!id || !workPackageId || !workPackageName || !status) return null
+  if (!id || !workPackageName || !status) return null
   return {
     id,
-    workPackageId,
+    workPackageId: nullableString(value.workPackageId),
     workPackageName,
     projectId: nullableString(value.projectId),
     projectName: nullableString(value.projectName),
