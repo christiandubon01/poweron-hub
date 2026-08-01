@@ -6,9 +6,9 @@
 //   - API/AI calls: network-first, graceful offline error
 //   - Supabase data GETs: stale-while-revalidate
 
-const CACHE_NAME = 'poweron-v4'
-const APP_SHELL_CACHE = 'poweron-shell-v4'
-const DATA_CACHE = 'poweron-data-v4'
+const CACHE_NAME = 'poweron-v5'
+const APP_SHELL_CACHE = 'poweron-shell-v5'
+const DATA_CACHE = 'poweron-data-v5'
 
 // Patterns for network-first (AI + API calls)
 const API_PATTERNS = [/\/api\//, /claude\.ai/, /anthropic\.com/, /netlify\/functions\//]
@@ -292,6 +292,13 @@ self.addEventListener('fetch', (event) => {
   if (!url.startsWith('http')) return
   if (url.includes('chrome-extension')) return
 
+  // ── Google Maps bypass — browser handles all Maps runtime resources ────────
+  // gstatic.com is img-src-only; SW fetch() would be blocked by connect-src.
+  // maps.googleapis.com paths containing /api/ incorrectly match API_PATTERNS
+  // (that regex targets same-origin /api/ routes, not external hosts).
+  // The app must not cache opaque tile or marker responses from Google.
+  if (url.includes('.gstatic.com') || url.includes('maps.googleapis.com')) return
+
   // ── Auth callback bypass — never intercept auth-related URLs ─────────────
   // Magic links open in Safari on iOS even when Chrome is set as the default
   // browser. Safari completes the token exchange and these URLs must reach
@@ -439,6 +446,18 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
+  // ── Cross-origin fallthrough bypass ─────────────────────────────────────────
+  // Any request that was not claimed above and originates from a different
+  // origin (e.g. Google Maps tiles, maps.gstatic.com marker images) must not
+  // be intercepted. SW fetch() is governed by connect-src CSP, not img-src;
+  // maps.gstatic.com is img-src-only. Returning without respondWith lets the
+  // browser load the resource natively under the correct CSP policy.
+  try {
+    if (new URL(url).origin !== self.location.origin) return
+  } catch (_) {
+    return
+  }
+
   // ── Everything else — network-first with cache fallback ───────────────────
   event.respondWith(
     fetch(event.request).then((response) => {
@@ -447,6 +466,9 @@ self.addEventListener('fetch', (event) => {
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, cloned))
       }
       return response
-    }).catch(() => caches.match(event.request))
+    }).catch(async () => {
+      const cached = await caches.match(event.request)
+      return cached || new Response('', { status: 503 })
+    })
   )
 })
