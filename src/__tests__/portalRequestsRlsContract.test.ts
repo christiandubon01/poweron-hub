@@ -6,7 +6,7 @@
  *   [MOCK]        component/service behavior assertions (mocked supabase client)
  *   [INTEGRATION] live DB required — marked but NOT run here
  *
- * Required coverage (28 cases):
+ * Required coverage (47 cases):
  *   1.  Role self-escalation is impossible                           [STATIC]
  *   2.  Legitimate profile self-edit remains possible               [STATIC]
  *   3.  Owner/admin role management remains possible                [STATIC]
@@ -35,18 +35,39 @@
  *   26. Existing form success/error behavior remains                [MOCK]
  *   27. One form submit creates one row                             [MOCK]
  *   28. Eight migration guards remain narrowly scoped               [STATIC]
+ *   29. Migration 108 drops legacy policies by real names           [STATIC]
+ *   30. Migration 108 defensively drops assumed names               [STATIC]
+ *   31. Migration 108 revokes ALL from PUBLIC                       [STATIC]
+ *   32. Migration 108 revokes ALL from anon                         [STATIC]
+ *   33. Migration 108 revokes ALL from authenticated                [STATIC]
+ *   34. Migration 108 regrants authenticated SELECT and UPDATE only [STATIC]
+ *   35. Migration 108 does not grant INSERT to authenticated        [STATIC]
+ *   36. Migration 108 does not grant DELETE to authenticated        [STATIC]
+ *   37. Migration 108 does not grant TRUNCATE to authenticated      [STATIC]
+ *   38. Migration 108 preserves owner/admin policies                [STATIC]
+ *   39. Migration 108 preserves all three RPCs                      [STATIC]
+ *   40. Migration 108 preserves anon/authenticated RPC EXECUTE      [STATIC]
+ *   41. Migration 108 preserves PUBLIC RPC denial                   [STATIC]
+ *   42. Migration 108 contains postcondition assertions             [STATIC]
+ *   43. Migration 108 does not alter CustomerPortalView             [STATIC]
+ *   44. Migration 108 does not alter PortalTrackView                [STATIC]
+ *   45. Migration 108 does not modify migration 107                 [STATIC]
+ *   46. Migration 108 adds no unauthorized implementation           [STATIC]
+ *   47. Eight migration guards updated to recognize migration 108   [STATIC]
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// ── Migration file fixture ────────────────────────────────────────────────────
+// ── Migration file fixtures ───────────────────────────────────────────────────
 
-const ROOT        = process.cwd()
-const MIG_DIR     = join(ROOT, 'supabase/migrations')
+const ROOT         = process.cwd()
+const MIG_DIR      = join(ROOT, 'supabase/migrations')
 const MIG_107_PATH = join(MIG_DIR, '107_secure_portal_requests_access.sql')
+const MIG_108_PATH = join(MIG_DIR, '108_remove_legacy_portal_request_access.sql')
 const mig107 = existsSync(MIG_107_PATH) ? readFileSync(MIG_107_PATH, 'utf8') : ''
+const mig108 = existsSync(MIG_108_PATH) ? readFileSync(MIG_108_PATH, 'utf8') : ''
 
 // ── Mock Supabase ─────────────────────────────────────────────────────────────
 
@@ -74,23 +95,23 @@ describe('[STATIC] 1. Role self-escalation is impossible (profiles_update_self)'
     expect(mig107).toMatch(/profiles_update_self[\s\S]*?WITH CHECK/)
   })
 
-  it('WITH CHECK pins role to auth.user_role()', () => {
+  it('WITH CHECK pins role to public.user_role()', () => {
     const policyBlock = mig107.slice(
       mig107.indexOf('CREATE POLICY "profiles_update_self"'),
       mig107.indexOf('COMMENT ON POLICY "profiles_update_self"')
     )
-    expect(policyBlock).toContain('role   = auth.user_role()')
+    expect(policyBlock).toContain('role   = public.user_role()')
   })
 
-  it('WITH CHECK pins org_id to auth.user_org_id()', () => {
+  it('WITH CHECK pins org_id to public.user_org_id()', () => {
     const policyBlock = mig107.slice(
       mig107.indexOf('CREATE POLICY "profiles_update_self"'),
       mig107.indexOf('COMMENT ON POLICY "profiles_update_self"')
     )
-    expect(policyBlock).toContain('org_id = auth.user_org_id()')
+    expect(policyBlock).toContain('org_id = public.user_org_id()')
   })
 
-  it('self-escalation reasoning: auth.user_role() is STABLE (uses statement snapshot)', () => {
+  it('self-escalation reasoning: public.user_role() is STABLE (uses statement snapshot)', () => {
     expect(mig107).toContain('STABLE')
     expect(mig107).toContain('statement-level snapshot')
   })
@@ -514,8 +535,8 @@ describe('[STATIC] 23. Authenticated ordinary employee has no Portal SELECT/UPDA
   })
 
   it('RLS policies scope authenticated access to owner/admin roles only', () => {
-    expect(mig107).toMatch(/portal_requests_owner_admin_select[\s\S]*?auth\.user_role\(\)/)
-    expect(mig107).toMatch(/portal_requests_owner_admin_update[\s\S]*?auth\.user_role\(\)/)
+    expect(mig107).toMatch(/portal_requests_owner_admin_select[\s\S]*?user_role\(\)/)
+    expect(mig107).toMatch(/portal_requests_owner_admin_update[\s\S]*?user_role\(\)/)
   })
 })
 
@@ -615,14 +636,284 @@ describe('[STATIC] 28. Eight migration guards remain narrowly scoped', () => {
     }
   })
 
-  it('each guard file allows migrations 103-107', () => {
+  it('each guard file allows migrations 103-108', () => {
     for (const rel of guardFiles) {
       const content = readFileSync(join(ROOT, rel), 'utf8')
       expect(content, `${rel} should exclude 107`).toContain("startsWith('107_')")
+      expect(content, `${rel} should exclude 108`).toContain("startsWith('108_')")
     }
   })
 
   it('migration 107 file exists', () => {
     expect(existsSync(MIG_107_PATH)).toBe(true)
+  })
+
+  it('migration 108 file exists', () => {
+    expect(existsSync(MIG_108_PATH)).toBe(true)
+  })
+})
+
+// ── Migration 108 static contract tests ──────────────────────────────────────
+
+describe('[STATIC] 29. Migration 108 drops legacy policies by real names', () => {
+  it('migration 108 file exists', () => {
+    expect(mig108).not.toBe('')
+  })
+
+  it('drops allow_all_inserts', () => {
+    expect(mig108).toContain('DROP POLICY IF EXISTS "allow_all_inserts"')
+  })
+
+  it('drops allow_auth_all', () => {
+    expect(mig108).toContain('DROP POLICY IF EXISTS "allow_auth_all"')
+  })
+})
+
+describe('[STATIC] 30. Migration 108 defensively drops previously assumed names', () => {
+  it('defensively drops portal_requests_public_insert', () => {
+    expect(mig108).toContain('DROP POLICY IF EXISTS "portal_requests_public_insert"')
+  })
+
+  it('defensively drops portal_requests_auth_all', () => {
+    expect(mig108).toContain('DROP POLICY IF EXISTS "portal_requests_auth_all"')
+  })
+})
+
+describe('[STATIC] 31. Migration 108 revokes ALL from PUBLIC', () => {
+  it('revokes ALL PRIVILEGES from PUBLIC on portal_requests', () => {
+    expect(mig108).toMatch(/REVOKE ALL.*ON.*portal_requests.*FROM PUBLIC/s)
+  })
+})
+
+describe('[STATIC] 32. Migration 108 revokes ALL from anon', () => {
+  it('revokes ALL PRIVILEGES from anon on portal_requests', () => {
+    expect(mig108).toMatch(/REVOKE ALL.*ON.*portal_requests.*FROM anon/s)
+  })
+})
+
+describe('[STATIC] 33. Migration 108 revokes ALL from authenticated', () => {
+  it('revokes ALL PRIVILEGES from authenticated on portal_requests', () => {
+    expect(mig108).toMatch(/REVOKE ALL.*ON.*portal_requests.*FROM authenticated/s)
+  })
+})
+
+describe('[STATIC] 34. Migration 108 regrants authenticated SELECT and UPDATE only', () => {
+  it('grants SELECT and UPDATE to authenticated', () => {
+    expect(mig108).toMatch(/GRANT SELECT, UPDATE ON.*portal_requests.*TO authenticated/s)
+  })
+})
+
+describe('[STATIC] 35. Migration 108 does not grant INSERT to authenticated', () => {
+  it('no GRANT INSERT to authenticated on portal_requests', () => {
+    const lines = mig108.split('\n').filter(l => /^\s*GRANT\b/i.test(l))
+    for (const line of lines) {
+      expect(line).not.toMatch(/\bINSERT\b/)
+    }
+  })
+})
+
+describe('[STATIC] 36. Migration 108 does not grant DELETE to authenticated', () => {
+  it('no GRANT DELETE to authenticated on portal_requests', () => {
+    const lines = mig108.split('\n').filter(l => /^\s*GRANT\b/i.test(l))
+    for (const line of lines) {
+      expect(line).not.toMatch(/\bDELETE\b/)
+    }
+  })
+})
+
+describe('[STATIC] 37. Migration 108 does not grant TRUNCATE to authenticated', () => {
+  it('no GRANT TRUNCATE to authenticated on portal_requests', () => {
+    const lines = mig108.split('\n').filter(l => /^\s*GRANT\b/i.test(l))
+    for (const line of lines) {
+      expect(line).not.toMatch(/\bTRUNCATE\b/)
+    }
+  })
+})
+
+describe('[STATIC] 38. Migration 108 preserves the two owner/admin policies', () => {
+  it('does not drop portal_requests_owner_admin_select', () => {
+    expect(mig108).not.toContain('DROP POLICY IF EXISTS "portal_requests_owner_admin_select"')
+    expect(mig108).not.toContain('DROP POLICY "portal_requests_owner_admin_select"')
+  })
+
+  it('does not drop portal_requests_owner_admin_update', () => {
+    expect(mig108).not.toContain('DROP POLICY IF EXISTS "portal_requests_owner_admin_update"')
+    expect(mig108).not.toContain('DROP POLICY "portal_requests_owner_admin_update"')
+  })
+
+  it('does not recreate owner/admin policies (migration 107 already installed them)', () => {
+    expect(mig108).not.toContain('CREATE POLICY portal_requests_owner_admin_select')
+    expect(mig108).not.toContain('CREATE POLICY portal_requests_owner_admin_update')
+  })
+})
+
+describe('[STATIC] 39. Migration 108 preserves all three RPCs', () => {
+  it('does not drop or replace submit_portal_request', () => {
+    expect(mig108).not.toContain('DROP FUNCTION')
+    expect(mig108).not.toContain('CREATE OR REPLACE FUNCTION public.submit_portal_request')
+  })
+
+  it('does not drop or replace get_portal_request_status', () => {
+    expect(mig108).not.toContain('CREATE OR REPLACE FUNCTION public.get_portal_request_status')
+  })
+
+  it('does not drop or replace append_portal_request_files', () => {
+    expect(mig108).not.toContain('CREATE OR REPLACE FUNCTION public.append_portal_request_files')
+  })
+})
+
+describe('[STATIC] 40. Migration 108 preserves anon/authenticated RPC EXECUTE grants', () => {
+  it('does not revoke EXECUTE from anon or authenticated', () => {
+    const lines = mig108.split('\n').filter(l => /^\s*REVOKE\b/i.test(l))
+    for (const line of lines) {
+      expect(line).not.toMatch(/\bEXECUTE\b/)
+    }
+  })
+})
+
+describe('[STATIC] 41. Migration 108 preserves PUBLIC RPC denial', () => {
+  it('does not grant EXECUTE to PUBLIC on any function', () => {
+    expect(mig108).not.toMatch(/GRANT.*EXECUTE.*TO PUBLIC/si)
+    expect(mig108).not.toMatch(/GRANT.*EXECUTE.*TO public\b/s)
+  })
+})
+
+describe('[STATIC] 42. Migration 108 contains transactional postcondition assertions', () => {
+  it('runs inside BEGIN/COMMIT', () => {
+    expect(mig108).toContain('BEGIN;')
+    expect(mig108).toContain('COMMIT;')
+  })
+
+  it('uses DO $$ block for postconditions', () => {
+    expect(mig108).toContain('DO $$')
+    expect(mig108).toContain('RAISE EXCEPTION')
+  })
+
+  it('asserts RLS remains enabled', () => {
+    expect(mig108).toContain('relrowsecurity')
+    expect(mig108).toMatch(/RLS.*not enabled|not enabled.*RLS/i)
+  })
+
+  it('asserts exactly two policies remain', () => {
+    expect(mig108).toContain('v_count <> 2')
+    expect(mig108).toMatch(/expected 2 portal_requests policies/)
+  })
+
+  it('asserts no broad or unrestricted policy remains', () => {
+    expect(mig108).toContain("cmd = 'ALL'")
+    expect(mig108).toContain("qual = 'true'")
+    expect(mig108).toContain('broad or unrestricted policy')
+  })
+
+  it('asserts PUBLIC lacks table privileges', () => {
+    expect(mig108).toMatch(/has_table_privilege\('public'.*portal_requests/)
+  })
+
+  it('asserts anon lacks table privileges', () => {
+    expect(mig108).toMatch(/has_table_privilege\('anon'.*portal_requests/)
+  })
+
+  it('asserts authenticated has exactly SELECT and UPDATE', () => {
+    expect(mig108).toMatch(/has_table_privilege\('authenticated'.*portal_requests.*SELECT/)
+    expect(mig108).toMatch(/has_table_privilege\('authenticated'.*portal_requests.*INSERT/)
+  })
+
+  it('asserts authenticated lacks INSERT DELETE TRUNCATE', () => {
+    expect(mig108).toMatch(/authenticated retains INSERT/)
+    expect(mig108).toMatch(/authenticated retains DELETE/)
+    expect(mig108).toMatch(/authenticated retains TRUNCATE/)
+  })
+
+  it('asserts exactly one overload per RPC', () => {
+    expect(mig108).toMatch(/expected 1 overload for submit_portal_request/)
+    expect(mig108).toMatch(/expected 1 overload for get_portal_request_status/)
+    expect(mig108).toMatch(/expected 1 overload for append_portal_request_files/)
+  })
+
+  it('asserts all three RPCs remain SECURITY DEFINER', () => {
+    expect(mig108).toMatch(/no longer SECURITY DEFINER/)
+  })
+
+  it('asserts anon and authenticated retain EXECUTE', () => {
+    expect(mig108).toMatch(/anon missing EXECUTE/)
+    expect(mig108).toMatch(/authenticated missing EXECUTE/)
+  })
+
+  it('asserts PUBLIC has no EXECUTE on RPCs', () => {
+    expect(mig108).toMatch(/PUBLIC has EXECUTE/)
+  })
+})
+
+describe('[STATIC] 43. Migration 108 does not alter CustomerPortalView', () => {
+  it('no reference to CustomerPortalView in migration 108', () => {
+    expect(mig108).not.toContain('CustomerPortalView')
+    expect(mig108).not.toContain('customer_portal_view')
+  })
+})
+
+describe('[STATIC] 44. Migration 108 does not alter PortalTrackView', () => {
+  it('no reference to PortalTrackView in migration 108', () => {
+    expect(mig108).not.toContain('PortalTrackView')
+    expect(mig108).not.toContain('portal_track_view')
+  })
+})
+
+describe('[STATIC] 45. Migration 108 does not modify migration 107', () => {
+  it('migration 108 does not recreate or replace any function from migration 107', () => {
+    expect(mig108).not.toContain('CREATE OR REPLACE FUNCTION public.submit_portal_request')
+    expect(mig108).not.toContain('CREATE OR REPLACE FUNCTION public.get_portal_request_status')
+    expect(mig108).not.toContain('CREATE OR REPLACE FUNCTION public.append_portal_request_files')
+    expect(mig108).not.toContain('CREATE EXTENSION IF NOT EXISTS pgcrypto')
+  })
+
+  it('migration 107 file is unchanged (contains the public.user_role fix)', () => {
+    expect(mig107).toContain('public.user_role()')
+    expect(mig107).toContain('public.user_org_id()')
+  })
+})
+
+describe('[STATIC] 46. Migration 108 adds no unauthorized implementation', () => {
+  it('no employee role implementation', () => {
+    expect(mig108).not.toContain('employee_role')
+    expect(mig108).not.toContain('profiles.role')
+  })
+
+  it('no storage or SEC-0S implementation', () => {
+    expect(mig108).not.toContain('portal-uploads')
+    expect(mig108).not.toContain('storage.buckets')
+  })
+
+  it('no assignment, service call, or billing implementation', () => {
+    expect(mig108).not.toContain('work_orders')
+    expect(mig108).not.toContain('service_calls')
+    expect(mig108).not.toContain('assignments')
+    expect(mig108).not.toContain('invoices')
+  })
+})
+
+describe('[STATIC] 47. Eight migration guards updated to recognize migration 108', () => {
+  const guardFiles = [
+    'src/__tests__/sessionCloseout.test.ts',
+    'src/__tests__/projectOnlyWorkSessions.test.ts',
+    'src/__tests__/projectOnlyAssignmentProjectEligibility.test.ts',
+    'src/__tests__/projectIdentityCompatibility.test.ts',
+    'src/components/admin/__tests__/adminSessionPunchVoid.test.ts',
+    'src/components/admin/__tests__/adminSessionPunchCorrection.test.ts',
+    'src/components/employee/__tests__/employeeWeeklyTaskViewUiContract.test.ts',
+    'src/components/employee/__tests__/employeeMonthCalendarUiContract.test.ts',
+  ]
+
+  it('all eight guard files allow migration 108', () => {
+    for (const rel of guardFiles) {
+      const content = readFileSync(join(ROOT, rel), 'utf8')
+      expect(content, `${rel} should exclude 108`).toContain("startsWith('108_')")
+    }
+  })
+
+  it('all eight guard files still reject migration 109 and later', () => {
+    for (const rel of guardFiles) {
+      const content = readFileSync(join(ROOT, rel), 'utf8')
+      expect(content, `${rel} should not allow 109+`).not.toContain("startsWith('109_')")
+    }
   })
 })
