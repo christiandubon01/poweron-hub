@@ -6,10 +6,10 @@
 --
 --   A. profiles_update_self (006) has no WITH CHECK clause, allowing any
 --      authenticated user to UPDATE their own profiles.role to 'owner'.
---      auth.user_role() is SECURITY DEFINER STABLE: it uses a statement-level
+--      public.user_role() is SECURITY DEFINER STABLE: it uses a statement-level
 --      snapshot and therefore returns the OLD role during WITH CHECK evaluation.
 --      Fix: DROP + recreate the policy with WITH CHECK that pins role and org_id
---      to auth.user_role()/auth.user_org_id() so self-escalation fails.
+--      to public.user_role()/public.user_org_id() so self-escalation fails.
 --      profiles_update_admin is left unchanged (owner/admin employee management).
 --
 --   B. /portal/track/:id called supabase.from('portal_requests').select('*')
@@ -57,11 +57,11 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ── A. Self-escalation repair on profiles ────────────────────────────────────
 -- Drop the policy that lacked WITH CHECK and recreate it with a clause that
--- pins role and org_id to the caller's CURRENT values.  auth.user_role() and
--- auth.user_org_id() are STABLE SECURITY DEFINER functions that use the
+-- pins role and org_id to the caller's CURRENT values.  public.user_role() and
+-- public.user_org_id() are STABLE SECURITY DEFINER functions that use the
 -- statement-level snapshot, so they return the BEFORE-UPDATE values when
 -- evaluated inside WITH CHECK.  A field user attempting to SET role = 'owner'
--- will find role = 'owner' != auth.user_role() ('field') → check fails.
+-- will find role = 'owner' != public.user_role() ('field') → check fails.
 --
 -- profiles_update_admin (owner/admin update any row in their org) is left
 -- intact — owners/admins retain full employee-management capability.
@@ -73,13 +73,13 @@ CREATE POLICY "profiles_update_self" ON public.profiles
   USING (id = auth.uid())
   WITH CHECK (
     id     = auth.uid()
-    AND role   = auth.user_role()
-    AND org_id = auth.user_org_id()
+    AND role   = public.user_role()
+    AND org_id = public.user_org_id()
   );
 
 COMMENT ON POLICY "profiles_update_self" ON public.profiles IS
   'SEC-0R: Users may update their own profile row but cannot change role or '
-  'org_id. auth.user_role() and auth.user_org_id() evaluate against the '
+  'org_id. public.user_role() and public.user_org_id() evaluate against the '
   'statement snapshot (STABLE functions), so they return the BEFORE-UPDATE '
   'values and reject any attempt to self-escalate or change org.';
 
@@ -104,7 +104,7 @@ REVOKE ALL ON public.portal_requests FROM anon;
 GRANT SELECT, UPDATE ON public.portal_requests TO authenticated;
 
 -- ── 4. Owner/admin RLS policies ───────────────────────────────────────────────
--- auth.user_role() is SECURITY DEFINER (migration 006), reads profiles.role,
+-- public.user_role() is SECURITY DEFINER (migration 006), reads profiles.role,
 -- and cannot be spoofed by the client. Employees with profiles.role = 'field',
 -- 'viewer', or any non-owner/admin value are excluded by both conditions.
 -- After the profiles_update_self repair (part A above), self-escalation is
@@ -114,14 +114,14 @@ CREATE POLICY portal_requests_owner_admin_select
   ON public.portal_requests
   FOR SELECT
   TO authenticated
-  USING (auth.user_role() IN ('owner', 'admin'));
+  USING (public.user_role() IN ('owner', 'admin'));
 
 CREATE POLICY portal_requests_owner_admin_update
   ON public.portal_requests
   FOR UPDATE
   TO authenticated
-  USING  (auth.user_role() IN ('owner', 'admin'))
-  WITH CHECK (auth.user_role() IN ('owner', 'admin'));
+  USING  (public.user_role() IN ('owner', 'admin'))
+  WITH CHECK (public.user_role() IN ('owner', 'admin'));
 
 -- ── 5. One-time attachment capability column ──────────────────────────────────
 -- Stores the SHA-256 hash of the one-time attachment capability returned to
