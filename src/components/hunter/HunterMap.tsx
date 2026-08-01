@@ -12,10 +12,24 @@
  */
 
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
-import { GoogleMap, MarkerF, InfoWindowF } from '@react-google-maps/api'
+import { GoogleMap, InfoWindowF } from '@react-google-maps/api'
 import { supabase } from '@/lib/supabase'
 import type { HunterLead } from './HunterLeadCard'
 import { GOOGLE_MAPS_BROWSER_KEY, useV15rGoogleMapsLoader } from '@/utils/googleMapsLoader'
+import {
+  applyRouteFocusVisibility,
+  createRouteOperationController,
+  leadSetFingerprint,
+  shouldExitFocusOnLeadSetChange,
+  shouldExitFocusOnMissingLead,
+} from './routeFocusPresentation'
+
+/** Imperative map markers with stable Lead identity (home base uses leadId null). */
+interface HunterLeadMapMarkerEntry {
+  leadId: string | null
+  marker: google.maps.Marker
+  isLeadPin: boolean
+}
 
 const containerStyle: React.CSSProperties = {
   width: '100%',
@@ -34,12 +48,6 @@ interface HomeBase {
   lat: number
   lng: number
   formatted_address: string
-}
-
-interface LeadMarkerEntry {
-  id: string | null
-  marker: google.maps.Marker
-  isLeadPin: boolean
 }
 
 function pinColorForScore(score: number): string {
@@ -241,15 +249,25 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
 
   const [homeBase, setHomeBase] = useState<HomeBase | null>(null)
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null)
-  const [focusedMapLeadId, setFocusedMapLeadId] = useState<string | null>(null)
-  const markersRef = useRef<LeadMarkerEntry[]>([])
+  /** Presentation-only: which normal Lead pin stays visible during Take Me There. */
+  const [routeFocusLeadId, setRouteFocusLeadId] = useState<string | null>(null)
+  const routeFocusLeadIdRef = useRef<string | null>(null)
+  const markersRef = useRef<HunterLeadMapMarkerEntry[]>([])
   const [routeLeadId, setRouteLeadId] = useState<string | null>(null)
   const routeLeadIdRef = useRef<string | null>(null)
   const [routeLoading, setRouteLoading] = useState(false)
   const polylineRef = useRef<google.maps.Polyline[]>([])
   const mapRef = useRef<google.maps.Map | null>(null)
+  const routeOpsRef = useRef(createRouteOperationController())
+  const leadFingerprintRef = useRef<string | null>(null)
 
+  const syncLeadMarkerVisibility = useCallback((focusId: string | null) => {
+    applyRouteFocusVisibility(markersRef.current, focusId)
+  }, [])
+
+  /** Authoritative exit: clear route visuals, reset focus, restore filtered Lead pins. */
   const clearRoute = useCallback(() => {
+    routeOpsRef.current.invalidate()
     if ((polylineRef as any).cleanupFn) {
       (polylineRef as any).cleanupFn()
       ;(polylineRef as any).cleanupFn = null
@@ -258,25 +276,56 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
     }
     polylineRef.current = []
     setRouteLeadId(null)
-    setFocusedMapLeadId(null)
     routeLeadIdRef.current = null
-  }, [])
+    setRouteFocusLeadId(null)
+    routeFocusLeadIdRef.current = null
+    setRouteLoading(false)
+    syncLeadMarkerVisibility(null)
+  }, [syncLeadMarkerVisibility])
 
   const drawRoute = useCallback((leadLat: number, leadLng: number, leadId: string) => {
     if (!homeBase || !mapRef.current) return
-    if (routeLeadIdRef.current === leadId) { clearRoute(); return }
-    clearRoute()
+    // Toggle off when the same focused Lead is requested again
+    if (routeFocusLeadIdRef.current === leadId) { clearRoute(); return }
+
+    // Cancel prior route without briefly restoring all markers
+    routeOpsRef.current.invalidate()
+    if ((polylineRef as any).cleanupFn) {
+      (polylineRef as any).cleanupFn()
+      ;(polylineRef as any).cleanupFn = null
+    } else {
+      polylineRef.current.forEach(p => p.setMap(null))
+    }
+    polylineRef.current = []
+    setRouteLeadId(null)
+    routeLeadIdRef.current = null
+
+    const op = routeOpsRef.current.begin()
+    setRouteFocusLeadId(leadId)
+    routeFocusLeadIdRef.current = leadId
+    syncLeadMarkerVisibility(leadId)
     setRouteLoading(true)
+
     const service = new google.maps.DirectionsService()
     service.route({
       origin: { lat: homeBase.lat, lng: homeBase.lng },
       destination: { lat: leadLat, lng: leadLng },
       travelMode: google.maps.TravelMode.DRIVING,
     }, (result, status) => {
+      if (!routeOpsRef.current.isCurrent(op)) return
       setRouteLoading(false)
-      if (status === 'OK' && result) {
+      if (status !== 'OK' || !result) {
+        console.warn('[HunterMap] directions failed:', status)
+        clearRoute()
+        return
+      }
+
+      try {
         const route = result.routes[0]
-        if (!route) return
+        if (!route) {
+          clearRoute()
+          return
+        }
 
         // Decode full path from overview_polyline
         const fullPath: google.maps.LatLng[] = []
@@ -286,7 +335,15 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
             fullPath.push(...pts)
           }
         }
-        if (fullPath.length === 0) return
+        if (fullPath.length === 0) {
+          clearRoute()
+          return
+        }
+
+        if (!routeOpsRef.current.isCurrent(op) || !mapRef.current) {
+          clearRoute()
+          return
+        }
 
         // Fit map to show full route with padding
         const bounds = new google.maps.LatLngBounds()
@@ -677,13 +734,20 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         }
 
         ;(polylineRef as any).cleanupFn = cleanup
+        if (!routeOpsRef.current.isCurrent(op)) {
+          cleanup()
+          return
+        }
         setRouteLeadId(leadId)
         routeLeadIdRef.current = leadId
-      } else {
-        console.warn('[HunterMap] directions failed:', status)
+        // Keep selected Lead pin visible; route-specific markers are separate.
+        syncLeadMarkerVisibility(leadId)
+      } catch (err) {
+        console.warn('[HunterMap] route setup failed:', err)
+        clearRoute()
       }
     })
-  }, [homeBase, clearRoute])
+  }, [homeBase, clearRoute, syncLeadMarkerVisibility])
 
   // Fetch home base once on mount
   useEffect(() => {
@@ -780,11 +844,22 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
     [geocodedLeads, portalPins]
   )
 
+  // Filter / Lead-list rebuild — end route focus so markers match the new set.
   useEffect(() => {
-    if (focusedMapLeadId && !allPins.some((pin) => pin.id === focusedMapLeadId)) {
-      setFocusedMapLeadId(null)
+    const nextFp = leadSetFingerprint(leads)
+    const prevFp = leadFingerprintRef.current
+    if (shouldExitFocusOnLeadSetChange(routeFocusLeadIdRef.current, prevFp, nextFp)) {
+      clearRoute()
     }
-  }, [allPins, focusedMapLeadId])
+    leadFingerprintRef.current = nextFp
+  }, [leads, clearRoute])
+
+  // Focused Lead removed from the pin set — restore normal visibility + clear route.
+  useEffect(() => {
+    if (shouldExitFocusOnMissingLead(routeFocusLeadId, allPins.map((p) => p.id))) {
+      clearRoute()
+    }
+  }, [allPins, routeFocusLeadId, clearRoute])
 
   useEffect(() => {
     if (!mapRef.current || !isLoaded) return
@@ -798,7 +873,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         icon: homeBaseSymbol(),
         zIndex: 1000,
       })
-      markersRef.current.push({ id: null, marker: hm, isLeadPin: false })
+      markersRef.current.push({ leadId: null, marker: hm, isLeadPin: false })
     }
     allPins.forEach(({ id, lat, lng, score, title, isPortal }) => {
       const m = new google.maps.Marker({
@@ -811,9 +886,8 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
       })
       m.addListener('click', () => {
         setSelectedLeadId(id)
-        setFocusedMapLeadId((current) => current && current !== id ? null : current)
       })
-      markersRef.current.push({ id, marker: m, isLeadPin: true })
+      markersRef.current.push({ leadId: id, marker: m, isLeadPin: true })
       // Animate flame for elite pins
       if (score >= 85) {
         let frameIdx = 0
@@ -851,18 +925,23 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         requestAnimationFrame(animatePortal)
       }
     })
-  }, [isLoaded, homeBase, allPins])
+    // Re-apply presentation focus after rebuild (no duplicate listeners on route markers).
+    syncLeadMarkerVisibility(routeFocusLeadIdRef.current)
+  }, [isLoaded, homeBase, allPins, syncLeadMarkerVisibility])
 
   useEffect(() => {
-    markersRef.current.forEach(({ id, marker, isLeadPin }) => {
-      if (!isLeadPin) return
-      marker.setOpacity(!focusedMapLeadId || id === focusedMapLeadId ? 1 : 0.2)
-    })
-  }, [allPins, focusedMapLeadId])
+    syncLeadMarkerVisibility(routeFocusLeadId)
+  }, [routeFocusLeadId, syncLeadMarkerVisibility])
+
+  // Unmount — never leave route focus / RAF loops / route markers behind.
+  useEffect(() => {
+    return () => {
+      clearRoute()
+    }
+  }, [clearRoute])
 
   const closeLeadPopup = useCallback(() => {
     setSelectedLeadId(null)
-    setFocusedMapLeadId(null)
   }, [])
 
   const center = homeBase ?? FALLBACK_CENTER
@@ -918,7 +997,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         ],
       }}
     >
-    
+
       {selectedLead && (
         <InfoWindowF
           position={{ lat: (selectedLead as any).latitude ?? (selectedLead as any).lat, lng: (selectedLead as any).longitude ?? (selectedLead as any).lng }}
@@ -949,7 +1028,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
               >
                 Open lead
               </button>
-              {routeLeadIdRef.current === (selectedLead as any).id ? (
+              {routeFocusLeadId === (selectedLead as any).id ? (
                 <button
                   onClick={() => { clearRoute(); }}
                   style={{ background: '#1d4ed8', color: 'white', padding: '4px 10px', fontSize: 12, borderRadius: 4, border: 'none', cursor: 'pointer', fontWeight: 500 }}
@@ -961,12 +1040,19 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
                   onClick={() => {
                     const lat = (selectedLead as any).latitude ?? (selectedLead as any).lat
                     const lng = (selectedLead as any).longitude ?? (selectedLead as any).lng
-                    if (lat && lng) {
-                      const leadId = (selectedLead as any).id
-                      drawRoute(lat, lng, leadId)
-                      setFocusedMapLeadId(leadId)
-                      setSelectedLeadId(null)
+                    const leadId = (selectedLead as any).id
+                    if (
+                      typeof lat !== 'number' ||
+                      typeof lng !== 'number' ||
+                      !Number.isFinite(lat) ||
+                      !Number.isFinite(lng) ||
+                      !leadId
+                    ) {
+                      clearRoute()
+                      return
                     }
+                    drawRoute(lat, lng, leadId)
+                    setSelectedLeadId(null)
                   }}
                   style={{ background: '#2563eb', color: 'white', padding: '4px 10px', fontSize: 12, borderRadius: 4, border: 'none', cursor: 'pointer', fontWeight: 500, opacity: routeLoading ? 0.6 : 1 }}
                 >
@@ -978,7 +1064,7 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
         </InfoWindowF>
       )}
     </GoogleMap>
-    {routeLeadId && (
+    {(routeFocusLeadId || routeLeadId) && (
       <button
         onClick={clearRoute}
         style={{
