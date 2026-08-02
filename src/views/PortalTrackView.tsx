@@ -13,6 +13,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams } from 'react-router-dom'
 import { GOOGLE_MAPS_BROWSER_KEY, loadV15rGoogleMapsScript } from '@/utils/googleMapsLoader'
+import { fetchAttachmentSignedUrls, isImagePath, getAttachmentDisplayName, type AttachmentEntry } from '@/services/portal/portalStorageService'
 
 const LOGO_URL = 'https://edxxbtyugohtowvslbfo.supabase.co/storage/v1/object/public/brand-assets/ChatGPT%20Image%20Jan%2030,%202026,%2010_40_53%20AM1.png'
 
@@ -382,19 +383,28 @@ export default function PortalTrackView() {
   const [techLocation, setTechLocation] = useState<TechLocation | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
+  const [attachmentSignedUrls, setAttachmentSignedUrls] = useState<AttachmentEntry[]>([])
 
   useEffect(() => {
     if (!requestId) { setNotFound(true); setLoading(false); return }
 
-    // SEC-0R: load portal request status via SECURITY DEFINER RPC.
+    // SEC-0R/SEC-0S: load portal request status via SECURITY DEFINER RPC.
     // Direct anon SELECT on portal_requests is revoked; this RPC returns
     // only customer-safe fields and never exposes notes, hunter_lead_id,
     // review fields, or internal admin data.
+    // SEC-0S R1: Signed URLs are fetched server-side; the RPC returns no
+    // raw storage paths to the browser.
     async function loadRequestStatus() {
       const { data } = await (supabase as any).rpc('get_portal_request_status', { p_id: requestId })
       if (!data) { setNotFound(true); setLoading(false); return }
       setRequest(data as PortalRequest)
       setLoading(false)
+
+      // SEC-0S R1: Fetch signed read URLs from the server endpoint (never from browser
+      // Storage API).  The server derives paths from the request row; we pass only
+      // the requestId.  No attach token or storage path is sent from the browser.
+      const entries = await fetchAttachmentSignedUrls(requestId!)
+      setAttachmentSignedUrls(entries)
     }
 
     async function load() {
@@ -542,6 +552,36 @@ export default function PortalTrackView() {
                 </span>
               </div>
             </div>
+
+            {/* SEC-0S R1: Attachments — signed short-lived URLs from server endpoint */}
+            {attachmentSignedUrls.length > 0 && (
+              <div className="pt-info-card">
+                <div className="pt-section-label">Photos &amp; Files You Sent</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                  {attachmentSignedUrls.map(({ displayName, mimeType, signedUrl }, i) =>
+                    signedUrl ? (
+                      <a
+                        key={i} href={signedUrl} target="_blank" rel="noopener noreferrer"
+                        style={{ display: 'block', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}
+                      >
+                        {mimeType?.startsWith('image/') ? (
+                          <img
+                            src={signedUrl}
+                            alt={displayName}
+                            style={{ width: '100%', height: 80, objectFit: 'cover', display: 'block' }}
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div style={{ width: '100%', height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,.05)', fontSize: 12, color: '#b8c3b4', padding: 8, textAlign: 'center' }}>
+                            {displayName}
+                          </div>
+                        )}
+                      </a>
+                    ) : null
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="pt-cta"><a href="/portal">← Submit Another Request</a></div>
           </>

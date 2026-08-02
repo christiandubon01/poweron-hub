@@ -70,8 +70,8 @@ describe('[STATIC SQL] Work Order management migration 109', () => {
     expect(migrations.filter((name) => name.startsWith('110_'))).toEqual([
       '110_project_only_work_orders.sql',
     ])
-    expect(migrations.filter((name) => name.startsWith('111_'))).toHaveLength(0)
-    expect(migrations[migrations.length - 1]).toBe('110_project_only_work_orders.sql')
+    expect(migrations.filter((name) => name.startsWith('111_'))).toEqual(['111_private_portal_storage.sql'])
+    expect(migrations).toContain('111_private_portal_storage.sql')
   })
 
   it('reuses payload.labor.totalHours for assigned hours and hours_spent for actual hours', () => {

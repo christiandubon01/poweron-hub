@@ -63,7 +63,7 @@ describe('[STATIC SQL] migration 110 readiness probe', () => {
       .filter((name) => /^\d+_/.test(name))
       .sort()
     expect(existsSync(join(process.cwd(), 'supabase/migrations/110_project_only_work_orders.sql'))).toBe(true)
-    expect(migrations.filter((name) => name.startsWith('111_'))).toHaveLength(0)
+    expect(migrations.filter((name) => name.startsWith('111_'))).toEqual(['111_private_portal_storage.sql'])
     expect(migration110).toContain('CREATE OR REPLACE FUNCTION public.project_only_work_orders_backend_ready()')
     expect(migration110).toContain('GRANT EXECUTE ON FUNCTION public.project_only_work_orders_backend_ready() TO authenticated')
     expect(migration110).toContain('REVOKE EXECUTE ON FUNCTION public.project_only_work_orders_backend_ready() FROM anon')

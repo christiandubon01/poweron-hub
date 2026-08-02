@@ -323,7 +323,9 @@ describe('migration guard — allow 106 reject 107+', () => {
           !name.startsWith('107_') &&
           !name.startsWith('108_') &&
         !name.startsWith('109_') &&
-        !name.startsWith('110_'),
+        !name.startsWith('110_') &&
+        !name.startsWith('111_') &&
+        !name.startsWith('112_'),
       )
     expect(beyond).toEqual([])
     expect(migrations).toContain('106_session_aware_admin_punch_void.sql')

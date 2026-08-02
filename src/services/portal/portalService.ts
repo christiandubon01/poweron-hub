@@ -16,6 +16,7 @@ import { geocodeAddressViaEdge, triggerGeocodingBackfill } from '@/services/geoc
 
 export interface PortalRequest {
   id: string
+  organization_id: string
   created_at: string
   name: string
   phone: string | null
@@ -84,6 +85,12 @@ async function getCurrentUserId(): Promise<string | null> {
   return user?.id ?? null
 }
 
+async function getCurrentOrganizationId(): Promise<string | null> {
+  const { data, error } = await (supabase as any).rpc('user_org_id')
+  if (error || typeof data !== 'string' || !data) return null
+  return data
+}
+
 // ── Value range by service category ──────────────────────────────────────────
 
 const VALUE_RANGE_MAP: Record<string, { min: number; max: number }> = {
@@ -149,9 +156,13 @@ export function getPortalTimelineMeta(eventType: PortalTimelineEventType) {
  * Owner-only — called from within the authenticated Hub.
  */
 export async function fetchNewPortalRequests(): Promise<PortalRequest[]> {
+  const organizationId = await getCurrentOrganizationId()
+  if (!organizationId) return []
+
   const { data, error } = await (supabase as any)
     .from('portal_requests')
     .select('*')
+    .eq('organization_id', organizationId)
     .eq('status', 'new')
     .order('created_at', { ascending: false })
 
@@ -164,10 +175,13 @@ export async function fetchNewPortalRequests(): Promise<PortalRequest[]> {
 
 export async function fetchPortalTrackerStateForLead(hunterLeadId: string): Promise<PortalTrackerState | null> {
   if (!hunterLeadId) return null
+  const organizationId = await getCurrentOrganizationId()
+  if (!organizationId) return null
 
   const { data: request, error } = await (supabase as any)
     .from('portal_requests')
     .select('*')
+    .eq('organization_id', organizationId)
     .eq('hunter_lead_id', hunterLeadId)
     .maybeSingle()
 
@@ -207,6 +221,17 @@ export async function writePortalTimelineEvent({
 }): Promise<PortalTimelineEvent | null> {
   const meta = PORTAL_TIMELINE_META[eventType]
   if (!portalRequestId || !meta) return null
+  const organizationId = await getCurrentOrganizationId()
+  if (!organizationId) return null
+
+  const { data: authorizedRequest, error: authorizationError } = await (supabase as any)
+    .from('portal_requests')
+    .select('id')
+    .eq('id', portalRequestId)
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+
+  if (authorizationError || !authorizedRequest?.id) return null
 
   const now = eventTime || new Date().toISOString()
   const payload = {
@@ -239,6 +264,8 @@ export async function writePortalLifecycleEvent(
   eventType: PortalTimelineEventType
 ): Promise<PortalTrackerState | null> {
   if (!PORTAL_LIFECYCLE_EVENT_TYPES.includes(eventType)) return null
+  const organizationId = await getCurrentOrganizationId()
+  if (!organizationId) return null
 
   const event = await writePortalTimelineEvent({ portalRequestId, eventType })
   if (!event) return null
@@ -252,6 +279,7 @@ export async function writePortalLifecycleEvent(
         completed_at: now,
       })
       .eq('id', portalRequestId)
+      .eq('organization_id', organizationId)
 
     if (error) {
       console.error('[portalService] work_completed portal_request update failed:', error)
@@ -263,6 +291,7 @@ export async function writePortalLifecycleEvent(
     .from('portal_requests')
     .select('*')
     .eq('id', portalRequestId)
+    .eq('organization_id', organizationId)
     .single()
 
   const { data: timeline, error: timelineError } = await (supabase as any)
@@ -333,15 +362,32 @@ export async function sendPortalReviewRequest({
  * Returns the new hunter lead id, or null on failure.
  */
 export async function convertToLead(request: PortalRequest): Promise<string | null> {
-  const [tenantId, userId] = await Promise.all([
+  const [tenantId, userId, organizationId] = await Promise.all([
     getCurrentTenantId(),
     getCurrentUserId(),
+    getCurrentOrganizationId(),
   ])
 
-  if (!tenantId || !userId) {
-    console.error('[portalService] convertToLead: not authenticated or no tenant')
+  if (!tenantId || !userId || !organizationId) {
+    console.error('[portalService] convertToLead: unauthorized organization or missing identity')
     return null
   }
+
+  // Never trust the request object supplied by the component as authorization
+  // or canonical Portal data. Re-read the exact request through organization-
+  // bound RLS and an explicit organization predicate before conversion.
+  const { data: canonicalRequest, error: canonicalRequestError } = await (supabase as any)
+    .from('portal_requests')
+    .select('*')
+    .eq('id', request.id)
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+
+  if (canonicalRequestError || !canonicalRequest?.id) {
+    console.error('[portalService] convertToLead: request unavailable for organization')
+    return null
+  }
+  request = canonicalRequest as PortalRequest
 
   // Map service_category → lead_type
   const leadTypeMap: Record<string, string> = {
@@ -474,6 +520,7 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
       hunter_lead_id: newLeadId,
     })
     .eq('id', request.id)
+    .eq('organization_id', organizationId)
 
   if (updateError) {
     console.error('[portalService] update portal_request failed:', updateError)
@@ -502,10 +549,14 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
  * Dismiss a portal_request without converting (mark as 'closed').
  */
 export async function dismissPortalRequest(requestId: string): Promise<void> {
+  const organizationId = await getCurrentOrganizationId()
+  if (!organizationId) return
+
   const { error } = await (supabase as any)
     .from('portal_requests')
     .update({ status: 'dismissed' })
     .eq('id', requestId)
+    .eq('organization_id', organizationId)
 
   // Write rejected disposition to linked hunter lead if exists
   if (!error) {
@@ -514,6 +565,7 @@ export async function dismissPortalRequest(requestId: string): Promise<void> {
         .from('portal_requests')
         .select('hunter_lead_id')
         .eq('id', requestId)
+        .eq('organization_id', organizationId)
         .maybeSingle()
       if (portalReq?.hunter_lead_id) {
         await (supabase as any).from('hunter_leads').update({

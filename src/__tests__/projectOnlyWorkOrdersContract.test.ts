@@ -87,8 +87,8 @@ describe('[STATIC SQL] migration 110 Project-only Work Orders', () => {
     expect(migrations.filter((name) => name.startsWith('110_'))).toEqual([
       '110_project_only_work_orders.sql',
     ])
-    expect(migrations.filter((name) => name.startsWith('111_'))).toHaveLength(0)
-    expect(migrations[migrations.length - 1]).toBe('110_project_only_work_orders.sql')
+    expect(migrations.filter((name) => name.startsWith('111_'))).toEqual(['111_private_portal_storage.sql'])
+    expect(migrations).toContain('111_private_portal_storage.sql')
   })
 
   it('makes work_package_id nullable while keeping work_package_name as required title', () => {

@@ -540,31 +540,61 @@ export default function CustomerPortalView() {
     setForm(prev => ({ ...prev, address, city }))
   }
 
-  // Upload files to Supabase Storage
-  const uploadFiles = async (requestId: string): Promise<string[]> => {
-    const allFiles = [
-      ...mediaFiles.filter(f => f.valid),
-      ...pdfFiles.filter(f => f.valid),
-    ]
-    if (allFiles.length === 0) return []
+  // SEC-0S: Obtain signed upload URLs from the server, upload each file directly
+  // to its signed URL via PUT, and return the object paths that succeeded.
+  // The bucket is private — permanent public URLs are never generated here.
+  const authorizeAndUpload = async (
+    requestId: string,
+    attachToken: string,
+    validFiles: { file: File }[]
+  ): Promise<string[]> => {
+    if (validFiles.length === 0) return []
 
-    const urls: string[] = []
+    // Ask the Netlify function to validate the token and generate signed upload URLs
+    let authResp: Response
+    try {
+      authResp = await fetch('/.netlify/functions/portal-upload-authorize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId,
+          attachToken,
+          files: validFiles.map(({ file }) => ({
+            name:     file.name,
+            mimeType: file.type,
+            size:     file.size,
+          })),
+        }),
+      })
+    } catch {
+      return []
+    }
+    if (!authResp.ok) return []
+
+    const { uploads } = await authResp.json() as {
+      uploads: { signedUploadUrl: string; objectPath: string; displayName: string }[]
+    }
+    if (!Array.isArray(uploads) || uploads.length === 0) return []
+
+    // Upload each file directly to Supabase Storage via the signed URL (PUT)
+    const paths: string[] = []
     let done = 0
 
-    for (const { file } of allFiles) {
-      const path = `${requestId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
-      const { error } = await supabase.storage
-        .from('portal-uploads')
-        .upload(path, file, { cacheControl: '3600', upsert: false })
-
-      if (!error) {
-        const { data } = supabase.storage.from('portal-uploads').getPublicUrl(path)
-        urls.push(data.publicUrl)
-      }
+    for (let i = 0; i < uploads.length; i++) {
+      const { signedUploadUrl, objectPath } = uploads[i]
+      const { file } = validFiles[i]
+      try {
+        const putResp = await fetch(signedUploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': file.type },
+          body: file,
+        })
+        if (putResp.ok) paths.push(objectPath)
+      } catch { /* skip failed individual upload */ }
       done++
-      setUploadProgress(Math.round((done / allFiles.length) * 100))
+      setUploadProgress(Math.round((done / uploads.length) * 100))
     }
-    return urls
+    return paths
   }
 
   const handleSubmit = async () => {
@@ -640,16 +670,20 @@ export default function CustomerPortalView() {
       const requestId   = submitData.request_id
       const attachToken = submitData.attach_token
 
-      // Upload files if any, then append URLs via one-time-capability RPC
-      if (mediaFiles.length > 0 || pdfFiles.length > 0) {
-        const fileUrls = await uploadFiles(requestId)
-        if (fileUrls.length > 0 && attachToken) {
-          const filesSuffix = `Files: ${fileUrls.join(', ')}`
-          // SEC-0R: capability token required; one-time use; cannot change status
+      // SEC-0S: upload via signed URLs, then register private object paths
+      const validFiles = [
+        ...mediaFiles.filter(f => f.valid),
+        ...pdfFiles.filter(f => f.valid),
+      ]
+      if (validFiles.length > 0 && attachToken) {
+        const uploadedPaths = await authorizeAndUpload(requestId, attachToken, validFiles)
+        if (uploadedPaths.length > 0) {
+          // register_portal_attachments validates token, path format, and ownership;
+          // stores paths as "FilePaths: ..." and consumes the one-time capability
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase as any).rpc('append_portal_request_files', {
+          await (supabase as any).rpc('register_portal_attachments', {
             p_id:           requestId,
-            p_notes_suffix: filesSuffix,
+            p_paths:        uploadedPaths,
             p_attach_token: attachToken,
           })
         }
