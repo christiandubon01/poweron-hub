@@ -102,13 +102,14 @@ DECLARE
   v_destination UUID;
   v_count       INTEGER;
 BEGIN
-  SELECT count(*), min(id)
+  -- Postgres 17 has no min(uuid); use ordered array_agg for a deterministic pick.
+  SELECT count(*), (array_agg(id ORDER BY id))[1]
   INTO v_count, v_destination
   FROM public.organizations
   WHERE settings->>'public_portal_destination' = 'true';
 
   IF v_count = 0 THEN
-    SELECT count(*), min(id)
+    SELECT count(*), (array_agg(id ORDER BY id))[1]
     INTO v_count, v_destination
     FROM public.organizations;
   END IF;
