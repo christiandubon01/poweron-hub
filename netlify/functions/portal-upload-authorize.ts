@@ -233,10 +233,12 @@ exports.handler = async (event) => {
     // Object path: {requestId}/{uuid}.{ext}  — no customer filename in storage
     const objectPath = `${requestId}/${attachId}.${ext}`
 
+    // Supabase Storage signed-upload endpoint is /object/upload/sign/{bucket}/{path}
+    // (not /object/sign/upload/...). Response shape is { url, token }.
     let storageRes
     try {
       storageRes = await fetch(
-        `${SUPABASE_URL}/storage/v1/object/sign/upload/portal-uploads/${objectPath}`,
+        `${SUPABASE_URL}/storage/v1/object/upload/sign/portal-uploads/${objectPath}`,
         {
           method: 'POST',
           headers: dbHeaders,
@@ -257,7 +259,11 @@ exports.handler = async (event) => {
     const storageData = await storageRes.json()
 
     let signedUploadUrl
-    if (storageData.signedUrl) {
+    if (storageData.url) {
+      signedUploadUrl = storageData.url.startsWith('http')
+        ? storageData.url
+        : `${SUPABASE_URL}/storage/v1${storageData.url.startsWith('/') ? '' : '/'}${storageData.url}`
+    } else if (storageData.signedUrl) {
       signedUploadUrl = storageData.signedUrl.startsWith('http')
         ? storageData.signedUrl
         : `${SUPABASE_URL}${storageData.signedUrl}`
