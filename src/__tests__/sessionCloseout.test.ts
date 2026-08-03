@@ -131,7 +131,8 @@ describe('migration guard — allow 106 reject 107+', () => {
           !name.startsWith('109_') &&
           !name.startsWith('110_') &&
           !name.startsWith('111_') &&
-        !name.startsWith('112_'),
+        !name.startsWith('112_') &&
+        !name.startsWith('113_'),
       )
     expect(beyond).toEqual([])
     expect(migrations).toContain('105_session_clock_out_summary.sql')

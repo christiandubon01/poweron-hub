@@ -354,7 +354,8 @@ describe('18. Migration guard allows 104 and rejects 105+', () => {
         !name.startsWith('109_') &&
         !name.startsWith('110_') &&
         !name.startsWith('111_') &&
-        !name.startsWith('112_')
+        !name.startsWith('112_') &&
+        !name.startsWith('113_')
       )
     expect(beyondExpected).toEqual([])
   })

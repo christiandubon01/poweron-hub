@@ -18,7 +18,7 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart } from 'recharts'
-import { Users, Sparkles, AlertCircle, Plus, Trash2, Edit2, TrendingUp, Zap, X, UserPlus } from 'lucide-react'
+import { Users, Sparkles, AlertCircle, Plus, Trash2, Edit2, TrendingUp, Zap, X, UserPlus, Shield } from 'lucide-react'
 import AddTeamMemberModal from './AddTeamMemberModal'
 import DemoInvite from '@/components/admin/DemoInvite'
 import EmployeeInviteModal from '@/components/admin/EmployeeInviteModal'
@@ -52,6 +52,8 @@ import { callClaude, extractText } from '@/services/claudeProxy'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 import { useAuth } from '@/hooks/useAuth'
+import { getActiveEmployeeProfiles, type AdminEmployeeProfile } from '@/services/adminTimecardService'
+import RolesPermissionsModal from '@/features/employee-roles/RolesPermissionsModal'
 
 interface EnhancedEmployee extends BackupEmployee {
   isOwner?: boolean
@@ -1326,6 +1328,24 @@ export default function V15rTeamPanel() {
 
   // ── Team Cost Settings modal ───────────────────────────────────────────────
   const [showCostSettingsModal, setShowCostSettingsModal] = useState(false)
+
+  // ── Roles & Permissions modal ─────────────────────────────────────────────
+  // portalProfileMap: display_name (lowercase) → { id, orgId } from employee_profiles
+  const [rolesTarget, setRolesTarget] = useState<{ epId: string; displayName: string; orgId: string } | null>(null)
+  const [portalProfileMap, setPortalProfileMap] = useState<Map<string, { id: string; orgId: string }>>(new Map())
+
+  useEffect(() => {
+    if (!isAdmin) return
+    getActiveEmployeeProfiles().then(res => {
+      if (!res.success) return
+      const map = new Map<string, { id: string; orgId: string }>()
+      for (const p of (res.data ?? []) as AdminEmployeeProfile[]) {
+        const key = p.display_name.trim().toLowerCase()
+        map.set(key, { id: p.id, orgId: p.org_id })
+      }
+      setPortalProfileMap(map)
+    })
+  }, [isAdmin])
 
   // ── Employee Detail modal ─────────────────────────────────────────────────
   const [selectedEmployee, setSelectedEmployee] = useState<EnhancedEmployee | null>(null)
@@ -3163,7 +3183,20 @@ export default function V15rTeamPanel() {
                     onToggleMultiplier={toggleMultiplier}
                     backup={backup}
                   />
-                  <div className="mt-2 flex gap-2 justify-end">
+                  <div className="mt-2 flex gap-2 justify-end flex-wrap">
+                    {isAdmin && (() => {
+                      const profileKey = (emp.name ?? '').trim().toLowerCase()
+                      const profile = portalProfileMap.get(profileKey)
+                      if (!profile) return null
+                      return (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setRolesTarget({ epId: profile.id, displayName: emp.name ?? '', orgId: profile.orgId }) }}
+                          className="text-xs px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded hover:bg-indigo-600/40 flex items-center gap-1"
+                        >
+                          <Shield className="w-3 h-3" /> Roles
+                        </button>
+                      )
+                    })()}
                     <button
                       onClick={(e) => { e.stopPropagation(); setEditingEmployee(normalizeEmployee(rawEmp) as any) }}
                       className="text-xs px-2 py-1 bg-blue-600/30 text-blue-300 rounded hover:bg-blue-600/40 flex items-center gap-1"
@@ -3418,6 +3451,16 @@ export default function V15rTeamPanel() {
           classification={ohmCard.classification as any}
           onDismiss={() => setOhmCard((prev: any) => ({ ...prev, show: false }))}
           onAcknowledge={() => markComplianceAcknowledged(ohmCard.empId)}
+        />
+      )}
+
+      {/* ── ROLES & PERMISSIONS MODAL (ROLE-2) ───────────────────────────── */}
+      {rolesTarget && (
+        <RolesPermissionsModal
+          epId={rolesTarget.epId}
+          displayName={rolesTarget.displayName}
+          orgId={rolesTarget.orgId}
+          onClose={() => setRolesTarget(null)}
         />
       )}
     </div>
