@@ -1354,6 +1354,7 @@ export default function V15rTeamPanel() {
   const [linkConfirmed, setLinkConfirmed] = useState(false)
   const [linking, setLinking] = useState(false)
   const [linkError, setLinkError] = useState('')
+  const [linkSuccess, setLinkSuccess] = useState('')
 
   async function refreshPortalProfileMap() {
     if (!isAdmin) return
@@ -1387,10 +1388,11 @@ export default function V15rTeamPanel() {
     const orgId = teamOrgId
     if (!orgId || !isAdmin) return
     setLinkError('')
+    setLinkSuccess('')
     setLinkConfirmed(false)
     setLinking(false)
     setLinkTarget({
-      backupEmployeeId: emp.id,
+      backupEmployeeId: String(emp.id),
       displayName: emp.name ?? '',
       email: (emp as any).email ?? null,
     })
@@ -1407,23 +1409,33 @@ export default function V15rTeamPanel() {
   }
 
   async function handleTeamLinkExisting() {
-    if (!linkTarget || !teamOrgId || !selectedLinkProfileId || !linkConfirmed) return
+    if (!linkTarget || !teamOrgId || !selectedLinkProfileId || !linkConfirmed || linking) return
     setLinking(true)
     setLinkError('')
-    const result = await linkExistingEmployeeAccount(
-      selectedLinkProfileId,
-      linkTarget.backupEmployeeId,
-      teamOrgId,
-    )
-    setLinking(false)
-    if (result.success) {
-      setLinkTarget(null)
-      setLinkCandidates([])
-      setSelectedLinkProfileId(null)
-      setLinkConfirmed(false)
-      void refreshPortalProfileMap()
-    } else {
-      setLinkError(result.error || 'Could not link accounts')
+    setLinkSuccess('')
+    try {
+      const result = await linkExistingEmployeeAccount(
+        selectedLinkProfileId,
+        linkTarget.backupEmployeeId,
+        teamOrgId,
+      )
+      if (result.success && result.data?.backup_employee_id === linkTarget.backupEmployeeId) {
+        setLinkSuccess(`Linked ${result.data.display_name} successfully.`)
+        setLinkTarget(null)
+        setLinkCandidates([])
+        setSelectedLinkProfileId(null)
+        setLinkConfirmed(false)
+        await refreshPortalProfileMap()
+      } else {
+        setLinkError(
+          result.error ||
+            'Link did not complete. No change was made. Try again or check that you are signed in as owner/admin.',
+        )
+      }
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : 'Unexpected link error')
+    } finally {
+      setLinking(false)
     }
   }
   // ── Employee Detail modal ─────────────────────────────────────────────────
@@ -3640,6 +3652,9 @@ export default function V15rTeamPanel() {
                         )}
                       </div>
                       <p className="text-xs text-gray-400 mt-0.5">{c.email || 'No email'}</p>
+                      <p className="text-[10px] text-gray-600 mt-0.5 font-mono">
+                        profile …{c.profileId.slice(-4)}
+                      </p>
                     </div>
                   </label>
                 ))}
@@ -3653,20 +3668,32 @@ export default function V15rTeamPanel() {
               </p>
             </div>
 
-            <label className="flex items-start gap-2 mb-4 cursor-pointer">
+            <label className="flex items-start gap-2 mb-2 cursor-pointer">
               <input
                 type="checkbox"
                 className="mt-0.5"
                 checked={linkConfirmed}
                 onChange={(e) => setLinkConfirmed(e.target.checked)}
                 disabled={linking || !selectedLinkProfileId}
+                aria-label="Confirm link existing account"
               />
               <span className="text-xs text-gray-300">
                 I confirm I want to link these two existing records.
               </span>
             </label>
+            {!linkConfirmed && selectedLinkProfileId && (
+              <p className="text-[11px] text-amber-400/90 mb-3">
+                Check the confirmation box above to enable Confirm Link.
+              </p>
+            )}
+            {(!selectedLinkProfileId && linkCandidates.length > 0) && (
+              <p className="text-[11px] text-amber-400/90 mb-3">
+                Select a portal profile above before confirming.
+              </p>
+            )}
 
-            {linkError && <p className="text-xs text-red-400 mb-3">{linkError}</p>}
+            {linkError && <p className="text-xs text-red-400 mb-3" role="alert">{linkError}</p>}
+            {linkSuccess && <p className="text-xs text-emerald-400 mb-3">{linkSuccess}</p>}
 
             <div className="flex gap-2 justify-end">
               <button
@@ -3676,6 +3703,7 @@ export default function V15rTeamPanel() {
                   setSelectedLinkProfileId(null)
                   setLinkConfirmed(false)
                   setLinkError('')
+                  setLinkSuccess('')
                 }}
                 disabled={linking}
                 className="px-4 py-2 rounded-lg bg-gray-700 text-gray-200 text-sm hover:bg-gray-600 transition disabled:opacity-60"
@@ -3683,6 +3711,7 @@ export default function V15rTeamPanel() {
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={() => { void handleTeamLinkExisting() }}
                 disabled={linking || !selectedLinkProfileId || !linkConfirmed || linkCandidates.length === 0}
                 className="px-4 py-2 rounded-lg bg-sky-700 text-white text-sm hover:bg-sky-600 transition disabled:opacity-60"

@@ -153,7 +153,7 @@ describe('ROLE-2.2A — link write semantics', () => {
   it('8. Link writes backup_employee_id via update', () => {
     const fn = TIMECARD_SRC.match(/export async function linkExistingEmployeeAccount[\s\S]+?^}/m)
     expect(fn).toBeTruthy()
-    expect(fn![0]).toContain('.update({ backup_employee_id: backupEmployeeId })')
+    expect(fn![0]).toMatch(/\.update\(\{\s*backup_employee_id:\s*(backupEmployeeId|cleanBackupId)\s*\}\)/)
     expect(fn![0]).toContain(".is('backup_employee_id', null)")
   })
 
@@ -176,9 +176,9 @@ describe('ROLE-2.2A — link write semantics', () => {
     expect(derivePortalLinkStatus({ active: false, user_id: 'u' })).toBe('Inactive')
     const fn = TIMECARD_SRC.match(/export async function linkExistingEmployeeAccount[\s\S]+?^}/m)!
     // Only backup_employee_id is written — no status/hours/project/auth fields touched.
-    expect(fn[0]).toMatch(/\.update\(\{\s*backup_employee_id:\s*backupEmployeeId\s*\}\)/)
-    expect(fn[0]).not.toContain('user_id')
-    expect(fn[0]).not.toContain('active:')
+    expect(fn[0]).toMatch(/\.update\(\{\s*backup_employee_id:\s*(backupEmployeeId|cleanBackupId)\s*\}\)/)
+    expect(fn[0]).not.toMatch(/\.update\(\{[^}]*user_id/)
+    expect(fn[0]).not.toMatch(/\.update\(\{[^}]*active:/)
   })
 })
 

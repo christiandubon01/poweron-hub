@@ -17,6 +17,7 @@ import {
   BarChart2,
   Send,
   Link2,
+  RefreshCw,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import {
@@ -1159,6 +1160,7 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
   const [linkConfirmed, setLinkConfirmed] = useState(false)
   const [linking, setLinking] = useState(false)
   const [linkError, setLinkError] = useState('')
+  const [linkSuccess, setLinkSuccess] = useState('')
   const [unlinkedCandidateCount, setUnlinkedCandidateCount] = useState(0)
 
   // Per-row invite state (for pending_invite entries with no invite token)
@@ -1197,6 +1199,7 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
   async function openLinkExisting(member: UnifiedCrewMember) {
     if (!orgId || !isOwner || !member.backupEmployeeId) return
     setLinkError('')
+    setLinkSuccess('')
     setLinkConfirmed(false)
     setLinking(false)
     setLinkTarget({
@@ -1217,23 +1220,33 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
   }
 
   async function handleLinkExistingAccount() {
-    if (!linkTarget || !orgId || !selectedLinkProfileId || !linkConfirmed) return
+    if (!linkTarget || !orgId || !selectedLinkProfileId || !linkConfirmed || linking) return
     setLinking(true)
     setLinkError('')
-    const result = await linkExistingEmployeeAccount(
-      selectedLinkProfileId,
-      linkTarget.backupEmployeeId,
-      orgId,
-    )
-    setLinking(false)
-    if (result.success) {
-      setLinkTarget(null)
-      setLinkCandidates([])
-      setSelectedLinkProfileId(null)
-      setLinkConfirmed(false)
-      void loadMembers()
-    } else {
-      setLinkError(result.error || 'Could not link accounts')
+    setLinkSuccess('')
+    try {
+      const result = await linkExistingEmployeeAccount(
+        selectedLinkProfileId,
+        linkTarget.backupEmployeeId,
+        orgId,
+      )
+      if (result.success && result.data?.backup_employee_id === linkTarget.backupEmployeeId) {
+        setLinkSuccess(`Linked ${result.data.display_name} successfully.`)
+        setLinkTarget(null)
+        setLinkCandidates([])
+        setSelectedLinkProfileId(null)
+        setLinkConfirmed(false)
+        await loadMembers()
+      } else {
+        setLinkError(
+          result.error ||
+            'Link did not complete. No change was made. Try again or check that you are signed in as owner/admin.',
+        )
+      }
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : 'Unexpected link error')
+    } finally {
+      setLinking(false)
     }
   }
 
@@ -1713,6 +1726,9 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                         )}
                       </div>
                       <p className="text-xs text-gray-400 mt-0.5">{c.email || 'No email'}</p>
+                      <p className="text-[10px] text-gray-600 mt-0.5 font-mono">
+                        profile …{c.profileId.slice(-4)}
+                      </p>
                     </div>
                   </label>
                 ))}
@@ -1726,21 +1742,35 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
               </p>
             </div>
 
-            <label className="flex items-start gap-2 mb-4 cursor-pointer">
+            <label className="flex items-start gap-2 mb-2 cursor-pointer">
               <input
                 type="checkbox"
                 className="mt-0.5"
                 checked={linkConfirmed}
                 onChange={(e) => setLinkConfirmed(e.target.checked)}
                 disabled={linking || !selectedLinkProfileId}
+                aria-label="Confirm link existing account"
               />
               <span className="text-xs text-gray-300">
                 I confirm I want to link these two existing records.
               </span>
             </label>
+            {!linkConfirmed && selectedLinkProfileId && (
+              <p className="text-[11px] text-amber-400/90 mb-3">
+                Check the confirmation box above to enable Confirm Link.
+              </p>
+            )}
+            {(!selectedLinkProfileId && linkCandidates.length > 0) && (
+              <p className="text-[11px] text-amber-400/90 mb-3">
+                Select a portal profile above before confirming.
+              </p>
+            )}
 
             {linkError && (
-              <p className="text-xs text-red-400 mb-3">{linkError}</p>
+              <p className="text-xs text-red-400 mb-3" role="alert">{linkError}</p>
+            )}
+            {linkSuccess && (
+              <p className="text-xs text-emerald-400 mb-3">{linkSuccess}</p>
             )}
 
             <div className="flex gap-2 justify-end">
@@ -1751,6 +1781,7 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                   setSelectedLinkProfileId(null)
                   setLinkConfirmed(false)
                   setLinkError('')
+                  setLinkSuccess('')
                 }}
                 disabled={linking}
                 className="px-4 py-2 rounded-lg bg-gray-700 text-gray-200 text-sm hover:bg-gray-600 transition disabled:opacity-60"
@@ -1758,11 +1789,19 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={() => { void handleLinkExistingAccount() }}
                 disabled={linking || !selectedLinkProfileId || !linkConfirmed || linkCandidates.length === 0}
                 className="px-4 py-2 rounded-lg bg-sky-700 text-white text-sm hover:bg-sky-600 transition disabled:opacity-60 flex items-center gap-1.5"
               >
-                {linking ? 'Linking…' : 'Confirm Link'}
+                {linking ? (
+                  <>
+                    <RefreshCw size={12} className="animate-spin" />
+                    Linking…
+                  </>
+                ) : (
+                  'Confirm Link'
+                )}
               </button>
             </div>
           </div>

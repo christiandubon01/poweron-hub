@@ -248,31 +248,62 @@ export async function renameRole(roleId: string, newName: string): Promise<Servi
 /**
  * Replace all permission keys for a role in one safe operation.
  * Deletes existing permissions, then inserts the new set.
- * RLS ensures this can only touch the caller's own org's roles.
+ * org_id is always taken from the authenticated owner profile (never trusted
+ * from a component prop alone). After write, a fresh SELECT verifies rows.
  */
 export async function setRolePermissions(
-  orgId: string,
+  _orgId: string,
   roleId: string,
   permissionKeys: string[],
-): Promise<ServiceResult> {
+): Promise<ServiceResult<string[]>> {
   try {
-    // Delete existing
+    const orgRes = await requireOrgId()
+    if (!orgRes.success || !orgRes.data) return { success: false, error: orgRes.error }
+    const orgId = orgRes.data
+
+    // Confirm the role belongs to this org before mutating permissions.
+    const { data: roleRow, error: roleErr } = await from('emp_roles')
+      .select('id, org_id')
+      .eq('id', roleId)
+      .eq('org_id', orgId)
+      .maybeSingle()
+    if (roleErr) return { success: false, error: roleErr.message }
+    if (!roleRow) return { success: false, error: 'Role not found in your organization.' }
+
     const { error: delErr } = await from('emp_role_permissions')
       .delete()
       .eq('role_id', roleId)
 
     if (delErr) return { success: false, error: delErr.message }
 
-    // Insert new set (skip empty)
     const unique = Array.from(new Set(permissionKeys)).filter(Boolean)
     if (unique.length > 0) {
       const rows = unique.map(key => ({ org_id: orgId, role_id: roleId, permission_key: key }))
       const { error: insErr } = await from('emp_role_permissions').insert(rows)
-
       if (insErr) return { success: false, error: insErr.message }
     }
 
-    return { success: true }
+    // Fresh query — never report success from the write alone.
+    const verify = await loadRolePermissions(roleId)
+    if (!verify.success) {
+      return { success: false, error: verify.error || 'Saved permissions could not be reloaded.' }
+    }
+    const saved = new Set(verify.data ?? [])
+    const missing = unique.filter(k => !saved.has(k))
+    if (missing.length > 0) {
+      return {
+        success: false,
+        error: `Permissions were written but not visible after reload (${missing.join(', ')}). Check SELECT policy on emp_role_permissions.`,
+      }
+    }
+    if ((verify.data ?? []).length !== unique.length) {
+      return {
+        success: false,
+        error: `Expected ${unique.length} permission(s) after save, found ${(verify.data ?? []).length}.`,
+      }
+    }
+
+    return { success: true, data: verify.data ?? [] }
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : 'Network error' }
   }
@@ -307,9 +338,9 @@ export async function deleteRole(roleId: string): Promise<ServiceResult> {
 
 // ── C. Assignment mutations ───────────────────────────────────────────────────
 
-/** Assign a role to an employee. Idempotent — ignores duplicate. */
+/** Assign a role to an employee. Idempotent — ignores duplicate. Verifies with a fresh query. */
 export async function assignRole(
-  orgId: string,
+  _orgId: string,
   epId: string,
   roleId: string,
 ): Promise<ServiceResult> {
@@ -317,7 +348,11 @@ export async function assignRole(
     const { data: { user } } = await supabase.auth.getUser()
     if (!user?.id) return { success: false, error: 'Not authenticated' }
 
-    // Verify employee belongs to the same org (belt-and-suspenders)
+    const orgRes = await requireOrgId()
+    if (!orgRes.success || !orgRes.data) return { success: false, error: orgRes.error }
+    const orgId = orgRes.data
+
+    // employee_profiles.id only — never a Cost Model / backup id.
     const checkRes = await verifyEmployeeOrgMembership(epId)
     if (!checkRes.success) return { success: false, error: checkRes.error }
     if (!checkRes.data) {
@@ -331,9 +366,19 @@ export async function assignRole(
       assigned_by: user.id,
     })
 
-    if (error) {
-      if (error.code === '23505') return { success: true } // already assigned — idempotent
+    if (error && error.code !== '23505') {
       return { success: false, error: error.message }
+    }
+
+    const verify = await loadEmployeeRoles(epId)
+    if (!verify.success) {
+      return { success: false, error: verify.error || 'Assignment saved but could not be reloaded.' }
+    }
+    if (!(verify.data ?? []).some(a => a.role_id === roleId)) {
+      return {
+        success: false,
+        error: 'Assignment was written but did not appear after reload. Check SELECT on emp_role_assignments.',
+      }
     }
     return { success: true }
   } catch (err) {
@@ -341,7 +386,7 @@ export async function assignRole(
   }
 }
 
-/** Remove a single role from an employee. Other roles are unaffected. */
+/** Remove a single role from an employee. Other roles are unaffected. Verifies removal. */
 export async function removeRole(epId: string, roleId: string): Promise<ServiceResult> {
   try {
     const { error } = await from('emp_role_assignments')
@@ -350,6 +395,17 @@ export async function removeRole(epId: string, roleId: string): Promise<ServiceR
       .eq('role_id', roleId)
 
     if (error) return { success: false, error: error.message }
+
+    const verify = await loadEmployeeRoles(epId)
+    if (!verify.success) {
+      return { success: false, error: verify.error || 'Removal completed but could not be reloaded.' }
+    }
+    if ((verify.data ?? []).some(a => a.role_id === roleId)) {
+      return {
+        success: false,
+        error: 'Role assignment is still present after delete. Check DELETE policy on emp_role_assignments.',
+      }
+    }
     return { success: true }
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : 'Network error' }

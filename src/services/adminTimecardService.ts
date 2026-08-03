@@ -287,6 +287,7 @@ export async function listUnlinkedPortalCandidates(
  * Set employee_profiles.backup_employee_id for an existing unlinked profile.
  * Requires explicit owner confirmation in the UI before calling.
  * Does not delete either record.
+ * After update, a fresh SELECT must confirm backup_employee_id before success.
  */
 export async function linkExistingEmployeeAccount(
   profileId: string,
@@ -297,16 +298,34 @@ export async function linkExistingEmployeeAccount(
     const { data: { user } } = await supabase.auth.getUser()
     if (!user?.id) return { success: false, error: 'Not authenticated' }
 
-    if (!profileId || !backupEmployeeId || !orgId) {
+    const cleanProfileId = String(profileId || '').trim()
+    const cleanBackupId = String(backupEmployeeId || '').trim()
+    const cleanOrgId = String(orgId || '').trim()
+    if (!cleanProfileId || !cleanBackupId || !cleanOrgId) {
       return { success: false, error: 'Missing link parameters' }
     }
 
-    // Refuse if this Cost Model employee is already linked in this org.
-    const { data: existingLink } = await from('employee_profiles')
-      .select('id, display_name')
-      .eq('org_id', orgId)
-      .eq('backup_employee_id', backupEmployeeId)
+    // Owner/admin + same-org gate via profiles.role / org_id (matches RLS).
+    const { data: callerProfile, error: callerErr } = await from('profiles')
+      .select('org_id, role')
+      .eq('id', user.id)
       .maybeSingle()
+    if (callerErr) return { success: false, error: callerErr.message }
+    if (!callerProfile) return { success: false, error: 'Caller profile not found.' }
+    if (callerProfile.org_id !== cleanOrgId) {
+      return { success: false, error: 'Organization mismatch — cannot link across organizations.' }
+    }
+    if (!['owner', 'admin'].includes(String(callerProfile.role || '').toLowerCase())) {
+      return { success: false, error: 'Only an organization owner or admin can link accounts.' }
+    }
+
+    // Refuse if this Cost Model employee is already linked in this org.
+    const { data: existingLink, error: existingErr } = await from('employee_profiles')
+      .select('id, display_name')
+      .eq('org_id', cleanOrgId)
+      .eq('backup_employee_id', cleanBackupId)
+      .maybeSingle()
+    if (existingErr) return { success: false, error: existingErr.message }
     if (existingLink) {
       return {
         success: false,
@@ -317,8 +336,8 @@ export async function linkExistingEmployeeAccount(
     // Load target; must be same-org and currently unlinked.
     const { data: target, error: targetErr } = await from('employee_profiles')
       .select(PROFILE_COLS)
-      .eq('id', profileId)
-      .eq('org_id', orgId)
+      .eq('id', cleanProfileId)
+      .eq('org_id', cleanOrgId)
       .maybeSingle()
 
     if (targetErr) return { success: false, error: targetErr.message }
@@ -331,12 +350,12 @@ export async function linkExistingEmployeeAccount(
     }
 
     const { data, error } = await from('employee_profiles')
-      .update({ backup_employee_id: backupEmployeeId })
-      .eq('id', profileId)
-      .eq('org_id', orgId)
+      .update({ backup_employee_id: cleanBackupId })
+      .eq('id', cleanProfileId)
+      .eq('org_id', cleanOrgId)
       .is('backup_employee_id', null)
       .select(PROFILE_COLS)
-      .single()
+      .maybeSingle()
 
     if (error) {
       if (error.code === '23505') {
@@ -345,10 +364,34 @@ export async function linkExistingEmployeeAccount(
           error: 'That Cost Model employee is already linked to another portal profile in this organization.',
         }
       }
-      return { success: false, error: error.message }
+      // PostgREST zero-row / RLS miss often surfaces as PGRST116 with .single();
+      // with maybeSingle it may be a silent null — handled below.
+      return { success: false, error: error.message || `Link update failed (${error.code || 'unknown'}).` }
     }
-    if (!data) return { success: false, error: 'Link failed — profile may have been linked by another session.' }
-    return { success: true, data: data as AdminEmployeeProfile }
+    if (!data) {
+      return {
+        success: false,
+        error:
+          'Link did not update any row. The profile may already be linked, or your account lacks owner/admin UPDATE permission on employee_profiles.',
+      }
+    }
+
+    // Fresh query — prove backup_employee_id before reporting success.
+    const { data: verified, error: verifyErr } = await from('employee_profiles')
+      .select(PROFILE_COLS)
+      .eq('id', cleanProfileId)
+      .eq('org_id', cleanOrgId)
+      .maybeSingle()
+    if (verifyErr) return { success: false, error: verifyErr.message }
+    if (!verified) return { success: false, error: 'Link wrote but profile could not be reloaded.' }
+    if (verified.backup_employee_id !== cleanBackupId) {
+      return {
+        success: false,
+        error: `Link did not stick. Expected backup_employee_id "${cleanBackupId}", found "${verified.backup_employee_id ?? 'null'}".`,
+      }
+    }
+
+    return { success: true, data: verified as AdminEmployeeProfile }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Network error'
     console.error('[adminTimecardService.linkExistingEmployeeAccount] Error:', err)

@@ -177,7 +177,7 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
   const [mutSuccess, setMutSuccess] = useState('')
 
   // Manage Roles tab state
-  const [manageMode, setManageMode] = useState<'list' | 'create' | 'edit'>('list')
+  const [manageMode, setManageMode] = useState<'list' | 'create' | 'edit-perms' | 'rename'>('list')
   const [editingRole, setEditingRole] = useState<RoleWithPerms | null>(null)
   const [newRoleName, setNewRoleName] = useState('')
   const [newRoleDesc, setNewRoleDesc] = useState('')
@@ -185,6 +185,9 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
   const [editRolePerms, setEditRolePerms] = useState<Set<string>>(new Set())
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [roleCounts, setRoleCounts] = useState<Map<string, number>>(new Map())
+  const [expandedEditCats, setExpandedEditCats] = useState<Set<PermissionCategory>>(
+    new Set(PERMISSION_CATEGORIES),
+  )
 
   // Effective access
   const [effectiveAccess, setEffectiveAccess] = useState<EffectivePermission[]>([])
@@ -294,20 +297,33 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
     return assignments.some(a => a.role_id === roleId)
   }
 
-  async function toggleAssignment(role: EmpRole) {
+  async function handleAssignRole(role: EmpRole) {
     const key = `assign-${role.id}`
-    if (mutating) return
-
+    if (mutating || isAssigned(role.id)) return
     await runMutation(key, async () => {
-      if (isAssigned(role.id)) {
-        const res = await removeRole(epId, role.id)
-        if (!res.success) throw new Error(res.error)
-        showSuccess(`Removed role "${tc(role.name)}"`)
-      } else {
-        const res = await assignRole(orgId, epId, role.id)
-        if (!res.success) throw new Error(res.error)
-        showSuccess(`Assigned role "${tc(role.name)}"`)
+      const res = await assignRole(orgId, epId, role.id)
+      if (!res.success) throw new Error(res.error || 'Could not assign role.')
+      const verify = await loadEmployeeRoles(epId)
+      if (!verify.success || !(verify.data ?? []).some(a => a.role_id === role.id)) {
+        throw new Error(`Role "${tc(role.name)}" was assigned but did not appear after reload.`)
       }
+      showSuccess(`Assigned role "${tc(role.name)}"`)
+      await loadAll()
+    })
+  }
+
+  async function handleRemoveRole(role: EmpRole) {
+    const key = `assign-${role.id}`
+    if (mutating || !isAssigned(role.id)) return
+    await runMutation(key, async () => {
+      const res = await removeRole(epId, role.id)
+      if (!res.success) throw new Error(res.error || 'Could not remove role.')
+      const verify = await loadEmployeeRoles(epId)
+      if (!verify.success) throw new Error(verify.error || 'Could not verify role removal.')
+      if ((verify.data ?? []).some(a => a.role_id === role.id)) {
+        throw new Error(`Role "${tc(role.name)}" is still assigned after removal.`)
+      }
+      showSuccess(`Removed role "${tc(role.name)}"`)
       await loadAll()
     })
   }
@@ -367,25 +383,65 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
     })
   }
 
-  function startEditRole(rwp: RoleWithPerms) {
+  function startEditPermissions(rwp: RoleWithPerms) {
+    setMutError('')
     setEditingRole(rwp)
     setEditRoleName(rwp.role.name)
     setEditRolePerms(new Set(rwp.permKeys))
-    setManageMode('edit')
+    setExpandedEditCats(new Set(PERMISSION_CATEGORIES))
+    setManageMode('edit-perms')
   }
 
-  async function handleSaveRoleEdit() {
+  function startRenameRole(rwp: RoleWithPerms) {
+    setMutError('')
+    setEditingRole(rwp)
+    setEditRoleName(rwp.role.name)
+    setManageMode('rename')
+  }
+
+  async function handleSavePermissions() {
     if (!editingRole) return
     await runMutation('save-role', async () => {
-      // Rename if changed
-      if (editRoleName.trim().toLowerCase() !== editingRole.role.name) {
-        const res = await renameRole(editingRole.role.id, editRoleName)
-        if (!res.success) throw new Error(res.error)
+      const selected = Array.from(editRolePerms)
+      const res = await setRolePermissions(orgId, editingRole.role.id, selected)
+      if (!res.success) throw new Error(res.error || 'Could not save permissions.')
+      const savedKeys = res.data ?? []
+      if (savedKeys.length !== selected.length) {
+        throw new Error(
+          `Save verification failed: expected ${selected.length} permission(s), found ${savedKeys.length}.`,
+        )
       }
-      // Update permissions
-      const res = await setRolePermissions(orgId, editingRole.role.id, Array.from(editRolePerms))
-      if (!res.success) throw new Error(res.error)
-      showSuccess(`Saved role "${tc(editRoleName || editingRole.role.name)}"`)
+      // Fresh full reload before leaving the editor — prove card count will update.
+      const freshRoles = await loadAll()
+      const updated = freshRoles.find(r => r.role.id === editingRole.role.id)
+      if (!updated) {
+        throw new Error('Role permissions saved but the role is missing after reload.')
+      }
+      if (updated.permKeys.length !== selected.length) {
+        throw new Error(
+          `Role card would show ${updated.permKeys.length} permission(s) after save; expected ${selected.length}.`,
+        )
+      }
+      showSuccess(
+        `Saved ${selected.length} permission${selected.length !== 1 ? 's' : ''} on "${tc(editingRole.role.name)}"`,
+      )
+      setManageMode('list')
+      setEditingRole(null)
+    })
+  }
+
+  async function handleSaveRename() {
+    if (!editingRole) return
+    await runMutation('rename-role', async () => {
+      if (!editRoleName.trim()) throw new Error('Role name cannot be blank.')
+      if (editRoleName.trim().toLowerCase() === editingRole.role.name) {
+        setManageMode('list')
+        setEditingRole(null)
+        return
+      }
+      const res = await renameRole(editingRole.role.id, editRoleName)
+      if (!res.success) throw new Error(res.error || 'Could not rename role.')
+      showSuccess(`Renamed role to "${tc(editRoleName)}"`)
       setManageMode('list')
       setEditingRole(null)
       await loadAll()
@@ -516,6 +572,11 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
               ══════════════════════════════════════════════════════════════ */}
               {tab === 'assigned' && (
                 <div className="space-y-3">
+                  <div className="bg-[var(--bg-card)] border border-gray-700/50 rounded-lg px-4 py-3 text-xs text-gray-400">
+                    Assign one or more roles to this employee. The employee inherits the permissions
+                    contained in those roles.
+                  </div>
+
                   {orgRoles.length === 0 ? (
                     <div className="text-center py-10 bg-[var(--bg-card)] rounded-lg border border-dashed border-gray-700">
                       <Shield className="w-8 h-8 text-gray-600 mx-auto mb-2" />
@@ -535,23 +596,26 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
                       const assigned = isAssigned(role.id)
                       const busy = mutating === `assign-${role.id}`
                       return (
-                        <label
+                        <div
                           key={role.id}
-                          className={`flex items-start gap-3 p-4 rounded-lg border cursor-pointer transition select-none ${
+                          className={`flex items-start gap-3 p-4 rounded-lg border transition ${
                             assigned
-                              ? 'bg-indigo-900/20 border-indigo-600/50 hover:border-indigo-500/70'
-                              : 'bg-[var(--bg-card)] border-gray-700 hover:border-gray-600'
+                              ? 'bg-indigo-900/20 border-indigo-600/50'
+                              : 'bg-[var(--bg-card)] border-gray-700'
                           }`}
                         >
-                          <input
-                            type="checkbox"
-                            checked={assigned}
-                            onChange={() => toggleAssignment(role)}
-                            disabled={!!mutating}
-                            className="mt-0.5 w-4 h-4 rounded border-gray-600 text-indigo-500 focus:ring-indigo-500 accent-indigo-500"
-                          />
+                          <div
+                            className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                              assigned
+                                ? 'bg-indigo-500 border-indigo-400'
+                                : 'bg-transparent border-gray-600'
+                            }`}
+                            aria-hidden
+                          >
+                            {assigned && <Check className="w-3 h-3 text-white" />}
+                          </div>
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-semibold text-gray-100 text-sm">{tc(role.name)}</span>
                               {assigned && (
                                 <span className="text-xs px-1.5 py-0.5 bg-indigo-600/30 text-indigo-300 rounded">
@@ -567,11 +631,32 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
                             )}
                             <p className="text-xs text-gray-600 mt-1">
                               {permKeys.length === 0
-                                ? 'No permissions set'
+                                ? '0 permissions'
                                 : `${permKeys.length} permission${permKeys.length !== 1 ? 's' : ''}`}
                             </p>
                           </div>
-                        </label>
+                          <div className="shrink-0">
+                            {assigned ? (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveRole(role)}
+                                disabled={!!mutating}
+                                className="px-3 py-1.5 text-xs font-semibold rounded border border-red-700/50 bg-red-900/30 text-red-300 hover:bg-red-900/50 transition disabled:opacity-50"
+                              >
+                                {busy ? 'Removing…' : 'Remove'}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleAssignRole(role)}
+                                disabled={!!mutating}
+                                className="px-3 py-1.5 text-xs font-semibold rounded border border-indigo-600/50 bg-indigo-600/30 text-indigo-200 hover:bg-indigo-600/50 transition disabled:opacity-50"
+                              >
+                                {busy ? 'Assigning…' : 'Assign'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       )
                     })
                   )}
@@ -584,9 +669,8 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
               {tab === 'individual' && (
                 <div className="space-y-3">
                   <div className="bg-[var(--bg-card)] border border-gray-700/50 rounded-lg px-4 py-3 text-xs text-gray-400">
-                    <strong className="text-gray-300">Individual Deny overrides all role grants.</strong>
-                    {' '}Use Deny to block specific permissions regardless of roles.
-                    Inherit means no override exists — access comes from roles.
+                    Use Allow or Deny to override this employee’s inherited role permissions. Deny
+                    always wins.
                   </div>
 
                   {PERMISSION_CATEGORIES.map(cat => {
@@ -663,6 +747,11 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
               ══════════════════════════════════════════════════════════════ */}
               {tab === 'manage' && (
                 <div className="space-y-4">
+                  {manageMode === 'list' && (
+                    <div className="bg-[var(--bg-card)] border border-gray-700/50 rounded-lg px-4 py-3 text-xs text-gray-400">
+                      Choose the permissions included with each role.
+                    </div>
+                  )}
 
                   {/* Create role form */}
                   {manageMode === 'create' && (
@@ -714,11 +803,10 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
                     </div>
                   )}
 
-                  {/* Edit role form */}
-                  {manageMode === 'edit' && editingRole && (
-                    <div className="bg-[var(--bg-card)] rounded-lg border border-indigo-700/40 p-4 space-y-4">
-                      <h3 className="text-sm font-bold text-gray-100">Edit Role</h3>
-
+                  {/* Rename role form */}
+                  {manageMode === 'rename' && editingRole && (
+                    <div className="bg-[var(--bg-card)] rounded-lg border border-indigo-700/40 p-4 space-y-3">
+                      <h3 className="text-sm font-bold text-gray-100">Rename Role</h3>
                       <div>
                         <label className="block text-xs font-semibold text-gray-400 mb-1 uppercase tracking-wide">
                           Role Name
@@ -729,45 +817,9 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
                           onChange={e => setEditRoleName(e.target.value)}
                           className="w-full bg-[var(--bg-input)] border border-gray-700 text-gray-100 text-sm px-3 py-2 rounded focus:outline-none focus:border-indigo-600"
                           maxLength={80}
+                          autoFocus
                         />
                       </div>
-
-                      <div>
-                        <h4 className="text-xs font-bold text-gray-300 uppercase tracking-wide mb-3">
-                          Permissions
-                        </h4>
-                        <div className="space-y-2 max-h-64 overflow-y-auto">
-                          {PERMISSION_CATEGORIES.map(cat => (
-                            <div key={cat} className="bg-[var(--bg-secondary)] rounded p-3">
-                              <div className="text-xs font-bold text-gray-400 uppercase mb-2">{cat}</div>
-                              <div className="grid grid-cols-1 gap-1.5">
-                                {getPermissionsByCategory(cat).map(p => (
-                                  <label key={p.key} className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                      type="checkbox"
-                                      checked={editRolePerms.has(p.key)}
-                                      onChange={e => {
-                                        const next = new Set(editRolePerms)
-                                        if (e.target.checked) next.add(p.key)
-                                        else next.delete(p.key)
-                                        setEditRolePerms(next)
-                                      }}
-                                      className="w-3.5 h-3.5 rounded accent-indigo-500"
-                                    />
-                                    <span className="text-xs text-gray-300 flex-1">{p.label}</span>
-                                    {p.sensitive && (
-                                      <span className="text-[9px] px-1 py-0.5 bg-amber-900/40 border border-amber-700/50 text-amber-400 rounded font-bold">
-                                        SENSITIVE
-                                      </span>
-                                    )}
-                                  </label>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
                       <div className="flex gap-2">
                         <button
                           onClick={() => { setManageMode('list'); setEditingRole(null) }}
@@ -776,11 +828,109 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
                           Cancel
                         </button>
                         <button
-                          onClick={handleSaveRoleEdit}
+                          onClick={handleSaveRename}
                           disabled={!!mutating || !editRoleName.trim()}
                           className="flex-1 px-3 py-2 bg-indigo-600/70 text-indigo-100 rounded text-sm font-semibold hover:bg-indigo-600 transition disabled:opacity-50"
                         >
-                          {mutating === 'save-role' ? 'Saving…' : 'Save Role'}
+                          {mutating === 'rename-role' ? 'Saving…' : 'Save Name'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Edit Permissions form */}
+                  {manageMode === 'edit-perms' && editingRole && (
+                    <div className="bg-[var(--bg-card)] rounded-lg border border-indigo-700/40 p-4 space-y-4">
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-100">
+                          Edit Permissions — {tc(editingRole.role.name)}
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Select every permission this role should include. Changes are saved only
+                          when you click Save Changes.
+                        </p>
+                      </div>
+
+                      <div className="space-y-2 max-h-80 overflow-y-auto">
+                        {PERMISSION_CATEGORIES.map(cat => {
+                          const perms = getPermissionsByCategory(cat)
+                          const expanded = expandedEditCats.has(cat)
+                          return (
+                            <div key={cat} className="bg-[var(--bg-secondary)] rounded border border-gray-700/60 overflow-hidden">
+                              <button
+                                type="button"
+                                className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-700/20 transition"
+                                onClick={() => {
+                                  const next = new Set(expandedEditCats)
+                                  if (expanded) next.delete(cat)
+                                  else next.add(cat)
+                                  setExpandedEditCats(next)
+                                }}
+                              >
+                                <span className="text-xs font-bold text-gray-300 uppercase tracking-wide">{cat}</span>
+                                <span className="flex items-center gap-2 text-gray-500 text-xs">
+                                  <span>
+                                    {perms.filter(p => editRolePerms.has(p.key)).length}/{perms.length}
+                                  </span>
+                                  {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                                </span>
+                              </button>
+                              {expanded && (
+                                <div className="border-t border-gray-700/60 divide-y divide-gray-700/40">
+                                  {perms.map(p => (
+                                    <label
+                                      key={p.key}
+                                      className="flex items-start gap-2.5 px-3 py-2.5 cursor-pointer hover:bg-gray-700/10"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={editRolePerms.has(p.key)}
+                                        onChange={e => {
+                                          const next = new Set(editRolePerms)
+                                          if (e.target.checked) next.add(p.key)
+                                          else next.delete(p.key)
+                                          setEditRolePerms(next)
+                                        }}
+                                        className="mt-0.5 w-3.5 h-3.5 rounded accent-indigo-500"
+                                      />
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="text-xs font-medium text-gray-200">{p.label}</span>
+                                          {p.sensitive && (
+                                            <span className="text-[9px] px-1 py-0.5 bg-amber-900/40 border border-amber-700/50 text-amber-400 rounded font-bold">
+                                              SENSITIVE
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="text-[11px] text-gray-500 mt-0.5">{p.description}</p>
+                                      </div>
+                                    </label>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+
+                      <p className="text-xs text-gray-500">
+                        {editRolePerms.size} permission{editRolePerms.size !== 1 ? 's' : ''} selected
+                      </p>
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { setManageMode('list'); setEditingRole(null); setMutError('') }}
+                          disabled={mutating === 'save-role'}
+                          className="px-3 py-2 bg-gray-700/50 text-gray-300 rounded text-sm hover:bg-gray-700 transition disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleSavePermissions}
+                          disabled={!!mutating}
+                          className="flex-1 px-3 py-2 bg-indigo-600/70 text-indigo-100 rounded text-sm font-semibold hover:bg-indigo-600 transition disabled:opacity-50"
+                        >
+                          {mutating === 'save-role' ? 'Saving…' : 'Save Changes'}
                         </button>
                       </div>
                     </div>
@@ -814,42 +964,50 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
                                     : 'bg-[var(--bg-card)] border-gray-700'
                                 }`}
                               >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                      <span className="font-semibold text-gray-100 text-sm">{tc(role.name)}</span>
-                                      <span className="text-xs text-gray-500">
-                                        {count} employee{count !== 1 ? 's' : ''}
-                                      </span>
-                                      <span className="text-xs text-gray-600">
-                                        · {permKeys.length} perm{permKeys.length !== 1 ? 's' : ''}
-                                      </span>
-                                    </div>
-                                    {role.description && (
-                                      <p className="text-xs text-gray-500 mt-0.5">{role.description}</p>
-                                    )}
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-semibold text-gray-100 text-sm">{tc(role.name)}</span>
                                   </div>
-                                  {!isConfirmingDelete && (
-                                    <div className="flex gap-1 shrink-0">
-                                      <button
-                                        onClick={() => startEditRole({ role, permKeys })}
-                                        disabled={!!mutating}
-                                        className="p-1.5 bg-indigo-600/20 text-indigo-300 rounded hover:bg-indigo-600/40 transition"
-                                        title="Edit role"
-                                      >
-                                        <Edit2 className="w-3.5 h-3.5" />
-                                      </button>
-                                      <button
-                                        onClick={() => setConfirmDeleteId(role.id)}
-                                        disabled={!!mutating}
-                                        className="p-1.5 bg-red-600/20 text-red-400 rounded hover:bg-red-600/40 transition"
-                                        title="Delete role"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
+                                  {role.description ? (
+                                    <p className="text-xs text-gray-500 mt-0.5">{role.description}</p>
+                                  ) : (
+                                    <p className="text-xs text-gray-600 mt-0.5 italic">No description</p>
                                   )}
+                                  <p className="text-xs text-gray-500 mt-1.5">
+                                    {count} employee{count !== 1 ? 's' : ''}
+                                    {' · '}
+                                    {permKeys.length} permission{permKeys.length !== 1 ? 's' : ''}
+                                  </p>
                                 </div>
+
+                                {!isConfirmingDelete && (
+                                  <div className="flex flex-wrap gap-2 mt-3">
+                                    <button
+                                      type="button"
+                                      onClick={() => startEditPermissions({ role, permKeys })}
+                                      disabled={!!mutating}
+                                      className="px-3 py-1.5 text-xs font-semibold rounded border border-indigo-600/40 bg-indigo-600/25 text-indigo-200 hover:bg-indigo-600/40 transition disabled:opacity-50"
+                                    >
+                                      Edit Permissions
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => startRenameRole({ role, permKeys })}
+                                      disabled={!!mutating}
+                                      className="px-3 py-1.5 text-xs font-semibold rounded border border-gray-600 bg-gray-700/40 text-gray-300 hover:bg-gray-700 transition disabled:opacity-50 flex items-center gap-1"
+                                    >
+                                      <Edit2 className="w-3 h-3" /> Rename
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmDeleteId(role.id)}
+                                      disabled={!!mutating}
+                                      className="px-3 py-1.5 text-xs font-semibold rounded border border-red-700/40 bg-red-900/20 text-red-300 hover:bg-red-900/40 transition disabled:opacity-50 flex items-center gap-1"
+                                    >
+                                      <Trash2 className="w-3 h-3" /> Delete
+                                    </button>
+                                  </div>
+                                )}
 
                                 {isConfirmingDelete && (
                                   <div className="mt-3 border-t border-red-700/30 pt-3">
