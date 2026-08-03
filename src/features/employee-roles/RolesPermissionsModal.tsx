@@ -198,7 +198,7 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
 
   // ── Load all data ───────────────────────────────────────────────────────────
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (): Promise<RoleWithPerms[]> => {
     setLoadState('loading')
     setLoadError('')
 
@@ -254,9 +254,11 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
       )
 
       setLoadState('idle')
+      return rolesWithPerms
     } catch (err) {
       setLoadState('error')
       setLoadError(err instanceof Error ? err.message : 'Failed to load data')
+      return []
     }
   }, [epId])
 
@@ -349,11 +351,19 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
       if (!newRoleName.trim()) throw new Error('Role name cannot be blank.')
       const res = await createRole(newRoleName, newRoleDesc)
       if (!res.success) throw new Error(res.error)
-      showSuccess(`Created role "${tc(res.data!.name)}"`)
+      if (!res.data?.id) throw new Error('Role insert returned no ID.')
+      showSuccess(`Created role "${tc(res.data.name)}"`)
       setNewRoleName('')
       setNewRoleDesc('')
+      // Fresh query after mutation — prove persistence before switching UI.
+      const freshRoles = await loadAll()
+      if (freshRoles.length === 0) {
+        throw new Error('Role was saved but is not visible. Check that your account has SELECT permission on emp_roles.')
+      }
+      if (!freshRoles.some(r => r.role.id === res.data!.id)) {
+        throw new Error(`Role "${tc(res.data.name)}" was created (id ${res.data.id}) but did not appear in the fresh roles query.`)
+      }
       setManageMode('list')
-      await loadAll()
     })
   }
 

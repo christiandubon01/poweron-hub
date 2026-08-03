@@ -139,8 +139,10 @@ describe('ROLE-2.1 — Crew Portal Role Manager entry point', () => {
     expect(PORTAL_SRC).toContain('Invitation Pending')
   })
 
-  it('5. MemberStatusBadge receives isPendingInvite prop from member', () => {
-    expect(PORTAL_SRC).toContain('isPendingInvite={member.isPendingInvite}')
+  it('5. MemberStatusBadge receives isPendingInvite derived from member.status', () => {
+    // ROLE-2.2: switched to UnifiedCrewMember — isPendingInvite is now derived from status field
+    expect(PORTAL_SRC).toContain('MemberStatusBadge')
+    expect(PORTAL_SRC).toMatch(/isPendingInvite=\{member\.(isPendingInvite|status\s*===\s*['"]pending_invite['"])/)
   })
 })
 
@@ -169,8 +171,9 @@ describe('ROLE-2.1 — Invite to Portal fallback for profiles without portal acc
 
 describe('ROLE-2.1 — employee_profile_id is the identity anchor in both entry points', () => {
 
-  it('7. Crew Portal uses member.id (employee_profiles.id) as epId', () => {
-    expect(PORTAL_SRC).toContain('epId: member.id')
+  it('7. Crew Portal uses employee_profiles.id as epId (via member.profileId after ROLE-2.2)', () => {
+    // ROLE-2.2: switched to UnifiedCrewMember — employee_profiles.id is now at member.profileId
+    expect(PORTAL_SRC).toMatch(/epId:\s*member\.(id|profileId!?)/)
   })
 
   it('8. Both files render RolesPermissionsModal (same component, not a copy)', () => {
@@ -178,11 +181,11 @@ describe('ROLE-2.1 — employee_profile_id is the identity anchor in both entry 
     expect(PORTAL_SRC).toContain('<RolesPermissionsModal')
   })
 
-  it('9. Team uses profile.id (from employee_profiles); Crew Portal uses member.id', () => {
-    // Team: profile.id from portalProfileMap which maps display_name → employee_profiles.id
+  it('9. Team uses profile.id (from employee_profiles); Crew Portal uses member.profileId (ROLE-2.2)', () => {
+    // Team: profile.id from portalProfileMap which maps backup_employee_id → employee_profiles.id
     expect(TEAM_SRC).toContain('epId: profile.id')
-    // Crew Portal: member.id which is employee_profiles.id from getOrgMembers
-    expect(PORTAL_SRC).toContain('epId: member.id')
+    // Crew Portal: member.profileId (UnifiedCrewMember) = employee_profiles.id from getUnifiedCrewDirectory
+    expect(PORTAL_SRC).toMatch(/epId:\s*member\.profileId/)
   })
 
   it('9. getAllOrgEmployeeProfiles is used in Team panel (includes inactive employees)', () => {

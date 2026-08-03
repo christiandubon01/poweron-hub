@@ -27,6 +27,8 @@ export interface SendEmployeeInviteInput {
   email: string
   employmentType?: EmployeeEmploymentType
   role?: EmployeeInviteRole
+  /** If set, UPDATE this existing employee_profiles row instead of inserting a new one. */
+  profileId?: string
 }
 
 export interface SendEmployeeInviteResult {
@@ -83,18 +85,21 @@ export async function sendEmployeeInvite(
       return { success: false, error: 'Not authenticated' }
     }
 
+    const body: Record<string, string> = {
+      displayName:    input.displayName,
+      email:          input.email,
+      employmentType: input.employmentType ?? 'full_time',
+      role:           input.role ?? 'employee',
+    }
+    if (input.profileId) body.profileId = input.profileId
+
     const res = await fetch('/.netlify/functions/sendEmployeeInvite', {
       method:  'POST',
       headers: {
         'Content-Type':  'application/json',
         Authorization:   `Bearer ${session.access_token}`,
       },
-      body: JSON.stringify({
-        displayName:    input.displayName,
-        email:          input.email,
-        employmentType: input.employmentType ?? 'full_time',
-        role:           input.role ?? 'employee',
-      }),
+      body: JSON.stringify(body),
     })
 
     const data = await res.json()

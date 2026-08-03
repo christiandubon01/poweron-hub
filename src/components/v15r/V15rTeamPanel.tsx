@@ -18,7 +18,7 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart } from 'recharts'
-import { Users, Sparkles, AlertCircle, Plus, Trash2, Edit2, TrendingUp, Zap, X, UserPlus, Shield } from 'lucide-react'
+import { Users, Sparkles, AlertCircle, Plus, Trash2, Edit2, TrendingUp, Zap, X, UserPlus, Shield, Link2 } from 'lucide-react'
 import AddTeamMemberModal from './AddTeamMemberModal'
 import DemoInvite from '@/components/admin/DemoInvite'
 import EmployeeInviteModal from '@/components/admin/EmployeeInviteModal'
@@ -52,7 +52,14 @@ import { callClaude, extractText } from '@/services/claudeProxy'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 import { useAuth } from '@/hooks/useAuth'
-import { getActiveEmployeeProfiles, getAllOrgEmployeeProfiles, type AdminEmployeeProfile } from '@/services/adminTimecardService'
+import {
+  getActiveEmployeeProfiles,
+  getAllOrgEmployeeProfiles,
+  listUnlinkedPortalCandidates,
+  linkExistingEmployeeAccount,
+  type AdminEmployeeProfile,
+  type PortalLinkCandidate,
+} from '@/services/adminTimecardService'
 import RolesPermissionsModal from '@/features/employee-roles/RolesPermissionsModal'
 
 interface EnhancedEmployee extends BackupEmployee {
@@ -1333,22 +1340,92 @@ export default function V15rTeamPanel() {
   // portalProfileMap: display_name (lowercase) → { id, orgId } from employee_profiles
   const [rolesTarget, setRolesTarget] = useState<{ epId: string; displayName: string; orgId: string } | null>(null)
   const [portalProfileMap, setPortalProfileMap] = useState<Map<string, { id: string; orgId: string }>>(new Map())
+  const [unlinkedPortalCandidates, setUnlinkedPortalCandidates] = useState<PortalLinkCandidate[]>([])
+  const [teamOrgId, setTeamOrgId] = useState<string | null>(null)
+
+  // Link Existing Account (ROLE-2.2A)
+  const [linkTarget, setLinkTarget] = useState<{
+    backupEmployeeId: string
+    displayName: string
+    email: string | null
+  } | null>(null)
+  const [linkCandidates, setLinkCandidates] = useState<PortalLinkCandidate[]>([])
+  const [selectedLinkProfileId, setSelectedLinkProfileId] = useState<string | null>(null)
+  const [linkConfirmed, setLinkConfirmed] = useState(false)
+  const [linking, setLinking] = useState(false)
+  const [linkError, setLinkError] = useState('')
+
+  async function refreshPortalProfileMap() {
+    if (!isAdmin) return
+    const res = await getAllOrgEmployeeProfiles()
+    if (!res.success) return
+    const map = new Map<string, { id: string; orgId: string }>()
+    let orgId: string | null = null
+    for (const p of (res.data ?? []) as AdminEmployeeProfile[]) {
+      orgId = orgId ?? p.org_id
+      if (p.backup_employee_id) {
+        map.set(p.backup_employee_id, { id: p.id, orgId: p.org_id })
+      } else {
+        map.set(`name:${p.display_name.trim().toLowerCase()}`, { id: p.id, orgId: p.org_id })
+      }
+    }
+    setPortalProfileMap(map)
+    if (orgId) {
+      setTeamOrgId(orgId)
+      const candRes = await listUnlinkedPortalCandidates(orgId)
+      setUnlinkedPortalCandidates(candRes.success && candRes.data ? candRes.data : [])
+    } else {
+      setUnlinkedPortalCandidates([])
+    }
+  }
 
   useEffect(() => {
-    if (!isAdmin) return
-    // getAllOrgEmployeeProfiles includes active, pending, and inactive profiles.
-    // getActiveEmployeeProfiles (active=true only) is kept for timecard operations.
-    getAllOrgEmployeeProfiles().then(res => {
-      if (!res.success) return
-      const map = new Map<string, { id: string; orgId: string }>()
-      for (const p of (res.data ?? []) as AdminEmployeeProfile[]) {
-        const key = p.display_name.trim().toLowerCase()
-        map.set(key, { id: p.id, orgId: p.org_id })
-      }
-      setPortalProfileMap(map)
-    })
+    void refreshPortalProfileMap()
   }, [isAdmin])
 
+  async function openTeamLinkExisting(emp: EnhancedEmployee) {
+    const orgId = teamOrgId
+    if (!orgId || !isAdmin) return
+    setLinkError('')
+    setLinkConfirmed(false)
+    setLinking(false)
+    setLinkTarget({
+      backupEmployeeId: emp.id,
+      displayName: emp.name ?? '',
+      email: (emp as any).email ?? null,
+    })
+    const res = await listUnlinkedPortalCandidates(orgId, (emp as any).email ?? null)
+    if (!res.success || !res.data) {
+      setLinkCandidates([])
+      setSelectedLinkProfileId(null)
+      setLinkError(res.error || 'Could not load portal candidates')
+      return
+    }
+    setLinkCandidates(res.data)
+    const suggested = res.data.find(c => c.emailMatch) ?? (res.data.length === 1 ? res.data[0] : null)
+    setSelectedLinkProfileId(suggested?.profileId ?? null)
+  }
+
+  async function handleTeamLinkExisting() {
+    if (!linkTarget || !teamOrgId || !selectedLinkProfileId || !linkConfirmed) return
+    setLinking(true)
+    setLinkError('')
+    const result = await linkExistingEmployeeAccount(
+      selectedLinkProfileId,
+      linkTarget.backupEmployeeId,
+      teamOrgId,
+    )
+    setLinking(false)
+    if (result.success) {
+      setLinkTarget(null)
+      setLinkCandidates([])
+      setSelectedLinkProfileId(null)
+      setLinkConfirmed(false)
+      void refreshPortalProfileMap()
+    } else {
+      setLinkError(result.error || 'Could not link accounts')
+    }
+  }
   // ── Employee Detail modal ─────────────────────────────────────────────────
   const [selectedEmployee, setSelectedEmployee] = useState<EnhancedEmployee | null>(null)
 
@@ -3187,26 +3264,44 @@ export default function V15rTeamPanel() {
                   />
                   <div className="mt-2 flex gap-2 justify-end flex-wrap">
                     {isAdmin && (() => {
-                      const profileKey = (emp.name ?? '').trim().toLowerCase()
-                      const profile = portalProfileMap.get(profileKey)
-                      if (!profile) {
-                        return (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setShowEmployeeInviteModal(true) }}
-                            className="text-xs px-2 py-1 bg-amber-600/30 text-amber-300 rounded hover:bg-amber-600/40 flex items-center gap-1"
-                            title="Prepare the employee account before assigning roles and permissions."
-                          >
-                            <UserPlus className="w-3 h-3" /> Invite to Portal
-                          </button>
-                        )
-                      }
+                      // Try stable backup_employee_id link first; fall back to display_name.
+                      const profile = portalProfileMap.get(emp.id)
+                        ?? portalProfileMap.get(`name:${(emp.name ?? '').trim().toLowerCase()}`)
+                      const hasStableLink = Boolean(portalProfileMap.get(emp.id))
+                      const showLinkExisting = !hasStableLink && unlinkedPortalCandidates.length > 0
                       return (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setRolesTarget({ epId: profile.id, displayName: emp.name ?? '', orgId: profile.orgId }) }}
-                          className="text-xs px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded hover:bg-indigo-600/40 flex items-center gap-1"
-                        >
-                          <Shield className="w-3 h-3" /> Roles & Permissions
-                        </button>
+                        <>
+                          {(() => {
+                            if (!profile) {
+                              return (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setShowEmployeeInviteModal(true) }}
+                                  className="text-xs px-2 py-1 bg-amber-600/30 text-amber-300 rounded hover:bg-amber-600/40 flex items-center gap-1"
+                                  title="Prepare the employee account before assigning roles and permissions."
+                                >
+                                  <UserPlus className="w-3 h-3" /> Invite to Portal
+                                </button>
+                              )
+                            }
+                            return (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setRolesTarget({ epId: profile.id, displayName: emp.name ?? '', orgId: profile.orgId }) }}
+                                className="text-xs px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded hover:bg-indigo-600/40 flex items-center gap-1"
+                              >
+                                <Shield className="w-3 h-3" /> Roles & Permissions
+                              </button>
+                            )
+                          })()}
+                          {showLinkExisting && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); void openTeamLinkExisting(emp) }}
+                              className="text-xs px-2 py-1 bg-sky-600/30 text-sky-300 rounded hover:bg-sky-600/40 flex items-center gap-1"
+                              title="Link this Cost Model employee to an existing unlinked portal profile."
+                            >
+                              <Link2 className="w-3 h-3" /> Link Existing Account
+                            </button>
+                          )}
+                        </>
                       )
                     })()}
                     <button
@@ -3474,6 +3569,129 @@ export default function V15rTeamPanel() {
           orgId={rolesTarget.orgId}
           onClose={() => setRolesTarget(null)}
         />
+      )}
+
+      {/* ── LINK EXISTING ACCOUNT (ROLE-2.2A) ─────────────────────────────── */}
+      {linkTarget && isAdmin && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !linking) {
+              setLinkTarget(null)
+              setLinkCandidates([])
+              setSelectedLinkProfileId(null)
+              setLinkConfirmed(false)
+              setLinkError('')
+            }
+          }}
+        >
+          <div className="relative w-full max-w-md bg-[var(--bg-card,#1e2433)] border border-gray-700 rounded-2xl shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-8 h-8 rounded-lg bg-sky-500/20 flex items-center justify-center">
+                <Link2 size={16} className="text-sky-400" />
+              </div>
+              <h3 className="text-base font-bold text-gray-100">Link Existing Account</h3>
+            </div>
+
+            <div className="mb-4 rounded-xl border border-gray-700 bg-[#11141c] p-3 space-y-1.5">
+              <p className="text-xs text-gray-500 uppercase tracking-wider">Cost Model employee</p>
+              <p className="text-sm text-gray-100 font-medium">{linkTarget.displayName}</p>
+              <p className="text-xs text-gray-400">{linkTarget.email || 'No email on Cost Model record'}</p>
+            </div>
+
+            {linkCandidates.length === 0 ? (
+              <p className="text-sm text-gray-400 mb-4">No unlinked portal profiles in this organization.</p>
+            ) : (
+              <div className="mb-4 space-y-2">
+                <p className="text-xs font-medium text-gray-400">Select portal profile to link</p>
+                {linkCandidates.map((c) => (
+                  <label
+                    key={c.profileId}
+                    className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 cursor-pointer transition ${
+                      selectedLinkProfileId === c.profileId
+                        ? 'border-sky-500 bg-sky-900/20'
+                        : 'border-gray-700 bg-[#11141c] hover:border-gray-500'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="team-link-candidate"
+                      className="mt-1"
+                      checked={selectedLinkProfileId === c.profileId}
+                      onChange={() => { setSelectedLinkProfileId(c.profileId); setLinkConfirmed(false) }}
+                      disabled={linking}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm text-gray-100 font-medium">{c.displayName}</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                          c.status === 'Active'
+                            ? 'text-green-400 border-green-700/50'
+                            : c.status === 'Inactive'
+                              ? 'text-gray-400 border-gray-600'
+                              : 'text-amber-400 border-amber-700/50'
+                        }`}>
+                          {c.status}
+                        </span>
+                        {c.emailMatch && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded border text-sky-300 border-sky-700/50">
+                            Suggested email match
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-0.5">{c.email || 'No email'}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            <div className="mb-4 rounded-xl border border-amber-700/40 bg-amber-950/30 px-3 py-2.5">
+              <p className="text-xs text-amber-200/90 leading-relaxed">
+                Records will be linked, not deleted. Portal status, hours, projects, assignments,
+                role values, and auth linkage are preserved. No invite is sent.
+              </p>
+            </div>
+
+            <label className="flex items-start gap-2 mb-4 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={linkConfirmed}
+                onChange={(e) => setLinkConfirmed(e.target.checked)}
+                disabled={linking || !selectedLinkProfileId}
+              />
+              <span className="text-xs text-gray-300">
+                I confirm I want to link these two existing records.
+              </span>
+            </label>
+
+            {linkError && <p className="text-xs text-red-400 mb-3">{linkError}</p>}
+
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => {
+                  setLinkTarget(null)
+                  setLinkCandidates([])
+                  setSelectedLinkProfileId(null)
+                  setLinkConfirmed(false)
+                  setLinkError('')
+                }}
+                disabled={linking}
+                className="px-4 py-2 rounded-lg bg-gray-700 text-gray-200 text-sm hover:bg-gray-600 transition disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { void handleTeamLinkExisting() }}
+                disabled={linking || !selectedLinkProfileId || !linkConfirmed || linkCandidates.length === 0}
+                className="px-4 py-2 rounded-lg bg-sky-700 text-white text-sm hover:bg-sky-600 transition disabled:opacity-60"
+              >
+                {linking ? 'Linking…' : 'Confirm Link'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

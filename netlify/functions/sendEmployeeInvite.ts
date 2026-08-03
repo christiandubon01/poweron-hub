@@ -38,6 +38,39 @@ const CORS_HEADERS = {
 
 // ── Supabase REST helpers ─────────────────────────────────────────────────────
 
+async function supabaseUpdate(url, serviceKey, table, id, patch) {
+  const res = await fetch(`${url}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
+    method:  'PATCH',
+    headers: {
+      apikey:         serviceKey,
+      Authorization:  `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+      Prefer:         'return=representation',
+    },
+    body: JSON.stringify(patch),
+  })
+  const data = await res.json()
+  if (!res.ok) {
+    throw new Error(data?.message || data?.error || `Supabase PATCH error ${res.status}`)
+  }
+  return Array.isArray(data) ? data[0] : data
+}
+
+async function supabaseSelectById(url, serviceKey, table, id, select) {
+  const res = await fetch(
+    `${url}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}&select=${select}&limit=1`,
+    {
+      headers: {
+        apikey:        serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+      },
+    },
+  )
+  if (!res.ok) return null
+  const data = await res.json()
+  return Array.isArray(data) && data.length > 0 ? data[0] : null
+}
+
 async function supabaseInsert(url, serviceKey, table, row) {
   const res = await fetch(`${url}/rest/v1/${table}`, {
     method:  'POST',
@@ -284,6 +317,7 @@ exports.handler = async (event) => {
   const employmentType = VALID_EMPLOYMENT_TYPES.has(body.employmentType)
     ? body.employmentType
     : 'full_time'
+  const profileId = typeof body.profileId === 'string' ? body.profileId.trim() : null
 
   if (!displayName) {
     return {
@@ -301,6 +335,91 @@ exports.handler = async (event) => {
     }
   }
 
+  // ── Invite to an existing prepared profile (UPDATE path) ───────────────────
+  if (profileId) {
+    try {
+      const existing = await supabaseSelectById(
+        supabaseUrl, serviceKey, 'employee_profiles', profileId,
+        'id,org_id,user_id,active,display_name',
+      )
+      if (!existing || existing.org_id !== profile.org_id) {
+        return {
+          statusCode: 403,
+          headers:    CORS_HEADERS,
+          body:       JSON.stringify({ success: false, error: 'Profile not found or not in your organization' }),
+        }
+      }
+      if (existing.user_id !== null) {
+        return {
+          statusCode: 409,
+          headers:    CORS_HEADERS,
+          body:       JSON.stringify({ success: false, error: 'Employee has already accepted an invite' }),
+        }
+      }
+      if (existing.active !== true) {
+        return {
+          statusCode: 409,
+          headers:    CORS_HEADERS,
+          body:       JSON.stringify({ success: false, error: 'Employee profile is inactive' }),
+        }
+      }
+
+      const inviteToken = crypto.randomUUID()
+      const baseUrl     = resolveBaseUrl(event)
+      const inviteLink  = `${baseUrl}/employee/invite/${inviteToken}`
+
+      await supabaseUpdate(supabaseUrl, serviceKey, 'employee_profiles', profileId, {
+        email:        emailRaw,
+        display_name: displayName,
+        invite_token: inviteToken,
+        invited_by:   authUser.id,
+        invited_at:   new Date().toISOString(),
+      })
+
+      let orgName = 'Your employer'
+      try {
+        const orgRes = await fetch(
+          `${supabaseUrl}/rest/v1/organizations?id=eq.${encodeURIComponent(profile.org_id)}&select=name&limit=1`,
+          { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+        )
+        if (orgRes.ok) {
+          const orgData = await orgRes.json()
+          if (Array.isArray(orgData) && orgData[0]?.name) orgName = orgData[0].name
+        }
+      } catch { /* non-fatal */ }
+
+      await sendEmail(resendKey, {
+        to:      emailRaw,
+        subject: `${orgName} — Employee time tracking invite`,
+        html:    buildEmployeeInviteHtml(inviteLink, displayName, orgName),
+        text: [
+          `${orgName} has invited you to Power On employee time tracking.`,
+          '',
+          'Use the link below to create your account or sign in and accept the invite:',
+          inviteLink,
+          '',
+          'Power On Solutions LLC · C-10 License #1151468 · Desert Hot Springs, CA',
+        ].join('\n'),
+      })
+
+      console.log(`[sendEmployeeInvite] Invite (update) sent to ${emailRaw}, profileId=${profileId}`)
+
+      return {
+        statusCode: 200,
+        headers:    CORS_HEADERS,
+        body:       JSON.stringify({ success: true, inviteId: profileId, email: emailRaw }),
+      }
+    } catch (err) {
+      console.error('[sendEmployeeInvite] Update-path error:', err)
+      return {
+        statusCode: 500,
+        headers:    CORS_HEADERS,
+        body:       JSON.stringify({ success: false, error: err.message || 'Internal server error' }),
+      }
+    }
+  }
+
+  // ── Standard new invite (INSERT path) ────────────────────────────────────────
   try {
     const inviteToken = crypto.randomUUID()
     const baseUrl     = resolveBaseUrl(event)

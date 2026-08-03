@@ -44,6 +44,7 @@ export interface AdminEmployeeProfile {
   active: boolean
   portal_access: Record<string, unknown> | null
   accepted_at: string | null
+  backup_employee_id: string | null
 }
 
 export interface AdminTimecardRow {
@@ -76,7 +77,7 @@ interface Result<T> {
 }
 
 const PROFILE_COLS =
-  'id, user_id, org_id, display_name, email, role, employee_role, employment_type, active, portal_access, accepted_at'
+  'id, user_id, org_id, display_name, email, role, employee_role, employment_type, active, portal_access, accepted_at, backup_employee_id'
 const ENTRY_COLS =
   'id, org_id, employee_user_id, employee_profile_id, work_date, clock_in_at, lunch_out_at, lunch_in_at, clock_out_at, total_minutes, lunch_minutes, paid_minutes, status, approval_status'
 const PUNCH_COLS =
@@ -133,6 +134,224 @@ export async function getAllOrgEmployeeProfiles(): Promise<Result<AdminEmployeeP
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Network error'
     console.error('[adminTimecardService.getAllOrgEmployeeProfiles] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── A3. prepareEmployeeAccount ────────────────────────────────────────────────────
+// Creates an employee_profiles row linked to a cost-model employee via backup_employee_id,
+// WITHOUT sending an invite. The owner can assign roles immediately and invite later.
+// RLS: ep_owner_admin_insert allows this from the browser (org_id validated by DB).
+
+export async function prepareEmployeeAccount(
+  backupEmployeeId: string,
+  displayName: string,
+  orgId: string,
+  email?: string,
+): Promise<Result<AdminEmployeeProfile>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+
+    // Prevent duplicate preparation for the same cost-model employee.
+    const { data: existing } = await from('employee_profiles')
+      .select('id, display_name')
+      .eq('org_id', orgId)
+      .eq('backup_employee_id', backupEmployeeId)
+      .maybeSingle()
+    if (existing) {
+      return {
+        success: false,
+        error: `A portal profile for ${existing.display_name} already exists.`,
+      }
+    }
+
+    const row: Record<string, unknown> = {
+      org_id:             orgId,
+      display_name:       displayName,
+      backup_employee_id: backupEmployeeId,
+      active:             true,
+      portal_access:      { time_tracking: true },
+      invited_by:         user.id,
+    }
+    if (email) row.email = email.trim().toLowerCase()
+
+    const { data, error } = await from('employee_profiles')
+      .insert(row)
+      .select(PROFILE_COLS)
+      .single()
+
+    if (error) return { success: false, error: error.message }
+    return { success: true, data: data as AdminEmployeeProfile }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.prepareEmployeeAccount] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+// ── A4. Link Existing Account (ROLE-2.2A) ──────────────────────────────────────
+// Links an existing unlinked employee_profiles row to a Cost Model employee by
+// setting backup_employee_id. Does NOT delete, merge, invite, or create auth.
+// RLS: ep_owner_admin_update — ordinary employees cannot perform this write.
+
+export type PortalLinkCandidateStatus = 'Invitation Pending' | 'Active' | 'Inactive'
+
+export interface PortalLinkCandidate {
+  profileId: string
+  displayName: string
+  email: string | null
+  status: PortalLinkCandidateStatus
+  /** True when this candidate's email exactly matches the Cost Model email (unique match preferred). */
+  emailMatch: boolean
+}
+
+export function derivePortalLinkStatus(profile: {
+  active: boolean
+  user_id: string | null
+}): PortalLinkCandidateStatus {
+  if (!profile.active) return 'Inactive'
+  if (profile.user_id) return 'Active'
+  return 'Invitation Pending'
+}
+
+/**
+ * Pure candidate filter for Link Existing Account.
+ * Same-org only; excludes already-linked profiles; never auto-links by name.
+ * When exactly one candidate has an exact email match, mark it as suggested.
+ */
+export function selectUnlinkedPortalCandidates(
+  profiles: Array<{
+    id: string
+    org_id: string
+    display_name: string
+    email: string | null
+    active: boolean
+    user_id: string | null
+    backup_employee_id: string | null
+  }>,
+  orgId: string,
+  costModelEmail?: string | null,
+): PortalLinkCandidate[] {
+  const emailNorm = costModelEmail?.trim().toLowerCase() || null
+  const unlinked = profiles
+    .filter(p => p.org_id === orgId && !p.backup_employee_id)
+    .map(p => {
+      const profileEmail = p.email?.trim().toLowerCase() || null
+      return {
+        profileId: p.id,
+        displayName: p.display_name,
+        email: p.email,
+        status: derivePortalLinkStatus(p),
+        emailMatch: Boolean(emailNorm && profileEmail && profileEmail === emailNorm),
+      }
+    })
+
+  // Prefer unique exact email matches as the suggested candidate (emailMatch stays true
+  // only when exactly one match exists — never auto-link by display name).
+  const emailMatches = unlinked.filter(c => c.emailMatch)
+  if (emailMatches.length !== 1) {
+    return unlinked.map(c => ({ ...c, emailMatch: false }))
+  }
+  return unlinked
+}
+
+export async function listUnlinkedPortalCandidates(
+  orgId: string,
+  costModelEmail?: string | null,
+): Promise<Result<PortalLinkCandidate[]>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+
+    const { data, error } = await from('employee_profiles')
+      .select(PROFILE_COLS)
+      .eq('org_id', orgId)
+      .order('display_name', { ascending: true })
+
+    if (error) return { success: false, error: error.message }
+
+    const profiles = (data ?? []) as AdminEmployeeProfile[]
+    return {
+      success: true,
+      data: selectUnlinkedPortalCandidates(profiles, orgId, costModelEmail),
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.listUnlinkedPortalCandidates] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
+/**
+ * Set employee_profiles.backup_employee_id for an existing unlinked profile.
+ * Requires explicit owner confirmation in the UI before calling.
+ * Does not delete either record.
+ */
+export async function linkExistingEmployeeAccount(
+  profileId: string,
+  backupEmployeeId: string,
+  orgId: string,
+): Promise<Result<AdminEmployeeProfile>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return { success: false, error: 'Not authenticated' }
+
+    if (!profileId || !backupEmployeeId || !orgId) {
+      return { success: false, error: 'Missing link parameters' }
+    }
+
+    // Refuse if this Cost Model employee is already linked in this org.
+    const { data: existingLink } = await from('employee_profiles')
+      .select('id, display_name')
+      .eq('org_id', orgId)
+      .eq('backup_employee_id', backupEmployeeId)
+      .maybeSingle()
+    if (existingLink) {
+      return {
+        success: false,
+        error: `Cost Model employee is already linked to ${existingLink.display_name}.`,
+      }
+    }
+
+    // Load target; must be same-org and currently unlinked.
+    const { data: target, error: targetErr } = await from('employee_profiles')
+      .select(PROFILE_COLS)
+      .eq('id', profileId)
+      .eq('org_id', orgId)
+      .maybeSingle()
+
+    if (targetErr) return { success: false, error: targetErr.message }
+    if (!target) return { success: false, error: 'Portal profile not found in this organization.' }
+    if (target.backup_employee_id) {
+      return {
+        success: false,
+        error: `Portal profile "${target.display_name}" is already linked to a Cost Model employee.`,
+      }
+    }
+
+    const { data, error } = await from('employee_profiles')
+      .update({ backup_employee_id: backupEmployeeId })
+      .eq('id', profileId)
+      .eq('org_id', orgId)
+      .is('backup_employee_id', null)
+      .select(PROFILE_COLS)
+      .single()
+
+    if (error) {
+      if (error.code === '23505') {
+        return {
+          success: false,
+          error: 'That Cost Model employee is already linked to another portal profile in this organization.',
+        }
+      }
+      return { success: false, error: error.message }
+    }
+    if (!data) return { success: false, error: 'Link failed — profile may have been linked by another session.' }
+    return { success: true, data: data as AdminEmployeeProfile }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.linkExistingEmployeeAccount] Error:', err)
     return { success: false, error: message }
   }
 }

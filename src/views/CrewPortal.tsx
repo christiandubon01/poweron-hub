@@ -15,6 +15,8 @@ import {
   ClipboardList,
   ChevronRight,
   BarChart2,
+  Send,
+  Link2,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import {
@@ -54,6 +56,13 @@ import OwnerPerformancePanel from '../components/admin/OwnerPerformancePanel'
 import EmployeeInviteModal from '../components/admin/EmployeeInviteModal'
 import EmployeeProfilePanel, { CostModelPill, PortalPill } from '../components/admin/EmployeeProfilePanel'
 import RolesPermissionsModal from '../features/employee-roles/RolesPermissionsModal'
+import {
+  prepareEmployeeAccount,
+  listUnlinkedPortalCandidates,
+  linkExistingEmployeeAccount,
+  type PortalLinkCandidate,
+} from '../services/adminTimecardService'
+import { resendEmployeeInvite } from '../services/employeeInviteService'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1127,11 +1136,35 @@ function ViewAsDropdown({
 function RoleManager({ isOwner }: { isOwner: boolean }) {
   const authUser = useAuthStore((s) => s.user)
   const [orgId, setOrgId] = useState<string | null>(null)
-  const [members, setMembers] = useState<OrgMember[]>([])
+  const [members, setMembers] = useState<UnifiedCrewMember[]>([])
   const [loading, setLoading] = useState(true)
   const [showInvite, setShowInvite] = useState(false)
   const [viewingAs, setViewingAs] = useState<AppRole | null>(null)
   const [rolesTarget, setRolesTarget] = useState<{ epId: string; displayName: string; orgId: string } | null>(null)
+
+  // Prepare Account state (for cost_model_only entries)
+  const [prepareTarget, setPrepareTarget] = useState<{ backupEmployeeId: string; displayName: string } | null>(null)
+  const [prepareEmail, setPrepareEmail] = useState('')
+  const [preparing, setPreparing] = useState(false)
+  const [prepareError, setPrepareError] = useState('')
+
+  // Link Existing Account state (ROLE-2.2A — owner only)
+  const [linkTarget, setLinkTarget] = useState<{
+    backupEmployeeId: string
+    displayName: string
+    email: string | null
+  } | null>(null)
+  const [linkCandidates, setLinkCandidates] = useState<PortalLinkCandidate[]>([])
+  const [selectedLinkProfileId, setSelectedLinkProfileId] = useState<string | null>(null)
+  const [linkConfirmed, setLinkConfirmed] = useState(false)
+  const [linking, setLinking] = useState(false)
+  const [linkError, setLinkError] = useState('')
+  const [unlinkedCandidateCount, setUnlinkedCandidateCount] = useState(0)
+
+  // Per-row invite state (for pending_invite entries with no invite token)
+  const [inviteTarget, setInviteTarget] = useState<{ profileId: string; displayName: string } | null>(null)
+  const [sendingInvite, setSendingInvite] = useState(false)
+  const [sendInviteError, setSendInviteError] = useState('')
 
   const loadMembers = useCallback(async () => {
     setLoading(true)
@@ -1139,25 +1172,75 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
     if (!orgResult.success) {
       setOrgId(null)
       setMembers([])
+      setUnlinkedCandidateCount(0)
       setLoading(false)
       return
     }
-    setOrgId(orgResult.data)
-    const result = await getOrgMembers(orgResult.data)
+    setOrgId(orgResult.data!)
+    const [result, candidatesRes] = await Promise.all([
+      getUnifiedCrewDirectory(),
+      listUnlinkedPortalCandidates(orgResult.data!),
+    ])
     if (result.success && result.data) {
       setMembers(result.data)
     } else {
       setMembers([])
     }
+    setUnlinkedCandidateCount(
+      candidatesRes.success && candidatesRes.data ? candidatesRes.data.length : 0,
+    )
     setLoading(false)
   }, [])
 
   useEffect(() => { void loadMembers() }, [loadMembers])
 
+  async function openLinkExisting(member: UnifiedCrewMember) {
+    if (!orgId || !isOwner || !member.backupEmployeeId) return
+    setLinkError('')
+    setLinkConfirmed(false)
+    setLinking(false)
+    setLinkTarget({
+      backupEmployeeId: member.backupEmployeeId,
+      displayName: member.name,
+      email: member.email,
+    })
+    const res = await listUnlinkedPortalCandidates(orgId, member.email)
+    if (!res.success || !res.data) {
+      setLinkCandidates([])
+      setSelectedLinkProfileId(null)
+      setLinkError(res.error || 'Could not load portal candidates')
+      return
+    }
+    setLinkCandidates(res.data)
+    const suggested = res.data.find(c => c.emailMatch) ?? (res.data.length === 1 ? res.data[0] : null)
+    setSelectedLinkProfileId(suggested?.profileId ?? null)
+  }
+
+  async function handleLinkExistingAccount() {
+    if (!linkTarget || !orgId || !selectedLinkProfileId || !linkConfirmed) return
+    setLinking(true)
+    setLinkError('')
+    const result = await linkExistingEmployeeAccount(
+      selectedLinkProfileId,
+      linkTarget.backupEmployeeId,
+      orgId,
+    )
+    setLinking(false)
+    if (result.success) {
+      setLinkTarget(null)
+      setLinkCandidates([])
+      setSelectedLinkProfileId(null)
+      setLinkConfirmed(false)
+      void loadMembers()
+    } else {
+      setLinkError(result.error || 'Could not link accounts')
+    }
+  }
+
   async function handleRoleChange(memberId: string, newRole: EmployeePortalRole) {
     if (!orgId || !isOwner) return
     setMembers((prev) =>
-      prev.map((m) => (m.id === memberId ? { ...m, role: newRole } : m)),
+      prev.map((m) => (m.profileId === memberId ? { ...m, portalRole: newRole } : m)),
     )
     await assignRole({
       profileId: memberId,
@@ -1170,7 +1253,7 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
   async function handleTradeRoleChange(memberId: string, newRole: EmployeeTradeRole | null) {
     if (!orgId || !isOwner) return
     setMembers((prev) =>
-      prev.map((m) => (m.id === memberId ? { ...m, employeeRole: newRole } : m)),
+      prev.map((m) => (m.profileId === memberId ? { ...m, employeeRole: newRole } : m)),
     )
     await assignTradeRole({
       profileId: memberId,
@@ -1178,6 +1261,39 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
       employeeRole: newRole,
       assignedBy: authUser?.id || '',
     })
+  }
+
+  async function handlePrepareAccount() {
+    if (!prepareTarget || !orgId) return
+    setPreparing(true)
+    setPrepareError('')
+    const result = await prepareEmployeeAccount(
+      prepareTarget.backupEmployeeId,
+      prepareTarget.displayName,
+      orgId,
+      prepareEmail.trim() || undefined,
+    )
+    setPreparing(false)
+    if (result.success) {
+      setPrepareTarget(null)
+      setPrepareEmail('')
+      void loadMembers()
+    } else {
+      setPrepareError(result.error || 'Could not prepare account')
+    }
+  }
+
+  async function handleSendInviteToProfile(profileId: string) {
+    setSendingInvite(true)
+    setSendInviteError('')
+    const result = await resendEmployeeInvite(profileId)
+    setSendingInvite(false)
+    if (result.success) {
+      setInviteTarget(null)
+      void loadMembers()
+    } else {
+      setSendInviteError(result.error || 'Could not send invite')
+    }
   }
 
   return (
@@ -1256,102 +1372,191 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                   </td>
                 </tr>
               ) : (
-                (members ?? []).map((member, idx) => (
-                  <tr
-                    key={member.id}
-                    style={{
-                      backgroundColor: idx % 2 === 0 ? '#0a0b0f' : '#0c0d12',
-                      borderBottom: '1px solid #1a1c23',
-                    }}
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
-                        <div
-                          className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-                          style={{ backgroundColor: '#1e3a5f', color: '#60a5fa' }}
-                        >
-                          {member.avatarInitials ?? member.name.slice(0, 2).toUpperCase()}
-                        </div>
-                        <div>
-                          <span className="text-gray-200 font-medium text-xs block">{member.name}</span>
-                          {member.isPendingInvite && (
-                            <span className="text-[10px] text-amber-500">Pending</span>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-
-                    <td className="px-4 py-3 text-gray-500 text-xs">{member.email || '—'}</td>
-
-                    <td className="px-4 py-3">
-                      <MemberRoleBadge employeeRole={member.employeeRole} fallbackRole={member.role} />
-                    </td>
-
-                    <td className="px-4 py-3">
-                      <MemberStatusBadge active={member.active} isPendingInvite={member.isPendingInvite} />
-                    </td>
-
-                    {isOwner && (
+                (members ?? []).map((member, idx) => {
+                  const isCostModelOnly = member.status === 'cost_model_only'
+                  const isSelf = member.userId && member.userId === authUser?.id
+                  const isPrepared = member.status === 'pending_invite' && member.profileId !== null
+                  return (
+                    <tr
+                      key={member.key}
+                      style={{
+                        backgroundColor: idx % 2 === 0 ? '#0a0b0f' : '#0c0d12',
+                        borderBottom: '1px solid #1a1c23',
+                      }}
+                    >
                       <td className="px-4 py-3">
-                        <PortalAccessChips access={member.portalAccess} />
-                      </td>
-                    )}
-
-                    {isOwner && (
-                      <td className="px-4 py-3">
-                        {member.user_id && member.user_id === authUser?.id ? (
-                          <span className="text-xs text-gray-700 italic">You</span>
-                        ) : (
-                          <AccessLevelDropdown
-                            memberId={member.id}
-                            currentRole={member.role}
-                            onChange={handleRoleChange}
-                          />
-                        )}
-                      </td>
-                    )}
-
-                    {isOwner && (
-                      <td className="px-4 py-3">
-                        {member.user_id && member.user_id === authUser?.id ? (
-                          <span className="text-xs text-gray-700 italic">—</span>
-                        ) : (
-                          <TradeRoleDropdown
-                            memberId={member.id}
-                            currentRole={member.employeeRole}
-                            onChange={handleTradeRoleChange}
-                          />
-                        )}
-                      </td>
-                    )}
-
-                    {isOwner && (
-                      <td className="px-4 py-3">
-                        {member.user_id && member.user_id === authUser?.id ? (
-                          <span className="text-xs text-gray-700 italic">—</span>
-                        ) : (
-                          <button
-                            onClick={() => orgId && setRolesTarget({ epId: member.id, displayName: member.name, orgId })}
-                            className="flex items-center gap-1 text-xs px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded hover:bg-indigo-600/40 transition-colors"
+                        <div className="flex items-center gap-2.5">
+                          <div
+                            className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                            style={isCostModelOnly
+                              ? { backgroundColor: '#1a2a1f', color: '#4ade80' }
+                              : { backgroundColor: '#1e3a5f', color: '#60a5fa' }
+                            }
                           >
-                            <Shield size={11} />
-                            Roles & Permissions
-                          </button>
+                            {member.name.slice(0, 2).toUpperCase()}
+                          </div>
+                          <div>
+                            <span className="text-gray-200 font-medium text-xs block">{member.name}</span>
+                            {member.status === 'pending_invite' && (
+                              <span className="text-[10px] text-amber-500">Pending invite</span>
+                            )}
+                            {isCostModelOnly && (
+                              <span className="text-[10px] text-green-600">Cost model only</span>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-3 text-gray-500 text-xs">{member.email || '—'}</td>
+
+                      <td className="px-4 py-3">
+                        <MemberRoleBadge
+                          employeeRole={member.employeeRole}
+                          fallbackRole={(member.portalRole as EmployeePortalRole) ?? member.backupRole ?? 'employee'}
+                        />
+                      </td>
+
+                      <td className="px-4 py-3">
+                        {isCostModelOnly ? (
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-green-700" />
+                            <span className="text-xs text-green-700">Cost Model Only</span>
+                          </span>
+                        ) : (
+                          <MemberStatusBadge
+                            active={member.status === 'active'}
+                            isPendingInvite={member.status === 'pending_invite'}
+                          />
                         )}
                       </td>
-                    )}
 
-                    <td className="px-4 py-3 text-gray-600 text-xs">
-                      {member.assigned_at
-                        ? new Date(member.assigned_at).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric',
-                          })
-                        : '—'}
-                    </td>
-                  </tr>
-                ))
+                      {isOwner && (
+                        <td className="px-4 py-3">
+                          {isCostModelOnly
+                            ? <span className="text-xs text-gray-700 italic">—</span>
+                            : <PortalAccessChips access={member.portalAccess} />
+                          }
+                        </td>
+                      )}
+
+                      {isOwner && (
+                        <td className="px-4 py-3">
+                          {isSelf ? (
+                            <span className="text-xs text-gray-700 italic">You</span>
+                          ) : isCostModelOnly ? (
+                            <span className="text-xs text-gray-700 italic">—</span>
+                          ) : (
+                            <AccessLevelDropdown
+                              memberId={member.profileId!}
+                              currentRole={(member.portalRole as EmployeePortalRole) ?? 'employee'}
+                              onChange={handleRoleChange}
+                            />
+                          )}
+                        </td>
+                      )}
+
+                      {isOwner && (
+                        <td className="px-4 py-3">
+                          {isSelf ? (
+                            <span className="text-xs text-gray-700 italic">—</span>
+                          ) : isCostModelOnly ? (
+                            <span className="text-xs text-gray-700 italic">—</span>
+                          ) : (
+                            <TradeRoleDropdown
+                              memberId={member.profileId!}
+                              currentRole={member.employeeRole}
+                              onChange={handleTradeRoleChange}
+                            />
+                          )}
+                        </td>
+                      )}
+
+                      {isOwner && (
+                        <td className="px-4 py-3">
+                          {isSelf ? (
+                            <span className="text-xs text-gray-700 italic">—</span>
+                          ) : isCostModelOnly ? (
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <button
+                                onClick={() => {
+                                  setPrepareTarget({ backupEmployeeId: member.backupEmployeeId!, displayName: member.name })
+                                  setPrepareEmail(member.email ?? '')
+                                  setPrepareError('')
+                                }}
+                                className="flex items-center gap-1 text-xs px-2 py-1 bg-green-900/30 text-green-400 rounded hover:bg-green-900/50 transition-colors"
+                              >
+                                <UserPlus size={11} />
+                                Prepare Account
+                              </button>
+                              {unlinkedCandidateCount > 0 && (
+                                <button
+                                  onClick={() => { void openLinkExisting(member) }}
+                                  className="flex items-center gap-1 text-xs px-2 py-1 bg-sky-900/30 text-sky-400 rounded hover:bg-sky-900/50 transition-colors"
+                                >
+                                  <Link2 size={11} />
+                                  Link Existing Account
+                                </button>
+                              )}
+                            </div>
+                          ) : isPrepared && member.email ? (
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <button
+                                onClick={() => handleSendInviteToProfile(member.profileId!)}
+                                disabled={sendingInvite}
+                                className="flex items-center gap-1 text-xs px-2 py-1 bg-teal-900/30 text-teal-400 rounded hover:bg-teal-900/50 transition-colors disabled:opacity-50"
+                              >
+                                <Send size={11} />
+                                Send Invite
+                              </button>
+                              <button
+                                onClick={() => orgId && setRolesTarget({ epId: member.profileId!, displayName: member.name, orgId })}
+                                className="flex items-center gap-1 text-xs px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded hover:bg-indigo-600/40 transition-colors"
+                              >
+                                <Shield size={11} />
+                                Roles
+                              </button>
+                            </div>
+                          ) : isPrepared ? (
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <button
+                                onClick={() => setInviteTarget({ profileId: member.profileId!, displayName: member.name })}
+                                className="flex items-center gap-1 text-xs px-2 py-1 bg-amber-900/30 text-amber-400 rounded hover:bg-amber-900/50 transition-colors"
+                              >
+                                <Send size={11} />
+                                Set Email & Invite
+                              </button>
+                              <button
+                                onClick={() => orgId && setRolesTarget({ epId: member.profileId!, displayName: member.name, orgId })}
+                                className="flex items-center gap-1 text-xs px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded hover:bg-indigo-600/40 transition-colors"
+                              >
+                                <Shield size={11} />
+                                Roles
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => orgId && setRolesTarget({ epId: member.profileId!, displayName: member.name, orgId })}
+                              className="flex items-center gap-1 text-xs px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded hover:bg-indigo-600/40 transition-colors"
+                            >
+                              <Shield size={11} />
+                              Roles & Permissions
+                            </button>
+                          )}
+                        </td>
+                      )}
+
+                      <td className="px-4 py-3 text-gray-600 text-xs">
+                        {member.acceptedAt
+                          ? new Date(member.acceptedAt).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                            })
+                          : '—'}
+                      </td>
+                    </tr>
+                  )
+                })
               )}
             </tbody>
           </table>
@@ -1372,6 +1577,198 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
         />
       )}
 
+      {/* ── SET EMAIL & INVITE (for prepared accounts with no email stored) ── */}
+      {inviteTarget && isOwner && (
+        <EmployeeInviteModal
+          profileId={inviteTarget.profileId}
+          initialName={inviteTarget.displayName}
+          onClose={() => {
+            setInviteTarget(null)
+            void loadMembers()
+          }}
+        />
+      )}
+
+      {/* ── PREPARE ACCOUNT CONFIRM DIALOG ─────────────────────────────────── */}
+      {prepareTarget && isOwner && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+          onClick={(e) => { if (e.target === e.currentTarget && !preparing) { setPrepareTarget(null); setPrepareEmail('') } }}
+        >
+          <div className="relative w-full max-w-sm bg-[var(--bg-card,#1e2433)] border border-gray-700 rounded-2xl shadow-2xl p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center">
+                <UserPlus size={16} className="text-green-400" />
+              </div>
+              <h3 className="text-base font-bold text-gray-100">Prepare Account</h3>
+            </div>
+            <p className="text-sm text-gray-400 mb-4">
+              Creates a portal profile for <strong className="text-gray-200">{prepareTarget.displayName}</strong> without sending an invite.
+              You can assign roles immediately and invite later.
+            </p>
+            <div className="mb-4">
+              <label className="block text-xs font-medium text-gray-400 mb-1">
+                Email <span className="text-gray-600">(optional — required to send invite later)</span>
+              </label>
+              <input
+                type="email"
+                value={prepareEmail}
+                onChange={(e) => setPrepareEmail(e.target.value)}
+                disabled={preparing}
+                placeholder="employee@example.com"
+                className="w-full bg-[#11141c] border border-gray-600 rounded-xl px-4 py-2.5 text-gray-100 placeholder-gray-600 focus:outline-none focus:border-green-500 transition text-sm disabled:opacity-60"
+              />
+            </div>
+            {prepareError && (
+              <p className="text-xs text-red-400 mb-3">{prepareError}</p>
+            )}
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => { setPrepareTarget(null); setPrepareEmail(''); setPrepareError('') }}
+                disabled={preparing}
+                className="px-4 py-2 rounded-lg bg-gray-700 text-gray-200 text-sm hover:bg-gray-600 transition disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePrepareAccount}
+                disabled={preparing}
+                className="px-4 py-2 rounded-lg bg-green-700 text-white text-sm hover:bg-green-600 transition disabled:opacity-60 flex items-center gap-1.5"
+              >
+                {preparing ? 'Preparing…' : 'Prepare Account'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── LINK EXISTING ACCOUNT CONFIRM DIALOG (ROLE-2.2A) ──────────────── */}
+      {linkTarget && isOwner && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !linking) {
+              setLinkTarget(null)
+              setLinkCandidates([])
+              setSelectedLinkProfileId(null)
+              setLinkConfirmed(false)
+              setLinkError('')
+            }
+          }}
+        >
+          <div className="relative w-full max-w-md bg-[var(--bg-card,#1e2433)] border border-gray-700 rounded-2xl shadow-2xl p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-8 h-8 rounded-lg bg-sky-500/20 flex items-center justify-center">
+                <Link2 size={16} className="text-sky-400" />
+              </div>
+              <h3 className="text-base font-bold text-gray-100">Link Existing Account</h3>
+            </div>
+
+            <div className="mb-4 rounded-xl border border-gray-700 bg-[#11141c] p-3 space-y-1.5">
+              <p className="text-xs text-gray-500 uppercase tracking-wider">Cost Model employee</p>
+              <p className="text-sm text-gray-100 font-medium">{linkTarget.displayName}</p>
+              <p className="text-xs text-gray-400">{linkTarget.email || 'No email on Cost Model record'}</p>
+            </div>
+
+            {linkCandidates.length === 0 ? (
+              <p className="text-sm text-gray-400 mb-4">
+                No unlinked portal profiles in this organization.
+              </p>
+            ) : (
+              <div className="mb-4 space-y-2">
+                <p className="text-xs font-medium text-gray-400">Select portal profile to link</p>
+                {linkCandidates.map((c) => (
+                  <label
+                    key={c.profileId}
+                    className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 cursor-pointer transition ${
+                      selectedLinkProfileId === c.profileId
+                        ? 'border-sky-500 bg-sky-900/20'
+                        : 'border-gray-700 bg-[#11141c] hover:border-gray-500'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="link-candidate"
+                      className="mt-1"
+                      checked={selectedLinkProfileId === c.profileId}
+                      onChange={() => { setSelectedLinkProfileId(c.profileId); setLinkConfirmed(false) }}
+                      disabled={linking}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm text-gray-100 font-medium">{c.displayName}</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                          c.status === 'Active'
+                            ? 'text-green-400 border-green-700/50'
+                            : c.status === 'Inactive'
+                              ? 'text-gray-400 border-gray-600'
+                              : 'text-amber-400 border-amber-700/50'
+                        }`}>
+                          {c.status}
+                        </span>
+                        {c.emailMatch && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded border text-sky-300 border-sky-700/50">
+                            Suggested email match
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-0.5">{c.email || 'No email'}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            <div className="mb-4 rounded-xl border border-amber-700/40 bg-amber-950/30 px-3 py-2.5">
+              <p className="text-xs text-amber-200/90 leading-relaxed">
+                Records will be linked, not deleted. Portal status, hours, projects, assignments,
+                role values, and auth linkage are preserved. No invite is sent.
+              </p>
+            </div>
+
+            <label className="flex items-start gap-2 mb-4 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={linkConfirmed}
+                onChange={(e) => setLinkConfirmed(e.target.checked)}
+                disabled={linking || !selectedLinkProfileId}
+              />
+              <span className="text-xs text-gray-300">
+                I confirm I want to link these two existing records.
+              </span>
+            </label>
+
+            {linkError && (
+              <p className="text-xs text-red-400 mb-3">{linkError}</p>
+            )}
+
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => {
+                  setLinkTarget(null)
+                  setLinkCandidates([])
+                  setSelectedLinkProfileId(null)
+                  setLinkConfirmed(false)
+                  setLinkError('')
+                }}
+                disabled={linking}
+                className="px-4 py-2 rounded-lg bg-gray-700 text-gray-200 text-sm hover:bg-gray-600 transition disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { void handleLinkExistingAccount() }}
+                disabled={linking || !selectedLinkProfileId || !linkConfirmed || linkCandidates.length === 0}
+                className="px-4 py-2 rounded-lg bg-sky-700 text-white text-sm hover:bg-sky-600 transition disabled:opacity-60 flex items-center gap-1.5"
+              >
+                {linking ? 'Linking…' : 'Confirm Link'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── ROLES & PERMISSIONS MODAL (ROLE-2.1 Crew Portal entry point) ─── */}
       {rolesTarget && (
         <RolesPermissionsModal
@@ -1380,6 +1777,10 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
           orgId={rolesTarget.orgId}
           onClose={() => setRolesTarget(null)}
         />
+      )}
+
+      {sendInviteError && (
+        <p className="text-xs text-red-400 mt-2">{sendInviteError}</p>
       )}
     </div>
   )

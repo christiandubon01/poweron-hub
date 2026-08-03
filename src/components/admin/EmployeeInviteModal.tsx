@@ -25,6 +25,12 @@ interface EmployeeInviteModalProps {
   onClose: () => void
   /** Pre-fill the display name field (e.g. from a Cost Model entry) */
   initialName?: string
+  /**
+   * If set, UPDATE this existing employee_profiles row instead of inserting a new one.
+   * Used when inviting a "prepared" employee who already has a profile but no invite token.
+   * The name field is locked to the profile's display name when this is provided.
+   */
+  profileId?: string
 }
 
 type ModalState = 'idle' | 'loading' | 'success' | 'error'
@@ -44,7 +50,7 @@ const EMPLOYMENT_OPTIONS: { value: EmployeeEmploymentType; label: string }[] = [
   { value: 'helper', label: 'Helper' },
 ]
 
-export default function EmployeeInviteModal({ onClose, initialName }: EmployeeInviteModalProps) {
+export default function EmployeeInviteModal({ onClose, initialName, profileId }: EmployeeInviteModalProps) {
   const [displayName, setDisplayName]       = useState(initialName ?? '')
   const [email, setEmail]                   = useState('')
   const [role, setRole]                     = useState<EmployeeInviteRole>('employee')
@@ -106,10 +112,11 @@ export default function EmployeeInviteModal({ onClose, initialName }: EmployeeIn
     setErrorMsg('')
 
     const result = await sendEmployeeInvite({
-      displayName: displayName.trim(),
-      email:       cleanEmail,
+      displayName:    displayName.trim(),
+      email:          cleanEmail,
       role,
       employmentType,
+      ...(profileId ? { profileId } : {}),
     })
 
     if (result.success) {
@@ -203,15 +210,19 @@ export default function EmployeeInviteModal({ onClose, initialName }: EmployeeIn
               <div>
                 <label className="block text-sm font-medium text-gray-400 mb-1">
                   Display name <span className="text-red-400">*</span>
+                  {profileId && (
+                    <span className="ml-2 text-xs text-teal-500 font-normal">Sending to existing profile</span>
+                  )}
                 </label>
                 <input
                   type="text"
                   value={displayName}
-                  onChange={e => setDisplayName(e.target.value)}
-                  disabled={isLoading}
+                  onChange={e => { if (!profileId) setDisplayName(e.target.value) }}
+                  disabled={isLoading || !!profileId}
+                  readOnly={!!profileId}
                   placeholder="Alex Rivera"
                   className={inputCls}
-                  style={{ minHeight: '44px', fontSize: '16px' }}
+                  style={{ minHeight: '44px', fontSize: '16px', opacity: profileId ? 0.7 : undefined }}
                 />
               </div>
 
