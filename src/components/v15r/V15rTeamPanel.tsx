@@ -52,7 +52,7 @@ import { callClaude, extractText } from '@/services/claudeProxy'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 import { useAuth } from '@/hooks/useAuth'
-import { getActiveEmployeeProfiles, type AdminEmployeeProfile } from '@/services/adminTimecardService'
+import { getActiveEmployeeProfiles, getAllOrgEmployeeProfiles, type AdminEmployeeProfile } from '@/services/adminTimecardService'
 import RolesPermissionsModal from '@/features/employee-roles/RolesPermissionsModal'
 
 interface EnhancedEmployee extends BackupEmployee {
@@ -1336,7 +1336,9 @@ export default function V15rTeamPanel() {
 
   useEffect(() => {
     if (!isAdmin) return
-    getActiveEmployeeProfiles().then(res => {
+    // getAllOrgEmployeeProfiles includes active, pending, and inactive profiles.
+    // getActiveEmployeeProfiles (active=true only) is kept for timecard operations.
+    getAllOrgEmployeeProfiles().then(res => {
       if (!res.success) return
       const map = new Map<string, { id: string; orgId: string }>()
       for (const p of (res.data ?? []) as AdminEmployeeProfile[]) {
@@ -3187,13 +3189,23 @@ export default function V15rTeamPanel() {
                     {isAdmin && (() => {
                       const profileKey = (emp.name ?? '').trim().toLowerCase()
                       const profile = portalProfileMap.get(profileKey)
-                      if (!profile) return null
+                      if (!profile) {
+                        return (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setShowEmployeeInviteModal(true) }}
+                            className="text-xs px-2 py-1 bg-amber-600/30 text-amber-300 rounded hover:bg-amber-600/40 flex items-center gap-1"
+                            title="Prepare the employee account before assigning roles and permissions."
+                          >
+                            <UserPlus className="w-3 h-3" /> Invite to Portal
+                          </button>
+                        )
+                      }
                       return (
                         <button
                           onClick={(e) => { e.stopPropagation(); setRolesTarget({ epId: profile.id, displayName: emp.name ?? '', orgId: profile.orgId }) }}
                           className="text-xs px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded hover:bg-indigo-600/40 flex items-center gap-1"
                         >
-                          <Shield className="w-3 h-3" /> Roles
+                          <Shield className="w-3 h-3" /> Roles & Permissions
                         </button>
                       )
                     })()}

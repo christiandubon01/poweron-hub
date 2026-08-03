@@ -53,6 +53,7 @@ import OwnerSchedulePanel from '../components/admin/OwnerSchedulePanel'
 import OwnerPerformancePanel from '../components/admin/OwnerPerformancePanel'
 import EmployeeInviteModal from '../components/admin/EmployeeInviteModal'
 import EmployeeProfilePanel, { CostModelPill, PortalPill } from '../components/admin/EmployeeProfilePanel'
+import RolesPermissionsModal from '../features/employee-roles/RolesPermissionsModal'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -205,6 +206,31 @@ function ActiveStatusDot({ active }: { active: boolean }) {
       <span className={`text-xs ${active ? 'text-green-400' : 'text-gray-500'}`}>
         {active ? 'Active' : 'Inactive'}
       </span>
+    </span>
+  )
+}
+
+function MemberStatusBadge({ active, isPendingInvite }: { active: boolean; isPendingInvite?: boolean }) {
+  if (!active) {
+    return (
+      <span className="flex items-center gap-1.5">
+        <span className="w-2 h-2 rounded-full bg-gray-600" />
+        <span className="text-xs text-gray-500">Inactive</span>
+      </span>
+    )
+  }
+  if (isPendingInvite) {
+    return (
+      <span className="flex items-center gap-1.5">
+        <span className="w-2 h-2 rounded-full bg-amber-500" />
+        <span className="text-xs text-amber-400">Invitation Pending</span>
+      </span>
+    )
+  }
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+      <span className="text-xs text-green-400">Active</span>
     </span>
   )
 }
@@ -1105,6 +1131,7 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
   const [loading, setLoading] = useState(true)
   const [showInvite, setShowInvite] = useState(false)
   const [viewingAs, setViewingAs] = useState<AppRole | null>(null)
+  const [rolesTarget, setRolesTarget] = useState<{ epId: string; displayName: string; orgId: string } | null>(null)
 
   const loadMembers = useCallback(async () => {
     setLoading(true)
@@ -1215,13 +1242,16 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                 {isOwner && (
                   <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Trade Role</th>
                 )}
+                {isOwner && (
+                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Permissions</th>
+                )}
                 <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Joined</th>
               </tr>
             </thead>
             <tbody>
               {(members ?? []).length === 0 ? (
                 <tr>
-                  <td colSpan={isOwner ? 8 : 5} className="px-4 py-4 text-xs text-gray-600">
+                  <td colSpan={isOwner ? 9 : 5} className="px-4 py-4 text-xs text-gray-600">
                     No employees yet. Invite to add to the roster.
                   </td>
                 </tr>
@@ -1258,7 +1288,7 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                     </td>
 
                     <td className="px-4 py-3">
-                      <ActiveStatusDot active={member.active} />
+                      <MemberStatusBadge active={member.active} isPendingInvite={member.isPendingInvite} />
                     </td>
 
                     {isOwner && (
@@ -1295,6 +1325,22 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                       </td>
                     )}
 
+                    {isOwner && (
+                      <td className="px-4 py-3">
+                        {member.user_id && member.user_id === authUser?.id ? (
+                          <span className="text-xs text-gray-700 italic">—</span>
+                        ) : (
+                          <button
+                            onClick={() => orgId && setRolesTarget({ epId: member.id, displayName: member.name, orgId })}
+                            className="flex items-center gap-1 text-xs px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded hover:bg-indigo-600/40 transition-colors"
+                          >
+                            <Shield size={11} />
+                            Roles & Permissions
+                          </button>
+                        )}
+                      </td>
+                    )}
+
                     <td className="px-4 py-3 text-gray-600 text-xs">
                       {member.assigned_at
                         ? new Date(member.assigned_at).toLocaleDateString('en-US', {
@@ -1323,6 +1369,16 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
             setShowInvite(false)
             void loadMembers()
           }}
+        />
+      )}
+
+      {/* ── ROLES & PERMISSIONS MODAL (ROLE-2.1 Crew Portal entry point) ─── */}
+      {rolesTarget && (
+        <RolesPermissionsModal
+          epId={rolesTarget.epId}
+          displayName={rolesTarget.displayName}
+          orgId={rolesTarget.orgId}
+          onClose={() => setRolesTarget(null)}
         />
       )}
     </div>

@@ -109,6 +109,34 @@ export async function getActiveEmployeeProfiles(): Promise<Result<AdminEmployeeP
   }
 }
 
+// ── A2. getAllOrgEmployeeProfiles ─────────────────────────────────────────────────
+// Returns ALL profiles for the org — active, pending, and inactive.
+// Used exclusively for role/permission configuration (ROLE-2+).
+// Timecard operations must continue using getActiveEmployeeProfiles() above.
+
+export async function getAllOrgEmployeeProfiles(): Promise<Result<AdminEmployeeProfile[]>> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) {
+      return { success: false, error: 'Not authenticated' }
+    }
+
+    const { data, error } = await from('employee_profiles')
+      .select(PROFILE_COLS)
+      .order('display_name', { ascending: true })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, data: (data ?? []) as AdminEmployeeProfile[] }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[adminTimecardService.getAllOrgEmployeeProfiles] Error:', err)
+    return { success: false, error: message }
+  }
+}
+
 // ── B. getAdminTimecardsForDate ─────────────────────────────────────────────────
 
 export async function getAdminTimecardsForDate(
