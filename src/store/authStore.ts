@@ -42,6 +42,14 @@ interface ResolvedPortalRole {
   ownerId: string | null
   employeeProfileId: string | null
   employerOrgId: string | null
+  /**
+   * EMP-AUTH-1A. 'resolved' = the crew/employee lookups completed and this role
+   * is trustworthy (including a genuine owner with no crew/employee row).
+   * 'unresolved' = a lookup timed out or errored, so identity is UNKNOWN. Callers
+   * must NOT treat 'unresolved' as owner — no PIN/AppShell/NDA — and should enter
+   * a safe resolving/retry state instead.
+   */
+  status?: 'resolved' | 'unresolved'
 }
 
 function hasTimeTrackingAccess(portalAccess: unknown): boolean {
@@ -65,69 +73,118 @@ function persistResolvedRole(resolved: ResolvedPortalRole): void {
   }
 }
 
+// EMP-AUTH-1A: single-lookup result. `matched` = a crew/employee identity was
+// found. `failed` = the lookup errored or timed out (identity UNKNOWN — must NOT
+// be read as "no such identity"). Neither set = a clean miss (definitively not
+// this role).
+interface LookupOutcome { matched?: ResolvedPortalRole; failed: boolean }
+
+const RESOLVE_QUERY_TIMEOUT_MS = 3000
+// Two attempts: immediate, then one short backoff. Kept tight so the safe
+// resolving state recovers quickly; genuine matches/misses return on attempt 1.
+const RESOLVE_RETRY_DELAYS_MS = [0, 600]
+
+const QUERY_TIMEOUT = Symbol('resolve_query_timeout')
+
+async function resolveCrewOnce(userId: string): Promise<LookupOutcome> {
+  try {
+    const res: any = await withTimeout(
+      supabase
+        .from('crew_members')
+        .select('owner_id')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .maybeSingle() as any,
+      RESOLVE_QUERY_TIMEOUT_MS,
+      QUERY_TIMEOUT as any,
+    )
+    if (res === QUERY_TIMEOUT) return { failed: true }
+    if (res?.error) return { failed: true }
+    if (res?.data) {
+      return {
+        failed: false,
+        matched: { role: 'crew', ownerId: res.data.owner_id ?? null, employeeProfileId: null, employerOrgId: null },
+      }
+    }
+    return { failed: false } // clean miss
+  } catch (e) {
+    console.warn('[Auth] resolveUserRole: crew check failed:', e)
+    return { failed: true }
+  }
+}
+
+async function resolveEmployeeOnce(userId: string): Promise<LookupOutcome> {
+  try {
+    const res: any = await withTimeout(
+      supabase
+        .from('employee_profiles')
+        .select('id, org_id, role, portal_access')
+        .eq('user_id', userId)
+        .eq('active', true) as any,
+      RESOLVE_QUERY_TIMEOUT_MS,
+      QUERY_TIMEOUT as any,
+    )
+    if (res === QUERY_TIMEOUT) return { failed: true }
+    if (res?.error) return { failed: true }
+    const rows = res?.data ?? []
+    const match = rows.find((row: any) => hasTimeTrackingAccess(row.portal_access))
+    if (match) {
+      return {
+        failed: false,
+        matched: { role: 'employee', ownerId: null, employeeProfileId: match.id, employerOrgId: match.org_id },
+      }
+    }
+    return { failed: false } // clean miss (no active time-tracking profile)
+  } catch (e) {
+    console.warn('[Auth] resolveUserRole: employee check failed:', e)
+    return { failed: true }
+  }
+}
+
+/** One full resolution pass. Crew precedence preserved; runs both lookups in
+ *  parallel so a single dead query cannot serialize the whole wait. */
+async function resolveUserRoleOnce(
+  userId: string,
+): Promise<{ resolved: ResolvedPortalRole | null; failed: boolean }> {
+  const [crew, emp] = await Promise.all([resolveCrewOnce(userId), resolveEmployeeOnce(userId)])
+  if (crew.matched) return { resolved: { ...crew.matched, status: 'resolved' }, failed: false }
+  if (emp.matched) return { resolved: { ...emp.matched, status: 'resolved' }, failed: false }
+  // No match. If EITHER lookup failed we cannot conclude "owner" — identity is unknown.
+  if (crew.failed || emp.failed) return { resolved: null, failed: true }
+  // Both lookups completed cleanly with no crew/employee row → genuine owner.
+  return {
+    resolved: { role: 'owner', ownerId: userId, employeeProfileId: null, employerOrgId: null, status: 'resolved' },
+    failed: false,
+  }
+}
+
 /**
  * Determine portal role:
  *   1. crew_members active match → crew
  *   2. employee_profiles active + time_tracking → employee
- *   3. fallback → owner
+ *   3. both lookups clean-miss → genuine owner
+ *   4. a lookup timed out / errored (after retries) → status 'unresolved'
  *
- * Employee employer org is employee_profiles.org_id (not profiles.org_id).
+ * EMP-AUTH-1A: a timeout/error is NEVER silently converted to owner. Callers must
+ * check `status` and, when 'unresolved', enter a safe resolving/retry state
+ * rather than owner PIN / AppShell / NDA. Employer org is employee_profiles.org_id.
  */
 async function resolveUserRole(userId: string): Promise<ResolvedPortalRole> {
-  try {
-    const { data, error } = await supabase
-      .from('crew_members')
-      .select('owner_id')
-      .eq('user_id', userId)
-      .eq('is_active', true)
-      .maybeSingle()
-
-    if (!error && data) {
-      const resolved: ResolvedPortalRole = {
-        role: 'crew',
-        ownerId: data.owner_id ?? null,
-        employeeProfileId: null,
-        employerOrgId: null,
-      }
+  for (let attempt = 0; attempt < RESOLVE_RETRY_DELAYS_MS.length; attempt++) {
+    if (RESOLVE_RETRY_DELAYS_MS[attempt] > 0) {
+      await new Promise(r => setTimeout(r, RESOLVE_RETRY_DELAYS_MS[attempt]))
+    }
+    const { resolved, failed } = await resolveUserRoleOnce(userId)
+    if (resolved) {
       persistResolvedRole(resolved)
+      _identityRetryCount = 0 // network recovered — clear the safe-retry budget
       return resolved
     }
-  } catch (e) {
-    console.warn('[Auth] resolveUserRole: crew check failed (non-blocking):', e)
+    if (!failed) break // unreachable, but never loop on a non-failure
   }
-
-  try {
-    const { data: employeeRows, error: employeeError } = await supabase
-      .from('employee_profiles')
-      .select('id, org_id, role, portal_access')
-      .eq('user_id', userId)
-      .eq('active', true)
-
-    if (!employeeError && employeeRows?.length) {
-      const match = employeeRows.find((row) => hasTimeTrackingAccess(row.portal_access))
-      if (match) {
-        const resolved: ResolvedPortalRole = {
-          role: 'employee',
-          ownerId: null,
-          employeeProfileId: match.id,
-          employerOrgId: match.org_id,
-        }
-        persistResolvedRole(resolved)
-        return resolved
-      }
-    }
-  } catch (e) {
-    console.warn('[Auth] resolveUserRole: employee check failed (non-blocking):', e)
-  }
-
-  const resolved: ResolvedPortalRole = {
-    role: 'owner',
-    ownerId: userId,
-    employeeProfileId: null,
-    employerOrgId: null,
-  }
-  persistResolvedRole(resolved)
-  return resolved
+  // Unresolved after retries. Do NOT persist and do NOT claim owner — the caller
+  // must keep the user in a safe resolving/retry state.
+  return { role: 'owner', ownerId: userId, employeeProfileId: null, employerOrgId: null, status: 'unresolved' }
 }
 
 /** Fast load from localStorage — used when app session already valid. */
@@ -263,6 +320,31 @@ interface AuthState {
 // fully initialized before the listener is attached.
 let _authListenerRegistered = false
 
+// EMP-AUTH-1 reentrancy guard. initialize() can be called concurrently (SIGNED_IN
+// listener + explicit invite/login calls). Each run captures a sequence number;
+// only the newest run may commit state. This prevents a stale run that resolved
+// the interim owner fallback (before the employee link existed) from overwriting
+// a newer run that resolved role === 'employee'. Root cause of Josh's NDA gate.
+let _initSeq = 0
+
+// EMP-AUTH-1A safe-retry budget. When identity resolution is 'unresolved' (a
+// lookup timed out/errored), initialize() keeps the user in a resolving state and
+// schedules a bounded re-initialize instead of ever falling back to owner. The
+// budget resets to 0 the moment resolveUserRole succeeds (network recovered).
+let _identityRetryCount = 0
+let _identityRetryTimer: ReturnType<typeof setTimeout> | null = null
+const MAX_IDENTITY_RETRIES = 5
+
+function scheduleIdentityReinit(): void {
+  if (_identityRetryTimer) return // a retry is already pending
+  if (_identityRetryCount >= MAX_IDENTITY_RETRIES) return // stay safe in resolving state
+  _identityRetryCount++
+  _identityRetryTimer = setTimeout(() => {
+    _identityRetryTimer = null
+    void useAuthStore.getState().initialize()
+  }, 2000)
+}
+
 function registerAuthListener() {
   if (_authListenerRegistered) return
   _authListenerRegistered = true
@@ -330,7 +412,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // Register auth state listener on first initialize (lazy — avoids TDZ in prod)
     registerAuthListener()
 
-    set({ status: 'loading', error: null })
+    // EMP-AUTH-1: capture this run's sequence; only the newest run commits state.
+    // A stale run (e.g. the SIGNED_IN-triggered resolve that saw no employee link
+    // yet and fell back to owner) can no longer overwrite a newer run that
+    // resolved role === 'employee'. All state writes below go through apply().
+    const seq = ++_initSeq
+    const apply = (partial: Partial<AuthState>) => {
+      if (seq === _initSeq) set(partial)
+    }
+
+    apply({ status: 'loading', error: null })
 
     try {
       // Safari iOS strips URL fragments on redirect — check both hash and search for tokens
@@ -362,13 +453,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (urlParams.get('verified') === 'true') {
         window.history.replaceState({}, document.title, window.location.pathname)
         await supabase.auth.signOut()
-        set({ status: 'unauthenticated' })
+        apply({ status: 'unauthenticated' })
         return
       }
 
       const { data: { session } } = await supabase.auth.getSession()
       if (!session?.user) {
-        set({ status: 'unauthenticated' })
+        apply({ status: 'unauthenticated' })
         return
       }
 
@@ -394,19 +485,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       if (!profile) {
         // Safety fallback if the user exists in Auth but not in Profiles
-        set({ status: 'needs_passcode_setup', user })
+        apply({ status: 'needs_passcode_setup', user })
         return
       }
       // Check for password recovery redirect
       if (sessionStorage.getItem('poweron_password_recovery') === '1') {
         sessionStorage.removeItem('poweron_password_recovery')
-        set({ status: 'password_recovery', user, profile })
+        apply({ status: 'password_recovery', user, profile })
         return
       }
 
       if (!profile.is_active) {
         await supabase.auth.signOut()
-        set({ status: 'unauthenticated', error: 'Your account has been deactivated.' })
+        apply({ status: 'unauthenticated', error: 'Your account has been deactivated.' })
         return
       }
 
@@ -416,12 +507,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (appSession) {
         // Re-use cached role from localStorage; re-resolve in background occasionally
         const { role, ownerId, employeeProfileId, employerOrgId } = loadRoleFromStorage(user.id)
-        set({ status: 'hydrating_user_data', user, profile, appSession, role, ownerId, employeeProfileId, employerOrgId })
+        apply({ status: 'hydrating_user_data', user, profile, appSession, role, ownerId, employeeProfileId, employerOrgId })
         await bootstrapAuthenticatedUser(user.id)
-        set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
-        // Fire background re-verify in case crew/employee membership changed
+        apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
+        // Fire background re-verify in case crew/employee membership changed.
+        // Never let an 'unresolved' (network-failed) pass overwrite the cached role.
         resolveUserRole(user.id).then((resolved) => {
-          set({
+          if (resolved.status === 'unresolved') return
+          apply({
             role: resolved.role,
             ownerId: resolved.ownerId,
             employeeProfileId: resolved.employeeProfileId,
@@ -434,7 +527,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // 4. If user just authenticated via password, skip PIN verification.
       // PIN is only required for lock/resume flows, not full password login.
       if (sessionStorage.getItem('poweron_password_authed') === '1') {
-        const { role, ownerId, employeeProfileId, employerOrgId } = await resolveUserRole(user.id)
+        const portalRole = await resolveUserRole(user.id)
+        if (portalRole.status === 'unresolved') {
+          // Identity unknown (network/timeout). Stay in a safe resolving state and
+          // retry — never authenticate into the owner surface on a guess. The
+          // password_authed flag is kept so the retry re-enters this branch.
+          apply({ status: 'loading', user, profile, error: null })
+          scheduleIdentityReinit()
+          return
+        }
+        const { role, ownerId, employeeProfileId, employerOrgId } = portalRole
         let appSession = null
         try {
           await withTimeout(
@@ -444,7 +546,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           appSession = await withTimeout(validateAppSession(), 3000, null)
         } catch {}
 
-        set({
+        apply({
           status: 'authenticated',
           tenantDataReady: false,
           tenantUserId: user.id,
@@ -462,7 +564,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         bootstrapAuthenticatedUser(user.id)
           .then(() => {
-            set({ tenantDataReady: true })
+            apply({ tenantDataReady: true })
           })
           .catch((err) => {
             console.error('[Auth] bootstrapAuthenticatedUser failed:', err)
@@ -477,11 +579,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       //     forced through PIN setup or unlock, even though the invited user
       //     has a personal profiles row without a passcode_hash. Owners fall
       //     through to the passcode flow below unchanged.
-      const portalRole = await withTimeout(
-        resolveUserRole(user.id),
-        5000,
-        { role: 'owner' as UserRole, ownerId: user.id, employeeProfileId: null, employerOrgId: null }
-      )
+      //     EMP-AUTH-1A: resolveUserRole is authoritative. A timeout/error yields
+      //     status 'unresolved' — we must NOT convert that to owner (that was the
+      //     path into Josh's PIN/NDA). Instead hold in a safe resolving state and
+      //     retry; a genuine owner resolves normally and continues below.
+      const portalRole = await resolveUserRole(user.id)
+      if (portalRole.status === 'unresolved') {
+        apply({ status: 'loading', user, profile, error: null })
+        scheduleIdentityReinit()
+        return
+      }
       if (portalRole.role !== 'owner') {
         let roleSession = null
         try {
@@ -491,7 +598,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           )
           roleSession = await withTimeout(validateAppSession(), 3000, null)
         } catch {}
-        set({
+        apply({
           status: 'hydrating_user_data',
           user,
           profile,
@@ -502,19 +609,29 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           employerOrgId: portalRole.employerOrgId,
         })
         await bootstrapAuthenticatedUser(user.id)
-        set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
+        apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
         return
       }
 
-      // 5. No passcode set at all → go to setup
+      // 5. No passcode set at all → go to setup.
+      //     EMP-AUTH-1: this is the owner-onboarding entry (PIN → AppShell → NDA).
+      //     We only reach it when portalRole resolved to 'owner' above. The seq
+      //     guard (apply) ensures a concurrent run that resolves 'employee' after
+      //     the invite link is created supersedes this owner commit.
       if (!profile.passcode_hash) {
-        set({ status: 'needs_passcode_setup', user, profile })
+        apply({ status: 'needs_passcode_setup', user, profile })
         return
       }
 
       // 6. password_only → skip PIN verification
       if (profile.passcode_hash === 'password_only') {
-        const { role, ownerId, employeeProfileId, employerOrgId } = await resolveUserRole(user.id)
+        const portalRole = await resolveUserRole(user.id)
+        if (portalRole.status === 'unresolved') {
+          apply({ status: 'loading', user, profile, error: null })
+          scheduleIdentityReinit()
+          return
+        }
+        const { role, ownerId, employeeProfileId, employerOrgId } = portalRole
         let session = null
         try {
           session = await withTimeout(
@@ -522,9 +639,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             5000, null
           )
         } catch {}
-        set({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId, employeeProfileId, employerOrgId })
+        apply({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId, employeeProfileId, employerOrgId })
         await bootstrapAuthenticatedUser(user.id)
-        set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
+        apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
         return
       }
 
@@ -534,21 +651,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       })
 
       if (ps.isLocked) {
-        set({ status: 'locked', user, profile, lockExpiresAt: ps.lockExpiresAt })
+        apply({ status: 'locked', user, profile, lockExpiresAt: ps.lockExpiresAt })
         return
       }
 
       // 8. Passcode set and not locked — check biometric
       const biometric = await getBiometricCapabilities()
       if (profile.biometric_enabled && biometric.available && biometric.enrolled) {
-        set({ status: 'biometric_prompt', user, profile, biometric })
+        apply({ status: 'biometric_prompt', user, profile, biometric })
       } else {
-        set({ status: 'needs_passcode', user, profile, biometric })
+        apply({ status: 'needs_passcode', user, profile, biometric })
       }
 
     } catch (err) {
       console.error('[Auth] initialize error:', err)
-      set({
+      apply({
         status: 'unauthenticated',
         user: null,
         profile: null,

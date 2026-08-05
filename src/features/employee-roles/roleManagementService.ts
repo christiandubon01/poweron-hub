@@ -62,6 +62,49 @@ export interface EmpPermissionOverride {
 // calls are not rejected as `never` — same pattern as adminTimecardService.ts.
 const from = supabase.from as any
 
+// ── Bounded read-after-write verification (ROLE-2.4) ─────────────────────────
+// The false "written but not visible" first-save error came from a SINGLE
+// immediate SELECT after the write: PostgREST read replicas / connection routing
+// can lag a few milliseconds behind the write, so the row is real but momentarily
+// invisible. A second click "worked" only because the lag had cleared.
+//
+// Fix: (1) prefer the authoritative rows the write itself returns (same request,
+// no replica lag); (2) if a fresh SELECT is still needed, retry it a bounded
+// number of times with short backoff BEFORE reporting failure. The write is NEVER
+// repeated during verification.
+
+const VERIFY_DELAYS_MS = [0, 60, 180]
+
+function sleep(ms: number): Promise<void> {
+  return ms > 0 ? new Promise(r => setTimeout(r, ms)) : Promise.resolve()
+}
+
+/** True when two key collections contain exactly the same set of values. */
+export function sameKeySet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false
+  const sa = new Set(a)
+  for (const k of b) if (!sa.has(k)) return false
+  return true
+}
+
+/**
+ * Re-run `load` up to VERIFY_DELAYS_MS.length times (with short backoff between
+ * attempts) until `predicate(rows)` holds. Returns the last load result. Does NOT
+ * write anything. Used only to confirm a write became visible.
+ */
+async function verifyWithRetry<T>(
+  load: () => Promise<ServiceResult<T[]>>,
+  predicate: (rows: T[]) => boolean,
+): Promise<ServiceResult<T[]>> {
+  let last: ServiceResult<T[]> = { success: false, error: 'Verification did not run.' }
+  for (let i = 0; i < VERIFY_DELAYS_MS.length; i++) {
+    await sleep(VERIFY_DELAYS_MS[i])
+    last = await load()
+    if (last.success && predicate(last.data ?? [])) return last
+  }
+  return last
+}
+
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
 async function requireOrgId(): Promise<ServiceResult<string>> {
@@ -277,33 +320,48 @@ export async function setRolePermissions(
     if (delErr) return { success: false, error: delErr.message }
 
     const unique = Array.from(new Set(permissionKeys)).filter(Boolean)
-    if (unique.length > 0) {
-      const rows = unique.map(key => ({ org_id: orgId, role_id: roleId, permission_key: key }))
-      const { error: insErr } = await from('emp_role_permissions').insert(rows)
-      if (insErr) return { success: false, error: insErr.message }
+
+    // Empty set: nothing to insert. Verify the delete landed (bounded retry).
+    if (unique.length === 0) {
+      const verify = await verifyWithRetry(
+        () => loadRolePermissions(roleId),
+        rows => rows.length === 0,
+      )
+      if (verify.success && (verify.data ?? []).length === 0) return { success: true, data: [] }
+      return { success: false, error: verify.error || 'Cleared permissions but rows still visible after retries.' }
     }
 
-    // Fresh query — never report success from the write alone.
-    const verify = await loadRolePermissions(roleId)
-    if (!verify.success) {
-      return { success: false, error: verify.error || 'Saved permissions could not be reloaded.' }
+    const rows = unique.map(key => ({ org_id: orgId, role_id: roleId, permission_key: key }))
+    // Return the inserted rows in the SAME request — authoritative, no replica lag.
+    const { data: insData, error: insErr } = await from('emp_role_permissions')
+      .insert(rows)
+      .select('permission_key')
+    if (insErr) return { success: false, error: insErr.message }
+
+    // Fast path: the write's own returned rows already match the intended set.
+    const insertedKeys = Array.isArray(insData)
+      ? insData.map((r: any) => r.permission_key as string)
+      : []
+    if (sameKeySet(insertedKeys, unique)) {
+      return { success: true, data: unique }
+    }
+
+    // Fallback: bounded read-after-write verification (NEVER re-writes).
+    const verify = await verifyWithRetry(
+      () => loadRolePermissions(roleId),
+      saved => sameKeySet(saved, unique),
+    )
+    if (verify.success && sameKeySet(verify.data ?? [], unique)) {
+      return { success: true, data: verify.data ?? [] }
     }
     const saved = new Set(verify.data ?? [])
     const missing = unique.filter(k => !saved.has(k))
-    if (missing.length > 0) {
-      return {
-        success: false,
-        error: `Permissions were written but not visible after reload (${missing.join(', ')}). Check SELECT policy on emp_role_permissions.`,
-      }
+    return {
+      success: false,
+      error: missing.length > 0
+        ? `Permissions were written but ${missing.length} were still not visible after retries (${missing.join(', ')}). Check SELECT policy on emp_role_permissions.`
+        : `Expected ${unique.length} permission(s) after save, found ${(verify.data ?? []).length}.`,
     }
-    if ((verify.data ?? []).length !== unique.length) {
-      return {
-        success: false,
-        error: `Expected ${unique.length} permission(s) after save, found ${(verify.data ?? []).length}.`,
-      }
-    }
-
-    return { success: true, data: verify.data ?? [] }
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : 'Network error' }
   }
@@ -359,28 +417,38 @@ export async function assignRole(
       return { success: false, error: 'Employee does not belong to your organization.' }
     }
 
-    const { error } = await from('emp_role_assignments').insert({
-      org_id: orgId,
-      employee_profile_id: epId,
-      role_id: roleId,
-      assigned_by: user.id,
-    })
+    const { data: insData, error } = await from('emp_role_assignments')
+      .insert({
+        org_id: orgId,
+        employee_profile_id: epId,
+        role_id: roleId,
+        assigned_by: user.id,
+      })
+      .select('id, role_id')
 
+    // 23505 = already assigned. Idempotent success — the pair exists either way.
     if (error && error.code !== '23505') {
       return { success: false, error: error.message }
     }
 
-    const verify = await loadEmployeeRoles(epId)
-    if (!verify.success) {
-      return { success: false, error: verify.error || 'Assignment saved but could not be reloaded.' }
+    // Fast path: the insert returned the row we intended (no duplicate case).
+    if (!error && Array.isArray(insData) && insData.some((a: any) => a.role_id === roleId)) {
+      return { success: true }
     }
-    if (!(verify.data ?? []).some(a => a.role_id === roleId)) {
-      return {
-        success: false,
-        error: 'Assignment was written but did not appear after reload. Check SELECT on emp_role_assignments.',
-      }
+
+    // Duplicate (23505) or no returned row → bounded read-after-write verify.
+    const verify = await verifyWithRetry(
+      () => loadEmployeeRoles(epId),
+      rows => rows.some(a => a.role_id === roleId),
+    )
+    if (verify.success && (verify.data ?? []).some(a => a.role_id === roleId)) {
+      return { success: true }
     }
-    return { success: true }
+    return {
+      success: false,
+      error: verify.error
+        || 'Assignment was written but did not appear after retries. Check SELECT on emp_role_assignments.',
+    }
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : 'Network error' }
   }
@@ -396,17 +464,19 @@ export async function removeRole(epId: string, roleId: string): Promise<ServiceR
 
     if (error) return { success: false, error: error.message }
 
-    const verify = await loadEmployeeRoles(epId)
-    if (!verify.success) {
-      return { success: false, error: verify.error || 'Removal completed but could not be reloaded.' }
+    // Bounded read-after-write verify that the row is gone (never re-deletes).
+    const verify = await verifyWithRetry(
+      () => loadEmployeeRoles(epId),
+      rows => !rows.some(a => a.role_id === roleId),
+    )
+    if (verify.success && !(verify.data ?? []).some(a => a.role_id === roleId)) {
+      return { success: true }
     }
-    if ((verify.data ?? []).some(a => a.role_id === roleId)) {
-      return {
-        success: false,
-        error: 'Role assignment is still present after delete. Check DELETE policy on emp_role_assignments.',
-      }
+    return {
+      success: false,
+      error: verify.error
+        || 'Role assignment is still present after retries. Check DELETE policy on emp_role_assignments.',
     }
-    return { success: true }
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : 'Network error' }
   }

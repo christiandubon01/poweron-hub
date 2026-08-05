@@ -1302,6 +1302,11 @@ export default function V15rTeamPanel() {
   const { isOwner, isAdmin, user } = useAuth()
   const [showDemoInviteModal, setShowDemoInviteModal] = useState(false)
   const [showEmployeeInviteModal, setShowEmployeeInviteModal] = useState(false)
+  // ROLE-2.4: when inviting from a Cost Model employee card, carry that employee's
+  // backup id + name so the server reuses/links the same profile (no duplicate).
+  const [inviteModalEmployee, setInviteModalEmployee] = useState<
+    { backupEmployeeId: string; displayName: string } | null
+  >(null)
   const [teamAdminTab, setTeamAdminTab] = useState<'timesheets' | 'tasks'>('timesheets')
 
   const employees = (backup?.employees || []) as EnhancedEmployee[]
@@ -1364,10 +1369,11 @@ export default function V15rTeamPanel() {
     let orgId: string | null = null
     for (const p of (res.data ?? []) as AdminEmployeeProfile[]) {
       orgId = orgId ?? p.org_id
+      // ROLE-2.4: only the stable backup_employee_id establishes identity. A
+      // display-name match must never be treated as the same person — unlinked
+      // profiles surface via the explicit "Link Existing Account" flow instead.
       if (p.backup_employee_id) {
         map.set(p.backup_employee_id, { id: p.id, orgId: p.org_id })
-      } else {
-        map.set(`name:${p.display_name.trim().toLowerCase()}`, { id: p.id, orgId: p.org_id })
       }
     }
     setPortalProfileMap(map)
@@ -3276,10 +3282,10 @@ export default function V15rTeamPanel() {
                   />
                   <div className="mt-2 flex gap-2 justify-end flex-wrap">
                     {isAdmin && (() => {
-                      // Try stable backup_employee_id link first; fall back to display_name.
+                      // ROLE-2.4: identity is the STABLE backup_employee_id link only.
+                      // Never treat a display-name match as the same person.
                       const profile = portalProfileMap.get(emp.id)
-                        ?? portalProfileMap.get(`name:${(emp.name ?? '').trim().toLowerCase()}`)
-                      const hasStableLink = Boolean(portalProfileMap.get(emp.id))
+                      const hasStableLink = Boolean(profile)
                       const showLinkExisting = !hasStableLink && unlinkedPortalCandidates.length > 0
                       return (
                         <>
@@ -3287,7 +3293,16 @@ export default function V15rTeamPanel() {
                             if (!profile) {
                               return (
                                 <button
-                                  onClick={(e) => { e.stopPropagation(); setShowEmployeeInviteModal(true) }}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    // Carry the Cost Model employee so the invite reuses/links
+                                    // the same profile instead of creating a duplicate.
+                                    setInviteModalEmployee({
+                                      backupEmployeeId: String(emp.id),
+                                      displayName: emp.name ?? '',
+                                    })
+                                    setShowEmployeeInviteModal(true)
+                                  }}
                                   className="text-xs px-2 py-1 bg-amber-600/30 text-amber-300 rounded hover:bg-amber-600/40 flex items-center gap-1"
                                   title="Prepare the employee account before assigning roles and permissions."
                                 >
@@ -3515,7 +3530,19 @@ export default function V15rTeamPanel() {
       {/* ── EMPLOYEE INVITE MODAL (admin only) ─────────────────────────────── */}
       {showEmployeeInviteModal && isAdmin && (
         <EmployeeInviteModal
-          onClose={() => setShowEmployeeInviteModal(false)}
+          onClose={() => {
+            setShowEmployeeInviteModal(false)
+            setInviteModalEmployee(null)
+            // Refresh so a newly reused/created profile flips the card to
+            // "Roles & Permissions" without a manual reload.
+            void refreshPortalProfileMap()
+          }}
+          {...(inviteModalEmployee
+            ? {
+                initialName: inviteModalEmployee.displayName,
+                backupEmployeeId: inviteModalEmployee.backupEmployeeId,
+              }
+            : {})}
         />
       )}
 

@@ -69,18 +69,22 @@ describe('ROLE-2.3 — Edit Permissions UX', () => {
   it('3. Save creates role-permission rows via setRolePermissions', () => {
     expect(MODAL_SRC).toContain('setRolePermissions(orgId, editingRole.role.id')
     expect(MODAL_SRC).toContain('Save Changes')
-    expect(SVC_SRC).toContain("from('emp_role_permissions').insert")
+    // ROLE-2.4: insert now chains .select() to return authoritative rows (multiline).
+    expect(SVC_SRC).toMatch(/from\('emp_role_permissions'\)\s*\.insert\(rows\)\s*\.select/)
   })
 
-  it('4. Reload preserves permissions (fresh query after save)', () => {
+  it('4. Reload preserves permissions (bounded read-after-write verify; optimistic UI)', () => {
+    // Service confirms via loadRolePermissions using a bounded retry (no re-write).
     expect(SVC_SRC).toMatch(/setRolePermissions[\s\S]+loadRolePermissions\(roleId\)/)
-    expect(MODAL_SRC).toContain('const freshRoles = await loadAll()')
-    expect(MODAL_SRC).toContain('updated.permKeys.length !== selected.length')
+    expect(SVC_SRC).toContain('verifyWithRetry')
+    // Modal reflects the confirmed key set on the card optimistically (single click).
+    expect(MODAL_SRC).toContain('setOrgRoles(prev =>')
   })
 
   it('5. Permission count updates on role card after save', () => {
     expect(MODAL_SRC).toContain('permKeys.length} permission')
-    expect(MODAL_SRC).toContain('Role card would show')
+    // Card is updated from the service-confirmed saved key set, not a lagging reload.
+    expect(MODAL_SRC).toMatch(/permKeys:\s*savedKeys/)
   })
 
   it('6. Failed save shows an error and keeps editor open', () => {
@@ -114,10 +118,13 @@ describe('ROLE-2.3 — Assigned Roles', () => {
     expect(DISPATCHER_ROLE).toMatch(/^[0-9a-f-]{36}$/)
   })
 
-  it('9. Assignment persists after reload (fresh query verify)', () => {
+  it('9. Assignment persists (bounded read-after-write verify in service)', () => {
+    // assignRole verifies via loadEmployeeRoles with a bounded retry (no re-insert).
     expect(SVC_SRC).toMatch(/export async function assignRole[\s\S]+loadEmployeeRoles\(epId\)/)
+    expect(SVC_SRC).toContain('verifyWithRetry')
+    // Modal trusts the service result (the redundant re-verify that caused the
+    // false first-save error was removed).
     expect(MODAL_SRC).toContain('handleAssignRole')
-    expect(MODAL_SRC).toContain('was assigned but did not appear after reload')
   })
 
   it('10. Removing one role preserves others', () => {

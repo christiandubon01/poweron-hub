@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom'
 import { Zap, Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowRight, CheckCircle } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/authStore'
+import { goToEmployeePortal } from '@/lib/employeeRoutes'
 
 type Phase = 'checking' | 'form' | 'authenticated'
 
@@ -79,9 +80,29 @@ export function EmployeeLogin() {
       }
 
       // Re-run the auth state machine so it resolves the employee role and routes
-      // to EmployeePortal. The portal-role branch bypasses the owner PIN gate.
+      // to EmployeePortal. AWAIT before routing so the resolved role — not an
+      // interim owner fallback — decides the destination (EMP-AUTH-1).
       await useAuthStore.getState().initialize()
-      navigate('/', { replace: true })
+      const resolvedRole = useAuthStore.getState().role
+      if (resolvedRole === 'employee') {
+        goToEmployeePortal(navigate)
+        return
+      }
+      // Authenticated but not an active employee. Do not drop them into the owner
+      // AppShell/PIN/NDA. Explain why, and sign them out of this portal context.
+      const { data: employeeRows } = await supabase
+        .from('employee_profiles')
+        .select('active, user_id')
+        .eq('user_id', (await supabase.auth.getUser()).data.user?.id ?? '')
+      const rows = (employeeRows ?? []) as Array<{ active: boolean | null; user_id: string | null }>
+      if (rows.length > 0 && rows.every(r => r.active === false)) {
+        setError('This employee account is inactive. Contact your employer to reactivate it.')
+      } else if (rows.length === 0) {
+        setError('No active employee profile is linked to this account yet. Ask your employer to send or resend your invitation.')
+      } else {
+        setError('This account is not set up for the Employee Portal. Contact your employer.')
+      }
+      await supabase.auth.signOut()
     } catch {
       setError('Could not sign in. Check your password or reset it.')
     } finally {
@@ -144,7 +165,7 @@ export function EmployeeLogin() {
             </p>
             <button
               type="button"
-              onClick={() => navigate('/', { replace: true })}
+              onClick={() => goToEmployeePortal(navigate)}
               className="inline-flex items-center justify-center gap-2 w-full px-6 py-3 bg-green-600 text-white text-sm font-semibold rounded-xl active:opacity-80"
             >
               Go to Employee Portal

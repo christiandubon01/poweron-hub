@@ -301,12 +301,11 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
     const key = `assign-${role.id}`
     if (mutating || isAssigned(role.id)) return
     await runMutation(key, async () => {
+      // The service already performs a bounded read-after-write verification.
+      // Trust its result — do NOT re-verify here (that double-check was the
+      // source of the false first-save error). Refresh the UI best-effort only.
       const res = await assignRole(orgId, epId, role.id)
       if (!res.success) throw new Error(res.error || 'Could not assign role.')
-      const verify = await loadEmployeeRoles(epId)
-      if (!verify.success || !(verify.data ?? []).some(a => a.role_id === role.id)) {
-        throw new Error(`Role "${tc(role.name)}" was assigned but did not appear after reload.`)
-      }
       showSuccess(`Assigned role "${tc(role.name)}"`)
       await loadAll()
     })
@@ -318,11 +317,6 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
     await runMutation(key, async () => {
       const res = await removeRole(epId, role.id)
       if (!res.success) throw new Error(res.error || 'Could not remove role.')
-      const verify = await loadEmployeeRoles(epId)
-      if (!verify.success) throw new Error(verify.error || 'Could not verify role removal.')
-      if ((verify.data ?? []).some(a => a.role_id === role.id)) {
-        throw new Error(`Role "${tc(role.name)}" is still assigned after removal.`)
-      }
       showSuccess(`Removed role "${tc(role.name)}"`)
       await loadAll()
     })
@@ -368,18 +362,20 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
       const res = await createRole(newRoleName, newRoleDesc)
       if (!res.success) throw new Error(res.error)
       if (!res.data?.id) throw new Error('Role insert returned no ID.')
-      showSuccess(`Created role "${tc(res.data.name)}"`)
+      // createRole returns the inserted row in the same request (authoritative).
+      // Reflect it immediately instead of gating the UI on a lagging re-query.
+      const created = res.data
+      setOrgRoles(prev =>
+        prev.some(r => r.role.id === created.id)
+          ? prev
+          : [...prev, { role: created, permKeys: [] }].sort((a, b) => a.role.name.localeCompare(b.role.name)),
+      )
+      showSuccess(`Created role "${tc(created.name)}"`)
       setNewRoleName('')
       setNewRoleDesc('')
-      // Fresh query after mutation — prove persistence before switching UI.
-      const freshRoles = await loadAll()
-      if (freshRoles.length === 0) {
-        throw new Error('Role was saved but is not visible. Check that your account has SELECT permission on emp_roles.')
-      }
-      if (!freshRoles.some(r => r.role.id === res.data!.id)) {
-        throw new Error(`Role "${tc(res.data.name)}" was created (id ${res.data.id}) but did not appear in the fresh roles query.`)
-      }
       setManageMode('list')
+      // Best-effort background refresh (counts, ordering); never throws.
+      void loadAll()
     })
   }
 
@@ -403,30 +399,23 @@ export default function RolesPermissionsModal({ epId, displayName, orgId, onClos
     if (!editingRole) return
     await runMutation('save-role', async () => {
       const selected = Array.from(editRolePerms)
+      // setRolePermissions is authoritative: it uses the write's returned rows and
+      // a bounded read-after-write retry, and only fails on a real failure. Trust
+      // its result and its verified key set — no extra re-verify/throw here.
       const res = await setRolePermissions(orgId, editingRole.role.id, selected)
       if (!res.success) throw new Error(res.error || 'Could not save permissions.')
-      const savedKeys = res.data ?? []
-      if (savedKeys.length !== selected.length) {
-        throw new Error(
-          `Save verification failed: expected ${selected.length} permission(s), found ${savedKeys.length}.`,
-        )
-      }
-      // Fresh full reload before leaving the editor — prove card count will update.
-      const freshRoles = await loadAll()
-      const updated = freshRoles.find(r => r.role.id === editingRole.role.id)
-      if (!updated) {
-        throw new Error('Role permissions saved but the role is missing after reload.')
-      }
-      if (updated.permKeys.length !== selected.length) {
-        throw new Error(
-          `Role card would show ${updated.permKeys.length} permission(s) after save; expected ${selected.length}.`,
-        )
-      }
+      const savedKeys = res.data ?? selected
+      // Optimistically reflect the confirmed key set on the role card immediately.
+      setOrgRoles(prev =>
+        prev.map(r => (r.role.id === editingRole.role.id ? { ...r, permKeys: savedKeys } : r)),
+      )
       showSuccess(
-        `Saved ${selected.length} permission${selected.length !== 1 ? 's' : ''} on "${tc(editingRole.role.name)}"`,
+        `Saved ${savedKeys.length} permission${savedKeys.length !== 1 ? 's' : ''} on "${tc(editingRole.role.name)}"`,
       )
       setManageMode('list')
       setEditingRole(null)
+      // Best-effort background refresh; never throws, never re-triggers the write.
+      void loadAll()
     })
   }
 

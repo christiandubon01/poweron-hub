@@ -127,23 +127,27 @@ describe('RolesPermissionsModal — role creation fix', () => {
     expect(MODAL_SRC).toMatch(/loadAll\s*=\s*useCallback\s*\(\s*async\s*\(\s*\)\s*:\s*Promise<RoleWithPerms\[\]>/)
   })
 
-  it('9. handleCreateRole awaits loadAll before calling setManageMode (fixes render race)', () => {
-    // Find the position of handleCreateRole in the file, then check relative ordering
+  // ROLE-2.4 UPDATE: the false-error double-verify was removed. createRole returns
+  // the inserted row in the same request (authoritative, no replica lag), so the
+  // UI reflects it optimistically and closes on ONE click instead of gating on a
+  // lagging reload that produced the "not visible after reload" false error.
+  it('9. handleCreateRole reflects the authoritative returned row and closes in one click', () => {
     const startIdx = MODAL_SRC.indexOf('async function handleCreateRole()')
     expect(startIdx).toBeGreaterThan(-1)
-    const segment = MODAL_SRC.slice(startIdx, startIdx + 1000)
-    const loadAllIdx = segment.indexOf('await loadAll()')
-    const modeIdx    = segment.indexOf("setManageMode('list')")
-    // loadAll must complete before mode switch within the same function
-    expect(loadAllIdx).toBeGreaterThan(-1)
-    expect(modeIdx).toBeGreaterThan(loadAllIdx)
+    const segment = MODAL_SRC.slice(startIdx, startIdx + 1400)
+    expect(segment).toContain('setOrgRoles(')          // optimistic reflect from res.data
+    expect(segment).toContain("setManageMode('list')") // single-click close
+    expect(segment).toContain('void loadAll()')        // best-effort refresh, not gated
+    expect(segment).not.toContain('await loadAll()')   // no reload-gated race/throw
   })
 
-  it('10. handleCreateRole throws diagnostic error when reload returns empty (detects silent RLS failure)', () => {
+  it('10. handleCreateRole does NOT throw a false diagnostic on reload lag', () => {
     const fn = MODAL_SRC.match(/async function handleCreateRole[\s\S]+?^\s*\}/m)
     expect(fn).toBeTruthy()
-    expect(fn![0]).toMatch(/\.length\s*===\s*0/)
-    expect(fn![0]).toContain('throw new Error')
+    expect(fn![0]).toContain('if (!res.data?.id)') // still validates the returned id
+    // The old empty-reload diagnostic throw is gone.
+    expect(fn![0]).not.toMatch(/did not appear in the fresh roles query/)
+    expect(fn![0]).not.toMatch(/is not visible\. Check that your account has SELECT/)
   })
 })
 
@@ -214,11 +218,13 @@ describe('V15rTeamPanel — backup_employee_id stable matching', () => {
     expect(lookup).toBeTruthy()
   })
 
-  it('22. Falls back to name: prefix key for profiles without backup_employee_id link', () => {
-    // Template literal in source: `name:${p.display_name...}` contains the substring name:${
-    expect(TEAM_SRC).toContain('name:${')
-    // Lookup also uses name: prefix with the employee name fallback
-    expect(TEAM_SRC).toMatch(/name:\$\{.*emp\.name/)
+  // ROLE-2.4 UPDATE: identity is the STABLE backup_employee_id link ONLY. The
+  // display-name fallback key was removed — "same name" must never imply "same
+  // person". Unlinked profiles surface via the explicit Link Existing Account flow.
+  it('22. Identity uses ONLY backup_employee_id — no display-name fallback key', () => {
+    expect(TEAM_SRC).toContain('map.set(p.backup_employee_id,')
+    expect(TEAM_SRC).not.toContain('name:${')
+    expect(TEAM_SRC).not.toMatch(/portalProfileMap\.get\(`name:/)
   })
 })
 

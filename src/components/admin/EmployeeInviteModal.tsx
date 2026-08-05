@@ -31,6 +31,12 @@ interface EmployeeInviteModalProps {
    * The name field is locked to the profile's display name when this is provided.
    */
   profileId?: string
+  /**
+   * Cost Model employee id. When inviting a Cost-Model-only employee (no portal
+   * profile yet), pass this so the server reuses/links the profile via
+   * backup_employee_id instead of creating a duplicate portal account (ROLE-2.4).
+   */
+  backupEmployeeId?: string
 }
 
 type ModalState = 'idle' | 'loading' | 'success' | 'error'
@@ -50,7 +56,7 @@ const EMPLOYMENT_OPTIONS: { value: EmployeeEmploymentType; label: string }[] = [
   { value: 'helper', label: 'Helper' },
 ]
 
-export default function EmployeeInviteModal({ onClose, initialName, profileId }: EmployeeInviteModalProps) {
+export default function EmployeeInviteModal({ onClose, initialName, profileId, backupEmployeeId }: EmployeeInviteModalProps) {
   const [displayName, setDisplayName]       = useState(initialName ?? '')
   const [email, setEmail]                   = useState('')
   const [role, setRole]                     = useState<EmployeeInviteRole>('employee')
@@ -117,6 +123,7 @@ export default function EmployeeInviteModal({ onClose, initialName, profileId }:
       role,
       employmentType,
       ...(profileId ? { profileId } : {}),
+      ...(backupEmployeeId ? { backupEmployeeId } : {}),
     })
 
     if (result.success) {

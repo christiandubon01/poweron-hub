@@ -29,6 +29,13 @@ export interface SendEmployeeInviteInput {
   role?: EmployeeInviteRole
   /** If set, UPDATE this existing employee_profiles row instead of inserting a new one. */
   profileId?: string
+  /**
+   * Cost Model employee id. When set (and profileId is not), the server reuses an
+   * existing unlinked portal profile for this backup_employee_id if one exists,
+   * otherwise inserts a new profile carrying this backup_employee_id — so a Cost
+   * Model employee never spawns a second, unlinked portal account (ROLE-2.4).
+   */
+  backupEmployeeId?: string
 }
 
 export interface SendEmployeeInviteResult {
@@ -92,6 +99,7 @@ export async function sendEmployeeInvite(
       role:           input.role ?? 'employee',
     }
     if (input.profileId) body.profileId = input.profileId
+    if (input.backupEmployeeId) body.backupEmployeeId = input.backupEmployeeId
 
     const res = await fetch('/.netlify/functions/sendEmployeeInvite', {
       method:  'POST',

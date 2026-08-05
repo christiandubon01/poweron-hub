@@ -454,9 +454,11 @@ export function AppShell({ children }: AppShellProps) {
   } | null>(null)
 
   let profile = null
+  let authRole: string | null = null
   try {
     const auth = useAuth()
     profile = auth.profile
+    authRole = (auth as { role?: string }).role ?? null
   } catch (e) {
     console.warn('[AppShell] useAuth failed, continuing without profile:', e)
   }
@@ -728,6 +730,16 @@ export function AppShell({ children }: AppShellProps) {
     if (isReadOnly || isDemoMode) return
     if (!profile?.id) return
 
+    // EMP-AUTH-1 / Step 3: the NDA (beta/owner agreement) is an OWNER gate. A
+    // confirmed employee or crew identity must never be evaluated for it. AppShell
+    // only renders for role 'owner', so this is belt-and-suspenders that also
+    // covers any transient state where an employee briefly reaches this shell.
+    if (authRole === 'employee' || authRole === 'crew') {
+      setNdaSigned(true)
+      setShowNdaGate(false)
+      return
+    }
+
     // Fast path: cached signed status (set after first confirmed sign)
     if (isNdaCachedSigned(profile.id)) {
       setNdaSigned(true)
@@ -748,7 +760,7 @@ export function AppShell({ children }: AppShellProps) {
         setNdaSigned(true)
         setShowNdaGate(false)
       })
-  }, [profile?.id, isReadOnly, isDemoMode])
+  }, [profile?.id, isReadOnly, isDemoMode, authRole])
 
   // Session Debrief listener — NEXUS publishes debrief conclusions via custom event
   useEffect(() => {

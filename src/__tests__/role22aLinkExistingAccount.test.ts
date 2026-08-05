@@ -183,10 +183,13 @@ describe('ROLE-2.2A — link write semantics', () => {
 })
 
 describe('ROLE-2.2A — role creation persistence contracts', () => {
-  it('12. Role creation fresh-query persistence checks returned role ID', () => {
-    expect(MODAL_SRC).toContain('const freshRoles = await loadAll()')
-    expect(MODAL_SRC).toContain('if (!res.data?.id)')
-    expect(MODAL_SRC).toContain('freshRoles.some(r => r.role.id === res.data!.id)')
+  // ROLE-2.4 UPDATE: createRole returns the inserted row in the same request
+  // (authoritative), so persistence is trusted from that row — not re-proven by a
+  // lagging reload that produced a false "not visible" error.
+  it('12. Role creation trusts the authoritative returned row (no reload-gated check)', () => {
+    expect(MODAL_SRC).toContain('if (!res.data?.id)')     // validates returned id
+    expect(MODAL_SRC).toContain('setOrgRoles(')            // optimistic reflect
+    expect(MODAL_SRC).not.toContain('const freshRoles = await loadAll()')
   })
 
   it('13. Failed role insert remains visible as an error', () => {

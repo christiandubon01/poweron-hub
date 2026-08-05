@@ -124,8 +124,17 @@ function parseBearerToken(event) {
 
 // ── Email (same template as sendEmployeeInvite) ───────────────────────────────
 
+function employeeSignInUrl(inviteLink) {
+  try {
+    return inviteLink.replace(/\/employee\/invite\/[^/?#]+.*/, '/employee/login')
+  } catch {
+    return inviteLink
+  }
+}
+
 function buildEmployeeInviteHtml(inviteLink, displayName, orgName) {
   const greeting = displayName ? `Hi ${displayName},` : 'Hello,'
+  const signInUrl = employeeSignInUrl(inviteLink)
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -135,8 +144,11 @@ function buildEmployeeInviteHtml(inviteLink, displayName, orgName) {
 <body style="font-family: Arial, sans-serif; font-size: 15px; color: #111; max-width: 600px; margin: 0 auto; padding: 24px; background: #f9fafb;">
   <div style="background: #fff; border-radius: 10px; padding: 36px 32px; border: 1px solid #e5e7eb;">
 
+    <p style="margin: 0 0 4px 0; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #16a34a;">
+      Power On Solutions Employee Account
+    </p>
     <h2 style="margin: 0 0 6px 0; font-size: 22px; color: #111; font-weight: 700;">
-      You're invited to Power On employee time tracking
+      Your Power On Employee Portal invitation (resent)
     </h2>
     <p style="margin: 0 0 20px 0; color: #6b7280; font-size: 13px;">
       Power On Solutions LLC · C-10 License #1151468 · Desert Hot Springs, CA
@@ -149,16 +161,17 @@ function buildEmployeeInviteHtml(inviteLink, displayName, orgName) {
     </p>
 
     <p style="margin: 0 0 16px 0; line-height: 1.6; color: #374151;">
-      <strong>${orgName || 'Your employer'}</strong> has resent your invite to the
-      <strong>Power On employee portal</strong> for clock-in and clock-out time tracking
-      from your phone or computer.
+      <strong>${orgName || 'Your employer'}</strong> has resent your invitation to activate
+      your <strong>Power On Solutions employee account</strong> and use the Employee Portal to
+      clock in and out and track your time.
     </p>
 
     <p style="margin: 0 0 24px 0; color: #374151; font-size: 14px;">
-      Click the button below to create your account or sign in and accept the invite:
+      Tap the button below to activate your account. Use the same email address this
+      invitation was sent to.
     </p>
 
-    <div style="text-align: center; margin: 0 0 28px 0;">
+    <div style="text-align: center; margin: 0 0 24px 0;">
       <a
         href="${inviteLink}"
         style="
@@ -173,14 +186,27 @@ function buildEmployeeInviteHtml(inviteLink, displayName, orgName) {
           letter-spacing: 0.02em;
         "
       >
-        Accept Employee Invite
+        Activate Employee Account
       </a>
     </div>
 
-    <p style="margin: 0; font-size: 12px; color: #9ca3af; line-height: 1.6;">
+    <p style="margin: 0 0 20px 0; font-size: 12px; color: #9ca3af; line-height: 1.6;">
       Or copy this link into your browser:<br>
       <span style="font-family: monospace; color: #6b7280; word-break: break-all;">${inviteLink}</span>
     </p>
+
+    <div style="background: #f9fafb; border: 1px solid #f3f4f6; border-radius: 8px; padding: 14px 16px; margin: 0 0 8px 0;">
+      <p style="margin: 0 0 6px 0; font-size: 13px; color: #374151;">
+        <strong>Already activated?</strong> Sign in to the Employee Portal any time:
+      </p>
+      <p style="margin: 0 0 10px 0; font-size: 13px;">
+        <a href="${signInUrl}" style="color: #16a34a; font-weight: 600; word-break: break-all;">${signInUrl}</a>
+      </p>
+      <p style="margin: 0; font-size: 12px; color: #9ca3af; line-height: 1.6;">
+        This activation link expires in 7 days. If it has expired, ask ${orgName || 'your employer'} to
+        resend your invitation. Need help? Reply to this email or contact your employer.
+      </p>
+    </div>
 
   </div>
 
@@ -365,13 +391,19 @@ exports.handler = async (event) => {
     const emailTo = empProfile.email
     await sendEmail(resendKey, {
       to:      emailTo,
-      subject: `${orgName} — Your employee invite (resent)`,
+      subject: `${orgName} — Activate your Power On employee account (resent)`,
       html:    buildEmployeeInviteHtml(inviteLink, empProfile.display_name, orgName),
       text: [
-        `${orgName} has resent your invite to Power On employee time tracking.`,
+        `${orgName || 'Your employer'} has resent your invitation to activate your Power On Solutions employee account.`,
         '',
-        'Use the link below to create your account or sign in and accept the invite:',
+        'Activate your account (use the email this invite was sent to):',
         inviteLink,
+        '',
+        'Already activated? Sign in to the Employee Portal any time:',
+        employeeSignInUrl(inviteLink),
+        '',
+        'This activation link expires in 7 days. If it has expired, ask your employer to resend it.',
+        'Questions? Reply to this email or contact your employer.',
         '',
         'Power On Solutions LLC · C-10 License #1151468 · Desert Hot Springs, CA',
       ].join('\n'),

@@ -89,6 +89,21 @@ async function supabaseInsert(url, serviceKey, table, row) {
   return Array.isArray(data) ? data[0] : data
 }
 
+async function supabaseSelectByBackupId(url, serviceKey, orgId, backupEmployeeId) {
+  const res = await fetch(
+    `${url}/rest/v1/employee_profiles?org_id=eq.${encodeURIComponent(orgId)}&backup_employee_id=eq.${encodeURIComponent(backupEmployeeId)}&select=id,org_id,user_id,active,display_name&limit=1`,
+    {
+      headers: {
+        apikey:        serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+      },
+    },
+  )
+  if (!res.ok) return null
+  const data = await res.json()
+  return Array.isArray(data) && data.length > 0 ? data[0] : null
+}
+
 async function supabaseSelectProfile(url, serviceKey, userId) {
   const res = await fetch(
     `${url}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=org_id,role&limit=1`,
@@ -143,10 +158,21 @@ function parseBearerToken(event) {
 
 // ── Email HTML ─────────────────────────────────────────────────────────────────
 
+// signInUrl (Employee Portal login for future visits) is derived from the invite
+// link so callers don't need to thread another argument through every path.
+function employeeSignInUrl(inviteLink) {
+  try {
+    return inviteLink.replace(/\/employee\/invite\/[^/?#]+.*/, '/employee/login')
+  } catch {
+    return inviteLink
+  }
+}
+
 function buildEmployeeInviteHtml(inviteLink, displayName, orgName) {
   const greeting = displayName
     ? `Hi ${displayName},`
     : 'Hello,'
+  const signInUrl = employeeSignInUrl(inviteLink)
 
   return `<!DOCTYPE html>
 <html>
@@ -157,8 +183,11 @@ function buildEmployeeInviteHtml(inviteLink, displayName, orgName) {
 <body style="font-family: Arial, sans-serif; font-size: 15px; color: #111; max-width: 600px; margin: 0 auto; padding: 24px; background: #f9fafb;">
   <div style="background: #fff; border-radius: 10px; padding: 36px 32px; border: 1px solid #e5e7eb;">
 
+    <p style="margin: 0 0 4px 0; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #16a34a;">
+      Power On Solutions Employee Account
+    </p>
     <h2 style="margin: 0 0 6px 0; font-size: 22px; color: #111; font-weight: 700;">
-      You're invited to Power On employee time tracking
+      You're invited to the Power On Employee Portal
     </h2>
     <p style="margin: 0 0 20px 0; color: #6b7280; font-size: 13px;">
       Power On Solutions LLC · C-10 License #1151468 · Desert Hot Springs, CA
@@ -171,16 +200,17 @@ function buildEmployeeInviteHtml(inviteLink, displayName, orgName) {
     </p>
 
     <p style="margin: 0 0 16px 0; line-height: 1.6; color: #374151;">
-      <strong>${orgName || 'Your employer'}</strong> has invited you to use the
-      <strong>Power On employee portal</strong> for clock-in and clock-out time tracking
-      from your phone or computer.
+      <strong>${orgName || 'Your employer'}</strong> has invited you to activate your
+      <strong>Power On Solutions employee account</strong> and use the Employee Portal to
+      clock in and out and track your time from your phone or computer.
     </p>
 
     <p style="margin: 0 0 24px 0; color: #374151; font-size: 14px;">
-      Click the button below to create your account or sign in and accept the invite:
+      Tap the button below to activate your account. Use the same email address this
+      invitation was sent to.
     </p>
 
-    <div style="text-align: center; margin: 0 0 28px 0;">
+    <div style="text-align: center; margin: 0 0 24px 0;">
       <a
         href="${inviteLink}"
         style="
@@ -195,14 +225,27 @@ function buildEmployeeInviteHtml(inviteLink, displayName, orgName) {
           letter-spacing: 0.02em;
         "
       >
-        Accept Employee Invite
+        Activate Employee Account
       </a>
     </div>
 
-    <p style="margin: 0; font-size: 12px; color: #9ca3af; line-height: 1.6;">
+    <p style="margin: 0 0 20px 0; font-size: 12px; color: #9ca3af; line-height: 1.6;">
       Or copy this link into your browser:<br>
       <span style="font-family: monospace; color: #6b7280; word-break: break-all;">${inviteLink}</span>
     </p>
+
+    <div style="background: #f9fafb; border: 1px solid #f3f4f6; border-radius: 8px; padding: 14px 16px; margin: 0 0 8px 0;">
+      <p style="margin: 0 0 6px 0; font-size: 13px; color: #374151;">
+        <strong>Already activated?</strong> Sign in to the Employee Portal any time:
+      </p>
+      <p style="margin: 0 0 10px 0; font-size: 13px;">
+        <a href="${signInUrl}" style="color: #16a34a; font-weight: 600; word-break: break-all;">${signInUrl}</a>
+      </p>
+      <p style="margin: 0; font-size: 12px; color: #9ca3af; line-height: 1.6;">
+        This activation link expires in 7 days. If it has expired, ask ${orgName || 'your employer'} to
+        resend your invitation. Need help? Reply to this email or contact your employer.
+      </p>
+    </div>
 
   </div>
 
@@ -213,6 +256,24 @@ function buildEmployeeInviteHtml(inviteLink, displayName, orgName) {
   </p>
 </body>
 </html>`
+}
+
+function buildEmployeeInviteText(inviteLink, orgName) {
+  const signInUrl = employeeSignInUrl(inviteLink)
+  return [
+    `${orgName || 'Your employer'} has invited you to activate your Power On Solutions employee account.`,
+    '',
+    'Activate your account (use the email this invite was sent to):',
+    inviteLink,
+    '',
+    'Already activated? Sign in to the Employee Portal any time:',
+    signInUrl,
+    '',
+    'This activation link expires in 7 days. If it has expired, ask your employer to resend it.',
+    'Questions? Reply to this email or contact your employer.',
+    '',
+    'Power On Solutions LLC · C-10 License #1151468 · Desert Hot Springs, CA',
+  ].join('\n')
 }
 
 async function sendEmail(apiKey, payload) {
@@ -318,6 +379,9 @@ exports.handler = async (event) => {
     ? body.employmentType
     : 'full_time'
   const profileId = typeof body.profileId === 'string' ? body.profileId.trim() : null
+  const backupEmployeeId = typeof body.backupEmployeeId === 'string' && body.backupEmployeeId.trim()
+    ? body.backupEmployeeId.trim()
+    : null
 
   if (!displayName) {
     return {
@@ -390,16 +454,9 @@ exports.handler = async (event) => {
 
       await sendEmail(resendKey, {
         to:      emailRaw,
-        subject: `${orgName} — Employee time tracking invite`,
+        subject: `${orgName} — Activate your Power On employee account`,
         html:    buildEmployeeInviteHtml(inviteLink, displayName, orgName),
-        text: [
-          `${orgName} has invited you to Power On employee time tracking.`,
-          '',
-          'Use the link below to create your account or sign in and accept the invite:',
-          inviteLink,
-          '',
-          'Power On Solutions LLC · C-10 License #1151468 · Desert Hot Springs, CA',
-        ].join('\n'),
+        text:    buildEmployeeInviteText(inviteLink, orgName),
       })
 
       console.log(`[sendEmployeeInvite] Invite (update) sent to ${emailRaw}, profileId=${profileId}`)
@@ -425,6 +482,62 @@ exports.handler = async (event) => {
     const baseUrl     = resolveBaseUrl(event)
     const inviteLink  = `${baseUrl}/employee/invite/${inviteToken}`
 
+    // ROLE-2.4 duplicate prevention / invite reuse:
+    // When inviting from a Cost Model employee (backupEmployeeId), never create a
+    // second portal profile if one already exists for that Cost Model employee.
+    // Reuse the existing unlinked profile; reject if it is already activated.
+    // backup_employee_id is unique per org (migration 114) — this is the app-side
+    // guard that keeps the constraint from ever being hit.
+    if (backupEmployeeId) {
+      const existingByBackup = await supabaseSelectByBackupId(
+        supabaseUrl, serviceKey, profile.org_id, backupEmployeeId,
+      )
+      if (existingByBackup) {
+        if (existingByBackup.user_id !== null) {
+          return {
+            statusCode: 409,
+            headers:    CORS_HEADERS,
+            body:       JSON.stringify({ success: false, error: 'This employee already has an active portal account.' }),
+          }
+        }
+        // Reuse the existing prepared/unlinked profile — do NOT insert a new row.
+        await supabaseUpdate(supabaseUrl, serviceKey, 'employee_profiles', existingByBackup.id, {
+          email:        emailRaw,
+          display_name: displayName,
+          invite_token: inviteToken,
+          invited_by:   authUser.id,
+          invited_at:   new Date().toISOString(),
+        })
+
+        let reuseOrgName = 'Your employer'
+        try {
+          const orgRes = await fetch(
+            `${supabaseUrl}/rest/v1/organizations?id=eq.${encodeURIComponent(profile.org_id)}&select=name&limit=1`,
+            { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+          )
+          if (orgRes.ok) {
+            const orgData = await orgRes.json()
+            if (Array.isArray(orgData) && orgData[0]?.name) reuseOrgName = orgData[0].name
+          }
+        } catch { /* non-fatal */ }
+
+        await sendEmail(resendKey, {
+          to:      emailRaw,
+          subject: `${reuseOrgName} — Activate your Power On employee account`,
+          html:    buildEmployeeInviteHtml(inviteLink, displayName, reuseOrgName),
+          text:    buildEmployeeInviteText(inviteLink, reuseOrgName),
+        })
+
+        console.log(`[sendEmployeeInvite] Invite (reuse by backup_employee_id) sent to ${emailRaw}, profileId=${existingByBackup.id}`)
+
+        return {
+          statusCode: 200,
+          headers:    CORS_HEADERS,
+          body:       JSON.stringify({ success: true, inviteId: existingByBackup.id, email: emailRaw, reused: true }),
+        }
+      }
+    }
+
     const row = {
       org_id:           profile.org_id,
       user_id:          null,
@@ -437,6 +550,8 @@ exports.handler = async (event) => {
       invite_token:     inviteToken,
       invited_by:       authUser.id,
       invited_at:       new Date().toISOString(),
+      // Carry the Cost Model linkage so the new profile is unified from creation.
+      ...(backupEmployeeId ? { backup_employee_id: backupEmployeeId } : {}),
     }
 
     const inserted = await supabaseInsert(supabaseUrl, serviceKey, 'employee_profiles', row)
@@ -465,16 +580,9 @@ exports.handler = async (event) => {
 
     await sendEmail(resendKey, {
       to:      emailRaw,
-      subject: `${orgName} — Employee time tracking invite`,
+      subject: `${orgName} — Activate your Power On employee account`,
       html:    buildEmployeeInviteHtml(inviteLink, displayName, orgName),
-      text: [
-        `${orgName} has invited you to Power On employee time tracking.`,
-        '',
-        'Use the link below to create your account or sign in and accept the invite:',
-        inviteLink,
-        '',
-        'Power On Solutions LLC · C-10 License #1151468 · Desert Hot Springs, CA',
-      ].join('\n'),
+      text:    buildEmployeeInviteText(inviteLink, orgName),
     })
 
     console.log(`[sendEmployeeInvite] Invite sent to ${emailRaw}, id=${inviteId}`)

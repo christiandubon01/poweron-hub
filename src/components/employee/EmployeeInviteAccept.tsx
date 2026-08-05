@@ -12,8 +12,8 @@
  *   6. Confirmation — EmployeePortal routing deferred to TIME-2C
  */
 
-import React, { useState, useEffect, useCallback } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   Zap,
   CheckCircle,
@@ -31,6 +31,7 @@ import {
 import type { User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/authStore'
+import { goToEmployeePortal } from '@/lib/employeeRoutes'
 import {
   validateEmployeeInviteToken,
   acceptEmployeeInvite,
@@ -142,6 +143,7 @@ function StatusCard({
 
 export function EmployeeInviteAccept() {
   const { token } = useParams<{ token: string }>()
+  const navigate = useNavigate()
 
   const [phase, setPhase] = useState<PagePhase>('loading')
   const [invalidReason, setInvalidReason] = useState<string | undefined>()
@@ -164,6 +166,12 @@ export function EmployeeInviteAccept() {
   const [acceptLoading, setAcceptLoading] = useState(false)
   const [acceptError, setAcceptError] = useState<string | null>(null)
   const [signOutLoading, setSignOutLoading] = useState(false)
+
+  // Guards so acceptance runs exactly once even as auth/session effects re-fire.
+  // acceptInFlightRef prevents overlapping accept_employee_invite calls (idempotent
+  // at the RPC too); autoAcceptTriedRef prevents the auto-accept effect from looping.
+  const acceptInFlightRef = useRef(false)
+  const autoAcceptTriedRef = useRef(false)
 
   // ── Session tracking (public route — no LoginFlow wrapper) ─────────────────
   useEffect(() => {
@@ -218,6 +226,24 @@ export function EmployeeInviteAccept() {
       mounted = false
     }
   }, [token])
+
+  // ── Already accepted + signed in → send them to the portal ─────────────────
+  // If the invite was already claimed and a session exists, this is almost
+  // always the same employee re-opening the link. Resolve role and route to the
+  // portal instead of showing an "already used" dead-end.
+  useEffect(() => {
+    if (phase !== 'invalid' || invalidReason !== 'already_accepted') return
+    if (!sessionReady || !sessionUser) return
+    let cancelled = false
+    ;(async () => {
+      await useAuthStore.getState().initialize()
+      if (cancelled) return
+      if (useAuthStore.getState().role === 'employee') {
+        goToEmployeePortal(navigate)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [phase, invalidReason, sessionReady, sessionUser, navigate])
 
   const handleSignOut = useCallback(async () => {
     setSignOutLoading(true)
@@ -341,31 +367,60 @@ export function EmployeeInviteAccept() {
   }
 
   // ── Accept invite (authenticated only) ─────────────────────────────────────
-  async function handleAccept() {
-    if (!token) return
+  //
+  // EMP-AUTH-1: acceptance now OWNS the flow. After the employee_profiles row is
+  // linked we AWAIT a fresh auth-state resolution (so role resolves to 'employee'
+  // and the interim owner fallback cannot win), then navigate with replace=true
+  // straight to the Employee Portal. There is no "Continue → /" hand-off that
+  // could render the owner PIN/NDA gate while role is still resolving.
+  const handleAccept = useCallback(async (): Promise<boolean> => {
+    if (!token) return false
+    if (acceptInFlightRef.current) return false
+    acceptInFlightRef.current = true
 
     setAcceptLoading(true)
     setAcceptError(null)
 
     try {
       const result = await acceptEmployeeInvite(token)
-      if (result.success) {
-        // The employee_profiles row is now linked to this auth user. Re-run the
-        // auth state machine so it re-resolves the portal role to 'employee'
-        // (the pre-accept resolution saw no linked profile and fell back to
-        // owner, which would otherwise route Continue into the owner PIN gate).
-        // Fire-and-forget: it settles while the user reads the success screen.
-        void useAuthStore.getState().initialize()
+      // 'already_accepted' with the current authenticated user is a success for
+      // routing purposes — the row is linked; just resolve role and land.
+      if (result.success || result.reason === 'already_accepted') {
+        // AWAIT (not fire-and-forget) so role is 'employee' before we route.
+        await useAuthStore.getState().initialize()
         setPhase('accepted')
-        return
+        goToEmployeePortal(navigate)
+        return true
       }
       setAcceptError(acceptMessage(result.reason))
+      return false
     } catch {
       setAcceptError('Something went wrong while accepting the invite. Please try again.')
+      return false
     } finally {
       setAcceptLoading(false)
+      acceptInFlightRef.current = false
     }
-  }
+  }, [token, navigate])
+
+  // ── Auto-accept once authenticated with the matching email ─────────────────
+  // Closes the interim window that caused the owner fallback: as soon as a
+  // matching authenticated session exists on a valid invite, claim it and route
+  // to the portal — the user never has to click through a generic landing.
+  useEffect(() => {
+    if (phase !== 'ready') return
+    if (!sessionUser || !token) return
+    if (autoAcceptTriedRef.current) return
+
+    const invitedEmail = invite?.email?.trim().toLowerCase()
+    const signedInEmail = sessionUser.email?.trim().toLowerCase()
+    // Only auto-accept when the invite has no bound email, or it matches the
+    // signed-in user. A mismatch is surfaced to the user, never auto-claimed.
+    if (invitedEmail && signedInEmail && invitedEmail !== signedInEmail) return
+
+    autoAcceptTriedRef.current = true
+    void handleAccept()
+  }, [phase, sessionUser, token, invite?.email, handleAccept])
 
   // ── Render phases ──────────────────────────────────────────────────────────
 
@@ -412,35 +467,23 @@ export function EmployeeInviteAccept() {
   }
 
   if (phase === 'accepted') {
+    // Acceptance succeeded and role has resolved to 'employee'; navigate() has
+    // already fired. This is a brief redirect state, not a Continue hand-off.
     return (
       <PageShell>
         <StatusCard
           icon={<CheckCircle className="w-7 h-7 text-green-600" />}
           title="Invite Accepted"
-          body="Invite accepted. Employee portal access will be available after setup is complete."
+          body="Taking you to your employee portal…"
           action={
-            <div className="flex flex-col gap-3">
-              <Link
-                to="/"
-                className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-green-600 text-white text-sm font-semibold rounded-xl"
-              >
-                Continue
-                <ArrowRight size={14} />
-              </Link>
-              <button
-                type="button"
-                onClick={handleSignOut}
-                disabled={signOutLoading}
-                className="inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-semibold text-gray-600 hover:text-gray-900"
-              >
-                {signOutLoading ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <LogOut size={14} />
-                )}
-                Sign Out
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => goToEmployeePortal(navigate)}
+              className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-green-600 text-white text-sm font-semibold rounded-xl"
+            >
+              Open Employee Portal
+              <ArrowRight size={14} />
+            </button>
           }
         />
       </PageShell>
