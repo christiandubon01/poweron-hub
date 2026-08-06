@@ -66,6 +66,34 @@ import { linkEntityToAccount, upsertRelationshipEvent } from '@/services/relatio
 // BUG 3 FIX — Canonical project financials (remaining_balance = quote − costs)
 import { calculateProjectFinancials, calculatePortfolioFinancials, INTERNAL_LABOR_RATE, VAN_MILE_RATE } from '@/utils/calculateProjectFinancials'
 import { PortalStatusControls } from '@/components/portal/PortalStatusControls'
+// SERVICE-LOG-1 — one canonical quote/profit formula path for New, Edit and View.
+import {
+  computeServiceQuote,
+  formatQuoteVariance,
+  quoteVarianceTone,
+  resolveTotalQuoted,
+  isManuallyQuoted,
+  round2,
+} from '@/features/service-quote/serviceQuoteMath'
+import {
+  addAssignment,
+  assignedProfileIds,
+  assignmentKey,
+  buildAssignableEmployeeOptions,
+  hydrateAssignmentIdentities,
+  normalizeAssignments,
+  removeAssignment,
+  summarizeAssignments,
+  type AssignedEmployee,
+} from '@/features/service-quote/serviceAssignments'
+import {
+  TOTAL_QUOTED_STEP,
+  reconcileServicePayment,
+  roundUpToQuoteStep,
+  snapToQuoteStep,
+} from '@/features/service-quote/servicePaymentStatus'
+import { syncServiceCallAssignments } from '@/services/serviceCallAssignmentService'
+import { getActiveEmployeeProfiles } from '@/services/adminTimecardService'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -99,6 +127,52 @@ function getAdjustmentTypeLabel(adj: any): 'Income' | 'Mileage' | 'Expense' {
 
 // ── Service balance & rollup ─────────────────────────────────────────────────
 
+/**
+ * SERVICE-LOG-1 polish — settings read cache (UI performance only).
+ *
+ * getServiceRollup() runs for every service row on every render, and each call
+ * used to do a full localStorage read + JSON.parse of the ENTIRE backup blob
+ * just to read two numbers. serviceBalanceDue() and getServicePaymentMeta()
+ * each call it again, so one render of N rows meant ~3N whole-backup parses.
+ * That is what made typing inside the Service Log modals feel laggy.
+ *
+ * Identical values, read once per data change instead of once per row. The
+ * cache is cleared by the same 'storage' / 'poweron-data-saved' events every
+ * save path in this file already dispatches, plus a short TTL so a missed
+ * invalidation can never leave stale rates on screen. No math changes.
+ */
+const SERVICE_RATE_CACHE_TTL_MS = 250
+let _serviceRateCache: { opCost: number; mileRate: number } | null = null
+let _serviceRateCacheAt = 0
+
+export function __resetServiceRateCache() {
+  _serviceRateCache = null
+  _serviceRateCacheAt = 0
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', __resetServiceRateCache)
+  window.addEventListener('poweron-data-saved', __resetServiceRateCache)
+}
+
+function readServiceRateSettings(): { opCost: number; mileRate: number } {
+  const now = Date.now()
+  if (_serviceRateCache && now - _serviceRateCacheAt < SERVICE_RATE_CACHE_TTL_MS) {
+    return _serviceRateCache
+  }
+  let settings: any = {}
+  try {
+    const bd = getBackupData() || {}
+    settings = bd.settings || {}
+  } catch { /* fall through to defaults */ }
+  _serviceRateCache = {
+    opCost: num(settings.opCost) || 43,
+    mileRate: num(settings.mileRate) || 0.66,
+  }
+  _serviceRateCacheAt = now
+  return _serviceRateCache
+}
+
 function getServiceRollup(l: any): any {
   const adjustments = (Array.isArray(l.adjustments) ? l.adjustments : [])
   const addIncome = adjustments.filter((a: any) => a && a.type === 'income').reduce((s: number, a: any) => s + num(a.amount), 0)
@@ -108,15 +182,10 @@ function getServiceRollup(l: any): any {
   const baseQuoted = num(l?.quoted)
   const totalBillable = baseQuoted + addIncome
 
-  // Read current Settings fresh from the tenant-aware backup — stored l.opCost / l.mileCost are unreliable
-  // (persist() bug corrupted those values historically; compute from raw hrs/miles instead)
-  let settings: any = {}
-  try {
-    const bd = getBackupData() || {}
-    settings = bd.settings || {}
-  } catch { /* fall through to defaults */ }
-  const opCost = num(settings.opCost) || 43
-  const mileRate = num(settings.mileRate) || 0.66
+  // Read current Settings from the tenant-aware backup — stored l.opCost / l.mileCost are unreliable
+  // (persist() bug corrupted those values historically; compute from raw hrs/miles instead).
+  // Cached per data change rather than per row — see readServiceRateSettings().
+  const { opCost, mileRate } = readServiceRateSettings()
 
   const hrs = num(l?.hrs)
   const miles = num(l?.miles)
@@ -520,7 +589,13 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [slHrs, setSlHrs] = useState('')
   const [slEstHrs, setSlEstHrs] = useState('')
   const [slMi, setSlMi] = useState('')
+  // slQuoted IS Total Quoted — the actual amount quoted to the customer. It keeps
+  // writing the existing serviceLogs[].quoted field, so collections, balances and
+  // revenue are unchanged. Suggested Quote is derived, never stored as the total.
   const [slQuoted, setSlQuoted] = useState('')
+  const [slBillRate, setSlBillRate] = useState('')
+  const [slQuotedManual, setSlQuotedManual] = useState(false)
+  const [slAssignments, setSlAssignments] = useState<AssignedEmployee[]>([])
   const [slMat, setSlMat] = useState('')
   const [slCollected, setSlCollected] = useState('')
   const [slStore, setSlStore] = useState('')
@@ -529,8 +604,6 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [slEmatInfo, setSlEmatInfo] = useState('')
   const [slDetailLink, setSlDetailLink] = useState('')
   const [slNotes, setSlNotes] = useState('')
-  const [showSvcLinkModal, setShowSvcLinkModal] = useState(false)
-  const [svcLinkNotice, setSvcLinkNotice] = useState('')
   // Service Estimate workflow state (Step 1-3)
   const [showEstimateForm, setShowEstimateForm] = useState(false)
   const [editEstimateId, setEditEstimateId] = useState<string | null>(null)
@@ -546,7 +619,12 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [estMaterials, setEstMaterials] = useState('')
   const [estMiles, setEstMiles] = useState('')
   const [estNotes, setEstNotes] = useState('')
-  const [estTech, setEstTech] = useState('')
+  // Total Quoted for estimates keeps writing serviceEstimates[].totalQuote.
+  const [estTotalQuoted, setEstTotalQuoted] = useState('')
+  const [estQuotedManual, setEstQuotedManual] = useState(false)
+  const [estAssignments, setEstAssignments] = useState<AssignedEmployee[]>([])
+  // Portal identities (employee_profiles) for the Assigned Employees picker.
+  const [portalProfiles, setPortalProfiles] = useState<any[]>([])
   const [estMatNotes, setEstMatNotes] = useState('')
   const [estReceiptUrl, setEstReceiptUrl] = useState('')
   const [showEstimateNewCustomerModal, setShowEstimateNewCustomerModal] = useState(false)
@@ -645,6 +723,30 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     }
   }, [forceUpdate, hasHydrated, isDemoMode])
 
+  // SERVICE-LOG-1: Escape closes the Service Call modal without saving.
+  useEffect(() => {
+    if (!showSvcForm) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') resetSvcForm()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showSvcForm])
+
+  // SERVICE-LOG-1: canonical portal identities for Assigned Employees. Read-only
+  // load; this never creates, invites or links an employee account.
+  useEffect(() => {
+    if (hasHydrated && isDemoMode) return
+    let cancelled = false
+    getActiveEmployeeProfiles()
+      .then((res) => {
+        if (cancelled) return
+        setPortalProfiles(res.success && Array.isArray(res.data) ? res.data : [])
+      })
+      .catch(() => { if (!cancelled) setPortalProfiles([]) })
+    return () => { cancelled = true }
+  }, [hasHydrated, isDemoMode])
+
   const [completingEstimateId, setCompletingEstimateId] = useState<string | null>(null)
   const [actualHours, setActualHours] = useState('')
   const [actualMaterials, setActualMaterials] = useState('')
@@ -674,7 +776,6 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const canonicalCustomerName = (record: any): string => {
     return resolveCanonicalCustomerName(record, gcContacts)
   }
-  const serviceAccountOptions = accountOptions
   // Full array kept for historical name resolution; liveEmployees drives the
   // employee pickers for new/edited logs (Phase 6S-C: hide deleted/inactive).
   const employees = backup.employees || []
@@ -882,6 +983,40 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const rawActiveServiceCalls = backup.activeServiceCalls || []
   const billRate = num(settings.billRate || 75)
   const taxRate = num(settings.tax || 0)
+
+  // ── SERVICE-LOG-1 shared quote + assignment plumbing ───────────────────────
+  // Every quote/profit number in this panel comes from this one helper so New,
+  // Edit and the read-only cards can never drift apart.
+  const quoteFor = (inputs: any, totalQuotedOverride?: number | null) => computeServiceQuote(
+    { mileRate, taxRatePct: taxRate, opCostRate: opCost, ...inputs },
+    totalQuotedOverride,
+  )
+
+  const assignableEmployeeOptions = buildAssignableEmployeeOptions(
+    liveEmployees.map((e: any) => ({ id: String(e.id), name: e.name, email: e.email ?? null })),
+    (portalProfiles || []).map((p: any) => ({
+      id: String(p.id),
+      display_name: p.display_name,
+      email: p.email ?? null,
+      active: p.active !== false,
+      user_id: p.user_id ?? null,
+      backup_employee_id: p.backup_employee_id ?? null,
+    })),
+    { includeOwner: true },
+  )
+
+  /** Push the current assignment set for one service record to the Employee Portal. */
+  function syncAssignmentsToPortal(record: any, kind: 'service_estimate' | 'service_call', assignments: AssignedEmployee[]) {
+    void syncServiceCallAssignments({
+      orgId: authProfile?.org_id || null,
+      serviceCallId: String(record?.id || ''),
+      kind,
+      profileIds: assignedProfileIds(assignments),
+      record,
+    }).then((res) => {
+      if (!res.success) console.warn('[V15rFieldLogPanel] service call assignment sync failed', res.error)
+    }).catch((err) => console.warn('[V15rFieldLogPanel] service call assignment sync failed', err))
+  }
   const serviceWorkflowStatus = (record: any) => String(record?.serviceStatus || record?.estimateStatus || record?.status || '').toLowerCase().trim()
   const archivedServiceReviewEntries = (() => {
     const seen = new Set<string>()
@@ -917,7 +1052,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setEstMiles('')
     setEstNotes('')
     setEditEstimateId(null)
-    setEstTech('')
+    setEstTotalQuoted('')
+    setEstQuotedManual(false)
+    setEstAssignments([])
     setEstMatNotes('')
     setEstReceiptUrl('')
     setShowEstimateNewCustomerModal(false)
@@ -1003,49 +1140,13 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     const estMi = parseFloat(estMiles) || 0
     const estRate = parseFloat(estBillRate) || billRate
 
-    const labor = estHrs * estRate
-    const mileageCost = estMi * mileRate
-    const taxableAmount = estMat + mileageCost
-    const taxAmount = taxableAmount * (taxRate / 100)
-    const totalQuote = labor + estMat + mileageCost + taxAmount
-    const profit = totalQuote - estMat - mileageCost - (estHrs * (parseFloat(String(backup?.settings?.opCost)) || 35))
-    const marginPct = totalQuote > 0 ? Math.min(((profit / totalQuote) * 100), 999) : 0
-
-    // ─────────────────────────────────────────────────────────────────────
-    // BRANCH: Editing an existing service-log entry via the modal UI.
-    // The Edit button on service-log rows opens this same modal (via
-    // beginSvcEditInModal) but the user is updating a serviceLog row, not
-    // creating an estimate. Update the row in place and exit early.
-    // ─────────────────────────────────────────────────────────────────────
-    if (editSvcId) {
-      const idx = serviceLogs.findIndex(l => l.id === editSvcId)
-      if (idx >= 0) {
-        pushState(backup)
-        const existing: any = serviceLogs[idx]
-        const updatedLog: any = {
-          ...existing,
-          customer: estCust || existing.customer || 'Unknown',
-          accountId: estAccountId || existing.accountId,
-          address: estAddr || existing.address || '',
-          date: estDate || existing.date || today(),
-          jtype: estJobType || existing.jtype,
-          estHrs: estHrs,
-          hrs: estHrs,
-          mat: estMat,
-          miles: estMi,
-          quoted: totalQuote,
-          notes: estNotes || existing.notes || '',
-          detailLink: estReceiptUrl || existing.detailLink || '',
-          updatedAt: new Date().toISOString(),
-        }
-        backup.serviceLogs[idx] = ensureServiceLogIdentity(updatedLog)
-        const saved = await persistServiceLogs()
-        if (!saved) return
-      }
-      resetEstimateForm()
-      setEditSvcId(null)
-      return
-    }
+    // SERVICE-LOG-1: Suggested Quote is derived; totalQuote stores the owner's
+    // actual Total Quoted (defaulting to the suggestion when never edited).
+    const quote = quoteFor(
+      { hours: estHrs, billRate: estRate, materials: estMat, miles: estMi },
+      estTotalQuoted === '' ? null : parseFloat(estTotalQuoted) || 0,
+    )
+    const totalQuote = quote.totalQuoted
 
     pushState(backup)
     const estimate = {
@@ -1060,11 +1161,12 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       estMaterials: estMat,
       milesRT: estMi,
       notes: estNotes,
-      technician: employees.find(e => e.id === estTech)?.name || estTech,
-      technicianId: estTech,
+      assignedEmployees: estAssignments,
       materialNotes: estMatNotes,
       receiptUrl: estReceiptUrl,
       totalQuote,
+      suggestedQuote: quote.suggestedQuote,
+      quotedManual: estQuotedManual,
       status: 'open',
       createdAt: new Date().toISOString(),
       // Preserve the hunter_lead id for portal-originated service calls so
@@ -1092,6 +1194,21 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     // Phase 6R-B: route through the service.calls scoped save (was broad persist()).
     const saved = await persistServiceCalls()
     if (!saved) return
+    // SERVICE-LOG-1: mirror the assignment set to the Employee Portal (job facts
+    // only — no quote, profit or collections data leaves the owner app).
+    syncAssignmentsToPortal(estimate, 'service_estimate', estAssignments)
+    // SALES-CONVERSION-1: notify PipelineTab that a new service call was saved so
+    // it can reconcile conversion receipts immediately. Only for new estimates that
+    // originated from a Sales Intelligence lead (hunterLeadId is only set then).
+    if (estimate.hunterLeadId) {
+      window.dispatchEvent(new CustomEvent('poweron:service-call-created', {
+        detail: {
+          serviceCallId: estimate.id,
+          leadId: estimate.hunterLeadId,
+          label: estimate.customer,
+        },
+      }))
+    }
     if (estimate.accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
@@ -1155,7 +1272,19 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setEstMaterials(String(est.estMaterials || 0))
     setEstMiles(String(est.milesRT || 0))
     setEstNotes(est.notes || '')
-    setEstTech((est as any).technician || '')
+    // SERVICE-LOG-1: the stored quote IS the customer's Total Quoted. Suggested
+    // Quote is recalculated live from the current cost inputs and never
+    // overwrites the historical customer number.
+    const loadedQuote = resolveTotalQuoted(est)
+    const suggested = quoteFor({
+      hours: num(est.estHours),
+      billRate: num(est.billRate) || billRate,
+      materials: num(est.estMaterials),
+      miles: num(est.milesRT),
+    }).suggestedQuote
+    setEstTotalQuoted(String(loadedQuote))
+    setEstQuotedManual(isManuallyQuoted(est, suggested))
+    setEstAssignments(hydrateAssignmentIdentities(normalizeAssignments(est), assignableEmployeeOptions))
     setEstMatNotes((est as any).materialNotes || '')
     setEstReceiptUrl((est as any).receiptUrl || '')
     setShowEstimateForm(true)
@@ -1243,6 +1372,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     // and service log is created. This is just a lead-confirmation milestone.
     const saved = await persistServiceCalls()
     if (!saved) return
+    // SERVICE-LOG-1: assignments (and Total Quoted) ride along on the spread
+    // above; re-sync so the portal rows reflect the now-active service call.
+    syncAssignmentsToPortal(activeEntry, 'service_call', normalizeAssignments(activeEntry))
     if (activeEntry.accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
@@ -1296,6 +1428,11 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
     pushState(backup)
 
+    // SERVICE-LOG-1: the estimate's Total Quoted is the customer agreement and
+    // carries through the conversion untouched; assignments come with it.
+    const carriedTotalQuoted = resolveTotalQuoted(est)
+    const carriedAssignments = normalizeAssignments(est)
+
     // Create service log entry
     const logEntry: BackupServiceLog = {
       id: 'svc' + Date.now(),
@@ -1306,11 +1443,14 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       jtype: est.jobType,
       hrs: actHrs,
       miles: actMi,
-      quoted: est.totalQuote,
+      quoted: carriedTotalQuoted,
+      suggestedQuote: (est as any).suggestedQuote,
+      quotedManual: (est as any).quotedManual,
+      assignedEmployees: carriedAssignments,
       mat: actMat,
       collected,
-      payStatus: collected >= est.totalQuote ? 'Y' : (collected > 0 ? 'P' : 'N'),
-      balanceDue: Math.max(0, est.totalQuote - collected),
+      payStatus: collected >= carriedTotalQuoted ? 'Y' : (collected > 0 ? 'P' : 'N'),
+      balanceDue: Math.max(0, carriedTotalQuoted - collected),
       store: '',
       notes: est.notes,
       mileCost: mileageCost,
@@ -1349,13 +1489,17 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       estMiles: estMi,
       actualMiles: actMi,
       milesVariance: actMi - estMi,
-      quoted: est.totalQuote,
+      quoted: carriedTotalQuoted,
       actualCost: actMat + mileageCost + labCost,
     })
 
     // Phase 6R-B: one scoped save carries the new serviceLog + estimate completion.
     const saved = await persistServiceCalls()
     if (!saved) return
+    // The completed work now lives on the service log id — move the portal rows
+    // there and clear the estimate's, so an employee sees the job once.
+    syncAssignmentsToPortal(logEntry, 'service_call', carriedAssignments)
+    syncAssignmentsToPortal(est, 'service_estimate', [])
     if ((logEntry as any).accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
@@ -1475,75 +1619,65 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setSlQuoted(''); setSlMat(''); setSlCollected(''); setSlStore(''); setSlJtype(JOB_TYPES[0])
     setSlPayStatus('Y'); setSlEmatInfo(''); setSlDetailLink(''); setSlNotes('')
     setSlAccountId('')
-    setShowSvcLinkModal(false)
-    setSvcLinkNotice('')
+    setSlBillRate(String(billRate))
+    setSlQuotedManual(false)
+    setSlAssignments([])
     setEditSvcId(null); setShowSvcForm(false)
   }
 
-  function linkServiceEntryToExistingCustomer(accountId: string) {
-    if (!editSvcId || !accountId) return
-    const account = gcContacts.find((c: any) => String(c.id) === String(accountId))
-    if (!account) return
-    const display = [account.company || 'Unnamed', account.contact ? `(${account.contact})` : ''].filter(Boolean).join(' ').trim()
-    const idx = serviceLogs.findIndex((l: any) => l.id === editSvcId)
-    if (idx < 0) return
-    pushState(backup)
-    const prior = backup.serviceLogs[idx] as any
-    backup.serviceLogs[idx] = {
-      ...prior,
-      accountId: account.id,
-      customer: display || prior.customer || 'Unknown',
-    }
-    setSlAccountId(String(account.id))
-    setSlCust(display || slCust)
-    setSvcLinkNotice(`Linked to ${display || 'Customer'}`)
-    setShowSvcLinkModal(false)
-    persist()
-    const linked = backup.serviceLogs[idx] as any
-    if (linked?.accountId) {
-      void linkEntityToAccount({
-        orgId: authProfile?.org_id || null,
-        accountId: String(linked.accountId),
-        entityType: 'service_log',
-        entityId: String(linked.id),
-        entityLabel: linked.jtype || linked.customer || 'Service Call',
-        legacyCustomerText: linked.customer || '',
-        metadata: { legacy_payload: linked },
-        createdBy: authProfile?.id || null,
-      }).catch((err) => console.warn('[V15rFieldLogPanel] relationship link upsert failed', err))
-      void upsertRelationshipEvent({
-        orgId: authProfile?.org_id || null,
-        accountId: String(linked.accountId),
-        entityType: 'service_log',
-        entityId: String(linked.id),
-        title: linked.jtype || linked.customer || 'Service Call',
-        description: linked.notes || '',
-        quotedAmount: num(linked.quoted || 0),
-        collectedAmount: num(linked.collected || 0),
-        outstandingAmount: Math.max(0, num(linked.quoted || 0) - num(linked.collected || 0)),
-        metadata: { status: linked.payStatus || '', legacy_payload: linked },
-        createdBy: authProfile?.id || null,
-      }).catch((err) => console.warn('[V15rFieldLogPanel] relationship event upsert failed', err))
-    }
+  /**
+   * SERVICE-LOG-1: Relationship Account picker inside the Service Call modal.
+   * Mirrors handleSelectEstimateAccount — the link is written by saveSvcEntry,
+   * so Cancel never persists anything.
+   */
+  function handleSelectServiceCallAccount(accountId: string) {
+    setSlAccountId(accountId)
+    const selected = accountOptions.find((a: any) => String(a.id) === String(accountId))
+    if (!selected) return
+    if (!String(slCust || '').trim()) setSlCust(selected.label)
+  }
+
+  /** Recompute Suggested Quote from the Service Call modal's current inputs. */
+  function serviceCallQuote(totalQuotedOverride?: number | null) {
+    const hrs = parseFloat(slEstHrs) || parseFloat(slHrs) || 0
+    return quoteFor(
+      {
+        hours: hrs,
+        billRate: parseFloat(slBillRate) || billRate,
+        materials: parseFloat(slMat) || 0,
+        miles: parseFloat(slMi) || 0,
+      },
+      totalQuotedOverride === undefined
+        ? (slQuoted === '' ? null : parseFloat(slQuoted) || 0)
+        : totalQuotedOverride,
+    )
   }
 
   async function saveSvcEntry() {
     const hrs = parseFloat(slHrs) || 0
     const mi = parseInt(slMi) || 0
-    const quoted = parseFloat(slQuoted) || 0
     const mat = parseFloat(slMat) || 0
     let collected = parseFloat(slCollected) || 0
     const mileCost = mi * mileRate
     const labCost = hrs * opCost
+
+    // SERVICE-LOG-1: `quoted` is Total Quoted — the actual customer amount. When
+    // the owner never typed one it initialises from the derived Suggested Quote,
+    // so behaviour matches the old single-number model.
+    const svcQuote = serviceCallQuote()
+    const quoted = svcQuote.totalQuoted
     const profit = quoted - mat - mileCost - labCost
 
     pushState(backup)
-    let payStatus = slPayStatus
-    if (collected <= 0.009) payStatus = 'N'
-    else if (quoted > 0 && collected + 0.009 < quoted) payStatus = 'P'
-    else payStatus = 'Y'
 
-    const balanceDue = payStatus === 'Y' ? 0 : Math.max(0, quoted - collected)
+    // SERVICE-LOG-1 polish: honour the Status the owner actually selected. This
+    // used to recompute payStatus from Collected alone, silently discarding the
+    // choice; reconciling Collected to the status keeps every downstream reader
+    // (rollups, Collections Queue, balance colours) consistent with it.
+    const payment = reconcileServicePayment(slPayStatus, collected, quoted)
+    const payStatus = payment.payStatus
+    collected = payment.collected
+    const balanceDue = payment.balanceDue
     const triggersAtSave = getFiredTriggerNames(backup, { profit, quoted, mat, miles: mi, hrs, mileCost, opCost: labCost })
 
     const entry: BackupServiceLog = {
@@ -1554,6 +1688,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       address: slAddr,
       jtype: slJtype,
       hrs, miles: mi, quoted, mat,
+      suggestedQuote: svcQuote.suggestedQuote,
+      quotedManual: slQuotedManual,
+      billRate: parseFloat(slBillRate) || billRate,
+      assignedEmployees: slAssignments,
       estHrs: parseFloat(slEstHrs) || hrs,
       collected, payStatus, balanceDue,
       store: slStore,
@@ -1586,6 +1724,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     }
     const saved = await persistServiceLogs()
     if (!saved) return
+    // SERVICE-LOG-1: employee-safe job facts only — no quote/profit/collections.
+    syncAssignmentsToPortal(entry, 'service_call', slAssignments)
     if ((entry as any).accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
@@ -1619,6 +1759,12 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     resetSvcForm()
   }
 
+  /**
+   * SERVICE-LOG-1: the canonical Edit Service Call path. New and Edit now open the
+   * SAME Service Call modal with the same calculation helper — the old
+   * detour that reopened a logged service call inside the blue Service Estimate
+   * modal is gone.
+   */
   function beginSvcEdit(logId: string) {
     const l = serviceLogs.find(x => x.id === logId)
     if (!l) return
@@ -1626,43 +1772,25 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setSlCust(canonicalCustomerName(l)); setSlAddr(l.address || ''); setSlDate(l.date); setSlHrs(String(l.hrs))
     setSlAccountId(String((l as any).accountId || ''))
     setSlEstHrs(String((l as any).estHrs ?? l.hrs ?? ''))
-    setSlMi(String(l.miles)); setSlQuoted(String(l.quoted)); setSlMat(String(l.mat))
+    setSlMi(String(l.miles)); setSlMat(String(l.mat))
     setSlCollected(String(l.collected)); setSlStore(l.store || ''); setSlJtype(l.jtype || JOB_TYPES[0])
     setSlPayStatus(l.payStatus || 'N'); setSlEmatInfo(l.emergencyMatInfo || '')
     setSlDetailLink(l.detailLink || ''); setSlNotes(l.notes || '')
-    setShowSvcForm(true)
-  }
 
-  /**
-   * Open the New Service Estimate MODAL prefilled with data from a logged service entry.
-   * Used by the Edit button on service-log rows so the user gets the same rich modal
-   * UI as "+ New Service Estimate" instead of the inline orange form.
-   *
-   * NOTE: This reuses editSvcId (not editEstimateId) so saveSvcEntry (the existing
-   * save path for service logs) still handles the update. The modal is just the UI.
-   */
-  function beginSvcEditInModal(logId: string) {
-    const l = serviceLogs.find(x => x.id === logId)
-    if (!l) return
-    // Set service-log edit state (so save path stays correct)
-    setEditSvcId(l.id)
-    // Prefill the ESTIMATE modal form fields from the service log
-    setEstCust(canonicalCustomerName(l))
-    setEstAccountId(String((l as any).accountId || ''))
-    setEstCustEdited(false)
-    setEstAddr(l.address || '')
-    setEstDate(l.date || today())
-    setEstJobType(l.jtype || JOB_TYPES[0])
-    setEstHours(String((l as any).estHrs ?? l.hrs ?? 0))
-    setEstBillRate(String(billRate))
-    setEstMaterials(String(l.mat || 0))
-    setEstMiles(String(l.miles || 0))
-    setEstNotes(l.notes || '')
-    setEstTech('')
-    setEstMatNotes('')
-    setEstReceiptUrl(l.detailLink || '')
-    // Open the modal
-    setShowEstimateForm(true)
+    // The stored quote loads into Total Quoted untouched; Suggested Quote is
+    // recalculated from the current cost inputs for comparison only.
+    const loadedRate = num((l as any).billRate) || billRate
+    setSlBillRate(String(loadedRate))
+    setSlQuoted(String(resolveTotalQuoted(l)))
+    const suggested = quoteFor({
+      hours: num((l as any).estHrs) || num(l.hrs),
+      billRate: loadedRate,
+      materials: num(l.mat),
+      miles: num(l.miles),
+    }).suggestedQuote
+    setSlQuotedManual(isManuallyQuoted(l, suggested))
+    setSlAssignments(hydrateAssignmentIdentities(normalizeAssignments(l), assignableEmployeeOptions))
+    setShowSvcForm(true)
   }
 
   function deleteSvcEntry(logId: string) {
@@ -2829,9 +2957,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
             </button>
             <button
               onClick={() => { resetSvcForm(); setShowSvcForm(true) }}
+              data-testid="new-service-call-button"
               className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-orange-600 text-white text-xs font-semibold"
             >
-              <Plus size={12} /> Service Call
+              <Plus size={12} /> New Service Call
             </button>
           </div>
         </div>
@@ -2930,9 +3059,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700/60 flex-shrink-0">
                 <div>
                   <h2 className="text-xl font-bold text-white">
-                    {editSvcId ? '✏️ Edit Service Entry' : editEstimateId ? '✏️ Edit Service Estimate' : '⚡ New Service Estimate'}
+                    {editEstimateId ? '✏️ Edit Service Estimate' : '⚡ New Service Estimate'}
                   </h2>
-                  <p className="text-sm text-gray-400 mt-1">Fill in the details — live profit signal updates as you go</p>
+                  <p className="text-sm text-gray-400 mt-1">Suggested Quote updates live — Total Quoted is what the customer agreed to</p>
                 </div>
                 <button
                   onClick={resetEstimateForm}
@@ -2975,7 +3104,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   <div className="md:col-span-1">
                     <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Customer / Job Name</label>
                     <input
-                      key={`estCust-${editEstimateId || editSvcId || 'new'}`}
+                      key={`estCust-${editEstimateId || 'new'}`}
                       defaultValue={estCust}
                       onBlur={e => { setEstCust(e.target.value); setEstCustEdited(true) }}
                       placeholder="e.g. Smith Residence"
@@ -2986,7 +3115,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   <div className="md:col-span-1">
                     <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Address</label>
                     <input
-                      key={`estAddr-${editEstimateId || editSvcId || 'new'}`}
+                      key={`estAddr-${editEstimateId || 'new'}`}
                       defaultValue={estAddr}
                       onBlur={e => setEstAddr(e.target.value)}
                       placeholder="Job site address"
@@ -3067,49 +3196,41 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   </div>
                 </div>
 
-                {/* Technician */}
-                <div>
-                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Technician</label>
-                  <select
-                    value={estTech}
-                    onChange={e => setEstTech(e.target.value)}
-                    className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
-                    style={{ backgroundColor: 'var(--bg-input)' }}
-                  >
-                    <option value="">Select technician...</option>
-                    {(estTech && !liveEmployees.some(e => e.id === estTech)
-                      ? [...liveEmployees, ...employees.filter(e => e.id === estTech)]
-                      : liveEmployees
-                    ).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                  </select>
-                </div>
+                {/* Assigned Employees — multi-select, canonical portal identities */}
+                <AssignedEmployeesField
+                  options={assignableEmployeeOptions}
+                  value={estAssignments}
+                  onChange={setEstAssignments}
+                  accent="blue"
+                />
 
-                {/* Notes */}
-                <div>
-                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Notes</label>
-                  <textarea
-                    key={`estNotes-${editEstimateId || editSvcId || 'new'}`}
-                    defaultValue={estNotes}
-                    onBlur={e => setEstNotes(e.target.value)}
-                    rows={2}
-                    placeholder="Scope, special requirements, access notes..."
-                    className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors resize-none"
-                    style={{ backgroundColor: 'var(--bg-input)' }}
-                  />
-                </div>
-
-                {/* Material Notes */}
-                <div>
-                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Material Notes</label>
-                  <textarea
-                    key={`estMatNotes-${editEstimateId || editSvcId || 'new'}`}
-                    defaultValue={estMatNotes}
-                    onBlur={e => setEstMatNotes(e.target.value)}
-                    rows={2}
-                    placeholder="Describe materials purchased or needed..."
-                    className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors resize-none"
-                    style={{ backgroundColor: 'var(--bg-input)' }}
-                  />
+                {/* Notes + Material Notes — paired for layout parity with the
+                    Service Call modal instead of two stacked full-width blocks. */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Notes</label>
+                    <textarea
+                      key={`estNotes-${editEstimateId || 'new'}`}
+                      defaultValue={estNotes}
+                      onBlur={e => setEstNotes(e.target.value)}
+                      rows={3}
+                      placeholder="Scope, special requirements, access notes..."
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors resize-none"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Material Notes</label>
+                    <textarea
+                      key={`estMatNotes-${editEstimateId || 'new'}`}
+                      defaultValue={estMatNotes}
+                      onBlur={e => setEstMatNotes(e.target.value)}
+                      rows={3}
+                      placeholder="Describe materials purchased or needed..."
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors resize-none"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
                 </div>
 
                 {/* Receipt URL */}
@@ -3117,7 +3238,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Receipt URL</label>
                   <div className="flex gap-2">
                     <input
-                      key={`estReceiptUrl-${editEstimateId || editSvcId || 'new'}`}
+                      key={`estReceiptUrl-${editEstimateId || 'new'}`}
                       defaultValue={estReceiptUrl}
                       onBlur={e => setEstReceiptUrl(e.target.value)}
                       placeholder="Paste receipt or invoice URL..."
@@ -3135,109 +3256,29 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   </div>
                 </div>
 
-                {/* Live Breakdown */}
+                {/* Suggested Quote vs Total Quoted — one canonical helper */}
                 {(() => {
-                  const estHrs = parseFloat(estHours) || 0
-                  const estMat = parseFloat(estMaterials) || 0
-                  const estMi = parseFloat(estMiles) || 0
-                  const estRate = parseFloat(estBillRate) || billRate
-                  const labor = estHrs * estRate
-                  const mileageCost = estMi * mileRate
-                  const opCostTotal = estHrs * opCost
-                  const taxableAmount = estMat + mileageCost
-                  const taxAmount = taxableAmount * (taxRate / 100)
-                  const totalQuote = labor + estMat + mileageCost + taxAmount
-                  const profit = totalQuote - estMat - mileageCost - taxAmount - opCostTotal
-                  const marginPct = totalQuote > 0 ? Math.min(((profit / totalQuote) * 100), 999) : 0
-
+                  const quote = quoteFor(
+                    {
+                      hours: parseFloat(estHours) || 0,
+                      billRate: parseFloat(estBillRate) || billRate,
+                      materials: parseFloat(estMaterials) || 0,
+                      miles: parseFloat(estMiles) || 0,
+                    },
+                    estTotalQuoted === '' ? null : parseFloat(estTotalQuoted) || 0,
+                  )
                   return (
-                    <div className="space-y-3">
-                      {/* Breakdown bar */}
-                      {/* Breakdown grid */}
-                      <div className="rounded-xl overflow-hidden border border-gray-700/50" style={{ backgroundColor: 'var(--bg-secondary)' }}>
-                        <div className="grid grid-cols-3 divide-x divide-gray-700/50">
-                          <div className="px-4 py-3">
-                            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Material Cost</div>
-                            <div className="font-mono text-sm font-bold text-orange-400">{fmt(estMat)}</div>
-                          </div>
-                          <div className="px-4 py-3">
-                            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Mileage <span className="opacity-50">@${mileRate.toFixed(2)}/mi</span></div>
-                            <div className="font-mono text-sm font-bold text-blue-400">{fmt(mileageCost)}</div>
-                          </div>
-                          <div className="px-4 py-3">
-                            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Tax <span className="opacity-50">@{taxRate.toFixed(2)}%</span></div>
-                            <div className="font-mono text-sm font-bold text-yellow-400">{fmt(taxAmount)}</div>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-3 divide-x divide-gray-700/50 border-t border-gray-700/50">
-                          <div className="px-4 py-3">
-                            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Op Cost <span className="opacity-50">@${opCost.toFixed(2)}/hr</span></div>
-                            <div className="font-mono text-sm font-bold text-red-400">{fmt(opCostTotal)}</div>
-                          </div>
-                          <div className="px-4 py-3">
-                            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Quoted Total</div>
-                            <div className="font-mono text-sm font-bold text-white">{fmt(totalQuote)}</div>
-                          </div>
-                          <div className="px-4 py-3">
-                            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Est. Profit</div>
-                            <div className="font-mono text-sm font-bold text-emerald-400">
-                              {fmt(profit)} <span className="text-[10px] opacity-60">({marginPct.toFixed(1)}%)</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Horizontal stacked bar */}
-                      {totalQuote > 0 && (() => {
-                        const segments = [
-                          { label: 'Materials', value: estMat,      color: '#f97316' },
-                          { label: 'Mileage',   value: mileageCost, color: '#60a5fa' },
-                          { label: 'Tax',       value: taxAmount,   color: '#facc15' },
-                          { label: 'Op Cost',   value: opCostTotal, color: '#f87171' },
-                          { label: 'Profit',    value: Math.max(0, profit), color: '#34d399' },
-                        ].filter(s => s.value > 0)
-                        return (
-                          <div className="space-y-2">
-                            {/* Bar */}
-                            <div className="flex rounded-lg overflow-hidden h-6 w-full">
-                              {segments.map((s, i) => (
-                                <div
-                                  key={i}
-                                  style={{ width: `${(s.value / totalQuote) * 100}%`, backgroundColor: s.color, minWidth: s.value > 0 ? 2 : 0 }}
-                                  title={`${s.label}: ${fmt(s.value)} (${((s.value / totalQuote) * 100).toFixed(1)}%)`}
-                                />
-                              ))}
-                            </div>
-                            {/* Legend */}
-                            <div className="flex flex-wrap gap-3">
-                              {segments.map((s, i) => (
-                                <div key={i} className="flex items-center gap-1.5">
-                                  <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: s.color }} />
-                                  <span className="text-[10px] text-gray-400">{s.label}</span>
-                                  <span className="text-[10px] font-mono font-bold" style={{ color: s.color }}>{fmt(s.value)}</span>
-                                  <span className="text-[9px] text-gray-600">({((s.value / totalQuote) * 100).toFixed(1)}%)</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )
-                      })()}
-
-                      {/* Profit signal */}
-                      {totalQuote > 0 && (
-                        <div className={`rounded-xl px-4 py-3 text-xs border ${
-                          profit >= dayTarget
-                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                            : profit > 0
-                            ? 'bg-yellow-500/10 border-yellow-500/25 text-yellow-400'
-                            : 'bg-red-500/10 border-red-500/25 text-red-400'
-                        }`}>
-                          {profit >= dayTarget && <span>✅ <strong>Above daily target</strong> — {fmt(profit)} profit ({marginPct.toFixed(1)}% margin). Strong job.</span>}
-                          {profit > 0 && profit < dayTarget && <span>⚠️ <strong>Below daily target</strong> — {fmt(profit)} profit ({marginPct.toFixed(1)}% margin). {fmt(dayTarget - profit)} short.</span>}
-                          {profit <= 0 && <span>🔴 <strong>Unprofitable</strong> — costs exceed quote by {fmt(Math.abs(profit))}. Reprice or reduce scope.</span>}
-                        </div>
-                      )}
-                    </div>
+                    <ServiceQuotePanel
+                      quote={quote}
+                      totalQuotedInput={estTotalQuoted === '' ? String(quote.suggestedQuote) : estTotalQuoted}
+                      onTotalQuotedChange={(raw) => { setEstTotalQuoted(raw); setEstQuotedManual(true) }}
+                      onUseSuggested={() => { setEstTotalQuoted(String(quote.suggestedQuote)); setEstQuotedManual(false) }}
+                      dayTarget={dayTarget}
+                      mileRate={mileRate}
+                      taxRate={taxRate}
+                      opCost={opCost}
+                      accent="blue"
+                    />
                   )
                 })()}
               </div>
@@ -3254,7 +3295,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   onClick={() => { saveServiceEstimate(); }}
                   className="flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-colors shadow-lg"
                 >
-                  {editSvcId ? '✓ Update Entry' : editEstimateId ? '✓ Update Estimate' : '⚡ Save as Open Estimate'}
+                  {editEstimateId ? '✓ Update Estimate' : '⚡ Save as Open Estimate'}
                 </button>
               </div>
 
@@ -3319,9 +3360,17 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                           </span>
                         </div>
                         {est.address && <div className="text-[10px] text-gray-500 mt-1">{est.address}</div>}
+                        {summarizeAssignments(normalizeAssignments(est)) && (
+                          <div className="text-[10px] text-blue-300/80 mt-1">
+                            Assigned: {summarizeAssignments(normalizeAssignments(est))}
+                          </div>
+                        )}
                       </div>
                       <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-                        <div className="font-mono text-blue-400 font-bold text-sm">{fmt(est.totalQuote)}</div>
+                        <div className="text-right">
+                          <div className="text-[8px] uppercase tracking-wider text-gray-500">Total Quoted</div>
+                          <div className="font-mono text-blue-400 font-bold text-sm">{fmt(resolveTotalQuoted(est))}</div>
+                        </div>
                         <div className="flex flex-wrap gap-1.5 justify-end">
                           <button
                             onClick={() => beginEstimateEdit(est.id)}
@@ -3400,9 +3449,17 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                           </span>
                         </div>
                         {est.address && <div className="text-[10px] text-gray-500 mt-1">{est.address}</div>}
+                        {summarizeAssignments(normalizeAssignments(est)) && (
+                          <div className="text-[10px] text-blue-300/80 mt-1">
+                            Assigned: {summarizeAssignments(normalizeAssignments(est))}
+                          </div>
+                        )}
                       </div>
                       <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-                        <div className="font-mono text-emerald-400 font-bold text-sm">{fmt(est.totalQuote)}</div>
+                        <div className="text-right">
+                          <div className="text-[8px] uppercase tracking-wider text-gray-500">Total Quoted</div>
+                          <div className="font-mono text-emerald-400 font-bold text-sm">{fmt(resolveTotalQuoted(est))}</div>
+                        </div>
                         {completingEstimateId !== est.id && (
                           <div className="flex flex-wrap gap-1.5 justify-end">
                             <button
@@ -3576,148 +3633,315 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
           </div>
         )}
 
-        {/* Entry form with LIVE PROFIT PREVIEW */}
+        {/* ═══════════════════════════════════════════════════════════════════ */}
+        {/* Service Call Modal — New / Edit share this one canonical form.       */}
+        {/* Related to the blue New Service Estimate modal but visually its own: */}
+        {/* orange wrench identity for service calls.                            */}
         {showSvcForm && (
-          <div className="rounded-xl border border-orange-700/50 bg-[var(--bg-input)] p-4 space-y-3">
-            <div className="text-xs font-bold text-gray-300 uppercase">{editSvcId ? 'Edit Service Entry' : 'New Service Call'}</div>
-
-            {/* LIVE PROFIT PREVIEW */}
-            {(slQuoted || slHrs) && (
-              <div
-                className="p-3 rounded-lg border-l-2"
-                style={{
-                  background: 'rgba(249, 115, 22, 0.1)',
-                  borderColor: '#f97316'
-                }}
-              >
-                <ProfitPreview
-                  quoted={parseFloat(slQuoted) || 0}
-                  mat={parseFloat(slMat) || 0}
-                  hrs={parseFloat(slHrs) || 0}
-                  miles={parseInt(slMi) || 0}
-                  dayTarget={dayTarget}
-                  mileRate={mileRate}
-                  opCost={opCost}
-                />
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Customer</label>
-                <div className="space-y-1.5">
-                  <input key={`slCust-${editSvcId || 'new'}`} defaultValue={slCust} onBlur={e => setSlCust(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
-                  {editSvcId && (
-                    <button
-                      type="button"
-                      onClick={() => setShowSvcLinkModal(true)}
-                      className="w-full px-2 py-1 rounded bg-cyan-700/40 border border-cyan-700/50 text-cyan-200 text-[10px] font-semibold hover:bg-cyan-700/60"
-                    >
-                      Link to Existing Customer
-                    </button>
-                  )}
-                  {svcLinkNotice && (
-                    <div className="text-[10px] text-emerald-300">{svcLinkNotice}</div>
-                  )}
-                </div>
-              </div>
-              <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Address</label>
-                <input key={`slAddr-${editSvcId || 'new'}`} defaultValue={slAddr} onBlur={e => setSlAddr(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
-              </div>
-              <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Date</label>
-                <input type="date" value={slDate} onChange={e => setSlDate(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
-              </div>
-              <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Est Hrs</label>
-                <input key={`slEstHrs-${editSvcId || 'new'}`} type="number" step="0.25" defaultValue={slEstHrs} onBlur={e => setSlEstHrs(e.target.value)} placeholder="quoted hrs" className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
-              </div>
-              <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Hours</label>
-                <input key={`slHrs-${editSvcId || 'new'}`} type="number" step="0.5" defaultValue={slHrs} onBlur={e => setSlHrs(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
-              </div>
-              <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Miles RT</label>
-                <input key={`slMi-${editSvcId || 'new'}`} type="number" defaultValue={slMi} onBlur={e => setSlMi(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
-              </div>
-              <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Quoted $</label>
-                <input key={`slQuoted-${editSvcId || 'new'}`} type="number" step="0.01" defaultValue={slQuoted} onBlur={e => setSlQuoted(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
-              </div>
-              <div className="w-full">
-                <VoiceMaterialCapture
-                  value={slMat}
-                  onChange={setSlMat}
-                  priceBook={Array.isArray(backup.priceBook) ? backup.priceBook : (backup.priceBook && typeof backup.priceBook === 'object' ? Object.values(backup.priceBook) : [])}
-                  onConfirm={(total, note) => {
-                    setSlMat(total > 0 ? total.toFixed(2) : slMat)
-                    setSlNotes(prev => prev ? `${prev}\n${note}` : note)
-                  }}
-                />
-              </div>
-              <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Collected $</label>
-                <input key={`slCollected-${editSvcId || 'new'}`} type="number" step="0.01" defaultValue={slCollected} onBlur={e => setSlCollected(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
-              </div>
-              <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Job Type</label>
-                <select value={slJtype} onChange={e => setSlJtype(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200">
-                  {JOB_TYPES.map(jt => <option key={jt} value={jt}>{jt}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Store</label>
-                <input key={`slStore-${editSvcId || 'new'}`} defaultValue={slStore} onBlur={e => setSlStore(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
-              </div>
-              <div>
-                <label className="text-[9px] text-gray-500 uppercase font-bold">Status</label>
-                <select value={slPayStatus} onChange={e => setSlPayStatus(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200">
-                  <option value="Y">Paid in Full</option>
-                  <option value="P">Partial</option>
-                  <option value="N">Unpaid</option>
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className="text-[9px] text-gray-500 uppercase font-bold">Emergency Mat Info</label>
-              <input key={`slEmatInfo-${editSvcId || 'new'}`} defaultValue={slEmatInfo} onBlur={e => setSlEmatInfo(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
-            </div>
-            <div>
-              <label className="text-[9px] text-gray-500 uppercase font-bold">Detail Link</label>
-              <input key={`slDetailLink-${editSvcId || 'new'}`} defaultValue={slDetailLink} onBlur={e => setSlDetailLink(e.target.value)} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200" />
-            </div>
-            <div>
-              <label className="text-[9px] text-gray-500 uppercase font-bold">Notes</label>
-              <textarea key={`slNotes-${editSvcId || 'new'}`} defaultValue={slNotes} onBlur={e => setSlNotes(e.target.value)} rows={2} className="w-full bg-[var(--bg-primary)] border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 resize-none" />
-            </div>
-            <div className="flex gap-2">
-              <button onClick={saveSvcEntry} className="px-3 py-1.5 rounded bg-orange-600 text-white text-xs font-semibold">{editSvcId ? 'Update' : 'Save'}</button>
-              <button onClick={resetSvcForm} className="px-3 py-1.5 rounded bg-gray-700 text-gray-300 text-xs">Cancel</button>
-            </div>
-
-            {showSvcLinkModal && (
-              <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-                <div className="w-full max-w-lg rounded-xl border border-cyan-500/30 bg-[linear-gradient(180deg,rgba(15,23,42,0.98),rgba(2,6,23,0.98))] p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="text-sm font-semibold text-cyan-300">Link to Existing Customer</div>
-                    <button onClick={() => setShowSvcLinkModal(false)} className="text-gray-400 hover:text-gray-200">✕</button>
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            data-testid="service-call-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={editSvcId ? 'Edit Service Call' : 'New Service Call'}
+            style={{ backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
+            onClick={e => { if (e.target === e.currentTarget) resetSvcForm() }}
+          >
+            <div
+              className="relative w-full max-w-5xl mx-4 sm:mx-6 rounded-2xl shadow-2xl flex flex-col"
+              style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid rgba(249,115,22,0.35)',
+                maxHeight: '90vh',
+                overflow: 'hidden',
+              }}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-orange-700/30 flex-shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span
+                    className="flex items-center justify-center w-9 h-9 rounded-xl flex-shrink-0"
+                    style={{ backgroundColor: 'rgba(249,115,22,0.15)', border: '1px solid rgba(249,115,22,0.35)' }}
+                  >
+                    <ClipboardList size={18} style={{ color: '#f97316' }} />
+                  </span>
+                  <div className="min-w-0">
+                    <h2 className="text-lg sm:text-xl font-bold text-white truncate">
+                      {editSvcId ? 'Edit Service Call' : 'New Service Call'}
+                    </h2>
+                    <p className="text-xs sm:text-sm text-gray-400 mt-0.5">
+                      Work performed and collected — Total Quoted is the customer amount
+                    </p>
                   </div>
-                  <div className="space-y-2">
+                </div>
+                <button
+                  onClick={resetSvcForm}
+                  aria-label="Close"
+                  className="text-gray-500 hover:text-white transition-colors text-lg leading-none px-2"
+                >✕</button>
+              </div>
+
+              {/* Body — scrollable */}
+              <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 space-y-4">
+                {/* Relationship account */}
+                <div>
+                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Relationship Account (Optional)</label>
+                  <select
+                    value={slAccountId}
+                    onChange={e => handleSelectServiceCallAccount(e.target.value)}
+                    className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none transition-colors"
+                    style={{ backgroundColor: 'var(--bg-input)' }}
+                  >
+                    <option value="">No linked account</option>
+                    {accountOptions.map((acc: any) => (
+                      <option key={acc.id} value={acc.id}>{acc.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Customer / Address / Date */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Customer / Job Name</label>
+                    <input
+                      key={`slCust-${editSvcId || 'new'}`}
+                      defaultValue={slCust}
+                      onBlur={e => setSlCust(e.target.value)}
+                      placeholder="e.g. Smith Residence"
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Address</label>
+                    <input
+                      key={`slAddr-${editSvcId || 'new'}`}
+                      defaultValue={slAddr}
+                      onBlur={e => setSlAddr(e.target.value)}
+                      placeholder="Job site address"
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Date</label>
+                    <input
+                      type="date"
+                      value={slDate}
+                      onChange={e => setSlDate(e.target.value)}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Job type */}
+                <div>
+                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Job Type</label>
+                  <select
+                    value={slJtype}
+                    onChange={e => setSlJtype(e.target.value)}
+                    className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                    style={{ backgroundColor: 'var(--bg-input)' }}
+                  >
+                    {JOB_TYPES.map(jt => <option key={jt} value={jt}>{jt}</option>)}
+                  </select>
+                </div>
+
+                {/* Pricing inputs */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Est. Hours</label>
+                    <input
+                      key={`slEstHrs-${editSvcId || 'new'}`}
+                      type="number" step="0.25"
+                      defaultValue={slEstHrs}
+                      onBlur={e => setSlEstHrs(e.target.value)}
+                      placeholder="quoted hrs"
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Actual Hours</label>
+                    <input
+                      key={`slHrs-${editSvcId || 'new'}`}
+                      type="number" step="0.5"
+                      defaultValue={slHrs}
+                      onBlur={e => setSlHrs(e.target.value)}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Bill Rate $</label>
+                    <input
+                      key={`slBillRate-${editSvcId || 'new'}`}
+                      type="number" step="0.01"
+                      defaultValue={slBillRate}
+                      onBlur={e => setSlBillRate(e.target.value)}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Miles RT</label>
+                    <input
+                      key={`slMi-${editSvcId || 'new'}`}
+                      type="number"
+                      defaultValue={slMi}
+                      onBlur={e => setSlMi(e.target.value)}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Assigned Employees */}
+                <AssignedEmployeesField
+                  options={assignableEmployeeOptions}
+                  value={slAssignments}
+                  onChange={setSlAssignments}
+                  accent="orange"
+                />
+
+                {/* Collected + Status */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Collected $</label>
+                    <input
+                      key={`slCollected-${editSvcId || 'new'}-${slPayStatus}`}
+                      type="number" step="0.01"
+                      defaultValue={slCollected}
+                      onBlur={e => setSlCollected(e.target.value)}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Status</label>
                     <select
-                      defaultValue=""
-                      onChange={(e) => linkServiceEntryToExistingCustomer(e.target.value)}
-                      className="w-full px-3 py-2 rounded bg-gray-900 border border-gray-700 text-xs text-cyan-200"
+                      value={slPayStatus}
+                      onChange={e => {
+                        // Reflect the reconciliation the save will apply, so the
+                        // owner sees the Collected amount their choice implies.
+                        const next = e.target.value
+                        setSlPayStatus(next)
+                        const reconciled = reconcileServicePayment(next, slCollected, serviceCallQuote().totalQuoted)
+                        setSlCollected(reconciled.collected ? String(reconciled.collected) : '')
+                      }}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
                     >
-                      <option value="">Select relationship account...</option>
-                      {serviceAccountOptions.map((acc: any) => (
-                        <option key={acc.id} value={acc.id}>{acc.label}</option>
-                      ))}
+                      <option value="Y">Paid in Full</option>
+                      <option value="P">Partial</option>
+                      <option value="N">Unpaid</option>
                     </select>
                   </div>
                 </div>
+
+                {/* Materials + Store */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
+                  <VoiceMaterialCapture
+                    className="max-w-sm"
+                    value={slMat}
+                    onChange={setSlMat}
+                    priceBook={Array.isArray(backup.priceBook) ? backup.priceBook : (backup.priceBook && typeof backup.priceBook === 'object' ? Object.values(backup.priceBook) : [])}
+                    onConfirm={(total, note) => {
+                      setSlMat(total > 0 ? total.toFixed(2) : slMat)
+                      setSlNotes(prev => prev ? `${prev}
+${note}` : note)
+                    }}
+                  />
+                  <div className="max-w-sm">
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Store</label>
+                    <input
+                      key={`slStore-${editSvcId || 'new'}`}
+                      defaultValue={slStore}
+                      onBlur={e => setSlStore(e.target.value)}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Emergency material info / Detail link */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Emergency Mat Info</label>
+                    <input
+                      key={`slEmatInfo-${editSvcId || 'new'}`}
+                      defaultValue={slEmatInfo}
+                      onBlur={e => setSlEmatInfo(e.target.value)}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Detail Link</label>
+                    <input
+                      key={`slDetailLink-${editSvcId || 'new'}`}
+                      defaultValue={slDetailLink}
+                      onBlur={e => setSlDetailLink(e.target.value)}
+                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                      style={{ backgroundColor: 'var(--bg-input)' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Notes */}
+                <div>
+                  <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Notes</label>
+                  <textarea
+                    key={`slNotes-${editSvcId || 'new'}`}
+                    defaultValue={slNotes}
+                    onBlur={e => setSlNotes(e.target.value)}
+                    rows={3}
+                    placeholder="Work performed, materials used, follow-up..."
+                    className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none resize-none"
+                    style={{ backgroundColor: 'var(--bg-input)' }}
+                  />
+                </div>
+
+                {/* Suggested Quote vs Total Quoted — same helper as the estimate modal */}
+                {(() => {
+                  const quote = serviceCallQuote()
+                  return (
+                    <ServiceQuotePanel
+                      quote={quote}
+                      totalQuotedInput={slQuoted === '' ? String(quote.suggestedQuote) : slQuoted}
+                      onTotalQuotedChange={(raw) => { setSlQuoted(raw); setSlQuotedManual(true) }}
+                      onUseSuggested={() => { setSlQuoted(String(quote.suggestedQuote)); setSlQuotedManual(false) }}
+                      dayTarget={dayTarget}
+                      mileRate={mileRate}
+                      taxRate={taxRate}
+                      opCost={opCost}
+                      accent="orange"
+                    />
+                  )
+                })()}
               </div>
-            )}
+
+              {/* Footer */}
+              <div
+                className="flex items-center justify-between px-4 sm:px-8 py-4 border-t border-orange-700/30 flex-shrink-0"
+                style={{ backgroundColor: 'var(--bg-secondary)' }}
+              >
+                <button
+                  onClick={resetSvcForm}
+                  className="px-4 py-2 rounded-lg text-xs text-gray-400 hover:text-white border border-gray-600 hover:border-gray-400 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveSvcEntry}
+                  data-testid="save-service-call"
+                  className="flex items-center gap-2 px-5 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold transition-colors shadow-lg"
+                >
+                  {editSvcId ? '✓ Update Service Call' : '✓ Save Service Call'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -3733,7 +3957,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     <div className="flex-1">
                       <div className="font-semibold text-gray-200">{canonicalCustomerName(l)}</div>
                       <div className="text-gray-500">{l.address} · {l.date}</div>
-                      <div className="font-mono text-orange-400 text-xs mt-0.5">{fmt(meta.remaining)} balance due</div>
+                      <div className="font-mono text-orange-400 text-xs mt-0.5">
+                        {fmt(meta.remaining)} balance due
+                        <span className="text-gray-500 font-normal"> · {fmt(meta.quoted)} total quoted</span>
+                      </div>
                     </div>
                     <div className="flex gap-1">
                       <button onClick={() => quickSetSvcPayment(l.id, 'Y')} className="px-2 py-1 rounded bg-emerald-600 text-white text-[9px]">Mark Paid</button>
@@ -3800,6 +4027,11 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                       </div>
                       {l.address && <div className="text-[10px] text-gray-500 mt-1">{l.address}</div>}
                       {l.notes && <div className="text-[10px] text-gray-500 mt-1">{l.notes}</div>}
+                      {summarizeAssignments(normalizeAssignments(l)) && (
+                        <div className="text-[10px] text-orange-300/80 mt-1">
+                          Assigned: {summarizeAssignments(normalizeAssignments(l))}
+                        </div>
+                      )}
                       {/* Mini breakdown strip */}
                       {roll.totalBillable > 0 && (
                         <div style={{ marginTop: '6px' }}>
@@ -3818,7 +4050,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     </div>
                     <div className="text-right text-[10px]" style={{ minWidth: '160px' }}>
                       <div className="font-mono font-bold" style={{ color: '#f7f8ef', fontSize: '12px', marginBottom: '4px' }}>
-                        {fmt(roll.totalBillable)} quote
+                        {fmt(roll.totalBillable)} total quoted
                       </div>
                       <div className="font-mono" style={{ color: '#e5e7eb' }}>
                         {num(roll.hrs).toFixed(1)}h × ${num(roll.opCost).toFixed(2)} = <span style={{ fontWeight: 700, color: '#f87171' }}>{fmt(roll.laborCost)} lab</span>
@@ -3916,7 +4148,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                       </button>
                     </div>
                     <div className="flex items-center gap-1 justify-end flex-shrink-0">
-                      <button onClick={() => beginSvcEditInModal(l.id)} className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-300 hover:bg-gray-600/50">Edit</button>
+                      <button onClick={() => beginSvcEdit(l.id)} className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-300 hover:bg-gray-600/50">Edit</button>
                       <button onClick={() => archiveSvcEntry(l.id)} className="text-[9px] px-2 py-1 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-600/60">Archive</button>
                       <button onClick={() => deleteSvcEntry(l.id)} className="text-[9px] px-2 py-1 rounded border bg-red-500/15 border-red-500/30 text-red-300 hover:bg-red-500/25 hover:text-red-200">Delete</button>
                     </div>
@@ -4589,58 +4821,266 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   )
 }
 
-// ── Profit Preview Component ─────────────────────────────────────────────────
+// ── SERVICE-LOG-1 shared controls ────────────────────────────────────────────
 
-function ProfitPreview({
-  quoted, mat, hrs, miles, dayTarget, mileRate, opCost
+/**
+ * Assigned Employees — multi-select with removable chips.
+ *
+ * Persists stable identities (employee_profiles.id and/or the BackupData
+ * cost-model employee id), never display names or emails. The same employee
+ * cannot be added twice, and removing one chip leaves the rest untouched.
+ */
+export function AssignedEmployeesField({
+  options, value, onChange, accent = 'blue',
 }: {
-  quoted: number; mat: number; hrs: number; miles: number
-  dayTarget: number; mileRate: number; opCost: number
+  options: any[]
+  value: any[]
+  onChange: (next: any[]) => void
+  accent?: 'blue' | 'orange'
 }) {
-  const costRate = opCost || 42.45
-  const mileCostRate = mileRate || 0.66
-  const mileCost = miles * mileCostRate
-  const laborCost = hrs * costRate
-  const totalCost = mat + mileCost + laborCost
-  const projectedProfit = quoted - totalCost
-
-  // Color code: green if profit > 0, yellow if profit > 0 but margin < 20%, red if profit < 0
-  let color = '#ef4444' // red for negative
-  if (projectedProfit > 0) {
-    const margin = dayTarget > 0 ? (projectedProfit / dayTarget) : 0
-    color = margin >= 0.2 ? '#10b981' : '#f59e0b' // green if margin >= 20%, yellow otherwise
-  }
+  const selectedKeys = new Set(value.map(assignmentKey))
+  const available = options.filter((o: any) => !selectedKeys.has(o.key))
+  const chipClass = accent === 'orange'
+    ? 'bg-orange-500/15 border-orange-500/40 text-orange-200'
+    : 'bg-blue-500/15 border-blue-500/40 text-blue-200'
+  const focusClass = accent === 'orange' ? 'focus:border-orange-500' : 'focus:border-blue-500'
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-      {/* Large profit number */}
-      <div style={{ textAlign: 'center', minWidth: '120px' }}>
-        <div style={{ fontSize: '28px', fontWeight: '800', fontFamily: 'monospace', color, lineHeight: '1.1' }}>
-          {fmt(projectedProfit)}
+    <div data-testid="assigned-employees-field">
+      <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Assigned Employees</label>
+      <select
+        value=""
+        aria-label="Add assigned employee"
+        onChange={(e) => {
+          const option = options.find((o: any) => o.key === e.target.value)
+          if (!option) return
+          onChange(addAssignment(value, {
+            employeeId: option.employeeId,
+            profileId: option.profileId,
+            name: option.name,
+          }))
+        }}
+        className={`w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 ${focusClass} outline-none transition-colors`}
+        style={{ backgroundColor: 'var(--bg-input)' }}
+      >
+        <option value="">{available.length ? 'Add employee…' : 'All employees assigned'}</option>
+        {available.map((o: any) => (
+          <option key={o.key} value={o.key}>
+            {o.name}{o.portalLinked ? '' : ' (no portal account)'}
+          </option>
+        ))}
+      </select>
+
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {value.map((a: any) => {
+            const key = assignmentKey(a)
+            return (
+              <span
+                key={key}
+                data-assigned-employee-key={key}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${chipClass}`}
+              >
+                {a.name || 'Unnamed'}
+                <button
+                  type="button"
+                  aria-label={`Remove ${a.name || 'employee'}`}
+                  onClick={() => onChange(removeAssignment(value, key))}
+                  className="opacity-70 hover:opacity-100"
+                >
+                  ✕
+                </button>
+              </span>
+            )
+          })}
         </div>
-        <div style={{ fontSize: '9px', color: 'var(--t3)', fontWeight: '600', textTransform: 'uppercase', marginTop: '2px' }}>
-          Projected Profit
-        </div>
-      </div>
-      {/* Breakdown strip */}
-      <div style={{ flex: 1 }}>
-        {quoted > 0 && (
-          <div style={{ display: 'flex', height: '8px', borderRadius: '4px', overflow: 'hidden', marginBottom: '6px', gap: '1px' }}>
-            {laborCost > 0 && <div style={{ flex: laborCost / quoted, backgroundColor: '#3b82f6', minWidth: '2px' }} title={`Labor: ${fmt(laborCost)}`} />}
-            {mat > 0 && <div style={{ flex: mat / quoted, backgroundColor: '#f59e0b', minWidth: '2px' }} title={`Material: ${fmt(mat)}`} />}
-            {mileCost > 0 && <div style={{ flex: mileCost / quoted, backgroundColor: '#06b6d4', minWidth: '2px' }} title={`Mileage: ${fmt(mileCost)}`} />}
-            {projectedProfit > 0 && <div style={{ flex: projectedProfit / quoted, backgroundColor: '#10b981', minWidth: '2px' }} title={`Profit: ${fmt(projectedProfit)}`} />}
+      )}
+      {value.length === 0 && (
+        <p className="text-[10px] text-gray-500 mt-1.5">No one assigned yet.</p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Suggested Quote vs Total Quoted breakdown.
+ *
+ * Suggested Quote / Suggested Profit are informational. Total Quoted is the
+ * owner's actual customer price and drives Quote Variance, Actual Estimated
+ * Profit, Actual Profit Margin, the cost bar and the daily-target signal.
+ */
+export function ServiceQuotePanel({
+  quote, totalQuotedInput, onTotalQuotedChange, onUseSuggested, dayTarget, mileRate, taxRate, opCost, accent = 'blue',
+}: {
+  quote: any
+  totalQuotedInput: string
+  onTotalQuotedChange: (raw: string) => void
+  onUseSuggested: () => void
+  dayTarget: number
+  mileRate: number
+  taxRate: number
+  opCost: number
+  accent?: 'blue' | 'orange'
+}) {
+  const tone = quoteVarianceTone(quote.quoteVariance)
+  const varianceColor = tone === 'above' ? '#34d399' : tone === 'below' ? '#fbbf24' : '#9ca3af'
+  const marginPct = quote.actualProfitMargin * 100
+  const profit = quote.actualEstimatedProfit
+  const total = quote.totalQuoted
+
+  // $5 grid, wide enough to reach well past the suggestion without the max
+  // shifting under the thumb mid-drag.
+  const sliderMax = Math.max(
+    roundUpToQuoteStep(quote.suggestedQuote * 2),
+    roundUpToQuoteStep(total),
+    1000,
+  )
+  const sliderValue = Math.min(sliderMax, Math.max(0, snapToQuoteStep(total)))
+
+  const segments = [
+    { label: 'Materials', value: quote.materialCost,  color: '#f97316' },
+    { label: 'Mileage',   value: quote.mileage,       color: '#60a5fa' },
+    { label: 'Tax',       value: quote.tax,           color: '#facc15' },
+    { label: 'Op Cost',   value: quote.operatingCost, color: '#f87171' },
+    { label: 'Profit',    value: Math.max(0, profit), color: '#34d399' },
+  ].filter(s => s.value > 0)
+  const barTotal = segments.reduce((s, x) => s + x.value, 0)
+
+  return (
+    <div className="space-y-3" data-testid="service-quote-panel">
+      <div className="rounded-xl overflow-hidden border border-gray-700/50" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+        <div className="grid grid-cols-3 divide-x divide-gray-700/50">
+          <div className="px-4 py-3">
+            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Material Cost</div>
+            <div className="font-mono text-sm font-bold text-orange-400">{fmt(quote.materialCost)}</div>
           </div>
-        )}
-        <div style={{ fontSize: '9px', color: 'var(--t3)', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <span>Labor {fmt(laborCost)}</span>
-          <span>Mat {fmt(mat)}</span>
-          <span>Miles {fmt(mileCost)}</span>
-          <span style={{ color }}>
-            {dayTarget > 0 ? pct(Math.round((projectedProfit / dayTarget) * 100)) : '0%'} of target
-          </span>
+          <div className="px-4 py-3">
+            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Mileage <span className="opacity-50">@${mileRate.toFixed(2)}/mi</span></div>
+            <div className="font-mono text-sm font-bold text-blue-400">{fmt(quote.mileage)}</div>
+          </div>
+          <div className="px-4 py-3">
+            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Tax <span className="opacity-50">@{taxRate.toFixed(2)}%</span></div>
+            <div className="font-mono text-sm font-bold text-yellow-400">{fmt(quote.tax)}</div>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 divide-x divide-gray-700/50 border-t border-gray-700/50">
+          <div className="px-4 py-3">
+            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Operating Cost <span className="opacity-50">@${opCost.toFixed(2)}/hr</span></div>
+            <div className="font-mono text-sm font-bold text-red-400">{fmt(quote.operatingCost)}</div>
+          </div>
+          <div className="px-4 py-3">
+            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Suggested Quote</div>
+            <div className="font-mono text-sm font-bold text-gray-200" data-testid="suggested-quote">{fmt(quote.suggestedQuote)}</div>
+          </div>
+          <div className="px-4 py-3">
+            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Suggested Profit</div>
+            <div className="font-mono text-sm font-bold text-emerald-300/80">{fmt(quote.suggestedProfit)}</div>
+          </div>
         </div>
       </div>
+
+      {/* Owner's actual price */}
+      <div className="rounded-xl border border-gray-700/50 px-4 py-3 space-y-3" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+          <div>
+            <label className="block text-[9px] uppercase tracking-wider text-gray-400 font-bold mb-1">Total Quoted</label>
+            {/* Slider is the primary control — $5 steps, no arrow-spinner fiddling.
+                The paired input stays for exact amounts and commits on blur/Enter
+                so typing does not re-render the whole Field Log per keystroke. */}
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={0}
+                max={sliderMax}
+                step={TOTAL_QUOTED_STEP}
+                aria-label="Total Quoted slider"
+                data-testid="total-quoted-slider"
+                value={sliderValue}
+                onChange={(e) => onTotalQuotedChange(e.target.value)}
+                className="flex-1 min-w-0 accent-orange-500 cursor-pointer"
+                style={{ accentColor: accent === 'orange' ? '#f97316' : '#3b82f6' }}
+              />
+              <input
+                key={`total-quoted-${totalQuotedInput}`}
+                type="number"
+                step={TOTAL_QUOTED_STEP}
+                aria-label="Total Quoted"
+                data-testid="total-quoted-input"
+                defaultValue={totalQuotedInput}
+                onBlur={(e) => onTotalQuotedChange(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                placeholder="0.00"
+                className="w-28 flex-shrink-0 rounded-lg px-2 py-2 text-sm font-mono font-bold text-white border border-gray-600 outline-none"
+                style={{ backgroundColor: 'var(--bg-input)' }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={onUseSuggested}
+              className={`mt-1.5 text-[10px] font-semibold underline ${accent === 'orange' ? 'text-orange-300' : 'text-blue-300'}`}
+            >
+              Use Suggested Quote
+            </button>
+          </div>
+          <div>
+            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Quote Variance</div>
+            <div className="font-mono text-sm font-bold" style={{ color: varianceColor }} data-testid="quote-variance">
+              {formatQuoteVariance(quote.quoteVariance, fmt)}
+            </div>
+            <div className="text-[9px] text-gray-500 mt-0.5">
+              {tone === 'above' && 'Above suggestion'}
+              {tone === 'below' && 'Below suggestion'}
+              {tone === 'neutral' && 'Matches suggestion'}
+            </div>
+          </div>
+          <div>
+            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Actual Estimated Profit</div>
+            <div className="font-mono text-sm font-bold" style={{ color: profit >= 0 ? '#34d399' : '#ef4444' }} data-testid="actual-estimated-profit">
+              {fmt(profit)} <span className="text-[10px] opacity-60">({marginPct.toFixed(1)}%)</span>
+            </div>
+            <div className="text-[9px] text-gray-500 mt-0.5">Actual Profit Margin</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Cost bar — proportional to the actual customer quote */}
+      {barTotal > 0 && (
+        <div className="space-y-2">
+          <div className="flex rounded-lg overflow-hidden h-6 w-full">
+            {segments.map((s, i) => (
+              <div
+                key={i}
+                style={{ width: `${(s.value / barTotal) * 100}%`, backgroundColor: s.color, minWidth: 2 }}
+                title={`${s.label}: ${fmt(s.value)}`}
+              />
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {segments.map((s, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: s.color }} />
+                <span className="text-[10px] text-gray-400">{s.label}</span>
+                <span className="text-[10px] font-mono font-bold" style={{ color: s.color }}>{fmt(s.value)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Daily-target signal — uses the ACTUAL customer quote, not the suggestion */}
+      {total > 0 && (
+        <div className={`rounded-xl px-4 py-3 text-xs border ${
+          profit >= dayTarget
+            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+            : profit > 0
+            ? 'bg-yellow-500/10 border-yellow-500/25 text-yellow-400'
+            : 'bg-red-500/10 border-red-500/25 text-red-400'
+        }`}>
+          {profit >= dayTarget && <span>✅ <strong>Above daily target</strong> — {fmt(profit)} profit ({marginPct.toFixed(1)}% margin) on {fmt(total)} quoted.</span>}
+          {profit > 0 && profit < dayTarget && <span>⚠️ <strong>Below daily target</strong> — {fmt(profit)} profit ({marginPct.toFixed(1)}% margin). {fmt(dayTarget - profit)} short.</span>}
+          {profit <= 0 && <span>🔴 <strong>Unprofitable</strong> — costs exceed the quoted amount by {fmt(Math.abs(profit))}. Reprice or reduce scope.</span>}
+        </div>
+      )}
     </div>
   )
 }

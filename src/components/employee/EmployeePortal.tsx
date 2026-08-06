@@ -8,13 +8,14 @@
 
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { LogOut, Clock, CalendarRange, ClipboardList, ListChecks, Loader2 } from 'lucide-react'
+import { LogOut, Clock, CalendarRange, ClipboardList, ListChecks, Loader2, Wrench } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import EmployeeTimeClock from '@/components/employee/EmployeeTimeClock'
 import EmployeeMyTimePanel from '@/components/employee/EmployeeMyTimePanel'
 import EmployeeMyTasksPanel from '@/components/employee/EmployeeMyTasksPanel'
 import EmployeeSchedulePanel from '@/components/employee/EmployeeSchedulePanel'
+import EmployeeMyServiceCallsPanel from '@/components/employee/EmployeeMyServiceCallsPanel'
 import EmployeePortalBrandHeader from '@/components/employee/EmployeePortalBrandHeader'
 
 interface EmployeeProfileSummary {
@@ -23,13 +24,14 @@ interface EmployeeProfileSummary {
   org_name: string | null
 }
 
-type EmployeePortalSection = 'clock' | 'my-time' | 'assignments' | 'schedule'
+type EmployeePortalSection = 'clock' | 'my-time' | 'assignments' | 'service-calls' | 'schedule'
 
 const SECTIONS: { key: EmployeePortalSection; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { key: 'clock',       label: 'Clock',       icon: Clock },
-  { key: 'my-time',     label: 'My Time',     icon: ListChecks },
-  { key: 'assignments', label: 'My Tasks',    icon: ClipboardList },
-  { key: 'schedule',    label: 'Schedule',    icon: CalendarRange },
+  { key: 'clock',         label: 'Clock',         icon: Clock },
+  { key: 'my-time',       label: 'My Time',       icon: ListChecks },
+  { key: 'assignments',   label: 'My Tasks',      icon: ClipboardList },
+  { key: 'service-calls', label: 'Service Calls', icon: Wrench },
+  { key: 'schedule',      label: 'Schedule',      icon: CalendarRange },
 ]
 
 // Read-only placeholder for sections whose data model isn't ready yet (TIME-5).
@@ -170,7 +172,7 @@ export function EmployeePortal() {
         </div>
 
         {/* Section switcher */}
-        <nav className="grid grid-cols-4 gap-2 mx-auto w-full max-w-lg">
+        <nav className="grid grid-cols-3 sm:grid-cols-5 gap-2 mx-auto w-full max-w-lg">
           {SECTIONS.map(({ key, label, icon: Icon }) => {
             const active = activeSection === key
             return (
@@ -198,6 +200,7 @@ export function EmployeePortal() {
         )}
         {activeSection === 'my-time' && <EmployeeMyTimePanel refreshKey={timeRefreshKey} />}
         {activeSection === 'assignments' && <EmployeeMyTasksPanel />}
+        {activeSection === 'service-calls' && <EmployeeMyServiceCallsPanel />}
         {activeSection === 'schedule' && <EmployeeSchedulePanel />}
       </main>
     </div>
