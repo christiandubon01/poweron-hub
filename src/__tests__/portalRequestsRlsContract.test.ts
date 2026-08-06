@@ -916,7 +916,7 @@ describe('[STATIC] 47. Eight migration guards updated to recognize migration 108
     }
   })
 
-  it('all eight guard files allow migrations 111-114 and still reject migration 115 and later', () => {
+  it('all eight guard files allow migrations 111-116 (intentional new migrations 115/116)', () => {
     for (const rel of guardFiles) {
       const content = readFileSync(join(ROOT, rel), 'utf8')
       expect(content, `${rel} should exclude 109`).toContain("startsWith('109_')")
@@ -925,7 +925,11 @@ describe('[STATIC] 47. Eight migration guards updated to recognize migration 108
       expect(content, `${rel} should exclude 112`).toContain("startsWith('112_')")
       expect(content, `${rel} should exclude 113`).toContain("startsWith('113_')")
       expect(content, `${rel} should exclude 114`).toContain("startsWith('114_')")
-      expect(content, `${rel} should not allow 115+`).not.toContain("startsWith('115_')")
+      // Migrations 115 (service_call_employee_assignments) and 116
+      // (sales_conversion_receipts) are intentional new migrations for
+      // SERVICE-LOG-1 and SALES-CONVERSION-1. Guard files must allow them.
+      expect(content, `${rel} should exclude 115`).toContain("startsWith('115_')")
+      expect(content, `${rel} should exclude 116`).toContain("startsWith('116_')")
     }
   })
 })
