@@ -666,53 +666,15 @@ export function AppShell({ children }: AppShellProps) {
           leadId: lead.id,
         })
         setActiveView('field-log')
-        // Move lead to estimated so it leaves Pipeline
-        import('@/store/hunterStore').then(({ useHunterStore: hs }) => {
-          hs.getState().updateLeadStatus(lead.id, 'estimated' as any)
-        })
-        // Write disposition
-        import('@/lib/supabase').then(({ supabase: sb }) => {
-          (sb as any).from('hunter_leads').update({
-            disposition: 'won_archived',
-            disposition_detail: `Converted to service call: ${lead.contact_name || lead.company_name || 'Unknown'}`,
-            disposition_at: new Date().toISOString(),
-          }).eq('id', lead.id).then(({ error }: any) => {
-            if (error) console.error('[AppShell] disposition write failed:', error)
-            else console.log('[AppShell] disposition written for', lead.id)
-          })
-        })
-        // Fire scheduling + confirmed milestones if portal lead
-        if (lead.source_tag === 'customer_portal' || lead.source === 'customer_portal') {
-          Promise.all([
-            import('@/lib/supabase'),
-            import('@/services/portal/portalService'),
-          ]).then(([{ supabase: sb }, portal]) => {
-            (sb as any).from('portal_requests').select('id, preferred_date').eq('hunter_lead_id', lead.id).maybeSingle()
-              .then(({ data: portalReq }: any) => {
-                if (!portalReq?.id) return
-                const confirmedTime = (() => {
-                  const pd = (portalReq as any).preferred_date
-                  return pd ? new Date(pd + 'T12:00:00').toISOString() : new Date(Date.now() + 1000).toISOString()
-                })()
-                Promise.all([
-                  portal.writePortalTimelineEvent({
-                    portalRequestId: portalReq.id,
-                    eventType: 'scheduling',
-                    description: 'A service call has been created for your request.',
-                    eventTime: new Date().toISOString(),
-                  }),
-                  portal.writePortalTimelineEvent({
-                    portalRequestId: portalReq.id,
-                    eventType: 'confirmed',
-                    description: 'Your service call has been scheduled.',
-                    eventTime: confirmedTime,
-                  }),
-                ]).catch((err) => {
-                  console.error('[AppShell] service_call milestone write failed:', err)
-                })
-              })
-          })
-        }
+        // SALES-CONVERSION-1 — this branch used to flip the lead to 'estimated',
+        // write its archive disposition, and fire the customer-facing
+        // "a service call has been created" portal milestones right here, at
+        // click time. None of that was true yet: no service call existed, and
+        // cancelling the modal left a lead marked converted with nothing to
+        // show for it. All three now run from the Pipeline conversion
+        // completion path, after the Service Call record exists AND its
+        // conversion receipt is durable.
+        // See src/features/sales-intelligence/conversion-receipts/.
       } else {
         setHunterLeadPrefill(prefill)
         setActiveView('projects')
@@ -721,6 +683,30 @@ export function AppShell({ children }: AppShellProps) {
 
     window.addEventListener('poweron:open-estimate', handleOpenEstimate)
     return () => window.removeEventListener('poweron:open-estimate', handleOpenEstimate)
+  }, [])
+
+  // SALES-CONVERSION-1 — "Open Project" / "Open Service Call" on a conversion
+  // receipt. Both reuse the navigation this shell already owns rather than
+  // introducing a second project-navigation system: projects go through the
+  // same handleSelectProject the Projects panel uses, service calls land on
+  // the existing Field Log view.
+  useEffect(() => {
+    const handleOpenProject = (event: Event) => {
+      const destinationId = (event as CustomEvent)?.detail?.destinationId
+      if (!destinationId) return
+      handleSelectProject(String(destinationId))
+    }
+    const handleOpenServiceCall = (event: Event) => {
+      const destinationId = (event as CustomEvent)?.detail?.destinationId
+      if (!destinationId) return
+      setActiveView('field-log')
+    }
+    window.addEventListener('poweron:open-project', handleOpenProject)
+    window.addEventListener('poweron:open-service-call', handleOpenServiceCall)
+    return () => {
+      window.removeEventListener('poweron:open-project', handleOpenProject)
+      window.removeEventListener('poweron:open-service-call', handleOpenServiceCall)
+    }
   }, [])
 
   // NDA gate — check on auth. Non-demo, non-read-only sessions only.

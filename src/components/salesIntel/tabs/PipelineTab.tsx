@@ -1,9 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useHunterStore } from '@/store/hunterStore';
 import type { HunterLead } from '@/services/hunter/HunterTypes';
 import { LeadStatus } from '@/services/hunter/HunterTypes';
-import { ClipboardList, ArrowLeft, FileText } from 'lucide-react';
+import { ClipboardList, ArrowLeft, FileText, AlertTriangle } from 'lucide-react';
 import { PortalStatusControls } from '@/components/portal/PortalStatusControls';
+import { getBackupData } from '@/services/backupDataService';
+// SALES-CONVERSION-1
+import {
+  ConversionReceiptsPanel,
+  SERVICE_CALL_CREATED_EVENT,
+  reconcilePipelineConversions,
+} from '@/features/sales-intelligence/conversion-receipts';
+import { completeLeadExit } from '@/features/sales-intelligence/conversion-receipts/conversionCompletion';
 
 /**
  * PipelineTab - Won-leads view.
@@ -26,6 +34,9 @@ export const PipelineTab: React.FC = () => {
   const updateLeadStatus = useHunterStore((s) => s.updateLeadStatus);
   const isLoading = useHunterStore((s) => s.isLoading);
 
+  const [receiptRefreshToken, setReceiptRefreshToken] = useState(0);
+  const [conversionErrors, setConversionErrors] = useState<string[]>([]);
+
   useEffect(() => {
     fetchLeads();
     // Re-fetch when component mounts / re-mounts in case Leads tab
@@ -34,6 +45,63 @@ export const PipelineTab: React.FC = () => {
   }, [fetchLeads]);
 
   const wonLeads = leads.filter((l) => (l as any).status === 'won');
+
+  /**
+   * SALES-CONVERSION-1 — conversion completion.
+   *
+   * Leads sitting in the active Pipeline that provably created a destination
+   * record get their receipt written here, and only then leave the Pipeline.
+   *
+   * This is the Service Call path's integration point: the Service Log save
+   * routine already stamps `serviceEstimate.hunterLeadId`, which is the proof
+   * this reads. It also picks up any Project whose inline receipt write failed,
+   * so a partially completed conversion always finishes without creating a
+   * second destination record.
+   */
+  const reconcileConversions = useCallback(async () => {
+    const currentLeads = useHunterStore.getState().leads as any[];
+    const backup = getBackupData();
+    if (!backup) return;
+
+    const result = await reconcilePipelineConversions({ leads: currentLeads, backup });
+    setConversionErrors(result.errors);
+
+    if (result.leadsReadyToExit.length === 0) {
+      if (result.outcomes.some((o) => o.created)) setReceiptRefreshToken((n) => n + 1);
+      return;
+    }
+
+    const updateStatus = useHunterStore.getState().updateLeadStatus;
+    for (const leadId of result.leadsReadyToExit) {
+      const lead = currentLeads.find((l) => String(l.id) === leadId);
+      if (!lead) continue;
+      const outcome = result.outcomes.find((o) => o.leadId === leadId);
+      if (!outcome) continue;
+      try {
+        await completeLeadExit({
+          lead,
+          destinationType: outcome.destinationType,
+          destinationLabel: outcome.destinationId,
+          updateLeadStatus: updateStatus,
+        });
+      } catch (err: any) {
+        console.error('[Pipeline] lead exit failed:', err);
+        setConversionErrors((prev) => [...prev, err?.message ?? 'Lead status update failed.']);
+      }
+    }
+    setReceiptRefreshToken((n) => n + 1);
+  }, []);
+
+  // Run on mount (the operator returning from Field Log / Projects) and
+  // whenever the Service Log path announces a new service call.
+  useEffect(() => {
+    void reconcileConversions();
+    const handler = () => {
+      void reconcileConversions();
+    };
+    window.addEventListener(SERVICE_CALL_CREATED_EVENT, handler);
+    return () => window.removeEventListener(SERVICE_CALL_CREATED_EVENT, handler);
+  }, [reconcileConversions]);
 
 const handleOpenEstimate = (lead: HunterLead, type: 'project' | 'service_call' = 'project') => {
     console.log('[Pipeline] Open Estimate clicked for lead:', lead.id);
@@ -69,6 +137,29 @@ const handleOpenEstimate = (lead: HunterLead, type: 'project' | 'service_call' =
         <p className="text-xs text-gray-500 mb-5">
           Leads you've promoted out of HUNTER. Open Estimate to push into Projects.
         </p>
+
+        {/* SALES-CONVERSION-1 — receipt failures are surfaced, never silent.
+            The lead stays in the active list below until its receipt lands. */}
+        {conversionErrors.length > 0 && (
+          <div className="mb-4 text-xs text-amber-200 bg-amber-900/25 border border-amber-800 rounded px-3 py-2">
+            <div className="flex items-center gap-2 font-semibold mb-1">
+              <AlertTriangle size={13} />
+              Conversion receipt not saved — lead kept in Pipeline
+            </div>
+            <ul className="list-disc list-inside space-y-0.5 text-amber-300/80">
+              {conversionErrors.map((message, i) => (
+                <li key={i}>{message}</li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={() => void reconcileConversions()}
+              className="mt-2 text-[11px] font-semibold bg-amber-700/40 hover:bg-amber-700/60 text-amber-100 px-2 py-1 rounded transition"
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
         {isLoading && wonLeads.length === 0 && (
           <div className="text-sm text-gray-500">Loading pipeline...</div>
@@ -133,6 +224,10 @@ const handleOpenEstimate = (lead: HunterLead, type: 'project' | 'service_call' =
           </div>
         )}
       </div>
+
+      {/* SALES-CONVERSION-1 — the closed ledger, deliberately styled apart from
+          the active lead list above (dashed border, amber accent, no actions). */}
+      <ConversionReceiptsPanel refreshToken={receiptRefreshToken} />
     </div>
   );
 };

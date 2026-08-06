@@ -40,6 +40,9 @@ import { useHunterStore } from '@/store/hunterStore'
 import { useAuth } from '@/hooks/useAuth'
 import { linkEntityToAccount, upsertRelationshipEvent } from '@/services/relationshipAccountService'
 import { GOOGLE_MAPS_BROWSER_KEY, useV15rGoogleMapsLoader } from '@/utils/googleMapsLoader'
+// SALES-CONVERSION-1 — a HUNTER lead may only leave the active Pipeline after
+// its conversion receipt is durable. See features/sales-intelligence.
+import { recordConversion } from '@/features/sales-intelligence/conversion-receipts'
 
 interface Props {
   onSelectProject?: (projectId: string) => void
@@ -102,6 +105,9 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
   // status='estimated' ONLY when the operator actually saves a new Project
   // (not when the modal opens). Cancel does nothing — lead stays in Pipeline.
   const updateLeadStatus = useHunterStore((s) => s.updateLeadStatus)
+  // SALES-CONVERSION-1 — the full lead row is needed to snapshot source,
+  // score, and status onto the conversion receipt.
+  const hunterLeads = useHunterStore((s) => s.leads)
   let authProfile: any = null
   try { authProfile = useAuth().profile } catch { /* auth not available */ }
   const [, setTick] = useState(0)
@@ -358,6 +364,47 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     // captured via newProj.convertedFromLeadId above.
     if (prefillFromLead?.leadId || hunterBannerCtx?.leadId) {
       const leadId = prefillFromLead?.leadId || hunterBannerCtx?.leadId
+
+      // ── SALES-CONVERSION-1 ────────────────────────────────────────────────
+      // The project row above is already persisted and `newProj.id` is real,
+      // so the conversion is now provable. Mint the receipt BEFORE the lead
+      // status changes. If the receipt cannot be saved, the lead stays in the
+      // active Pipeline and the operator gets a retryable error — retrying is
+      // safe because the receipt is keyed on (tenant, lead, type, project id),
+      // and re-opening this project never mints a second one.
+      const leadRow =
+        (hunterLeads || []).find((l: any) => String(l.id) === String(leadId)) || {
+          id: leadId,
+          contact_name: npClient.trim() || npName.trim(),
+          estimated_value: num(npContract),
+          score: hunterBannerCtx?.score,
+          source: hunterBannerCtx?.source_tag,
+          source_tag: hunterBannerCtx?.source_tag,
+        }
+      const receiptResult = await recordConversion({
+        lead: leadRow,
+        destinationType: 'project',
+        destinationId: String(newProj.id),
+        destinationLabel: newProj.name || newProj.client || 'Project',
+        // The project contract amount is the canonical converted value.
+        convertedValue: num(newProj.contract) || null,
+      })
+
+      if (!receiptResult.ok) {
+        console.error('[V15rProjectsPanel] conversion receipt failed:', receiptResult.error)
+        alert(
+          'The project was created, but its conversion receipt could not be saved:\n\n' +
+            (receiptResult.error || 'Unknown error') +
+            '\n\nThe lead stays in Pipeline and the receipt is retried automatically the ' +
+            'next time you open Sales Intelligence → Pipeline. Do not use "Open as Project" ' +
+            'again — that would create a second project.'
+        )
+        setShowNewProject(false)
+        setHunterBannerCtx(null)
+        forceUpdate()
+        return
+      }
+
       try {
         await updateLeadStatus(leadId, 'estimated' as any)
         // Write disposition so Lead History shows what happened
