@@ -61,6 +61,14 @@ import {
   type PortalLinkCandidate,
 } from '@/services/adminTimecardService'
 import RolesPermissionsModal from '@/features/employee-roles/RolesPermissionsModal'
+import {
+  buildUnifiedDirectory,
+  getTeamCardDirectoryEntries,
+  getOrganizationPyramidEntries,
+  isCostModelOwner,
+  type PortalProfileInput,
+  type UnifiedEmployeeRow,
+} from '@/features/employee-directory/unifyDirectory'
 
 interface EnhancedEmployee extends BackupEmployee {
   isOwner?: boolean
@@ -268,7 +276,7 @@ Monthly Service Pace (Avg): ${fmt(monthlyServicePace)}`
 
   return (
     <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
-      <h2 className="text-lg font-bold text-gray-100 mb-6">Employee Cost Structure</h2>
+      <h2 className="text-lg font-bold text-gray-100 mb-6">Labor Burden & Capacity</h2>
 
       {/* Cost Line Items */}
       <div className="space-y-3 mb-6">
@@ -847,16 +855,22 @@ function TeamCostSettingsModal({ backup, onClose }: { backup: BackupData; onClos
       <div className="w-full max-w-lg bg-[var(--bg-primary)] border border-gray-700 rounded-xl shadow-2xl flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 shrink-0">
-          <h2 className="text-lg font-bold text-gray-100">⚙️ Team Cost Settings</h2>
+          <h2 className="text-lg font-bold text-gray-100">⚙️ Labor Burden & Capacity Settings</h2>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300 transition"><X className="w-5 h-5" /></button>
         </div>
 
         {/* Scrollable body */}
         <div className="overflow-y-auto p-6 space-y-6 flex-1">
 
-          {/* Employee Cost Structure */}
+          {/* Legacy Employee-Cost References */}
           <div>
-            <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wide mb-4">Employee Cost Structure</h3>
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wide">Legacy Employee-Cost References</h3>
+              <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 shrink-0">Needs classification</span>
+            </div>
+            <div className="rounded-lg border border-amber-400/10 bg-amber-950/10 px-3 py-2 mb-4 text-[11px] text-gray-500 leading-relaxed" data-testid="legacy-cost-references-notice">
+              These monthly entries are preserved from prior setup. They are not currently added into employee loaded labor cost and are not automatically connected to the Overhead Manager. Each entry requires classification before consolidation — see the cost source audit for guidance.
+            </div>
             <div className="space-y-3 mb-4">
               {costs.map((cost: any) => (
                 <div key={cost.id} className="flex gap-3 items-center">
@@ -902,10 +916,10 @@ function TeamCostSettingsModal({ backup, onClose }: { backup: BackupData; onClos
             </div>
           </div>
 
-          {/* Payroll Multiplier */}
+          {/* W-2 Payroll Burden */}
           <div className="border-t border-gray-700 pt-4">
-            <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wide mb-3">Payroll Multiplier</h3>
-            <div className="flex justify-between items-center">
+            <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wide mb-3">W-2 Payroll Burden</h3>
+            <div className="flex justify-between items-center mb-2">
               <label className="text-sm text-gray-300">W-2 multiplier</label>
               <div className="flex items-center gap-2">
                 <input
@@ -918,7 +932,10 @@ function TeamCostSettingsModal({ backup, onClose }: { backup: BackupData; onClos
                 <span className="text-gray-500 text-sm">x</span>
               </div>
             </div>
-            <p className="text-xs text-gray-500 mt-1">Applied to W-2 employee base cost. Owner and 1099 are not affected.</p>
+            <p className="text-xs text-gray-500">Applied to W-2 employee base cost. Owner and 1099 are not affected.</p>
+            <div className="mt-2 rounded-lg border border-gray-700/50 bg-gray-900/40 px-3 py-2 text-[11px] text-gray-500">
+              <span className="text-gray-300 font-medium">Loaded Labor Cost</span> = Base Wage × {payrollMult.toFixed(2)}x (W-2 only) — does not include company overhead recovery.
+            </div>
           </div>
 
           {/* PTO / Sick Defaults */}
@@ -1338,7 +1355,7 @@ export default function V15rTeamPanel() {
   // ── Edit employee modal ────────────────────────────────────────────────────
   const [editingEmployee, setEditingEmployee] = useState<EnhancedEmployee | null>(null)
 
-  // ── Team Cost Settings modal ───────────────────────────────────────────────
+  // ── Labor Burden & Capacity modal ─────────────────────────────────────────
   const [showCostSettingsModal, setShowCostSettingsModal] = useState(false)
 
   // ── Roles & Permissions modal ─────────────────────────────────────────────
@@ -1347,6 +1364,8 @@ export default function V15rTeamPanel() {
   const [portalProfileMap, setPortalProfileMap] = useState<Map<string, { id: string; orgId: string }>>(new Map())
   const [unlinkedPortalCandidates, setUnlinkedPortalCandidates] = useState<PortalLinkCandidate[]>([])
   const [teamOrgId, setTeamOrgId] = useState<string | null>(null)
+  // COST-SOURCE-2B: all org profiles as PortalProfileInput[] for unified directory
+  const [allOrgProfiles, setAllOrgProfiles] = useState<PortalProfileInput[]>([])
 
   // Link Existing Account (ROLE-2.2A)
   const [linkTarget, setLinkTarget] = useState<{
@@ -1365,9 +1384,13 @@ export default function V15rTeamPanel() {
     if (!isAdmin) return
     const res = await getAllOrgEmployeeProfiles()
     if (!res.success) return
+    const rawProfiles = (res.data ?? []) as AdminEmployeeProfile[]
     const map = new Map<string, { id: string; orgId: string }>()
     let orgId: string | null = null
-    for (const p of (res.data ?? []) as AdminEmployeeProfile[]) {
+    // COST-SOURCE-2B: also collect all profiles as PortalProfileInput[] for the
+    // unified directory so portal-only employees are visible in cards and pyramid.
+    const portalInputs: PortalProfileInput[] = []
+    for (const p of rawProfiles) {
       orgId = orgId ?? p.org_id
       // ROLE-2.4: only the stable backup_employee_id establishes identity. A
       // display-name match must never be treated as the same person — unlinked
@@ -1375,8 +1398,19 @@ export default function V15rTeamPanel() {
       if (p.backup_employee_id) {
         map.set(p.backup_employee_id, { id: p.id, orgId: p.org_id })
       }
+      portalInputs.push({
+        id: p.id,
+        display_name: p.display_name ?? '',
+        email: p.email ?? null,
+        active: p.active !== false,
+        user_id: p.user_id ?? null,
+        backup_employee_id: p.backup_employee_id ?? null,
+        employee_role: p.employee_role ?? null,
+        employment_type: p.employment_type ?? null,
+      })
     }
     setPortalProfileMap(map)
+    setAllOrgProfiles(portalInputs)
     if (orgId) {
       setTeamOrgId(orgId)
       const candRes = await listUnlinkedPortalCandidates(orgId)
@@ -1462,8 +1496,24 @@ export default function V15rTeamPanel() {
   const currentMonth = today.getMonth()
   const currentYear = today.getFullYear()
 
-  // Owner employee (first marked as owner or create virtual one)
-  const owner = employees.find(e => e.isOwner) || { id: 'owner-virtual', name: 'Owner', role: 'Business Manager', billRate: 0, costRate: 0, isOwner: true }
+  // COST-SOURCE-2B: canonical unified directory — one row per real person.
+  // Sentinel owner detection via normalizeEmployee so raw records without a
+  // persisted isOwner field are correctly identified.
+  const unifiedDirectory = useMemo(() => {
+    const costModelInputs = liveEmployees.map(e => ({
+      id: String(e.id ?? ''),
+      name: e.name ?? '',
+      email: (e as any).email ?? null,
+      classification: (e as any).classification ?? null,
+      isOwner: normalizeEmployee(e).isOwner,
+    }))
+    return buildUnifiedDirectory(costModelInputs, allOrgProfiles)
+  }, [liveEmployees, allOrgProfiles])
+
+  // Owner employee (first marked as owner or create virtual one).
+  // Use normalizeEmployee so sentinel ids ('me', 'owner', 'owner-virtual') are
+  // detected even when the raw isOwner flag is not persisted in the record.
+  const owner = liveEmployees.find(e => normalizeEmployee(e).isOwner) || { id: 'owner-virtual', name: 'Owner', role: 'Business Manager', billRate: 0, costRate: 0, isOwner: true }
 
   // Calculate employee stats
   const employeeStats = useMemo(() => {
@@ -1836,7 +1886,7 @@ export default function V15rTeamPanel() {
             style={{ minHeight: '44px' }}
           >
             <TrendingUp className="w-4 h-4" />
-            Team Cost Settings
+            Labor Burden & Capacity
           </button>
           <a
             href="/employee/login"
@@ -1920,41 +1970,58 @@ export default function V15rTeamPanel() {
 
                   <div className="h-8 w-0.5 bg-gray-700"></div>
 
-                  {liveEmployees.filter(e => !e.isOwner).length > 0 || hypotheticals.length > 0 ? (
+                  {/* COST-SOURCE-2B: pyramid uses canonical unified directory so linked
+                      employees appear once and portal-only employees are visible. */}
+                  {getOrganizationPyramidEntries(unifiedDirectory).length > 0 || hypotheticals.length > 0 ? (
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4 w-full">
-                      {liveEmployees
-                        .filter(e => !e.isOwner)
-                        .map((rawEmp) => {
-                          const emp = normalizeEmployee(rawEmp)
-                          const project = projects.find(p => p.id === emp.project_id)
+                      {getOrganizationPyramidEntries(unifiedDirectory).map((row) => {
+                        const rawEmp = row.costModelId ? liveEmployees.find(e => e.id === row.costModelId) : null
+                        const emp = rawEmp ? normalizeEmployee(rawEmp) : null
+                        const project = emp ? projects.find(p => p.id === emp.project_id) : null
 
-                          if (emp.employee_type === 'per_project') {
-                            return (
-                              <div key={emp.id} className="text-center">
-                                <div className="bg-amber-700/15 border-2 border-dashed border-amber-500/60 rounded-lg px-3 py-2 relative hover:border-amber-500 transition">
-                                  <div className="text-sm font-semibold text-amber-200">{emp.name}</div>
-                                  <div className="text-xs text-amber-400/80">{emp.role || 'Per-Project'}</div>
-                                  {project && (
-                                    <div className="mt-1 text-xs px-1.5 py-0.5 bg-amber-600/30 text-amber-300 rounded inline-block">
-                                      {project.name}
-                                    </div>
-                                  )}
-                                  <div className="text-xs text-gray-600 mt-0.5">{emp.classification}</div>
-                                </div>
-                              </div>
-                            )
-                          }
-
+                        if (row.kind === 'portal_only') {
                           return (
-                            <div key={emp.id} className="text-center">
-                              <div className="bg-blue-700/15 border border-blue-600/50 rounded-lg px-3 py-2 hover:border-blue-500 transition">
-                                <div className="text-sm font-semibold text-blue-200">{emp.name}</div>
-                                <div className="text-xs text-blue-400/80">{emp.role || 'Team Member'}</div>
-                                <div className="text-xs text-gray-600 mt-0.5">W-2 · {emp.status}</div>
+                            <div key={row.key} className="text-center">
+                              <div className="bg-gray-700/15 border border-gray-600/50 rounded-lg px-3 py-2">
+                                <div className="text-sm font-semibold text-gray-300">{row.displayName}</div>
+                                <div className="text-xs text-gray-500">{row.employeeRole || 'Portal'}</div>
+                                <div className="text-[10px] text-gray-600 mt-0.5">{row.portalStatus} · Portal Only</div>
                               </div>
                             </div>
                           )
-                        })}
+                        }
+
+                        if (emp && emp.employee_type === 'per_project') {
+                          return (
+                            <div key={row.key} className="text-center">
+                              <div className="bg-amber-700/15 border-2 border-dashed border-amber-500/60 rounded-lg px-3 py-2 relative hover:border-amber-500 transition">
+                                <div className="text-sm font-semibold text-amber-200">{row.displayName}</div>
+                                <div className="text-xs text-amber-400/80">{emp.role || 'Per-Project'}</div>
+                                {project && (
+                                  <div className="mt-1 text-xs px-1.5 py-0.5 bg-amber-600/30 text-amber-300 rounded inline-block">
+                                    {project.name}
+                                  </div>
+                                )}
+                                <div className="text-xs text-gray-600 mt-0.5">{emp.classification}</div>
+                              </div>
+                            </div>
+                          )
+                        }
+
+                        return (
+                          <div key={row.key} className="text-center">
+                            <div className="bg-blue-700/15 border border-blue-600/50 rounded-lg px-3 py-2 hover:border-blue-500 transition">
+                              <div className="text-sm font-semibold text-blue-200">{row.displayName}</div>
+                              <div className="text-xs text-blue-400/80">{(emp && emp.role) || row.employeeRole || 'Team Member'}</div>
+                              <div className="text-xs text-gray-600 mt-0.5">
+                                {row.kind === 'cost_model_only'
+                                  ? `${emp?.classification || 'W-2'} · No Portal`
+                                  : `${emp?.classification || 'W-2'} · ${emp?.status || row.portalStatus || 'Active'}`}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
 
                       {hypotheticals.map((hyp) => (
                         <div key={hyp.id} className="text-center">
@@ -2008,39 +2075,57 @@ export default function V15rTeamPanel() {
               </div>
             </div>
             <div className="h-8 w-0.5 bg-gray-700"></div>
-            {liveEmployees.filter(e => !e.isOwner).length > 0 || hypotheticals.length > 0 ? (
+            {/* COST-SOURCE-2B: non-admin pyramid also uses unified directory */}
+            {getOrganizationPyramidEntries(unifiedDirectory).length > 0 || hypotheticals.length > 0 ? (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4 w-full">
-                {liveEmployees
-                  .filter(e => !e.isOwner)
-                  .map((rawEmp) => {
-                    const emp = normalizeEmployee(rawEmp)
-                    const project = projects.find(p => p.id === emp.project_id)
-                    if (emp.employee_type === 'per_project') {
-                      return (
-                        <div key={emp.id} className="text-center">
-                          <div className="bg-amber-700/15 border-2 border-dashed border-amber-500/60 rounded-lg px-3 py-2 relative hover:border-amber-500 transition">
-                            <div className="text-sm font-semibold text-amber-200">{emp.name}</div>
-                            <div className="text-xs text-amber-400/80">{emp.role || 'Per-Project'}</div>
-                            {project && (
-                              <div className="mt-1 text-xs px-1.5 py-0.5 bg-amber-600/30 text-amber-300 rounded inline-block">
-                                {project.name}
-                              </div>
-                            )}
-                            <div className="text-xs text-gray-600 mt-0.5">{emp.classification}</div>
-                          </div>
-                        </div>
-                      )
-                    }
+                {getOrganizationPyramidEntries(unifiedDirectory).map((row) => {
+                  const rawEmp = row.costModelId ? liveEmployees.find(e => e.id === row.costModelId) : null
+                  const emp = rawEmp ? normalizeEmployee(rawEmp) : null
+                  const project = emp ? projects.find(p => p.id === emp.project_id) : null
+
+                  if (row.kind === 'portal_only') {
                     return (
-                      <div key={emp.id} className="text-center">
-                        <div className="bg-blue-700/15 border border-blue-600/50 rounded-lg px-3 py-2 hover:border-blue-500 transition">
-                          <div className="text-sm font-semibold text-blue-200">{emp.name}</div>
-                          <div className="text-xs text-blue-400/80">{emp.role || 'Team Member'}</div>
-                          <div className="text-xs text-gray-600 mt-0.5">W-2 · {emp.status}</div>
+                      <div key={row.key} className="text-center">
+                        <div className="bg-gray-700/15 border border-gray-600/50 rounded-lg px-3 py-2">
+                          <div className="text-sm font-semibold text-gray-300">{row.displayName}</div>
+                          <div className="text-xs text-gray-500">{row.employeeRole || 'Portal'}</div>
+                          <div className="text-[10px] text-gray-600 mt-0.5">{row.portalStatus} · Portal Only</div>
                         </div>
                       </div>
                     )
-                  })}
+                  }
+
+                  if (emp && emp.employee_type === 'per_project') {
+                    return (
+                      <div key={row.key} className="text-center">
+                        <div className="bg-amber-700/15 border-2 border-dashed border-amber-500/60 rounded-lg px-3 py-2 relative hover:border-amber-500 transition">
+                          <div className="text-sm font-semibold text-amber-200">{row.displayName}</div>
+                          <div className="text-xs text-amber-400/80">{emp.role || 'Per-Project'}</div>
+                          {project && (
+                            <div className="mt-1 text-xs px-1.5 py-0.5 bg-amber-600/30 text-amber-300 rounded inline-block">
+                              {project.name}
+                            </div>
+                          )}
+                          <div className="text-xs text-gray-600 mt-0.5">{emp.classification}</div>
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div key={row.key} className="text-center">
+                      <div className="bg-blue-700/15 border border-blue-600/50 rounded-lg px-3 py-2 hover:border-blue-500 transition">
+                        <div className="text-sm font-semibold text-blue-200">{row.displayName}</div>
+                        <div className="text-xs text-blue-400/80">{(emp && emp.role) || row.employeeRole || 'Team Member'}</div>
+                        <div className="text-xs text-gray-600 mt-0.5">
+                          {row.kind === 'cost_model_only'
+                            ? `${emp?.classification || 'W-2'} · No Portal`
+                            : `${emp?.classification || 'W-2'} · ${emp?.status || row.portalStatus || 'Active'}`}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
                 {hypotheticals.map((hyp) => (
                   <div key={hyp.id} className="text-center">
                     <div className="bg-transparent border-2 border-dashed border-purple-600/50 rounded-lg px-3 py-2 relative opacity-75">
@@ -2075,7 +2160,7 @@ export default function V15rTeamPanel() {
         </div>
       )}
 
-      {/* EMPLOYEE COST STRUCTURE — moved to Team Cost Settings modal */}
+      {/* EMPLOYEE COST STRUCTURE — moved to Labor Burden & Capacity modal */}
 
       {/* ENHANCED EMPLOYEE COST VS PIPELINE CHART */}
       <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
@@ -3252,8 +3337,10 @@ export default function V15rTeamPanel() {
         )
       })()}
 
-      {/* EMPLOYEE CARDS */}
-      {liveEmployees.length === 0 ? (
+      {/* EMPLOYEE CARDS — ROLE-2.4: canonical unified directory.
+          Linked + cost-model-only rows render EmployeeCard + admin buttons.
+          Portal-only rows (no cost model record) show a minimal status card. */}
+      {getTeamCardDirectoryEntries(unifiedDirectory).length === 0 ? (
         <div className="text-center py-16 bg-[var(--bg-card)] rounded-lg border border-gray-700">
           <p className="text-gray-400 text-lg">No employees yet</p>
           <p className="text-gray-600 text-sm mt-2">Add team members to get started</p>
@@ -3262,13 +3349,54 @@ export default function V15rTeamPanel() {
         <div>
           <h2 className="text-2xl font-bold text-gray-100 mb-4">Employee Cards</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {liveEmployees.map((rawEmp) => {
+            {getTeamCardDirectoryEntries(unifiedDirectory).map((row) => {
+              // Portal-only: person exists in the portal but has no cost model record.
+              if (row.kind === 'portal_only') {
+                return (
+                  <div key={row.key} className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-4">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="w-8 h-8 rounded-full bg-sky-700/40 flex items-center justify-center text-sky-300 text-xs font-bold">
+                        {(row.displayName.charAt(0) || '?').toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-gray-100">{row.displayName}</div>
+                        <div className="text-xs text-gray-500">{row.employeeRole ?? 'No role set'}</div>
+                      </div>
+                    </div>
+                    <div className={`inline-block text-[10px] px-2 py-0.5 rounded font-medium mb-2 ${row.portalStatus === 'Active' ? 'bg-emerald-700/30 text-emerald-300' : 'bg-gray-700/50 text-gray-400'}`}>
+                      {row.portalStatus ?? 'Portal Only'}
+                    </div>
+                    {isAdmin && row.portalProfileId && (
+                      <div className="mt-2 flex gap-2 justify-end">
+                        <button
+                          onClick={() => setRolesTarget({ epId: row.portalProfileId!, displayName: row.displayName, orgId: teamOrgId ?? '' })}
+                          className="text-xs px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded hover:bg-indigo-600/40 flex items-center gap-1"
+                        >
+                          <Shield className="w-3 h-3" /> Roles & Permissions
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              }
+
+              // Linked or cost-model-only: find the cost model record for EmployeeCard.
+              const rawEmp = liveEmployees.find(e => String(e.id) === row.costModelId)
+              if (!rawEmp) return null
               const emp = normalizeEmployee(rawEmp) as EnhancedEmployee
               const stats = employeeStats.get(emp.id)
               if (!stats) return null
+              // ROLE-2.4: identity is the STABLE backup_employee_id link only.
+              // Linked rows already have the resolved profile id on the row.
+              // Cost-model-only rows fall back to portalProfileMap keyed by emp.id.
+              const profile = row.kind === 'linked'
+                ? { id: row.portalProfileId!, orgId: teamOrgId ?? '' }
+                : portalProfileMap.get(emp.id) ?? null
+              const hasStableLink = Boolean(profile)
+              const showLinkExisting = !hasStableLink && unlinkedPortalCandidates.length > 0
               return (
                 <div
-                  key={emp.id}
+                  key={row.key}
                   onClick={() => setSelectedEmployee(emp)}
                   className="cursor-pointer"
                 >
@@ -3282,11 +3410,6 @@ export default function V15rTeamPanel() {
                   />
                   <div className="mt-2 flex gap-2 justify-end flex-wrap">
                     {isAdmin && (() => {
-                      // ROLE-2.4: identity is the STABLE backup_employee_id link only.
-                      // Never treat a display-name match as the same person.
-                      const profile = portalProfileMap.get(emp.id)
-                      const hasStableLink = Boolean(profile)
-                      const showLinkExisting = !hasStableLink && unlinkedPortalCandidates.length > 0
                       return (
                         <>
                           {(() => {
@@ -3295,8 +3418,6 @@ export default function V15rTeamPanel() {
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    // Carry the Cost Model employee so the invite reuses/links
-                                    // the same profile instead of creating a duplicate.
                                     setInviteModalEmployee({
                                       backupEmployeeId: String(emp.id),
                                       displayName: emp.name ?? '',

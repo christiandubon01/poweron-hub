@@ -213,9 +213,13 @@ describe('V15rTeamPanel — backup_employee_id stable matching', () => {
     expect(TEAM_SRC).toContain('map.set(p.backup_employee_id,')
   })
 
-  it('21. Lookup tries emp.id (backup_employee_id) before display_name fallback', () => {
-    const lookup = TEAM_SRC.match(/const profile\s*=\s*portalProfileMap\.get\(emp\.id\)/)
-    expect(lookup).toBeTruthy()
+  it('21. Lookup uses emp.id (backup_employee_id) for portalProfileMap — no name-based key', () => {
+    // COST-SOURCE-2B: Employee Cards now use unified directory rows. Linked rows
+    // resolve via row.portalProfileId; cost-model-only rows still look up by
+    // emp.id (= backup_employee_id). The key is always the stable identity, never
+    // a display name.
+    expect(TEAM_SRC).toContain('portalProfileMap.get(emp.id)')
+    expect(TEAM_SRC).not.toMatch(/portalProfileMap\.get\(.*\.name/)
   })
 
   // ROLE-2.4 UPDATE: identity is the STABLE backup_employee_id link ONLY. The

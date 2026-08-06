@@ -25,6 +25,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useAuthStore } from '@/store/authStore'
 import { verifyPasscode, setPasscode } from '@/lib/auth/passcode'
 import { getBackupData, saveBackupData, saveBackupDataAndSync, exportBackup, importBackupFromFile, isSupabaseConfigured, forceSyncToCloud, num, fmt, fmtK, pct, getProjectFinancials, getSnapshots, createSnapshot, restoreSnapshot, getPhaseWeights, buildEqualPhaseWeights, type BackupSettings, type BackupData, type DataSnapshot } from '@/services/backupDataService'
+import { buildCostSourceSummary } from '@/utils/costSourceHelper'
 import { getLocalOwnerProfile, saveLocalOwnerProfile, saveOwnerProfile, type CityLicense } from '@/services/ownerProfileService'
 import { pushState } from '@/services/undoRedoService'
 import { extractFromPDF, mapToServiceLog, mapToProject, logImport, processBatch, type QBBatchItem, type QBExtractedData } from '@/services/quickbooksImportService'
@@ -1659,6 +1660,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
     return { monthlyTotal, annualTotal, costPerHr }
   }
   const overheadCalc = calcOverhead()
+  const costSource = buildCostSourceSummary(settings as any, (backup as any).employees)
 
   const lastSync = backup._lastSavedAt ? new Date(backup._lastSavedAt).toLocaleString() : 'Never'
   const supabaseUp = isSupabaseConfigured()
@@ -1815,7 +1817,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
           </div>
           <div className="mt-4 space-y-1 text-xs text-gray-400">
             <p className="truncate">License: <span className="text-gray-200">{settings.license || 'Not set'}</span></p>
-            <p>OH Rate: <span className="text-gray-200">{fmt(num(settings.defaultOHRate || overheadCalc.costPerHr || 0))}/hr</span></p>
+            <p>Overhead Recovery: <span className="text-gray-200">{fmt(overheadCalc.costPerHr)}/hr</span></p>
           </div>
           <div className="mt-auto pt-4 flex flex-col gap-3">
             <span className={`self-start rounded-full border px-2 py-1 text-[10px] font-semibold ${showBusinessSetup ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
@@ -2251,14 +2253,14 @@ const persist = useCallback((mutatedData?: BackupData) => {
               <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
                 <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
                   <div>
-                    <h3 className="text-sm font-bold text-gray-100">Rates & pricing</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">Hourly, mileage, markup, tax, and waste defaults.</p>
+                    <h3 className="text-sm font-bold text-gray-100">Pricing Defaults</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Fallback rates used when no pricing crew is selected. Employee wages and overhead are managed separately.</p>
                   </div>
                   <span className="rounded-full border border-blue-400/20 bg-blue-400/10 px-2 py-1 text-[11px] font-semibold text-blue-100">Pricing</span>
                 </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Bill Rate ($/hr)</label>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Default Customer Bill Rate ($/hr)</label>
                   <input
                     type="number"
                     value={settings.billRate || 95}
@@ -2267,39 +2269,6 @@ const persist = useCallback((mutatedData?: BackupData) => {
                       if (data) {
                         pushState(data)
                         data.settings.billRate = parseFloat(e.target.value) || 95
-                        persist(data)
-                      }
-                    }}
-                    className="w-full px-3 py-2 border rounded text-sm theme-input"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">OH Rate ($/hr)</label>
-                  <input
-                    type="number"
-                    value={settings.defaultOHRate || 55}
-                    onChange={(e) => {
-                      const data = getBackupData()
-                      if (data) {
-                        pushState(data)
-                        data.settings.defaultOHRate = parseFloat(e.target.value) || 55
-                        persist(data)
-                      }
-                    }}
-                    className="w-full px-3 py-2 border rounded text-sm theme-input"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Owner Labor Cost ($/hr)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={settings.opCost || ''}
-                    onChange={(e) => {
-                      const data = getBackupData()
-                      if (data) {
-                        pushState(data)
-                        data.settings.opCost = parseFloat(e.target.value) || 0
                         persist(data)
                       }
                     }}
@@ -2375,6 +2344,51 @@ const persist = useCallback((mutatedData?: BackupData) => {
               </div>
               </div>
 
+              {/* Connected Cost Sources — read-only; each value has one canonical owner */}
+              <div className="rounded-xl border border-emerald-400/10 bg-slate-950/55 p-4" data-testid="connected-cost-sources">
+                <div className="flex items-center justify-between gap-3 border-b border-emerald-400/10 pb-3 mb-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-100">Connected Cost Sources</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Read-only. Each value is managed in one place — edit it there, not here.</p>
+                  </div>
+                  <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[11px] font-semibold text-emerald-100">Sources</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* 1. Company Overhead Recovery */}
+                  <div className="rounded-lg border border-cyan-400/10 bg-cyan-950/20 p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold mb-1">Company Overhead Recovery</p>
+                    <p className="text-lg font-bold text-cyan-100">{fmt(costSource.overheadRecoveryRate)}<span className="text-xs font-normal text-gray-400">/hr</span></p>
+                    <p className="text-[11px] text-gray-500 mt-1">Managed in <span className="text-cyan-300/80 font-medium">Overhead Manager</span></p>
+                    <p className="text-[10px] text-gray-600 mt-0.5">{fmt(costSource.annualOverhead)} annual ÷ {costSource.targetRecoveryLaborHours.toFixed(0)} target hrs/yr</p>
+                  </div>
+                  {/* 2. Owner Loaded Labor Cost */}
+                  <div className="rounded-lg border border-blue-400/10 bg-blue-950/20 p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-blue-200/60 font-bold mb-1">Owner Loaded Labor Cost</p>
+                    <p className="text-lg font-bold text-blue-100">
+                      {costSource.ownerLoadedLaborCost > 0 ? <>{fmt(costSource.ownerLoadedLaborCost)}<span className="text-xs font-normal text-gray-400">/hr</span></> : <span className="text-sm text-gray-500">Not set</span>}
+                    </p>
+                    <p className="text-[11px] text-gray-500 mt-1">Managed in <span className="text-blue-300/80 font-medium">Team → Owner / Me</span></p>
+                    <p className="text-[10px] text-gray-600 mt-0.5">Base wage from employee record. No W-2 multiplier applied to owner.</p>
+                  </div>
+                  {/* 3. Informational Solo Owner Cost */}
+                  <div className="rounded-lg border border-violet-400/10 bg-violet-950/20 p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-violet-200/60 font-bold mb-1">Informational Solo Owner Cost</p>
+                    <p className="text-lg font-bold text-violet-100">
+                      {costSource.informationalSoloOwnerCost > 0 ? <>{fmt(costSource.informationalSoloOwnerCost)}<span className="text-xs font-normal text-gray-400">/hr</span></> : <span className="text-sm text-gray-500">—</span>}
+                    </p>
+                    <p className="text-[10px] text-gray-500 mt-1">Owner labor + overhead recovery — what a solo-owner hour fully costs the business. Informational only.</p>
+                  </div>
+                  {/* 4. Legacy Service Cost */}
+                  <div className="rounded-lg border border-amber-400/10 bg-amber-950/15 p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-amber-200/60 font-bold mb-1">Legacy Solo Service Cost</p>
+                    <p className="text-lg font-bold text-amber-100">
+                      {costSource.legacyStoredServiceCost > 0 ? <>{fmt(costSource.legacyStoredServiceCost)}<span className="text-xs font-normal text-gray-400">/hr</span></> : <span className="text-sm text-gray-500">Not set</span>}
+                    </p>
+                    <p className="text-[10px] text-gray-500 mt-1">Current Service Log records temporarily use this stored value. Read-only until team-aware pricing is activated.</p>
+                  </div>
+                </div>
+              </div>
+
               <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
                 <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
                   <div>
@@ -2401,7 +2415,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Billable Hrs/Yr</label>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Target Overhead Recovery Labor-Hours / Year</label>
                   <input
                     type="number"
                     value={settings.billableHrsYear || 936}
@@ -2415,6 +2429,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
                   />
+                  <p className="text-[10px] text-gray-600 mt-1">Determines the company overhead recovery rate (Overhead Manager).</p>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">AM Block (min)</label>
@@ -2659,19 +2674,26 @@ const persist = useCallback((mutatedData?: BackupData) => {
                 })}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                 <div className="rounded-xl border border-cyan-400/15 bg-slate-950/60 p-3 shadow-inner shadow-blue-950/20">
-                  <p className="text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold">Monthly Overhead</p>
+                  <p className="text-[10px] uppercase tracking-wider text-cyan-200/60 font-bold">Monthly Company Overhead</p>
                   <p className="mt-1 text-lg font-bold text-cyan-100">{fmt(overheadCalc.monthlyTotal)}</p>
                 </div>
                 <div className="rounded-xl border border-blue-400/15 bg-blue-950/20 p-3 shadow-inner shadow-blue-950/20">
-                  <p className="text-[10px] uppercase tracking-wider text-blue-200/60 font-bold">Annual Overhead</p>
+                  <p className="text-[10px] uppercase tracking-wider text-blue-200/60 font-bold">Annual Company Overhead</p>
                   <p className="mt-1 text-lg font-bold text-blue-100">{fmt(overheadCalc.annualTotal)}</p>
                 </div>
-                <div className="rounded-xl border border-emerald-400/15 bg-emerald-950/15 p-3 shadow-inner shadow-blue-950/20">
-                  <p className="text-[10px] uppercase tracking-wider text-emerald-200/60 font-bold">Real Cost / Hr</p>
-                  <p className="mt-1 text-lg font-bold text-emerald-100">{fmt(overheadCalc.costPerHr)}</p>
+                <div className="rounded-xl border border-violet-400/15 bg-violet-950/15 p-3 shadow-inner shadow-blue-950/20">
+                  <p className="text-[10px] uppercase tracking-wider text-violet-200/60 font-bold">Target Recovery Labor-Hours / Year</p>
+                  <p className="mt-1 text-lg font-bold text-violet-100">{num(settings.billableHrsYear || 936).toFixed(0)} hrs</p>
                 </div>
+                <div className="rounded-xl border border-emerald-400/15 bg-emerald-950/15 p-3 shadow-inner shadow-blue-950/20">
+                  <p className="text-[10px] uppercase tracking-wider text-emerald-200/60 font-bold">Overhead Recovery per Labor-Hour</p>
+                  <p className="mt-1 text-lg font-bold text-emerald-100">{fmt(overheadCalc.costPerHr)}/hr</p>
+                </div>
+              </div>
+              <div className="rounded-lg border border-cyan-400/8 bg-slate-950/30 px-4 py-3 text-[11px] text-gray-500 leading-relaxed">
+                This rate distributes company overhead across the labor-hours the company expects to bill. Employee wages and loaded labor costs are managed separately in Team.
               </div>
 
               {(['essential', 'extra', 'loans', 'vehicle'] as const).filter((key) => key === openOverheadCategory).map((key) => {
