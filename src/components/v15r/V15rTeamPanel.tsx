@@ -390,7 +390,7 @@ Monthly Service Pace (Avg): ${fmt(monthlyServicePace)}`
 }
 
 // ── OWNER CARD ENHANCEMENT ──
-function OwnerCard({ owner, backup }: { owner: EnhancedEmployee; backup: BackupData }) {
+function OwnerCard({ owner, backup, onSave }: { owner: EnhancedEmployee; backup: BackupData; onSave: (id: string, updates: Partial<EnhancedEmployee>) => void }) {
   const settings = backup?.settings || {}
   const personalIncomeGoal = num(settings.personalIncomeGoal || 0)
   const monthlyGoal = personalIncomeGoal / 12
@@ -425,6 +425,16 @@ function OwnerCard({ owner, backup }: { owner: EnhancedEmployee; backup: BackupD
           <p className="text-sm text-gray-500 mt-1">{owner.role || 'Business Owner'}</p>
         </div>
         <span className="px-3 py-1 bg-blue-600/40 text-blue-300 rounded-full text-xs font-semibold">Owner</span>
+      </div>
+
+      {/* SERVICE-COST-3D: Owner classifies their own labor the same as any Team member.
+          Persists to the canonical owner record's laborCategory via the shared employee
+          save path — no duplicate/synthetic owner record is created and rates are untouched. */}
+      <div className="mb-4">
+        <LaborCategoryField
+          value={owner.laborCategory === 'field' || owner.laborCategory === 'office' ? owner.laborCategory : ''}
+          onChange={(v) => { if (v === 'field' || v === 'office') onSave(owner.id, { laborCategory: v }) }}
+        />
       </div>
 
       {personalIncomeGoal > 0 && (
@@ -600,6 +610,13 @@ function EmployeeCard({
   const isOwner = employee.isOwner || false
   const typeLabel = isOwner ? 'Owner 👑' : profile.workerType === '1099' ? '1099' : 'W-2'
   const typeCls = isOwner ? 'bg-blue-600/40 text-blue-300' : 'bg-gray-700/60 text-gray-400'
+  const laborCategory = employee.laborCategory
+  const laborCatLabel = laborCategory === 'field' ? 'Field' : laborCategory === 'office' ? 'Office' : 'Needs classification'
+  const laborCatCls = laborCategory === 'field'
+    ? 'bg-emerald-600/30 text-emerald-300'
+    : laborCategory === 'office'
+      ? 'bg-purple-600/30 text-purple-300'
+      : 'bg-amber-600/30 text-amber-300'
 
   return (
     <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-4 cursor-pointer hover:border-gray-500 transition-colors">
@@ -609,7 +626,10 @@ function EmployeeCard({
           <h3 className="font-bold text-gray-100 text-sm leading-tight truncate">{employee.name}</h3>
           <p className="text-xs text-gray-500 mt-0.5 truncate">{employee.role || 'Team Member'}</p>
         </div>
-        <span className={`text-xs px-2 py-0.5 rounded shrink-0 ${typeCls}`}>{typeLabel}</span>
+        <div className="flex shrink-0 gap-1.5">
+          <span className={`text-xs px-2 py-0.5 rounded ${typeCls}`}>{typeLabel}</span>
+          <span className={`text-xs px-2 py-0.5 rounded ${laborCatCls}`}>{laborCatLabel}</span>
+        </div>
       </div>
 
       {/* Stats row */}
@@ -680,6 +700,9 @@ function EmployeeEditModal({
 
   const [baseWage, setBaseWage] = useState<number | ''>(initBase || '')
   const [billRate, setBillRate] = useState<number | ''>(initBill || '')
+  const [laborCategory, setLaborCategory] = useState<import('./employeeTypes').LaborCategory | ''>(
+    employee.laborCategory === 'field' || employee.laborCategory === 'office' ? employee.laborCategory : '',
+  )
   const [billOverridden, setBillOverridden] = useState(initBill > 0 && initBill !== initBase * (noMultiplier ? 1 : payrollMult) * 2)
 
   // Auto-update bill rate default when base changes (unless user overrode)
@@ -766,6 +789,8 @@ function EmployeeEditModal({
               </span>
             </div>
           )}
+
+          <LaborCategoryField value={laborCategory} onChange={setLaborCategory} />
         </div>
 
         <div className="flex gap-3 px-6 py-4 border-t border-gray-700">
@@ -780,7 +805,11 @@ function EmployeeEditModal({
               // Build corrected save payload via shared helper — normalises stale records on save.
               const workerType = resolveWorkerType(employee)
               const payload = buildSavePayload(baseNum, billNum, workerType, editSettings)
-              onSave(employee.id, payload as any)
+              const updates: Partial<EnhancedEmployee> = payload as any
+              if (laborCategory === 'field' || laborCategory === 'office') {
+                updates.laborCategory = laborCategory
+              }
+              onSave(employee.id, updates)
             }}
             className="flex-1 px-4 py-2.5 bg-blue-600/70 text-blue-100 rounded-lg text-sm font-bold hover:bg-blue-600 transition"
           >
@@ -788,6 +817,32 @@ function EmployeeEditModal({
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function LaborCategoryField({
+  value,
+  onChange,
+}: {
+  value: import('./employeeTypes').LaborCategory | ''
+  onChange: (v: import('./employeeTypes').LaborCategory | '') => void
+}) {
+  return (
+    <div>
+      <label className="block text-xs font-semibold text-gray-400 mb-1 uppercase tracking-wide">Labor Category</label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as import('./employeeTypes').LaborCategory | '')}
+        className="w-full bg-[var(--bg-input)] border border-gray-700 text-[var(--text-primary)] text-sm px-3 py-2.5 rounded focus:outline-none focus:border-blue-600"
+      >
+        <option value="">— Select —</option>
+        <option value="field">Field — affects Service Call labor and overhead</option>
+        <option value="office">Office / Administrative — assigned only, no field labor</option>
+      </select>
+      <p className="text-[11px] text-gray-500 mt-1">
+        Field employees are included in Costed Field Crew. Office employees may be assigned but do not add field labor cost.
+      </p>
     </div>
   )
 }
@@ -2178,7 +2233,7 @@ export default function V15rTeamPanel() {
 
       {/* KPI CARDS: Owner Card + Projected Monthly Cost + NEXUS AI Hire */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <OwnerCard owner={owner} backup={backup} />
+        <OwnerCard owner={owner} backup={backup} onSave={handleEditSave} />
 
         <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-4">
           <div className="text-xs font-semibold text-gray-500 uppercase mb-2">Projected Monthly Cost</div>

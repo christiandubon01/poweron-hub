@@ -1623,6 +1623,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
         salaryTarget: 12000,
         billableHrsYear: 936,
         annualTarget: 120000,
+        defaultPricingCrewIds: [],
         phaseWeights: { Estimating: 5, Planning: 10, 'Site Prep': 15, 'Rough-in': 35, Finish: 25, Trim: 10 },
         mtoPhases: [...DEFAULT_PROJECT_PHASES],
         overhead: { essential: [], extra: [], loans: [], vehicle: [] },
@@ -2341,6 +2342,35 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
                   />
                 </div>
+              </div>
+
+              <div className="mt-4 pt-4 border-t border-cyan-400/10">
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Default Pricing Crew</label>
+                <p className="text-[11px] text-gray-500 mb-2">
+                  Canonical Team employee IDs used for quoting when no field crew is assigned. Rates are read from Team.
+                </p>
+                <select
+                  multiple
+                  value={settings.defaultPricingCrewIds || []}
+                  onChange={(e) => {
+                    const data = getBackupData()
+                    if (!data) return
+                    const options = Array.from(e.target.selectedOptions).map((o) => o.value)
+                    pushState(data)
+                    data.settings.defaultPricingCrewIds = options
+                    persist(data)
+                  }}
+                  className="w-full px-3 py-2 border rounded text-sm theme-input min-h-[80px]"
+                >
+                  {(backup.employees || [])
+                    .filter((e) => e.status !== 'Inactive' && e.status !== 'Closed')
+                    .map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.name || e.role || 'Unnamed'} {e.laborCategory ? `(${e.laborCategory})` : '(unclassified)'}
+                      </option>
+                    ))}
+                </select>
+                <p className="text-[10px] text-gray-600 mt-1">Hold Ctrl/Cmd to select multiple employees.</p>
               </div>
               </div>
 

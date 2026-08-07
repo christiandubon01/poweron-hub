@@ -15,6 +15,7 @@
 export type EmployeeType = 'permanent' | 'per_project' | 'hypothetical'
 export type Classification = 'W-2' | '1099'
 export type EmployeeStatus = 'Active' | 'Inactive' | 'Closed'
+export type LaborCategory = 'field' | 'office'
 
 export interface ExtendedEmployee {
   // ── Original BackupEmployee fields (always present) ──────────────────────
@@ -42,6 +43,9 @@ export interface ExtendedEmployee {
   // ── Cost modifiers (existing) ─────────────────────────────────────────────
   isOwner?: boolean
   applyMultiplier?: boolean
+
+  // ── SERVICE-COST-3B: field vs office classification ───────────────────────
+  laborCategory?: LaborCategory | null
 
   // ── OHM compliance tracking ───────────────────────────────────────────────
   compliance_acknowledged?: boolean
@@ -74,6 +78,14 @@ export function normalizeEmployee(raw: any): ExtendedEmployee {
     applyMultiplier = true // permanent W-2 default
   }
 
+  // SERVICE-COST-3B: only explicit 'field' or 'office' is valid.
+  // Missing/unknown values remain null so callers cannot silently treat
+  // unclassified employees as field workers.
+  const laborCategory: LaborCategory | null =
+    raw.laborCategory === 'field' || raw.laborCategory === 'office'
+      ? raw.laborCategory
+      : null
+
   return {
     id: raw.id ?? '',
     name: raw.name ?? '',
@@ -91,6 +103,7 @@ export function normalizeEmployee(raw: any): ExtendedEmployee {
     project_id: raw.project_id,
     isOwner: isOwnerFlag,
     applyMultiplier,
+    laborCategory,
     compliance_acknowledged: raw.compliance_acknowledged ?? false,
   }
 }

@@ -140,7 +140,7 @@ describe('payment status', () => {
 
   it('shows the owner the Collected amount their status implies', () => {
     const modal = sliceServiceCallModal()
-    expect(modal).toContain('const reconciled = reconcileServicePayment(next, slCollected, serviceCallQuote().totalQuoted)')
+    expect(modal).toContain('const reconciled = reconcileServicePayment(next, slCollected, serviceCallDisplayQuote().totalQuoted)')
     // Remounting on status change is what makes the uncontrolled input redisplay.
     expect(modal).toContain('key={`slCollected-${editSvcId || \'new\'}-${slPayStatus}`}')
   })

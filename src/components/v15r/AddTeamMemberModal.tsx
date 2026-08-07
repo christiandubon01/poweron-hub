@@ -21,7 +21,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { X, User, Briefcase, Lightbulb, ChevronRight, AlertTriangle } from 'lucide-react'
-import type { EmployeeType, ExtendedEmployee } from './employeeTypes'
+import type { EmployeeType, ExtendedEmployee, LaborCategory } from './employeeTypes'
 
 interface Project {
   id: string
@@ -110,6 +110,7 @@ export default function AddTeamMemberModal({
   const [estimatedEndDate, setEstimatedEndDate] = useState('')
   const [projectId, setProjectId] = useState('')
   const [startMonth, setStartMonth] = useState('')
+  const [laborCategory, setLaborCategory] = useState<LaborCategory | ''>('')
 
   // Derived flag: no W-2 payroll burden for contractor types.
   // Business rules (enforced via shared helper on save):
@@ -180,6 +181,10 @@ export default function AddTeamMemberModal({
       classification,
       applyMultiplier: !isContr,
       compliance_acknowledged: false,
+    }
+
+    if (laborCategory === 'field' || laborCategory === 'office') {
+      record.laborCategory = laborCategory
     }
 
     if (selectedType === 'permanent') {
@@ -334,6 +339,20 @@ export default function AddTeamMemberModal({
                     <span className="text-gray-500">Permanent employees are always W-2</span>
                   </div>
                 </Field>
+                <Field label="Labor Category">
+                  <select
+                    className={inputCls}
+                    value={laborCategory}
+                    onChange={e => setLaborCategory(e.target.value as LaborCategory | '')}
+                  >
+                    <option value="">— Select —</option>
+                    <option value="field">Field — affects Service Call labor and overhead</option>
+                    <option value="office">Office / Administrative — assigned only, no field labor</option>
+                  </select>
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    Field employees are included in Costed Field Crew. Office employees may be assigned but do not add field labor cost.
+                  </p>
+                </Field>
                 <Field label="Status">
                   <select
                     className={inputCls}
@@ -439,6 +458,20 @@ export default function AddTeamMemberModal({
                     )}
                   </>
                 )}
+                <Field label="Labor Category">
+                  <select
+                    className={inputCls}
+                    value={laborCategory}
+                    onChange={e => setLaborCategory(e.target.value as LaborCategory | '')}
+                  >
+                    <option value="">— Select —</option>
+                    <option value="field">Field — affects Service Call labor and overhead</option>
+                    <option value="office">Office / Administrative — assigned only, no field labor</option>
+                  </select>
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    Field employees are included in Costed Field Crew. Office employees may be assigned but do not add field labor cost.
+                  </p>
+                </Field>
                 <Field label="Classification">
                   <select
                     className={inputCls}
