@@ -2780,6 +2780,8 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [desktopElectricalToolsOpen, setDesktopElectricalToolsOpen] = useState(readDesktopElectricalToolsOpen)
   const [desktopLabelOptionsOpen, setDesktopLabelOptionsOpen] = useState(false)
   const [desktopElectricalSymbolsOpen, setDesktopElectricalSymbolsOpen] = useState(false)
+  const [quickAccessPaletteOpen, setQuickAccessPaletteOpen] = useState(false)
+  const [scopeLayerDeleteConfirm, setScopeLayerDeleteConfirm] = useState<{ layerId: string; layerName: string } | null>(null)
   const closeElectricalToolsPalette = () => {
     setDesktopElectricalToolsOpen(false)
     setDesktopLabelOptionsOpen(false)
@@ -4403,6 +4405,10 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         cancelWireSegmentPicker()
         return
       }
+      if (scopeLayerDeleteConfirm) {
+        setScopeLayerDeleteConfirm(null)
+        return
+      }
       if (isSymbolSizePanelOpen) {
         setIsSymbolSizePanelOpen(false)
         return
@@ -4454,7 +4460,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover, openDesktopElectricalCategory, desktopLabelOptionsOpen, desktopElectricalToolsOpen, desktopElectricalSymbolsOpen, isSymbolSizePanelOpen, pasteModeActive, isWireProfileManagerOpen, wireSegmentPickSession, cancelWireSegmentPicker])
+  }, [isFullScreenView, isTabletImmersiveFullscreen, noteEditor, richTextEditor, draftRect, dragStart, inkDraft, focusedAnnotationId, layoutEditId, inlineTextEditId, openPopover, openDesktopElectricalCategory, desktopLabelOptionsOpen, desktopElectricalToolsOpen, desktopElectricalSymbolsOpen, isSymbolSizePanelOpen, pasteModeActive, isWireProfileManagerOpen, wireSegmentPickSession, cancelWireSegmentPicker, scopeLayerDeleteConfirm])
 
   useEffect(() => {
     pendingScrollResetRef.current = true
@@ -5281,6 +5287,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     setActionMsg({ type: 'success', text: 'Work package deleted.' })
   }, [loadScopeLayers, persistScopeLayerDeletion, scopeLayers])
+
+  const requestScopeLayerDelete = useCallback((layer: BlueprintScopeLayer) => {
+    setScopeLayerDeleteConfirm({
+      layerId: layer.id,
+      layerName: layer.name || 'Work Package',
+    })
+  }, [])
 
   const applyOptimisticScopeLayerScopedSelection = useCallback((selectedIds: Set<string>) => {
     const nextSelectedIds = new Set(selectedIds)
@@ -9874,6 +9887,80 @@ const annotationPanelSizeClass =
     )
   }
 
+  const renderQuickAccessPaletteButton = () => (
+    <div className="min-w-0">
+      <button
+        type="button"
+        aria-expanded={quickAccessPaletteOpen}
+        onClick={() => setQuickAccessPaletteOpen((open) => !open)}
+        className={`w-full inline-flex items-center gap-1.5 min-h-8 text-xs px-2 py-1 rounded-md border text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${quickAccessPaletteOpen ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+        title="Quick Access palette"
+        aria-label="Quick Access"
+      >
+        <ChevronDown size={12} className={`shrink-0 transition-transform ${quickAccessPaletteOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+        <span className="min-w-0 flex-1 whitespace-normal break-words font-medium">Quick Access</span>
+      </button>
+    </div>
+  )
+
+  const renderQuickAccessPaletteContents = () => (
+    <div className="rounded-md border border-gray-800 bg-gray-900/50 p-1.5">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-semibold text-gray-100">Quick Access</div>
+          <div className="text-[10px] text-gray-500">Tool presets for the next placement</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => openQuickAccessSettings(quickAccessPresets.findIndex(Boolean) >= 0 ? quickAccessPresets.findIndex(Boolean) : 0)}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-700 text-gray-400 transition-colors hover:border-gray-500 hover:text-white"
+          title="Quick Access settings"
+          aria-label="Quick Access settings"
+        >
+          <Settings size={15} />
+        </button>
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
+        {quickAccessPresets.map((preset, index) => (
+          <button
+            key={`quick-access-slot-${index + 1}`}
+            type="button"
+            onClick={() => preset ? applyQuickAccessPreset(preset, index) : openQuickAccessSettings(index)}
+            className={`relative flex min-h-11 min-w-0 items-center gap-2 rounded-md border px-2 py-2 text-left transition-colors ${preset ? 'border-gray-700 bg-gray-900/40 text-gray-200 hover:border-blue-500/60 hover:bg-blue-900/15' : 'border-dashed border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'}`}
+            title={(() => {
+              if (!preset) return `Configure Slot ${index + 1}`
+              if (!supportsWireProfileAssignment({ toolType: preset.toolType, toolVariant: preset.toolVariant })) {
+                return `Activate ${preset.label}`
+              }
+              const display = resolveQuickAccessWireProfileDisplay(readProjectQuickAccessBinding(index), projectWireProfiles)
+              return `Activate ${preset.label} — ${display.label}`
+            })()}
+          >
+            {preset ? (
+              <>
+                <span className="shrink-0 text-gray-400">{quickAccessIcon(preset)}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[9px] uppercase tracking-wide text-gray-500">Slot {index + 1}</span>
+                  <span className="block truncate text-[11px] font-medium">{preset.label}</span>
+                  {supportsWireProfileAssignment({ toolType: preset.toolType, toolVariant: preset.toolVariant }) && (
+                    <span className="block truncate text-[10px] text-gray-500">
+                      {resolveQuickAccessWireProfileDisplay(readProjectQuickAccessBinding(index), projectWireProfiles).label}
+                    </span>
+                  )}
+                </span>
+                {preset.color && (
+                  <span className="h-3 w-3 shrink-0 rounded-full border border-white/30" style={{ backgroundColor: preset.color }} />
+                )}
+              </>
+            ) : (
+              <span className="truncate text-[11px]">+ Slot {index + 1}</span>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+
   function annotationTypeToToolKey(type: string): ToolKey | null {
     const map: Record<string, ToolKey> = {
       highlight: 'highlight', textHighlight: 'textHighlight', underline: 'underline', textBox: 'textBox',
@@ -11461,12 +11548,13 @@ const annotationPanelSizeClass =
                         if (!next) setDesktopLabelOptionsOpen(false)
                         writeDesktopElectricalToolsOpen(next)
                       }}
-                      className={`w-full inline-flex items-center gap-1.5 min-h-8 text-xs px-2 py-1 rounded-md border text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${toolMode === 'shape' && (shapeKind === 'circuit-path' || shapeKind === 'circuit-arc') ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                      className={`w-full inline-flex items-center gap-1.5 min-h-8 text-xs px-2 py-1 rounded-md border text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${isPackagePickMode ? 'border-emerald-400 text-emerald-200 bg-emerald-500/10' : toolMode === 'shape' && (shapeKind === 'circuit-path' || shapeKind === 'circuit-arc') ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
                       title="Electrical Tools"
                       aria-label="Electrical Tools"
                     >
                       <ChevronDown size={12} className={`shrink-0 transition-transform ${desktopElectricalToolsOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
                       <span className="min-w-0 flex-1 whitespace-normal break-words font-medium">Electrical Tools</span>
+                      {isPackagePickMode && <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" aria-hidden="true" />}
                       {toolMode === 'shape' && (shapeKind === 'circuit-path' || shapeKind === 'circuit-arc') && (
                         <span className="hidden min-w-0 max-w-[45%] truncate text-[10px] text-cyan-200/80 sm:inline">
                           {shapeKind === 'circuit-path' ? 'Circuit Path' : 'Circuit Arc'}
@@ -11475,6 +11563,7 @@ const annotationPanelSizeClass =
                     </button>
                   </div>
                   {renderTouchElectricalSymbolsButton()}
+                  {!useDesktopThreePaneLayout && renderQuickAccessPaletteButton()}
                 </div>
                 {desktopElectricalToolsOpen && createPortal(
                   <BlueprintFloatingPalette paletteId="electrical-tools" title="Electrical Tools" onClose={closeElectricalToolsPalette} defaultX={60} defaultY={80}>
@@ -11532,6 +11621,7 @@ const annotationPanelSizeClass =
                         {showCircuitMeasurementLabels ? <Eye size={12} /> : <EyeOff size={12} />}
                         Circuit Labels {showCircuitMeasurementLabels ? 'On' : 'Off'}
                       </button>
+                      {renderPackagePickControls('panel')}
                       <div className="min-w-0" data-testid="desktop-label-options-menu">
                         <button
                           type="button"
@@ -11629,20 +11719,29 @@ const annotationPanelSizeClass =
                   </BlueprintFloatingPalette>,
                   document.body
                 )}
+                {quickAccessPaletteOpen && createPortal(
+                  <BlueprintFloatingPalette paletteId="quick-access" title="Quick Access" onClose={() => setQuickAccessPaletteOpen(false)} defaultX={660} defaultY={80}>
+                    {renderQuickAccessPaletteContents()}
+                  </BlueprintFloatingPalette>,
+                  document.body
+                )}
                 {useDesktopThreePaneLayout ? (
                   <div className="space-y-1.5">
-                    <div className="text-[10px] uppercase tracking-wide text-gray-500">Electrical Symbols</div>
-                    <button
-                      type="button"
-                      aria-pressed={desktopElectricalSymbolsOpen}
-                      onClick={() => setDesktopElectricalSymbolsOpen((v) => !v)}
-                      className={`w-full inline-flex items-center gap-1.5 min-h-8 text-xs px-2 py-1 rounded-md border text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${toolMode === 'shape' && electricalSymbolOptionByKind.has(shapeKind as ElectricalSymbolKind) ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                      title="Electrical Symbols palette"
-                      aria-label="Electrical Symbols"
-                    >
-                      <ChevronDown className={`shrink-0 transition-transform ${desktopElectricalSymbolsOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
-                      <span className="min-w-0 flex-1 whitespace-normal break-words font-medium">Electrical Symbols</span>
-                    </button>
+                    <div className="text-[10px] uppercase tracking-wide text-gray-500">Floating Palettes</div>
+                    <div className="grid gap-1.5 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        aria-pressed={desktopElectricalSymbolsOpen}
+                        onClick={() => setDesktopElectricalSymbolsOpen((v) => !v)}
+                        className={`w-full inline-flex items-center gap-1.5 min-h-8 text-xs px-2 py-1 rounded-md border text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${toolMode === 'shape' && electricalSymbolOptionByKind.has(shapeKind as ElectricalSymbolKind) ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                        title="Electrical Symbols palette"
+                        aria-label="Electrical Symbols"
+                      >
+                        <ChevronDown className={`shrink-0 transition-transform ${desktopElectricalSymbolsOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+                        <span className="min-w-0 flex-1 whitespace-normal break-words font-medium">Electrical Symbols</span>
+                      </button>
+                      {renderQuickAccessPaletteButton()}
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -11929,63 +12028,6 @@ const annotationPanelSizeClass =
               </div>
             )}
 
-            {useDesktopThreePaneLayout && (
-              <div className="mt-3 border-t border-gray-800 pt-3">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <div>
-                    <div className="text-xs font-semibold text-gray-100">Quick Access</div>
-                    <div className="text-[10px] text-gray-500">Tool presets for the next placement</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => openQuickAccessSettings(quickAccessPresets.findIndex(Boolean) >= 0 ? quickAccessPresets.findIndex(Boolean) : 0)}
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-700 text-gray-400 transition-colors hover:border-gray-500 hover:text-white"
-                    title="Quick Access settings"
-                    aria-label="Quick Access settings"
-                  >
-                    <Settings size={15} />
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {quickAccessPresets.map((preset, index) => (
-                    <button
-                      key={`quick-access-slot-${index + 1}`}
-                      type="button"
-                      onClick={() => preset ? applyQuickAccessPreset(preset, index) : openQuickAccessSettings(index)}
-                      className={`relative flex min-h-11 min-w-0 items-center gap-2 rounded-md border px-2 py-2 text-left transition-colors ${preset ? 'border-gray-700 bg-gray-900/40 text-gray-200 hover:border-blue-500/60 hover:bg-blue-900/15' : 'border-dashed border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'}`}
-                      title={(() => {
-                        if (!preset) return `Configure Slot ${index + 1}`
-                        if (!supportsWireProfileAssignment({ toolType: preset.toolType, toolVariant: preset.toolVariant })) {
-                          return `Activate ${preset.label}`
-                        }
-                        const display = resolveQuickAccessWireProfileDisplay(readProjectQuickAccessBinding(index), projectWireProfiles)
-                        return `Activate ${preset.label} — ${display.label}`
-                      })()}
-                    >
-                      {preset ? (
-                        <>
-                          <span className="shrink-0 text-gray-400">{quickAccessIcon(preset)}</span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-[9px] uppercase tracking-wide text-gray-500">Slot {index + 1}</span>
-                            <span className="block truncate text-[11px] font-medium">{preset.label}</span>
-                            {supportsWireProfileAssignment({ toolType: preset.toolType, toolVariant: preset.toolVariant }) && (
-                              <span className="block truncate text-[10px] text-gray-500">
-                                {resolveQuickAccessWireProfileDisplay(readProjectQuickAccessBinding(index), projectWireProfiles).label}
-                              </span>
-                            )}
-                          </span>
-                          {preset.color && (
-                            <span className="h-3 w-3 shrink-0 rounded-full border border-white/30" style={{ backgroundColor: preset.color }} />
-                          )}
-                        </>
-                      ) : (
-                        <span className="truncate text-[11px]">+ Slot {index + 1}</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
             </DesktopToolbarScrollContent>
           </div>
 
@@ -13931,34 +13973,6 @@ const annotationPanelSizeClass =
                         Create Work Package
                       </button>
                     </div>
-                    {/* ── Package Pick / Multi Select controls ── */}
-                    <div className={useDesktopThreePaneLayout ? 'mt-2 flex flex-wrap items-center gap-1.5' : 'hidden'}>
-                      <button
-                        type="button"
-                        onClick={togglePackagePickMode}
-                        className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-semibold ${isPackagePickMode ? 'border-emerald-400/70 bg-emerald-500/15 text-emerald-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
-                        title="Toggle Package Pick mode — click symbols/shapes on the canvas to add them to a work package. Desktop: press Left Control."
-                      >
-                        <MousePointer2 size={11} />
-                        {isPackagePickMode ? 'Package Pick: On' : 'Package Pick'}
-                      </button>
-                      <span className={`text-[10px] ${selectedPackageCount > 0 ? 'font-semibold text-emerald-300' : 'text-gray-500'}`}>
-                        Package Pick: {selectedPackageCount} selected
-                      </span>
-                      {selectedPackageCount > 0 && (
-                        <button
-                          type="button"
-                          onClick={clearPackagePickSelection}
-                          className="inline-flex items-center gap-1 rounded border border-gray-700 px-2 py-1 text-[10px] text-gray-300 hover:bg-white/5"
-                          title="Clear the package-pick selection"
-                        >
-                          <X size={10} /> Clear
-                        </button>
-                      )}
-                      {isPackagePickMode && (
-                        <span className="text-[9px] text-emerald-300/70">Picking visible annotations only · Tap canvas items to add/remove · Left Ctrl or Esc to exit</span>
-                      )}
-                    </div>
                   </div>
                 )}
 
@@ -14095,56 +14109,56 @@ const annotationPanelSizeClass =
                                   </div>
                                 </div>
                               </div>
-                              <div className="flex flex-shrink-0 items-center gap-1">
-                                <div className="flex flex-col">
+                              <div className="flex max-w-[252px] flex-shrink-0 flex-wrap justify-end gap-1">
+                                <div className="grid grid-cols-1 gap-1">
                                   <button
                                     type="button"
                                     onClick={() => moveScopeLayer(layer.id, 'up')}
                                     disabled={!moveState.canMoveUp}
-                                    className="rounded border border-gray-700 px-1 leading-none text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-700"
+                                    className="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-gray-700 text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-700"
                                     title="Move package up"
                                     aria-label="Move package up"
                                   >
-                                    <ChevronUp size={10} />
+                                    <ChevronUp size={14} />
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => moveScopeLayer(layer.id, 'down')}
                                     disabled={!moveState.canMoveDown}
-                                    className="mt-0.5 rounded border border-gray-700 px-1 leading-none text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-700"
+                                    className="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-gray-700 text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-700"
                                     title="Move package down"
                                     aria-label="Move package down"
                                   >
-                                    <ChevronDown size={10} />
+                                    <ChevronDown size={14} />
                                   </button>
                                 </div>
                                 <button
                                   type="button"
                                   onClick={() => toggleScopeLayerIsolation(layer.id)}
-                                  className={`rounded border px-1 py-0.5 text-[10px] ${isLayerIsolated ? 'border-amber-400/50 bg-amber-500/15 text-amber-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+                                  className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded border ${isLayerIsolated ? 'border-amber-400/50 bg-amber-500/15 text-amber-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
                                   title={isLayerIsolated ? 'Remove this package from the visible set' : 'Show this package on canvas (add to visible set)'}
                                 >
-                                  <Eye size={10} />
+                                  <Eye size={14} />
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => toggleScopeLayerHidden(layer.id)}
-                                  className={`rounded border px-1 py-0.5 text-[10px] ${isLayerHidden ? 'border-rose-400/50 bg-rose-500/15 text-rose-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+                                  className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded border ${isLayerHidden ? 'border-rose-400/50 bg-rose-500/15 text-rose-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
                                   title={isLayerHidden ? 'Show this package annotations in general view' : 'Hide this package annotations from general view'}
                                 >
-                                  <EyeOff size={10} />
+                                  <EyeOff size={14} />
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => openEditScopeLayerModal(layer)}
-                                  className="rounded border border-gray-700 px-1.5 py-0.5 text-[10px] text-gray-300 hover:bg-white/5"
+                                  className="inline-flex min-h-11 items-center justify-center rounded border border-gray-700 px-3 text-[10px] font-semibold text-gray-300 hover:bg-white/5"
                                 >
                                   Edit
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => deleteScopeLayer(layer.id)}
-                                  className="rounded border border-red-900/50 px-1.5 py-0.5 text-[10px] text-red-300 hover:bg-red-950/30"
+                                  onClick={() => requestScopeLayerDelete(layer)}
+                                  className="inline-flex min-h-11 items-center justify-center rounded border border-red-900/50 px-3 text-[10px] font-semibold text-red-300 hover:bg-red-950/30"
                                 >
                                   Delete
                                 </button>
@@ -14555,34 +14569,34 @@ const annotationPanelSizeClass =
                                     )}
                                   </div>
                                 </div>
-                                <div className="flex flex-shrink-0 items-center gap-1">
+                                <div className="flex max-w-[204px] flex-shrink-0 flex-wrap justify-end gap-1">
                                   <button
                                     type="button"
                                     onClick={() => toggleScopeLayerIsolation(layer.id)}
-                                    className={`rounded border px-1 py-0.5 text-[10px] ${isLayerIsolated ? 'border-amber-400/50 bg-amber-500/15 text-amber-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+                                    className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded border ${isLayerIsolated ? 'border-amber-400/50 bg-amber-500/15 text-amber-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
                                     title={isLayerIsolated ? 'Show all annotations' : 'Isolate this package on canvas'}
                                   >
-                                    <Eye size={10} />
+                                    <Eye size={14} />
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => toggleScopeLayerHidden(layer.id)}
-                                    className={`rounded border px-1 py-0.5 text-[10px] ${isLayerHidden ? 'border-rose-400/50 bg-rose-500/15 text-rose-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+                                    className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded border ${isLayerHidden ? 'border-rose-400/50 bg-rose-500/15 text-rose-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
                                     title={isLayerHidden ? 'Show this package annotations in general view' : 'Hide this package annotations from general view'}
                                   >
-                                    <EyeOff size={10} />
+                                    <EyeOff size={14} />
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => openEditScopeLayerModal(layer)}
-                                    className="rounded border border-gray-700 px-1.5 py-0.5 text-[10px] text-gray-300 hover:bg-white/5"
+                                    className="inline-flex min-h-11 items-center justify-center rounded border border-gray-700 px-3 text-[10px] font-semibold text-gray-300 hover:bg-white/5"
                                   >
                                     Edit
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => deleteScopeLayer(layer.id)}
-                                    className="rounded border border-red-900/50 px-1.5 py-0.5 text-[10px] text-red-300 hover:bg-red-950/30"
+                                    onClick={() => requestScopeLayerDelete(layer)}
+                                    className="inline-flex min-h-11 items-center justify-center rounded border border-red-900/50 px-3 text-[10px] font-semibold text-red-300 hover:bg-red-950/30"
                                   >
                                     Delete
                                   </button>
@@ -15427,6 +15441,57 @@ const annotationPanelSizeClass =
           Adjusts symbol LABEL text size only (via symbolLabelScale → renderElectricalSymbolSvg's
           externalLabel). Never resizes symbol glyphs, boxes, or annotation geometry, and never
           writes annotation data. Local UI state only. */}
+      {scopeLayerDeleteConfirm && createPortal(
+        <div
+          className="fixed inset-0 z-[100055] flex items-center justify-center bg-black/70 p-4"
+          onMouseDown={() => setScopeLayerDeleteConfirm(null)}
+        >
+          <div
+            className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-gray-700 bg-[#111827] shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-gray-800 px-4 py-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-100">Delete Work Package</h3>
+                <p className="mt-0.5 text-xs text-gray-500">This removes the package and keeps its existing delete behavior once confirmed.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setScopeLayerDeleteConfirm(null)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white"
+                aria-label="Close delete confirmation"
+              >
+                <X size={15} />
+              </button>
+            </div>
+            <div className="px-4 py-4 text-sm text-gray-200">
+              Delete <span className="font-semibold text-white">{scopeLayerDeleteConfirm.layerName}</span>?
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-800 bg-[#111827] px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setScopeLayerDeleteConfirm(null)}
+                className="rounded border border-gray-700 px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const pendingDelete = scopeLayerDeleteConfirm
+                  setScopeLayerDeleteConfirm(null)
+                  if (pendingDelete) void deleteScopeLayer(pendingDelete.layerId)
+                }}
+                className="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500"
+              >
+                Delete Work Package
+              </button>
+            </div>
+          </div>
+        </div>,
+        viewerPortalTarget
+      )}
+
       {isSymbolSizePanelOpen && createPortal(
         <div
           className="fixed z-[100000] w-56 rounded-lg border border-gray-700 bg-[#111827] shadow-2xl"

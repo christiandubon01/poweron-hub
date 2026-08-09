@@ -41,7 +41,7 @@ describe('desktop left toolbar scroll structure', () => {
     expect(source).not.toContain('bv-left-toolbar col-start-1 row-start-3 min-h-0 h-full overflow-hidden flex flex-col rounded-xl border border-gray-800 bg-[#10131c] p-4 space-y-2')
   })
 
-  it('keeps tools, electrical categories, and Quick Access inside the scroll owner', () => {
+  it('keeps tools and electrical categories inside the scroll owner while floating palettes stay separate', () => {
     const scrollSource = desktopToolbarScrollSource()
 
     expect(scrollSource).toContain('<Undo2 size={13} /> Undo')
@@ -49,8 +49,9 @@ describe('desktop left toolbar scroll structure', () => {
     expect(scrollSource).toContain('DESKTOP_ELECTRICAL_TOOL_CATEGORIES.map((category)')
     expect(scrollSource).toContain('key={category.id}')
     expect(scrollSource).toContain('category.children.map((childKind)')
-    expect(scrollSource).toContain('Quick Access')
-    expect(scrollSource).toContain('quickAccessPresets.map((preset, index)')
+    expect(scrollSource).toContain('Floating Palettes')
+    expect(scrollSource).toContain('Electrical Symbols')
+    expect(scrollSource).not.toContain('quickAccessPresets.map((preset, index)')
   })
 
   it('keeps the left resize handle outside the scroll wrapper and leaves pane width persistence intact', () => {

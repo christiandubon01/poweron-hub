@@ -13,7 +13,7 @@ function countOccurrences(haystack: string, needle: string) {
 
 function drawBucketSource() {
   const start = source.indexOf("{toolbarBucket === 'draw' && (")
-  const end = source.indexOf('<div className="space-y-1.5">', start)
+  const end = source.indexOf("{toolbarBucket === 'generate' && (", start)
   expect(start).toBeGreaterThan(-1)
   expect(end).toBeGreaterThan(start)
   return source.slice(start, end)
@@ -28,12 +28,11 @@ function desktopElectricalToolsSource() {
   return drawSource.slice(start, end)
 }
 
-function quickAccessHeaderSource() {
-  const start = source.indexOf('<div className="text-xs font-semibold text-gray-100">Quick Access</div>')
-  const end = source.indexOf('<div className="grid grid-cols-2 gap-1.5">', start)
+function floatingPalettesSource() {
+  const drawSource = drawBucketSource()
+  const start = drawSource.indexOf('<div className="text-[10px] uppercase tracking-wide text-gray-500">Floating Palettes</div>')
   expect(start).toBeGreaterThan(-1)
-  expect(end).toBeGreaterThan(start)
-  return source.slice(start, end)
+  return drawSource.slice(start)
 }
 
 describe('desktop Electrical Tools menu structure', () => {
@@ -43,7 +42,6 @@ describe('desktop Electrical Tools menu structure', () => {
     expect(menuSource).toContain('Electrical Tools')
     expect(menuSource).toContain('data-testid="desktop-electrical-tools-menu"')
     expect(menuSource).toContain('aria-label="Electrical Tools"')
-    expect(menuSource).not.toContain('!useDesktopThreePaneLayout')
     expect(drawBucketSource()).not.toContain('{useDesktopThreePaneLayout && (')
   })
 
@@ -94,9 +92,9 @@ describe('desktop Electrical Tools menu structure', () => {
     expect(drawBucketSource()).not.toContain('{!useDesktopThreePaneLayout && (')
   })
 
-  it('removes the desktop Quick Access header Wire Profiles button', () => {
-    expect(quickAccessHeaderSource()).not.toContain('Manage wire profiles')
-    expect(quickAccessHeaderSource()).not.toContain('Wire Profiles')
+  it('keeps Wire Profiles inside Electrical Tools rather than the floating palette toggles', () => {
+    expect(floatingPalettesSource()).not.toContain('Manage wire profiles')
+    expect(floatingPalettesSource()).not.toContain('Wire Profiles')
     expect(countOccurrences(desktopElectricalToolsSource(), 'aria-label="Manage wire profiles"')).toBe(1)
   })
 
@@ -154,6 +152,27 @@ describe('desktop Electrical Tools menu structure', () => {
     expect(menuSource).not.toContain("addEventListener('pointerdown'")
     expect(quickAccessApplySource).not.toContain('setDesktopElectricalToolsOpen')
     expect(quickAccessApplySource).not.toContain('writeDesktopElectricalToolsOpen')
+  })
+
+  it('moves Package Pick into Electrical Tools and shows the persisted-mode indicator on the trigger', () => {
+    const drawSource = drawBucketSource()
+    const menuSource = desktopElectricalToolsSource()
+
+    expect(menuSource).toContain("renderPackagePickControls('panel')")
+    expect(drawSource.split("renderPackagePickControls('panel')").length - 1).toBe(1)
+    expect(drawSource).not.toContain("useDesktopThreePaneLayout ? 'mt-2 flex flex-wrap items-center gap-1.5' : 'hidden'")
+    expect(menuSource).toContain("isPackagePickMode ? 'border-emerald-400 text-emerald-200 bg-emerald-500/10'")
+    expect(menuSource).toContain('h-2 w-2 shrink-0 rounded-full bg-emerald-400')
+  })
+
+  it('renders Quick Access as a third floating palette toggle beside Electrical Symbols', () => {
+    const palettesSource = floatingPalettesSource()
+
+    expect(source).toContain('const [quickAccessPaletteOpen, setQuickAccessPaletteOpen] = useState(false)')
+    expect(source).toContain('<BlueprintFloatingPalette paletteId="quick-access" title="Quick Access"')
+    expect(source).toContain('{renderQuickAccessPaletteContents()}')
+    expect(palettesSource).toContain('{renderQuickAccessPaletteButton()}')
+    expect(palettesSource).not.toContain('quickAccessPresets.map((preset, index)')
   })
 
   it('arms the parent only for Circuit Path or Circuit Arc tool state', () => {
