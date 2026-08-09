@@ -10,6 +10,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend
 } from 'recharts'
 import { num, type BackupData } from '@/services/backupDataService'
+import { isDeadProjectLog } from '@/services/projectScopeMerge'
 
 function startOfWeek(d: Date): Date {
   const out = new Date(d)
@@ -29,7 +30,7 @@ function weekLabel(d: Date): string {
 }
 
 export default function LaborTrendChart({ backup }: { backup: BackupData }) {
-  const logs = backup.logs || []
+  const logs = (backup.logs || []).filter((log: any) => !isDeadProjectLog(log))
   const opCost = num(backup.settings?.opCost || 0)
   const billRate = num(backup.settings?.billRate || 0)
   // Use opCost (internal operating cost rate) or fall back to billRate / 1.5
@@ -52,7 +53,7 @@ export default function LaborTrendChart({ backup }: { backup: BackupData }) {
     const logDate = new Date(raw + 'T00:00:00')
     if (isNaN(logDate.getTime())) continue
     const hrs = num(log.hrs)
-    const collected = num(log.collected)
+    const collected = num(log.paymentsCollected || log.collected || 0)
     for (const bucket of buckets) {
       if (logDate >= bucket.weekStart && logDate <= bucket.weekEnd) {
         bucket.hrs += hrs

@@ -22,7 +22,9 @@ import type { BiometricCapabilities } from '@/lib/auth/biometric'
 import { createAppSession, destroyAppSession, validateAppSession, getDeviceInfo } from '@/lib/auth/session'
 import type { AppSession } from '@/lib/auth/session'
 import { logLogin, logAudit } from '@/lib/memory/audit'
-import { hasBackupData, createEmptyBackup, saveBackupData, syncToSupabase as syncBackupToSupabase, loadFromSupabase, setHydrating, getCacheOwner, setCacheOwner, clearCacheOwner, setActiveTenantUser, markTenantDataReady, clearActiveTenantUser, clearLocalSnapshots } from '@/services/backupDataService'
+import { hasBackupData, createEmptyBackup, saveBackupData, loadFromSupabase, setHydrating, getCacheOwner, setCacheOwner, clearCacheOwner, setActiveTenantUser, markTenantDataReady, clearActiveTenantUser, clearLocalSnapshots, hasPendingLocalSave, reconcilePendingLocalSaveForHydration } from '@/services/backupDataService'
+import type { BackupHydrationResult } from '@/services/backupDataService'
+import { completeDeferredHydration } from '@/services/postPinHydrationService'
 import { logAction } from '@/services/security/AgentSafetySystem'
 
 // ── Role system ───────────────────────────────────────────────────────────────
@@ -216,42 +218,111 @@ async function seedEmptyBackupIfNeeded(userId: string): Promise<void> {
   saveBackupData(empty, userId)
 }
 
+class StaleAuthOperationError extends Error {
+  constructor() {
+    super('Auth operation superseded')
+    this.name = 'StaleAuthOperationError'
+  }
+}
+
+let _authOperationGeneration = 0
+let _initSeq = 0
+
+function beginAuthOperation(): number {
+  // Shared auth transitions also invalidate any older initialize() commit.
+  _initSeq++
+  return ++_authOperationGeneration
+}
+
+function isAuthOperationCurrent(operationId: number): boolean {
+  return operationId === _authOperationGeneration
+}
+
+function assertAuthOperationCurrent(isCurrent: () => boolean): void {
+  if (!isCurrent()) throw new StaleAuthOperationError()
+}
+
 /** Bootstrap authenticated user — loads tenant data before marking authenticated.
  *  This is the ONLY place loadFromSupabase should be called during login.
  *  It is read-only against Supabase; new users get local-only empty state. */
-async function bootstrapAuthenticatedUser(userId: string): Promise<void> {
+async function bootstrapAuthenticatedUser(
+  userId: string,
+  isCurrent: () => boolean = () => true,
+): Promise<BackupHydrationResult> {
+  assertAuthOperationCurrent(isCurrent)
   setHydrating(true)
+  assertAuthOperationCurrent(isCurrent)
   setActiveTenantUser(userId)
   let preserveCacheOwner = false
   try {
+    assertAuthOperationCurrent(isCurrent)
     // Legacy owner tag is kept only as a diagnostic/compatibility marker.
     const cacheOwner = getCacheOwner()
     if (cacheOwner && cacheOwner !== userId) {
       localStorage.removeItem('poweron_v2')
       if (!await clearLocalSnapshots()) {
+        assertAuthOperationCurrent(isCurrent)
         preserveCacheOwner = true
         throw new Error('Unable to clear the previous account snapshot history')
       }
+      assertAuthOperationCurrent(isCurrent)
       clearCacheOwner()
     }
+    assertAuthOperationCurrent(isCurrent)
     setCacheOwner(userId)
 
-    const result = await loadFromSupabase(userId)
-    if (!result.success) {
-      throw new Error(result.error || 'Failed to load workspace data')
+    const initialResult = await loadFromSupabase(userId, false, isCurrent)
+    assertAuthOperationCurrent(isCurrent)
+    if (!initialResult.success) {
+      throw new Error(initialResult.error || 'Failed to load workspace data')
     }
+
+    // The guarded sync engine refuses writes while the bootstrap read flag is set.
+    // Auth UI remains in hydrating_user_data; only the service-level read phase ends.
+    if (initialResult.status === 'deferred_pending_local') {
+      assertAuthOperationCurrent(isCurrent)
+      setHydrating(false)
+    }
+
+    const result = await completeDeferredHydration(initialResult, {
+      reconcilePendingLocalSave: async () => {
+        assertAuthOperationCurrent(isCurrent)
+        const syncResult = await reconcilePendingLocalSaveForHydration(userId)
+        assertAuthOperationCurrent(isCurrent)
+        return syncResult
+      },
+      hasPendingLocalSave: () => {
+        assertAuthOperationCurrent(isCurrent)
+        return hasPendingLocalSave()
+      },
+      requestRemoteRefresh: async () => {
+        assertAuthOperationCurrent(isCurrent)
+        const { requestRemoteRefresh } = await import('@/services/liveCloudRefreshService')
+        assertAuthOperationCurrent(isCurrent)
+        const refreshResult = await requestRemoteRefresh({ source: 'manual' })
+        assertAuthOperationCurrent(isCurrent)
+        return refreshResult
+      },
+    })
+    assertAuthOperationCurrent(isCurrent)
 
     // loadFromSupabase(userId) seeds empty tenant-local data when no remote row exists.
     // This is a final safety fallback only.
+    assertAuthOperationCurrent(isCurrent)
     await seedEmptyBackupIfNeeded(userId)
+    assertAuthOperationCurrent(isCurrent)
     markTenantDataReady(userId)
+    return result
   } catch (err) {
+    if (err instanceof StaleAuthOperationError || !isCurrent()) {
+      throw err instanceof StaleAuthOperationError ? err : new StaleAuthOperationError()
+    }
     console.error('[Auth] bootstrapAuthenticatedUser failed:', err)
     clearActiveTenantUser()
     if (!preserveCacheOwner) clearCacheOwner()
     throw err
   } finally {
-    setHydrating(false)
+    if (isCurrent()) setHydrating(false)
   }
 }
 
@@ -325,8 +396,6 @@ let _authListenerRegistered = false
 // only the newest run may commit state. This prevents a stale run that resolved
 // the interim owner fallback (before the employee link existed) from overwriting
 // a newer run that resolved role === 'employee'. Root cause of Josh's NDA gate.
-let _initSeq = 0
-
 // EMP-AUTH-1A safe-retry budget. When identity resolution is 'unresolved' (a
 // lookup timed out/errored), initialize() keeps the user in a resolving state and
 // schedules a bounded re-initialize instead of ever falling back to owner. The
@@ -351,6 +420,7 @@ function registerAuthListener() {
 
   supabase.auth.onAuthStateChange(async (event, session) => {
     if (event === 'PASSWORD_RECOVERY') {
+      const operationId = beginAuthOperation()
       // User clicked password reset link — show set new password form
       if (session?.user) {
         const { data: profile } = await supabase
@@ -358,6 +428,7 @@ function registerAuthListener() {
           .select('*')
           .eq('id', session.user.id)
           .maybeSingle()
+        if (!isAuthOperationCurrent(operationId)) return
         useAuthStore.setState({
           status: 'password_recovery',
           user: session.user as any,
@@ -375,6 +446,8 @@ function registerAuthListener() {
       // normal app use (e.g. after a sync push) must not trigger a re-auth cycle.
     }
     if (event === 'SIGNED_OUT') {
+      beginAuthOperation()
+      setHydrating(false)
       clearActiveTenantUser()
       useAuthStore.setState({
         status:          'unauthenticated',
@@ -416,7 +489,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // A stale run (e.g. the SIGNED_IN-triggered resolve that saw no employee link
     // yet and fell back to owner) can no longer overwrite a newer run that
     // resolved role === 'employee'. All state writes below go through apply().
+    const operationId = beginAuthOperation()
     const seq = ++_initSeq
+    const isCurrent = () => seq === _initSeq && isAuthOperationCurrent(operationId)
     const apply = (partial: Partial<AuthState>) => {
       if (seq === _initSeq) set(partial)
     }
@@ -508,7 +583,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         // Re-use cached role from localStorage; re-resolve in background occasionally
         const { role, ownerId, employeeProfileId, employerOrgId } = loadRoleFromStorage(user.id)
         apply({ status: 'hydrating_user_data', user, profile, appSession, role, ownerId, employeeProfileId, employerOrgId })
-        await bootstrapAuthenticatedUser(user.id)
+        await bootstrapAuthenticatedUser(user.id, isCurrent)
         apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
         // Fire background re-verify in case crew/employee membership changed.
         // Never let an 'unresolved' (network-failed) pass overwrite the cached role.
@@ -562,7 +637,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         sessionStorage.removeItem('poweron_password_authed')
 
-        bootstrapAuthenticatedUser(user.id)
+        bootstrapAuthenticatedUser(user.id, isCurrent)
           .then(() => {
             apply({ tenantDataReady: true })
           })
@@ -608,7 +683,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           employeeProfileId: portalRole.employeeProfileId,
           employerOrgId: portalRole.employerOrgId,
         })
-        await bootstrapAuthenticatedUser(user.id)
+        await bootstrapAuthenticatedUser(user.id, isCurrent)
         apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
         return
       }
@@ -640,7 +715,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           )
         } catch {}
         apply({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId, employeeProfileId, employerOrgId })
-        await bootstrapAuthenticatedUser(user.id)
+        await bootstrapAuthenticatedUser(user.id, isCurrent)
         apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
         return
       }
@@ -664,6 +739,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
     } catch (err) {
+      if (err instanceof StaleAuthOperationError || !isCurrent()) return
       console.error('[Auth] initialize error:', err)
       apply({
         status: 'unauthenticated',
@@ -679,6 +755,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   // ── Email / password sign in ────────────────────────────────────────────────
   signInWithEmail: async (email: string, password?: string) => {
+    beginAuthOperation()
     set({ error: null })
     try {
       const { error } = password
@@ -698,6 +775,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   // ── Magic link ─────────────────────────────────────────────────────────────
   signInWithMagicLink: async (email: string) => {
+    beginAuthOperation()
     set({ error: null })
     try {
       const { error } = await supabase.auth.signInWithOtp({
@@ -713,13 +791,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   // ── Submit passcode ─────────────────────────────────────────────────────────
   submitPasscode: async (passcode: string) => {
+    const operationId = beginAuthOperation()
+    const isCurrent = () => isAuthOperationCurrent(operationId)
     const { user, profile } = get()
     console.log('[submitPasscode] called with user:', user?.id, 'profile:', profile?.id, 'passcode length:', passcode?.length)
     if (!user || !profile) {
       console.error('[submitPasscode] ABORT: no user or profile', { user: !!user, profile: !!profile })
       return
     }
+    if (!isCurrent()) return
     set({ error: null })
+    let ownedSessionId: string | null = null
 
     try {
       console.log('[submitPasscode] calling verifyPasscode for user:', user.id, 'org:', profile.org_id)
@@ -728,19 +810,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         10000,
         { success: false as const, locked: false as const, attemptsRemaining: 5 }
       )
+      assertAuthOperationCurrent(isCurrent)
       console.log('[submitPasscode] verifyPasscode result:', JSON.stringify(result))
       if (result.success) {
         // Create Redis app session (timeout 5s — don't block login)
-        await withTimeout(
+        const createdSessionId = await withTimeout(
           createAppSession({
             userId: user.id,
             orgId:  profile.org_id,
             role:   profile.role,
             deviceInfo: getDeviceInfo(),
+            isCurrent,
           }),
           5000,
           'timeout'
         )
+        assertAuthOperationCurrent(isCurrent)
+        if (createdSessionId !== 'timeout' && createdSessionId) {
+          ownedSessionId = createdSessionId
+        }
 
         // Fire-and-forget audit + profile update
         logLogin(user.id, { method: 'passcode' }).catch(() => {})
@@ -757,16 +845,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           5000,
           { role: 'owner' as UserRole, ownerId: user.id, employeeProfileId: null, employerOrgId: null }
         )
+        assertAuthOperationCurrent(isCurrent)
 
-        const session = await withTimeout(validateAppSession(), 3000, null)
+        const session = ownedSessionId
+          ? await withTimeout(validateAppSession(ownedSessionId), 3000, null)
+          : null
+        assertAuthOperationCurrent(isCurrent)
         set({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId, employeeProfileId, employerOrgId })
-        await bootstrapAuthenticatedUser(user.id)
+        await bootstrapAuthenticatedUser(user.id, isCurrent)
+        assertAuthOperationCurrent(isCurrent)
         set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
 
       } else if ('locked' in result && result.locked) {
+        assertAuthOperationCurrent(isCurrent)
         set({ status: 'locked', lockExpiresAt: result.lockExpiresAt })
 
       } else {
+        assertAuthOperationCurrent(isCurrent)
         set({
           error: 'attemptsRemaining' in result && result.attemptsRemaining === 1
             ? `Incorrect passcode. 1 attempt remaining before lockout.`
@@ -774,13 +869,32 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         })
       }
     } catch (err) {
+      if (err instanceof StaleAuthOperationError || !isCurrent()) return
       console.error('[Auth] submitPasscode error:', err)
-      set({ error: 'Verification failed. Please try again.' })
+      // PIN may already be valid while the subsequent tenant hydration/reconcile
+      // failed. Return to the existing retryable PIN state instead of leaving the
+      // user indefinitely on hydrating_user_data. Tenant cache remains untouched.
+      // Invalidate the failed transition before awaiting cleanup. A timed-out
+      // createAppSession call will observe this and cannot later claim storage.
+      const failureOperationId = beginAuthOperation()
+      try {
+        if (ownedSessionId) await destroyAppSession(ownedSessionId)
+      } catch { /* retry remains available */ }
+      if (!isAuthOperationCurrent(failureOperationId)) return
+      clearActiveTenantUser()
+      set({
+        status: 'needs_passcode',
+        appSession: null,
+        tenantDataReady: false,
+        tenantUserId: null,
+        error: 'Workspace refresh failed. Check your connection and enter your PIN to retry.',
+      })
     }
   },
 
   // ── Set up passcode (onboarding) ────────────────────────────────────────────
   setupPasscode: async (passcode: string) => {
+    beginAuthOperation()
     const { user, profile } = get()
     if (!user) return
 
@@ -852,6 +966,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   // ── Biometric auth ──────────────────────────────────────────────────────────
   authenticateBio: async () => {
+    beginAuthOperation()
     const { user, profile } = get()
     if (!user || !profile) return
 
@@ -897,6 +1012,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   // ── Skip biometric (use passcode instead) ───────────────────────────────────
   skipBiometric: () => {
+    beginAuthOperation()
     set({ status: 'needs_passcode', error: null })
   },
 
@@ -905,6 +1021,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   // Clears the Redis session but keeps the Supabase JWT. 
   // This triggers the PIN screen while keeping user identity known.
   lockApp: async () => {
+    beginAuthOperation()
     const { user } = get()
     if (user) {
       // Robust logging: if the audit trail fails, we still lock the app
@@ -931,6 +1048,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   // ── Sign out ────────────────────────────────────────────────────────────────
   // The "Hard Reset" for account switching. Wipes the JWT and all state.
   signOut: async () => {
+    // Invalidate first: no older PIN continuation may resume during audit/session cleanup.
+    beginAuthOperation()
+    setHydrating(false)
+    clearActiveTenantUser()
     const { user } = get()
     if (user) {
       try {
@@ -950,7 +1071,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
     }
     await destroyAppSession()
-    clearActiveTenantUser()
     await supabase.auth.signOut()
     localStorage.removeItem(ROLE_STORAGE_KEY)
     localStorage.removeItem(OWNER_ID_STORAGE_KEY)

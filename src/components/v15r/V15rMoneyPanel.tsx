@@ -22,6 +22,8 @@ import {
   saveBackupWithRemoteBaselineSync,
   fetchLatestRemoteBackup,
   getProjectFinancials,
+  getCanonicalKpiInputs,
+  projectLogsFor,
   resolveProjectBucket,
   num,
   fmt,
@@ -33,12 +35,14 @@ import {
   type BackupProject,
   type BackupServiceLog,
 } from '@/services/backupDataService'
-import { isDeletedOrArchivedServiceLog } from '@/services/serviceScopeMerge'
-import { isDeadProjectLog } from '@/services/projectScopeMerge'
 import { mergeWeeklyDataIntoRemote } from '@/services/weeklyDataScopeMerge'
+import {
+  isCurrentWeeklyRow,
+  recalculateWeeklyData,
+  resolveWeeklyDataForRead,
+} from '@/services/weeklyFinancialPolicy'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
-import { calcPipeline } from '@/utils/pipelineCalc'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 
@@ -58,11 +62,12 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
   // recharts imported at top of file
   // Phase 6S-B hotfix: exclude archived + soft-deleted projects from the Money tab
   // revenue-breakdown chart totals (display-only filter; data untouched).
-  const projects = (backup.projects || []).filter(isActiveMoneyProject)
+  const canonical = getCanonicalKpiInputs(backup)
+  const projects = canonical.projects
   const settings = backup.settings || {} as any
 
   // Calculate revenue breakdown
-  const pipeline = projects.reduce((s, p) => s + num(p.contract), 0)
+  const pipeline = canonical.activeProjectContract
   const paid = projects.reduce((s, p) => s + getProjectFinancials(p, backup).paid, 0)
   const unbilled = Math.max(0, pipeline - paid)
 
@@ -150,23 +155,6 @@ function BusinessHealthChart({ backup }: { backup: BackupData }) {
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
-/**
- * Phase 6S-B hotfix: hide ARCHIVED and soft-DELETED projects from every Money tab
- * project-derived bucket/list/table (Business Roll-Up totals, Exposure Framework,
- * Cash Waterfall, project pipeline). Display/calculation-input filter ONLY — the
- * projects stay in backup data untouched so they can be restored/reactivated
- * elsewhere. Returns false for deletedAt / status==='deleted' / archived /
- * archivedAt / status==='archived'; true for normal active/open projects.
- */
-function isActiveMoneyProject(project: any): boolean {
-  if (!project) return false
-  if (project.deletedAt) return false
-  if (project.archived || project.archivedAt) return false
-  const status = String(project.status || project.projectStatus || '').toLowerCase().trim()
-  if (status === 'deleted' || status === 'archived') return false
-  return true
-}
-
 export default function V15rMoneyPanel() {
   const { isDemoMode, hasHydrated } = useDemoMode()
   const [, setRemoteRefreshTick] = useState(0)
@@ -196,96 +184,7 @@ export default function V15rMoneyPanel() {
     setRecalculating(true)
 
     const nowIso = new Date().toISOString()
-    // Phase 6S-B: exclude deleted (tombstoned) / archived PROJECT logs from the
-    // weekly derivation so they never inflate proj collected.
-    const allLogs = (backup.logs || []).filter(l => !isDeadProjectLog(l))
-    // Phase 6R-A: exclude deleted (tombstoned) / archived service logs from the
-    // weekly derivation so they never inflate svc collected / pendingInv.
-    const allSvcLogs = (backup.serviceLogs || []).filter(l => !isDeletedOrArchivedServiceLog(l))
-    const allProjects = backup.projects || []
-
-    // Validation cap: total of ALL serviceLogs.collected
-    const totalServiceCollected = allSvcLogs.reduce((s, l) => s + num(l.collected), 0)
-    const today = new Date()
-
-    let accum = 0
-    const recalced = wdArr.map((w: any) => {
-      // Preserve manually overridden weeks verbatim, but still fold their stored
-      // proj/svc contribution into the running accum so subsequent derived weeks
-      // accumulate correctly (previously these weeks broke the accumulation).
-      if (w.manualOverride) {
-        accum += num(w.proj) + num(w.svc)
-        return { ...w }
-      }
-
-      const weekStart = w.start ? new Date(w.start) : null
-      if (!weekStart) return { ...w }
-      const weekEnd = new Date(weekStart.getTime() + 7 * 86400000)
-
-      // proj: SUM of payments from project field logs ONLY (backup.logs)
-      // Project logs may use 'collected' or 'paymentsCollected' field
-      // These are multi-day jobs with phases, RFIs, blueprints — never from serviceLogs
-      const projCollected = allLogs.reduce((s, l) => {
-        const ld = l.date ? new Date(l.date) : null
-        if (ld && ld >= weekStart && ld < weekEnd) {
-          return s + num(l.paymentsCollected || l.collected || 0)
-        }
-        return s
-      }, 0)
-
-      // svc: SUM of collected from serviceLogs ONLY (backup.serviceLogs)
-      // These are same-day/2-day service calls — never from project logs
-      let svcCollected = allSvcLogs.reduce((s, l) => {
-        const ld = l.date ? new Date(l.date) : null
-        if (ld && ld >= weekStart && ld < weekEnd) return s + num(l.collected)
-        return s
-      }, 0)
-
-      // Validation 1: Skip future dates (dates after today)
-      if (weekStart > today) {
-        svcCollected = 0
-      }
-
-      // Validation 2: Cap individual week to total service collected (no phantom entries)
-      if (svcCollected > totalServiceCollected) {
-        svcCollected = 0
-      }
-
-      // Validation 3: Verify against actual logs in week (clear phantom entries)
-      const logsInWeek = allSvcLogs.filter(l => {
-        const d = l.date ? new Date(l.date) : null
-        return d && d >= weekStart && d < weekEnd
-      })
-      if (logsInWeek.length === 0 && svcCollected > 0) {
-        svcCollected = 0
-      }
-
-      accum += projCollected + svcCollected
-
-      // unbilled: SUM of ACTIVE projects only (not completed, not cancelled)
-      const activeProjects = allProjects.filter(p =>
-        p.status === 'active' || p.status === 'in_progress'
-      )
-      const activeUnbilled = activeProjects.reduce((s, p) =>
-        s + Math.max(0, num(p.contract) - num(p.billed)), 0
-      )
-
-      // pendingInv: SUM of serviceLogs where collected=0 and quoted>0
-      const pending = allSvcLogs
-        .filter(l => num(l.collected) === 0 && num(l.quoted) > 0)
-        .reduce((s, l) => s + num(l.quoted), 0)
-
-      return {
-        ...w,
-        proj: projCollected,
-        svc: svcCollected,
-        accum,
-        unbilled: activeUnbilled,
-        pendingInv: pending,
-        derivedAt: nowIso,
-        weeklyUpdatedAt: nowIso,
-      }
-    })
+    const recalced = recalculateWeeklyData(backup, nowIso)
 
     const localBackup: BackupData = { ...backup, weeklyData: recalced }
 
@@ -346,12 +245,13 @@ export default function V15rMoneyPanel() {
     )
   }
 
-  const projects = backup.projects || []
-  const logs = backup.logs || []
+  const canonicalKpis = getCanonicalKpiInputs(backup)
+  const projects = canonicalKpis.projects
+  const logs = projects.flatMap(project => projectLogsFor(backup, project.id))
   // Phase 6R-A: service money totals below must exclude deleted (tombstoned) and
   // archived service logs so collected / outstanding / exposure aren't inflated.
-  const serviceLogs = (backup.serviceLogs || []).filter(l => !isDeletedOrArchivedServiceLog(l))
-  const weeklyData = backup.weeklyData || []
+  const serviceLogs = canonicalKpis.serviceLogs
+  const weeklyData = resolveWeeklyDataForRead(backup)
   const settings = backup.settings || {} as any
   const mileRate = num(settings.mileRate || 0.66)
   const opCostRate = num(settings.opCost || 42.45)
@@ -364,7 +264,7 @@ export default function V15rMoneyPanel() {
   // tab project-derived sections (Roll-Up totals, Exposure Framework, Cash
   // Waterfall). projectMoney is the single source every project bucket/list/table
   // below is built from, so filtering here hides them everywhere at once.
-  const moneyProjects = projects.filter(isActiveMoneyProject)
+  const moneyProjects = projects
   const projectMoney = moneyProjects.map(p => {
     const m = getProjectFinancials(p, backup)
     return { p, ...m }
@@ -373,23 +273,14 @@ export default function V15rMoneyPanel() {
   // ── Service calculations ───────────────────────────────────────────────
   const svcCount = serviceLogs.length
   const svcPaidCount = serviceLogs.filter(l => num(l.collected) > 0).length
-  const svcQuoted = serviceLogs.reduce((s, l) => s + num(l.quoted), 0)
-  const svcCollected = serviceLogs.reduce((s, l) => s + num(l.collected), 0)
+  const svcQuoted = canonicalKpis.serviceQuoted
+  const svcCollected = canonicalKpis.serviceCollected
   const svcMatTotal = serviceLogs.reduce((s, l) => s + num(l.mat), 0)
   const svcMilesTotal = serviceLogs.reduce((s, l) => s + num(l.mileCost != null ? l.mileCost : (num(l.miles) * mileRate)), 0)
   const svcOpTotal = serviceLogs.reduce((s, l) => s + num(l.opCost != null ? l.opCost : (num(l.hrs) * opCostRate)), 0)
   const svcDirectCosts = svcMatTotal + svcMilesTotal + svcOpTotal
   const svcProfit = serviceLogs.reduce((s, l) => s + num(l.profit != null ? l.profit : (num(l.quoted) - num(l.mat) - num(l.miles) * mileRate - num(l.hrs) * opCostRate)), 0)
-  const svcOutstanding = serviceLogs.reduce((s, l) => {
-    const quoted = num(l.quoted)
-    const collected = num(l.collected)
-    const adjustments = Array.isArray(l.adjustments) ? l.adjustments : []
-    const addIncome = adjustments
-      .filter((a: any) => a && a.type === 'income')
-      .reduce((ac: number, a: any) => ac + num(a.amount), 0)
-    const totalBillable = quoted + addIncome
-    return s + Math.max(0, totalBillable - collected)
-  }, 0)
+  const svcOutstanding = canonicalKpis.serviceOutstanding
   const svcAvgTicket = svcCount ? svcQuoted / svcCount : 0
   const svcMargin = svcQuoted > 0 ? (svcProfit / svcQuoted) * 100 : 0
 
@@ -431,11 +322,11 @@ export default function V15rMoneyPanel() {
   const ytdAccum = weeklyData.length > 0 ? num(weeklyData[weeklyData.length - 1]?.accum) : 0
 
   // ── 8 HEADER KPIs (Per-Business Summary) ────────────────────────────────────
-  // 1. Total Pipeline = active + coming-up project contracts + remaining service balance
-  const totalPipeline = calcPipeline(moneyProjects) + Math.max(0, svcQuoted - svcCollected)
+  // 1. Total Pipeline = active project contracts + adjusted service outstanding
+  const totalPipeline = canonicalKpis.pipeline
 
   // 2. Total Collected = sum of project paid + service collected
-  const totalCollected = projectPaid + svcCollected
+  const totalCollected = canonicalKpis.collected
 
   // 3. Total Material Cost = sum of mat field across all logs + service logs
   const projectMatCost = projectMoney.reduce((s, m) => s + logs.filter(l => l.projId === m.p.id).reduce((ls, l) => ls + num(l.mat), 0), 0)
@@ -545,7 +436,7 @@ export default function V15rMoneyPanel() {
       {/* ── 8 HEADER KPI CARDS (Per-Business Summary) ──────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { lbl: 'Total Pipeline', val: fmtK(totalPipeline), sub: 'Active contracts + svc outstanding (header bar includes full svc quoted)' },
+          { lbl: 'Total Pipeline', val: fmtK(totalPipeline), sub: 'Active contracts + service outstanding' },
           { lbl: 'Total Collected', val: fmtK(totalCollected), sub: 'Projects + Service', clr: '#10b981' },
           { lbl: 'Total Material Cost', val: fmtK(totalMatCost), sub: 'All materials', isMaterialCard: true },
           { lbl: 'Total Labor Cost', val: fmtK(totalLaborCost), sub: 'All hours × rate' },
@@ -906,11 +797,11 @@ export default function V15rMoneyPanel() {
             const inc = num(w.proj) + num(w.svc)
             const exposure = num(w.unbilled) + num(w.pendingInv)
 
-            // B41 Fix 5: use computed week start (Monday-based from current week)
-            const computedStart = weekStartDate(w.wk)
+            // Persisted start is the weekly identity used by the shared reader.
+            const computedStart = w.start || weekStartDate(w.wk)
             const today = new Date()
             const weekStart = new Date(computedStart + 'T00:00:00')
-            const isCurrentWeek = weekStart <= today && new Date(weekStart.getTime() + 7 * 86400000) > today
+            const isCurrentWeek = isCurrentWeeklyRow(w, today)
             const isPast = weekStart < today && !isCurrentWeek
             const hasNoActivity = num(w.proj) === 0 && num(w.svc) === 0
             const isGapWeek = isPast && hasNoActivity && showWeeklyGaps

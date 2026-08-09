@@ -40,6 +40,7 @@ import {
   type BackupLog,
   type BackupData,
 } from '@/services/backupDataService'
+import { stampSettingsFields } from '@/services/settingsScopeMerge'
 import {
   mergeEmployeesIntoRemote,
   ensureEmployeeIdentity,
@@ -3024,7 +3025,8 @@ export default function V15rTeamPanel() {
                       onChange={e => {
                         if (!backup.settings) (backup as any).settings = {}
                         ;(backup.settings as any).billableHrsYear = num(e.target.value)
-                        saveBackupData(backup)
+                        stampSettingsFields(backup.settings, ['billableHrsYear'])
+                        saveBackupDataAndSync(backup, 'settings')
                         forceUpdate({})
                       }}
                       className="w-20 bg-[var(--bg-input)] border border-gray-600 text-gray-100 text-xs px-2 py-1 rounded text-right focus:outline-none focus:border-indigo-500"

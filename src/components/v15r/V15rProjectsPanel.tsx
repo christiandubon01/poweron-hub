@@ -30,7 +30,7 @@ import {
   isActiveProject,
   type BackupProject,
 } from '@/services/backupDataService'
-import { getLiveRFIs, mergeProjectLogsIntoRemote, createProjectTombstone, mergeProjectLifecycleIntoRemote, isDeletedProject, mergeAllProjectFinanceIntoRemote, mergeAllProjectScheduleIntoRemote, stampProjectScheduleFields } from '@/services/projectScopeMerge'
+import { getLiveRFIs, mergeProjectLogsIntoRemote, createProjectTombstone, mergeProjectLifecycleIntoRemote, isDeletedProject, mergeAllProjectLifecycleIntoRemote, mergeAllProjectFinanceIntoRemote, mergeAllProjectScheduleIntoRemote, stampProjectArchiveLifecycle, stampProjectScheduleFields } from '@/services/projectScopeMerge'
 import { getProjectDaysSinceLastMovement } from '@/utils/v15rProjectHealth'
 import { pushState } from '@/services/undoRedoService'
 import QuickBooksImportModal from './QuickBooksImportModal'
@@ -601,7 +601,8 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
       const remote = await fetchLatestRemoteBackup()
       if (remote.hasRemoteRow && remote.remoteData) {
         const incoming = getBackupData() || backup
-        const financeMerged = mergeAllProjectFinanceIntoRemote(remote.remoteData, incoming)
+        const lifecycleMerged = mergeAllProjectLifecycleIntoRemote(remote.remoteData, incoming)
+        const financeMerged = mergeAllProjectFinanceIntoRemote(remote.remoteData, lifecycleMerged)
         const merged = includeScheduleScope
           ? mergeAllProjectScheduleIntoRemote(remote.remoteData, financeMerged)
           : financeMerged
@@ -870,28 +871,21 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     persist()
   }
 
-  function archiveProject(id: string) {
+  async function archiveProject(id: string) {
     if (!confirm('Archive this record? It will be hidden from active views but kept for history.')) return
     const p = allProjects.find(x => x.id === id)
     if (!p) return
     pushState(backup)
-    ;(p as any).archived = true
-    ;(p as any).archivedAt = new Date().toISOString()
-    ;(p as any).archivedReason = (p as any).archivedReason ?? null
-    persist()
+    stampProjectArchiveLifecycle(p, true)
+    await saveProjectLifecycleScoped(id)
   }
 
-  function restoreProject(id: string) {
+  async function restoreProject(id: string) {
     const p = allProjects.find(x => x.id === id)
     if (!p) return
     pushState(backup)
-    ;(p as any).archived = false
-    ;(p as any).isArchived = false
-    if ((p as any).archivedAt && !(p as any).lastArchivedAt) {
-      ;(p as any).lastArchivedAt = (p as any).archivedAt
-    }
-    delete (p as any).archivedAt
-    persist()
+    stampProjectArchiveLifecycle(p, false)
+    await saveProjectLifecycleScoped(id)
   }
 
   // Phase 6Q-B: restore a soft-deleted project. Kept separate from restoreProject

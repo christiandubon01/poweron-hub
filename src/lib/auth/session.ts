@@ -61,6 +61,8 @@ export async function createAppSession(params: {
   orgId:    string
   role:     string
   deviceInfo: DeviceInfo
+  /** Prevent a superseded auth operation from replacing a newer tab session. */
+  isCurrent?: () => boolean
 }): Promise<string> {
   const res = await sessionStoreCall<{ sessionId: string | null }>('session.create', {
     deviceInfo: params.deviceInfo,
@@ -71,6 +73,13 @@ export async function createAppSession(params: {
     return ''
   }
 
+  if (params.isCurrent && !params.isCurrent()) {
+    // The server session belongs to the superseded operation. Destroy that exact
+    // session, but never touch the sessionStorage entry owned by a newer attempt.
+    try { await sessionStoreCall('session.destroy', { sessionId: res.sessionId }) } catch {}
+    return res.sessionId
+  }
+
   // Persist sessionId in sessionStorage (tab-scoped)
   sessionStorage.setItem(SESSION_STORAGE_KEY, res.sessionId)
 
@@ -78,12 +87,12 @@ export async function createAppSession(params: {
 }
 
 /**
- * Validate the current session and refresh its TTL.
+ * Validate the current or explicitly expected session and refresh its TTL.
  * Call this on every route change to keep active sessions alive.
  * Returns null if the session has expired or doesn't exist.
  */
-export async function validateAppSession(): Promise<AppSession | null> {
-  const sessionId = sessionStorage.getItem(SESSION_STORAGE_KEY)
+export async function validateAppSession(expectedSessionId?: string): Promise<AppSession | null> {
+  const sessionId = expectedSessionId ?? sessionStorage.getItem(SESSION_STORAGE_KEY)
   if (!sessionId) return null
 
   // The server refreshes the TTL and lastActiveAt as part of this call.
@@ -112,14 +121,19 @@ export async function getAppSession(): Promise<AppSession | null> {
  * Destroy the current session (sign out, lock, or inactivity timeout).
  *
  * Called before supabase.auth.signOut(), so the JWT the store needs is still
- * valid. The local key is cleared even if the server call fails.
+ * valid. Untargeted cleanup clears the local key even if the server call fails;
+ * targeted cleanup clears it only while that expected session still owns it.
  */
-export async function destroyAppSession(): Promise<void> {
-  const sessionId = sessionStorage.getItem(SESSION_STORAGE_KEY)
+export async function destroyAppSession(expectedSessionId?: string): Promise<void> {
+  const storedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY)
+  const sessionId = expectedSessionId ?? storedSessionId
   if (sessionId) {
     await sessionStoreCall('session.destroy', { sessionId })
   }
-  sessionStorage.removeItem(SESSION_STORAGE_KEY)
+  // Targeted cleanup must not remove a newer operation's current session ID.
+  if (!expectedSessionId || storedSessionId === expectedSessionId) {
+    sessionStorage.removeItem(SESSION_STORAGE_KEY)
+  }
 }
 
 /**

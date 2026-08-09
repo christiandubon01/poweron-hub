@@ -34,6 +34,7 @@ export interface CalcLog {
   mat?: number | string | null
   miles?: number | string | null
   collected?: number | string | null
+  paymentsCollected?: number | string | null
 }
 
 /** Minimal project shape required. */
@@ -121,7 +122,7 @@ export function calculateProjectFinancials(
     const hrs = n(l.hrs)
     const mat = n(l.mat)
     const miles = n(l.miles)
-    const coll = n(l.collected)
+    const coll = n(l.paymentsCollected || l.collected || 0)
 
     total_hours += hrs
     total_miles += miles

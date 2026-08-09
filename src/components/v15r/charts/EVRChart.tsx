@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState, useCallback } from 'react'
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Brush } from 'recharts'
-import { getProjectFinancials, num, type BackupData } from '@/services/backupDataService'
+import { getProjectFinancials, num, projectLogsFor, type BackupData } from '@/services/backupDataService'
 
 const fmtK = (v: number) => v >= 1000000 ? `$${(v / 1000000).toFixed(1)}M` : v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${Math.round(v)}`
 
@@ -80,12 +80,12 @@ export default function EVRChart({ projects, backup, dateStart, dateEnd }: { pro
   const chartData = orderedProjects.map((p, index) => {
     const fin = getProjectFinancials(p, backup)
     // FIX: logs use projId (not projectId) — support both field names for safety
-    const logs = (backup.logs || []).filter((l: any) => (l.projId || l.projectId || '') === p.id && inRange(l.date))
-    // When date range active, sum from filtered logs; otherwise use fin.paid + fallback to p.paid
-    // fin.paid is loggedPaid + manualPaidAdjustment — falls back to p.paid when no matching logs exist
+    const logs = projectLogsFor(backup, p.id).filter((l: any) => inRange(l.date))
+    // When date range is active, sum matching live logs; otherwise use the
+    // canonical all-time payment total (logs + manual adjustment).
     const income = dateStart || dateEnd
-      ? logs.reduce((s: number, l: any) => s + num(l.collected), 0)
-      : Math.max(fin.paid, num(p.paid))
+      ? logs.reduce((s: number, l: any) => s + num(l.paymentsCollected || l.collected || 0), 0)
+      : fin.paid
     const ar = Math.max(0, fin.billed - fin.paid)
     cumIncome += income
     cumAR += ar

@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { getBackupData, saveBackupData, saveBackupDataAndSync, fetchLatestRemoteBackup, saveBackupWithRemoteBaselineSync, num, daysSince, getPhaseWeights } from '@/services/backupDataService'
+import { stampSettingsFields } from '@/services/settingsScopeMerge'
 import {
   createProgressTaskTombstone,
   ensureProgressTaskIdentity,
@@ -623,6 +624,7 @@ export default function V15rProgressTab({ projectId, onUpdate, backup: initialBa
       if (!currentBackup.settings.mtoPhases) currentBackup.settings.mtoPhases = []
       currentBackup.settings.mtoPhases = [...settingsPhases, trimmed]
       currentBackup.settings.phaseWeights[trimmed] = 0
+      stampSettingsFields(currentBackup.settings, ['mtoPhases', 'phaseWeights'], ts)
       if (!proj.phases) proj.phases = {}
       if (!proj.tasks) proj.tasks = {}
       if (!proj.customPhases) proj.customPhases = []

@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React from 'react'
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts'
-import { num, type BackupData } from '@/services/backupDataService'
+import { num, projectLogsFor, type BackupData } from '@/services/backupDataService'
 
 const projectColors = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
 
@@ -10,7 +10,7 @@ const logProjectId = (log: any) => String(log?.projId || log?.projectId || '')
 export default function PvAChart({ projects, backup }: { projects: any[]; backup: BackupData }) {
   if (!projects.length) return <div className="flex items-center justify-center h-full text-gray-500 text-sm">No projects</div>
 
-  const logs = backup.logs || []
+  const logs = projects.flatMap((project: any) => projectLogsFor(backup, project.id))
 
   // Build a unified timeline from all project dates
   const allDates = new Set<string>()
@@ -37,7 +37,7 @@ export default function PvAChart({ projects, backup }: { projects: any[]; backup
       // Actual: cumulative collected up to this date
       const cumCollected = logs
         .filter((l: any) => logProjectId(l) === String(p.id || '') && l.date && l.date <= date)
-        .reduce((s: number, l: any) => s + num(l.collected), 0)
+        .reduce((s: number, l: any) => s + num(l.paymentsCollected || l.collected || 0), 0)
       if (cumCollected > 0) {
         row[`p${i}_actual`] = cumCollected
       }

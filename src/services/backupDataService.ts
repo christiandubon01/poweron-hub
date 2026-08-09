@@ -31,6 +31,7 @@ import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog
 import { mergeRemoteWeeklyDataIntoOutgoing } from './weeklyDataScopeMerge'
 import { mergeRemoteEmployeesIntoOutgoing } from './teamScopeMerge'
 import { mergeRemoteMultiDayServiceCallsIntoOutgoing } from './serviceScopeMerge'
+import { getSettingsDataFieldNames, mergeRemoteSettingsIntoOutgoing, mergeSettingsByField, stampSettingsFields } from './settingsScopeMerge'
 // Phase 6S-H (emergency guard): reuse the same tombstone-safe id-mergers the direct
 // blueprint save path uses, so a stale unrelated whole-app save cannot clobber newer
 // remote blueprint annotations / scope layers. blueprintLibraryService only imports
@@ -191,6 +192,7 @@ export function getLastSyncMeta(): { savedBy: string; savedAt: string; direction
 let _saveDebounceTimer: any = null
 let _dataChanged = false
 let _lastSyncedAt = 0
+let _hydrationPendingReconcileInFlight: Promise<SyncToSupabaseResult> | null = null
 const SYNC_INTERVAL_MS = 13_000 // 13 seconds
 const SAVE_DEBOUNCE_MS = 100
 
@@ -484,6 +486,10 @@ export interface BackupSettings {
   personalIncomeGoal?: number; overheadPct?: number
   employeeCosts?: Array<{id: string, label: string, amount: number}>
   payrollMult?: number
+  /** SYNC-02: top-level settings field/group LWW metadata. */
+  fieldUpdatedAt?: Record<string, string>
+  /** SYNC-02: intentional top-level setting/group removal tombstones. */
+  fieldDeletedAt?: Record<string, string>
 }
 
 export interface BackupAgendaSection {
@@ -984,9 +990,9 @@ export function updateKnownRemoteBaselineFromRemote(
  *   • locally-newer records survive the remote apply (nothing local is lost),
  *   • remotely-newer records still apply,
  *   • newer deletedAt tombstones still win.
- * Non-array branches (settings, calcRefs, …) still come from the remote snapshot
- * unchanged. This is the single shared apply path used by live refresh, realtime,
- * and loadFromSupabase, so the protection covers every module at the root.
+ * Settings resolve by SYNC-02 top-level field/group freshness; other non-array
+ * branches (calcRefs, …) still come from the remote snapshot. This is the single
+ * shared apply path used by live refresh, realtime, and loadFromSupabase.
  *
  * Also records _lastSyncMeta with direction 'applied' so the header reports
  * "Loaded from <device>" instead of the misleading "Synced by <device>".
@@ -1141,8 +1147,24 @@ export async function importBackupFromFile(file: File): Promise<{ data: BackupDa
     }
   }
 
-  // Merge object keys (settings, calcRefs, projectDashboards, blueprintSummaries) — key-level merge, don't overwrite
-  const objectKeys = ['settings', 'calcRefs', 'projectDashboards', 'blueprintSummaries']
+  // Settings import remains additive, but imported freshness metadata is never
+  // trusted. Only genuinely missing business fields are adopted and stamped now.
+  if (raw.settings && typeof raw.settings === 'object' && !Array.isArray(raw.settings)) {
+    if (!existing.settings || typeof existing.settings !== 'object') existing.settings = {} as any
+    const adoptedSettingsFields: string[] = []
+    for (const field of getSettingsDataFieldNames(raw.settings)) {
+      if (!(field in existing.settings)) {
+        ;(existing.settings as any)[field] = raw.settings[field]
+        adoptedSettingsFields.push(field)
+      }
+    }
+    if (adoptedSettingsFields.length > 0) {
+      stampSettingsFields(existing.settings, adoptedSettingsFields)
+    }
+  }
+
+  // Merge remaining object keys at key level without overwriting current values.
+  const objectKeys = ['calcRefs', 'projectDashboards', 'blueprintSummaries']
   for (const key of objectKeys) {
     if (raw[key] && typeof raw[key] === 'object' && !Array.isArray(raw[key])) {
       if (!existing[key] || typeof existing[key] !== 'object') existing[key] = {}
@@ -1424,7 +1446,7 @@ export function getProjectFinancials(p: BackupProject, d: BackupData): {
   const contract = num(p.contract)
   const billed = num(p.billed)
   const logs = projectLogsFor(d, p.id)
-  const loggedPaid = logs.reduce((s, l) => s + num(l.collected), 0)
+  const loggedPaid = logs.reduce((s, l) => s + num(l.paymentsCollected || l.collected || 0), 0)
   const manualPaidAdjustment = num(fin.manualPaidAdjustment || 0)
   const paid = Math.max(0, loggedPaid + manualPaidAdjustment)
   const ar = Math.max(0, billed - paid)
@@ -1432,9 +1454,9 @@ export function getProjectFinancials(p: BackupProject, d: BackupData): {
   const risk = Math.max(0, contract - paid)
   const estMat = getLiveMaterialRows(p.matRows || [], p.id, 'matRows').reduce((s: number, r: any) => s + (num(r.cost) * num(r.qty || 1)), 0)
   const matCost = estMat
-  const paidLogs = logs.filter(l => num(l.collected) > 0).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+  const paidLogs = logs.filter(l => num(l.paymentsCollected || l.collected || 0) > 0).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
   const lastCollectedAt = fin.lastCollectedAt || (paidLogs[0] ? paidLogs[0].date : '') || p.lastCollectedAt || ''
-  const lastCollectedAmount = paidLogs[0] ? num(paidLogs[0].collected) : num(p.lastCollectedAmount || 0)
+  const lastCollectedAmount = paidLogs[0] ? num(paidLogs[0].paymentsCollected || paidLogs[0].collected || 0) : num(p.lastCollectedAmount || 0)
   return { contract, billed, paid, loggedPaid, manualPaidAdjustment, ar, unbilled, risk, matCost, lastCollectedAt, lastCollectedAmount }
 }
 
@@ -1663,27 +1685,88 @@ export function syncAllProjectFinanceBuckets(d: BackupData): void {
 
 // ── KPIs (matches HTML renderHome exactly) ───────────────────────────────────
 
-export function getKPIs(d: BackupData) {
+/**
+ * Canonical record selection and shared cash inputs for owner-visible KPIs.
+ * Derived only: this function never reads storage and never persists its result.
+ */
+export function getCanonicalKpiInputs(d: BackupData) {
   const projects = (d.projects || []).filter(isActiveProject)
-  const logs = d.logs || []
   const serviceLogs = (d.serviceLogs || []).filter(isActiveServiceCall)
+  const activeProjects = projects.filter(p => String(p.status || p.projectStatus || '').toLowerCase().trim() === 'active')
+  const activeProjectContract = activeProjects.reduce((sum, project) => sum + num(project.contract), 0)
+  const projectPaid = projects.reduce((sum, project) => sum + getProjectFinancials(project, d).paid, 0)
+  const serviceQuoted = serviceLogs.reduce((sum, log) => sum + num(log.quoted), 0)
+  const serviceBillable = serviceLogs.reduce((sum, log) => {
+    const adjustments = Array.isArray(log.adjustments) ? log.adjustments : []
+    const additionalIncome = adjustments
+      .filter((adjustment: any) => adjustment && adjustment.type === 'income')
+      .reduce((adjustmentSum: number, adjustment: any) => adjustmentSum + num(adjustment.amount), 0)
+    return sum + num(log.quoted) + additionalIncome
+  }, 0)
+  const serviceCollected = serviceLogs.reduce((sum, log) => sum + num(log.collected), 0)
+  const serviceOutstanding = serviceLogs.reduce((sum, log) => {
+    const adjustments = Array.isArray(log.adjustments) ? log.adjustments : []
+    const additionalIncome = adjustments
+      .filter((adjustment: any) => adjustment && adjustment.type === 'income')
+      .reduce((adjustmentSum: number, adjustment: any) => adjustmentSum + num(adjustment.amount), 0)
+    return sum + Math.max(0, num(log.quoted) + additionalIncome - num(log.collected))
+  }, 0)
+
+  return {
+    projects,
+    activeProjects,
+    serviceLogs,
+    activeProjectContract,
+    projectPaid,
+    serviceQuoted,
+    serviceBillable,
+    serviceCollected,
+    serviceOutstanding,
+    pipeline: activeProjectContract + serviceOutstanding,
+    collected: projectPaid + serviceCollected,
+  }
+}
+
+/** Shared Dashboard cash-flow cards, derived from the same canonical inputs. */
+export function getDashboardCashFlowSummary(d: BackupData) {
+  const canonical = getCanonicalKpiInputs(d)
+  const exposure = canonical.activeProjects.reduce(
+    (sum, project) => sum + num(project.contract) + getProjectCOConfirmedTotal(project),
+    0,
+  )
+  const activeExposure = canonical.activeProjects.reduce(
+    (sum, project) => sum
+      + Math.max(0, num(project.contract) - getProjectFinancials(project, d).paid)
+      + getProjectCOApprovedUnpaid(project),
+    0,
+  )
+  const unbilled = canonical.activeProjects.reduce(
+    (sum, project) => sum + Math.max(0, num(project.contract) - num(project.billed)),
+    0,
+  )
+  return {
+    exposure,
+    activeExposure,
+    serviceExposure: canonical.serviceOutstanding,
+    unbilled,
+    pending: canonical.serviceOutstanding,
+    svcTotal: canonical.serviceCollected,
+    projTotal: canonical.projectPaid,
+    accumTotal: canonical.collected,
+  }
+}
+
+export function getKPIs(d: BackupData) {
+  const canonical = getCanonicalKpiInputs(d)
+  const projects = canonical.projects
+  const logs = projects.flatMap(project => projectLogsFor(d, project.id))
+  const serviceLogs = canonical.serviceLogs
   syncAllProjectFinanceBuckets(d)
-  // Pipeline = active/coming project contracts + open service calls quoted
-  // Excludes: completed+collected projects, deleted projects, lost/rejected estimates
-  const projectContract = projects
-    .filter(p => {
-      const s = (p.status || '').toLowerCase()
-      // Exclude explicitly completed, deleted, lost, or rejected projects
-      if (s === 'deleted' || s === 'lost' || s === 'rejected') return false
-      // Exclude completed bucket (status=completed OR 100% overall completion)
-      return resolveProjectBucket(p) === 'active'
-    })
-    .reduce((s, p) => s + num(p.contract), 0)
-  // Service calls total: all calls (open + partial); fully-collected ones still part of pipeline history
-  const svcQuoted = serviceLogs.reduce((s, l) => s + num(l.quoted), 0)
+  // Pipeline = active project contracts + adjusted open service balances.
+  // Excludes completed/coming/deleted/lost/rejected projects from the project bucket.
   // Paid / Cash Received = project paid + service collected (matches HTML cashReceived)
-  const projectPaid = projects.reduce((s, p) => s + getProjectFinancials(p, d).paid, 0)
-  const svcCollected = serviceLogs.reduce((s, l) => s + num(l.collected), 0)
+  const projectPaid = canonical.projectPaid
+  const svcCollected = canonical.serviceCollected
   const paid = projectPaid + svcCollected
   const billed = projects.reduce((s, p) => s + num(p.billed), 0)
   // Exposure = active project bucket balance remaining (matches HTML activeProjectExposure)
@@ -1693,28 +1776,8 @@ export function getKPIs(d: BackupData) {
   const exposure = activeProjectMoney.reduce((s, m) => s + Math.max(0, m.contract - m.paid), 0)
   // SVC Unbilled = sum of remaining balance across all service log entriesssS
   // (totalBillable - collected), zeroed for overpaid entries; money math only, never stale payStatus
-  const svcUnbilled = serviceLogs.reduce((s, l) => {
-    const quoted = num(l.quoted)
-    const collected = num(l.collected)
-    const adjustments = Array.isArray(l.adjustments) ? l.adjustments : []
-    const addIncome = adjustments
-      .filter((a: any) => a && a.type === 'income')
-      .reduce((ac: number, a: any) => ac + num(a.amount), 0)
-    const totalBillable = quoted + addIncome
-    return s + Math.max(0, totalBillable - collected)
-  }, 0)
-  
-  const svcWithBalanceDue = serviceLogs.reduce((s, l) => {
-    const quoted = num(l.quoted)
-    const collected = num(l.collected)
-    const adjustments = Array.isArray(l.adjustments) ? l.adjustments : []
-    const addIncome = adjustments
-      .filter((a: any) => a && a.type === 'income')
-      .reduce((ac: number, a: any) => ac + num(a.amount), 0)
-    const totalBillable = quoted + addIncome
-    return s + (totalBillable - collected > 0 ? totalBillable : 0)
-  }, 0)
-  const pipeline = projectContract + svcWithBalanceDue
+  const svcUnbilled = canonical.serviceOutstanding
+  const pipeline = canonical.pipeline
   const openRfis = projects.reduce((s, p) => s + getLiveRFIs(p.rfis || [], p.id).filter((r: any) => r.status !== 'answered').length, 0)
   const totalHours = logs.reduce((s, l) => s + num(l.hrs), 0)
   const activeProjects = projects.filter(p => p.status === 'active' || p.status === 'coming').length
@@ -2287,13 +2350,14 @@ function isIdBearingRecordArray(value: unknown): value is Array<Record<string, a
  * applyRemoteBackupDataSilent: EVERY id-bearing array (logs, projects, serviceLogs,
  * employees, priceBook, …) now survives a remote apply the same way blueprint
  * annotations do — locally-newer rows are kept, remotely-newer rows still apply,
- * and newer deletedAt tombstones still win via updatedAt. Non-array branches
- * (settings, calcRefs, projectDashboards, scalars) continue to come from the
- * remote snapshot unchanged, exactly as before.
+ * and newer deletedAt tombstones still win via updatedAt. Settings resolve via
+ * SYNC-02 top-level field/group timestamps; other non-array branches (calcRefs,
+ * projectDashboards, scalars) continue to come from the remote snapshot.
  */
 export function mergeLocalRecordsIntoRemoteSnapshot(remote: BackupData, local: BackupData): BackupData {
   const merged: BackupData = {
     ...(remote as any),
+    settings: mergeSettingsByField((remote as any).settings, (local as any).settings),
     blueprintSummaries: mergeBlueprintSummariesObject(
       (remote as any).blueprintSummaries,
       (local as any).blueprintSummaries,
@@ -2409,13 +2473,13 @@ function mergeBlueprintSummariesObject(remoteRaw: any, localRaw: any): Record<st
  *     scoped change that exists only in the incoming blob (e.g. the Money
  *     panel weekly recalc, blueprint saves that don't pre-save locally) still
  *     lands;
- *   • everything else (settings, calcRefs, projectDashboards, scalars): the
- *     LOCAL value is kept unconditionally — a remote clone must never replace
- *     local branches during a scoped save.
+ *   • settings: SYNC-02 top-level field/group LWW; calcRefs, projectDashboards,
+ *     and scalars keep the LOCAL value unconditionally.
  */
 function mergeScopedIncomingIntoLocal(local: BackupData, incoming: BackupData): BackupData {
   let merged: BackupData = {
     ...(local as any),
+    settings: mergeSettingsByField((incoming as any).settings, (local as any).settings),
     blueprintSummaries: mergeBlueprintSummariesObject(
       (incoming as any).blueprintSummaries,
       (local as any).blueprintSummaries,
@@ -2492,7 +2556,9 @@ function mergeLocalChangesIntoRemote(
   for (const key of changedKeys) {
     if (!(key in local)) continue
     const localVal = (local as any)[key]
-    if (key === 'blueprintSummaries') {
+    if (key === 'settings') {
+      ;(merged as any)[key] = mergeSettingsByField((remote as any)[key], localVal)
+    } else if (key === 'blueprintSummaries') {
       ;(merged as any)[key] = mergeBlueprintSummariesObject((remote as any)[key], localVal)
     } else if (arrayKeys.has(key) && Array.isArray(localVal)) {
       const remoteArr = Array.isArray((remote as any)[key]) ? (remote as any)[key] : []
@@ -3143,6 +3209,7 @@ export async function syncToSupabase(
       try {
         const remoteSnapshot = await fetchLatestRemoteBackup(userId)
         if (remoteSnapshot?.remoteData) {
+          outgoing = mergeRemoteSettingsIntoOutgoing(outgoing, remoteSnapshot.remoteData)
           outgoing = mergeRemoteProjectBlueprintListsIntoOutgoing(outgoing, remoteSnapshot.remoteData)
           if (!skipWeeklyGuard) {
             outgoing = mergeRemoteWeeklyDataIntoOutgoing(outgoing, remoteSnapshot.remoteData)
@@ -3238,6 +3305,41 @@ export async function syncToSupabase(
   }
 }
 
+/**
+ * SYNC-08: reconcile the one pending tenant payload that blocked login hydration.
+ * This reuses the existing guarded sync engine and only clears pending markers after
+ * a real successful cloud write. Concurrent callers share the same bounded attempt.
+ */
+export function reconcilePendingLocalSaveForHydration(
+  userId = _activeTenantUserId,
+): Promise<SyncToSupabaseResult> {
+  if (!hasPendingLocalSave()) {
+    return Promise.resolve({ success: true, skipped: true })
+  }
+  if (!userId) {
+    return Promise.resolve({ success: false, skipped: true, error: 'No active tenant user' })
+  }
+  if (_hydrationPendingReconcileInFlight) return _hydrationPendingReconcileInFlight
+
+  const attempt = syncToSupabase(userId, { source: 'post-pin-hydration-reconcile' })
+    .then((result) => {
+      if (result.success) {
+        _dataChanged = false
+        _lastSyncedAt = Date.now()
+        _changedKeys.clear()
+      }
+      return result
+    })
+    .finally(() => {
+      if (_hydrationPendingReconcileInFlight === attempt) {
+        _hydrationPendingReconcileInFlight = null
+      }
+    })
+
+  _hydrationPendingReconcileInFlight = attempt
+  return attempt
+}
+
 async function hydrateRelationshipAccountsIntoLocalProjection(userId: string): Promise<void> {
   try {
     const { getRelationshipAccountsNormalized } = await import('@/services/relationshipAccountService')
@@ -3275,7 +3377,23 @@ console.log(`[Sync] Hydrated relationship_accounts into gcContacts projection ($
  * During login/bootstrap this function is read-only against Supabase:
  * remote row wins if present; no row creates a local-only empty cache.
  */
-export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, maybeForceRemote = false): Promise<{ success: boolean; merged: boolean; fromDevice?: string; error?: string; status?: 'loaded_remote' | 'seeded_empty' | 'failed' }> {
+export type BackupHydrationStatus = 'applied' | 'no_remote' | 'deferred_pending_local' | 'failed'
+
+export interface BackupHydrationResult {
+  success: boolean
+  merged: boolean
+  fromDevice?: string
+  error?: string
+  status: BackupHydrationStatus
+  /** True only after a deferred pending payload was guarded-synced before refresh. */
+  reconciledPendingLocal?: boolean
+}
+
+export async function loadFromSupabase(
+  userIdOrForceRemote?: string | boolean,
+  maybeForceRemote = false,
+  isCurrent: () => boolean = () => true,
+): Promise<BackupHydrationResult> {
   const explicitUserId = typeof userIdOrForceRemote === 'string' ? userIdOrForceRemote : null
   const forceRemote = typeof userIdOrForceRemote === 'boolean' ? userIdOrForceRemote : maybeForceRemote
   if (!isSupabaseConfigured()) return { success: false, merged: false, status: 'failed', error: 'Supabase not configured' }
@@ -3289,6 +3407,7 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     const thisDevice = getDeviceId()
 
     const { data: { user } } = await supabase.auth.getUser()
+    if (!isCurrent()) return { success: false, merged: false, status: 'failed', error: 'Hydration superseded' }
     if (!user) return { success: false, merged: false, status: 'failed', error: 'Not authenticated' }
 
     const userId = explicitUserId || _activeTenantUserId || user.id
@@ -3299,7 +3418,10 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
 
     const sameTenant = _activeTenantUserId === userId
     const preApplyKnownRemoteBaselineMs = sameTenant ? getKnownRemoteBaselineMs() : 0
-    if (!sameTenant) setActiveTenantUser(userId)
+    if (!sameTenant) {
+      if (!isCurrent()) return { success: false, merged: false, status: 'failed', error: 'Hydration superseded' }
+      setActiveTenantUser(userId)
+    }
 
     const { data: row, error } = await supabase
       .from('app_state')
@@ -3307,6 +3429,8 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
       .eq('user_id', userId)
       .eq('state_key', SUPABASE_STATE_KEY)
       .maybeSingle()
+
+    if (!isCurrent()) return { success: false, merged: false, status: 'failed', error: 'Hydration superseded' }
 
     if (error) {
       console.warn('[Sync] Supabase read failed:', error.message)
@@ -3323,16 +3447,18 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
       const existingLocal = getBackupData(userId)
       if (existingLocal) {
         console.log('[Sync] No remote data found — existing local backup kept (empty seed skipped)')
+        if (!isCurrent()) return { success: false, merged: false, status: 'failed', error: 'Hydration superseded' }
         markTenantDataReady(userId)
         await hydrateRelationshipAccountsIntoLocalProjection(userId)
-        return { success: true, merged: false }
+        return { success: true, merged: false, status: 'no_remote' }
       }
       console.log('[Sync] No remote data found — seeding tenant-local empty cache only')
       const empty = attachTenantOwner(createEmptyBackup(), userId)
+      if (!isCurrent()) return { success: false, merged: false, status: 'failed', error: 'Hydration superseded' }
       saveBackupDataSilent(empty, userId)
       markTenantDataReady(userId)
       await hydrateRelationshipAccountsIntoLocalProjection(userId)
-      return { success: true, merged: false, status: 'seeded_empty' }
+      return { success: true, merged: false, status: 'no_remote' }
     }
 
     const remote = attachTenantOwner(row.data as BackupData, userId)
@@ -3359,23 +3485,27 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
     if (explicitUserId) {
       if (local && hasPendingLocalSave()) {
         console.log('[Sync] Bootstrap remote apply deferred — local save is pending')
+        if (!isCurrent()) return { success: false, merged: false, status: 'failed', error: 'Hydration superseded' }
         markTenantDataReady(userId)
         await hydrateRelationshipAccountsIntoLocalProjection(userId)
-        return { success: true, merged: false, fromDevice: remoteDevice }
+        return { success: true, merged: false, fromDevice: remoteDevice, status: 'deferred_pending_local' }
       }
 
+      if (!isCurrent()) return { success: false, merged: false, status: 'failed', error: 'Hydration superseded' }
       const applyResult = applyRemoteBackupDataSilent(remote, userId, remoteBaseline, { snapshotReason: 'Bootstrap' })
       if (!applyResult.applied) {
         dispatchSyncError(REMOTE_MERGE_FAILED_MSG, 'bootstrap')
+        if (!isCurrent()) return { success: false, merged: false, status: 'failed', error: 'Hydration superseded' }
         markTenantDataReady(userId)
         await hydrateRelationshipAccountsIntoLocalProjection(userId)
         console.warn(`[Sync] Bootstrap: remote apply merge failed — local backup kept (saved by ${remoteDevice})`)
         return { success: false, merged: false, fromDevice: remoteDevice, status: 'failed', error: REMOTE_MERGE_FAILED_MSG }
       }
+      if (!isCurrent()) return { success: false, merged: false, status: 'failed', error: 'Hydration superseded' }
       markTenantDataReady(userId)
       await hydrateRelationshipAccountsIntoLocalProjection(userId)
       console.log(`[Sync] Bootstrap loaded tenant ${userId} from Supabase (saved by ${remoteDevice})`)
-      return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
+      return { success: true, merged: true, fromDevice: remoteDevice, status: 'applied' }
     }
 
     console.log(`[Sync] This device: ${thisDevice}`)
@@ -3388,7 +3518,7 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
       console.log('[Sync] Mid-session remote apply deferred — local save is pending')
       markTenantDataReady(userId)
       await hydrateRelationshipAccountsIntoLocalProjection(userId)
-      return { success: true, merged: false, fromDevice: remoteDevice }
+      return { success: true, merged: false, fromDevice: remoteDevice, status: 'deferred_pending_local' }
     }
 
     if (shouldApplyRemote) {
@@ -3405,13 +3535,13 @@ export async function loadFromSupabase(userIdOrForceRemote?: string | boolean, m
       markTenantDataReady(userId)
       await hydrateRelationshipAccountsIntoLocalProjection(userId)
       console.log(`[Sync] Mid-session remote applied (saved by ${remoteDevice})`)
-      return { success: true, merged: true, fromDevice: remoteDevice, status: 'loaded_remote' }
+      return { success: true, merged: true, fromDevice: remoteDevice, status: 'applied' }
     }
 
     console.log('[Sync] Mid-session pull — remote has not advanced; local kept')
     markTenantDataReady(userId)
     await hydrateRelationshipAccountsIntoLocalProjection(userId)
-    return { success: true, merged: false, fromDevice: remoteDevice }
+    return { success: true, merged: false, fromDevice: remoteDevice, status: 'no_remote' }
   } catch (err: any) {
     console.error('[Sync] Supabase load error:', err)
     return { success: false, merged: false, status: 'failed', error: err?.message || 'Unknown error' }

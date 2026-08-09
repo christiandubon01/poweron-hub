@@ -642,7 +642,7 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
         const totalHours = recentLogs.reduce((s, l) => s + num(l.hrs || l.hours), 0)
         const totalMaterialCost = recentLogs.reduce((s, l) => s + num(l.mat || l.materialCost), 0)
         const totalMiles = recentLogs.reduce((s, l) => s + num(l.miles || l.mileRT), 0)
-        const totalCollected7d = recentLogs.reduce((s, l) => s + num(l.collected), 0)
+        const totalCollected7d = recentLogs.reduce((s, l) => s + num(l.paymentsCollected || l.collected || 0), 0)
         const opCost7d = Number(backup.settings?.opCost) || 55
         const mileRate7d = num(backup.settings?.mileRate) || VAN_MILE_RATE
         const totalLaborCost7d = totalHours * opCost7d

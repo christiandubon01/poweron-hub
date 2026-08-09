@@ -25,6 +25,7 @@ import {
   type Snapshot,
 } from '@/services/snapshotService'
 import { getBackupData, saveBackupDataAndSync, forceSyncToCloud } from '@/services/backupDataService'
+import { prepareSettingsForExplicitReplacement } from '@/services/settingsScopeMerge'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -530,6 +531,10 @@ export default function SnapshotPanel() {
 
       // Step 3: Apply snapshot data to app state and wait for cloud write
       const restorePayload = getSnapshotRestorePayload(snap.snapshot_data as Record<string, unknown>)
+      restorePayload.settings = prepareSettingsForExplicitReplacement(
+        (currentData as any).settings,
+        restorePayload.settings,
+      )
       await saveBackupDataAndSync(restorePayload as any, 'snapshotRestore')
 
       // Step 3B: Force a final Supabase sync before reload so hydration pulls restored data

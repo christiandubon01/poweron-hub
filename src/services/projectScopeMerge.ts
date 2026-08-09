@@ -2002,6 +2002,113 @@ export function mergeProjectLogsIntoRemote(
 // all other projects, serviceLogs, and blueprint data are preserved untouched.
 // Child-record cascade tombstoning and a hard purge are deferred to a later phase.
 
+export const PROJECT_ARCHIVE_LIFECYCLE_FIELDS = [
+  'archived',
+  'isArchived',
+  'archivedAt',
+  'archivedReason',
+] as const
+
+function hasOwnField(record: any, field: string): boolean {
+  return !!record && Object.prototype.hasOwnProperty.call(record, field)
+}
+
+/**
+ * An explicit false is a real restore marker. A legacy row that has none of these
+ * fields is unknown, not an implicit restore, and therefore cannot erase explicit
+ * archive state from the other side of a merge.
+ */
+export function hasExplicitProjectArchiveState(project: any): boolean {
+  return (
+    typeof project?.archived === 'boolean'
+    || typeof project?.isArchived === 'boolean'
+    || hasOwnField(project, 'archivedAt')
+  )
+}
+
+function isProjectArchivedState(project: any): boolean {
+  return !!(
+    project
+    && (project.archived === true || project.isArchived === true || isValidDateString(project.archivedAt))
+  )
+}
+
+/**
+ * Existing project lifecycle freshness rule. updatedAt is canonical; deletedAt
+ * and archivedAt are legacy fallbacks for older lifecycle records.
+ */
+export function projectLifecycleFreshnessMs(project: any): number {
+  return Math.max(
+    comparableMs(project?.updatedAt),
+    comparableMs(project?.deletedAt),
+    comparableMs(project?.archivedAt),
+  )
+}
+
+/** Mutate one project into an explicit archive or restore lifecycle state. */
+export function stampProjectArchiveLifecycle(project: any, archived: boolean, timestamp?: string): any {
+  if (!project || typeof project !== 'object') return project
+  const now = isValidDateString(timestamp) ? String(timestamp) : new Date().toISOString()
+  if (archived) {
+    project.archived = true
+    project.archivedAt = now
+    project.archivedReason = project.archivedReason ?? null
+  } else {
+    project.archived = false
+    // Compatibility field is read by isArchivedRecord; an explicit restore must
+    // clear a legacy true value even though new project writes use `archived`.
+    project.isArchived = false
+    if (isValidDateString(project.archivedAt) && !isValidDateString(project.lastArchivedAt)) {
+      project.lastArchivedAt = String(project.archivedAt)
+    }
+    // Explicit null distinguishes a restore from legacy archive-field absence.
+    project.archivedAt = null
+  }
+  project.updatedAt = now
+  return project
+}
+
+function applyProjectArchiveState(targetProject: any, sourceProject: any): void {
+  const archived = isProjectArchivedState(sourceProject)
+  targetProject.archived = archived
+
+  if (hasOwnField(sourceProject, 'isArchived')) {
+    targetProject.isArchived = sourceProject.isArchived === true
+  } else if (!archived && hasOwnField(targetProject, 'isArchived')) {
+    targetProject.isArchived = false
+  }
+
+  if (isValidDateString(sourceProject?.archivedAt)) {
+    targetProject.archivedAt = String(sourceProject.archivedAt)
+  } else if (hasOwnField(sourceProject, 'archivedAt') || !archived) {
+    targetProject.archivedAt = null
+  }
+
+  if (hasOwnField(sourceProject, 'archivedReason')) {
+    targetProject.archivedReason = sourceProject.archivedReason ?? null
+  }
+}
+
+function pickProjectArchiveWinner(remoteProject: any, incomingProject: any): any | null {
+  const remoteExplicit = hasExplicitProjectArchiveState(remoteProject)
+  const incomingExplicit = hasExplicitProjectArchiveState(incomingProject)
+  if (!remoteExplicit && !incomingExplicit) return null
+  if (remoteExplicit !== incomingExplicit) return remoteExplicit ? remoteProject : incomingProject
+  return projectLifecycleFreshnessMs(incomingProject) > projectLifecycleFreshnessMs(remoteProject)
+    ? incomingProject
+    : remoteProject
+}
+
+function copyLatestProjectUpdatedAt(targetProject: any, remoteProject: any, incomingProject: any): void {
+  const remoteMs = comparableMs(remoteProject?.updatedAt)
+  const incomingMs = comparableMs(incomingProject?.updatedAt)
+  if (remoteMs >= incomingMs && isValidDateString(remoteProject?.updatedAt)) {
+    targetProject.updatedAt = String(remoteProject.updatedAt)
+  } else if (isValidDateString(incomingProject?.updatedAt)) {
+    targetProject.updatedAt = String(incomingProject.updatedAt)
+  }
+}
+
 /** True when a project carries a soft-delete tombstone (deletedAt) or status 'deleted'. */
 export function isDeletedProject(project: any): boolean {
   if (!project) return false
@@ -2059,12 +2166,52 @@ export function mergeProjectLifecycleIntoRemote(
   }
 
   const remoteProject: any = remoteProjects[remoteIndex]
-  remoteProject.deletedAt = incomingProject.deletedAt
-  remoteProject.deletedBy = incomingProject.deletedBy
-  remoteProject.status = incomingProject.status
-  if (isValidDateString(incomingProject.updatedAt)) {
-    remoteProject.updatedAt = incomingProject.updatedAt
+  if (projectLifecycleFreshnessMs(incomingProject) <= projectLifecycleFreshnessMs(remoteProject)) {
+    return merged
   }
+
+  if (hasOwnField(incomingProject, 'deletedAt')) remoteProject.deletedAt = incomingProject.deletedAt
+  else delete remoteProject.deletedAt
+  if (hasOwnField(incomingProject, 'deletedBy')) remoteProject.deletedBy = incomingProject.deletedBy
+  else delete remoteProject.deletedBy
+  remoteProject.status = incomingProject.status
+  if (hasExplicitProjectArchiveState(incomingProject)) {
+    applyProjectArchiveState(remoteProject, incomingProject)
+  }
+  copyLatestProjectUpdatedAt(remoteProject, remoteProject, incomingProject)
+  return merged
+}
+
+/**
+ * Broad Projects-panel lifecycle guard (INCOMING-based). Preserve every unrelated
+ * local edit, but reconcile archive/restore fields for every matching project by
+ * lifecycle freshness. This composes with the existing finance/schedule guards;
+ * it is not a second persistence path.
+ */
+export function mergeAllProjectLifecycleIntoRemote(
+  remoteBackup: BackupData,
+  incomingBackup: BackupData,
+): BackupData {
+  const merged = JSON.parse(JSON.stringify(incomingBackup)) as BackupData
+  const remoteById = new Map<string, any>()
+  for (const remoteProject of Array.isArray(remoteBackup?.projects) ? remoteBackup.projects : []) {
+    const id = String(remoteProject?.id || '').trim()
+    if (id) remoteById.set(id, remoteProject)
+  }
+
+  for (const incomingProject of Array.isArray(merged.projects) ? merged.projects : []) {
+    const id = String(incomingProject?.id || '').trim()
+    if (!id) continue
+    const remoteProject = remoteById.get(id)
+    if (!remoteProject) continue
+    const winner = pickProjectArchiveWinner(remoteProject, incomingProject)
+    if (!winner) continue
+    applyProjectArchiveState(incomingProject, winner)
+    // This is a composed row: unrelated fields from local plus the winning archive
+    // state. Carry the latest row freshness so generic root merges retain it.
+    copyLatestProjectUpdatedAt(incomingProject, remoteProject, incomingProject)
+  }
+
   return merged
 }
 

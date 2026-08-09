@@ -1,16 +1,13 @@
 // @ts-nocheck
 import React from 'react'
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceArea } from 'recharts'
-import { getProjectFinancials, num, type BackupData } from '@/services/backupDataService'
-
-const logProjectId = (log: any) => String(log?.projId || log?.projectId || '')
+import { getProjectFinancials, num, projectLogsFor, type BackupData } from '@/services/backupDataService'
 
 export default function RCAChart({ projects, backup, dateStart, dateEnd }: { projects: any[]; backup: BackupData; dateStart?: string; dateEnd?: string }) {
   if (!projects.length) return <div className="flex items-center justify-center h-full text-gray-500 text-sm">No projects</div>
 
   const mileRate = num(backup.settings?.mileRate || 0.66)
   const opCost = num(backup.settings?.opCost || 42.45)
-  const logs = backup.logs || []
 
   const inRange = (d: string) => {
     if (!d) return true
@@ -25,10 +22,10 @@ export default function RCAChart({ projects, backup, dateStart, dateEnd }: { pro
   const chartData = isSingle
     ? (() => {
         const p = projects[0]
-        const pLogs = logs.filter((l: any) => logProjectId(l) === String(p.id || '') && inRange(l.date)).sort((a: any, b: any) => (a.date || '').localeCompare(b.date || ''))
+        const pLogs = projectLogsFor(backup, p.id).filter((l: any) => inRange(l.date)).sort((a: any, b: any) => (a.date || '').localeCompare(b.date || ''))
         let cumCollected = 0, cumLabor = 0, cumMat = 0, cumMile = 0
         return pLogs.map((l: any) => {
-          cumCollected += num(l.collected)
+          cumCollected += num(l.paymentsCollected || l.collected || 0)
           cumLabor += num(l.hrs) * opCost
           cumMat += num(l.mat)
           cumMile += num(l.miles || 0) * mileRate
@@ -44,7 +41,7 @@ export default function RCAChart({ projects, backup, dateStart, dateEnd }: { pro
       })()
     : projects.map(p => {
         const fin = getProjectFinancials(p, backup)
-        const pLogs = logs.filter((l: any) => logProjectId(l) === String(p.id || '') && inRange(l.date))
+        const pLogs = projectLogsFor(backup, p.id).filter((l: any) => inRange(l.date))
         const totalHrs = pLogs.reduce((s: number, l: any) => s + num(l.hrs), 0)
         const totalMat = pLogs.reduce((s: number, l: any) => s + num(l.mat), 0)
         const totalMiles = pLogs.reduce((s: number, l: any) => s + num(l.miles || 0), 0)

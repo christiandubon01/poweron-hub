@@ -10,6 +10,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine
 } from 'recharts'
 import { num, getProjectFinancials, isActiveProject, type BackupData } from '@/services/backupDataService'
+import { isDeadProjectLog } from '@/services/projectScopeMerge'
 
 function startOfMonth(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), 1)
@@ -25,7 +26,7 @@ function monthLabel(d: Date): string {
 
 export default function SixMonthForecastChart({ backup }: { backup: BackupData }) {
   const projects = (backup.projects || []).filter(isActiveProject)
-  const logs = backup.logs || []
+  const logs = (backup.logs || []).filter((log: any) => !isDeadProjectLog(log))
   const opCost = num(backup.settings?.opCost || 42.45)
   const mileRate = num(backup.settings?.mileRate || 0.66)
 
@@ -82,7 +83,7 @@ export default function SixMonthForecastChart({ backup }: { backup: BackupData }
     const msStr = bucket.monthStart.toISOString().substring(0, 7) // "YYYY-MM"
     const collected = logs.reduce((s: number, l: any) => {
       const d = (l.date || l.logDate || '').substring(0, 7)
-      return d === msStr ? s + num(l.collected) : s
+      return d === msStr ? s + num(l.paymentsCollected || l.collected || 0) : s
     }, 0)
     bucket.actual = collected
   })

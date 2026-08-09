@@ -13,6 +13,7 @@
 import { useMemo } from 'react'
 import { Zap } from 'lucide-react'
 import { getBackupData, type BackupWeeklyData } from '@/services/backupDataService'
+import { resolveWeeklyDataForRead } from '@/services/weeklyFinancialPolicy'
 import ImportBackupButton from '@/components/ImportBackupButton'
 
 function weekRowColor(w: BackupWeeklyData): string {
@@ -39,7 +40,7 @@ export default function V15rCashFlow() {
   const backup = getBackupData()
   if (!backup) return <NoData />
 
-  const weeks = (backup.weeklyData || [])
+  const weeks = resolveWeeklyDataForRead(backup)
   const nonEmpty = (weeks || []).filter(w => !w._empty)
 
   // Summary KPIs

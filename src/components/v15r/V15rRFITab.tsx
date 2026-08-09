@@ -8,6 +8,7 @@ import {
   saveBackupDataAndSync,
   saveBackupWithRemoteBaselineSync,
 } from '@/services/backupDataService'
+import { stampSettingsFields } from '@/services/settingsScopeMerge'
 import {
   createRFIIdentityContext,
   createRFITombstone,
@@ -417,6 +418,7 @@ export default function V15rRFITab({ projectId, onUpdate, backup: initialBackup 
         colorKey: RFI_LABEL_COLOR_PALETTE[customLabelColorIndex(clean)].key,
       },
     ]
+    stampSettingsFields(freshBackup.settings, ['rfiLabels'])
     saveBackupDataAndSync(freshBackup, 'settings')
     closeLabelModal()
     forceUpdate()

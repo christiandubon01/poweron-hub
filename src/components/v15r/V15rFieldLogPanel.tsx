@@ -2801,7 +2801,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                                    recentServiceLogs.reduce((s, l) => s + num(l.mat || l.materialCost), 0)
           const totalMiles = recentProjectLogs.reduce((s, l) => s + num(l.miles || l.mileRT), 0) +
                             recentServiceLogs.reduce((s, l) => s + num(l.miles || l.mileRT), 0)
-          const totalCollected7d = recentProjectLogs.reduce((s, l) => s + num(l.collected), 0) +
+          const totalCollected7d = recentProjectLogs.reduce((s, l) => s + num(l.paymentsCollected || l.collected || 0), 0) +
                                   recentServiceLogs.reduce((s, l) => s + num(l.collected), 0)
           const logCount = recentProjectLogs.length + recentServiceLogs.length
 
@@ -3165,7 +3165,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
             if (!proj) return null
 
             const fin = getProjectFinancials(proj, backup)
-            const projTotalCollected = projLogs.reduce((s, l) => s + num(l.collected), 0)
+            const projTotalCollected = projLogs.reduce((s, l) => s + num(l.paymentsCollected || l.collected || 0), 0)
             const projTotalMat = projLogs.reduce((s, l) => s + num(l.mat), 0)
             const projTotalHrs = projLogs.reduce((s, l) => s + num(l.hrs), 0)
             const projTotalMiles = projLogs.reduce((s, l) => s + num(l.miles || 0), 0)
@@ -4699,7 +4699,7 @@ ${note}` : note)
           mat: totalMat,
           mileCost: totalMiles * mileRate,
           hrs: totalHours,
-          collected: projectLogs.reduce((s, l) => s + num(l.collected), 0),
+          collected: projectLogs.reduce((s, l) => s + num(l.paymentsCollected || l.collected || 0), 0),
         }
         return {
           label: project.name || 'Unnamed project',
@@ -5169,23 +5169,21 @@ ${note}` : note)
     return d.toISOString().slice(0, 10)
   }
   const weekStart = getISOWeekStart()
+  const liveWeekProjectLogs = (backup.logs || []).filter(l => !isDeadProjectLog(l) && (l.date || '') >= weekStart)
 
   // Hours This Week — from project logs only (service logs have different hrs meaning)
-  const hoursThisWeek = (backup.logs || [])
-    .filter(l => (l.date || '') >= weekStart)
+  const hoursThisWeek = liveWeekProjectLogs
     .reduce((s, l) => s + num(l.hrs), 0)
 
   // Revenue This Week — collected from both project logs and service logs
-  const revenueThisWeek = (backup.logs || [])
-    .filter(l => (l.date || '') >= weekStart)
-    .reduce((s, l) => s + num(l.collected), 0)
+  const revenueThisWeek = liveWeekProjectLogs
+    .reduce((s, l) => s + num(l.paymentsCollected || l.collected || 0), 0)
     + (backup.serviceLogs || [])
     .filter(l => isActiveServiceCall(l) && (l.date || '') >= weekStart)
     .reduce((s, l) => s + num(l.collected), 0)
 
   // Mat Cost This Week — from both
-  const matThisWeek = (backup.logs || [])
-    .filter(l => (l.date || '') >= weekStart)
+  const matThisWeek = liveWeekProjectLogs
     .reduce((s, l) => s + num(l.mat), 0)
     + (backup.serviceLogs || [])
     .filter(l => isActiveServiceCall(l) && (l.date || '') >= weekStart)
@@ -5194,8 +5192,7 @@ ${note}` : note)
   // Net This Week
   const costRate = num(backup.settings?.opCost || 42.45)
   const laborCostThisWeek = hoursThisWeek * costRate
-  const mileCostThisWeek = (backup.logs || [])
-    .filter(l => (l.date || '') >= weekStart)
+  const mileCostThisWeek = liveWeekProjectLogs
     .reduce((s, l) => s + num(l.miles) * mileRate, 0)
   const netThisWeek = revenueThisWeek - matThisWeek - laborCostThisWeek - mileCostThisWeek
 

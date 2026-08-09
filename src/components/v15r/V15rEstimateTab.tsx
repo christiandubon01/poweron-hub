@@ -18,6 +18,7 @@ import {
   isActiveProject,
   isActiveServiceCall,
 } from '@/services/backupDataService'
+import { stampSettingsFields } from '@/services/settingsScopeMerge'
 import { nonCriticalWrite } from '@/services/writeDebounce'
 import {
   mergeServiceCallsScopeIntoRemote,
@@ -1341,6 +1342,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   const editTax = (value) => {
     pushState()
     backup.settings.tax = num(value)
+    stampSettingsFields(backup.settings, ['tax'])
     saveBackupData(backup)
     forceUpdate()
   }

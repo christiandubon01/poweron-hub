@@ -29,6 +29,7 @@ import CFOTChart from '@/components/v15r/charts/CFOTChart'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { callClaude, extractText } from '@/services/claudeProxy'
+import { resolveWeeklyDataForRead } from '@/services/weeklyFinancialPolicy'
 
 // ── Tier pricing ───────────────────────────────────────────────────────────────
 const TIER_PRICES: Record<string, number> = {
@@ -274,7 +275,10 @@ export default function BusinessOverviewView() {
   }, [backup])
 
   // Weekly data for CFOT chart
-  const weeklyData = useMemo(() => (backup?.weeklyData || []).filter(w => !w._empty), [backup])
+  const weeklyData = useMemo(
+    () => (backup ? resolveWeeklyDataForRead(backup) : []).filter(w => !w._empty),
+    [backup],
+  )
 
   // Service net (svc collected - svc quoted balance)
   const serviceNet = useMemo(() => {

@@ -322,7 +322,7 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
   },
   'project.lifecycle': {
     scope: 'project.lifecycle',
-    dataPath: 'projects[].deletedAt / deletedBy / status (soft-delete lifecycle metadata only)',
+    dataPath: 'projects[].archive fields + deletedAt / deletedBy / status (project lifecycle metadata only)',
     owner: 'V15rProjectsPanel',
     level: 'nested',
     identityField: 'id',
@@ -332,7 +332,7 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
     needsTombstone: false,
     strategy: 'field-lww',
     priority: 'critical',
-    notes: 'Phase 6Q: project soft-delete lifecycle. deleteProject stamps deletedAt/deletedBy/status="deleted" (no hard remove from projects[], no hard-filter of logs[]). mergeProjectLifecycleIntoRemote patches ONLY these lifecycle fields onto the matching remote project; all child arrays (changeOrders/rfis/materials/estimate rows/scalars/schedule/notes), top-level logs[], other projects, serviceLogs, and blueprint data are preserved untouched. Readers hide deleted projects via isActiveProject (deletedAt or status="deleted") and the panel excludes them from the Archived list. Child-record cascade tombstoning and a hard export-gated purge are deferred to a later phase.',
+    notes: 'Phase 6Q + SYNC-01: project soft-delete and archive/restore lifecycle. Archive fields are archived/archivedAt/archivedReason plus legacy isArchived compatibility; lifecycle transitions stamp project updatedAt and resolve by strictly-newer timestamp (archivedAt/deletedAt legacy fallback, remote wins ties). Explicit archive/restore metadata beats legacy field absence. mergeProjectLifecycleIntoRemote patches ONLY lifecycle fields onto a fresh remote project; mergeAllProjectLifecycleIntoRemote is the incoming-based guard composed into the Projects panel broad saver. Child arrays, logs[], finance, other projects, serviceLogs, and blueprint data remain untouched. lastArchivedAt is historical/derived and is not a conflict field.',
   },
   'project.finance': {
     scope: 'project.finance',
@@ -617,14 +617,17 @@ export const SCOPE_REGISTRY: Readonly<Record<DataScope, ScopeDescriptor>> = {
   // ── Settings ──
   settings: {
     scope: 'settings',
-    dataPath: 'settings{}',
+    dataPath: 'settings{} + settings.fieldUpdatedAt{} + settings.fieldDeletedAt{}',
     owner: 'V15rSettingsPanel',
     level: 'top-level',
-    identityField: 'singleton',
-    needsTimestamp: true,
+    identityField: 'singleton top-level field/group name',
+    timestampField: 'settings.fieldUpdatedAt[fieldOrGroup]',
+    tombstoneField: 'settings.fieldDeletedAt[fieldOrGroup]',
+    needsTimestamp: false,
     needsTombstone: false,
     strategy: 'field-lww',
     priority: 'critical',
+    notes: 'SYNC-02: settings remain one singleton scope, but every independent top-level scalar and whole logical group resolves separately. phaseWeights, ordered mtoPhases, overhead, defaultPricingCrewIds, and rfiLabels are whole groups; nested leaves are not independently timestamped. Strictly newer timestamp wins and remote wins ties. Timestamped explicit values (including null) beat legacy unstamped values; deletion tombstones distinguish intentional removal. Live refresh, scoped merges, broad saves, and the pre-sync remote-baseline fold all use settingsScopeMerge.ts. Owner/employee loaded rates, payroll burden, Team employee/crew costing, PTO/projections, laborCategory, and service cost snapshots/formulas remain deferred to SYNC-06.',
   },
 }
 

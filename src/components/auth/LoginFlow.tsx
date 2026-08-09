@@ -1538,7 +1538,7 @@ interface LoginFlowProps {
 
 export function LoginFlow({ children }: LoginFlowProps) {
   const status = useAuthStore(s => s.status)
-  const { submitPasscode, signOut } = useAuth()
+  const { submitPasscode, signOut, error } = useAuth()
   const [screen, setScreen] = useState<AuthScreen>('landing')
   const [pinFallback, setPinFallback] = useState(false)
 
@@ -1558,7 +1558,7 @@ export function LoginFlow({ children }: LoginFlowProps) {
       return <InitialSetupFlow />
 
     case 'needs_passcode':
-      return <PinAuth onVerify={submitPasscode} onFallbackToMagicLink={signOut} />
+      return <PinAuth onVerify={submitPasscode} onFallbackToMagicLink={signOut} errorMessage={error} />
 
     case 'biometric_prompt':
       return <BiometricPrompt />

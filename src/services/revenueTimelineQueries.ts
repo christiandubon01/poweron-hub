@@ -10,6 +10,7 @@
  */
 
 import { getBackupData, isActiveProject, isActiveServiceCall, saveBackupData } from '@/services/backupDataService'
+import { isDeadProjectLog } from '@/services/projectScopeMerge'
 import { getProjectPhaseNames, normalizePhaseName } from '@/utils/v15rProjectPhases'
 import {
   getPhasePaymentSchedule,
@@ -105,18 +106,22 @@ function getActiveServiceRecords(backup: any): any[] {
   ].filter(isActiveServiceCall)
 }
 
+function getLiveProjectLogs(backup: any): any[] {
+  return (backup?.logs || []).filter((log: any) => !isDeadProjectLog(log))
+}
+
 /** Get 8-week cash flow buckets from current local state */
 export function query8WeekCashFlow(anchorDate?: string | Date | null): WeekBucket[] {
   const backup = getBackupData()
   if (!backup) return []
-  return get8WeekCashFlow(getActiveProjects(backup), backup.logs || [], getActiveServiceRecords(backup), anchorDate)
+  return get8WeekCashFlow(getActiveProjects(backup), getLiveProjectLogs(backup), getActiveServiceRecords(backup), anchorDate)
 }
 
 /** Get monthly revenue comparison from current local state */
 export function queryMonthlyRevenue(months: number = 6, startMonthOffset: number = 0): MonthBucket[] {
   const backup = getBackupData()
   if (!backup) return []
-  return getMonthlyRevenueComparison(getActiveProjects(backup), backup.logs || [], months, startMonthOffset)
+  return getMonthlyRevenueComparison(getActiveProjects(backup), getLiveProjectLogs(backup), months, startMonthOffset)
 }
 
 /** Get overlap windows from current local state */
@@ -141,7 +146,7 @@ export function queryQuoteVsActual(projectId: string): PhaseVariance[] {
   if (!backup) return []
   const project = getActiveProjects(backup).find((p: any) => p.id === projectId)
   if (!project) return []
-  return getQuoteVsActual(project, backup.logs || [])
+  return getQuoteVsActual(project, getLiveProjectLogs(backup))
 }
 
 /** Get payment schedule for a specific project */
@@ -159,7 +164,7 @@ export function queryAllQuoteVsActual(): Array<{ projectId: string; projectName:
   const backup = getBackupData()
   if (!backup) return []
   const projects = getActiveProjects(backup)
-  const logs = backup.logs || []
+  const logs = getLiveProjectLogs(backup)
 
   return projects
     .map((p: any) => ({

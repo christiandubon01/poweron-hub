@@ -18,7 +18,7 @@
 
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react'
 import { ChevronDown, ChevronUp, Plus, Search, Edit2, Trash2, AlertCircle, Copy, Sparkles, ExternalLink, Upload, FileText, FileSpreadsheet, X, Check, Download, RefreshCw, GripVertical } from 'lucide-react'
-import { getBackupData, saveBackupData, markChanged, type BackupData, type BackupPriceBookItem } from '@/services/backupDataService'
+import { getActiveTenantUserId, getBackupData, saveBackupData, markChanged, type BackupData, type BackupPriceBookItem } from '@/services/backupDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
@@ -447,35 +447,28 @@ function num(val: any): number {
   return isNaN(n) ? 0 : n
 }
 
-/**
- * getPriceBookSource — Reads price book data from localStorage.
- * The old HTML app stores data under key 'poweron_v2' (with data.priceBook as a flat array).
- * The React app stores under 'poweron_backup_data'.
- * Try 'poweron_v2' first, fall back to 'poweron_backup_data'.
- */
-function getPriceBookSource(): { backup: BackupData | null, priceBookItems: BackupPriceBookItem[], source: string } {
-  // 1. Try poweron_v2 key first (HTML app's localStorage key)
-  try {
-    const v2Raw = localStorage.getItem('poweron_v2')
-    if (v2Raw) {
-      const v2Data = JSON.parse(v2Raw)
-      if (v2Data && Array.isArray(v2Data.priceBook) && v2Data.priceBook.length > 0) {
-        console.log('[PriceBook] Loaded from poweron_v2 key — items:', v2Data.priceBook.length)
-        return { backup: v2Data as BackupData, priceBookItems: v2Data.priceBook, source: 'poweron_v2' }
-      }
-    }
-  } catch (e) {
-    console.warn('[PriceBook] Failed to parse poweron_v2:', e)
-  }
+type PriceBookSource = 'tenant_backup_data' | 'poweron_backup_data' | 'none'
 
-  // 2. Fall back to poweron_backup_data key (React app's localStorage key)
+/**
+ * getPriceBookSource — Reads price book data through the tenant-aware BackupData API.
+ *
+ * Authenticated sessions must never inspect browser-global poweron_v2 directly.
+ * Unauthenticated legacy/migration fallback remains centralized in getBackupData().
+ */
+export function getPriceBookSource(): { backup: BackupData | null, priceBookItems: BackupPriceBookItem[], source: PriceBookSource } {
+  const activeTenantUserId = getActiveTenantUserId()
   const backup = getBackupData()
   if (!backup) return { backup: null, priceBookItems: [], source: 'none' }
 
   const rawPB = backup.priceBook
   const items: BackupPriceBookItem[] = Array.isArray(rawPB) ? rawPB : []
-  console.log('[PriceBook] Loaded from poweron_backup_data key — items:', items.length)
-  return { backup, priceBookItems: items, source: 'poweron_backup_data' }
+  const source: PriceBookSource = activeTenantUserId ? 'tenant_backup_data' : 'poweron_backup_data'
+  console.log(`[PriceBook] Loaded from ${source} — items:`, items.length)
+  return { backup, priceBookItems: items, source }
+}
+
+export function persistPriceBookBackup(backup: BackupData): void {
+  saveBackupData(backup)
 }
 
 export default function V15rPriceBookPanel() {
@@ -692,7 +685,7 @@ export default function V15rPriceBookPanel() {
       backup.priceBook = [...priceBookItems, ...newItems]
     }
 
-    // Save to poweron_v2 + poweron_backup_data
+    // Save through the tenant-aware BackupData path.
     persistPriceBook()
     // Mark changed — 30s periodic sync (startPeriodicSync) will handle Supabase write
     markChanged('priceBook')
@@ -811,15 +804,7 @@ export default function V15rPriceBookPanel() {
 
   /** Persist price book changes to the correct localStorage key */
   const persistPriceBook = () => {
-    if (pbSource.source === 'poweron_v2') {
-      try {
-        localStorage.setItem('poweron_v2', JSON.stringify(backup))
-      } catch (e) {
-        console.error('[PriceBook] Failed to save to poweron_v2:', e)
-      }
-    }
-    // Always also save to React backup key for consistency
-    saveBackupData(backup)
+    persistPriceBookBackup(backup)
   }
 
   const saveNotes = (id: string) => {

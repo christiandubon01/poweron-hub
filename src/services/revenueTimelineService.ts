@@ -117,6 +117,20 @@ function getServiceLogTotalBillable(svc: any): number {
   return n(svc?.quoted) + addIncome
 }
 
+function dedupeServiceRecords(records: any[]): any[] {
+  const seen = new Set<string>()
+  const result: any[] = []
+  for (const record of Array.isArray(records) ? records : []) {
+    const identities = [record?.id, record?.serviceLogId, record?.fromEstimateId]
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+    if (identities.some(identity => seen.has(identity))) continue
+    result.push(record)
+    identities.forEach(identity => seen.add(identity))
+  }
+  return result
+}
+
 function datesOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
   return aStart <= bEnd && bStart <= aEnd
 }
@@ -340,6 +354,7 @@ export function get8WeekCashFlow(
   serviceRecords: any[] = [],
   anchorDate?: string | Date | null
 ): WeekBucket[] {
+  const uniqueServiceRecords = dedupeServiceRecords(serviceRecords)
   const now = anchorDate instanceof Date
     ? new Date(anchorDate)
     : (anchorDate ? parseDate(anchorDate) || new Date() : new Date())
@@ -388,7 +403,7 @@ export function get8WeekCashFlow(
   }
 
   // Projected: active service-call/log balances due on their scheduled/log date
-  for (const svc of serviceRecords) {
+  for (const svc of uniqueServiceRecords) {
     const svcDate = parseDate(svc.date || svc.scheduledDate || svc.dueDate)
     if (!svcDate) continue
     const billable = getServiceLogTotalBillable(svc)
@@ -431,7 +446,7 @@ export function get8WeekCashFlow(
   }
 
   // Actual: from service-log collected amount — what was actually received, not total invoiced.
-  for (const svc of serviceRecords) {
+  for (const svc of uniqueServiceRecords) {
     const svcDate = parseDate(svc.date || svc.logDate)
     if (!svcDate) continue
     const collected = n(svc.collected)

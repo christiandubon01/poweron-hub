@@ -25,6 +25,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useAuthStore } from '@/store/authStore'
 import { verifyPasscode, setPasscode } from '@/lib/auth/passcode'
 import { getBackupData, saveBackupData, saveBackupDataAndSync, exportBackup, importBackupFromFile, isSupabaseConfigured, forceSyncToCloud, num, fmt, fmtK, pct, getProjectFinancials, getSnapshots, createSnapshot, restoreSnapshot, getPhaseWeights, buildEqualPhaseWeights, type BackupSettings, type BackupData, type DataSnapshot } from '@/services/backupDataService'
+import { getSettingsDataFieldNames, stampSettingsFields } from '@/services/settingsScopeMerge'
 import { buildCostSourceSummary } from '@/utils/costSourceHelper'
 import { getLocalOwnerProfile, saveLocalOwnerProfile, saveOwnerProfile, type CityLicense } from '@/services/ownerProfileService'
 import { pushState } from '@/services/undoRedoService'
@@ -1452,10 +1453,13 @@ export default function V15rSettingsPanel() {
   const [openOverheadCategory, setOpenOverheadCategory] = useState<'essential' | 'extra' | 'loans' | 'vehicle'>('essential')
   const [overheadEntryModes, setOverheadEntryModes] = useState<Record<string, 'monthly' | 'yearly'>>({})
 
-const persist = useCallback((mutatedData?: BackupData) => {
+const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: readonly string[] = []) => {
   const data = mutatedData || getBackupData()
   if (data) {
     if (!mutatedData) pushState(data)
+    if (changedSettingsFields.length > 0) {
+      stampSettingsFields(data.settings, changedSettingsFields)
+    }
     data._lastSavedAt = new Date().toISOString()
     saveBackupDataAndSync(data, 'settings')
     forceUpdate()
@@ -1610,6 +1614,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
     const data = getBackupData()
     if (data) {
       pushState(data)
+      const resetFields = getSettingsDataFieldNames(data.settings)
       data.settings = {
         company: 'My Company',
         license: '',
@@ -1632,7 +1637,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
         overhead: { essential: [], extra: [], loans: [], vehicle: [] },
         gcalUrl: '',
       } as any
-      persist(data)
+      persist(data, [...new Set([...resetFields, ...getSettingsDataFieldNames(data.settings)])])
       alert('Settings reset ✓')
     }
   }, [persist])
@@ -1642,7 +1647,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
     if (data) {
       pushState(data)
       data.settings.gcalUrl = gcalUrlDraft
-      persist(data)
+      persist(data, ['gcalUrl'])
     }
   }, [gcalUrlDraft, persist])
 
@@ -1685,7 +1690,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
       pushState(data)
       const newTheme = currentTheme === 'dark' ? 'light' : 'dark'
       data.settings.theme = newTheme
-      saveBackupData(data)
+      persist(data, ['theme'])
       // Apply theme class to document root for Tailwind dark: utilities
       const root = document.documentElement
       if (newTheme === 'dark') {
@@ -1706,7 +1711,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
       window.dispatchEvent(new Event('storage'))
       forceUpdate()
     }
-  }, [currentTheme, forceUpdate])
+  }, [currentTheme, persist])
 
   // Logo upload handlers
   const handleLogoUpload = useCallback((type: 'dark' | 'light', file: File) => {
@@ -1721,12 +1726,11 @@ const persist = useCallback((mutatedData?: BackupData) => {
         } else {
           data.settings.logoLight = base64
         }
-        saveBackupData(data)
-        forceUpdate()
+        persist(data, [type === 'dark' ? 'logoDark' : 'logoLight'])
       }
     }
     reader.readAsDataURL(file)
-  }, [forceUpdate])
+  }, [persist])
 
   const hasWideExpandedPanel =
     (isAdminOwner && showAdminTools) ||
@@ -2212,7 +2216,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     if (data) {
                       pushState(data)
                       data.settings.company = e.target.value
-                      persist(data)
+                      persist(data, ['company'])
                     }
                   }}
                   className="w-full px-3 py-2 border rounded text-sm focus:border-blue-500 focus:outline-none theme-input"
@@ -2229,7 +2233,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     if (data) {
                       pushState(data)
                       data.settings.ownerName = e.target.value
-                      persist(data)
+                      persist(data, ['ownerName'])
                     }
                   }}
                   className="w-full px-3 py-2 border rounded text-sm focus:border-blue-500 focus:outline-none theme-input"
@@ -2245,7 +2249,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     if (data) {
                       pushState(data)
                       data.settings.license = e.target.value
-                      persist(data)
+                      persist(data, ['license'])
                     }
                   }}
                   className="w-full px-3 py-2 border rounded text-sm focus:border-blue-500 focus:outline-none theme-input"
@@ -2279,7 +2283,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                         // absent value) so the tombstone-safe sync preserves the
                         // cleared state; 0 is stored as a real 0. No literal fallback.
                         data.settings.billRate = parsed === undefined ? null : parsed
-                        persist(data)
+                        persist(data, ['billRate'])
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -2300,7 +2304,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                         const parsed = parseSettingInput(e.target.value)
                         // COST-1.5B: empty/non-numeric → explicit null; 0 kept as 0.
                         data.settings.mileRate = parsed === undefined ? null : parsed
-                        persist(data)
+                        persist(data, ['mileRate'])
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -2320,7 +2324,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                         const parsed = parseSettingInput(e.target.value)
                         // COST-1.5B: empty/non-numeric → explicit null; 0 kept as 0.
                         data.settings.markup = parsed === undefined ? null : parsed
-                        persist(data)
+                        persist(data, ['markup'])
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -2342,7 +2346,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                         // COST-1.5B: a real 0% tax must survive — empty/non-numeric →
                         // explicit null, a typed 0 is stored as 0 (never coerced to 8.75).
                         data.settings.tax = parsed === undefined ? null : parsed
-                        persist(data)
+                        persist(data, ['tax'])
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -2362,7 +2366,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                         const parsed = parseSettingInput(e.target.value)
                         // COST-1.5B: empty/non-numeric → explicit null; 0 kept as 0.
                         data.settings.wasteDefault = parsed === undefined ? null : parsed
-                        persist(data)
+                        persist(data, ['wasteDefault'])
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -2384,7 +2388,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     const options = Array.from(e.target.selectedOptions).map((o) => o.value)
                     pushState(data)
                     data.settings.defaultPricingCrewIds = options
-                    persist(data)
+                    persist(data, ['defaultPricingCrewIds'])
                   }}
                   className="w-full px-3 py-2 border rounded text-sm theme-input min-h-[80px]"
                 >
@@ -2464,7 +2468,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                       if (data) {
                         pushState(data)
                         data.settings.dayTarget = parseFloat(e.target.value) || 361
-                        persist(data)
+                        persist(data, ['dayTarget'])
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -2480,7 +2484,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                       if (data) {
                         pushState(data)
                         data.settings.billableHrsYear = parseFloat(e.target.value) || 936
-                        persist(data)
+                        persist(data, ['billableHrsYear'])
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -2497,7 +2501,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                       if (data) {
                         pushState(data)
                         data.settings.amBlock = parseFloat(e.target.value) || 420
-                        persist(data)
+                        persist(data, ['amBlock'])
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -2513,7 +2517,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                       if (data) {
                         pushState(data)
                         data.settings.pmBlock = parseFloat(e.target.value) || 260
-                        persist(data)
+                        persist(data, ['pmBlock'])
                       }
                     }}
                     className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -2529,7 +2533,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     if (data) {
                       pushState(data)
                       data.settings.salaryTarget = parseFloat(e.target.value) || 12000
-                      persist(data)
+                      persist(data, ['salaryTarget'])
                     }
                   }}
                   className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -2546,7 +2550,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     if (data) {
                       pushState(data)
                       data.settings.annualTarget = parseFloat(e.target.value) || 120000
-                      persist(data)
+                      persist(data, ['annualTarget'])
                     }
                   }}
                   className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -2649,8 +2653,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                           if (data) {
                             pushState(data)
                             data.settings.personalIncomeGoal = parseFloat(e.target.value) || 0
-                            saveBackupData(data)
-                            forceUpdate()
+                            persist(data, ['personalIncomeGoal'])
                           }
                         }}
                         className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -2667,8 +2670,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                           if (data) {
                             pushState(data)
                             data.settings.overheadPct = parseFloat(e.target.value) || 30
-                            saveBackupData(data)
-                            forceUpdate()
+                            persist(data, ['overheadPct'])
                           }
                         }}
                         className="w-full px-3 py-2 border rounded text-sm theme-input"
@@ -2782,7 +2784,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                           if (!data.settings.overhead) data.settings.overhead = { essential: [], extra: [], loans: [], vehicle: [] }
                           if (!data.settings.overhead[key]) data.settings.overhead[key] = []
                           data.settings.overhead[key].push({ id: Date.now().toString(), name, monthly })
-                          persist(data)
+                          persist(data, ['overhead'])
                         }
                       }}
                       className="text-xs px-3 py-1.5 border border-cyan-400/25 bg-cyan-400/10 text-cyan-100 rounded-lg hover:bg-cyan-400/15 font-semibold transition-colors"
@@ -2834,7 +2836,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                                 const idx = data.settings.overhead[key].findIndex((x: any) => x.id === item.id)
                                 if (idx >= 0) {
                                   data.settings.overhead[key][idx].monthly = parseFloat(e.target.value) || 0
-                                  persist(data)
+                                  persist(data, ['overhead'])
                                 }
                               }
                             }}
@@ -2856,7 +2858,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                                 const idx = data.settings.overhead[key].findIndex((x: any) => x.id === item.id)
                                 if (idx >= 0) {
                                   data.settings.overhead[key][idx].monthly = (parseFloat(e.target.value) || 0) / 12
-                                  persist(data)
+                                  persist(data, ['overhead'])
                                 }
                               }
                             }}
@@ -2872,7 +2874,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                               if (data && data.settings.overhead && data.settings.overhead[key]) {
                                 pushState(data)
                                 data.settings.overhead[key] = data.settings.overhead[key].filter((x: any) => x.id !== item.id)
-                                persist(data)
+                                persist(data, ['overhead'])
                               }
                             }}
                             className="h-7 w-7 rounded-lg border border-red-400/15 bg-red-500/10 text-xs text-red-300 hover:bg-red-500/15 hover:text-red-200 transition-colors"
@@ -2935,7 +2937,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                             const keys = Object.keys(merged)
                             const prev = Array.isArray(data.settings.mtoPhases) ? data.settings.mtoPhases : []
                             data.settings.mtoPhases = [...prev.filter(k => keys.includes(k)), ...keys.filter(k => !prev.includes(k))]
-                            persist(data)
+                            persist(data, ['phaseWeights', 'mtoPhases'])
                           }}
                           className="w-full accent-cyan-400"
                         />
@@ -2959,7 +2961,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                               }
                               data.settings.mtoPhases = next
                             }
-                            persist(data)
+                            persist(data, ['phaseWeights', 'mtoPhases'])
                           }}
                           className="h-7 w-7 rounded-lg border border-red-400/15 bg-red-500/10 text-xs text-red-300 hover:bg-red-500/15 hover:text-red-200 transition-colors"
                         >
@@ -2987,7 +2989,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                         data.settings.phaseWeights[ph] = baseWeight + (idx < remainder ? 1 : 0)
                       })
                       data.settings.mtoPhases = [...keys]
-                      persist(data)
+                      persist(data, ['phaseWeights', 'mtoPhases'])
                     }}
                     className="mt-3 w-full rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/15 transition-colors"
                   >
@@ -3028,7 +3030,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                               }
                               data.settings.mtoPhases = next
                             }
-                            persist(data)
+                            persist(data, ['phaseWeights', 'mtoPhases'])
                           }}
                           className="h-7 w-7 rounded-lg border border-red-400/15 bg-red-500/10 text-xs text-red-300 hover:bg-red-500/15 hover:text-red-200 transition-colors"
                         >
@@ -3058,7 +3060,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                       } else {
                         pw[trimmed] = 0
                       }
-                      persist(data)
+                      persist(data, ['phaseWeights', 'mtoPhases'])
                     }}
                     className="mt-3 w-full rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/15 transition-colors"
                   >
@@ -3242,8 +3244,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                       if (data) {
                         pushState(data)
                         data.settings.phaseWeights[phase] = parseInt(e.target.value) || 0
-                        saveBackupData(data)
-                        forceUpdate()
+                        persist(data, ['phaseWeights'])
                       }
                     }}
                     className="flex-1"
@@ -3255,8 +3256,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                       if (data) {
                         pushState(data)
                         delete data.settings.phaseWeights[phase]
-                        saveBackupData(data)
-                        forceUpdate()
+                        persist(data, ['phaseWeights'])
                       }
                     }}
                     className="text-red-400 hover:text-red-300"
@@ -3279,8 +3279,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     Object.entries(data.settings.phaseWeights).forEach(([ph], idx) => {
                       data.settings.phaseWeights[ph] = baseWeight + (idx < remainder ? 1 : 0)
                     })
-                    saveBackupData(data)
-                    forceUpdate()
+                    persist(data, ['phaseWeights'])
                   }
                 }}
                 className="w-full px-3 py-2 bg-blue-600/30 hover:bg-blue-600/40 text-blue-300 rounded text-xs font-medium border border-blue-500/30"
@@ -3386,7 +3385,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                       if (data) {
                         pushState(data)
                         data.settings.mtoPhases = data.settings.mtoPhases.filter((_: string, idx: number) => idx !== i)
-                        persist(data)
+                        persist(data, ['mtoPhases'])
                       }
                     }}
                     className="text-red-400 hover:text-red-300"
@@ -3404,7 +3403,7 @@ const persist = useCallback((mutatedData?: BackupData) => {
                     pushState(data)
                     if (!data.settings.mtoPhases) data.settings.mtoPhases = []
                     data.settings.mtoPhases.push(name)
-                    persist(data)
+                    persist(data, ['mtoPhases'])
                   }
                 }}
                 className="w-full text-xs px-2 py-2 bg-blue-600/30 text-blue-300 rounded hover:bg-blue-600/40 border border-blue-500/30"

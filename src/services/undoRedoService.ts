@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { getBackupData, saveBackupData, type BackupData } from '@/services/backupDataService'
+import { prepareSettingsForExplicitReplacement } from '@/services/settingsScopeMerge'
 
 interface UndoRedoState {
   undoStack: string[]
@@ -65,10 +66,11 @@ export function undo(): boolean {
     if (!previous) return false
 
     const restored = JSON.parse(previous) as BackupData
+    restored.settings = prepareSettingsForExplicitReplacement(current?.settings, restored.settings)
     saveBackupData(restored)
     state.undoStack.pop()
     if (currentJson) state.redoStack.push(currentJson)
-    state.lastPushedState = previous
+    state.lastPushedState = JSON.stringify(restored)
 
     return true
   } catch (err) {
@@ -88,10 +90,11 @@ export function redo(): boolean {
     if (!next) return false
 
     const restored = JSON.parse(next) as BackupData
+    restored.settings = prepareSettingsForExplicitReplacement(current?.settings, restored.settings)
     saveBackupData(restored)
     state.redoStack.pop()
     if (currentJson) state.undoStack.push(currentJson)
-    state.lastPushedState = next
+    state.lastPushedState = JSON.stringify(restored)
 
     return true
   } catch (err) {

@@ -46,12 +46,10 @@ import {
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authedJsonHeaders } from '@/services/authedFetch'
-import { getBackupData, saveBackupData, getKPIs, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, saveLiveDataVerified, getLastSyncMeta, createEmptyBackup, isActiveProject, resolveProjectBucket, type BackupData } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, getKPIs, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, saveLiveDataVerified, getLastSyncMeta, createEmptyBackup, isActiveProject, resolveProjectBucket, fmtK, type BackupData } from '@/services/backupDataService'
 // BUG 1 FIX — Realtime sync + stale-check service
 import { initRealtimeSync } from '@/services/realtimeSyncService'
 import { startLiveCloudRefresh } from '@/services/liveCloudRefreshService'
-// BUG 2 FIX — Active-only pipeline formula
-import { calcActivePipeline } from '@/utils/pipelineCalc'
 import { useDemoStore } from '@/store/demoStore'
 import templates from '@/config/templates/index'
 import { getDemoKPIs, DEMO_SERVICE_NET, DEMO_COMPANY } from '@/services/demoDataService'
@@ -861,16 +859,8 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const lastSaved = backupData?._lastSavedAt || ''
   const _rawKpis = kpis || { pipeline: 0, paid: 0, billed: 0, exposure: 0, svcUnbilled: 0, openRfis: 0, totalHours: 0, activeProjects: 0 }
 
-  // BUG 2 FIX — Override pipeline with active-only formula (+ open service balances).
-  // getKPIs() in backupDataService includes 'coming' projects and all service quoted values.
-  // calcActivePipeline uses status === 'active' ONLY + uncollected service call balances.
-  const _correctedPipeline = (hasHydrated && isDemoMode)
-    ? _rawKpis.pipeline  // keep demo as-is
-    : calcActivePipeline(backupData?.projects || [], backupData?.serviceLogs || [])
-  const _correctedRawKpis = { ..._rawKpis, pipeline: _correctedPipeline }
-
   // Demo Mode: swap KPIs and company name for display only — real data unchanged
-  const safeKpis = (hasHydrated && isDemoMode) ? getDemoKPIs() : _correctedRawKpis
+  const safeKpis = (hasHydrated && isDemoMode) ? getDemoKPIs() : _rawKpis
 
   // Calculate percentage for revenue target progress
   const annualTarget = (isDemoMode ? 480000 : backupData?.settings?.annualTarget) || 120000
@@ -1748,12 +1738,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                     {/* PIPELINE */}
                     <div className="flex flex-col items-center min-w-[80px]" title={isCompact ? 'Pipeline' : undefined}>
                       {isCompact ? (
-                        <span className="text-sm font-bold text-green-400">{hideFinances ? '••••' : fmtHeader(safeKpis.pipeline)}</span>
+                        <span className="text-sm font-bold text-green-400">{hideFinances ? '••••' : fmtK(safeKpis.pipeline)}</span>
                       ) : (
                         <>
                           <span className="text-[8px] font-bold uppercase text-gray-500">Pipeline</span>
                           <span className="text-base font-bold text-green-400">
-                            {hideFinances ? '••••' : fmtHeader(safeKpis.pipeline)}
+                            {hideFinances ? '••••' : fmtK(safeKpis.pipeline)}
                           </span>
                         </>
                       )}

@@ -14,8 +14,9 @@ function BarChart3Icon({ size = 24, className = '' }: { size?: number; className
 function BrainIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M12 18v-5"/></svg>
 }
-import { getBackupData, getProjectFinancials, getProjectCOConfirmedTotal, getProjectCOApprovedUnpaid, health, num, fmtK, isActiveProject, isActiveServiceCall, type BackupData } from '@/services/backupDataService'
-import { getLiveChangeOrders } from '@/services/projectScopeMerge'
+import { getBackupData, getProjectFinancials, getProjectCOConfirmedTotal, getDashboardCashFlowSummary, health, num, fmtK, isActiveProject, isActiveServiceCall, type BackupData } from '@/services/backupDataService'
+import { getLiveChangeOrders, isDeadProjectLog } from '@/services/projectScopeMerge'
+import { calculateWeeklyFinancialsForRange, resolveWeeklyDataForRead } from '@/services/weeklyFinancialPolicy'
 // BUG 2 FIX — Active-only pipeline formula (replaces calcPipeline which included 'coming')
 import { calcActivePipeline } from '@/utils/pipelineCalc'
 // BUG 3 FIX — Canonical project financials
@@ -137,26 +138,28 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
         // BUG 2 FIX — Pipeline = active projects ONLY + uncollected service balances
         // (removed 'coming' from pipeline per owner spec)
         const activeContractTotal = activeProjects.reduce((s: number, p: any) => s + num(p.contract), 0)
-        const totalARExposure = activeProjects.reduce((s: number, p: any) => s + Math.max(0, num(p.contract) - num(p.paid)), 0)
-        const totalCollected = activeProjects.reduce((s: number, p: any) => s + num(p.paid), 0)
+        const totalARExposure = activeProjects.reduce((s: number, p: any) => s + Math.max(0, num(p.contract) - getProjectFinancials(p, backup).paid), 0)
+        const totalCollected = activeProjects.reduce((s: number, p: any) => s + getProjectFinancials(p, backup).paid, 0)
         const totalBilled = activeProjects.reduce((s: number, p: any) => s + num(p.billed), 0)
-        const totalUnbilledInvoiced = activeProjects.reduce((s: number, p: any) => s + Math.max(0, num(p.billed) - num(p.paid)), 0)
+        const totalUnbilledInvoiced = activeProjects.reduce((s: number, p: any) => s + Math.max(0, num(p.billed) - getProjectFinancials(p, backup).paid), 0)
         // BUG 2 FIX — use calcActivePipeline (active ONLY + open service balances)
         const pipelineTotal = calcActivePipeline(projects.filter(isActiveProject), activeServiceLogs)
 
         // BUG 3 FIX — Canonical project financials using calculatePortfolioFinancials
         const mileRate = num(backup?.settings?.mileRate) || 0.66
-        const portfolioFin = calculatePortfolioFinancials(activeProjects, backup.logs || [], mileRate)
+        const liveProjectLogs = (backup.logs || []).filter((log: any) => !isDeadProjectLog(log))
+        const portfolioFin = calculatePortfolioFinancials(activeProjects, liveProjectLogs, mileRate)
 
         // Per-project detail for active projects (include canonical balance)
         const activeProjectDetails = activeProjects.map(p => {
-          const fin = calculateProjectFinancials(p, backup.logs || [], mileRate, Number(backup?.settings?.opCost) || 55)
+          const canonicalPaid = getProjectFinancials(p, backup).paid
+          const fin = calculateProjectFinancials(p, liveProjectLogs, mileRate, Number(backup?.settings?.opCost) || 55)
           return {
             name: p.name,
             contract: num(p.contract),
-            paid: num(p.paid),
+            paid: canonicalPaid,
             billed: num(p.billed),
-            arExposure: Math.max(0, num(p.contract) - num(p.paid)),
+            arExposure: Math.max(0, num(p.contract) - canonicalPaid),
             // BUG 3 — canonical fields
             remaining_balance: fin.remaining_balance,
             total_costs: fin.total_costs,
@@ -186,7 +189,7 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
           serviceLogRevenue: svcTotalCollected,
           activeProjectDetails,
           recentServiceLogs: recentSvcLogs,
-          weeklyData: (backup.weeklyData || []).slice(-4),
+          weeklyData: resolveWeeklyDataForRead(backup).slice(-4),
           // BUG 3 — portfolio-level canonical financials
           portfolioRemainingBalance: portfolioFin.remaining_balance,
           portfolioTotalCosts: portfolioFin.total_costs,
@@ -543,7 +546,7 @@ function ChartFamily({
 // Recharts bar chart showing hours logged per team member
 // this week, this month, and rolling 12 weeks. Uses backup.logs[].emp + .hrs.
 function TeamHoursChart({ backup }: { backup: BackupData }) {
-  const logs = backup.logs || []
+  const logs = (backup.logs || []).filter((log: any) => !isDeadProjectLog(log))
   const now = new Date(); now.setHours(0,0,0,0)
   const todayStr = now.toISOString().split('T')[0]
 
@@ -753,25 +756,9 @@ function V15rDashboardInner() {
     const fmtIso = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
-    const allLogs = (backup.logs || []) as any[]
+    const allLogs = (backup.logs || []).filter((log: any) => !isDeadProjectLog(log)) as any[]
     const allSvcLogs = (backup.serviceLogs || []).filter(isActiveServiceCall) as any[]
     const allProjects = (backup.projects || []).filter(isActiveProject) as any[]
-
-    // Weekly income (unchanged from prior fix)
-    const svcByWeek: Record<number, number> = {}
-    const projByWeek: Record<number, number> = {}
-    for (const l of allLogs) {
-      const ws = getWeekStart(l.date || l.logDate)
-      if (!ws) continue
-      const k = ws.getTime()
-      projByWeek[k] = (projByWeek[k] || 0) + num(l.paymentsCollected || l.collected || 0)
-    }
-    for (const sl of allSvcLogs) {
-      const ws = getWeekStart(sl.date)
-      if (!ws) continue
-      const k = ws.getTime()
-      svcByWeek[k] = (svcByWeek[k] || 0) + num(sl.collected)
-    }
 
     // Precompute per-project log payments sorted by date (for historical collected sums)
     const projectPayments = new Map<string, Array<{ date: Date; amount: number }>>()
@@ -898,8 +885,6 @@ function V15rDashboardInner() {
       const wEnd = new Date(wStart)
       wEnd.setDate(wStart.getDate() + 6)
       wEnd.setHours(23, 59, 59, 999)
-      const k = wStart.getTime()
-
       // Per-project exposure as of week end (DASHBOARD-CFOT-MATH-FIX-JUN19-2026-1).
       //   projectsTotalExp = Projects Total Exposure = gross contract + confirmed change
       //                      orders, placed by their date. Started projects. No payment
@@ -949,8 +934,9 @@ function V15rDashboardInner() {
       const serviceExposure = svcUncollectedInvoiced + svcUncollectedUninvoiced // Service Calls Exposure (service only)
       const pendingInv = svcUncollectedInvoiced
 
-      const svc = svcByWeek[k] || 0
-      const proj = projByWeek[k] || 0
+      const liveWeekly = calculateWeeklyFinancialsForRange(backup, wStart, new Date(wEnd.getTime() + 1))
+      const svc = liveWeekly.svc
+      const proj = liveWeekly.proj
       accum += svc + proj
       weeks.push({
         wk: 40 - i,
@@ -1057,32 +1043,11 @@ function V15rDashboardInner() {
 
   // ── CFOT Summary Boxes — computed directly from backup data ──
   const serviceLogs = (backup.serviceLogs || []).filter(isActiveServiceCall)
-  const projectLogs = backup.logs || []
-  const cfotSummary = (() => {
-    const activeProjects = projects.filter(p => p.status === 'active')
-    // Projects Total Exposure (gross): original contract + confirmed change orders
-    // {Approved, Completed, Invoiced, Paid}. PROJECTS ONLY. No payment subtraction.
-    // DASHBOARD-CFOT-MATH-FIX-JUN19-2026-1
-    const exposure = activeProjects.reduce((s, p) => s + num(p.contract) + getProjectCOConfirmedTotal(p), 0)
-    // Active Exposure: base still owed (contract − canonical collected) + approved-but-unpaid
-    // change orders {Approved, Invoiced, Completed} (Paid excluded). ACTIVE projects only.
-    // Uses getProjectFinancials().paid (logs + manualPaidAdjustment) — the source of truth —
-    // NOT the deprecated/stale p.paid scalar. (DASHBOARD-CFOT-MATH-FIX2-JUN19-2026-1)
-    const activeExposure = activeProjects.reduce((s, p) => s + Math.max(0, num(p.contract) - getProjectFinancials(p, backup).paid) + getProjectCOApprovedUnpaid(p), 0)
-    // Service Calls Exposure: uncollected service-call balances. SERVICE CALLS ONLY.
-    const serviceExposure = serviceLogs.reduce((s: number, l: any) => s + Math.max(0, num(l.quoted) - num(l.collected)), 0)
-    // Retained for the NEXUS / PULSE analyzers (not rendered as CFOT cards).
-    const unbilled = activeProjects.reduce((s, p) => s + Math.max(0, num(p.contract) - num(p.billed)), 0)
-    const pending = serviceExposure
-    const svcTotal = serviceLogs.reduce((s: number, l: any) => s + num(l.collected), 0)
-    const projTotal = projects.reduce((s: number, p: any) => s + num(p.paid), 0)
-    const accumTotal = svcTotal + projTotal
-    return { exposure, activeExposure, serviceExposure, unbilled, pending, svcTotal, projTotal, accumTotal }
-  })()
+  const cfotSummary = getDashboardCashFlowSummary(backup)
 
   // ── OPP: Active projects by contract value — skip unnamed/ghost projects ──
   const oppProjects = projects
-    .filter(p => (p.status === 'active' || p.status === 'coming') && p.name && p.name.trim())
+    .filter(p => p.status === 'active' && p.name && p.name.trim())
     .sort((a, b) => (b.contract || 0) - (a.contract || 0))
     .slice(0, 8)
 
@@ -1140,7 +1105,7 @@ function V15rDashboardInner() {
     .slice(0, 10)
   const rcaDropdownProjects = (backup.projects || []).filter((p: any) => isActiveProject(p) && p.name && p.name.trim())
   const rcaFilteredProjects = (() => {
-    const allLogs = backup.logs || []
+    const allLogs = (backup.logs || []).filter((log: any) => !isDeadProjectLog(log))
     const inRange = (d: string) => {
       if (!d) return false
       if (rcaDateStart && d < rcaDateStart) return false

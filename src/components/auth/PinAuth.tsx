@@ -41,9 +41,11 @@ interface PinAuthProps {
    * instead of dispatching the window event.
    */
   onVerify?: (pin: string) => void | Promise<void>
+  /** Auth-store failure from PIN verification or post-PIN workspace hydration. */
+  errorMessage?: string | null
 }
 
-export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
+export function PinAuth({ onFallbackToMagicLink, onVerify, errorMessage }: PinAuthProps) {
   const hasPinStored = Boolean(getStoredHash())
   const [mode, setMode] = useState<FlowMode>((hasPinStored || onVerify) ? 'verify' : 'setup-create')
 
@@ -57,6 +59,13 @@ export function PinAuth({ onFallbackToMagicLink, onVerify }: PinAuthProps) {
   const [attempts, setAttempts] = useState(0)
   const [lockoutEnd, setLockoutEnd] = useState<number | null>(null)
   const [timeLeft, setTimeLeft] = useState(0)
+
+  useEffect(() => {
+    if (!errorMessage) return
+    setError(errorMessage)
+    setDigits(Array(PIN_LENGTH).fill(''))
+    setIsSubmitting(false)
+  }, [errorMessage])
 
   useEffect(() => {
     if (!lockoutEnd) return
