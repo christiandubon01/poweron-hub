@@ -79,23 +79,6 @@ export const DESKTOP_ELECTRICAL_PANEL_KINDS = [
 ] as const satisfies readonly ElectricalSymbolKind[]
 
 const DESKTOP_ELECTRICAL_PANEL_KIND_SET = new Set<ElectricalSymbolKind>(DESKTOP_ELECTRICAL_PANEL_KINDS)
-const LEGACY_NON_DESKTOP_HIDDEN_KIND_SET = new Set<ElectricalSymbolKind>([
-  'can-light-2',
-  'canless-light-2',
-  'canless-light-4',
-  'canless-light-6',
-  'canless-light-10',
-  'electrical-gfci-wp',
-  'electrical-single-receptacle',
-  'electrical-half-hot-receptacle',
-  'electrical-sub-panel',
-  'electrical-switchboard',
-  'electrical-switchgear',
-  'electrical-ats',
-  'electrical-transformer',
-  'electrical-led-strip',
-  'electrical-low-voltage-transformer',
-])
 
 export type DesktopElectricalToolCategory = {
   id:
@@ -192,8 +175,4 @@ export function isDesktopElectricalCategoryChildKind(kind: unknown): kind is Ele
 
 export function shouldShowElectricalSymbolInDesktopMainGrid(kind: ElectricalSymbolKind) {
   return !isDesktopElectricalCategoryChildKind(kind) && kind !== 'electrical-recessed-light'
-}
-
-export function shouldShowElectricalSymbolInLegacyNonDesktopToolbar(kind: ElectricalSymbolKind) {
-  return !LEGACY_NON_DESKTOP_HIDDEN_KIND_SET.has(kind)
 }

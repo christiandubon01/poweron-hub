@@ -18,7 +18,7 @@ function drawBucketSource() {
 function desktopElectricalToolsSource() {
   const drawSource = drawBucketSource()
   const start = drawSource.indexOf('data-testid="desktop-electrical-tools-menu"')
-  const end = drawSource.indexOf('{!useDesktopThreePaneLayout && (', start)
+  const end = drawSource.indexOf('paletteId="electrical-symbols"', start)
   expect(start).toBeGreaterThan(-1)
   expect(end).toBeGreaterThan(start)
   return drawSource.slice(start, end)
@@ -126,12 +126,13 @@ describe('desktop Label Options disclosure', () => {
     expect(menuSource).toContain('Symbols Size ({Math.round(symbolLabelScale * 100)}%)')
   })
 
-  it('preserves non-desktop standalone label controls', () => {
-    const nonDesktopSource = nonDesktopLabelControlsSource()
+  it('moves non-desktop standalone label controls into the Electrical Tools floating palette', () => {
+    const drawSource = drawBucketSource()
+    const menuSource = desktopElectricalToolsSource()
 
-    expect(nonDesktopSource).toContain('{!useDesktopThreePaneLayout && (')
-    expect(nonDesktopSource).toContain("electricalSymbolLabelsVisible ? 'Hide Labels' : 'Show Labels'")
-    expect(nonDesktopSource).toContain('Symbols Size ({Math.round(symbolLabelScale * 100)}%)')
+    expect(drawSource).not.toContain('{!useDesktopThreePaneLayout && (')
+    expect(menuSource).toContain("electricalSymbolLabelsVisible ? 'Hide Labels' : 'Show Labels'")
+    expect(menuSource).toContain('Symbols Size ({Math.round(symbolLabelScale * 100)}%)')
   })
 
   it('does not add outside-click dismissal', () => {

@@ -18,7 +18,6 @@ import {
   isDesktopElectricalCategoryChildKind,
   isDesktopReceptacleKind,
   shouldShowElectricalSymbolInDesktopMainGrid,
-  shouldShowElectricalSymbolInLegacyNonDesktopToolbar,
 } from '../desktopElectricalToolCategories'
 import {
   inferRouteBuilderDefaultChannel,
@@ -169,13 +168,11 @@ describe('desktop receptacle variants', () => {
     }
   })
 
-  it('keeps existing receptacles legacy-visible and hides only new desktop-only receptacles', () => {
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-receptacle')).toBe(true)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-gfci')).toBe(true)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-receptacle-240v')).toBe(true)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-gfci-wp')).toBe(false)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-single-receptacle')).toBe(false)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-half-hot-receptacle')).toBe(false)
+  it('places all receptacle variants in the Electrical Symbols floating palette only', () => {
+    for (const kind of RECEPTACLE_KINDS) {
+      expect(isDesktopElectricalCategoryChildKind(kind)).toBe(true)
+      expect(shouldShowElectricalSymbolInDesktopMainGrid(kind)).toBe(false)
+    }
   })
 
   it('classifies all receptacles as downstream load endpoints only', () => {

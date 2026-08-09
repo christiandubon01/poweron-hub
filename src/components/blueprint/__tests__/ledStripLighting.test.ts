@@ -26,7 +26,6 @@ import {
   DESKTOP_LIGHTING_CATEGORY_ID,
   DESKTOP_LIGHTING_KINDS,
   shouldShowElectricalSymbolInDesktopMainGrid,
-  shouldShowElectricalSymbolInLegacyNonDesktopToolbar,
 } from '../desktopElectricalToolCategories'
 
 const viewerSource = readFileSync(
@@ -121,7 +120,7 @@ describe('LED Strip lighting symbol', () => {
     expect(markup).not.toContain('XFMR')
   })
 
-  it('is the fifth Lighting child, desktop-category-only, and hidden on legacy non-desktop', () => {
+  it('is the fifth Lighting child and desktop-category-only', () => {
     expect(DESKTOP_LIGHTING_KINDS).toEqual([
       'electrical-led-panel-2x2',
       'electrical-led-panel-2x4',
@@ -134,7 +133,6 @@ describe('LED Strip lighting symbol', () => {
     expect(DESKTOP_ELECTRICAL_TOOL_CATEGORIES[6]).toMatchObject({ id: DESKTOP_LIGHTING_CATEGORY_ID, label: 'Lighting' })
     expect(DESKTOP_ELECTRICAL_TOOL_CATEGORIES[7]).toMatchObject({ label: 'Electrical Panels' })
     expect(shouldShowElectricalSymbolInDesktopMainGrid('electrical-led-strip')).toBe(false)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-led-strip')).toBe(false)
   })
 
   it('uses the open multipoint path architecture without circuit, measurement, or wire identity', () => {

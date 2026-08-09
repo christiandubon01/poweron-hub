@@ -37,7 +37,6 @@ import {
   isDesktopRecessedLightKind,
   isDesktopSwitchKind,
   shouldShowElectricalSymbolInDesktopMainGrid,
-  shouldShowElectricalSymbolInLegacyNonDesktopToolbar,
 } from '../desktopElectricalToolCategories'
 import {
   inferRouteBuilderDefaultChannel,
@@ -426,52 +425,6 @@ describe('desktop recessed light registered variants', () => {
     ))
     expect(desktopStandalone).toEqual(expectedDesktopStandalone)
     expect(ELECTRICAL_SYMBOL_OPTIONS.map((option) => option.value)).toEqual(registryOrderBefore)
-
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('can-light-4')).toBe(true)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('can-light-6')).toBe(true)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-recessed-light')).toBe(true)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('can-light-2')).toBe(false)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('canless-light-2')).toBe(false)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('canless-light-4')).toBe(false)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('canless-light-6')).toBe(false)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('canless-light-10')).toBe(false)
-    for (const [kind] of CEILING_DEVICE_EXPECTATIONS) {
-      expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar(kind)).toBe(true)
-    }
-    for (const [kind] of LIGHTING_CONTROL_EXPECTATIONS) {
-      expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar(kind)).toBe(true)
-    }
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-receptacle')).toBe(true)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-gfci')).toBe(true)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-receptacle-240v')).toBe(true)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-gfci-wp')).toBe(false)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-single-receptacle')).toBe(false)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-half-hot-receptacle')).toBe(false)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-hdmi')).toBe(true)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-data')).toBe(true)
-    for (const [kind] of LIGHTING_EXPECTATIONS) {
-      expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar(kind)).toBe(kind !== 'electrical-led-strip' && kind !== 'electrical-low-voltage-transformer')
-    }
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-panel')).toBe(true)
-    for (const [kind, , , , , isLegacyVisible] of ELECTRICAL_PANEL_EXPECTATIONS) {
-      expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar(kind)).toBe(isLegacyVisible)
-    }
-    const legacyNonDesktopOrder = ELECTRICAL_SYMBOL_OPTIONS.filter((option) => shouldShowElectricalSymbolInLegacyNonDesktopToolbar(option.value)).map((option) => option.value)
-    const switchStart = legacyNonDesktopOrder.indexOf('electrical-switch')
-    expect(legacyNonDesktopOrder.slice(switchStart, switchStart + 4)).toEqual([
-      'electrical-switch',
-      'electrical-switch-3way',
-      'electrical-switch-4way',
-      'electrical-dimmer',
-    ])
-    const lowVoltageStart = legacyNonDesktopOrder.indexOf('electrical-hdmi')
-    expect(legacyNonDesktopOrder.slice(lowVoltageStart, lowVoltageStart + 2)).toEqual(['electrical-hdmi', 'electrical-data'])
-    expect(legacyNonDesktopOrder.filter((kind) => DESKTOP_LIGHTING_KINDS.includes(kind as any))).toEqual([
-      'electrical-pendant-light',
-      'electrical-sconce',
-      'electrical-led-panel-2x2',
-      'electrical-led-panel-2x4',
-    ])
   })
 
   it('preserves Low Voltage registry and animation isolation', () => {
