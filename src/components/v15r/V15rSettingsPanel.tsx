@@ -28,6 +28,9 @@ import { getBackupData, saveBackupData, saveBackupDataAndSync, exportBackup, imp
 import { buildCostSourceSummary } from '@/utils/costSourceHelper'
 import { getLocalOwnerProfile, saveLocalOwnerProfile, saveOwnerProfile, type CityLicense } from '@/services/ownerProfileService'
 import { pushState } from '@/services/undoRedoService'
+// COST-1.5B — Pricing Defaults inputs must accept empty (not set → null) and 0
+// without inventing a literal. Shared provided-ness + parse helpers.
+import { isRateProvided, parseSettingInput } from '@/features/service-quote/serviceRateSettings'
 import { extractFromPDF, mapToServiceLog, mapToProject, logImport, processBatch, type QBBatchItem, type QBExtractedData } from '@/services/quickbooksImportService'
 import { VoiceSettings } from '@/components/voice/VoiceSettings'
 import SnapshotPanel from '@/components/SnapshotPanel'
@@ -2264,12 +2267,18 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Default Customer Bill Rate ($/hr)</label>
                   <input
                     type="number"
-                    value={settings.billRate || 95}
-                    onChange={(e) => {
+                    key={`billRate-${isRateProvided(settings.billRate) ? settings.billRate : 'unset'}`}
+                    defaultValue={isRateProvided(settings.billRate) ? String(settings.billRate) : ''}
+                    placeholder="Not set"
+                    onBlur={(e) => {
                       const data = getBackupData()
                       if (data) {
                         pushState(data)
-                        data.settings.billRate = parseFloat(e.target.value) || 95
+                        const parsed = parseSettingInput(e.target.value)
+                        // COST-1.5B: empty/non-numeric → explicit null (present key,
+                        // absent value) so the tombstone-safe sync preserves the
+                        // cleared state; 0 is stored as a real 0. No literal fallback.
+                        data.settings.billRate = parsed === undefined ? null : parsed
                         persist(data)
                       }
                     }}
@@ -2281,12 +2290,16 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   <input
                     type="number"
                     step="0.01"
-                    value={settings.mileRate || 0.66}
-                    onChange={(e) => {
+                    key={`mileRate-${isRateProvided(settings.mileRate) ? settings.mileRate : 'unset'}`}
+                    defaultValue={isRateProvided(settings.mileRate) ? String(settings.mileRate) : ''}
+                    placeholder="Not set"
+                    onBlur={(e) => {
                       const data = getBackupData()
                       if (data) {
                         pushState(data)
-                        data.settings.mileRate = parseFloat(e.target.value) || 0.66
+                        const parsed = parseSettingInput(e.target.value)
+                        // COST-1.5B: empty/non-numeric → explicit null; 0 kept as 0.
+                        data.settings.mileRate = parsed === undefined ? null : parsed
                         persist(data)
                       }
                     }}
@@ -2297,12 +2310,16 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Markup %</label>
                   <input
                     type="number"
-                    value={settings.markup || 50}
-                    onChange={(e) => {
+                    key={`markup-${isRateProvided(settings.markup) ? settings.markup : 'unset'}`}
+                    defaultValue={isRateProvided(settings.markup) ? String(settings.markup) : ''}
+                    placeholder="Not set"
+                    onBlur={(e) => {
                       const data = getBackupData()
                       if (data) {
                         pushState(data)
-                        data.settings.markup = parseFloat(e.target.value) || 50
+                        const parsed = parseSettingInput(e.target.value)
+                        // COST-1.5B: empty/non-numeric → explicit null; 0 kept as 0.
+                        data.settings.markup = parsed === undefined ? null : parsed
                         persist(data)
                       }
                     }}
@@ -2314,12 +2331,17 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   <input
                     type="number"
                     step="0.01"
-                    value={settings.tax || 8.75}
-                    onChange={(e) => {
+                    key={`tax-${isRateProvided(settings.tax) ? settings.tax : 'unset'}`}
+                    defaultValue={isRateProvided(settings.tax) ? String(settings.tax) : ''}
+                    placeholder="Not set"
+                    onBlur={(e) => {
                       const data = getBackupData()
                       if (data) {
                         pushState(data)
-                        data.settings.tax = parseFloat(e.target.value) || 8.75
+                        const parsed = parseSettingInput(e.target.value)
+                        // COST-1.5B: a real 0% tax must survive — empty/non-numeric →
+                        // explicit null, a typed 0 is stored as 0 (never coerced to 8.75).
+                        data.settings.tax = parsed === undefined ? null : parsed
                         persist(data)
                       }
                     }}
@@ -2330,12 +2352,16 @@ const persist = useCallback((mutatedData?: BackupData) => {
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Waste %</label>
                   <input
                     type="number"
-                    value={settings.wasteDefault || 10}
-                    onChange={(e) => {
+                    key={`wasteDefault-${isRateProvided(settings.wasteDefault) ? settings.wasteDefault : 'unset'}`}
+                    defaultValue={isRateProvided(settings.wasteDefault) ? String(settings.wasteDefault) : ''}
+                    placeholder="Not set"
+                    onBlur={(e) => {
                       const data = getBackupData()
                       if (data) {
                         pushState(data)
-                        data.settings.wasteDefault = parseFloat(e.target.value) || 10
+                        const parsed = parseSettingInput(e.target.value)
+                        // COST-1.5B: empty/non-numeric → explicit null; 0 kept as 0.
+                        data.settings.wasteDefault = parsed === undefined ? null : parsed
                         persist(data)
                       }
                     }}

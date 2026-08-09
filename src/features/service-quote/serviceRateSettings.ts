@@ -109,6 +109,21 @@ export function isRateProvided(raw: unknown): boolean {
 }
 
 /**
+ * COST-1.5B — parse a Settings input's raw string into the value to STORE.
+ *
+ * Returns `undefined` when the field is empty / non-numeric — the owner has
+ * expressed "not set". The Settings caller stores an explicit `null` for that
+ * case (a present key with an absent value, which the tombstone-safe sync layer
+ * preserves across devices rather than resurrecting a stale literal). Returns the
+ * number otherwise; a typed `0` is a real value and comes back as `0`, never
+ * coerced to a default. This is the storage inverse of {@link isRateProvided}:
+ * whatever isRateProvided rejects, this maps to `undefined`.
+ */
+export function parseSettingInput(raw: string): number | undefined {
+  return isRateProvided(raw) ? Number(raw) : undefined
+}
+
+/**
  * Resolve one rate field against its policy. `present` is false when the value is
  * not provided, or is 0 for a field where zero is not a valid value.
  */

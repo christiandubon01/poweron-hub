@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isRateProvided,
+  parseSettingInput,
   resolveRateField,
   resolveRequiredServiceRates,
   RATE_FIELD_POLICY,
@@ -120,5 +121,42 @@ describe('resolveRequiredServiceRates — crew mode (mode-aware required set)', 
   it('mileRate and tax are still required in crew mode', () => {
     const r = resolveRequiredServiceRates({ opCost: 45, billRate: 75 }, { mode: 'crew' })
     expect(r.missing.map((m) => m.key).sort()).toEqual(['mileRate', 'tax'])
+  })
+})
+
+// ── COST-1.5B — Settings inputs accept empty and zero ────────────────────────
+describe('isRateProvided — null reads as not-provided (COST-1.5B store-null path)', () => {
+  it('null, undefined, empty and non-numeric are all not-provided', () => {
+    // The Settings inputs store explicit null for "cleared"; on the next render
+    // that null must read back as not-provided so the field shows empty, not the
+    // stale literal.
+    expect(isRateProvided(null)).toBe(false)
+    expect(isRateProvided(undefined)).toBe(false)
+    expect(isRateProvided('')).toBe(false)
+    expect(isRateProvided('abc')).toBe(false)
+  })
+})
+
+describe('parseSettingInput — what a Settings input persists', () => {
+  it('empty / whitespace / non-numeric → undefined (caller stores null = absent)', () => {
+    expect(parseSettingInput('')).toBeUndefined()
+    expect(parseSettingInput('   ')).toBeUndefined()
+    expect(parseSettingInput('abc')).toBeUndefined()
+  })
+  it('a typed 0 persists as a real 0, never coerced to a literal', () => {
+    expect(parseSettingInput('0')).toBe(0)
+    expect(parseSettingInput('0.0')).toBe(0)
+  })
+  it('a normal value persists unchanged', () => {
+    expect(parseSettingInput('95')).toBe(95)
+    expect(parseSettingInput('0.66')).toBe(0.66)
+    expect(parseSettingInput('8.75')).toBe(8.75)
+  })
+  it('round-trips with isRateProvided: a stored 0 is provided, a stored null is not', () => {
+    // Mirrors the Settings display: value stored → shown vs blank.
+    const storedZero = parseSettingInput('0')            // 0
+    const storedCleared = parseSettingInput('') ?? null  // null (what the input writes)
+    expect(isRateProvided(storedZero)).toBe(true)
+    expect(isRateProvided(storedCleared)).toBe(false)
   })
 })
