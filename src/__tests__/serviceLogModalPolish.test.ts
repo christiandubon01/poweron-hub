@@ -15,6 +15,7 @@ import {
   roundUpToQuoteStep,
   snapToQuoteStep,
 } from '@/features/service-quote/servicePaymentStatus'
+import { resolveRateField } from '@/features/service-quote/serviceRateSettings'
 
 const panel = readFileSync(
   join(process.cwd(), 'src/components/v15r/V15rFieldLogPanel.tsx'),
@@ -170,9 +171,17 @@ describe('render cost', () => {
     expect(panel).toContain('SERVICE_RATE_CACHE_TTL_MS')
   })
 
-  it('keeps the same default rates as before', () => {
-    expect(panel).toContain('opCost: num(settings.opCost) || 43')
-    expect(panel).toContain('mileRate: num(settings.mileRate) || 0.66')
+  it('no longer invents a default rate when settings are missing (COST-1.5A)', () => {
+    // Old behaviour substituted 43 / 0.66 for a missing rate. The rate resolver
+    // now reports the field as not-present instead of returning an invented
+    // number, so the ledger can show "Profit unavailable" rather than a wrong
+    // figure. This is the behavioural replacement for the old source-pinned test.
+    expect(resolveRateField('opCost', undefined).present).toBe(false)
+    expect(resolveRateField('mileRate', undefined).present).toBe(false)
+    // Regression guard: the specific invented literals are gone from the ledger
+    // rate reader (readServiceRateSettings).
+    expect(panel).not.toContain('opCost: num(settings.opCost) || 43')
+    expect(panel).not.toContain('mileRate: num(settings.mileRate) || 0.66')
   })
 })
 

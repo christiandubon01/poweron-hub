@@ -75,6 +75,14 @@ import {
   isManuallyQuoted,
   round2,
 } from '@/features/service-quote/serviceQuoteMath'
+// COST-1.5A — pricing-rate settings resolver. A missing required rate produces a
+// visible block, never a silently invented number.
+import {
+  resolveRequiredServiceRates,
+  resolveRateField,
+  RATE_FIELD_POLICY,
+  type MissingRate,
+} from '@/features/service-quote/serviceRateSettings'
 import {
   addAssignment,
   assignedProfileIds,
@@ -155,7 +163,7 @@ function getAdjustmentTypeLabel(adj: any): 'Income' | 'Mileage' | 'Expense' {
  * invalidation can never leave stale rates on screen. No math changes.
  */
 const SERVICE_RATE_CACHE_TTL_MS = 250
-let _serviceRateCache: { opCost: number; mileRate: number } | null = null
+let _serviceRateCache: { opCost: number; mileRate: number; ratesMissing: MissingRate[] } | null = null
 let _serviceRateCacheAt = 0
 
 export function __resetServiceRateCache() {
@@ -168,7 +176,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('poweron-data-saved', __resetServiceRateCache)
 }
 
-function readServiceRateSettings(): { opCost: number; mileRate: number } {
+function readServiceRateSettings(): { opCost: number; mileRate: number; ratesMissing: MissingRate[] } {
   const now = Date.now()
   if (_serviceRateCache && now - _serviceRateCacheAt < SERVICE_RATE_CACHE_TTL_MS) {
     return _serviceRateCache
@@ -177,10 +185,25 @@ function readServiceRateSettings(): { opCost: number; mileRate: number } {
   try {
     const bd = getBackupData() || {}
     settings = bd.settings || {}
-  } catch { /* fall through to defaults */ }
+  } catch { /* fall through — missing values are surfaced, never invented */ }
+  // COST-1.5A: no silent default. A missing opCost (or a degenerate $0/hr) and an
+  // unset mileRate are reported so the ledger can show "Profit unavailable"
+  // instead of a number computed from an invented rate.
+  const opCostField = resolveRateField('opCost', settings.opCost)
+  const mileRateField = resolveRateField('mileRate', settings.mileRate)
+  const ratesMissing: MissingRate[] = []
+  if (!opCostField.present) {
+    const p = RATE_FIELD_POLICY.opCost
+    ratesMissing.push({ key: p.key, label: p.label, remedy: p.remedy })
+  }
+  if (!mileRateField.present) {
+    const p = RATE_FIELD_POLICY.mileRate
+    ratesMissing.push({ key: p.key, label: p.label, remedy: p.remedy })
+  }
   _serviceRateCache = {
-    opCost: num(settings.opCost) || 43,
-    mileRate: num(settings.mileRate) || 0.66,
+    opCost: opCostField.value,
+    mileRate: mileRateField.value,
+    ratesMissing,
   }
   _serviceRateCacheAt = now
   return _serviceRateCache
@@ -198,7 +221,7 @@ function getServiceRollup(l: any): any {
   // Read current Settings from the tenant-aware backup — stored l.opCost / l.mileCost are unreliable
   // (persist() bug corrupted those values historically; compute from raw hrs/miles instead).
   // Cached per data change rather than per row — see readServiceRateSettings().
-  const { opCost, mileRate } = readServiceRateSettings()
+  const { opCost, mileRate, ratesMissing } = readServiceRateSettings()
 
   const hrs = num(l?.hrs)
   const miles = num(l?.miles)
@@ -223,7 +246,7 @@ function getServiceRollup(l: any): any {
   return {
     baseQuoted, addIncome, addExpense, addMileage, totalAddedCost, totalBillable,
     baseActual, totalActual, collected, remaining, projectedProfit, adjustments,
-    hrs, miles, matCost, laborCost, mileCost, opCost, mileRate,
+    hrs, miles, matCost, laborCost, mileCost, opCost, mileRate, ratesMissing,
     estHrs, estLaborCost, estBaseCost, estimatedTotalCost, estimatedProfit, hasEstimate
   }
 }
@@ -805,8 +828,11 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const liveEmployees = getLiveEmployees(employees)
   const triggerRules = backup.triggerRules || []
   const settings = backup.settings || {} as any
-  const mileRate = num(settings.mileRate || 0.66)
-  const opCost = num(settings.opCost || 42.45)
+  // COST-1.5A: read the raw setting, never invent a fallback rate. When a value is
+  // missing the modal blocks the quote (see estMissingRates / slMissingRates) — a
+  // wrong number is never shown. dayTarget is out of this phase's scope.
+  const mileRate = num(settings.mileRate)
+  const opCost = num(settings.opCost)
   const dayTarget = num(settings.dayTarget || 361)
 
   function persist() {
@@ -1004,8 +1030,11 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const serviceEstimates = backup.serviceEstimates || []
   const activeServiceEstimates = serviceEstimates.filter(isActiveServiceCall)
   const rawActiveServiceCalls = backup.activeServiceCalls || []
-  const billRate = num(settings.billRate || 75)
-  const taxRate = num(settings.tax || 0)
+  // COST-1.5A: no invented fallback. Missing billRate blocks legacy-mode quotes;
+  // a real 0% tax is kept (num → 0) and only an UNSET tax blocks (handled by the
+  // resolver's per-field zero policy, not here).
+  const billRate = num(settings.billRate)
+  const taxRate = num(settings.tax)
 
   // ── SERVICE-LOG-1 shared quote + assignment plumbing ───────────────────────
   // Every quote/profit number in this panel comes from this one helper so New,
@@ -1137,7 +1166,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setEstDate(today())
     setEstJobType(JOB_TYPES[0])
     setEstHours('')
-    setEstBillRate(String(billRate))
+    // COST-1.5A: only pre-fill a real Default Bill Rate; leave blank when unset
+    // rather than seeding a degenerate 0.
+    setEstBillRate(billRate > 0 ? String(billRate) : '')
     setEstMaterials('')
     setEstMiles('')
     setEstNotes('')
@@ -1753,7 +1784,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setSlQuoted(''); setSlMat(''); setSlCollected(''); setSlStore(''); setSlJtype(JOB_TYPES[0])
     setSlPayStatus('Y'); setSlEmatInfo(''); setSlDetailLink(''); setSlNotes('')
     setSlAccountId('')
-    setSlBillRate(String(billRate))
+    // COST-1.5A: only pre-fill a real Default Bill Rate; leave blank when unset.
+    setSlBillRate(billRate > 0 ? String(billRate) : '')
     setSlQuotedManual(false)
     setSlAssignments([])
     setSlCostingSource('assigned')
@@ -1901,6 +1933,30 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       ? crewBreakdownToLegacyQuote(crewResult.breakdown, slQuoted === '' ? null : parseFloat(slQuoted) || 0)
       : serviceCallQuote()
   }
+
+  // ── COST-1.5A: mode-aware missing-rate gate ─────────────────────────────────
+  // The displayed quote falls back to the legacy single-rate path whenever crew
+  // costing cannot resolve, so the required-settings set is computed against the
+  // SAME effective mode the quote will actually use. A frozen record prices from
+  // its snapshot and needs no settings check. When `missing` is non-empty the
+  // modal shows a blocking panel instead of a number and disables Save.
+  const estEffectiveMode: 'legacy' | 'crew' | 'frozen' =
+    estCostingMode === 'frozen' && estFrozenSnapshot ? 'frozen'
+      : estCostingMode === 'legacy' ? 'legacy'
+        : estimateCrewQuote().breakdown ? 'crew' : 'legacy'
+  const estMissingRates: MissingRate[] =
+    estEffectiveMode === 'frozen'
+      ? []
+      : resolveRequiredServiceRates(settings, { mode: estEffectiveMode }).missing
+
+  const slEffectiveMode: 'legacy' | 'crew' | 'frozen' =
+    slCostingMode === 'frozen' && slFrozenSnapshot ? 'frozen'
+      : slCostingMode === 'legacy' ? 'legacy'
+        : serviceCallCrewQuote().breakdown ? 'crew' : 'legacy'
+  const slMissingRates: MissingRate[] =
+    slEffectiveMode === 'frozen'
+      ? []
+      : resolveRequiredServiceRates(settings, { mode: slEffectiveMode }).missing
 
   /**
    * SERVICE-COST-3B: adapt a crew breakdown to the legacy ServiceQuoteBreakdown
@@ -3608,17 +3664,23 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                         : estimateCrewQuote()
                   return (
                     <div className="space-y-3">
-                      <ServiceQuotePanel
-                        quote={quote}
-                        totalQuotedInput={estTotalQuoted === '' ? String(quote.suggestedQuote) : estTotalQuoted}
-                        onTotalQuotedChange={(raw) => { setEstTotalQuoted(raw); setEstQuotedManual(true) }}
-                        onUseSuggested={() => { setEstTotalQuoted(String(quote.suggestedQuote)); setEstQuotedManual(false) }}
-                        dayTarget={dayTarget}
-                        mileRate={mileRate}
-                        taxRate={taxRate}
-                        opCost={opCost}
-                        accent="blue"
-                      />
+                      {/* COST-1.5A: block the quote entirely when a required rate
+                          is missing — never show a number built on an invented rate. */}
+                      {estMissingRates.length > 0 ? (
+                        <ServiceQuoteMissingPanel missing={estMissingRates} accent="blue" />
+                      ) : (
+                        <ServiceQuotePanel
+                          quote={quote}
+                          totalQuotedInput={estTotalQuoted === '' ? String(quote.suggestedQuote) : estTotalQuoted}
+                          onTotalQuotedChange={(raw) => { setEstTotalQuoted(raw); setEstQuotedManual(true) }}
+                          onUseSuggested={() => { setEstTotalQuoted(String(quote.suggestedQuote)); setEstQuotedManual(false) }}
+                          dayTarget={dayTarget}
+                          mileRate={mileRate}
+                          taxRate={taxRate}
+                          opCost={opCost}
+                          accent="blue"
+                        />
+                      )}
 
                       {/* SERVICE-COST-3B: crew cost breakdown detail */}
                       <CrewCostBreakdownPanel
@@ -3640,7 +3702,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 </button>
                 <button
                   onClick={() => { saveServiceEstimate(); }}
-                  className="flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-colors shadow-lg"
+                  disabled={estMissingRates.length > 0}
+                  title={estMissingRates.length > 0 ? 'Set the missing pricing settings above before saving.' : undefined}
+                  className={`flex items-center gap-2 px-5 py-2 rounded-lg text-white text-xs font-bold transition-colors shadow-lg ${estMissingRates.length > 0 ? 'bg-gray-600 opacity-50 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500'}`}
                 >
                   {editEstimateId ? '✓ Update Estimate' : '⚡ Save as Open Estimate'}
                 </button>
@@ -4282,17 +4346,23 @@ ${note}` : note)
                         : serviceCallCrewQuote()
                   return (
                     <div className="space-y-3">
-                      <ServiceQuotePanel
-                        quote={quote}
-                        totalQuotedInput={slQuoted === '' ? String(quote.suggestedQuote) : slQuoted}
-                        onTotalQuotedChange={(raw) => { setSlQuoted(raw); setSlQuotedManual(true) }}
-                        onUseSuggested={() => { setSlQuoted(String(quote.suggestedQuote)); setSlQuotedManual(false) }}
-                        dayTarget={dayTarget}
-                        mileRate={mileRate}
-                        taxRate={taxRate}
-                        opCost={opCost}
-                        accent="orange"
-                      />
+                      {/* COST-1.5A: block the quote entirely when a required rate
+                          is missing — never show a number built on an invented rate. */}
+                      {slMissingRates.length > 0 ? (
+                        <ServiceQuoteMissingPanel missing={slMissingRates} accent="orange" />
+                      ) : (
+                        <ServiceQuotePanel
+                          quote={quote}
+                          totalQuotedInput={slQuoted === '' ? String(quote.suggestedQuote) : slQuoted}
+                          onTotalQuotedChange={(raw) => { setSlQuoted(raw); setSlQuotedManual(true) }}
+                          onUseSuggested={() => { setSlQuoted(String(quote.suggestedQuote)); setSlQuotedManual(false) }}
+                          dayTarget={dayTarget}
+                          mileRate={mileRate}
+                          taxRate={taxRate}
+                          opCost={opCost}
+                          accent="orange"
+                        />
+                      )}
 
                       {/* SERVICE-COST-3B: crew cost breakdown detail */}
                       <CrewCostBreakdownPanel
@@ -4317,8 +4387,10 @@ ${note}` : note)
                 </button>
                 <button
                   onClick={saveSvcEntry}
+                  disabled={slMissingRates.length > 0}
+                  title={slMissingRates.length > 0 ? 'Set the missing pricing settings above before saving.' : undefined}
                   data-testid="save-service-call"
-                  className="flex items-center gap-2 px-5 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold transition-colors shadow-lg"
+                  className={`flex items-center gap-2 px-5 py-2 rounded-lg text-white text-xs font-bold transition-colors shadow-lg ${slMissingRates.length > 0 ? 'bg-gray-600 opacity-50 cursor-not-allowed' : 'bg-orange-600 hover:bg-orange-500'}`}
                 >
                   {editSvcId ? '✓ Update Service Call' : '✓ Save Service Call'}
                 </button>
@@ -4480,14 +4552,27 @@ ${note}` : note)
                       <span className="text-gray-400">Total Cost:</span>
                       <span className="font-mono" style={{ color: '#f87171' }}>{fmt(roll.totalActual)}</span>
                     </div>
-                    <div className="flex justify-between border-t border-gray-700 pt-1.5" style={{ fontSize: '11px' }}>
-                      <span className="text-gray-400">Projected Margin (Quoted {num(roll.estHrs).toFixed(1)} hr):</span>
-                      <span className="font-mono font-bold" style={{ color: roll.estimatedProfit >= 0 ? '#378ADD' : '#E24B4A' }}>{fmt(roll.estimatedProfit)}</span>
-                    </div>
-                    <div className="flex justify-between" style={{ fontSize: '11px' }}>
-                      <span className="text-gray-400">Cash Real Margin (Actual {num(l.hrs).toFixed(1)} hr):</span>
-                      <span className="font-mono font-bold" style={{ color: roll.projectedProfit >= 0 ? '#1D9E75' : '#E24B4A' }}>{fmt(roll.projectedProfit)}</span>
-                    </div>
+                    {roll.ratesMissing && roll.ratesMissing.length > 0 ? (
+                      /* COST-1.5A: a required cost rate is unset — show a warning
+                         instead of a profit computed from an invented rate. */
+                      <div className="flex justify-between border-t border-gray-700 pt-1.5 gap-2" style={{ fontSize: '11px' }}>
+                        <span className="text-amber-400">⚠ Profit unavailable</span>
+                        <span className="font-mono text-amber-400 text-right">
+                          Set {roll.ratesMissing.map((m: MissingRate) => m.label).join(' & ')} in Settings
+                        </span>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex justify-between border-t border-gray-700 pt-1.5" style={{ fontSize: '11px' }}>
+                          <span className="text-gray-400">Projected Margin (Quoted {num(roll.estHrs).toFixed(1)} hr):</span>
+                          <span className="font-mono font-bold" style={{ color: roll.estimatedProfit >= 0 ? '#378ADD' : '#E24B4A' }}>{fmt(roll.estimatedProfit)}</span>
+                        </div>
+                        <div className="flex justify-between" style={{ fontSize: '11px' }}>
+                          <span className="text-gray-400">Cash Real Margin (Actual {num(l.hrs).toFixed(1)} hr):</span>
+                          <span className="font-mono font-bold" style={{ color: roll.projectedProfit >= 0 ? '#1D9E75' : '#E24B4A' }}>{fmt(roll.projectedProfit)}</span>
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   {/* Action buttons row */}
@@ -5520,6 +5605,46 @@ export function CrewCostBreakdownPanel({
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * COST-1.5A — blocking panel shown in place of the quote when a required pricing
+ * setting is missing. It names each missing field and where to set it, and the
+ * modal's Save button is disabled alongside it. The app never invents a rate, so
+ * the owner sees a clear "not set" message rather than a wrong number that looks
+ * right.
+ */
+export function ServiceQuoteMissingPanel({
+  missing,
+  accent = 'blue',
+}: {
+  missing: MissingRate[]
+  accent?: 'blue' | 'orange'
+}) {
+  return (
+    <div
+      className="rounded-xl border border-amber-500/40 px-4 py-4 space-y-2"
+      style={{ backgroundColor: 'var(--bg-secondary)' }}
+      data-testid="service-quote-missing-panel"
+    >
+      <div className="flex items-center gap-2 text-sm font-bold text-amber-400">
+        <AlertCircle size={16} /> Quote unavailable — pricing settings not set
+      </div>
+      <p className="text-xs text-gray-400">
+        This quote can’t be calculated because required pricing settings are missing.
+        The app won’t guess these values. Set them, then reopen this quote:
+      </p>
+      <ul className="space-y-1.5">
+        {missing.map((m) => (
+          <li key={m.key} className="text-xs text-gray-300">
+            <span className="font-semibold text-amber-300">{m.label}</span>
+            <span className="text-gray-500"> — not set.</span>{' '}
+            <span className="text-gray-400">{m.remedy}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
