@@ -269,8 +269,11 @@ describe('COST-SOURCE-2A — Settings UI contracts', () => {
     expect(SETTINGS_SRC).toContain('Informational Solo Owner Cost')
   })
 
-  it('4l. Connected Cost Sources shows Legacy Solo Service Cost', () => {
+  it('4l. Legacy service cost remains visible in Connected Cost Sources', () => {
+    expect(SETTINGS_SRC).toContain('Connected Cost Sources')
     expect(SETTINGS_SRC).toContain('Legacy Solo Service Cost')
+    expect(SETTINGS_SRC).not.toContain('Historical Settings')
+    expect(SETTINGS_SRC).not.toContain('Historical Solo Service Cost')
   })
 
   it('4m. billableHrsYear is labeled as overhead-recovery labor-hours', () => {

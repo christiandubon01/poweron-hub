@@ -46,7 +46,9 @@ import {
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authedJsonHeaders } from '@/services/authedFetch'
-import { getBackupData, saveBackupData, getKPIs, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, saveLiveDataVerified, getLastSyncMeta, createEmptyBackup, isActiveProject, resolveProjectBucket, fmtK, type BackupData } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, getKPIs, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, saveLiveDataVerified, getLastSyncMeta, createEmptyBackup, isActiveProject, resolveProjectBucket, fmt, fmtK, num, type BackupData } from '@/services/backupDataService'
+import { buildBusinessGoalTruth } from '@/services/businessGoalTruth'
+import { calculateYearlyRevenueTargetProgress } from '@/services/yearlyRevenueTarget'
 // BUG 1 FIX — Realtime sync + stale-check service
 import { initRealtimeSync } from '@/services/realtimeSyncService'
 import { startLiveCloudRefresh } from '@/services/liveCloudRefreshService'
@@ -861,10 +863,15 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
   // Demo Mode: swap KPIs and company name for display only — real data unchanged
   const safeKpis = (hasHydrated && isDemoMode) ? getDemoKPIs() : _rawKpis
-
-  // Calculate percentage for revenue target progress
-  const annualTarget = (isDemoMode ? 480000 : backupData?.settings?.annualTarget) || 120000
-  const revenueTargetPct = Math.min(100, Math.round((safeKpis.paid / annualTarget) * 100))
+  const paidKpiValue = num(safeKpis.paid)
+  const yearlyTargetActual = paidKpiValue
+  const goalTruth = buildBusinessGoalTruth(backupData || createEmptyBackup())
+  const dailyTargetTruth = goalTruth.dailyTarget
+  const parsedAnnualTarget = Number(settings?.annualTarget)
+  const annualTargetValue = Number.isFinite(parsedAnnualTarget) && parsedAnnualTarget > 0
+    ? num(parsedAnnualTarget)
+    : null
+  const yearlyTargetProgress = calculateYearlyRevenueTargetProgress(yearlyTargetActual, annualTargetValue)
 
   // SERVICE NET = Total Quoted - Material - Mileage from service calls
   const serviceNet = isDemoMode ? DEMO_SERVICE_NET : (() => {
@@ -1766,12 +1773,12 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                     {/* PAID */}
                     <div className="flex flex-col items-center min-w-[80px]" title={isCompact ? 'Paid' : undefined}>
                       {isCompact ? (
-                        <span className="text-sm font-bold text-green-400">{hideFinances ? '••••' : fmtHeader(safeKpis.paid)}</span>
+                        <span className="text-sm font-bold text-green-400">{hideFinances ? '••••' : fmtHeader(paidKpiValue)}</span>
                       ) : (
                         <>
                           <span className="text-[8px] font-bold uppercase text-gray-500">Paid</span>
                           <span className="text-base font-bold text-green-400">
-                            {hideFinances ? '••••' : fmtHeader(safeKpis.paid)}
+                            {hideFinances ? '••••' : fmtHeader(paidKpiValue)}
                           </span>
                         </>
                       )}
@@ -1963,7 +1970,21 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
               {/* Daily Target — hidden in App Brain architecture mode */}
               {!isMobile && !isAppBrainView && (
                 <div className="text-xs text-gray-400">
-                  Daily Target: <span className="text-green-400 font-semibold">${settings.dayTarget || 0}</span>
+                  {dailyTargetTruth.targetConfigured ? (
+                    <>
+                      Daily Target: <span className="text-green-400 font-semibold">{fmt(dailyTargetTruth.targetValue || 0)}</span>
+                      <span className="text-gray-500"> · </span>
+                      Today: <span className="text-cyan-300 font-semibold">{fmt(dailyTargetTruth.actualCollected)}</span>
+                      <span className="text-gray-500"> · </span>
+                      <span className={dailyTargetTruth.difference !== null && dailyTargetTruth.difference >= 0 ? 'text-emerald-300 font-semibold' : 'text-amber-300 font-semibold'}>
+                        {dailyTargetTruth.difference !== null ? `${dailyTargetTruth.difference >= 0 ? '+' : ''}${fmt(dailyTargetTruth.difference)}` : '0%'}
+                      </span>
+                      <span className="text-gray-500"> · </span>
+                      <span className="text-emerald-300 font-semibold">{dailyTargetTruth.progressPct ?? 0}%</span>
+                    </>
+                  ) : (
+                    <>Daily Target: <span className="text-amber-300 font-semibold">Not configured</span></>
+                  )}
                 </div>
               )}
 
@@ -2045,17 +2066,25 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
 
           {/* ROW 2: TARGET Progress Bar */}
           {showTargetBar && (
-          <div className="h-3 flex items-center px-6 bg-gradient-to-r from-green-500 via-green-600 to-blue-500 relative overflow-hidden" title={`${revenueTargetPct}% of $${(annualTarget / 1000).toFixed(0)}k annual target ($${(safeKpis.paid / 1000).toFixed(1)}k collected)`}>
-            {/* Filled portion (progress) */}
+          <div
+            className="h-3 flex items-center justify-center px-6 bg-gradient-to-r from-green-500 via-green-600 to-blue-500 text-[10px] font-semibold text-white relative overflow-hidden"
+            title={annualTargetValue
+              ? `${yearlyTargetProgress.progressPct}% of ${fmt(annualTargetValue)} yearly revenue target (${fmt(yearlyTargetActual)} paid)`
+              : 'Set a Yearly Revenue Target in Settings to track the Paid KPI.'}
+          >
             <div
-              className="absolute left-0 top-0 h-full bg-gradient-to-r from-green-400 to-blue-400 transition-all"
-              style={{ width: `${revenueTargetPct}%` }}
+              className="absolute left-0 top-0 h-full bg-gradient-to-r from-green-300 to-cyan-300 transition-all"
+              style={{ width: `${yearlyTargetProgress.fillPct}%` }}
             />
-            {/* Unfilled portion */}
             <div
-              className="absolute top-0 h-full bg-gray-700"
-              style={{ left: `${revenueTargetPct}%`, right: 0 }}
+              className="absolute top-0 h-full bg-gray-700/70"
+              style={{ left: `${yearlyTargetProgress.fillPct}%`, right: 0 }}
             />
+            <div className="absolute inset-0 flex items-center justify-center px-6">
+              {annualTargetValue
+                ? `${yearlyTargetProgress.progressPct}% of yearly target`
+                : 'Yearly revenue target not configured'}
+            </div>
           </div>
           )}
         </header>
@@ -2080,7 +2109,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         <main
           className="flex-1 min-w-0 overflow-x-hidden"
           style={activeView === 'visual-suite' || activeView === 'neural-world'
-            ? { display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', backgroundColor: '#000' }
+              ? { display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', backgroundColor: '#000' }
             : blueprintImmersive
               ? { display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', backgroundColor: 'var(--bg-secondary)' }
               : { backgroundColor: 'var(--bg-secondary)', marginTop: showTargetBar ? '5rem' : '4rem', overflowX: 'hidden', overflowY: 'auto', width: '100%', maxWidth: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' }

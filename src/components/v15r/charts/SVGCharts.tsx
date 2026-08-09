@@ -566,12 +566,11 @@ function CashFlowProjectionChart({ weekBuckets, overlapWindows }) {
 }
 
 // ── REVENUE TIMELINE CHART 2: Monthly Revenue Projected vs Actual ──
-// Grouped bar chart, 6-month rolling. Dashed amber line = monthly target.
-function MonthlyRevenueChart({ monthlyBuckets, dailyTarget }) {
+// Grouped bar chart, 6-month rolling.
+function MonthlyRevenueChart({ monthlyBuckets }) {
   var tooltipRef = React.useRef(null)
   if (!monthlyBuckets || !monthlyBuckets.length) return <EmptyChart />
-  var target = (dailyTarget || 0) * 20
-  var maxVal = Math.max(1, target)
+  var maxVal = 1
   for (var mi = 0; mi < monthlyBuckets.length; mi++) {
     maxVal = Math.max(maxVal, monthlyBuckets[mi].projected || 0, monthlyBuckets[mi].actual || 0)
   }
@@ -586,14 +585,12 @@ function MonthlyRevenueChart({ monthlyBuckets, dailyTarget }) {
     var d = monthlyBuckets[i]
     el.innerHTML = '<b style="color:#fff">' + (d.month || '') + '</b>' +
       '<div style="color:#3b82f6">Projected: ' + fmtDollar(d.projected || 0) + '</div>' +
-      '<div style="color:#10b981">Actual: ' + fmtDollar(d.actual || 0) + '</div>' +
-      (target > 0 ? '<div style="color:#f59e0b">Target: ' + fmtDollar(target) + '</div>' : '')
+      '<div style="color:#10b981">Actual: ' + fmtDollar(d.actual || 0) + '</div>'
     el.style.display = 'block'
   }
   function hideTip() { if (tooltipRef.current) tooltipRef.current.style.display = 'none' }
 
   var ticks = [0, 0.25, 0.5, 0.75, 1].map(function(f) { return maxVal * f })
-  var targetY = pad.t + cH - (target / maxVal) * cH
 
   return (
     <div className="relative w-full h-full">
@@ -605,11 +602,6 @@ function MonthlyRevenueChart({ monthlyBuckets, dailyTarget }) {
             <text x={pad.l - 8} y={yPos + 4} textAnchor="end" fill="#9ca3af" fontSize="10">{fmtDollar(v)}</text>
           </g>
         })}
-        {/* Monthly target dashed line */}
-        {target > 0 && (
-          <line x1={pad.l} y1={targetY} x2={W - pad.r} y2={targetY}
-            stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="6 4" opacity={0.7} />
-        )}
         {monthlyBuckets.map(function(d, i) {
           var gx = pad.l + i * groupW + groupW * 0.15
           var projH = ((d.projected || 0) / maxVal) * cH
@@ -627,7 +619,6 @@ function MonthlyRevenueChart({ monthlyBuckets, dailyTarget }) {
       <div className="flex gap-4 mt-1 justify-center text-[10px] text-gray-400">
         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500" /> Projected</span>
         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" /> Actual</span>
-        <span className="flex items-center gap-1"><span style={{ width: 16, height: 0, borderTop: '2px dashed #f59e0b', display: 'inline-block' }} /><span> Target ({fmtDollar(target)}/mo)</span></span>
       </div>
     </div>
   )

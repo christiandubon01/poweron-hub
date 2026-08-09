@@ -24,9 +24,11 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { useAuthStore } from '@/store/authStore'
 import { verifyPasscode, setPasscode } from '@/lib/auth/passcode'
-import { getBackupData, saveBackupData, saveBackupDataAndSync, exportBackup, importBackupFromFile, isSupabaseConfigured, forceSyncToCloud, num, fmt, fmtK, pct, getProjectFinancials, getSnapshots, createSnapshot, restoreSnapshot, getPhaseWeights, buildEqualPhaseWeights, type BackupSettings, type BackupData, type DataSnapshot } from '@/services/backupDataService'
+import { getBackupData, saveBackupData, saveBackupDataAndSync, exportBackup, importBackupFromFile, isSupabaseConfigured, forceSyncToCloud, num, fmt, getKPIs, getSnapshots, createSnapshot, restoreSnapshot, getPhaseWeights, buildEqualPhaseWeights, type BackupSettings, type BackupData, type DataSnapshot } from '@/services/backupDataService'
 import { getSettingsDataFieldNames, stampSettingsFields } from '@/services/settingsScopeMerge'
 import { buildCostSourceSummary } from '@/utils/costSourceHelper'
+import { buildBusinessGoalTruth } from '@/services/businessGoalTruth'
+import { calculateYearlyRevenueTargetProgress } from '@/services/yearlyRevenueTarget'
 import { getLocalOwnerProfile, saveLocalOwnerProfile, saveOwnerProfile, type CityLicense } from '@/services/ownerProfileService'
 import { pushState } from '@/services/undoRedoService'
 // COST-1.5B — Pricing Defaults inputs must accept empty (not set → null) and 0
@@ -1670,6 +1672,16 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
   }
   const overheadCalc = calcOverhead()
   const costSource = buildCostSourceSummary(settings as any, (backup as any).employees)
+  const goalTruth = buildBusinessGoalTruth(backup)
+  const dailyTargetTruth = goalTruth.dailyTarget
+  const dailyTargetInputValue = isRateProvided(settings.dayTarget) ? String(settings.dayTarget) : ''
+  const annualTargetInputValue = isRateProvided(settings.annualTarget) ? String(settings.annualTarget) : ''
+  const personalIncomeGoalInputValue = isRateProvided(settings.personalIncomeGoal) ? String(settings.personalIncomeGoal) : ''
+  const paidKpiValue = num(getKPIs(backup).paid)
+  const annualTargetValue = Number.isFinite(Number(settings.annualTarget)) && Number(settings.annualTarget) > 0
+    ? num(settings.annualTarget)
+    : null
+  const yearlyTargetProgress = calculateYearlyRevenueTargetProgress(paidKpiValue, annualTargetValue)
 
   const lastSync = backup._lastSavedAt ? new Date(backup._lastSavedAt).toLocaleString() : 'Never'
   const supabaseUp = isSupabaseConfigured()
@@ -2453,247 +2465,245 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
                 <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
                   <div>
                     <h3 className="text-sm font-bold text-gray-100">Targets</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">Daily, annual, and schedule planning targets.</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Manual operating targets for the business.</p>
                   </div>
                   <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[11px] font-semibold text-emerald-100">Goals</span>
                 </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Daily Target ($)</label>
-                  <input
-                    type="number"
-                    value={settings.dayTarget || 361}
-                    onChange={(e) => {
-                      const data = getBackupData()
-                      if (data) {
-                        pushState(data)
-                        data.settings.dayTarget = parseFloat(e.target.value) || 361
-                        persist(data, ['dayTarget'])
-                      }
-                    }}
-                    className="w-full px-3 py-2 border rounded text-sm theme-input"
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Daily Target ($)</label>
+                    <input
+                      type="number"
+                      value={dailyTargetInputValue}
+                      onChange={(e) => {
+                        const data = getBackupData()
+                        if (data) {
+                          pushState(data)
+                          data.settings.dayTarget = parseSettingInput(e.target.value) ?? 0
+                          persist(data, ['dayTarget'])
+                        }
+                      }}
+                      className="w-full px-3 py-2 border rounded text-sm theme-input"
+                    />
+                    <p className="text-[10px] text-gray-600 mt-1">Manual business target. Compared against today's collected Project + Service revenue.</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Annual Revenue Target ($)</label>
+                    <input
+                      type="number"
+                      value={annualTargetInputValue}
+                      onChange={(e) => {
+                        const data = getBackupData()
+                        if (data) {
+                          pushState(data)
+                          data.settings.annualTarget = parseSettingInput(e.target.value) ?? 0
+                          persist(data, ['annualTarget'])
+                        }
+                      }}
+                      className="w-full px-3 py-2 border rounded text-sm theme-input"
+                    />
+                    <p className="text-[10px] text-gray-600 mt-1">Manual owner goal for business revenue this year. Independent from Personal Income Goal and Required Revenue.</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Target Overhead Recovery Labor-Hours / Year</label>
+                    <input
+                      type="number"
+                      value={settings.billableHrsYear || 936}
+                      onChange={(e) => {
+                        const data = getBackupData()
+                        if (data) {
+                          pushState(data)
+                          data.settings.billableHrsYear = parseFloat(e.target.value) || 936
+                          persist(data, ['billableHrsYear'])
+                        }
+                      }}
+                      className="w-full px-3 py-2 border rounded text-sm theme-input"
+                    />
+                    <p className="text-[10px] text-gray-600 mt-1">Determines the company overhead recovery rate (Overhead Manager).</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">AM Block (min)</label>
+                    <input
+                      type="number"
+                      value={settings.amBlock || 420}
+                      onChange={(e) => {
+                        const data = getBackupData()
+                        if (data) {
+                          pushState(data)
+                          data.settings.amBlock = parseFloat(e.target.value) || 420
+                          persist(data, ['amBlock'])
+                        }
+                      }}
+                      className="w-full px-3 py-2 border rounded text-sm theme-input"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">PM Block (min)</label>
+                    <input
+                      type="number"
+                      value={settings.pmBlock || 260}
+                      onChange={(e) => {
+                        const data = getBackupData()
+                        if (data) {
+                          pushState(data)
+                          data.settings.pmBlock = parseFloat(e.target.value) || 260
+                          persist(data, ['pmBlock'])
+                        }
+                      }}
+                      className="w-full px-3 py-2 border rounded text-sm theme-input"
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Target Overhead Recovery Labor-Hours / Year</label>
-                  <input
-                    type="number"
-                    value={settings.billableHrsYear || 936}
-                    onChange={(e) => {
-                      const data = getBackupData()
-                      if (data) {
-                        pushState(data)
-                        data.settings.billableHrsYear = parseFloat(e.target.value) || 936
-                        persist(data, ['billableHrsYear'])
-                      }
-                    }}
-                    className="w-full px-3 py-2 border rounded text-sm theme-input"
-                  />
-                  <p className="text-[10px] text-gray-600 mt-1">Determines the company overhead recovery rate (Overhead Manager).</p>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">AM Block (min)</label>
-                  <input
-                    type="number"
-                    value={settings.amBlock || 420}
-                    onChange={(e) => {
-                      const data = getBackupData()
-                      if (data) {
-                        pushState(data)
-                        data.settings.amBlock = parseFloat(e.target.value) || 420
-                        persist(data, ['amBlock'])
-                      }
-                    }}
-                    className="w-full px-3 py-2 border rounded text-sm theme-input"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">PM Block (min)</label>
-                  <input
-                    type="number"
-                    value={settings.pmBlock || 260}
-                    onChange={(e) => {
-                      const data = getBackupData()
-                      if (data) {
-                        pushState(data)
-                        data.settings.pmBlock = parseFloat(e.target.value) || 260
-                        persist(data, ['pmBlock'])
-                      }
-                    }}
-                    className="w-full px-3 py-2 border rounded text-sm theme-input"
-                  />
-                </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Salary Target ($/yr)</label>
-                <input
-                  type="number"
-                  value={settings.salaryTarget || 12000}
-                  onChange={(e) => {
-                    const data = getBackupData()
-                    if (data) {
-                      pushState(data)
-                      data.settings.salaryTarget = parseFloat(e.target.value) || 12000
-                      persist(data, ['salaryTarget'])
-                    }
-                  }}
-                  className="w-full px-3 py-2 border rounded text-sm theme-input"
-                />
-              </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Annual Revenue Target ($)</label>
-                <input
-                  type="number"
-                  value={settings.annualTarget || 120000}
-                  onChange={(e) => {
-                    const data = getBackupData()
-                    if (data) {
-                      pushState(data)
-                      data.settings.annualTarget = parseFloat(e.target.value) || 120000
-                      persist(data, ['annualTarget'])
-                    }
-                  }}
-                  className="w-full px-3 py-2 border rounded text-sm theme-input"
-                />
-              </div>
-              </div>
-              </div>
-
-              {(() => {
-                const currentYear = new Date().getFullYear()
-                const ytdRevenue = (backup.projects || []).reduce((sum, p) => {
-                  const paidAmount = num(getProjectFinancials(p, backup).paid)
-                  return sum + paidAmount
-                }, 0) + (backup.serviceLogs || []).reduce((sum, log) => {
-                  const logDate = new Date(log.date || '')
-                  if (logDate.getFullYear() === currentYear) {
-                    return sum + num(log.collected)
-                  }
-                  return sum
-                }, 0)
-                const annualTarget = num(settings.annualTarget || 120000)
-                const ytdPct = annualTarget > 0 ? Math.min(100, Math.round((ytdRevenue / annualTarget) * 100)) : 0
-
-                return (
-                  <div className="rounded-xl border border-cyan-400/10 bg-gradient-to-br from-slate-950/70 to-cyan-950/20 p-4">
-                    <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
-                      <div>
-                        <h3 className="text-sm font-bold text-gray-100">Progress</h3>
-                        <p className="text-xs text-gray-500 mt-0.5">Year-to-date revenue against the annual target.</p>
-                      </div>
-                      <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[11px] font-semibold text-emerald-100">{ytdPct}%</span>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="mt-4 rounded-xl border border-emerald-400/15 bg-emerald-950/10 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">YTD Revenue</label>
-                      <div className="w-full px-3 py-2 border border-cyan-400/20 rounded-lg text-sm font-semibold bg-slate-950/70 text-gray-100">
-                        ${(ytdRevenue / 1000).toFixed(1)}k
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-200">Today's Collected</h4>
+                      <p className="text-[10px] text-gray-500 mt-1">Canonical collected cash for {dailyTargetTruth.day} from Projects + Service Calls.</p>
+                    </div>
+                    {!dailyTargetTruth.targetConfigured && (
+                      <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2 py-1 text-[11px] font-semibold text-amber-100">
+                        Target not configured
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div className="rounded-lg border border-cyan-400/10 bg-slate-950/45 p-3">
+                      <div className="text-[10px] uppercase tracking-wider text-gray-500">Daily Target</div>
+                      <div className="mt-1 text-lg font-bold text-white">
+                        {dailyTargetTruth.targetConfigured ? fmt(dailyTargetTruth.targetValue || 0) : 'Not configured'}
                       </div>
                     </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Progress to Target</label>
-                      <div className="w-full flex items-center gap-2 rounded-lg p-3 border border-cyan-400/20 bg-slate-950/70">
-                        <div className="flex-1 h-3 bg-slate-800 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-gradient-to-r from-emerald-400 to-cyan-400 transition-all"
-                            style={{ width: `${ytdPct}%` }}
-                          />
-                        </div>
-                        <span className="text-sm font-semibold text-gray-300 w-12 text-right">{ytdPct}%</span>
+                    <div className="rounded-lg border border-cyan-400/10 bg-slate-950/45 p-3">
+                      <div className="text-[10px] uppercase tracking-wider text-gray-500">Today's Collected</div>
+                      <div className="mt-1 text-lg font-bold text-cyan-300">{fmt(dailyTargetTruth.actualCollected)}</div>
+                      <div className="mt-1 text-[10px] text-gray-500">
+                        Projects {fmt(dailyTargetTruth.projectCollected)} + Service {fmt(dailyTargetTruth.serviceCollected)}
                       </div>
                     </div>
+                    <div className="rounded-lg border border-cyan-400/10 bg-slate-950/45 p-3">
+                      <div className="text-[10px] uppercase tracking-wider text-gray-500">Difference</div>
+                      <div className={`mt-1 text-lg font-bold ${dailyTargetTruth.difference === null ? 'text-gray-400' : dailyTargetTruth.difference >= 0 ? 'text-emerald-300' : 'text-amber-300'}`}>
+                        {dailyTargetTruth.difference === null ? 'Not configured' : `${dailyTargetTruth.difference >= 0 ? '+' : ''}${fmt(dailyTargetTruth.difference)}`}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-cyan-400/10 bg-slate-950/45 p-3">
+                      <div className="text-[10px] uppercase tracking-wider text-gray-500">Progress</div>
+                      <div className="mt-1 text-lg font-bold text-emerald-300">
+                        {dailyTargetTruth.progressPct === null ? '0%' : `${dailyTargetTruth.progressPct}%`}
+                      </div>
                     </div>
                   </div>
-                )
-              })()}
+                </div>
+              </div>
 
-              {(() => {
-                const personalIncomeGoal = num(settings.personalIncomeGoal || 0)
-                const overheadPct = num(settings.overheadPct || 30)
-                const currentYear = new Date().getFullYear()
-                const now = new Date()
-                const monthsElapsed = now.getMonth() + 1 + (now.getFullYear() - currentYear) * 12
+              <div className="rounded-xl border border-cyan-400/10 bg-gradient-to-br from-slate-950/70 to-cyan-950/20 p-4">
+                <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-100">Progress</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Annual Revenue Target progress matched to the header Paid KPI.</p>
+                  </div>
+                  <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[11px] font-semibold text-emerald-100">
+                    {yearlyTargetProgress.configured ? `${yearlyTargetProgress.progressPct}%` : 'Not set'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Paid</label>
+                    <div className="w-full px-3 py-2 border border-cyan-400/20 rounded-lg text-sm font-semibold bg-slate-950/70 text-gray-100">
+                      {fmt(paidKpiValue)}
+                    </div>
+                  </div>
 
-                const totalPaidYTD = (backup.projects || []).reduce((sum, p) => {
-                  const paidAmount = num(getProjectFinancials(p, backup).paid)
-                  return sum + paidAmount
-                }, 0) + (backup.serviceLogs || []).reduce((sum, log) => {
-                  const logDate = new Date(log.date || '')
-                  if (logDate.getFullYear() === currentYear) {
-                    return sum + num(log.collected)
-                  }
-                  return sum
-                }, 0)
-
-                const requiredMonthlyRevenue = personalIncomeGoal > 0 ? personalIncomeGoal / (1 - overheadPct / 100) / 12 : 0
-                const currentMonthlyPace = monthsElapsed > 0 ? totalPaidYTD / monthsElapsed : 0
-                const isOnPace = currentMonthlyPace >= requiredMonthlyRevenue && personalIncomeGoal > 0
-
-                return (
-                  <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
-                    <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
-                      <div>
-                        <h3 className="text-sm font-bold text-gray-100">Personal Income Goal</h3>
-                        <p className="text-xs text-gray-500 mt-0.5">Revenue needed to support owner income after overhead.</p>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Progress to Target</label>
+                    <div className="w-full flex items-center gap-2 rounded-lg p-3 border border-cyan-400/20 bg-slate-950/70">
+                      <div className="flex-1 h-3 bg-slate-800 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-emerald-400 to-cyan-400 transition-all"
+                          style={{ width: `${yearlyTargetProgress.fillPct}%` }}
+                        />
                       </div>
-                      <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${isOnPace ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-100' : 'border-amber-400/25 bg-amber-400/10 text-amber-100'}`}>
-                        {isOnPace ? 'On pace' : 'Watch pace'}
+                      <span className="text-sm font-semibold text-gray-300 w-16 text-right">
+                        {yearlyTargetProgress.configured ? `${yearlyTargetProgress.progressPct}%` : '—'}
                       </span>
                     </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Annual Personal Income Goal ($)</label>
-                      <input
-                        type="number"
-                        value={settings.personalIncomeGoal || 0}
-                        onChange={(e) => {
-                          const data = getBackupData()
-                          if (data) {
-                            pushState(data)
-                            data.settings.personalIncomeGoal = parseFloat(e.target.value) || 0
-                            persist(data, ['personalIncomeGoal'])
-                          }
-                        }}
-                        className="w-full px-3 py-2 border rounded text-sm theme-input"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Overhead %</label>
-                      <input
-                        type="number"
-                        value={settings.overheadPct || 30}
-                        onChange={(e) => {
-                          const data = getBackupData()
-                          if (data) {
-                            pushState(data)
-                            data.settings.overheadPct = parseFloat(e.target.value) || 30
-                            persist(data, ['overheadPct'])
-                          }
-                        }}
-                        className="w-full px-3 py-2 border rounded text-sm theme-input"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Required Monthly Revenue</label>
-                      <div className="w-full px-3 py-2 border border-cyan-400/20 rounded-lg text-sm font-semibold bg-slate-950/70 text-gray-100">
-                        {personalIncomeGoal > 0 ? fmt(requiredMonthlyRevenue) : '—'}
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Current Monthly Pace</label>
-                      <div className={`w-full px-3 py-2 border rounded-lg text-sm font-semibold ${isOnPace ? 'bg-emerald-900/20 border-emerald-500/30 text-emerald-200' : 'bg-amber-900/20 border-amber-500/30 text-amber-200'}`}>
-                        {monthsElapsed > 0 ? fmt(currentMonthlyPace) : '—'}
-                      </div>
-                    </div>
-                    </div>
                   </div>
-                )
-              })()}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-cyan-400/10 bg-slate-950/55 p-4">
+                <div className="flex items-center justify-between gap-3 border-b border-cyan-400/10 pb-3 mb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-100">Personal Income Goal</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Owner compensation target. Does not set your hourly labor cost.</p>
+                  </div>
+                  <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2 py-1 text-[11px] font-semibold text-amber-100">
+                    Pending target
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Annual Personal Income Goal ($)</label>
+                    <input
+                      type="number"
+                      value={personalIncomeGoalInputValue}
+                      onChange={(e) => {
+                        const data = getBackupData()
+                        if (data) {
+                          pushState(data)
+                          data.settings.personalIncomeGoal = parseSettingInput(e.target.value) ?? 0
+                          persist(data, ['personalIncomeGoal'])
+                        }
+                      }}
+                      className="w-full px-3 py-2 border rounded text-sm theme-input"
+                    />
+                    <p className="text-[10px] text-gray-600 mt-1">Owner compensation target. This does not change Team owner hourly labor costing.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Overhead %</label>
+                    <input
+                      type="number"
+                      value={settings.overheadPct || 30}
+                      onChange={(e) => {
+                        const data = getBackupData()
+                        if (data) {
+                          pushState(data)
+                          data.settings.overheadPct = parseFloat(e.target.value) || 30
+                          persist(data, ['overheadPct'])
+                        }
+                      }}
+                      className="w-full px-3 py-2 border rounded text-sm theme-input"
+                    />
+                    <p className="text-[10px] text-gray-600 mt-1">Visible owner input retained. Required Revenue remains blocked until actual cost data is trustworthy.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Current Company Overhead</label>
+                    <div className="w-full px-3 py-2 border border-cyan-400/20 rounded-lg text-sm font-semibold bg-slate-950/70 text-gray-100">
+                      {goalTruth.annualCompanyOverhead.available ? fmt(goalTruth.annualCompanyOverhead.value) : 'Unavailable'}
+                    </div>
+                    <p className="text-[10px] text-gray-600 mt-1">Derived from Overhead Manager. Current total still includes configured debt and loan buckets.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Trailing 90-Day Collected Revenue</label>
+                    <div className="w-full px-3 py-2 border border-cyan-400/20 rounded-lg text-sm font-semibold bg-slate-950/70 text-gray-100">
+                      {goalTruth.trailingCollectedRevenue.available ? fmt(goalTruth.trailingCollectedRevenue.value) : 'Unavailable'}
+                    </div>
+                    <p className="text-[10px] text-gray-600 mt-1">
+                      Canonical collected cash from {goalTruth.trailingCollectedRevenue.start || '—'} through {goalTruth.trailingCollectedRevenue.endExclusive || '—'} (end exclusive).
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-950/20 p-4">
+                  <div className="text-xs font-semibold text-amber-100 uppercase tracking-wider">Required Revenue Target</div>
+                  <div className="mt-1 text-lg font-bold text-amber-200">Pending actual cost data</div>
+                  <p className="text-[11px] text-gray-400 mt-2">{goalTruth.requiredAnnualRevenue.reason}</p>
+                </div>
+              </div>
             </div>
           </SettingCard>
           </>

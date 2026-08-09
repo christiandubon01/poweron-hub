@@ -14,9 +14,10 @@ function BarChart3Icon({ size = 24, className = '' }: { size?: number; className
 function BrainIcon({ size = 24, className = '' }: { size?: number; className?: string }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M12 18v-5"/></svg>
 }
-import { getBackupData, getProjectFinancials, getProjectCOConfirmedTotal, getDashboardCashFlowSummary, health, num, fmtK, isActiveProject, isActiveServiceCall, type BackupData } from '@/services/backupDataService'
+import { getBackupData, getProjectFinancials, getProjectCOConfirmedTotal, getDashboardCashFlowSummary, health, num, fmt, fmtK, isActiveProject, isActiveServiceCall, type BackupData } from '@/services/backupDataService'
 import { getLiveChangeOrders, isDeadProjectLog } from '@/services/projectScopeMerge'
 import { calculateWeeklyFinancialsForRange, resolveWeeklyDataForRead } from '@/services/weeklyFinancialPolicy'
+import { buildBusinessGoalTruth } from '@/services/businessGoalTruth'
 // BUG 2 FIX — Active-only pipeline formula (replaces calcPipeline which included 'coming')
 import { calcActivePipeline } from '@/utils/pipelineCalc'
 // BUG 3 FIX — Canonical project financials
@@ -45,7 +46,6 @@ import {
   queryOverlapWindows,
   queryGanttData,
   queryAllQuoteVsActual,
-  getDailyTarget,
 } from '@/services/revenueTimelineQueries'
 
 // ── NEXUS AI DASHBOARD ANALYZER ──
@@ -689,6 +689,9 @@ function V15rDashboardInner() {
     )
   }
 
+  const goalTruth = buildBusinessGoalTruth(backup, new Date())
+  const dailyTargetTruth = goalTruth.dailyTarget
+
   const projects = (backup.projects || []).filter(isActiveProject)
   const weeklyData = backup.weeklyData || []
   const cashFlowAnchor = (() => {
@@ -1137,7 +1140,6 @@ function V15rDashboardInner() {
   const overlapWindows = useMemo(() => queryOverlapWindows(), [backup])
   const ganttRows = useMemo(() => queryGanttData(), [backup])
   const allVariances = useMemo(() => queryAllQuoteVsActual(), [backup])
-  const dailyTarget = useMemo(() => getDailyTarget(), [backup])
 
   // ── Family summary stats ──
   const activeCount = projects.filter(p => p.status === 'active').length
@@ -1742,7 +1744,7 @@ function V15rDashboardInner() {
             <div className="mb-4 flex items-start justify-between gap-4 flex-wrap">
               <div>
                 <h3 className="text-lg font-bold text-gray-100">Monthly Revenue — Projected vs Actual</h3>
-                <p className="text-xs text-gray-400 italic mt-0.5">6-month rolling · Dashed amber = monthly target (dayTarget × 20 work days)</p>
+                <p className="text-xs text-gray-400 italic mt-0.5">6-month rolling projected vs collected revenue. Required revenue target stays unavailable until gross margin is trustworthy.</p>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -1769,13 +1771,54 @@ function V15rDashboardInner() {
             </div>
             {(activeCount > 0 || monthlyOffset < 0) ? (
               <div style={{ position: 'relative', width: '100%', minWidth: 0, height: '300px' }}>
-                <MonthlyRevenueChart monthlyBuckets={monthBuckets} dailyTarget={dailyTarget} />
+                <MonthlyRevenueChart monthlyBuckets={monthBuckets} />
               </div>
             ) : (
               <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
                 No payments recorded this month yet
               </div>
             )}
+          </div>
+
+          <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div>
+                <h3 className="text-lg font-bold text-gray-100">Daily Target</h3>
+                <p className="text-xs text-gray-400 italic mt-0.5">Today's canonical collected revenue from Projects + Service Calls.</p>
+              </div>
+              {!dailyTargetTruth.targetConfigured && (
+                <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[11px] font-semibold text-amber-200">
+                  Not configured
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-lg border border-gray-700 bg-[var(--bg-secondary)] p-3">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Target</div>
+                <div className="mt-1 text-lg font-bold text-emerald-300">
+                  {dailyTargetTruth.targetConfigured ? fmt(dailyTargetTruth.targetValue || 0) : 'Not set'}
+                </div>
+              </div>
+              <div className="rounded-lg border border-gray-700 bg-[var(--bg-secondary)] p-3">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Today's Collected</div>
+                <div className="mt-1 text-lg font-bold text-cyan-300">{fmt(dailyTargetTruth.actualCollected)}</div>
+              </div>
+              <div className="rounded-lg border border-gray-700 bg-[var(--bg-secondary)] p-3">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Difference</div>
+                <div className={`mt-1 text-lg font-bold ${dailyTargetTruth.difference === null ? 'text-gray-400' : dailyTargetTruth.difference >= 0 ? 'text-emerald-300' : 'text-amber-300'}`}>
+                  {dailyTargetTruth.difference === null
+                    ? 'Not set'
+                    : `${dailyTargetTruth.difference >= 0 ? '+' : ''}${fmt(dailyTargetTruth.difference)}`}
+                </div>
+              </div>
+              <div className="rounded-lg border border-gray-700 bg-[var(--bg-secondary)] p-3">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Progress</div>
+                <div className="mt-1 text-lg font-bold text-emerald-300">{dailyTargetTruth.progressPct ?? 0}%</div>
+              </div>
+            </div>
+            <div className="mt-3 text-xs text-gray-500">
+              Projects {fmt(dailyTargetTruth.projectCollected)} + Service {fmt(dailyTargetTruth.serviceCollected)}
+            </div>
           </div>
 
         </div>

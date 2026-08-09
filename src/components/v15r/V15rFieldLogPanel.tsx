@@ -307,14 +307,16 @@ function getBalanceColor(balance: number, contract: number): string {
   return '#f97316'                       // orange: < 10% remaining
 }
 
+function isRetiredDayTargetTriggerType(ruleType: string): boolean {
+  return ruleType === 'bad_day' || ruleType === 'good_day'
+}
+
 function getFiredTriggerNames(backup: BackupData, data: any): string[] {
-  const target = num((backup.settings && backup.settings.dayTarget) || 361)
   const names: string[] = []
   for (const r of (backup.triggerRules || [])) {
     if (!r.active) continue
+    if (isRetiredDayTargetTriggerType(String(r.type || '').trim())) continue
     let hit = false
-    if (r.type === 'bad_day' && num(data.profit) < target * num(r.threshold)) hit = true
-    if (r.type === 'good_day' && num(data.profit) >= target * num(r.threshold)) hit = true
     if (r.type === 'travel' && num(data.quoted) > 0 && num(data.mileCost) > num(data.quoted) * num(r.threshold)) hit = true
     if (r.type === 'material' && num(data.quoted) > 0 && num(data.mat) > num(data.quoted) * num(r.threshold)) hit = true
     if (hit) names.push(r.name)
@@ -323,10 +325,10 @@ function getFiredTriggerNames(backup: BackupData, data: any): string[] {
 }
 
 function getTriggerRuleDetail(backup: BackupData, rule: BackupTriggerRule, data: any): any {
-  const dailyTarget = num((backup.settings && backup.settings.dayTarget) || 361)
   const thresholdRatio = num(rule.threshold)
   const quoted = num(data.quoted)
   const type = String(rule.type || '').trim()
+  const retired = isRetiredDayTargetTriggerType(type)
   let currentValue = 0
   let thresholdValue = 0
   let comparison = ''
@@ -336,28 +338,10 @@ function getTriggerRuleDetail(backup: BackupData, rule: BackupTriggerRule, data:
   let hit = false
   let why = 'Rule type is not mapped to a measurable trigger factor yet.'
 
-  if (type === 'bad_day') {
-    currentValue = num(data.profit)
-    thresholdValue = dailyTarget * thresholdRatio
-    comparison = '<'
-    factorLabel = 'Profit'
-    thresholdLabel = 'Maximum profit before flag'
-    unit = 'money'
-    hit = currentValue < thresholdValue
-    why = hit
-      ? `Profit is below the configured bad-day threshold.`
-      : `Profit is at or above the bad-day threshold.`
-  } else if (type === 'good_day') {
-    currentValue = num(data.profit)
-    thresholdValue = dailyTarget * thresholdRatio
-    comparison = '>='
-    factorLabel = 'Profit'
-    thresholdLabel = 'Minimum profit target'
-    unit = 'money'
-    hit = currentValue >= thresholdValue
-    why = hit
-      ? `Profit meets or beats the configured good-day target.`
-      : `Profit is below the configured good-day target.`
+  if (retired) {
+    factorLabel = 'Retired'
+    thresholdLabel = 'Retired'
+    why = 'This condition was disabled because Daily Target now measures whole-business collected revenue, not per-job service profit.'
   } else if (type === 'travel') {
     currentValue = quoted > 0 ? num(data.mileCost) / quoted : 0
     thresholdValue = thresholdRatio
@@ -388,9 +372,10 @@ function getTriggerRuleDetail(backup: BackupData, rule: BackupTriggerRule, data:
 
   return {
     rule,
-    active: rule.active !== false,
-    hit: rule.active !== false && hit,
-    needsAttention: rule.active !== false && hit && type !== 'good_day',
+    active: !retired && rule.active !== false,
+    retired,
+    hit: !retired && rule.active !== false && hit,
+    needsAttention: !retired && rule.active !== false && hit,
     rawHit: hit,
     currentValue,
     thresholdValue,
@@ -404,40 +389,28 @@ function getTriggerRuleDetail(backup: BackupData, rule: BackupTriggerRule, data:
 }
 
 function formatTriggerFactorValue(detail: any): string {
+  if (detail.retired) return 'Retired'
   if (detail.unit === 'money') return fmt(detail.currentValue)
   if (detail.unit === 'percent') return pct(Math.round(num(detail.currentValue) * 100))
   return String(detail.currentValue)
 }
 
 function formatTriggerThresholdValue(detail: any): string {
+  if (detail.retired) return 'Retired'
   if (detail.unit === 'money') return fmt(detail.thresholdValue)
   if (detail.unit === 'percent') return pct(Math.round(num(detail.thresholdValue) * 100))
   return String(detail.thresholdValue)
 }
 
-function triggerThresholdInputMeta(ruleType: string, threshold: any, dayTarget: number): any {
+function triggerThresholdInputMeta(ruleType: string, threshold: any): any {
   const type = String(ruleType || '').trim()
   const ratio = num(threshold)
-  if (type === 'bad_day') {
+  if (isRetiredDayTargetTriggerType(type)) {
     return {
-      mode: 'money',
-      label: 'Maximum profit before flag',
-      helper: 'Flags when Profit is below this amount. Saved as a ratio of the daily target.',
-      value: Math.round(dayTarget * ratio),
-      min: -1000,
-      max: Math.max(1000, Math.round(dayTarget * 3)),
-      step: 25,
-    }
-  }
-  if (type === 'good_day') {
-    return {
-      mode: 'money',
-      label: 'Minimum profit target',
-      helper: 'Fires when Profit is at or above this amount. Saved as a ratio of the daily target.',
-      value: Math.round(dayTarget * ratio),
-      min: 0,
-      max: Math.max(1000, Math.round(dayTarget * 4)),
-      step: 25,
+      mode: 'disabled',
+      label: 'Retired condition',
+      helper: 'This legacy trigger depended on Daily Target as a per-job profit threshold and no longer runs.',
+      value: 0,
     }
   }
   if (type === 'travel') {
@@ -849,10 +822,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const settings = backup.settings || {} as any
   // COST-1.5A: read the raw setting, never invent a fallback rate. When a value is
   // missing the modal blocks the quote (see estMissingRates / slMissingRates) — a
-  // wrong number is never shown. dayTarget is out of this phase's scope.
+  // wrong number is never shown.
   const mileRate = num(settings.mileRate)
   const opCost = num(settings.opCost)
-  const dayTarget = num(settings.dayTarget || 361)
 
   function persist() {
     backup._lastSavedAt = new Date().toISOString()
@@ -2412,7 +2384,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     const rule = triggerRules.find(r => r.id === ruleId)
     if (rule) {
       pushState(backup)
-      rule.active = active
+      rule.active = isRetiredDayTargetTriggerType(String(rule.type || '').trim()) ? false : active
       persist()
     }
   }
@@ -2422,7 +2394,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setTriggerRuleForm({
       id: `trigger_${Date.now().toString(36)}`,
       name: '',
-      type: 'bad_day',
+      type: 'travel',
       color: '#3b82f6',
       active: true,
       condition: '',
@@ -2449,12 +2421,13 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     if (!triggerRuleForm) return
     const name = String(triggerRuleForm.name || '').trim()
     if (!name) return
+    const nextType = String(triggerRuleForm.type || 'travel').trim() || 'travel'
     const nextRule = {
       id: String(triggerRuleForm.id || `trigger_${Date.now().toString(36)}`),
       name,
-      type: String(triggerRuleForm.type || 'bad_day').trim() || 'bad_day',
+      type: nextType,
       color: String(triggerRuleForm.color || '#3b82f6').trim() || '#3b82f6',
-      active: triggerRuleForm.active !== false,
+      active: isRetiredDayTargetTriggerType(nextType) ? false : triggerRuleForm.active !== false,
       condition: String(triggerRuleForm.condition || '').trim(),
       threshold: String(triggerRuleForm.threshold || '0').trim(),
       thresholdLabel: String(triggerRuleForm.thresholdLabel || 'Threshold').trim(),
@@ -3123,12 +3096,6 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   { label: 'Mileage', amount: fmt(num(rr.entryMileageCost)), Icon: Route, color: '#67e8f9', bg: 'rgba(103,232,249,0.08)', border: 'rgba(103,232,249,0.24)' },
                   { label: 'Total', amount: fmt(num(rr.entryTotalCost)), Icon: CircleDollarSign, color: '#f87171', bg: 'rgba(248,113,113,0.11)', border: 'rgba(248,113,113,0.34)', featured: true },
                 ]
-
-              // Daily target indicator
-              const todayHours = sorted.filter(x => x.date === today()).reduce((s, x) => s + num(x.hrs), 0)
-              const todayLaborCost = todayHours * (num(settings.billRate) || 95)
-              const onTarget = todayLaborCost >= dayTarget
-
               return (
                 <div key={l.id} className="space-y-1">
                   {/* Main entry row */}
@@ -3223,11 +3190,6 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                       </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                      {false && todayHours > 0 && (
-                        <span style={{ padding: '2px 6px', borderRadius: '3px', background: onTarget ? 'rgba(16,185,129,.2)' : 'rgba(239,68,68,.2)', color: onTarget ? '#10b981' : '#ef4444', fontSize: '9px', fontWeight: 700 }}>
-                          {onTarget ? '✓ On Target' : '⚠ Below Target'} ({todayHours.toFixed(1)}h)
-                        </span>
-                      )}
                       <button onClick={() => beginLogEdit(l.id)} className="rounded-md border border-white/[0.06] bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold text-slate-300 hover:bg-white/[0.07] hover:text-white">Edit</button>
                       <button onClick={() => deleteLogEntry(l.id)} className="rounded-md border border-red-400/10 bg-red-500/[0.06] px-2.5 py-1 text-[10px] font-semibold text-red-300 hover:bg-red-500/[0.10] hover:text-red-200">Delete</button>
                     </div>
@@ -3782,7 +3744,6 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                           totalQuotedInput={estTotalQuoted === '' ? String(quote.suggestedQuote) : estTotalQuoted}
                           onTotalQuotedChange={(raw) => { setEstTotalQuoted(raw); setEstQuotedManual(true) }}
                           onUseSuggested={() => { setEstTotalQuoted(String(quote.suggestedQuote)); setEstQuotedManual(false) }}
-                          dayTarget={dayTarget}
                           mileRate={mileRate}
                           taxRate={taxRate}
                           opCost={opCost}
@@ -4486,7 +4447,6 @@ ${note}` : note)
                           totalQuotedInput={slQuoted === '' ? String(quote.suggestedQuote) : slQuoted}
                           onTotalQuotedChange={(raw) => { setSlQuoted(raw); setSlQuotedManual(true) }}
                           onUseSuggested={() => { setSlQuoted(String(quote.suggestedQuote)); setSlQuotedManual(false) }}
-                          dayTarget={dayTarget}
                           mileRate={mileRate}
                           taxRate={taxRate}
                           opCost={opCost}
@@ -4943,12 +4903,13 @@ ${note}` : note)
     }
 
     const thresholdEditorMeta = triggerRuleForm
-      ? triggerThresholdInputMeta(triggerRuleForm.type || 'bad_day', triggerRuleForm.threshold, dayTarget)
+      ? triggerThresholdInputMeta(triggerRuleForm.type || 'travel', triggerRuleForm.threshold)
       : null
     const updateTriggerThresholdFromEditor = (rawValue: number) => {
       if (!triggerRuleForm || !thresholdEditorMeta) return
+      if (thresholdEditorMeta.mode === 'disabled') return
       const nextThreshold = thresholdEditorMeta.mode === 'money'
-        ? (dayTarget > 0 ? rawValue / dayTarget : 0)
+        ? rawValue
         : thresholdEditorMeta.mode === 'percent'
           ? rawValue / 100
           : rawValue
@@ -5132,9 +5093,10 @@ ${note}` : note)
                 </label>
                 <label className="space-y-1">
                   <span className="text-[10px] text-gray-500 uppercase font-bold">Type</span>
-                  <select value={triggerRuleForm.type || 'bad_day'} onChange={e => setTriggerRuleForm({ ...triggerRuleForm, type: e.target.value })} className="w-full bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-blue-500">
-                    <option value="bad_day">Bad day</option>
-                    <option value="good_day">Good day</option>
+                  <select value={triggerRuleForm.type || 'travel'} onChange={e => setTriggerRuleForm({ ...triggerRuleForm, type: e.target.value })} className="w-full bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-blue-500">
+                    {isRetiredDayTargetTriggerType(String(triggerRuleForm.type || '').trim()) && (
+                      <option value={String(triggerRuleForm.type)}>{String(triggerRuleForm.type) === 'bad_day' ? 'Bad day (retired)' : 'Good day (retired)'}</option>
+                    )}
                     <option value="travel">Travel</option>
                     <option value="material">Material</option>
                   </select>
@@ -5150,11 +5112,12 @@ ${note}` : note)
                       max={thresholdEditorMeta?.max}
                       step={thresholdEditorMeta?.step || 0.01}
                       onChange={e => updateTriggerThresholdFromEditor(Number(e.target.value))}
+                      disabled={thresholdEditorMeta?.mode === 'disabled'}
                       className="w-full bg-[var(--bg-input)] border border-gray-600 rounded px-3 py-2 text-xs text-[var(--text-primary)] outline-none focus:border-blue-500"
                     />
                     {thresholdEditorMeta?.mode === 'percent' && <span className="text-xs font-bold text-blue-300">%</span>}
                   </div>
-                  {thresholdEditorMeta && thresholdEditorMeta.mode !== 'number' && (
+                  {thresholdEditorMeta && thresholdEditorMeta.mode !== 'number' && thresholdEditorMeta.mode !== 'disabled' && (
                     <input
                       type="range"
                       value={thresholdEditorMeta.value}
@@ -5191,7 +5154,11 @@ ${note}` : note)
                 <div className="flex items-center justify-between gap-3 mb-2">
                   <div>
                     <div className="text-sm font-bold text-gray-200">{rule.name}</div>
-                    <div className="text-[10px] text-gray-500 mt-1">{rule.type} · threshold {pct(Math.round(num(rule.threshold) * 100))}</div>
+                    <div className="text-[10px] text-gray-500 mt-1">
+                      {isRetiredDayTargetTriggerType(String(rule.type || '').trim())
+                        ? 'Retired legacy condition'
+                        : `${rule.type} · threshold ${pct(Math.round(num(rule.threshold) * 100))}`}
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <label className="flex items-center gap-2 cursor-pointer">
@@ -5199,9 +5166,12 @@ ${note}` : note)
                         type="checkbox"
                         checked={rule.active || false}
                         onChange={e => toggleTrigger(rule.id, e.target.checked)}
+                        disabled={isRetiredDayTargetTriggerType(String(rule.type || '').trim())}
                         className="w-4 h-4"
                       />
-                      <span className="text-[9px] text-gray-400">{rule.active ? 'Active' : 'Inactive'}</span>
+                      <span className="text-[9px] text-gray-400">
+                        {isRetiredDayTargetTriggerType(String(rule.type || '').trim()) ? 'Retired' : rule.active ? 'Active' : 'Inactive'}
+                      </span>
                     </label>
                     <button onClick={() => startEditTriggerRule(rule)} className="p-1.5 rounded text-gray-400 hover:text-blue-300 hover:bg-blue-500/10" title="Edit trigger rule">
                       <Edit3 size={13} />
@@ -5415,7 +5385,6 @@ ${note}` : note)
             collected: s.collected, payStatus: s.payStatus, balanceDue: s.balanceDue,
           })),
           triggerRuleCount: triggerRules.length,
-          dayTarget,
           employeeCount: employees.length,
         }}
         isOpen={aiOpen}
@@ -5832,16 +5801,15 @@ export function ServiceQuoteMissingPanel({
  *
  * Suggested Quote / Suggested Profit are informational. Total Quoted is the
  * owner's actual customer price and drives Quote Variance, Actual Estimated
- * Profit, Actual Profit Margin, the cost bar and the daily-target signal.
+ * Profit, Actual Profit Margin, and the cost bar.
  */
 export function ServiceQuotePanel({
-  quote, totalQuotedInput, onTotalQuotedChange, onUseSuggested, dayTarget, mileRate, taxRate, opCost, operatingCostLabel, accent = 'blue',
+  quote, totalQuotedInput, onTotalQuotedChange, onUseSuggested, mileRate, taxRate, opCost, operatingCostLabel, accent = 'blue',
 }: {
   quote: any
   totalQuotedInput: string
   onTotalQuotedChange: (raw: string) => void
   onUseSuggested: () => void
-  dayTarget: number
   mileRate: number
   taxRate: number
   opCost: number
@@ -5996,18 +5964,9 @@ export function ServiceQuotePanel({
         </div>
       )}
 
-      {/* Daily-target signal — uses the ACTUAL customer quote, not the suggestion */}
-      {total > 0 && (
-        <div className={`rounded-xl px-4 py-3 text-xs border ${
-          profit >= dayTarget
-            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-            : profit > 0
-            ? 'bg-yellow-500/10 border-yellow-500/25 text-yellow-400'
-            : 'bg-red-500/10 border-red-500/25 text-red-400'
-        }`}>
-          {profit >= dayTarget && <span>✅ <strong>Above daily target</strong> — {fmt(profit)} profit ({marginPct.toFixed(1)}% margin) on {fmt(total)} quoted.</span>}
-          {profit > 0 && profit < dayTarget && <span>⚠️ <strong>Below daily target</strong> — {fmt(profit)} profit ({marginPct.toFixed(1)}% margin). {fmt(dayTarget - profit)} short.</span>}
-          {profit <= 0 && <span>🔴 <strong>Unprofitable</strong> — costs exceed the quoted amount by {fmt(Math.abs(profit))}. Reprice or reduce scope.</span>}
+      {total > 0 && profit <= 0 && (
+        <div className="rounded-xl px-4 py-3 text-xs border bg-red-500/10 border-red-500/25 text-red-400">
+          <span>🔴 <strong>Unprofitable</strong> — costs exceed the quoted amount by {fmt(Math.abs(profit))}. Reprice or reduce scope.</span>
         </div>
       )}
     </div>

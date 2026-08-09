@@ -194,9 +194,9 @@ function computeMonthlyBurn(): number {
     const extra     = (oh.extra     || []).reduce((s: number, r: any) => s + num(r.monthly), 0)
     const loans     = (oh.loans     || []).reduce((s: number, r: any) => s + num(r.monthly), 0)
     const vehicle   = (oh.vehicle   || []).reduce((s: number, r: any) => s + num(r.monthly), 0)
-    // Include salary target as monthly cost
-    const salaryMo  = num(data.settings.salaryTarget) / 12
-    return essential + extra + loans + vehicle + salaryMo
+    // Owner compensation planning now follows the canonical Personal Income Goal.
+    const ownerCompMo = num(data.settings.personalIncomeGoal) / 12
+    return essential + extra + loans + vehicle + ownerCompMo
   } catch {
     return 0
   }
@@ -610,7 +610,7 @@ export function assessDecision(
  * Sources:
  * - Cash on hand → not tracked in backup data (requires manual context)
  * - AR → derived from service logs and project billed/paid gaps
- * - Monthly burn → overhead settings + salary target
+ * - Monthly burn → overhead settings + Personal Income Goal
  * - Runway → cash / (burn / 4.33 weeks) — requires cashOnHand to be meaningful
  *
  * The snapshot is embedded in every DecisionResult for display in overlays.

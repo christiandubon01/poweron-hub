@@ -24,6 +24,12 @@ export interface WeeklyFinancialValues {
   pendingInv: number
 }
 
+export interface CanonicalDayRange {
+  dayKey: string
+  start: Date
+  endExclusive: Date
+}
+
 function validDate(value: unknown): Date | null {
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : new Date(value.getTime())
@@ -31,6 +37,18 @@ function validDate(value: unknown): Date | null {
   if (typeof value !== 'string' && typeof value !== 'number') return null
   const parsed = new Date(value)
   return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function localDayKey(date: Date): string {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-')
+}
+
+function utcDateAtMidnight(dayKey: string): Date {
+  return new Date(`${dayKey}T00:00:00.000Z`)
 }
 
 function projectStatus(project: any): string {
@@ -105,6 +123,29 @@ export function calculateWeeklyFinancialsForRange(
     .reduce((sum, log) => sum + num(log?.quoted), 0)
 
   return { proj, svc, unbilled, pendingInv }
+}
+
+export function resolveCanonicalLocalDayRange(day = new Date()): CanonicalDayRange {
+  const localStart = new Date(day.getFullYear(), day.getMonth(), day.getDate())
+  const localEnd = new Date(localStart)
+  localEnd.setDate(localEnd.getDate() + 1)
+  const dayKey = localDayKey(localStart)
+  return {
+    dayKey,
+    start: utcDateAtMidnight(dayKey),
+    endExclusive: utcDateAtMidnight(localDayKey(localEnd)),
+  }
+}
+
+export function calculateDailyFinancialsForDate(
+  backup: BackupData,
+  day = new Date(),
+): WeeklyFinancialValues & { dayKey: string } {
+  const range = resolveCanonicalLocalDayRange(day)
+  return {
+    ...calculateWeeklyFinancialsForRange(backup, range.start, range.endExclusive),
+    dayKey: range.dayKey,
+  }
 }
 
 export function isCurrentWeeklyRow(row: Partial<BackupWeeklyData>, now: Date): boolean {

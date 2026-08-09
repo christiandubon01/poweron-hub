@@ -40,6 +40,7 @@ import {
   type BackupLog,
   type BackupData,
 } from '@/services/backupDataService'
+import { buildBusinessGoalTruth } from '@/services/businessGoalTruth'
 import { stampSettingsFields } from '@/services/settingsScopeMerge'
 import {
   mergeEmployeesIntoRemote,
@@ -114,6 +115,10 @@ class ChartErrorBoundary extends React.Component<{children: React.ReactNode}, {h
     }
     return this.props.children
   }
+}
+
+function formatGoalMetric(metric: any): string {
+  return metric?.available ? formatCurrency(metric.value) : 'Unavailable'
 }
 
 
@@ -393,7 +398,8 @@ Monthly Service Pace (Avg): ${fmt(monthlyServicePace)}`
 // ── OWNER CARD ENHANCEMENT ──
 function OwnerCard({ owner, backup, onSave }: { owner: EnhancedEmployee; backup: BackupData; onSave: (id: string, updates: Partial<EnhancedEmployee>) => void }) {
   const settings = backup?.settings || {}
-  const personalIncomeGoal = num(settings.personalIncomeGoal || 0)
+  const goalTruth = buildBusinessGoalTruth(backup)
+  const personalIncomeGoal = goalTruth.personalIncomeGoal.value || 0
   const monthlyGoal = personalIncomeGoal / 12
   const persistedOwner = (backup.employees || []).find((employee: any) => employee.id === owner.id)
   const configuredBaseRate = Number((persistedOwner as any)?.hourly_rate)
@@ -403,28 +409,6 @@ function OwnerCard({ owner, backup, onSave }: { owner: EnhancedEmployee; backup:
   useEffect(() => {
     setOwnerBaseRate(hasConfiguredBaseRate ? String(configuredBaseRate) : '')
   }, [configuredBaseRate, hasConfiguredBaseRate])
-
-  // Calculate YTD pace
-  const projects = backup?.projects || []
-  const logs = backup?.logs || []
-  const currentYear = new Date().getFullYear()
-  const currentMonth = new Date().getMonth()
-  const monthsElapsed = currentMonth + 1
-
-  const ytdPaid = projects.reduce((sum, p) => {
-    const paidAmount = num(p.paid || 0)
-    const lastCollectedAt = p.lastCollectedAt
-    if (lastCollectedAt) {
-      const collectedDate = new Date(lastCollectedAt)
-      if (collectedDate.getFullYear() === currentYear) {
-        return sum + paidAmount
-      }
-    }
-    return sum
-  }, 0)
-
-  const ytdPacePerMonth = monthsElapsed > 0 ? ytdPaid / monthsElapsed : 0
-  const isOnPace = ytdPacePerMonth >= monthlyGoal
 
   return (
     <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
@@ -485,28 +469,43 @@ function OwnerCard({ owner, backup, onSave }: { owner: EnhancedEmployee; backup:
         />
       </div>
 
-      {personalIncomeGoal > 0 && (
+      {(goalTruth.personalIncomeGoal.value !== null || goalTruth.trailingCollectedRevenue.available) && (
         <div className="space-y-4 mt-4">
           <div className="bg-[var(--bg-secondary)] rounded-lg p-4">
             <div className="text-xs font-semibold text-gray-500 uppercase mb-1">Personal Income Goal</div>
             <div className="flex justify-between items-baseline">
-              <div className="text-2xl font-bold text-emerald-400">{formatCurrency(personalIncomeGoal)}</div>
-              <div className="text-sm text-gray-400">({formatCurrency(monthlyGoal)}/mo)</div>
+              <div className={`text-2xl font-bold ${personalIncomeGoal > 0 ? 'text-emerald-400' : 'text-gray-500'}`}>
+                {personalIncomeGoal > 0 ? formatCurrency(personalIncomeGoal) : 'Not set'}
+              </div>
+              <div className="text-sm text-gray-400">{personalIncomeGoal > 0 ? `(${formatCurrency(monthlyGoal)}/mo)` : 'Planning only'}</div>
             </div>
             <p className="text-xs text-gray-500 mt-1">Business target - does not set hourly labor cost.</p>
           </div>
 
-          <div className={`bg-[var(--bg-secondary)] rounded-lg p-4 border-l-4 ${isOnPace ? 'border-l-emerald-500' : 'border-l-red-500'}`}>
-            <div className="text-xs font-semibold text-gray-500 uppercase mb-1">YTD Pace</div>
+          <div className="bg-[var(--bg-secondary)] rounded-lg p-4 border-l-4 border-l-blue-500">
+            <div className="text-xs font-semibold text-gray-500 uppercase mb-1">Current Company Overhead</div>
             <div className="flex justify-between items-baseline">
-              <div className={`text-2xl font-bold ${isOnPace ? 'text-emerald-400' : 'text-red-400'}`}>
-                {formatCurrency(ytdPacePerMonth)}
-              </div>
-              <div className={`text-xs font-semibold ${isOnPace ? 'text-emerald-400' : 'text-red-400'}`}>
-                {isOnPace ? '✓ On pace' : '✗ Below goal'}
-              </div>
+              <div className="text-2xl font-bold text-blue-300">{formatGoalMetric(goalTruth.annualCompanyOverhead)}</div>
+              <div className="text-xs font-semibold text-blue-300">Canonical annual</div>
             </div>
-            <p className="text-xs text-gray-500 mt-2">{monthsElapsed} month{monthsElapsed !== 1 ? 's' : ''} elapsed</p>
+            <p className="text-xs text-gray-500 mt-2">Derived from Overhead Manager.</p>
+          </div>
+
+          <div className="bg-[var(--bg-secondary)] rounded-lg p-4 border-l-4 border-l-cyan-500">
+            <div className="text-xs font-semibold text-gray-500 uppercase mb-1">Trailing 90-Day Collected Revenue</div>
+            <div className="flex justify-between items-baseline">
+              <div className="text-2xl font-bold text-cyan-300">{formatGoalMetric(goalTruth.trailingCollectedRevenue)}</div>
+              <div className="text-xs font-semibold text-cyan-300">Canonical cash</div>
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              {goalTruth.trailingCollectedRevenue.start || '—'} through {goalTruth.trailingCollectedRevenue.endExclusive || '—'} (end exclusive)
+            </p>
+          </div>
+
+          <div className="bg-[var(--bg-secondary)] rounded-lg p-4 border-l-4 border-l-amber-500">
+            <div className="text-xs font-semibold text-gray-500 uppercase mb-1">Required Revenue Target</div>
+            <div className="text-xl font-bold text-amber-300">Pending actual cost data</div>
+            <p className="text-xs text-gray-500 mt-2">{goalTruth.requiredAnnualRevenue.reason}</p>
           </div>
         </div>
       )}
@@ -521,8 +520,6 @@ function EnhancedCostVsPipelineChart({ backup }) {
   const projects = backup.projects || []
   const logs = backup.logs || []
   const settings = backup.settings || {}
-  const personalIncomeGoal = parseFloat(settings.personalIncomeGoal || 0)
-  const overheadPct = parseFloat(settings.overheadPct || 30) / 100
   const now = new Date()
   const chartData = []
   for (let i = 0; i < 6; i++) {
@@ -531,9 +528,7 @@ function EnhancedCostVsPipelineChart({ backup }) {
     const mLogs = logs.filter(l => { const ld = new Date(l.date || ''); return ld.getMonth() === d.getMonth() && ld.getFullYear() === d.getFullYear() })
     const empCost = mLogs.reduce((s, l) => { const empId = l.empId || l.employeeId; const emp = employees.find(e => e.id === empId); return s + (parseFloat(l.hrs || 0) * getLoadedHourlyRate(emp, settings)) }, 0)
     const revenue = projects.filter(p => p.status === 'active' || p.status === 'coming').reduce((s, p) => s + (parseFloat(p.contract || 0) / 12), 0)
-    const ownerDraw = personalIncomeGoal / 12
-    const overhead = revenue * overheadPct
-    chartData.push({ name: label, employees: empCost, ownerDraw, overhead, revenue })
+    chartData.push({ name: label, employees: empCost, revenue })
   }
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -543,9 +538,7 @@ function EnhancedCostVsPipelineChart({ backup }) {
         <YAxis tickFormatter={(v) => '$' + (v / 1000).toFixed(0) + 'k'} tick={{ fill: '#9ca3af', fontSize: 11 }} />
         <Tooltip contentStyle={{ backgroundColor: '#0f1117', border: '1px solid #374151', borderRadius: 8 }} formatter={(v) => ['$' + Number(v).toLocaleString()]} />
         <Legend wrapperStyle={{ color: '#d1d5db', fontSize: 11 }} />
-        <Bar dataKey="employees" name="Employee Costs" stackId="costs" fill="#ef4444" />
-        <Bar dataKey="ownerDraw" name="Owner Draw" stackId="costs" fill="#f97316" />
-        <Bar dataKey="overhead" name="Overhead" stackId="costs" fill="#eab308" />
+        <Bar dataKey="employees" name="Loaded Employee Costs" stackId="costs" fill="#ef4444" />
         <Line type="monotone" dataKey="revenue" name="Projected Revenue" stroke="#10b981" strokeWidth={3} dot={{ r: 3 }} />
       </ComposedChart>
     </ResponsiveContainer>
@@ -555,49 +548,46 @@ function EnhancedCostVsPipelineChart({ backup }) {
 
 // ── AI INSIGHT CARD ──
 function AIInsightCard({ backup }: { backup: BackupData }) {
+  const goalTruth = buildBusinessGoalTruth(backup)
   const settings = backup?.settings || {}
   const projects = backup?.projects || []
   const employeeCosts = settings.employeeCosts || []
-  const personalIncomeGoal = num(settings.personalIncomeGoal || 0)
-  const overheadPct = num(settings.overheadPct || 0)
 
   const monthlyEmployeeCosts = employeeCosts.reduce((s, c) => s + num(c.amount || 0), 0)
-  const monthlyOwnerDraw = personalIncomeGoal / 12
   const activeRevenue = projects
     .filter(p => p.status === 'active' || p.status === 'coming')
     .reduce((s, p) => s + num(p.contract || 0), 0)
   const monthlyRevenue = activeRevenue / 12
-  const monthlyOverhead = monthlyRevenue * (overheadPct / 100)
-  const totalMonthCost = monthlyEmployeeCosts + monthlyOwnerDraw + monthlyOverhead
-  const monthlyDifference = monthlyRevenue - totalMonthCost
+  const monthlyDifference = monthlyRevenue - monthlyEmployeeCosts
 
   let insight = ''
   if (monthlyDifference < 0) {
-    insight = `At current pace, costs exceed revenue by ${formatCurrency(Math.abs(monthlyDifference))}/mo. Secure additional work to maintain profitability.`
+    insight = `Projected revenue is below current employee-only monthly cost by ${formatCurrency(Math.abs(monthlyDifference))}/mo. Review staffing load and near-term pipeline before treating this as profitable.`
   } else if (monthlyDifference === 0) {
-    insight = `Revenue and costs are balanced. Current trajectory is break-even.`
+    insight = `Projected revenue roughly matches employee-only monthly cost. Owner compensation and full company overhead still need separate review.`
   } else {
-    insight = `Revenue exceeds costs by ${formatCurrency(monthlyDifference)}/mo. Current trajectory is profitable.`
+    insight = `Projected revenue exceeds employee-only monthly cost by ${formatCurrency(monthlyDifference)}/mo. This is not a required-revenue target because gross margin is still unavailable.`
   }
 
   return (
     <div className="bg-[var(--bg-secondary)] rounded-lg border-2 border-yellow-500/50 p-6">
       <div className="flex items-center gap-2 mb-3">
         <Zap className="w-5 h-5 text-yellow-400" />
-        <span className="text-xs font-bold uppercase text-yellow-400 bg-yellow-600/30 px-2 py-1 rounded">AI Insight</span>
+        <span className="text-xs font-bold uppercase text-yellow-400 bg-yellow-600/30 px-2 py-1 rounded">Revenue Context</span>
       </div>
       <p className="text-gray-200 text-sm leading-relaxed">{insight}</p>
+      <p className="mt-2 text-xs text-gray-500">{goalTruth.requiredAnnualRevenue.reason}</p>
       <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
         <div className="bg-[var(--bg-card)] rounded p-2">
-          <div className="text-gray-500 mb-1">Monthly Costs</div>
-          <div className="font-bold text-red-400">{formatCurrency(totalMonthCost)}</div>
+          <div className="text-gray-500 mb-1">Employee Costs</div>
+          <div className="font-bold text-red-400">{formatCurrency(monthlyEmployeeCosts)}</div>
         </div>
         <div className="bg-[var(--bg-card)] rounded p-2">
-          <div className="text-gray-500 mb-1">Monthly Revenue</div>
+          <div className="text-gray-500 mb-1">Projected Revenue</div>
           <div className="font-bold text-emerald-400">{formatCurrency(monthlyRevenue)}</div>
         </div>
         <div className="bg-[var(--bg-card)] rounded p-2">
-          <div className="text-gray-500 mb-1">Monthly Gap</div>
+          <div className="text-gray-500 mb-1">Employee Gap</div>
           <div className={`font-bold ${monthlyDifference >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
             {monthlyDifference >= 0 ? '+' : ''}{formatCurrency(monthlyDifference)}
           </div>
@@ -2269,7 +2259,7 @@ export default function V15rTeamPanel() {
       {/* ENHANCED EMPLOYEE COST VS PIPELINE CHART */}
       <div className="bg-[var(--bg-card)] rounded-lg border border-gray-700 p-6">
         <h2 className="text-lg font-bold text-gray-100 mb-4">6-Month Cost vs Pipeline Forecast</h2>
-        <p className="text-sm text-gray-500 mb-4">Next 6 months: stacked costs (red/orange/yellow) vs projected revenue (green line)</p>
+        <p className="text-sm text-gray-500 mb-4">Next 6 months: loaded employee cost vs projected revenue. Owner compensation goals and required revenue stay on the canonical goal-truth path.</p>
         <div className="relative w-full" style={{ height: '320px' }}>
           <ChartErrorBoundary>
             <EnhancedCostVsPipelineChart backup={backup} />
@@ -2463,23 +2453,20 @@ export default function V15rTeamPanel() {
                         </div>
                       </div>
 
-                      {/* Chart 2: Break-even Analysis */}
+                      {/* Chart 2: Revenue Coverage Context */}
                       <div>
-                        <h4 className="text-xs font-semibold text-gray-400 uppercase mb-3">Break-even Revenue Analysis</h4>
+                        <h4 className="text-xs font-semibold text-gray-400 uppercase mb-3">Revenue Coverage Context</h4>
                         <div className="space-y-2">
                           {(() => {
                             const annualCost = (hyp.costRate * 40 * 4.33) * 12
-                            const overheadPct = 30
-                            const breakEvenRevenue = annualCost / (1 - overheadPct / 100)
                             const activeProjects = projects.filter((p: any) => p.status === 'active' || p.status === 'Active')
                             const totalActiveRevenue = activeProjects.reduce((sum: number, p: any) => sum + (p.totalBudget || p.budget || 0), 0)
                             const employeeCount = Math.max(1, employees.length)
                             const revenuePerEmployee = totalActiveRevenue / employeeCount
-                            const maxValue = Math.max(breakEvenRevenue, revenuePerEmployee, annualCost)
+                            const maxValue = Math.max(revenuePerEmployee, annualCost, 1)
 
                             return [
                               { label: 'Position Cost', value: annualCost, color: '#f87171' },
-                              { label: 'Break-even (30% OH)', value: breakEvenRevenue, color: '#fbbf24' },
                               { label: 'Revenue/Employee', value: revenuePerEmployee, color: '#34d399' },
                             ].map(bar => (
                               <div key={bar.label} className="flex items-center gap-2">
@@ -2499,11 +2486,7 @@ export default function V15rTeamPanel() {
                           })()}
                         </div>
                         <div className="mt-3 pt-2 border-t border-gray-700/50 text-xs text-gray-400">
-                          <p>Revenue per employee to cover: <span className="text-cyan-400 font-semibold">${(() => {
-                            const annualCost = (hyp.costRate * 40 * 4.33) * 12
-                            const overheadPct = 30
-                            return (annualCost / (1 - overheadPct / 100)).toLocaleString('en-US', { maximumFractionDigits: 0 })
-                          })()}</span></p>
+                          <p>Required revenue target stays pending until actual gross margin is trustworthy.</p>
                         </div>
                       </div>
                     </div>
