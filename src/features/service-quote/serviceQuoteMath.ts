@@ -206,3 +206,35 @@ export function nextTotalQuotedAfterInputChange(args: {
 }): number {
   return args.quotedManual ? round2(args.currentTotalQuoted) : round2(args.suggestedQuote)
 }
+
+export type EstimateBillRateSource = 'default' | 'manual'
+
+/**
+ * Resolve persisted Bill Rate provenance. Explicit metadata is authoritative.
+ * Legacy rows are inferred once: a positive record-specific value is preserved
+ * as manual unless it exactly matches the current Settings default.
+ */
+export function resolveEstimateBillRateSource(
+  record: unknown,
+  settingsDefault: unknown,
+): EstimateBillRateSource {
+  const r = (record ?? {}) as Record<string, unknown>
+  if (r.billRateSource === 'default' || r.billRateSource === 'manual') {
+    return r.billRateSource
+  }
+  const stored = num(r.billRate)
+  const fallback = num(settingsDefault)
+  return stored > 0 && fallback > 0 && Math.abs(stored - fallback) <= 0.005
+    ? 'default'
+    : 'manual'
+}
+
+export function resolveEffectiveEstimateBillRate(
+  record: unknown,
+  settingsDefault: unknown,
+): number {
+  const r = (record ?? {}) as Record<string, unknown>
+  return resolveEstimateBillRateSource(r, settingsDefault) === 'default'
+    ? round2(num(settingsDefault))
+    : round2(num(r.billRate))
+}

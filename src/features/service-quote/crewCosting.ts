@@ -30,6 +30,11 @@ export interface CrewMemberInput {
 export interface CrewCostSnapshot {
   version: 1
   calculatedAt: string
+  /** Present only after Confirm Job accepts the cost basis. */
+  frozenAt?: string
+  pricingModel?: 'crew' | 'solo-legacy'
+  freezeReason?: 'confirm-job'
+  snapshotKind?: 'comparison' | 'frozen'
   crewSource: CrewSource
   siteHours: number
   crewLaborHours: number
@@ -58,6 +63,8 @@ export interface ComputeCrewQuoteArgs {
   overheadRecoveryRate: number
   totalQuoted: number
   crewSource?: CrewSource
+  /** Service Estimate selling-price authority. Team bill rates remain informational. */
+  estimateBillRate?: number
 }
 
 export interface CrewQuoteBreakdown extends Omit<CrewCostSnapshot, 'version' | 'calculatedAt' | 'crewSource'> {
@@ -77,7 +84,11 @@ export interface CrewQuoteBreakdown extends Omit<CrewCostSnapshot, 'version' | '
  */
 export function computeCrewQuote(args: ComputeCrewQuoteArgs): CrewQuoteBreakdown {
   const siteHours = num(args.siteHours)
-  const crew = Array.isArray(args.crew) ? args.crew : []
+  const rawCrew = Array.isArray(args.crew) ? args.crew : []
+  const estimateBillRate = num(args.estimateBillRate)
+  const crew = estimateBillRate > 0
+    ? rawCrew.map((member) => ({ ...member, billRate: estimateBillRate }))
+    : rawCrew
   const materialCost = round2(num(args.materialCost))
   const miles = num(args.miles)
   const mileRate = num(args.mileRate)
@@ -161,7 +172,25 @@ export function buildCostSnapshot(
   breakdown: CrewQuoteBreakdown,
   calculatedAt = new Date().toISOString(),
 ): CrewCostSnapshot {
-  return snapshotFromBreakdown(breakdown, calculatedAt)
+  return { ...snapshotFromBreakdown(breakdown, calculatedAt), snapshotKind: 'comparison' }
+}
+
+/** Confirm Job is the only transition that turns live cost into historical authority. */
+export function freezeCostSnapshot(
+  snapshot: CrewCostSnapshot,
+  frozenAt = new Date().toISOString(),
+): CrewCostSnapshot {
+  return {
+    ...snapshot,
+    frozenAt,
+    pricingModel: 'crew',
+    freezeReason: 'confirm-job',
+    snapshotKind: 'frozen',
+  }
+}
+
+export function isFrozenCostSnapshot(snapshot: CrewCostSnapshot | null | undefined): boolean {
+  return !!snapshot && snapshot.snapshotKind === 'frozen' && !!snapshot.frozenAt
 }
 
 /**
@@ -245,6 +274,14 @@ export interface CostedCrewResolution {
   missingClassificationIds: string[]
   missingRateIds: string[]
   officeOnlyIds: string[]
+  financialInputErrors?: string[]
+}
+
+export interface CostedCrewOptions {
+  /** Strict live-estimate path: no costRate/opCost/payroll-multiplier fallbacks. */
+  strictFinancialInputs?: boolean
+  payrollMult?: unknown
+  estimateBillRate?: unknown
 }
 
 /**
@@ -259,6 +296,7 @@ export function resolveCostedCrew(
   costModelEmployees: CostModelEmployee[],
   assignedEmployees?: AssignedEmployee[],
   pricingCrewIds?: string[],
+  options: CostedCrewOptions = {},
 ): CostedCrewResolution {
   const result: CostedCrewResolution = {
     crew: [],
@@ -266,6 +304,7 @@ export function resolveCostedCrew(
     missingClassificationIds: [],
     missingRateIds: [],
     officeOnlyIds: [],
+    financialInputErrors: [],
   }
 
   const normalizedEmployees = (costModelEmployees || []).map(normalizeEmployee)
@@ -340,8 +379,43 @@ export function resolveCostedCrew(
       continue
     }
 
-    const loadedRate = getLoadedHourlyRate(emp, {})
-    const billRate = num(emp.billRate)
+    const rawEmployee = costModelEmployees.find((raw) => String(raw.id) === String(emp.id)) ?? emp
+    let loadedRate: number
+    let billRate: number
+    if (options.strictFinancialInputs) {
+      const baseRate = Number(rawEmployee?.hourly_rate)
+      if (!Number.isFinite(baseRate) || baseRate <= 0) {
+        result.missingRateIds.push(emp.id)
+        result.financialInputErrors!.push(
+          emp.isOwner
+            ? 'Owner Base Hourly Labor Rate required. Set it in Team → Owner / Me.'
+            : `${emp.name || emp.id} needs a Base Wage in Team.`,
+        )
+        continue
+      }
+      if (emp.isOwner || emp.classification === '1099' || emp.employee_type === 'per_project') {
+        loadedRate = baseRate
+      } else {
+        const payrollMult = Number(options.payrollMult)
+        if (!Number.isFinite(payrollMult) || payrollMult < 1) {
+          result.financialInputErrors!.push(
+            `Payroll burden multiplier required for W-2 employee ${emp.name || emp.id}. Configure Team → Labor Burden & Capacity.`,
+          )
+          continue
+        }
+        loadedRate = baseRate * payrollMult
+      }
+      billRate = num(options.estimateBillRate)
+      if (billRate <= 0) {
+        result.financialInputErrors!.push(
+          'Estimate Bill Rate required. Set it in this Service Estimate.',
+        )
+        continue
+      }
+    } else {
+      loadedRate = getLoadedHourlyRate(emp, {})
+      billRate = num(emp.billRate)
+    }
     if (loadedRate <= 0 || billRate <= 0) {
       result.missingRateIds.push(emp.id)
       continue
@@ -391,6 +465,10 @@ export function validateCrewForCosting(
   // identities are never silently omitted from a mixed crew.
   if (resolution?.errors.length) {
     errors.push(...resolution.errors)
+  }
+
+  if (resolution?.financialInputErrors?.length) {
+    errors.push(...new Set(resolution.financialInputErrors))
   }
 
   if (!Number.isFinite(siteHours) || siteHours <= 0) {

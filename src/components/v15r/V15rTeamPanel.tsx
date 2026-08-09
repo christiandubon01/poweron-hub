@@ -395,6 +395,14 @@ function OwnerCard({ owner, backup, onSave }: { owner: EnhancedEmployee; backup:
   const settings = backup?.settings || {}
   const personalIncomeGoal = num(settings.personalIncomeGoal || 0)
   const monthlyGoal = personalIncomeGoal / 12
+  const persistedOwner = (backup.employees || []).find((employee: any) => employee.id === owner.id)
+  const configuredBaseRate = Number((persistedOwner as any)?.hourly_rate)
+  const hasConfiguredBaseRate = Number.isFinite(configuredBaseRate) && configuredBaseRate > 0
+  const [ownerBaseRate, setOwnerBaseRate] = useState<string>(hasConfiguredBaseRate ? String(configuredBaseRate) : '')
+
+  useEffect(() => {
+    setOwnerBaseRate(hasConfiguredBaseRate ? String(configuredBaseRate) : '')
+  }, [configuredBaseRate, hasConfiguredBaseRate])
 
   // Calculate YTD pace
   const projects = backup?.projects || []
@@ -428,13 +436,52 @@ function OwnerCard({ owner, backup, onSave }: { owner: EnhancedEmployee; backup:
         <span className="px-3 py-1 bg-blue-600/40 text-blue-300 rounded-full text-xs font-semibold">Owner</span>
       </div>
 
+      <div className="space-y-3 mb-4">
+        <div className="bg-[var(--bg-secondary)] rounded-lg p-4">
+          <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Base Hourly Labor Rate</label>
+          {persistedOwner ? (
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500">$</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={ownerBaseRate}
+                onChange={(event) => setOwnerBaseRate(event.target.value)}
+                onBlur={() => {
+                  const nextRate = Number(ownerBaseRate)
+                  if (!Number.isFinite(nextRate) || nextRate <= 0 || nextRate === configuredBaseRate) return
+                  onSave(owner.id, { hourly_rate: nextRate, costRate: nextRate, applyMultiplier: false } as any)
+                }}
+                className="w-32 bg-[var(--bg-input)] border border-gray-700 text-gray-100 text-sm px-3 py-2 rounded focus:outline-none focus:border-blue-600"
+                aria-label="Owner Base Hourly Labor Rate"
+              />
+              <span className="text-gray-500 text-sm">/ hr</span>
+            </div>
+          ) : (
+            <div className="text-sm font-semibold text-amber-300">Owner labor rate not configured</div>
+          )}
+          {!hasConfiguredBaseRate && persistedOwner && (
+            <p className="text-xs text-amber-300 mt-2">Owner labor rate not configured. Enter the owner base hourly rate to enable live Service Estimate costing.</p>
+          )}
+        </div>
+
+        <div className="bg-[var(--bg-secondary)] rounded-lg p-4">
+          <div className="text-xs font-semibold text-gray-500 uppercase mb-1">Loaded Labor Cost</div>
+          <div className={`text-xl font-bold ${hasConfiguredBaseRate ? 'text-amber-400' : 'text-gray-500'}`}>
+            {hasConfiguredBaseRate ? `${formatCurrency(configuredBaseRate)}/hr` : 'Not configured'}
+          </div>
+          <p className="text-xs text-gray-500 mt-1">Derived from Owner Base Hourly Labor Rate. No W-2 payroll multiplier.</p>
+        </div>
+      </div>
+
       {/* SERVICE-COST-3D: Owner classifies their own labor the same as any Team member.
           Persists to the canonical owner record's laborCategory via the shared employee
           save path — no duplicate/synthetic owner record is created and rates are untouched. */}
       <div className="mb-4">
         <LaborCategoryField
           value={owner.laborCategory === 'field' || owner.laborCategory === 'office' ? owner.laborCategory : ''}
-          onChange={(v) => { if (v === 'field' || v === 'office') onSave(owner.id, { laborCategory: v }) }}
+          onChange={(v) => { if (persistedOwner && (v === 'field' || v === 'office')) onSave(owner.id, { laborCategory: v }) }}
         />
       </div>
 
@@ -446,6 +493,7 @@ function OwnerCard({ owner, backup, onSave }: { owner: EnhancedEmployee; backup:
               <div className="text-2xl font-bold text-emerald-400">{formatCurrency(personalIncomeGoal)}</div>
               <div className="text-sm text-gray-400">({formatCurrency(monthlyGoal)}/mo)</div>
             </div>
+            <p className="text-xs text-gray-500 mt-1">Business target - does not set hourly labor cost.</p>
           </div>
 
           <div className={`bg-[var(--bg-secondary)] rounded-lg p-4 border-l-4 ${isOnPace ? 'border-l-emerald-500' : 'border-l-red-500'}`}>

@@ -105,9 +105,11 @@ describe('SERVICE-COST-3D — UI wiring source contract (supplemental)', () => {
 
   it('OwnerCard exposes an editable Labor Category that saves to the owner laborCategory field', () => {
     const start = teamPanel.indexOf('function OwnerCard(')
-    const ownerCard = teamPanel.slice(start, start + 2500)
+    const ownerCard = teamPanel.slice(start, start + 6000)
     expect(ownerCard).toContain('<LaborCategoryField')
-    expect(ownerCard).toContain('onSave(owner.id, { laborCategory: v })')
+    expect(ownerCard).toContain("onSave(owner.id, { laborCategory: v })")
+    expect(ownerCard).toContain('hourly_rate: nextRate')
+    expect(ownerCard).toContain('costRate: nextRate')
     // Owner card is wired to the same persistence handler normal employees use.
     expect(teamPanel).toContain('<OwnerCard owner={owner} backup={backup} onSave={handleEditSave} />')
   })

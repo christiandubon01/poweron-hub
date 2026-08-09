@@ -25,8 +25,6 @@
 
 import {
   resolveWorkerType,
-  getBaseHourlyRate,
-  getLoadedHourlyRate,
 } from '@/components/v15r/employeeCostUtils'
 
 // ── Overhead Metrics ─────────────────────────────────────────────────────────
@@ -100,7 +98,8 @@ export function resolveOwnerLoadedLaborCost(
   }
 
   if (!ownerRecord) return 0
-  return getLoadedHourlyRate(ownerRecord, settings)
+  const baseRate = Number(ownerRecord.hourly_rate)
+  return Number.isFinite(baseRate) && baseRate > 0 ? baseRate : 0
 }
 
 // ── Full Cost-Source Summary ─────────────────────────────────────────────────
@@ -134,7 +133,7 @@ export function buildCostSourceSummary(
 ): CostSourceSummary {
   const s = settings ?? {}
   const overhead = (s.overhead ?? {}) as Record<string, Array<{ monthly?: number }>>
-  const billableHrsYear = Number(s.billableHrsYear) > 0 ? Number(s.billableHrsYear) : 936
+  const billableHrsYear = Number(s.billableHrsYear) > 0 ? Number(s.billableHrsYear) : 0
 
   const { monthlyOverhead, annualOverhead, targetRecoveryLaborHours, overheadRecoveryRate } =
     calculateOverheadMetrics(overhead, billableHrsYear)

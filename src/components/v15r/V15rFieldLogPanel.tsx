@@ -73,6 +73,8 @@ import {
   quoteVarianceTone,
   resolveTotalQuoted,
   isManuallyQuoted,
+  resolveEffectiveEstimateBillRate,
+  resolveEstimateBillRateSource,
   round2,
 } from '@/features/service-quote/serviceQuoteMath'
 // COST-1.5A — pricing-rate settings resolver. A missing required rate produces a
@@ -107,6 +109,7 @@ import {
 import {
   buildCostSnapshot,
   computeCrewQuote,
+  freezeCostSnapshot,
   quoteFromCostSnapshot,
   resolveCostedCrew,
   validateCrewForCosting,
@@ -218,16 +221,29 @@ function getServiceRollup(l: any): any {
   const baseQuoted = num(l?.quoted)
   const totalBillable = baseQuoted + addIncome
 
-  // Read current Settings from the tenant-aware backup — stored l.opCost / l.mileCost are unreliable
-  // (persist() bug corrupted those values historically; compute from raw hrs/miles instead).
-  // Cached per data change rather than per row — see readServiceRateSettings().
-  const { opCost, mileRate, ratesMissing } = readServiceRateSettings()
-
+  // Historical profitability resolves only record-owned snapshot/stored data.
   const hrs = num(l?.hrs)
   const miles = num(l?.miles)
   const matCost = num(l?.mat)
-  const laborCost = hrs * opCost
-  const mileCost = miles * mileRate
+  const acceptedSnapshot = l?.costSnapshot as CrewCostSnapshot | undefined
+  const snapshotHourlyCost = acceptedSnapshot
+    ? acceptedSnapshot.crew.reduce((sum, member) => sum + num(member.loadedLaborRate), 0)
+      + acceptedSnapshot.crew.length * num(acceptedSnapshot.overheadRecoveryRate)
+    : 0
+  // Historical rows never read today's settings.opCost. Frozen crew records use
+  // their accepted rates; legacy rows use only their own stored cost components.
+  const hasStoredLegacyLabor = !acceptedSnapshot && Number.isFinite(Number(l?.opCost)) && Number(l?.opCost) > 0
+  const opCost = acceptedSnapshot
+    ? snapshotHourlyCost
+    : hasStoredLegacyLabor && hrs > 0 ? num(l?.opCost) / hrs : 0
+  const mileRate = acceptedSnapshot
+    ? num(acceptedSnapshot.mileRate)
+    : (miles > 0 && Number.isFinite(Number(l?.mileCost)) ? num(l?.mileCost) / miles : 0)
+  const ratesMissing: MissingRate[] = (!acceptedSnapshot && !hasStoredLegacyLabor)
+    ? [{ key: 'opCost', label: 'Historical operating cost', remedy: 'Exact historical operating-rate metadata is unavailable; the stored legacy model is preserved.' }]
+    : []
+  const laborCost = acceptedSnapshot ? hrs * snapshotHourlyCost : num(l?.opCost)
+  const mileCost = acceptedSnapshot ? miles * mileRate : num(l?.mileCost)
   const baseActual = matCost + mileCost + laborCost
 
   const totalActual = baseActual + totalAddedCost
@@ -657,6 +673,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [estJobType, setEstJobType] = useState(JOB_TYPES[0])
   const [estHours, setEstHours] = useState('')
   const [estBillRate, setEstBillRate] = useState('')
+  const [estBillRateSource, setEstBillRateSource] = useState<'default' | 'manual'>('default')
   const [estMaterials, setEstMaterials] = useState('')
   const [estMiles, setEstMiles] = useState('')
   const [estNotes, setEstNotes] = useState('')
@@ -669,6 +686,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   // SERVICE-COST-3B: legacy/crew/frozen mode gates snapshot creation and recalculation.
   const [estCostingMode, setEstCostingMode] = useState<'legacy' | 'crew' | 'frozen'>('crew')
   const [estFrozenSnapshot, setEstFrozenSnapshot] = useState<CrewCostSnapshot | null>(null)
+  const [estPreviousSnapshot, setEstPreviousSnapshot] = useState<CrewCostSnapshot | null>(null)
+  const [estLegacyVersion, setEstLegacyVersion] = useState<any | null>(null)
   // Portal identities (employee_profiles) for the Assigned Employees picker.
   const [portalProfiles, setPortalProfiles] = useState<any[]>([])
   const [estMatNotes, setEstMatNotes] = useState('')
@@ -1036,6 +1055,12 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const billRate = num(settings.billRate)
   const taxRate = num(settings.tax)
 
+  useEffect(() => {
+    if (showEstimateForm && estBillRateSource === 'default') {
+      setEstBillRate(billRate > 0 ? String(billRate) : '')
+    }
+  }, [billRate, estBillRateSource, showEstimateForm])
+
   // ── SERVICE-LOG-1 shared quote + assignment plumbing ───────────────────────
   // Every quote/profit number in this panel comes from this one helper so New,
   // Edit and the read-only cards can never drift apart.
@@ -1066,6 +1091,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     assignedEmployees: AssignedEmployee[]
     pricingCrewIds: string[]
     costSnapshot?: CrewCostSnapshot | null
+    estimateBillRate: number
   }): {
     breakdown: CrewQuoteBreakdown | null
     snapshot: CrewCostSnapshot | null
@@ -1079,6 +1105,11 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       liveEmployees,
       args.assignedEmployees,
       args.pricingCrewIds,
+      {
+        strictFinancialInputs: true,
+        payrollMult: settings.payrollMult,
+        estimateBillRate: args.estimateBillRate,
+      },
     )
 
     const validation = validateCrewForCosting(costed.crew, overheadRecoveryRate, args.siteHours, costed)
@@ -1096,6 +1127,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       overheadRecoveryRate,
       totalQuoted,
       crewSource: args.costingSource,
+      estimateBillRate: args.estimateBillRate,
     })
 
     return {
@@ -1169,6 +1201,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     // COST-1.5A: only pre-fill a real Default Bill Rate; leave blank when unset
     // rather than seeding a degenerate 0.
     setEstBillRate(billRate > 0 ? String(billRate) : '')
+    setEstBillRateSource('default')
     setEstMaterials('')
     setEstMiles('')
     setEstNotes('')
@@ -1180,6 +1213,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setEstPricingCrewIds([])
     setEstCostingMode('crew')
     setEstFrozenSnapshot(null)
+    setEstPreviousSnapshot(null)
+    setEstLegacyVersion(null)
     setEstMatNotes('')
     setEstReceiptUrl('')
     setShowEstimateNewCustomerModal(false)
@@ -1263,35 +1298,20 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     const estHrs = parseFloat(estHours) || 0
     const estMat = parseFloat(estMaterials) || 0
     const estMi = parseFloat(estMiles) || 0
-    const estRate = parseFloat(estBillRate) || billRate
+    const estRate = parseFloat(estBillRate) || 0
 
-    // SERVICE-COST-3B: quote path depends on costing mode.
-    //   legacy  -> settings.opCost single-rate compatibility, no snapshot written.
-    //   frozen  -> keep existing snapshot, no recomputation.
-    //   crew    -> crew-aware math, writes snapshot when valid.
-    let quote: import('@/features/service-quote/serviceQuoteMath').ServiceQuoteBreakdown
-    let estimateSnapshot: CrewCostSnapshot | undefined = undefined
-    if (estCostingMode === 'legacy') {
-      quote = quoteFor(
-        { hours: estHrs, billRate: estRate, materials: estMat, miles: estMi },
-        estTotalQuoted === '' ? null : parseFloat(estTotalQuoted) || 0,
-      )
-    } else if (estCostingMode === 'frozen' && estFrozenSnapshot) {
-      quote = quoteFromCostSnapshot(
-        estFrozenSnapshot,
-        estTotalQuoted === '' ? estFrozenSnapshot.suggestedQuote : parseFloat(estTotalQuoted) || estFrozenSnapshot.suggestedQuote,
-      )
-      estimateSnapshot = estFrozenSnapshot
-    } else {
-      const crewResult = estimateCrewQuote()
-      quote = crewResult.breakdown
-        ? crewBreakdownToLegacyQuote(crewResult.breakdown, estTotalQuoted === '' ? null : parseFloat(estTotalQuoted) || 0)
-        : quoteFor(
-            { hours: estHrs, billRate: estRate, materials: estMat, miles: estMi },
-            estTotalQuoted === '' ? null : parseFloat(estTotalQuoted) || 0,
-          )
-      estimateSnapshot = crewResult.snapshot ?? undefined
+    // OPEN pricing is always live. Ordinary Save stores comparison metadata only;
+    // it never creates historical authority.
+    const crewResult = estimateCrewQuote()
+    if (!crewResult.breakdown || !crewResult.snapshot) {
+      alert(crewResult.errors.join('\n') || 'Current live pricing inputs are incomplete.')
+      return
     }
+    const quote = crewBreakdownToLegacyQuote(
+      crewResult.breakdown,
+      estTotalQuoted === '' ? null : parseFloat(estTotalQuoted) || 0,
+    )
+    const estimateSnapshot: CrewCostSnapshot = crewResult.snapshot
     const totalQuote = quote.totalQuoted
 
     pushState(backup)
@@ -1304,12 +1324,16 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       jobType: estJobType,
       estHours: estHrs,
       billRate: estRate,
+      billRateSource: estBillRateSource,
       estMaterials: estMat,
       milesRT: estMi,
       notes: estNotes,
       assignedEmployees: estAssignments,
       // SERVICE-COST-3B: owner-only cost snapshot. Never sent to Employee Portal.
       costSnapshot: estimateSnapshot,
+      pricingCrewIds: estPricingCrewIds,
+      costingSource: estCostingSource,
+      legacyPricing: estLegacyVersion || undefined,
       materialNotes: estMatNotes,
       receiptUrl: estReceiptUrl,
       totalQuote,
@@ -1416,7 +1440,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setEstDate(est.date || today())
     setEstJobType(est.jobType || JOB_TYPES[0])
     setEstHours(String(est.estHours || 0))
-    setEstBillRate(String(est.billRate || billRate))
+    const loadedBillRateSource = resolveEstimateBillRateSource(est, settings.billRate)
+    const loadedBillRate = resolveEffectiveEstimateBillRate(est, settings.billRate)
+    setEstBillRate(String(loadedBillRate || ''))
+    setEstBillRateSource(loadedBillRateSource)
     setEstMaterials(String(est.estMaterials || 0))
     setEstMiles(String(est.milesRT || 0))
     setEstNotes(est.notes || '')
@@ -1426,25 +1453,36 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     const loadedQuote = resolveTotalQuoted(est)
     const suggested = quoteFor({
       hours: num(est.estHours),
-      billRate: num(est.billRate) || billRate,
+      billRate: loadedBillRate,
       materials: num(est.estMaterials),
       miles: num(est.milesRT),
     }).suggestedQuote
     setEstTotalQuoted(String(loadedQuote))
     setEstQuotedManual(isManuallyQuoted(est, suggested))
     setEstAssignments(hydrateAssignmentIdentities(normalizeAssignments(est), assignableEmployeeOptions))
-    // SERVICE-COST-3B: restore costing source and pricing crew from snapshot or record.
-    // Old records without a snapshot start in explicit legacy mode and require an
-    // explicit Upgrade to Crew Costing before a snapshot may be written.
+    // An OPEN snapshot is previous-reference metadata, never frozen authority.
+    // Legacy rows keep an explicit original-version label while current live cost
+    // is resolved from today's canonical Team + overhead inputs.
     const savedSnapshot = (est as any).costSnapshot as CrewCostSnapshot | undefined
     if (savedSnapshot) {
-      setEstCostingMode('frozen')
-      setEstFrozenSnapshot(savedSnapshot)
-    } else {
-      setEstCostingMode('legacy')
+      setEstCostingMode('crew')
+      setEstPreviousSnapshot(savedSnapshot)
       setEstFrozenSnapshot(null)
+      setEstLegacyVersion((est as any).legacyPricing || null)
+    } else {
+      const storedOperatingRate = Number((est as any).operatingCostRate ?? (est as any).opCostRate)
+      setEstCostingMode('crew')
+      setEstFrozenSnapshot(null)
+      setEstPreviousSnapshot(null)
+      setEstLegacyVersion((est as any).legacyPricing || {
+        pricingModel: 'solo-legacy',
+        originalQuote: resolveTotalQuoted(est),
+        ...(Number.isFinite(storedOperatingRate) && storedOperatingRate > 0
+          ? { storedOperatingCostRate: storedOperatingRate }
+          : {}),
+      })
     }
-    const savedCrewSource = savedSnapshot?.crewSource || 'assigned'
+    const savedCrewSource = savedSnapshot?.crewSource || (est as any).costingSource || 'assigned'
     setEstCostingSource(savedCrewSource)
     setEstPricingCrewIds(
       (est as any).pricingCrewIds
@@ -1513,17 +1551,45 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   async function confirmEstimateToActiveCall(estimateId: string) {
     const est = serviceEstimates.find(e => e.id === estimateId)
     if (!est) return
-    pushState(backup)
     const now = new Date().toISOString()
+    const settingsGate = resolveRequiredServiceRates(settings, { mode: 'crew' }).missing
+    const liveResult = estimateCrewQuoteForRecord(est)
+    if (settingsGate.length || !liveResult.breakdown || !liveResult.snapshot) {
+      const messages = [
+        ...settingsGate.map((missing) => `${missing.label}: ${missing.remedy}`),
+        ...liveResult.errors,
+      ]
+      alert(`Cannot Confirm Job until current live cost is valid:\n\n${messages.join('\n')}`)
+      return
+    }
+    const frozenSnapshot = freezeCostSnapshot(liveResult.snapshot, now)
+    const effectiveBillRate = resolveEffectiveEstimateBillRate(est, settings.billRate)
+    const billRateSource = resolveEstimateBillRateSource(est, settings.billRate)
+    const priorSnapshot = (est as any).costSnapshot as CrewCostSnapshot | undefined
+    const legacyPricing = (est as any).legacyPricing || (!priorSnapshot ? {
+      pricingModel: 'solo-legacy',
+      originalQuote: resolveTotalQuoted(est),
+      historicalCostModelPreserved: true,
+    } : undefined)
+
+    pushState(backup)
     // Phase 6R-B: mark the source estimate active (stamp identity/updatedAt) and
     // create the active call with a DISTINCT activeServiceCallId + fromEstimateId
     // link (avoids the old same-id ambiguity across the two arrays). Display still
     // reads the estimate's status, so UI behavior is unchanged.
-    est.status = 'active'
-    ;(est as any).updatedAt = now
-    backup.serviceEstimates = serviceEstimates.map(e => e.id === estimateId ? ensureServiceEstimateIdentity(est) : e)
-    const activeEntry: any = ensureActiveServiceCallIdentity({
+    const acceptedEstimate: any = ensureServiceEstimateIdentity({
       ...est,
+      status: 'active',
+      updatedAt: now,
+      billRate: effectiveBillRate,
+      billRateSource,
+      suggestedQuote: liveResult.breakdown.suggestedQuote,
+      costSnapshot: frozenSnapshot,
+      legacyPricing,
+    })
+    backup.serviceEstimates = serviceEstimates.map(e => e.id === estimateId ? acceptedEstimate : e)
+    const activeEntry: any = ensureActiveServiceCallIdentity({
+      ...acceptedEstimate,
       status: 'active',
       accountId: (est as any).accountId || undefined,
       activeServiceCallId: 'asc' + Date.now() + Math.random().toString(36).slice(2, 6),
@@ -1588,8 +1654,13 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     const actMi = parseFloat(actualMiles) || 0
     const collected = parseFloat(paymentCollected) || 0
 
-    const mileageCost = actMi * mileRate
-    const labCost = actHrs * opCost
+    const acceptedSnapshot = (est as any).costSnapshot as CrewCostSnapshot | undefined
+    const acceptedCrewHourlyCost = acceptedSnapshot
+      ? acceptedSnapshot.crew.reduce((sum, member) => sum + num(member.loadedLaborRate), 0)
+        + (acceptedSnapshot.crew.length * num(acceptedSnapshot.overheadRecoveryRate))
+      : 0
+    const mileageCost = acceptedSnapshot ? actMi * num(acceptedSnapshot.mileRate) : 0
+    const labCost = acceptedSnapshot ? actHrs * acceptedCrewHourlyCost : 0
 
     pushState(backup)
 
@@ -1612,15 +1683,20 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       suggestedQuote: (est as any).suggestedQuote,
       quotedManual: (est as any).quotedManual,
       assignedEmployees: carriedAssignments,
+      costSnapshot: acceptedSnapshot,
+      legacyPricing: (est as any).legacyPricing,
+      historicalCostUnavailable: !acceptedSnapshot,
       mat: actMat,
       collected,
       payStatus: collected >= carriedTotalQuoted ? 'Y' : (collected > 0 ? 'P' : 'N'),
       balanceDue: Math.max(0, carriedTotalQuoted - collected),
       store: '',
       notes: est.notes,
-      mileCost: mileageCost,
-      opCost: labCost,
-      profit: collected - actMat - mileageCost - labCost,
+      ...(acceptedSnapshot ? {
+        mileCost: mileageCost,
+        opCost: labCost,
+        profit: collected - actMat - mileageCost - labCost,
+      } : {}),
     } as any
 
     // Phase 6R-B: identity-stamp the new service log AND mark the source estimate
@@ -1845,6 +1921,25 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       costingSource: estCostingSource,
       assignedEmployees: estAssignments,
       pricingCrewIds: estPricingCrewIds,
+      estimateBillRate: parseFloat(estBillRate) || 0,
+    })
+  }
+
+  function estimateCrewQuoteForRecord(record: any) {
+    const priorSnapshot = record?.costSnapshot as CrewCostSnapshot | undefined
+    const costingSource = (priorSnapshot?.crewSource || record?.costingSource || 'assigned') as 'assigned' | 'pricing'
+    const pricingCrewIds = record?.pricingCrewIds
+      || (costingSource === 'pricing' ? (priorSnapshot?.crew || []).map((member) => member.costModelEmployeeId) : [])
+    const effectiveBillRate = resolveEffectiveEstimateBillRate(record, settings.billRate)
+    return crewQuoteFor({
+      siteHours: num(record?.estHours),
+      materials: num(record?.estMaterials),
+      miles: num(record?.milesRT),
+      totalQuotedOverride: resolveTotalQuoted(record),
+      costingSource,
+      assignedEmployees: hydrateAssignmentIdentities(normalizeAssignments(record), assignableEmployeeOptions),
+      pricingCrewIds,
+      estimateBillRate: effectiveBillRate,
     })
   }
 
@@ -1873,6 +1968,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       costingSource: slCostingSource,
       assignedEmployees: slAssignments,
       pricingCrewIds: slPricingCrewIds,
+      estimateBillRate: parseFloat(slBillRate) || 0,
     })
   }
 
@@ -1903,15 +1999,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     const crewResult = estimateCrewQuote()
     return crewResult.breakdown
       ? crewBreakdownToLegacyQuote(crewResult.breakdown, estTotalQuoted === '' ? null : parseFloat(estTotalQuoted) || 0)
-      : quoteFor(
-          {
-            hours: parseFloat(estHours) || 0,
-            billRate: parseFloat(estBillRate) || billRate,
-            materials: parseFloat(estMaterials) || 0,
-            miles: parseFloat(estMiles) || 0,
-          },
-          estTotalQuoted === '' ? null : parseFloat(estTotalQuoted) || 0,
-        )
+      : computeServiceQuote({}, estTotalQuoted === '' ? 0 : parseFloat(estTotalQuoted) || 0)
   }
 
   /**
@@ -1943,11 +2031,12 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const estEffectiveMode: 'legacy' | 'crew' | 'frozen' =
     estCostingMode === 'frozen' && estFrozenSnapshot ? 'frozen'
       : estCostingMode === 'legacy' ? 'legacy'
-        : estimateCrewQuote().breakdown ? 'crew' : 'legacy'
+        : 'crew'
   const estMissingRates: MissingRate[] =
     estEffectiveMode === 'frozen'
       ? []
       : resolveRequiredServiceRates(settings, { mode: estEffectiveMode }).missing
+  const estCrewErrors = estEffectiveMode === 'crew' ? estimateCrewQuote().errors : []
 
   const slEffectiveMode: 'legacy' | 'crew' | 'frozen' =
     slCostingMode === 'frozen' && slFrozenSnapshot ? 'frozen'
@@ -3538,11 +3627,19 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Bill Rate $</label>
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <label className="text-[10px] text-gray-400 uppercase font-bold">Bill Rate $</label>
+                      <span
+                        className={`text-[9px] px-2 py-0.5 rounded uppercase tracking-wide ${estBillRateSource === 'manual' ? 'bg-amber-500/15 text-amber-300' : 'bg-blue-500/15 text-blue-300'}`}
+                        title={estBillRateSource === 'manual' ? 'This estimate keeps its own Bill Rate.' : 'Inherited from the Settings Default Bill Rate.'}
+                      >
+                        {estBillRateSource === 'manual' ? 'Manual Override' : 'From Settings'}
+                      </span>
+                    </div>
                     <input
                       type="number" step="0.01"
                       defaultValue={estBillRate}
-                      onBlur={e => setEstBillRate(e.target.value)}
+                      onBlur={e => { setEstBillRate(e.target.value); setEstBillRateSource('manual') }}
                       placeholder="0.00"
                       className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-blue-500 outline-none transition-colors"
                       style={{ backgroundColor: 'var(--bg-input)' }}
@@ -3591,13 +3688,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   accent="blue"
                   mode={estCostingMode}
                   onUpgradeToCrew={() => setEstCostingMode('crew')}
-                  onRecalculate={() => {
-                    const result = estimateCrewQuote()
-                    if (result.snapshot) {
-                      setEstFrozenSnapshot(result.snapshot)
-                      setEstCostingMode('crew')
-                    }
-                  }}
+                  onRecalculate={forceUpdate}
                   recalculateDisabled={estimateCrewQuote().errors.length > 0}
                 />
 
@@ -3664,10 +3755,27 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                         : estimateCrewQuote()
                   return (
                     <div className="space-y-3">
+                      {estLegacyVersion && (
+                        <div className="rounded-lg border border-amber-700/30 bg-amber-900/15 px-3 py-2 text-xs">
+                          <div className="font-bold uppercase tracking-wide text-amber-300">Legacy Solo Version</div>
+                          <div className="text-gray-300 mt-1">Original stored quote: {fmt(num(estLegacyVersion.originalQuote))}</div>
+                          {num(estLegacyVersion.storedOperatingCostRate) > 0 ? (
+                            <div className="text-gray-400">Stored operating cost: {fmt(num(estLegacyVersion.storedOperatingCostRate))}/hr</div>
+                          ) : (
+                            <div className="text-gray-500">Historical cost model preserved - exact historical operating-rate metadata unavailable</div>
+                          )}
+                        </div>
+                      )}
+                      <div className="rounded-lg border border-blue-700/30 bg-blue-900/10 px-3 py-2">
+                        <div className="text-[11px] font-bold uppercase tracking-wide text-blue-300">Current Live Pricing</div>
+                        <div className="text-[10px] text-gray-500">Current Team labor + current Overhead Manager recovery</div>
+                      </div>
                       {/* COST-1.5A: block the quote entirely when a required rate
                           is missing — never show a number built on an invented rate. */}
                       {estMissingRates.length > 0 ? (
                         <ServiceQuoteMissingPanel missing={estMissingRates} accent="blue" />
+                      ) : estCrewErrors.length > 0 ? (
+                        <ServiceCostingBlockedPanel errors={estCrewErrors} />
                       ) : (
                         <ServiceQuotePanel
                           quote={quote}
@@ -3678,8 +3786,13 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                           mileRate={mileRate}
                           taxRate={taxRate}
                           opCost={opCost}
+                          operatingCostLabel="Live Labor + Overhead"
                           accent="blue"
                         />
+                      )}
+
+                      {estPreviousSnapshot && crewResult.breakdown && (
+                        <PricingSnapshotDeltaPanel previous={estPreviousSnapshot} current={crewResult.breakdown} />
                       )}
 
                       {/* SERVICE-COST-3B: crew cost breakdown detail */}
@@ -3702,9 +3815,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 </button>
                 <button
                   onClick={() => { saveServiceEstimate(); }}
-                  disabled={estMissingRates.length > 0}
-                  title={estMissingRates.length > 0 ? 'Set the missing pricing settings above before saving.' : undefined}
-                  className={`flex items-center gap-2 px-5 py-2 rounded-lg text-white text-xs font-bold transition-colors shadow-lg ${estMissingRates.length > 0 ? 'bg-gray-600 opacity-50 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500'}`}
+                  disabled={estMissingRates.length > 0 || estCrewErrors.length > 0}
+                  title={estMissingRates.length > 0 || estCrewErrors.length > 0 ? 'Configure the missing live cost inputs above before saving.' : undefined}
+                  className={`flex items-center gap-2 px-5 py-2 rounded-lg text-white text-xs font-bold transition-colors shadow-lg ${estMissingRates.length > 0 || estCrewErrors.length > 0 ? 'bg-gray-600 opacity-50 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500'}`}
                 >
                   {editEstimateId ? '✓ Update Estimate' : '⚡ Save as Open Estimate'}
                 </button>
@@ -3776,6 +3889,11 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                             Assigned: {summarizeAssignments(normalizeAssignments(est))}
                           </div>
                         )}
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {((est as any).legacyPricing || !(est as any).costSnapshot) && <span className="text-[9px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-300">Legacy Solo Pricing</span>}
+                          {(est as any).costSnapshot && <span className="text-[9px] px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300">Previous Saved Crew Cost</span>}
+                          <span className="text-[9px] px-2 py-0.5 rounded bg-blue-500/15 text-blue-300">Current Live Pricing</span>
+                        </div>
                       </div>
                       <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
                         <div className="text-right">
@@ -3865,6 +3983,18 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                             Assigned: {summarizeAssignments(normalizeAssignments(est))}
                           </div>
                         )}
+                        {(() => {
+                          const snapshot = (est as any).costSnapshot as CrewCostSnapshot | undefined
+                          return snapshot?.frozenAt ? (
+                            <div className="mt-1.5 text-[10px] text-cyan-300">
+                              Frozen Pricing / {snapshot.frozenAt.slice(0, 10)} / {snapshot.pricingModel === 'crew' ? 'Crew' : 'Solo Legacy'}
+                            </div>
+                          ) : snapshot ? (
+                            <div className="mt-1.5 text-[10px] text-cyan-300">Frozen Pricing / accepted before freeze metadata was recorded</div>
+                          ) : (
+                            <div className="mt-1.5 text-[10px] text-amber-300">Legacy Solo Pricing / historical cost model preserved</div>
+                          )
+                        })()}
                       </div>
                       <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
                         <div className="text-right">
@@ -4486,6 +4616,16 @@ ${note}` : note)
                           Assigned: {summarizeAssignments(normalizeAssignments(l))}
                         </div>
                       )}
+                      {(() => {
+                        const snapshot = (l as any).costSnapshot as CrewCostSnapshot | undefined
+                        if (snapshot?.frozenAt) {
+                          return <div className="text-[10px] text-cyan-300 mt-1">Frozen Pricing / {snapshot.frozenAt.slice(0, 10)} / Crew</div>
+                        }
+                        if (snapshot) {
+                          return <div className="text-[10px] text-cyan-300 mt-1">Frozen Pricing / accepted before freeze metadata was recorded</div>
+                        }
+                        return <div className="text-[10px] text-amber-300 mt-1">Legacy Solo Pricing / historical cost model preserved</div>
+                      })()}
                       {/* Mini breakdown strip */}
                       {roll.totalBillable > 0 && (
                         <div style={{ marginTop: '6px' }}>
@@ -4558,7 +4698,7 @@ ${note}` : note)
                       <div className="flex justify-between border-t border-gray-700 pt-1.5 gap-2" style={{ fontSize: '11px' }}>
                         <span className="text-amber-400">⚠ Profit unavailable</span>
                         <span className="font-mono text-amber-400 text-right">
-                          Set {roll.ratesMissing.map((m: MissingRate) => m.label).join(' & ')} in Settings
+                          {roll.ratesMissing.map((m: MissingRate) => m.remedy).join(' ')}
                         </span>
                       </div>
                     ) : (
@@ -5441,6 +5581,18 @@ export function CostingCrewField({
         </div>
       )}
 
+      {!isLegacy && !isFrozen && onRecalculate && (
+        <div className="mb-2 rounded-lg border border-blue-700/20 bg-blue-900/10 px-3 py-2 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] text-blue-200 font-semibold">Current Live Pricing</div>
+            <p className="text-[10px] text-gray-500">Uses current Team labor, overhead, mileage, tax, and this estimate's Bill Rate.</p>
+          </div>
+          <button type="button" onClick={onRecalculate} disabled={recalculateDisabled} className={`text-[10px] font-semibold underline shrink-0 ${recalculateDisabled ? 'text-gray-500 cursor-not-allowed' : 'text-blue-300 hover:text-blue-200'}`}>
+            Refresh Cost Inputs
+          </button>
+        </div>
+      )}
+
       <div className="flex gap-2 mb-2">
         <button
           type="button"
@@ -5606,6 +5758,35 @@ export function CrewCostBreakdownPanel({
   )
 }
 
+export function ServiceCostingBlockedPanel({ errors }: { errors: string[] }) {
+  return (
+    <div className="rounded-xl border border-amber-500/40 px-4 py-4" style={{ backgroundColor: 'var(--bg-secondary)' }} data-testid="service-costing-blocked-panel">
+      <div className="flex items-center gap-2 text-sm font-bold text-amber-400">
+        <AlertCircle size={16} /> Current live cost unavailable
+      </div>
+      <p className="text-xs text-gray-400 mt-1">Configure these inputs before saving or confirming. The app will not substitute settings.opCost or another fallback.</p>
+      <ul className="mt-2 space-y-1 list-disc list-inside">
+        {errors.map((error, index) => <li key={index} className="text-xs text-amber-200">{error}</li>)}
+      </ul>
+    </div>
+  )
+}
+
+export function PricingSnapshotDeltaPanel({ previous, current }: { previous: CrewCostSnapshot; current: CrewQuoteBreakdown }) {
+  const difference = round2(current.totalInternalCost - previous.totalInternalCost)
+  return (
+    <div className="rounded-xl border border-cyan-700/30 bg-cyan-900/10 px-4 py-3 text-xs" data-testid="pricing-snapshot-delta">
+      <div className="font-bold uppercase tracking-wide text-cyan-300">Previous Saved Crew Cost</div>
+      <div className="grid grid-cols-3 gap-2 mt-2 text-gray-400">
+        <div>Previous<br /><span className="font-mono text-gray-200">{fmt(previous.totalInternalCost)}</span></div>
+        <div>Current<br /><span className="font-mono text-gray-200">{fmt(current.totalInternalCost)}</span></div>
+        <div>Difference<br /><span className={`font-mono ${difference > 0 ? 'text-amber-300' : 'text-emerald-300'}`}>{difference > 0 ? '+' : ''}{fmt(difference)}</span></div>
+      </div>
+      <p className="text-[10px] text-gray-500 mt-2">Reference only - OPEN pricing uses the current live calculation.</p>
+    </div>
+  )
+}
+
 /**
  * COST-1.5A — blocking panel shown in place of the quote when a required pricing
  * setting is missing. It names each missing field and where to set it, and the
@@ -5654,7 +5835,7 @@ export function ServiceQuoteMissingPanel({
  * Profit, Actual Profit Margin, the cost bar and the daily-target signal.
  */
 export function ServiceQuotePanel({
-  quote, totalQuotedInput, onTotalQuotedChange, onUseSuggested, dayTarget, mileRate, taxRate, opCost, accent = 'blue',
+  quote, totalQuotedInput, onTotalQuotedChange, onUseSuggested, dayTarget, mileRate, taxRate, opCost, operatingCostLabel, accent = 'blue',
 }: {
   quote: any
   totalQuotedInput: string
@@ -5664,6 +5845,7 @@ export function ServiceQuotePanel({
   mileRate: number
   taxRate: number
   opCost: number
+  operatingCostLabel?: string
   accent?: 'blue' | 'orange'
 }) {
   const tone = quoteVarianceTone(quote.quoteVariance)
@@ -5709,7 +5891,10 @@ export function ServiceQuotePanel({
         </div>
         <div className="grid grid-cols-3 divide-x divide-gray-700/50 border-t border-gray-700/50">
           <div className="px-4 py-3">
-            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">Operating Cost <span className="opacity-50">@${opCost.toFixed(2)}/hr</span></div>
+            <div className="text-[9px] uppercase tracking-wider text-gray-500 mb-1">
+              {operatingCostLabel || 'Operating Cost'}
+              {!operatingCostLabel && <span className="opacity-50"> @${opCost.toFixed(2)}/hr</span>}
+            </div>
             <div className="font-mono text-sm font-bold text-red-400">{fmt(quote.operatingCost)}</div>
           </div>
           <div className="px-4 py-3">

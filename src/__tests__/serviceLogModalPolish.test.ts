@@ -161,7 +161,8 @@ describe('render cost', () => {
     const rollupStart = panel.indexOf('function getServiceRollup(')
     const rollupEnd = panel.indexOf('function serviceBalanceDue(')
     const rollup = panel.slice(rollupStart, rollupEnd)
-    expect(rollup).toContain('readServiceRateSettings()')
+    expect(rollup).toContain('const acceptedSnapshot = l?.costSnapshot')
+    expect(rollup).not.toContain('readServiceRateSettings()')
     expect(rollup).not.toContain('getBackupData()')
   })
 

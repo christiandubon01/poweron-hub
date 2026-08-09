@@ -39,15 +39,17 @@ describe('SERVICE-COST-3B legacy/frozen/crew mode state', () => {
     expect(panel).toContain("const [estFrozenSnapshot, setEstFrozenSnapshot]")
   })
 
-  it('opens old records without costSnapshot in legacy mode', () => {
+  it('keeps completed Service Calls legacy-compatible while OPEN estimates resolve live crew cost', () => {
     expect(panel).toContain("setSlCostingMode('legacy')")
-    expect(panel).toContain("setEstCostingMode('legacy')")
-    expect(panel).toContain('Old records without a snapshot start in explicit legacy mode')
+    expect(panel).toContain("setEstCostingMode('crew')")
+    expect(panel).toContain('Legacy Solo Version')
+    expect(panel).toContain('Current Live Pricing')
   })
 
-  it('opens records with costSnapshot in frozen mode', () => {
+  it('treats a Service Call snapshot as frozen and an OPEN estimate snapshot as previous reference', () => {
     expect(panel).toContain("setSlCostingMode('frozen')")
-    expect(panel).toContain("setEstCostingMode('frozen')")
+    expect(panel).toContain('setEstPreviousSnapshot(savedSnapshot)')
+    expect(panel).toContain('Previous Saved Crew Cost')
   })
 
   it('resets new records to crew mode', () => {
@@ -75,22 +77,21 @@ describe('SERVICE-COST-3B explicit owner actions', () => {
 })
 
 describe('SERVICE-COST-3B snapshot save path', () => {
-  it('does not write costSnapshot in legacy mode', () => {
+  it('keeps the historical Service Call legacy branch without making it the OPEN estimate authority', () => {
     expect(panel).toContain("if (slCostingMode === 'legacy')")
-    expect(panel).toContain("if (estCostingMode === 'legacy')")
-    // Legacy branch does not assign a snapshot.
     expect(panel).toContain("svcQuote = serviceCallQuote()")
-    expect(panel).toContain("quote = quoteFor(")
+    expect(panel).toContain('OPEN pricing is always live')
   })
 
-  it('preserves existing snapshot in frozen mode', () => {
+  it('preserves existing snapshots only for the historical Service Call path', () => {
     expect(panel).toContain("serviceSnapshot = slFrozenSnapshot")
-    expect(panel).toContain("estimateSnapshot = estFrozenSnapshot")
+    expect(panel).toContain('freezeCostSnapshot(liveResult.snapshot, now)')
   })
 
-  it('computes and writes new snapshot only in crew mode', () => {
+  it('writes an OPEN comparison snapshot and freezes a fresh live snapshot at Confirm Job', () => {
     expect(panel).toContain("serviceSnapshot = crewResult.snapshot ?? undefined")
-    expect(panel).toContain("estimateSnapshot = crewResult.snapshot ?? undefined")
+    expect(panel).toContain('const estimateSnapshot: CrewCostSnapshot = crewResult.snapshot')
+    expect(panel).toContain('costSnapshot: frozenSnapshot')
   })
 })
 

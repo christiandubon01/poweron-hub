@@ -174,8 +174,8 @@ describe('SERVICE-COST-3C source guard — crew-mode call sites pass the manual 
   })
 
   it('estimate contexts pass estTotalQuoted and service-call contexts pass slQuoted (display + save = 2 each)', () => {
-    const estCalls = panel.match(/crewBreakdownToLegacyQuote\(crewResult\.breakdown, estTotalQuoted/g) || []
-    const slCalls = panel.match(/crewBreakdownToLegacyQuote\(crewResult\.breakdown, slQuoted/g) || []
+    const estCalls = panel.match(/crewBreakdownToLegacyQuote\(\s*crewResult\.breakdown,\s*estTotalQuoted/g) || []
+    const slCalls = panel.match(/crewBreakdownToLegacyQuote\(\s*crewResult\.breakdown,\s*slQuoted/g) || []
     expect(estCalls.length).toBe(2)
     expect(slCalls.length).toBe(2)
   })
