@@ -52,8 +52,12 @@ export function BlueprintFloatingPalette({ paletteId, title, onClose, children, 
     clampPaletteGeom(stored ?? { x: defaultX, y: defaultY, w: DEFAULT_W, h: DEFAULT_H })
   )
 
+  const headerRef = useRef<HTMLDivElement | null>(null)
+  const resizeHandleRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ pointerId: number; startClientX: number; startClientY: number; startX: number; startY: number } | null>(null)
   const resizeRef = useRef<{ pointerId: number; startClientX: number; startClientY: number; startW: number; startH: number } | null>(null)
+  const dragListenersRef = useRef<{ move: (e: PointerEvent) => void; up: (e: PointerEvent) => void; cancel: (e: PointerEvent) => void } | null>(null)
+  const resizeListenersRef = useRef<{ move: (e: PointerEvent) => void; up: (e: PointerEvent) => void; cancel: (e: PointerEvent) => void } | null>(null)
 
   useEffect(() => {
     const store = readPaletteStore()
@@ -71,63 +75,108 @@ export function BlueprintFloatingPalette({ paletteId, title, onClose, children, 
     }
   }, [])
 
+  const detachDragListeners = () => {
+    const listeners = dragListenersRef.current
+    if (!listeners) return
+    window.removeEventListener('pointermove', listeners.move)
+    window.removeEventListener('pointerup', listeners.up)
+    window.removeEventListener('pointercancel', listeners.cancel)
+    dragListenersRef.current = null
+  }
+
+  const detachResizeListeners = () => {
+    const listeners = resizeListenersRef.current
+    if (!listeners) return
+    window.removeEventListener('pointermove', listeners.move)
+    window.removeEventListener('pointerup', listeners.up)
+    window.removeEventListener('pointercancel', listeners.cancel)
+    resizeListenersRef.current = null
+  }
+
+  const endDragSession = (pointerId?: number) => {
+    const drag = dragRef.current
+    if (!drag) return
+    if (pointerId !== undefined && drag.pointerId !== pointerId) return
+    try { headerRef.current?.releasePointerCapture(drag.pointerId) } catch {}
+    dragRef.current = null
+    detachDragListeners()
+  }
+
+  const endResizeSession = (pointerId?: number) => {
+    const resize = resizeRef.current
+    if (!resize) return
+    if (pointerId !== undefined && resize.pointerId !== pointerId) return
+    try { resizeHandleRef.current?.releasePointerCapture(resize.pointerId) } catch {}
+    resizeRef.current = null
+    detachResizeListeners()
+  }
+
+  useEffect(() => {
+    return () => {
+      endDragSession()
+      endResizeSession()
+    }
+  }, [])
+
   const handleHeaderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest('button')) return
     e.stopPropagation()
     dragRef.current = { pointerId: e.pointerId, startClientX: e.clientX, startClientY: e.clientY, startX: geom.x, startY: geom.y }
+    detachDragListeners()
+    const move = (event: PointerEvent) => {
+      const drag = dragRef.current
+      if (!drag || drag.pointerId !== event.pointerId) return
+      setGeom((g) => clampPaletteGeom({
+        ...g,
+        x: drag.startX + (event.clientX - drag.startClientX),
+        y: drag.startY + (event.clientY - drag.startClientY),
+      }))
+    }
+    const up = (event: PointerEvent) => {
+      const drag = dragRef.current
+      if (!drag || drag.pointerId !== event.pointerId) return
+      endDragSession(event.pointerId)
+    }
+    const cancel = (event: PointerEvent) => {
+      const drag = dragRef.current
+      if (!drag || drag.pointerId !== event.pointerId) return
+      endDragSession(event.pointerId)
+    }
+    dragListenersRef.current = { move, up, cancel }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', cancel)
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch {}
-  }
-
-  const handleHeaderPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragRef.current || dragRef.current.pointerId !== e.pointerId) return
-    setGeom((g) => clampPaletteGeom({
-      ...g,
-      x: dragRef.current!.startX + (e.clientX - dragRef.current!.startClientX),
-      y: dragRef.current!.startY + (e.clientY - dragRef.current!.startClientY),
-    }))
-  }
-
-  const handleHeaderPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId === e.pointerId) {
-      try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch {}
-      dragRef.current = null
-    }
-  }
-
-  const handleHeaderPointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId === e.pointerId) {
-      try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch {}
-      dragRef.current = null
-    }
   }
 
   const handleResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation()
     resizeRef.current = { pointerId: e.pointerId, startClientX: e.clientX, startClientY: e.clientY, startW: geom.w, startH: geom.h }
+    detachResizeListeners()
+    const move = (event: PointerEvent) => {
+      const resize = resizeRef.current
+      if (!resize || resize.pointerId !== event.pointerId) return
+      setGeom((g) => clampPaletteGeom({
+        ...g,
+        w: Math.max(resize.startW + (event.clientX - resize.startClientX), MIN_W),
+        h: Math.max(resize.startH + (event.clientY - resize.startClientY), MIN_H),
+      }))
+    }
+    const up = (event: PointerEvent) => {
+      const resize = resizeRef.current
+      if (!resize || resize.pointerId !== event.pointerId) return
+      endResizeSession(event.pointerId)
+    }
+    const cancel = (event: PointerEvent) => {
+      const resize = resizeRef.current
+      if (!resize || resize.pointerId !== event.pointerId) return
+      endResizeSession(event.pointerId)
+    }
+    resizeListenersRef.current = { move, up, cancel }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', cancel)
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch {}
-  }
-
-  const handleResizePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!resizeRef.current || resizeRef.current.pointerId !== e.pointerId) return
-    setGeom((g) => clampPaletteGeom({
-      ...g,
-      w: Math.max(resizeRef.current!.startW + (e.clientX - resizeRef.current!.startClientX), MIN_W),
-      h: Math.max(resizeRef.current!.startH + (e.clientY - resizeRef.current!.startClientY), MIN_H),
-    }))
-  }
-
-  const handleResizePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (resizeRef.current?.pointerId === e.pointerId) {
-      try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch {}
-      resizeRef.current = null
-    }
-  }
-
-  const handleResizePointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (resizeRef.current?.pointerId === e.pointerId) {
-      try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch {}
-      resizeRef.current = null
-    }
   }
 
   return (
@@ -139,12 +188,10 @@ export function BlueprintFloatingPalette({ paletteId, title, onClose, children, 
       data-testid={`palette-${paletteId}`}
     >
       <div
+        ref={headerRef}
         className="flex shrink-0 cursor-grab items-center gap-2 border-b border-gray-700 px-2 py-1.5 active:cursor-grabbing"
         style={{ touchAction: 'none' }}
         onPointerDown={handleHeaderPointerDown}
-        onPointerMove={handleHeaderPointerMove}
-        onPointerUp={handleHeaderPointerUp}
-        onPointerCancel={handleHeaderPointerCancel}
       >
         <span className="flex-1 truncate text-xs font-semibold text-gray-100">{title}</span>
         <button
@@ -162,12 +209,10 @@ export function BlueprintFloatingPalette({ paletteId, title, onClose, children, 
         </div>
       </div>
       <div
+        ref={resizeHandleRef}
         className="absolute bottom-0 right-0 h-4 w-4 cursor-se-resize"
         style={{ touchAction: 'none' }}
         onPointerDown={handleResizePointerDown}
-        onPointerMove={handleResizePointerMove}
-        onPointerUp={handleResizePointerUp}
-        onPointerCancel={handleResizePointerCancel}
       />
     </div>
   )
