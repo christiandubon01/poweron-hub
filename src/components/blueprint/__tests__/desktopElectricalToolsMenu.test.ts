@@ -158,8 +158,8 @@ describe('desktop Electrical Tools menu structure', () => {
     const drawSource = drawBucketSource()
     const menuSource = desktopElectricalToolsSource()
 
-    expect(menuSource).toContain("renderPackagePickControls('panel')")
-    expect(drawSource.split("renderPackagePickControls('panel')").length - 1).toBe(1)
+    expect(menuSource).toContain('renderPackagePickControls()')
+    expect(drawSource.split('renderPackagePickControls()').length - 1).toBe(1)
     expect(drawSource).not.toContain("useDesktopThreePaneLayout ? 'mt-2 flex flex-wrap items-center gap-1.5' : 'hidden'")
     expect(menuSource).toContain("isPackagePickMode ? 'border-emerald-400 text-emerald-200 bg-emerald-500/10'")
     expect(menuSource).toContain('h-2 w-2 shrink-0 rounded-full bg-emerald-400')

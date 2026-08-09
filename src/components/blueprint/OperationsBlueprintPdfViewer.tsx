@@ -9831,14 +9831,11 @@ const annotationPanelSizeClass =
     </div>
   )
 
-  const renderPackagePickControls = (placement: 'panel' | 'touch-overlay') => {
-    const isTouchOverlay = placement === 'touch-overlay'
+  // BLUEPRINT UI-2 — single Package Pick presentation, rendered only inside the
+  // Electrical Tools palette. The old top-right canvas overlay copy was removed.
+  const renderPackagePickControls = () => {
     return (
-      <div
-        className={isTouchOverlay
-          ? 'flex max-w-[calc(100vw-2rem)] flex-wrap items-center justify-end gap-1.5 rounded-lg border border-gray-700 bg-[#10131c]/95 px-2 py-1.5 shadow-lg backdrop-blur-sm'
-          : 'mt-2 flex flex-wrap items-center gap-1.5'}
-      >
+      <div className="mt-2 flex flex-wrap items-center gap-1.5" data-testid="package-pick-controls">
         <button
           type="button"
           onClick={togglePackagePickMode}
@@ -9861,7 +9858,7 @@ const annotationPanelSizeClass =
             <X size={10} /> Clear
           </button>
         )}
-        {!isTouchOverlay && isPackagePickMode && (
+        {isPackagePickMode && (
           <span className="text-[9px] text-emerald-300/70">Picking visible annotations only · Tap canvas items to add/remove · Left Ctrl or Esc to exit</span>
         )}
       </div>
@@ -11565,6 +11562,14 @@ const annotationPanelSizeClass =
                   {renderTouchElectricalSymbolsButton()}
                   {!useDesktopThreePaneLayout && renderQuickAccessPaletteButton()}
                 </div>
+                {/* BLUEPRINT UI-2 — the three floating palettes portal into `viewerPortalTarget`,
+                    not document.body. In desktop native fullscreen the browser only paints the
+                    subtree of the fullscreen element (the viewer root), so a palette mounted on
+                    document.body was live in the DOM but invisible: the toggles appeared to do
+                    nothing. `viewerPortalTarget` is the same target every other viewer modal
+                    already uses — it is the viewer root while fullscreen and document.body
+                    otherwise, so palette state, geometry storage, and drag behavior are shared
+                    across both modes rather than duplicated. */}
                 {desktopElectricalToolsOpen && createPortal(
                   <BlueprintFloatingPalette paletteId="electrical-tools" title="Electrical Tools" onClose={closeElectricalToolsPalette} defaultX={60} defaultY={80}>
                     <div id="desktop-electrical-tools-panel" className="grid grid-cols-1 gap-1">
@@ -11621,7 +11626,7 @@ const annotationPanelSizeClass =
                         {showCircuitMeasurementLabels ? <Eye size={12} /> : <EyeOff size={12} />}
                         Circuit Labels {showCircuitMeasurementLabels ? 'On' : 'Off'}
                       </button>
-                      {renderPackagePickControls('panel')}
+                      {renderPackagePickControls()}
                       <div className="min-w-0" data-testid="desktop-label-options-menu">
                         <button
                           type="button"
@@ -11665,7 +11670,7 @@ const annotationPanelSizeClass =
                       </div>
                     </div>
                   </BlueprintFloatingPalette>,
-                  document.body
+                  viewerPortalTarget
                 )}
                 {desktopElectricalSymbolsOpen && createPortal(
                   <BlueprintFloatingPalette paletteId="electrical-symbols" title="Electrical Symbols" onClose={() => setDesktopElectricalSymbolsOpen(false)} defaultX={360} defaultY={80}>
@@ -11717,13 +11722,13 @@ const annotationPanelSizeClass =
                       )
                     })}
                   </BlueprintFloatingPalette>,
-                  document.body
+                  viewerPortalTarget
                 )}
                 {quickAccessPaletteOpen && createPortal(
                   <BlueprintFloatingPalette paletteId="quick-access" title="Quick Access" onClose={() => setQuickAccessPaletteOpen(false)} defaultX={660} defaultY={80}>
                     {renderQuickAccessPaletteContents()}
                   </BlueprintFloatingPalette>,
-                  document.body
+                  viewerPortalTarget
                 )}
                 {useDesktopThreePaneLayout ? (
                   <div className="space-y-1.5">
@@ -12262,20 +12267,10 @@ const annotationPanelSizeClass =
                   }
                 }}
               >
-                {!useDesktopThreePaneLayout && (
-                  <div
-                    className="absolute top-2 z-40 flex justify-end"
-                    style={{ right: fsRail.show ? 24 : 8 }}
-                  >
-                    <div
-                      className="pointer-events-auto"
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {renderPackagePickControls('touch-overlay')}
-                    </div>
-                  </div>
-                )}
+                {/* BLUEPRINT UI-2 — the standalone top-right Package Pick overlay was removed.
+                    Package Pick now has exactly one owner-facing activation path: the controls
+                    rendered inside the Electrical Tools palette. Mode state, selection, count,
+                    Clear, and the canvas highlight logic are untouched. */}
                 <div
                   className="relative p-2 sm:p-3"
                   style={{
@@ -14109,13 +14104,19 @@ const annotationPanelSizeClass =
                                   </div>
                                 </div>
                               </div>
-                              <div className="flex max-w-[252px] flex-shrink-0 flex-wrap justify-end gap-1">
-                                <div className="grid grid-cols-1 gap-1">
+                              {/* BLUEPRINT UI-2 — compact two-row action tray. Row 1 holds the four
+                                  icon controls side by side (up / down / show / hide); row 2 holds the
+                                  wider Edit + Delete labels. Controls are 40px, down from the 44px
+                                  tray that made the cards too tall, and never back to the old ~24px
+                                  icons. Narrower than the previous 252px cap, so the name/description
+                                  column keeps more width. */}
+                              <div className="flex flex-shrink-0 flex-col items-end gap-1" data-testid="work-package-action-tray">
+                                <div className="flex items-center gap-1" data-testid="work-package-action-row-primary">
                                   <button
                                     type="button"
                                     onClick={() => moveScopeLayer(layer.id, 'up')}
                                     disabled={!moveState.canMoveUp}
-                                    className="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-gray-700 text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-700"
+                                    className="inline-flex h-10 w-10 items-center justify-center rounded border border-gray-700 text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-700"
                                     title="Move package up"
                                     aria-label="Move package up"
                                   >
@@ -14125,43 +14126,45 @@ const annotationPanelSizeClass =
                                     type="button"
                                     onClick={() => moveScopeLayer(layer.id, 'down')}
                                     disabled={!moveState.canMoveDown}
-                                    className="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-gray-700 text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-700"
+                                    className="inline-flex h-10 w-10 items-center justify-center rounded border border-gray-700 text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-700"
                                     title="Move package down"
                                     aria-label="Move package down"
                                   >
                                     <ChevronDown size={14} />
                                   </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleScopeLayerIsolation(layer.id)}
+                                    className={`inline-flex h-10 w-10 items-center justify-center rounded border ${isLayerIsolated ? 'border-amber-400/50 bg-amber-500/15 text-amber-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+                                    title={isLayerIsolated ? 'Remove this package from the visible set' : 'Show this package on canvas (add to visible set)'}
+                                  >
+                                    <Eye size={14} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleScopeLayerHidden(layer.id)}
+                                    className={`inline-flex h-10 w-10 items-center justify-center rounded border ${isLayerHidden ? 'border-rose-400/50 bg-rose-500/15 text-rose-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+                                    title={isLayerHidden ? 'Show this package annotations in general view' : 'Hide this package annotations from general view'}
+                                  >
+                                    <EyeOff size={14} />
+                                  </button>
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={() => toggleScopeLayerIsolation(layer.id)}
-                                  className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded border ${isLayerIsolated ? 'border-amber-400/50 bg-amber-500/15 text-amber-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
-                                  title={isLayerIsolated ? 'Remove this package from the visible set' : 'Show this package on canvas (add to visible set)'}
-                                >
-                                  <Eye size={14} />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => toggleScopeLayerHidden(layer.id)}
-                                  className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded border ${isLayerHidden ? 'border-rose-400/50 bg-rose-500/15 text-rose-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
-                                  title={isLayerHidden ? 'Show this package annotations in general view' : 'Hide this package annotations from general view'}
-                                >
-                                  <EyeOff size={14} />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => openEditScopeLayerModal(layer)}
-                                  className="inline-flex min-h-11 items-center justify-center rounded border border-gray-700 px-3 text-[10px] font-semibold text-gray-300 hover:bg-white/5"
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => requestScopeLayerDelete(layer)}
-                                  className="inline-flex min-h-11 items-center justify-center rounded border border-red-900/50 px-3 text-[10px] font-semibold text-red-300 hover:bg-red-950/30"
-                                >
-                                  Delete
-                                </button>
+                                <div className="flex items-center gap-1" data-testid="work-package-action-row-secondary">
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditScopeLayerModal(layer)}
+                                    className="inline-flex h-10 items-center justify-center rounded border border-gray-700 px-3 text-[10px] font-semibold text-gray-300 hover:bg-white/5"
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => requestScopeLayerDelete(layer)}
+                                    className="inline-flex h-10 items-center justify-center rounded border border-red-900/50 px-3 text-[10px] font-semibold text-red-300 hover:bg-red-950/30"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
                               </div>
                             </div>
                             {layer.description && <div className="mt-1 text-[10px] text-gray-400 line-clamp-2">{layer.description}</div>}
