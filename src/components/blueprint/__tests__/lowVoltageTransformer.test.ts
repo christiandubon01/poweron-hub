@@ -21,7 +21,6 @@ import {
 import {
   DESKTOP_LIGHTING_KINDS,
   shouldShowElectricalSymbolInDesktopMainGrid,
-  shouldShowElectricalSymbolInLegacyNonDesktopToolbar,
 } from '../desktopElectricalToolCategories'
 
 function symbolAnnotation(id: string, shapeKind: string): BlueprintAnnotation {
@@ -103,10 +102,9 @@ describe('Low Voltage Transformer lighting symbol', () => {
     })
   })
 
-  it('is the sixth Lighting child, desktop-category-only, and hidden on legacy non-desktop', () => {
+  it('is the sixth Lighting child and desktop-category-only', () => {
     expect(DESKTOP_LIGHTING_KINDS[5]).toBe('electrical-low-voltage-transformer')
     expect(shouldShowElectricalSymbolInDesktopMainGrid('electrical-low-voltage-transformer')).toBe(false)
-    expect(shouldShowElectricalSymbolInLegacyNonDesktopToolbar('electrical-low-voltage-transformer')).toBe(false)
   })
 
   it('stays animation-neutral and separate from all route device classifications', () => {

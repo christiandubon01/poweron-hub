@@ -22,7 +22,7 @@ function drawBucketSource() {
 function desktopElectricalToolsSource() {
   const drawSource = drawBucketSource()
   const start = drawSource.indexOf('data-testid="desktop-electrical-tools-menu"')
-  const end = drawSource.indexOf('{!useDesktopThreePaneLayout && (', start)
+  const end = drawSource.indexOf('paletteId="electrical-symbols"', start)
   expect(start).toBeGreaterThan(-1)
   expect(end).toBeGreaterThan(start)
   return drawSource.slice(start, end)
@@ -37,14 +37,14 @@ function quickAccessHeaderSource() {
 }
 
 describe('desktop Electrical Tools menu structure', () => {
-  it('renders Electrical Tools only in the desktop three-pane branch', () => {
+  it('renders Electrical Tools on all devices without a desktop-only branch', () => {
     const menuSource = desktopElectricalToolsSource()
 
-    expect(drawBucketSource()).toContain('{useDesktopThreePaneLayout && (')
     expect(menuSource).toContain('Electrical Tools')
     expect(menuSource).toContain('data-testid="desktop-electrical-tools-menu"')
     expect(menuSource).toContain('aria-label="Electrical Tools"')
     expect(menuSource).not.toContain('!useDesktopThreePaneLayout')
+    expect(drawBucketSource()).not.toContain('{useDesktopThreePaneLayout && (')
   })
 
   it('uses a controlled accessible disclosure parent', () => {
@@ -73,15 +73,10 @@ describe('desktop Electrical Tools menu structure', () => {
     expect(labelOptionsIndex).toBeGreaterThan(circuitLabelsIndex)
   })
 
-  it('keeps desktop Circuit Labels inside the Electrical Tools disclosure and preserves the non-desktop copy', () => {
+  it('keeps Circuit Labels inside the Electrical Tools floating palette', () => {
     const menuSource = desktopElectricalToolsSource()
-    const drawSource = drawBucketSource()
-    const nonDesktopStart = drawSource.indexOf('{!useDesktopThreePaneLayout && (')
-    const nonDesktopSource = drawSource.slice(nonDesktopStart)
 
     expect(menuSource).toContain('Circuit Labels {showCircuitMeasurementLabels')
-    expect(nonDesktopSource).toContain('Circuit Labels {showCircuitMeasurementLabels')
-    expect(menuSource.indexOf('Circuit Labels {showCircuitMeasurementLabels')).toBeLessThan(nonDesktopStart)
   })
 
   it('keeps Label Options inside Electrical Tools and removes standalone desktop copies', () => {
@@ -93,16 +88,10 @@ describe('desktop Electrical Tools menu structure', () => {
     expect(drawSource).not.toContain('data-testid="desktop-symbol-label-controls"')
   })
 
-  it('removes old desktop flat Circuit Path and Circuit Arc while preserving non-desktop copies', () => {
-    const drawSource = drawBucketSource()
-    const nonDesktopStart = drawSource.indexOf('{!useDesktopThreePaneLayout && (')
-    const nonDesktopSource = drawSource.slice(nonDesktopStart)
-
-    expect(nonDesktopStart).toBeGreaterThan(-1)
-    expect(nonDesktopSource).toContain('Circuit Path</button>')
-    expect(nonDesktopSource).toContain('Circuit Arc</button>')
+  it('provides Circuit Path and Circuit Arc via the Electrical Tools floating palette', () => {
     expect(desktopElectricalToolsSource()).toContain('Circuit Path</button>')
     expect(desktopElectricalToolsSource()).toContain('Circuit Arc</button>')
+    expect(drawBucketSource()).not.toContain('{!useDesktopThreePaneLayout && (')
   })
 
   it('removes the desktop Quick Access header Wire Profiles button', () => {
