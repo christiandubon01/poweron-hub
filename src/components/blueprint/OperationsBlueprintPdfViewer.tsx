@@ -9783,6 +9783,97 @@ const annotationPanelSizeClass =
       : ''
 
   // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Annotation Ã¢â€ â€ tool-key mapping Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+  const touchToolbarBuckets: Array<[ToolbarBucket, string, any]> = [
+    ['annotate', 'Annotate', Layers],
+    ['draw', 'Draw / Mark', PenLine],
+    ['generate', 'Generate', Sparkles],
+    ['view', 'View', MousePointer2],
+    ['measure', 'Measure', Ruler],
+  ]
+
+  const renderTouchHistoryButtons = (options: { inert?: boolean } = {}) => (
+    <div className={`flex items-center gap-1 ${options.inert ? 'invisible pointer-events-none' : 'justify-end'}`} aria-hidden={options.inert || undefined}>
+      <button
+        type="button"
+        disabled={!activeUndoCommand || annotationHistoryInteractionBlocked}
+        onClick={() => void applyAnnotationHistory('undo')}
+        tabIndex={options.inert ? -1 : undefined}
+        className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2 text-xs text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+        title={activeUndoCommand ? `Undo: ${activeUndoCommand.label} (Ctrl+Z)` : 'Nothing to undo'}
+        aria-label={activeUndoCommand ? `Undo ${activeUndoCommand.label}` : 'Nothing to undo'}
+      >
+        <Undo2 size={13} /> Undo
+      </button>
+      <button
+        type="button"
+        disabled={!activeRedoCommand || annotationHistoryInteractionBlocked}
+        onClick={() => void applyAnnotationHistory('redo')}
+        tabIndex={options.inert ? -1 : undefined}
+        className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2 text-xs text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+        title={activeRedoCommand ? `Redo: ${activeRedoCommand.label} (Ctrl+Y / Ctrl+Shift+Z)` : 'Nothing to redo'}
+        aria-label={activeRedoCommand ? `Redo ${activeRedoCommand.label}` : 'Nothing to redo'}
+      >
+        <Redo2 size={13} /> Redo
+      </button>
+    </div>
+  )
+
+  const renderPackagePickControls = (placement: 'panel' | 'touch-overlay') => {
+    const isTouchOverlay = placement === 'touch-overlay'
+    return (
+      <div
+        className={isTouchOverlay
+          ? 'flex max-w-[calc(100vw-2rem)] flex-wrap items-center justify-end gap-1.5 rounded-lg border border-gray-700 bg-[#10131c]/95 px-2 py-1.5 shadow-lg backdrop-blur-sm'
+          : 'mt-2 flex flex-wrap items-center gap-1.5'}
+      >
+        <button
+          type="button"
+          onClick={togglePackagePickMode}
+          className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-semibold ${isPackagePickMode ? 'border-emerald-400/70 bg-emerald-500/15 text-emerald-200' : 'border-gray-700 text-gray-300 hover:bg-white/5'}`}
+          title="Toggle Package Pick mode — click symbols/shapes on the canvas to add them to a work package. Desktop: press Left Control."
+        >
+          <MousePointer2 size={11} />
+          {isPackagePickMode ? 'Package Pick: On' : 'Package Pick'}
+        </button>
+        <span className={`text-[10px] ${selectedPackageCount > 0 ? 'font-semibold text-emerald-300' : 'text-gray-500'}`}>
+          Package Pick: {selectedPackageCount} selected
+        </span>
+        {selectedPackageCount > 0 && (
+          <button
+            type="button"
+            onClick={clearPackagePickSelection}
+            className="inline-flex items-center gap-1 rounded border border-gray-700 px-2 py-1 text-[10px] text-gray-300 hover:bg-white/5"
+            title="Clear the package-pick selection"
+          >
+            <X size={10} /> Clear
+          </button>
+        )}
+        {!isTouchOverlay && isPackagePickMode && (
+          <span className="text-[9px] text-emerald-300/70">Picking visible annotations only · Tap canvas items to add/remove · Left Ctrl or Esc to exit</span>
+        )}
+      </div>
+    )
+  }
+
+  const renderTouchElectricalSymbolsButton = () => {
+    if (useDesktopThreePaneLayout) return null
+    return (
+      <div className="min-w-0">
+        <button
+          type="button"
+          aria-expanded={desktopElectricalSymbolsOpen}
+          onClick={() => setDesktopElectricalSymbolsOpen((v) => !v)}
+          className={`w-full inline-flex items-center gap-1.5 min-h-8 text-xs px-2 py-1 rounded-md border text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${toolMode === 'shape' && electricalSymbolOptionByKind.has(shapeKind as ElectricalSymbolKind) ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+          title="Electrical Symbols palette"
+          aria-label="Electrical Symbols"
+        >
+          <ChevronDown size={12} className={`shrink-0 transition-transform ${desktopElectricalSymbolsOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+          <span className="min-w-0 flex-1 whitespace-normal break-words font-medium">Electrical Symbols</span>
+        </button>
+      </div>
+    )
+  }
+
   function annotationTypeToToolKey(type: string): ToolKey | null {
     const map: Record<string, ToolKey> = {
       highlight: 'highlight', textHighlight: 'textHighlight', underline: 'underline', textBox: 'textBox',
@@ -11063,35 +11154,6 @@ const annotationPanelSizeClass =
               </div>
             </div>
 
-            {/* -- Row 2: centered bucket tabs -- */}
-            <div className="px-3 py-1.5 border-b border-gray-700/40 bg-[#0d0e14] flex-shrink-0 flex items-center justify-center gap-1 overflow-x-auto">
-              {([
-                ['annotate', 'Annotate', Layers],
-                ['draw', 'Draw / Mark', PenLine],
-                ['generate', 'Generate', Sparkles],
-                ['view', 'View', MousePointer2],
-                ['measure', 'Measure', Ruler],
-              ] as Array<[ToolbarBucket, string, any]>).map(([bucket, label, Icon]) => (
-                <button
-                  key={bucket}
-                  onClick={() => setToolbarBucket(bucket)}
-                  className={`shrink-0 flex items-center gap-1.5 h-8 text-xs px-3 rounded-md border transition-colors ${
-                    toolbarBucket === bucket
-                      ? bucket === 'measure'
-                        ? 'border-sky-500 text-sky-300 bg-sky-900/25'
-                        : 'border-blue-500 text-blue-300 bg-blue-900/25'
-                      : 'border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'
-                  }`}
-                  title={label}
-                >
-                  <Icon size={12} className="shrink-0" />
-                  <span className="whitespace-nowrap font-medium">{label}</span>
-                  {bucket === 'measure' && calibrationStatus !== 'none' && (
-                    <span className={`ml-0.5 w-1.5 h-1.5 rounded-full ${calibrationStatus === 'saved' ? 'bg-green-500' : 'bg-amber-500'}`} />
-                  )}
-                </button>
-              ))}
-            </div>
             </>
           )}
 
@@ -11214,59 +11276,34 @@ const annotationPanelSizeClass =
           >
             <DesktopToolbarScrollContent enabled={useDesktopThreePaneLayout}>
             {!useDesktopThreePaneLayout && (
-            <div className="flex items-center gap-1.5 overflow-x-auto">
-              <button
-                type="button"
-                disabled={!activeUndoCommand || annotationHistoryInteractionBlocked}
-                onClick={() => void applyAnnotationHistory('undo')}
-                className="inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2 text-xs text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                title={activeUndoCommand ? `Undo: ${activeUndoCommand.label} (Ctrl+Z)` : 'Nothing to undo'}
-                aria-label={activeUndoCommand ? `Undo ${activeUndoCommand.label}` : 'Nothing to undo'}
-              >
-                <Undo2 size={13} /> Undo
-              </button>
-              <button
-                type="button"
-                disabled={!activeRedoCommand || annotationHistoryInteractionBlocked}
-                onClick={() => void applyAnnotationHistory('redo')}
-                className="inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-gray-700 px-2 text-xs text-gray-300 transition-colors hover:border-gray-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                title={activeRedoCommand ? `Redo: ${activeRedoCommand.label} (Ctrl+Y / Ctrl+Shift+Z)` : 'Nothing to redo'}
-                aria-label={activeRedoCommand ? `Redo ${activeRedoCommand.label}` : 'Nothing to redo'}
-              >
-                <Redo2 size={13} /> Redo
-              </button>
-            </div>
-            )}
-
-            {/* â"€â"€â"€â"€ Tablet: Compact single-row segmented bucket selector â"€â"€â"€â"€ */}
-            {!useDesktopThreePaneLayout && !isTabletImmersiveFullscreen && (
-              <div className="flex gap-0.5 items-stretch overflow-x-auto">
-                {([
-                  ['annotate', 'Annotate', Layers],
-                  ['draw', 'Draw / Mark', PenLine],
-                  ['generate', 'Generate', Sparkles],
-                  ['view', 'View', MousePointer2],
-                  ['measure', 'Measure', Ruler],
-                ] as Array<[ToolbarBucket, string, any]>).map(([bucket, label, Icon]) => (
-                  <button
-                    key={bucket}
-                    onClick={() => setToolbarBucket(bucket)}
-                    className={`shrink-0 flex items-center gap-1 h-7 text-xs px-2.5 rounded-md border transition-colors ${
-                      toolbarBucket === bucket
-                        ? bucket === 'measure'
-                          ? 'border-sky-500 text-sky-300 bg-sky-900/25'
-                          : 'border-blue-500 text-blue-300 bg-blue-900/25'
-                        : 'border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'
-                    }`}
-                    title={label}
-                  >
-                    <Icon size={11} className="shrink-0" />
-                    <span className="whitespace-nowrap">{label}</span>
-                    {bucket === 'measure' && calibrationStatus !== 'none' && (
-                      <span className={`ml-0.5 w-1.5 h-1.5 rounded-full ${calibrationStatus === 'saved' ? 'bg-green-500' : 'bg-amber-500'}`} />
-                    )}
-                  </button>
-                ))}
+              <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5">
+                {renderTouchHistoryButtons({ inert: true })}
+                <div className="min-w-0 overflow-x-auto">
+                  <div className="flex min-w-max items-center justify-center gap-0.5">
+                    {touchToolbarBuckets.map(([bucket, label, Icon]) => (
+                      <button
+                        key={bucket}
+                        type="button"
+                        onClick={() => setToolbarBucket(bucket)}
+                        className={`shrink-0 flex items-center gap-1 h-8 rounded-md border px-2.5 text-xs transition-colors ${
+                          toolbarBucket === bucket
+                            ? bucket === 'measure'
+                              ? 'border-sky-500 text-sky-300 bg-sky-900/25'
+                              : 'border-blue-500 text-blue-300 bg-blue-900/25'
+                            : 'border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'
+                        }`}
+                        title={label}
+                      >
+                        <Icon size={11} className="shrink-0" />
+                        <span className="whitespace-nowrap">{label}</span>
+                        {bucket === 'measure' && calibrationStatus !== 'none' && (
+                          <span className={`ml-0.5 h-1.5 w-1.5 rounded-full ${calibrationStatus === 'saved' ? 'bg-green-500' : 'bg-amber-500'}`} />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {renderTouchHistoryButtons()}
               </div>
             )}
 
@@ -11437,6 +11474,7 @@ const annotationPanelSizeClass =
                       )}
                     </button>
                   </div>
+                  {renderTouchElectricalSymbolsButton()}
                 </div>
                 {desktopElectricalToolsOpen && createPortal(
                   <BlueprintFloatingPalette paletteId="electrical-tools" title="Electrical Tools" onClose={closeElectricalToolsPalette} defaultX={60} defaultY={80}>
@@ -11591,20 +11629,22 @@ const annotationPanelSizeClass =
                   </BlueprintFloatingPalette>,
                   document.body
                 )}
-                <div className="space-y-1.5">
-                  <div className="text-[10px] uppercase tracking-wide text-gray-500">Electrical Symbols</div>
-                  <button
-                    type="button"
-                    aria-pressed={desktopElectricalSymbolsOpen}
-                    onClick={() => setDesktopElectricalSymbolsOpen((v) => !v)}
-                    className={`w-full inline-flex items-center gap-1.5 min-h-8 text-xs px-2 py-1 rounded-md border text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${toolMode === 'shape' && electricalSymbolOptionByKind.has(shapeKind as ElectricalSymbolKind) ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
-                    title="Electrical Symbols palette"
-                    aria-label="Electrical Symbols"
-                  >
-                    <ChevronDown className={`shrink-0 transition-transform ${desktopElectricalSymbolsOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
-                    <span className="min-w-0 flex-1 whitespace-normal break-words font-medium">Electrical Symbols</span>
-                  </button>
-                </div>
+                {useDesktopThreePaneLayout ? (
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] uppercase tracking-wide text-gray-500">Electrical Symbols</div>
+                    <button
+                      type="button"
+                      aria-pressed={desktopElectricalSymbolsOpen}
+                      onClick={() => setDesktopElectricalSymbolsOpen((v) => !v)}
+                      className={`w-full inline-flex items-center gap-1.5 min-h-8 text-xs px-2 py-1 rounded-md border text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${toolMode === 'shape' && electricalSymbolOptionByKind.has(shapeKind as ElectricalSymbolKind) ? 'border-cyan-500 text-cyan-300 bg-cyan-900/20' : 'border-gray-700 text-gray-300 hover:text-white'}`}
+                      title="Electrical Symbols palette"
+                      aria-label="Electrical Symbols"
+                    >
+                      <ChevronDown className={`shrink-0 transition-transform ${desktopElectricalSymbolsOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+                      <span className="min-w-0 flex-1 whitespace-normal break-words font-medium">Electrical Symbols</span>
+                    </button>
+                  </div>
+                ) : null}
               </div>
             )}
 
@@ -12155,6 +12195,7 @@ const annotationPanelSizeClass =
                   // Hide scrollbars across all browsers Ã¢â‚¬â€ inline guarantees they
                   // apply regardless of CSS file load order. Container still
                   // scrolls programmatically (required by pan/zoom logic).
+                  position: useDesktopThreePaneLayout ? undefined : 'relative',
                   scrollbarWidth: 'none',          /* Firefox */
                   msOverflowStyle: 'none' as any,  /* IE / old Edge */
                 } as React.CSSProperties}
@@ -12179,6 +12220,20 @@ const annotationPanelSizeClass =
                   }
                 }}
               >
+                {!useDesktopThreePaneLayout && (
+                  <div
+                    className="absolute top-2 z-40 flex justify-end"
+                    style={{ right: fsRail.show ? 24 : 8 }}
+                  >
+                    <div
+                      className="pointer-events-auto"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {renderPackagePickControls('touch-overlay')}
+                    </div>
+                  </div>
+                )}
                 <div
                   className="relative p-2 sm:p-3"
                   style={{
@@ -13877,7 +13932,7 @@ const annotationPanelSizeClass =
                       </button>
                     </div>
                     {/* ── Package Pick / Multi Select controls ── */}
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <div className={useDesktopThreePaneLayout ? 'mt-2 flex flex-wrap items-center gap-1.5' : 'hidden'}>
                       <button
                         type="button"
                         onClick={togglePackagePickMode}
