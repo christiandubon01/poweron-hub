@@ -17,6 +17,13 @@
 
 import { getBackupData, saveBackupData, num, type BackupData, type BackupServiceLog } from './backupDataService'
 import { callClaude, extractText } from './claudeProxy'
+import {
+  createServicePaymentLegacyBaseline,
+  deriveServicePayStatus,
+  MONEY_EPSILON,
+  resolveServiceBalanceDue,
+  sumServicePayments,
+} from '@/features/service-quote/servicePaymentLedger'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -143,7 +150,7 @@ export async function extractFromPDF(file: File): Promise<QBExtractedData> {
 // ── Map extracted data to Service Log entry ──────────────────────────────────
 
 export function mapToServiceLog(data: QBExtractedData): Partial<BackupServiceLog> {
-  const collected = data.totalAmount - data.balanceDue
+  const collected = Math.max(0, data.totalAmount - data.balanceDue)
   let payStatus = 'N'
   if (data.paymentStatus === 'paid') payStatus = 'Y'
   else if (data.paymentStatus === 'partial') payStatus = 'P'
@@ -164,7 +171,7 @@ export function mapToServiceLog(data: QBExtractedData): Partial<BackupServiceLog
 
   const firstLine = (data.lineItems?.[0]?.description || '').slice(0, 200)
 
-  return {
+  const base: Partial<BackupServiceLog> = {
     id: 'svc' + Date.now() + Math.random().toString(36).slice(2, 6),
     date: data.date || new Date().toISOString().slice(0, 10),
     customer: data.customerName || 'Unknown',
@@ -174,14 +181,32 @@ export function mapToServiceLog(data: QBExtractedData): Partial<BackupServiceLog
     miles: 0,
     quoted: data.totalAmount,
     mat: 0,
-    collected: collected,
-    payStatus: payStatus,
+    collected,
+    payStatus,
     balanceDue: data.balanceDue,
     store: '',
     notes: firstLine,
     adjustments: [],
     source: 'quickbooks_import',
   }
+
+  // FORENSIC-KPI-2B1: a collected amount from a QB import has no real payment date.
+  // Preserve it as a legacy_baseline event with receivedAt = null so the invoice date
+  // is never misused as the payment date. Re-import deduplication remains an existing
+  // limitation of this importer; event identity is stable within the created row only.
+  if (collected > MONEY_EPSILON) {
+    const baseline = createServicePaymentLegacyBaseline(base as any, {
+      now: new Date().toISOString(),
+    })
+    if (baseline) {
+      base.payments = [baseline]
+      base.collected = sumServicePayments([baseline])
+      base.payStatus = deriveServicePayStatus(base.collected, base.quoted)
+      base.balanceDue = resolveServiceBalanceDue(base.collected, base.quoted)
+    }
+  }
+
+  return base
 }
 
 // ── Map extracted data to Project ────────────────────────────────────────────
@@ -450,12 +475,12 @@ function getCol(cols: string[], map: QBOColMap, field: keyof QBOColMap): string 
  */
 export function mapQBORowsToServiceLogs(rows: QBOParsedRow[]): Partial<BackupServiceLog>[] {
   return rows.map(row => {
-    const collected = row.amount - row.balance
+    const collected = Math.max(0, row.amount - row.balance)
     let payStatus = 'N'
     if (row.status === 'Paid') payStatus = 'Y'
     else if (row.status === 'Partial') payStatus = 'P'
 
-    return {
+    const base: Partial<BackupServiceLog> = {
       id: 'svc' + Date.now() + Math.random().toString(36).slice(2, 6),
       date: row.invoiceDate || new Date().toISOString().slice(0, 10),
       customer: row.customer,
@@ -473,5 +498,22 @@ export function mapQBORowsToServiceLogs(rows: QBOParsedRow[]): Partial<BackupSer
       adjustments: [],
       source: 'quickbooks_csv_import',
     }
+
+    // FORENSIC-KPI-2B1: imported collected amounts have no payment date. Preserve them
+    // as a legacy_baseline event with receivedAt = null; the invoice date is not used.
+    // Re-import deduplication remains an existing importer limitation.
+    if (collected > MONEY_EPSILON) {
+      const baseline = createServicePaymentLegacyBaseline(base as any, {
+        now: new Date().toISOString(),
+      })
+      if (baseline) {
+        base.payments = [baseline]
+        base.collected = sumServicePayments([baseline])
+        base.payStatus = deriveServicePayStatus(base.collected, base.quoted)
+        base.balanceDue = resolveServiceBalanceDue(base.collected, base.quoted)
+      }
+    }
+
+    return base
   })
 }

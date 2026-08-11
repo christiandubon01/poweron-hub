@@ -103,6 +103,21 @@ import {
   snapToQuoteStep,
 } from '@/features/service-quote/servicePaymentStatus'
 import {
+  buildServiceLogWithPayment,
+  deriveServicePayStatus,
+  getServicePaymentEvents,
+  hasServicePaymentLedger,
+  MONEY_EPSILON,
+  recordServicePayment,
+  resolveServiceCollected,
+  resolveServiceTotalBillable,
+  type ServicePaymentRowLike,
+} from '@/features/service-quote/servicePaymentLedger'
+import RecordServicePaymentModal, {
+  localTodayKey,
+  type RecordServicePaymentRequest,
+} from './RecordServicePaymentModal'
+import {
   syncServiceCallAssignments,
 } from '@/services/serviceCallAssignmentService'
 // SERVICE-COST-3B — crew-aware labor and overhead recovery.
@@ -628,9 +643,13 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [slFrozenSnapshot, setSlFrozenSnapshot] = useState<CrewCostSnapshot | null>(null)
   const [slMat, setSlMat] = useState('')
   const [slCollected, setSlCollected] = useState('')
+  // FORENSIC-KPI-2B1: new service calls with collected > 0 need a real received date.
+  const [slReceivedAt, setSlReceivedAt] = useState(localTodayKey())
   const [slStore, setSlStore] = useState('')
   const [slJtype, setSlJtype] = useState(JOB_TYPES[0])
   const [slPayStatus, setSlPayStatus] = useState('Y')
+  // FORENSIC-KPI-2B1: pending real-payment capture (amount + actual received date).
+  const [payRequest, setPayRequest] = useState<RecordServicePaymentRequest | null>(null)
   const [slEmatInfo, setSlEmatInfo] = useState('')
   const [slDetailLink, setSlDetailLink] = useState('')
   const [slNotes, setSlNotes] = useState('')
@@ -790,6 +809,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [actualMaterials, setActualMaterials] = useState('')
   const [actualMiles, setActualMiles] = useState('')
   const [paymentCollected, setPaymentCollected] = useState('')
+  // FORENSIC-KPI-2B1: completion cash needs a real received date, not the service date.
+  const [paymentReceivedAt, setPaymentReceivedAt] = useState(localTodayKey())
   const [paymentStatus, setPaymentStatus] = useState('Unpaid')
   const [completionVariance, setCompletionVariance] = useState<any>(null)
   const [showArchivedServiceReview, setShowArchivedServiceReview] = useState(false)
@@ -1613,6 +1634,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setActualMaterials(String(est.estMaterials || 0))
     setActualMiles(String(est.milesRT || 0))
     setPaymentCollected('')
+    setPaymentReceivedAt(localTodayKey())
     setPaymentStatus('Unpaid')
     setCompletionVariance(null)
   }
@@ -1624,7 +1646,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     const actHrs = parseFloat(actualHours) || 0
     const actMat = parseFloat(actualMaterials) || 0
     const actMi = parseFloat(actualMiles) || 0
-    const collected = parseFloat(paymentCollected) || 0
+    const typedCollected = parseFloat(paymentCollected) || 0
 
     const acceptedSnapshot = (est as any).costSnapshot as CrewCostSnapshot | undefined
     const acceptedCrewHourlyCost = acceptedSnapshot
@@ -1642,7 +1664,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     const carriedAssignments = normalizeAssignments(est)
 
     // Create service log entry
-    const logEntry: BackupServiceLog = {
+    let logEntry: any = {
       id: 'svc' + Date.now(),
       date: today(),
       customer: est.customer,
@@ -1659,17 +1681,49 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       legacyPricing: (est as any).legacyPricing,
       historicalCostUnavailable: !acceptedSnapshot,
       mat: actMat,
-      collected,
-      payStatus: collected >= carriedTotalQuoted ? 'Y' : (collected > 0 ? 'P' : 'N'),
-      balanceDue: Math.max(0, carriedTotalQuoted - collected),
+      collected: typedCollected,
       store: '',
       notes: est.notes,
       ...(acceptedSnapshot ? {
         mileCost: mileageCost,
         opCost: labCost,
-        profit: collected - actMat - mileageCost - labCost,
+        profit: typedCollected - actMat - mileageCost - labCost,
       } : {}),
-    } as any
+    }
+
+    // FORENSIC-KPI-2B1: owner-entered cash at completion must create a real payment
+    // event with the captured received date. No date is ever fabricated.
+    if (typedCollected > MONEY_EPSILON) {
+      if (!paymentReceivedAt) {
+        alert('Select the date the payment was received.')
+        return
+      }
+      const paymentResult = buildServiceLogWithPayment(logEntry, {
+        amount: typedCollected,
+        receivedAt: paymentReceivedAt,
+      })
+      if (!paymentResult.ok) {
+        alert(paymentResult.message)
+        return
+      }
+      logEntry = paymentResult.row
+    }
+
+    // FORENSIC-KPI-2B1: the completion Payment Status selector is workflow UX only.
+    // It cannot manufacture or erase cash. Reconcile the owner's choice against the
+    // actual collected amount; a contradiction is refused and leaves the ledger alone.
+    const requestedStatusCode: 'Y' | 'P' | 'N' = paymentStatus === 'Paid'
+      ? 'Y'
+      : paymentStatus === 'Partial'
+        ? 'P'
+        : 'N'
+    const reconcile = reconcileServicePayment(requestedStatusCode, logEntry.collected, carriedTotalQuoted)
+    if (reconcile.blocked) {
+      alert(reconcile.message || 'Selected payment status does not match the recorded amount.')
+      return
+    }
+    logEntry.payStatus = reconcile.payStatus
+    logEntry.balanceDue = reconcile.balanceDue
 
     // Phase 6R-B: identity-stamp the new service log AND mark the source estimate
     // completed, then save BOTH through the service.calls scoped merge below. This
@@ -1677,7 +1731,12 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     // while mutating serviceLogs + serviceEstimates, risking loss of the new log
     // and the estimate completion when remote had advanced).
     const now6rb = new Date().toISOString()
-    backup.serviceLogs = [...serviceLogs, ensureServiceLogIdentity({ ...logEntry, updatedAt: now6rb })]
+    logEntry.statusEvents = []
+    stampStatusEvent(logEntry, logEntry.payStatus, logEntry.collected, false)
+    if (!logEntry.serviceLogId) logEntry.serviceLogId = logEntry.id
+    logEntry.createdAt = logEntry.createdAt || now6rb
+    logEntry.updatedAt = now6rb
+    backup.serviceLogs = [...serviceLogs, ensureServiceLogIdentity(logEntry)]
     est.status = 'completed'
     ;(est as any).updatedAt = now6rb
     backup.serviceEstimates = serviceEstimates.map(e => e.id === est.id ? ensureServiceEstimateIdentity(est) : e)
@@ -1829,7 +1888,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
   function resetSvcForm() {
     setSlCust(''); setSlAddr(''); setSlDate(today()); setSlHrs(''); setSlEstHrs(''); setSlMi('')
-    setSlQuoted(''); setSlMat(''); setSlCollected(''); setSlStore(''); setSlJtype(JOB_TYPES[0])
+    setSlQuoted(''); setSlMat(''); setSlCollected(''); setSlReceivedAt(localTodayKey()); setSlStore(''); setSlJtype(JOB_TYPES[0])
     setSlPayStatus('Y'); setSlEmatInfo(''); setSlDetailLink(''); setSlNotes('')
     setSlAccountId('')
     // COST-1.5A: only pre-fill a real Default Bill Rate; leave blank when unset.
@@ -2054,7 +2113,17 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     const hrs = parseFloat(slHrs) || 0
     const mi = parseInt(slMi) || 0
     const mat = parseFloat(slMat) || 0
-    let collected = parseFloat(slCollected) || 0
+    // FORENSIC-KPI-2B1: on a row that already has a real payment ledger, the ledger is
+    // the money and the Collected box is a read-only mirror of it. Legacy rows (no
+    // ledger yet) keep their scalar amount read-only; new money must use Record Payment.
+    const priorSvcRow = editSvcId ? serviceLogs.find(l => l.id === editSvcId) : undefined
+    const svcHasLedger = hasServicePaymentLedger(priorSvcRow)
+    const isNewSvc = !editSvcId
+    const typedCollected = parseFloat(slCollected) || 0
+    const needsPaymentEvent = isNewSvc && typedCollected > MONEY_EPSILON
+    let collected = svcHasLedger
+      ? resolveServiceCollected(priorSvcRow)
+      : (isNewSvc ? 0 : resolveServiceCollected(priorSvcRow))
 
     // SERVICE-COST-3B: quote path depends on costing mode.
     //   legacy  -> settings.opCost single-rate compatibility, no snapshot written.
@@ -2088,11 +2157,16 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
     pushState(backup)
 
-    // SERVICE-LOG-1 polish: honour the Status the owner actually selected. This
-    // used to recompute payStatus from Collected alone, silently discarding the
-    // choice; reconciling Collected to the status keeps every downstream reader
-    // (rollups, Collections Queue, balance colours) consistent with it.
-    const payment = reconcileServicePayment(slPayStatus, collected, quoted)
+    // FORENSIC-KPI-2B1: the Status select is workflow UX only — it can no longer
+    // manufacture or erase cash. reconcileServicePayment leaves Collected alone and
+    // returns the truthful status; a choice that contradicts the money is refused and
+    // surfaced inline in the modal (see servicePaymentBlock below).
+    //
+    // "Fully settled" is judged against Total Billable (protected Total Quoted plus
+    // valid income adjustments), never against Total Quoted alone.
+    const carriedAdjustments = editSvcId ? (serviceLogs.find(l => l.id === editSvcId)?.adjustments || []) : []
+    const totalBillableAtSave = resolveServiceTotalBillable({ quoted, adjustments: carriedAdjustments })
+    const payment = reconcileServicePayment(slPayStatus, collected, totalBillableAtSave)
     const payStatus = payment.payStatus
     collected = payment.collected
     const balanceDue = payment.balanceDue
@@ -2118,10 +2192,39 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       notes: slNotes,
       emergencyMatInfo: slEmatInfo,
       detailLink: slDetailLink,
-      adjustments: (editSvcId ? (serviceLogs.find(l => l.id === editSvcId)?.adjustments || []) : []),
+      adjustments: carriedAdjustments,
+      // FORENSIC-KPI-2B1: the entry is rebuilt from scratch on every save, so the
+      // append-only payment ledger MUST be carried across or an unrelated edit would
+      // silently delete real payment history.
+      ...(svcHasLedger ? { payments: getServicePaymentEvents(priorSvcRow) } : {}),
     } as any
 
-    if (editSvcId) {
+    // FORENSIC-KPI-2B1: new service calls with owner-entered cash must be born with a
+    // real payment ledger. Route the money through the shared payment writer so it has a
+    // stable id, amount, and owner-asserted receivedAt — never a fabricated service date.
+    if (needsPaymentEvent) {
+      if (!slReceivedAt) {
+        alert('Select the date the payment was received.')
+        return
+      }
+      const paymentResult = buildServiceLogWithPayment(entry, {
+        amount: typedCollected,
+        receivedAt: slReceivedAt,
+      })
+      if (!paymentResult.ok) {
+        alert(paymentResult.message)
+        return
+      }
+      ;(paymentResult.row as any).statusEvents = []
+      stampStatusEvent(paymentResult.row as any, paymentResult.payStatus, paymentResult.collected, false)
+      ;(paymentResult.row as any).updatedAt = new Date().toISOString()
+      backup.serviceLogs = [...serviceLogs, ensureServiceLogIdentity(paymentResult.row as any)]
+      const saved = await persistServiceLogs()
+      if (!saved) return
+      const savedEntry = paymentResult.row as any
+      await finalizeServiceLogSave(savedEntry, slAssignments)
+      return
+    } else if (editSvcId) {
       const idx = serviceLogs.findIndex(l => l.id === editSvcId)
       if (idx >= 0) {
         // Preserve prior statusEvents on edit, append the new state
@@ -2144,30 +2247,38 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     }
     const saved = await persistServiceLogs()
     if (!saved) return
+    await finalizeServiceLogSave(entry, slAssignments)
+  }
+
+  /**
+   * Shared post-save cleanup for service log creation/edit: portal sync, relationship
+   * account link/event, skill signals, and form reset.
+   */
+  async function finalizeServiceLogSave(savedEntry: any, assignments: AssignedEmployee[]) {
     // SERVICE-LOG-1: employee-safe job facts only — no quote/profit/collections.
-    syncAssignmentsToPortal(entry, 'service_call', slAssignments)
-    if ((entry as any).accountId) {
+    syncAssignmentsToPortal(savedEntry, 'service_call', assignments)
+    if (savedEntry?.accountId) {
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
-        accountId: String((entry as any).accountId),
+        accountId: String(savedEntry.accountId),
         entityType: 'service_log',
-        entityId: String(entry.id),
-        entityLabel: entry.jtype || entry.customer || 'Service Call',
-        legacyCustomerText: entry.customer || '',
-        metadata: { legacy_payload: entry },
+        entityId: String(savedEntry.id),
+        entityLabel: savedEntry.jtype || savedEntry.customer || 'Service Call',
+        legacyCustomerText: savedEntry.customer || '',
+        metadata: { legacy_payload: savedEntry },
         createdBy: authProfile?.id || null,
       }).catch((err) => console.warn('[V15rFieldLogPanel] relationship link upsert failed', err))
       void upsertRelationshipEvent({
         orgId: authProfile?.org_id || null,
-        accountId: String((entry as any).accountId),
+        accountId: String(savedEntry.accountId),
         entityType: 'service_log',
-        entityId: String(entry.id),
-        title: entry.jtype || entry.customer || 'Service Call',
-        description: entry.notes || '',
-        quotedAmount: num(entry.quoted || 0),
-        collectedAmount: num(entry.collected || 0),
-        outstandingAmount: Math.max(0, num(entry.quoted || 0) - num(entry.collected || 0)),
-        metadata: { status: entry.payStatus || '', legacy_payload: entry },
+        entityId: String(savedEntry.id),
+        title: savedEntry.jtype || savedEntry.customer || 'Service Call',
+        description: savedEntry.notes || '',
+        quotedAmount: num(savedEntry.quoted || 0),
+        collectedAmount: num(savedEntry.collected || 0),
+        outstandingAmount: Math.max(0, num(savedEntry.quoted || 0) - num(savedEntry.collected || 0)),
+        metadata: { status: savedEntry.payStatus || '', legacy_payload: savedEntry },
         createdBy: authProfile?.id || null,
       }).catch((err) => console.warn('[V15rFieldLogPanel] relationship event upsert failed', err))
     }
@@ -2318,31 +2429,90 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     })
   }
 
+  /**
+   * FORENSIC-KPI-2B1: "Mark Paid" and "Partial" no longer write money directly — they
+   * open the compact Record Payment capture so a real amount AND a real received date
+   * are collected. The buttons, their labels and their purpose are unchanged.
+   *
+   * "Mark Paid" prefills the outstanding balance; the owner can correct it. If the
+   * actual cash is short of the balance, the shortfall is simply not recorded — it is
+   * never manufactured to make the status fit.
+   */
   function quickSetSvcPayment(logId: string, status: string) {
     const l = serviceLogs.find(x => x.id === logId)
     if (!l) return
+    const totalBillable = resolveServiceTotalBillable(l)
+    const alreadyCollected = resolveServiceCollected(l)
+    const balanceDue = Math.max(0, totalBillable - alreadyCollected)
+    setPayRequest({
+      logId,
+      customer: canonicalCustomerName(l),
+      totalBillable,
+      alreadyCollected,
+      balanceDue,
+      suggestedAmount: status === 'Y' ? balanceDue : 0,
+      title: status === 'Y' ? 'Mark Paid — record payment' : 'Partial — record payment',
+    })
+  }
+
+  /**
+   * The single Service payment write path in this panel. Delegates all money and
+   * status arithmetic to recordServicePayment() so cash is never manufactured or
+   * erased, then persists through the Phase 6R-A scoped serviceLogs save.
+   */
+  function commitServicePayment(amount: number, receivedAt: string, note: string) {
+    const request = payRequest
+    if (!request) return
+    const idx = serviceLogs.findIndex(x => x.id === request.logId)
+    if (idx < 0) { setPayRequest(null); return }
+    const target = serviceLogs[idx]
+
+    const result = recordServicePayment(target, { amount, receivedAt, note })
+    if (!result.ok) { alert(result.message); return }
+
     pushState(backup)
-    const roll = getServiceRollup(l)
-    // Preserve prior invoiced flag — quick-pay doesn't change invoicing, only collection
-    const wasInvoiced = !!(Array.isArray(l.statusEvents) && l.statusEvents.length && l.statusEvents[l.statusEvents.length - 1].invoiced)
-    if (status === 'Y') {
-      l.collected = roll.totalBillable
-      l.payStatus = 'Y'
-      l.balanceDue = 0
-      stampStatusEvent(l, 'Y', l.collected, wasInvoiced)
-    } else if (status === 'P') {
-      const amt = prompt('Partial amount collected:', String(num(l.collected) || 0))
-      if (amt === null) return
-      l.collected = parseFloat(amt) || 0
-      const newMeta = getServicePaymentMeta(l)
-      l.payStatus = newMeta.status
-      l.balanceDue = newMeta.remaining
-      stampStatusEvent(l, newMeta.status, l.collected, wasInvoiced)
-    }
-    // Phase 6R-A: stamp identity/updatedAt and route through scoped serviceLogs save.
-    if (!(l as any).serviceLogId) (l as any).serviceLogId = l.id
-    ;(l as any).updatedAt = new Date().toISOString()
+    // Preserve prior invoiced flag — recording cash doesn't change invoicing.
+    const wasInvoiced = !!(Array.isArray(target.statusEvents) && target.statusEvents.length
+      && target.statusEvents[target.statusEvents.length - 1].invoiced)
+    const next: any = { ...result.row }
+    next.statusEvents = Array.isArray(target.statusEvents) ? [...target.statusEvents] : []
+    stampStatusEvent(next, result.payStatus, result.collected, wasInvoiced)
+    if (!next.serviceLogId) next.serviceLogId = next.id
+    next.updatedAt = new Date().toISOString()
+
+    const source = backup.serviceLogs || []
+    backup.serviceLogs = source.map(row => (String(row.id) === String(request.logId) ? next : row))
+    setPayRequest(null)
     persistServiceLogs()
+  }
+
+  /** True when the row open in the modal already has real payment-event truth. */
+  const editingSvcHasLedger = hasServicePaymentLedger(
+    editSvcId ? serviceLogs.find(l => l.id === editSvcId) : undefined,
+  )
+
+  /**
+   * Live preview of what the current modal inputs mean, so the owner can see the
+   * balance and any refused status choice before saving. Read-only: writes nothing.
+   */
+  function serviceCallPaymentPreview() {
+    const prior = editSvcId ? serviceLogs.find(l => l.id === editSvcId) : undefined
+    const totalBillable = resolveServiceTotalBillable({
+      quoted: serviceCallDisplayQuote().totalQuoted,
+      adjustments: prior?.adjustments || [],
+    })
+    const collected = editingSvcHasLedger
+      ? resolveServiceCollected(prior)
+      : (parseFloat(slCollected) || 0)
+    const reconciled = reconcileServicePayment(slPayStatus, collected, totalBillable)
+    return {
+      totalBillable,
+      collected: reconciled.collected,
+      balanceDue: reconciled.balanceDue,
+      blocked: reconciled.blocked,
+      message: reconciled.message,
+      paymentCount: getServicePaymentEvents(prior).length,
+    }
   }
 
   function addServiceAdjustment(logId: string, type: 'income' | 'expense' | 'mileage') {
@@ -4028,6 +4198,15 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                             />
                           </div>
                           <div>
+                            <label className="text-[9px] text-gray-500 uppercase font-bold">Date Received</label>
+                            <input
+                              type="date"
+                              value={paymentReceivedAt}
+                              onChange={e => setPaymentReceivedAt(e.target.value)}
+                              className="w-full bg-[var(--bg-input)] border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
+                            />
+                          </div>
+                          <div>
                             <label className="text-[9px] text-gray-500 uppercase font-bold">Payment Status</label>
                             <select
                               value={paymentStatus}
@@ -4333,25 +4512,38 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   <div>
                     <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Collected $</label>
                     <input
-                      key={`slCollected-${editSvcId || 'new'}-${slPayStatus}`}
+                      key={`slCollected-${editSvcId || 'new'}`}
                       type="number" step="0.01"
                       defaultValue={slCollected}
+                      readOnly={editingSvcHasLedger}
                       onBlur={e => setSlCollected(e.target.value)}
-                      className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                      className={`w-full rounded-lg px-3 py-2 text-sm border border-gray-600 focus:border-orange-500 outline-none ${editingSvcHasLedger ? 'text-gray-400 cursor-not-allowed' : 'text-gray-200'}`}
                       style={{ backgroundColor: 'var(--bg-input)' }}
                     />
+                    {/* FORENSIC-KPI-2B1: new service calls with owner-entered cash need
+                        a real received date. Legacy rows and zero-cash rows don't. */}
+                    {!editSvcId && (
+                      <div className="mt-2">
+                        <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Date Received</label>
+                        <input
+                          type="date"
+                          value={slReceivedAt}
+                          onChange={e => setSlReceivedAt(e.target.value)}
+                          className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
+                          style={{ backgroundColor: 'var(--bg-input)' }}
+                        />
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Status</label>
                     <select
                       value={slPayStatus}
                       onChange={e => {
-                        // Reflect the reconciliation the save will apply, so the
-                        // owner sees the Collected amount their choice implies.
-                        const next = e.target.value
-                        setSlPayStatus(next)
-                        const reconciled = reconcileServicePayment(next, slCollected, serviceCallDisplayQuote().totalQuoted)
-                        setSlCollected(reconciled.collected ? String(reconciled.collected) : '')
+                        // FORENSIC-KPI-2B1: changing workflow status must never rewrite
+                        // the Collected amount. The implied balance and any refusal are
+                        // shown in the hint line below instead.
+                        setSlPayStatus(e.target.value)
                       }}
                       className="w-full rounded-lg px-3 py-2 text-sm text-gray-200 border border-gray-600 focus:border-orange-500 outline-none"
                       style={{ backgroundColor: 'var(--bg-input)' }}
@@ -4362,6 +4554,28 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     </select>
                   </div>
                 </div>
+
+                {/* FORENSIC-KPI-2B1: balance hint + refusal notice. Status never edits cash. */}
+                {(() => {
+                  const preview = serviceCallPaymentPreview()
+                  return (
+                    <div className="text-[10px] leading-relaxed -mt-1">
+                      {preview.blocked ? (
+                        <div className="text-amber-400">⚠ {preview.message} Saving keeps the recorded money and stores the truthful status.</div>
+                      ) : (
+                        <div className="text-gray-500">
+                          Balance remaining: <span className="font-mono text-orange-400">{fmt(preview.balanceDue)}</span>
+                          <span className="text-gray-600"> · {fmt(preview.totalBillable)} total billable</span>
+                        </div>
+                      )}
+                      {editingSvcHasLedger && (
+                        <div className="text-gray-500 mt-0.5">
+                          Collected is the sum of {preview.paymentCount} recorded payment{preview.paymentCount === 1 ? '' : 's'} — use Mark Paid / Partial to record another.
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
 
                 {/* Materials + Store */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
@@ -5389,6 +5603,14 @@ ${note}` : note)
         }}
         isOpen={aiOpen}
         onClose={() => setAiOpen(false)}
+      />
+
+      {/* FORENSIC-KPI-2B1: real payment capture — amount + actual received date. */}
+      <RecordServicePaymentModal
+        request={payRequest}
+        today={localTodayKey()}
+        onCancel={() => setPayRequest(null)}
+        onConfirm={commitServicePayment}
       />
     </div>
   )

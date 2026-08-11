@@ -232,7 +232,11 @@ describe('multi-employee assignment end to end', () => {
 
   it('wires every service-call save to the portal sync', () => {
     expect(panel).toContain('function syncAssignmentsToPortal(')
-    expect(panel).toContain("syncAssignmentsToPortal(entry, 'service_call', slAssignments)")
+    // FORENSIC-KPI-2B1: the save path now delegates post-save portal/account wiring
+    // to a shared helper so every route (create, edit, payment, completion) stays
+    // consistent. The helper still calls syncAssignmentsToPortal with the saved row.
+    expect(panel).toContain('function finalizeServiceLogSave(')
+    expect(panel).toContain("syncAssignmentsToPortal(savedEntry, 'service_call', assignments)")
     expect(panel).toContain("syncAssignmentsToPortal(estimate, 'service_estimate', estAssignments)")
     expect(panel).toContain("syncAssignmentsToPortal(activeEntry, 'service_call', normalizeAssignments(activeEntry))")
   })

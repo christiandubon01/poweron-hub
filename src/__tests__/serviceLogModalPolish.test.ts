@@ -90,19 +90,39 @@ describe('Total Quoted slider', () => {
 
 // ── D. Status behaviour ──────────────────────────────────────────────────────
 
+/**
+ * FORENSIC-KPI-2B1 re-specification.
+ *
+ * These cases previously asserted the opposite: that "Paid in Full" with an empty
+ * Collected box wrote 685, and that "Unpaid" over a typed 300 wrote 0. That was the
+ * manufacture/erase behaviour the owner approved removing. Coverage is kept — every
+ * old case still has a case here — but each now pins the truthful semantics.
+ * Exact-dollar coverage lives in features/service-quote/__tests__/servicePaymentTruth.
+ */
 describe('payment status', () => {
-  it('honours an explicit Paid in Full even with nothing typed in Collected', () => {
+  it('refuses Paid in Full with nothing collected instead of manufacturing 685', () => {
     const r = reconcileServicePayment('Y', '', 685)
-    expect(r.payStatus).toBe('Y')
-    expect(r.collected).toBe(685)
-    expect(r.balanceDue).toBe(0)
-  })
-
-  it('honours an explicit Unpaid even when an amount was typed', () => {
-    const r = reconcileServicePayment('N', 300, 685)
-    expect(r.payStatus).toBe('N')
     expect(r.collected).toBe(0)
     expect(r.balanceDue).toBe(685)
+    expect(r.blocked).toBe(true)
+    expect(r.blockedReason).toBe('outstanding-balance')
+    expect(r.payStatus).toBe('N')
+  })
+
+  it('refuses Unpaid over a real amount instead of erasing it', () => {
+    const r = reconcileServicePayment('N', 300, 685)
+    expect(r.collected).toBe(300)
+    expect(r.balanceDue).toBe(385)
+    expect(r.blocked).toBe(true)
+    expect(r.blockedReason).toBe('collected-would-be-erased')
+    expect(r.payStatus).toBe('P')
+  })
+
+  it('allows Unpaid when no money exists', () => {
+    const r = reconcileServicePayment('N', 0, 685)
+    expect(r.blocked).toBe(false)
+    expect(r.payStatus).toBe('N')
+    expect(r.collected).toBe(0)
   })
 
   it('keeps a real partial amount as Partial', () => {
@@ -110,11 +130,16 @@ describe('payment status', () => {
     expect(r.payStatus).toBe('P')
     expect(r.collected).toBe(300)
     expect(r.balanceDue).toBe(385)
+    expect(r.blocked).toBe(false)
   })
 
-  it('resolves an unrepresentable Partial to the truthful status', () => {
+  it('resolves an unrepresentable Partial to the truthful status without moving money', () => {
     expect(reconcileServicePayment('P', 0, 685).payStatus).toBe('N')
-    expect(reconcileServicePayment('P', 700, 685)).toEqual({ payStatus: 'Y', collected: 685, balanceDue: 0 })
+    const over = reconcileServicePayment('P', 700, 685)
+    expect(over.payStatus).toBe('Y')
+    // The 15 overpayment is real money and is NOT trimmed back to the quote.
+    expect(over.collected).toBe(700)
+    expect(over.balanceDue).toBe(0)
   })
 
   it('never returns a negative collected or balance', () => {
@@ -129,8 +154,8 @@ describe('payment status', () => {
     expect(reconcileServicePayment('bogus', 0, 685).payStatus).toBe('N')
   })
 
-  it('is the single save path — the old derive-from-collected override is gone', () => {
-    expect(panel).toContain('const payment = reconcileServicePayment(slPayStatus, collected, quoted)')
+  it('is the single save path and judges settlement against Total Billable', () => {
+    expect(panel).toContain('const payment = reconcileServicePayment(slPayStatus, collected, totalBillableAtSave)')
     expect(panel).not.toContain('if (collected <= 0.009) payStatus = \'N\'')
     expect(panel).toContain('collected, payStatus, balanceDue,')
   })
@@ -139,11 +164,19 @@ describe('payment status', () => {
     expect(panel).toContain("setSlPayStatus(l.payStatus || 'N')")
   })
 
-  it('shows the owner the Collected amount their status implies', () => {
+  it('no longer lets the status select rewrite the Collected input', () => {
     const modal = sliceServiceCallModal()
-    expect(modal).toContain('const reconciled = reconcileServicePayment(next, slCollected, serviceCallDisplayQuote().totalQuoted)')
-    // Remounting on status change is what makes the uncontrolled input redisplay.
-    expect(modal).toContain('key={`slCollected-${editSvcId || \'new\'}-${slPayStatus}`}')
+    expect(modal).not.toContain('setSlCollected(reconciled.collected')
+    // The remount-on-status-change key is gone with it — status no longer redisplays cash.
+    expect(modal).not.toContain('key={`slCollected-${editSvcId || \'new\'}-${slPayStatus}`}')
+    expect(modal).toContain('key={`slCollected-${editSvcId || \'new\'}`}')
+  })
+
+  it('shows the owner the balance and any refused status inline', () => {
+    const modal = sliceServiceCallModal()
+    expect(modal).toContain('serviceCallPaymentPreview()')
+    expect(modal).toContain('Balance remaining:')
+    expect(modal).toContain('preview.blocked')
   })
 
   it('offers all three statuses', () => {

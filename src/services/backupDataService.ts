@@ -30,7 +30,10 @@ import {
 import { getLiveChangeOrders, getLiveMaterialRows, getLiveRFIs, isDeadProjectLog, mergeHomeAgendaAlertsIntoRemote, mergeRemoteEstimateVersionsIntoOutgoing, mergeRemoteHomeAgendaAlertsIntoOutgoing, mergeRemoteLaborPhaseColorsIntoOutgoing, mergeRemoteProjectCoordinationIntoOutgoing, mergeRemoteProjectProgressIntoOutgoing, mergeRemoteProjectScheduleIntoOutgoing, mergeRemoteProjectTimelineIntoOutgoing } from './projectScopeMerge'
 import { mergeRemoteWeeklyDataIntoOutgoing } from './weeklyDataScopeMerge'
 import { mergeRemoteEmployeesIntoOutgoing } from './teamScopeMerge'
-import { mergeRemoteMultiDayServiceCallsIntoOutgoing } from './serviceScopeMerge'
+import { mergeRemoteMultiDayServiceCallsIntoOutgoing, mergeServiceLogsIntoRemote } from './serviceScopeMerge'
+// FORENSIC-KPI-2B1: type-only edge to the pure payment-ledger primitive. Erased at
+// compile time, so no module cycle is introduced.
+import type { ServicePaymentEvent } from '@/features/service-quote/servicePaymentLedger'
 import { getSettingsDataFieldNames, mergeRemoteSettingsIntoOutgoing, mergeSettingsByField, stampSettingsFields } from './settingsScopeMerge'
 // Phase 6S-H (emergency guard): reuse the same tombstone-safe id-mergers the direct
 // blueprint save path uses, so a stale unrelated whole-app save cannot clobber newer
@@ -428,8 +431,19 @@ export interface BackupServiceLog {
   lostReason?: string
   lostNotes?: string
   completedAt?: string
+  /** @deprecated FORENSIC-KPI-2B: declared but never written or read. Superseded by payments[].receivedAt. */
   paidAt?: string
   statusEvents?: any[]
+  /**
+   * FORENSIC-KPI-2B1: additive, append-only payment-event ledger — the truth source
+   * for real dollars received and (going forward) the date they were received.
+   *
+   * `collected` above remains the compatibility cache every existing financial reader
+   * consumes; it is recomputed from this ledger whenever the ledger changes. Rows
+   * predating the ledger keep `collected` as valid legacy amount truth and are NOT
+   * bulk-converted — see ensureServicePaymentLedger() in servicePaymentLedger.ts.
+   */
+  payments?: ServicePaymentEvent[]
   // Phase 6R-A: scoped-merge identity, timestamps, and soft-delete tombstone.
   serviceLogId?: string
   createdAt?: string
@@ -3740,6 +3754,47 @@ export async function saveHomeAgendaAlertsScoped(
       saveBackupDataAndSync(incoming, 'home.agendaAlerts', {
         source: 'home.agendaAlerts',
         _scopes: ['home.agendaAlerts'],
+      })
+    }
+  }
+}
+
+/**
+ * FORENSIC-KPI-2B1: scoped remote-baseline save for serviceLogs[].
+ *
+ * Mirrors the private saveServiceLogsScoped() inside V15rFieldLogPanel so that other
+ * Service payment writers — starting with the Home Collections Priority card, which
+ * used to broad-save under the 'logs' key — persist through the same delete-safe,
+ * ledger-unioning service.calls path instead of overwriting unrelated scopes.
+ */
+export async function persistServiceLogsScoped(
+  incomingBackup?: BackupData | null,
+  options?: { source?: string },
+): Promise<void> {
+  const mergeSource = options?.source || 'service-logs-remote-merge'
+  try {
+    const remote = await fetchLatestRemoteBackup()
+    const incoming = getBackupData() || incomingBackup
+    if (!incoming) return
+    if (remote.hasRemoteRow && remote.remoteData) {
+      const merged = mergeServiceLogsIntoRemote(remote.remoteData, incoming)
+      await saveBackupWithRemoteBaselineSync(
+        merged,
+        { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+        { source: mergeSource, changedKey: 'serviceLogs', _scopes: ['service.calls'] },
+      )
+      return
+    }
+    saveBackupDataAndSync(incoming, 'serviceLogs', {
+      source: 'service.calls', _scopes: ['service.calls'],
+    })
+  } catch (err) {
+    if ((err as Error)?.name === 'BackupStorageWriteError') return
+    console.warn('[persistServiceLogsScoped] Scoped sync failed; local changes preserved', err)
+    const incoming = getBackupData() || incomingBackup
+    if (incoming) {
+      saveBackupDataAndSync(incoming, 'serviceLogs', {
+        source: 'service.calls', _scopes: ['service.calls'],
       })
     }
   }

@@ -44,6 +44,7 @@ import {
   saveBackupData,
   saveBackupDataAndSync,
   saveHomeAgendaAlertsScoped,
+  persistServiceLogsScoped,
   getKPIs,
   health,
   daysSince,
@@ -68,6 +69,15 @@ import { getDemoBackupData } from '@/services/demoDataService'
 import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import CollectionPriorityCard from '@/components/CollectionPriorityCard'
+import RecordServicePaymentModal, {
+  localTodayKey,
+  type RecordServicePaymentRequest,
+} from '@/components/v15r/RecordServicePaymentModal'
+import {
+  recordServicePayment,
+  resolveServiceCollected,
+  resolveServiceTotalBillable,
+} from '@/features/service-quote/servicePaymentLedger'
 
 // ── Greeting helper ──────────────────────────────────────────────────────────
 
@@ -284,6 +294,8 @@ export default function V15rHome() {
   const [editingAlertData, setEditingAlertData] = useState<{title: string, description: string, action: string, scheduledAt?: string, linkedProjectId?: string}>({title: '', description: '', action: '', scheduledAt: '', linkedProjectId: ''})
   const [addingAlert, setAddingAlert] = useState(false)
   const [editingAIAlertId, setEditingAIAlertId] = useState<string | null>(null)
+  // FORENSIC-KPI-2B1: pending real-payment capture from the Collections Priority card.
+  const [payRequest, setPayRequest] = useState<RecordServicePaymentRequest | null>(null)
   const [editAIAlertText, setEditAIAlertText] = useState('')
   const [nexusAlertsCollapsed, setNexusAlertsCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false
@@ -694,22 +706,66 @@ export default function V15rHome() {
     persistHomeAgendaAlerts()
   }
 
+  /**
+   * FORENSIC-KPI-2B1: the Collections Priority card's "collected" action.
+   *
+   * Its owner-facing purpose and label are unchanged, but it now opens the same
+   * Record Payment capture the Service Calls panel uses, so the amount and the ACTUAL
+   * received date are captured instead of silently topping the balance up on today's
+   * clock. It previously also left payStatus stale and broad-saved under the 'logs'
+   * key; both are fixed by routing through recordServicePayment + the service.calls
+   * scoped save.
+   */
   function markServiceJobCollected(logId: string) {
     const log = serviceLogs.find((l: any) => l.id === logId)
     if (!log) return
+    const totalBillable = resolveServiceTotalBillable(log)
+    const alreadyCollected = resolveServiceCollected(log)
+    const balanceDue = Math.max(0, totalBillable - alreadyCollected)
+    setPayRequest({
+      logId,
+      customer: String(log.customer || 'Service call'),
+      totalBillable,
+      alreadyCollected,
+      balanceDue,
+      suggestedAmount: balanceDue,
+      title: 'Record payment collected',
+    })
+  }
+
+  /** Single payment write path on Home. All money arithmetic lives in the ledger. */
+  function commitServicePayment(amount: number, receivedAt: string, note: string) {
+    const request = payRequest
+    if (!request) return
+    const source = backup.serviceLogs || []
+    const target = source.find((l: any) => String(l.id) === String(request.logId))
+    if (!target) { setPayRequest(null); return }
+
+    const result = recordServicePayment(target, { amount, receivedAt, note })
+    if (!result.ok) { alert(result.message); return }
+
     pushState(backup)
-    const balanceDue = getServiceBalanceDue(log)
-    log.collected = num(log.collected || 0) + balanceDue
-    if (!Array.isArray((log as any).statusEvents)) (log as any).statusEvents = []
-    const prior = (log as any).statusEvents
+    const next: any = { ...result.row }
+    const prior = Array.isArray((target as any).statusEvents) ? [...(target as any).statusEvents] : []
     const wasInvoiced = !!(prior.length && prior[prior.length - 1].invoiced)
     prior.push({
-      date: new Date().toISOString().slice(0, 10),
-      status: 'Y',
-      collected: Math.max(0, num(log.collected) || 0),
+      date: receivedAt || new Date().toISOString().slice(0, 10),
+      status: result.payStatus,
+      collected: result.collected,
       invoiced: wasInvoiced,
     })
-    persist()
+    next.statusEvents = prior
+    if (!next.serviceLogId) next.serviceLogId = next.id
+    next.updatedAt = new Date().toISOString()
+
+    backup.serviceLogs = source.map((l: any) => (String(l.id) === String(request.logId) ? next : l))
+    setPayRequest(null)
+    backup._lastSavedAt = new Date().toISOString()
+    saveBackupData(backup)
+    window.dispatchEvent(new Event('storage'))
+    window.dispatchEvent(new Event('poweron-data-saved'))
+    forceUpdate()
+    void persistServiceLogsScoped(backup, { source: 'home-collections-payment' })
   }
 
   // ── Alert management handlers ────────────────────────────────────────────────
@@ -1777,6 +1833,14 @@ export default function V15rHome() {
           </div>
         </div>
       )}
+
+      {/* FORENSIC-KPI-2B1: real payment capture — amount + actual received date. */}
+      <RecordServicePaymentModal
+        request={payRequest}
+        today={localTodayKey()}
+        onCancel={() => setPayRequest(null)}
+        onConfirm={commitServicePayment}
+      />
 
       </div>
   )

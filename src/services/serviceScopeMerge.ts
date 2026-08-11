@@ -10,16 +10,21 @@
  * projectScopeMerge.ts so project logic is untouched. Pure module: no React,
  * localStorage, Supabase client, or side effects.
  *
- * A service "payment" is NOT a separate entity — it is a set of FIELDS on a
- * serviceLogs[] row. The merge unit is therefore the whole row, so collected /
- * payStatus / balanceDue always travel with the winning row. The append-only
- * adjustments[] and statusEvents[] ledgers are unioned across both sides so
+ * The merge unit is the whole serviceLogs[] row, so collected / payStatus /
+ * balanceDue always travel with the winning row. The append-only adjustments[],
+ * statusEvents[] and payments[] ledgers are unioned across both sides so
  * payment/collection history is never dropped by a concurrent edit.
+ *
+ * FORENSIC-KPI-2B1: payments[] is the real payment-event ledger (stable event ids,
+ * signed amounts, owner-asserted received dates). It is unioned by event id only —
+ * never by a content fingerprint — and the winning row's `collected` compatibility
+ * cache is re-derived from the union so no device's payment is lost to LWW.
  *
  * Phase 6R-A intentionally does NOT touch: logs[], projects[], activeServiceCalls[],
  * serviceEstimates[], or multiDayServiceCalls (now Phase 6R-C / service.multiDayCalls).
  */
 import type { BackupData } from './backupDataService'
+import { reconcileServiceCacheFromLedger } from '@/features/service-quote/servicePaymentLedger'
 
 const EPOCH_FALLBACK_ISO = '1970-01-01T00:00:00.000Z'
 
@@ -230,6 +235,64 @@ function unionStatusEvents(a: any[], b: any[]): any[] {
 }
 
 /**
+ * Fold two copies of the SAME payment event (same id) seen on two devices.
+ *
+ * A void must never be lost to merge order, so a voided copy always wins the void
+ * fields. Everything else takes the later recordedAt.
+ */
+function mergePaymentEventPair(existing: any, incoming: any): any {
+  const existingVoided = normalizeText(existing?.voidedAt)
+  const incomingVoided = normalizeText(incoming?.voidedAt)
+  const newer = comparableMs(incoming?.recordedAt) > comparableMs(existing?.recordedAt) ? incoming : existing
+  const merged: any = { ...newer }
+  if (existingVoided || incomingVoided) {
+    merged.voidedAt = existingVoided && incomingVoided
+      ? (comparableMs(incomingVoided) > comparableMs(existingVoided) ? incoming.voidedAt : existing.voidedAt)
+      : (existingVoided ? existing.voidedAt : incoming.voidedAt)
+  }
+  const reversalOf = normalizeText(newer?.reversalOfId)
+    || normalizeText(existing?.reversalOfId)
+    || normalizeText(incoming?.reversalOfId)
+  if (reversalOf) merged.reversalOfId = reversalOf
+  return merged
+}
+
+/**
+ * FORENSIC-KPI-2B1: union two payments[] ledgers.
+ *
+ * Identity is the stable event id ONLY — never a cumulative amount/date fingerprint.
+ * That is precisely why payments[] exists as a sibling of statusEvents[] rather than
+ * an overload of it: two genuine $300 payments received on the same day are two
+ * events, and a content fingerprint would silently collapse them into one.
+ *
+ * Deterministic (remote order first, then incoming-only events in their own order)
+ * and idempotent: re-merging a merged result returns the same set.
+ */
+function unionPayments(a: any[], b: any[]): any[] {
+  const out: any[] = []
+  const indexById = new Map<string, number>()
+  for (const list of [a, b]) {
+    for (const event of Array.isArray(list) ? list : []) {
+      if (!event || typeof event !== 'object') continue
+      // An id-less event can only come from hand-edited or corrupt data. Falling back
+      // to a content key keeps the merge idempotent instead of duplicating the row on
+      // every sync; our writer always stamps a real id.
+      const key = normalizeText(event.id) || `fp:${shortStableHash([
+        event?.amount, event?.receivedAt, event?.recordedAt, event?.kind, event?.note,
+      ].map(value => normalizeText(value)).join('|'))}`
+      const at = indexById.get(key)
+      if (at === undefined) {
+        indexById.set(key, out.length)
+        out.push(event)
+        continue
+      }
+      out[at] = mergePaymentEventPair(out[at], event)
+    }
+  }
+  return out
+}
+
+/**
  * Pick the winning row for one identity, then fold both sides' append-only
  * ledgers into it so no adjustment or statusEvent is lost.
  */
@@ -252,9 +315,17 @@ function pickServiceLogWinner(remote: any, incoming: any): any {
   // which row won on updatedAt — the ledgers are append-only.
   const mergedAdjustments = unionAdjustments(remote.adjustments, incoming.adjustments)
   const mergedStatusEvents = unionStatusEvents(remote.statusEvents, incoming.statusEvents)
+  const mergedPayments = unionPayments(remote.payments, incoming.payments)
   const result: any = { ...winner }
   if (mergedAdjustments.length) result.adjustments = mergedAdjustments
   if (mergedStatusEvents.length) result.statusEvents = mergedStatusEvents
+  if (mergedPayments.length) {
+    result.payments = mergedPayments
+    // FORENSIC-KPI-2B1: the winning row's `collected` cache only knows about its own
+    // device's events. Re-derive it from the union so a payment recorded on the other
+    // device is not dropped from every downstream reader by LWW.
+    return reconcileServiceCacheFromLedger(result)
+  }
   return result
 }
 

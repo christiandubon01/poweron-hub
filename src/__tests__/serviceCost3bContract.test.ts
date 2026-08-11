@@ -102,8 +102,16 @@ describe('SERVICE-COST-3B display quote helpers', () => {
     expect(panel).toContain('quoteFromCostSnapshot(')
   })
 
-  it('reconciles payment status against the displayed quote', () => {
-    expect(panel).toContain('reconcileServicePayment(next, slCollected, serviceCallDisplayQuote().totalQuoted)')
+  /**
+   * FORENSIC-KPI-2B1 re-specification: the displayed quote still drives the payment
+   * preview, but it now feeds resolveServiceTotalBillable (quote + income adjustments)
+   * and the result is read-only — the status select no longer writes Collected.
+   */
+  it('previews payment status against the displayed quote without writing cash', () => {
+    expect(panel).toContain('function serviceCallPaymentPreview()')
+    expect(panel).toContain('quoted: serviceCallDisplayQuote().totalQuoted,')
+    expect(panel).toContain('const reconciled = reconcileServicePayment(slPayStatus, collected, totalBillable)')
+    expect(panel).not.toContain('setSlCollected(reconciled.collected')
   })
 })
 
