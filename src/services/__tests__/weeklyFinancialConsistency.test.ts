@@ -35,7 +35,7 @@ function backup(extra: Record<string, any> = {}): any {
   return {
     projects: [{ id: 'project-1', status: 'active', contract: 1_000, billed: 250 }],
     logs: [{ id: 'project-log-1', projId: 'project-1', date: '2026-08-04', collected: 200 }],
-    serviceLogs: [{ id: 'service-log-1', date: '2026-08-05', quoted: 300, collected: 75 }],
+    serviceLogs: [{ id: 'service-log-1', serviceLogId: 'service-log-1', date: '2026-08-05', quoted: 300, collected: 75, payments: [{ id: 'pay-svc1', amount: 75, receivedAt: '2026-08-05', recordedAt: '2026-08-05T00:00:00.000Z', kind: 'payment', voidedAt: null }] }],
     weeklyData: [row()],
     settings: {},
     ...extra,
@@ -194,9 +194,9 @@ describe('SYNC-05 current versus historical reader policy', () => {
   it('keeps service-log collection and pending-payment inputs consistent', () => {
     const source = backup({
       serviceLogs: [
-        { id: 'paid', date: '2026-08-05', quoted: 300, collected: 75 },
-        { id: 'pending', date: '2026-08-05', quoted: 425, collected: 0 },
-        { id: 'archived', date: '2026-08-05', quoted: 999, collected: 999, archived: true },
+        { id: 'paid', serviceLogId: 'paid', date: '2026-08-05', quoted: 300, collected: 75, payments: [{ id: 'pay-paid', amount: 75, receivedAt: '2026-08-05', recordedAt: '2026-08-05T00:00:00.000Z', kind: 'payment', voidedAt: null }] },
+        { id: 'pending', serviceLogId: 'pending', date: '2026-08-05', quoted: 425, collected: 0 },
+        { id: 'archived', serviceLogId: 'archived', date: '2026-08-05', quoted: 999, collected: 999, archived: true, payments: [{ id: 'pay-archived', amount: 999, receivedAt: '2026-08-05', recordedAt: '2026-08-05T00:00:00.000Z', kind: 'payment', voidedAt: null }] },
       ],
     })
 
@@ -216,7 +216,7 @@ describe('SYNC-05 current versus historical reader policy', () => {
   it('keeps the existing future-service exclusion during explicit recalculation', () => {
     const future = row({ wk: 33, start: '2026-08-09' })
     const source = backup({
-      serviceLogs: [{ id: 'future-service', date: '2026-08-10', quoted: 300, collected: 75 }],
+      serviceLogs: [{ id: 'future-service', serviceLogId: 'future-service', date: '2026-08-10', quoted: 300, collected: 75, payments: [{ id: 'pay-future', amount: 75, receivedAt: '2026-08-10', recordedAt: '2026-08-10T00:00:00.000Z', kind: 'payment', voidedAt: null }] }],
       weeklyData: [future],
     })
 

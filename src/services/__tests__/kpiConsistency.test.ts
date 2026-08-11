@@ -7,6 +7,7 @@ import {
   getKPIs,
   getDashboardCashFlowSummary,
   getProjectFinancials,
+  num,
 } from '../backupDataService'
 import {
   calculateWeeklyFinancialsForRange,
@@ -42,15 +43,31 @@ function activeProject(extra: Record<string, any> = {}): any {
 }
 
 function serviceLog(extra: Record<string, any> = {}): any {
-  return {
+  const base = {
     id: 'service-1',
     serviceLogId: 'service-1',
     date: '2026-08-04',
     quoted: 500,
     collected: 100,
     adjustments: [{ id: 'adj-1', type: 'income', amount: 50 }],
-    ...extra,
   }
+  const merged: Record<string, any> = { ...base, ...extra }
+  // FORENSIC-KPI-2B2-1: weekly cash is dated by payments[].receivedAt. Give the
+  // default helper row a dated payment so legacy service-date semantics do not
+  // leak into period assertions that mean to test canonical cash.
+  if (!merged.payments && num(merged.collected) > 0) {
+    merged.payments = [
+      {
+        id: `pay-${merged.id}`,
+        amount: num(merged.collected),
+        receivedAt: merged.date,
+        recordedAt: `${merged.date}T00:00:00.000Z`,
+        kind: 'payment',
+        voidedAt: null,
+      },
+    ]
+  }
+  return merged
 }
 
 describe('SYNC-04 canonical KPI consistency', () => {

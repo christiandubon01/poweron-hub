@@ -17,6 +17,7 @@ import {
 } from './backupDataService'
 import { isDeadProjectLog, logProjectId } from './projectScopeMerge'
 import { isDeletedOrArchivedServiceLog } from './serviceScopeMerge'
+import { getServiceCashForRange } from '@/features/service-quote/serviceCashDate'
 
 export interface WeeklyFinancialValues {
   proj: number
@@ -115,11 +116,10 @@ export function calculateWeeklyFinancialsForRange(
     return sum + num(log?.paymentsCollected || log?.collected || 0)
   }, 0)
 
-  const svc = serviceLogs.reduce((sum, log) => {
-    const date = validDate(log?.date)
-    if (!date || date < weekStart || date >= weekEnd) return sum
-    return sum + num(log?.collected)
-  }, 0)
+  // FORENSIC-KPI-2B2-1: Service cash FLOW is dated by payments[].receivedAt.
+  // The service/work date is intentionally NOT used as a fake payment date.
+  // Unknown-date legacy cash remains lifetime cash and is excluded from period sums.
+  const { knownDatedCash: svc } = getServiceCashForRange(serviceLogs, weekStart, weekEnd)
 
   const unbilled = activeProjects.reduce(
     (sum, project) => sum + Math.max(0, num(project?.contract) - num(project?.billed)),

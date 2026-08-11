@@ -40,9 +40,9 @@ describe('COST-TRUTH-2B business goal truth', () => {
         { id: 'project-payment-archived', projId: 'project-archived', date: '2026-08-09', collected: 900 },
       ],
       serviceLogs: [
-        { id: 'service-live-earlier', date: '2026-07-15', quoted: 500, collected: 300 },
-        { id: 'service-live-today', date: '2026-08-09', quoted: 250, collected: 150 },
-        { id: 'service-deleted-today', date: '2026-08-09', quoted: 700, collected: 700, deletedAt: '2026-08-09T18:00:00.000Z' },
+        { id: 'service-live-earlier', serviceLogId: 'service-live-earlier', date: '2026-07-15', quoted: 500, collected: 300, payments: [{ id: 'pay-earlier', amount: 300, receivedAt: '2026-07-15', recordedAt: '2026-07-15T00:00:00.000Z', kind: 'payment', voidedAt: null }] },
+        { id: 'service-live-today', serviceLogId: 'service-live-today', date: '2026-08-09', quoted: 250, collected: 150, payments: [{ id: 'pay-today', amount: 150, receivedAt: '2026-08-09', recordedAt: '2026-08-09T00:00:00.000Z', kind: 'payment', voidedAt: null }] },
+        { id: 'service-deleted-today', serviceLogId: 'service-deleted-today', date: '2026-08-09', quoted: 700, collected: 700, deletedAt: '2026-08-09T18:00:00.000Z', payments: [{ id: 'pay-deleted', amount: 700, receivedAt: '2026-08-09', recordedAt: '2026-08-09T00:00:00.000Z', kind: 'payment', voidedAt: null }] },
       ],
     })
 
