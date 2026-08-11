@@ -10,6 +10,7 @@
  */
 import {
   isActiveProject,
+  isCashHistoryProject,
   num,
   type BackupData,
   type BackupWeeklyData,
@@ -56,10 +57,17 @@ function projectStatus(project: any): string {
 }
 
 /**
- * Project payment logs remain their own canonical records. When a log names a
- * known project, the existing project lifecycle predicate decides whether that
- * activity belongs in current active financials. Legacy/unlinked logs remain
- * readable so this policy does not silently discard old imports.
+ * Project payment logs remain their own canonical records.
+ *
+ * FORENSIC-KPI-2A: this list feeds period COLLECTED CASH only (`proj` below).
+ * Collected cash is a dated flow, not a lifecycle state — archiving or cancelling
+ * a job in August does not remove a payment received in March. Parent eligibility
+ * is therefore a deletion-only test (isCashHistoryProject), not the active-work
+ * predicate. Per-log tombstones still win: isDeadProjectLog is checked first, so a
+ * deleted/void payment stays financially dead. Legacy/unlinked logs remain readable
+ * so this policy does not silently discard old imports.
+ *
+ * `unbilled` and `pendingInv` below keep their own active-lifecycle lists.
  */
 function canonicalProjectLogs(backup: BackupData): any[] {
   const projects = Array.isArray(backup.projects) ? backup.projects : []
@@ -74,7 +82,7 @@ function canonicalProjectLogs(backup: BackupData): any[] {
     const projectId = logProjectId(log)
     if (!projectId) return true
     const project = projectById.get(projectId)
-    return !project || isActiveProject(project)
+    return !project || isCashHistoryProject(project)
   })
 }
 

@@ -13,6 +13,7 @@ import {
   resolveWeeklyDataForRead,
 } from '../weeklyFinancialPolicy'
 import { get8WeekCashFlow } from '../revenueTimelineService'
+import { stampProjectArchiveLifecycle } from '../projectScopeMerge'
 import { calculateProjectFinancials } from '../../utils/calculateProjectFinancials'
 
 const NOW = new Date('2026-08-05T12:00:00.000Z')
@@ -53,7 +54,11 @@ function serviceLog(extra: Record<string, any> = {}): any {
 }
 
 describe('SYNC-04 canonical KPI consistency', () => {
-  it('excludes an archived project from active pipeline and collected KPIs', () => {
+  // FORENSIC-KPI-2A: this assertion previously required archived cash to vanish
+  // (paid: 300). Owner-approved semantics separate project LIFECYCLE from
+  // historical CASH: the archived project leaves Pipeline but keeps the $900 it
+  // collected. Pipeline expectation is unchanged and pinned here on purpose.
+  it('excludes an archived project from active pipeline but keeps its collected cash', () => {
     const source = backup({
       projects: [
         activeProject(),
@@ -66,7 +71,7 @@ describe('SYNC-04 canonical KPI consistency', () => {
       serviceLogs: [serviceLog()],
     })
 
-    expect(getKPIs(source)).toMatchObject({ pipeline: 1_450, paid: 300 })
+    expect(getKPIs(source)).toMatchObject({ pipeline: 1_450, paid: 1_200 })
   })
 
   it('includes a restored project again using the same canonical predicate', () => {
@@ -336,5 +341,244 @@ describe('SYNC-04 canonical KPI consistency', () => {
     } finally {
       ;(globalThis as any).localStorage = prior
     }
+  })
+})
+
+// ── FORENSIC-KPI-2A: project lifecycle vs historical cash ────────────────────
+// Owner-approved semantics: an archived / lost / cancelled project leaves active
+// Pipeline and active Exposure but KEEPS the cash it actually collected. Only a
+// genuine tombstone (deleted project, or a deleted payment log) removes money
+// from financial history. Dollar figures below are the real acceptance scenario.
+
+const SURGERY_CONTRACT = 10_000
+const SURGERY_COLLECTED = 6_700
+const SURGERY_EXPOSURE = SURGERY_CONTRACT - SURGERY_COLLECTED // 3_300
+
+function surgeryCenter(extra: Record<string, any> = {}): any {
+  return {
+    id: 'surgery-center',
+    name: 'Surgery Center',
+    status: 'active',
+    contract: SURGERY_CONTRACT,
+    billed: 0,
+    ...extra,
+  }
+}
+
+function surgeryBackup(projectExtra: Record<string, any> = {}, logs?: any[]): any {
+  return backup({
+    projects: [surgeryCenter(projectExtra)],
+    logs: logs ?? [
+      { id: 'sc-payment', projId: 'surgery-center', date: '2026-08-04', collected: SURGERY_COLLECTED },
+    ],
+  })
+}
+
+describe('FORENSIC-KPI-2A historical project cash is lifecycle-independent', () => {
+  it('TEST 1a — active project reports pipeline, exposure and collected cash', () => {
+    const kpis = getKPIs(surgeryBackup())
+
+    expect(kpis.pipeline).toBe(SURGERY_CONTRACT)
+    expect(kpis.exposure).toBe(SURGERY_EXPOSURE)
+    expect(kpis.paid).toBe(SURGERY_COLLECTED)
+  })
+
+  it('TEST 1b — archived project keeps collected cash and leaves pipeline/exposure', () => {
+    const source = surgeryBackup({ archived: true, archivedAt: '2026-08-05T00:00:00.000Z' })
+    const kpis = getKPIs(source)
+
+    expect(kpis.pipeline).toBe(0)
+    expect(kpis.exposure).toBe(0)
+    expect(getDashboardCashFlowSummary(source).activeExposure).toBe(0)
+    expect(kpis.paid).toBe(SURGERY_COLLECTED)
+  })
+
+  it('TEST 1c — lost project keeps collected cash and leaves pipeline/exposure', () => {
+    const source = surgeryBackup({ status: 'lost', outcome: 'lost' })
+    const kpis = getKPIs(source)
+
+    expect(kpis.pipeline).toBe(0)
+    expect(kpis.exposure).toBe(0)
+    expect(getDashboardCashFlowSummary(source).activeExposure).toBe(0)
+    expect(kpis.paid).toBe(SURGERY_COLLECTED)
+  })
+
+  it('TEST 1d — cancelled project keeps collected cash and leaves pipeline/exposure', () => {
+    const source = surgeryBackup({ status: 'cancelled', outcome: 'cancelled' })
+    const kpis = getKPIs(source)
+
+    expect(kpis.pipeline).toBe(0)
+    expect(kpis.exposure).toBe(0)
+    expect(getDashboardCashFlowSummary(source).activeExposure).toBe(0)
+    expect(kpis.paid).toBe(SURGERY_COLLECTED)
+  })
+
+  it('TEST 2 — archive then restore does not duplicate collected cash', () => {
+    const source = surgeryBackup()
+
+    expect(getKPIs(source).paid).toBe(SURGERY_COLLECTED)
+
+    stampProjectArchiveLifecycle(source.projects[0], true, '2026-08-05T00:00:00.000Z')
+    expect(getKPIs(source).paid).toBe(SURGERY_COLLECTED)
+    expect(getKPIs(source).pipeline).toBe(0)
+
+    stampProjectArchiveLifecycle(source.projects[0], false, '2026-08-06T00:00:00.000Z')
+    const restored = getKPIs(source)
+
+    expect(restored.paid).toBe(SURGERY_COLLECTED)
+    expect(restored.paid).not.toBe(SURGERY_COLLECTED * 2)
+    expect(restored.pipeline).toBe(SURGERY_CONTRACT)
+    expect(restored.exposure).toBe(SURGERY_EXPOSURE)
+  })
+
+  it('TEST 4 — a tombstoned payment log stays excluded on a cash-bearing project', () => {
+    const source = surgeryBackup({ archived: true, archivedAt: '2026-08-05T00:00:00.000Z' }, [
+      { id: 'sc-live', projId: 'surgery-center', date: '2026-08-04', collected: SURGERY_COLLECTED },
+      {
+        id: 'sc-void',
+        projId: 'surgery-center',
+        date: '2026-08-04',
+        collected: 900,
+        deletedAt: '2026-08-05T00:00:00.000Z',
+      },
+    ])
+
+    expect(getKPIs(source).paid).toBe(SURGERY_COLLECTED)
+    expect(getKPIs(source).paid).not.toBe(SURGERY_COLLECTED + 900)
+  })
+
+  it('keeps a genuinely deleted project out of cash history', () => {
+    const tombstoned = surgeryBackup({ status: 'deleted', deletedAt: '2026-08-05T00:00:00.000Z' })
+    const deletedAtOnly = surgeryBackup({ deletedAt: '2026-08-05T00:00:00.000Z' })
+
+    expect(getKPIs(tombstoned).paid).toBe(0)
+    expect(getKPIs(deletedAtOnly).paid).toBe(0)
+    expect(getKPIs(tombstoned).pipeline).toBe(0)
+  })
+
+  it('TEST 5 — completed project behavior is unchanged', () => {
+    const source = surgeryBackup({ status: 'completed', completedAt: '2026-08-05T00:00:00.000Z' })
+    const kpis = getKPIs(source)
+
+    expect(kpis.paid).toBe(SURGERY_COLLECTED)
+    expect(kpis.pipeline).toBe(0)
+    expect(kpis.exposure).toBe(0)
+    expect(kpis.activeProjects).toBe(0)
+  })
+
+  it('TEST 6 — retained cash never re-enters active pipeline, exposure or counts', () => {
+    const source = backup({
+      projects: [
+        activeProject(),
+        surgeryCenter({ id: 'sc-archived', archived: true, archivedAt: '2026-08-05T00:00:00.000Z' }),
+        surgeryCenter({ id: 'sc-lost', status: 'lost', outcome: 'lost' }),
+        surgeryCenter({ id: 'sc-cancelled', status: 'cancelled' }),
+      ],
+      logs: [
+        { id: 'live-payment', projId: 'project-1', date: '2026-08-04', collected: 200 },
+        { id: 'archived-payment', projId: 'sc-archived', date: '2026-08-04', collected: 1_000 },
+        { id: 'lost-payment', projId: 'sc-lost', date: '2026-08-04', collected: 2_000 },
+        { id: 'cancelled-payment', projId: 'sc-cancelled', date: '2026-08-04', collected: 3_000 },
+      ],
+    })
+
+    const canonical = getCanonicalKpiInputs(source)
+    const kpis = getKPIs(source)
+
+    // Active lists stay narrow — only the one live project.
+    expect(canonical.projects.map(p => p.id)).toEqual(['project-1'])
+    expect(canonical.activeProjects.map(p => p.id)).toEqual(['project-1'])
+    expect(kpis.pipeline).toBe(1_000)
+    expect(kpis.exposure).toBe(800)
+    expect(kpis.activeProjects).toBe(1)
+    expect(getDashboardCashFlowSummary(source).activeExposure).toBe(800)
+
+    // Cash list is wider — every non-tombstoned project's money is retained.
+    expect(canonical.cashHistoryProjects.map(p => p.id)).toEqual([
+      'project-1',
+      'sc-archived',
+      'sc-lost',
+      'sc-cancelled',
+    ])
+    expect(kpis.paid).toBe(6_200)
+    expect(canonical.collected).toBe(6_200)
+  })
+
+  // FORENSIC-KPI-2A-CLOSE — Money "Cash Received · Projects + Service" must resolve
+  // from the same canonical historical cash as Header Paid and Total Collected,
+  // WITHOUT widening the Money panel's active/display-scoped project list.
+  it('resolves Cash Received, Total Collected and Header Paid to one canonical figure', () => {
+    const source = backup({
+      projects: [
+        activeProject({ id: 'live', contract: 4_000 }),
+        surgeryCenter({ id: 'archived', archived: true, archivedAt: '2026-08-05T00:00:00.000Z' }),
+      ],
+      logs: [
+        { id: 'live-payment', projId: 'live', date: '2026-08-04', collected: 1_000 },
+        { id: 'archived-payment', projId: 'archived', date: '2026-08-04', collected: 6_700 },
+      ],
+      serviceLogs: [serviceLog({ quoted: 500, collected: 500, adjustments: [] })],
+    })
+
+    const canonical = getCanonicalKpiInputs(source)
+
+    // 1_000 (active) + 6_700 (archived) + 500 (service) = 8_200
+    expect(canonical.collected).toBe(8_200)
+    expect(getKPIs(source).paid).toBe(8_200)
+    expect(getDashboardCashFlowSummary(source).accumTotal).toBe(8_200)
+
+    // The Money panel's active project table list stays narrow — the archived
+    // project must not reappear in Exposure Framework / Cash Waterfall / Payment
+    // Tracker, and its display-scoped project paid total stays active-only.
+    expect(canonical.projects.map(p => p.id)).toEqual(['live'])
+    const displayScopedProjectPaid = canonical.projects.reduce(
+      (sum, p) => sum + getProjectFinancials(p, source).paid,
+      0,
+    )
+    expect(displayScopedProjectPaid).toBe(1_000)
+  })
+
+  it('keeps Cash Received stable across archive, restore and re-archive', () => {
+    const source = backup({
+      projects: [
+        activeProject({ id: 'live', contract: 4_000 }),
+        surgeryCenter({ id: 'toggled' }),
+      ],
+      logs: [
+        { id: 'live-payment', projId: 'live', date: '2026-08-04', collected: 1_000 },
+        { id: 'toggled-payment', projId: 'toggled', date: '2026-08-04', collected: 6_700 },
+      ],
+      serviceLogs: [serviceLog({ quoted: 500, collected: 500, adjustments: [] })],
+    })
+    const toggled = source.projects[1]
+
+    expect(getCanonicalKpiInputs(source).collected).toBe(8_200)
+
+    stampProjectArchiveLifecycle(toggled, true, '2026-08-05T00:00:00.000Z')
+    expect(getCanonicalKpiInputs(source).collected).toBe(8_200)
+
+    stampProjectArchiveLifecycle(toggled, false, '2026-08-06T00:00:00.000Z')
+    expect(getCanonicalKpiInputs(source).collected).toBe(8_200)
+
+    stampProjectArchiveLifecycle(toggled, true, '2026-08-07T00:00:00.000Z')
+    expect(getCanonicalKpiInputs(source).collected).toBe(8_200)
+    expect(getCanonicalKpiInputs(source).collected).not.toBe(14_900)
+  })
+
+  it('keeps the Money Cash Received pill on the canonical collected authority', () => {
+    const moneySrc = readFileSync(
+      join(process.cwd(), 'src/components/v15r/V15rMoneyPanel.tsx'),
+      'utf8',
+    )
+
+    // Cash Received reads canonical historical cash, not the display-scoped total.
+    expect(moneySrc).toContain('const cashReceived = canonicalKpis.collected')
+    expect(moneySrc).not.toContain('const cashReceived = projectPaid + svcCollected')
+    expect(moneySrc).toContain("lbl: 'Cash Received', val: fmtK(cashReceived)")
+
+    // The active/display-scoped project total still drives the project tables.
+    expect(moneySrc).toContain('const projectPaid = projectMoney.reduce((s, m) => s + m.paid, 0)')
+    expect(moneySrc).toContain("lbl: 'Project Paid', val: fmtK(projectPaid)")
+    expect(moneySrc).toContain('const moneyProjects = projects')
   })
 })

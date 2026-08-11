@@ -314,7 +314,12 @@ export default function V15rMoneyPanel() {
 
   // ── 4 KPIs ─────────────────────────────────────────────────────────────
   const grossRevenue = projectContract + svcQuoted
-  const cashReceived = projectPaid + svcCollected
+  // FORENSIC-KPI-2A: "Cash Received · Projects + Service" is historical collected
+  // cash and must read the same canonical authority as Header Paid and the Total
+  // Collected card. The local projectPaid above is the ACTIVE/display-scoped total
+  // that drives the project tables, so it excludes legitimate cash from archived /
+  // lost / cancelled projects — correct for those tables, wrong for this pill.
+  const cashReceived = canonicalKpis.collected
   // netRevenue is computed below after totalCollected and combinedTotalCost are defined
   const totalExposure = projectAR + projectUnbilled + Math.max(0, svcOutstanding)
 

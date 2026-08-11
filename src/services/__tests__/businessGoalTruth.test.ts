@@ -50,9 +50,13 @@ describe('COST-TRUTH-2B business goal truth', () => {
 
     expect(truth.personalIncomeGoal).toEqual({ configured: true, value: 120_000 })
     expect(truth.annualCompanyOverhead).toEqual({ available: true, value: 15_000 })
+    // FORENSIC-KPI-2A: the $900 payment on `project-archived` is legitimate
+    // collected cash and now stays in both the trailing window and its own day.
+    // Previously 2_650 / 350 — archiving the parent project erased real money.
+    // The deleted service log ($700) and the stale `paid` scalars stay excluded.
     expect(truth.trailingCollectedRevenue).toMatchObject({
       available: true,
-      value: 2_650,
+      value: 3_550,
       start: '2026-05-12',
       endExclusive: '2026-08-10',
       days: 90,
@@ -61,11 +65,11 @@ describe('COST-TRUTH-2B business goal truth', () => {
       day: '2026-08-09',
       targetConfigured: true,
       targetValue: 500,
-      actualCollected: 350,
-      projectCollected: 200,
+      actualCollected: 1_250,
+      projectCollected: 1_100,
       serviceCollected: 150,
-      difference: -150,
-      progressPct: 70,
+      difference: 750,
+      progressPct: 250,
     })
     expect(truth.grossMarginStatus).toBe('unavailable')
     expect(truth.grossMargin.available).toBe(false)

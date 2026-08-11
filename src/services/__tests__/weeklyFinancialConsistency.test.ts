@@ -116,20 +116,60 @@ describe('SYNC-05 current versus historical reader policy', () => {
     expect(result[1]).toEqual(manualCurrent)
   })
 
-  it('excludes an archived project and its payment activity from the current week', () => {
+  // FORENSIC-KPI-2A: previously required archived period cash to vanish (proj: 0).
+  // Owner-approved semantics keep collected cash in the period it was received;
+  // only current-work figures (unbilled) follow the active project lifecycle.
+  it('keeps an archived project period cash but drops its current-work unbilled', () => {
     const source = backup({
       projects: [{ id: 'project-1', status: 'active', archived: true, archivedAt: NEW, contract: 1_000, billed: 250 }],
     })
 
-    expect(resolveWeeklyDataForRead(source, CURRENT)[0]).toMatchObject({ proj: 0, unbilled: 0 })
+    expect(resolveWeeklyDataForRead(source, CURRENT)[0]).toMatchObject({ proj: 200, unbilled: 0 })
   })
 
-  it('returns a restored project and its payment activity to the current week', () => {
+  it('returns a restored project to current-work unbilled without duplicating period cash', () => {
     const source = backup({
       projects: [{ id: 'project-1', status: 'active', archived: false, archivedAt: null, contract: 1_000, billed: 250 }],
     })
 
     expect(resolveWeeklyDataForRead(source, CURRENT)[0]).toMatchObject({ proj: 200, unbilled: 750 })
+  })
+
+  // FORENSIC-KPI-2A TEST 3 — period collected cash survives archive / lost / cancelled.
+  // Current-work unbilled correctly drops to 0 in every non-active state.
+  it('keeps period collected cash through archive, lost and cancelled states', () => {
+    const source = backup({
+      projects: [{ id: 'project-1', status: 'active', contract: 1_000, billed: 250 }],
+    })
+    const range = () =>
+      calculateWeeklyFinancialsForRange(
+        source,
+        new Date('2026-08-02T00:00:00.000Z'),
+        new Date('2026-08-09T00:00:00.000Z'),
+      )
+
+    expect(range()).toMatchObject({ proj: 200, unbilled: 750 })
+
+    source.projects[0] = { id: 'project-1', status: 'active', archived: true, archivedAt: NEW, contract: 1_000, billed: 250 }
+    expect(range()).toMatchObject({ proj: 200, unbilled: 0 })
+
+    source.projects[0] = { id: 'project-1', status: 'lost', outcome: 'lost', contract: 1_000, billed: 250 }
+    expect(range()).toMatchObject({ proj: 200, unbilled: 0 })
+
+    source.projects[0] = { id: 'project-1', status: 'cancelled', contract: 1_000, billed: 250 }
+    expect(range()).toMatchObject({ proj: 200, unbilled: 0 })
+  })
+
+  it('keeps a tombstoned payment log excluded even on an archived project', () => {
+    const source = backup({
+      projects: [{ id: 'project-1', status: 'active', archived: true, archivedAt: NEW, contract: 1_000, billed: 250 }],
+      logs: [
+        { id: 'project-log-1', projId: 'project-1', date: '2026-08-04', collected: 200 },
+        { id: 'project-log-void', projId: 'project-1', date: '2026-08-04', collected: 900, deletedAt: NEW },
+      ],
+    })
+
+    expect(resolveWeeklyDataForRead(source, CURRENT)[0]).toMatchObject({ proj: 200 })
   })
 
   it('excludes a deleted project and its payment activity', () => {

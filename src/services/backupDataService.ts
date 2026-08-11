@@ -1280,6 +1280,31 @@ export function isActiveProject(record: any): boolean {
   return true
 }
 
+/**
+ * FORENSIC-KPI-2A: does this project's collected cash belong in financial history?
+ *
+ * Project LIFECYCLE and historical CASH are separate questions. isActiveProject
+ * answers "is this live work right now?" — the right gate for Pipeline, Exposure
+ * and work queues, and the wrong gate for money already received. Archiving or
+ * cancelling a job does not un-deposit the payments it took; only a genuine data
+ * tombstone (an invalid record) removes cash from history.
+ *
+ * Deliberately NOT a lifecycle whitelist. Historical cash must not have to know
+ * every operational status. This is a deletion-only rule and reuses the project
+ * deletion semantics already established by isActiveProject and the existing
+ * archive/restore tests: a `deletedAt` tombstone, or status 'deleted'.
+ *
+ * Per-payment validity is a separate concern and stays with isDeadProjectLog —
+ * a tombstoned payment log is still excluded even on a cash-bearing project.
+ */
+export function isCashHistoryProject(record: any): boolean {
+  if (!record) return false
+  if (record.deletedAt) return false
+  const status = String(record.status || record.projectStatus || '').toLowerCase().trim()
+  if (status === 'deleted') return false
+  return true
+}
+
 export function isActiveServiceCall(record: any): boolean {
   if (!record || isArchivedRecord(record)) return false
   // Phase 6R-A: soft-deleted service logs are never active (deletedAt tombstone).
@@ -1690,11 +1715,16 @@ export function syncAllProjectFinanceBuckets(d: BackupData): void {
  * Derived only: this function never reads storage and never persists its result.
  */
 export function getCanonicalKpiInputs(d: BackupData) {
+  // Active lifecycle list — Pipeline, Exposure, unbilled, work queues. Unchanged.
   const projects = (d.projects || []).filter(isActiveProject)
+  // FORENSIC-KPI-2A: cash history is a separate list. A project that is archived,
+  // lost or cancelled leaves the active lists above but keeps the money it took.
+  // Only a genuine tombstone drops out (see isCashHistoryProject).
+  const cashHistoryProjects = (d.projects || []).filter(isCashHistoryProject)
   const serviceLogs = (d.serviceLogs || []).filter(isActiveServiceCall)
   const activeProjects = projects.filter(p => String(p.status || p.projectStatus || '').toLowerCase().trim() === 'active')
   const activeProjectContract = activeProjects.reduce((sum, project) => sum + num(project.contract), 0)
-  const projectPaid = projects.reduce((sum, project) => sum + getProjectFinancials(project, d).paid, 0)
+  const projectPaid = cashHistoryProjects.reduce((sum, project) => sum + getProjectFinancials(project, d).paid, 0)
   const serviceQuoted = serviceLogs.reduce((sum, log) => sum + num(log.quoted), 0)
   const serviceBillable = serviceLogs.reduce((sum, log) => {
     const adjustments = Array.isArray(log.adjustments) ? log.adjustments : []
@@ -1714,6 +1744,7 @@ export function getCanonicalKpiInputs(d: BackupData) {
 
   return {
     projects,
+    cashHistoryProjects,
     activeProjects,
     serviceLogs,
     activeProjectContract,
