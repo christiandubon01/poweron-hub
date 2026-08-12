@@ -108,12 +108,33 @@ describe('COST-TRUTH-2B surface contract', () => {
     expect(layoutSrc).toContain('Daily Target:')
     expect(layoutSrc).toContain('settings?.annualTarget')
     expect(layoutSrc).toContain('yearly revenue target')
+    // FORENSIC-KPI-2B2-2D/2E + KPI-TIMELINE-1: The header "Collected" KPI is a
+    // selectable canonical collected-cash range. paidYtdValue remains the
+    // current-calendar-year KNOWN collected authority and the Annual Revenue
+    // Target numerator (yearlyTargetActual) — isolated from preset selection
+    // (Part D). In Demo Mode BOTH paidYtdValue and the selectable timeline use
+    // the demo-safe BackupData universe (getDemoBackupData), never real company
+    // cash. The default preset is CURRENT_YEAR, on which the displayed Header
+    // value reuses paidYtdValue exactly; the lifetime paidKpiValue is retained
+    // (global getKPIs().paid meaning unchanged) and surfaced via a tooltip.
     expect(layoutSrc).toContain('const paidKpiValue = num(safeKpis.paid)')
-    expect(layoutSrc).toContain('const yearlyTargetActual = paidKpiValue')
+    expect(layoutSrc).toContain('const paidYtdValue = (hasHydrated && isDemoMode)')
+    expect(layoutSrc).toContain('getCurrentYearCollectedRevenue(getDemoBackupData()).knownTotal')
+    expect(layoutSrc).toContain('getCurrentYearCollectedRevenue(backupData || createEmptyBackup()).knownTotal')
+    expect(layoutSrc).toContain('const yearlyTargetActual = paidYtdValue')
     expect(layoutSrc).toContain('calculateYearlyRevenueTargetProgress(yearlyTargetActual, annualTargetValue)')
-    expect(layoutSrc.match(/fmtHeader\(paidKpiValue\)/g)).toHaveLength(2)
+    // Selectable timeline (KPI-TIMELINE-1): demo-gated, defaults to CURRENT_YEAR,
+    // reuses paidYtdValue on that preset.
+    expect(layoutSrc).toContain('const collectedTimelineBackup = (hasHydrated && isDemoMode)')
+    expect(layoutSrc).toContain('getTimelineCollected(collectedTimelineBackup,')
+    expect(layoutSrc).toContain("useState<TimelinePreset>('CURRENT_YEAR')")
+    expect(layoutSrc).toContain('const collectedDisplayValue = collectedPreset === \'CURRENT_YEAR\'')
+    expect(layoutSrc).toContain('? paidYtdValue')
+    // Part D isolation: the Annual Target numerator never follows the selected range.
+    expect(layoutSrc).not.toContain('const yearlyTargetActual = collectedDisplayValue')
+    // The displayed Header value is collectedDisplayValue (compact + full).
+    expect(layoutSrc.match(/fmtHeader\(collectedDisplayValue\)/g)).toHaveLength(2)
     expect(layoutSrc).not.toContain('calculateCurrentYearFinancialsToDate')
-    expect(layoutSrc).not.toContain('currentYearCollected')
     expect(layoutSrc).not.toContain('required annual revenue')
   })
 

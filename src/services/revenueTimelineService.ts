@@ -14,6 +14,35 @@
  *  - Quote vs actual variance per project
  */
 
+import { getServiceCashForRange } from '@/features/service-quote/serviceCashDate'
+import { isDeletedOrArchivedServiceLog } from './serviceScopeMerge'
+import { isDeadProjectLog } from './projectScopeMerge'
+import { isSyntheticPaidBackfillLog } from './collectedRevenueRange'
+
+/**
+ * FORENSIC-KPI-REVENUE-TIMELINE-1 — provenance guard for PRECISE-PERIOD Project cash.
+ *
+ * The 8-week and 6-month "actual" buckets are exact-period cash reporting, so a
+ * Project log may only contribute to a bucket when its date is genuine cash-receipt
+ * authority for that amount. Two classes are excluded:
+ *
+ *   1. Dead logs — tombstoned / archived rows whose money was already reversed.
+ *   2. Synthetic `log-paidbackfill-*` rows — the one-time p.paid reconciliation
+ *      migration stamps an aggregate historical gap with `lastCollectedAt`, which
+ *      does NOT prove the whole amount arrived that day. These remain valid
+ *      LIFETIME cash (see collectedRevenueRange.projectLifetimeCash); they are only
+ *      barred from precise buckets.
+ *
+ * Same predicates the canonical range authority and the 52-week derivation use —
+ * no new provenance rule is introduced here.
+ */
+function isPreciseProjectCashLog(log: any): boolean {
+  if (!log || typeof log !== 'object') return false
+  if (isDeadProjectLog(log)) return false
+  if (isSyntheticPaidBackfillLog(log)) return false
+  return true
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface PhaseTimelineEntry {
@@ -86,6 +115,11 @@ function parseDate(s: string | null | undefined): Date | null {
   if (!s) return null
   const d = new Date(s + 'T00:00:00')
   return isNaN(d.getTime()) ? null : d
+}
+
+function utcMidnightFromLocalDate(d: Date): Date {
+  const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return new Date(`${dayKey}T00:00:00.000Z`)
 }
 
 function addDays(d: Date, days: number): Date {
@@ -423,8 +457,9 @@ export function get8WeekCashFlow(
     }
   }
 
-  // Actual: from active project field-log payments
+  // Actual: from active project field-log payments (precise-period provenance only)
   for (const log of logs) {
+    if (!isPreciseProjectCashLog(log)) continue
     const projectId = String(log.projId || log.projectId || '')
     if (!activeProjectIds.has(projectId)) continue
     const logDate = parseDate(log.date || log.logDate)
@@ -445,20 +480,23 @@ export function get8WeekCashFlow(
     }
   }
 
-  // Actual: from service-log collected amount — what was actually received, not total invoiced.
-  for (const svc of uniqueServiceRecords) {
-    const svcDate = parseDate(svc.date || svc.logDate)
-    if (!svcDate) continue
-    const collected = n(svc.collected)
-    if (collected === 0) continue
+  // Actual: from service-log collected cash — bucketed by payment receivedAt date.
+  const liveServiceRecords = uniqueServiceRecords.filter(s => !isDeletedOrArchivedServiceLog(s))
+  const rangeStart = utcMidnightFromLocalDate(buckets[0].weekStart)
+  const rangeEnd = utcMidnightFromLocalDate(addDays(buckets[buckets.length - 1].weekStart, 7))
+  const { entries: serviceCashEntries } = getServiceCashForRange(liveServiceRecords, rangeStart, rangeEnd)
+  for (const entry of serviceCashEntries) {
+    if (!entry.receivedAt) continue
+    const receivedDate = parseDate(entry.receivedAt.slice(0, 10))
+    if (!receivedDate) continue
     for (const bucket of buckets) {
       const we = addDays(bucket.weekStart, 6)
-      if (svcDate >= bucket.weekStart && svcDate <= we) {
-        bucket.actual += collected
+      if (receivedDate >= bucket.weekStart && receivedDate <= we) {
+        bucket.actual += entry.amount
         bucket.actualSources?.serviceCollections.push({
-          label: svc.customer || svc.name || svc.jtype || 'Service call',
-          amount: collected,
-          detail: `collected · ${svc.date || svc.logDate || 'service log'}`,
+          label: entry.description || 'Service payment',
+          amount: entry.amount,
+          detail: `received · ${entry.receivedAt.slice(0, 10)}`,
         })
         break
       }
@@ -478,6 +516,7 @@ export function get8WeekCashFlow(
 export function getMonthlyRevenueComparison(
   allProjects: any[],
   logs: any[],
+  serviceRecords: any[] = [],
   months: number = 6,
   startMonthOffset: number = 0  // 0 = current month, negative = scroll back into history
 ): MonthBucket[] {
@@ -513,8 +552,9 @@ export function getMonthlyRevenueComparison(
     }
   }
 
-  // Actual: from logs (all logs, including historical)
+  // Actual: from project field logs (precise-period provenance only)
   for (const log of logs) {
+    if (!isPreciseProjectCashLog(log)) continue
     const logDate = parseDate(log.date || log.logDate)
     if (!logDate) continue
     const collected = n(log.paymentsCollected || log.collected)
@@ -526,6 +566,27 @@ export function getMonthlyRevenueComparison(
         logDate.getMonth() === bucketDate.getMonth()
       ) {
         buckets[i].actual += collected
+        break
+      }
+    }
+  }
+
+  // Actual: from service-log collected cash — bucketed by payment receivedAt month.
+  const liveServiceRecords = serviceRecords.filter(s => !isDeletedOrArchivedServiceLog(s))
+  const rangeStart = utcMidnightFromLocalDate(new Date(now.getFullYear(), now.getMonth() + startMonthOffset, 1))
+  const rangeEnd = utcMidnightFromLocalDate(new Date(now.getFullYear(), now.getMonth() + startMonthOffset + months, 1))
+  const { entries: serviceCashEntries } = getServiceCashForRange(liveServiceRecords, rangeStart, rangeEnd)
+  for (const entry of serviceCashEntries) {
+    if (!entry.receivedAt) continue
+    const receivedDate = parseDate(entry.receivedAt.slice(0, 10))
+    if (!receivedDate) continue
+    for (let i = 0; i < months; i++) {
+      const bucketDate = new Date(now.getFullYear(), now.getMonth() + startMonthOffset + i, 1)
+      if (
+        receivedDate.getFullYear() === bucketDate.getFullYear() &&
+        receivedDate.getMonth() === bucketDate.getMonth()
+      ) {
+        buckets[i].actual += entry.amount
         break
       }
     }

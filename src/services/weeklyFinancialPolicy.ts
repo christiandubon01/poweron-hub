@@ -1,10 +1,26 @@
 /**
- * Deterministic current/historical policy for BackupData.weeklyData.
+ * Deterministic derived-view policy for BackupData.weeklyData.
  *
- * - Historical rows are saved snapshots and are returned unchanged by readers.
- * - A current non-manual row is resolved from canonical project/service inputs.
- * - manualOverride rows are user-owned snapshots and are never recalculated.
- * - Explicit recalculation may refresh every non-manual row and stamps freshness.
+ * FORENSIC-KPI-2B2-2H: 52-week reporting is a PURE / AUTOMATIC DERIVED VIEW of
+ * canonical dated cash. The owner never clicks "Recalculate from Data" to keep
+ * the chart current — canonical financial records change and the 52-week view
+ * reflects them on the next render.
+ *
+ * - EVERY non-manual weekly row is derived from canonical project/service inputs
+ *   when read. Stored proj/svc/unbilled/pendingInv on a non-manual row are stale
+ *   scaffolding; only `wk` + `start` (the week identity) are authoritative. Manual
+ *   rows (manualOverride === true) are owner-owned and preserved exactly.
+ * - accum is rebuilt deterministically in chronological (wk) order across the
+ *   full derived+manual chain so there are no gaps or double-counts.
+ * - Service cash FLOW is dated by payments[].receivedAt only (Part C). Legacy
+ *   undated service cash is lifetime cash and lands in NO weekly bucket.
+ * - Synthetic Project paid-scalar backfill (`log-paidbackfill-…`) and undated /
+ *   manualPaidAdjustment Project cash carry no precise receipt date, so they land
+ *   in NO weekly bucket (Part D). They remain legitimate lifetime cash elsewhere.
+ * - No input object or array is mutated. Derivation is deterministic + idempotent.
+ *
+ * recalculateWeeklyData / deriveRow remain as the explicit-refresh policy used by
+ * tests and the sync layer; the owner-facing manual refresh UI has been retired.
  *
  * Pure module: no React, storage, Supabase, clocks (unless supplied), or writes.
  */
@@ -18,6 +34,7 @@ import {
 import { isDeadProjectLog, logProjectId } from './projectScopeMerge'
 import { isDeletedOrArchivedServiceLog } from './serviceScopeMerge'
 import { getServiceCashForRange } from '@/features/service-quote/serviceCashDate'
+import { isSyntheticPaidBackfillLog } from './collectedRevenueRange'
 
 export interface WeeklyFinancialValues {
   proj: number
@@ -110,7 +127,16 @@ export function calculateWeeklyFinancialsForRange(
     .filter(project => isActiveProject(project))
     .filter(project => ['active', 'in_progress'].includes(projectStatus(project)))
 
+  // FORENSIC-KPI-2B2-2H (Part D): Project cash provenance consistency.
+  // The weekly proj bucket is PRECISE dated cash only. Synthetic paid-scalar
+  // backfill (`log-paidbackfill-…`) carries a lastCollectedAt-derived date for an
+  // aggregate historical gap — that date is NOT cash-receipt authority for the full
+  // amount, so it is excluded from the weekly bucket (lifetime cash keeps it
+  // elsewhere via collectedRevenueRange). Undated logs are also excluded (no date →
+  // no precise week). Genuine owner-entered dated Payment logs fall in their week.
+  // Reuses the SAME provenance predicate as collectedRevenueRange — no new heuristic.
   const proj = projectLogs.reduce((sum, log) => {
+    if (isSyntheticPaidBackfillLog(log)) return sum
     const date = validDate(log?.date || log?.logDate)
     if (!date || date < weekStart || date >= weekEnd) return sum
     return sum + num(log?.paymentsCollected || log?.collected || 0)
@@ -191,15 +217,48 @@ function deriveRow(
 }
 
 /**
- * Reader policy: historical rows stay persisted; only the current non-manual row
- * is overlaid with live canonical values. No input object or array is mutated.
+ * Reader policy (FORENSIC-KPI-2B2-2H): the 52-week view is an automatic derived view
+ * of canonical dated cash. EVERY non-manual row is re-derived from current canonical
+ * project/service truth on read — there is no "current row only" special case and no
+ * stale historical snapshot. Manual override rows are owner-owned and preserved
+ * verbatim (their proj/svc fold into the running accum so later weeks stay
+ * cumulative-correct). accum is rebuilt deterministically in chronological (wk)
+ * order across the full chain. No persistence, no save, no reload, no remote sync.
+ *
+ * Pure: maps over a fresh array, spreads into new row objects, never mutates backup.
  */
 export function resolveWeeklyDataForRead(backup: BackupData, now = new Date()): BackupWeeklyData[] {
   const rows = Array.isArray(backup.weeklyData) ? backup.weeklyData : []
-  return rows.map((row, index) => {
-    if (row?.manualOverride === true || !isCurrentWeeklyRow(row, now)) return { ...row }
-    const previousAccum = index > 0 ? num(rows[index - 1]?.accum) : 0
-    return deriveRow(backup, row, previousAccum)
+  const nowMs = validDate(now)?.getTime() ?? null
+  let accum = 0
+  return rows.map(row => {
+    // Manual override: owner values authoritative for this week. Preserve the row
+    // exactly, but advance the running accum by the manual contribution so the
+    // chain stays cumulative-correct for subsequent derived weeks.
+    if (row?.manualOverride === true) {
+      accum += num(row?.proj) + num(row?.svc)
+      return { ...row }
+    }
+    const start = validDate(row?.start)
+    // No week identity → cannot derive; keep stored scaffolding, keep the chain
+    // moving via the stored accum (defensive; well-formed weeklyData always has start).
+    if (!start) {
+      accum = num(row?.accum) || accum
+      return { ...row }
+    }
+    const end = new Date(start.getTime() + 7 * 86_400_000)
+    const values = calculateWeeklyFinancialsForRange(backup, start, end)
+    // Preserve the established future-service exclusion: a week whose start is after
+    // `now` does not pre-recognize service collections. Project cash is already gated
+    // by the log date falling inside the week, so only svc needs this guard.
+    if (nowMs !== null && start.getTime() > nowMs) values.svc = 0
+    const next: BackupWeeklyData = {
+      ...row,
+      ...values,
+      accum: accum + values.proj + values.svc,
+    }
+    accum = num(next.accum)
+    return next
   })
 }
 

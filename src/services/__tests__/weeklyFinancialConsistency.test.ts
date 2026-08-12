@@ -105,14 +105,24 @@ describe('SYNC-05 current versus historical reader policy', () => {
     expect(resolveWeeklyDataForRead(first, CURRENT)).toEqual(resolveWeeklyDataForRead(second, CURRENT))
   })
 
-  it('keeps historical rows stable and does not destroy a current manual override', () => {
+  // FORENSIC-KPI-2B2-2H: the reader is now an AUTOMATIC derived view. Every
+  // non-manual row is re-derived from canonical truth on read — there is no
+  // "historical rows stay persisted" special case. Stored proj/svc on a
+  // non-manual row are stale scaffolding; only wk + start are authoritative.
+  it('derives non-manual historical rows from canonical truth and preserves a current manual override', () => {
+    // Stale stored values (proj 900 / svc 80) that are NOT backed by canonical cash
+    // in week 31 (the canonical log + service payment both fall in week 32).
     const historical = row({ wk: 31, start: '2026-07-26', proj: 900, svc: 80, accum: 980 })
     const manualCurrent = row({ proj: 777, svc: 88, accum: 1_845, manualOverride: true, weeklyUpdatedAt: NEW })
     const source = backup({ weeklyData: [historical, manualCurrent] })
 
     const result = resolveWeeklyDataForRead(source, CURRENT)
 
-    expect(result[0]).toEqual(historical)
+    // Historical non-manual row is RE-DERIVED: canonical log (2026-08-04) and
+    // service payment (2026-08-05) fall in week 32, so week 31's actuals are 0/0
+    // and the stale 900/80 are discarded. accum resets to the derived chain (0).
+    expect(result[0]).toMatchObject({ wk: 31, start: '2026-07-26', proj: 0, svc: 0, accum: 0 })
+    // Manual override is preserved verbatim — owner values authoritative.
     expect(result[1]).toEqual(manualCurrent)
   })
 

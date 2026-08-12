@@ -16,7 +16,7 @@ import {
   DollarSign, Users, ShieldCheck, FileText, Clock, AlertTriangle,
   Activity, CheckCircle, Circle, RefreshCw, BarChart3
 } from 'lucide-react'
-import { getBackupData } from '@/services/backupDataService'
+import { getBackupData, getProjectFinancials } from '@/services/backupDataService'
 
 const AgentSystemMapView = lazy(() => import('./AgentSystemMapView'))
 
@@ -152,7 +152,15 @@ export default function AbsoluteDashboardView() {
 
   // Pipeline / money metrics
   const pipelineTotal = activeProjects.reduce((sum: number, p: any) => sum + (Number(p.contract) || 0), 0)
-  const paidTotal = activeProjects.reduce((sum: number, p: any) => sum + (Number(p.paid) || 0), 0)
+  // FORENSIC-KPI-ABSOLUTE-1: canonical per-project paid (live payment logs +
+  // manualPaidAdjustment) instead of the deprecated `p.paid` scalar, which is no
+  // longer written to and read as $0 on every project collected through the field
+  // log. Scope is deliberately still ACTIVE projects — this card is titled
+  // "Payments received on active projects", not lifetime cash.
+  const paidTotal = activeProjects.reduce(
+    (sum: number, p: any) => sum + (backupData ? getProjectFinancials(p, backupData).paid : 0),
+    0,
+  )
   const billedTotal = activeProjects.reduce((sum: number, p: any) => sum + (Number(p.billed) || 0), 0)
   const exposure = billedTotal - paidTotal
 

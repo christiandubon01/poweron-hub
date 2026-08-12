@@ -43,6 +43,7 @@ import { mergeBlueprintAnnotationsById, mergeBlueprintQuickAccessWireProfileBind
 import { idbDelete, idbGet, idbSet } from './idbStorage'
 import { getDemoBackupData, persistDemoBackupData } from './demoDataService'
 import { isDemoRuntimeActive } from './demoModeSafety'
+import { resolveProjectLaborSource } from '@/utils/costSourceHelper'
 
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
 const STORAGE_KEY = LEGACY_STORAGE_KEY
@@ -1610,10 +1611,10 @@ export function getAgendaProjectName(d: BackupData, projectId: string): string {
 /** Build cumulative log rollup for a project.
  *  Sorted oldest-to-newest so cumulative fields accumulate correctly.
  *  Spec:
- *    Labor cost = hours × internal overhead rate (settings.opCost, NaN if missing)
+ *    Labor cost = hours × (current worker loaded labor + current overhead recovery)
  *    Material cost = mat as entered
  *    Mileage cost = miles × mileRate (settings.mileRate, default $0.67/mi)
- *    Running balance = contract − cumulative collected − cumulative total cost
+ *    Running balance = contract − cumulative total cost
  */
 export function buildProjectLogRollup(d: BackupData, projId: string): {
   quote: number; logs: BackupLog[]; byId: Record<string, any>
@@ -1625,12 +1626,7 @@ export function buildProjectLogRollup(d: BackupData, projId: string): {
     if (da !== db) return da.localeCompare(db)
     return String(a.id || '').localeCompare(String(b.id || ''))
   })
-  // Spec: internal overhead rate for labor cost (opCost/OH_RATE, NOT billRate)
-  const opCost = num(d.settings && d.settings.opCost)
   const mileRate = num(d.settings && d.settings.mileRate)
-  if (!opCost) {
-    console.error('[buildProjectLogRollup] Settings opCost missing — returning NaN costs')
-  }
   if (!mileRate) {
     console.error('[buildProjectLogRollup] Settings mileRate missing — returning NaN costs')
   }
@@ -1642,8 +1638,10 @@ export function buildProjectLogRollup(d: BackupData, projId: string): {
     cumMiles += num(l.miles)
     cumCollected += num(l.collected)
 
-    // Per-entry cost (spec: Labor=hrs×opCost, Material=mat, Mileage=milesRT×mileRate)
-    const entryLaborCost = num(l.hrs) * opCost
+    const laborSource = resolveProjectLaborSource(d.settings, d.employees, l.empId, l.emp)
+    const entryLaborRate = laborSource.internalLaborRate
+    // Per-entry cost (spec: Labor=hrs×(loaded labor + overhead), Material=mat, Mileage=milesRT×mileRate)
+    const entryLaborCost = num(l.hrs) * entryLaborRate
     const entryMaterialCost = num(l.mat)
     const entryMileageCost = num(l.miles) * mileRate
     const entryTotalCost = entryLaborCost + entryMaterialCost + entryMileageCost

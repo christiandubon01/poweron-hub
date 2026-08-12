@@ -17,10 +17,6 @@ import React, { useState, useRef, useEffect } from 'react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import {
   getBackupData,
-  saveBackupData,
-  saveBackupDataAndSync,
-  saveBackupWithRemoteBaselineSync,
-  fetchLatestRemoteBackup,
   getProjectFinancials,
   getCanonicalKpiInputs,
   projectLogsFor,
@@ -32,15 +28,13 @@ import {
   syncAllProjectFinanceBuckets,
   isActiveProject,
   type BackupData,
-  type BackupProject,
-  type BackupServiceLog,
 } from '@/services/backupDataService'
-import { mergeWeeklyDataIntoRemote } from '@/services/weeklyDataScopeMerge'
 import {
   isCurrentWeeklyRow,
-  recalculateWeeklyData,
   resolveWeeklyDataForRead,
 } from '@/services/weeklyFinancialPolicy'
+import { getLifetimeCollectedRevenue } from '@/services/collectedRevenueRange'
+import { internalLaborRate } from './employeeCostUtils'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 import { useDemoMode } from '@/store/demoStore'
@@ -167,75 +161,13 @@ export default function V15rMoneyPanel() {
   const [weeklyEdit, setWeeklyEdit] = useState<string | null>(null)
   const [aiOpen, setAiOpen] = useState(false)
   const [showWeeklyGaps, setShowWeeklyGaps] = useState(true)
-  const [recalculating, setRecalculating] = useState(false)
 
-  // ISSUE 3: Recalculate weekly data from actual project/service log data.
-  // Phase 6S-B: converted to a finance.weeklyData scoped save. Derived rows are
-  // stamped with derivedAt/weeklyUpdatedAt, manualOverride rows are preserved
-  // verbatim (but still fold their stored contribution into the running accum so
-  // later weeks stay cumulative-correct), tombstoned project/service logs are
-  // excluded, and the recalculated weeklyData is merged onto a freshly-fetched
-  // remote snapshot before a remote-baseline sync so a stale broad save cannot
-  // clobber newer remote weekly rows and manual rows always win.
-  async function recalcWeeklyFromData() {
-    if (!backup) return
-    const wdArr = backup.weeklyData || []
-    if (wdArr.length === 0) return
-    setRecalculating(true)
-
-    const nowIso = new Date().toISOString()
-    const recalced = recalculateWeeklyData(backup, nowIso)
-
-    const localBackup: BackupData = { ...backup, weeklyData: recalced }
-
-    try {
-      const remote = await fetchLatestRemoteBackup()
-      if (remote?.remoteData) {
-        // Merge our recalculated weeklyData onto the freshly-fetched remote blob
-        // (manualOverride rows in remote win; derived recalc rows apply).
-        const merged = mergeWeeklyDataIntoRemote(remote.remoteData, localBackup)
-        await saveBackupWithRemoteBaselineSync(
-          merged,
-          {
-            remoteUpdatedAt: remote.remoteUpdatedAt,
-            remoteDataLastSavedAt: remote.remoteDataLastSavedAt,
-          },
-          {
-            source: 'finance-weeklyData-remote-merge',
-            changedKey: 'weeklyData',
-            _scopes: ['finance.weeklyData'],
-          },
-        )
-      } else {
-        saveBackupDataAndSync(localBackup, 'weeklyData', {
-          source: 'finance.weeklyData',
-          _scopes: ['finance.weeklyData'],
-        })
-      }
-    } catch (err) {
-      if ((err as Error)?.name === 'BackupStorageWriteError') {
-        setRecalculating(false)
-        return
-      }
-      console.warn('[MoneyPanel] weeklyData remote-baseline save failed — falling back to local scoped save', err)
-      try {
-        saveBackupDataAndSync(localBackup, 'weeklyData', {
-          source: 'finance.weeklyData',
-          _scopes: ['finance.weeklyData'],
-        })
-      } catch (fallbackErr) {
-        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') {
-          setRecalculating(false)
-          return
-        }
-        throw fallbackErr
-      }
-    }
-
-    setRecalculating(false)
-    // Force re-render
-    window.location.reload()
-  }
+  // FORENSIC-KPI-2B2-2H: the 52-week view is an AUTOMATIC derived view of canonical
+  // dated cash. `weeklyData` below is resolved purely from in-memory canonical truth
+  // on every render via resolveWeeklyDataForRead — no manual recalc button, no save,
+  // no reload, no remote sync merely to refresh the chart. Canonical records change
+  // → the 52-week view reflects them on the next render. Manual override rows remain
+  // preserved (see weeklyFinancialPolicy.resolveWeeklyDataForRead).
 
   if (!backup) {
     return (
@@ -254,7 +186,18 @@ export default function V15rMoneyPanel() {
   const weeklyData = resolveWeeklyDataForRead(backup)
   const settings = backup.settings || {} as any
   const mileRate = num(settings.mileRate || 0.66)
-  const opCostRate = num(settings.opCost || 42.45)
+  // COST-TRUTH-3: internal labor cost authority is settings.opCost. settings.billRate
+  // is a separate customer-billing authority and is never substituted here, and there
+  // is no invented fallback rate — an unset opCost yields 0 internal labor cost and the
+  // Total Labor Cost card says the rate is not configured rather than showing a
+  // plausible-looking invented number.
+  const opCostRate = internalLaborRate(settings)
+  const opCostRateMissing = opCostRate <= 0
+
+  // FORENSIC-MONEY-LIFETIME-1 — the ONE canonical lifetime collected figure this
+  // panel uses everywhere it means "cash the business has taken". See the Total
+  // Collected card below for the full rationale.
+  const totalCollectedLifetime = getLifetimeCollectedRevenue(backup)
 
   // Sync finance buckets
   syncAllProjectFinanceBuckets(backup)
@@ -319,7 +262,9 @@ export default function V15rMoneyPanel() {
   // Collected card. The local projectPaid above is the ACTIVE/display-scoped total
   // that drives the project tables, so it excludes legitimate cash from archived /
   // lost / cancelled projects — correct for those tables, wrong for this pill.
-  const cashReceived = canonicalKpis.collected
+  // FORENSIC-MONEY-LIFETIME-1: same canonical lifetime authority as the Total
+  // Collected card and the header "All Time" preset, so the two cannot diverge.
+  const cashReceived = totalCollectedLifetime
   // netRevenue is computed below after totalCollected and combinedTotalCost are defined
   const totalExposure = projectAR + projectUnbilled + Math.max(0, svcOutstanding)
 
@@ -330,8 +275,22 @@ export default function V15rMoneyPanel() {
   // 1. Total Pipeline = active project contracts + adjusted service outstanding
   const totalPipeline = canonicalKpis.pipeline
 
-  // 2. Total Collected = sum of project paid + service collected
-  const totalCollected = canonicalKpis.collected
+  // 2. Total Collected — LIFETIME cash.
+  //
+  // FORENSIC-MONEY-LIFETIME-1: cash the business actually took must not vanish
+  // because a record later left the ACTIVE lists. canonicalKpis.collected keeps
+  // archived/lost/cancelled PROJECT cash (isCashHistoryProject) but its Service
+  // half is scoped to isActiveServiceCall, so archiving a paid Service call used
+  // to erase its collected cash from this card.
+  //
+  // getCollectedRevenueForRange(...).lifetimeTotal is the ONE canonical lifetime
+  // authority (Service payments[] reconciled to the collected cache + Project
+  // logged payments + manualPaidAdjustment, tombstones excluded, voids excluded,
+  // refunds signed). It is the same authority the header "All Time" preset uses,
+  // so Money and the header cannot diverge. Pipeline below is unchanged and stays
+  // an ACTIVE-scoped forward-looking figure — archiving a paid project may reduce
+  // Pipeline while Total Collected stays put.
+  const totalCollected = totalCollectedLifetime
 
   // 3. Total Material Cost = sum of mat field across all logs + service logs
   const projectMatCost = projectMoney.reduce((s, m) => s + logs.filter(l => l.projId === m.p.id).reduce((ls, l) => ls + num(l.mat), 0), 0)
@@ -442,12 +401,12 @@ export default function V15rMoneyPanel() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
           { lbl: 'Total Pipeline', val: fmtK(totalPipeline), sub: 'Active contracts + service outstanding' },
-          { lbl: 'Total Collected', val: fmtK(totalCollected), sub: 'Projects + Service', clr: '#10b981' },
+          { lbl: 'Total Collected', val: fmtK(totalCollected), sub: 'Lifetime cash — Projects + Service', clr: '#10b981' },
           { lbl: 'Total Material Cost', val: fmtK(totalMatCost), sub: 'All materials', isMaterialCard: true },
-          { lbl: 'Total Labor Cost', val: fmtK(totalLaborCost), sub: 'All hours × rate' },
+          { lbl: 'Total Labor Cost', val: opCostRateMissing ? 'Rate not set' : fmtK(totalLaborCost), sub: opCostRateMissing ? 'Set Settings → operating cost' : 'All hours × internal rate', clr: opCostRateMissing ? '#f59e0b' : undefined },
           { lbl: 'Total Mileage Cost', val: fmtK(totalMileageCost), sub: 'All miles × rate' },
-          { lbl: 'Combined Total Cost', val: fmtK(combinedTotalCost), sub: 'Mat + Labor + Mile' },
-          { lbl: 'Gross Margin %', val: grossMarginPct.toFixed(1) + '%', sub: '(Collected - Cost) / Collected', clr: grossMarginPct >= 50 ? '#10b981' : grossMarginPct >= 30 ? '#f59e0b' : '#ef4444' },
+          { lbl: 'Combined Total Cost', val: opCostRateMissing ? 'Rate not set' : fmtK(combinedTotalCost), sub: 'Mat + Labor + Mile', clr: opCostRateMissing ? '#f59e0b' : undefined },
+          { lbl: 'Gross Margin %', val: opCostRateMissing ? '—' : grossMarginPct.toFixed(1) + '%', sub: '(Collected - Cost) / Collected', clr: opCostRateMissing ? '#f59e0b' : grossMarginPct >= 50 ? '#10b981' : grossMarginPct >= 30 ? '#f59e0b' : '#ef4444' },
           { lbl: 'Balance Left', val: fmtK(balanceLeft), sub: 'Pipeline - Collected', clr: balanceLeft >= 0 ? '#10b981' : '#ef4444' },
         ].map((k: any, i) => (
           <div key={i} className="bg-[var(--bg-card)] border border-gray-700/50 rounded-lg p-3">
@@ -758,13 +717,6 @@ export default function V15rMoneyPanel() {
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">52-Week Cash Flow</h3>
       <div className="flex gap-2">
-        <button
-          onClick={recalcWeeklyFromData}
-          disabled={recalculating}
-          className="px-2 py-1 rounded text-xs font-semibold bg-blue-600/20 text-blue-400 border border-blue-600/30 hover:bg-blue-600/30 transition-all disabled:opacity-50"
-        >
-          {recalculating ? 'Recalculating...' : 'Recalculate from Data'}
-        </button>
         <button
           onClick={() => setShowWeeklyGaps(!showWeeklyGaps)}
           className={`px-2 py-1 rounded text-xs font-semibold transition-all ${

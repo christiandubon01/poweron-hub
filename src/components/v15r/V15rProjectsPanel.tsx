@@ -335,6 +335,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
     backup.projects = [...(backup.projects || []), newProj]
     persist('projects', true)
     if (newProj.accountId) {
+      const newProjCollected = getProjectFinancials(newProj, backup).paid
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
         accountId: String(newProj.accountId),
@@ -353,8 +354,12 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
         title: newProj.name || 'Project',
         description: newProj.notes || '',
         quotedAmount: num(newProj.contract || 0),
-        collectedAmount: num(newProj.paid || 0),
-        outstandingAmount: Math.max(0, num(newProj.contract || 0) - num(newProj.paid || 0)),
+        // FORENSIC-KPI-RELATIONSHIP-1: persist CANONICAL collected (live payment
+        // logs + manualPaidAdjustment), never the deprecated p.paid scalar, so the
+        // relationship timeline stops recording stale cash. Applies to this and all
+        // future writes; rows already persisted are left untouched.
+        collectedAmount: newProjCollected,
+        outstandingAmount: Math.max(0, num(newProj.contract || 0) - newProjCollected),
         metadata: { status: newProj.status || '', type: newProj.type || '', legacy_payload: newProj },
         createdBy: authProfile?.id || null,
       }).catch((err) => console.warn('[V15rProjectsPanel] relationship event upsert failed', err))
@@ -513,6 +518,7 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
 
     persist('projects', scheduleFieldsChanged.length > 0)
     if ((p as any).accountId) {
+      const editProjCollected = getProjectFinancials(p, backup).paid
       void linkEntityToAccount({
         orgId: authProfile?.org_id || null,
         accountId: String((p as any).accountId),
@@ -531,8 +537,9 @@ export default function V15rProjectsPanel({ onSelectProject, prefillFromLead, on
         title: p.name || 'Project',
         description: (p as any).notes || '',
         quotedAmount: num(p.contract || 0),
-        collectedAmount: num((p as any).paid || 0),
-        outstandingAmount: Math.max(0, num(p.contract || 0) - num((p as any).paid || 0)),
+        // FORENSIC-KPI-RELATIONSHIP-1: canonical collected, never the p.paid scalar.
+        collectedAmount: editProjCollected,
+        outstandingAmount: Math.max(0, num(p.contract || 0) - editProjCollected),
         metadata: { status: p.status || '', type: p.type || '', legacy_payload: p },
         createdBy: authProfile?.id || null,
       }).catch((err) => console.warn('[V15rProjectsPanel] relationship event upsert failed', err))

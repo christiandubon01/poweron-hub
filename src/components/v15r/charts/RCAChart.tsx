@@ -2,12 +2,18 @@
 import React from 'react'
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceArea } from 'recharts'
 import { getProjectFinancials, num, projectLogsFor, type BackupData } from '@/services/backupDataService'
+import { internalLaborRate } from '../employeeCostUtils'
 
 export default function RCAChart({ projects, backup, dateStart, dateEnd }: { projects: any[]; backup: BackupData; dateStart?: string; dateEnd?: string }) {
   if (!projects.length) return <div className="flex items-center justify-center h-full text-gray-500 text-sm">No projects</div>
 
   const mileRate = num(backup.settings?.mileRate || 0.66)
-  const opCost = num(backup.settings?.opCost || 42.45)
+  // COST-TRUTH-3: internal labor cost authority is settings.opCost. billRate is a
+  // separate customer-billing authority and is never substituted, and there is no
+  // invented fallback rate — when opCost is unset the labor / break-even series
+  // carries no labor and the chart says so (LaborTrendChart / COST-1.5A policy).
+  const opCost = internalLaborRate(backup.settings)
+  const opCostMissing = opCost <= 0
 
   const inRange = (d: string) => {
     if (!d) return true
@@ -58,6 +64,12 @@ export default function RCAChart({ projects, backup, dateStart, dateEnd }: { pro
   const maxBE = Math.max(...chartData.map(d => d.breakeven), 1)
 
   return (
+    <>
+      {opCostMissing && (
+        <div className="px-2 pb-1 text-[10px] text-amber-400">
+          ⚠ Internal cost rate (Settings → operating cost) not set — labor and break-even exclude labor cost.
+        </div>
+      )}
     <ResponsiveContainer width="100%" height="100%">
       <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
@@ -78,5 +90,6 @@ export default function RCAChart({ projects, backup, dateStart, dateEnd }: { pro
         <Line type="monotone" dataKey="breakeven" name="Break-even" stroke="#6b7280" strokeWidth={2} strokeDasharray="8 4" dot={false} />
       </LineChart>
     </ResponsiveContainer>
+    </>
   )
 }

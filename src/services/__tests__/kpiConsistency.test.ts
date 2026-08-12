@@ -589,7 +589,15 @@ describe('FORENSIC-KPI-2A historical project cash is lifecycle-independent', () 
     )
 
     // Cash Received reads canonical historical cash, not the display-scoped total.
-    expect(moneySrc).toContain('const cashReceived = canonicalKpis.collected')
+    //
+    // FORENSIC-MONEY-LIFETIME-1 strengthened this: it now shares the ONE canonical
+    // lifetime authority with the Total Collected card and the header "All Time"
+    // preset. canonicalKpis.collected kept archived PROJECT cash but scoped its
+    // Service half to isActiveServiceCall, so archiving a paid Service call erased
+    // that cash from this pill.
+    expect(moneySrc).toContain('const totalCollectedLifetime = getLifetimeCollectedRevenue(backup)')
+    expect(moneySrc).toContain('const cashReceived = totalCollectedLifetime')
+    expect(moneySrc).toContain('const totalCollected = totalCollectedLifetime')
     expect(moneySrc).not.toContain('const cashReceived = projectPaid + svcCollected')
     expect(moneySrc).toContain("lbl: 'Cash Received', val: fmtK(cashReceived)")
 

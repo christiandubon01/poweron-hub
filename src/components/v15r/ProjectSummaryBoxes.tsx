@@ -13,6 +13,7 @@
  */
 
 import { calculateProjectFinancials, VAN_MILE_RATE } from '@/utils/calculateProjectFinancials'
+import { resolveProjectLaborSource } from '@/utils/costSourceHelper'
 
 interface ProjectSummaryBoxesProps {
   /** Project ID to summarize */
@@ -51,8 +52,9 @@ export default function ProjectSummaryBoxes({ projectId, backup }: ProjectSummar
 
   // Use canonical formula — same as Field Log panel BUG-3-FIX calculation
   const mileRate = Number(backup?.settings?.mileRate) || VAN_MILE_RATE
-  const laborRate = Number(backup?.settings?.opCost) || 55
-  const fin = calculateProjectFinancials(project, backup.logs || [], mileRate, laborRate)
+  const laborRateForLog = (log: any) => resolveProjectLaborSource(backup?.settings, backup?.employees || [], log?.empId, log?.emp).internalLaborRate
+  const fin = calculateProjectFinancials(project, backup.logs || [], mileRate, laborRateForLog)
+  const laborRateMissing = fin.labor_cost <= 0 && fin.total_hours > 0
 
   // Log count = number of field log entries for this project
   const logCount = (backup.logs || []).filter((l: any) => l.projId === projectId || l.projectId === projectId).length
@@ -79,9 +81,11 @@ export default function ProjectSummaryBoxes({ projectId, backup }: ProjectSummar
     },
     {
       label: 'Remaining',
-      value: fmtMoney(fin.remaining_balance),
-      color: balColor,
-      title: 'Remaining Balance = Quote − Total Costs (Labor + Materials + Transport)',
+      value: laborRateMissing ? 'Rate not set' : fmtMoney(fin.remaining_balance),
+      color: laborRateMissing ? '#f59e0b' : balColor,
+      title: laborRateMissing
+        ? 'Internal cost rate (Settings → operating cost) not set — remaining balance unavailable'
+        : 'Remaining Balance = Quote − Total Costs (Labor + Materials + Transport)',
     },
     {
       label: 'Mat Purchased',

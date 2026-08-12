@@ -19,6 +19,9 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, LineChart, Line, XAx
 import { AlertCircle, TrendingUp, Sparkles, Zap, ChevronDown, ChevronRight, Users, X } from 'lucide-react'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { getBackupData, getProjectFinancials, resolveProjectBucket, fmtK, fmt, pct, num, saveBackupData, type BackupData } from '@/services/backupDataService'
+import { getServiceCashForRange } from '@/features/service-quote/serviceCashDate'
+import { getCollectedRevenueForRange } from '@/services/collectedRevenueRange'
+import { isDeletedOrArchivedServiceLog } from '@/services/serviceScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
@@ -453,16 +456,22 @@ function V15rIncomeCalcInner() {
   const revenueStreams = useMemo(() => {
     const now = new Date()
     const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1)
-    const recentProjects = projects.filter(p => {
-      const d = p.completedDate || p.endDate || p.startDate
-      return d && new Date(d) >= threeMonthsAgo
-    })
-    const recentSvc = serviceLogs.filter((l: any) => {
-      const d = l.date || l.completedDate
-      return d && new Date(d) >= threeMonthsAgo
-    })
-    const projRevenue3mo = recentProjects.reduce((s, p) => s + num(p.paid || p.collected), 0)
-    const svcRevenue3mo = recentSvc.reduce((s: number, l: any) => s + num(l.collected), 0)
+    const startUtc = new Date(`${threeMonthsAgo.getFullYear()}-${String(threeMonthsAgo.getMonth() + 1).padStart(2, '0')}-${String(threeMonthsAgo.getDate()).padStart(2, '0')}T00:00:00.000Z`)
+    // End at start-of-tomorrow (local day) so a payment received TODAY is included.
+    // getServiceCashForRange is half-open [start, end); today's UTC midnight must be
+    // strictly less than endUtc, so endUtc is tomorrow's UTC midnight. Reuses the
+    // existing canonical local-day → UTC-midnight policy (no second timezone rule).
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+    const endUtc = new Date(`${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}T00:00:00.000Z`)
+    const liveServiceLogs = serviceLogs.filter((l: any) => !isDeletedOrArchivedServiceLog(l))
+    const { knownDatedCash: svcRevenue3mo } = getServiceCashForRange(liveServiceLogs, startUtc, endUtc)
+    // FORENSIC-KPI-CANONICAL-READERS-1 Part D: 3-month Project collected cash via the
+    // canonical ranged authority — known-dated genuine Project payment logs in
+    // [startUtc, endUtc). Replaces the deprecated p.paid lifetime scalar. Synthetic
+    // paid-backfill and manualPaidAdjustment are unknown-date cash and excluded from
+    // the range; the service half above already uses receivedAt. projectKnownDatedCash
+    // is independent of the service-log set getCollectedRevenueForRange sees.
+    const projRevenue3mo = getCollectedRevenueForRange(backup, startUtc, endUtc).projectKnownDatedCash
     const projMonthlyNet = projRevenue3mo / 3
     const svcMonthlyNet = svcRevenue3mo / 3
     const rmoNet = rmoMonthly - (totalLabor / Math.max(1, totalMonthly) * rmoMonthly)

@@ -211,6 +211,56 @@ export function mergeWeeklyDataIntoRemote(
 }
 
 /**
+ * FORENSIC-KPI-2B2-2F — build the outgoing blob for a Money → 52-Week
+ * "Recalculate from my data" action WITHOUT adopting remote canonical arrays.
+ *
+ * The weeklyData recalculation is a REPORTING action: it rebuilds the derived
+ * weekly-row cache from current source truth. It must NOT change canonical
+ * business truth (projects[], logs[], serviceLogs[], settings, employees[], …)
+ * because the Header KPIs (Pipeline / Paid YTD / Exposure / Service Unbilled /
+ * Open Projects / Open RFIs) read canonical source arrays via getKPIs, and a
+ * chart recalculation is not a business transaction.
+ *
+ * Previously the handler built `mergeWeeklyDataIntoRemote(remote, local)` and
+ * passed the whole result to saveBackupWithRemoteBaselineSync. That result is a
+ * clone of the REMOTE snapshot with only weeklyData swapped, so its canonical
+ * arrays are remote's. saveBackupWithRemoteBaselineSync →
+ * mergeScopedIncomingIntoLocal then folded those remote canonical arrays into
+ * local (it ignores _scopes), so after the post-save reload the Header KPIs
+ * changed to reflect remote canonical. That is the defect.
+ *
+ * This helper produces the SAME weeklyData the remote branch already produced
+ * (mergeWeeklyRowsByWk(remote.weeklyData, recalced): remote manualOverride rows
+ * preserved, derived rows recalculated, non-manual ties go to the recalced side)
+ * but pairs it with LOCAL canonical via a shallow clone of localBackup. The
+ * caller then passes this local-canonical blob to saveBackupWithRemoteBaselineSync,
+ * so mergeScopedIncomingIntoLocal(local, outgoing) merges local→local for every
+ * canonical key (a no-op under prefer-newer id merge) and only weeklyData moves.
+ *
+ * Pure: no React, localStorage, Supabase, or side effects. Returns a new object;
+ * the weeklyData array is a fresh merge result, the canonical arrays are the same
+ * references the caller already holds (shallow clone — mergeScopedIncomingIntoLocal
+ * does not mutate them in place).
+ */
+export function buildWeeklyRecalcOutgoing(
+  localBackup: BackupData,
+  remoteBackup: BackupData | null | undefined,
+  recalcedWeeklyData: any[],
+): BackupData {
+  let outgoingWeeklyData = recalcedWeeklyData
+  if (remoteBackup) {
+    // Reuse the exact weeklyData merge the remote branch already used: base the
+    // merge on the remote snapshot, take ONLY the reconciled weeklyData array,
+    // and discard the remote canonical base.
+    outgoingWeeklyData = mergeWeeklyDataIntoRemote(remoteBackup, {
+      ...localBackup,
+      weeklyData: recalcedWeeklyData,
+    }).weeklyData
+  }
+  return { ...localBackup, weeklyData: outgoingWeeklyData }
+}
+
+/**
  * Fold newer REMOTE weeklyData[] into a fresh clone of `outgoingBackup` when the
  * outgoing save is NOT a weeklyData save. This prevents an unrelated broad save
  * from pushing stale local weeklyData over newer remote weeklyData. Remote rows

@@ -11,6 +11,7 @@ import {
 } from 'recharts'
 import { num, getProjectFinancials, isActiveProject, type BackupData } from '@/services/backupDataService'
 import { isDeadProjectLog } from '@/services/projectScopeMerge'
+import { internalLaborRate } from '../employeeCostUtils'
 
 function startOfMonth(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), 1)
@@ -27,7 +28,11 @@ function monthLabel(d: Date): string {
 export default function SixMonthForecastChart({ backup }: { backup: BackupData }) {
   const projects = (backup.projects || []).filter(isActiveProject)
   const logs = (backup.logs || []).filter((log: any) => !isDeadProjectLog(log))
-  const opCost = num(backup.settings?.opCost || 42.45)
+  // COST-TRUTH-3: burn rate is an INTERNAL cost figure, so settings.opCost is the
+  // only authority — never billRate, and no invented fallback rate. An unset opCost
+  // leaves labor out of the burn and the chart discloses that below.
+  const opCost = internalLaborRate(backup.settings)
+  const opCostMissing = opCost <= 0
   const mileRate = num(backup.settings?.mileRate || 0.66)
 
   const now = new Date()
@@ -107,6 +112,11 @@ export default function SixMonthForecastChart({ backup }: { backup: BackupData }
       {isSparse && hasBurn && (
         <div className="absolute top-0 right-2 z-10 bg-blue-900/40 border border-blue-700/60 rounded px-2 py-1 text-[10px] text-blue-300">
           Pipeline sparse — showing burn rate baseline. Add active/coming projects to improve forecast.
+        </div>
+      )}
+      {opCostMissing && (
+        <div className="absolute top-0 left-2 z-10 bg-amber-900/40 border border-amber-700/60 rounded px-2 py-1 text-[10px] text-amber-300">
+          Internal cost rate (Settings → operating cost) not set — burn excludes labor cost.
         </div>
       )}
       <ResponsiveContainer width="100%" height="100%">

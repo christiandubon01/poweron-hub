@@ -18,7 +18,8 @@
  * classifier, or any file on the out-of-scope list.
  */
 
-import { getBackupData, getKPIs } from '@/services/backupDataService'
+import { getBackupData, getKPIs, getProjectFinancials } from '@/services/backupDataService'
+import { internalLaborRate } from '@/components/v15r/employeeCostUtils'
 import { getActiveMode } from '@/services/nexusMode'
 import { getLiveLaborRows, getLiveMaterialRows } from '@/services/projectScopeMerge'
 
@@ -135,14 +136,27 @@ function computeHealthScore(
 
 // ── Finance bucket (spec formula) ────────────────────────────────────────────
 
-function getFinancials(p: any): {
+/**
+ * FORENSIC-KPI-NEXUS-1: project money for NEXUS prose.
+ *
+ * Delegates to the canonical authority `getProjectFinancials`, which derives paid
+ * from live (non-tombstoned) payment logs plus `finance.manualPaidAdjustment`.
+ * The previous local formula read the deprecated `p.paid` scalar, which is no
+ * longer written to — so NEXUS was quoting the owner stale collected figures that
+ * disagreed with every on-screen KPI. Same numbers as the Money panel, Dashboard
+ * and header now.
+ */
+function getFinancials(p: any, data: any): {
   contract: number; billed: number; paid: number; outstanding: number
 } {
-  const contract    = num(p.contract)
-  const billed      = num(p.billed)
-  const paid        = num(p.paid) + num(p.finance?.manualPaidAdjustment)
-  const outstanding = contract - paid
-  return { contract, billed, paid, outstanding }
+  const canonical = getProjectFinancials(p, data)
+  const outstanding = canonical.contract - canonical.paid
+  return {
+    contract: canonical.contract,
+    billed: canonical.billed,
+    paid: canonical.paid,
+    outstanding,
+  }
 }
 
 // ── Compact Live Business Context Block ───────────────────────────────────────
@@ -284,7 +298,13 @@ export function buildDeepProjectContext(): string {
   })
 
   const phaseWeights = data.settings?.phaseWeights || {}
-  const billRate     = num(data.settings?.billRate) || 95
+  // COST-TRUTH-3: two SEPARATE authorities, never interchangeable.
+  //   billRate  → what the customer is charged (quoted labor budget only).
+  //   opCost    → what labor costs the business internally (cost logged).
+  // The labor-cost line below previously multiplied logged hours by billRate,
+  // which reported the customer price as internal cost and roughly doubled it.
+  const billRate       = num(data.settings?.billRate) || 95
+  const internalRate   = internalLaborRate(data.settings)
   const wasteDefault = num(data.settings?.wasteDefault) || 0
   const pbItems      = getPBArray(data)
 
@@ -301,7 +321,7 @@ export function buildDeepProjectContext(): string {
   }
 
   for (const p of activeProjects.slice(0, 8)) {
-    const fin         = getFinancials(p)
+    const fin         = getFinancials(p, data)
     const completion  = overallCompletion(p.phases, phaseWeights)
     const activePhase = resolveActivePhase(p.phases)
 
@@ -464,11 +484,14 @@ export function buildDeepProjectContext(): string {
     let totalOutstanding = 0
 
     for (const p of activeProjects.slice(0, 8)) {
-      const fin      = getFinancials(p)
+      const fin      = getFinancials(p, data)
       const loggedHrs = (data.logs || [])
         .filter((l: any) => l.projId === p.id)
         .reduce((s: number, l: any) => s + num(l.hrs), 0)
-      const laborCostLogged = loggedHrs * billRate
+      // Internal cost of logged hours — settings.opCost, never billRate, and no
+      // invented fallback (0 means "rate not configured", reported as such below).
+      const laborCostLogged = internalRate > 0 ? loggedHrs * internalRate : null
+      // Quoted labor budget is a CUSTOMER-facing figure, so billRate is correct here.
       const laborQuoted     = getLiveLaborRows(p.laborRows || [], p.id).reduce((s: number, r: any) =>
         s + num(r.hrs) * num(r.rate || billRate), 0)
 
@@ -478,7 +501,9 @@ export function buildDeepProjectContext(): string {
 
       let line = `${p.name}: contract ${fmt(fin.contract)}, paid ${fmt(fin.paid)}, outstanding ${fmt(Math.max(0, fin.outstanding))}`
       if (laborQuoted > 0) {
-        line += `, labor budget ${fmt(laborQuoted)} vs ${fmt(laborCostLogged)} cost logged`
+        line += laborCostLogged === null
+          ? `, labor budget ${fmt(laborQuoted)} (internal cost rate not set — logged cost unavailable)`
+          : `, labor budget ${fmt(laborQuoted)} vs ${fmt(laborCostLogged)} internal cost logged`
       }
       finLines.push(line)
     }

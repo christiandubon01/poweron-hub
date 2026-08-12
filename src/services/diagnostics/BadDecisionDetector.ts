@@ -31,7 +31,7 @@
  *   // result.flags[0].severity === 'RED'
  */
 
-import { getBackupData, num, daysSince } from '@/services/backupDataService'
+import { getBackupData, getProjectFinancials, num, daysSince } from '@/services/backupDataService'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -239,10 +239,14 @@ function buildARItems(): { total: number; biggest: string | null; biggestAmt: nu
       else                  { aging[3].amount += balance; aging[3].count++ }
     }
 
-    // Project AR (billed but not yet paid)
+    // Project AR (billed but not yet paid).
+    // FORENSIC-KPI-RISKGATE-1: `paid` is the canonical derived figure (live payment
+    // logs + manualPaidAdjustment), not the deprecated `proj.paid` scalar. Reading
+    // the scalar made every field-log-collected project look fully unpaid, inflating
+    // the AR this risk gate blocks decisions on.
     for (const proj of data.projects || []) {
       const billed  = num(proj.billed)
-      const paid    = num(proj.paid)
+      const paid    = getProjectFinancials(proj, data).paid
       const balance = Math.max(0, billed - paid)
       if (balance < 0.01) continue
 
@@ -278,7 +282,8 @@ function hasOverdueAR(days: number): { has: boolean; overdueTotal: number } {
       if (daysSince(log.date) > days) overdueTotal += balance
     }
     for (const proj of data.projects || []) {
-      const balance = Math.max(0, num(proj.billed) - num(proj.paid))
+      // FORENSIC-KPI-RISKGATE-1: canonical collected, not the p.paid scalar.
+      const balance = Math.max(0, num(proj.billed) - getProjectFinancials(proj, data).paid)
       if (balance < 0.01) continue
       if (daysSince(proj.lastMove) > days) overdueTotal += balance
     }

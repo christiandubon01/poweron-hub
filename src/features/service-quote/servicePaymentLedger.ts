@@ -407,3 +407,252 @@ export function reconcileServiceCacheFromLedger<T extends ServicePaymentRowLike>
     payStatus: deriveServicePayStatus(collected, totalBillable),
   } as T
 }
+
+// ── Legacy date resolution (FORENSIC-KPI-2B2-2D) ──────────────────────────────
+
+/**
+ * FORENSIC-KPI-2B2-2D: detect the pre-ledger / undated historical cash on a Service
+ * row that the owner can later assign a REAL received date to — without changing the
+ * amount.
+ *
+ * CASE 1 — no payments[] ledger: the scalar `collected` (clamped >= 0) is the
+ *   unknown legacy amount. source = 'scalar'.
+ * CASE 2 — a payments[] ledger exists: the unknown amount is the sum of LIVE
+ *   legacy_baseline events (receivedAt = null by construction). source = 'baseline'.
+ *   Any OTHER live event whose receivedAt is null (a 'payment' or 'refund' recorded
+ *   without a date) is NOT something this helper knows how to resolve safely;
+ *   hasUnexpectedNullDateEvent is set so the caller can refuse instead of inventing
+ *   semantics for it (see resolveServiceLegacyPayments 'unexpected-null-date').
+ *
+ * Rows with no unknown cash return { amount: 0, source: 'none', ... } — already fully
+ * dated, or nothing collected.
+ */
+export interface ServiceLegacyUnknownCash {
+  amount: number
+  source: 'scalar' | 'baseline' | 'none'
+  hasUnexpectedNullDateEvent: boolean
+}
+
+export function getServiceLegacyUnknownCash(
+  row: ServicePaymentRowLike | null | undefined,
+): ServiceLegacyUnknownCash {
+  if (!row || typeof row !== 'object') {
+    return { amount: 0, source: 'none', hasUnexpectedNullDateEvent: false }
+  }
+
+  const events = getServicePaymentEvents(row)
+  if (events.length === 0) {
+    const scalar = round2(Math.max(0, num(row.collected)))
+    return {
+      amount: scalar,
+      source: scalar > MONEY_EPSILON ? 'scalar' : 'none',
+      hasUnexpectedNullDateEvent: false,
+    }
+  }
+
+  let unknown = 0
+  let hasUnexpectedNullDateEvent = false
+  for (const event of events) {
+    if (!isLiveServicePaymentEvent(event)) continue
+    const hasDate = typeof event.receivedAt === 'string' && event.receivedAt.trim().length > 0
+    if (hasDate) continue
+    if (event.kind === 'legacy_baseline') {
+      unknown += num(event.amount)
+    } else {
+      hasUnexpectedNullDateEvent = true
+    }
+  }
+  unknown = round2(unknown)
+  return {
+    amount: unknown,
+    source: unknown > MONEY_EPSILON ? 'baseline' : 'none',
+    hasUnexpectedNullDateEvent,
+  }
+}
+
+export interface LegacyPaymentEntryInput {
+  amount: number
+  receivedAt: string
+  note?: string
+}
+
+export type ResolveServiceLegacyPaymentsFailure =
+  | 'unexpected-null-date'
+  | 'no-unknown-cash'
+  | 'invalid-entries'
+  | 'amount-mismatch'
+
+export interface ResolveServiceLegacyPaymentsSuccess<T> {
+  ok: true
+  row: T
+  /** The new dated events appended (one per input entry). */
+  events: ServicePaymentEvent[]
+  collected: number
+  balanceDue: number
+  payStatus: ServicePayStatusCode
+  /** The unknown amount that was resolved. */
+  resolvedAmount: number
+}
+
+export interface ResolveServiceLegacyPaymentsRejected {
+  ok: false
+  reason: ResolveServiceLegacyPaymentsFailure
+  message: string
+  /** entriesSum - unknownAmount, when reason is 'amount-mismatch'. */
+  difference?: number
+}
+
+export type ResolveServiceLegacyPaymentsResult<T> =
+  | ResolveServiceLegacyPaymentsSuccess<T>
+  | ResolveServiceLegacyPaymentsRejected
+
+/**
+ * FORENSIC-KPI-2B2-2D: assign real received dates to a Service row's pre-ledger /
+ * undated historical cash WITHOUT changing the collected amount.
+ *
+ * The owner opens an old Service Call whose collected cash has no recorded payment
+ * date. They enter one or more { amount, receivedAt } rows that together sum to the
+ * unknown amount. This helper:
+ *   • VOIDs the live legacy_baseline event(s) — same stable id on both devices, so
+ *     the production serviceLogs merge's void-wins semantics retire them instead of
+ *     resurrecting a live baseline from the remote side. (Scalar-only rows have no
+ *     baseline event to void; their entries simply start the ledger.)
+ *   • keeps every OTHER event EXACTLY as-is (ids, dates, amounts, voided state),
+ *   • appends one dated 'payment' event per entry (negative entry → 'refund'),
+ *   • recomputes collected / balanceDue / payStatus from the new ledger.
+ *
+ * MONEY INVARIANT: the entries sum equals the unknown amount, so the new collected
+ * equals the old collected. totalBillable is untouched, so balanceDue and payStatus
+ * are unchanged too. The ONLY thing that changes is the cash DATE — which moves the
+ * money out of unknown-date and into the correct calendar period for every FLOW
+ * reader (Header Paid YTD, Monthly / Weekly / 8-Week, Annual Target numerator).
+ *
+ * It REFUSES (never invents) when:
+ *   • hasUnexpectedNullDateEvent — a non-baseline event has no date (report, don't guess),
+ *   • there is no unknown cash to resolve,
+ *   • entries are empty, non-positive, or missing a date,
+ *   • entries do not sum to the unknown amount (within MONEY_EPSILON).
+ */
+export function resolveServiceLegacyPayments<T extends ServicePaymentRowLike>(
+  row: T,
+  entries: LegacyPaymentEntryInput[],
+  options?: { now?: string; makeId?: () => string },
+): ResolveServiceLegacyPaymentsResult<T> {
+  if (!row || typeof row !== 'object') {
+    return { ok: false, reason: 'invalid-entries', message: 'No service record to resolve.' }
+  }
+
+  const unknown = getServiceLegacyUnknownCash(row)
+
+  if (unknown.hasUnexpectedNullDateEvent) {
+    return {
+      ok: false,
+      reason: 'unexpected-null-date',
+      message:
+        'This service call has a payment recorded without a received date that is not a legacy baseline. Its date must be entered directly, not resolved here.',
+    }
+  }
+
+  if (unknown.amount <= MONEY_EPSILON) {
+    return {
+      ok: false,
+      reason: 'no-unknown-cash',
+      message: 'This service call has no undated collected cash to resolve.',
+    }
+  }
+
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return { ok: false, reason: 'invalid-entries', message: 'Enter at least one payment row.' }
+  }
+
+  const now = options?.now || new Date().toISOString()
+  const makeId = options?.makeId || newServicePaymentEventId
+
+  const cleanEntries: { amount: number; receivedAt: string; note: string }[] = []
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      return { ok: false, reason: 'invalid-entries', message: 'Each payment row needs an amount and a date.' }
+    }
+    const amount = round2(num(entry.amount))
+    if (!Number.isFinite(amount) || Math.abs(amount) <= MONEY_EPSILON) {
+      return { ok: false, reason: 'invalid-entries', message: 'Each payment amount must be greater than zero.' }
+    }
+    const receivedAt = typeof entry.receivedAt === 'string' ? entry.receivedAt.trim() : ''
+    if (!receivedAt) {
+      return { ok: false, reason: 'invalid-entries', message: 'Select the date each payment was received.' }
+    }
+    const note = typeof entry.note === 'string' ? entry.note.trim() : ''
+    cleanEntries.push({ amount, receivedAt, note })
+  }
+
+  const entriesSum = round2(cleanEntries.reduce((sum, e) => sum + e.amount, 0))
+  const difference = round2(entriesSum - unknown.amount)
+  if (Math.abs(difference) > MONEY_EPSILON) {
+    return {
+      ok: false,
+      reason: 'amount-mismatch',
+      message: `The payment rows total ${entriesSum.toFixed(2)} but the undated collected cash is ${unknown.amount.toFixed(2)}. Adjust the rows so they match exactly.`,
+      difference,
+    }
+  }
+
+  // Build the new ledger: VOID each live undated legacy_baseline (same stable id on
+  // both devices, so the production merge's void-wins semantics retire it instead of
+  // resurrecting a live remote baseline that would double the collected cash), keep
+  // every other event EXACTLY as-is, then append one dated event per entry. Scalar-
+  // only rows have no baseline to void — the entries simply become the ledger.
+  const keep: ServicePaymentEvent[] = []
+  for (const event of getServicePaymentEvents(row)) {
+    if (!isLiveServicePaymentEvent(event)) {
+      keep.push(event) // preserve already-voided events untouched
+      continue
+    }
+    const hasDate = typeof event.receivedAt === 'string' && event.receivedAt.trim().length > 0
+    if (!hasDate && event.kind === 'legacy_baseline') {
+      keep.push({
+        ...event,
+        voidedAt: now,
+        note: `${typeof event.note === 'string' && event.note ? event.note + ' ' : ''}[Resolved to dated payment event(s) on ${now.slice(0, 10)}]`,
+      })
+      continue
+    }
+    keep.push(event)
+  }
+
+  const newEvents: ServicePaymentEvent[] = cleanEntries.map(entry => {
+    const event: ServicePaymentEvent = {
+      id: makeId(),
+      amount: entry.amount,
+      receivedAt: entry.receivedAt,
+      recordedAt: now,
+      kind: entry.amount < 0 ? 'refund' : 'payment',
+      voidedAt: null,
+    }
+    if (entry.note) event.note = entry.note
+    return event
+  })
+
+  const nextEvents = [...keep, ...newEvents]
+  const collected = sumServicePayments(nextEvents)
+  const totalBillable = resolveServiceTotalBillable(row)
+  const balanceDue = resolveServiceBalanceDue(collected, totalBillable)
+  const payStatus = deriveServicePayStatus(collected, totalBillable)
+
+  const nextRow = {
+    ...row,
+    payments: nextEvents,
+    collected,
+    balanceDue,
+    payStatus,
+  } as T
+
+  return {
+    ok: true,
+    row: nextRow,
+    events: newEvents,
+    collected,
+    balanceDue,
+    payStatus,
+    resolvedAmount: unknown.amount,
+  }
+}

@@ -21,6 +21,7 @@ import { KPICard } from './KPICard'
 import { lazy, Suspense } from 'react'
 import ImportBackupButton from '@/components/ImportBackupButton'
 import { getBackupData, getBackupKPIs, mapBackupWeeklyData, num, fmt } from '@/services/backupDataService'
+import { getLifetimeCollectedRevenue } from '@/services/collectedRevenueRange'
 import { useProactiveAI } from '@/hooks/useProactiveAI'
 import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
 
@@ -115,7 +116,11 @@ export function DashboardPanel({ orgId, userId }: { orgId: string; userId: strin
   const projects = backup?.projects || []
   const serviceLogs = backup?.serviceLogs || []
   const totalContract = projects.reduce((s, p) => s + num(p.contract || 0), 0)
-  const totalCollected = serviceLogs.reduce((s, l) => s + num(l.collected || 0), 0) + projects.reduce((s, p) => s + num(p.paid || 0), 0)
+  // FORENSIC-KPI-PULSE-1: lifetime collected cash for the PULSE prompt must be the
+  // SAME canonical figure the owner sees in Money / the header "All Time" preset.
+  // The previous local sum read the deprecated `p.paid` scalar (no longer written
+  // to) and the raw service `collected` cache, so PULSE analysed stale numbers.
+  const totalCollected = backup ? getLifetimeCollectedRevenue(backup) : 0
   const totalQuoted = serviceLogs.reduce((s, l) => s + num(l.quoted || 0), 0)
   const collectionRate = totalQuoted > 0 ? (totalCollected / totalQuoted * 100).toFixed(1) : '0'
   const pulseContext = `Financial snapshot: ${projects.length} projects ($${totalContract.toFixed(0)} total contract), ${serviceLogs.length} service logs ($${totalQuoted.toFixed(0)} quoted, ${collectionRate}% collection rate). Analyze financial health, flag collection issues, and project cash flow.`
@@ -125,9 +130,13 @@ export function DashboardPanel({ orgId, userId }: { orgId: string; userId: strin
   const backupKPIs = rawBackupKPIs ? {
     totalRevenue: rawBackupKPIs.pipeline,
     projectCount: rawBackupKPIs.activeProjects,
-    totalCollected: rawBackupKPIs.paid,
+    // FORENSIC-KPI-PULSE-1: canonical lifetime collected — same authority as Money
+    // and the header "All Time" preset, so the fallback card cannot disagree with
+    // the rest of the app. (The profit composition below is unchanged; only its
+    // collected input was migrated off the active-scoped KPI figure.)
+    totalCollected,
     totalMaterialCost: 0,
-    totalProfit: rawBackupKPIs.paid - rawBackupKPIs.exposure,
+    totalProfit: totalCollected - rawBackupKPIs.exposure,
     totalHours: rawBackupKPIs.totalHours,
     activeProjects: rawBackupKPIs.activeProjects,
   } : null

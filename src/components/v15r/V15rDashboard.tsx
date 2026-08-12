@@ -16,12 +16,15 @@ function BrainIcon({ size = 24, className = '' }: { size?: number; className?: s
 }
 import { getBackupData, getProjectFinancials, getProjectCOConfirmedTotal, getDashboardCashFlowSummary, health, num, fmt, fmtK, isActiveProject, isActiveServiceCall, type BackupData } from '@/services/backupDataService'
 import { getLiveChangeOrders, isDeadProjectLog } from '@/services/projectScopeMerge'
+import { isDeletedOrArchivedServiceLog } from '@/services/serviceScopeMerge'
+import { getCollectedRevenueForRange } from '@/services/collectedRevenueRange'
 import { calculateWeeklyFinancialsForRange, resolveWeeklyDataForRead } from '@/services/weeklyFinancialPolicy'
 import { buildBusinessGoalTruth } from '@/services/businessGoalTruth'
 // BUG 2 FIX — Active-only pipeline formula (replaces calcPipeline which included 'coming')
 import { calcActivePipeline } from '@/utils/pipelineCalc'
 // BUG 3 FIX — Canonical project financials
 import { calculateProjectFinancials, calculatePortfolioFinancials } from '@/utils/calculateProjectFinancials'
+import { resolveProjectLaborSource } from '@/utils/costSourceHelper'
 import { BarChart, Bar, XAxis as RXAxis, YAxis as RYAxis, CartesianGrid as RCGrid, Tooltip as RTooltip, Legend as RLegend, ResponsiveContainer as RRC } from 'recharts'
 import { callClaude, extractText } from '@/services/claudeProxy'
 // SVGCharts kept as reference only — use individual Recharts chart files below
@@ -148,12 +151,13 @@ function NEXUSDashboardAnalyzer({ backup, cfotSummary, projects }: {
         // BUG 3 FIX — Canonical project financials using calculatePortfolioFinancials
         const mileRate = num(backup?.settings?.mileRate) || 0.66
         const liveProjectLogs = (backup.logs || []).filter((log: any) => !isDeadProjectLog(log))
-        const portfolioFin = calculatePortfolioFinancials(activeProjects, liveProjectLogs, mileRate)
+        const projectLaborRateForLog = (log: any) => resolveProjectLaborSource(backup?.settings, backup?.employees || [], log?.empId, log?.emp).internalLaborRate
+        const portfolioFin = calculatePortfolioFinancials(activeProjects, liveProjectLogs, mileRate, projectLaborRateForLog)
 
         // Per-project detail for active projects (include canonical balance)
         const activeProjectDetails = activeProjects.map(p => {
           const canonicalPaid = getProjectFinancials(p, backup).paid
-          const fin = calculateProjectFinancials(p, liveProjectLogs, mileRate, Number(backup?.settings?.opCost) || 55)
+          const fin = calculateProjectFinancials(p, liveProjectLogs, mileRate, projectLaborRateForLog)
           return {
             name: p.name,
             contract: num(p.contract),
@@ -368,7 +372,9 @@ function PulseTrendAnalyzer({ backup, cfotSummary, projects, onOpenNexus }: {
       // Collect last 30 days of CFOT + revenue data
       const now = new Date()
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-      const recentWeekly = (backup.weeklyData || []).filter((w: any) => {
+      // FORENSIC-KPI-2B2-2H (Part G): display derived weekly financials through the
+      // canonical resolver — raw backup.weeklyData would show stale cached rows.
+      const recentWeekly = resolveWeeklyDataForRead(backup).filter((w: any) => {
         if (!w.start) return false
         return new Date(w.start + 'T00:00:00') >= thirtyDaysAgo
       })
@@ -693,7 +699,9 @@ function V15rDashboardInner() {
   const dailyTargetTruth = goalTruth.dailyTarget
 
   const projects = (backup.projects || []).filter(isActiveProject)
-  const weeklyData = backup.weeklyData || []
+  // FORENSIC-KPI-2B2-2H (Part G/H): CFOT reads DERIVED weekly financials, not raw
+  // cached weeklyData. Resolved once per render via useMemo (no per-row recalculation).
+  const weeklyData = useMemo(() => resolveWeeklyDataForRead(backup), [backup])
   const cashFlowAnchor = (() => {
     const d = new Date((cashFlowAnchorDate || todayIso) + 'T00:00:00')
     if (isNaN(d.getTime())) return new Date(todayIso + 'T00:00:00')
@@ -840,23 +848,30 @@ function V15rDashboardInner() {
     if (!todayWs) return []
     const weeks: any[] = []
     // DASHBOARD-CFOT-COLLECTION-PATH-PARITY-APR22-2026-1
-    // Pre-seed accum with all collections dated BEFORE the 40-week window.
-    // Without this the green Accumulative Income line starts at $0 and under-reports
-    // total lifetime collected by the sum of any pre-window logs. With this, the line
-    // starts at the correct baseline and its right-edge value matches the PAID header.
+    // Pre-seed accum with canonical KNOWN-DATED collected cash dated BEFORE the
+    // 40-week window. FORENSIC-KPI-CANONICAL-READERS-1 Part A: the carry-in must
+    // use the SAME canonical ranged authority (getCollectedRevenueForRange) as the
+    // in-window weekly line (calculateWeeklyFinancialsForRange) so the Accumulative
+    // Income line is one continuous canonical cumulative series — no gap, overlap,
+    // or provenance drift at the window seam. Service cash is dated by
+    // payments[].receivedAt (NOT the work/service date); synthetic Project
+    // paid-backfill and manualPaidAdjustment are unknown-date cash and excluded from
+    // the precise carry-in; voided/dead logs are excluded; genuine dated Project
+    // payments and signed Service refunds are included. No separate Project/Service
+    // carry-in formula — one canonical call.
     const windowStart = new Date(todayWs)
     windowStart.setDate(todayWs.getDate() - 39 * 7)
-    let accum = 0
-    for (const l of allLogs) {
-      const ld = (l.date || l.logDate) ? new Date((l.date || l.logDate) + 'T00:00:00') : null
-      if (!ld || isNaN(ld.getTime())) continue
-      if (ld < windowStart) accum += num(l.paymentsCollected || l.collected || 0)
+    // Scope service logs to the same !isDeletedOrArchivedServiceLog predicate the
+    // in-window weekly authority uses (canonicalServiceLogs) so carry-in and
+    // in-window share one service scope. The prior carry-in used isActiveServiceCall
+    // and the service work date + scalar, which diverged from the in-window scope
+    // and from the receivedAt cash-date authority.
+    const carryInBackup = {
+      ...backup,
+      serviceLogs: (backup.serviceLogs || []).filter((sl: any) => !isDeletedOrArchivedServiceLog(sl)),
     }
-    for (const sl of allSvcLogs) {
-      const ld = sl.date ? new Date(sl.date + 'T00:00:00') : null
-      if (!ld || isNaN(ld.getTime())) continue
-      if (ld < windowStart) accum += num(sl.collected)
-    }
+    const carryIn = getCollectedRevenueForRange(carryInBackup, new Date(0), windowStart).knownTotal
+    let accum = carryIn
     // ── Change-order classification for CFOT (DASHBOARD-CFOT-MATH-FIX-JUN19-2026-1) ──
     // Confirmed COs (Projects Total Exposure): Approved / Completed / Invoiced / Paid.
     // Approved-unpaid COs (Active Exposure):    Approved / Invoiced / Completed (Paid excluded).
@@ -1046,7 +1061,22 @@ function V15rDashboardInner() {
 
   // ── CFOT Summary Boxes — computed directly from backup data ──
   const serviceLogs = (backup.serviceLogs || []).filter(isActiveServiceCall)
-  const cfotSummary = getDashboardCashFlowSummary(backup)
+  // FORENSIC-KPI-CANONICAL-READERS-1 Part B: the CFOT card's "Accum" summary tile
+  // represents the chart's Accumulative Income line, so it must derive from the SAME
+  // canonical cumulative authority as the line. getDashboardCashFlowSummary returns
+  // accumTotal = canonical lifetime collected (svcTotal/projTotal siblings stay
+  // lifetime, and that function's own accumTotal semantics + kpiConsistency.test
+  // are preserved unchanged). The RENDERED "Accum" tile is specialized here to the
+  // chart line's right-edge canonical accum (Part A carry-in + canonical weekly) so
+  // the line and the tile that labels it never diverge by rule. They may still differ
+  // from Service $/Project $ lifetime tiles for the legitimate reason that a
+  // cumulative-through-time line is a different measure from a lifetime total.
+  const cfotSummaryRaw = getDashboardCashFlowSummary(backup)
+  let cfotChartFinalAccum = 0
+  for (let i = cfotData.length - 1; i >= 0; i--) {
+    if (cfotData[i].accum != null) { cfotChartFinalAccum = num(cfotData[i].accum); break }
+  }
+  const cfotSummary = { ...cfotSummaryRaw, accumTotal: cfotChartFinalAccum }
 
   // ── OPP: Active projects by contract value — skip unnamed/ghost projects ──
   const oppProjects = projects

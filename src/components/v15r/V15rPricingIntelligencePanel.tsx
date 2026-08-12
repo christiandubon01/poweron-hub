@@ -18,6 +18,7 @@ import { useProactiveAI } from '@/hooks/useProactiveAI'
 import { ProactiveInsightCard } from '@/components/shared/ProactiveInsightCard'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { getLiveLaborRows, getLiveMaterialRows } from '@/services/projectScopeMerge'
+import { internalLaborRate } from './employeeCostUtils'
 
 interface BenchmarkRow {
   name: string
@@ -159,7 +160,10 @@ export default function V15rPricingIntelligencePanel() {
     if (!project) return []
 
     const logs = projectLogsFor(backup, selectedProjectId)
-    const opRate = num(backup.settings?.opCost || 42.45)
+    // COST-TRUTH-3: settings.opCost is the internal labor cost authority. No
+    // invented fallback — an unset rate yields 0 labor cost in the expense line
+    // rather than a plausible-looking made-up figure.
+    const opRate = internalLaborRate(backup.settings)
     const mileRate = num(backup.settings?.mileRate || 0.66)
 
     const dailyMap: Record<string, any> = {}
@@ -209,7 +213,11 @@ export default function V15rPricingIntelligencePanel() {
         jobType: c.project.type,
         templateName: c.project.templateName || '',
         soldPrice: num(c.project.contract),
-        grossProfit: num(c.project.billed) - num(c.project.paid),
+        // FORENSIC-KPI-PRICING-1: canonical collected (live payment logs +
+        // manualPaidAdjustment), not the deprecated p.paid scalar. Archive rows
+        // written from here forward carry truthful cash; existing historical
+        // archive rows are left exactly as they were recorded.
+        grossProfit: num(c.project.billed) - getProjectFinancials(c.project, backup).paid,
         grossMarginPct: c.project.contract ? ((num(c.project.billed) / num(c.project.contract)) * 100 - 100) : 0,
         estimatedLaborHrs: num(c.project.laborHrs || 0),
         actualLaborHrs: (projectLogsFor(backup, c.project.id) || []).reduce((s: number, l: any) => s + num(l.hrs), 0),
@@ -495,7 +503,8 @@ export default function V15rPricingIntelligencePanel() {
                                 jobType: project.type,
                                 templateName: project.templateName || '',
                                 soldPrice: num(project.contract),
-                                grossProfit: num(project.billed) - num(project.paid),
+                                // FORENSIC-KPI-PRICING-1: canonical collected, not p.paid.
+                                grossProfit: num(project.billed) - getProjectFinancials(project, backup).paid,
                                 grossMarginPct: project.contract
                                   ? (num(project.billed) / num(project.contract)) * 100 - 100
                                   : 0,

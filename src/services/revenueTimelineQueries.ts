@@ -121,7 +121,7 @@ export function query8WeekCashFlow(anchorDate?: string | Date | null): WeekBucke
 export function queryMonthlyRevenue(months: number = 6, startMonthOffset: number = 0): MonthBucket[] {
   const backup = getBackupData()
   if (!backup) return []
-  return getMonthlyRevenueComparison(getActiveProjects(backup), getLiveProjectLogs(backup), months, startMonthOffset)
+  return getMonthlyRevenueComparison(getActiveProjects(backup), getLiveProjectLogs(backup), getActiveServiceRecords(backup), months, startMonthOffset)
 }
 
 /** Get overlap windows from current local state */

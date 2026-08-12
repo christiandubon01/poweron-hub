@@ -41,6 +41,7 @@ import {
   type BackupData,
 } from '@/services/backupDataService'
 import { buildBusinessGoalTruth } from '@/services/businessGoalTruth'
+import { getCollectedRevenueForRange } from '@/services/collectedRevenueRange'
 import { stampSettingsFields } from '@/services/settingsScopeMerge'
 import {
   mergeEmployeesIntoRemote,
@@ -157,6 +158,18 @@ function CostVsPipelineChart({ backup }) {
 }
 
 
+/**
+ * Convert a local Date to the UTC-midnight boundary of its calendar day — the
+ * half-open range convention getCollectedRevenueForRange expects for both
+ * Service `receivedAt` and Project log dates.
+ */
+function weekBoundaryUtc(d: Date): Date {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return new Date(`${y}-${m}-${day}T00:00:00.000Z`)
+}
+
 // ── LABOR COST VS REVENUE 12-WEEK CHART ──
 function LaborCostVsRevenueChart({ backup }) {
   // recharts imported at top of file
@@ -172,10 +185,17 @@ function LaborCostVsRevenueChart({ backup }) {
     const weekStart = new Date(weekEnd.getTime() - 7 * 86400000)
     const wLogs = logs.filter(l => { const d = new Date(l.date || ''); return d >= weekStart && d < weekEnd })
     const cost = wLogs.reduce((s, l) => { const empId = l.empId || l.employeeId; const emp = employees.find(e => e.id === empId); return s + (parseFloat(l.hrs || 0) * getLoadedHourlyRate(emp, backup.settings)) }, 0)
-    const projRev = wLogs.reduce((s, l) => s + parseFloat(l.collected || 0), 0)
-    const svcRev = serviceLogs.filter(l => { const d = new Date(l.date || ''); return d >= weekStart && d < weekEnd }).reduce((s, l) => s + parseFloat(l.collected || 0), 0)
+    // FORENSIC-KPI-TEAM-1: this is a PRECISE-PERIOD (weekly) cash bucket, so it
+    // must use the canonical ranged authority. The previous local sum bucketed
+    // Service cash by the WORK date (`serviceLog.date`) — a payment received in
+    // August for June work landed in June — walked raw project logs (counting
+    // tombstoned rows and synthetic `log-paidbackfill-` backfill), and ignored
+    // void/refund semantics. getCollectedRevenueForRange applies receivedAt,
+    // provenance filtering and signed refunds. Unknown-date cash is deliberately
+    // excluded from these weekly buckets rather than fabricated into one.
+    const rev = getCollectedRevenueForRange(backup, weekBoundaryUtc(weekStart), weekBoundaryUtc(weekEnd)).knownTotal
     accumCost += cost
-    accumRev += projRev + svcRev
+    accumRev += rev
     const pct = accumRev > 0 ? (accumCost / accumRev) * 100 : 0
     chartData.push({ name: 'W' + (12 - w), cost: accumCost, revenue: accumRev, laborPct: Math.min(pct, 100) })
   }

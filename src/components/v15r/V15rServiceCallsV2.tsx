@@ -51,6 +51,7 @@ import { pushState } from '@/services/undoRedoService'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 import MultiDayServiceCallModal, { type MultiDayModalConfig } from './MultiDayServiceCallModal'
+import { internalLaborRate } from './employeeCostUtils'
 import ImportBackupButton from '@/components/ImportBackupButton'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -144,7 +145,9 @@ export default function V15rServiceCallsV2() {
   const gcContacts = backup?.gcContacts || []
 
   // Settings for rate defaults
-  const laborRate = num(backup?.settings?.opCost || backup?.settings?.billRate || 43)
+  // COST-TRUTH-3: internal labor cost authority is opCost, NEVER billRate.
+  // No invented fallback — 0 means opCost is unset; downstream surfaces "Rate not set".
+  const laborRate = internalLaborRate(backup?.settings)
   const mileRate = num(backup?.settings?.mileRate || 0.67)
 
   // ── Persist helper ─────────────────────────────────────────────────────────
@@ -604,7 +607,9 @@ function DayEntryRow({
           <div>
             <span className="text-gray-500">Labor: </span>
             <span className="text-cyan-400 font-mono">
-              {day.labor_hours}h × ${laborRate} = {fmtMoney(day.labor_cost)}
+              {laborRate > 0
+                ? <>{day.labor_hours}h × ${laborRate.toFixed(2)} = {fmtMoney(day.labor_cost)}</>
+                : <>{day.labor_hours}h · <span className="text-amber-400">Rate not set</span></>}
             </span>
           </div>
           <div>

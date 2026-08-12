@@ -64,6 +64,7 @@ import {
 import { getLiveRFIs, createCustomAlertTombstone, createHomeAgendaItemTombstone, createHomeAgendaSectionTombstone, getLiveAgendaSections, getLiveCustomAlerts, stampCustomAlert, stampHomeAgendaItem, stampHomeAgendaSection } from '@/services/projectScopeMerge'
 import { isDeletedOrArchivedServiceLog } from '@/services/serviceScopeMerge'
 import { ProjectCard } from './ProjectCard'
+import { internalLaborRate } from './employeeCostUtils'
 import { useDemoMode } from '@/store/demoStore'
 import { getDemoBackupData } from '@/services/demoDataService'
 import { pushState } from '@/services/undoRedoService'
@@ -164,7 +165,12 @@ function getServiceRollup(log: any): any {
     const bd = getBackupData() || {}
     settings = bd.settings || {}
   } catch {}
-  const opCost = num(settings.opCost) || 43
+  // COST-TRUTH-3: settings.opCost is the only internal labor cost authority.
+  // billRate is never substituted, and there is no invented fallback rate — an
+  // unset opCost yields 0 labor cost, surfaced via `opCostMissing` below rather
+  // than papered over with a plausible-looking constant.
+  const opCost = internalLaborRate(settings)
+  const opCostMissing = opCost <= 0
   const mileRate = num(settings.mileRate) || 0.66
 
   const hrs = num(log?.hrs)
@@ -189,6 +195,8 @@ function getServiceRollup(log: any): any {
     laborCost,
     mileCost,
     opCost,
+    /** True when settings.opCost is unset — labor cost and profit are unavailable. */
+    opCostMissing,
     mileRate,
   }
 }
@@ -1497,11 +1505,15 @@ export default function V15rHome() {
                     if (!rollCache[projId]) rollCache[projId] = buildProjectLogRollup(backup, projId)
                     return rollCache[projId]
                   }
+                  // COST-TRUTH-3: no invented fallback — if opCost is unset, internal labor
+                  // cost is UNAVAILABLE and surfaced as "Rate not set" (mirrors COST-1.5A).
+                  const homeLaborRateMissing = internalLaborRate(backup.settings) <= 0
                   return recentLogs.map((l: any, i: number) => {
                     const projId = l.projId || l.projectId || ''
                     const projRoll = getRoll(projId)
                     const rr = projRoll.byId[l.id] || {
-                      entryLaborCost: num(l.hrs) * (num(backup.settings?.billRate) || 95),
+                      // COST-TRUTH-3: internal labor cost authority is opCost, NEVER billRate.
+                      entryLaborCost: num(l.hrs) * internalLaborRate(backup.settings),
                       entryMaterialCost: num(l.mat),
                       entryMileageCost: num(l.miles) * (num(backup.settings?.mileRate) || 0.67),
                       entryTotalCost: 0,
@@ -1515,10 +1527,10 @@ export default function V15rHome() {
                     const entryTotal = rr.entryTotalCost
                     const hasPay = num(l.collected) > 0
                     const entryTotalStats = [
-                      { label: 'Labor', amount: fmt(num(entryRevenue)), Icon: Timer, color: '#e5e7eb', bg: 'rgba(229,231,235,0.06)', border: 'rgba(229,231,235,0.16)' },
+                      { label: 'Labor', amount: homeLaborRateMissing ? 'Rate not set' : fmt(num(entryRevenue)), Icon: Timer, color: homeLaborRateMissing ? '#f59e0b' : '#e5e7eb', bg: 'rgba(229,231,235,0.06)', border: 'rgba(229,231,235,0.16)' },
                       { label: 'Material', amount: fmt(num(l.mat)), Icon: Boxes, color: '#fcd34d', bg: 'rgba(252,211,77,0.08)', border: 'rgba(252,211,77,0.22)' },
                       { label: 'Mileage', amount: fmt(num(entryMiCost)), Icon: Route, color: '#67e8f9', bg: 'rgba(103,232,249,0.08)', border: 'rgba(103,232,249,0.24)' },
-                      { label: 'Total', amount: fmt(num(entryTotal)), Icon: CircleDollarSign, color: '#f87171', bg: 'rgba(248,113,113,0.11)', border: 'rgba(248,113,113,0.34)', featured: true },
+                      { label: 'Total', amount: homeLaborRateMissing ? 'Rate not set' : fmt(num(entryTotal)), Icon: CircleDollarSign, color: homeLaborRateMissing ? '#f59e0b' : '#f87171', bg: 'rgba(248,113,113,0.11)', border: 'rgba(248,113,113,0.34)', featured: true },
                     ]
                     return (
                       <div key={l.id || i} className={`px-2 py-2 sm:px-4 sm:py-2.5 ${i < recentLogs.length - 1 ? 'border-b border-gray-800/50' : ''}`}>
@@ -1671,7 +1683,9 @@ export default function V15rHome() {
                             {fmt(roll.totalBillable)} quote
                           </div>
                           <div className="font-mono" style={{ color: '#e5e7eb' }}>
-                            {num(roll.hrs).toFixed(1)}h x ${num(roll.opCost).toFixed(2)} = <span style={{ fontWeight: 700, color: '#f87171' }}>{fmt(roll.laborCost)} lab</span>
+                            {roll.opCostMissing
+                              ? <span style={{ fontWeight: 700, color: '#f59e0b' }}>{num(roll.hrs).toFixed(1)}h · internal rate not set</span>
+                              : <>{num(roll.hrs).toFixed(1)}h x ${num(roll.opCost).toFixed(2)} = <span style={{ fontWeight: 700, color: '#f87171' }}>{fmt(roll.laborCost)} lab</span></>}
                           </div>
                           <div className="font-mono" style={{ color: '#fcd34d' }}>
                             <span style={{ fontWeight: 700 }}>{fmt(roll.matCost)}</span> mat
@@ -1692,11 +1706,11 @@ export default function V15rHome() {
                         </div>
                         <div className="flex justify-between font-bold border-t border-gray-700 pt-1.5" style={{ fontSize: '11px' }}>
                           <span className="text-gray-400">Total Cost:</span>
-                          <span className="font-mono" style={{ color: '#f87171' }}>{fmt(roll.totalActual)}</span>
+                          <span className="font-mono" style={{ color: roll.opCostMissing ? '#f59e0b' : '#f87171' }}>{roll.opCostMissing ? 'Rate not set' : fmt(roll.totalActual)}</span>
                         </div>
                         <div className="flex justify-between border-t border-gray-700 pt-1.5" style={{ fontSize: '11px' }}>
                           <span className="text-gray-400">Cash Real Margin:</span>
-                          <span className="font-mono font-bold" style={{ color: roll.projectedProfit >= 0 ? '#1D9E75' : '#E24B4A' }}>{fmt(roll.projectedProfit)}</span>
+                          <span className="font-mono font-bold" style={{ color: roll.opCostMissing ? '#f59e0b' : roll.projectedProfit >= 0 ? '#1D9E75' : '#E24B4A' }}>{roll.opCostMissing ? '—' : fmt(roll.projectedProfit)}</span>
                         </div>
                         <div className="flex justify-between" style={{ fontSize: '11px' }}>
                           <span className="text-gray-400">Collected:</span>

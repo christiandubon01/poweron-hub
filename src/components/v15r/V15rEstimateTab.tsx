@@ -38,7 +38,12 @@ import MileageProjectAddress, {
 } from './MileageProjectAddress'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
-import { getLoadedHourlyRate, getBaseHourlyRate, resolveWorkerType } from './employeeCostUtils'
+// COST-TRUTH-3: internalLaborRate() is the ONE internal labor cost authority
+// (settings.opCost). It returns 0 when unset — an honest "rate not configured" —
+// and never falls back to settings.billRate or an invented constant. Every
+// internal-cost fallback in this file routes through it; the `billRate || 95` /
+// `|| 65` fallbacks below are CUSTOMER-billing defaults and are unrelated.
+import { getLoadedHourlyRate, getBaseHourlyRate, resolveWorkerType, internalLaborRate } from './employeeCostUtils'
 import {
   createLaborIdentityContext,
   createLaborRowTombstone,
@@ -1094,7 +1099,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
     const taxOnMatSelling = matBreakdown.reduce((s, r) => s + num(r.sellingTax), 0)
     const labHrs = laborRows.reduce((s, r) => s + num(r.hrs), 0)
     const manualOH = overheadRows.reduce((s, r) => s + num(r.hrs) * num(r.rate), 0)
-    const opRate = num(backup.settings?.opCost || 42.45)
+    const opRate = internalLaborRate(backup.settings)
     const billRate = num(backup.settings?.billRate || 95)
     const opC = labHrs * opRate           // internal labor cost
     const oh = manualOH                   // planning & OH rows from estimate tab
@@ -1353,7 +1358,7 @@ export default function V15rEstimateTab({ projectId, onUpdate, backup: initialBa
   // Service Call estimate helpers
   const SVC_JOB_TYPES = ['GFCI / Receptacles', 'Panel / Service', 'Troubleshoot', 'Lighting', 'EV Charger', 'Low Voltage', 'Circuit Add/Replace', 'Switches / Dimmers', 'Warranty', 'Other']
   const mileRate = num(backup.settings?.mileRate || 0.66)
-  const opRate = num(backup.settings?.opCost || 42.45)
+  const opRate = internalLaborRate(backup.settings)
   const scHrsN = parseFloat(scHrs) || 0
   const scMatN = parseFloat(scMat) || 0
   const scMilesN = parseInt(scMiles) || 0
@@ -2515,15 +2520,15 @@ Return ONLY valid JSON, no other text.`
       const ownerRecord = (backup.employees || []).find(isOwnerRecord)
       if (ownerRecord) {
         return getBaseHourlyRate(ownerRecord, backup.settings) ||
-               num(backup.settings?.opCost || 42.45)
+               internalLaborRate(backup.settings)
       }
-      return num(backup.settings?.opCost || 42.45)
+      return internalLaborRate(backup.settings)
     }
     const emp = (backup.employees || []).find((e: any) => e.id === empId)
-    if (!emp) return num(backup.settings?.opCost || 42.45)
+    if (!emp) return internalLaborRate(backup.settings)
     // Shared helper: owner/1099 return base; W-2 returns base × payrollMult.
     const rate = getLoadedHourlyRate(emp, backup.settings)
-    return rate > 0 ? rate : num(backup.settings?.opCost || 42.45)
+    return rate > 0 ? rate : internalLaborRate(backup.settings)
   }
   const getEmployeeRecord = (empId: string): any => {
     if (!empId || empId === 'me') return (backup.employees || []).find(isOwnerRecord) || null
@@ -2531,8 +2536,8 @@ Return ONLY valid JSON, no other text.`
   }
   const getEmployeeBaseRate = (empId: string): number => {
     const emp = getEmployeeRecord(empId)
-    if (!emp) return num(backup.settings?.opCost || 42.45)
-    return getBaseHourlyRate(emp, backup.settings) || num(backup.settings?.opCost || 42.45)
+    if (!emp) return internalLaborRate(backup.settings)
+    return getBaseHourlyRate(emp, backup.settings) || internalLaborRate(backup.settings)
   }
   const getEmployeeBillRateForWorker = (empId: string): number => {
     const emp = getEmployeeRecord(empId)
@@ -5300,7 +5305,7 @@ Return ONLY valid JSON, no other text.`
                 )}
                 {(backup.employees || []).filter((e: any) => rowEmps.includes(e.id) && !e.costRate).length > 0 && (
                   <div style={{ marginTop: '6px', fontSize: '10px', color: 'var(--t3)' }}>
-                    Workers without a cost rate use the Settings operating cost (${num(backup.settings?.opCost || 42.45).toFixed(2)}/h) as fallback.
+                    Workers without a cost rate use the Settings operating cost (${internalLaborRate(backup.settings).toFixed(2)}/h) as fallback.
                   </div>
                 )}
               </div>

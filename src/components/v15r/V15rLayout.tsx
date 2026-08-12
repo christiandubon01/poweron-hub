@@ -49,12 +49,14 @@ import { authedJsonHeaders } from '@/services/authedFetch'
 import { getBackupData, saveBackupData, getKPIs, isSupabaseConfigured, startPeriodicSync, forceSyncToCloud, saveLiveDataVerified, getLastSyncMeta, createEmptyBackup, isActiveProject, resolveProjectBucket, fmt, fmtK, num, type BackupData } from '@/services/backupDataService'
 import { buildBusinessGoalTruth } from '@/services/businessGoalTruth'
 import { calculateYearlyRevenueTargetProgress } from '@/services/yearlyRevenueTarget'
+import { getCurrentYearCollectedRevenue } from '@/services/collectedRevenueRange'
+import { getTimelineCollected, TIMELINE_PRESETS, type TimelinePreset } from '@/services/financialTimelineRange'
 // BUG 1 FIX — Realtime sync + stale-check service
 import { initRealtimeSync } from '@/services/realtimeSyncService'
 import { startLiveCloudRefresh } from '@/services/liveCloudRefreshService'
 import { useDemoStore } from '@/store/demoStore'
 import templates from '@/config/templates/index'
-import { getDemoKPIs, DEMO_SERVICE_NET, DEMO_COMPANY } from '@/services/demoDataService'
+import { getDemoKPIs, getDemoBackupData, DEMO_SERVICE_NET, DEMO_COMPANY } from '@/services/demoDataService'
 import { undo, redo, canUndo, canRedo } from '@/services/undoRedoService'
 import { initEventBus } from '@/services/agentEventBus'
 import { subscribeNexusToEvents } from '@/agents/nexus'
@@ -97,6 +99,13 @@ interface V15rLayoutProps {
 
 export default function V15rLayout({ activeView, onNav, activeProjectId, activeProjectName, children }: V15rLayoutProps) {
   const [backupData, setBackupData] = useState<BackupData | null>(() => getBackupData() ?? createEmptyBackup())
+  // KPI-TIMELINE-1 — canonical collected-cash range selector on the header KPI.
+  // Default CURRENT_YEAR so the slot opens on the same current-year authority as
+  // the Annual Revenue Target numerator (paidYtdValue). Selecting another preset
+  // changes only this slot's display; the Annual Target numerator is untouched.
+  const [collectedPreset, setCollectedPreset] = useState<TimelinePreset>('CURRENT_YEAR')
+  const [customStart, setCustomStart] = useState('')
+  const [customEnd, setCustomEnd] = useState('')
   const [kpis, setKpis] = useState<any>(() => {
     const d = getBackupData()
     return d ? getKPIs(d) : null
@@ -864,7 +873,18 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   // Demo Mode: swap KPIs and company name for display only — real data unchanged
   const safeKpis = (hasHydrated && isDemoMode) ? getDemoKPIs() : _rawKpis
   const paidKpiValue = num(safeKpis.paid)
-  const yearlyTargetActual = paidKpiValue
+  // FORENSIC-KPI-2B2-2D / 2B2-2E: Header "Paid YTD" and the Annual Revenue Target
+  // numerator share ONE authority — current-calendar-year KNOWN collected cash.
+  // Unknown-date legacy cash is excluded from both until the owner assigns a real
+  // received date (see Edit Service Call → Payment History → Resolve Payment Date(s)).
+  // DEMO MODE (2B2-2E): the authority is the existing demo-safe BackupData universe
+  // (getDemoBackupData), NEVER real company collected cash — mirroring the demo-safe
+  // safeKpis convention. The global getKPIs().paid lifetime meaning is unchanged;
+  // paidKpiValue is retained for the lifetime tooltip.
+  const paidYtdValue = (hasHydrated && isDemoMode)
+    ? getCurrentYearCollectedRevenue(getDemoBackupData()).knownTotal
+    : getCurrentYearCollectedRevenue(backupData || createEmptyBackup()).knownTotal
+  const yearlyTargetActual = paidYtdValue
   const goalTruth = buildBusinessGoalTruth(backupData || createEmptyBackup())
   const dailyTargetTruth = goalTruth.dailyTarget
   const parsedAnnualTarget = Number(settings?.annualTarget)
@@ -872,6 +892,38 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
     ? num(parsedAnnualTarget)
     : null
   const yearlyTargetProgress = calculateYearlyRevenueTargetProgress(yearlyTargetActual, annualTargetValue)
+
+  // KPI-TIMELINE-1 — header "Collected" KPI is a selectable canonical collected-cash
+  // range. Demo Mode (2B2-2E): the authority is the existing demo-safe BackupData
+  // universe (getDemoBackupData), NEVER real company cash — mirroring paidYtdValue.
+  // Unknown-date historical cash is never fabricated into a precise period: precise
+  // presets show knownTotal; ALL_TIME shows lifetimeTotal; the undated amount is
+  // surfaced as provenance. CURRENT_YEAR reuses paidYtdValue exactly so the slot and
+  // the Annual Target numerator stay identical on the default preset (Part D).
+  const collectedTimelineBackup = (hasHydrated && isDemoMode)
+    ? getDemoBackupData()
+    : (backupData || createEmptyBackup())
+  const collectedTimeline = getTimelineCollected(collectedTimelineBackup, collectedPreset, { now: new Date(), customStart, customEnd })
+  // KPI-TIMELINE-1A: an incomplete CUSTOM range is an explicit invalid state —
+  // the UI shows a "Select dates" prompt, never a fabricated number or lifetime.
+  const collectedInvalid = collectedTimeline.isInvalid
+  const collectedDisplayValue = collectedPreset === 'CURRENT_YEAR'
+    ? paidYtdValue
+    : (collectedTimeline.displayValue ?? 0)
+  const collectedUndatedCash = collectedTimeline.provenance.unknownDateTotal
+  const collectedKnownCash = collectedTimeline.provenance.knownTotal
+  const collectedUndatedCue = (hideFinances || collectedInvalid)
+    ? ''
+    : collectedTimeline.isAllTime
+      ? `${fmtK(collectedKnownCash)} known / ${fmtK(collectedUndatedCash)} undated`
+      : collectedUndatedCash > 0
+        ? `+${fmtK(collectedUndatedCash)} undated`
+        : ''
+  const collectedTooltip = collectedInvalid
+    ? 'Select a start and end date for the custom range.'
+    : collectedTimeline.isAllTime
+      ? `Collected (All Time) · known ${fmt(collectedKnownCash)} · undated ${fmt(collectedUndatedCash)} · lifetime ${fmt(paidKpiValue)}`
+      : `Collected (${collectedTimeline.range.label}) · known ${fmt(collectedKnownCash)} · undated ${fmt(collectedUndatedCash)} · lifetime ${fmt(paidKpiValue)}`
 
   // SERVICE NET = Total Quoted - Material - Mileage from service calls
   const serviceNet = isDemoMode ? DEMO_SERVICE_NET : (() => {
@@ -1770,17 +1822,86 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                       )}
                     </div>
 
-                    {/* PAID */}
-                    <div className="flex flex-col items-center min-w-[80px]" title={isCompact ? 'Paid' : undefined}>
-                      {isCompact ? (
-                        <span className="text-sm font-bold text-green-400">{hideFinances ? '••••' : fmtHeader(paidKpiValue)}</span>
-                      ) : (
-                        <>
-                          <span className="text-[8px] font-bold uppercase text-gray-500">Paid</span>
-                          <span className="text-base font-bold text-green-400">
-                            {hideFinances ? '••••' : fmtHeader(paidKpiValue)}
+                    {/* COLLECTED — KPI-TIMELINE-1: selectable canonical collected-cash
+                        range. Default CURRENT_YEAR shares the Annual Target numerator
+                        (paidYtdValue). Unknown-date historical cash is never fabricated
+                        into a precise period; it surfaces as a provenance cue. Lifetime
+                        collected remains available via the tooltip.
+                        KPI-TIMELINE-FINAL-FIX: the selector is rendered as an obvious
+                        owner-facing dropdown (visible "Collected" concept + a bordered
+                        custom select with a ChevronDown caret). Global CSS strips the
+                        native select arrow (-webkit-appearance:none) and the previous
+                        bare border-0 bg-transparent select rendered only the preset's
+                        short label ("Paid YTD") with no affordance — so it read as a
+                        fixed label, not a control. The native <select> stays the real
+                        interaction target; the ChevronDown is a pointer-events-none
+                        overlay. Options show the full period label (p.label) so the
+                        owner sees "Current Year", not "Paid YTD". The select lives
+                        OUTSIDE the isCompact branch so both compact and full desktop
+                        paths expose it. */}
+                    {/* KPI-TIMELINE-POLISH-1 — same information, same interactivity,
+                        header-native presentation. The bare bordered form control is
+                        replaced by a compact period chip that sits under the amount
+                        (amount first, like every neighbouring KPI), reads as a control
+                        via its caret + hover/focus affordance, and no longer competes
+                        with the figure it qualifies. The native <select> is still the
+                        real interaction target and still carries every preset; only
+                        the chrome changed. */}
+                    <div className="grid min-w-[148px] max-w-[188px] grid-rows-[auto_auto] gap-y-0.5" title={collectedTooltip}>
+                      <div className="grid grid-cols-[1fr_auto] items-center gap-x-2">
+                        <span className="text-[8px] font-bold uppercase tracking-[0.18em] text-gray-500">Collected</span>
+                        <div className="relative group shrink-0 justify-self-end">
+                        <select
+                          value={collectedPreset}
+                          onChange={(e) => setCollectedPreset(e.target.value as TimelinePreset)}
+                          className="appearance-none cursor-pointer border-0 bg-transparent py-0 pl-0 pr-4 text-[10px] font-medium normal-case leading-tight text-slate-300 outline-none transition-colors hover:text-emerald-200 focus-visible:text-emerald-100"
+                          aria-label="Collected cash range"
+                        >
+                          {TIMELINE_PRESETS.map((p) => (
+                            <option key={p.value} value={p.value} className="bg-gray-900 text-gray-200 normal-case">
+                              {p.label}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown
+                          size={10}
+                          className="absolute right-0 top-1/2 -translate-y-1/2 text-gray-500 transition-colors group-hover:text-emerald-300 pointer-events-none"
+                        />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-[1fr_auto] items-end gap-x-2">
+                        {isCompact ? (
+                          collectedInvalid ? (
+                            <span className="text-sm font-bold leading-none text-gray-400">Select dates</span>
+                          ) : (
+                            <span className="text-sm font-bold leading-none text-green-400">{hideFinances ? '••••' : fmtHeader(collectedDisplayValue)}</span>
+                          )
+                        ) : (
+                          <span className={`text-[17px] font-bold leading-none ${collectedInvalid ? 'text-gray-400' : 'text-green-400'}`}>
+                            {collectedInvalid ? 'Select dates' : (hideFinances ? '••••' : fmtHeader(collectedDisplayValue))}
                           </span>
-                        </>
+                        )}
+                        {collectedUndatedCue && (
+                          <span className="shrink-0 self-end text-right whitespace-nowrap text-[9px] font-medium uppercase tracking-[0.14em] text-gray-500 leading-none">{collectedUndatedCue}</span>
+                        )}
+                      </div>
+                      {collectedPreset === 'CUSTOM' && (
+                        <div className="mt-1 flex gap-1">
+                          <input
+                            type="date"
+                            value={customStart}
+                            onChange={(e) => setCustomStart(e.target.value)}
+                            className="text-[8px] bg-gray-800/70 border border-gray-700/80 text-gray-200 rounded px-1 py-[1px] outline-none focus-visible:border-green-500/70 w-[68px]"
+                            aria-label="Custom range start"
+                          />
+                          <input
+                            type="date"
+                            value={customEnd}
+                            onChange={(e) => setCustomEnd(e.target.value)}
+                            className="text-[8px] bg-gray-800/70 border border-gray-700/80 text-gray-200 rounded px-1 py-[1px] outline-none focus-visible:border-green-500/70 w-[68px]"
+                            aria-label="Custom range end"
+                          />
+                        </div>
                       )}
                     </div>
 

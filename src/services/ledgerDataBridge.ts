@@ -16,8 +16,11 @@
  * - serviceLogs[].adjustments[] for income/expense line items
  */
 
-import { getBackupData, type BackupData, type BackupServiceLog, type BackupProject } from './backupDataService'
+import { getServiceCashForRange } from '@/features/service-quote/serviceCashDate'
+import { getBackupData, getProjectFinancials, type BackupData, type BackupServiceLog, type BackupProject } from './backupDataService'
+import { getLifetimeCollectedRevenue } from './collectedRevenueRange'
 import { publish } from './agentEventBus'
+import { isDeletedOrArchivedServiceLog } from './serviceScopeMerge'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -100,7 +103,8 @@ export function getMonthlyCollections(months = 12): MonthlyCollection[] {
 
   const buckets = new Map<string, MonthlyCollection>()
 
-  // Service logs — primary source for collections
+  // Service logs — STOCK fields (quoted/balance/count) by service log date.
+  // collected is intentionally excluded here; it is added below by payment receivedAt.
   const serviceLogs = Array.isArray(backup.serviceLogs) ? backup.serviceLogs : []
   for (const log of serviceLogs) {
     const mk = monthKey(log.date)
@@ -114,9 +118,24 @@ export function getMonthlyCollections(months = 12): MonthlyCollection[] {
     const quoted = num(log.quoted)
     const collected = num(log.collected)
     b.quoted += quoted
-    b.collected += collected
     b.balance += Math.max(0, quoted - collected)
     b.count++
+  }
+
+  // Service FLOW (collected) by payment receivedAt
+  const now = new Date()
+  const rangeStart = new Date(Date.UTC(now.getFullYear(), now.getMonth() - months + 1, 1))
+  const rangeEnd = new Date(Date.UTC(now.getFullYear(), now.getMonth() + 1, 1))
+  const liveServiceLogs = serviceLogs.filter(log => !isDeletedOrArchivedServiceLog(log))
+  const { entries: serviceCashEntries } = getServiceCashForRange(liveServiceLogs, rangeStart, rangeEnd)
+  for (const entry of serviceCashEntries) {
+    if (!entry.receivedAt) continue
+    const mk = entry.receivedAt.slice(0, 7) // 'YYYY-MM'
+    if (!buckets.has(mk)) {
+      buckets.set(mk, { month: mk, collected: 0, quoted: 0, balance: 0, count: 0 })
+    }
+    const b = buckets.get(mk)!
+    b.collected += entry.amount
   }
 
   // Project field logs — also contribute collected amounts
@@ -193,11 +212,15 @@ export function getOutstandingAR(): OutstandingAR {
     }
   }
 
-  // Project AR
+  // Project AR.
+  // FORENSIC-KPI-LEDGER-1: `paid` is the canonical derived figure (live payment
+  // logs + manualPaidAdjustment), not the deprecated `proj.paid` scalar. The
+  // scalar is no longer written to, so LEDGER previously reported the full billed
+  // amount as outstanding on every project collected through the field log.
   const projects = Array.isArray(backup.projects) ? backup.projects : []
   for (const proj of projects) {
     const billed = num(proj.billed)
-    const paid = num(proj.paid)
+    const paid = getProjectFinancials(proj, backup).paid
     const balance = Math.max(0, billed - paid)
 
     if (balance > 0 && billed > 0) {
@@ -291,17 +314,17 @@ export function getLedgerSummary(): LedgerSummary {
 
   const backup = getBackupData()
 
-  // Total revenue + collected from service logs
+  // Total quoted revenue from service logs (a billing figure, not cash).
   const serviceLogs = Array.isArray(backup?.serviceLogs) ? backup!.serviceLogs : []
   const svcRevenue = serviceLogs.reduce((sum, l) => sum + num(l.quoted), 0)
-  const svcCollected = serviceLogs.reduce((sum, l) => sum + num(l.collected), 0)
 
-  // Total collected from project field logs (backup.logs[].collected)
-  const fieldLogs = Array.isArray(backup?.logs) ? backup!.logs : []
-  const projCollected = fieldLogs.reduce((sum, l) => sum + num((l as any).collected), 0)
-
+  // FORENSIC-KPI-LEDGER-1: lifetime collected cash comes from the ONE canonical
+  // authority. The previous local sum walked backup.logs raw — counting tombstoned
+  // logs, missing finance.manualPaidAdjustment, and ignoring the Service payment
+  // ledger's void/refund semantics — so LEDGER's total disagreed with Money and
+  // the header.
   const totalRevenue = svcRevenue
-  const totalCollected = svcCollected + projCollected
+  const totalCollected = backup ? getLifetimeCollectedRevenue(backup) : 0
 
   return {
     monthlyCollections,

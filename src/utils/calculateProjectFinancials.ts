@@ -9,7 +9,7 @@
  *
  * Formula:
  *   total_costs           = labor_cost + material_cost + transportation_cost
- *   labor_cost            = hours × $43/hr  (internal rate, locked by owner)
+ *   labor_cost            = hours × resolved internal labor rate
  *   material_cost         = sum of mat entries in field logs
  *   transportation_cost   = miles × rate ($0.66 van default, $1.04 truck)
  *   remaining_balance     = quote_value − total_costs
@@ -30,6 +30,8 @@ export const TRUCK_MILE_RATE = 1.04       // $1.04/mile for truck
 export interface CalcLog {
   id?: string
   projId?: string
+  emp?: string | null
+  empId?: string | null
   hrs?: number | string | null
   mat?: number | string | null
   miles?: number | string | null
@@ -49,7 +51,7 @@ export interface CalcProject {
 export interface ProjectFinancials {
   /** Contract / quote value */
   quote: number
-  /** Labor cost = total hours × $43/hr */
+  /** Labor cost = total hours × resolved internal labor rate */
   labor_cost: number
   /** Material cost = sum of mat from field logs */
   material_cost: number
@@ -85,6 +87,7 @@ function n(v: unknown): number {
  * @param allLogs   ALL field logs from backup — function filters to this project
  * @param mileRate  Optional override rate (e.g. from settings.mileRate).
  *                  Defaults to VAN_MILE_RATE ($0.66).
+ * @param laborRate Optional fixed rate OR per-log resolver.
  *
  * @returns ProjectFinancials — ALL financial fields, side by side.
  *
@@ -96,7 +99,7 @@ export function calculateProjectFinancials(
   project: CalcProject,
   allLogs: CalcLog[],
   mileRate?: number,
-  laborRate?: number
+  laborRate?: number | ((log: CalcLog) => number)
 ): ProjectFinancials {
   const quote = n(project?.contract)
 
@@ -123,10 +126,13 @@ export function calculateProjectFinancials(
     const mat = n(l.mat)
     const miles = n(l.miles)
     const coll = n(l.paymentsCollected || l.collected || 0)
+    const resolvedLaborRate = typeof laborRate === 'function'
+      ? n(laborRate(l))
+      : (laborRate != null && !isNaN(laborRate) && laborRate > 0 ? laborRate : 0)
 
     total_hours += hrs
     total_miles += miles
-    labor_cost += hrs * (laborRate != null && !isNaN(laborRate) && laborRate > 0 ? laborRate : 0)
+    labor_cost += hrs * resolvedLaborRate
     material_cost += mat
     transportation_cost += miles * rate
     total_collected += coll
@@ -161,7 +167,7 @@ export function calculatePortfolioFinancials(
   projects: CalcProject[],
   allLogs: CalcLog[],
   mileRate?: number,
-  laborRate?: number
+  laborRate?: number | ((log: CalcLog) => number)
 ): ProjectFinancials {
   const zero: ProjectFinancials = {
     quote: 0,

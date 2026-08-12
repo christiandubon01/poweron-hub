@@ -18,6 +18,30 @@
 
 const SAFE_FALLBACK_HOURLY = 0
 
+/**
+ * Internal labor cost rate — what labor costs the business per hour, for
+ * generic / owner / company-operating-cost contexts that do not resolve a
+ * specific Team employee's loaded rate.
+ *
+ * Authority: settings.opCost (internal operating cost rate). This is the same
+ * authority buildProjectLogRollup uses for entryLaborCost (hrs × opCost).
+ *
+ * Customer bill rate (settings.billRate) is a SEPARATE revenue/quote authority
+ * and must NEVER be used as the internal labor cost. Substituting billRate for
+ * opCost inflates internal cost (e.g. 8h × $110 = $880 instead of 8h × $54 =
+ * $432), so billRate is deliberately not read here and not used as a fallback.
+ *
+ * Returns 0 when opCost is unset (honest "no rate configured" — mirrors
+ * buildProjectLogRollup, which emits no silent default). Callers that want a
+ * non-zero display default may fall back at the call site, but must never fall
+ * back to billRate.
+ *
+ * For a specific employee's internal cost, use getLoadedHourlyRate(emp, settings).
+ */
+export function internalLaborRate(settings?: any): number {
+  return Number(settings?.opCost) || 0
+}
+
 export type WorkerType = 'owner' | 'w2' | '1099'
 
 /** Determine the canonical worker type from stored fields.

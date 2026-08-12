@@ -23,9 +23,7 @@
  * Pure module — no I/O, no React, no Supabase.
  */
 
-import {
-  resolveWorkerType,
-} from '@/components/v15r/employeeCostUtils'
+import { resolveWorkerType } from '@/components/v15r/employeeCostUtils'
 
 // ── Overhead Metrics ─────────────────────────────────────────────────────────
 
@@ -150,5 +148,98 @@ export function buildCostSourceSummary(
     ownerLoadedLaborCost,
     legacyStoredServiceCost,
     informationalSoloOwnerCost,
+  }
+}
+
+export interface ProjectLaborSource {
+  loadedLaborRate: number
+  overheadRecoveryRate: number
+  internalLaborRate: number
+  employee: Record<string, unknown> | null
+}
+
+function resolveExplicitLoadedLaborRate(
+  employee: Record<string, unknown> | null,
+  settings: Record<string, unknown> | null | undefined,
+): number {
+  if (!employee) return 0
+  const type = resolveWorkerType(employee)
+  const hourlyRate = Number(employee.hourly_rate)
+  const payrollMult = Math.max(1, Number(settings?.payrollMult) || 1.20)
+  if (Number.isFinite(hourlyRate) && hourlyRate > 0) {
+    return type === 'w2' ? hourlyRate * payrollMult : hourlyRate
+  }
+
+  const storedCostRate = Number(employee.costRate)
+  if (Number.isFinite(storedCostRate) && storedCostRate > 0) {
+    if (type === 'w2') return storedCostRate
+    return storedCostRate
+  }
+
+  return 0
+}
+
+function resolveOwnerRecord(
+  employees: Array<Record<string, unknown>> | null | undefined,
+): Record<string, unknown> | null {
+  if (!Array.isArray(employees)) return null
+  for (const emp of employees) {
+    if (resolveWorkerType(emp) === 'owner') return emp
+  }
+  return null
+}
+
+function findEmployeeByName(
+  employees: Array<Record<string, unknown>>,
+  name: string,
+): Record<string, unknown> | null {
+  const target = name.trim().toLowerCase()
+  if (!target) return null
+  for (const emp of employees) {
+    if (String(emp?.name ?? '').trim().toLowerCase() === target) return emp
+  }
+  return null
+}
+
+export function resolveProjectLaborEmployee(
+  employeeId: string | null | undefined,
+  employeeName: string | null | undefined,
+  employees: Array<Record<string, unknown>> | null | undefined,
+): Record<string, unknown> | null {
+  if (!Array.isArray(employees) || employees.length === 0) return null
+
+  const targetId = String(employeeId ?? '').trim()
+  if (targetId) {
+    const byId = employees.find((emp) => String(emp?.id ?? '').trim() === targetId)
+    if (byId) return byId
+  }
+
+  const targetName = String(employeeName ?? '').trim()
+  if (!targetId && (!targetName || /^me$/i.test(targetName) || /^owner\s*\/\s*me$/i.test(targetName))) {
+    return resolveOwnerRecord(employees)
+  }
+
+  return findEmployeeByName(employees, targetName) ?? null
+}
+
+export function resolveProjectLaborSource(
+  settings: Record<string, unknown> | null | undefined,
+  employees: Array<Record<string, unknown>> | null | undefined,
+  employeeId?: string | null,
+  employeeName?: string | null,
+): ProjectLaborSource {
+  const employee = resolveProjectLaborEmployee(employeeId, employeeName, employees)
+  const { overheadRecoveryRate } = buildCostSourceSummary(settings, employees)
+  const loadedLaborRate = resolveExplicitLoadedLaborRate(employee, settings)
+  const internalLaborRate =
+    loadedLaborRate > 0 && overheadRecoveryRate > 0
+      ? loadedLaborRate + overheadRecoveryRate
+      : 0
+
+  return {
+    loadedLaborRate,
+    overheadRecoveryRate,
+    internalLaborRate,
+    employee,
   }
 }

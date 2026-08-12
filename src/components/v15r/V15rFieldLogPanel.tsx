@@ -40,7 +40,12 @@ import {
   type BackupTriggerRule,
 } from '@/services/backupDataService'
 import { mergeProjectLogsIntoRemote, createLogTombstone, isDeadProjectLog } from '@/services/projectScopeMerge'
+import { getCollectedRevenueForRange } from '@/services/collectedRevenueRange'
 import { getLiveEmployees } from '@/services/teamScopeMerge'
+import { internalLaborRate } from './employeeCostUtils'
+import ProjectLogFinancialPanel from './ProjectLogFinancialPanel'
+import ProjectLogModalLayout from './ProjectLogModalLayout'
+import ServiceCallModalLayout, { ServiceCallSection } from './ServiceCallModalLayout'
 import {
   mergeServiceLogsIntoRemote,
   ensureServiceLogIdentity,
@@ -64,7 +69,10 @@ import VoiceMaterialCapture from './VoiceMaterialCapture'
 import { useAuth } from '@/hooks/useAuth'
 import { linkEntityToAccount, upsertRelationshipEvent } from '@/services/relationshipAccountService'
 // BUG 3 FIX — Canonical project financials (remaining_balance = quote − costs)
-import { calculateProjectFinancials, calculatePortfolioFinancials, INTERNAL_LABOR_RATE, VAN_MILE_RATE } from '@/utils/calculateProjectFinancials'
+// INTERNAL_LABOR_RATE is deliberately NOT imported: COST-TRUTH-3 makes
+// settings.opCost (via internalLaborRate) the only internal labor cost authority,
+// and the $43 constant is a legacy default that must never re-enter a cost path.
+import { calculateProjectFinancials, calculatePortfolioFinancials, VAN_MILE_RATE } from '@/utils/calculateProjectFinancials'
 import { PortalStatusControls } from '@/components/portal/PortalStatusControls'
 // SERVICE-LOG-1 — one canonical quote/profit formula path for New, Edit and View.
 import {
@@ -105,14 +113,18 @@ import {
 import {
   buildServiceLogWithPayment,
   deriveServicePayStatus,
+  getServiceLegacyUnknownCash,
   getServicePaymentEvents,
   hasServicePaymentLedger,
+  isLiveServicePaymentEvent,
   MONEY_EPSILON,
   recordServicePayment,
+  resolveServiceLegacyPayments,
   resolveServiceCollected,
   resolveServiceTotalBillable,
   type ServicePaymentRowLike,
 } from '@/features/service-quote/servicePaymentLedger'
+import { buildServiceLegacyReconciliationQueue } from '@/features/service-quote/serviceLegacyReconciliationQueue'
 import RecordServicePaymentModal, {
   localTodayKey,
   type RecordServicePaymentRequest,
@@ -132,6 +144,7 @@ import {
   type CrewQuoteBreakdown,
 } from '@/features/service-quote/crewCosting'
 import { calculateOverheadMetrics } from '@/utils/costSourceHelper'
+import { resolveProjectLaborSource } from '@/utils/costSourceHelper'
 import { getActiveEmployeeProfiles } from '@/services/adminTimecardService'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -650,6 +663,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [slPayStatus, setSlPayStatus] = useState('Y')
   // FORENSIC-KPI-2B1: pending real-payment capture (amount + actual received date).
   const [payRequest, setPayRequest] = useState<RecordServicePaymentRequest | null>(null)
+  // FORENSIC-KPI-2B2-2D: legacy-date resolution form. Owner assigns real received
+  // dates to undated historical collected cash WITHOUT changing the amount.
+  const [legacyResolveOpen, setLegacyResolveOpen] = useState(false)
+  const [legacyResolveRows, setLegacyResolveRows] = useState<{ amount: string; receivedAt: string; note: string }[]>([])
   const [slEmatInfo, setSlEmatInfo] = useState('')
   const [slDetailLink, setSlDetailLink] = useState('')
   const [slNotes, setSlNotes] = useState('')
@@ -814,6 +831,15 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [paymentStatus, setPaymentStatus] = useState('Unpaid')
   const [completionVariance, setCompletionVariance] = useState<any>(null)
   const [showArchivedServiceReview, setShowArchivedServiceReview] = useState(false)
+  // FORENSIC-KPI-2B2-2G: Historical Service Payment Reconciliation work queue.
+  // A discovery layer over the existing resolveServiceLegacyPayments resolver —
+  // finds undated historical collected cash so the owner does not have to open
+  // every old Service Call. Membership is derived from getServiceLegacyUnknownCash
+  // (the SAME authority the resolver uses), so the queue and resolver can never
+  // disagree about what "undated" means. No mutation happens here; Resolve routes
+  // into the existing Edit Service Call Payment History resolver + scoped save.
+  const [showHistoricalPayments, setShowHistoricalPayments] = useState(false)
+  const [historicalFilter, setHistoricalFilter] = useState('')
 
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
   if (!backup) {
@@ -827,6 +853,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const projects = (backup.projects || []).filter(isActiveProject)
   const logs = backup.logs || []
   const serviceLogs = backup.serviceLogs || []
+  // FORENSIC-KPI-2B2-2G: reconciliation queue derived read-only from the SAME
+  // unknown-cash authority the resolver uses. Recomputed each render so it tracks
+  // saves immediately; O(active service logs), same cost as the other service filters.
+  const reconciliationQueue = buildServiceLegacyReconciliationQueue(serviceLogs, { isActive: isActiveServiceCall })
   const gcContacts = backup.gcContacts || []
   const accountOptions = gcContacts.map((gc: any) => ({
     id: String(gc.id || ''),
@@ -839,6 +869,12 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   // employee pickers for new/edited logs (Phase 6S-C: hide deleted/inactive).
   const employees = backup.employees || []
   const liveEmployees = getLiveEmployees(employees)
+  const projectLaborRateForLog = useCallback((log: any) => {
+    return resolveProjectLaborSource(backup?.settings, employees, log?.empId, log?.emp).internalLaborRate
+  }, [backup?.settings, employees])
+  const sumProjectLaborCost = useCallback((logsToSum: any[]) => {
+    return (logsToSum || []).reduce((sum: number, log: any) => sum + (num(log?.hrs) * projectLaborRateForLog(log)), 0)
+  }, [projectLaborRateForLog])
   const triggerRules = backup.triggerRules || []
   const settings = backup.settings || {} as any
   // COST-1.5A: read the raw setting, never invent a fallback rate. When a value is
@@ -1899,6 +1935,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setSlPricingCrewIds([])
     setSlCostingMode('crew')
     setSlFrozenSnapshot(null)
+    setLegacyResolveOpen(false); setLegacyResolveRows([])
     setEditSvcId(null); setShowSvcForm(false)
   }
 
@@ -2341,6 +2378,40 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
     setShowSvcForm(true)
   }
 
+  /**
+   * FORENSIC-KPI-2B2-2G: route a queue row into the EXISTING Edit Service Call
+   * Payment History resolver. This is NOT a second resolver — it reuses the
+   * canonical beginSvcEdit open path, then auto-opens the same legacy-date
+   * resolve form (and the same commitResolveLegacyPayments writer) already proven
+   * in 2B2-2D. The only thing seeded here is the resolve rows; the service/work
+   * date is intentionally NOT prefilled as Date Received (the service date is not
+   * payment-date authority).
+   *
+   * The queue modal stays mounted underneath the edit modal, so once the owner
+   * saves + closes the edit modal the queue re-renders with the row gone — no
+   * page reload, no optimistic fake success (the existing scoped save owns truth).
+   */
+  function openResolveFromQueue(log: any) {
+    // Q14: never mutate from the queue in Demo Mode — reconciliation is read-only there.
+    if (hasHydrated && isDemoMode) return
+    const unknown = getServiceLegacyUnknownCash(log)
+    if (unknown.amount <= MONEY_EPSILON || unknown.hasUnexpectedNullDateEvent) return
+    beginSvcEdit(String((log as any).id))
+    setLegacyResolveRows([{ amount: unknown.amount.toFixed(2), receivedAt: '', note: '' }])
+    setLegacyResolveOpen(true)
+  }
+
+  /**
+   * FORENSIC-KPI-2B2-2G: open an unexpected-null-date warning row in the existing
+   * Edit Service Call modal so the owner can fix the non-baseline undated event
+   * directly in Payment History. The legacy resolver refuses these by design; the
+   * date must be entered on the event itself, not resolved here.
+   */
+  function openWarningEditFromQueue(logId: string) {
+    if (hasHydrated && isDemoMode) return
+    beginSvcEdit(logId)
+  }
+
   function deleteSvcEntry(logId: string) {
     if (!confirm('Delete this service entry?')) return
     pushState(backup)
@@ -2513,6 +2584,106 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       message: reconciled.message,
       paymentCount: getServicePaymentEvents(prior).length,
     }
+  }
+
+  // ── FORENSIC-KPI-2B2-2D: Payment History + legacy date resolution ───────────
+  // The row currently open in the Edit Service Call modal (null when creating new).
+  const editingSvcRow = editSvcId ? serviceLogs.find(l => l.id === editSvcId) : undefined
+  const editingSvcEvents = getServicePaymentEvents(editingSvcRow)
+  const editingSvcLegacyUnknown = getServiceLegacyUnknownCash(editingSvcRow)
+
+  /** Start the resolve form with one row seeded to the full unknown amount. */
+  function beginLegacyResolve() {
+    if (editingSvcLegacyUnknown.amount <= MONEY_EPSILON) return
+    setLegacyResolveRows([{
+      amount: editingSvcLegacyUnknown.amount.toFixed(2),
+      receivedAt: '',
+      note: '',
+    }])
+    setLegacyResolveOpen(true)
+  }
+
+  function addLegacyResolveRow() {
+    setLegacyResolveRows(rows => [...rows, { amount: '', receivedAt: '', note: '' }])
+  }
+
+  function updateLegacyResolveRow(idx: number, patch: Partial<{ amount: string; receivedAt: string; note: string }>) {
+    setLegacyResolveRows(rows => rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
+  }
+
+  function removeLegacyResolveRow(idx: number) {
+    setLegacyResolveRows(rows => rows.filter((_, i) => i !== idx))
+  }
+
+  /** Live validation of the resolve rows — mirrors the pure helper's rules. */
+  const legacyResolveValidation = (() => {
+    const unknown = editingSvcLegacyUnknown.amount
+    if (unknown <= MONEY_EPSILON) {
+      return { ok: false, message: 'This service call has no undated collected cash to resolve.' }
+    }
+    if (editingSvcLegacyUnknown.hasUnexpectedNullDateEvent) {
+      return {
+        ok: false,
+        message: 'A payment on this call was recorded without a date and is not a legacy baseline. Enter its date directly — it cannot be resolved here.',
+      }
+    }
+    if (legacyResolveRows.length === 0) {
+      return { ok: false, message: 'Enter at least one payment row.' }
+    }
+    let sum = 0
+    for (const r of legacyResolveRows) {
+      const amt = parseFloat(r.amount)
+      if (!Number.isFinite(amt) || Math.abs(amt) <= MONEY_EPSILON) {
+        return { ok: false, message: 'Every row needs an amount greater than zero.' }
+      }
+      if (!r.receivedAt) {
+        return { ok: false, message: 'Select the date each payment was received.' }
+      }
+      sum += amt
+    }
+    const diff = round2(sum - unknown)
+    if (Math.abs(diff) > MONEY_EPSILON) {
+      return {
+        ok: false,
+        message: `Rows total ${sum.toFixed(2)} but undated cash is ${unknown.toFixed(2)}. They must match exactly.`,
+      }
+    }
+    return { ok: true, message: '' }
+  })()
+
+  /**
+   * The single legacy-date write path. Delegates ALL money/date arithmetic to
+   * resolveServiceLegacyPayments() so the collected amount can never change — only
+   * the cash DATE moves — then persists through the same scoped serviceLogs save.
+   */
+  function commitResolveLegacyPayments() {
+    if (!editSvcId) return
+    const target = serviceLogs.find(x => x.id === editSvcId)
+    if (!target) return
+    if (!legacyResolveValidation.ok) { alert(legacyResolveValidation.message); return }
+
+    const entries = legacyResolveRows.map(r => ({
+      amount: parseFloat(r.amount),
+      receivedAt: r.receivedAt,
+      note: r.note || undefined,
+    }))
+
+    const result = resolveServiceLegacyPayments(target, entries)
+    if (!result.ok) { alert(result.message); return }
+
+    pushState(backup)
+    const wasInvoiced = !!(Array.isArray(target.statusEvents) && target.statusEvents.length
+      && target.statusEvents[target.statusEvents.length - 1].invoiced)
+    const next: any = { ...result.row }
+    next.statusEvents = Array.isArray(target.statusEvents) ? [...target.statusEvents] : []
+    stampStatusEvent(next, result.payStatus, result.collected, wasInvoiced)
+    if (!next.serviceLogId) next.serviceLogId = next.id
+    next.updatedAt = new Date().toISOString()
+
+    const source = backup.serviceLogs || []
+    backup.serviceLogs = source.map(row => (String(row.id) === String(editSvcId) ? next : row))
+    setLegacyResolveOpen(false); setLegacyResolveRows([])
+    persistServiceLogs()
   }
 
   function addServiceAdjustment(logId: string, type: 'income' | 'expense' | 'mileage') {
@@ -2738,48 +2909,28 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
           const projectLogSectionClass = 'rounded-xl border border-white/8 bg-slate-950/35 p-4 shadow-inner shadow-white/[0.025]'
 
           return (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center"
-            style={{ backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
-          >
-            <div
-              className="relative mx-4 flex w-full max-w-5xl flex-col overflow-hidden rounded-2xl shadow-2xl"
-              style={{
-                maxHeight: '90vh',
-                background: 'linear-gradient(145deg, rgba(15,23,42,0.98) 0%, rgba(8,31,47,0.98) 48%, rgba(2,16,28,0.99) 100%)',
-                border: '1px solid rgba(45,212,191,0.28)',
-                boxShadow: '0 28px 80px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06), inset 0 0 70px rgba(20,184,166,0.08)',
-              }}
-            >
-              <div
-                className="pointer-events-none absolute inset-0 opacity-50"
-                style={{
-                  background: 'linear-gradient(115deg, transparent 0%, rgba(45,212,191,0.07) 32%, transparent 58%)',
-                  animation: 'projectLogModalGlare 9s ease-in-out infinite',
-                }}
+          /* PROJECT-LOG-UI-2B — the SAME shared dual-compartment shell the Edit
+             Project Log modal uses (V15rProjectLogsTab). This file supplies only
+             the LEFT field-entry content and the RIGHT financial panel; the
+             overlay, header, grid, scroll regions and footer live in
+             ProjectLogModalLayout. */
+          <ProjectLogModalLayout
+            mode={editLogId ? 'edit' : 'new'}
+            onClose={resetProjForm}
+            onSave={saveProjEntry}
+            right={
+              <ProjectLogFinancialPanel
+                backup={backup}
+                projectId={flProj || null}
+                editLogId={editLogId}
+                projectName={projects.find(p => p.id === flProj)?.name}
+                employeeId={flEmp || null}
+                employeeName={(liveEmployees.find(e => e.id === flEmp) || employees.find(e => e.id === flEmp))?.name}
+                inputs={{ hrs: flHrs, miles: flMiles, mat: flMat, collected: flCollected }}
               />
-              <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-cyan-300/10 to-transparent" />
-
-              <div className="relative flex flex-shrink-0 items-center justify-between border-b border-cyan-300/10 px-6 py-5">
-                <div className="flex items-center gap-4">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-emerald-300/25 bg-emerald-400/10 text-emerald-300 shadow-lg shadow-emerald-950/30">
-                    <ClipboardList size={20} />
-                  </div>
-                  <div>
-                    <h2 className="text-2xl font-bold tracking-normal text-white">{editLogId ? 'Edit Project Log' : 'New Project Log'}</h2>
-                    <p className="mt-1 text-sm text-cyan-100/58">Log labor, materials, mileage, collection, and work performed.</p>
-                  </div>
-                </div>
-                <button
-                  onClick={resetProjForm}
-                  className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-400 transition-colors hover:border-cyan-300/30 hover:bg-cyan-300/10 hover:text-white"
-                  aria-label="Close project log modal"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              <div className="relative flex-1 space-y-4 overflow-y-auto px-5 py-5">
+            }
+            left={
+              <>
                 <div className={projectLogSectionClass}>
                   <div className="mb-4 flex items-center gap-3">
                     <div className="h-px flex-1 bg-gradient-to-r from-emerald-300/45 via-cyan-300/15 to-transparent" />
@@ -2878,105 +3029,9 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
             </div>
                   </div>
                 </div>
-            {/* Spec: Live entry form preview — updates as user types */}
-            {flProj && (() => {
-              const previewBillRate = num(settings.billRate) || 95
-              const previewMileRate = num(settings.mileRate) || 0.67
-              const proj = projects.find(p => p.id === flProj)
-              const contract = proj ? num(proj.contract) : 0
-
-              // Get cumulative state from existing entries (before this one)
-              const projRollPreview = buildProjectLogRollup(backup, flProj)
-              const existingLogs = projRollPreview.logs
-              // If editing, exclude the current entry from baseline
-              const baselineLogs = editLogId
-                ? existingLogs.filter(l => l.id !== editLogId)
-                : existingLogs
-              const lastBaseline = baselineLogs[baselineLogs.length - 1]
-              const lastRr = lastBaseline ? projRollPreview.byId[lastBaseline.id] : null
-              const currentBalance = lastRr ? lastRr.remainingAfter : contract
-
-              // New entry cost preview
-              const previewHrs = parseFloat(flHrs) || 0
-              const previewMat = parseFloat(flMat) || 0
-              const previewMiles = parseFloat(flMiles) || 0
-              const previewColl = parseFloat(flCollected) || 0
-              const previewLaborCost = previewHrs * previewBillRate
-              const previewMileageCost = previewMiles * previewMileRate
-              const previewEntryCost = previewLaborCost + previewMat + previewMileageCost
-              const remainingAfterSave = currentBalance - previewColl - previewEntryCost
-              const quoteBurnPct = contract > 0
-                ? Math.abs(((currentBalance - remainingAfterSave) / contract) * 100)
-                : 0
-              const previewColor = getBalanceColor(remainingAfterSave, contract)
-
-              return (
-                <div className="rounded-xl border border-cyan-300/12 bg-slate-950/45 p-3 shadow-inner shadow-white/[0.02]">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-100/55">Live Summary</div>
-                    <div className="text-[10px] font-mono text-slate-500">{quoteBurnPct.toFixed(1)}% burn against {fmt(contract)}</div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-                    {[
-                      { label: 'Labor', value: previewLaborCost, color: 'text-rose-300' },
-                      { label: 'Material', value: previewMat, color: 'text-orange-300' },
-                      { label: 'Mileage', value: previewMileageCost, color: 'text-sky-300' },
-                      { label: 'Collected', value: previewColl, color: 'text-emerald-300' },
-                    ].map(item => (
-                      <div key={item.label} className="rounded-lg border border-white/8 bg-white/[0.035] px-3 py-2">
-                        <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-500">{item.label}</div>
-                        <div className={`mt-1 font-mono text-sm font-bold ${item.color}`}>{fmt(item.value)}</div>
-                      </div>
-                    ))}
-                    <div className="rounded-lg border border-emerald-300/18 bg-emerald-300/[0.06] px-3 py-2">
-                      <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-emerald-100/55">Estimated Total</div>
-                      <div className="mt-1 font-mono text-sm font-bold text-white">{fmt(previewEntryCost)}</div>
-                      <div className="mt-0.5 text-[9px] font-mono" style={{ color: previewColor }}>Rem. {fmt(remainingAfterSave)}</div>
-                    </div>
-                  </div>
-                  <div className="sr-only">
-                  <span className="text-gray-500">Daily net preview: </span>
-                  <span style={{ color: previewColor, fontWeight: 700 }}>{fmt(remainingAfterSave)}</span>
-                  <span className="text-gray-600"> ({quoteBurnPct.toFixed(1)}% burn) | </span>
-                  <span className="text-gray-500">Project quote: </span>
-                  <span className="text-gray-300">{fmt(contract)}</span>
-                  <span className="text-gray-600"> — </span>
-                  <span className="text-gray-500">Today's logged cost: </span>
-                  <span className="text-red-400">{fmt(previewEntryCost)}</span>
-                  <span className="text-gray-600"> — </span>
-                  <span className="text-gray-500">Collected today: </span>
-                  <span className="text-emerald-400">{fmt(previewColl)}</span>
-                  <span className="text-gray-600"> — </span>
-                  <span className="text-gray-500">Remaining after save: </span>
-                  <span style={{ color: previewColor, fontWeight: 700 }}>{fmt(remainingAfterSave)}</span>
-                  </div>
-                </div>
-              )
-            })()}
-              </div>
-
-              <div className="relative flex flex-shrink-0 items-center justify-between border-t border-cyan-300/10 bg-slate-950/70 px-8 py-5 shadow-[0_-18px_34px_rgba(2,6,23,0.35)]">
-                <button
-                  onClick={resetProjForm}
-                  className="rounded-lg border border-white/12 bg-white/[0.03] px-4 py-2 text-xs font-semibold text-slate-300 transition-colors hover:border-white/25 hover:bg-white/[0.06] hover:text-white"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={saveProjEntry}
-                  className="flex items-center gap-2 rounded-lg border border-emerald-300/35 bg-gradient-to-r from-emerald-600 to-teal-500 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-950/35 transition-all hover:from-emerald-500 hover:to-teal-400"
-                >
-                  {editLogId ? 'Update Log' : 'Save Log'}
-                </button>
-              </div>
-              <style>{`
-                @keyframes projectLogModalGlare {
-                  0%, 100% { transform: translateX(-22%); opacity: 0.28; }
-                  50% { transform: translateX(18%); opacity: 0.48; }
-                }
-              `}</style>
-            </div>
-          </div>
+              </>
+            }
+          />
           )
         })()}
 
@@ -3033,14 +3088,30 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                                    recentServiceLogs.reduce((s, l) => s + num(l.mat || l.materialCost), 0)
           const totalMiles = recentProjectLogs.reduce((s, l) => s + num(l.miles || l.mileRT), 0) +
                             recentServiceLogs.reduce((s, l) => s + num(l.miles || l.mileRT), 0)
-          const totalCollected7d = recentProjectLogs.reduce((s, l) => s + num(l.paymentsCollected || l.collected || 0), 0) +
-                                  recentServiceLogs.reduce((s, l) => s + num(l.collected), 0)
+          // FORENSIC-KPI-CANONICAL-READERS-1 Part E: 7-day collected via the canonical
+          // ranged authority so synthetic paid-backfill is NOT mis-dated into the
+          // window and Service cash uses receivedAt (not the work date). The display
+          // scope is preserved exactly (active projects + projFilter; active service
+          // logs, none when a project is filtered) — only the provenance rule changes.
+          // Hours / material / miles / logCount below still use the raw log sums above.
+          const _tomorrow7d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+          const _fmtKey7d = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+          const _startUtc7d = new Date(_fmtKey7d(sevenDaysAgo) + 'T00:00:00.000Z')
+          const _endUtc7d = new Date(_fmtKey7d(_tomorrow7d) + 'T00:00:00.000Z')
+          const _scopedBackup7d = {
+            ...backup,
+            logs: (backup.logs || []).filter((l: any) =>
+              activeProjectIds.has(l.projId) && (projFilter === 'all' || l.projId === projFilter)),
+            serviceLogs: projFilter === 'all' ? (backup.serviceLogs || []).filter((l: any) => isActiveServiceCall(l)) : [],
+          }
+          const totalCollected7d = getCollectedRevenueForRange(_scopedBackup7d, _startUtc7d, _endUtc7d).knownTotal
           const logCount = recentProjectLogs.length + recentServiceLogs.length
 
-          // Derived cost totals using Settings
-          const opCost7d = Number(backup.settings?.opCost) || 55
+          // Derived project labor totals use current Team loaded labor + current
+          // overhead recovery by worker. Service math remains unchanged elsewhere.
           const mileRate7d = num(backup.settings?.mileRate) || VAN_MILE_RATE
-          const totalLaborCost7d = totalHours * opCost7d
+          const totalLaborCost7d = sumProjectLaborCost(recentProjectLogs)
+          const opCost7dMissing = totalLaborCost7d <= 0 && recentProjectLogs.some((log: any) => num(log?.hrs) > 0)
           const totalMileageCost7d = totalMiles * mileRate7d
           const totalCost7d = totalLaborCost7d + totalMaterialCost + totalMileageCost7d
 
@@ -3048,13 +3119,13 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
           let remainingBalNow = 0
           let projQuoteNow = 0
           if (projFilter === 'all') {
-            const finAll = calculatePortfolioFinancials(projects, backup.logs || [], mileRate7d, opCost7d)
+            const finAll = calculatePortfolioFinancials(projects, backup.logs || [], mileRate7d, projectLaborRateForLog)
             remainingBalNow = finAll.remaining_balance
             projQuoteNow = finAll.quote
           } else {
             const proj = projects.find((p: any) => p.id === projFilter)
             if (proj) {
-              const finProj = calculateProjectFinancials(proj, backup.logs || [], mileRate7d, opCost7d)
+              const finProj = calculateProjectFinancials(proj, backup.logs || [], mileRate7d, projectLaborRateForLog)
               remainingBalNow = finProj.remaining_balance
               projQuoteNow = finProj.quote
             }
@@ -3099,8 +3170,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   </div>
                   <div>
                     <div className="text-[9px] text-gray-500 uppercase font-bold">Labor Cost</div>
-                    <div className="text-[9px] text-gray-600">Hrs × ${opCost7d.toFixed(2)}/hr</div>
-                    <div className="text-sm font-bold font-mono text-red-400">{fmt(totalLaborCost7d)}</div>
+                    <div className="text-[9px] text-gray-600">{opCost7dMissing ? 'rate not set' : 'current team labor + overhead'}</div>
+                    <div className={`text-sm font-bold font-mono ${opCost7dMissing ? 'text-amber-400' : 'text-red-400'}`}>{opCost7dMissing ? 'Rate not set' : fmt(totalLaborCost7d)}</div>
                   </div>
                   <div>
                     <div className="text-[9px] text-gray-500 uppercase font-bold">Material Cost</div>
@@ -3114,12 +3185,12 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   <div>
                     <div className="text-[9px] text-gray-500 uppercase font-bold">Total Costs</div>
                     <div className="text-[9px] text-gray-600">L+M+T</div>
-                    <div className="text-sm font-bold font-mono text-red-400">{fmt(totalCost7d)}</div>
+                    <div className={`text-sm font-bold font-mono ${opCost7dMissing ? 'text-amber-400' : 'text-red-400'}`}>{opCost7dMissing ? 'Rate not set' : fmt(totalCost7d)}</div>
                   </div>
                   <div>
                     <div className="text-[9px] text-gray-500 uppercase font-bold">Remaining Balance</div>
                     <div className="text-[9px] text-gray-600">project, current</div>
-                    <div className="text-sm font-bold font-mono" style={{ color: balColor7d }}>{fmt(remainingBalNow)}</div>
+                    <div className="text-sm font-bold font-mono" style={{ color: opCost7dMissing ? '#f59e0b' : balColor7d }}>{opCost7dMissing ? '—' : fmt(remainingBalNow)}</div>
                   </div>
                   <div>
                     <div className="text-[9px] text-gray-500 uppercase font-bold">Collected</div>
@@ -3163,22 +3234,21 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
           const totalHours = sorted.reduce((s, l) => s + num(l.hrs), 0)
           const totalMat = sorted.reduce((s, l) => s + num(l.mat), 0)
 
-          // BUG 3 FIX — Canonical formula via calculateProjectFinancials:
-          //   remaining_balance = quote − total_costs  (NOT quote − collected)
-          //   total_costs = labor ($43/hr) + material + transportation (mileRate)
-          //   total_collected tracked SEPARATELY
+          // Canonical formula via calculateProjectFinancials with project labor
+          // resolved from current Team loaded labor + current overhead recovery.
           const canonMileRate = num(backup.settings?.mileRate) || VAN_MILE_RATE
           let canonFin: ReturnType<typeof calculateProjectFinancials>
           if (projFilter === 'all') {
-            canonFin = calculatePortfolioFinancials(projects, sorted, canonMileRate, Number(backup?.settings?.opCost) || 55)
+            canonFin = calculatePortfolioFinancials(projects, sorted, canonMileRate, projectLaborRateForLog)
           } else {
             const proj = projects.find((p: any) => p.id === projFilter)
             if (proj) {
-              canonFin = calculateProjectFinancials(proj, sorted, canonMileRate, Number(backup?.settings?.opCost) || 55)
+              canonFin = calculateProjectFinancials(proj, sorted, canonMileRate, projectLaborRateForLog)
             } else {
               canonFin = { quote: 0, labor_cost: 0, material_cost: 0, transportation_cost: 0, total_costs: 0, remaining_balance: 0, total_collected: 0, total_hours: 0, total_miles: 0, mile_rate: canonMileRate }
             }
           }
+          const canonOpCostMissing = canonFin.labor_cost <= 0 && canonFin.total_hours > 0
           const canonBalColor = getBalanceColor(canonFin.remaining_balance, canonFin.quote)
 
           return (
@@ -3190,8 +3260,8 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 </div>
                 <div>
                   <div className="text-[9px] text-gray-300 uppercase font-bold">Labor Cost to Date</div>
-                  <div className="text-[9px] text-gray-400">Hrs × ${(Number(backup?.settings?.opCost) || 55).toFixed(2)}/hr</div>
-                  <div className="text-sm font-bold font-mono text-red-400">{fmt(canonFin.labor_cost)}</div>
+                  <div className="text-[9px] text-gray-400">{canonOpCostMissing ? 'rate not set' : 'current team labor + overhead'}</div>
+                  <div className={`text-sm font-bold font-mono ${canonOpCostMissing ? 'text-amber-400' : 'text-red-400'}`}>{canonOpCostMissing ? 'Rate not set' : fmt(canonFin.labor_cost)}</div>
                 </div>
                 <div>
                   <div className="text-[9px] text-gray-300 uppercase font-bold">Material Cost to Date</div>
@@ -3205,12 +3275,12 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 <div>
                   <div className="text-[9px] text-gray-300 uppercase font-bold">Total Costs to Date</div>
                   <div className="text-[9px] text-gray-400">Lbr+Mat+Mil</div>
-                  <div className="text-sm font-bold font-mono text-red-400">{fmt(canonFin.total_costs)}</div>
+                  <div className={`text-sm font-bold font-mono ${canonOpCostMissing ? 'text-amber-400' : 'text-red-400'}`}>{canonOpCostMissing ? 'Rate not set' : fmt(canonFin.total_costs)}</div>
                 </div>
                 <div>
                   <div className="text-[9px] text-gray-300 uppercase font-bold">Remaining Balance</div>
                   <div className="text-[9px] text-gray-400">Quote−Current Total Cost</div>
-                  <div className="text-sm font-bold font-mono" style={{ color: canonBalColor }}>{fmt(canonFin.remaining_balance)}</div>
+                  <div className="text-sm font-bold font-mono" style={{ color: canonOpCostMissing ? '#f59e0b' : canonBalColor }}>{canonOpCostMissing ? '—' : fmt(canonFin.remaining_balance)}</div>
                 </div>
                 <div>
                   <div className="text-[9px] text-gray-300 uppercase font-bold">Total Collected to Date</div>
@@ -3385,34 +3455,28 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
             const proj = projects.find(p => p.id === projId)
             if (!proj) return null
 
-            const fin = getProjectFinancials(proj, backup)
+            const fin = calculateProjectFinancials(proj, projLogs, num(settings.mileRate) || 0.67, projectLaborRateForLog)
             const projTotalCollected = projLogs.reduce((s, l) => s + num(l.paymentsCollected || l.collected || 0), 0)
-            const projTotalMat = projLogs.reduce((s, l) => s + num(l.mat), 0)
-            const projTotalHrs = projLogs.reduce((s, l) => s + num(l.hrs), 0)
-            const projTotalMiles = projLogs.reduce((s, l) => s + num(l.miles || 0), 0)
-            // Spec: labor cost = hours × billing rate (not opCost)
-            const summBillRate = num(settings.billRate) || 95
-            const summMileRate = num(settings.mileRate) || 0.67
-            const projTotalCosts = projTotalMat + (projTotalHrs * summBillRate) + (projTotalMiles * summMileRate)
-            // Spec: balance = contract − collected(cumulative) − cumulative total cost
-            const balanceLeft = fin.contract - projTotalCollected - projTotalCosts
-            const summBalanceColor = getBalanceColor(balanceLeft, fin.contract)
+            const summLaborMissing = fin.labor_cost <= 0 && fin.total_hours > 0
+            const projTotalCosts = summLaborMissing ? null : fin.total_costs
+            const balanceLeft = summLaborMissing ? null : fin.remaining_balance
+            const summBalanceColor = summLaborMissing ? '#f59e0b' : getBalanceColor(balanceLeft, fin.quote)
 
             return (
               <div key={projId} className="bg-[var(--bg-input)] border border-gray-800 rounded px-3 py-2 text-[10px] flex justify-between gap-3 mb-2">
                 <div className="font-semibold text-gray-200">{proj.name}</div>
                 <div className="flex gap-4">
                   <span style={{ color: '#e5e7eb' }}>
-                    <span className="text-gray-500">Quote:</span> <span className="font-mono">{fmt(fin.contract)}</span>
+                    <span className="text-gray-500">Quote:</span> <span className="font-mono">{fmt(fin.quote)}</span>
                   </span>
                   <span style={{ color: '#10b981' }}>
                     <span className="text-gray-500">Collected:</span> <span className="font-mono">{fmt(projTotalCollected)}</span>
                   </span>
                   <span style={{ color: '#ef4444' }}>
-                    <span className="text-gray-500">Costs:</span> <span className="font-mono">{fmt(projTotalCosts)}</span>
+                    <span className="text-gray-500">Costs:</span> <span className="font-mono">{summLaborMissing ? <span className="text-amber-400">Rate not set</span> : fmt(projTotalCosts)}</span>
                   </span>
                   <span style={{ color: summBalanceColor }}>
-                    <span className="text-gray-500">Balance:</span> <span className="font-mono">{fmt(balanceLeft)}</span>
+                    <span className="text-gray-500">Balance:</span> <span className="font-mono">{summLaborMissing ? '—' : fmt(balanceLeft)}</span>
                   </span>
                 </div>
               </div>
@@ -3422,20 +3486,20 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
 
         {/* Running Totals Bar at bottom - Project Log */}
         {sorted.length > 0 && (() => {
-          // Single source of truth — same function and same inputs as top summary card
+          // Single source of truth — same function and same project labor authority as top summary card
           const footMileRate = num(backup.settings?.mileRate) || VAN_MILE_RATE
-          const footOpCost = Number(backup?.settings?.opCost) || 55
           let footFin: ReturnType<typeof calculateProjectFinancials>
           if (projFilter === 'all') {
-            footFin = calculatePortfolioFinancials(projects, sorted, footMileRate, footOpCost)
+            footFin = calculatePortfolioFinancials(projects, sorted, footMileRate, projectLaborRateForLog)
           } else {
             const proj = projects.find((p: any) => p.id === projFilter)
             if (proj) {
-              footFin = calculateProjectFinancials(proj, sorted, footMileRate, footOpCost)
+              footFin = calculateProjectFinancials(proj, sorted, footMileRate, projectLaborRateForLog)
             } else {
               footFin = { quote: 0, labor_cost: 0, material_cost: 0, transportation_cost: 0, total_costs: 0, remaining_balance: 0, total_collected: 0, total_hours: 0, total_miles: 0, mile_rate: footMileRate }
             }
           }
+          const footOpCostMissing = footFin.labor_cost <= 0 && footFin.total_hours > 0
           const totalHours = footFin.total_hours
           const totalMat = footFin.material_cost
           const totalCollected = footFin.total_collected
@@ -3466,7 +3530,7 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   Total Hours: <span className="font-mono" style={{ color: '#e5e7eb' }}>{totalHours.toFixed(1)}h</span>
                 </span>
                 <span style={{ color: '#9ca3af' }}>
-                  Total Labor: <span className="font-mono" style={{ color: '#e5e7eb' }}>{fmt(footFin.labor_cost)}</span>
+                  Total Labor: <span className="font-mono" style={{ color: footOpCostMissing ? '#f59e0b' : '#e5e7eb' }}>{footOpCostMissing ? 'Rate not set' : fmt(footFin.labor_cost)}</span>
                 </span>
                 <span style={{ color: '#f59e0b' }}>
                   Total Mat: <span className="font-mono" style={{ color: '#fcd34d' }}>{fmt(totalMat)}</span>
@@ -3477,12 +3541,12 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 <span style={{ color: '#10b981' }}>
                   Total Collected: <span className="font-mono" style={{ color: '#6ee7b7' }}>{fmt(totalCollected)}</span>
                 </span>
-                <span style={{ color: '#ef4444' }}>
-                  Total Cost: <span className="font-mono">{fmt(totalCost)}</span>
+                <span style={{ color: footOpCostMissing ? '#f59e0b' : '#ef4444' }}>
+                  Total Cost: <span className="font-mono">{footOpCostMissing ? 'Rate not set' : fmt(totalCost)}</span>
                 </span>
                 {projQuote > 0 && (
-                  <span style={{ color: bottomBalanceColor }}>
-                    Balance Left: <span className="font-mono">{fmt(balanceLeft)}</span>
+                  <span style={{ color: footOpCostMissing ? '#f59e0b' : bottomBalanceColor }}>
+                    Balance Left: <span className="font-mono">{footOpCostMissing ? '—' : fmt(balanceLeft)}</span>
                   </span>
                 )}
               </div>
@@ -3544,6 +3608,22 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
               }`}
             >
               <Archive size={12} /> Archived Service Calls ({archivedServiceReviewEntries.length})
+            </button>
+            <button
+              onClick={() => setShowHistoricalPayments(true)}
+              data-testid="historical-payments-button"
+              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border ${
+                reconciliationQueue.unresolvedCount > 0
+                  ? 'bg-orange-600/20 text-orange-300 border-orange-700/40'
+                  : 'bg-slate-700/20 text-slate-300 border-slate-600/30'
+              }`}
+            >
+              <Timer size={12} /> Historical Payments
+              {reconciliationQueue.unresolvedCount > 0 && (
+                <span className="ml-0.5 inline-flex items-center justify-center min-w-[16px] px-1 rounded-full bg-orange-600 text-white text-[10px] font-bold">
+                  {reconciliationQueue.unresolvedCount}
+                </span>
+              )}
             </button>
             <button
               onClick={() => setShowQBImport(true)}
@@ -4319,51 +4399,16 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
         {/* Related to the blue New Service Estimate modal but visually its own: */}
         {/* orange wrench identity for service calls.                            */}
         {showSvcForm && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center"
-            data-testid="service-call-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={editSvcId ? 'Edit Service Call' : 'New Service Call'}
-            style={{ backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
-            onClick={e => { if (e.target === e.currentTarget) resetSvcForm() }}
-          >
-            <div
-              className="relative w-full max-w-5xl mx-4 sm:mx-6 rounded-2xl shadow-2xl flex flex-col"
-              style={{
-                backgroundColor: 'var(--bg-card)',
-                border: '1px solid rgba(249,115,22,0.35)',
-                maxHeight: '90vh',
-                overflow: 'hidden',
-              }}
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-orange-700/30 flex-shrink-0">
-                <div className="flex items-center gap-3 min-w-0">
-                  <span
-                    className="flex items-center justify-center w-9 h-9 rounded-xl flex-shrink-0"
-                    style={{ backgroundColor: 'rgba(249,115,22,0.15)', border: '1px solid rgba(249,115,22,0.35)' }}
-                  >
-                    <ClipboardList size={18} style={{ color: '#f97316' }} />
-                  </span>
-                  <div className="min-w-0">
-                    <h2 className="text-lg sm:text-xl font-bold text-white truncate">
-                      {editSvcId ? 'Edit Service Call' : 'New Service Call'}
-                    </h2>
-                    <p className="text-xs sm:text-sm text-gray-400 mt-0.5">
-                      Work performed and collected — Total Quoted is the customer amount
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={resetSvcForm}
-                  aria-label="Close"
-                  className="text-gray-500 hover:text-white transition-colors text-lg leading-none px-2"
-                >✕</button>
-              </div>
-
-              {/* Body — scrollable */}
-              <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 space-y-4">
+          <ServiceCallModalLayout
+            mode={editSvcId ? 'edit' : 'new'}
+            onClose={resetSvcForm}
+            onSave={saveSvcEntry}
+            saveDisabled={slMissingRates.length > 0}
+            saveTitle={slMissingRates.length > 0 ? 'Set the missing pricing settings above before saving.' : undefined}
+            left={
+              <>
+              {/* ── A. JOB / CUSTOMER ─────────────────────────────────────── */}
+              <ServiceCallSection title="Job / Customer">
                 {/* Relationship account */}
                 <div>
                   <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Relationship Account (Optional)</label>
@@ -4428,7 +4473,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     {JOB_TYPES.map(jt => <option key={jt} value={jt}>{jt}</option>)}
                   </select>
                 </div>
+              </ServiceCallSection>
 
+              {/* ── B. WORK INPUTS ────────────────────────────────────────── */}
+              <ServiceCallSection title="Work Inputs">
                 {/* Pricing inputs */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div>
@@ -4477,7 +4525,12 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                     />
                   </div>
                 </div>
+              </ServiceCallSection>
 
+              {/* ── C. ASSIGNMENT — who worked the job. Deliberately NOT the
+                     Costing Crew, which determines pricing and lives in the
+                     right-hand costing compartment. ────────────────────────── */}
+              <ServiceCallSection title="Assignment" note="who worked the job">
                 {/* Assigned Employees */}
                 <AssignedEmployeesField
                   options={assignableEmployeeOptions}
@@ -4485,28 +4538,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   onChange={setSlAssignments}
                   accent="orange"
                 />
+              </ServiceCallSection>
 
-                {/* SERVICE-COST-3B: Costing Crew selector */}
-                <CostingCrewField
-                  source={slCostingSource}
-                  onSourceChange={setSlCostingSource}
-                  pricingCrewIds={slPricingCrewIds}
-                  onPricingCrewChange={setSlPricingCrewIds}
-                  employees={liveEmployees}
-                  errors={serviceCallCrewQuote().errors}
-                  accent="orange"
-                  mode={slCostingMode}
-                  onUpgradeToCrew={() => setSlCostingMode('crew')}
-                  onRecalculate={() => {
-                    const result = serviceCallCrewQuote()
-                    if (result.snapshot) {
-                      setSlFrozenSnapshot(result.snapshot)
-                      setSlCostingMode('crew')
-                    }
-                  }}
-                  recalculateDisabled={serviceCallCrewQuote().errors.length > 0}
-                />
-
+              {/* ── D. PAYMENT ────────────────────────────────────────────── */}
+              <ServiceCallSection title="Payment">
                 {/* Collected + Status */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
@@ -4577,6 +4612,129 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                   )
                 })()}
 
+                {/* FORENSIC-KPI-2B2-2D: Payment History + legacy date resolution.
+                    Shows every recorded payment event read-only. Undated historical
+                    cash ("Payment date unknown") can be given a real received date
+                    WITHOUT changing the collected amount — only the cash DATE moves. */}
+                {editSvcId && (
+                  <div className="rounded-lg border border-gray-700/60 p-3" style={{ backgroundColor: 'var(--bg-input)' }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="block text-[10px] text-gray-400 uppercase font-bold">Payment History</span>
+                      {editingSvcLegacyUnknown.amount > MONEY_EPSILON && !editingSvcLegacyUnknown.hasUnexpectedNullDateEvent && !legacyResolveOpen && (
+                        <button
+                          type="button"
+                          onClick={beginLegacyResolve}
+                          className="text-[10px] px-2 py-1 rounded bg-orange-600/20 text-orange-300 hover:bg-orange-600/30 border border-orange-700/40"
+                        >
+                          Resolve Payment Date{editingSvcLegacyUnknown.amount > 0 ? '' : ''}s
+                        </button>
+                      )}
+                    </div>
+
+                    {editingSvcEvents.length === 0 ? (
+                      <div className="text-[11px] text-gray-500">
+                        No payment ledger. Collected <span className="font-mono text-gray-300">{fmt(resolveServiceCollected(editingSvcRow))}</span> is a legacy amount with no recorded payment date.
+                      </div>
+                    ) : (
+                      <ul className="space-y-1">
+                        {editingSvcEvents.map(ev => {
+                          if (!isLiveServicePaymentEvent(ev)) {
+                            // A voided legacy_baseline is a resolved historical amount —
+                            // its cash now lives on the dated resolved event(s), so hide
+                            // it to keep the history clean. Other voided events stay visible.
+                            if (ev.kind === 'legacy_baseline') return null
+                            return (
+                              <li key={ev.id} className="text-[11px] text-gray-600 flex justify-between">
+                                <span>Voided payment</span>
+                                <span className="font-mono">{fmt(num(ev.amount))}</span>
+                              </li>
+                            )
+                          }
+                          const dated = typeof ev.receivedAt === 'string' && ev.receivedAt.trim().length > 0
+                          const isBaseline = ev.kind === 'legacy_baseline'
+                          return (
+                            <li key={ev.id} className="text-[11px] flex justify-between gap-2">
+                              <span className={dated ? 'text-gray-300' : 'text-amber-400'}>
+                                {dated ? ev.receivedAt : 'Payment date unknown'}
+                                {isBaseline && <span className="text-gray-600"> · legacy</span>}
+                                {ev.kind === 'refund' && <span className="text-gray-600"> · refund</span>}
+                              </span>
+                              <span className={`font-mono ${num(ev.amount) < 0 ? 'text-red-400' : 'text-gray-300'}`}>{fmt(num(ev.amount))}</span>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    )}
+
+                    {editingSvcLegacyUnknown.hasUnexpectedNullDateEvent && (
+                      <div className="mt-2 text-[10px] text-red-400 leading-relaxed">
+                        ⚠ A payment on this call was recorded without a date and is not a legacy baseline. Its date must be entered directly — it cannot be resolved here.
+                      </div>
+                    )}
+
+                    {legacyResolveOpen && (
+                      <div className="mt-3 rounded-lg border border-orange-700/40 p-2" style={{ backgroundColor: 'var(--bg-card)' }}>
+                        <div className="text-[10px] text-orange-300 mb-2">
+                          Assign real received date{editingSvcLegacyUnknown.amount > 0 ? '' : ''}s to the undated <span className="font-mono">{fmt(editingSvcLegacyUnknown.amount)}</span> — the collected total stays the same.
+                        </div>
+                        <div className="space-y-2">
+                          {legacyResolveRows.map((row, idx) => (
+                            <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+                              <input
+                                type="number" step="0.01" placeholder="Amount"
+                                value={row.amount}
+                                onChange={e => updateLegacyResolveRow(idx, { amount: e.target.value })}
+                                className="w-full rounded px-2 py-1 text-[11px] text-gray-200 border border-gray-600 outline-none focus:border-orange-500"
+                                style={{ backgroundColor: 'var(--bg-input)' }}
+                              />
+                              <input
+                                type="date"
+                                value={row.receivedAt}
+                                onChange={e => updateLegacyResolveRow(idx, { receivedAt: e.target.value })}
+                                className="w-full rounded px-2 py-1 text-[11px] text-gray-200 border border-gray-600 outline-none focus:border-orange-500"
+                                style={{ backgroundColor: 'var(--bg-input)' }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeLegacyResolveRow(idx)}
+                                aria-label="Remove row"
+                                className="text-gray-500 hover:text-red-400 px-1"
+                              ><Trash2 size={13} /></button>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2 mt-2">
+                          <button type="button" onClick={addLegacyResolveRow} className="text-[10px] px-2 py-1 rounded bg-gray-700/60 text-gray-300 hover:bg-gray-600/60 flex items-center gap-1">
+                            <Plus size={11} /> Add row
+                          </button>
+                          <span className="text-[10px] text-gray-500">
+                            Rows total <span className="font-mono text-gray-300">{fmt(legacyResolveRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0))}</span> · must equal <span className="font-mono text-orange-300">{fmt(editingSvcLegacyUnknown.amount)}</span>
+                          </span>
+                        </div>
+                        {!legacyResolveValidation.ok && legacyResolveRows.length > 0 && (
+                          <div className="mt-2 text-[10px] text-amber-400">{legacyResolveValidation.message}</div>
+                        )}
+                        <div className="flex items-center gap-2 mt-3">
+                          <button
+                            type="button"
+                            onClick={commitResolveLegacyPayments}
+                            disabled={!legacyResolveValidation.ok}
+                            className="text-[11px] px-3 py-1.5 rounded bg-orange-600 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-orange-500"
+                          >
+                            Save resolved dates
+                          </button>
+                          <button type="button" onClick={() => { setLegacyResolveOpen(false); setLegacyResolveRows([]) }} className="text-[11px] px-3 py-1.5 rounded bg-gray-700/60 text-gray-300 hover:bg-gray-600/60">
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </ServiceCallSection>
+
+              {/* ── E. MATERIALS + PROOF ──────────────────────────────────── */}
+              <ServiceCallSection title="Materials + Proof">
                 {/* Materials + Store */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
                   <VoiceMaterialCapture
@@ -4625,7 +4783,10 @@ ${note}` : note)
                     />
                   </div>
                 </div>
+              </ServiceCallSection>
 
+              {/* ── F. NOTES ──────────────────────────────────────────────── */}
+              <ServiceCallSection title="Notes">
                 {/* Notes */}
                 <div>
                   <label className="block text-[10px] text-gray-400 uppercase font-bold mb-1">Notes</label>
@@ -4639,9 +4800,40 @@ ${note}` : note)
                     style={{ backgroundColor: 'var(--bg-input)' }}
                   />
                 </div>
+              </ServiceCallSection>
+              </>
+            }
+            right={
+              <>
+              {/* ── A. COSTING CREW — determines pricing. Stays out of the
+                     left-hand Assignment section on purpose. The pane and its
+                     warnings render whether or not costing is valid, so an
+                     inactive breakdown always explains itself. ─────────────── */}
+              <ServiceCallSection title="Costing Crew" note="drives pricing">
+                {/* SERVICE-COST-3B: Costing Crew selector */}
+                <CostingCrewField
+                  source={slCostingSource}
+                  onSourceChange={setSlCostingSource}
+                  pricingCrewIds={slPricingCrewIds}
+                  onPricingCrewChange={setSlPricingCrewIds}
+                  employees={liveEmployees}
+                  errors={serviceCallCrewQuote().errors}
+                  accent="orange"
+                  mode={slCostingMode}
+                  onUpgradeToCrew={() => setSlCostingMode('crew')}
+                  onRecalculate={() => {
+                    const result = serviceCallCrewQuote()
+                    if (result.snapshot) {
+                      setSlFrozenSnapshot(result.snapshot)
+                      setSlCostingMode('crew')
+                    }
+                  }}
+                  recalculateDisabled={serviceCallCrewQuote().errors.length > 0}
+                />
+              </ServiceCallSection>
 
-                {/* Suggested Quote vs Total Quoted — respects legacy/frozen/crew mode */}
-                {(() => {
+              {/* Suggested Quote vs Total Quoted — respects legacy/frozen/crew mode */}
+              {(() => {
                   const quote = serviceCallDisplayQuote()
                   const crewResult =
                     slCostingMode === 'frozen' && slFrozenSnapshot
@@ -4675,32 +4867,10 @@ ${note}` : note)
                       />
                     </div>
                   )
-                })()}
-              </div>
-
-              {/* Footer */}
-              <div
-                className="flex items-center justify-between px-4 sm:px-8 py-4 border-t border-orange-700/30 flex-shrink-0"
-                style={{ backgroundColor: 'var(--bg-secondary)' }}
-              >
-                <button
-                  onClick={resetSvcForm}
-                  className="px-4 py-2 rounded-lg text-xs text-gray-400 hover:text-white border border-gray-600 hover:border-gray-400 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={saveSvcEntry}
-                  disabled={slMissingRates.length > 0}
-                  title={slMissingRates.length > 0 ? 'Set the missing pricing settings above before saving.' : undefined}
-                  data-testid="save-service-call"
-                  className={`flex items-center gap-2 px-5 py-2 rounded-lg text-white text-xs font-bold transition-colors shadow-lg ${slMissingRates.length > 0 ? 'bg-gray-600 opacity-50 cursor-not-allowed' : 'bg-orange-600 hover:bg-orange-500'}`}
-                >
-                  {editSvcId ? '✓ Update Service Call' : '✓ Save Service Call'}
-                </button>
-              </div>
-            </div>
-          </div>
+              })()}
+              </>
+            }
+          />
         )}
 
         {/* Collections Queue */}
@@ -5450,7 +5620,9 @@ ${note}` : note)
       const mat = num(l.mat || 0)
       const hrs = num(l.hrs || 0)
       const miles = num(l.miles || 0)
-      const costRate = num(backup.settings?.opCost || 42.45)
+      // COST-TRUTH-3: settings.opCost only — no invented internal-cost fallback.
+      const costRate = internalLaborRate(backup.settings)
+      if (costRate <= 0) return false // rate not configured → no profit claim made
       const mileRate = num(backup.settings?.mileRate || 0.66)
       const totalCost = mat + (miles * mileRate) + (hrs * costRate)
       return quoted - totalCost < 0
@@ -5500,11 +5672,20 @@ ${note}` : note)
     .reduce((s, l) => s + num(l.hrs), 0)
 
   // Revenue This Week — collected from both project logs and service logs
-  const revenueThisWeek = liveWeekProjectLogs
-    .reduce((s, l) => s + num(l.paymentsCollected || l.collected || 0), 0)
-    + (backup.serviceLogs || [])
-    .filter(l => isActiveServiceCall(l) && (l.date || '') >= weekStart)
-    .reduce((s, l) => s + num(l.collected), 0)
+  // FORENSIC-KPI-CANONICAL-READERS-1 Part E: route through the canonical ranged
+  // authority so Service cash uses receivedAt (not the work date) and synthetic
+  // paid-backfill is not mis-dated into the current week. Service scope stays
+  // active-only to match the prior raw-sum scope; project scope is canonical
+  // (isCashHistoryProject keeps archived/lost/cancelled historical cash, !dead,
+  // backfill excluded). hoursThisWeek / matThisWeek / mileCostThisWeek above/below
+  // still use the raw liveWeekProjectLogs sums — only the collected-cash sum changes.
+  const _weekStartUtc = new Date(weekStart + 'T00:00:00.000Z')
+  const _weekEndUtc = new Date(_weekStartUtc.getTime() + 7 * 86400000)
+  const _scopedBackupWeek = {
+    ...backup,
+    serviceLogs: (backup.serviceLogs || []).filter((l: any) => isActiveServiceCall(l)),
+  }
+  const revenueThisWeek = getCollectedRevenueForRange(_scopedBackupWeek, _weekStartUtc, _weekEndUtc).knownTotal
 
   // Mat Cost This Week — from both
   const matThisWeek = liveWeekProjectLogs
@@ -5513,8 +5694,12 @@ ${note}` : note)
     .filter(l => isActiveServiceCall(l) && (l.date || '') >= weekStart)
     .reduce((s, l) => s + num(l.mat), 0)
 
-  // Net This Week
-  const costRate = num(backup.settings?.opCost || 42.45)
+  // Net This Week.
+  // COST-TRUTH-3: settings.opCost is the internal labor cost authority; billRate is
+  // never substituted and there is no invented fallback rate. Without a configured
+  // rate no net figure is claimed — the tile reports the rate as unset instead.
+  const costRate = internalLaborRate(backup.settings)
+  const costRateMissing = costRate <= 0
   const laborCostThisWeek = hoursThisWeek * costRate
   const mileCostThisWeek = liveWeekProjectLogs
     .reduce((s, l) => s + num(l.miles) * mileRate, 0)
@@ -5539,7 +5724,7 @@ ${note}` : note)
           </div>
           <div>
             <div className="text-[9px] text-gray-500 uppercase font-bold">Net Revenue This Week</div>
-            <div className={`text-sm font-bold ${netThisWeek >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{fmt(netThisWeek)}</div>
+            <div className={`text-sm font-bold ${costRateMissing ? 'text-amber-400' : netThisWeek >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{costRateMissing ? 'Rate not set' : fmt(netThisWeek)}</div>
           </div>
         </div>
       </div>
@@ -5574,6 +5759,177 @@ ${note}` : note)
         {activeTab === 'svc' && renderServiceLogs()}
         {activeTab === 'triggers' && renderTriggers()}
       </div>
+
+      {/* FORENSIC-KPI-2B2-2G: Historical Service Payment Reconciliation queue.
+          Discovery layer over the existing resolveServiceLegacyPayments resolver.
+          z-40 so the Edit Service Call modal (z-50) stacks above it when a queue
+          row is resolved; the queue stays mounted and re-renders with the row gone
+          once the owner saves + closes the edit modal. No financial mutation
+          originates here — Resolve routes into the existing resolver + scoped save. */}
+      {showHistoricalPayments && (() => {
+        const demoReadOnly = hasHydrated && isDemoMode
+        const filterText = historicalFilter.trim().toLowerCase()
+        const filteredUnresolved = filterText
+          ? reconciliationQueue.unresolved.filter(e => {
+              const name = canonicalCustomerName(e.log).toLowerCase()
+              const jtype = String((e as any).log?.jtype || '').toLowerCase()
+              return name.includes(filterText) || jtype.includes(filterText)
+            })
+          : reconciliationQueue.unresolved
+        return (
+          <div
+            className="fixed inset-0 z-40 flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(3px)' }}
+            onClick={() => setShowHistoricalPayments(false)}
+          >
+            <div
+              className="relative mx-4 w-full max-w-3xl flex flex-col overflow-hidden rounded-2xl shadow-2xl"
+              style={{
+                maxHeight: '88vh',
+                background: 'linear-gradient(145deg, rgba(20,16,12,0.99) 0%, rgba(12,14,10,0.99) 60%, rgba(8,10,8,0.99) 100%)',
+                border: '1px solid rgba(249,115,22,0.32)',
+                boxShadow: '0 28px 80px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.05)',
+              }}
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-orange-900/40">
+                <div className="flex items-center gap-2">
+                  <Timer size={14} className="text-orange-400" />
+                  <span className="text-sm font-bold text-orange-200">Historical Service Payments</span>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  onClick={() => setShowHistoricalPayments(false)}
+                  className="text-gray-400 hover:text-gray-200"
+                ><X size={16} /></button>
+              </div>
+
+              {/* Summary */}
+              <div className="px-4 py-3 border-b border-gray-800/60 space-y-2">
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div>
+                    <div className="text-[9px] text-gray-500 uppercase font-bold">Calls needing dates</div>
+                    <div className="text-base font-bold text-orange-300">{reconciliationQueue.unresolvedCount}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-gray-500 uppercase font-bold">Undated collected</div>
+                    <div className="text-base font-bold font-mono text-orange-300">{fmt(reconciliationQueue.undatedTotal)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-gray-500 uppercase font-bold">With dated payments</div>
+                    <div className="text-base font-bold text-emerald-400">{reconciliationQueue.resolvedCount}</div>
+                  </div>
+                </div>
+                {/* Progress (Part G): DATED vs UNDATED dollars — not yearly reporting. */}
+                <div className="flex items-center justify-between text-[10px] text-gray-400 px-1">
+                  <span>Dated collected: <span className="font-mono text-emerald-400">{fmt(reconciliationQueue.datedCollected)}</span></span>
+                  <span>Still undated: <span className="font-mono text-orange-300">{fmt(reconciliationQueue.undatedTotal)}</span></span>
+                </div>
+                <div className="text-[10px] text-gray-500 leading-relaxed">
+                  Collected money with no recorded Date Received. Resolving assigns a real received date — the collected total stays the same; only the cash DATE moves.
+                </div>
+                <div className="text-[10px] text-gray-600 leading-relaxed">
+                  52-week history updates after recalculation.
+                </div>
+                {demoReadOnly && (
+                  <div className="text-[10px] text-amber-400 leading-relaxed">
+                    Reconciliation is read-only in Demo Mode — Resolve is disabled.
+                  </div>
+                )}
+              </div>
+
+              {/* Filter */}
+              {reconciliationQueue.unresolvedCount > 0 && (
+                <div className="px-4 py-2 border-b border-gray-800/60">
+                  <input
+                    type="text"
+                    value={historicalFilter}
+                    onChange={e => setHistoricalFilter(e.target.value)}
+                    placeholder="Filter by customer or job type"
+                    className="w-full rounded px-2 py-1 text-[11px] text-gray-200 border border-gray-600 outline-none focus:border-orange-500"
+                    style={{ backgroundColor: 'var(--bg-input)' }}
+                  />
+                </div>
+              )}
+
+              {/* List */}
+              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+                {reconciliationQueue.unresolvedCount === 0 && reconciliationQueue.warnings.length === 0 && (
+                  <div className="text-center text-xs text-gray-500 py-8">
+                    All collected cash has recorded payment dates.
+                  </div>
+                )}
+
+                {filteredUnresolved.map(entry => {
+                  const name = canonicalCustomerName(entry.log)
+                  const jtype = (entry as any).log?.jtype || ''
+                  const svcDate = entry.serviceDate
+                  return (
+                    <div key={entry.id} className="rounded-lg border border-gray-700/50 p-3 flex items-center justify-between gap-3" style={{ backgroundColor: 'var(--bg-input)' }}>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-semibold text-gray-200 truncate">{name}</span>
+                          {jtype && <span className="text-[10px] text-gray-500">{jtype}</span>}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-2 flex-wrap text-[10px] text-gray-500">
+                          <span>Service date: {svcDate || 'No date'}</span>
+                          <span className="text-amber-400">Payment date: Unknown</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-sm font-bold font-mono text-orange-300">{fmt(entry.unknownAmount)}</span>
+                        <button
+                          type="button"
+                          onClick={() => openResolveFromQueue(entry.log)}
+                          disabled={demoReadOnly}
+                          data-testid="historical-payments-resolve"
+                          className="text-[11px] px-3 py-1.5 rounded bg-orange-600 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-orange-500"
+                        >
+                          Resolve
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {/* Warnings: unexpected null-date events the resolver refuses. */}
+                {reconciliationQueue.warnings.length > 0 && (
+                  <div className="pt-2 space-y-2">
+                    <div className="text-[10px] text-red-400 uppercase font-bold">Needs attention — fix the date directly</div>
+                    {reconciliationQueue.warnings.map(entry => {
+                      const name = canonicalCustomerName(entry.log)
+                      const jtype = (entry as any).log?.jtype || ''
+                      return (
+                        <div key={entry.id} className="rounded-lg border border-red-900/50 p-3 flex items-center justify-between gap-3" style={{ backgroundColor: 'var(--bg-input)' }}>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-semibold text-gray-200 truncate">{name}</span>
+                              {jtype && <span className="text-[10px] text-gray-500">{jtype}</span>}
+                            </div>
+                            <div className="mt-0.5 text-[10px] text-red-400 leading-relaxed">
+                              A payment on this call was recorded without a date and is not a legacy baseline. Its date must be entered directly in Payment History — it cannot be resolved here.
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openWarningEditFromQueue(entry.id)}
+                            disabled={demoReadOnly}
+                            className="text-[11px] px-3 py-1.5 rounded bg-gray-700/60 text-gray-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-600/60 shrink-0"
+                          >
+                            Edit call
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* QuickBooks PDF Import Modal */}
       {showQBImport && (

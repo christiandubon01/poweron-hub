@@ -15,14 +15,17 @@ import {
 } from '@/services/backupDataService'
 import { mergeProjectLogsIntoRemote, createLogTombstone } from '@/services/projectScopeMerge'
 import { getLiveEmployees } from '@/services/teamScopeMerge'
+import ProjectLogFinancialPanel from './ProjectLogFinancialPanel'
+import ProjectLogModalLayout from './ProjectLogModalLayout'
 import { pushState } from '@/services/undoRedoService'
 import { processSkillSignals } from '@/services/skillSignalExtractor'
-import { Plus, Timer, Boxes, Route, CircleDollarSign, X, ClipboardList } from 'lucide-react'
+import { Plus, Timer, Boxes, Route, CircleDollarSign } from 'lucide-react'
 import VoiceMaterialCapture from './VoiceMaterialCapture'
 import {
   calculateProjectFinancials,
   VAN_MILE_RATE,
 } from '@/utils/calculateProjectFinancials'
+import { resolveProjectLaborSource } from '@/utils/costSourceHelper'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -210,6 +213,12 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
   const employees = backup.employees || []
   const liveEmployees = getLiveEmployees(employees)
   const settings = backup.settings || {} as any
+  const projectLaborRateForLog = useCallback((log: any) => {
+    return resolveProjectLaborSource(backup?.settings, employees, log?.empId, log?.emp).internalLaborRate
+  }, [backup?.settings, employees])
+  const sumProjectLaborCost = useCallback((logsToSum: any[]) => {
+    return (logsToSum || []).reduce((sum: number, log: any) => sum + (num(log?.hrs) * projectLaborRateForLog(log)), 0)
+  }, [projectLaborRateForLog])
 
   function makeLogInternalId() {
     if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `log_${crypto.randomUUID()}`
@@ -371,10 +380,10 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
   }
 
   const canonMileRate = num(backup.settings?.mileRate) || VAN_MILE_RATE
-  const canonOpCost = Number(backup?.settings?.opCost) || 55
   const canonFin = p
-    ? calculateProjectFinancials(p, sorted, canonMileRate, canonOpCost)
+    ? calculateProjectFinancials(p, sorted, canonMileRate, projectLaborRateForLog)
     : { quote: 0, labor_cost: 0, material_cost: 0, transportation_cost: 0, total_costs: 0, remaining_balance: 0, total_collected: 0, total_hours: 0, total_miles: 0, mile_rate: canonMileRate }
+  const canonOpCostMissing = canonFin.labor_cost <= 0 && canonFin.total_hours > 0
   const canonBalColor = getBalanceColor(canonFin.remaining_balance, canonFin.quote)
 
   // Form style constants (matching V15rFieldLogPanel)
@@ -410,50 +419,29 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
         </button>
       </div>
 
-      {/* Add / Edit Modal */}
+      {/* Add / Edit Modal — PROJECT-LOG-UI-2B: the SAME shared dual-compartment
+          shell the New Project Log modal uses (V15rFieldLogPanel). This file
+          supplies only the LEFT field-entry content and the RIGHT financial
+          panel; the overlay, header, grid, scroll regions and footer live in
+          ProjectLogModalLayout. */}
       {showProjForm && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
-        >
-          <div
-            className="relative mx-4 flex w-full max-w-5xl flex-col overflow-hidden rounded-2xl shadow-2xl"
-            style={{
-              maxHeight: '90vh',
-              background: 'linear-gradient(145deg, rgba(15,23,42,0.98) 0%, rgba(8,31,47,0.98) 48%, rgba(2,16,28,0.99) 100%)',
-              border: '1px solid rgba(45,212,191,0.28)',
-              boxShadow: '0 28px 80px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06), inset 0 0 70px rgba(20,184,166,0.08)',
-            }}
-          >
-            <div
-              className="pointer-events-none absolute inset-0 opacity-50"
-              style={{
-                background: 'linear-gradient(115deg, transparent 0%, rgba(45,212,191,0.07) 32%, transparent 58%)',
-                animation: 'projectLogModalGlare 9s ease-in-out infinite',
-              }}
+        <ProjectLogModalLayout
+          mode={editLogId ? 'edit' : 'new'}
+          onClose={resetProjForm}
+          onSave={saveProjEntry}
+          right={
+            <ProjectLogFinancialPanel
+              backup={backup}
+              projectId={projectId}
+              editLogId={editLogId}
+              projectName={p.name}
+              employeeId={flEmp || null}
+              employeeName={(liveEmployees.find(e => e.id === flEmp) || employees.find(e => e.id === flEmp))?.name}
+              inputs={{ hrs: flHrs, miles: flMiles, mat: flMat, collected: flCollected }}
             />
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-cyan-300/10 to-transparent" />
-
-            <div className="relative flex flex-shrink-0 items-center justify-between border-b border-cyan-300/10 px-6 py-5">
-              <div className="flex items-center gap-4">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-emerald-300/25 bg-emerald-400/10 text-emerald-300 shadow-lg shadow-emerald-950/30">
-                  <ClipboardList size={20} />
-                </div>
-                <div>
-                  <h2 className="text-2xl font-bold tracking-normal text-white">{editLogId ? 'Edit Project Log' : 'New Project Log'}</h2>
-                  <p className="mt-1 text-sm text-cyan-100/58">{p.name} — Log labor, materials, mileage, and collection.</p>
-                </div>
-              </div>
-              <button
-                onClick={resetProjForm}
-                className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-400 transition-colors hover:border-cyan-300/30 hover:bg-cyan-300/10 hover:text-white"
-                aria-label="Close"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="relative flex-1 space-y-4 overflow-y-auto px-5 py-5">
+          }
+          left={
+            <>
               <div className={projectLogSectionClass}>
                 <div className="mb-4 flex items-center gap-3">
                   <div className="h-px flex-1 bg-gradient-to-r from-emerald-300/45 via-cyan-300/15 to-transparent" />
@@ -551,79 +539,9 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
                   </div>
                 </div>
               </div>
-
-              {/* Live entry preview */}
-              {(() => {
-                const previewBillRate = num(settings.billRate) || 95
-                const previewMileRate = num(settings.mileRate) || 0.67
-                const contract = num(p.contract)
-                const projRollPreview = buildProjectLogRollup(backup, projectId)
-                const existingLogs = projRollPreview.logs
-                const baselineLogs = editLogId ? existingLogs.filter(l => l.id !== editLogId) : existingLogs
-                const lastBaseline = baselineLogs[baselineLogs.length - 1]
-                const lastRr = lastBaseline ? projRollPreview.byId[lastBaseline.id] : null
-                const currentBalance = lastRr ? lastRr.remainingAfter : contract
-                const previewHrs = parseFloat(flHrs) || 0
-                const previewMat = parseFloat(flMat) || 0
-                const previewMiles = parseFloat(flMiles) || 0
-                const previewColl = parseFloat(flCollected) || 0
-                const previewLaborCost = previewHrs * previewBillRate
-                const previewMileageCost = previewMiles * previewMileRate
-                const previewEntryCost = previewLaborCost + previewMat + previewMileageCost
-                const remainingAfterSave = currentBalance - previewColl - previewEntryCost
-                const quoteBurnPct = contract > 0 ? Math.abs(((currentBalance - remainingAfterSave) / contract) * 100) : 0
-                const previewColor = getBalanceColor(remainingAfterSave, contract)
-                return (
-                  <div className="rounded-xl border border-cyan-300/12 bg-slate-950/45 p-3 shadow-inner shadow-white/[0.02]">
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-100/55">Live Summary</div>
-                      <div className="text-[10px] font-mono text-slate-500">{quoteBurnPct.toFixed(1)}% burn against {fmt(contract)}</div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-                      {[
-                        { label: 'Labor', value: previewLaborCost, color: 'text-rose-300' },
-                        { label: 'Material', value: previewMat, color: 'text-orange-300' },
-                        { label: 'Mileage', value: previewMileageCost, color: 'text-sky-300' },
-                        { label: 'Collected', value: previewColl, color: 'text-emerald-300' },
-                      ].map(item => (
-                        <div key={item.label} className="rounded-lg border border-white/8 bg-white/[0.035] px-3 py-2">
-                          <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-500">{item.label}</div>
-                          <div className={`mt-1 font-mono text-sm font-bold ${item.color}`}>{fmt(item.value)}</div>
-                        </div>
-                      ))}
-                      <div className="rounded-lg border border-emerald-300/18 bg-emerald-300/[0.06] px-3 py-2">
-                        <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-emerald-100/55">Est. Total</div>
-                        <div className="mt-1 font-mono text-sm font-bold text-white">{fmt(previewEntryCost)}</div>
-                        <div className="mt-0.5 text-[9px] font-mono" style={{ color: previewColor }}>Rem. {fmt(remainingAfterSave)}</div>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })()}
-            </div>
-
-            <div className="relative flex flex-shrink-0 items-center justify-between border-t border-cyan-300/10 bg-slate-950/70 px-8 py-5 shadow-[0_-18px_34px_rgba(2,6,23,0.35)]">
-              <button
-                onClick={resetProjForm}
-                className="rounded-lg border border-white/12 bg-white/[0.03] px-4 py-2 text-xs font-semibold text-slate-300 transition-colors hover:border-white/25 hover:bg-white/[0.06] hover:text-white"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={saveProjEntry}
-                className="flex items-center gap-2 rounded-lg border border-emerald-300/35 bg-gradient-to-r from-emerald-600 to-teal-500 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-950/35 transition-all hover:from-emerald-500 hover:to-teal-400"
-              >
-                {editLogId ? 'Update Log' : 'Save Log'}
-              </button>
-            </div>
-            <style>{`
-              @keyframes projectLogModalGlare {
-                0%, 100% { transform: translateX(-22%); opacity: 0.28; }
-                50% { transform: translateX(18%); opacity: 0.48; }
-              }
-            `}</style>
-          </div>
-        </div>
+            </>
+          }
+        />
       )}
 
       {/* Last 7 Days Summary */}
@@ -643,12 +561,12 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
         const totalMaterialCost = recentLogs.reduce((s, l) => s + num(l.mat || l.materialCost), 0)
         const totalMiles = recentLogs.reduce((s, l) => s + num(l.miles || l.mileRT), 0)
         const totalCollected7d = recentLogs.reduce((s, l) => s + num(l.paymentsCollected || l.collected || 0), 0)
-        const opCost7d = Number(backup.settings?.opCost) || 55
         const mileRate7d = num(backup.settings?.mileRate) || VAN_MILE_RATE
-        const totalLaborCost7d = totalHours * opCost7d
+        const totalLaborCost7d = sumProjectLaborCost(recentLogs)
+        const opCost7dMissing = totalLaborCost7d <= 0 && totalHours > 0
         const totalMileageCost7d = totalMiles * mileRate7d
         const totalCost7d = totalLaborCost7d + totalMaterialCost + totalMileageCost7d
-        const fin7d = p ? calculateProjectFinancials(p, sorted, mileRate7d, opCost7d) : null
+        const fin7d = p ? calculateProjectFinancials(p, sorted, mileRate7d, projectLaborRateForLog) : null
         const remainingBalNow = fin7d?.remaining_balance ?? 0
         const projQuoteNow = fin7d?.quote ?? 0
         const balColor7d = getBalanceColor(remainingBalNow, projQuoteNow)
@@ -675,11 +593,11 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
               <div className="grid grid-cols-7 gap-3 text-center">
                 {[
                   { label: 'Total Hours', value: `${totalHours.toFixed(1)}h`, color: 'text-white' },
-                  { label: 'Labor Cost', sub: `Hrs × $${opCost7d.toFixed(2)}/hr`, value: fmt(totalLaborCost7d), color: 'text-red-400' },
+                  { label: 'Labor Cost', sub: opCost7dMissing ? 'rate not set' : 'current team labor + overhead', value: opCost7dMissing ? 'Rate not set' : fmt(totalLaborCost7d), color: opCost7dMissing ? 'text-amber-400' : 'text-red-400' },
                   { label: 'Material Cost', value: fmt(totalMaterialCost), color: '#fcd34d' },
                   { label: 'Mileage Cost', sub: `Mi × $${mileRate7d.toFixed(2)}`, value: fmt(totalMileageCost7d), color: '#60a5fa' },
-                  { label: 'Total Costs', sub: 'L+M+T', value: fmt(totalCost7d), color: 'text-red-400' },
-                  { label: 'Remaining Balance', sub: 'project, current', value: fmt(remainingBalNow), color: balColor7d },
+                  { label: 'Total Costs', sub: 'L+M+T', value: opCost7dMissing ? 'Rate not set' : fmt(totalCost7d), color: opCost7dMissing ? 'text-amber-400' : 'text-red-400' },
+                  { label: 'Remaining Balance', sub: 'project, current', value: opCost7dMissing ? '—' : fmt(remainingBalNow), color: opCost7dMissing ? '#f59e0b' : balColor7d },
                   { label: 'Collected', value: fmt(totalCollected7d), color: 'text-emerald-400' },
                 ].map(({ label, sub, value, color }) => (
                   <div key={label}>
@@ -731,8 +649,8 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
             </div>
             <div className="min-w-0 rounded-md border border-white/[0.06] bg-white/[0.025] px-2 py-2">
               <div className="text-[9px] text-gray-300 uppercase font-bold">Labor Cost</div>
-              <div className="text-[9px] text-gray-400">Hrs × ${canonOpCost.toFixed(2)}/hr</div>
-              <div className="text-sm font-bold font-mono text-red-400">{fmt(canonFin.labor_cost)}</div>
+              <div className="text-[9px] text-gray-400">{canonOpCostMissing ? 'rate not set' : 'current team labor + overhead'}</div>
+              <div className={`text-sm font-bold font-mono ${canonOpCostMissing ? 'text-amber-400' : 'text-red-400'}`}>{canonOpCostMissing ? 'Rate not set' : fmt(canonFin.labor_cost)}</div>
             </div>
             <div className="min-w-0 rounded-md border border-white/[0.06] bg-white/[0.025] px-2 py-2">
               <div className="text-[9px] text-gray-300 uppercase font-bold">Material Cost</div>
@@ -746,12 +664,12 @@ export default function V15rProjectLogsTab({ projectId, onUpdate, backup }: V15r
             <div className="min-w-0 rounded-md border border-white/[0.06] bg-white/[0.025] px-2 py-2">
               <div className="text-[9px] text-gray-300 uppercase font-bold">Total Costs</div>
               <div className="text-[9px] text-gray-400">Lbr+Mat+Mil</div>
-              <div className="text-sm font-bold font-mono text-red-400">{fmt(canonFin.total_costs)}</div>
+              <div className={`text-sm font-bold font-mono ${canonOpCostMissing ? 'text-amber-400' : 'text-red-400'}`}>{canonOpCostMissing ? 'Rate not set' : fmt(canonFin.total_costs)}</div>
             </div>
             <div className="min-w-0 rounded-md border border-white/[0.06] bg-white/[0.025] px-2 py-2">
               <div className="text-[9px] text-gray-300 uppercase font-bold">Remaining Balance</div>
               <div className="text-[9px] text-gray-400">Quote−Total Cost</div>
-              <div className="text-sm font-bold font-mono" style={{ color: canonBalColor }}>{fmt(canonFin.remaining_balance)}</div>
+              <div className="text-sm font-bold font-mono" style={{ color: canonOpCostMissing ? '#f59e0b' : canonBalColor }}>{canonOpCostMissing ? '—' : fmt(canonFin.remaining_balance)}</div>
             </div>
             <div className="min-w-0 rounded-md border border-white/[0.06] bg-white/[0.025] px-2 py-2">
               <div className="text-[9px] text-gray-300 uppercase font-bold">Total Collected</div>

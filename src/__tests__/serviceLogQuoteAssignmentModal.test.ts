@@ -26,6 +26,16 @@ const panel = readFileSync(
   join(process.cwd(), 'src/components/v15r/V15rFieldLogPanel.tsx'),
   'utf8',
 )
+/**
+ * SERVICE-CALL-UI-2B: the modal SHELL (overlay, header, the two compartments,
+ * footer) now lives in one shared layout component so New and Edit cannot
+ * drift. Chrome assertions read it there; field, wiring and money assertions
+ * still read the panel.
+ */
+const layout = readFileSync(
+  join(process.cwd(), 'src/components/v15r/ServiceCallModalLayout.tsx'),
+  'utf8',
+)
 const portal = readFileSync(
   join(process.cwd(), 'src/components/employee/EmployeePortal.tsx'),
   'utf8',
@@ -47,24 +57,28 @@ describe('New Service Call modal', () => {
   })
 
   it('is a centered overlay modal, not an inline form', () => {
-    expect(panel).toContain('data-testid="service-call-modal"')
-    expect(panel).toContain('className="fixed inset-0 z-50 flex items-center justify-center"')
+    expect(layout).toContain('data-testid="service-call-modal"')
+    expect(layout).toContain('className="fixed inset-0 z-50 flex items-center justify-center"')
     expect(panel).not.toContain('{/* Entry form with LIVE PROFIT PREVIEW */}')
     expect(panel).not.toContain('rounded-xl border border-orange-700/50 bg-[var(--bg-input)] p-4 space-y-3')
   })
 
   it('has a close X, a Cancel button and a primary Save button', () => {
-    const modal = sliceModal()
-    expect(modal).toContain('aria-label="Close"')
-    expect(modal).toContain('>\n                  Cancel\n                </button>')
-    expect(modal).toContain('data-testid="save-service-call"')
+    expect(layout).toContain('aria-label="Close"')
+    expect(layout).toMatch(/>\s*Cancel\s*<\/button>/)
+    expect(layout).toContain('data-testid="save-service-call"')
+    // LAYOUT-9/10: one Cancel and one primary action for the whole modal.
+    expect(layout.match(/>\s*Cancel\s*</g)).toHaveLength(1)
+    expect(layout.match(/data-testid="save-service-call"/g)).toHaveLength(1)
+    expect(panel).not.toContain('data-testid="save-service-call"')
   })
 
   it('closes without saving on Cancel, close X and outside click', () => {
-    const modal = sliceModal()
-    // Every dismissal path goes through resetSvcForm, which never persists.
-    expect(modal).toContain('onClick={e => { if (e.target === e.currentTarget) resetSvcForm() }}')
-    expect(modal.match(/onClick=\{resetSvcForm\}/g)?.length).toBeGreaterThanOrEqual(2)
+    // Every dismissal path goes through the caller's resetSvcForm, which never
+    // persists. The layout only forwards it — backdrop, close X and Cancel.
+    expect(layout).toContain('onClick={e => { if (e.target === e.currentTarget) onClose() }}')
+    expect(layout.match(/onClick=\{onClose\}/g)?.length).toBeGreaterThanOrEqual(2)
+    expect(sliceModal()).toContain('onClose={resetSvcForm}')
     const resetStart = panel.indexOf('function resetSvcForm()')
     const resetBody = panel.slice(resetStart, panel.indexOf('\n  }\n', resetStart))
     expect(resetBody).not.toMatch(/persist|save/i)
@@ -76,12 +90,16 @@ describe('New Service Call modal', () => {
   })
 
   it('saves through one create path', () => {
-    expect(panel).toContain('onClick={saveSvcEntry}')
-    expect(panel.match(/onClick=\{saveSvcEntry\}/g)).toHaveLength(1)
+    expect(panel).toContain('onSave={saveSvcEntry}')
+    expect(panel.match(/onSave=\{saveSvcEntry\}/g)).toHaveLength(1)
+    expect(layout.match(/onClick=\{onSave\}/g)).toHaveLength(1)
   })
 
   it('opens the same canonical form in edit mode', () => {
-    expect(panel).toContain("{editSvcId ? 'Edit Service Call' : 'New Service Call'}")
+    // One shell, one mode flag — New and Edit cannot render different chrome.
+    expect(panel).toContain("mode={editSvcId ? 'edit' : 'new'}")
+    expect(layout).toContain("isEdit ? 'Edit Service Call' : 'New Service Call'")
+    expect(layout).toContain("isEdit ? '✓ Update Service Call' : '✓ Save Service Call'")
     expect(panel).toContain('onClick={() => beginSvcEdit(l.id)}')
     // The old detour through the blue Service Estimate modal is gone.
     expect(panel).not.toContain('beginSvcEditInModal')
@@ -89,20 +107,21 @@ describe('New Service Call modal', () => {
   })
 
   it('uses a service-call identity distinct from the estimate modal', () => {
-    const modal = sliceModal()
-    expect(modal).toContain("border: '1px solid rgba(249,115,22,0.35)'")
-    expect(modal).toContain('<ClipboardList size={18}')
-    expect(modal).toContain('bg-orange-600')
+    expect(layout).toContain("border: '1px solid rgba(249,115,22,0.35)'")
+    expect(layout).toContain('<ClipboardList size={18}')
+    expect(layout).toContain('bg-orange-600')
     expect(panel).toContain("border: '1px solid rgba(59,130,246,0.3)'") // estimate stays blue
   })
 
   it('stays usable at desktop, iPad and mobile widths', () => {
-    const modal = sliceModal()
-    expect(modal).toContain('max-w-5xl mx-4 sm:mx-6')
-    expect(modal).toContain("maxHeight: '90vh'")
-    expect(modal).toContain('flex-1 overflow-y-auto')   // scrollable body
-    expect(modal).toContain('flex-shrink-0')            // separated header/footer
-    expect(modal).toContain('grid-cols-1 md:grid-cols-3')
+    // SERVICE-CALL-UI-2B: matches the Project Log dual-compartment benchmark.
+    expect(layout).toContain("width: 'min(94vw, 1560px)'")
+    expect(layout).toContain("maxHeight: '92vh'")
+    expect(layout).not.toContain('max-w-5xl')
+    expect(layout).not.toContain('100vw')                 // never edge-to-edge
+    expect(layout).toContain('xl:overflow-y-auto')        // per-pane scrolling
+    expect(layout).toContain('flex-shrink-0')             // pinned header/footer
+    expect(sliceModal()).toContain('grid-cols-1 md:grid-cols-3')
   })
 
   it('keeps every existing service-call field', () => {

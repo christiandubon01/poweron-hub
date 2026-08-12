@@ -11,6 +11,7 @@ import {
 } from 'recharts'
 import { num, type BackupData } from '@/services/backupDataService'
 import { isDeadProjectLog } from '@/services/projectScopeMerge'
+import { internalLaborRate } from '../employeeCostUtils'
 
 function startOfWeek(d: Date): Date {
   const out = new Date(d)
@@ -31,10 +32,10 @@ function weekLabel(d: Date): string {
 
 export default function LaborTrendChart({ backup }: { backup: BackupData }) {
   const logs = (backup.logs || []).filter((log: any) => !isDeadProjectLog(log))
-  const opCost = num(backup.settings?.opCost || 0)
-  const billRate = num(backup.settings?.billRate || 0)
-  // Use opCost (internal operating cost rate) or fall back to billRate / 1.5
-  const laborRate = opCost > 0 ? opCost : billRate > 0 ? billRate / 1.5 : 0
+  // COST-TRUTH-3: internal labor cost authority is opCost, NEVER billRate.
+  // When opCost is unset, laborRate is 0 and the chart shows the honest
+  // "Cost rate not set — showing hours" axis instead of a billRate-derived cost.
+  const laborRate = internalLaborRate(backup.settings)
 
   // Build 12-week buckets starting 11 weeks ago
   const now = new Date()
