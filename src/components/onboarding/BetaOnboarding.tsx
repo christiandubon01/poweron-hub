@@ -3,7 +3,7 @@
  * BetaOnboarding — 6-step new-org setup flow.
  *
  * Fires ONCE after NDA is signed, before main app loads.
- * Checks orgs.onboarding_complete — never shows again after completion.
+ * Checks organizations.settings.onboarding — never shows again after completion.
  *
  * Steps:
  *   1. Welcome          — headline + Get Started CTA
@@ -14,9 +14,11 @@
  *   6. Done             — confirmation screen, Open Dashboard CTA
  *
  * On complete:
- *   - Writes orgs.onboarding_complete = true
- *   - Writes orgs.industry, orgs.business_name, orgs.owner_name,
- *     orgs.license_number, orgs.city_state, orgs.ai_name, orgs.nexus_voice_id
+ *   - Writes organizations.settings.onboarding.complete = true
+ *   - Writes industry, businessName, ownerName, licenseNumber, cityState,
+ *     aiName and nexusVoiceId into organizations.settings.onboarding, and the
+ *     company name / license into organizations.settings.identity (COMM-1B)
+ *   - Mirrors the company name into this tenant's workspace settings
  *   - Sets ai_name in NEXUS system prompt via window event
  *   - Loads industry template seed via window event
  */
@@ -27,8 +29,9 @@ import {
   ChevronRight, ChevronLeft, CheckCircle2, Sparkles, Bot,
   Play, Square, Loader2, Volume2, Check,
 } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
+import { saveOrganizationOnboarding } from '@/services/organizationIdentityService'
+import { getBackupData, saveBackupData } from '@/services/backupDataService'
 import { getTemplate } from '@/config/templates/index'
 import { authedJsonHeaders } from '@/services/authedFetch'
 import { trackPilotTelemetryEvent } from '@/services/pilotTelemetryClient'
@@ -293,24 +296,41 @@ export default function BetaOnboarding({ onComplete }: BetaOnboardingProps) {
 
       const resolvedAiName = aiName.trim() || 'NEXUS'
 
-      // Persist to orgs table
-      const { error } = await supabase
-        .from('orgs' as never)
-        .update({
-          onboarding_complete: true,
-          industry: industry?.key ?? null,
-          business_name: businessName.trim() || null,
-          owner_name: ownerName.trim() || null,
-          license_number: licenseNumber.trim() || null,
-          city_state: cityState.trim() || null,
-          ai_name: resolvedAiName,
-          nexus_voice_id: nexusVoiceId || NEXUS_VOICE_DEFAULT_ID,
+      // COMM-PROD-1.1. This wrote to a table named `orgs`, which does not exist,
+      // so every answer was silently dropped and the gate would re-open on the
+      // next load. Same fields, same flow — persisted to the real organizations
+      // authority (settings JSONB), scoped to this org id.
+      try {
+        await saveOrganizationOnboarding(orgId, {
+          complete: true,
+          industry: industry?.key ?? '',
+          businessName: businessName.trim(),
+          ownerName: ownerName.trim(),
+          licenseNumber: licenseNumber.trim(),
+          cityState: cityState.trim(),
+          aiName: resolvedAiName,
+          nexusVoiceId: nexusVoiceId || NEXUS_VOICE_DEFAULT_ID,
         })
-        .eq('id', orgId)
-
-      if (error) {
-        console.error('[BetaOnboarding] Supabase update error:', error)
+      } catch (err) {
+        console.error('[BetaOnboarding] organization onboarding save failed:', err)
         // Don't block the user — fall through and complete
+      }
+
+      // Mirror the company name into this tenant's workspace settings so the
+      // owner shell resolves the contractor's own identity instead of the
+      // PowerOn Hub product fallback.
+      try {
+        const trimmedBusinessName = businessName.trim()
+        if (trimmedBusinessName) {
+          const workspace = getBackupData()
+          if (workspace) {
+            workspace.settings = { ...(workspace.settings ?? {}), company: trimmedBusinessName }
+            if (licenseNumber.trim()) workspace.settings.license = licenseNumber.trim()
+            saveBackupData(workspace)
+          }
+        }
+      } catch (err) {
+        console.warn('[BetaOnboarding] workspace company mirror failed:', err)
       }
 
       // Persist selected voice to localStorage so voice.ts picks it up immediately
@@ -447,23 +467,26 @@ export default function BetaOnboarding({ onComplete }: BetaOnboardingProps) {
               <p className="text-gray-500 text-sm mt-1">This info appears across your workspace.</p>
             </div>
             <div className="space-y-3 max-w-sm mx-auto">
+              {/* COMM-PROD-1 Step 9 (defect A). Generic examples — these placeholders
+                  are the first company identity a new contractor sees, so they must
+                  not suggest Power On Solutions as their own business. */}
               <Field
                 label="Business Name"
                 value={businessName}
                 onChange={setBusinessName}
-                placeholder="Power On Solutions LLC"
+                placeholder="Your company name"
               />
               <Field
                 label="Your Name"
                 value={ownerName}
                 onChange={setOwnerName}
-                placeholder="Christian Dubon"
+                placeholder="Your full name"
               />
               <Field
                 label="License Number"
                 value={licenseNumber}
                 onChange={setLicenseNumber}
-                placeholder="C-10 #1151468"
+                placeholder="Your contractor license #"
                 optional
               />
               <Field

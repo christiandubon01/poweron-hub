@@ -170,7 +170,7 @@ const WinsLogPanel = lazy(() => import('@/components/v15r/WinsLog/WinsLogPanel')
 const PinnedInsightsButton = lazy(() => import('@/components/v15r/PinnedInsights/PinnedInsightsButton').then(m => ({ default: m.PinnedInsightsButton })).catch(() => ({ default: () => null })))
 const OnboardingModal = lazy(() => chunkRetry(() => import('@/components/onboarding/OnboardingModal')))
 
-// Beta onboarding flow — fires once after NDA, checks orgs.onboarding_complete
+// Beta onboarding flow — fires once after NDA, checks organizations onboarding state
 const BetaOnboarding = lazy(() => chunkRetry(() => import('@/components/onboarding/BetaOnboarding')))
 
 // INT-1 — V4-OB1 OnboardingFlow — AI-driven first-run interview (checks user_onboarding table)
@@ -520,8 +520,18 @@ export function AppShell({ children }: AppShellProps) {
     }
   }, [profile])
 
-  // Beta onboarding gate — check orgs.onboarding_complete after NDA is signed.
+  // Beta onboarding gate — company identity setup, checked after NDA is signed.
   // Only runs once per session, only for non-demo, non-read-only users.
+  //
+  // COMM-PROD-1.1. This used to query a table named `orgs`, which does not exist
+  // — `organizations` is the multi-tenant root. Every read errored into the warn
+  // branch, so a brand-new contractor never reached company identity onboarding
+  // and their workspace kept no company name at all. The lookup now uses the real
+  // organizations authority, scoped to the authenticated profile's org_id.
+  //
+  // Onboarding is required only for an organization with no company identity yet:
+  // an established tenant (Customer Zero and every existing org) already carries
+  // identity details or a workspace company name and is never sent through it.
   useEffect(() => {
     if (isReadOnly || isDemoMode) return
     if (betaOnboardingChecked) return
@@ -531,22 +541,23 @@ export function AppShell({ children }: AppShellProps) {
 
     setBetaOnboardingChecked(true)
 
-    import('@/lib/supabase').then(({ supabase }) => {
-      supabase
-        .from('orgs' as never)
-        .select('onboarding_complete')
-        .eq('id', profile.org_id)
-        .single()
-        .then(({ data, error }: { data: any; error: any }) => {
-          if (error) {
-            console.warn('[AppShell] onboarding_complete check failed:', error)
-            return
-          }
-          if (data && data.onboarding_complete === false) {
-            setShowBetaOnboarding(true)
-          }
-        })
-    })
+    let cancelled = false
+    import('@/services/organizationIdentityService')
+      .then(({ loadOrganizationOnboardingState }) => loadOrganizationOnboardingState(profile.org_id))
+      .then((state) => {
+        if (cancelled || !state) return
+        if (state.onboarding.complete || state.identityConfigured) return
+        // Established workspaces carry their own company name; never re-onboard them.
+        const workspaceCompany = String((getBackupData() as any)?.settings?.company ?? '').trim()
+        if (workspaceCompany) return
+        setShowBetaOnboarding(true)
+      })
+      .catch((err) => {
+        // Unresolvable org state is not a reason to interrupt an owner with setup.
+        console.warn('[AppShell] organization onboarding check failed:', err)
+      })
+
+    return () => { cancelled = true }
   }, [ndaSigned, profile?.org_id, isReadOnly, isDemoMode, betaOnboardingChecked])
 
   // INT-1 — V4-OB1 OnboardingFlow: check user_onboarding table after NDA signed.
@@ -1073,7 +1084,8 @@ export function AppShell({ children }: AppShellProps) {
   }
 
   // Beta onboarding gate: fires once after NDA, before main app loads.
-  // Checks orgs.onboarding_complete — if false, show BetaOnboarding full-screen.
+  // Checks the organization's onboarding/identity state — if unset, show
+  // BetaOnboarding full-screen.
   if (showBetaOnboarding && !isReadOnly && !isDemoMode) {
     return (
       <Suspense fallback={

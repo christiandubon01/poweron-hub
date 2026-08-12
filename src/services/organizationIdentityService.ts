@@ -27,6 +27,36 @@ type PersistedIdentity = Partial<{
   logoDark: string
 }>
 
+/**
+ * COMM-PROD-1.1. First-run company identity onboarding state.
+ *
+ * AppShell and BetaOnboarding both addressed a table named `orgs`, which does not
+ * exist — `organizations` is the multi-tenant root (migration 002). Every read
+ * errored and every write was silently dropped, so a brand-new contractor never
+ * reached company identity onboarding.
+ *
+ * The state lives in `organizations.settings.onboarding` (JSONB, already present
+ * on the real table) so no schema change is required, and it sits beside
+ * `settings.identity` under the same org-scoped authority.
+ */
+export interface OrganizationOnboarding {
+  complete: boolean
+  industry: string
+  businessName: string
+  ownerName: string
+  licenseNumber: string
+  cityState: string
+  aiName: string
+  nexusVoiceId: string
+}
+
+export interface OrganizationOnboardingState {
+  identity: OrganizationIdentity
+  onboarding: OrganizationOnboarding
+  /** True when this organization already has a company identity on file. */
+  identityConfigured: boolean
+}
+
 const DEFAULT_TIMEZONE = 'America/Los_Angeles'
 
 function cleanString(value: unknown): string {
@@ -78,6 +108,128 @@ export function buildOrganizationIdentityPatch(
       identity: nextIdentity,
     },
   }
+}
+
+export function normalizeOrganizationOnboarding(row: OrganizationRow | null | undefined): OrganizationOnboarding {
+  const settings = asRecord(row?.settings)
+  const onboarding = asRecord(settings.onboarding)
+
+  return {
+    complete: onboarding.complete === true,
+    industry: cleanString(onboarding.industry),
+    businessName: cleanString(onboarding.businessName),
+    ownerName: cleanString(onboarding.ownerName),
+    licenseNumber: cleanString(onboarding.licenseNumber),
+    cityState: cleanString(onboarding.cityState),
+    aiName: cleanString(onboarding.aiName),
+    nexusVoiceId: cleanString(onboarding.nexusVoiceId),
+  }
+}
+
+/**
+ * An organization that already carries company identity details has been set up,
+ * whether or not it ever walked the beta onboarding screens. This is what keeps
+ * Customer Zero and any other established tenant out of first-run onboarding.
+ */
+export function hasConfiguredOrganizationIdentity(identity: OrganizationIdentity | null | undefined): boolean {
+  if (!identity) return false
+  return Boolean(
+    identity.supportEmail ||
+    identity.supportPhone ||
+    identity.address ||
+    identity.licenseNumber ||
+    identity.logoLight ||
+    identity.logoDark,
+  )
+}
+
+export function buildOrganizationOnboardingPatch(
+  current: OrganizationRow | null | undefined,
+  patch: Partial<OrganizationOnboarding>,
+): { name?: string; settings: Record<string, unknown> } {
+  const currentSettings = asRecord(current?.settings)
+  const currentOnboarding = normalizeOrganizationOnboarding(current)
+  const businessName = cleanString(patch.businessName ?? currentOnboarding.businessName)
+
+  const nextOnboarding: OrganizationOnboarding = {
+    complete: patch.complete ?? currentOnboarding.complete,
+    industry: cleanString(patch.industry ?? currentOnboarding.industry),
+    businessName,
+    ownerName: cleanString(patch.ownerName ?? currentOnboarding.ownerName),
+    licenseNumber: cleanString(patch.licenseNumber ?? currentOnboarding.licenseNumber),
+    cityState: cleanString(patch.cityState ?? currentOnboarding.cityState),
+    aiName: cleanString(patch.aiName ?? currentOnboarding.aiName),
+    nexusVoiceId: cleanString(patch.nexusVoiceId ?? currentOnboarding.nexusVoiceId),
+  }
+
+  // The business name and license the owner just entered ARE this organization's
+  // identity, so they land in settings.identity too — that is what the rest of
+  // the product already reads (COMM-1B).
+  const identityPatch = buildOrganizationIdentityPatch(current, {
+    ...(businessName ? { companyName: businessName } : {}),
+    ...(nextOnboarding.licenseNumber ? { licenseNumber: nextOnboarding.licenseNumber } : {}),
+  })
+
+  return {
+    ...(businessName ? { name: businessName } : {}),
+    settings: {
+      ...currentSettings,
+      ...identityPatch.settings,
+      onboarding: nextOnboarding,
+    },
+  }
+}
+
+/** Read the onboarding + identity state for one organization. Org-scoped by id. */
+export async function loadOrganizationOnboardingState(orgId: string): Promise<OrganizationOnboardingState | null> {
+  const cleanOrgId = cleanString(orgId)
+  if (!cleanOrgId) return null
+
+  const { data, error } = await supabase
+    .from('organizations')
+    .select('id, name, settings')
+    .eq('id', cleanOrgId)
+    .maybeSingle()
+
+  if (error) throw error
+  if (!data) return null
+
+  const row = data as OrganizationRow
+  const identity = normalizeOrganizationIdentity(row)
+  return {
+    identity,
+    onboarding: normalizeOrganizationOnboarding(row),
+    identityConfigured: hasConfiguredOrganizationIdentity(identity),
+  }
+}
+
+/** Persist first-run onboarding answers onto the organization. Org-scoped by id. */
+export async function saveOrganizationOnboarding(
+  orgId: string,
+  patch: Partial<OrganizationOnboarding>,
+): Promise<OrganizationOnboarding | null> {
+  const cleanOrgId = cleanString(orgId)
+  if (!cleanOrgId) return null
+
+  const from = supabase.from as any
+
+  const { data: current, error: currentError } = await from('organizations')
+    .select('id, name, settings')
+    .eq('id', cleanOrgId)
+    .maybeSingle()
+
+  if (currentError) throw currentError
+  if (!current) return null
+
+  const update = buildOrganizationOnboardingPatch(current as OrganizationRow, patch)
+  const { data: saved, error: saveError } = await from('organizations')
+    .update(update)
+    .eq('id', cleanOrgId)
+    .select('id, name, settings')
+    .maybeSingle()
+
+  if (saveError) throw saveError
+  return normalizeOrganizationOnboarding((saved ?? { ...(current as OrganizationRow), ...update }) as OrganizationRow)
 }
 
 export async function loadOrganizationIdentity(orgId: string): Promise<OrganizationIdentity | null> {
