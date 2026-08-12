@@ -29,6 +29,10 @@ const CORS_HEADERS = {
   'Content-Type':                  'application/json',
 }
 
+function cleanString(value) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
 // ── Supabase REST helpers ─────────────────────────────────────────────────────
 
 async function supabaseSelectProfile(url, serviceKey, userId) {
@@ -241,6 +245,86 @@ async function sendEmail(apiKey, payload) {
   return data
 }
 
+function buildComm1bResendInviteHtml(inviteLink, displayName, orgBranding) {
+  const greeting = displayName ? `Hi ${displayName},` : 'Hello,'
+  const signInUrl = employeeSignInUrl(inviteLink)
+  const orgName = cleanString(orgBranding?.name) || 'Your employer'
+  const supportEmail = cleanString(orgBranding?.supportEmail)
+  const supportPhone = cleanString(orgBranding?.supportPhone)
+  const supportLine = [supportEmail, supportPhone].filter(Boolean).join(' · ')
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="font-family: Arial, sans-serif; font-size: 15px; color: #111; max-width: 600px; margin: 0 auto; padding: 24px; background: #f9fafb;">
+  <div style="background: #fff; border-radius: 10px; padding: 36px 32px; border: 1px solid #e5e7eb;">
+    <p style="margin: 0 0 4px 0; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #16a34a;">
+      ${orgName} on PowerOn Hub
+    </p>
+    <h2 style="margin: 0 0 6px 0; font-size: 22px; color: #111; font-weight: 700;">
+      Your team invitation on PowerOn Hub
+    </h2>
+    <p style="margin: 0 0 20px 0; color: #6b7280; font-size: 13px;">
+      PowerOn Hub employee access
+    </p>
+    <hr style="border: none; border-top: 1px solid #f3f4f6; margin: 0 0 20px 0;">
+    <p style="margin: 0 0 16px 0; line-height: 1.6; color: #374151;">${greeting}</p>
+    <p style="margin: 0 0 16px 0; line-height: 1.6; color: #374151;">
+      <strong>${orgName}</strong> has resent your invitation to join their team on <strong>PowerOn Hub</strong> and use the Employee Portal to clock in and out and track your time.
+    </p>
+    <p style="margin: 0 0 24px 0; color: #374151; font-size: 14px;">
+      Tap the button below to activate your account. Use the same email address this invitation was sent to.
+    </p>
+    <div style="text-align: center; margin: 0 0 24px 0;">
+      <a
+        href="${inviteLink}"
+        style="display:inline-block;background:#16a34a;color:#fff;font-size:15px;font-weight:700;text-decoration:none;padding:14px 36px;border-radius:8px;letter-spacing:0.02em;"
+      >
+        Activate Employee Account
+      </a>
+    </div>
+    <p style="margin: 0 0 20px 0; font-size: 12px; color: #9ca3af; line-height: 1.6;">
+      Or copy this link into your browser:<br>
+      <span style="font-family: monospace; color: #6b7280; word-break: break-all;">${inviteLink}</span>
+    </p>
+    <div style="background: #f9fafb; border: 1px solid #f3f4f6; border-radius: 8px; padding: 14px 16px; margin: 0 0 8px 0;">
+      <p style="margin: 0 0 6px 0; font-size: 13px; color: #374151;"><strong>Already activated?</strong> Sign in to the Employee Portal any time:</p>
+      <p style="margin: 0 0 10px 0; font-size: 13px;">
+        <a href="${signInUrl}" style="color: #16a34a; font-weight: 600; word-break: break-all;">${signInUrl}</a>
+      </p>
+      <p style="margin: 0; font-size: 12px; color: #9ca3af; line-height: 1.6;">
+        This activation link expires in 7 days. If it has expired, ask ${orgName} to resend your invitation. Need help? Reply to this email or contact your employer${supportLine ? ` at ${supportLine}` : ''}.
+      </p>
+    </div>
+  </div>
+  <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+  <p style="font-size: 12px; color: #9ca3af; margin: 0; text-align: center;">
+    PowerOn Hub<br>${orgName}${supportLine ? `<br>${supportLine}` : ''}
+  </p>
+</body>
+</html>`
+}
+
+async function loadOrgBranding(url, serviceKey, orgId) {
+  const res = await fetch(
+    `${url}/rest/v1/organizations?id=eq.${encodeURIComponent(orgId)}&select=name,settings&limit=1`,
+    { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+  )
+  if (!res.ok) return { name: 'Your employer', supportEmail: '', supportPhone: '' }
+  const rows = await res.json()
+  const row = Array.isArray(rows) ? rows[0] : null
+  const identity = row?.settings?.identity && typeof row.settings.identity === 'object'
+    ? row.settings.identity
+    : {}
+  return {
+    name: cleanString(row?.name) || 'Your employer',
+    supportEmail: cleanString(identity?.supportEmail),
+    supportPhone: cleanString(identity?.supportPhone),
+  }
+}
+
 // ── Handler ────────────────────────────────────────────────────────────────────
 
 exports.handler = async (event) => {
@@ -367,28 +451,44 @@ exports.handler = async (event) => {
       invited_at:   new Date().toISOString(),
     })
 
-    let orgName = 'Your employer'
+    let orgBranding = { name: 'Your employer', supportEmail: '', supportPhone: '' }
     try {
-      const orgRes = await fetch(
-        `${supabaseUrl}/rest/v1/organizations?id=eq.${encodeURIComponent(callerProfile.org_id)}&select=name&limit=1`,
-        {
-          headers: {
-            apikey:        serviceKey,
-            Authorization: `Bearer ${serviceKey}`,
-          },
-        },
-      )
-      if (orgRes.ok) {
-        const orgData = await orgRes.json()
-        if (Array.isArray(orgData) && orgData[0]?.name) {
-          orgName = orgData[0].name
-        }
-      }
+      orgBranding = await loadOrgBranding(supabaseUrl, serviceKey, callerProfile.org_id)
     } catch {
       // Non-fatal — email still sends with fallback org name
     }
 
     const emailTo = empProfile.email
+    const supportLine = [orgBranding.supportEmail, orgBranding.supportPhone].filter(Boolean).join(' · ')
+    await sendEmail(resendKey, {
+      to:      emailTo,
+      subject: `${orgBranding.name} invited you to join PowerOn Hub`,
+      html:    buildComm1bResendInviteHtml(inviteLink, empProfile.display_name, orgBranding),
+      text: [
+        `${orgBranding.name} has resent your invitation to join their team on PowerOn Hub.`,
+        '',
+        'Activate your account (use the email this invite was sent to):',
+        inviteLink,
+        '',
+        'Already activated? Sign in to the Employee Portal any time:',
+        employeeSignInUrl(inviteLink),
+        '',
+        'This activation link expires in 7 days. If it has expired, ask your employer to resend it.',
+        `Questions? Reply to this email or contact your employer${supportLine ? ` at ${supportLine}` : ''}.`,
+        '',
+        'PowerOn Hub',
+        orgBranding.name,
+        ...(supportLine ? [supportLine] : []),
+      ].join('\n'),
+    })
+
+    console.log(`[resendEmployeeInvite] Invite resent to ${emailTo}, profileId=${profileId}`)
+
+    return {
+      statusCode: 200,
+      headers:    CORS_HEADERS,
+      body:       JSON.stringify({ success: true, email: emailTo }),
+    }
     await sendEmail(resendKey, {
       to:      emailTo,
       subject: `${orgName} — Activate your Power On employee account (resent)`,

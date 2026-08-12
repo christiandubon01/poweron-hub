@@ -88,6 +88,14 @@ import {
   translateNormalizedPoints,
 } from '@/features/blueprint-animation/routeGeometry'
 import {
+  classifyBlueprintAnimationPersistenceResult,
+  classifyBlueprintPersistenceResult,
+  getBlueprintSaveState,
+  getBlueprintSaveStateClassName,
+  type BlueprintSaveState,
+} from '@/features/blueprint-save/blueprintSaveState'
+import { trackPilotTelemetryEvent } from '@/services/pilotTelemetryClient'
+import {
   buildAutoCalibrationForPage as buildSharedAutoCalibrationForPage,
   buildManualKnownDistanceCalibration as buildSharedManualKnownDistanceCalibration,
   buildScaleCalibration as buildSharedScaleCalibration,
@@ -200,6 +208,7 @@ import {
   ElectricalSymbolCountSummary,
   ElectricalSymbolTotalsDialog,
 } from '@/features/blueprint-symbol-counts'
+import { useDemoStore } from '@/store/demoStore'
 import {
   BlueprintSnapshotCaptureDialog,
   SnapshotLibraryDialog,
@@ -2501,7 +2510,17 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const [packageAnimationRouteNotices, setPackageAnimationRouteNotices] = useState<Record<string, PackageAnimationRouteNotice>>({})
   const [animationRouteReviewConflicts, setAnimationRouteReviewConflicts] = useState<Record<string, PackageAnimationRouteConflictState & { operationId?: number }>>({})
   const [syncNotice, setSyncNotice] = useState<string | null>(null)
+  const isDemoMode = useDemoStore((state) => state.isDemoMode)
+  const [blueprintSaveState, setBlueprintSaveState] = useState<BlueprintSaveState>(() => (
+    isDemoMode
+      ? getBlueprintSaveState('saved-on-this-device', 'Demo Mode stays on this device only.')
+      : getBlueprintSaveState('unsaved')
+  ))
   const syncNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingBlueprintSaveCountRef = useRef(0)
+  const lastResolvedBlueprintSaveStateRef = useRef<BlueprintSaveState>(isDemoMode
+    ? getBlueprintSaveState('saved-on-this-device', 'Demo Mode stays on this device only.')
+    : getBlueprintSaveState('unsaved'))
   // Step 13B-QA5-R4: gate for the one-time "cloud paused" banner. While the
   // stale-overwrite guard is blocking cloud writes, every local annotation/scope-layer
   // save still succeeds locally and calls showSyncPausedNoticeOnce() -- without this
@@ -2516,7 +2535,112 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setActionMsg(null)
     setPackageAnimationRouteNotices({})
     setAnimationRouteReviewConflicts({})
-  }, [blueprint?.id])
+    const nextState = isDemoMode
+      ? getBlueprintSaveState('saved-on-this-device', 'Demo Mode stays on this device only.')
+      : getBlueprintSaveState('unsaved')
+    pendingBlueprintSaveCountRef.current = 0
+    lastResolvedBlueprintSaveStateRef.current = nextState
+    setBlueprintSaveState(nextState)
+  }, [blueprint?.id, isDemoMode])
+
+  const openedTelemetryIdsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const blueprintId = String(blueprint?.id || '').trim()
+    if (!blueprintId || isDemoMode || openedTelemetryIdsRef.current.has(blueprintId)) return
+    openedTelemetryIdsRef.current.add(blueprintId)
+    void trackPilotTelemetryEvent({
+      eventName: 'blueprint_opened',
+      module: 'blueprint',
+      feature: 'viewer_open',
+      objectId: blueprintId,
+      metadata: {
+        projectId: blueprint?.projectId ?? undefined,
+        source: 'operations_blueprint_pdf_viewer',
+      },
+    })
+  }, [blueprint?.id, blueprint?.projectId, isDemoMode])
+
+  const beginBlueprintSave = useCallback(() => {
+    pendingBlueprintSaveCountRef.current += 1
+    setBlueprintSaveState(getBlueprintSaveState('saving'))
+  }, [])
+
+  const resolveBlueprintSave = useCallback((nextState: BlueprintSaveState) => {
+    lastResolvedBlueprintSaveStateRef.current = nextState
+    pendingBlueprintSaveCountRef.current = Math.max(0, pendingBlueprintSaveCountRef.current - 1)
+    if (pendingBlueprintSaveCountRef.current === 0) {
+      setBlueprintSaveState(nextState)
+    }
+  }, [])
+
+  const resolveBlueprintSaveFromPersistence = useCallback((result: { localSaved?: boolean; cloudSynced?: boolean; warning?: string; error?: string }) => {
+    resolveBlueprintSave(classifyBlueprintPersistenceResult(result, {
+      localDetail: isDemoMode ? 'Demo Mode stays on this device only.' : undefined,
+    }))
+  }, [isDemoMode, resolveBlueprintSave])
+
+  const resolveBlueprintSaveFromAnimation = useCallback((result: { localSaved?: boolean; cloudSynced?: boolean; warning?: string; error?: string; status?: string }) => {
+    const nextState = classifyBlueprintAnimationPersistenceResult(result)
+    resolveBlueprintSave(isDemoMode && nextState.kind === 'saved-to-cloud'
+      ? getBlueprintSaveState('saved-on-this-device', 'Demo Mode stays on this device only.')
+      : nextState)
+  }, [isDemoMode, resolveBlueprintSave])
+
+  const failBlueprintSave = useCallback((detail?: string) => {
+    resolveBlueprintSave(getBlueprintSaveState('sync-failed', detail))
+  }, [resolveBlueprintSave])
+
+  const trackBlueprintAnnotationTelemetry = useCallback((annotation: BlueprintAnnotation) => {
+    if (isDemoMode) return
+    const metadata = (annotation.meta && typeof annotation.meta === 'object'
+      ? annotation.meta
+      : annotation.metadata && typeof annotation.metadata === 'object'
+        ? annotation.metadata
+        : {}) as Record<string, unknown>
+    const shapeKind = String(metadata.shapeKind || '').trim()
+    if (annotation.type === 'measure-distance' || annotation.type === 'measure-area' || annotation.type === 'measure-perimeter') {
+      void trackPilotTelemetryEvent({
+        eventName: 'blueprint_measurement_created',
+        module: 'blueprint',
+        feature: annotation.type,
+        objectId: annotation.id,
+        metadata: {
+          blueprintSetId: annotation.blueprintSetId,
+          projectId: annotation.projectId,
+          pageNumber: annotation.pageNumber,
+          measurementType: annotation.type,
+        },
+      })
+      return
+    }
+    if (annotation.type === 'shape' && shapeKind === 'circuit-path') {
+      void trackPilotTelemetryEvent({
+        eventName: 'circuit_path_created',
+        module: 'blueprint',
+        feature: 'circuit_path',
+        objectId: annotation.id,
+        metadata: {
+          blueprintSetId: annotation.blueprintSetId,
+          projectId: annotation.projectId,
+          pageNumber: annotation.pageNumber,
+        },
+      })
+      return
+    }
+    if (annotation.type === 'shape' && shapeKind === 'circuit-arc') {
+      void trackPilotTelemetryEvent({
+        eventName: 'circuit_arc_created',
+        module: 'blueprint',
+        feature: 'circuit_arc',
+        objectId: annotation.id,
+        metadata: {
+          blueprintSetId: annotation.blueprintSetId,
+          projectId: annotation.projectId,
+          pageNumber: annotation.pageNumber,
+        },
+      })
+    }
+  }, [isDemoMode])
 
   useEffect(() => {
     if (!blueprint?.id || !pdfDoc) return
@@ -3218,6 +3342,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const nextBindingId = bindingSupports ? quickAccessDraftWireProfileId : null
     setQuickAccessBindingSaving(true)
     setQuickAccessBindingSaveError(null)
+    beginBlueprintSave()
     try {
       const result = await saveOperationsBlueprintQuickAccessWireProfileBinding(
         getBackupData(),
@@ -3227,15 +3352,18 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       )
       if (!result.localSaved) {
         setQuickAccessBindingSaveError(result.error || QUICK_ACCESS_BINDING_SAVE_FAILURE_MESSAGE)
+        resolveBlueprintSaveFromPersistence(result)
       } else {
         setQuickAccessDraftWireProfileId(nextBindingId)
         setWireProfileRemoteRefreshVersion((version) => version + 1)
         if (result.warning || result.error) {
           setQuickAccessBindingSaveError(result.warning || result.error || null)
         }
+        resolveBlueprintSaveFromPersistence(result)
       }
     } catch (error: any) {
       setQuickAccessBindingSaveError(error?.message || QUICK_ACCESS_BINDING_SAVE_FAILURE_MESSAGE)
+      failBlueprintSave(error?.message || QUICK_ACCESS_BINDING_SAVE_FAILURE_MESSAGE)
     } finally {
       setQuickAccessBindingSaving(false)
     }
@@ -3255,10 +3383,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const slotKey = getQuickAccessSlotKey(slotIndex)
     const projectId = String(blueprint?.projectId || '').trim()
     if (slotKey && projectId) {
+      beginBlueprintSave()
       try {
-        await saveOperationsBlueprintQuickAccessWireProfileBinding(getBackupData(), projectId, slotKey, null)
+        const result = await saveOperationsBlueprintQuickAccessWireProfileBinding(getBackupData(), projectId, slotKey, null)
+        resolveBlueprintSaveFromPersistence(result)
         setWireProfileRemoteRefreshVersion((version) => version + 1)
-      } catch { /* binding clear is best-effort alongside visual clear */ }
+      } catch (error: any) {
+        failBlueprintSave(error?.message || QUICK_ACCESS_BINDING_SAVE_FAILURE_MESSAGE)
+      }
     }
     const activeKey = getQuickAccessSlotKey(slotIndex)
     if (activeKey && activeQuickAccessSession?.slotKey === activeKey) clearActiveQuickAccessSession()
@@ -3709,8 +3841,18 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const showSyncPausedNoticeOnce = useCallback(() => {
     if (syncBlockedNoticeShownRef.current) return
     syncBlockedNoticeShownRef.current = true
+    if (pendingBlueprintSaveCountRef.current === 0) {
+      const nextState = getBlueprintSaveState(
+        'saved-on-this-device',
+        isDemoMode
+          ? 'Demo Mode stays on this device only.'
+          : 'Cloud sync is paused until this Blueprint reloads.',
+      )
+      lastResolvedBlueprintSaveStateRef.current = nextState
+      setBlueprintSaveState(nextState)
+    }
     showTransientSyncNotice('Saved locally — cloud paused until reload.')
-  }, [showTransientSyncNotice])
+  }, [isDemoMode, showTransientSyncNotice])
 
   const loadAnnotations = useCallback(() => {
     if (!blueprint?.id) {
@@ -3784,10 +3926,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
 
   const persistScopeLayers = useCallback(async (nextLayers: BlueprintScopeLayer[]) => {
     if (!blueprint?.id) return false
+    beginBlueprintSave()
     try {
       const backup = getBackupData()
       if (!backup) throw new Error('No local backup data available.')
       const result = await saveOperationsBlueprintScopeLayers(backup, blueprint.id, nextLayers)
+      resolveBlueprintSaveFromPersistence(result)
       if (result.cloudSynced) {
         clearStaleSyncMessages()
         return true
@@ -3805,6 +3949,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       loadScopeLayers()
       return false
     } catch (e: any) {
+      failBlueprintSave(e?.message || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG)
       setActionMsg({
         type: 'error',
         text: e?.message || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
@@ -3812,7 +3957,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       loadScopeLayers()
       return false
     }
-  }, [blueprint?.id, clearStaleSyncMessages, loadScopeLayers, showSyncPausedNoticeOnce])
+  }, [beginBlueprintSave, blueprint?.id, clearStaleSyncMessages, failBlueprintSave, loadScopeLayers, resolveBlueprintSaveFromPersistence, showSyncPausedNoticeOnce])
 
   // BP-SYNC-FIX-1 Part A: explicit single-package delete. Deliberately separate from
   // persistScopeLayers (which saves the live set) so a delete never travels as an omitted id —
@@ -3820,10 +3965,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   // as persistScopeLayers; on failure loadScopeLayers() restores the full array.
   const persistScopeLayerDeletion = useCallback(async (layerId: string) => {
     if (!blueprint?.id) return false
+    beginBlueprintSave()
     try {
       const backup = getBackupData()
       if (!backup) throw new Error('No local backup data available.')
       const result = await deleteOperationsBlueprintScopeLayer(backup, blueprint.id, layerId)
+      resolveBlueprintSaveFromPersistence(result)
       if (result.cloudSynced) {
         clearStaleSyncMessages()
         return true
@@ -3841,6 +3988,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       loadScopeLayers()
       return false
     } catch (e: any) {
+      failBlueprintSave(e?.message || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG)
       setActionMsg({
         type: 'error',
         text: e?.message || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
@@ -3848,7 +3996,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       loadScopeLayers()
       return false
     }
-  }, [blueprint?.id, clearStaleSyncMessages, loadScopeLayers, showSyncPausedNoticeOnce])
+  }, [beginBlueprintSave, blueprint?.id, clearStaleSyncMessages, failBlueprintSave, loadScopeLayers, resolveBlueprintSaveFromPersistence, showSyncPausedNoticeOnce])
 
   const clearDoc = useCallback(async () => {
     try {
@@ -5238,6 +5386,22 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       loadScopeLayers()
       return
     }
+    if (scopeLayerModal.mode === 'create') {
+      const createdLayer = nextLayers.find((layer) => !scopeLayers.some((existing) => existing.id === layer.id))
+      if (createdLayer) {
+        void trackPilotTelemetryEvent({
+          eventName: 'work_package_created',
+          module: 'blueprint',
+          feature: 'scope_layer',
+          objectId: createdLayer.id,
+          metadata: {
+            blueprintSetId: blueprint?.id ?? undefined,
+            projectId: blueprint?.projectId ?? undefined,
+            pageNumber: createdLayer.pageNumber ?? undefined,
+          },
+        })
+      }
+    }
 
     setSelectedForPackageIds(new Set())
     setActionMsg({
@@ -5334,11 +5498,14 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
             saved = true
             persistedLayers = result.packages
           } else {
+            beginBlueprintSave()
             const saveResult = await saveOperationsBlueprintScopeLayers(backup, blueprintSetId, result.packages)
             saved = saveResult.cloudSynced || saveResult.localSaved
             if (saveResult.cloudSynced) {
+              resolveBlueprintSaveFromPersistence(saveResult)
               clearStaleSyncMessages()
             } else if (saveResult.localSaved) {
+              resolveBlueprintSaveFromPersistence(saveResult)
               if (saveResult.warning) showSyncPausedNoticeOnce()
             } else {
               throw new Error(saveResult.error || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG)
@@ -5346,6 +5513,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
             persistedLayers = result.packages
           }
         } catch (e: any) {
+          if (String(e?.message || '').trim()) failBlueprintSave(e?.message || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG)
           if (scopeLayerScopedGenerationRef.current.get(blueprintSetId) === generation) {
             setActionMsg({
               type: 'warning',
@@ -5371,9 +5539,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         }
       })
   }, [
+    beginBlueprintSave,
     blueprint?.id,
     clearStaleSyncMessages,
+    failBlueprintSave,
     loadScopeLayers,
+    resolveBlueprintSaveFromPersistence,
     showSyncPausedNoticeOnce,
   ])
 
@@ -5426,16 +5597,20 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
           const liveLayers = sortWorkPackages(getOperationsBlueprintScopeLayers(backup || {}, blueprintSetId))
           const result = applyWorkPackageVisibility(liveLayers, layerId, visible, new Date().toISOString())
           if (!result.changed) throw new Error('The work package no longer exists.')
+          beginBlueprintSave()
           const saveResult = await saveOperationsBlueprintScopeLayers(backup, blueprintSetId, result.packages)
           saved = saveResult.cloudSynced || saveResult.localSaved
           if (saveResult.cloudSynced) {
+            resolveBlueprintSaveFromPersistence(saveResult)
             clearStaleSyncMessages()
           } else if (saveResult.localSaved) {
+            resolveBlueprintSaveFromPersistence(saveResult)
             if (saveResult.warning) showSyncPausedNoticeOnce()
           } else {
             throw new Error(saveResult.error || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG)
           }
         } catch (e: any) {
+          if (String(e?.message || '').trim()) failBlueprintSave(e?.message || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG)
           if (scopeLayerVisibilityGenerationRef.current.get(key) === generation) {
             setActionMsg({
               type: 'warning',
@@ -5455,9 +5630,12 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         }
       })
   }, [
+    beginBlueprintSave,
     blueprint?.id,
     clearStaleSyncMessages,
+    failBlueprintSave,
     loadScopeLayers,
+    resolveBlueprintSaveFromPersistence,
     showSyncPausedNoticeOnce,
   ])
 
@@ -5480,6 +5658,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   const persistReorderedScopeLayers = useCallback(async (nextLayers: BlueprintScopeLayer[]) => {
     if (!blueprint?.id) return
     const saveId = ++scopeLayerOrderSaveIdRef.current
+    beginBlueprintSave()
     isScopeLayerOrderSavingRef.current = true
     setIsScopeLayerOrderSaving(true)
     setScopeLayers(sortWorkPackages(nextLayers))
@@ -5489,6 +5668,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       const backup = getBackupData()
       if (!backup) throw new Error('No local backup data available.')
       const result = await saveOperationsBlueprintScopeLayers(backup, blueprint.id, nextLayers)
+      resolveBlueprintSaveFromPersistence(result)
       saved = result.cloudSynced || result.localSaved
       cloudSynced = result.cloudSynced
       if (result.cloudSynced) {
@@ -5502,6 +5682,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         })
       }
     } catch (e: any) {
+      failBlueprintSave(e?.message || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG)
       setActionMsg({
         type: 'error',
         text: e?.message || SCOPE_LAYER_CLOUD_SYNC_WARNING_MSG,
@@ -5531,8 +5712,11 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
   }, [
     blueprint?.id,
     clearStaleSyncMessages,
+    failBlueprintSave,
     loadScopeLayers,
+    resolveBlueprintSaveFromPersistence,
     showSyncPausedNoticeOnce,
+    beginBlueprintSave,
   ])
 
   const requestScopeLayerReorder = useCallback((params: {
@@ -5647,6 +5831,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     setAnimationRouteBuilder((previous) => previous && previous.sessionId === session.sessionId && previous.layerId === session.layerId
       ? { ...previous, saving: true, conflict: undefined }
       : previous)
+    beginBlueprintSave()
     try {
       const result = await saveOperationsBlueprintScopeLayerAnimationScene({
         blueprintSetId: blueprint.id,
@@ -5654,6 +5839,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         expectedBaseRevision: animationRouteBuilder.draft.expectedBaseRevision,
         nextScene: JSON.parse(JSON.stringify(conversion.scene)),
       })
+      resolveBlueprintSaveFromAnimation(result)
       const outcome = reconcilePackageAnimationRouteSave(animationRouteBuilder, result)
       if (outcome.status === 'saved') {
         const completionDecision = decidePackageAnimationRouteCompletion(animationRouteBuilderRef.current, saveIdentity, {
@@ -5715,6 +5901,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         setActionMsg({ type: 'error', text: outcome.conflict.message })
       }
     } catch (error: any) {
+      failBlueprintSave(error?.message || 'The route save could not be completed. Your draft is still open.')
       const completionDecision = decidePackageAnimationRouteCompletion(animationRouteBuilderRef.current, saveIdentity, {
         ...blueprintIdentityRef.current,
         currentOperationId: animationRouteSaveOperationIdRef.current,
@@ -5731,7 +5918,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       // Reset after success, conflict and failure alike so a deliberate retry is always allowed.
       animationRouteSaveGuardRef.current.end()
     }
-  }, [animationRouteBuilder, blueprint?.id, blueprint?.projectId])
+  }, [animationRouteBuilder, beginBlueprintSave, blueprint?.id, blueprint?.projectId, failBlueprintSave, resolveBlueprintSaveFromAnimation])
 
   const clearSavedPackageAnimationRoute = useCallback(async (clickedLayer: BlueprintScopeLayer) => {
     if (!blueprint?.id || !clickedLayer.animationScene) return
@@ -5751,6 +5938,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       projectId: blueprint.projectId,
       operationId,
     }
+    beginBlueprintSave()
     try {
       const result = await saveOperationsBlueprintScopeLayerAnimationScene({
         blueprintSetId: blueprint.id,
@@ -5758,6 +5946,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         expectedBaseRevision,
         nextScene: null,
       })
+      resolveBlueprintSaveFromAnimation(result)
       const outcome = reconcilePackageAnimationRouteSave(null, result)
       if (outcome.status === 'saved') {
         const completionDecision = decidePackageAnimationRouteCompletion(animationRouteBuilderRef.current, clearIdentity, {
@@ -5814,10 +6003,13 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
       if (completionDecision.closeCurrentBuilder) {
         setActionMsg({ type: 'error', text: outcome.conflict.message })
       }
+    } catch (error: any) {
+      failBlueprintSave(error?.message || 'Failed to clear animation route.')
+      setActionMsg({ type: 'error', text: error?.message || 'Failed to clear animation route.' })
     } finally {
       animationRouteSaveGuardRef.current.end()
     }
-  }, [animationRouteBuilder?.layerId, blueprint?.id, blueprint?.projectId])
+  }, [animationRouteBuilder?.layerId, beginBlueprintSave, blueprint?.id, blueprint?.projectId, failBlueprintSave, resolveBlueprintSaveFromAnimation])
 
   const reloadLatestPackageAnimationRoute = useCallback(() => {
     if (!animationRouteBuilder || !blueprint?.id) return
@@ -6148,14 +6340,19 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     // wall-clock time. See beginAnnotationMutation for the dirty-scope / reload-guard reasoning.
     const saveSequence = beginAnnotationMutation()
     const op = async (): Promise<boolean> => {
+      beginBlueprintSave()
       const before = cloneAnnotationForHistory(persistedAnnotationSnapshotsRef.current.get(annotationToPersist.id))
       try {
         const backup = getBackupData()
         if (!backup) throw new Error('No local backup data available.')
         const saveResult = await upsertOperationsBlueprintAnnotation(backup, annotationToPersist)
         if (saveResult.cloudSynced) {
+          trackBlueprintAnnotationTelemetry(annotationToPersist)
+          resolveBlueprintSaveFromPersistence(saveResult)
           clearStaleSyncMessages()
         } else if (saveResult.localSaved) {
+          trackBlueprintAnnotationTelemetry(annotationToPersist)
+          resolveBlueprintSaveFromPersistence(saveResult)
           // Always surface local-only — never silently claim success when cloud push
           // failed, was blocked, or returned without a warning payload.
           showSyncPausedNoticeOnce()
@@ -6181,6 +6378,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         if (isSyncBlockedMessage(msg)) {
           showSyncPausedNoticeOnce()
         } else {
+          failBlueprintSave(msg)
           console.error('[Blueprint] Annotation save failed — keeping optimistic annotation:', msg)
           setError(msg)
         }
@@ -6201,7 +6399,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     mutationQueueRef.current = mutationQueueRef.current.then(op)
     return mutationQueueRef.current
-  }, [beginAnnotationMutation, clearStaleSyncMessages, finishAnnotationMutation, onAnnotationsChanged, recordSuccessfulAnnotationMutation, showSyncPausedNoticeOnce])
+  }, [beginAnnotationMutation, beginBlueprintSave, clearStaleSyncMessages, failBlueprintSave, finishAnnotationMutation, onAnnotationsChanged, recordSuccessfulAnnotationMutation, resolveBlueprintSaveFromPersistence, showSyncPausedNoticeOnce])
 
   const assignableWireProfiles = useMemo(
     () => listAssignableActiveWireProfiles(String(blueprint?.projectId || ''), projectWireProfiles),
@@ -7317,14 +7515,19 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     const deleteSequence = beginAnnotationMutation()
     annotationMutationCoordinatorRef.current.markDeleted(annotationId, deleteSequence)
     const op = async (): Promise<boolean> => {
+      beginBlueprintSave()
       try {
         const backup = getBackupData()
         if (!backup) throw new Error('No local backup data available.')
         const saveResult = await deleteOperationsBlueprintAnnotation(backup, bpId, annotationId)
         if (saveResult.cloudSynced) {
+          resolveBlueprintSaveFromPersistence(saveResult)
           clearStaleSyncMessages()
         } else if (saveResult.localSaved && saveResult.warning) {
+          resolveBlueprintSaveFromPersistence(saveResult)
           showSyncPausedNoticeOnce()
+        } else if (saveResult.localSaved) {
+          resolveBlueprintSaveFromPersistence(saveResult)
         } else if (!saveResult.localSaved) {
           throw new Error(saveResult.error || 'Failed to delete annotation.')
         }
@@ -7351,6 +7554,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
         if (isSyncBlockedMessage(msg)) {
           showSyncPausedNoticeOnce()
         } else {
+          failBlueprintSave(msg)
           setError(msg)
         }
         loadAnnotations()
@@ -7361,7 +7565,7 @@ const getSafePdfPageNumber = useCallback((value: number | string | null | undefi
     }
     mutationQueueRef.current = mutationQueueRef.current.then(op)
     return mutationQueueRef.current
-  }, [beginAnnotationMutation, blueprint?.id, clearStaleSyncMessages, finishAnnotationMutation, loadAnnotations, onAnnotationsChanged, recordSuccessfulAnnotationMutation, showSyncPausedNoticeOnce])
+  }, [beginAnnotationMutation, beginBlueprintSave, blueprint?.id, clearStaleSyncMessages, failBlueprintSave, finishAnnotationMutation, loadAnnotations, onAnnotationsChanged, recordSuccessfulAnnotationMutation, resolveBlueprintSaveFromPersistence, showSyncPausedNoticeOnce])
 
   const removeAnnotationsAsSingleHistoryCommand = useCallback(async (
     annotationIds: string[],
@@ -10828,6 +11032,11 @@ const annotationPanelSizeClass =
           {syncNotice}
         </div>
       )}
+      {blueprintSaveState.kind !== 'unsaved' && (
+        <div className={`pointer-events-none absolute right-3 top-2 z-[100050] rounded-full border px-2.5 py-1 text-[11px] font-semibold shadow-lg ${getBlueprintSaveStateClassName(blueprintSaveState.tone)}`}>
+          {blueprintSaveState.label}
+        </div>
+      )}
 
       {/* Step 13B-QA7-R6: fullscreen overlay scroll handle. Absolute overlay on
           the fixed fullscreen root (so it never affects document width / fit
@@ -13981,7 +14190,7 @@ const annotationPanelSizeClass =
                         <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-200">{pageFilteredScopeLayers.length}{!scopeLayerShowAllPages && pageFilteredScopeLayers.length !== scopeLayers.length ? ` / ${scopeLayers.length}` : ''}</span>
                       </div>
                       <div className="mt-0.5 flex items-center justify-between gap-2">
-                        <div className="text-[10px] text-sky-200/60">{isScopeLayerOrderSaving ? 'Saving package order...' : 'Saved work packages for this viewer session. Drag the handle or use ↑/↓ to reorder.'}</div>
+                        <div className="text-[10px] text-sky-200/60">{isScopeLayerOrderSaving ? 'Saving package order...' : 'Work package order follows the current Blueprint save status. Drag the handle or use ↑/↓ to reorder.'}</div>
                         <ScopeLayerTotalsControls
                           onOpenProjectWireTotals={() => setProjectWireTotalsOpen(true)}
                           onOpenElectricalSymbolTotals={() => setElectricalSymbolTotalsOpen(true)}

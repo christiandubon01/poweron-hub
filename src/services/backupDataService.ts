@@ -41,6 +41,8 @@ import { getSettingsDataFieldNames, mergeRemoteSettingsIntoOutgoing, mergeSettin
 // backupDataService dynamically, so this static edge introduces no module cycle.
 import { mergeBlueprintAnnotationsById, mergeBlueprintQuickAccessWireProfileBindings, mergeBlueprintScopeLayersById, mergeBlueprintSetRecordsById, mergeBlueprintWireProfilesById, mergeOperationsBlueprintLibraryById } from './blueprintLibraryService'
 import { idbDelete, idbGet, idbSet } from './idbStorage'
+import { getDemoBackupData, persistDemoBackupData } from './demoDataService'
+import { isDemoRuntimeActive } from './demoModeSafety'
 
 const LEGACY_STORAGE_KEY = 'poweron_backup_data'
 const STORAGE_KEY = LEGACY_STORAGE_KEY
@@ -773,6 +775,9 @@ export function hasBackupData(userId = _activeTenantUserId): boolean {
 }
 
 export function getBackupData(userId = _activeTenantUserId): BackupData | null {
+  if (isDemoRuntimeActive()) {
+    return getDemoBackupData()
+  }
   try {
     const key = getEffectiveStorageKey(userId)
     const raw = localStorage.getItem(key)
@@ -906,6 +911,23 @@ export function saveBackupData(
   userId = _activeTenantUserId,
   options?: { notify?: boolean },
 ): void {
+  if (isDemoRuntimeActive()) {
+    try {
+      persistDemoBackupData(data)
+    } catch (err) {
+      const failure = err instanceof BackupStorageWriteError ? err : new BackupStorageWriteError(err)
+      console.error('[backupDataService] Failed to save demo state:', failure)
+      throw failure
+    }
+    if (options?.notify !== false) {
+      try {
+        window.dispatchEvent(new CustomEvent('poweron-data-saved'))
+      } catch {
+        /* ignore */
+      }
+    }
+    return
+  }
   try {
     const owned = userId ? attachTenantOwner(data, userId) : data
     const key = getEffectiveStorageKey(userId)
@@ -3599,6 +3621,13 @@ export function saveBackupDataAndSync(
   changedKey?: string,
   syncOptions?: SyncToSupabaseOptions,
 ): void {
+  if (isDemoRuntimeActive()) {
+    data._lastSavedAt = new Date().toISOString()
+    saveBackupData(data)
+    if (changedKey) markChanged(changedKey)
+    maybeAutoSnapshot('Demo data saved')
+    return
+  }
   data._lastSavedAt = new Date().toISOString()
   saveBackupData(data)
   if (changedKey) markChanged(changedKey)
@@ -3613,6 +3642,26 @@ export async function saveBackupDataAndSyncNow(
   changedKey?: string,
   syncOptions?: SyncToSupabaseOptions,
 ): Promise<SyncToSupabaseResult> {
+  if (isDemoRuntimeActive()) {
+    data._lastSavedAt = new Date().toISOString()
+    saveBackupData(data)
+    if (changedKey) markChanged(changedKey)
+    try {
+      maybeAutoSnapshot('Demo data saved')
+    } catch {
+      /* ignore */
+    }
+    return {
+      success: true,
+      merged: false,
+      blocked: false,
+      conflict: false,
+      fromDevice: null,
+      remoteSavedAt: data._lastSavedAt || null,
+      remoteUpdatedAt: null,
+      remoteDataLastSavedAt: data._lastSavedAt || null,
+    } as SyncToSupabaseResult
+  }
   data._lastSavedAt = new Date().toISOString()
   saveBackupData(data)
   if (changedKey) markChanged(changedKey)

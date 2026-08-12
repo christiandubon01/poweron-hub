@@ -28,10 +28,15 @@
 import { create } from 'zustand'
 import React, { createContext, useContext, useEffect } from 'react'
 import { getTemplate } from '@/config/templates/index'
+import {
+  DEMO_INDUSTRY_KEY,
+  DEMO_MODE_KEY,
+  getPersistedDemoIndustry,
+  loadPersistedDemoMode as loadPersistedDemoModeFlag,
+  resetDemoBackupStorage,
+} from '@/services/demoModeSafety'
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
-const DEMO_MODE_KEY = 'poweron-demo-mode'
-const DEMO_INDUSTRY_KEY = 'poweron_demo_industry'
 
 // ── Industry display name map ─────────────────────────────────────────────────
 export const INDUSTRY_LABELS: Record<string, string> = {
@@ -45,19 +50,11 @@ export const INDUSTRY_LABELS: Record<string, string> = {
 
 // ── Load persisted values ─────────────────────────────────────────────────────
 function loadPersistedDemoMode(): boolean {
-  try {
-    return localStorage.getItem(DEMO_MODE_KEY) === 'true'
-  } catch {
-    return false
-  }
+  return loadPersistedDemoModeFlag()
 }
 
 function loadPersistedDemoIndustry(): string {
-  try {
-    return localStorage.getItem(DEMO_INDUSTRY_KEY) || 'electrical'
-  } catch {
-    return 'electrical'
-  }
+  return getPersistedDemoIndustry()
 }
 
 // ── State shape ──────────────────────────────────────────────────────────────
@@ -83,6 +80,9 @@ interface DemoState {
 
   /** Disable demo mode */
   disableDemoMode: () => void
+
+  /** Reset demo data for the active industry back to baseline */
+  resetDemoData: () => void
 
   /** Called once by AppShell after mount to signal hydration is complete */
   setHasHydrated: () => void
@@ -138,6 +138,12 @@ export const useDemoStore = create<DemoState>((set, get) => ({
     try { window.dispatchEvent(new CustomEvent('poweron:demo-mode-changed', { detail: { isDemoMode: false } })) } catch { /* ignore */ }
   },
 
+  resetDemoData: () => {
+    const industry = get().currentIndustry || 'electrical'
+    resetDemoBackupStorage(industry)
+    try { window.dispatchEvent(new CustomEvent('poweron:demo-mode-reset', { detail: { industry } })) } catch { /* ignore */ }
+  },
+
   setIndustry: (industry: string) => {
     try { localStorage.setItem(DEMO_INDUSTRY_KEY, industry) } catch { /* ignore */ }
     set({ currentIndustry: industry })
@@ -185,11 +191,11 @@ export const useDemoStore = create<DemoState>((set, get) => ({
 export function useDemoMode() {
   const {
     isDemoMode, hasHydrated, toggleDemoMode, enableDemoMode, disableDemoMode,
-    currentIndustry, setIndustry, getDemoCompanyName, getDemoData,
+    resetDemoData, currentIndustry, setIndustry, getDemoCompanyName, getDemoData,
   } = useDemoStore()
   return {
     isDemoMode, hasHydrated, toggleDemoMode, enableDemoMode, disableDemoMode,
-    currentIndustry, setIndustry, getDemoCompanyName, getDemoData,
+    resetDemoData, currentIndustry, setIndustry, getDemoCompanyName, getDemoData,
   }
 }
 

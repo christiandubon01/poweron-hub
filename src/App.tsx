@@ -26,6 +26,7 @@ import { supabase } from '@/lib/supabase'
 import { useDemoStore, DemoProvider, INDUSTRY_LABELS } from '@/store/demoStore'
 import { ModeProvider } from '@/store/modeContext'
 import { useDemoLimits } from '@/hooks/useDemoLimits'
+import { isDemoRuntimeActive, isDemoUrlActive } from '@/services/demoModeSafety'
 
 // Lazy-loaded portals — don't import at module scope to avoid TDZ issues
 // Chunk-retry: reloads page if a stale chunk hash causes an import failure after deployment
@@ -147,6 +148,7 @@ function AuditGate({ children }: { children: React.ReactNode }) {
   const [auditStatus, setAuditStatus] = useState<AuditStatus>('idle')
 
   useEffect(() => {
+    if (isDemoRuntimeActive()) return
     const params = new URLSearchParams(window.location.search)
     const token = params.get('audit')
     if (!token) return
@@ -205,8 +207,7 @@ function DemoGate({ children }: { children: React.ReactNode }) {
   // We also call enableDemoMode() inside the lazy initializer so the
   // demoStore flag is set before AppShell's first paint — no amber-banner flash.
   const [isDemoUrl] = useState<boolean>(() => {
-    const params = new URLSearchParams(window.location.search)
-    const isDemoParam = params.get('demo') === 'true'
+    const isDemoParam = isDemoRuntimeActive()
     if (isDemoParam) {
       // Synchronously enable demo mode so AppShell sees isDemoMode=true on
       // its very first render (avoids a brief flash where the banner is missing).
@@ -431,6 +432,7 @@ export default function App() {
 
   // Boot the auth state machine on app mount
   useEffect(() => {
+    if (isDemoRuntimeActive()) return
     initialize()
   }, [initialize])
 

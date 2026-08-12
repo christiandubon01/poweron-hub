@@ -17,11 +17,13 @@ import EmployeeMyTasksPanel from '@/components/employee/EmployeeMyTasksPanel'
 import EmployeeSchedulePanel from '@/components/employee/EmployeeSchedulePanel'
 import EmployeeMyServiceCallsPanel from '@/components/employee/EmployeeMyServiceCallsPanel'
 import EmployeePortalBrandHeader from '@/components/employee/EmployeePortalBrandHeader'
+import { normalizeOrganizationIdentity } from '@/services/organizationIdentityService'
 
 interface EmployeeProfileSummary {
   display_name: string
   role: string
   org_name: string | null
+  logo_url: string | null
 }
 
 type EmployeePortalSection = 'clock' | 'my-time' | 'assignments' | 'service-calls' | 'schedule'
@@ -97,14 +99,17 @@ export function EmployeePortal() {
         }
 
         let orgName: string | null = null
+        let logoUrl: string | null = null
         const orgId = employerOrgId || data.org_id
         if (orgId) {
           const { data: orgData } = await supabase
             .from('organizations')
-            .select('name')
+            .select('name, settings')
             .eq('id', orgId)
             .maybeSingle()
-          orgName = orgData?.name ?? null
+          const identity = normalizeOrganizationIdentity(orgData as any)
+          orgName = identity.companyName || null
+          logoUrl = identity.logoDark || identity.logoLight || null
         }
 
         if (mounted) {
@@ -112,6 +117,7 @@ export function EmployeePortal() {
             display_name: data.display_name,
             role: data.role,
             org_name: orgName,
+            logo_url: logoUrl,
           })
         }
       } catch {
@@ -133,7 +139,10 @@ export function EmployeePortal() {
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between sticky top-0 z-10">
-        <EmployeePortalBrandHeader />
+        <EmployeePortalBrandHeader
+          companyName={profileSummary?.org_name}
+          logoUrl={profileSummary?.logo_url}
+        />
         <button
           type="button"
           onClick={handleSignOut}

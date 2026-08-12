@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { supabase } from '@/lib/supabase'
+import { isDemoRuntimeActive } from '@/services/demoModeSafety'
 import { getPageCount } from '@/services/blueprintExtractor'
 import { SCOPE_REGISTRY, type DataScope } from '@/services/scopeRegistry'
 import {
@@ -196,6 +197,9 @@ export async function uploadBlueprintPdfToStorage(params: {
   projectId: string
   orgId?: string | null
 }): Promise<{ storagePath: string }> {
+  if (isDemoRuntimeActive()) {
+    throw new Error('Blueprint PDF uploads are disabled in Demo Mode.')
+  }
   const { file, projectId } = params
 
   const { data: userData, error: userError } = await supabase.auth.getUser()
@@ -242,6 +246,7 @@ export async function uploadBlueprintPdfToStorage(params: {
 }
 
 export async function cleanupBlueprintStorageObject(storagePath: string): Promise<void> {
+  if (isDemoRuntimeActive()) return
   const cleanPath = String(storagePath || '').trim()
   if (!cleanPath) return
   try {
@@ -255,6 +260,9 @@ export async function cleanupBlueprintStorageObject(storagePath: string): Promis
 }
 
 export async function deleteBlueprintStorageObjectStrict(storagePath: string): Promise<void> {
+  if (isDemoRuntimeActive()) {
+    throw new Error('Blueprint storage deletion is disabled in Demo Mode.')
+  }
   const cleanPath = String(storagePath || '').trim()
   if (!cleanPath) {
     throw new Error('Missing storagePath for blueprint file deletion.')
@@ -528,6 +536,9 @@ export async function mergeDetectedSheetIndexRows(
 }
 
 export async function getBlueprintSignedUrl(storagePath: string, expiresIn = 900): Promise<string> {
+  if (isDemoRuntimeActive()) {
+    throw new Error('Live blueprint storage is unavailable in Demo Mode.')
+  }
   const cleanPath = String(storagePath || '').trim()
   if (!cleanPath) {
     throw new Error('Missing blueprint storage path.')

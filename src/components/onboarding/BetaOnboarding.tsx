@@ -21,7 +21,7 @@
  *   - Loads industry template seed via window event
  */
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   Zap, Wrench, Building2, Stethoscope, Package, HardHat,
   ChevronRight, ChevronLeft, CheckCircle2, Sparkles, Bot,
@@ -31,6 +31,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { getTemplate } from '@/config/templates/index'
 import { authedJsonHeaders } from '@/services/authedFetch'
+import { trackPilotTelemetryEvent } from '@/services/pilotTelemetryClient'
 
 // ── NEXUS Voices (10 curated) ─────────────────────────────────────────────────
 
@@ -177,6 +178,7 @@ interface BetaOnboardingProps {
 
 export default function BetaOnboarding({ onComplete }: BetaOnboardingProps) {
   const { profile } = useAuth()
+  const onboardingStartedRef = useRef(false)
 
   const [step, setStep]               = useState(0)
   const [saving, setSaving]           = useState(false)
@@ -198,6 +200,17 @@ export default function BetaOnboarding({ onComplete }: BetaOnboardingProps) {
 
   // Step 5
   const [aiName, setAiName]           = useState('NEXUS')
+
+  useEffect(() => {
+    if (!profile?.org_id || onboardingStartedRef.current) return
+    onboardingStartedRef.current = true
+    void trackPilotTelemetryEvent({
+      eventName: 'onboarding_started',
+      module: 'onboarding',
+      feature: 'beta_onboarding',
+      objectId: profile.org_id,
+    })
+  }, [profile?.org_id])
 
   // ── Voice helpers ───────────────────────────────────────────────────────────
 
@@ -334,6 +347,16 @@ export default function BetaOnboarding({ onComplete }: BetaOnboardingProps) {
           signupTimestamp: profile?.created_at ?? new Date().toISOString(),
         }),
       }).catch((err) => console.warn('[BetaOnboarding] notifyNewBetaUser failed:', err))
+
+      void trackPilotTelemetryEvent({
+        eventName: 'onboarding_completed',
+        module: 'onboarding',
+        feature: 'beta_onboarding',
+        objectId: orgId,
+        metadata: {
+          industry: industry?.key ?? undefined,
+        },
+      })
 
       onComplete()
     } catch (err) {

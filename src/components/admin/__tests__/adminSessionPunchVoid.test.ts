@@ -302,12 +302,12 @@ describe('migration 106 — one-time existing ghost cleanup', () => {
 
 // ── 7. Migration guards ───────────────────────────────────────────────────────
 
-describe('migration guard — allow 106 reject 107+', () => {
+describe('migration guard — allow 118 reject 119+', () => {
   it('migration 106 exists', () => {
     expect(existsSync(mig106Path)).toBe(true)
   })
 
-  it('allows 100–106 and rejects 107+', () => {
+  it('allows 100–118 and rejects 119+', () => {
     const migrations = readdirSync(migDir)
     const beyond = migrations
       .filter((name: string) => /^1\d\d_/.test(name))
@@ -328,11 +328,15 @@ describe('migration guard — allow 106 reject 107+', () => {
         !name.startsWith('112_') &&
         !name.startsWith('113_') &&
         !name.startsWith('114_') &&
-        !name.startsWith('115_') &&
-        !name.startsWith('116_'),
+          !name.startsWith('115_') &&
+        !name.startsWith('116_') &&
+        !name.startsWith('117_') &&
+        !name.startsWith('118_'),
       )
     expect(beyond).toEqual([])
     expect(migrations).toContain('106_session_aware_admin_punch_void.sql')
+    expect(migrations).toContain('117_pilot_telemetry.sql')
+    expect(migrations).toContain('118_pilot_telemetry_hardening.sql')
   })
 
   it('does not modify migrations 097–105 content via this file', () => {

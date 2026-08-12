@@ -70,6 +70,11 @@ import {
   type HardwareIndexData,
 } from '@/services/solarTraining/SolarEstimateSettings'
 import { authedJsonHeaders } from '@/services/authedFetch'
+import {
+  loadOrganizationIdentity,
+  saveOrganizationIdentity,
+  type OrganizationIdentity,
+} from '@/services/organizationIdentityService'
 
 // ── Settings Hub visibility persistence (Phase R1) ──────────────────────────
 const SETTINGS_HUB_VISIBILITY_KEY = 'poweron_settings_hub_visibility_v1'
@@ -1205,6 +1210,7 @@ export default function V15rSettingsPanel() {
 
   // Auth (for owner role check)
   const { isOwner, user, profile: authProfile } = useAuth()
+  const orgId = authProfile?.org_id ? String(authProfile.org_id) : ''
 
   const [showBetaInviteModal, setShowBetaInviteModal] = useState(false)
   const [, setHideTick] = useState(0)
@@ -1216,9 +1222,16 @@ export default function V15rSettingsPanel() {
   const [scoutScanHistoryVisible, setScoutScanHistoryVisible] = useState(SCOUT_SCAN_HISTORY_PAGE_SIZE)
   const [proposalQueueKey, setProposalQueueKey] = useState(0)
   // Demo Mode store
-  const { isDemoMode, enableDemoMode, disableDemoMode } = useDemoStore()
+  const { isDemoMode, enableDemoMode, disableDemoMode, resetDemoData } = useDemoStore()
   const [showDemoConfirm, setShowDemoConfirm] = useState(false)
   const [showExitDemoModal, setShowExitDemoModal] = useState(false)
+
+  async function exitDemoModeSafely() {
+    disableDemoMode()
+    try { localStorage.removeItem('poweron-demo-mode') } catch { /* ignore */ }
+    try { await supabase.auth.signOut() } catch { /* ignore */ }
+    window.location.assign(window.location.pathname)
+  }
   const [gcalUrlDraft, setGcalUrlDraft] = useState(settings.gcalUrl || '')
   // ── Settings Hub visibility (Phase R1) ────────────────────────────────────
   // Persisted via localStorage key SETTINGS_HUB_VISIBILITY_KEY.
@@ -1467,6 +1480,60 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
     forceUpdate()
   }
 }, [forceUpdate])
+
+  const syncOrgIdentityIntoBackup = useCallback((identity: OrganizationIdentity) => {
+    const data = getBackupData()
+    if (!data) return
+
+    let changed = false
+    const applyField = (key: string, value: string, overwriteWhenEmpty = false) => {
+      if (!value && !overwriteWhenEmpty) return
+      if ((data.settings as any)[key] === value) return
+      ;(data.settings as any)[key] = value
+      changed = true
+    }
+
+    applyField('company', identity.companyName, true)
+    applyField('license', identity.licenseNumber)
+    applyField('supportEmail', identity.supportEmail)
+    applyField('supportPhone', identity.supportPhone)
+    applyField('businessAddress', identity.address)
+    applyField('orgTimezone', identity.timezone)
+    applyField('logoLight', identity.logoLight)
+    applyField('logoDark', identity.logoDark)
+
+    if (changed) {
+      persist(data, ['company', 'license', 'supportEmail', 'supportPhone', 'businessAddress', 'orgTimezone', 'logoLight', 'logoDark'])
+    }
+  }, [persist])
+
+  const saveOrgIdentityPatch = useCallback(async (patch: Partial<OrganizationIdentity>) => {
+    if (!orgId || !isOwner) return
+    try {
+      const saved = await saveOrganizationIdentity(orgId, patch)
+      if (saved) syncOrgIdentityIntoBackup(saved)
+    } catch (err) {
+      console.warn('[Settings] saveOrganizationIdentity failed:', err)
+    }
+  }, [isOwner, orgId, syncOrgIdentityIntoBackup])
+
+  useEffect(() => {
+    if (!orgId || !isOwner) return
+    let cancelled = false
+
+    void loadOrganizationIdentity(orgId)
+      .then((identity) => {
+        if (!identity || cancelled) return
+        syncOrgIdentityIntoBackup(identity)
+      })
+      .catch((err) => {
+        console.warn('[Settings] loadOrganizationIdentity failed:', err)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isOwner, orgId, syncOrgIdentityIntoBackup])
 
   const snapshots = useMemo(() => {
     if (!backup) return []
@@ -1739,10 +1806,11 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
           data.settings.logoLight = base64
         }
         persist(data, [type === 'dark' ? 'logoDark' : 'logoLight'])
+        void saveOrgIdentityPatch(type === 'dark' ? { logoDark: base64 } : { logoLight: base64 })
       }
     }
     reader.readAsDataURL(file)
-  }, [persist])
+  }, [persist, saveOrgIdentityPatch])
 
   const hasWideExpandedPanel =
     (isAdminOwner && showAdminTools) ||
@@ -2231,6 +2299,7 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
                       persist(data, ['company'])
                     }
                   }}
+                  onBlur={(e) => { void saveOrgIdentityPatch({ companyName: e.target.value }) }}
                   className="w-full px-3 py-2 border rounded text-sm focus:border-blue-500 focus:outline-none theme-input"
                 />
               </div>
@@ -2264,6 +2333,75 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
                       persist(data, ['license'])
                     }
                   }}
+                  onBlur={(e) => { void saveOrgIdentityPatch({ licenseNumber: e.target.value }) }}
+                  className="w-full px-3 py-2 border rounded text-sm focus:border-blue-500 focus:outline-none theme-input"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Support Email</label>
+                <input
+                  type="email"
+                  value={settings.supportEmail || ''}
+                  onChange={(e) => {
+                    const data = getBackupData()
+                    if (data) {
+                      pushState(data)
+                      ;(data.settings as any).supportEmail = e.target.value
+                      persist(data, ['supportEmail'])
+                    }
+                  }}
+                  onBlur={(e) => { void saveOrgIdentityPatch({ supportEmail: e.target.value }) }}
+                  className="w-full px-3 py-2 border rounded text-sm focus:border-blue-500 focus:outline-none theme-input"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Support Phone</label>
+                <input
+                  type="text"
+                  value={settings.supportPhone || ''}
+                  onChange={(e) => {
+                    const data = getBackupData()
+                    if (data) {
+                      pushState(data)
+                      ;(data.settings as any).supportPhone = e.target.value
+                      persist(data, ['supportPhone'])
+                    }
+                  }}
+                  onBlur={(e) => { void saveOrgIdentityPatch({ supportPhone: e.target.value }) }}
+                  className="w-full px-3 py-2 border rounded text-sm focus:border-blue-500 focus:outline-none theme-input"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Timezone</label>
+                <input
+                  type="text"
+                  value={settings.orgTimezone || ''}
+                  onChange={(e) => {
+                    const data = getBackupData()
+                    if (data) {
+                      pushState(data)
+                      ;(data.settings as any).orgTimezone = e.target.value
+                      persist(data, ['orgTimezone'])
+                    }
+                  }}
+                  onBlur={(e) => { void saveOrgIdentityPatch({ timezone: e.target.value }) }}
+                  className="w-full px-3 py-2 border rounded text-sm focus:border-blue-500 focus:outline-none theme-input"
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Business Address</label>
+                <input
+                  type="text"
+                  value={settings.businessAddress || ''}
+                  onChange={(e) => {
+                    const data = getBackupData()
+                    if (data) {
+                      pushState(data)
+                      ;(data.settings as any).businessAddress = e.target.value
+                      persist(data, ['businessAddress'])
+                    }
+                  }}
+                  onBlur={(e) => { void saveOrgIdentityPatch({ address: e.target.value }) }}
                   className="w-full px-3 py-2 border rounded text-sm focus:border-blue-500 focus:outline-none theme-input"
                 />
               </div>
@@ -3675,6 +3813,15 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
                     </p>
                   </div>
                   <button
+                    onClick={() => {
+                      resetDemoData()
+                      window.location.reload()
+                    }}
+                    className="text-xs text-amber-300 hover:text-amber-100 font-semibold px-2 py-1 rounded transition-colors"
+                  >
+                    Reset
+                  </button>
+                  <button
                     onClick={() => setShowExitDemoModal(true)}
                     className="text-xs text-amber-300 hover:text-amber-100 font-semibold px-2 py-1 rounded transition-colors"
                   >
@@ -3765,9 +3912,7 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
                   </button>
                   <button
                     onClick={() => {
-                      disableDemoMode()
-                      try { localStorage.removeItem('poweron-demo-mode') } catch { /* ignore */ }
-                      window.location.reload()
+                      void exitDemoModeSafely()
                     }}
                     style={{
                       flex: 1,

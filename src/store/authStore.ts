@@ -26,6 +26,9 @@ import { hasBackupData, createEmptyBackup, saveBackupData, loadFromSupabase, set
 import type { BackupHydrationResult } from '@/services/backupDataService'
 import { completeDeferredHydration } from '@/services/postPinHydrationService'
 import { logAction } from '@/services/security/AgentSafetySystem'
+import { resolveProductRedirectUrl } from '@/services/organizationIdentityService'
+import { isDemoRuntimeActive } from '@/services/demoModeSafety'
+import { trackPilotTelemetryEvent } from '@/services/pilotTelemetryClient'
 
 // ── Role system ───────────────────────────────────────────────────────────────
 // owner    → the business owner; sees the full app (V15rLayout + all panels)
@@ -38,6 +41,10 @@ const ROLE_STORAGE_KEY = 'poweron-hub-role'
 const OWNER_ID_STORAGE_KEY = 'poweron-hub-owner-id'
 const EMPLOYEE_PROFILE_ID_KEY = 'poweron-hub-employee-profile-id'
 const EMPLOYER_ORG_ID_KEY = 'poweron-hub-employer-org-id'
+const MAGIC_LINK_REDIRECT_URL = resolveProductRedirectUrl(
+  import.meta.env.VITE_APP_BASE_URL as string | undefined,
+  typeof window !== 'undefined' ? window.location.origin : undefined,
+)
 
 interface ResolvedPortalRole {
   role: UserRole
@@ -438,6 +445,14 @@ function registerAuthListener() {
       return
     }
     if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+      if (event === 'SIGNED_IN') {
+        void trackPilotTelemetryEvent({
+          eventName: 'login_success',
+          module: 'auth',
+          feature: 'magic_link',
+          metadata: { source: 'interactive_session_entry' },
+        })
+      }
       const { status } = useAuthStore.getState()
       if (status === 'unauthenticated' || status === 'loading') {
         useAuthStore.getState().initialize()
@@ -482,6 +497,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   // Called once on app mount. Determines which screen to show.
  
    initialize: async () => {
+    if (isDemoRuntimeActive()) {
+      setHydrating(false)
+      clearActiveTenantUser()
+      useAuthStore.setState({
+        status: 'unauthenticated',
+        user: null,
+        profile: null,
+        appSession: null,
+        tenantDataReady: false,
+        tenantUserId: null,
+        error: null,
+      })
+      return
+    }
+
     // Register auth state listener on first initialize (lazy — avoids TDZ in prod)
     registerAuthListener()
 
@@ -780,7 +810,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email,
-        options: { emailRedirectTo: 'https://app.poweronsolutionsllc.com' },
+        options: { emailRedirectTo: MAGIC_LINK_REDIRECT_URL },
       })
       if (error) throw error
     } catch (err: unknown) {

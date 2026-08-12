@@ -21,6 +21,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Brain, RefreshCw, ChevronDown, ChevronUp, Clock, Zap, ShieldAlert } from 'lucide-react'
 import { authedJsonHeaders } from '@/services/authedFetch'
+import { fetchFounderPilotReport, logFounderSupportIncident, setOrganizationPilotClassification } from '@/services/pilotTelemetryClient'
+import { supabase } from '@/lib/supabase'
 
 // ─── Agent Seed Data ───────────────────────────────────────────────────────────
 
@@ -349,11 +351,85 @@ const TIER_LABELS: Record<number, string> = {
 export default function AdminToolsView() {
   const [lastRefresh] = useState<string>(new Date().toISOString())
   const tiers = [1, 2, 3, 4, 5]
+  const [report, setReport] = useState<any>(null)
+  const [reportLoading, setReportLoading] = useState(true)
+  const [reportError, setReportError] = useState<string | null>(null)
+  const [supportOrgId, setSupportOrgId] = useState('')
+  const [supportCategory, setSupportCategory] = useState('onboarding')
+  const [supportNote, setSupportNote] = useState('')
+  const [supportMinutes, setSupportMinutes] = useState('')
+  const [supportStatus, setSupportStatus] = useState<string | null>(null)
+  const [classificationOrgId, setClassificationOrgId] = useState('')
+  const [classificationValue, setClassificationValue] = useState<'customer_zero' | 'design_partner' | 'normal'>('design_partner')
+  const [classificationStatus, setClassificationStatus] = useState<string | null>(null)
+  const [isFounder, setIsFounder] = useState(false)
 
   function fmtTimestamp(iso: string) {
     try {
       return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     } catch { return iso }
+  }
+
+  const loadReport = useCallback(async () => {
+    setReportLoading(true)
+    setReportError(null)
+    try {
+      setReport(await fetchFounderPilotReport())
+    } catch (error: any) {
+      setReportError(error?.message || 'Pilot report unavailable.')
+    } finally {
+      setReportLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      const email = String(data?.user?.email || '').trim().toLowerCase()
+      const founder = String(import.meta.env.VITE_ADMIN_EMAIL || '').trim().toLowerCase()
+      setIsFounder(Boolean(email && founder && email === founder))
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!isFounder) {
+      setReportLoading(false)
+      return
+    }
+    void loadReport()
+  }, [isFounder, loadReport])
+
+  async function handleSupportSubmit(event: React.FormEvent) {
+    event.preventDefault()
+    setSupportStatus(null)
+    const result = await logFounderSupportIncident({
+      organizationId: supportOrgId,
+      category: supportCategory,
+      note: supportNote,
+      minutesSpent: supportMinutes ? Number(supportMinutes) : null,
+    })
+    if (!result.ok) {
+      setSupportStatus(result.error || 'Support incident failed.')
+      return
+    }
+    setSupportStatus('Support incident recorded.')
+    setSupportNote('')
+    setSupportMinutes('')
+    await loadReport()
+  }
+
+  async function handleClassificationSubmit(event: React.FormEvent) {
+    event.preventDefault()
+    setClassificationStatus(null)
+    const result = await setOrganizationPilotClassification({
+      organizationId: classificationOrgId,
+      classification: classificationValue,
+    })
+    if (!result.ok) {
+      setClassificationStatus(result.error || 'Classification update failed.')
+      return
+    }
+    setClassificationStatus('Classification updated.')
+    await loadReport()
   }
 
   return (
@@ -395,6 +471,144 @@ export default function AdminToolsView() {
 
       {/* Agent tiers */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+        {isFounder ? (
+          <div style={{
+            border: '1px solid rgba(16,185,129,0.2)',
+            borderRadius: 12,
+            padding: 16,
+            backgroundColor: 'rgba(16,185,129,0.05)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 16, color: '#f9fafb' }}>Pilot Telemetry</h2>
+                <p style={{ margin: '6px 0 0', fontSize: 12, color: '#9ca3af' }}>
+                  Founder-only cross-org reporting for the August 12, 2026 pilot cohort.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void loadReport()}
+                style={{
+                  border: '1px solid rgba(148,163,184,0.3)',
+                  borderRadius: 8,
+                  background: 'transparent',
+                  color: '#e5e7eb',
+                  padding: '8px 12px',
+                  cursor: 'pointer',
+                }}
+              >
+                Refresh Report
+              </button>
+            </div>
+
+            {reportError && <div style={{ color: '#fca5a5', fontSize: 12, marginBottom: 12 }}>{reportError}</div>}
+            {reportLoading && <div style={{ color: '#9ca3af', fontSize: 12, marginBottom: 12 }}>Loading pilot telemetry...</div>}
+
+            {report?.summary && (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: 10,
+                marginBottom: 16,
+              }}>
+                {[
+                  ['Pilot orgs', report.summary.totalPilotOrganizations],
+                  ['Activated orgs', report.summary.activatedOrganizations],
+                  ['Weekly active orgs', report.summary.weeklyActiveOrganizations],
+                  ['Weekly active users', report.summary.weeklyActiveUsers],
+                ].map(([label, value]) => (
+                  <div key={String(label)} style={{ border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 12, backgroundColor: 'rgba(15,23,42,0.5)' }}>
+                    <div style={{ color: '#94a3b8', fontSize: 11 }}>{label}</div>
+                    <div style={{ color: '#f8fafc', fontSize: 22, fontWeight: 700, marginTop: 4 }}>{String(value)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {Array.isArray(report?.organizations) && report.organizations.length > 0 && (
+              <div style={{ display: 'grid', gap: 10, marginBottom: 16 }}>
+                {report.organizations.map((org: any) => (
+                  <div key={org.organizationId} style={{ border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 12, backgroundColor: 'rgba(15,23,42,0.45)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                      <div>
+                        <div style={{ color: '#f8fafc', fontSize: 14, fontWeight: 700 }}>{org.organizationName}</div>
+                        <div style={{ color: '#94a3b8', fontSize: 11 }}>{org.classification} · {org.activated ? `activated in ${org.minutesToFirstValue ?? 'n/a'} min` : 'not activated yet'}</div>
+                      </div>
+                      <div style={{ color: '#cbd5e1', fontSize: 11 }}>
+                        Projects {org.projectsCreated} · Estimates {org.estimatesCreated} · Sent {org.estimatesSent}
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 8, color: '#cbd5e1', fontSize: 11 }}>
+                      Employees invited {org.employeesInvited} · activated {org.employeesActivated} · portal activity {org.employeePortalActivityCount}
+                    </div>
+                    <div style={{ marginTop: 6, color: '#cbd5e1', fontSize: 11 }}>
+                      Blueprint opens {org.blueprintOpenCount} · measurements {org.blueprintMeasurementCount} · paths {org.circuitPathCount} · arcs {org.circuitArcCount} · packages {org.workPackageCount}
+                    </div>
+                    <div style={{ marginTop: 6, color: '#cbd5e1', fontSize: 11 }}>
+                      Feature errors {org.featureErrorCount} · support incidents {org.founderSupportIncidentCount} ({org.founderSupportMinutes} min)
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <form onSubmit={handleClassificationSubmit} style={{ display: 'grid', gap: 8, marginBottom: 16 }}>
+              <div style={{ color: '#f8fafc', fontSize: 13, fontWeight: 600 }}>Pilot Organization Classification</div>
+              <select value={classificationOrgId} onChange={(event) => setClassificationOrgId(event.target.value)} style={{ borderRadius: 8, padding: 10, backgroundColor: '#0f172a', color: '#e5e7eb', border: '1px solid rgba(148,163,184,0.25)' }}>
+                <option value="">Select organization</option>
+                {(report?.allOrganizations ?? []).map((org: any) => (
+                  <option key={org.organizationId} value={org.organizationId}>{org.organizationName}</option>
+                ))}
+              </select>
+              <select value={classificationValue} onChange={(event) => setClassificationValue(event.target.value as 'customer_zero' | 'design_partner' | 'normal')} style={{ borderRadius: 8, padding: 10, backgroundColor: '#0f172a', color: '#e5e7eb', border: '1px solid rgba(148,163,184,0.25)' }}>
+                <option value="design_partner">design_partner</option>
+                <option value="customer_zero">customer_zero</option>
+                <option value="normal">normal</option>
+              </select>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <button type="submit" disabled={!classificationOrgId} style={{ borderRadius: 8, padding: '10px 14px', backgroundColor: classificationOrgId ? '#38bdf8' : '#334155', color: '#0f172a', border: 'none', fontWeight: 700, cursor: classificationOrgId ? 'pointer' : 'not-allowed' }}>
+                  Save Classification
+                </button>
+                {classificationStatus && <span style={{ color: classificationStatus.includes('updated') ? '#86efac' : '#fca5a5', fontSize: 12 }}>{classificationStatus}</span>}
+              </div>
+            </form>
+
+            <form onSubmit={handleSupportSubmit} style={{ display: 'grid', gap: 8 }}>
+              <div style={{ color: '#f8fafc', fontSize: 13, fontWeight: 600 }}>Founder Support Incident</div>
+              <select value={supportOrgId} onChange={(event) => setSupportOrgId(event.target.value)} style={{ borderRadius: 8, padding: 10, backgroundColor: '#0f172a', color: '#e5e7eb', border: '1px solid rgba(148,163,184,0.25)' }}>
+                <option value="">Select organization</option>
+                {(report?.allOrganizations ?? []).map((org: any) => (
+                  <option key={org.organizationId} value={org.organizationId}>{org.organizationName}</option>
+                ))}
+              </select>
+              <select value={supportCategory} onChange={(event) => setSupportCategory(event.target.value)} style={{ borderRadius: 8, padding: 10, backgroundColor: '#0f172a', color: '#e5e7eb', border: '1px solid rgba(148,163,184,0.25)' }}>
+                {['onboarding', 'login/auth', 'employee', 'blueprint', 'estimate', 'project', 'data/sync', 'bug', 'how-to', 'other'].map((category) => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+              <input value={supportMinutes} onChange={(event) => setSupportMinutes(event.target.value)} placeholder="Minutes spent (optional)" style={{ borderRadius: 8, padding: 10, backgroundColor: '#0f172a', color: '#e5e7eb', border: '1px solid rgba(148,163,184,0.25)' }} />
+              <textarea value={supportNote} onChange={(event) => setSupportNote(event.target.value)} placeholder="Short non-sensitive note" rows={3} style={{ borderRadius: 8, padding: 10, backgroundColor: '#0f172a', color: '#e5e7eb', border: '1px solid rgba(148,163,184,0.25)' }} />
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <button type="submit" disabled={!supportOrgId} style={{ borderRadius: 8, padding: '10px 14px', backgroundColor: supportOrgId ? '#10b981' : '#334155', color: '#0f172a', border: 'none', fontWeight: 700, cursor: supportOrgId ? 'pointer' : 'not-allowed' }}>
+                  Record Incident
+                </button>
+                {supportStatus && <span style={{ color: supportStatus.includes('recorded') ? '#86efac' : '#fca5a5', fontSize: 12 }}>{supportStatus}</span>}
+              </div>
+            </form>
+          </div>
+        ) : (
+          <div style={{
+            border: '1px solid rgba(248,113,113,0.25)',
+            borderRadius: 12,
+            padding: 16,
+            backgroundColor: 'rgba(127,29,29,0.18)',
+            color: '#fecaca',
+            fontSize: 12,
+          }}>
+            Pilot telemetry reporting is founder-only and stays behind the secure server report boundary.
+          </div>
+        )}
+
         {tiers.map(tier => {
           const tierAgents = SEED_AGENTS.filter(a => a.tier === tier)
           const tierColor = TIER_COLORS[tier]

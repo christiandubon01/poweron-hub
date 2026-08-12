@@ -83,7 +83,9 @@ function statusPill(status: 'active' | 'archived') {
 export default function BlueprintAI() {
   const backup = useMemo(() => getBackupData() || { projects: [], settings: {}, blueprintSummaries: {} }, [])
   const projects = Array.isArray(backup?.projects) ? backup.projects : []
-  const orgId = backup?.settings?.orgId || 'local'
+  const orgId = typeof backup?.settings?.orgId === 'string' && backup.settings.orgId.trim() && backup.settings.orgId !== 'local'
+    ? backup.settings.orgId.trim()
+    : null
 
   const [library, setLibrary] = useState<BlueprintLibraryItem[]>(() => getOperationsBlueprintLibrary(backup))
   const [selectedId, setSelectedId] = useState<string>(() => loadBlueprintActiveId(getOperationsBlueprintLibrary(backup)))

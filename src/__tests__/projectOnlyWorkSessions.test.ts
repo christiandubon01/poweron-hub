@@ -526,10 +526,10 @@ describe('migration guard', () => {
     expect(existsSync(join(migDir, '100_project_only_work_sessions.sql'))).toBe(true)
   })
 
-  it('no migrations beyond 106 exist', () => {
+  it('no migrations beyond 118 exist', () => {
     const { readdirSync } = require('node:fs')
     const migrations = readdirSync(migDir)
-    // Allows 100_–106_ (project-only through session-aware admin void)
+    // Allows 100_–118_ (project-only through COMM telemetry hardening)
     const beyondExpected = migrations.filter((name: string) => /^1\d\d_/.test(name))
       .filter((name: string) =>
         !name.startsWith('100_') &&
@@ -548,8 +548,12 @@ describe('migration guard', () => {
         !name.startsWith('113_') &&
         !name.startsWith('114_') &&
         !name.startsWith('115_') &&
-        !name.startsWith('116_')
+        !name.startsWith('116_') &&
+        !name.startsWith('117_') &&
+        !name.startsWith('118_')
       )
+    expect(migrations).toContain('117_pilot_telemetry.sql')
+    expect(migrations).toContain('118_pilot_telemetry_hardening.sql')
     expect(beyondExpected).toEqual([])
   })
 })

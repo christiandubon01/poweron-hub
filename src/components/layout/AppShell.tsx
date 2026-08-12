@@ -16,6 +16,7 @@ import { getBackupData } from '@/services/backupDataService'
 import { useReadOnly } from '@/contexts/ReadOnlyContext'
 import { useDemoStore } from '@/store/demoStore'
 import { useUIStore } from '@/store/uiStore'
+import { supabase } from '@/lib/supabase'
 import Watermark from '@/components/Watermark'
 import ConclusionCards from '@/components/ConclusionCards'
 import ProactiveAlertCards from '@/components/ProactiveAlertCards'
@@ -452,6 +453,13 @@ export function AppShell({ children }: AppShellProps) {
       estimated_margin?: number;
     };
   } | null>(null)
+
+  async function exitDemoModeSafely() {
+    disableDemoMode()
+    try { localStorage.removeItem('poweron-demo-mode') } catch { /* ignore */ }
+    try { await supabase.auth.signOut() } catch { /* ignore */ }
+    window.location.assign(window.location.pathname)
+  }
 
   let profile = null
   let authRole: string | null = null
@@ -1278,9 +1286,7 @@ export function AppShell({ children }: AppShellProps) {
               </button>
               <button
                 onClick={() => {
-                  disableDemoMode()
-                  try { localStorage.removeItem('poweron-demo-mode') } catch { /* ignore */ }
-                  window.location.reload()
+                  void exitDemoModeSafely()
                 }}
                 style={{
                   flex: 1,

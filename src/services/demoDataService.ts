@@ -20,12 +20,29 @@ import type {
   BackupSettings,
   BackupWeeklyData,
 } from './backupDataService'
+import { getActiveDemoIndustry, getDemoBackupStorageKey } from '@/services/demoModeSafety'
+import { getTemplate } from '@/config/templates/index'
 
 // ── Placeholder identity ─────────────────────────────────────────────────────
 
 export const DEMO_COMPANY  = 'Pacific Coast Electric LLC'
 export const DEMO_OWNER    = 'Mike Thompson'
 export const DEMO_LICENSE  = 'C-10 #9876543'
+
+function cloneDemoData<T>(value: T): T {
+  if (typeof structuredClone === 'function') return structuredClone(value)
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+export function getDemoCompanyName(): string {
+  const industry = getActiveDemoIndustry()
+  if (!industry || industry === 'electrical') return DEMO_COMPANY
+  try {
+    return getTemplate(industry)?.demoCompanyName ?? DEMO_COMPANY
+  } catch {
+    return DEMO_COMPANY
+  }
+}
 
 // ── Demo KPI overrides (used directly in header bar) ────────────────────────
 // These match the spec target: Pipeline $105k, Paid $36k, Exposure $27k,
@@ -821,6 +838,7 @@ function makeDemoLogs(): any[] {
 // ── Main export: getDemoBackupData() ─────────────────────────────────────────
 
 let _cachedDemoData: BackupData | null = null
+let _cachedDemoStorageKey: string | null = null
 
 /**
  * Returns a fully-shaped BackupData object with generic contractor placeholders.
@@ -828,9 +846,22 @@ let _cachedDemoData: BackupData | null = null
  * Never writes to localStorage or Supabase.
  */
 export function getDemoBackupData(): BackupData {
-  if (_cachedDemoData) return _cachedDemoData
+  const storageKey = getDemoBackupStorageKey()
+  if (_cachedDemoData && _cachedDemoStorageKey === storageKey) return _cachedDemoData
+
+  try {
+    const raw = localStorage.getItem(storageKey)
+    if (raw) {
+      _cachedDemoData = JSON.parse(raw) as BackupData
+      _cachedDemoStorageKey = storageKey
+      return _cachedDemoData
+    }
+  } catch {
+    /* ignore parse/storage errors and rebuild the baseline */
+  }
 
   const demoSettings = makeDemoSettings()
+  demoSettings.company = getDemoCompanyName()
 
   _cachedDemoData = {
     // Core data
@@ -866,6 +897,7 @@ export function getDemoBackupData(): BackupData {
     _lastSavedAt:    new Date().toISOString(),
     _schemaVersion:  27,
   } as unknown as BackupData
+  _cachedDemoStorageKey = storageKey
 
   return _cachedDemoData
 }
@@ -876,6 +908,29 @@ export function getDemoBackupData(): BackupData {
  */
 export function invalidateDemoCache(): void {
   _cachedDemoData = null
+  _cachedDemoStorageKey = null
+}
+
+export function persistDemoBackupData(data: BackupData): void {
+  const storageKey = getDemoBackupStorageKey()
+  const owned = cloneDemoData(data)
+  owned.settings = {
+    ...(owned.settings || {}),
+    company: getDemoCompanyName(),
+  } as any
+  localStorage.setItem(storageKey, JSON.stringify(owned))
+  _cachedDemoData = owned
+  _cachedDemoStorageKey = storageKey
+}
+
+export function resetDemoBackupData(): BackupData {
+  invalidateDemoCache()
+  try {
+    localStorage.removeItem(getDemoBackupStorageKey())
+  } catch {
+    /* ignore */
+  }
+  return getDemoBackupData()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
