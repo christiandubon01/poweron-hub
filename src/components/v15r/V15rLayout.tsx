@@ -887,6 +887,17 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
   const yearlyTargetActual = paidYtdValue
   const goalTruth = buildBusinessGoalTruth(backupData || createEmptyBackup())
   const dailyTargetTruth = goalTruth.dailyTarget
+  // HEADER-KPI-UI-1 — presentation split of the EXISTING locked figure.
+  // businessGoalTruth already computes difference = actualCollected − targetValue.
+  // The header shows its two halves under owner-facing names: what is still to
+  // collect today, and any amount collected beyond target. No new calculation,
+  // no new authority, no persistence — `difference` remains the single source.
+  const dailyTargetRemaining = dailyTargetTruth.difference === null
+    ? 0
+    : Math.max(0, -dailyTargetTruth.difference)
+  const dailyTargetOver = dailyTargetTruth.difference === null
+    ? 0
+    : Math.max(0, dailyTargetTruth.difference)
   const parsedAnnualTarget = Number(settings?.annualTarget)
   const annualTargetValue = Number.isFinite(parsedAnnualTarget) && parsedAnnualTarget > 0
     ? num(parsedAnnualTarget)
@@ -1839,69 +1850,28 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                         owner sees "Current Year", not "Paid YTD". The select lives
                         OUTSIDE the isCompact branch so both compact and full desktop
                         paths expose it. */}
-                    {/* KPI-TIMELINE-POLISH-1 — same information, same interactivity,
-                        header-native presentation. The bare bordered form control is
-                        replaced by a compact period chip that sits under the amount
-                        (amount first, like every neighbouring KPI), reads as a control
-                        via its caret + hover/focus affordance, and no longer competes
-                        with the figure it qualifies. The native <select> is still the
-                        real interaction target and still carries every preset; only
-                        the chrome changed. */}
-                    <div className="grid min-w-[148px] max-w-[188px] grid-rows-[auto_auto] gap-y-0.5" title={collectedTooltip}>
-                      <div className="grid grid-cols-[1fr_auto] items-center gap-x-2">
-                        <span className="text-[8px] font-bold uppercase tracking-[0.18em] text-gray-500">Collected</span>
-                        <div className="relative group shrink-0 justify-self-end">
-                        <select
-                          value={collectedPreset}
-                          onChange={(e) => setCollectedPreset(e.target.value as TimelinePreset)}
-                          className="appearance-none cursor-pointer border-0 bg-transparent py-0 pl-0 pr-4 text-[10px] font-medium normal-case leading-tight text-slate-300 outline-none transition-colors hover:text-emerald-200 focus-visible:text-emerald-100"
-                          aria-label="Collected cash range"
-                        >
-                          {TIMELINE_PRESETS.map((p) => (
-                            <option key={p.value} value={p.value} className="bg-gray-900 text-gray-200 normal-case">
-                              {p.label}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown
-                          size={10}
-                          className="absolute right-0 top-1/2 -translate-y-1/2 text-gray-500 transition-colors group-hover:text-emerald-300 pointer-events-none"
-                        />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-[1fr_auto] items-end gap-x-2">
-                        {isCompact ? (
-                          collectedInvalid ? (
-                            <span className="text-sm font-bold leading-none text-gray-400">Select dates</span>
-                          ) : (
-                            <span className="text-sm font-bold leading-none text-green-400">{hideFinances ? '••••' : fmtHeader(collectedDisplayValue)}</span>
-                          )
-                        ) : (
-                          <span className={`text-[17px] font-bold leading-none ${collectedInvalid ? 'text-gray-400' : 'text-green-400'}`}>
+                    {/* HEADER-KPI-UI-1 — Collected renders as a NORMAL header KPI
+                        again: label, then the prominent amount, then the undated
+                        provenance cue directly beneath it — the same vertical
+                        stack Pipeline and every neighbouring KPI use. The range
+                        selector no longer lives in (or beside) this block; it is
+                        its own header slot after Service Net. Value authority,
+                        undated authority and the tooltip are untouched. */}
+                    <div className="flex flex-col items-center min-w-[104px]" title={collectedTooltip}>
+                      {isCompact ? (
+                        <span className={`text-sm font-bold ${collectedInvalid ? 'text-gray-400' : 'text-green-400'}`}>
+                          {collectedInvalid ? 'Select dates' : (hideFinances ? '••••' : fmtHeader(collectedDisplayValue))}
+                        </span>
+                      ) : (
+                        <>
+                          <span className="text-[8px] font-bold uppercase text-gray-500">Collected</span>
+                          <span className={`text-base font-bold ${collectedInvalid ? 'text-gray-400' : 'text-green-400'}`}>
                             {collectedInvalid ? 'Select dates' : (hideFinances ? '••••' : fmtHeader(collectedDisplayValue))}
                           </span>
-                        )}
-                        {collectedUndatedCue && (
-                          <span className="shrink-0 self-end text-right whitespace-nowrap text-[9px] font-medium uppercase tracking-[0.14em] text-gray-500 leading-none">{collectedUndatedCue}</span>
-                        )}
-                      </div>
-                      {collectedPreset === 'CUSTOM' && (
-                        <div className="mt-1 flex gap-1">
-                          <input
-                            type="date"
-                            value={customStart}
-                            onChange={(e) => setCustomStart(e.target.value)}
-                            className="text-[8px] bg-gray-800/70 border border-gray-700/80 text-gray-200 rounded px-1 py-[1px] outline-none focus-visible:border-green-500/70 w-[68px]"
-                            aria-label="Custom range start"
-                          />
-                          <input
-                            type="date"
-                            value={customEnd}
-                            onChange={(e) => setCustomEnd(e.target.value)}
-                            className="text-[8px] bg-gray-800/70 border border-gray-700/80 text-gray-200 rounded px-1 py-[1px] outline-none focus-visible:border-green-500/70 w-[68px]"
-                            aria-label="Custom range end"
-                          />
-                        </div>
+                        </>
+                      )}
+                      {collectedUndatedCue && (
+                        <span className="whitespace-nowrap text-[9px] font-medium uppercase tracking-[0.14em] text-gray-500 leading-none">{collectedUndatedCue}</span>
                       )}
                     </div>
 
@@ -1985,6 +1955,60 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                             {hideFinances ? '••••' : fmtHeader(serviceNet)}
                           </span>
                         </>
+                      )}
+                    </div>
+
+                    {/* Separator */}
+                    <div className={`h-10 w-px bg-gray-700 ${isCompact ? 'hidden' : ''}`} />
+
+                    {/* HEADER-KPI-UI-1 — COLLECTED RANGE SELECTOR, moved here from
+                        inside the Collected KPI so it stops competing with the
+                        figure it qualifies. This is the SAME control: same
+                        `collectedPreset` state, same setter, same TIMELINE_PRESETS
+                        list, same Custom start/end inputs, same aria-label. Only
+                        its position in the header changed. The native <select>
+                        remains the real interaction target; the ChevronDown is a
+                        pointer-events-none caret. Rendered outside the isCompact
+                        branch so both compact and full desktop expose it. */}
+                    <div className="flex flex-col items-center min-w-[104px]" title="Collected cash range">
+                      {!isCompact && (
+                        <span className="text-[8px] font-bold uppercase text-gray-500">Range</span>
+                      )}
+                      <div className="relative group">
+                        <select
+                          value={collectedPreset}
+                          onChange={(e) => setCollectedPreset(e.target.value as TimelinePreset)}
+                          className="appearance-none cursor-pointer border-0 bg-transparent py-0 pl-0 pr-4 text-[11px] font-semibold normal-case leading-tight text-slate-300 outline-none transition-colors hover:text-emerald-200 focus-visible:text-emerald-100"
+                          aria-label="Collected cash range"
+                        >
+                          {TIMELINE_PRESETS.map((p) => (
+                            <option key={p.value} value={p.value} className="bg-gray-900 text-gray-200 normal-case">
+                              {p.label}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown
+                          size={10}
+                          className="absolute right-0 top-1/2 -translate-y-1/2 text-gray-500 transition-colors group-hover:text-emerald-300 pointer-events-none"
+                        />
+                      </div>
+                      {collectedPreset === 'CUSTOM' && (
+                        <div className="mt-1 flex gap-1">
+                          <input
+                            type="date"
+                            value={customStart}
+                            onChange={(e) => setCustomStart(e.target.value)}
+                            className="text-[8px] bg-gray-800/70 border border-gray-700/80 text-gray-200 rounded px-1 py-[1px] outline-none focus-visible:border-green-500/70 w-[68px]"
+                            aria-label="Custom range start"
+                          />
+                          <input
+                            type="date"
+                            value={customEnd}
+                            onChange={(e) => setCustomEnd(e.target.value)}
+                            className="text-[8px] bg-gray-800/70 border border-gray-700/80 text-gray-200 rounded px-1 py-[1px] outline-none focus-visible:border-green-500/70 w-[68px]"
+                            aria-label="Custom range end"
+                          />
+                        </div>
                       )}
                     </div>
                   </div>
@@ -2088,20 +2112,34 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 )}
               </div>
 
-              {/* Daily Target — hidden in App Brain architecture mode */}
+              {/* Daily Target — hidden in App Brain architecture mode.
+                  HEADER-KPI-UI-1: two-line stack. The target stays the prominent
+                  primary line; Today / Remaining / progress drop to a smaller
+                  secondary line beneath it. Every figure shown before is still
+                  shown — the over-target surplus now appears only when it exists,
+                  under an explicit label instead of a bare signed number. */}
               {!isMobile && !isAppBrainView && (
-                <div className="text-xs text-gray-400">
+                <div className="text-xs text-gray-400 leading-tight" data-testid="header-daily-target">
                   {dailyTargetTruth.targetConfigured ? (
                     <>
-                      Daily Target: <span className="text-green-400 font-semibold">{fmt(dailyTargetTruth.targetValue || 0)}</span>
-                      <span className="text-gray-500"> · </span>
-                      Today: <span className="text-cyan-300 font-semibold">{fmt(dailyTargetTruth.actualCollected)}</span>
-                      <span className="text-gray-500"> · </span>
-                      <span className={dailyTargetTruth.difference !== null && dailyTargetTruth.difference >= 0 ? 'text-emerald-300 font-semibold' : 'text-amber-300 font-semibold'}>
-                        {dailyTargetTruth.difference !== null ? `${dailyTargetTruth.difference >= 0 ? '+' : ''}${fmt(dailyTargetTruth.difference)}` : '0%'}
-                      </span>
-                      <span className="text-gray-500"> · </span>
-                      <span className="text-emerald-300 font-semibold">{dailyTargetTruth.progressPct ?? 0}%</span>
+                      <div>
+                        Daily Target: <span className="text-green-400 font-semibold">{fmt(dailyTargetTruth.targetValue || 0)}</span>
+                      </div>
+                      <div className="mt-0.5 text-[11px]" data-testid="header-daily-target-secondary">
+                        Today: <span className="text-cyan-300 font-semibold">{fmt(dailyTargetTruth.actualCollected)}</span>
+                        <span className="text-gray-600"> • </span>
+                        Remaining: <span className={dailyTargetRemaining > 0 ? 'text-amber-300 font-semibold' : 'text-emerald-300 font-semibold'}>
+                          {fmt(dailyTargetRemaining)}
+                        </span>
+                        {dailyTargetOver > 0 && (
+                          <>
+                            <span className="text-gray-600"> • </span>
+                            <span className="text-emerald-300 font-semibold">+{fmt(dailyTargetOver)} over</span>
+                          </>
+                        )}
+                        <span className="text-gray-600"> • </span>
+                        <span className="text-emerald-300 font-semibold">{dailyTargetTruth.progressPct ?? 0}%</span>
+                      </div>
                     </>
                   ) : (
                     <>Daily Target: <span className="text-amber-300 font-semibold">Not configured</span></>

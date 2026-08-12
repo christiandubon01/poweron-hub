@@ -65,7 +65,9 @@ describe('KPI-TIMELINE-FINAL-FIX — owner desktop header Collected selector', (
 
   it('H6 — the undated provenance cue remains visible when applicable', () => {
     expect(layoutSrc).toContain('collectedUndatedCue')
-    expect(layoutSrc).toContain('self-end text-right whitespace-nowrap')
+    // HEADER-KPI-UI-1: the cue now sits centred directly BENEATH the Collected
+    // amount (normal KPI stack) instead of right-aligned beside it.
+    expect(layoutSrc).toContain('whitespace-nowrap text-[9px] font-medium uppercase tracking-[0.14em] text-gray-500 leading-none')
   })
 
   it('H7 — selecting Previous Year changes the selected header period', () => {
@@ -114,18 +116,25 @@ describe('KPI-TIMELINE-FINAL-FIX — owner desktop header Collected selector', (
     }
   })
 
-  it('H12 — label and selected period share the top row while amount and undated cue share the value row', () => {
-    const slotStart = layoutSrc.indexOf('title={collectedTooltip}')
+  it('H12 — HEADER-KPI-UI-1: Collected is a plain KPI stack; the selector moved out of it', () => {
+    const attr = layoutSrc.indexOf('title={collectedTooltip}')
+    expect(attr).toBeGreaterThan(-1)
+    // Widen back to the opening tag so the slot's own className is in scope.
+    const slotStart = layoutSrc.lastIndexOf('<div', attr)
     expect(slotStart).toBeGreaterThan(-1)
-    const slotEnd = layoutSrc.indexOf('{/* Separator */}', slotStart)
+    const slotEnd = layoutSrc.indexOf('{/* Separator */}', attr)
     expect(slotEnd).toBeGreaterThan(slotStart)
     const slot = layoutSrc.slice(slotStart, slotEnd)
 
-    expect((slot.match(/<select/g) || []).length).toBe(1)
-    expect(slot).toContain('aria-label="Collected cash range"')
-    expect(slot).toContain('grid grid-cols-[1fr_auto] items-center gap-x-2')
-    expect(slot).toContain('grid grid-cols-[1fr_auto] items-end gap-x-2')
+    // Label → amount → undated cue, stacked like every neighbouring KPI.
+    expect(slot).toContain('flex flex-col items-center')
+    expect(slot).toContain('>Collected<')
     expect(slot).toContain('collectedDisplayValue')
+    expect(slot).toContain('collectedUndatedCue')
+    // The range control is no longer inside or attached to the Collected block.
+    expect(slot.match(/<select/g)).toBeNull()
+    expect(slot).not.toContain('aria-label="Collected cash range"')
+    expect(slot).not.toContain('TIMELINE_PRESETS')
   })
 
   it('H13 — the selector is not disabled and not pointer-events blocked', () => {
