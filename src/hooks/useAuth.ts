@@ -55,6 +55,7 @@ export function useAuth() {
     signInWithMagicLink: store.signInWithMagicLink,
     submitPasscode:     store.submitPasscode,
     setupPasscode:      store.setupPasscode,
+    completeInitialSetup: store.completeInitialSetup,
     authenticateBio:    store.authenticateBio,
     skipBiometric:      store.skipBiometric,
     signOut:            store.signOut,

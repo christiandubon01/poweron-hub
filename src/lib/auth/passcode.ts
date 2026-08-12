@@ -104,12 +104,29 @@ export async function setPasscode(
   try {
     const hash = await hashPasscode(passcode)
 
-    const { error } = await supabase
+    // COMM-PROD-1 Step 9 (defect C). PostgREST returns success with zero rows
+    // when the UPDATE matches nothing — a missing profiles row or a row-level
+    // policy miss both look identical to a real save. Onboarding reported
+    // "PIN saved" while profiles.passcode_hash stayed NULL, so the next reload
+    // read no hash and sent the owner back through PIN setup. The readback is
+    // the server-side confirmation: a save is only successful once the stored
+    // hash comes back from the database.
+    const { data: saved, error } = await supabase
       .from('profiles')
       .update({ passcode_hash: hash })
       .eq('id', userId)
+      .select('id, passcode_hash')
+      .maybeSingle()
 
     if (error) throw error
+
+    if (!saved || (saved as { passcode_hash?: string }).passcode_hash !== hash) {
+      console.error('[Passcode] setPasscode wrote no profile row', { userId })
+      return {
+        success: false,
+        error: 'Passcode could not be saved to your account. Please try again.',
+      }
+    }
 
     // Clear any existing lockout when passcode is reset.
     // Server-scoped to the caller — userId is not sent.

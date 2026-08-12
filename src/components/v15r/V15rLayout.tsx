@@ -1184,7 +1184,13 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                   <div className="flex items-center gap-2">
                     <Zap size={22} className={isDemoMode ? 'text-amber-400' : 'text-green-400'} />
                     <span className="text-base font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
-                      {isDemoMode ? DEMO_COMPANY : (settings.company || 'PowerOn Solutions')}
+                      {/* COMM-PROD-1 Step 9 (defect A). Tenant slot: the resolved
+                          organization name when the contractor has configured one,
+                          otherwise the PRODUCT brand. It must never fall back to
+                          Customer Zero's company name — an unrelated contractor
+                          would inherit "PowerOn Solutions" as its own identity.
+                          Power On Solutions keeps resolving through settings.company. */}
+                      {isDemoMode ? DEMO_COMPANY : (settings.company || 'PowerOn Hub')}
                     </span>
                   </div>
                 )}
@@ -2289,7 +2295,10 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
         {/* Copyright Footer — hidden in fullscreen mode */}
         {activeView !== 'visual-suite' && activeView !== 'neural-world' && (
           <div className="text-center text-[10px] text-gray-600 py-2" style={{ backgroundColor: 'var(--bg-secondary)' }}>
-            &copy; 2026 Power On Solutions LLC &middot; PowerOn Hub V3.0
+            {/* COMM-PROD-1 Step 9 (defect A). Product chrome only. The shell footer
+                is shown to every tenant, so it carries the PowerOn Hub product brand
+                rather than Customer Zero's legal entity. */}
+            &copy; 2026 PowerOn Hub &middot; V3.0
           </div>
         )}
       </div>

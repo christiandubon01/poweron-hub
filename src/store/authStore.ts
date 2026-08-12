@@ -333,6 +333,61 @@ async function bootstrapAuthenticatedUser(
   }
 }
 
+/**
+ * COMM-PROD-1 Step 9 (defect B). Shared tail for every owner entry point that has
+ * already proved identity (PIN setup, password-only setup, PIN verify).
+ *
+ * The order matters: the app session and portal role are resolved first, then the
+ * tenant workspace is bootstrapped, and only then does status become
+ * 'authenticated'. Any path that flips to 'authenticated' without running
+ * bootstrapAuthenticatedUser leaves the backup service with no active tenant, so
+ * getBackupData() falls through to the browser-global legacy key — empty on a
+ * brand-new organization — and the app renders the Import Backup recovery screen
+ * instead of the workspace.
+ */
+async function establishOwnerSession(
+  set: (partial: Partial<AuthState>) => void,
+  user: User,
+  profile: Profile | null,
+  auditMethod: string,
+  isCurrent: () => boolean = () => true,
+): Promise<void> {
+  let session = null
+  try {
+    await withTimeout(
+      createAppSession({
+        userId: user.id,
+        orgId: profile?.org_id,
+        role: profile?.role,
+        deviceInfo: getDeviceInfo(),
+        isCurrent,
+      }),
+      5000,
+      'timeout',
+    )
+    session = await withTimeout(validateAppSession(), 3000, null)
+  } catch {
+    // The Redis app session is a resume convenience. The Supabase JWT and the
+    // server-side passcode remain authoritative, so a store outage must not
+    // block setup.
+  }
+  assertAuthOperationCurrent(isCurrent)
+
+  logLogin(user.id, { method: auditMethod }).catch(() => {})
+
+  const { role, ownerId, employeeProfileId, employerOrgId } = await withTimeout(
+    resolveUserRole(user.id),
+    5000,
+    { role: 'owner' as UserRole, ownerId: user.id, employeeProfileId: null, employerOrgId: null },
+  )
+  assertAuthOperationCurrent(isCurrent)
+
+  set({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId, employeeProfileId, employerOrgId })
+  await bootstrapAuthenticatedUser(user.id, isCurrent)
+  assertAuthOperationCurrent(isCurrent)
+  set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
+}
+
 // Timeout helper — prevents auth flow from hanging on slow Redis/network calls
 function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([
@@ -383,6 +438,7 @@ interface AuthState {
   signInWithMagicLink:(email: string) => Promise<void>
   submitPasscode:     (passcode: string) => Promise<void>
   setupPasscode:      (passcode: string) => Promise<void>
+  completeInitialSetup: () => Promise<void>
   authenticateBio:    () => Promise<void>
   lockApp:            () => Promise<void>
   signOut:            () => Promise<void>
@@ -651,8 +707,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           appSession = await withTimeout(validateAppSession(), 3000, null)
         } catch {}
 
+        // COMM-PROD-1 Step 9 (defect B). This branch used to publish
+        // 'authenticated' immediately and bootstrap in the background, so the
+        // shell rendered while the backup service still had no active tenant.
+        // On a brand-new organization that first render reads the empty legacy
+        // key and shows the Import Backup recovery screen, and nothing re-renders
+        // it once hydration lands. Hold in hydrating_user_data like every other
+        // entry point; a bootstrap failure still lets the user in rather than
+        // bouncing them back to the login screen.
         apply({
-          status: 'authenticated',
+          status: 'hydrating_user_data',
           tenantDataReady: false,
           tenantUserId: user.id,
           user,
@@ -667,13 +731,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         sessionStorage.removeItem('poweron_password_authed')
 
-        bootstrapAuthenticatedUser(user.id, isCurrent)
-          .then(() => {
-            apply({ tenantDataReady: true })
-          })
-          .catch((err) => {
-            console.error('[Auth] bootstrapAuthenticatedUser failed:', err)
-          })
+        try {
+          await bootstrapAuthenticatedUser(user.id, isCurrent)
+          apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
+        } catch (err) {
+          if (err instanceof StaleAuthOperationError || !isCurrent()) return
+          console.error('[Auth] bootstrapAuthenticatedUser failed:', err)
+          apply({ status: 'authenticated', tenantDataReady: false, tenantUserId: user.id })
+        }
 
         return
       }
@@ -964,33 +1029,69 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (biometric.available) {
         set({ status: 'biometric_prompt', profile: refreshedProfile, biometric })
       } else {
-        // 5. Create app session (Redis write — timeout 5s, fall through on failure)
-        const orgId   = (refreshedProfile ?? profile)!.org_id
-        const profRole = (refreshedProfile ?? profile)!.role
-        await withTimeout(
-          createAppSession({ userId: user.id, orgId, role: profRole, deviceInfo: getDeviceInfo() }),
-          5000,
-          'timeout'
-        )
-        // Fire-and-forget audit
-        logLogin(user.id, { method: 'passcode_setup' }).catch(() => {})
-
-        // Resolve portal role (owner / crew / employee)
-        const { role: userRole, ownerId, employeeProfileId, employerOrgId } = await withTimeout(
-          resolveUserRole(user.id),
-          5000,
-          { role: 'owner' as UserRole, ownerId: user.id, employeeProfileId: null, employerOrgId: null }
-        )
-
-        const session = await withTimeout(validateAppSession(), 3000, null)
-        set({ status: 'hydrating_user_data', user, profile: refreshedProfile, appSession: session, role: userRole, ownerId, employeeProfileId, employerOrgId })
-        await bootstrapAuthenticatedUser(user.id)
-        set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
+        // 5. App session + role + tenant bootstrap, then authenticated.
+        await establishOwnerSession(set, user, (refreshedProfile ?? profile) as Profile | null, 'passcode_setup')
       }
 
     } catch (err) {
       console.error('[Auth] setupPasscode error:', err)
       set({ error: 'Failed to save passcode. Please try again.' })
+    }
+  },
+
+  // ── Complete first-run setup (onboarding) ───────────────────────────────────
+  // COMM-PROD-1 Step 9. InitialSetupFlow owns the first-run screens and has
+  // already confirmed the passcode server-side by the time this runs. It used to
+  // finish by writing status: 'authenticated' straight into the store, which
+  // skipped app-session creation, role resolution and tenant bootstrap entirely.
+  // A brand-new contractor therefore reached the shell with no active tenant
+  // (Import Backup screen) and no resumable session (PIN setup again on reload).
+  // This action runs the same authenticated tail as every other owner entry.
+  completeInitialSetup: async () => {
+    const operationId = beginAuthOperation()
+    const isCurrent = () => isAuthOperationCurrent(operationId)
+    const { user } = get()
+    if (!user) return
+
+    set({ error: null })
+
+    try {
+      // Re-read the profile so the store carries the same server-confirmed
+      // passcode/org state that the next reload's initialize() will read.
+      const { data: refreshed } = await withTimeout(
+        supabase
+          .from('profiles')
+          .select('id, org_id, full_name, role, is_active, passcode_hash')
+          .eq('id', user.id)
+          .maybeSingle(),
+        5000,
+        { data: null, error: null } as any,
+      )
+      assertAuthOperationCurrent(isCurrent)
+
+      const profile = (refreshed as Profile | null) ?? get().profile
+
+      // Seed project templates for the new org (non-blocking).
+      if (profile?.org_id) {
+        supabase.rpc('seed_project_templates_for_org', { p_org_id: profile.org_id })
+          .then(() => {})
+          .catch((e: unknown) => console.warn('[Auth] seed templates failed (non-blocking):', e))
+      }
+
+      await establishOwnerSession(set, user, profile, 'initial_setup', isCurrent)
+    } catch (err) {
+      if (err instanceof StaleAuthOperationError || !isCurrent()) return
+      console.error('[Auth] completeInitialSetup error:', err)
+      // The passcode itself is already stored server-side, so the retryable PIN
+      // screen is the correct recovery — never a half-authenticated shell.
+      clearActiveTenantUser()
+      set({
+        status: 'needs_passcode',
+        appSession: null,
+        tenantDataReady: false,
+        tenantUserId: null,
+        error: 'Workspace setup could not finish. Check your connection and enter your PIN to continue.',
+      })
     }
   },
 

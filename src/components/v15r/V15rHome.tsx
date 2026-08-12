@@ -41,6 +41,8 @@ import {
 import { supabase } from '@/lib/supabase'
 import {
   getBackupData,
+  getActiveTenantUserId,
+  createEmptyBackup,
   saveBackupData,
   saveBackupDataAndSync,
   saveHomeAgendaAlertsScoped,
@@ -454,7 +456,16 @@ export default function V15rHome() {
     return () => document.removeEventListener('mousedown', handler)
   }, [showLockPopover])
 
-  const _rawBackup = getBackupData()
+  // COMM-PROD-1 Step 9 (defect B). A valid authenticated organization that has
+  // no company data yet is a brand-new workspace, not a recovery case: it renders
+  // the normal application on the canonical empty BackupData (empty projects,
+  // leads, team, estimates, $0 KPIs) so the owner can create Project #1 without
+  // importing anything. The Import Backup screen below stays for the genuinely
+  // unresolvable case — no authenticated tenant is active (audit-token/read-only
+  // entry, legacy unauthenticated shells), where fabricating an empty workspace
+  // would hide a real data problem. This never reads another organization's data.
+  const _storedBackup = getBackupData()
+  const _rawBackup = _storedBackup ?? (getActiveTenantUserId() ? createEmptyBackup() : null)
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : _rawBackup
 
   if (!backup) {

@@ -17,7 +17,6 @@ import { Eye, EyeOff, Check, ArrowRight } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useAuth } from '@/hooks/useAuth'
 import { setPasscode } from '@/lib/auth/passcode'
-import { useAuthStore } from '@/store/authStore'
 import { supabase } from '@/lib/supabase'
 
 const PIN_LENGTH = 6
@@ -228,7 +227,7 @@ function PasswordForm({ onSubmit, saving, error }) {
 type FlowStep = 'password' | 'pin-create' | 'pin-confirm' | 'saving'
 
 export function InitialSetupFlow() {
-  const { setupPasscode, user } = useAuth()
+  const { user, completeInitialSetup } = useAuth()
   const [step, setStep] = useState<FlowStep>('pin-create')
   const [password, setPassword] = useState('')
   const [pin, setPin] = useState('')
@@ -273,18 +272,29 @@ export function InitialSetupFlow() {
     }
     setStep('saving')
     try {
-      const pinHash = await sha256hex(pin)
-      savePinLocal(pinHash)
-      if (user?.id) {
-        const result = await setPasscode(user.id, pin)
-        console.log('[PIN SETUP] setPasscode result:', JSON.stringify(result))
-        if (!result.success) {
-          setSaveErr('Failed to save PIN. Please try again.')
-          setStep('pin-create')
-          return
-        }
+      if (!user?.id) {
+        setSaveErr('Your session expired. Sign in again to finish setup.')
+        setStep('pin-create')
+        return
       }
-      useAuthStore.setState(state => ({ ...state, status: 'authenticated' }))
+      // COMM-PROD-1 Step 9 (defect C). setPasscode now confirms the write with a
+      // server readback, so a silent zero-row UPDATE no longer reports success.
+      // The local device hash is written only after that confirmation — it is a
+      // convenience for this device, never proof that a PIN exists.
+      const result = await setPasscode(user.id, pin)
+      console.log('[PIN SETUP] setPasscode result:', JSON.stringify(result))
+      if (!result.success) {
+        setSaveErr(result.error || 'Failed to save PIN. Please try again.')
+        setStep('pin-create')
+        return
+      }
+      savePinLocal(await sha256hex(pin))
+
+      // COMM-PROD-1 Step 9 (defect B). Finish through the auth store so the app
+      // session, portal role and tenant workspace are all established before the
+      // shell renders. Writing status: 'authenticated' directly skipped the whole
+      // bootstrap and left a brand-new organization with no active tenant.
+      await completeInitialSetup()
     } catch (err) {
       setSaveErr('Setup failed. Please try again.')
       setStep('pin-create')
@@ -294,11 +304,28 @@ export function InitialSetupFlow() {
   const handleSkipPin = async () => {
     setStep('saving')
     try {
-      if (user?.id) {
-        await supabase.from('profiles').update({ passcode_hash: 'password_only' } as any).eq('id', user.id)
+      if (!user?.id) {
+        setSaveErr('Your session expired. Sign in again to finish setup.')
+        setStep('pin-create')
+        return
       }
-      useAuthStore.setState(state => ({ ...state, status: 'authenticated' }))
+      // Same verified-write contract as the PIN path: password_only must be
+      // readable back from the profiles row before setup is treated as done.
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ passcode_hash: 'password_only' } as any)
+        .eq('id', user.id)
+        .select('id, passcode_hash')
+        .maybeSingle()
+      if (error || !data || (data as any).passcode_hash !== 'password_only') {
+        setSaveErr('Could not save your setup choice. Please try again.')
+        setStep('pin-create')
+        return
+      }
+      try { localStorage.removeItem(STORAGE_KEY) } catch {}
+      await completeInitialSetup()
     } catch {
+      setSaveErr('Setup failed. Please try again.')
       setStep('pin-create')
     }
   }
