@@ -520,7 +520,7 @@ function LandingPage({ onLogin, onRegister }: { onLogin: () => void; onRegister:
 }
 
 // ── Register Flow ─────────────────────────────────────────────────────────────
-function RegisterFlow({ onBack }: { onBack: () => void }) {
+function RegisterFlow({ onBack, onExistingAccount }: { onBack: () => void; onExistingAccount: (email: string, message: string) => void }) {
   const [fullName, setFullName] = useState('')
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
@@ -547,7 +547,24 @@ function RegisterFlow({ onBack }: { onBack: () => void }) {
         email: email.trim(), password,
         options: { emailRedirectTo: 'https://app.poweronsolutionsllc.com', data: { full_name: fullName.trim(), username: username.toLowerCase().trim() } },
       })
-      if (signUpError) throw signUpError
+      if (signUpError) {
+        const msg = signUpError.message ?? ''
+        if (/already registered|already exists|already been registered/i.test(msg)) {
+          onExistingAccount(
+            email.trim(),
+            'This email already has a PowerOn Hub login. Sign in to continue creating your contractor workspace.',
+          )
+          return
+        }
+        throw signUpError
+      }
+      if (Array.isArray(data.user?.identities) && data.user.identities.length === 0) {
+        onExistingAccount(
+          email.trim(),
+          'This email already has a PowerOn Hub login. Sign in to continue creating your contractor workspace.',
+        )
+        return
+      }
       if (data.user) {
         await supabase.from('profiles').update({ full_name: fullName.trim(), username: username.toLowerCase().trim() } as any).eq('id', data.user.id)
       }
@@ -966,6 +983,13 @@ function RegisterFlow({ onBack }: { onBack: () => void }) {
               <button type="submit" disabled={loading} style={{ ...btnPrimary, minHeight: '56px', borderRadius: '12px', marginTop: '4px', opacity: loading ? 0.6 : 1, boxShadow: `0 0 0 1px rgba(61,158,245,0.42), 0 16px 42px rgba(30,128,223,0.32)` }}>
                 {loading ? <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : <><ArrowRight size={15} /> Create Account</>}
               </button>
+              <button
+                type="button"
+                onClick={() => onExistingAccount(email.trim(), 'Already use PowerOn Hub? Sign in to continue.')}
+                style={{ ...btnSecondary, minHeight: '50px', borderRadius: '12px', background: 'rgba(2,6,13,0.48)', border: '1px solid rgba(61,158,245,0.22)' }}
+              >
+                Already use PowerOn Hub? Sign In
+              </button>
             </form>
           </div>
         </section>
@@ -975,13 +999,22 @@ function RegisterFlow({ onBack }: { onBack: () => void }) {
 }
 
 // ── Login Form ────────────────────────────────────────────────────────────────
-function LoginForm({ onBack }: { onBack: () => void }) {
+function LoginForm({
+  onBack,
+  initialIdentifier = '',
+  initialInfo = '',
+}: {
+  onBack: () => void
+  initialIdentifier?: string
+  initialInfo?: string
+}) {
   const { signInWithEmail, error, clearError } = useAuth()
-  const [identifier, setIdentifier] = useState('')
+  const [identifier, setIdentifier] = useState(initialIdentifier)
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [localError, setLocalError] = useState('')
+  const [infoMessage, setInfoMessage] = useState(initialInfo)
   const [showForgot, setShowForgot] = useState(false)
   const [forgotEmail, setForgotEmail] = useState('')
   const [forgotSent, setForgotSent] = useState(false)
@@ -1000,7 +1033,7 @@ function LoginForm({ onBack }: { onBack: () => void }) {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    setLocalError(''); clearError()
+    setLocalError(''); clearError(); setInfoMessage('')
     if (!identifier.trim() || !password) return
     setLoading(true)
     try {
@@ -1415,6 +1448,12 @@ function LoginForm({ onBack }: { onBack: () => void }) {
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
+              {infoMessage && !localError && !error && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '11px 14px', background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.22)', borderRadius: '10px' }}>
+                  <CheckCircle size={15} color="#93c5fd" />
+                  <span style={{ fontSize: '12px', color: '#bfdbfe' }}>{infoMessage}</span>
+                </div>
+              )}
               {(localError || error) && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '11px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.22)', borderRadius: '10px' }}>
                   <AlertCircle size={15} color="#f87171" />
@@ -1540,6 +1579,8 @@ export function LoginFlow({ children }: LoginFlowProps) {
   const status = useAuthStore(s => s.status)
   const { submitPasscode, signOut, error } = useAuth()
   const [screen, setScreen] = useState<AuthScreen>('landing')
+  const [loginIdentifier, setLoginIdentifier] = useState('')
+  const [loginInfo, setLoginInfo] = useState('')
   const [pinFallback, setPinFallback] = useState(false)
 
   switch (status) {
@@ -1549,9 +1590,36 @@ export function LoginFlow({ children }: LoginFlowProps) {
     case 'unauthenticated': {
       // In a Locked state, status is 'needs_passcode', not 'unauthenticated'.
       // This block handles users who haven't logged in at all.
-      if (screen === 'register') return <RegisterFlow onBack={() => setScreen('landing')} />
-      if (screen === 'login') return <LoginForm onBack={() => setScreen('landing')} />
-      return <LandingPage onLogin={() => setScreen('login')} onRegister={() => setScreen('register')} />
+      if (screen === 'register') {
+        return (
+          <RegisterFlow
+            onBack={() => setScreen('landing')}
+            onExistingAccount={(email, message) => {
+              setLoginIdentifier(email)
+              setLoginInfo(message)
+              setScreen('login')
+            }}
+          />
+        )
+      }
+      if (screen === 'login') {
+        return (
+          <LoginForm
+            onBack={() => setScreen('landing')}
+            initialIdentifier={loginIdentifier}
+            initialInfo={loginInfo}
+          />
+        )
+      }
+      return (
+        <LandingPage
+          onLogin={() => {
+            setLoginInfo('')
+            setScreen('login')
+          }}
+          onRegister={() => setScreen('register')}
+        />
+      )
     }
 
     case 'needs_passcode_setup':

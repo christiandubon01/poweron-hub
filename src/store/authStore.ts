@@ -29,6 +29,7 @@ import { logAction } from '@/services/security/AgentSafetySystem'
 import { resolveProductRedirectUrl } from '@/services/organizationIdentityService'
 import { isDemoRuntimeActive } from '@/services/demoModeSafety'
 import { trackPilotTelemetryEvent } from '@/services/pilotTelemetryClient'
+import { detectPortalContext } from '@/lib/portalContext'
 
 // ── Role system ───────────────────────────────────────────────────────────────
 // owner    → the business owner; sees the full app (V15rLayout + all panels)
@@ -61,24 +62,66 @@ interface ResolvedPortalRole {
   status?: 'resolved' | 'unresolved'
 }
 
+type OwnerBootstrapProfile = Pick<Profile, 'id' | 'org_id' | 'full_name' | 'role' | 'is_active' | 'passcode_hash'> & {
+  biometric_enabled?: boolean | null
+}
+
 function hasTimeTrackingAccess(portalAccess: unknown): boolean {
   if (!portalAccess || typeof portalAccess !== 'object') return false
   const flags = portalAccess as Record<string, unknown>
   return flags.time_tracking === true || flags.time_tracking === 'true'
 }
 
-function persistResolvedRole(resolved: ResolvedPortalRole): void {
-  localStorage.setItem(ROLE_STORAGE_KEY, resolved.role)
-  localStorage.setItem(OWNER_ID_STORAGE_KEY, resolved.ownerId ?? '')
+function storageKey(base: string, context: 'main' | 'employee'): string {
+  return `${base}:${context}`
+}
+
+function persistResolvedRole(context: 'main' | 'employee', resolved: ResolvedPortalRole): void {
+  localStorage.setItem(storageKey(ROLE_STORAGE_KEY, context), resolved.role)
+  localStorage.setItem(storageKey(OWNER_ID_STORAGE_KEY, context), resolved.ownerId ?? '')
   if (resolved.employeeProfileId) {
-    localStorage.setItem(EMPLOYEE_PROFILE_ID_KEY, resolved.employeeProfileId)
+    localStorage.setItem(storageKey(EMPLOYEE_PROFILE_ID_KEY, context), resolved.employeeProfileId)
   } else {
-    localStorage.removeItem(EMPLOYEE_PROFILE_ID_KEY)
+    localStorage.removeItem(storageKey(EMPLOYEE_PROFILE_ID_KEY, context))
   }
   if (resolved.employerOrgId) {
-    localStorage.setItem(EMPLOYER_ORG_ID_KEY, resolved.employerOrgId)
+    localStorage.setItem(storageKey(EMPLOYER_ORG_ID_KEY, context), resolved.employerOrgId)
   } else {
-    localStorage.removeItem(EMPLOYER_ORG_ID_KEY)
+    localStorage.removeItem(storageKey(EMPLOYER_ORG_ID_KEY, context))
+  }
+}
+
+async function bootstrapOwnerWorkspaceForAuthenticatedUser(user: User): Promise<Profile | null> {
+  try {
+    const res: any = await withTimeout(
+      supabase.functions.invoke('bootstrap-owner-workspace', {
+        body: {
+          source: 'auth_store_initialize',
+          userId: user.id,
+        },
+      }) as any,
+      8000,
+      QUERY_TIMEOUT as any,
+    )
+    if (res === QUERY_TIMEOUT) return null
+    if (res?.error) {
+      console.warn('[Auth] bootstrap-owner-workspace failed:', res.error)
+      return null
+    }
+    const profile = res?.data?.profile as OwnerBootstrapProfile | null | undefined
+    if (!profile?.id || !profile?.org_id) return null
+    return {
+      id: profile.id,
+      org_id: profile.org_id,
+      full_name: profile.full_name ?? user.email ?? 'Owner',
+      role: profile.role ?? 'owner',
+      is_active: profile.is_active ?? true,
+      passcode_hash: profile.passcode_hash ?? 'password_only',
+      biometric_enabled: profile.biometric_enabled ?? false,
+    } as Profile
+  } catch (err) {
+    console.warn('[Auth] bootstrap-owner-workspace threw:', err)
+    return null
   }
 }
 
@@ -150,6 +193,32 @@ async function resolveEmployeeOnce(userId: string): Promise<LookupOutcome> {
   }
 }
 
+async function resolveOwnerOnce(userId: string): Promise<LookupOutcome> {
+  try {
+    const res: any = await withTimeout(
+      supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', userId)
+        .maybeSingle() as any,
+      RESOLVE_QUERY_TIMEOUT_MS,
+      QUERY_TIMEOUT as any,
+    )
+    if (res === QUERY_TIMEOUT) return { failed: true }
+    if (res?.error) return { failed: true }
+    if (res?.data?.id) {
+      return {
+        failed: false,
+        matched: { role: 'owner', ownerId: userId, employeeProfileId: null, employerOrgId: null },
+      }
+    }
+    return { failed: false }
+  } catch (e) {
+    console.warn('[Auth] resolveUserRole: owner check failed:', e)
+    return { failed: true }
+  }
+}
+
 /** One full resolution pass. Crew precedence preserved; runs both lookups in
  *  parallel so a single dead query cannot serialize the whole wait. */
 async function resolveUserRoleOnce(
@@ -161,6 +230,31 @@ async function resolveUserRoleOnce(
   // No match. If EITHER lookup failed we cannot conclude "owner" — identity is unknown.
   if (crew.failed || emp.failed) return { resolved: null, failed: true }
   // Both lookups completed cleanly with no crew/employee row → genuine owner.
+  return {
+    resolved: { role: 'owner', ownerId: userId, employeeProfileId: null, employerOrgId: null, status: 'resolved' },
+    failed: false,
+  }
+}
+
+async function resolvePortalRoleOnce(
+  userId: string,
+  context: 'main' | 'employee',
+): Promise<{ resolved: ResolvedPortalRole | null; failed: boolean }> {
+  if (context === 'employee') {
+    const [emp, owner] = await Promise.all([resolveEmployeeOnce(userId), resolveOwnerOnce(userId)])
+    if (emp.matched) return { resolved: { ...emp.matched, status: 'resolved' }, failed: false }
+    if (owner.matched) return { resolved: { ...owner.matched, status: 'resolved' }, failed: false }
+    if (emp.failed || owner.failed) return { resolved: null, failed: true }
+    return {
+      resolved: { role: 'owner', ownerId: userId, employeeProfileId: null, employerOrgId: null, status: 'resolved' },
+      failed: false,
+    }
+  }
+
+  const [crew, owner] = await Promise.all([resolveCrewOnce(userId), resolveOwnerOnce(userId)])
+  if (crew.matched) return { resolved: { ...crew.matched, status: 'resolved' }, failed: false }
+  if (owner.matched) return { resolved: { ...owner.matched, status: 'resolved' }, failed: false }
+  if (crew.failed || owner.failed) return { resolved: null, failed: true }
   return {
     resolved: { role: 'owner', ownerId: userId, employeeProfileId: null, employerOrgId: null, status: 'resolved' },
     failed: false,
@@ -179,13 +273,14 @@ async function resolveUserRoleOnce(
  * rather than owner PIN / AppShell / NDA. Employer org is employee_profiles.org_id.
  */
 async function resolveUserRole(userId: string): Promise<ResolvedPortalRole> {
+  const context = detectPortalContext(typeof window !== 'undefined' ? window.location.pathname : '/')
   for (let attempt = 0; attempt < RESOLVE_RETRY_DELAYS_MS.length; attempt++) {
     if (RESOLVE_RETRY_DELAYS_MS[attempt] > 0) {
       await new Promise(r => setTimeout(r, RESOLVE_RETRY_DELAYS_MS[attempt]))
     }
-    const { resolved, failed } = await resolveUserRoleOnce(userId)
+    const { resolved, failed } = await resolvePortalRoleOnce(userId, context)
     if (resolved) {
-      persistResolvedRole(resolved)
+      persistResolvedRole(context, resolved)
       _identityRetryCount = 0 // network recovered — clear the safe-retry budget
       return resolved
     }
@@ -205,6 +300,18 @@ function loadRoleFromStorage(userId: string): ResolvedPortalRole {
     ownerId,
     employeeProfileId: localStorage.getItem(EMPLOYEE_PROFILE_ID_KEY) || null,
     employerOrgId: localStorage.getItem(EMPLOYER_ORG_ID_KEY) || null,
+  }
+}
+
+function loadRoleFromStorageForContext(userId: string, context: 'main' | 'employee'): ResolvedPortalRole | null {
+  const role = localStorage.getItem(storageKey(ROLE_STORAGE_KEY, context)) as UserRole | null
+  if (!role) return null
+  const ownerId = localStorage.getItem(storageKey(OWNER_ID_STORAGE_KEY, context)) || userId
+  return {
+    role,
+    ownerId,
+    employeeProfileId: localStorage.getItem(storageKey(EMPLOYEE_PROFILE_ID_KEY, context)) || null,
+    employerOrgId: localStorage.getItem(storageKey(EMPLOYER_ORG_ID_KEY, context)) || null,
   }
 }
 
@@ -625,6 +732,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
       const user = session.user
+      const portalContext = detectPortalContext(window.location.pathname)
 
       // 2. Load profile (the DB trigger creates it on signup, but allow a brief retry
       //    in case the trigger hasn't committed yet)
@@ -642,6 +750,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           break
         }
         if (attempt < 2) await new Promise(r => setTimeout(r, 500))
+      }
+
+      if (!profile && portalContext === 'main') {
+        profile = await bootstrapOwnerWorkspaceForAuthenticatedUser(user)
       }
 
       if (!profile) {
@@ -666,22 +778,32 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       //    Timeout after 5s — if Redis is slow, assume no session and ask for passcode
       const appSession = await withTimeout(validateAppSession(), 5000, null)
       if (appSession) {
-        // Re-use cached role from localStorage; re-resolve in background occasionally
-        const { role, ownerId, employeeProfileId, employerOrgId } = loadRoleFromStorage(user.id)
+        const cachedRole = portalContext === 'main'
+          ? loadRoleFromStorageForContext(user.id, portalContext)
+          : null
+        const resolvedRole = cachedRole ?? await resolveUserRole(user.id)
+        if (resolvedRole.status === 'unresolved') {
+          apply({ status: 'loading', user, profile, error: null })
+          scheduleIdentityReinit()
+          return
+        }
+        const { role, ownerId, employeeProfileId, employerOrgId } = resolvedRole
         apply({ status: 'hydrating_user_data', user, profile, appSession, role, ownerId, employeeProfileId, employerOrgId })
         await bootstrapAuthenticatedUser(user.id, isCurrent)
         apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
-        // Fire background re-verify in case crew/employee membership changed.
-        // Never let an 'unresolved' (network-failed) pass overwrite the cached role.
-        resolveUserRole(user.id).then((resolved) => {
-          if (resolved.status === 'unresolved') return
-          apply({
-            role: resolved.role,
-            ownerId: resolved.ownerId,
-            employeeProfileId: resolved.employeeProfileId,
-            employerOrgId: resolved.employerOrgId,
-          })
-        }).catch(() => {})
+        if (cachedRole) {
+          // Fire background re-verify in case crew/employee membership changed.
+          // Never let an 'unresolved' (network-failed) pass overwrite the cached role.
+          resolveUserRole(user.id).then((resolved) => {
+            if (resolved.status === 'unresolved') return
+            apply({
+              role: resolved.role,
+              ownerId: resolved.ownerId,
+              employeeProfileId: resolved.employeeProfileId,
+              employerOrgId: resolved.employerOrgId,
+            })
+          }).catch(() => {})
+        }
         return
       }
 

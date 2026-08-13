@@ -27,6 +27,7 @@ import { useDemoStore, DemoProvider, INDUSTRY_LABELS } from '@/store/demoStore'
 import { ModeProvider } from '@/store/modeContext'
 import { useDemoLimits } from '@/hooks/useDemoLimits'
 import { isDemoRuntimeActive, isDemoUrlActive } from '@/services/demoModeSafety'
+import { setPreferredPortalContext } from '@/lib/portalContext'
 
 // Lazy-loaded portals — don't import at module scope to avoid TDZ issues
 // Chunk-retry: reloads page if a stale chunk hash causes an import failure after deployment
@@ -112,6 +113,10 @@ function ClientPortal() {
 // ── AuthenticatedRoot — renders the correct portal based on role ───────────────
 function AuthenticatedRoot() {
   const { role } = useAuth()
+
+  useEffect(() => {
+    setPreferredPortalContext(role === 'employee' ? 'employee' : 'main')
+  }, [role])
 
   switch (role) {
     case 'crew':
