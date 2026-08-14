@@ -12,6 +12,7 @@ const deps = vi.hoisted(() => ({
   setActiveTenantUser: vi.fn(),
   markTenantDataReady: vi.fn(),
   clearActiveTenantUser: vi.fn(),
+  resetSessionScopedBackupClientState: vi.fn(),
   clearLocalSnapshots: vi.fn(),
   invoke: vi.fn(),
   createdOrganizations: [] as Array<string>,
@@ -116,6 +117,7 @@ vi.mock('@/services/backupDataService', () => ({
   setActiveTenantUser: (...args: any[]) => deps.setActiveTenantUser(...args),
   markTenantDataReady: (...args: any[]) => deps.markTenantDataReady(...args),
   clearActiveTenantUser: (...args: any[]) => deps.clearActiveTenantUser(...args),
+  resetSessionScopedBackupClientState: (...args: any[]) => deps.resetSessionScopedBackupClientState(...args),
   clearLocalSnapshots: (...args: any[]) => deps.clearLocalSnapshots(...args),
   hasPendingLocalSave: vi.fn(() => false),
   reconcilePendingLocalSaveForHydration: vi.fn(async () => ({ success: true })),
@@ -186,6 +188,7 @@ beforeEach(() => {
   deps.setActiveTenantUser.mockReset()
   deps.markTenantDataReady.mockReset()
   deps.clearActiveTenantUser.mockReset()
+  deps.resetSessionScopedBackupClientState.mockReset()
   deps.clearLocalSnapshots.mockReset().mockResolvedValue(true)
   deps.createdOrganizations = []
   deps.invoke.mockReset().mockImplementation(async (name: string) => {
