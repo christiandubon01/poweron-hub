@@ -17,6 +17,7 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
+import { classifySource } from '@/services/portal/attributionSource'
 import { GOOGLE_MAPS_BROWSER_KEY, loadV15rGoogleMapsScript } from '@/utils/googleMapsLoader'
 
 declare global {
@@ -647,6 +648,11 @@ export default function CustomerPortalView() {
 
       // SEC-0R: submit via SECURITY DEFINER RPC — returns {request_id, attach_token}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const attrValue = (key: string) => {
+        const value = attribution[key]?.trim()
+        return value ? value : null
+      }
+
       const { data: submitResult, error: dbError } = await (supabase as any).rpc('submit_portal_request', {
         p_name:             form.name.trim(),
         p_phone:            form.phone.trim() || null,
@@ -659,6 +665,18 @@ export default function CustomerPortalView() {
         p_preferred_date:   form.preferred_date || null,
         p_preferred_time:   times || null,
         p_notes:            payload.notes || null,
+        p_gclid:            attrValue('gclid'),
+        p_gbraid:           attrValue('gbraid'),
+        p_wbraid:           attrValue('wbraid'),
+        p_utm_source:       attrValue('utm_source'),
+        p_utm_medium:       attrValue('utm_medium'),
+        p_utm_campaign:     attrValue('utm_campaign'),
+        p_utm_term:         attrValue('utm_term'),
+        p_utm_content:      attrValue('utm_content'),
+        p_referrer:         attrValue('referrer'),
+        p_landing_page:     attrValue('landing_page'),
+        p_page_url:         attrValue('page_url'),
+        p_source_category:  classifySource(attribution),
       })
 
       const submitData = submitResult as { request_id: string; attach_token: string } | null
