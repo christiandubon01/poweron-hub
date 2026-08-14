@@ -14,7 +14,7 @@ import { BiometricPrompt } from '@/components/auth/BiometricPrompt'
 import { PinAuth } from '@/components/auth/PinAuth'
 import { InitialSetupFlow } from '@/components/auth/InitialSetupFlow'
 import { supabase } from '@/lib/supabase'
-import { clearPasswordRecoveryIntent, passwordRecoveryRedirectUrl, validateNewPassword } from '@/lib/auth/passwordRecovery'
+import { clearPasswordRecoveryIntent, markPasswordRecoveryRequest, passwordRecoveryRedirectUrl, validateNewPassword } from '@/lib/auth/passwordRecovery'
 import { resolveProductRedirectUrl } from '@/services/organizationIdentityService'
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
@@ -1063,12 +1063,15 @@ function LoginForm({
         import.meta.env.VITE_APP_BASE_URL as string | undefined,
         window.location.origin,
       )
+      const redirectTo = passwordRecoveryRedirectUrl(baseUrl)
       const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail.trim(), {
-        redirectTo: passwordRecoveryRedirectUrl(baseUrl),
+        redirectTo,
       })
       if (error) throw error
+      markPasswordRecoveryRequest(redirectTo)
       setForgotSent(true)
     } catch (err: any) {
+      clearPasswordRecoveryIntent()
       setLocalError(err.message ?? 'Failed to send reset email.')
     } finally {
       setForgotLoading(false)

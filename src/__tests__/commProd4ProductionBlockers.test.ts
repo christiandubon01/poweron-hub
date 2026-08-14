@@ -40,6 +40,7 @@ describe('COMM-PROD-4 password recovery (RUNTIME)', () => {
   it('distinguishes recovery callbacks from normal signup confirmation', () => {
     expect(isPasswordRecoveryLocation({ pathname: '/auth/reset-password', search: '?code=pkce', hash: '' })).toBe(true)
     expect(isPasswordRecoveryLocation({ pathname: '/', search: '', hash: '#access_token=x&type=recovery' })).toBe(true)
+    expect(isPasswordRecoveryLocation({ pathname: '/', search: '?code=pkce', hash: '' })).toBe(false)
     expect(isPasswordRecoveryLocation({ pathname: '/', search: '?verified=true', hash: '' })).toBe(false)
     expect(passwordRecoveryRedirectUrl('https://hub.example/')).toBe('https://hub.example/auth/reset-password')
   })
@@ -57,6 +58,7 @@ describe('COMM-PROD-4 password recovery UI (SOURCE-CONTRACT)', () => {
     expect(LOGIN).toContain('placeholder="New password (min 8 chars)"')
     expect(LOGIN).toContain('placeholder="Confirm password"')
     expect(LOGIN).toContain('supabase.auth.updateUser({ password })')
+    expect(LOGIN).toContain('markPasswordRecoveryRequest(redirectTo)')
     expect(LOGIN).toMatch(/clearPasswordRecoveryIntent\(\)[\s\S]{0,100}await signOut\(\)/)
     expect(LOGIN).toContain("case 'password_recovery':")
   })

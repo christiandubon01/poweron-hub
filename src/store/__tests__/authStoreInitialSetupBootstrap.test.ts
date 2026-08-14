@@ -14,6 +14,7 @@
  * with a stored passcode resolves "PIN configured", not PIN setup.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { markPasswordRecoveryRequest } from '@/lib/auth/passwordRecovery'
 
 const deps = vi.hoisted(() => ({
   hydrationResult: { success: true, merged: false, status: 'no_remote' } as any,
@@ -802,6 +803,31 @@ describe('COMM-PROD-4 password callback routing', () => {
     expect(useAuthStore.getState().status).toBe('unauthenticated')
     expect(useAuthStore.getState().status).not.toBe('password_recovery')
     expect(deps.loadFromSupabase).not.toHaveBeenCalled()
+  })
+
+  it('treats a production-style root code callback as recovery only when a valid reset request is pending', async () => {
+    window.location.search = '?code=recovery-pkce-code'
+    markPasswordRecoveryRequest('https://app.poweronsolutionsllc.com/auth/reset-password')
+    deps.getSession.mockResolvedValue({ data: { session: { user: { id: CONTRACTOR } } } })
+
+    await useAuthStore.getState().initialize()
+
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'password_recovery',
+      user: { id: CONTRACTOR },
+    })
+    expect(deps.loadFromSupabase).not.toHaveBeenCalled()
+  })
+
+  it('does not treat an arbitrary root auth code as password recovery', async () => {
+    window.location.search = '?code=signup-confirmation-code'
+    deps.getSession.mockResolvedValue({ data: { session: { user: { id: CONTRACTOR } } } })
+
+    await useAuthStore.getState().initialize()
+
+    expect(useAuthStore.getState().status).toBe('authenticated')
+    expect(useAuthStore.getState().status).not.toBe('password_recovery')
+    expect(deps.loadFromSupabase).toHaveBeenCalledTimes(1)
   })
 })
 
