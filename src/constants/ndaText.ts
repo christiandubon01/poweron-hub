@@ -3,18 +3,18 @@
  * Full NDA agreement text for PowerOn Hub Beta Testing Program.
  * Imported by ndaService.ts for PDF generation and display.
  *
- * NDA_VERSION — semantic version string. Bump this when the NDA text changes.
- * Users who accepted a previous version will be prompted to re-accept.
- * NDA_AGREEMENT_VERSION — the Supabase agreement_type key (includes version).
- * When bumping NDA_VERSION, update NDA_AGREEMENT_VERSION to match.
+ * NDA_VERSION — the human-readable document revision.
+ * NDA_AGREEMENT_VERSION — the persisted signed_agreements agreement_type key.
+ *
+ * Re-consent is NOT triggered by bumping these constants alone.
+ * The canonical NDA authority owns version compatibility and only requires
+ * re-consent when a newer agreement version is explicitly marked that way.
  */
 
-// NDA-FIX: Added NDA_VERSION constant. Start at "1.0".
-// To require re-acceptance: bump to "1.1", "2.0", etc. and update NDA_AGREEMENT_VERSION.
 export const NDA_VERSION = '1.0';
 
-// Supabase agreement_type stored in signed_agreements.agreement_type
-// Format: nda_beta_v{NDA_VERSION} — preserves existing records from before this fix.
+// Supabase agreement_type stored in signed_agreements.agreement_type.
+// Keep historical keys stable; publish a new key only for a new legal document.
 export const NDA_AGREEMENT_VERSION = 'nda_beta_v1';
 
 export const NDA_FULL_TEXT = `NON-DISCLOSURE AND BETA TESTING AGREEMENT

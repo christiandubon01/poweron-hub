@@ -17,30 +17,20 @@ import jsPDF from 'jspdf';
 import { syncToSupabase, fetchFromSupabase } from './supabaseService';
 import { supabase } from '@/lib/supabase';
 import { NDA_FULL_TEXT, NDA_AGREEMENT_VERSION } from '@/constants/ndaText';
+import {
+  allowsNDAAccess,
+  resolveNDAStatus,
+  type NDAAccessOverrideRecordLike,
+  type NDASignedAgreementRecordLike,
+  type ResolvedNDAStatus,
+} from '@/services/ndaAuthority';
 
 // Re-export for backward compatibility with NDASigningFlow and other consumers
 export { NDA_FULL_TEXT, NDA_AGREEMENT_VERSION };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface SignedAgreementRecord {
-  id?: string;
-  user_id?: string | null;
-  agreement_type?: string | null;
-  signature_image?: string | null;
-  signature_data?: string | null;
-  typed_name?: string | null;
-  ip_address?: string | null;
-  signed_at?: string | null;
-  created_at?: string | null;
-  pdf_url?: string;
-  // Identity verification fields (B2)
-  email?: string | null;
-  pin_verified?: boolean | null;
-  verification_timestamp?: string | null;
-  // Admin revoke (B3)
-  revoked?: boolean | null;
-}
+export interface SignedAgreementRecord extends NDASignedAgreementRecordLike {}
 
 export interface NDASubmission {
   userId: string;
@@ -146,35 +136,25 @@ export interface ValidSignedNDAResult {
 // naming those newer columns makes PostgREST reject the entire read before
 // legacy classification can run.
 export const SIGNED_NDA_READ_SELECT = '*';
+const NDA_ACCESS_AUTHORITY_TABLE = 'nda_access_authority';
 
-function normalizeAgreementType(agreementType: string | null | undefined): string {
-  return String(agreementType || '').trim().toLowerCase();
+export class NDAAuthorityUnavailableError extends Error {
+  code: string
+  supabaseCode: string | null
+  cause: unknown
+
+  constructor(message: string, cause?: unknown) {
+    super(message)
+    this.name = 'NDAAuthorityUnavailableError'
+    this.code = 'NDA_AUTHORITY_SCHEMA_UNAVAILABLE'
+    this.supabaseCode = typeof (cause as any)?.code === 'string' ? (cause as any).code : null
+    this.cause = cause ?? null
+  }
 }
 
-function isNdaAgreementType(agreementType: string | null | undefined): boolean {
-  return normalizeAgreementType(agreementType).includes('nda');
-}
-
-function hasAgreementTimestamp(record: SignedAgreementRecord): boolean {
-  return Boolean(record.signed_at || record.created_at);
-}
-
-function isCurrentSignedNDARecord(record: SignedAgreementRecord): boolean {
-  return (
-    normalizeAgreementType(record.agreement_type) === normalizeAgreementType(NDA_AGREEMENT_VERSION) &&
-    Boolean(record.id) &&
-    Boolean(record.verification_timestamp)
-  );
-}
-
-export function classifySignedNDARecord(
-  record: SignedAgreementRecord | null | undefined,
-): SignedNDACompatibility | null {
-  if (!record) return null;
-  if (record.revoked === true) return null;
-  if (!isNdaAgreementType(record.agreement_type)) return null;
-  if (!hasAgreementTimestamp(record)) return null;
-  return isCurrentSignedNDARecord(record) ? 'current' : 'legacy';
+export function isNDAAuthorityUnavailableError(error: unknown): error is NDAAuthorityUnavailableError {
+  return error instanceof NDAAuthorityUnavailableError
+    || (typeof error === 'object' && error !== null && (error as any).code === 'NDA_AUTHORITY_SCHEMA_UNAVAILABLE')
 }
 
 async function fetchSignedNDARecordsForUser(userId: string): Promise<SignedAgreementRecord[]> {
@@ -187,6 +167,68 @@ async function fetchSignedNDARecordsForUser(userId: string): Promise<SignedAgree
 
   if (error) throw error;
   return Array.isArray(data) ? (data as SignedAgreementRecord[]) : [];
+}
+
+function isOptionalRelationMissing(error: any): boolean {
+  const code = String(error?.code || '').trim()
+  const message = String(error?.message || '').toLowerCase()
+  return (
+    code === 'PGRST205'
+    || code === '42P01'
+    || message.includes("could not find the table")
+    || message.includes('does not exist')
+  )
+}
+
+async function fetchNDAAccessOverrideForUser(userId: string): Promise<NDAAccessOverrideRecordLike | null> {
+  const { data, error } = await (supabase as any)
+    .from(NDA_ACCESS_AUTHORITY_TABLE)
+    .select('user_id, access_state, source_classification, reason, effective_at, created_at')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (error) {
+    if (isOptionalRelationMissing(error)) {
+      throw new NDAAuthorityUnavailableError(
+        'NDA authority is unavailable because migration 121_nda_access_authority.sql has not been applied.',
+        error,
+      )
+    }
+    throw error
+  }
+  return (data ?? null) as NDAAccessOverrideRecordLike | null
+}
+
+function signedStateToCompatibility(state: ResolvedNDAStatus['state']): SignedNDACompatibility | null {
+  if (state === 'SIGNED_CURRENT') return 'current'
+  if (state === 'SIGNED_LEGACY') return 'legacy'
+  return null
+}
+
+export async function getCanonicalNDAStatus(userId: string): Promise<ResolvedNDAStatus> {
+  const { data: { user } } = await supabase.auth.getUser()
+  const authUid = user?.id ?? userId
+
+  const [records, override] = await Promise.all([
+    fetchSignedNDARecordsForUser(authUid),
+    fetchNDAAccessOverrideForUser(authUid),
+  ])
+
+  const resolved = resolveNDAStatus({
+    agreements: records,
+    override,
+    user: {
+      userId: authUid,
+    },
+  })
+
+  if (allowsNDAAccess(resolved.state)) {
+    setNdaCacheAccepted(authUid)
+  } else {
+    try { localStorage.removeItem(getNdaCacheKey(authUid)) } catch { /* unavailable */ }
+  }
+
+  return resolved
 }
 
 // ─── Self-healing sync ─────────────────────────────────────────────────────────
@@ -463,7 +505,9 @@ export async function saveSignedNDA(
   pinVerified?: boolean
 ): Promise<string> {
   const signedAt = new Date().toISOString();
-  const verificationTimestamp = new Date().toISOString();
+  if (pinVerified === false) {
+    throw new Error('PIN verification is required before saving the NDA agreement.')
+  }
 
   // ── CRITICAL: Wait for auth to be ready before writing ────────────────────
   let authUid: string;
@@ -491,8 +535,6 @@ export async function saveSignedNDA(
     ip_address: ipAddress,
     signed_at: signedAt,
     email: email ?? undefined,
-    pin_verified: pinVerified ?? false,
-    verification_timestamp: verificationTimestamp,
   };
 
   let insertedRow: any;
@@ -596,42 +638,41 @@ export async function saveSignedNDA(
  * server row and is never sufficient to bypass the gate on its own.
  */
 export async function getValidSignedNDA(userId: string): Promise<ValidSignedNDAResult | null> {
-  // The cache is a hint only. Always confirm the server row so a prior failed
-  // insert cannot leave a permanent client-side gate bypass.
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-    const authUid = user?.id ?? userId;
-    const records = await fetchSignedNDARecordsForUser(authUid);
-
-    for (const record of records) {
-      const kind = classifySignedNDARecord(record);
-      if (!kind) continue;
-      setNdaCacheAccepted(authUid);
-      return { kind, record };
-    }
-
-    try { localStorage.removeItem(getNdaCacheKey(authUid)); } catch { /* unavailable */ }
-    return null;
+    const resolved = await getCanonicalNDAStatus(userId)
+    const kind = signedStateToCompatibility(resolved.state)
+    if (!kind || !resolved.agreement) return null
+    return { kind, record: resolved.agreement as SignedAgreementRecord }
   } catch (err) {
-    console.warn('[ndaService] Error checking authoritative NDA status; keeping gate closed:', err);
-    return null;
+    if (isNDAAuthorityUnavailableError(err)) throw err
+    console.warn('[ndaService] Error checking authoritative NDA status; keeping gate closed:', err)
+    return null
   }
 }
 
 /**
- * Returns true if the user has a valid signed NDA on record.
- *
- * Legacy server-side NDA rows remain valid even when they predate newer
- * metadata fields, as long as they are recognizable NDA agreements and carry
- * trustworthy historical timestamps. If the deployed schema exposes a
- * revocation flag, revoked rows are rejected.
+ * Returns true only when a real server-side signed agreement remains valid.
  */
 export async function hasValidSignedNDA(userId: string): Promise<boolean> {
-  return Boolean(await getValidSignedNDA(userId));
+  return Boolean(await getValidSignedNDA(userId))
+}
+
+/**
+ * Returns true when the canonical NDA authority allows the app to open.
+ */
+export async function hasNDAAccess(userId: string): Promise<boolean> {
+  try {
+    const resolved = await getCanonicalNDAStatus(userId)
+    return allowsNDAAccess(resolved.state)
+  } catch (err) {
+    if (isNDAAuthorityUnavailableError(err)) throw err
+    console.warn('[ndaService] Error resolving canonical NDA access; keeping gate closed:', err)
+    return false
+  }
 }
 
 export async function hasUserSignedNDA(userId: string): Promise<boolean> {
-  return hasValidSignedNDA(userId);
+  return hasValidSignedNDA(userId)
 }
 
 /**
@@ -697,13 +738,34 @@ export async function getSignedNDAsPaginated(
  * Revokes a signed NDA record by setting revoked: true.
  */
 export async function revokeSignedNDA(recordId: string): Promise<void> {
-  const { error } = await (supabase as any)
+  const { data: agreement, error: agreementError } = await (supabase as any)
     .from('signed_agreements')
-    .update({ revoked: true })
-    .eq('id', recordId);
+    .select('user_id')
+    .eq('id', recordId)
+    .maybeSingle()
+
+  if (agreementError) {
+    throw new Error(`Revoke failed: ${agreementError.message}`)
+  }
+  if (!agreement?.user_id) {
+    throw new Error('Revoke failed: signed agreement user could not be resolved.')
+  }
+
+  const { error } = await (supabase as any)
+    .from(NDA_ACCESS_AUTHORITY_TABLE)
+    .upsert({
+      user_id: agreement.user_id,
+      access_state: 'REVOKED',
+      source_classification: 'guardian_manual_revocation',
+      reason: 'Guardian NDA access revocation',
+      effective_at: new Date().toISOString(),
+    }, { onConflict: 'user_id' })
 
   if (error) {
-    throw new Error(`Revoke failed: ${error.message}`);
+    if (isOptionalRelationMissing(error)) {
+      throw new Error('Revoke failed: apply migration 121_nda_access_authority.sql before revoking NDA access.')
+    }
+    throw new Error(`Revoke failed: ${error.message}`)
   }
 }
 

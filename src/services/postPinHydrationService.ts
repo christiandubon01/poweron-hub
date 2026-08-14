@@ -3,6 +3,22 @@ import type {
   SyncToSupabaseResult,
 } from './backupDataService'
 
+export type DeferredHydrationStage = 'reconcile' | 'refresh'
+
+export class DeferredHydrationError extends Error {
+  stage: DeferredHydrationStage
+  code: string | null
+  cause: unknown
+
+  constructor(stage: DeferredHydrationStage, message: string, cause?: unknown) {
+    super(message)
+    this.name = 'DeferredHydrationError'
+    this.stage = stage
+    this.code = typeof (cause as any)?.code === 'string' ? (cause as any).code : null
+    this.cause = cause ?? null
+  }
+}
+
 export interface DeferredHydrationDependencies {
   reconcilePendingLocalSave: () => Promise<SyncToSupabaseResult>
   hasPendingLocalSave: () => boolean
@@ -22,13 +38,28 @@ export async function completeDeferredHydration(
 
   const syncResult = await dependencies.reconcilePendingLocalSave()
   if (!syncResult.success) {
-    throw new Error(syncResult.error || 'Pending local changes could not be reconciled')
+    throw new DeferredHydrationError(
+      'reconcile',
+      syncResult.error || 'Pending local changes could not be reconciled',
+      syncResult,
+    )
   }
   if (dependencies.hasPendingLocalSave()) {
-    throw new Error('Pending local changes are still waiting for cloud sync')
+    throw new DeferredHydrationError(
+      'reconcile',
+      'Pending local changes are still waiting for cloud sync',
+    )
   }
 
-  await dependencies.requestRemoteRefresh()
+  try {
+    await dependencies.requestRemoteRefresh()
+  } catch (error) {
+    throw new DeferredHydrationError(
+      'refresh',
+      error instanceof Error ? error.message : 'Remote refresh failed during deferred hydration',
+      error,
+    )
+  }
 
   return {
     ...initial,

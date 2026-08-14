@@ -8,6 +8,12 @@ import {
   isPilotTelemetryEventName,
   sanitizeTelemetryMetadata,
 } from '../../src/services/pilotTelemetryShared'
+import {
+  allowsNDAAccess,
+  resolveNDAStatus,
+  type NDAAccessOverrideRecordLike,
+  type NDASignedAgreementRecordLike,
+} from '../../src/services/ndaAuthority'
 
 type NetlifyEvent = {
   httpMethod?: string
@@ -438,8 +444,9 @@ export function buildFounderContractorAdminReport(input: {
   invites: any[]
   agreements: any[]
   authUsers: any[]
+  overrides?: any[]
 }, now = Date.now()) {
-  const { organizations, profiles, invites, agreements, authUsers } = input
+  const { organizations, profiles, invites, agreements, authUsers, overrides = [] } = input
   const authById = new Map(authUsers.map((entry: any) => [String(entry.id), entry]))
   const authByEmail = new Map(authUsers
     .filter((entry: any) => entry.email)
@@ -449,21 +456,59 @@ export function buildFounderContractorAdminReport(input: {
   const organizationByOwnerId = new Map(organizations
     .filter((entry: any) => entry.owner_id)
     .map((entry: any) => [String(entry.owner_id), entry]))
+  const agreementsByUserId = new Map<string, NDASignedAgreementRecordLike[]>()
+  for (const agreement of agreements) {
+    const key = String(agreement.user_id || '')
+    if (!agreementsByUserId.has(key)) agreementsByUserId.set(key, [])
+    agreementsByUserId.get(key)!.push(agreement)
+  }
+  const overrideByUserId = new Map<string, NDAAccessOverrideRecordLike>(
+    overrides
+      .filter((entry: any) => entry?.user_id)
+      .map((entry: any) => [String(entry.user_id), entry]),
+  )
 
-  const contractorAccounts = organizations.map((org: any) => {
+  function describeNDAStatus(state: string): 'signed' | 'grandfathered' | 'missing' | 'revoked' {
+    if (state === 'SIGNED_CURRENT' || state === 'SIGNED_LEGACY') return 'signed'
+    if (state === 'GRANDFATHERED_LEGACY_ACCESS') return 'grandfathered'
+    if (state === 'REVOKED') return 'revoked'
+    return 'missing'
+  }
+
+  const contractorAccounts = organizations
+    .filter((org: any) => org.owner_id)
+    .map((org: any) => {
     const ownerId = String(org.owner_id || '')
     const owner = authById.get(ownerId) as any
     const ownerProfile = profileByUserId.get(ownerId) as any
     const settings = record(org.settings)
     const onboarding = record(settings.onboarding)
-    const ownerAgreements = agreements.filter((agreement: any) => String(agreement.user_id) === ownerId && agreement.revoked !== true)
+    const resolved = resolveNDAStatus({
+      agreements: agreementsByUserId.get(ownerId) ?? [],
+      override: overrideByUserId.get(ownerId) ?? null,
+      user: {
+        userId: ownerId,
+        role: ownerProfile?.role ?? 'owner',
+        organizationId: String(org.id),
+        organizationOwnerId: ownerId,
+        authCreatedAt: owner?.created_at ?? null,
+        lastSignInAt: owner?.last_sign_in_at ?? null,
+        profileCreatedAt: ownerProfile?.created_at ?? null,
+        organizationCreatedAt: org.created_at ?? null,
+      },
+    })
     return {
       organizationId: String(org.id),
       organizationName: String(org.name || ''),
       ownerEmail: String(owner?.email || ''),
       createdAt: org.created_at,
       onboardingStatus: onboarding.complete === true ? 'complete' : 'pending',
-      agreementStatus: ownerAgreements.length > 0 ? 'signed' : 'missing',
+      agreementStatus: describeNDAStatus(resolved.state),
+      ndaState: resolved.state,
+      agreementVersion: resolved.agreement?.agreement_type || null,
+      signedAt: resolved.signedAt,
+      signer: resolved.signer || ownerProfile?.full_name || null,
+      artifactAvailable: resolved.hasArtifact,
       classification: getPilotOrganizationClassification(settings),
       accountStatus: ownerProfile?.is_active === false ? 'inactive' : 'active',
     }
@@ -494,21 +539,54 @@ export function buildFounderContractorAdminReport(input: {
     }
   })
 
-  const signedAgreements = agreements.map((agreement: any) => {
-    const signer = authById.get(String(agreement.user_id)) as any
-    const profile = profileByUserId.get(String(agreement.user_id)) as any
-    const org = (profile?.org_id ? organizationById.get(String(profile.org_id)) : null) as any
+  const signedAgreements = contractorAccounts.map((account: any) => {
+    const ownerId = String(account.organizationId ? (organizationById.get(account.organizationId)?.owner_id || '') : '')
+    const owner = authById.get(ownerId) as any
+    const profile = profileByUserId.get(ownerId) as any
+    const org = organizationById.get(String(account.organizationId)) as any
+    const resolved = resolveNDAStatus({
+      agreements: agreementsByUserId.get(ownerId) ?? [],
+      override: overrideByUserId.get(ownerId) ?? null,
+      user: {
+        userId: ownerId,
+        role: profile?.role ?? 'owner',
+        organizationId: org?.id ? String(org.id) : null,
+        organizationOwnerId: ownerId,
+        authCreatedAt: owner?.created_at ?? null,
+        lastSignInAt: owner?.last_sign_in_at ?? null,
+        profileCreatedAt: profile?.created_at ?? null,
+        organizationCreatedAt: org?.created_at ?? null,
+      },
+    })
+    const agreement = resolved.agreement as NDASignedAgreementRecordLike | null
+    const status = resolved.state === 'SIGNED_CURRENT'
+      ? 'current'
+      : resolved.state === 'SIGNED_LEGACY'
+        ? 'legacy'
+        : resolved.state === 'GRANDFATHERED_LEGACY_ACCESS'
+          ? 'grandfathered'
+          : resolved.state === 'REVOKED'
+            ? 'revoked'
+            : 'unsigned'
     return {
-      id: String(agreement.id),
-      signer: String(agreement.typed_name || profile?.full_name || ''),
-      email: String(agreement.email || signer?.email || ''),
+      id: String(agreement?.id || `nda-access-${ownerId}`),
+      signer: String(agreement?.typed_name || profile?.full_name || ''),
+      email: String(agreement?.email || owner?.email || ''),
       organizationId: org?.id ? String(org.id) : null,
       organizationName: org?.name ? String(org.name) : null,
-      version: String(agreement.agreement_type || ''),
-      signedAt: agreement.signed_at,
-      status: agreement.revoked === true ? 'revoked' : 'signed',
-      pinVerified: agreement.pin_verified === true,
-      hasPdf: Boolean(agreement.pdf_url),
+      version: agreement?.agreement_type ? String(agreement.agreement_type) : null,
+      signedAt: resolved.signedAt,
+      ndaState: resolved.state,
+      status,
+      pinVerified: agreement?.pin_verified === true,
+      hasPdf: resolved.hasArtifact,
+      artifactStatus: resolved.state === 'GRANDFATHERED_LEGACY_ACCESS'
+        ? 'access_grandfathered_no_signed_document'
+        : resolved.hasArtifact
+          ? 'signed_document_on_file'
+          : allowsNDAAccess(resolved.state)
+            ? 'no_signed_pdf_captured'
+            : 'no_document',
     }
   })
 
@@ -525,11 +603,12 @@ async function handleFounderContractorAdmin(user: any) {
   if (denied) return denied
 
   const supabase = getServiceClient()
-  const [organizationsResult, profilesResult, invitesResult, agreementsResult, authUsers] = await Promise.all([
+  const [organizationsResult, profilesResult, invitesResult, agreementsResult, overridesResult, authUsers] = await Promise.all([
     supabase.from('organizations').select('id, name, owner_id, settings, created_at'),
     supabase.from('profiles').select('id, org_id, full_name, role, is_active, created_at'),
     supabase.from('beta_invites').select('id, email, industry, status, invited_at, accepted_at, expires_at, accepted_user_id, organization_id'),
-    supabase.from('signed_agreements').select('id, user_id, agreement_type, typed_name, email, signed_at, pin_verified, revoked, pdf_url'),
+    supabase.from('signed_agreements').select('id, user_id, agreement_type, typed_name, full_name, email, signed_at, created_at, pdf_url, signature_image, signature_data, ip_address, version, org_id'),
+    readOptionalTable(supabase, 'nda_access_authority', 'user_id, access_state, source_classification, reason, effective_at, created_at'),
     listAllAuthUsers(supabase),
   ])
 
@@ -542,6 +621,7 @@ async function handleFounderContractorAdmin(user: any) {
     profiles: profilesResult.data ?? [],
     invites: invitesResult.data ?? [],
     agreements: agreementsResult.data ?? [],
+    overrides: overridesResult.available ? (overridesResult.data ?? []) : [],
     authUsers,
   })
 

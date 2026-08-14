@@ -22,14 +22,14 @@ import type { BiometricCapabilities } from '@/lib/auth/biometric'
 import { createAppSession, destroyAppSession, validateAppSession, getDeviceInfo } from '@/lib/auth/session'
 import type { AppSession } from '@/lib/auth/session'
 import { logLogin, logAudit } from '@/lib/memory/audit'
-import { hasBackupData, createEmptyBackup, saveBackupData, loadFromSupabase, setHydrating, getCacheOwner, setCacheOwner, clearCacheOwner, setActiveTenantUser, markTenantDataReady, clearActiveTenantUser, clearLocalSnapshots, hasPendingLocalSave, reconcilePendingLocalSaveForHydration } from '@/services/backupDataService'
+import { hasBackupData, createEmptyBackup, saveBackupData, loadFromSupabase, setHydrating, getCacheOwner, setCacheOwner, clearCacheOwner, setActiveTenantUser, markTenantDataReady, clearActiveTenantUser, clearLocalSnapshots, hasPendingLocalSave, reconcilePendingLocalSaveForHydration, resetSessionScopedBackupClientState } from '@/services/backupDataService'
 import type { BackupHydrationResult } from '@/services/backupDataService'
-import { completeDeferredHydration } from '@/services/postPinHydrationService'
+import { completeDeferredHydration, DeferredHydrationError } from '@/services/postPinHydrationService'
 import { logAction } from '@/services/security/AgentSafetySystem'
 import { resolveProductRedirectUrl } from '@/services/organizationIdentityService'
 import { isDemoRuntimeActive } from '@/services/demoModeSafety'
 import { trackPilotTelemetryEvent } from '@/services/pilotTelemetryClient'
-import { detectPortalContext } from '@/lib/portalContext'
+import { clearPreferredPortalContext, detectPortalContext } from '@/lib/portalContext'
 import { clearPasswordRecoveryIntent, hasPasswordRecoveryIntent, isPasswordRecoveryLocation, markPasswordRecoveryIntent } from '@/lib/auth/passwordRecovery'
 
 // ── Role system ───────────────────────────────────────────────────────────────
@@ -90,6 +90,22 @@ function persistResolvedRole(context: 'main' | 'employee', resolved: ResolvedPor
   } else {
     localStorage.removeItem(storageKey(EMPLOYER_ORG_ID_KEY, context))
   }
+}
+
+function clearPersistedRoleContext(context: 'main' | 'employee'): void {
+  localStorage.removeItem(storageKey(ROLE_STORAGE_KEY, context))
+  localStorage.removeItem(storageKey(OWNER_ID_STORAGE_KEY, context))
+  localStorage.removeItem(storageKey(EMPLOYEE_PROFILE_ID_KEY, context))
+  localStorage.removeItem(storageKey(EMPLOYER_ORG_ID_KEY, context))
+}
+
+function clearPersistedPortalRoleState(): void {
+  clearPersistedRoleContext('main')
+  clearPersistedRoleContext('employee')
+  localStorage.removeItem(ROLE_STORAGE_KEY)
+  localStorage.removeItem(OWNER_ID_STORAGE_KEY)
+  localStorage.removeItem(EMPLOYEE_PROFILE_ID_KEY)
+  localStorage.removeItem(EMPLOYER_ORG_ID_KEY)
 }
 
 async function bootstrapOwnerWorkspaceForAuthenticatedUser(user: User): Promise<Profile | null> {
@@ -340,6 +356,97 @@ class StaleAuthOperationError extends Error {
   }
 }
 
+type AuthHydrationFailureStage =
+  | 'loadFromSupabase'
+  | 'reconcile'
+  | 'refresh'
+  | 'completeDeferredHydration'
+  | 'bootstrap'
+
+class AuthHydrationFailureError extends Error {
+  stage: AuthHydrationFailureStage
+  code: string | null
+  cause: unknown
+
+  constructor(stage: AuthHydrationFailureStage, message: string, cause?: unknown) {
+    super(message)
+    this.name = 'AuthHydrationFailureError'
+    this.stage = stage
+    this.code = typeof (cause as any)?.code === 'string' ? (cause as any).code : null
+    this.cause = cause ?? null
+  }
+}
+
+function shortenAuthDiagnosticId(value: string | null | undefined): string | null {
+  const normalized = String(value || '').trim()
+  if (!normalized) return null
+  if (normalized.length <= 12) return normalized
+  return `${normalized.slice(0, 8)}...${normalized.slice(-4)}`
+}
+
+function reportAuthHydrationFailure(params: {
+  stage: AuthHydrationFailureStage
+  userId: string
+  organizationId?: string | null
+  error: unknown
+  initSequenceId?: number | null
+}): void {
+  const { stage, userId, organizationId, error, initSequenceId = null } = params
+  console.error('[AUTH-HYDRATION-FAIL]', {
+    stage,
+    userId: shortenAuthDiagnosticId(userId),
+    organizationId: shortenAuthDiagnosticId(organizationId),
+    code: typeof (error as any)?.code === 'string' ? (error as any).code : null,
+    message: error instanceof Error ? error.message : String(error),
+    initSequenceId,
+  })
+}
+
+function reportWorkspaceBootstrapBoundaryFailure(params: {
+  stage: string
+  userId?: string | null
+  profileId?: string | null
+  organizationId?: string | null
+  error: unknown
+  initSequenceId?: number | null
+  authOperationGeneration: number
+  currentStatus: AuthStatus
+}): void {
+  const {
+    stage,
+    userId,
+    profileId,
+    organizationId,
+    error,
+    initSequenceId = null,
+    authOperationGeneration,
+    currentStatus,
+  } = params
+  console.error('[AUTH-WORKSPACE-BOOTSTRAP-FAIL]', {
+    stage,
+    errorName: error instanceof Error ? error.name : typeof error,
+    code: typeof (error as any)?.code === 'string' ? (error as any).code : null,
+    message: error instanceof Error ? error.message : String(error),
+    userId: shortenAuthDiagnosticId(userId),
+    profileId: shortenAuthDiagnosticId(profileId),
+    organizationId: shortenAuthDiagnosticId(organizationId),
+    initSequenceId,
+    authOperationGeneration,
+    currentStatus,
+  })
+}
+
+function toAuthHydrationFailure(error: unknown, fallbackStage: AuthHydrationFailureStage): AuthHydrationFailureError {
+  if (error instanceof AuthHydrationFailureError) return error
+  if (error instanceof DeferredHydrationError) {
+    return new AuthHydrationFailureError(error.stage, error.message, error)
+  }
+  if (error instanceof Error) {
+    return new AuthHydrationFailureError(fallbackStage, error.message, error)
+  }
+  return new AuthHydrationFailureError(fallbackStage, String(error), error)
+}
+
 let _authOperationGeneration = 0
 let _initSeq = 0
 
@@ -364,6 +471,7 @@ async function bootstrapAuthenticatedUser(
   userId: string,
   organizationId: string | null | undefined,
   isCurrent: () => boolean = () => true,
+  diagnostics: { initSequenceId?: number | null } = {},
 ): Promise<BackupHydrationResult> {
   assertAuthOperationCurrent(isCurrent)
   setHydrating(true)
@@ -390,7 +498,19 @@ async function bootstrapAuthenticatedUser(
     const initialResult = await loadFromSupabase(userId, false, isCurrent)
     assertAuthOperationCurrent(isCurrent)
     if (!initialResult.success) {
-      throw new Error(initialResult.error || 'Failed to load workspace data')
+      const failure = new AuthHydrationFailureError(
+        'loadFromSupabase',
+        initialResult.error || 'Failed to load workspace data',
+        initialResult,
+      )
+      reportAuthHydrationFailure({
+        stage: failure.stage,
+        userId,
+        organizationId,
+        error: failure,
+        initSequenceId: diagnostics.initSequenceId ?? null,
+      })
+      throw failure
     }
 
     // The guarded sync engine refuses writes while the bootstrap read flag is set.
@@ -400,26 +520,39 @@ async function bootstrapAuthenticatedUser(
       setHydrating(false)
     }
 
-    const result = await completeDeferredHydration(initialResult, {
-      reconcilePendingLocalSave: async () => {
-        assertAuthOperationCurrent(isCurrent)
-        const syncResult = await reconcilePendingLocalSaveForHydration(userId)
-        assertAuthOperationCurrent(isCurrent)
-        return syncResult
-      },
-      hasPendingLocalSave: () => {
-        assertAuthOperationCurrent(isCurrent)
-        return hasPendingLocalSave()
-      },
-      requestRemoteRefresh: async () => {
-        assertAuthOperationCurrent(isCurrent)
-        const { requestRemoteRefresh } = await import('@/services/liveCloudRefreshService')
-        assertAuthOperationCurrent(isCurrent)
-        const refreshResult = await requestRemoteRefresh({ source: 'manual' })
-        assertAuthOperationCurrent(isCurrent)
-        return refreshResult
-      },
-    })
+    let result: BackupHydrationResult
+    try {
+      result = await completeDeferredHydration(initialResult, {
+        reconcilePendingLocalSave: async () => {
+          assertAuthOperationCurrent(isCurrent)
+          const syncResult = await reconcilePendingLocalSaveForHydration(userId)
+          assertAuthOperationCurrent(isCurrent)
+          return syncResult
+        },
+        hasPendingLocalSave: () => {
+          assertAuthOperationCurrent(isCurrent)
+          return hasPendingLocalSave()
+        },
+        requestRemoteRefresh: async () => {
+          assertAuthOperationCurrent(isCurrent)
+          const { requestRemoteRefresh } = await import('@/services/liveCloudRefreshService')
+          assertAuthOperationCurrent(isCurrent)
+          const refreshResult = await requestRemoteRefresh({ source: 'manual' })
+          assertAuthOperationCurrent(isCurrent)
+          return refreshResult
+        },
+      })
+    } catch (error) {
+      const failure = toAuthHydrationFailure(error, 'completeDeferredHydration')
+      reportAuthHydrationFailure({
+        stage: failure.stage,
+        userId,
+        organizationId,
+        error: failure,
+        initSequenceId: diagnostics.initSequenceId ?? null,
+      })
+      throw failure
+    }
     assertAuthOperationCurrent(isCurrent)
 
     // loadFromSupabase(userId) seeds empty tenant-local data when no remote row exists.
@@ -461,6 +594,15 @@ async function bootstrapAuthenticatedUser(
     if (err instanceof StaleAuthOperationError || !isCurrent()) {
       throw err instanceof StaleAuthOperationError ? err : new StaleAuthOperationError()
     }
+    if (!(err instanceof AuthHydrationFailureError)) {
+      reportAuthHydrationFailure({
+        stage: 'bootstrap',
+        userId,
+        organizationId,
+        error: err,
+        initSequenceId: diagnostics.initSequenceId ?? null,
+      })
+    }
     console.error('[Auth] bootstrapAuthenticatedUser failed:', err)
     clearActiveTenantUser()
     if (!preserveCacheOwner) clearCacheOwner()
@@ -481,6 +623,7 @@ async function bootstrapResolvedPortalData(
   organizationId: string | null | undefined,
   role: UserRole,
   isCurrent: () => boolean = () => true,
+  diagnostics: { initSequenceId?: number | null } = {},
 ): Promise<void> {
   assertAuthOperationCurrent(isCurrent)
   if (role === 'employee') {
@@ -488,7 +631,7 @@ async function bootstrapResolvedPortalData(
     clearActiveTenantUser()
     return
   }
-  await bootstrapAuthenticatedUser(userId, organizationId, isCurrent)
+  await bootstrapAuthenticatedUser(userId, organizationId, isCurrent, diagnostics)
 }
 
 /**
@@ -635,6 +778,14 @@ function scheduleIdentityReinit(): void {
   }, 2000)
 }
 
+function clearIdentityRetryState(): void {
+  _identityRetryCount = 0
+  if (_identityRetryTimer) {
+    clearTimeout(_identityRetryTimer)
+    _identityRetryTimer = null
+  }
+}
+
 function registerAuthListener() {
   if (_authListenerRegistered) return
   _authListenerRegistered = true
@@ -677,8 +828,13 @@ function registerAuthListener() {
     }
     if (event === 'SIGNED_OUT') {
       beginAuthOperation()
+      clearIdentityRetryState()
       setHydrating(false)
       clearActiveTenantUser()
+      resetSessionScopedBackupClientState()
+      clearPersistedPortalRoleState()
+      clearPreferredPortalContext()
+      try { sessionStorage.removeItem('poweron_password_authed') } catch { /* ignore */ }
       useAuthStore.setState({
         status:          'unauthenticated',
         user:            null,
@@ -860,7 +1016,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           }
         }
         apply({ status: 'hydrating_user_data', user, profile, appSession: contextualSession, role, ownerId, employeeProfileId, employerOrgId })
-        await bootstrapResolvedPortalData(user.id, activeOrgId, role, isCurrent)
+        await bootstrapResolvedPortalData(user.id, activeOrgId, role, isCurrent, { initSequenceId: seq })
         apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
         if (cachedRole) {
           // Fire background re-verify in case crew/employee membership changed.
@@ -925,13 +1081,30 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         sessionStorage.removeItem('poweron_password_authed')
 
         try {
-          await bootstrapResolvedPortalData(user.id, role === 'employee' ? employerOrgId : profile.org_id, role, isCurrent)
+          await bootstrapResolvedPortalData(
+            user.id,
+            role === 'employee' ? employerOrgId : profile.org_id,
+            role,
+            isCurrent,
+            { initSequenceId: seq },
+          )
           apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
         } catch (err) {
           if (err instanceof StaleAuthOperationError || !isCurrent()) return
+          reportWorkspaceBootstrapBoundaryFailure({
+            stage: typeof (err as any)?.stage === 'string' ? (err as any).stage : 'password_login_bootstrap_boundary',
+            userId: user.id,
+            profileId: profile.id,
+            organizationId: role === 'employee' ? employerOrgId : profile.org_id,
+            error: err,
+            initSequenceId: seq,
+            authOperationGeneration: _authOperationGeneration,
+            currentStatus: get().status,
+          })
           console.error('[Auth] bootstrapAuthenticatedUser failed:', err)
           // Never publish the AppShell while tenant data is unresolved. Keep the
           // neutral hydration screen visible and offer an explicit retry.
+          try { sessionStorage.setItem('poweron_password_authed', '1') } catch { /* ignore */ }
           apply({
             status: 'hydrating_user_data',
             tenantDataReady: false,
@@ -1053,16 +1226,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     beginAuthOperation()
     set({ error: null })
     try {
+      if (password) {
+        try { sessionStorage.setItem('poweron_password_authed', '1') } catch { /* ignore */ }
+      }
       const { error } = password
         ? await supabase.auth.signInWithPassword({ email, password })
         : await supabase.auth.signInWithOtp({ email })
       if (error) throw error
-      if (password) {
-        sessionStorage.setItem('poweron_password_authed', '1')
-        await get().initialize()
-      }
+      // SIGNED_IN remains the single bootstrap trigger for password auth. This
+      // avoids a second initialize() racing the auth listener during account
+      // switches while still carrying the password-auth marker into the first
+      // authenticated bootstrap.
       // Magic link: status stays as-is; Supabase will handle the redirect
     } catch (err: unknown) {
+      if (password) {
+        try { sessionStorage.removeItem('poweron_password_authed') } catch { /* ignore */ }
+      }
       const e = err as { message?: string }
       set({ error: e.message ?? 'Sign in failed. Check your email and try again.' })
     }
@@ -1393,8 +1572,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   signOut: async () => {
     // Invalidate first: no older PIN continuation may resume during audit/session cleanup.
     beginAuthOperation()
+    clearIdentityRetryState()
     setHydrating(false)
     clearActiveTenantUser()
+    resetSessionScopedBackupClientState()
     const { user } = get()
     if (user) {
       try {
@@ -1415,10 +1596,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
     await destroyAppSession()
     await supabase.auth.signOut()
-    localStorage.removeItem(ROLE_STORAGE_KEY)
-    localStorage.removeItem(OWNER_ID_STORAGE_KEY)
-    localStorage.removeItem(EMPLOYEE_PROFILE_ID_KEY)
-    localStorage.removeItem(EMPLOYER_ORG_ID_KEY)
+    clearPersistedPortalRoleState()
+    clearPreferredPortalContext()
+    try { sessionStorage.removeItem('poweron_password_authed') } catch { /* ignore */ }
     localStorage.removeItem('poweron_alerts_cache')
     localStorage.removeItem('poweron_v2')
     const snapshotsCleared = await clearLocalSnapshots()

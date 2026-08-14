@@ -4,6 +4,8 @@ const remoteState = vi.hoisted(() => ({
   data: null as any,
   readCount: 0,
   userId: 'owner-1',
+  sessionUserId: 'owner-1',
+  authUserId: 'owner-1',
   readGate: null as Promise<void> | null,
 }))
 
@@ -23,7 +25,22 @@ vi.mock('@/lib/supabase', () => {
   })
   return {
     supabase: {
-      auth: { getUser: vi.fn(async () => ({ data: { user: { id: remoteState.userId } } })) },
+      auth: {
+        getSession: vi.fn(async () => ({
+          data: {
+            session: remoteState.sessionUserId
+              ? { user: { id: remoteState.sessionUserId } }
+              : null,
+          },
+        })),
+        getUser: vi.fn(async () => ({
+          data: {
+            user: remoteState.authUserId
+              ? { id: remoteState.authUserId }
+              : null,
+          },
+        })),
+      },
       from: vi.fn(() => builder),
     },
   }
@@ -59,6 +76,8 @@ beforeEach(() => {
   vi.resetModules()
   remoteState.data = null
   remoteState.readCount = 0
+  remoteState.sessionUserId = 'owner-1'
+  remoteState.authUserId = 'owner-1'
   remoteState.readGate = null
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new MemoryStorage() })
   const testWindow = new EventTarget() as any
@@ -141,5 +160,38 @@ describe('SYNC-08 BackupData hydration outcomes', () => {
     expect(result).toMatchObject({ success: false, status: 'failed', error: 'Hydration superseded' })
     expect(service.isTenantDataReady()).toBe(false)
     expect(service.getBackupData(remoteState.userId)).toBeNull()
+  })
+
+  it('uses the current auth session as the bootstrap authority during an account switch', async () => {
+    const service = await import('../backupDataService')
+    remoteState.userId = 'owner-b'
+    remoteState.sessionUserId = 'owner-b'
+    remoteState.authUserId = 'owner-a'
+    remoteState.data = backup({ settings: { theme: 'current-session-b' }, _lastSavedAt: '2026-08-08T12:00:00.000Z' })
+
+    service.setActiveTenantUser(remoteState.userId)
+
+    const result = await service.loadFromSupabase(remoteState.userId)
+
+    expect(result).toMatchObject({ success: true, merged: true, status: 'applied' })
+    expect(service.getBackupData(remoteState.userId)?.settings.theme).toBe('current-session-b')
+  })
+
+  it('keeps the mismatch guard intact when code asks for another tenant than the current session', async () => {
+    const service = await import('../backupDataService')
+    remoteState.userId = 'owner-b'
+    remoteState.sessionUserId = 'owner-b'
+    remoteState.authUserId = 'owner-b'
+    remoteState.data = backup({ settings: { theme: 'owner-b-only' }, _lastSavedAt: '2026-08-08T12:00:00.000Z' })
+
+    const result = await service.loadFromSupabase('owner-a')
+
+    expect(result).toMatchObject({
+      success: false,
+      merged: false,
+      status: 'failed',
+      error: 'Authenticated user mismatch',
+    })
+    expect(service.getBackupData('owner-a')).toBeNull()
   })
 })

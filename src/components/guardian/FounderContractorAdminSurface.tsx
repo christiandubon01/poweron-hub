@@ -15,8 +15,8 @@ function formatDate(value: string | null | undefined): string {
 }
 
 function Badge({ value }: { value: string }) {
-  const positive = ['active', 'complete', 'signed', 'accepted'].includes(value)
-  const negative = ['inactive', 'revoked', 'expired', 'missing'].includes(value)
+  const positive = ['active', 'complete', 'signed', 'accepted', 'current', 'legacy'].includes(value)
+  const negative = ['inactive', 'revoked', 'expired', 'missing', 'unsigned'].includes(value)
   return (
     <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
       positive
@@ -138,7 +138,7 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
       ) : !report ? null : section === 'accounts' ? (
         <div className="flex-1 overflow-auto">
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-[#0f1018]"><tr>{['Company / Org', 'Owner Email', 'Created', 'Onboarding', 'NDA / Agreement', 'Classification', 'Account'].map((label) => <th key={label} className={headerCell}>{label}</th>)}</tr></thead>
+            <thead className="sticky top-0 bg-[#0f1018]"><tr>{['Company / Org', 'Owner Email', 'Created', 'Onboarding', 'NDA State', 'Document', 'Classification', 'Account'].map((label) => <th key={label} className={headerCell}>{label}</th>)}</tr></thead>
             <tbody className="divide-y divide-gray-800">
               {report.contractorAccounts.map((account) => (
                 <tr key={account.organizationId}>
@@ -146,7 +146,8 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
                   <td className={bodyCell}>{account.ownerEmail || '—'}</td>
                   <td className={bodyCell}>{formatDate(account.createdAt)}</td>
                   <td className={bodyCell}><Badge value={account.onboardingStatus} /></td>
-                  <td className={bodyCell}><Badge value={account.agreementStatus} /></td>
+                  <td className={bodyCell}><Badge value={account.ndaState} /></td>
+                  <td className={bodyCell}>{account.artifactAvailable ? 'Signed document on file' : account.ndaState === 'GRANDFATHERED_LEGACY_ACCESS' ? 'Access grandfathered' : account.signedAt ? 'No signed PDF captured' : '—'}</td>
                   <td className={bodyCell}><Badge value={account.classification} /></td>
                   <td className={bodyCell}><Badge value={account.accountStatus} /></td>
                 </tr>
@@ -176,7 +177,7 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
       ) : (
         <div className="flex-1 overflow-auto">
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-[#0f1018]"><tr>{['Signer', 'Email', 'Organization', 'Version', 'Signed Date', 'Status', 'Verified'].map((label) => <th key={label} className={headerCell}>{label}</th>)}</tr></thead>
+            <thead className="sticky top-0 bg-[#0f1018]"><tr>{['Signer', 'Email', 'Organization', 'Version', 'Signed Date', 'State', 'Artifact'].map((label) => <th key={label} className={headerCell}>{label}</th>)}</tr></thead>
             <tbody className="divide-y divide-gray-800">
               {report.signedAgreements.map((agreement) => (
                 <tr key={agreement.id}>
@@ -185,8 +186,8 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
                   <td className={bodyCell}>{agreement.organizationName || '—'}</td>
                   <td className={bodyCell}>{agreement.version || '—'}</td>
                   <td className={bodyCell}>{formatDate(agreement.signedAt)}</td>
-                  <td className={bodyCell}><Badge value={agreement.status} /></td>
-                  <td className={bodyCell}>{agreement.pinVerified ? 'PIN verified' : '—'}</td>
+                  <td className={bodyCell}><Badge value={agreement.ndaState} /></td>
+                  <td className={bodyCell}>{agreement.artifactStatus.replace(/_/g, ' ')}</td>
                 </tr>
               ))}
             </tbody>

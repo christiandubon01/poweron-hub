@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const authDeps = vi.hoisted(() => ({
   verifyResult: { success: true } as any,
@@ -15,6 +15,7 @@ const authDeps = vi.hoisted(() => ({
   markTenantDataReady: vi.fn(),
   setHydrating: vi.fn(),
   clearActiveTenantUser: vi.fn(),
+  resetSessionScopedBackupClientState: vi.fn(),
   clearLocalSnapshots: vi.fn(),
   authSignOut: vi.fn(),
   getSession: vi.fn(),
@@ -98,6 +99,7 @@ vi.mock('@/services/backupDataService', () => ({
   setActiveTenantUser: (...args: any[]) => authDeps.setActiveTenantUser(...args),
   markTenantDataReady: (...args: any[]) => authDeps.markTenantDataReady(...args),
   clearActiveTenantUser: (...args: any[]) => authDeps.clearActiveTenantUser(...args),
+  resetSessionScopedBackupClientState: (...args: any[]) => authDeps.resetSessionScopedBackupClientState(...args),
   clearLocalSnapshots: (...args: any[]) => authDeps.clearLocalSnapshots(...args),
   hasPendingLocalSave: vi.fn(() => authDeps.pending),
   reconcilePendingLocalSaveForHydration: (...args: any[]) => authDeps.reconcilePending(...args),
@@ -150,6 +152,20 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
+let consoleErrorSpy: ReturnType<typeof vi.spyOn>
+
+function expectHydrationFailureLogged(stage: string, message: string): void {
+  expect(consoleErrorSpy.mock.calls).toEqual(expect.arrayContaining([[
+    '[AUTH-HYDRATION-FAIL]',
+    expect.objectContaining({
+      stage,
+      userId: 'owner-1',
+      organizationId: 'org-1',
+      message,
+    }),
+  ]]))
+}
+
 beforeEach(() => {
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new MemoryStorage() })
   Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: new MemoryStorage() })
@@ -180,6 +196,7 @@ beforeEach(() => {
   authDeps.markTenantDataReady.mockReset()
   authDeps.setHydrating.mockReset()
   authDeps.clearActiveTenantUser.mockReset()
+  authDeps.resetSessionScopedBackupClientState.mockReset()
   authDeps.clearLocalSnapshots.mockReset().mockResolvedValue(true)
   authDeps.authSignOut.mockReset().mockResolvedValue({})
   authDeps.getSession.mockReset().mockResolvedValue({ data: { session: null } })
@@ -191,7 +208,12 @@ beforeEach(() => {
     id: 'owner-1', org_id: 'org-1', role: 'owner', is_active: true,
     passcode_hash: 'pbkdf2:test', full_name: 'Owner', biometric_enabled: false,
   })
+  consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
   resetStore()
+})
+
+afterEach(() => {
+  consoleErrorSpy.mockRestore()
 })
 
 describe('SYNC-08 auth-store PIN hydration', () => {
@@ -259,6 +281,65 @@ describe('SYNC-08 auth-store PIN hydration', () => {
     expect(authDeps.clearActiveTenantUser).toHaveBeenCalled()
     expect(authDeps.destroyAppSession).toHaveBeenCalledWith('session-1')
     expect(authDeps.requestRemoteRefresh).not.toHaveBeenCalled()
+  })
+
+  it('logs reconcile-stage diagnostics when deferred local sync cannot be completed', async () => {
+    authDeps.pending = true
+    authDeps.hydrationResult = {
+      success: true, merged: false, status: 'deferred_pending_local',
+    }
+    authDeps.reconcilePending.mockResolvedValue({
+      success: false,
+      error: 'pending sync failed',
+    })
+
+    await useAuthStore.getState().submitPasscode('123456')
+
+    expectHydrationFailureLogged('reconcile', 'pending sync failed')
+    expect(authDeps.requestRemoteRefresh).not.toHaveBeenCalled()
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'needs_passcode',
+      tenantDataReady: false,
+      tenantUserId: null,
+      error: 'Workspace refresh failed. Check your connection and enter your PIN to retry.',
+    })
+  })
+
+  it('logs refresh-stage diagnostics when post-reconcile cloud refresh fails', async () => {
+    authDeps.pending = true
+    authDeps.hydrationResult = {
+      success: true, merged: false, status: 'deferred_pending_local',
+    }
+    authDeps.reconcilePending.mockImplementation(async () => {
+      authDeps.pending = false
+      return { success: true }
+    })
+    authDeps.requestRemoteRefresh.mockRejectedValue(new Error('refresh offline'))
+
+    await useAuthStore.getState().submitPasscode('123456')
+
+    expectHydrationFailureLogged('refresh', 'refresh offline')
+    expect(authDeps.requestRemoteRefresh).toHaveBeenCalledTimes(1)
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'needs_passcode',
+      tenantDataReady: false,
+      tenantUserId: null,
+      error: 'Workspace refresh failed. Check your connection and enter your PIN to retry.',
+    })
+  })
+
+  it('logs bootstrap-stage diagnostics when workspace hydration throws before stage classification', async () => {
+    authDeps.loadFromSupabase.mockRejectedValue(Object.assign(new Error('supabase exploded'), { code: 'ECONNRESET' }))
+
+    await useAuthStore.getState().submitPasscode('123456')
+
+    expectHydrationFailureLogged('bootstrap', 'supabase exploded')
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'needs_passcode',
+      tenantDataReady: false,
+      tenantUserId: null,
+      error: 'Workspace refresh failed. Check your connection and enter your PIN to retry.',
+    })
   })
 
   it('keeps sign-out authoritative when an older PIN hydration later succeeds', async () => {

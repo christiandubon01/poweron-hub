@@ -6,7 +6,12 @@ export interface FounderContractorAccount {
   ownerEmail: string
   createdAt: string
   onboardingStatus: 'complete' | 'pending'
-  agreementStatus: 'signed' | 'missing'
+  agreementStatus: 'signed' | 'grandfathered' | 'missing' | 'revoked'
+  ndaState: 'SIGNED_CURRENT' | 'SIGNED_LEGACY' | 'GRANDFATHERED_LEGACY_ACCESS' | 'UNSIGNED' | 'REVOKED'
+  agreementVersion: string | null
+  signedAt: string | null
+  signer: string | null
+  artifactAvailable: boolean
   classification: string
   accountStatus: 'active' | 'inactive'
 }
@@ -29,11 +34,13 @@ export interface FounderSignedAgreement {
   email: string
   organizationId: string | null
   organizationName: string | null
-  version: string
-  signedAt: string
-  status: 'signed' | 'revoked'
+  version: string | null
+  signedAt: string | null
+  ndaState: 'SIGNED_CURRENT' | 'SIGNED_LEGACY' | 'GRANDFATHERED_LEGACY_ACCESS' | 'UNSIGNED' | 'REVOKED'
+  status: 'current' | 'legacy' | 'grandfathered' | 'unsigned' | 'revoked'
   pinVerified: boolean
   hasPdf: boolean
+  artifactStatus: 'signed_document_on_file' | 'no_signed_pdf_captured' | 'access_grandfathered_no_signed_document' | 'no_document'
 }
 
 export interface FounderContractorAdminReport {

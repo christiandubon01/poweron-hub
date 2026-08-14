@@ -21,7 +21,7 @@ import Watermark from '@/components/Watermark'
 import ConclusionCards from '@/components/ConclusionCards'
 import ProactiveAlertCards from '@/components/ProactiveAlertCards'
 import SessionDebrief from '@/components/SessionDebrief'
-import { hasValidSignedNDA } from '@/services/ndaService'
+import { hasNDAAccess, isNDAAuthorityUnavailableError } from '@/services/ndaService'
 import { validateInviteToken, markInviteAccepted } from '@/services/inviteService'
 // INT-1 — Guardian agent connections (registers cross-agent compliance listeners on startup)
 import { registerAllListeners } from '@/services/guardian/GuardianAgentConnections'
@@ -387,6 +387,7 @@ export function AppShell({ children }: AppShellProps) {
   // key ('poweron_nda_signed_{userId}') which meant the fast path never hit after signing.
   const [ndaSigned, setNdaSigned] = useState<boolean | null>(null)
   const [showNdaGate, setShowNdaGate] = useState(false)
+  const [ndaAuthorityError, setNdaAuthorityError] = useState<string | null>(null)
 
   function getNdaCacheKey(userId: string) {
     // MUST match getNdaCacheKey() in ndaService.ts: 'poweron_nda_accepted_{userId}'
@@ -738,20 +739,29 @@ export function AppShell({ children }: AppShellProps) {
     if (authRole === 'employee' || authRole === 'crew') {
       setNdaSigned(true)
       setShowNdaGate(false)
+      setNdaAuthorityError(null)
       return
     }
 
     // Server authority: a local flag alone must never bypass the required gate.
-    hasValidSignedNDA(profile.id)
+    hasNDAAccess(profile.id)
       .then((signed) => {
         setNdaSigned(signed)
         setShowNdaGate(!signed)
+        setNdaAuthorityError(null)
         // Persist so future loads skip the Supabase call
         if (signed) setNdaCached(profile.id)
       })
-      .catch(() => {
+      .catch((error) => {
+        if (isNDAAuthorityUnavailableError(error)) {
+          setNdaSigned(null)
+          setShowNdaGate(false)
+          setNdaAuthorityError(error.message)
+          return
+        }
         setNdaSigned(false)
         setShowNdaGate(true)
+        setNdaAuthorityError(null)
       })
   }, [profile?.id, isReadOnly, isDemoMode, authRole])
 
@@ -1044,6 +1054,26 @@ export function AppShell({ children }: AppShellProps) {
 
       default:                return <V15rHome />
     }
+  }
+
+  if (ndaAuthorityError && !isReadOnly && !isDemoMode) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-950 px-6">
+        <div className="max-w-lg rounded-2xl border border-amber-500/30 bg-gray-900/95 p-6 text-center shadow-2xl">
+          <div className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-300">NDA authority unavailable</div>
+          <div className="mt-4 text-lg font-semibold text-white">This environment is missing the canonical NDA authority schema.</div>
+          <div className="mt-3 text-sm leading-6 text-gray-300">{ndaAuthorityError}</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (ndaSigned === null && !isReadOnly && !isDemoMode && authRole !== 'employee' && authRole !== 'crew' && profile?.id) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-950">
+        <div className="text-gray-500 text-sm">Checking NDA access…</div>
+      </div>
+    )
   }
 
   // NDA gate: block access until NDA is signed (non-demo, non-read-only)

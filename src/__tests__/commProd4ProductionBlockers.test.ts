@@ -27,11 +27,13 @@ const PASSCODE = read('src/lib/auth/passcode.ts')
 const EMPLOYEE_INVITE = read('src/components/employee/EmployeeInviteAccept.tsx')
 const APP_SHELL = read('src/components/layout/AppShell.tsx')
 const NDA = read('src/services/ndaService.ts')
+const NDA_AUTHORITY = read('src/services/ndaAuthority.ts')
 const GUARDIAN = read('src/views/GuardianView.tsx')
 const FOUNDER_SURFACE = read('src/components/guardian/FounderContractorAdminSurface.tsx')
 const FOUNDER_FN = read('netlify/functions/pilot-telemetry.ts')
 const SEND_INVITE_FN = read('netlify/functions/sendInvite.ts')
 const MIGRATION = read('supabase/migrations/119_founder_contractor_admin_and_beta_invite_security.sql')
+const NDA_MIGRATION = read('supabase/migrations/121_nda_access_authority.sql')
 const APP = read('src/App.tsx')
 
 describe('COMM-PROD-4 password recovery (RUNTIME)', () => {
@@ -99,6 +101,13 @@ describe('COMM-PROD-4 employee context and branding (SOURCE-CONTRACT)', () => {
     expect(AUTH).toContain('appSession.orgId !== activeOrgId || appSession.role !== role')
   })
 
+  it('clears session-scoped tenant and role artifacts on logout before another account hydrates', () => {
+    expect(AUTH).toContain('resetSessionScopedBackupClientState()')
+    expect(AUTH).toContain('clearPersistedPortalRoleState()')
+    expect(AUTH).toContain('clearPreferredPortalContext()')
+    expect(AUTH).toContain("sessionStorage.removeItem('poweron_password_authed')")
+  })
+
   it('uses employer or product branding without Customer Zero leakage', () => {
     expect(EMPLOYEE_INVITE).not.toContain('Power On Solutions')
     expect(EMPLOYEE_INVITE).toContain("invite?.org_name || 'PowerOn Hub'")
@@ -120,9 +129,10 @@ describe('COMM-PROD-4 founder report (RUNTIME)', () => {
     }],
     agreements: [{
       id: 'nda-new', user_id: 'owner-new', typed_name: 'New Owner', email: 'owner@westcoast.test',
-      agreement_type: 'nda_v1', signed_at: '2026-08-13T09:30:00Z', pin_verified: true, revoked: false, pdf_url: 'nda.pdf',
+      agreement_type: 'nda_beta_v1', signed_at: '2026-08-13T09:30:00Z', created_at: '2026-08-13T09:30:01Z',
+      signature_image: 'data:image/png;base64,current-signature', pdf_url: 'nda.pdf',
     }],
-    authUsers: [{ id: 'owner-new', email: 'owner@westcoast.test' }],
+    authUsers: [{ id: 'owner-new', email: 'owner@westcoast.test', created_at: '2026-08-13T08:00:00Z', last_sign_in_at: '2026-08-13T12:00:00Z' }],
   }, Date.parse('2026-08-13T12:00:00Z'))
 
   it('includes the current beta invite and links it to its resulting organization', () => {
@@ -133,13 +143,13 @@ describe('COMM-PROD-4 founder report (RUNTIME)', () => {
 
   it('includes the accepted contractor organization/account', () => {
     expect(report.contractorAccounts).toContainEqual(expect.objectContaining({
-      organizationId: 'org-new', ownerEmail: 'owner@westcoast.test', agreementStatus: 'signed', accountStatus: 'active',
+      organizationId: 'org-new', ownerEmail: 'owner@westcoast.test', agreementStatus: 'signed', ndaState: 'SIGNED_CURRENT', accountStatus: 'active',
     }))
   })
 
   it('includes the newly signed agreement with signer and organization', () => {
     expect(report.signedAgreements).toContainEqual(expect.objectContaining({
-      id: 'nda-new', signer: 'New Owner', organizationId: 'org-new', status: 'signed', hasPdf: true,
+      id: 'nda-new', signer: 'New Owner', organizationId: 'org-new', ndaState: 'SIGNED_CURRENT', hasPdf: true,
     }))
   })
 })
@@ -172,13 +182,19 @@ describe('COMM-PROD-4 founder security and persistence', () => {
     expect(cache).toBeGreaterThan(insert)
     expect(NDA).toContain("throw new Error(error?.message || 'Signed agreement insert returned no row')")
     expect(NDA).toContain("export const SIGNED_NDA_READ_SELECT = '*'")
-    expect(NDA).toContain('export async function hasValidSignedNDA')
-    expect(NDA).toContain('classifySignedNDARecord')
+    expect(NDA).toContain('export class NDAAuthorityUnavailableError extends Error')
+    expect(NDA).toContain("this.code = 'NDA_AUTHORITY_SCHEMA_UNAVAILABLE'")
+    expect(NDA).toContain('throw new NDAAuthorityUnavailableError(')
+    expect(NDA).toContain('export async function getCanonicalNDAStatus')
+    expect(NDA).toContain('resolveNDAStatus')
+    expect(NDA).toContain('export async function hasNDAAccess')
     expect(NDA).toContain('Error checking authoritative NDA status; keeping gate closed')
     expect(NDA).not.toContain("'pin_verified',")
     expect(NDA).not.toContain("'verification_timestamp',")
     expect(NDA).not.toContain("'revoked',")
-    expect(APP_SHELL).toContain('hasValidSignedNDA(profile.id)')
+    expect(APP_SHELL).toContain('hasNDAAccess(profile.id)')
+    expect(APP_SHELL).toContain('NDA authority unavailable')
+    expect(APP_SHELL).toContain('Checking NDA access')
   })
 
   it('uses token-scoped invite RPCs and removes anonymous table enumeration (SOURCE-CONTRACT)', () => {
@@ -187,6 +203,30 @@ describe('COMM-PROD-4 founder security and persistence', () => {
     expect(MIGRATION).toContain('FUNCTION public.accept_beta_invite')
     expect(MIGRATION).toContain('accepted_user_id')
     expect(MIGRATION).toContain('organization_id')
+    expect(NDA_MIGRATION).toContain('CREATE TABLE IF NOT EXISTS public.nda_access_authority')
+    expect(NDA_MIGRATION).toContain('FROM public.organizations o')
+    expect(NDA_MIGRATION).toContain('JOIN public.profiles p')
+    expect(NDA_MIGRATION).toContain('FROM public.signed_agreements sa')
+    expect(NDA_MIGRATION).toContain('INSERT INTO public.nda_access_authority')
+    expect(NDA_MIGRATION).toContain("'GRANDFATHERED_LEGACY_ACCESS'")
+    expect(NDA_MIGRATION).toContain("'REVOKED'")
+    expect(NDA_MIGRATION).toContain("'legacy_owner_access_compatibility'")
+    expect(NDA_MIGRATION).not.toMatch(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
+    expect(NDA_MIGRATION).not.toContain('INSERT INTO public.signed_agreements')
+    expect(NDA_MIGRATION).not.toContain('UPDATE public.signed_agreements')
+    expect(NDA_MIGRATION).not.toContain('pre_2026_08_14_owner_account_without_server_agreement')
+    expect(NDA_MIGRATION).not.toContain('au.last_sign_in_at IS NOT NULL')
+  })
+
+  it('keeps runtime NDA resolution free of account-specific identities and age heuristics (SOURCE-CONTRACT)', () => {
+    const resolverBody = NDA_AUTHORITY.slice(NDA_AUTHORITY.indexOf('export function resolveNDAStatus'))
+    expect(NDA).not.toContain('themarmelow17@gmail.com')
+    expect(NDA_AUTHORITY).not.toContain('themarmelow17@gmail.com')
+    expect(NDA_AUTHORITY).not.toContain('Christian Dubon')
+    expect(resolverBody).not.toContain('authCreatedAt')
+    expect(resolverBody).not.toContain('lastSignInAt')
+    expect(resolverBody).not.toContain('profileCreatedAt')
+    expect(resolverBody).not.toContain('organizationCreatedAt')
   })
 })
 

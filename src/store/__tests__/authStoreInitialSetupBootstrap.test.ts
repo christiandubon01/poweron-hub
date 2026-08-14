@@ -13,15 +13,18 @@
  * the authenticated organization is the only tenant ever activated, and a reload
  * with a stored passcode resolves "PIN configured", not PIN setup.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const deps = vi.hoisted(() => ({
   hydrationResult: { success: true, merged: false, status: 'no_remote' } as any,
   hasBackup: false,
+  authStateChangeHandler: null as null | ((event: string, session: any) => unknown | Promise<unknown>),
   loadFromSupabase: vi.fn(),
   createAppSession: vi.fn(),
   validateAppSession: vi.fn(),
   destroyAppSession: vi.fn(),
+  authSignOut: vi.fn(),
+  signInWithPassword: vi.fn(),
   setActiveTenantUser: vi.fn(),
   markTenantDataReady: vi.fn(),
   clearActiveTenantUser: vi.fn(),
@@ -32,6 +35,7 @@ const deps = vi.hoisted(() => ({
   setHydrating: vi.fn(),
   getSession: vi.fn(),
   getPasscodeStatus: vi.fn(),
+  resetSessionScopedBackupClientState: vi.fn(),
   rpc: vi.fn(),
   profiles: new Map<string, any>(),
   statusSequence: [] as string[],
@@ -67,9 +71,13 @@ vi.mock('@/lib/supabase', () => {
       from: vi.fn((table: string) => makeBuilder(table)),
       rpc: (...args: any[]) => deps.rpc(...args),
       auth: {
-        onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: vi.fn() } } })),
+        onAuthStateChange: vi.fn((callback: (event: string, session: any) => unknown) => {
+          deps.authStateChangeHandler = callback
+          return { data: { subscription: { unsubscribe: vi.fn() } } }
+        }),
         getSession: (...args: any[]) => deps.getSession(...args),
-        signOut: vi.fn(async () => ({})),
+        signInWithPassword: (...args: any[]) => deps.signInWithPassword(...args),
+        signOut: (...args: any[]) => deps.authSignOut(...args),
       },
     },
   }
@@ -115,6 +123,7 @@ vi.mock('@/services/backupDataService', () => ({
   setActiveTenantUser: (...args: any[]) => deps.setActiveTenantUser(...args),
   markTenantDataReady: (...args: any[]) => deps.markTenantDataReady(...args),
   clearActiveTenantUser: (...args: any[]) => deps.clearActiveTenantUser(...args),
+  resetSessionScopedBackupClientState: (...args: any[]) => deps.resetSessionScopedBackupClientState(...args),
   clearLocalSnapshots: (...args: any[]) => deps.clearLocalSnapshots(...args),
   hasPendingLocalSave: vi.fn(() => false),
   reconcilePendingLocalSaveForHydration: vi.fn(async () => ({ success: true })),
@@ -138,6 +147,17 @@ class MemoryStorage {
 
 const CONTRACTOR = 'contractor-1'
 const CUSTOMER_ZERO = 'customer-zero-owner'
+let consoleErrorSpy: ReturnType<typeof vi.spyOn>
+
+async function emitAuthEvent(event: string, session: any): Promise<void> {
+  if (!deps.authStateChangeHandler) throw new Error('Auth state listener was not registered')
+  await deps.authStateChangeHandler(event, session)
+}
+
+async function ensureAuthListenerRegistered(): Promise<void> {
+  if (deps.authStateChangeHandler) return
+  await useAuthStore.getState().initialize()
+}
 
 beforeEach(() => {
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new MemoryStorage() })
@@ -156,6 +176,17 @@ beforeEach(() => {
     sessionId: 'session-new', userId: CONTRACTOR, orgId: 'contractor-org', role: 'owner',
   }))
   deps.destroyAppSession.mockReset().mockResolvedValue(undefined)
+  deps.authSignOut.mockReset().mockImplementation(async () => {
+    if (deps.authStateChangeHandler) await emitAuthEvent('SIGNED_OUT', null)
+    return {}
+  })
+  deps.signInWithPassword.mockReset().mockImplementation(async ({ email }: { email: string }) => {
+    const userId = email === 'customer@example.test' ? CUSTOMER_ZERO : CONTRACTOR
+    const session = { user: { id: userId, email } }
+    deps.getSession.mockResolvedValue({ data: { session } })
+    if (deps.authStateChangeHandler) await emitAuthEvent('SIGNED_IN', session)
+    return { data: { session }, error: null }
+  })
   deps.setActiveTenantUser.mockReset()
   deps.markTenantDataReady.mockReset()
   deps.clearActiveTenantUser.mockReset()
@@ -170,6 +201,7 @@ beforeEach(() => {
   deps.getPasscodeStatus.mockReset().mockResolvedValue({
     isSet: true, isLocked: false, attemptsRemaining: 5, lockExpiresAt: null,
   })
+  deps.resetSessionScopedBackupClientState.mockReset()
   deps.rpc.mockReset().mockReturnValue({ then: (r: any) => Promise.resolve({}).then(r), catch: () => {} })
 
   deps.profiles.clear()
@@ -183,6 +215,7 @@ beforeEach(() => {
   })
 
   deps.statusSequence.length = 0
+  consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
   useAuthStore.setState({
     status: 'needs_passcode_setup',
     user: { id: CONTRACTOR, email: 'contractor@example.test' } as any,
@@ -200,12 +233,33 @@ beforeEach(() => {
   })
 })
 
+afterEach(() => {
+  consoleErrorSpy.mockRestore()
+})
+
 function trackStatus(): () => void {
   deps.statusSequence.push(useAuthStore.getState().status)
   return useAuthStore.subscribe((state) => {
     const last = deps.statusSequence[deps.statusSequence.length - 1]
     if (state.status !== last) deps.statusSequence.push(state.status)
   })
+}
+
+function sessionFor(userId: string, email = `${userId}@example.test`) {
+  return { user: { id: userId, email } }
+}
+
+async function initializePasswordAuthenticatedUser(userId: string): Promise<void> {
+  sessionStorage.setItem('poweron_password_authed', '1')
+  deps.getSession.mockResolvedValue({ data: { session: sessionFor(userId) } })
+  deps.validateAppSession.mockResolvedValue(null)
+  await useAuthStore.getState().initialize()
+}
+
+async function signInAfterSwitch(email: string): Promise<void> {
+  await ensureAuthListenerRegistered()
+  await useAuthStore.getState().signInWithEmail(email, 'correct-horse-battery-staple')
+  await vi.waitFor(() => expect(useAuthStore.getState().status).toBe('authenticated'))
 }
 
 describe('COMM-PROD-1 A — new contractor bootstrap', () => {
@@ -321,6 +375,407 @@ describe('COMM-PROD-1 A — password login (logout → login journey)', () => {
       tenantUserId: null,
       error: 'Workspace data could not be loaded. Check your connection and retry.',
     })
+  })
+
+  it('emits the exact boundary diagnostic before storing the generic workspace error', async () => {
+    sessionStorage.setItem('poweron_password_authed', '1')
+    deps.getSession.mockResolvedValue({ data: { session: { user: { id: CONTRACTOR } } } })
+    deps.validateAppSession.mockResolvedValue(null)
+    deps.hydrationResult = { success: false, merged: false, status: 'failed', error: 'offline' }
+
+    let boundaryLoggedBeforeUiError = false
+    const unsubscribe = useAuthStore.subscribe((state) => {
+      if (state.error === 'Workspace data could not be loaded. Check your connection and retry.') {
+        boundaryLoggedBeforeUiError = consoleErrorSpy.mock.calls.some((call) =>
+          call[0] === '[AUTH-WORKSPACE-BOOTSTRAP-FAIL]'
+          && (call[1] as any)?.message === 'offline')
+      }
+    })
+
+    await useAuthStore.getState().initialize()
+    unsubscribe()
+
+    expect(boundaryLoggedBeforeUiError).toBe(true)
+    expect(consoleErrorSpy.mock.calls).toEqual(expect.arrayContaining([[
+      '[AUTH-WORKSPACE-BOOTSTRAP-FAIL]',
+      expect.objectContaining({
+        stage: 'loadFromSupabase',
+        errorName: 'AuthHydrationFailureError',
+        code: null,
+        message: 'offline',
+        userId: CONTRACTOR,
+        profileId: CONTRACTOR,
+        organizationId: expect.stringContaining('contract'),
+        initSequenceId: expect.any(Number),
+        authOperationGeneration: expect.any(Number),
+        currentStatus: 'hydrating_user_data',
+      }),
+    ]]))
+  })
+
+  it('logs the workspace failure stage and retries against the current authenticated user only', async () => {
+    sessionStorage.setItem('poweron_password_authed', '1')
+    deps.getSession.mockResolvedValueOnce({ data: { session: { user: { id: CONTRACTOR } } } })
+    deps.validateAppSession.mockResolvedValue(null)
+    deps.hydrationResult = { success: false, merged: false, status: 'failed', error: 'offline' }
+
+    await useAuthStore.getState().initialize()
+
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'hydrating_user_data',
+      tenantDataReady: false,
+      tenantUserId: null,
+      error: 'Workspace data could not be loaded. Check your connection and retry.',
+    })
+    expect(sessionStorage.getItem('poweron_password_authed')).toBe('1')
+    expect(consoleErrorSpy.mock.calls).toEqual(expect.arrayContaining([[
+      '[AUTH-HYDRATION-FAIL]',
+      expect.objectContaining({
+        stage: 'loadFromSupabase',
+        userId: CONTRACTOR,
+        message: 'offline',
+        initSequenceId: expect.any(Number),
+      }),
+    ]]))
+
+    deps.hydrationResult = { success: true, merged: false, status: 'no_remote' }
+    deps.getSession.mockResolvedValueOnce({ data: { session: { user: { id: CUSTOMER_ZERO } } } })
+
+    await useAuthStore.getState().initialize()
+
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'authenticated',
+      user: { id: CUSTOMER_ZERO },
+      profile: { id: CUSTOMER_ZERO, org_id: 'power-on-org' },
+      tenantDataReady: true,
+      tenantUserId: CUSTOMER_ZERO,
+      error: null,
+    })
+    expect(deps.loadFromSupabase.mock.calls.map((call) => call[0])).toEqual([CONTRACTOR, CUSTOMER_ZERO])
+    expect(deps.setActiveTenantUser.mock.calls[deps.setActiveTenantUser.mock.calls.length - 1]?.[0]).toBe(CUSTOMER_ZERO)
+  })
+
+  it('clears session-scoped auth artifacts before Account B bootstraps after Account A logout', async () => {
+    sessionStorage.setItem('poweron_password_authed', '1')
+    deps.getSession.mockResolvedValueOnce({ data: { session: { user: { id: CONTRACTOR } } } })
+    deps.validateAppSession.mockResolvedValue(null)
+
+    await useAuthStore.getState().initialize()
+
+    localStorage.setItem('poweron-hub-role:main', 'owner')
+    localStorage.setItem('poweron-hub-owner-id:main', CONTRACTOR)
+    localStorage.setItem('poweron-hub-role:employee', 'employee')
+    sessionStorage.setItem('poweron-hub-portal-context', 'employee')
+
+    await useAuthStore.getState().signOut()
+
+    expect(deps.resetSessionScopedBackupClientState).toHaveBeenCalled()
+    expect(localStorage.getItem('poweron-hub-role:main')).toBeNull()
+    expect(localStorage.getItem('poweron-hub-owner-id:main')).toBeNull()
+    expect(localStorage.getItem('poweron-hub-role:employee')).toBeNull()
+    expect(sessionStorage.getItem('poweron-hub-portal-context')).toBeNull()
+    expect(sessionStorage.getItem('poweron_password_authed')).toBeNull()
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'unauthenticated',
+      user: null,
+      profile: null,
+      tenantDataReady: false,
+      tenantUserId: null,
+    })
+
+    sessionStorage.setItem('poweron_password_authed', '1')
+    deps.getSession.mockResolvedValueOnce({ data: { session: { user: { id: CUSTOMER_ZERO } } } })
+
+    await useAuthStore.getState().initialize()
+
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'authenticated',
+      user: { id: CUSTOMER_ZERO },
+      profile: { id: CUSTOMER_ZERO, org_id: 'power-on-org' },
+      tenantDataReady: true,
+      tenantUserId: CUSTOMER_ZERO,
+      error: null,
+    })
+    expect(deps.loadFromSupabase.mock.calls.map((call) => call[0])).toEqual([CONTRACTOR, CUSTOMER_ZERO])
+  })
+
+  it('allows Account B to log out and Account A to load its own workspace again', async () => {
+    sessionStorage.setItem('poweron_password_authed', '1')
+    deps.getSession.mockResolvedValueOnce({ data: { session: { user: { id: CUSTOMER_ZERO } } } })
+    deps.validateAppSession.mockResolvedValue(null)
+
+    await useAuthStore.getState().initialize()
+    await useAuthStore.getState().signOut()
+
+    sessionStorage.setItem('poweron_password_authed', '1')
+    deps.getSession.mockResolvedValueOnce({ data: { session: { user: { id: CONTRACTOR } } } })
+
+    await useAuthStore.getState().initialize()
+
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'authenticated',
+      user: { id: CONTRACTOR },
+      profile: { id: CONTRACTOR, org_id: 'contractor-org' },
+      tenantDataReady: true,
+      tenantUserId: CONTRACTOR,
+      error: null,
+    })
+    expect(deps.loadFromSupabase.mock.calls.map((call) => call[0])).toEqual([CUSTOMER_ZERO, CONTRACTOR])
+    expect(deps.resetSessionScopedBackupClientState).toHaveBeenCalled()
+  })
+
+  it('loads Account B on the first post-logout password login through the SIGNED_IN bootstrap path', async () => {
+    await initializePasswordAuthenticatedUser(CONTRACTOR)
+    await useAuthStore.getState().signOut()
+
+    deps.loadFromSupabase.mockClear()
+    deps.validateAppSession.mockResolvedValue(null)
+    await signInAfterSwitch('customer@example.test')
+
+    expect(deps.loadFromSupabase.mock.calls.map((call) => call[0])).toEqual([CUSTOMER_ZERO])
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'authenticated',
+      user: { id: CUSTOMER_ZERO },
+      profile: { id: CUSTOMER_ZERO, org_id: 'power-on-org' },
+      tenantDataReady: true,
+      tenantUserId: CUSTOMER_ZERO,
+      error: null,
+    })
+    expect(sessionStorage.getItem('poweron_password_authed')).toBeNull()
+  })
+
+  it('starts exactly one workspace bootstrap for one post-logout Account B password login', async () => {
+    await initializePasswordAuthenticatedUser(CONTRACTOR)
+    await useAuthStore.getState().signOut()
+
+    deps.loadFromSupabase.mockClear()
+    deps.validateAppSession.mockResolvedValue(null)
+    await signInAfterSwitch('customer@example.test')
+
+    expect(deps.loadFromSupabase).toHaveBeenCalledTimes(1)
+    expect(deps.loadFromSupabase.mock.calls[0][0]).toBe(CUSTOMER_ZERO)
+  })
+
+  it('keeps the same first-login success when switching from Account B back to Account A', async () => {
+    await initializePasswordAuthenticatedUser(CUSTOMER_ZERO)
+    await useAuthStore.getState().signOut()
+
+    deps.validateAppSession.mockResolvedValue(null)
+    await signInAfterSwitch('contractor@example.test')
+
+    expect(deps.loadFromSupabase.mock.calls.map((call) => call[0])).toEqual([CUSTOMER_ZERO, CONTRACTOR])
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'authenticated',
+      user: { id: CONTRACTOR },
+      profile: { id: CONTRACTOR, org_id: 'contractor-org' },
+      tenantDataReady: true,
+      tenantUserId: CONTRACTOR,
+      error: null,
+    })
+  })
+
+  it('ignores a delayed Account A bootstrap success after Account B becomes current', async () => {
+    let releaseAccountA!: () => void
+    deps.getSession.mockResolvedValue({ data: { session: sessionFor(CONTRACTOR) } })
+    deps.validateAppSession.mockResolvedValue(null)
+    sessionStorage.setItem('poweron_password_authed', '1')
+    deps.loadFromSupabase.mockImplementationOnce(() => new Promise(resolve => {
+      releaseAccountA = () => resolve({ success: true, merged: false, status: 'no_remote' })
+    }))
+
+    const accountAInitialize = useAuthStore.getState().initialize()
+    await vi.waitFor(() => expect(useAuthStore.getState().status).toBe('hydrating_user_data'))
+
+    await useAuthStore.getState().signOut()
+    deps.loadFromSupabase.mockImplementation(async () => ({ success: true, merged: false, status: 'no_remote' }))
+    await signInAfterSwitch('customer@example.test')
+
+    releaseAccountA()
+    await accountAInitialize
+
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'authenticated',
+      user: { id: CUSTOMER_ZERO },
+      profile: { id: CUSTOMER_ZERO, org_id: 'power-on-org' },
+      tenantDataReady: true,
+      tenantUserId: CUSTOMER_ZERO,
+      error: null,
+    })
+    expect(deps.setActiveTenantUser.mock.calls[deps.setActiveTenantUser.mock.calls.length - 1]?.[0]).toBe(CUSTOMER_ZERO)
+  })
+
+  it('prevents a delayed Account A bootstrap failure from overwriting Account B status or error', async () => {
+    let rejectAccountA!: (reason?: unknown) => void
+    deps.getSession.mockResolvedValue({ data: { session: sessionFor(CONTRACTOR) } })
+    deps.validateAppSession.mockResolvedValue(null)
+    sessionStorage.setItem('poweron_password_authed', '1')
+    deps.loadFromSupabase.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectAccountA = reject
+    }))
+
+    const accountAInitialize = useAuthStore.getState().initialize()
+    await vi.waitFor(() => expect(useAuthStore.getState().status).toBe('hydrating_user_data'))
+
+    await useAuthStore.getState().signOut()
+    deps.loadFromSupabase.mockImplementation(async () => ({ success: true, merged: false, status: 'no_remote' }))
+    await signInAfterSwitch('customer@example.test')
+
+    rejectAccountA(new Error('late Account A hydration failure'))
+    await accountAInitialize
+
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'authenticated',
+      user: { id: CUSTOMER_ZERO },
+      tenantDataReady: true,
+      tenantUserId: CUSTOMER_ZERO,
+      error: null,
+    })
+    expect(consoleErrorSpy.mock.calls).not.toEqual(expect.arrayContaining([[
+      '[AUTH-HYDRATION-FAIL]',
+      expect.objectContaining({ userId: CONTRACTOR, message: 'late Account A hydration failure' }),
+    ]]))
+  })
+
+  it('clears a stale previous-session workspace error before Account B begins a valid bootstrap', async () => {
+    await ensureAuthListenerRegistered()
+    useAuthStore.setState({
+      status: 'unauthenticated',
+      error: 'Workspace data could not be loaded. Check your connection and retry.',
+      user: null,
+      profile: null,
+      tenantDataReady: false,
+      tenantUserId: null,
+    })
+
+    await signInAfterSwitch('customer@example.test')
+
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'authenticated',
+      user: { id: CUSTOMER_ZERO },
+      tenantDataReady: true,
+      tenantUserId: CUSTOMER_ZERO,
+      error: null,
+    })
+  })
+
+  it('discards stale Account A store identity and bootstraps Account B from the current session', async () => {
+    await ensureAuthListenerRegistered()
+    useAuthStore.setState({
+      status: 'needs_passcode',
+      user: { id: CONTRACTOR, email: 'contractor@example.test' } as any,
+      profile: {
+        id: CONTRACTOR,
+        org_id: 'contractor-org',
+        role: 'owner',
+        is_active: true,
+        full_name: 'Contractor One',
+        passcode_hash: 'pbkdf2:100000:aa:bb',
+      } as any,
+      appSession: { sessionId: 'session-a', userId: CONTRACTOR, orgId: 'contractor-org', role: 'owner' } as any,
+      biometric: null,
+      lockExpiresAt: null,
+      error: 'Workspace data could not be loaded. Check your connection and retry.',
+      role: 'owner',
+      ownerId: CONTRACTOR,
+      employeeProfileId: null,
+      employerOrgId: null,
+      tenantDataReady: true,
+      tenantUserId: CONTRACTOR,
+    })
+    sessionStorage.setItem('poweron_password_authed', '1')
+    deps.loadFromSupabase.mockClear()
+    deps.getSession.mockResolvedValue({ data: { session: sessionFor(CUSTOMER_ZERO, 'customer@example.test') } })
+    deps.validateAppSession.mockResolvedValue(null)
+
+    await useAuthStore.getState().initialize()
+
+    expect(deps.loadFromSupabase.mock.calls.map((call) => call[0])).toEqual([CUSTOMER_ZERO])
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'authenticated',
+      user: { id: CUSTOMER_ZERO },
+      profile: { id: CUSTOMER_ZERO, org_id: 'power-on-org' },
+      role: 'owner',
+      ownerId: CUSTOMER_ZERO,
+      tenantDataReady: true,
+      tenantUserId: CUSTOMER_ZERO,
+      error: null,
+    })
+  })
+
+  it('resolves the same Account B workspace identity on immediate login and on authenticated reload', async () => {
+    await ensureAuthListenerRegistered()
+    deps.hasBackup = true
+    useAuthStore.setState({
+      status: 'unauthenticated',
+      user: null,
+      profile: null,
+      appSession: null,
+      biometric: null,
+      lockExpiresAt: null,
+      error: null,
+      role: 'owner',
+      ownerId: null,
+      employeeProfileId: null,
+      employerOrgId: null,
+      tenantDataReady: false,
+      tenantUserId: null,
+    })
+    deps.validateAppSession.mockResolvedValue(null)
+    await signInAfterSwitch('customer@example.test')
+
+    const immediateLoginState = {
+      profileId: useAuthStore.getState().profile?.id,
+      organizationId: useAuthStore.getState().profile?.org_id,
+      tenantUserId: useAuthStore.getState().tenantUserId,
+      tenantDataReady: useAuthStore.getState().tenantDataReady,
+      loadUserIds: deps.loadFromSupabase.mock.calls.map((call) => call[0]),
+    }
+
+    useAuthStore.setState({
+      status: 'loading',
+      user: null,
+      profile: null,
+      appSession: null,
+      biometric: null,
+      lockExpiresAt: null,
+      error: null,
+      role: 'owner',
+      ownerId: null,
+      employeeProfileId: null,
+      employerOrgId: null,
+      tenantDataReady: false,
+      tenantUserId: null,
+    })
+    deps.loadFromSupabase.mockClear()
+    deps.getSession.mockResolvedValue({ data: { session: sessionFor(CUSTOMER_ZERO, 'customer@example.test') } })
+    deps.validateAppSession.mockResolvedValue({
+      sessionId: 'session-b',
+      userId: CUSTOMER_ZERO,
+      orgId: 'power-on-org',
+      role: 'owner',
+    })
+
+    await useAuthStore.getState().initialize()
+
+    expect({
+      profileId: useAuthStore.getState().profile?.id,
+      organizationId: useAuthStore.getState().profile?.org_id,
+      tenantUserId: useAuthStore.getState().tenantUserId,
+      tenantDataReady: useAuthStore.getState().tenantDataReady,
+      loadUserIds: deps.loadFromSupabase.mock.calls.map((call) => call[0]),
+    }).toEqual({
+      ...immediateLoginState,
+      loadUserIds: [CUSTOMER_ZERO],
+    })
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'authenticated',
+      user: { id: CUSTOMER_ZERO },
+      profile: { id: CUSTOMER_ZERO, org_id: 'power-on-org' },
+      tenantDataReady: true,
+      tenantUserId: CUSTOMER_ZERO,
+      error: null,
+    })
+    expect(deps.saveBackupData).not.toHaveBeenCalled()
   })
 })
 

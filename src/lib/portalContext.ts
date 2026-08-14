@@ -20,6 +20,14 @@ export function setPreferredPortalContext(context: PortalContext): void {
   }
 }
 
+export function clearPreferredPortalContext(): void {
+  try {
+    sessionStorage.removeItem(PORTAL_CONTEXT_KEY)
+  } catch {
+    // Best-effort only.
+  }
+}
+
 export function getPreferredPortalContext(): PortalContext | null {
   return readStoredPortalContext()
 }

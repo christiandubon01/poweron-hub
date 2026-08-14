@@ -236,11 +236,13 @@ exports.handler = async (event: any) => {
   }
 
   try {
-    // 3. Total NDA signatures — signed_agreements count (non-revoked)
+    // 3. Total NDA signatures — count live signed_agreements rows.
+    // The linked production schema on Friday, August 14, 2026 does not expose
+    // signed_agreements.revoked, so keep this query schema-safe.
     const ndaRows = await supabaseQuery(
       supabaseUrl,
       serviceKey,
-      `signed_agreements?select=id&revoked=neq.true`
+      `signed_agreements?select=id`
     )
     totalNDAs = ndaRows.length
   } catch (err) {

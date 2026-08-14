@@ -129,6 +129,19 @@ export function clearActiveTenantUser(): void {
   _lastKnownRemoteSavedAt = null
 }
 
+export function resetSessionScopedBackupClientState(): void {
+  if (_saveDebounceTimer) {
+    clearTimeout(_saveDebounceTimer)
+    _saveDebounceTimer = null
+  }
+  _dataChanged = false
+  _changedKeys.clear()
+  _lastSyncedAt = 0
+  _hydrationPendingReconcileInFlight = null
+  _lastSyncMeta = null
+  _lastConflictDispatch = null
+}
+
 export function getActiveTenantUserId(): string | null {
   return _activeTenantUserId
 }
@@ -3471,7 +3484,8 @@ export async function loadFromSupabase(
     const { supabase } = await import('@/lib/supabase')
     const thisDevice = getDeviceId()
 
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { session } } = await supabase.auth.getSession()
+    const user = session?.user ?? null
     if (!isCurrent()) return { success: false, merged: false, status: 'failed', error: 'Hydration superseded' }
     if (!user) return { success: false, merged: false, status: 'failed', error: 'Not authenticated' }
 
