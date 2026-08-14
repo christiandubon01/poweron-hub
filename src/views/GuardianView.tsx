@@ -28,6 +28,7 @@ import {
   RefreshCw,
   Send,
   Ban,
+  Building2,
 } from 'lucide-react';
 import {
   sendInvite,
@@ -51,6 +52,7 @@ import {
   type AuditDecisionEntry,
   type AgentFeedbackRatio,
 } from '../services/feedbackLoopService';
+import { FounderContractorAdminSurface } from '../components/guardian/FounderContractorAdminSurface';
 
 // ─── Severity Badge ───────────────────────────────────────────────────────────
 
@@ -1755,27 +1757,18 @@ function GuardianTuningTab() {
 
 // ─── Guardian View Root ───────────────────────────────────────────────────────
 
-type GuardianTab = 'monitor' | 'ai-decisions' | 'signed-ndas' | 'beta-invites' | 'tuning';
+type GuardianTab = 'monitor' | 'ai-decisions' | 'contractor-accounts' | 'signed-ndas' | 'beta-invites' | 'tuning';
 
 export default function GuardianView() {
   const [activeTab, setActiveTab] = useState<GuardianTab>('monitor');
 
   // Pending invite badge count — loaded lazily to show on tab
-  const [pendingInviteCount, setPendingInviteCount] = useState<number | null>(null);
-
-  useEffect(() => {
-    import('../services/inviteService').then(({ getInvites }) => {
-      getInvites().then((rows) => {
-        setPendingInviteCount(rows.filter((r) => r.status === 'pending').length);
-      }).catch(() => { /* non-fatal */ });
-    });
-  }, []);
-
   const tabs: { id: GuardianTab; label: string; icon: React.ReactNode; badge?: number | null }[] = [
     { id: 'monitor',      label: 'Monitor',       icon: <Shield size={12} /> },
     { id: 'ai-decisions', label: 'AI Decisions',  icon: <Brain size={12} /> },
-    { id: 'signed-ndas',  label: 'Signed NDAs',   icon: <FileText size={12} /> },
-    { id: 'beta-invites', label: 'Beta Invites',  icon: <Mail size={12} />, badge: pendingInviteCount },
+    { id: 'contractor-accounts', label: 'Contractor Accounts', icon: <Building2 size={12} /> },
+    { id: 'beta-invites', label: 'Contractor Beta Invites', icon: <Mail size={12} /> },
+    { id: 'signed-ndas',  label: 'Signed NDAs / Agreements', icon: <FileText size={12} /> },
     { id: 'tuning',       label: 'Tuning',         icon: <ToggleRight size={12} /> },
   ];
 
@@ -1841,11 +1834,10 @@ export default function GuardianView() {
       {/* Tab Content */}
       <div className="flex-1 overflow-y-auto p-4">
         {activeTab === 'monitor' && (
-          <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 h-full min-h-0">
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 h-full min-h-0">
             <RulesPanel />
             <ViolationsPanel />
             <AuditTrailPanel />
-            <SignedNDAsPanel />
           </div>
         )}
         {activeTab === 'ai-decisions' && (
@@ -1858,18 +1850,14 @@ export default function GuardianView() {
             <AIDecisionsPanel />
           </div>
         )}
+        {activeTab === 'contractor-accounts' && (
+          <FounderContractorAdminSurface section="accounts" />
+        )}
         {activeTab === 'signed-ndas' && (
-          <div
-            className="flex flex-col rounded-xl border overflow-hidden"
-            style={{ borderColor: '#1e2128', backgroundColor: '#0d0e14', height: '100%', minHeight: 0 }}
-          >
-            <SignedNDAsAdminTab />
-          </div>
+          <FounderContractorAdminSurface section="agreements" />
         )}
         {activeTab === 'beta-invites' && (
-          <div className="h-full min-h-0">
-            <BetaInvitesTab />
-          </div>
+          <FounderContractorAdminSurface section="invites" />
         )}
         {activeTab === 'tuning' && (
           <div className="h-full min-h-0 overflow-y-auto">

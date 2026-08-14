@@ -106,6 +106,7 @@ vi.mock('@/services/backupDataService', () => ({
   hasBackupData: (...args: any[]) => deps.hasBackupData(...args),
   createEmptyBackup: (...args: any[]) => deps.createEmptyBackup(...args),
   saveBackupData: (...args: any[]) => deps.saveBackupData(...args),
+  getBackupData: vi.fn(() => null),
   loadFromSupabase: (...args: any[]) => deps.loadFromSupabase(...args),
   setHydrating: (...args: any[]) => deps.setHydrating(...args),
   getCacheOwner: vi.fn(() => null),
@@ -306,7 +307,7 @@ describe('COMM-PROD-1 A — password login (logout → login journey)', () => {
     })
   })
 
-  it('still admits the owner when hydration fails, flagged as not ready', async () => {
+  it('keeps the shell closed when password-login hydration fails', async () => {
     sessionStorage.setItem('poweron_password_authed', '1')
     deps.getSession.mockResolvedValue({ data: { session: { user: { id: CONTRACTOR } } } })
     deps.validateAppSession.mockResolvedValue(null)
@@ -315,8 +316,37 @@ describe('COMM-PROD-1 A — password login (logout → login journey)', () => {
     await useAuthStore.getState().initialize()
 
     expect(useAuthStore.getState()).toMatchObject({
-      status: 'authenticated', tenantDataReady: false, tenantUserId: CONTRACTOR,
+      status: 'hydrating_user_data',
+      tenantDataReady: false,
+      tenantUserId: null,
+      error: 'Workspace data could not be loaded. Check your connection and retry.',
     })
+  })
+})
+
+describe('COMM-PROD-4 password callback routing', () => {
+  it('routes an authenticated recovery callback to the dedicated reset state', async () => {
+    window.location.pathname = '/auth/reset-password'
+    deps.getSession.mockResolvedValue({ data: { session: { user: { id: CONTRACTOR } } } })
+
+    await useAuthStore.getState().initialize()
+
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'password_recovery',
+      user: { id: CONTRACTOR },
+    })
+    expect(deps.loadFromSupabase).not.toHaveBeenCalled()
+  })
+
+  it('keeps a normal signup confirmation on the established verification flow', async () => {
+    window.location.search = '?verified=true'
+    deps.getSession.mockResolvedValue({ data: { session: { user: { id: CONTRACTOR } } } })
+
+    await useAuthStore.getState().initialize()
+
+    expect(useAuthStore.getState().status).toBe('unauthenticated')
+    expect(useAuthStore.getState().status).not.toBe('password_recovery')
+    expect(deps.loadFromSupabase).not.toHaveBeenCalled()
   })
 })
 

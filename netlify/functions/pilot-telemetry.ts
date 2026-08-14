@@ -68,7 +68,18 @@ function founderEmail(): string {
   ).trim().toLowerCase()
 }
 
-async function resolveActorContext(supabase: ReturnType<typeof createClient>, userId: string) {
+export function isFounderUser(user: { email?: string | null } | null | undefined, configuredEmail = founderEmail()): boolean {
+  const expected = String(configuredEmail || '').trim().toLowerCase()
+  return Boolean(expected && String(user?.email || '').trim().toLowerCase() === expected)
+}
+
+export function requireFounder(user: any, configuredEmail = founderEmail()) {
+  return isFounderUser(user, configuredEmail)
+    ? null
+    : json(403, { error: 'Founder access required.' })
+}
+
+async function resolveActorContext(supabase: any, userId: string) {
   const { data: profile } = await supabase
     .from('profiles')
     .select('id, org_id, role')
@@ -242,7 +253,7 @@ function weekRange(now = new Date()) {
 }
 
 async function readOptionalTable(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   table: string,
   select: string,
 ) {
@@ -405,6 +416,160 @@ async function handleFounderReport(user: any) {
   })
 }
 
+async function listAllAuthUsers(supabase: any): Promise<any[]> {
+  const users: any[] = []
+  for (let page = 1; page <= 20; page += 1) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 })
+    if (error) throw error
+    const batch = data?.users ?? []
+    users.push(...batch)
+    if (batch.length < 1000) break
+  }
+  return users
+}
+
+function record(value: unknown): Record<string, any> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}
+}
+
+export function buildFounderContractorAdminReport(input: {
+  organizations: any[]
+  profiles: any[]
+  invites: any[]
+  agreements: any[]
+  authUsers: any[]
+}, now = Date.now()) {
+  const { organizations, profiles, invites, agreements, authUsers } = input
+  const authById = new Map(authUsers.map((entry: any) => [String(entry.id), entry]))
+  const authByEmail = new Map(authUsers
+    .filter((entry: any) => entry.email)
+    .map((entry: any) => [String(entry.email).trim().toLowerCase(), entry]))
+  const profileByUserId = new Map(profiles.map((entry: any) => [String(entry.id), entry]))
+  const organizationById = new Map(organizations.map((entry: any) => [String(entry.id), entry]))
+  const organizationByOwnerId = new Map(organizations
+    .filter((entry: any) => entry.owner_id)
+    .map((entry: any) => [String(entry.owner_id), entry]))
+
+  const contractorAccounts = organizations.map((org: any) => {
+    const ownerId = String(org.owner_id || '')
+    const owner = authById.get(ownerId) as any
+    const ownerProfile = profileByUserId.get(ownerId) as any
+    const settings = record(org.settings)
+    const onboarding = record(settings.onboarding)
+    const ownerAgreements = agreements.filter((agreement: any) => String(agreement.user_id) === ownerId && agreement.revoked !== true)
+    return {
+      organizationId: String(org.id),
+      organizationName: String(org.name || ''),
+      ownerEmail: String(owner?.email || ''),
+      createdAt: org.created_at,
+      onboardingStatus: onboarding.complete === true ? 'complete' : 'pending',
+      agreementStatus: ownerAgreements.length > 0 ? 'signed' : 'missing',
+      classification: getPilotOrganizationClassification(settings),
+      accountStatus: ownerProfile?.is_active === false ? 'inactive' : 'active',
+    }
+  })
+
+  const contractorBetaInvites = invites.map((invite: any) => {
+    const acceptedUser = (invite.accepted_user_id
+      ? authById.get(String(invite.accepted_user_id))
+      : authByEmail.get(String(invite.email || '').trim().toLowerCase())) as any
+    const linkedOrg = (invite.organization_id
+      ? organizationById.get(String(invite.organization_id))
+      : acceptedUser
+        ? organizationByOwnerId.get(String(acceptedUser.id))
+        : null) as any
+    const status = invite.status === 'pending' && new Date(invite.expires_at).getTime() <= now
+      ? 'expired'
+      : invite.status
+    return {
+      id: String(invite.id),
+      email: String(invite.email || ''),
+      industry: invite.industry ? String(invite.industry) : null,
+      status,
+      invitedAt: invite.invited_at,
+      acceptedAt: invite.accepted_at,
+      expiresAt: invite.expires_at,
+      organizationId: linkedOrg?.id ? String(linkedOrg.id) : null,
+      organizationName: linkedOrg?.name ? String(linkedOrg.name) : null,
+    }
+  })
+
+  const signedAgreements = agreements.map((agreement: any) => {
+    const signer = authById.get(String(agreement.user_id)) as any
+    const profile = profileByUserId.get(String(agreement.user_id)) as any
+    const org = (profile?.org_id ? organizationById.get(String(profile.org_id)) : null) as any
+    return {
+      id: String(agreement.id),
+      signer: String(agreement.typed_name || profile?.full_name || ''),
+      email: String(agreement.email || signer?.email || ''),
+      organizationId: org?.id ? String(org.id) : null,
+      organizationName: org?.name ? String(org.name) : null,
+      version: String(agreement.agreement_type || ''),
+      signedAt: agreement.signed_at,
+      status: agreement.revoked === true ? 'revoked' : 'signed',
+      pinVerified: agreement.pin_verified === true,
+      hasPdf: Boolean(agreement.pdf_url),
+    }
+  })
+
+  return {
+    contractorAccounts: contractorAccounts.sort((a: any, b: any) => String(b.createdAt).localeCompare(String(a.createdAt))),
+    contractorBetaInvites: contractorBetaInvites.sort((a: any, b: any) => String(b.invitedAt).localeCompare(String(a.invitedAt))),
+    signedAgreements: signedAgreements.sort((a: any, b: any) => String(b.signedAt).localeCompare(String(a.signedAt))),
+  }
+}
+
+/** Founder-only cross-org contractor account, beta invite, and agreement report. */
+async function handleFounderContractorAdmin(user: any) {
+  const denied = requireFounder(user)
+  if (denied) return denied
+
+  const supabase = getServiceClient()
+  const [organizationsResult, profilesResult, invitesResult, agreementsResult, authUsers] = await Promise.all([
+    supabase.from('organizations').select('id, name, owner_id, settings, created_at'),
+    supabase.from('profiles').select('id, org_id, full_name, role, is_active, created_at'),
+    supabase.from('beta_invites').select('id, email, industry, status, invited_at, accepted_at, expires_at, accepted_user_id, organization_id'),
+    supabase.from('signed_agreements').select('id, user_id, agreement_type, typed_name, email, signed_at, pin_verified, revoked, pdf_url'),
+    listAllAuthUsers(supabase),
+  ])
+
+  for (const result of [organizationsResult, profilesResult, invitesResult, agreementsResult]) {
+    if (result.error) return json(500, { error: result.error.message || 'Founder contractor report query failed.' })
+  }
+
+  const report = buildFounderContractorAdminReport({
+    organizations: organizationsResult.data ?? [],
+    profiles: profilesResult.data ?? [],
+    invites: invitesResult.data ?? [],
+    agreements: agreementsResult.data ?? [],
+    authUsers,
+  })
+
+  return json(200, {
+    generatedAt: new Date().toISOString(),
+    ...report,
+  })
+}
+
+async function handleFounderRevokeBetaInvite(event: NetlifyEvent, user: any) {
+  const denied = requireFounder(user)
+  if (denied) return denied
+  const payload = event.body ? JSON.parse(event.body) : {}
+  const inviteId = String(payload?.inviteId || '').trim()
+  if (!inviteId) return json(400, { error: 'inviteId is required.' })
+
+  const supabase = getServiceClient()
+  const { data, error } = await supabase
+    .from('beta_invites')
+    .update({ status: 'revoked' })
+    .eq('id', inviteId)
+    .select('id')
+    .maybeSingle()
+  if (error) return json(500, { error: error.message || 'Could not revoke beta invite.' })
+  if (!data?.id) return json(404, { error: 'Beta invite not found.' })
+  return json(200, { ok: true, inviteId })
+}
+
 export async function handler(event: NetlifyEvent) {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type, Authorization' }, body: '' }
@@ -421,6 +586,8 @@ export async function handler(event: NetlifyEvent) {
     if (action === 'track_event') return await handleTrackEvent(event, user)
     if (action === 'log_support_incident') return await handleSupportIncident(event, user)
     if (action === 'founder_report') return await handleFounderReport(user)
+    if (action === 'founder_contractor_admin') return await handleFounderContractorAdmin(user)
+    if (action === 'founder_revoke_beta_invite') return await handleFounderRevokeBetaInvite(event, user)
     if (action === 'set_org_classification') return await handleSetOrgClassification(event, user)
     return json(400, { error: 'Unknown action.' })
   } catch (error: any) {

@@ -85,6 +85,27 @@ export function normalizeOrganizationIdentity(row: OrganizationRow | null | unde
   }
 }
 
+/**
+ * Mirrors the authoritative organization identity into the legacy workspace
+ * settings consumed by the shell. Returns the original object when no value
+ * changes so bootstrap can avoid a redundant persistence write.
+ */
+export function applyOrganizationIdentityToWorkspaceSettings(
+  settings: Record<string, unknown>,
+  identity: OrganizationIdentity,
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = {}
+  if (identity.companyName && settings.company !== identity.companyName) patch.company = identity.companyName
+  if (identity.licenseNumber && settings.license !== identity.licenseNumber) patch.license = identity.licenseNumber
+  if (identity.supportEmail && settings.supportEmail !== identity.supportEmail) patch.supportEmail = identity.supportEmail
+  if (identity.supportPhone && settings.supportPhone !== identity.supportPhone) patch.supportPhone = identity.supportPhone
+  if (identity.address && settings.businessAddress !== identity.address) patch.businessAddress = identity.address
+  if (identity.timezone && settings.orgTimezone !== identity.timezone) patch.orgTimezone = identity.timezone
+  if (identity.logoLight && settings.logoLight !== identity.logoLight) patch.logoLight = identity.logoLight
+  if (identity.logoDark && settings.logoDark !== identity.logoDark) patch.logoDark = identity.logoDark
+  return Object.keys(patch).length > 0 ? { ...settings, ...patch } : settings
+}
+
 export function buildOrganizationIdentityPatch(
   current: OrganizationRow | null | undefined,
   patch: Partial<OrganizationIdentity>,

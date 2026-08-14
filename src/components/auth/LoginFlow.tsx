@@ -14,6 +14,8 @@ import { BiometricPrompt } from '@/components/auth/BiometricPrompt'
 import { PinAuth } from '@/components/auth/PinAuth'
 import { InitialSetupFlow } from '@/components/auth/InitialSetupFlow'
 import { supabase } from '@/lib/supabase'
+import { clearPasswordRecoveryIntent, passwordRecoveryRedirectUrl, validateNewPassword } from '@/lib/auth/passwordRecovery'
+import { resolveProductRedirectUrl } from '@/services/organizationIdentityService'
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
 const BG = '#02060d'
@@ -1057,7 +1059,13 @@ function LoginForm({
     if (!forgotEmail.trim()) return
     setForgotLoading(true)
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail.trim(), { redirectTo: 'https://app.poweronsolutionsllc.com' })
+      const baseUrl = resolveProductRedirectUrl(
+        import.meta.env.VITE_APP_BASE_URL as string | undefined,
+        window.location.origin,
+      )
+      const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail.trim(), {
+        redirectTo: passwordRecoveryRedirectUrl(baseUrl),
+      })
       if (error) throw error
       setForgotSent(true)
     } catch (err: any) {
@@ -1489,13 +1497,15 @@ function SetNewPasswordForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    if (password.length < 8) { setError('Password must be at least 8 characters.'); return }
-    if (password !== confirmPassword) { setError('Passwords do not match.'); return }
+    const validationError = validateNewPassword(password, confirmPassword)
+    if (validationError) { setError(validationError); return }
     setLoading(true)
     try {
       const { error } = await supabase.auth.updateUser({ password })
       if (error) throw error
       setDone(true)
+      clearPasswordRecoveryIntent()
+      await signOut()
     } catch (err: any) {
       setError(err.message ?? 'Failed to update password.')
     } finally {
@@ -1545,7 +1555,7 @@ function SetNewPasswordForm() {
                 </div>
               )}
               <button type="submit" disabled={loading} style={{ ...btnPrimary, opacity: loading ? 0.6 : 1 }}>
-                {loading ? <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : <><ArrowRight size={15} /> Update Password</>}
+                {loading ? <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : <><ArrowRight size={15} /> Set Password</>}
               </button>
             </form>
           </>
@@ -1577,7 +1587,7 @@ interface LoginFlowProps {
 
 export function LoginFlow({ children }: LoginFlowProps) {
   const status = useAuthStore(s => s.status)
-  const { submitPasscode, signOut, error } = useAuth()
+  const { submitPasscode, signOut, initialize, error } = useAuth()
   const [screen, setScreen] = useState<AuthScreen>('landing')
   const [loginIdentifier, setLoginIdentifier] = useState('')
   const [loginInfo, setLoginInfo] = useState('')
@@ -1646,6 +1656,18 @@ export function LoginFlow({ children }: LoginFlowProps) {
           <div style={{ width: '32px', height: '32px', border: '3px solid #1e80df',
             borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
           <div style={{ color: '#6b7280', fontSize: '14px' }}>Loading your workspace...</div>
+          {error && (
+            <>
+              <div style={{ color: '#fca5a5', fontSize: '13px', maxWidth: '420px', textAlign: 'center' }}>{error}</div>
+              <button
+                type="button"
+                onClick={() => initialize()}
+                style={{ ...btnSecondary, width: 'auto', padding: '10px 20px' }}
+              >
+                Retry workspace load
+              </button>
+            </>
+          )}
           <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
         </div>
       )

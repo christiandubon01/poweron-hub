@@ -32,6 +32,7 @@ import type { User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/authStore'
 import { goToEmployeePortal } from '@/lib/employeeRoutes'
+import { setPreferredPortalContext } from '@/lib/portalContext'
 import {
   validateEmployeeInviteToken,
   acceptEmployeeInvite,
@@ -173,6 +174,12 @@ export function EmployeeInviteAccept() {
   const acceptInFlightRef = useRef(false)
   const autoAcceptTriedRef = useRef(false)
 
+  // Establish portal intent before any authentication event can initialize the
+  // shared auth store. The same auth user may also own a contractor workspace.
+  useEffect(() => {
+    setPreferredPortalContext('employee')
+  }, [])
+
   // ── Session tracking (public route — no LoginFlow wrapper) ─────────────────
   useEffect(() => {
     let mounted = true
@@ -282,6 +289,7 @@ export function EmployeeInviteAccept() {
     setResetMessage(null)
 
     try {
+      setPreferredPortalContext('employee')
       if (isNewAccount) {
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
@@ -386,6 +394,7 @@ export function EmployeeInviteAccept() {
       // 'already_accepted' with the current authenticated user is a success for
       // routing purposes — the row is linked; just resolve role and land.
       if (result.success || result.reason === 'already_accepted') {
+        setPreferredPortalContext('employee')
         // AWAIT (not fire-and-forget) so role is 'employee' before we route.
         await useAuthStore.getState().initialize()
         setPhase('accepted')
@@ -508,8 +517,8 @@ export function EmployeeInviteAccept() {
             <Zap className="w-5 h-5 text-green-600" fill="currentColor" />
           </div>
           <div>
-            <p className="text-sm font-bold text-gray-900 leading-tight">Power On Solutions</p>
-            <p className="text-xs text-gray-400 uppercase tracking-wider font-mono">Employee Invite</p>
+            <p className="text-sm font-bold text-gray-900 leading-tight">{invite?.org_name || 'PowerOn Hub'}</p>
+            <p className="text-xs text-gray-400 uppercase tracking-wider font-mono">PowerOn Hub Employee Portal</p>
           </div>
         </div>
       </div>

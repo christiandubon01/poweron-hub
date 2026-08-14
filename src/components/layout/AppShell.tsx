@@ -21,7 +21,7 @@ import Watermark from '@/components/Watermark'
 import ConclusionCards from '@/components/ConclusionCards'
 import ProactiveAlertCards from '@/components/ProactiveAlertCards'
 import SessionDebrief from '@/components/SessionDebrief'
-import { hasUserSignedNDA } from '@/services/ndaService'
+import { hasValidSignedNDA } from '@/services/ndaService'
 import { validateInviteToken, markInviteAccepted } from '@/services/inviteService'
 // INT-1 — Guardian agent connections (registers cross-agent compliance listeners on startup)
 import { registerAllListeners } from '@/services/guardian/GuardianAgentConnections'
@@ -393,10 +393,6 @@ export function AppShell({ children }: AppShellProps) {
     return `poweron_nda_accepted_${userId}`
   }
 
-  function isNdaCachedSigned(userId: string): boolean {
-    try { return localStorage.getItem(getNdaCacheKey(userId)) === '1' } catch { return false }
-  }
-
   function setNdaCached(userId: string): void {
     try { localStorage.setItem(getNdaCacheKey(userId), '1') } catch { /* storage unavailable */ }
   }
@@ -745,15 +741,8 @@ export function AppShell({ children }: AppShellProps) {
       return
     }
 
-    // Fast path: cached signed status (set after first confirmed sign)
-    if (isNdaCachedSigned(profile.id)) {
-      setNdaSigned(true)
-      setShowNdaGate(false)
-      return
-    }
-
-    // Slow path: verify with Supabase
-    hasUserSignedNDA(profile.id)
+    // Server authority: a local flag alone must never bypass the required gate.
+    hasValidSignedNDA(profile.id)
       .then((signed) => {
         setNdaSigned(signed)
         setShowNdaGate(!signed)
@@ -761,9 +750,8 @@ export function AppShell({ children }: AppShellProps) {
         if (signed) setNdaCached(profile.id)
       })
       .catch(() => {
-        // On error, don't block the app
-        setNdaSigned(true)
-        setShowNdaGate(false)
+        setNdaSigned(false)
+        setShowNdaGate(true)
       })
   }, [profile?.id, isReadOnly, isDemoMode, authRole])
 
@@ -929,9 +917,12 @@ export function AppShell({ children }: AppShellProps) {
                 // Mark invite as accepted after NDA is signed
                 const token = pendingInviteToken || sessionStorage.getItem('poweron_invite_token')
                 if (token) {
-                  markInviteAccepted(token).catch(console.warn)
-                  sessionStorage.removeItem('poweron_invite_token')
-                  setPendingInviteToken(null)
+                  markInviteAccepted(token)
+                    .then(() => {
+                      sessionStorage.removeItem('poweron_invite_token')
+                      setPendingInviteToken(null)
+                    })
+                    .catch(console.warn)
                 }
                 setActiveView('home')
               }}
@@ -1073,9 +1064,12 @@ export function AppShell({ children }: AppShellProps) {
             // Mark invite as accepted after NDA is signed
             const token = pendingInviteToken || sessionStorage.getItem('poweron_invite_token')
             if (token) {
-              markInviteAccepted(token).catch(console.warn)
-              sessionStorage.removeItem('poweron_invite_token')
-              setPendingInviteToken(null)
+              markInviteAccepted(token)
+                .then(() => {
+                  sessionStorage.removeItem('poweron_invite_token')
+                  setPendingInviteToken(null)
+                })
+                .catch(console.warn)
             }
           }}
         />

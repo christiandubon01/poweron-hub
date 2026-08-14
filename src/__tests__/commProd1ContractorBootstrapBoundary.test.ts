@@ -28,7 +28,7 @@ describe('COMM-PROD-1 A — new contractor bootstrap', () => {
     expect(initialSetupSrc).toContain('completeInitialSetup')
     expect(authStoreSrc).toContain('completeInitialSetup: async () => {')
     expect(authStoreSrc).toContain('async function establishOwnerSession(')
-    expect(authStoreSrc).toContain('await bootstrapAuthenticatedUser(user.id, isCurrent)')
+    expect(authStoreSrc).toContain('await bootstrapAuthenticatedUser(user.id, profile?.org_id, isCurrent)')
   })
 
   it('never publishes authenticated straight from the onboarding screen', () => {
@@ -39,7 +39,7 @@ describe('COMM-PROD-1 A — new contractor bootstrap', () => {
   })
 
   it('holds the password-login path in hydration until the tenant workspace is ready', () => {
-    expect(authStoreSrc).toContain('await bootstrapAuthenticatedUser(user.id, isCurrent)')
+    expect(authStoreSrc).toContain('await bootstrapResolvedPortalData(user.id, role === \'employee\' ? employerOrgId : profile.org_id, role, isCurrent)')
     expect(authStoreSrc).toContain("apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })")
     // The old fast path published authenticated first and hydrated afterwards.
     expect(authStoreSrc).not.toContain("apply({ tenantDataReady: true })")

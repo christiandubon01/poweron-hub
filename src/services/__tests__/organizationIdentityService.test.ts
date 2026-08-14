@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyOrganizationIdentityToWorkspaceSettings,
   buildOrganizationIdentityPatch,
   normalizeOrganizationIdentity,
   resolveProductRedirectUrl,
@@ -85,6 +86,27 @@ describe('COMM-1B organization identity service', () => {
           logoDark: 'dark-a',
         },
       },
+    })
+  })
+
+  it('mirrors authoritative organization identity into workspace settings during bootstrap', () => {
+    expect(applyOrganizationIdentityToWorkspaceSettings(
+      { company: 'Stale Name', unrelated: { keep: true } },
+      {
+        companyName: 'WestCoast Lighting',
+        supportEmail: 'office@westcoast.test',
+        supportPhone: '760-555-0142',
+        address: '100 Main St',
+        licenseNumber: 'C10-123',
+        timezone: 'America/Los_Angeles',
+        logoLight: 'light.png',
+        logoDark: 'dark.png',
+      },
+    )).toMatchObject({
+      company: 'WestCoast Lighting',
+      unrelated: { keep: true },
+      logoLight: 'light.png',
+      logoDark: 'dark.png',
     })
   })
 

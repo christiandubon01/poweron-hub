@@ -6,9 +6,8 @@
  * NDA-FIX — Auth race condition fix:
  * - Wait for auth.getSession() to resolve before any Supabase writes
  * - Verify auth.uid() returns valid UUID
- * - localStorage backup + self-healing sync
  * - Retry logic with exponential backoff (3 tries)
- * - On page load: check localStorage FIRST (instant gate bypass)
+ * - Supabase row remains authoritative for the access gate
  *
  * Supabase table: signed_agreements
  * Supabase Storage bucket: nda-documents (private)
@@ -26,19 +25,21 @@ export { NDA_FULL_TEXT, NDA_AGREEMENT_VERSION };
 
 export interface SignedAgreementRecord {
   id?: string;
-  user_id: string;
-  agreement_type: string;
-  signature_image: string;
-  typed_name: string;
-  ip_address: string;
-  signed_at: string;
+  user_id?: string | null;
+  agreement_type?: string | null;
+  signature_image?: string | null;
+  signature_data?: string | null;
+  typed_name?: string | null;
+  ip_address?: string | null;
+  signed_at?: string | null;
+  created_at?: string | null;
   pdf_url?: string;
   // Identity verification fields (B2)
-  email?: string;
-  pin_verified?: boolean;
-  verification_timestamp?: string;
+  email?: string | null;
+  pin_verified?: boolean | null;
+  verification_timestamp?: string | null;
   // Admin revoke (B3)
-  revoked?: boolean;
+  revoked?: boolean | null;
 }
 
 export interface NDASubmission {
@@ -124,14 +125,6 @@ function getNdaCacheKey(userId: string): string {
   return `poweron_nda_accepted_${userId}`;
 }
 
-function isNdaCachedAccepted(userId: string): boolean {
-  try {
-    return localStorage.getItem(getNdaCacheKey(userId)) === '1';
-  } catch {
-    return false;
-  }
-}
-
 function setNdaCacheAccepted(userId: string): void {
   try {
     localStorage.setItem(getNdaCacheKey(userId), '1');
@@ -140,65 +133,63 @@ function setNdaCacheAccepted(userId: string): void {
   }
 }
 
-function clearNdaCache(userId: string): void {
-  try {
-    localStorage.removeItem(getNdaCacheKey(userId));
-  } catch {
-    // Ignore
-  }
+export type SignedNDACompatibility = 'current' | 'legacy';
+
+export interface ValidSignedNDAResult {
+  kind: SignedNDACompatibility;
+  record: SignedAgreementRecord;
+}
+
+// Use a schema-safe wildcard read here. The linked production project on
+// Friday, August 14, 2026 still serves historical signed_agreements rows
+// without pin_verified / verification_timestamp / revoked, and explicitly
+// naming those newer columns makes PostgREST reject the entire read before
+// legacy classification can run.
+export const SIGNED_NDA_READ_SELECT = '*';
+
+function normalizeAgreementType(agreementType: string | null | undefined): string {
+  return String(agreementType || '').trim().toLowerCase();
+}
+
+function isNdaAgreementType(agreementType: string | null | undefined): boolean {
+  return normalizeAgreementType(agreementType).includes('nda');
+}
+
+function hasAgreementTimestamp(record: SignedAgreementRecord): boolean {
+  return Boolean(record.signed_at || record.created_at);
+}
+
+function isCurrentSignedNDARecord(record: SignedAgreementRecord): boolean {
+  return (
+    normalizeAgreementType(record.agreement_type) === normalizeAgreementType(NDA_AGREEMENT_VERSION) &&
+    Boolean(record.id) &&
+    Boolean(record.verification_timestamp)
+  );
+}
+
+export function classifySignedNDARecord(
+  record: SignedAgreementRecord | null | undefined,
+): SignedNDACompatibility | null {
+  if (!record) return null;
+  if (record.revoked === true) return null;
+  if (!isNdaAgreementType(record.agreement_type)) return null;
+  if (!hasAgreementTimestamp(record)) return null;
+  return isCurrentSignedNDARecord(record) ? 'current' : 'legacy';
+}
+
+async function fetchSignedNDARecordsForUser(userId: string): Promise<SignedAgreementRecord[]> {
+  const { data, error } = await (supabase as any)
+    .from('signed_agreements')
+    .select(SIGNED_NDA_READ_SELECT)
+    .eq('user_id', userId)
+    .order('signed_at', { ascending: false })
+    .limit(25);
+
+  if (error) throw error;
+  return Array.isArray(data) ? (data as SignedAgreementRecord[]) : [];
 }
 
 // ─── Self-healing sync ─────────────────────────────────────────────────────────
-
-/**
- * If localStorage says accepted but Supabase disagrees, re-write to Supabase
- * to ensure consistency. Called during page load.
- */
-async function healNdaSync(userId: string): Promise<void> {
-  try {
-    // Only attempt healing if both conditions are true:
-    // 1. localStorage says accepted
-    // 2. Supabase says NOT accepted
-    
-    if (!isNdaCachedAccepted(userId)) {
-      return; // Nothing to heal
-    }
-    
-    const signed = await hasUserSignedNDA(userId);
-    
-    if (signed) {
-      return; // Already in sync
-    }
-    
-    console.log('[ndaService] Healing: localStorage says accepted but Supabase disagrees. Re-writing...');
-    
-    // Re-write a marker record to Supabase
-    // This uses a minimal record since we're just establishing consensus
-    const signedAt = new Date().toISOString();
-    const healRecord: SignedAgreementRecord = {
-      user_id: userId,
-      agreement_type: NDA_AGREEMENT_VERSION,
-      signature_image: '', // Marker: empty signature means auto-healed
-      typed_name: 'AUTO-HEALED',
-      ip_address: 'auto-heal',
-      signed_at: signedAt,
-      pin_verified: true, // Mark as verified since user accepted
-    };
-    
-    await withRetry(async () => {
-      await syncToSupabase({
-        table: 'signed_agreements',
-        data: healRecord as unknown as Record<string, unknown>,
-        operation: 'insert',
-      });
-    });
-    
-    console.log('[ndaService] Self-healing complete');
-  } catch (err) {
-    console.warn('[ndaService] Self-healing failed (non-blocking):', err);
-    // Self-healing is non-blocking; the app continues either way
-  }
-}
 
 // ─── PDF Generation ───────────────────────────────────────────────────────────
 
@@ -507,11 +498,18 @@ export async function saveSignedNDA(
   let insertedRow: any;
   try {
     insertedRow = await withRetry(async () => {
-      return await syncToSupabase({
-        table: 'signed_agreements',
-        data: record as unknown as Record<string, unknown>,
-        operation: 'insert',
-      });
+      // NDA persistence is fail-closed. The generic sync helper intentionally
+      // turns a failed offline write into a synthetic local success, which is
+      // not valid for an access-control agreement.
+      const { data, error } = await (supabase as any)
+        .from('signed_agreements')
+        .insert(record)
+        .select('*')
+        .single();
+      if (error || !data?.id) {
+        throw new Error(error?.message || 'Signed agreement insert returned no row');
+      }
+      return data;
     });
   } catch (insertErr) {
     console.error('[ndaService] Failed to insert NDA record after 3 retries:', insertErr);
@@ -592,54 +590,48 @@ export async function saveSignedNDA(
 }
 
 /**
- * Returns true if the user has a signed NDA on record.
+ * Returns the authoritative signed NDA record for a user, if one exists.
  *
- * Priority:
- * 1. Check localStorage FIRST (instant, no network)
- * 2. If not cached, verify against Supabase (uses auth.uid())
- * 3. Background: if Supabase disagrees with cache, trigger self-healing
- *
- * This ensures page reloads never re-trigger the NDA gate if the user
- * has already accepted, even if Supabase is temporarily unavailable.
+ * Supabase is authoritative. The local marker is updated only after a verified
+ * server row and is never sufficient to bypass the gate on its own.
  */
-export async function hasUserSignedNDA(userId: string): Promise<boolean> {
-  // FAST PATH: Check localStorage cache FIRST
-  const cached = isNdaCachedAccepted(userId);
-  if (cached) {
-    console.log('[ndaService] NDA acceptance found in localStorage cache (fast path)');
-    
-    // Background: trigger self-healing sync if needed (non-blocking)
-    void healNdaSync(userId).catch(err => {
-      console.warn('[ndaService] Background self-healing failed (non-blocking):', err);
-    });
-    
-    return true;
-  }
-
-  // SLOW PATH: Query Supabase using authenticated UID (not the caller's userId)
+export async function getValidSignedNDA(userId: string): Promise<ValidSignedNDAResult | null> {
+  // The cache is a hint only. Always confirm the server row so a prior failed
+  // insert cannot leave a permanent client-side gate bypass.
   try {
     const { data: { user } } = await supabase.auth.getUser();
     const authUid = user?.id ?? userId;
+    const records = await fetchSignedNDARecordsForUser(authUid);
 
-    const records = await fetchFromSupabase<SignedAgreementRecord>(
-      'signed_agreements',
-      { user_id: authUid, agreement_type: NDA_AGREEMENT_VERSION }
-    );
-
-    const signed = records.length > 0;
-
-    if (signed) {
-      // Update localStorage cache for next time
+    for (const record of records) {
+      const kind = classifySignedNDARecord(record);
+      if (!kind) continue;
       setNdaCacheAccepted(authUid);
+      return { kind, record };
     }
 
-    return signed;
+    try { localStorage.removeItem(getNdaCacheKey(authUid)); } catch { /* unavailable */ }
+    return null;
   } catch (err) {
-    console.warn('[ndaService] Error checking NDA status — failing open (do not re-trigger gate on network error):', err);
-    // NDA-FIX: Fail open — if Supabase is unreachable, do NOT force re-acceptance.
-    // A network hiccup should never lock the user out of the app.
-    return true;
+    console.warn('[ndaService] Error checking authoritative NDA status; keeping gate closed:', err);
+    return null;
   }
+}
+
+/**
+ * Returns true if the user has a valid signed NDA on record.
+ *
+ * Legacy server-side NDA rows remain valid even when they predate newer
+ * metadata fields, as long as they are recognizable NDA agreements and carry
+ * trustworthy historical timestamps. If the deployed schema exposes a
+ * revocation flag, revoked rows are rejected.
+ */
+export async function hasValidSignedNDA(userId: string): Promise<boolean> {
+  return Boolean(await getValidSignedNDA(userId));
+}
+
+export async function hasUserSignedNDA(userId: string): Promise<boolean> {
+  return hasValidSignedNDA(userId);
 }
 
 /**

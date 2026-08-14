@@ -30,6 +30,7 @@ import { resolveProductRedirectUrl } from '@/services/organizationIdentityServic
 import { isDemoRuntimeActive } from '@/services/demoModeSafety'
 import { trackPilotTelemetryEvent } from '@/services/pilotTelemetryClient'
 import { detectPortalContext } from '@/lib/portalContext'
+import { clearPasswordRecoveryIntent, hasPasswordRecoveryIntent, isPasswordRecoveryLocation, markPasswordRecoveryIntent } from '@/lib/auth/passwordRecovery'
 
 // ── Role system ───────────────────────────────────────────────────────────────
 // owner    → the business owner; sees the full app (V15rLayout + all panels)
@@ -361,6 +362,7 @@ function assertAuthOperationCurrent(isCurrent: () => boolean): void {
  *  It is read-only against Supabase; new users get local-only empty state. */
 async function bootstrapAuthenticatedUser(
   userId: string,
+  organizationId: string | null | undefined,
   isCurrent: () => boolean = () => true,
 ): Promise<BackupHydrationResult> {
   assertAuthOperationCurrent(isCurrent)
@@ -425,6 +427,34 @@ async function bootstrapAuthenticatedUser(
     assertAuthOperationCurrent(isCurrent)
     await seedEmptyBackupIfNeeded(userId)
     assertAuthOperationCurrent(isCurrent)
+
+    // Organization identity is part of tenant readiness, not a Settings-only
+    // side effect. Mirror the authoritative organizations.name/settings.identity
+    // fields into the already-hydrated workspace before the shell is released.
+    if (organizationId) {
+      try {
+        const [{ loadOrganizationIdentity, applyOrganizationIdentityToWorkspaceSettings }, backup] = await Promise.all([
+          import('@/services/organizationIdentityService'),
+          import('@/services/backupDataService'),
+        ])
+        assertAuthOperationCurrent(isCurrent)
+        const identity = await loadOrganizationIdentity(organizationId)
+        assertAuthOperationCurrent(isCurrent)
+        const workspace = backup.getBackupData(userId)
+        if (identity && workspace) {
+          const nextSettings = applyOrganizationIdentityToWorkspaceSettings(workspace.settings ?? {}, identity)
+          if (nextSettings !== workspace.settings) {
+            workspace.settings = nextSettings as any
+            backup.saveBackupData(workspace, userId)
+          }
+        }
+      } catch (err) {
+        // A missing/unavailable logo must not block entry. The workspace's
+        // existing company value (or PowerOn Hub product fallback) remains safe.
+        console.warn('[Auth] organization identity hydration failed (non-blocking):', err)
+      }
+    }
+    assertAuthOperationCurrent(isCurrent)
     markTenantDataReady(userId)
     return result
   } catch (err) {
@@ -438,6 +468,27 @@ async function bootstrapAuthenticatedUser(
   } finally {
     if (isCurrent()) setHydrating(false)
   }
+}
+
+/**
+ * Employee portal data is organization-scoped and hydrates inside EmployeePortal.
+ * It must never attach the auth user's owner workspace to the backup service: a
+ * dual-role user can own Org A while being employed by Org B. Crew retains its
+ * established workspace bootstrap behavior; owners retain the strict shell gate.
+ */
+async function bootstrapResolvedPortalData(
+  userId: string,
+  organizationId: string | null | undefined,
+  role: UserRole,
+  isCurrent: () => boolean = () => true,
+): Promise<void> {
+  assertAuthOperationCurrent(isCurrent)
+  if (role === 'employee') {
+    setHydrating(false)
+    clearActiveTenantUser()
+    return
+  }
+  await bootstrapAuthenticatedUser(userId, organizationId, isCurrent)
 }
 
 /**
@@ -490,7 +541,7 @@ async function establishOwnerSession(
   assertAuthOperationCurrent(isCurrent)
 
   set({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId, employeeProfileId, employerOrgId })
-  await bootstrapAuthenticatedUser(user.id, isCurrent)
+  await bootstrapAuthenticatedUser(user.id, profile?.org_id, isCurrent)
   assertAuthOperationCurrent(isCurrent)
   set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
 }
@@ -591,6 +642,7 @@ function registerAuthListener() {
   supabase.auth.onAuthStateChange(async (event, session) => {
     if (event === 'PASSWORD_RECOVERY') {
       const operationId = beginAuthOperation()
+      markPasswordRecoveryIntent()
       // User clicked password reset link — show set new password form
       if (session?.user) {
         const { data: profile } = await supabase
@@ -695,6 +747,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // Safari iOS strips URL fragments on redirect — check both hash and search for tokens
       // before calling getSession() so Supabase can pick them up.
       try {
+        if (isPasswordRecoveryLocation(window.location)) markPasswordRecoveryIntent()
         const hash = window.location.hash?.slice(1) || ''
         const search = window.location.search?.slice(1) || ''
         const params = new URLSearchParams(hash || search)
@@ -705,9 +758,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           console.log('[Auth] iOS Safari fallback: found tokens in URL', { type, via: hash ? 'hash' : 'search' })
           await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
           // If this is a password recovery redirect, flag it
-          if (type === 'recovery') {
-            sessionStorage.setItem('poweron_password_recovery', '1')
-          }
+          if (type === 'recovery') markPasswordRecoveryIntent()
           // Clear tokens from URL bar
           window.history.replaceState({}, document.title, window.location.pathname)
         }
@@ -719,6 +770,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // If redirected from email verification, show login page
       const urlParams = new URLSearchParams(window.location.search)
       if (urlParams.get('verified') === 'true') {
+        clearPasswordRecoveryIntent()
         window.history.replaceState({}, document.title, window.location.pathname)
         await supabase.auth.signOut()
         apply({ status: 'unauthenticated' })
@@ -733,6 +785,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       const user = session.user
       const portalContext = detectPortalContext(window.location.pathname)
+
+      // A recovery callback is an authenticated Supabase session with a very
+      // specific purpose. Handle it before owner/profile/PIN routing so a late or
+      // missed PASSWORD_RECOVERY event cannot fall through to the normal login.
+      if (hasPasswordRecoveryIntent(window.location)) {
+        apply({ status: 'password_recovery', user, profile: null, error: null })
+        return
+      }
 
       // 2. Load profile (the DB trigger creates it on signup, but allow a brief retry
       //    in case the trigger hasn't committed yet)
@@ -761,13 +821,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         apply({ status: 'needs_passcode_setup', user })
         return
       }
-      // Check for password recovery redirect
-      if (sessionStorage.getItem('poweron_password_recovery') === '1') {
-        sessionStorage.removeItem('poweron_password_recovery')
-        apply({ status: 'password_recovery', user, profile })
-        return
-      }
-
       if (!profile.is_active) {
         await supabase.auth.signOut()
         apply({ status: 'unauthenticated', error: 'Your account has been deactivated.' })
@@ -788,8 +841,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           return
         }
         const { role, ownerId, employeeProfileId, employerOrgId } = resolvedRole
-        apply({ status: 'hydrating_user_data', user, profile, appSession, role, ownerId, employeeProfileId, employerOrgId })
-        await bootstrapAuthenticatedUser(user.id, isCurrent)
+        const activeOrgId = role === 'employee' ? employerOrgId : profile.org_id
+        let contextualSession = appSession
+        if (activeOrgId && (appSession.orgId !== activeOrgId || appSession.role !== role)) {
+          contextualSession = null
+          try {
+            const contextualSessionId = await withTimeout(
+              createAppSession({ userId: user.id, orgId: activeOrgId, role, deviceInfo: getDeviceInfo() }),
+              5000,
+              'timeout',
+            )
+            if (contextualSessionId !== 'timeout' && contextualSessionId) {
+              contextualSession = await withTimeout(validateAppSession(contextualSessionId), 3000, null)
+            }
+          } catch {
+            // JWT + resolved membership remain authoritative; the Redis session is
+            // only a resume optimization and must not retain a cross-org context.
+          }
+        }
+        apply({ status: 'hydrating_user_data', user, profile, appSession: contextualSession, role, ownerId, employeeProfileId, employerOrgId })
+        await bootstrapResolvedPortalData(user.id, activeOrgId, role, isCurrent)
         apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
         if (cachedRole) {
           // Fire background re-verify in case crew/employee membership changed.
@@ -823,7 +894,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         let appSession = null
         try {
           await withTimeout(
-            createAppSession({ userId: user.id, orgId: profile.org_id, role: profile.role, deviceInfo: getDeviceInfo() }),
+            createAppSession({ userId: user.id, orgId: role === 'employee' ? employerOrgId : profile.org_id, role, deviceInfo: getDeviceInfo() }),
             5000, 'timeout'
           )
           appSession = await withTimeout(validateAppSession(), 3000, null)
@@ -854,12 +925,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         sessionStorage.removeItem('poweron_password_authed')
 
         try {
-          await bootstrapAuthenticatedUser(user.id, isCurrent)
+          await bootstrapResolvedPortalData(user.id, role === 'employee' ? employerOrgId : profile.org_id, role, isCurrent)
           apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
         } catch (err) {
           if (err instanceof StaleAuthOperationError || !isCurrent()) return
           console.error('[Auth] bootstrapAuthenticatedUser failed:', err)
-          apply({ status: 'authenticated', tenantDataReady: false, tenantUserId: user.id })
+          // Never publish the AppShell while tenant data is unresolved. Keep the
+          // neutral hydration screen visible and offer an explicit retry.
+          apply({
+            status: 'hydrating_user_data',
+            tenantDataReady: false,
+            tenantUserId: null,
+            error: 'Workspace data could not be loaded. Check your connection and retry.',
+          })
         }
 
         return
@@ -885,7 +963,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         let roleSession = null
         try {
           await withTimeout(
-            createAppSession({ userId: user.id, orgId: profile.org_id, role: profile.role, deviceInfo: getDeviceInfo() }),
+            createAppSession({ userId: user.id, orgId: portalRole.employerOrgId ?? profile.org_id, role: portalRole.role, deviceInfo: getDeviceInfo() }),
             5000, 'timeout'
           )
           roleSession = await withTimeout(validateAppSession(), 3000, null)
@@ -900,7 +978,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           employeeProfileId: portalRole.employeeProfileId,
           employerOrgId: portalRole.employerOrgId,
         })
-        await bootstrapAuthenticatedUser(user.id, isCurrent)
+        await bootstrapResolvedPortalData(user.id, portalRole.employerOrgId ?? profile.org_id, portalRole.role, isCurrent)
         apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
         return
       }
@@ -927,12 +1005,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         let session = null
         try {
           session = await withTimeout(
-            createAppSession({ userId: user.id, orgId: profile.org_id, role: profile.role, deviceInfo: getDeviceInfo() }),
+            createAppSession({ userId: user.id, orgId: role === 'employee' ? employerOrgId : profile.org_id, role, deviceInfo: getDeviceInfo() }),
             5000, null
           )
         } catch {}
         apply({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId, employeeProfileId, employerOrgId })
-        await bootstrapAuthenticatedUser(user.id, isCurrent)
+        await bootstrapResolvedPortalData(user.id, role === 'employee' ? employerOrgId : profile.org_id, role, isCurrent)
         apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
         return
       }
@@ -1069,7 +1147,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           : null
         assertAuthOperationCurrent(isCurrent)
         set({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId, employeeProfileId, employerOrgId })
-        await bootstrapAuthenticatedUser(user.id, isCurrent)
+        await bootstrapResolvedPortalData(user.id, profile.org_id, role, isCurrent)
         assertAuthOperationCurrent(isCurrent)
         set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
 
@@ -1137,11 +1215,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
       // 3. Reload profile (passcode_hash now set) — timeout 5s
-      const { data: refreshedProfile } = await withTimeout(
-        supabase.from('profiles').select('*').eq('id', user.id).single(),
+      const refreshedResult = await withTimeout(
+        supabase
+          .from('profiles')
+          .select('id, org_id, full_name, role, is_active, passcode_hash')
+          .eq('id', user.id)
+          .maybeSingle(),
         5000,
-        { data: profile, error: null }
+        { data: null, error: { message: 'Profile readback timed out' } } as any,
       )
+      const refreshedProfile = refreshedResult?.data as Profile | null
+      if (refreshedResult?.error || !refreshedProfile?.id || !refreshedProfile.org_id || !refreshedProfile.passcode_hash) {
+        throw new Error(refreshedResult?.error?.message || 'Passcode readback did not confirm the saved profile')
+      }
 
       // 4. Check biometric (should be instant in browser, timeout 3s as safety)
       const biometric = await withTimeout(getBiometricCapabilities(), 3000, {
@@ -1152,7 +1238,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({ status: 'biometric_prompt', profile: refreshedProfile, biometric })
       } else {
         // 5. App session + role + tenant bootstrap, then authenticated.
-        await establishOwnerSession(set, user, (refreshedProfile ?? profile) as Profile | null, 'passcode_setup')
+        await establishOwnerSession(set, user, refreshedProfile, 'passcode_setup')
       }
 
     } catch (err) {
@@ -1180,18 +1266,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       // Re-read the profile so the store carries the same server-confirmed
       // passcode/org state that the next reload's initialize() will read.
-      const { data: refreshed } = await withTimeout(
+      const refreshedResult = await withTimeout(
         supabase
           .from('profiles')
           .select('id, org_id, full_name, role, is_active, passcode_hash')
           .eq('id', user.id)
           .maybeSingle(),
         5000,
-        { data: null, error: null } as any,
+        { data: null, error: { message: 'Profile readback timed out' } } as any,
       )
       assertAuthOperationCurrent(isCurrent)
 
-      const profile = (refreshed as Profile | null) ?? get().profile
+      const refreshed = refreshedResult?.data as Profile | null
+      if (refreshedResult?.error || !refreshed?.id || !refreshed?.org_id || !refreshed?.passcode_hash) {
+        throw new Error(refreshedResult?.error?.message || 'Passcode readback did not confirm the saved profile')
+      }
+      const profile = refreshed
 
       // Seed project templates for the new org (non-blocking).
       if (profile?.org_id) {
@@ -1247,7 +1337,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           { role: 'owner' as UserRole, ownerId: user.id, employeeProfileId: null, employerOrgId: null }
         )
         set({ status: 'hydrating_user_data', user, profile, appSession: await validateAppSession(), role, ownerId, employeeProfileId, employerOrgId })
-        await bootstrapAuthenticatedUser(user.id)
+        await bootstrapResolvedPortalData(user.id, role === 'employee' ? employerOrgId : profile.org_id, role)
         set({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
 
       } else if (result.reason === 'cancelled') {

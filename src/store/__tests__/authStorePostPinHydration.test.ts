@@ -89,6 +89,7 @@ vi.mock('@/services/backupDataService', () => ({
   hasBackupData: vi.fn(() => true),
   createEmptyBackup: vi.fn(() => ({ projects: [], logs: [], settings: {} })),
   saveBackupData: vi.fn(),
+  getBackupData: vi.fn(() => null),
   loadFromSupabase: (...args: any[]) => authDeps.loadFromSupabase(...args),
   setHydrating: (...args: any[]) => authDeps.setHydrating(...args),
   getCacheOwner: vi.fn(() => null),

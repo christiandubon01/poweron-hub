@@ -16,15 +16,16 @@
  */
 
 const crypto = require('crypto')
+const { createClient } = require('@supabase/supabase-js')
 
 const RESEND_API_URL  = 'https://api.resend.com/emails'
 const DEFAULT_FROM    = 'Power On Solutions <noreply@poweronsolutions.com>'
 const NOTIFY_EMAIL    = 'app@poweronsolutionsllc.com'
-const APP_BASE_URL    = 'https://incomparable-croissant-a86c81.netlify.app'
+const APP_BASE_URL    = (process.env.VITE_APP_BASE_URL || 'https://app.poweronsolutionsllc.com').replace(/\/$/, '')
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Content-Type': 'application/json',
 }
 
@@ -180,7 +181,7 @@ async function sendEmail(apiKey: string, payload: {
 
 // ── Handler ────────────────────────────────────────────────────────────────────
 
-exports.handler = async (event: any) => {
+export const handler = async (event: any) => {
   // Preflight
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 200, headers: CORS_HEADERS, body: '' }
@@ -212,6 +213,24 @@ exports.handler = async (event: any) => {
     }
   }
 
+  // Beta invitations are a founder platform-admin action. The service role is
+  // used only after the caller's Supabase JWT and founder email are verified.
+  const authorization = event.headers?.authorization || event.headers?.Authorization || ''
+  const token = String(authorization).match(/^Bearer\s+(.+)$/i)?.[1]
+  if (!token) {
+    return { statusCode: 401, headers: CORS_HEADERS, body: JSON.stringify({ success: false, error: 'Authentication required' }) }
+  }
+  const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { data: authData, error: authError } = await admin.auth.getUser(token)
+  const caller = authData?.user
+  if (authError || !caller) {
+    return { statusCode: 401, headers: CORS_HEADERS, body: JSON.stringify({ success: false, error: 'Invalid authentication' }) }
+  }
+  const founder = String(process.env.PILOT_TELEMETRY_FOUNDER_EMAIL || process.env.ADMIN_EMAIL || process.env.VITE_ADMIN_EMAIL || '').trim().toLowerCase()
+  if (!founder || String(caller.email || '').trim().toLowerCase() !== founder) {
+    return { statusCode: 403, headers: CORS_HEADERS, body: JSON.stringify({ success: false, error: 'Founder access required' }) }
+  }
+
   // Parse body
   let body: Record<string, unknown> = {}
   try {
@@ -224,10 +243,9 @@ exports.handler = async (event: any) => {
     }
   }
 
-  const { email, industry, invitedBy } = body as {
+  const { email, industry } = body as {
     email?: string
     industry?: string
-    invitedBy?: string
   }
 
   // Validate email
@@ -251,7 +269,7 @@ exports.handler = async (event: any) => {
       status:       'pending',
     }
     if (industry)  row.industry   = industry
-    if (invitedBy) row.invited_by = invitedBy
+    row.invited_by = caller.id
 
     const inserted = await supabaseInsert(supabaseUrl, serviceKey, 'beta_invites', row)
     const inviteId = inserted?.id as string | undefined

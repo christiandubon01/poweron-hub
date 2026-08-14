@@ -12,6 +12,7 @@ const deps = vi.hoisted(() => ({
   markTenantDataReady: vi.fn(),
   clearActiveTenantUser: vi.fn(),
   clearLocalSnapshots: vi.fn(),
+  createAppSession: vi.fn(),
 }))
 
 vi.mock('@/lib/supabase', () => {
@@ -84,7 +85,7 @@ vi.mock('@/lib/auth/biometric', () => ({
 }))
 
 vi.mock('@/lib/auth/session', () => ({
-  createAppSession: vi.fn(async () => 'session-1'),
+  createAppSession: (...args: any[]) => deps.createAppSession(...args),
   destroyAppSession: vi.fn(async () => undefined),
   validateAppSession: (...args: any[]) => deps.validateAppSession(...args),
   getDeviceInfo: vi.fn(() => 'test-device'),
@@ -101,6 +102,7 @@ vi.mock('@/services/backupDataService', () => ({
   hasBackupData: vi.fn(() => true),
   createEmptyBackup: vi.fn(() => ({ projects: [], logs: [], settings: {} })),
   saveBackupData: vi.fn(),
+  getBackupData: vi.fn(() => null),
   loadFromSupabase: (...args: any[]) => deps.loadFromSupabase(...args),
   setHydrating: (...args: any[]) => deps.setHydrating(...args),
   getCacheOwner: vi.fn(() => null),
@@ -175,6 +177,7 @@ beforeEach(() => {
   deps.markTenantDataReady.mockReset()
   deps.clearActiveTenantUser.mockReset()
   deps.clearLocalSnapshots.mockReset().mockResolvedValue(true)
+  deps.createAppSession.mockReset().mockResolvedValue('session-employee')
 
   useAuthStore.setState({
     status: 'loading',
@@ -219,6 +222,13 @@ describe('COMM-PROD-2 dual portal context routing', () => {
       employerOrgId: EMPLOYER_ORG_ID,
       tenantUserId: USER_ID,
     })
+    expect(deps.createAppSession).toHaveBeenCalledWith(expect.objectContaining({
+      userId: USER_ID,
+      orgId: EMPLOYER_ORG_ID,
+      role: 'employee',
+    }))
+    expect(deps.loadFromSupabase).not.toHaveBeenCalled()
+    expect(deps.clearActiveTenantUser).toHaveBeenCalled()
   })
 
   it('preserves employee portal intent on the shared root route after landing in the employee portal', async () => {

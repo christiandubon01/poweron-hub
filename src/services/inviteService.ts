@@ -19,9 +19,9 @@ export interface BetaInvite {
   id: string
   email: string
   invited_by: string | null
-  invite_token: string
+  invite_token?: string
   industry: string | null
-  status: 'pending' | 'accepted' | 'expired'
+  status: 'pending' | 'accepted' | 'expired' | 'revoked'
   invited_at: string
   accepted_at: string | null
   expires_at: string
@@ -52,9 +52,11 @@ export async function sendInvite(
   invitedBy?: string,
 ): Promise<SendInviteResult> {
   try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.access_token) return { success: false, error: 'Not authenticated' }
     const res = await fetch('/.netlify/functions/sendInvite', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
       body:    JSON.stringify({ email, industry: industry || null, invitedBy: invitedBy || null }),
     })
 
@@ -97,16 +99,14 @@ export async function getInvites(): Promise<BetaInvite[]> {
  * Does not delete the row — preserves audit trail.
  */
 export async function revokeInvite(id: string): Promise<{ success: boolean; error?: string }> {
-  const { error } = await supabase
-    .from('beta_invites')
-    .update({ status: 'expired' })
-    .eq('id', id)
-
-  if (error) {
-    console.error('[inviteService.revokeInvite] Error:', error)
-    return { success: false, error: error.message }
-  }
-
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session?.access_token) return { success: false, error: 'Not authenticated' }
+  const response = await fetch('/.netlify/functions/pilot-telemetry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+    body: JSON.stringify({ action: 'founder_revoke_beta_invite', inviteId: id }),
+  })
+  if (!response.ok) return { success: false, error: await response.text() || `HTTP ${response.status}` }
   return { success: true }
 }
 
@@ -126,38 +126,15 @@ export async function validateInviteToken(token: string): Promise<ValidateTokenR
     return { valid: false, reason: 'Invalid token format' }
   }
 
-  const { data, error } = await supabase
-    .from('beta_invites')
-    .select('*')
-    .eq('invite_token', token)
-    .single()
+  const { data, error } = await (supabase.rpc as any)('validate_beta_invite', { p_token: token })
 
   if (error || !data) {
     return { valid: false, reason: 'Token not found' }
   }
-
-  const invite = data as BetaInvite
-
-  if (invite.status !== 'pending') {
-    return {
-      valid:  false,
-      reason: invite.status === 'accepted' ? 'Invite already accepted' : 'Invite has expired or been revoked',
-      invite,
-    }
-  }
-
-  const now = new Date()
-  const exp = new Date(invite.expires_at)
-  if (now > exp) {
-    // Auto-mark as expired
-    await supabase
-      .from('beta_invites')
-      .update({ status: 'expired' })
-      .eq('id', invite.id)
-    return { valid: false, reason: 'Invite link has expired', invite }
-  }
-
-  return { valid: true, invite }
+  const result = data as { valid: boolean; reason?: string; invite?: BetaInvite }
+  return result.valid
+    ? { valid: true, invite: result.invite }
+    : { valid: false, reason: result.reason, invite: result.invite }
 }
 
 // ── markInviteAccepted ────────────────────────────────────────────────────────
@@ -167,12 +144,7 @@ export async function validateInviteToken(token: string): Promise<ValidateTokenR
  * Stores accepted_at timestamp.
  */
 export async function markInviteAccepted(token: string): Promise<void> {
-  const { error } = await supabase
-    .from('beta_invites')
-    .update({ status: 'accepted', accepted_at: new Date().toISOString() })
-    .eq('invite_token', token)
-
-  if (error) {
-    console.error('[inviteService.markInviteAccepted] Error:', error)
-  }
+  const { data, error } = await (supabase.rpc as any)('accept_beta_invite', { p_token: token })
+  if (error) throw error
+  if (!data?.success) throw new Error(data?.reason || 'Beta invitation could not be accepted')
 }
