@@ -3,6 +3,7 @@ import { authedJsonHeaders } from '@/services/authedFetch'
 export interface FounderContractorAccount {
   organizationId: string
   organizationName: string
+  ownerFullName: string | null
   ownerEmail: string
   createdAt: string
   onboardingStatus: 'complete' | 'pending'
@@ -14,6 +15,10 @@ export interface FounderContractorAccount {
   artifactAvailable: boolean
   classification: string
   accountStatus: 'active' | 'inactive'
+  employeeCount: number
+  memberCount: number
+  lastActivityAt: string | null
+  lastLoginAt: string | null
 }
 
 export interface FounderBetaInvite {
@@ -43,6 +48,103 @@ export interface FounderSignedAgreement {
   artifactStatus: 'signed_document_on_file' | 'no_signed_pdf_captured' | 'access_grandfathered_no_signed_document' | 'no_document'
 }
 
+export interface FounderAgreementArtifactAccess {
+  url: string
+  filename: string
+}
+
+export type FounderContractorPresenceStatus = 'active' | 'idle' | 'locked' | 'offline' | 'no_history'
+
+export interface FounderContractorPresenceSummary {
+  organizationId: string
+  status: FounderContractorPresenceStatus
+  hasHistory: boolean
+  liveDeviceCount: number
+  liveSessionCount: number
+  lastInteractionAt: string | null
+  lastHeartbeatAt: string | null
+  sessionCount: number
+}
+
+export interface FounderSecurityAlert {
+  organizationId: string
+  organizationName: string
+  sessionId: string | null
+  userId: string
+  userLabel: string
+  deviceId: string | null
+  deviceLabel: string
+  eventType: 'session_started' | 'ip_changed'
+  occurredAt: string
+  publicIp: string | null
+  previousPublicIp: string | null
+  isNewDevice: boolean
+  alertKind: 'new_device' | 'ip_changed'
+}
+
+export interface FounderContractorPresenceReport {
+  serverNow: string
+  summaries: FounderContractorPresenceSummary[]
+  alerts: FounderSecurityAlert[]
+}
+
+export interface FounderPresenceDeviceGroup {
+  deviceKey: string
+  deviceId: string | null
+  deviceLabel: string
+  deviceType: string
+  status: FounderContractorPresenceStatus
+  liveSessionCount: number
+  startedAt: string | null
+  lastInteractionAt: string | null
+  lastHeartbeatAt: string | null
+  recentModule: string | null
+  recentModuleLabel: string
+}
+
+export interface FounderPresenceSessionRecord {
+  sessionId: string
+  userId: string
+  userLabel: string
+  userRole: string | null
+  deviceId: string | null
+  deviceLabel: string
+  deviceType: string
+  module: string | null
+  moduleLabel: string
+  visibilityState: 'visible' | 'hidden'
+  status: FounderContractorPresenceStatus
+  startedAt: string | null
+  lastInteractionAt: string | null
+  lastHeartbeatAt: string | null
+  endedAt: string | null
+  endedReason: string | null
+}
+
+export interface FounderSecurityHistoryEntry {
+  sessionId: string | null
+  userId: string
+  userLabel: string
+  deviceId: string | null
+  deviceLabel: string
+  eventType: 'session_started' | 'ip_changed'
+  occurredAt: string
+  publicIp: string | null
+  previousPublicIp: string | null
+  isNewDevice: boolean
+  isAlert: boolean
+}
+
+export interface FounderContractorPresenceDetail {
+  organizationId: string
+  organizationName: string
+  serverNow: string
+  summary: FounderContractorPresenceSummary
+  deviceGroups: FounderPresenceDeviceGroup[]
+  sessions: FounderPresenceSessionRecord[]
+  securityHistory: FounderSecurityHistoryEntry[]
+}
+
 export interface FounderContractorAdminReport {
   generatedAt: string
   contractorAccounts: FounderContractorAccount[]
@@ -56,5 +158,48 @@ export async function fetchFounderContractorAdminReport(): Promise<FounderContra
     headers: await authedJsonHeaders(),
   })
   if (!response.ok) throw new Error(await response.text() || `Founder contractor report failed (${response.status})`)
+  return response.json()
+}
+
+export async function fetchFounderAgreementArtifactAccess(
+  agreementId: string,
+): Promise<FounderAgreementArtifactAccess> {
+  const response = await fetch('/.netlify/functions/pilot-telemetry', {
+    method: 'POST',
+    headers: await authedJsonHeaders(),
+    body: JSON.stringify({
+      action: 'founder_agreement_artifact',
+      agreementId,
+    }),
+  })
+  if (!response.ok) {
+    throw new Error(await response.text() || `Founder agreement artifact request failed (${response.status})`)
+  }
+  return response.json()
+}
+
+export async function fetchFounderContractorPresenceReport(): Promise<FounderContractorPresenceReport> {
+  const response = await fetch('/.netlify/functions/pilot-telemetry?action=founder_contractor_presence', {
+    method: 'GET',
+    headers: await authedJsonHeaders(),
+  })
+  if (!response.ok) throw new Error(await response.text() || `Founder contractor presence failed (${response.status})`)
+  return response.json()
+}
+
+export async function fetchFounderContractorPresenceDetail(
+  organizationId: string,
+): Promise<FounderContractorPresenceDetail> {
+  const response = await fetch('/.netlify/functions/pilot-telemetry', {
+    method: 'POST',
+    headers: await authedJsonHeaders(),
+    body: JSON.stringify({
+      action: 'founder_contractor_presence_detail',
+      organizationId,
+    }),
+  })
+  if (!response.ok) {
+    throw new Error(await response.text() || `Founder contractor presence detail failed (${response.status})`)
+  }
   return response.json()
 }

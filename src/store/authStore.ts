@@ -21,6 +21,8 @@ import { authenticateWithBiometric, getBiometricCapabilities } from '@/lib/auth/
 import type { BiometricCapabilities } from '@/lib/auth/biometric'
 import { createAppSession, destroyAppSession, validateAppSession, getDeviceInfo } from '@/lib/auth/session'
 import type { AppSession } from '@/lib/auth/session'
+import { presenceMonitor } from '@/lib/guardian/presenceMonitor'
+import { getDeviceId } from '@/services/backupDataService'
 import { logLogin, logAudit } from '@/lib/memory/audit'
 import { hasBackupData, createEmptyBackup, saveBackupData, loadFromSupabase, setHydrating, getCacheOwner, setCacheOwner, clearCacheOwner, setActiveTenantUser, markTenantDataReady, clearActiveTenantUser, clearLocalSnapshots, hasPendingLocalSave, reconcilePendingLocalSaveForHydration, resetSessionScopedBackupClientState } from '@/services/backupDataService'
 import type { BackupHydrationResult } from '@/services/backupDataService'
@@ -655,17 +657,24 @@ async function establishOwnerSession(
 ): Promise<void> {
   let session = null
   try {
-    await withTimeout(
+    const newSessionId = await withTimeout(
       createAppSession({
         userId: user.id,
         orgId: profile?.org_id,
         role: profile?.role,
         deviceInfo: getDeviceInfo(),
+        deviceId: getDeviceId(),
         isCurrent,
       }),
       5000,
       'timeout',
     )
+    if (newSessionId && newSessionId !== 'timeout') {
+      presenceMonitor.start({
+        sessionId: newSessionId,
+        onInactivityLock: () => void useAuthStore.getState().lockApp('inactivity_timeout'),
+      })
+    }
     session = await withTimeout(validateAppSession(), 3000, null)
   } catch {
     // The Redis app session is a resume convenience. The Supabase JWT and the
@@ -1294,6 +1303,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             orgId:  profile.org_id,
             role:   profile.role,
             deviceInfo: getDeviceInfo(),
+            deviceId: getDeviceId(),
             isCurrent,
           }),
           5000,
@@ -1302,6 +1312,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         assertAuthOperationCurrent(isCurrent)
         if (createdSessionId !== 'timeout' && createdSessionId) {
           ownedSessionId = createdSessionId
+          // Start presence monitor — PIN unlock itself counts as first interaction
+          presenceMonitor.start({
+            sessionId: createdSessionId,
+            onInactivityLock: () => void useAuthStore.getState().lockApp('inactivity_timeout'),
+          })
         }
 
         // Fire-and-forget audit + profile update
@@ -1498,12 +1513,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const result = await authenticateWithBiometric()
 
       if (result.success) {
-        const appSession = await createAppSession({
+        const bioSessionId = await createAppSession({
           userId: user.id,
           orgId:  profile.org_id,
           role:   profile.role,
           deviceInfo: getDeviceInfo(),
+          deviceId: getDeviceId(),
         })
+        if (bioSessionId) {
+          presenceMonitor.start({
+            sessionId: bioSessionId,
+            onInactivityLock: () => void useAuthStore.getState().lockApp('inactivity_timeout'),
+          })
+        }
         await logLogin(user.id, { method: 'biometric' })
         await supabase
           .from('profiles')
@@ -1540,30 +1562,32 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   // ── Sign out ────────────────────────────────────────────────────────────────
   // ── Lock App ──────────────────────────────────────────────────────────────
-  // Clears the Redis session but keeps the Supabase JWT. 
+  // Clears the Redis session but keeps the Supabase JWT.
   // This triggers the PIN screen while keeping user identity known.
-  lockApp: async () => {
+  // endedReason defaults to 'manual_lock'; inactivity passes 'inactivity_timeout'.
+  lockApp: async (endedReason: 'manual_lock' | 'inactivity_timeout' = 'manual_lock') => {
     beginAuthOperation()
+    presenceMonitor.stop()
     const { user } = get()
     if (user) {
       // Robust logging: if the audit trail fails, we still lock the app
       try {
-        await logAction({ 
-          agentName: 'SYSTEM', 
-          actionType: 'lock', 
-          target: `profiles:${user.id}`, 
-          approvalStatus: 'n/a', 
-          approvalPhrase: null, 
-          userId: user.id, 
-          beforeState: { status: get().status }, 
-          afterState: { status: 'needs_passcode' }, 
-          verificationResult: null 
+        await logAction({
+          agentName: 'SYSTEM',
+          actionType: 'lock',
+          target: `profiles:${user.id}`,
+          approvalStatus: 'n/a',
+          approvalPhrase: null,
+          userId: user.id,
+          beforeState: { status: get().status },
+          afterState: { status: 'needs_passcode' },
+          verificationResult: null
         })
       } catch (e) {
         console.warn('[Auth] Audit logging failed, proceeding with lock:', e)
       }
     }
-    await destroyAppSession()
+    await destroyAppSession(undefined, endedReason)
     set({ status: 'needs_passcode', appSession: null })
   },
 
@@ -1572,6 +1596,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   signOut: async () => {
     // Invalidate first: no older PIN continuation may resume during audit/session cleanup.
     beginAuthOperation()
+    presenceMonitor.stop()
     clearIdentityRetryState()
     setHydrating(false)
     clearActiveTenantUser()
@@ -1579,22 +1604,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const { user } = get()
     if (user) {
       try {
-        await logAction({ 
-          agentName: 'SYSTEM', 
-          actionType: 'logout', 
-          target: `profiles:${user.id}`, 
-          approvalStatus: 'n/a', 
-          approvalPhrase: null, 
-          userId: user.id, 
-          beforeState: null, 
-          afterState: null, 
-          verificationResult: null 
+        await logAction({
+          agentName: 'SYSTEM',
+          actionType: 'logout',
+          target: `profiles:${user.id}`,
+          approvalStatus: 'n/a',
+          approvalPhrase: null,
+          userId: user.id,
+          beforeState: null,
+          afterState: null,
+          verificationResult: null
         })
       } catch (e) {
         console.warn('[Auth] Audit logging failed, proceeding with logout:', e)
       }
     }
-    await destroyAppSession()
+    await destroyAppSession(undefined, 'signout')
     await supabase.auth.signOut()
     clearPersistedPortalRoleState()
     clearPreferredPortalContext()

@@ -10,16 +10,42 @@ import {
 } from '../../src/services/pilotTelemetryShared'
 import {
   allowsNDAAccess,
+  hasRealNDAArtifact,
   resolveNDAStatus,
   type NDAAccessOverrideRecordLike,
   type NDASignedAgreementRecordLike,
 } from '../../src/services/ndaAuthority'
+import {
+  buildFounderPresenceDetail,
+  buildFounderPresenceSummary,
+  buildFounderSecurityAlerts,
+  buildFounderSecurityHistory,
+  type FounderPresenceSessionRow,
+  type FounderSecurityEventRow,
+} from '../../src/services/guardianFounderPresence'
 
 type NetlifyEvent = {
   httpMethod?: string
   headers?: Record<string, string | undefined>
   queryStringParameters?: Record<string, string | undefined>
   body?: string | null
+}
+
+type FounderPilotOrganizationIndexEntry = {
+  organizationId: string
+  organizationName: string
+  classification: string
+}
+
+type FounderPilotRecentActivityEntry = {
+  organizationId: string
+  organizationName: string
+  classification: string
+  eventName: string
+  module: string | null
+  feature: string | null
+  occurredAt: string
+  metadata: Record<string, unknown>
 }
 
 function json(statusCode: number, body: unknown) {
@@ -72,6 +98,116 @@ function founderEmail(): string {
     || process.env.VITE_ADMIN_EMAIL
     || '',
   ).trim().toLowerCase()
+}
+
+const FOUNDER_ACTIVITY_BLOCKED_KEYS = [
+  'attachment',
+  'blueprint',
+  'content',
+  'customer',
+  'estimate',
+  'fieldlog',
+  'id',
+  'note',
+  'project',
+  'summary',
+]
+
+function sanitizeFounderActivityMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  const sanitized = sanitizeTelemetryMetadata(metadata || {})
+  const filtered: Record<string, unknown> = {}
+
+  for (const [key, value] of Object.entries(sanitized)) {
+    const normalizedKey = key.replace(/[^a-z0-9]/gi, '').toLowerCase()
+    if (!normalizedKey || FOUNDER_ACTIVITY_BLOCKED_KEYS.some((blocked) => normalizedKey.includes(blocked))) {
+      continue
+    }
+
+    if (Array.isArray(value)) {
+      const items = value
+        .filter((entry) => ['string', 'number', 'boolean'].includes(typeof entry))
+        .slice(0, 8)
+      if (items.length > 0) filtered[key] = items
+      continue
+    }
+
+    if (value && typeof value === 'object') {
+      const nested = sanitizeFounderActivityMetadata(value as Record<string, unknown>)
+      if (Object.keys(nested).length > 0) filtered[key] = nested
+      continue
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      if (trimmed) filtered[key] = trimmed.slice(0, 120)
+      continue
+    }
+
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      filtered[key] = value
+    }
+  }
+
+  return filtered
+}
+
+export function buildFounderPilotRecentActivity(input: {
+  telemetry: any[]
+  organizations: FounderPilotOrganizationIndexEntry[]
+  limit?: number
+}): FounderPilotRecentActivityEntry[] {
+  const organizationsById = new Map(
+    input.organizations.map((organization) => [organization.organizationId, organization]),
+  )
+
+  return (input.telemetry ?? [])
+    .map((event: any) => {
+      const organizationId = String(event?.organization_id || '').trim()
+      const organization = organizationsById.get(organizationId)
+      if (!organization) return null
+
+      return {
+        organizationId,
+        organizationName: organization.organizationName,
+        classification: organization.classification,
+        eventName: String(event?.event_name || '').trim(),
+        module: event?.module ? String(event.module) : null,
+        feature: event?.feature ? String(event.feature) : null,
+        occurredAt: String(event?.occurred_at || '').trim(),
+        metadata: sanitizeFounderActivityMetadata(
+          event?.metadata && typeof event.metadata === 'object' && !Array.isArray(event.metadata)
+            ? event.metadata
+            : {},
+        ),
+      }
+    })
+    .filter((entry): entry is FounderPilotRecentActivityEntry => Boolean(entry?.organizationId && entry.occurredAt && entry.eventName))
+    .sort((left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt))
+    .slice(0, input.limit ?? 40)
+}
+
+function deriveAgreementArtifactFilename(record: {
+  pdf_url?: string | null
+  typed_name?: string | null
+  full_name?: string | null
+  agreement_type?: string | null
+  signed_at?: string | null
+  created_at?: string | null
+}): string {
+  const storagePath = String(record.pdf_url || '').trim()
+  const pathTail = storagePath.split('/').filter(Boolean).pop() || ''
+  if (pathTail.toLowerCase().endsWith('.pdf')) return pathTail
+
+  const signer = String(record.typed_name || record.full_name || 'signed-agreement')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  const version = String(record.agreement_type || 'nda').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
+  const signedAt = String(record.signed_at || record.created_at || '').slice(0, 10) || 'agreement'
+  return `${signer || 'signed-agreement'}-${version || 'nda'}-${signedAt}.pdf`
 }
 
 export function isFounderUser(user: { email?: string | null } | null | undefined, configuredEmail = founderEmail()): boolean {
@@ -258,6 +394,126 @@ function weekRange(now = new Date()) {
   return { start, end }
 }
 
+const FOUNDER_PRESENCE_LOOKBACK_DAYS = 30
+const FOUNDER_PRESENCE_SUMMARY_SESSION_LIMIT = 500
+const FOUNDER_SECURITY_ALERT_LIMIT = 30
+const FOUNDER_PRESENCE_DETAIL_SESSION_LIMIT = 30
+const FOUNDER_PRESENCE_DETAIL_EVENT_LIMIT = 30
+
+function isoDaysAgo(days: number, now = new Date()): string {
+  return new Date(now.getTime() - (days * 24 * 60 * 60 * 1000)).toISOString()
+}
+
+async function loadFounderContractorOrganizations(supabase: any) {
+  const { data, error } = await supabase
+    .from('organizations')
+    .select('id, name, owner_id, settings, created_at')
+    .not('owner_id', 'is', null)
+
+  if (error) throw error
+  return (data ?? []).map((organization: any) => ({
+    organizationId: String(organization.id),
+    organizationName: String(organization.name || ''),
+    ownerId: organization.owner_id ? String(organization.owner_id) : null,
+  }))
+}
+
+async function loadPresenceSessions(supabase: any, options: {
+  organizationIds: string[]
+  limit: number
+  startedAfterIso: string
+}) {
+  if (options.organizationIds.length === 0) return []
+  const { data, error } = await supabase
+    .from('user_sessions')
+    .select('session_id, user_id, org_id, device_id, device_type, device_info, module, started_at, last_active_at, last_interaction_at, visibility_state, ended_reason, ended_at')
+    .in('org_id', options.organizationIds)
+    .not('session_id', 'is', null)
+    .or(`started_at.gte.${options.startedAfterIso},last_active_at.gte.${options.startedAfterIso},ended_at.gte.${options.startedAfterIso}`)
+    .order('last_active_at', { ascending: false })
+    .limit(options.limit)
+
+  if (error) throw error
+  return (data ?? []) as FounderPresenceSessionRow[]
+}
+
+async function loadSecurityEvents(supabase: any, options: {
+  organizationIds: string[]
+  limit: number
+  occurredAfterIso?: string
+}) {
+  if (options.organizationIds.length === 0) return []
+  let query = supabase
+    .from('account_security_events')
+    .select('session_id, user_id, org_id, device_id, event_type, public_ip, previous_public_ip, is_new_device, occurred_at')
+    .in('org_id', options.organizationIds)
+    .order('occurred_at', { ascending: false })
+    .limit(options.limit)
+
+  if (options.occurredAfterIso) {
+    query = query.gte('occurred_at', options.occurredAfterIso)
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+  return (data ?? []) as FounderSecurityEventRow[]
+}
+
+async function attachUserIdentityToPresenceData(
+  supabase: any,
+  sessions: FounderPresenceSessionRow[],
+  events: FounderSecurityEventRow[],
+) {
+  const userIds = [...new Set([
+    ...sessions.map((session) => String(session.user_id || '')),
+    ...events.map((event) => String(event.user_id || '')),
+  ].filter(Boolean))]
+
+  if (userIds.length === 0) {
+    return { sessions, events }
+  }
+
+  const { data: profiles, error: profileError } = await supabase
+    .from('profiles')
+    .select('id, full_name, role')
+    .in('id', userIds)
+
+  if (profileError) throw profileError
+
+  const authUsers = await listAllAuthUsers(supabase)
+  const authById = new Map(authUsers.map((user: any) => [String(user.id), user]))
+  const profileById = new Map<string, { full_name: string | null; role: string | null }>(
+    ((profiles ?? []) as Array<{ id: string; full_name: string | null; role: string | null }>)
+      .map((profile) => [String(profile.id), profile]),
+  )
+
+  const hydrateSession = (session: FounderPresenceSessionRow): FounderPresenceSessionRow => {
+    const profile = profileById.get(String(session.user_id))
+    const authUser = authById.get(String(session.user_id))
+    return {
+      ...session,
+      user_full_name: profile?.full_name ? String(profile.full_name) : null,
+      user_email: authUser?.email ? String(authUser.email) : null,
+      user_role: profile?.role ? String(profile.role) : null,
+    }
+  }
+
+  const hydrateEvent = (event: FounderSecurityEventRow): FounderSecurityEventRow => {
+    const profile = profileById.get(String(event.user_id))
+    const authUser = authById.get(String(event.user_id))
+    return {
+      ...event,
+      user_full_name: profile?.full_name ? String(profile.full_name) : null,
+      user_email: authUser?.email ? String(authUser.email) : null,
+    }
+  }
+
+  return {
+    sessions: sessions.map(hydrateSession),
+    events: events.map(hydrateEvent),
+  }
+}
+
 async function readOptionalTable(
   supabase: any,
   table: string,
@@ -406,6 +662,15 @@ async function handleFounderReport(user: any) {
     }
   })
 
+  const recentActivity = buildFounderPilotRecentActivity({
+    telemetry,
+    organizations: includedOrganizations.map((org) => ({
+      organizationId: org.id,
+      organizationName: org.name,
+      classification: org.classification,
+    })),
+  })
+
   return json(200, {
     generatedAt: new Date().toISOString(),
     weekStart: start.toISOString(),
@@ -419,6 +684,7 @@ async function handleFounderReport(user: any) {
     },
     allOrganizations: pilotOrganizations,
     organizations: organizationsReport,
+    recentActivity,
   })
 }
 
@@ -445,8 +711,19 @@ export function buildFounderContractorAdminReport(input: {
   agreements: any[]
   authUsers: any[]
   overrides?: any[]
+  employeeProfiles?: any[]
+  activityEvents?: any[]
 }, now = Date.now()) {
-  const { organizations, profiles, invites, agreements, authUsers, overrides = [] } = input
+  const {
+    organizations,
+    profiles,
+    invites,
+    agreements,
+    authUsers,
+    overrides = [],
+    employeeProfiles = [],
+    activityEvents = [],
+  } = input
   const authById = new Map(authUsers.map((entry: any) => [String(entry.id), entry]))
   const authByEmail = new Map(authUsers
     .filter((entry: any) => entry.email)
@@ -467,6 +744,50 @@ export function buildFounderContractorAdminReport(input: {
       .filter((entry: any) => entry?.user_id)
       .map((entry: any) => [String(entry.user_id), entry]),
   )
+  const memberCountByOrg = new Map<string, number>()
+  for (const profile of profiles) {
+    const orgId = String(profile?.org_id || '').trim()
+    if (!orgId) continue
+    memberCountByOrg.set(orgId, (memberCountByOrg.get(orgId) ?? 0) + 1)
+  }
+  const employeeCountByOrg = new Map<string, number>()
+  for (const employeeProfile of employeeProfiles) {
+    const orgId = String(employeeProfile?.org_id || '').trim()
+    if (!orgId) continue
+    employeeCountByOrg.set(orgId, (employeeCountByOrg.get(orgId) ?? 0) + 1)
+  }
+  const lastActivityByOrg = new Map<string, string>()
+  for (const event of activityEvents) {
+    const orgId = String(event?.organization_id || '').trim()
+    const occurredAt = String(event?.occurred_at || '').trim()
+    if (!orgId || !occurredAt) continue
+    const existing = lastActivityByOrg.get(orgId)
+    if (!existing || new Date(occurredAt).getTime() > new Date(existing).getTime()) {
+      lastActivityByOrg.set(orgId, occurredAt)
+    }
+  }
+
+  function latestTimestamp(...values: Array<string | null | undefined>): string | null {
+    let best: string | null = null
+    let bestMillis = Number.NEGATIVE_INFINITY
+    for (const value of values) {
+      if (!value) continue
+      const millis = new Date(value).getTime()
+      if (Number.isNaN(millis) || millis <= bestMillis) continue
+      best = value
+      bestMillis = millis
+    }
+    return best
+  }
+
+  function getOwnerFullName(ownerProfile: any, owner: any): string | null {
+    const profileName = String(ownerProfile?.full_name || '').trim()
+    if (profileName) return profileName
+
+    const metadata = record(owner?.user_metadata ?? owner?.raw_user_meta_data)
+    const authName = String(metadata.full_name || metadata.name || '').trim()
+    return authName || null
+  }
 
   function describeNDAStatus(state: string): 'signed' | 'grandfathered' | 'missing' | 'revoked' {
     if (state === 'SIGNED_CURRENT' || state === 'SIGNED_LEGACY') return 'signed'
@@ -479,6 +800,7 @@ export function buildFounderContractorAdminReport(input: {
     .filter((org: any) => org.owner_id)
     .map((org: any) => {
     const ownerId = String(org.owner_id || '')
+    const orgId = String(org.id)
     const owner = authById.get(ownerId) as any
     const ownerProfile = profileByUserId.get(ownerId) as any
     const settings = record(org.settings)
@@ -498,8 +820,9 @@ export function buildFounderContractorAdminReport(input: {
       },
     })
     return {
-      organizationId: String(org.id),
+      organizationId: orgId,
       organizationName: String(org.name || ''),
+      ownerFullName: getOwnerFullName(ownerProfile, owner),
       ownerEmail: String(owner?.email || ''),
       createdAt: org.created_at,
       onboardingStatus: onboarding.complete === true ? 'complete' : 'pending',
@@ -511,6 +834,10 @@ export function buildFounderContractorAdminReport(input: {
       artifactAvailable: resolved.hasArtifact,
       classification: getPilotOrganizationClassification(settings),
       accountStatus: ownerProfile?.is_active === false ? 'inactive' : 'active',
+      employeeCount: employeeCountByOrg.get(orgId) ?? 0,
+      memberCount: memberCountByOrg.get(orgId) ?? 0,
+      lastActivityAt: latestTimestamp(lastActivityByOrg.get(orgId), owner?.last_sign_in_at ?? null),
+      lastLoginAt: owner?.last_sign_in_at ?? null,
     }
   })
 
@@ -603,12 +930,23 @@ async function handleFounderContractorAdmin(user: any) {
   if (denied) return denied
 
   const supabase = getServiceClient()
-  const [organizationsResult, profilesResult, invitesResult, agreementsResult, overridesResult, authUsers] = await Promise.all([
+  const [
+    organizationsResult,
+    profilesResult,
+    invitesResult,
+    agreementsResult,
+    overridesResult,
+    employeeProfilesResult,
+    activityEventsResult,
+    authUsers,
+  ] = await Promise.all([
     supabase.from('organizations').select('id, name, owner_id, settings, created_at'),
     supabase.from('profiles').select('id, org_id, full_name, role, is_active, created_at'),
     supabase.from('beta_invites').select('id, email, industry, status, invited_at, accepted_at, expires_at, accepted_user_id, organization_id'),
     supabase.from('signed_agreements').select('id, user_id, agreement_type, typed_name, full_name, email, signed_at, created_at, pdf_url, signature_image, signature_data, ip_address, version, org_id'),
     readOptionalTable(supabase, 'nda_access_authority', 'user_id, access_state, source_classification, reason, effective_at, created_at'),
+    readOptionalTable(supabase, 'employee_profiles', 'id, org_id, user_id, active, accepted_at, created_at'),
+    readOptionalTable(supabase, 'pilot_telemetry_events', 'organization_id, occurred_at'),
     listAllAuthUsers(supabase),
   ])
 
@@ -622,12 +960,135 @@ async function handleFounderContractorAdmin(user: any) {
     invites: invitesResult.data ?? [],
     agreements: agreementsResult.data ?? [],
     overrides: overridesResult.available ? (overridesResult.data ?? []) : [],
+    employeeProfiles: employeeProfilesResult.available ? (employeeProfilesResult.data ?? []) : [],
+    activityEvents: activityEventsResult.available ? (activityEventsResult.data ?? []) : [],
     authUsers,
   })
 
   return json(200, {
     generatedAt: new Date().toISOString(),
     ...report,
+  })
+}
+
+async function handleFounderContractorPresence(user: any) {
+  const denied = requireFounder(user)
+  if (denied) return denied
+
+  const supabase = getServiceClient()
+  const organizations = await loadFounderContractorOrganizations(supabase)
+  const organizationIds = organizations.map((organization: { organizationId: string }) => organization.organizationId)
+  const organizationNames = Object.fromEntries(
+    organizations.map((organization: { organizationId: string; organizationName: string }) => [organization.organizationId, organization.organizationName]),
+  ) as Record<string, string>
+  const serverNow = new Date().toISOString()
+  const lookbackIso = isoDaysAgo(FOUNDER_PRESENCE_LOOKBACK_DAYS, new Date(serverNow))
+
+  const [sessions, events] = await Promise.all([
+    loadPresenceSessions(supabase, {
+      organizationIds,
+      limit: FOUNDER_PRESENCE_SUMMARY_SESSION_LIMIT,
+      startedAfterIso: lookbackIso,
+    }),
+    loadSecurityEvents(supabase, {
+      organizationIds,
+      limit: FOUNDER_SECURITY_ALERT_LIMIT * 3,
+      occurredAfterIso: lookbackIso,
+    }),
+  ])
+
+  const summaries = Object.values(
+    buildFounderPresenceSummary(sessions, organizationIds, serverNow),
+  )
+    .sort((left, right) => organizationNames[left.organizationId].localeCompare(organizationNames[right.organizationId]))
+
+  const alerts = buildFounderSecurityAlerts(events, organizationNames).slice(0, FOUNDER_SECURITY_ALERT_LIMIT)
+
+  return json(200, {
+    serverNow,
+    summaries,
+    alerts,
+  })
+}
+
+async function handleFounderContractorPresenceDetail(event: NetlifyEvent, user: any) {
+  const denied = requireFounder(user)
+  if (denied) return denied
+
+  const payload = event.body ? JSON.parse(event.body) : {}
+  const organizationId = String(payload?.organizationId || '').trim()
+  if (!organizationId) return json(400, { error: 'organizationId is required.' })
+
+  const supabase = getServiceClient()
+  const organizations = await loadFounderContractorOrganizations(supabase)
+  const organization = organizations.find((entry: { organizationId: string }) => entry.organizationId === organizationId)
+  if (!organization) return json(404, { error: 'Contractor organization not found.' })
+
+  const serverNow = new Date().toISOString()
+  const lookbackIso = isoDaysAgo(FOUNDER_PRESENCE_LOOKBACK_DAYS, new Date(serverNow))
+
+  const [sessionsRaw, eventsRaw] = await Promise.all([
+    loadPresenceSessions(supabase, {
+      organizationIds: [organizationId],
+      limit: FOUNDER_PRESENCE_DETAIL_SESSION_LIMIT,
+      startedAfterIso: lookbackIso,
+    }),
+    loadSecurityEvents(supabase, {
+      organizationIds: [organizationId],
+      limit: FOUNDER_PRESENCE_DETAIL_EVENT_LIMIT,
+    }),
+  ])
+
+  const hydrated = await attachUserIdentityToPresenceData(supabase, sessionsRaw, eventsRaw)
+  const detail = buildFounderPresenceDetail({
+    sessions: hydrated.sessions,
+    serverNow,
+  })
+  const securityHistory = buildFounderSecurityHistory(hydrated.events)
+
+  return json(200, {
+    organizationId,
+    organizationName: organization.organizationName,
+    serverNow,
+    summary: detail.summary,
+    deviceGroups: detail.deviceGroups,
+    sessions: detail.sessions,
+    securityHistory,
+  })
+}
+
+async function handleFounderAgreementArtifact(event: NetlifyEvent, user: any) {
+  const denied = requireFounder(user)
+  if (denied) return denied
+
+  const payload = event.body ? JSON.parse(event.body) : {}
+  const agreementId = String(payload?.agreementId || '').trim()
+  if (!agreementId) return json(400, { error: 'agreementId is required.' })
+
+  const supabase = getServiceClient()
+  const { data, error } = await supabase
+    .from('signed_agreements')
+    .select('id, agreement_type, typed_name, full_name, signed_at, created_at, pdf_url')
+    .eq('id', agreementId)
+    .maybeSingle()
+
+  if (error) return json(500, { error: error.message || 'Agreement artifact lookup failed.' })
+  if (!data?.id) return json(404, { error: 'Agreement artifact not found.' })
+  if (!hasRealNDAArtifact(data.pdf_url)) {
+    return json(404, { error: 'No signed artifact is available for this agreement.' })
+  }
+
+  const { data: signedArtifact, error: signedArtifactError } = await supabase.storage
+    .from('nda-documents')
+    .createSignedUrl(String(data.pdf_url).trim(), 300)
+
+  if (signedArtifactError || !signedArtifact?.signedUrl) {
+    return json(500, { error: signedArtifactError?.message || 'Agreement artifact URL could not be generated.' })
+  }
+
+  return json(200, {
+    url: signedArtifact.signedUrl,
+    filename: deriveAgreementArtifactFilename(data),
   })
 }
 
@@ -639,14 +1100,48 @@ async function handleFounderRevokeBetaInvite(event: NetlifyEvent, user: any) {
   if (!inviteId) return json(400, { error: 'inviteId is required.' })
 
   const supabase = getServiceClient()
+  // Atomic conditional update — only succeeds when the row is still effectively pending:
+  // status = 'pending' AND expires_at is in the future.
+  // Expired, accepted, and revoked rows are all excluded server-side.
   const { data, error } = await supabase
     .from('beta_invites')
     .update({ status: 'revoked' })
     .eq('id', inviteId)
+    .eq('status', 'pending')
+    .gt('expires_at', new Date().toISOString())
     .select('id')
     .maybeSingle()
   if (error) return json(500, { error: error.message || 'Could not revoke beta invite.' })
-  if (!data?.id) return json(404, { error: 'Beta invite not found.' })
+  if (!data?.id) return json(400, { error: 'invite_not_revokable' })
+  return json(200, { ok: true, inviteId })
+}
+
+async function handleFounderDeleteBetaInvite(event: NetlifyEvent, user: any) {
+  const denied = requireFounder(user)
+  if (denied) return denied
+  const payload = event.body ? JSON.parse(event.body) : {}
+  const inviteId = String(payload?.inviteId || '').trim()
+  if (!inviteId) return json(400, { error: 'inviteId is required.' })
+
+  const supabase = getServiceClient()
+  const { data: invite, error: loadError } = await supabase
+    .from('beta_invites')
+    .select('id, status')
+    .eq('id', inviteId)
+    .maybeSingle()
+  if (loadError) return json(500, { error: loadError.message || 'Could not load beta invite.' })
+  if (!invite?.id) return json(404, { error: 'Beta invite not found.' })
+  if (invite.status === 'accepted') return json(400, { error: 'invite_not_deletable' })
+
+  const { data: deleted, error: deleteError } = await supabase
+    .from('beta_invites')
+    .delete()
+    .eq('id', inviteId)
+    .neq('status', 'accepted')
+    .select('id')
+    .maybeSingle()
+  if (deleteError) return json(500, { error: deleteError.message || 'Could not delete beta invite.' })
+  if (!deleted?.id) return json(400, { error: 'invite_not_deletable' })
   return json(200, { ok: true, inviteId })
 }
 
@@ -667,7 +1162,11 @@ export async function handler(event: NetlifyEvent) {
     if (action === 'log_support_incident') return await handleSupportIncident(event, user)
     if (action === 'founder_report') return await handleFounderReport(user)
     if (action === 'founder_contractor_admin') return await handleFounderContractorAdmin(user)
+    if (action === 'founder_contractor_presence') return await handleFounderContractorPresence(user)
+    if (action === 'founder_contractor_presence_detail') return await handleFounderContractorPresenceDetail(event, user)
+    if (action === 'founder_agreement_artifact') return await handleFounderAgreementArtifact(event, user)
     if (action === 'founder_revoke_beta_invite') return await handleFounderRevokeBetaInvite(event, user)
+    if (action === 'founder_delete_beta_invite') return await handleFounderDeleteBetaInvite(event, user)
     if (action === 'set_org_classification') return await handleSetOrgClassification(event, user)
     return json(400, { error: 'Unknown action.' })
   } catch (error: any) {

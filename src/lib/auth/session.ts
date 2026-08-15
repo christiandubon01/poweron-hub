@@ -61,11 +61,17 @@ export async function createAppSession(params: {
   orgId:    string
   role:     string
   deviceInfo: DeviceInfo
+  deviceId?: string
+  module?: string
+  visibilityState?: string
   /** Prevent a superseded auth operation from replacing a newer tab session. */
   isCurrent?: () => boolean
 }): Promise<string> {
   const res = await sessionStoreCall<{ sessionId: string | null }>('session.create', {
-    deviceInfo: params.deviceInfo,
+    deviceInfo:      params.deviceInfo,
+    deviceId:        params.deviceId ?? '',
+    module:          params.module ?? 'home',
+    visibilityState: params.visibilityState ?? (typeof document !== 'undefined' ? document.visibilityState : 'visible'),
   })
 
   if (!res?.sessionId) {
@@ -123,16 +129,32 @@ export async function getAppSession(): Promise<AppSession | null> {
  * Called before supabase.auth.signOut(), so the JWT the store needs is still
  * valid. Untargeted cleanup clears the local key even if the server call fails;
  * targeted cleanup clears it only while that expected session still owns it.
+ *
+ * Pass `endedReason` to record the termination cause in the persistent presence row.
  */
-export async function destroyAppSession(expectedSessionId?: string): Promise<void> {
+export async function destroyAppSession(
+  expectedSessionId?: string,
+  endedReason?: 'signout' | 'manual_lock' | 'inactivity_timeout',
+): Promise<void> {
   const storedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY)
   const sessionId = expectedSessionId ?? storedSessionId
   if (sessionId) {
-    await sessionStoreCall('session.destroy', { sessionId })
+    await sessionStoreCall('session.destroy', { sessionId, endedReason: endedReason ?? null })
   }
   // Targeted cleanup must not remove a newer operation's current session ID.
   if (!expectedSessionId || storedSessionId === expectedSessionId) {
     sessionStorage.removeItem(SESSION_STORAGE_KEY)
+  }
+}
+
+/**
+ * Get the current tab's session ID (tab-scoped, from sessionStorage).
+ */
+export function getCurrentSessionId(): string | null {
+  try {
+    return sessionStorage.getItem(SESSION_STORAGE_KEY)
+  } catch {
+    return null
   }
 }
 

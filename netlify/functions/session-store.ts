@@ -305,6 +305,213 @@ function sanitizeDeviceInfo(deviceInfo: any) {
   }
 }
 
+// ── Guardian presence helpers ─────────────────────────────────────────────────
+
+/**
+ * Service-role Supabase client for presence and security event writes.
+ * account_security_events has RLS enabled with zero authenticated policies,
+ * so only the service role can write to it. user_sessions presence writes
+ * also use service role for reliability (bypasses any RLS policy gaps).
+ */
+function serviceRoleClient() {
+  const { url } = supabaseConfig()
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+  if (!url || !key) {
+    console.warn('[session-store] SUPABASE_SERVICE_ROLE_KEY not configured — presence writes skipped')
+    return null
+  }
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+}
+
+/**
+ * Returns the server-observed trusted public IP from the Netlify header.
+ * This header is set by Netlify infrastructure and cannot be spoofed by clients.
+ * Returns null in localhost/dev where the header is absent.
+ */
+function getTrustedIp(event: any): string | null {
+  const ip = event?.headers?.['x-nf-client-connection-ip'] || null
+  return ip && typeof ip === 'string' ? ip.trim() : null
+}
+
+/**
+ * Inserts the new-runtime presence row and optional session_started security event.
+ * Entirely non-blocking — failures are logged but never propagate to the auth flow.
+ */
+async function insertPresenceRow(params: {
+  sessionId: string
+  userId: string
+  orgId: string
+  deviceId: string
+  deviceInfo: any
+  module: string
+  visState: string
+}, trustedIp: string | null): Promise<void> {
+  const svc = serviceRoleClient()
+  if (!svc) return
+
+  const { sessionId, userId, orgId, deviceId, deviceInfo, module, visState } = params
+  const now = new Date().toISOString()
+
+  try {
+    // Determine is_new_device before inserting (so the new row isn't counted)
+    let isNewDevice = false
+    if (deviceId) {
+      const { count, error: countErr } = await svc
+        .from('user_sessions')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('org_id', orgId)
+        .eq('device_id', deviceId)
+        .not('session_id', 'is', null)
+      if (!countErr) isNewDevice = (count === 0)
+    }
+
+    // Insert presence row — ip_address intentionally omitted (remains NULL)
+    const { error: insertErr } = await svc.from('user_sessions').insert({
+      session_id:          sessionId,
+      user_id:             userId,
+      org_id:              orgId,
+      device_id:           deviceId || null,
+      device_type:         deviceInfo?.platform || 'web',
+      device_info:         deviceInfo || {},
+      module,
+      started_at:          now,
+      last_active_at:      now,
+      last_interaction_at: now,
+      visibility_state:    visState,
+    })
+    if (insertErr) {
+      console.error('[session-store] user_sessions insert failed (non-fatal):', insertErr.message)
+    }
+
+    // Security event — only when a trusted IP is observed by Netlify
+    if (trustedIp) {
+      const { error: evtErr } = await svc.from('account_security_events').insert({
+        session_id:         sessionId,
+        user_id:            userId,
+        org_id:             orgId,
+        device_id:          deviceId || null,
+        event_type:         'session_started',
+        public_ip:          trustedIp,
+        previous_public_ip: null,
+        is_new_device:      isNewDevice,
+        occurred_at:        now,
+      })
+      if (evtErr) {
+        console.error('[session-store] account_security_events insert failed (non-fatal):', evtErr.message)
+      }
+    }
+  } catch (err: any) {
+    console.error('[session-store] insertPresenceRow failed (non-fatal):', err?.message)
+  }
+}
+
+/**
+ * Updates last_active_at (and optionally module/visibility_state) on the
+ * persistent presence row. Called on every heartbeat (session.validate).
+ * Never touches last_interaction_at — that is human-interaction only.
+ */
+async function updatePresenceHeartbeat(params: {
+  sessionId: string
+  userId: string
+  module?: string
+  visState?: string
+}): Promise<void> {
+  const svc = serviceRoleClient()
+  if (!svc) return
+  try {
+    const update: Record<string, any> = { last_active_at: new Date().toISOString() }
+    if (params.module    !== undefined) update.module           = params.module
+    if (params.visState  !== undefined) update.visibility_state = params.visState
+    await svc
+      .from('user_sessions')
+      .update(update)
+      .eq('session_id', params.sessionId)
+      .eq('user_id', params.userId)
+  } catch (err: any) {
+    console.error('[session-store] updatePresenceHeartbeat failed (non-fatal):', err?.message)
+  }
+}
+
+/**
+ * Sets last_interaction_at = now() on the persistent presence row.
+ * Called only on explicit human-interaction signals, never on heartbeats.
+ */
+async function updatePresenceInteraction(sessionId: string, userId: string): Promise<void> {
+  const svc = serviceRoleClient()
+  if (!svc) return
+  try {
+    await svc
+      .from('user_sessions')
+      .update({ last_interaction_at: new Date().toISOString() })
+      .eq('session_id', sessionId)
+      .eq('user_id', userId)
+  } catch (err: any) {
+    console.error('[session-store] updatePresenceInteraction failed (non-fatal):', err?.message)
+  }
+}
+
+/**
+ * Marks the persistent presence row as ended with a reason.
+ * Called from session.destroy before the Redis key is removed.
+ */
+async function endPresenceRow(sessionId: string, userId: string, endedReason: string | null): Promise<void> {
+  const svc = serviceRoleClient()
+  if (!svc) return
+  try {
+    const update: Record<string, any> = { ended_at: new Date().toISOString() }
+    if (endedReason) update.ended_reason = endedReason
+    await svc
+      .from('user_sessions')
+      .update(update)
+      .eq('session_id', sessionId)
+      .eq('user_id', userId)
+      .not('session_id', 'is', null)
+  } catch (err: any) {
+    console.error('[session-store] endPresenceRow failed (non-fatal):', err?.message)
+  }
+}
+
+/**
+ * Checks for an IP change on session.validate. If the current trusted IP differs
+ * from the Redis-cached IP, inserts one ip_changed security event and updates
+ * the Redis session. Safe to call every heartbeat — only fires on actual change.
+ */
+async function checkAndRecordIpChange(
+  session: any,
+  sessionId: string,
+  trustedIp: string | null,
+): Promise<any> {
+  if (!trustedIp) return session
+
+  const prevIp = session.currentPublicIp || null
+  if (prevIp === trustedIp) return session
+
+  // IP changed — insert security event
+  const svc = serviceRoleClient()
+  if (svc && session.userId && session.orgId) {
+    try {
+      await svc.from('account_security_events').insert({
+        session_id:         sessionId,
+        user_id:            session.userId,
+        org_id:             session.orgId,
+        device_id:          session.deviceId || null,
+        event_type:         'ip_changed',
+        public_ip:          trustedIp,
+        previous_public_ip: prevIp,
+        is_new_device:      null,
+        occurred_at:        new Date().toISOString(),
+      })
+    } catch (err: any) {
+      console.error('[session-store] ip_changed event insert failed (non-fatal):', err?.message)
+    }
+  }
+
+  return { ...session, currentPublicIp: trustedIp }
+}
+
 /**
  * Subscription tier for the caller's org.
  * Mirrors getOrgSubscription() in src/services/stripe.ts — RLS scopes the row.
@@ -328,7 +535,7 @@ async function resolveTier(db: any): Promise<string> {
   }
 }
 
-async function handleSessionCreate(user: any, db: any, body: any) {
+async function handleSessionCreate(user: any, db: any, body: any, event: any) {
   // Identity, org and role come from the profiles row — never the request body.
   let orgId = ''
   let role  = ''
@@ -344,23 +551,33 @@ async function handleSessionCreate(user: any, db: any, body: any) {
     }
   }
 
-  const tier      = await resolveTier(db)
-  const sessionId = crypto.randomUUID()
-  const now       = Date.now()
+  const tier       = await resolveTier(db)
+  const sessionId  = crypto.randomUUID()
+  const now        = Date.now()
+  const deviceId   = String(body?.deviceId ?? '').slice(0, 64)
+  const module     = String(body?.module ?? 'home').slice(0, 64)
+  const visState   = body?.visibilityState === 'hidden' ? 'hidden' : 'visible'
+  const deviceInfo = sanitizeDeviceInfo(body?.deviceInfo)
+  const trustedIp  = getTrustedIp(event)
 
   const session = {
     sessionId,
-    userId:       user.id,
+    userId:          user.id,
     orgId,
     role,
     tier,
-    deviceInfo:   sanitizeDeviceInfo(body?.deviceInfo),
-    createdAt:    now,
-    lastActiveAt: now,
+    deviceInfo,
+    deviceId,
+    currentPublicIp: trustedIp,
+    createdAt:       now,
+    lastActiveAt:    now,
   }
 
   const stored = await rSet(keys.session(sessionId), session, TTL_SESSION)
   if (!stored) return { sessionId: null, session: null }
+
+  // Awaited before response — failure-isolated (insertPresenceRow catches all errors internally)
+  await insertPresenceRow({ sessionId, userId: user.id, orgId, deviceId, deviceInfo, module, visState }, trustedIp)
 
   return { sessionId, session }
 }
@@ -377,14 +594,37 @@ async function loadOwnedSession(user: any, sessionId: string) {
   return session
 }
 
-async function handleSessionValidate(user: any, body: any) {
+async function handleSessionValidate(user: any, body: any, event: any) {
   const sessionId = String(body?.sessionId ?? '')
   const session = await loadOwnedSession(user, sessionId)
   if (!session) return { session: null }
 
-  const updated = { ...session, lastActiveAt: Date.now() }
+  const module   = body?.module   !== undefined ? String(body.module).slice(0, 64)   : undefined
+  const visState = body?.visibilityState === 'hidden' ? 'hidden'
+                 : body?.visibilityState === 'visible' ? 'visible'
+                 : undefined
+
+  // IP change check — updates Redis session and inserts ip_changed event if needed
+  const trustedIp = getTrustedIp(event)
+  const sessionAfterIp = await checkAndRecordIpChange(session, sessionId, trustedIp)
+
+  const updated = { ...sessionAfterIp, lastActiveAt: Date.now() }
   await rSet(keys.session(sessionId), updated, TTL_SESSION)
+
+  // Awaited before response — failure-isolated (updatePresenceHeartbeat catches errors internally)
+  await updatePresenceHeartbeat({ sessionId, userId: user.id, module, visState })
+
   return { session: updated }
+}
+
+async function handleSessionInteraction(user: any, body: any) {
+  const sessionId = String(body?.sessionId ?? '')
+  const session = await loadOwnedSession(user, sessionId)
+  if (!session) return { ok: false }
+
+  // Awaited before response — failure-isolated (updatePresenceInteraction catches errors internally)
+  await updatePresenceInteraction(sessionId, user.id)
+  return { ok: true }
 }
 
 async function handleSessionGet(user: any, body: any) {
@@ -393,9 +633,16 @@ async function handleSessionGet(user: any, body: any) {
 }
 
 async function handleSessionDestroy(user: any, body: any) {
-  const sessionId = String(body?.sessionId ?? '')
+  const sessionId  = String(body?.sessionId ?? '')
+  const endedReason = body?.endedReason ?? null
   const session = await loadOwnedSession(user, sessionId)
-  if (session) await rDel(keys.session(sessionId))
+  if (session) {
+    // Awaited before Redis delete — ensures ended_at/ended_reason persist; failure-isolated
+    if (session.sessionId) {
+      await endPresenceRow(session.sessionId, user.id, endedReason)
+    }
+    await rDel(keys.session(sessionId))
+  }
   return { ok: true }
 }
 
@@ -449,10 +696,13 @@ exports.handler = async (event: any, _context: any) => {
         result = await handlePasscodeClearLock(user)
         break
       case 'session.create':
-        result = await handleSessionCreate(user, db, body)
+        result = await handleSessionCreate(user, db, body, event)
         break
       case 'session.validate':
-        result = await handleSessionValidate(user, body)
+        result = await handleSessionValidate(user, body, event)
+        break
+      case 'session.interaction':
+        result = await handleSessionInteraction(user, body)
         break
       case 'session.get':
         result = await handleSessionGet(user, body)

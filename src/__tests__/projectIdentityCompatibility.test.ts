@@ -505,7 +505,7 @@ describe('migration guard', () => {
     expect(existsSync(join(migDir, '101_project_identity_compat.sql'))).toBe(true)
   })
 
-  it('no migrations beyond 118 exist', () => {
+  it('no migrations beyond 119 exist', () => {
     const migrations = readdirSync(migDir)
     const beyondExpected = migrations
       .filter((name: string) => /^1\d\d_/.test(name))
@@ -528,10 +528,15 @@ describe('migration guard', () => {
         !name.startsWith('115_') &&
         !name.startsWith('116_') &&
         !name.startsWith('117_') &&
-        !name.startsWith('118_')
+        !name.startsWith('118_') &&
+        !name.startsWith('119_') &&
+        !name.startsWith('120_') &&
+        !name.startsWith('121_') &&
+        !name.startsWith('122_')
       )
     expect(migrations).toContain('117_pilot_telemetry.sql')
     expect(migrations).toContain('118_pilot_telemetry_hardening.sql')
+    expect(migrations).toContain('120_portal_request_attribution.sql')
     expect(beyondExpected).toEqual([])
   })
 })

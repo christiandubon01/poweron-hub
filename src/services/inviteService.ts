@@ -2,12 +2,11 @@
 /**
  * inviteService.ts — Beta Invite System (B7)
  *
- * Client-side service for the beta invite workflow.
- *
  * Public API:
  *   sendInvite(email, industry?)  — calls the sendInvite Netlify function
  *   getInvites()                  — queries beta_invites ordered by invited_at DESC
- *   revokeInvite(id)              — sets status to 'expired'
+ *   revokeInvite(id)              — sets status to 'revoked' (pending only)
+ *   deleteInvite(id)              — hard-deletes pending/expired/revoked invite
  *   validateInviteToken(token)    — checks token exists + not expired + status=pending
  */
 
@@ -94,10 +93,7 @@ export async function getInvites(): Promise<BetaInvite[]> {
 
 // ── revokeInvite ──────────────────────────────────────────────────────────────
 
-/**
- * Marks the invite as expired, preventing future use.
- * Does not delete the row — preserves audit trail.
- */
+/** Sets status to 'revoked'. Server only succeeds when current status is 'pending'. */
 export async function revokeInvite(id: string): Promise<{ success: boolean; error?: string }> {
   const { data: { session } } = await supabase.auth.getSession()
   if (!session?.access_token) return { success: false, error: 'Not authenticated' }
@@ -106,7 +102,36 @@ export async function revokeInvite(id: string): Promise<{ success: boolean; erro
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
     body: JSON.stringify({ action: 'founder_revoke_beta_invite', inviteId: id }),
   })
-  if (!response.ok) return { success: false, error: await response.text() || `HTTP ${response.status}` }
+  if (!response.ok) {
+    try {
+      const body = await response.json()
+      return { success: false, error: body?.error || `HTTP ${response.status}` }
+    } catch {
+      return { success: false, error: `HTTP ${response.status}` }
+    }
+  }
+  return { success: true }
+}
+
+// ── deleteInvite ──────────────────────────────────────────────────────────────
+
+/** Hard-deletes a pending, expired, or revoked invite. Server refuses accepted invites. */
+export async function deleteInvite(id: string): Promise<{ success: boolean; error?: string }> {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session?.access_token) return { success: false, error: 'Not authenticated' }
+  const response = await fetch('/.netlify/functions/pilot-telemetry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+    body: JSON.stringify({ action: 'founder_delete_beta_invite', inviteId: id }),
+  })
+  if (!response.ok) {
+    try {
+      const body = await response.json()
+      return { success: false, error: body?.error || `HTTP ${response.status}` }
+    } catch {
+      return { success: false, error: `HTTP ${response.status}` }
+    }
+  }
   return { success: true }
 }
 
