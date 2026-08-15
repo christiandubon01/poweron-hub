@@ -19,6 +19,7 @@ import { supabase } from '@/lib/supabase'
 import clsx from 'clsx'
 import HunterLeadCard, { type HunterLead } from './HunterLeadCard'
 import AddLeadModal from './AddLeadModal'
+import CallLogModal from './CallLogModal'
 import PortalInbox from './PortalInbox'
 import YelpAdPanel from './YelpAdPanel'
 import { useHunterStore } from '@/store/hunterStore'
@@ -453,6 +454,28 @@ const handleMapLeadSelect = (leadId: string) => {
   // itself via setTimeout after ~3 seconds.
   const [isAddLeadOpen, setIsAddLeadOpen] = useState(false)
   const [addLeadSuccessVisible, setAddLeadSuccessVisible] = useState(false)
+
+  // LEAD-SRC-3C1 — Call opens outbound log modal; external dialer is optional
+  const [callLogWarning, setCallLogWarning] = useState<string | null>(null)
+  const [callModalOpen, setCallModalOpen] = useState(false)
+  const [callModalLead, setCallModalLead] = useState<HunterLead | null>(null)
+
+  const handleCallLead = (lead: HunterLead) => {
+    const phone = lead.phone
+    if (!phone) {
+      setCallLogWarning('No phone number on this lead.')
+      return
+    }
+    setCallLogWarning(null)
+    onLeadAction?.(lead.id, 'call', phone)
+    setCallModalLead(lead)
+    setCallModalOpen(true)
+  }
+
+  const closeCallModal = () => {
+    setCallModalOpen(false)
+    setCallModalLead(null)
+  }
 
   const handleAddLeadSuccess = () => {
     setAddLeadSuccessVisible(true)
@@ -1487,6 +1510,19 @@ const handleMapLeadSelect = (leadId: string) => {
           </div>
         )}
 
+        {callLogWarning && (
+          <div className="bg-amber-950 border border-amber-700 rounded p-3 text-sm text-amber-100 flex items-start justify-between gap-3">
+            <span>{callLogWarning}</span>
+            <button
+              type="button"
+              className="text-amber-300 hover:text-white text-xs shrink-0"
+              onClick={() => setCallLogWarning(null)}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         {/* Empty State Message */}
         {leads.length === 0 && (
           <div className="bg-amber-900 border border-amber-700 rounded p-3 text-sm text-amber-100 flex items-center justify-between">
@@ -1715,9 +1751,7 @@ const handleMapLeadSelect = (leadId: string) => {
                       onNotesChange={(id, notes) => {
                         onLeadAction?.(id, 'update_notes', notes)
                       }}
-                      onCall={(lead) => {
-                        onLeadAction?.(lead.id, 'call', lead.phone)
-                      }}
+                      onCall={handleCallLead}
                       onPractice={(lead) => {
                         onLeadAction?.(lead.id, 'practice', lead)
                       }}
@@ -1938,9 +1972,7 @@ const handleMapLeadSelect = (leadId: string) => {
                       onNotesChange={(id, notes) => {
                         onLeadAction?.(id, 'update_notes', notes)
                       }}
-                      onCall={(lead) => {
-                        onLeadAction?.(lead.id, 'call', lead.phone)
-                      }}
+                      onCall={handleCallLead}
                       onPractice={(lead) => {
                         onLeadAction?.(lead.id, 'practice', lead)
                       }}
@@ -2005,7 +2037,7 @@ const handleMapLeadSelect = (leadId: string) => {
                           <HunterLeadCard key={lead.id} lead={lead}
                             onStatusChange={(id, status) => onLeadAction?.(id, 'status_change', status)}
                             onNotesChange={(id, notes) => onLeadAction?.(id, 'update_notes', notes)}
-                            onCall={(lead) => onLeadAction?.(lead.id, 'call', lead.phone)}
+                            onCall={handleCallLead}
                             onPractice={(lead) => onLeadAction?.(lead.id, 'practice', lead)}
                           />
                         ))}
@@ -2032,7 +2064,7 @@ const handleMapLeadSelect = (leadId: string) => {
                           <HunterLeadCard key={lead.id} lead={lead}
                             onStatusChange={(id, status) => onLeadAction?.(id, 'status_change', status)}
                             onNotesChange={(id, notes) => onLeadAction?.(id, 'update_notes', notes)}
-                            onCall={(lead) => onLeadAction?.(lead.id, 'call', lead.phone)}
+                            onCall={handleCallLead}
                             onPractice={(lead) => onLeadAction?.(lead.id, 'practice', lead)}
                           />
                         ))}
@@ -2059,7 +2091,7 @@ const handleMapLeadSelect = (leadId: string) => {
                           <HunterLeadCard key={lead.id} lead={lead}
                             onStatusChange={(id, status) => onLeadAction?.(id, 'status_change', status)}
                             onNotesChange={(id, notes) => onLeadAction?.(id, 'update_notes', notes)}
-                            onCall={(lead) => onLeadAction?.(lead.id, 'call', lead.phone)}
+                            onCall={handleCallLead}
                             onPractice={(lead) => onLeadAction?.(lead.id, 'practice', lead)}
                           />
                         ))}
@@ -2086,7 +2118,7 @@ const handleMapLeadSelect = (leadId: string) => {
                           <HunterLeadCard key={lead.id} lead={lead}
                             onStatusChange={(id, status) => onLeadAction?.(id, 'status_change', status)}
                             onNotesChange={(id, notes) => onLeadAction?.(id, 'update_notes', notes)}
-                            onCall={(lead) => onLeadAction?.(lead.id, 'call', lead.phone)}
+                            onCall={handleCallLead}
                             onPractice={(lead) => onLeadAction?.(lead.id, 'practice', lead)}
                           />
                         ))}
@@ -2125,6 +2157,19 @@ const handleMapLeadSelect = (leadId: string) => {
         isOpen={isAddLeadOpen}
         onClose={() => setIsAddLeadOpen(false)}
         onSuccess={handleAddLeadSuccess}
+      />
+
+      <CallLogModal
+        isOpen={callModalOpen}
+        mode="create"
+        defaultDirection="outbound"
+        defaultPhone={callModalLead?.phone ?? ''}
+        defaultHunterLeadId={callModalLead?.id ?? null}
+        showOptionalDialer
+        onClose={closeCallModal}
+        onSaved={() => {
+          setCallLogWarning(null)
+        }}
       />
 
       {showTlmaMethodModal && (

@@ -789,14 +789,15 @@ describe('migration guard', () => {
     expect(migrations).toContain('122_guardian_presence_security.sql')
   })
 
-  it('migrations 123–126 exist; no migrations numbered 127 or higher', () => {
+  it('migrations 123–127 exist; no migrations numbered 128 or higher', () => {
     expect(migrations).toContain('123_guardian_user_access_revocation.sql')
     expect(migrations).toContain('124_inactive_user_rls_boundary.sql')
     expect(migrations).toContain('125_inactive_user_authenticated_data_gate.sql')
     expect(migrations).toContain('126_organization_hunter_tenant_authority.sql')
+    expect(migrations).toContain('127_call_logs.sql')
     const beyond = migrations.filter((name: string) => {
       const m = name.match(/^(\d+)_/)
-      return m ? parseInt(m[1], 10) > 126 : false
+      return m ? parseInt(m[1], 10) > 127 : false
     })
     expect(beyond).toEqual([])
   })
