@@ -181,6 +181,47 @@ export interface FounderContractorAdminReport {
   contractorAccounts: FounderContractorAccount[]
   contractorBetaInvites: FounderBetaInvite[]
   signedAgreements: FounderSignedAgreement[]
+  kpis?: {
+    adoption: {
+      activeOrgs7d: number
+      activeOrgs30d: number
+      newContractorAccountsThisMonth: number
+      dormantAccounts: number
+    }
+    onboarding: {
+      pendingSetup: number
+      completedOnboarding: number
+      pendingInvites: number
+      inviteConversionRate: number | null
+      inviteConversionAccepted: number
+      inviteConversionEligible: number
+    }
+    security: {
+      newDevices30d: number
+      ipChanges30d: number
+      revokedUsers: number
+    }
+  }
+}
+
+export interface FounderContractorPresenceReport {
+  serverNow: string
+  summaries: FounderContractorPresenceSummary[]
+  alerts: FounderSecurityAlert[]
+  securityHistory: FounderGlobalSecurityHistoryEntry[]
+  kpis?: {
+    liveNow: {
+      organizationsActiveNow: number
+      usersActiveNow: number
+      liveDevices: number
+      liveSessions: number
+    }
+    security: {
+      newDevices30d: number
+      ipChanges30d: number
+      revokedUsers: number
+    }
+  }
 }
 
 export async function fetchFounderContractorAdminReport(): Promise<FounderContractorAdminReport> {

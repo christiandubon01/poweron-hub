@@ -27,6 +27,13 @@ import {
   type FounderPresenceSessionRow,
   type FounderSecurityEventRow,
 } from '../../src/services/guardianFounderPresence'
+import {
+  buildFounderAdoptionKpis,
+  buildFounderLiveNowKpis,
+  buildFounderOnboardingKpis,
+  buildFounderSecurityKpiCounts,
+  isExcludedFromAdoptionKpis,
+} from '../../src/services/guardianFounderKpis'
 
 type NetlifyEvent = {
   httpMethod?: string
@@ -520,6 +527,66 @@ async function loadSecurityEvents(supabase: any, options: {
   const { data, error } = await query
   if (error) throw error
   return (data ?? []) as FounderSecurityEventRow[]
+}
+
+/** Bounded activity rows for Active Orgs / Dormant — no full telemetry download. */
+async function loadFounderActivitySessions(supabase: any, options: {
+  organizationIds: string[]
+  startedAfterIso: string
+  limit?: number
+}) {
+  if (options.organizationIds.length === 0) return []
+  const { data, error } = await supabase
+    .from('user_sessions')
+    .select('org_id, session_id, started_at, last_interaction_at')
+    .in('org_id', options.organizationIds)
+    .not('session_id', 'is', null)
+    .or(`started_at.gte.${options.startedAfterIso},last_interaction_at.gte.${options.startedAfterIso}`)
+    .order('last_interaction_at', { ascending: false })
+    .limit(options.limit ?? 2000)
+
+  if (error) throw error
+  return (data ?? []) as Array<{
+    org_id: string
+    session_id: string | null
+    started_at: string | null
+    last_interaction_at: string | null
+  }>
+}
+
+async function countSecurityEvents(supabase: any, options: {
+  organizationIds: string[]
+  eventType: 'session_started' | 'ip_changed'
+  occurredAfterIso: string
+  isNewDevice?: boolean
+}) {
+  if (options.organizationIds.length === 0) return 0
+  let query = supabase
+    .from('account_security_events')
+    .select('id', { count: 'exact', head: true })
+    .in('org_id', options.organizationIds)
+    .eq('event_type', options.eventType)
+    .gte('occurred_at', options.occurredAfterIso)
+
+  if (options.isNewDevice === true) {
+    query = query.eq('is_new_device', true)
+  }
+
+  const { count, error } = await query
+  if (error) throw error
+  return Number(count || 0)
+}
+
+async function countRevokedCanonicalProfiles(supabase: any, organizationIds: string[]) {
+  if (organizationIds.length === 0) return 0
+  const { count, error } = await supabase
+    .from('profiles')
+    .select('id', { count: 'exact', head: true })
+    .in('org_id', organizationIds)
+    .eq('is_active', false)
+
+  if (error) throw error
+  return Number(count || 0)
 }
 
 async function attachUserIdentityToPresenceData(
@@ -1144,6 +1211,7 @@ async function handleFounderContractorAdmin(user: any) {
   if (denied) return denied
 
   const supabase = getServiceClient()
+  const serverNow = new Date()
   const [
     organizationsResult,
     profilesResult,
@@ -1179,9 +1247,55 @@ async function handleFounderContractorAdmin(user: any) {
     authUsers,
   })
 
+  const kpiOrganizations = report.contractorAccounts.map((account: any) => ({
+    organizationId: String(account.organizationId),
+    createdAt: account.createdAt ? String(account.createdAt) : null,
+    classification: String(account.classification || 'unknown'),
+    onboardingStatus: account.onboardingStatus === 'complete' ? 'complete' as const : 'pending' as const,
+    accountStatus: account.accountStatus === 'inactive' ? 'inactive' as const : 'active' as const,
+  }))
+
+  const adoptionEligibleOrgIds = kpiOrganizations
+    .filter((org: { classification: string }) => !isExcludedFromAdoptionKpis(org.classification))
+    .map((org: { organizationId: string }) => org.organizationId)
+
+  const lookbackIso = isoDaysAgo(30, serverNow)
+  const [activitySessions, revokedUsers] = await Promise.all([
+    loadFounderActivitySessions(supabase, {
+      organizationIds: adoptionEligibleOrgIds,
+      startedAfterIso: lookbackIso,
+      limit: 2000,
+    }),
+    countRevokedCanonicalProfiles(supabase, adoptionEligibleOrgIds),
+  ])
+
+  const adoption = buildFounderAdoptionKpis({
+    organizations: kpiOrganizations,
+    activitySessions,
+    now: serverNow,
+  })
+  const onboarding = buildFounderOnboardingKpis({
+    organizations: kpiOrganizations,
+    invites: report.contractorBetaInvites.map((invite: any) => ({
+      id: String(invite.id),
+      email: String(invite.email || ''),
+      status: String(invite.status || ''),
+      invitedAt: invite.invitedAt ? String(invite.invitedAt) : null,
+    })),
+  })
+
   return json(200, {
-    generatedAt: new Date().toISOString(),
+    generatedAt: serverNow.toISOString(),
     ...report,
+    kpis: {
+      adoption,
+      onboarding,
+      security: buildFounderSecurityKpiCounts({
+        newDevices30d: 0,
+        ipChanges30d: 0,
+        revokedUsers,
+      }),
+    },
   })
 }
 
@@ -1198,7 +1312,7 @@ async function handleFounderContractorPresence(user: any) {
   const serverNow = new Date().toISOString()
   const lookbackIso = isoDaysAgo(FOUNDER_PRESENCE_LOOKBACK_DAYS, new Date(serverNow))
 
-  const [sessionsRaw, eventsRaw] = await Promise.all([
+  const [sessionsRaw, eventsRaw, newDevices30d, ipChanges30d] = await Promise.all([
     loadPresenceSessions(supabase, {
       organizationIds,
       limit: FOUNDER_PRESENCE_SUMMARY_SESSION_LIMIT,
@@ -1207,6 +1321,17 @@ async function handleFounderContractorPresence(user: any) {
     loadSecurityEvents(supabase, {
       organizationIds,
       limit: FOUNDER_SECURITY_HISTORY_LIMIT,
+      occurredAfterIso: lookbackIso,
+    }),
+    countSecurityEvents(supabase, {
+      organizationIds,
+      eventType: 'session_started',
+      occurredAfterIso: lookbackIso,
+      isNewDevice: true,
+    }),
+    countSecurityEvents(supabase, {
+      organizationIds,
+      eventType: 'ip_changed',
       occurredAfterIso: lookbackIso,
     }),
   ])
@@ -1229,6 +1354,14 @@ async function handleFounderContractorPresence(user: any) {
     summaries,
     alerts,
     securityHistory,
+    kpis: {
+      liveNow: buildFounderLiveNowKpis(sessions, serverNow),
+      security: buildFounderSecurityKpiCounts({
+        newDevices30d,
+        ipChanges30d,
+        revokedUsers: 0,
+      }),
+    },
   })
 }
 

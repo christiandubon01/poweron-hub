@@ -41,6 +41,11 @@ import {
   readGuardianSecurityLastSeen,
   writeGuardianSecurityLastSeen,
 } from '@/services/guardianFounderPresence'
+import {
+  emptyFounderFleetKpis,
+  formatInviteConversionDisplay,
+  type FounderFleetKpis,
+} from '@/services/guardianFounderKpis'
 import { deleteInvite, revokeInvite, sendInvite } from '@/services/inviteService'
 
 export type FounderContractorSection = 'accounts' | 'invites' | 'agreements'
@@ -179,6 +184,186 @@ function ModalCard({ title, description, scrollable, children }: {
 const headerCell = 'px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-wide text-gray-600 whitespace-nowrap'
 const bodyCell = 'px-4 py-3 text-xs text-gray-300 align-top'
 
+type KpiMetricCell = {
+  label: string
+  value: string
+  title: string
+  emphasize?: boolean
+}
+
+function FounderKpiStrip({
+  kpis,
+  unreadSecurityAlerts,
+}: {
+  kpis: FounderFleetKpis
+  unreadSecurityAlerts: number
+}) {
+  const groups: Array<{
+    id: string
+    label: string
+    tone: 'live' | 'security' | 'neutral'
+    metrics: KpiMetricCell[]
+  }> = [
+    {
+      id: 'live-now',
+      label: 'LIVE NOW',
+      tone: 'live',
+      metrics: [
+        {
+          label: 'Organizations Active Now',
+          value: String(kpis.liveNow.organizationsActiveNow),
+          title: 'Distinct contractor organizations with at least one currently Active or Idle user session.',
+        },
+        {
+          label: 'Users Active Now',
+          value: String(kpis.liveNow.usersActiveNow),
+          title: 'Distinct canonical users currently Active or Idle. Locked and Offline users are excluded.',
+        },
+        {
+          label: 'Live Devices',
+          value: String(kpis.liveNow.liveDevices),
+          title: 'Distinct live device_id values from currently Active or Idle sessions.',
+        },
+        {
+          label: 'Live Sessions',
+          value: String(kpis.liveNow.liveSessions),
+          title: 'Currently live session rows/tabs classified Active or Idle by Guardian presence authority.',
+        },
+      ],
+    },
+    {
+      id: 'adoption',
+      label: 'ADOPTION',
+      tone: 'neutral',
+      metrics: [
+        {
+          label: 'Active Orgs 7D',
+          value: String(kpis.adoption.activeOrgs7d),
+          title: 'Organizations with authenticated PowerOn activity during the last 7 days (session start or user interaction). Demo and internal orgs excluded.',
+        },
+        {
+          label: 'Active Orgs 30D',
+          value: String(kpis.adoption.activeOrgs30d),
+          title: 'Organizations with authenticated PowerOn activity during the last 30 days (session start or user interaction). Demo and internal orgs excluded.',
+        },
+        {
+          label: 'New Contractor Accounts This Month',
+          value: String(kpis.adoption.newContractorAccountsThisMonth),
+          title: 'Owner-backed contractor organizations created in the current UTC calendar month. Demo and internal orgs excluded.',
+        },
+        {
+          label: 'Dormant Accounts',
+          value: String(kpis.adoption.dormantAccounts),
+          title: 'Established contractor accounts (onboarding complete, still active) with no qualifying activity in the last 30 days. Pending setup is not counted here.',
+        },
+      ],
+    },
+    {
+      id: 'security',
+      label: 'SECURITY',
+      tone: 'security',
+      metrics: [
+        {
+          label: 'Unread Security Alerts',
+          value: String(unreadSecurityAlerts),
+          title: 'Unread new-device and public-IP change alerts using the same last-seen authority as the Security Alerts control.',
+          emphasize: unreadSecurityAlerts > 0,
+        },
+        {
+          label: 'New Devices 30D',
+          value: String(kpis.security.newDevices30d),
+          title: 'account_security_events with event_type=session_started and is_new_device=true in the trailing 30 days.',
+        },
+        {
+          label: 'IP Changes 30D',
+          value: String(kpis.security.ipChanges30d),
+          title: 'account_security_events with event_type=ip_changed in the trailing 30 days.',
+        },
+        {
+          label: 'Revoked Users',
+          value: String(kpis.security.revokedUsers),
+          title: 'Canonical profiles in contractor organizations where is_active=false. Employee-only identities without profiles are excluded.',
+        },
+      ],
+    },
+    {
+      id: 'onboarding',
+      label: 'ONBOARDING',
+      tone: 'neutral',
+      metrics: [
+        {
+          label: 'Pending Setup',
+          value: String(kpis.onboarding.pendingSetup),
+          title: 'Contractor organizations where settings.onboarding.complete is not true.',
+        },
+        {
+          label: 'Completed Onboarding',
+          value: String(kpis.onboarding.completedOnboarding),
+          title: 'Contractor organizations where settings.onboarding.complete is true.',
+        },
+        {
+          label: 'Pending Invites',
+          value: String(kpis.onboarding.pendingInvites),
+          title: 'Beta invites still pending (not accepted, expired, revoked, or deleted).',
+        },
+        {
+          label: 'Invite → Account Conversion',
+          value: formatInviteConversionDisplay(kpis.onboarding.inviteConversionRate),
+          title: kpis.onboarding.inviteConversionEligible > 0
+            ? `Accepted/converted invites ÷ eligible sent invites (${kpis.onboarding.inviteConversionAccepted}/${kpis.onboarding.inviteConversionEligible}).`
+            : 'No invites yet. Conversion is accepted ÷ eligible sent invites when a valid denominator exists.',
+        },
+      ],
+    },
+  ]
+
+  return (
+    <div data-testid="founder-kpi-strip" className="border-b border-gray-800 px-4 py-3">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {groups.map((group) => (
+          <section
+            key={group.id}
+            data-testid={`founder-kpi-group-${group.id}`}
+            className={`rounded-lg border px-3 py-2.5 ${
+              group.tone === 'live'
+                ? 'border-emerald-900/50 bg-emerald-950/15'
+                : group.tone === 'security'
+                  ? 'border-gray-700 bg-[#10111a]'
+                  : 'border-gray-800 bg-[#0f1018]'
+            }`}
+          >
+            <div className={`mb-2 text-[10px] font-bold uppercase tracking-[0.14em] ${
+              group.tone === 'live'
+                ? 'text-emerald-400'
+                : group.tone === 'security'
+                  ? 'text-amber-300/90'
+                  : 'text-gray-500'
+            }`}>
+              {group.label}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {group.metrics.map((metric) => (
+                <div key={metric.label} title={metric.title} className="min-w-0">
+                  <div className="truncate text-[10px] text-gray-500">{metric.label}</div>
+                  <div className={`mt-0.5 text-sm font-semibold tabular-nums ${
+                    metric.emphasize
+                      ? 'text-red-300'
+                      : group.tone === 'live'
+                        ? 'text-emerald-200'
+                        : 'text-gray-100'
+                  }`}>
+                    {metric.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function reconcileSelectedOrganizationId(
   currentId: string | null,
   accounts: FounderContractorAccount[],
@@ -267,6 +452,8 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
   const [needsAttentionSnapshot, setNeedsAttentionSnapshot] = useState<FounderSecurityAlert[]>([])
   const [lastSeenAt, setLastSeenAt] = useState<string | null>(null)
   const [presenceSecurityHistory, setPresenceSecurityHistory] = useState<FounderGlobalSecurityHistoryEntry[]>([])
+  const [fleetKpis, setFleetKpis] = useState<FounderFleetKpis>(() => emptyFounderFleetKpis())
+  const [fleetKpisReady, setFleetKpisReady] = useState(false)
   const reportStateRef = useRef<FounderContractorAdminReport | null>(null)
   const selectedOrganizationIdRef = useRef<string | null>(null)
   const presenceSnapshotRef = useRef({
@@ -275,6 +462,7 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
     securityHistory: [] as FounderGlobalSecurityHistoryEntry[],
     serverNow: null as string | null,
   })
+  const fleetKpisRef = useRef<FounderFleetKpis>(emptyFounderFleetKpis())
   const presenceDetailsRef = useRef<Record<string, FounderContractorPresenceDetail>>({})
   const loadReportRef = useRef<Promise<void> | null>(null)
   const loadPresenceRef = useRef<Promise<void> | null>(null)
@@ -350,6 +538,10 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
     presenceDetailsRef.current = presenceDetailsByOrganizationId
   }, [presenceDetailsByOrganizationId])
 
+  useEffect(() => {
+    fleetKpisRef.current = fleetKpis
+  }, [fleetKpis])
+
   // Close Security Center on Escape (before contractor modal when open)
   useEffect(() => {
     if (!securityAlertsOpen) return
@@ -378,9 +570,29 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
       if (!reportStateRef.current) setLoading(true)
       setError(null)
       try {
-        setReport(await fetchFounderContractorAdminReport())
+        const nextReport = await fetchFounderContractorAdminReport()
+        setReport(nextReport)
+        if (nextReport.kpis) {
+          setFleetKpis((current) => {
+            const merged: FounderFleetKpis = {
+              ...current,
+              adoption: nextReport.kpis!.adoption,
+              onboarding: nextReport.kpis!.onboarding,
+              security: {
+                ...current.security,
+                revokedUsers: nextReport.kpis!.security.revokedUsers,
+              },
+            }
+            fleetKpisRef.current = merged
+            return merged
+          })
+          setFleetKpisReady(true)
+        }
       } catch (err) {
-        setReport(null)
+        // Preserve prior report/KPI snapshot during background refresh failures.
+        if (!reportStateRef.current) {
+          setReport(null)
+        }
         setError(err instanceof Error ? err.message : 'Founder contractor report could not be loaded.')
       } finally {
         setLoading(false)
@@ -409,6 +621,22 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
         setPresenceAlerts(response.alerts)
         setPresenceSecurityHistory(response.securityHistory ?? [])
         setPresenceServerNow(response.serverNow)
+        if (response.kpis) {
+          setFleetKpis((current) => {
+            const merged: FounderFleetKpis = {
+              ...current,
+              liveNow: response.kpis!.liveNow,
+              security: {
+                ...current.security,
+                newDevices30d: response.kpis!.security.newDevices30d,
+                ipChanges30d: response.kpis!.security.ipChanges30d,
+              },
+            }
+            fleetKpisRef.current = merged
+            return merged
+          })
+          setFleetKpisReady(true)
+        }
       } catch (err) {
         setPresenceError(err instanceof Error ? err.message : 'Presence unavailable.')
       } finally {
@@ -757,6 +985,12 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
         ) : !report ? null : section === 'accounts' ? (
           // ── Contractor Accounts — full-width table (detail opens as modal) ──
           <div className="flex-1 overflow-auto">
+            {fleetKpisReady && (
+              <FounderKpiStrip
+                kpis={fleetKpis}
+                unreadSecurityAlerts={unreadAlertCount}
+              />
+            )}
             {presenceError && (
               <div className="m-4 mb-0 rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
                 {presenceShowingStaleData
