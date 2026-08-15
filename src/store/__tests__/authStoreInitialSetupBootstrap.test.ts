@@ -104,6 +104,11 @@ vi.mock('@/lib/auth/session', () => ({
   getDeviceInfo: vi.fn(() => 'test-device'),
 }))
 
+vi.mock('@/lib/guardian/presenceMonitor', () => ({
+  presenceMonitor: { start: vi.fn(), stop: vi.fn(), setModule: vi.fn() },
+  normalizeModule: (v: string) => v,
+}))
+
 vi.mock('@/lib/memory/audit', () => ({
   logLogin: vi.fn(async () => {}),
   logAudit: vi.fn(async () => {}),
@@ -128,6 +133,7 @@ vi.mock('@/services/backupDataService', () => ({
   clearLocalSnapshots: (...args: any[]) => deps.clearLocalSnapshots(...args),
   hasPendingLocalSave: vi.fn(() => false),
   reconcilePendingLocalSaveForHydration: vi.fn(async () => ({ success: true })),
+  getDeviceId: vi.fn(() => 'test-device-id'),
 }))
 
 vi.mock('@/services/liveCloudRefreshService', () => ({

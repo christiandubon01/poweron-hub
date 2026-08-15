@@ -412,24 +412,81 @@ async function insertPresenceRow(params: {
  * Updates last_active_at (and optionally module/visibility_state) on the
  * persistent presence row. Called on every heartbeat (session.validate).
  * Never touches last_interaction_at — that is human-interaction only.
+ *
+ * GUARDIAN-3B3C: on the first heartbeat after a browser refresh where the
+ * Redis session predates the Guardian migration (or any path where the
+ * user_sessions row never existed), UPDATE matches 0 rows. In that case
+ * a self-heal INSERT is performed so Guardian can track the session going
+ * forward. The security event is created at most once per recovered session.
+ *
+ * last_interaction_at is intentionally left NULL in the recovered row —
+ * a heartbeat is not human interaction and must not defeat inactivity logic.
  */
 async function updatePresenceHeartbeat(params: {
   sessionId: string
   userId: string
+  orgId?: string
+  deviceId?: string
+  deviceInfo?: any
   module?: string
   visState?: string
-}): Promise<void> {
+  sessionCreatedAt?: number
+}, trustedIp?: string | null): Promise<void> {
   const svc = serviceRoleClient()
   if (!svc) return
+  const now = new Date().toISOString()
   try {
-    const update: Record<string, any> = { last_active_at: new Date().toISOString() }
-    if (params.module    !== undefined) update.module           = params.module
-    if (params.visState  !== undefined) update.visibility_state = params.visState
-    await svc
+    const update: Record<string, any> = { last_active_at: now }
+    if (params.module   !== undefined) update.module           = params.module
+    if (params.visState !== undefined) update.visibility_state = params.visState
+
+    const { data: updatedRows, error: updateErr } = await svc
       .from('user_sessions')
       .update(update)
       .eq('session_id', params.sessionId)
       .eq('user_id', params.userId)
+      .select('id')
+
+    if (updateErr) {
+      console.error('[session-store] updatePresenceHeartbeat failed (non-fatal):', updateErr.message)
+      return
+    }
+
+    // Self-heal: row was missing — INSERT exactly once using the stable sessionId.
+    if (!updatedRows || updatedRows.length === 0) {
+      const startedAt = params.sessionCreatedAt
+        ? new Date(params.sessionCreatedAt).toISOString()
+        : now
+      const { error: insertErr } = await svc.from('user_sessions').insert({
+        session_id:          params.sessionId,
+        user_id:             params.userId,
+        org_id:              params.orgId ?? '',
+        device_id:           params.deviceId || null,
+        device_type:         params.deviceInfo?.platform || 'web',
+        device_info:         params.deviceInfo || {},
+        module:              params.module ?? 'home',
+        started_at:          startedAt,
+        last_active_at:      now,
+        last_interaction_at: null,
+        visibility_state:    params.visState ?? 'visible',
+      })
+      if (insertErr) {
+        console.error('[session-store] self-heal presence insert failed (non-fatal):', insertErr.message)
+      } else if (trustedIp && params.orgId) {
+        // One-time session_started event for the recovered session
+        await svc.from('account_security_events').insert({
+          session_id:         params.sessionId,
+          user_id:            params.userId,
+          org_id:             params.orgId,
+          device_id:          params.deviceId || null,
+          event_type:         'session_started',
+          public_ip:          trustedIp,
+          previous_public_ip: null,
+          is_new_device:      false,
+          occurred_at:        now,
+        }).catch(() => {})
+      }
+    }
   } catch (err: any) {
     console.error('[session-store] updatePresenceHeartbeat failed (non-fatal):', err?.message)
   }
@@ -599,10 +656,11 @@ async function handleSessionValidate(user: any, body: any, event: any) {
   const session = await loadOwnedSession(user, sessionId)
   if (!session) return { session: null }
 
-  const module   = body?.module   !== undefined ? String(body.module).slice(0, 64)   : undefined
-  const visState = body?.visibilityState === 'hidden' ? 'hidden'
-                 : body?.visibilityState === 'visible' ? 'visible'
-                 : undefined
+  const module    = body?.module   !== undefined ? String(body.module).slice(0, 64)   : undefined
+  const visState  = body?.visibilityState === 'hidden' ? 'hidden'
+                  : body?.visibilityState === 'visible' ? 'visible'
+                  : undefined
+  const deviceId  = body?.deviceId !== undefined ? String(body.deviceId).slice(0, 64) : undefined
 
   // IP change check — updates Redis session and inserts ip_changed event if needed
   const trustedIp = getTrustedIp(event)
@@ -611,8 +669,18 @@ async function handleSessionValidate(user: any, body: any, event: any) {
   const updated = { ...sessionAfterIp, lastActiveAt: Date.now() }
   await rSet(keys.session(sessionId), updated, TTL_SESSION)
 
-  // Awaited before response — failure-isolated (updatePresenceHeartbeat catches errors internally)
-  await updatePresenceHeartbeat({ sessionId, userId: user.id, module, visState })
+  // Heartbeat: updates last_active_at; self-heals missing row on first heartbeat
+  // after a browser refresh where the Redis session predates GUARDIAN-3B2.
+  await updatePresenceHeartbeat({
+    sessionId,
+    userId:           user.id,
+    orgId:            session.orgId,
+    deviceId:         deviceId ?? session.deviceId,
+    deviceInfo:       session.deviceInfo,
+    module,
+    visState,
+    sessionCreatedAt: session.createdAt,
+  }, trustedIp)
 
   return { session: updated }
 }

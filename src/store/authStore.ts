@@ -670,10 +670,7 @@ async function establishOwnerSession(
       'timeout',
     )
     if (newSessionId && newSessionId !== 'timeout') {
-      presenceMonitor.start({
-        sessionId: newSessionId,
-        onInactivityLock: () => void useAuthStore.getState().lockApp('inactivity_timeout'),
-      })
+      startPresenceMonitor(newSessionId)
     }
     session = await withTimeout(validateAppSession(), 3000, null)
   } catch {
@@ -704,6 +701,18 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
     promise,
     new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
   ])
+}
+
+// Shared presence monitor starter. All entry points that establish or resume
+// an app session call this so deviceId and the inactivity callback are always
+// consistent. presenceMonitor.start() stops any prior monitor first, so this
+// is safe to call from every successful auth path without risking double-timers.
+function startPresenceMonitor(sessionId: string): void {
+  presenceMonitor.start({
+    sessionId,
+    deviceId: getDeviceId(),
+    onInactivityLock: () => void useAuthStore.getState().lockApp('inactivity_timeout'),
+  })
 }
 
 type Profile = Tables<'profiles'>
@@ -1024,6 +1033,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             // only a resume optimization and must not retain a cross-org context.
           }
         }
+        // Resume presence for the existing (or newly-contextualised) session.
+        // The session.validate heartbeat will self-heal the user_sessions row
+        // if it was missing (pre-GUARDIAN-3B2 Redis session or first boot after
+        // the Guardian migration). No new createAppSession call is made here.
+        const resumeSessionId = contextualSession?.sessionId
+        if (resumeSessionId) startPresenceMonitor(resumeSessionId)
         apply({ status: 'hydrating_user_data', user, profile, appSession: contextualSession, role, ownerId, employeeProfileId, employerOrgId })
         await bootstrapResolvedPortalData(user.id, activeOrgId, role, isCurrent, { initSequenceId: seq })
         apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
@@ -1064,6 +1079,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           )
           appSession = await withTimeout(validateAppSession(), 3000, null)
         } catch {}
+        if (appSession?.sessionId) startPresenceMonitor(appSession.sessionId)
 
         // COMM-PROD-1 Step 9 (defect B). This branch used to publish
         // 'authenticated' immediately and bootstrap in the background, so the
@@ -1150,6 +1166,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           )
           roleSession = await withTimeout(validateAppSession(), 3000, null)
         } catch {}
+        if (roleSession?.sessionId) startPresenceMonitor(roleSession.sessionId)
         apply({
           status: 'hydrating_user_data',
           user,
@@ -1191,6 +1208,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             5000, null
           )
         } catch {}
+        if (session) startPresenceMonitor(session)
         apply({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId, employeeProfileId, employerOrgId })
         await bootstrapResolvedPortalData(user.id, role === 'employee' ? employerOrgId : profile.org_id, role, isCurrent)
         apply({ status: 'authenticated', tenantDataReady: true, tenantUserId: user.id })
@@ -1312,11 +1330,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         assertAuthOperationCurrent(isCurrent)
         if (createdSessionId !== 'timeout' && createdSessionId) {
           ownedSessionId = createdSessionId
-          // Start presence monitor — PIN unlock itself counts as first interaction
-          presenceMonitor.start({
-            sessionId: createdSessionId,
-            onInactivityLock: () => void useAuthStore.getState().lockApp('inactivity_timeout'),
-          })
+          startPresenceMonitor(createdSessionId)
         }
 
         // Fire-and-forget audit + profile update
@@ -1521,10 +1535,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           deviceId: getDeviceId(),
         })
         if (bioSessionId) {
-          presenceMonitor.start({
-            sessionId: bioSessionId,
-            onInactivityLock: () => void useAuthStore.getState().lockApp('inactivity_timeout'),
-          })
+          startPresenceMonitor(bioSessionId)
         }
         await logLogin(user.id, { method: 'biometric' })
         await supabase

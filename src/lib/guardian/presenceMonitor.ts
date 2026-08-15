@@ -57,6 +57,7 @@ export function normalizeModule(view: string): string {
 
 class PresenceMonitor {
   private sessionId: string | null = null
+  private deviceId: string | null = null
   private currentModule: string = 'home'
   private onInactivityLock: (() => void) | null = null
 
@@ -72,12 +73,14 @@ class PresenceMonitor {
 
   start(config: {
     sessionId: string
+    deviceId?: string
     initialModule?: string
     onInactivityLock: () => void
   }): void {
     this.stop()  // clear any prior monitor — ensures single timer per tab
 
     this.sessionId              = config.sessionId
+    this.deviceId               = config.deviceId ?? null
     this.currentModule          = config.initialModule ?? 'home'
     this.onInactivityLock       = config.onInactivityLock
     this.lastInteractionAt      = Date.now()
@@ -120,6 +123,7 @@ class PresenceMonitor {
     this.cleanupFns.forEach(fn => fn())
     this.cleanupFns = []
     this.sessionId       = null
+    this.deviceId        = null
     this.onInactivityLock = null
   }
 
@@ -164,6 +168,7 @@ class PresenceMonitor {
       sessionId: this.sessionId,
       module,
       visibilityState,
+      ...(this.deviceId ? { deviceId: this.deviceId } : {}),
     })
   }
 
