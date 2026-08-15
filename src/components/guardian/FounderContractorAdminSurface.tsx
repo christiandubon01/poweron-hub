@@ -46,6 +46,24 @@ import {
   formatInviteConversionDisplay,
   type FounderFleetKpis,
 } from '@/services/guardianFounderKpis'
+import {
+  FOUNDER_FLEET_COLUMN_LABELS,
+  FOUNDER_FLEET_FILTERS,
+  buildFleetFilterContextFromAccounts,
+  buildFounderFleetRows,
+  companyPresenceContext,
+  countUnreadAlertsByOrganization,
+  filterFounderFleetRows,
+  fleetFilterLabel,
+  sortFounderFleetRows,
+  type FounderFleetFilter,
+  type FounderFleetRow,
+} from '@/services/guardianFounderFleet'
+import {
+  accountHealthBadgeClass,
+  deriveContractorAccountHealth,
+  type AccountHealthResult,
+} from '@/services/guardianFounderAccountHealth'
 import { deleteInvite, revokeInvite, sendInvite } from '@/services/inviteService'
 
 export type FounderContractorSection = 'accounts' | 'invites' | 'agreements'
@@ -159,6 +177,49 @@ function CompactMeta({ label, value, badge }: { label: string; value?: string; b
         ? <Badge value={badge} />
         : <span className="truncate text-xs text-gray-300">{value ?? '-'}</span>
       }
+    </div>
+  )
+}
+
+/** GUARDIAN-3B7 — compact Account Health summary in the contractor modal header. */
+function AccountHealthHeader({ health }: { health: AccountHealthResult }) {
+  const { facts } = health
+  return (
+    <div
+      data-testid="contractor-account-health"
+      className="mt-3 rounded-xl border border-gray-800 bg-[#0f1018] px-3 py-2.5"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-600">Account Health</span>
+        <span
+          data-testid="contractor-account-health-label"
+          className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${accountHealthBadgeClass(health.label)}`}
+        >
+          {health.label}
+        </span>
+        <span
+          data-testid="contractor-account-health-explanation"
+          className="min-w-0 text-xs text-gray-400"
+        >
+          {health.explanation}
+        </span>
+      </div>
+      <div
+        data-testid="contractor-account-health-facts"
+        className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3 lg:grid-cols-6"
+      >
+        <CompactMeta label="Last Active" value={facts.lastActiveLabel} />
+        <CompactMeta label="30D Active Days" value={String(facts.activeDays30)} />
+        <CompactMeta label="Modules Used" value={String(facts.modulesUsedCount)} />
+        <CompactMeta label="Onboarding" badge={facts.onboardingStatus} />
+        <CompactMeta
+          label="Security"
+          value={facts.unreadSecurityAlertCount > 0
+            ? `${facts.unreadSecurityAlertCount} unread`
+            : 'Clear'}
+        />
+        <CompactMeta label="Access" value={facts.access.label} />
+      </div>
     </div>
   )
 }
@@ -454,6 +515,7 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
   const [presenceSecurityHistory, setPresenceSecurityHistory] = useState<FounderGlobalSecurityHistoryEntry[]>([])
   const [fleetKpis, setFleetKpis] = useState<FounderFleetKpis>(() => emptyFounderFleetKpis())
   const [fleetKpisReady, setFleetKpisReady] = useState(false)
+  const [fleetFilter, setFleetFilter] = useState<FounderFleetFilter>('all')
   const reportStateRef = useRef<FounderContractorAdminReport | null>(null)
   const selectedOrganizationIdRef = useRef<string | null>(null)
   const presenceSnapshotRef = useRef({
@@ -516,6 +578,80 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
   const needsAttentionEvents = securityAlertsOpen
     ? needsAttentionSnapshot
     : filterUnreadGuardianSecurityAlerts(presenceAlerts, lastSeenAt)
+
+  const unreadAlertsByOrg = useMemo(
+    () => countUnreadAlertsByOrganization(presenceAlerts, lastSeenAt),
+    [lastSeenAt, presenceAlerts],
+  )
+
+  const fleetFilterContext = useMemo(
+    () => buildFleetFilterContextFromAccounts({
+      accounts: report?.contractorAccounts ?? [],
+      now: presenceServerNow ?? report?.generatedAt ?? undefined,
+    }),
+    [presenceServerNow, report],
+  )
+
+  const fleetRows = useMemo(() => {
+    if (!report) return [] as FounderFleetRow[]
+    const rows = buildFounderFleetRows({
+      accounts: report.contractorAccounts,
+      presenceByOrg,
+      unreadAlertsByOrg,
+      now: presenceServerNow ?? report.generatedAt,
+    })
+    return sortFounderFleetRows(rows)
+  }, [presenceByOrg, presenceServerNow, report, unreadAlertsByOrg])
+
+  const filteredFleetRows = useMemo(
+    () => filterFounderFleetRows(fleetRows, fleetFilter, fleetFilterContext),
+    [fleetFilter, fleetFilterContext, fleetRows],
+  )
+
+  const selectedAccountHealth = useMemo(() => {
+    if (!selectedAccount) return null
+    const unreadForOrg = unreadAlertsByOrg.get(selectedAccount.organizationId) ?? 0
+    return deriveContractorAccountHealth(
+      {
+        createdAt: selectedAccount.createdAt,
+        onboardingStatus: selectedAccount.onboardingStatus,
+        accountStatus: selectedAccount.accountStatus,
+        lastActiveAt: selectedAccount.lastActiveAt,
+        activeDays30: selectedAccount.activeDays30,
+        modulesUsed30: selectedAccount.modulesUsed30,
+        accessActiveCount: selectedAccount.accessActiveCount,
+        accessRevokedCount: selectedAccount.accessRevokedCount,
+        unreadSecurityAlertCount: unreadForOrg,
+      },
+      presenceServerNow ?? report?.generatedAt,
+    )
+  }, [presenceServerNow, report?.generatedAt, selectedAccount, unreadAlertsByOrg])
+
+  const fleetHealthByOrg = useMemo(() => {
+    const map = new Map<string, AccountHealthResult>()
+    if (!report) return map
+    const now = presenceServerNow ?? report.generatedAt
+    for (const account of report.contractorAccounts) {
+      map.set(
+        account.organizationId,
+        deriveContractorAccountHealth(
+          {
+            createdAt: account.createdAt,
+            onboardingStatus: account.onboardingStatus,
+            accountStatus: account.accountStatus,
+            lastActiveAt: account.lastActiveAt,
+            activeDays30: account.activeDays30,
+            modulesUsed30: account.modulesUsed30,
+            accessActiveCount: account.accessActiveCount,
+            accessRevokedCount: account.accessRevokedCount,
+            unreadSecurityAlertCount: unreadAlertsByOrg.get(account.organizationId) ?? 0,
+          },
+          now,
+        ),
+      )
+    }
+    return map
+  }, [presenceServerNow, report, unreadAlertsByOrg])
 
   useEffect(() => {
     reportStateRef.current = report
@@ -999,42 +1135,174 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
               </div>
             )}
 
-            <table className="w-full border-collapse">
-              <thead className="sticky top-0 bg-[#0f1018]"><tr>{['Company / Org', 'Owner Email', 'Created', 'Onboarding', 'NDA State', 'Classification', 'Account Status'].map((label) => <th key={label} className={headerCell}>{label}</th>)}</tr></thead>
-              <tbody className="divide-y divide-gray-800">
-                {report.contractorAccounts.map((account) => {
-                  const isSelected = account.organizationId === selectedOrganizationId
-                  const summary = presenceByOrg.get(account.organizationId)
-                  return (
-                    <tr
-                      key={account.organizationId}
-                      onClick={() => setSelectedOrganizationId(account.organizationId)}
-                      className={`cursor-pointer transition-colors ${isSelected ? 'bg-green-950/20' : 'hover:bg-white/5'}`}
-                      aria-label={`Open contractor account details for ${account.organizationName || account.organizationId}`}
-                    >
-                      <td className={bodyCell}>
-                        <span className="font-semibold text-gray-100">{account.organizationName || 'Unnamed organization'}</span>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <PresenceBadge status={summary?.status ?? 'no_history'} />
-                          <span className="text-[11px] text-gray-500">{presenceNarrative(summary)}</span>
-                        </div>
-                        {summary?.hasHistory && (
-                          <div className="mt-1 text-[11px] text-gray-600">
-                            Last interaction {formatOptionalDate(summary.lastInteractionAt)} · Last heartbeat {formatOptionalDate(summary.lastHeartbeatAt)}
+            <div
+              className="flex flex-wrap items-center gap-1.5 border-b border-gray-800 px-4 py-2.5"
+              data-testid="founder-fleet-filter-bar"
+              role="toolbar"
+              aria-label="Contractor fleet filters"
+            >
+              {FOUNDER_FLEET_FILTERS.map((filterId) => {
+                const active = fleetFilter === filterId
+                return (
+                  <button
+                    key={filterId}
+                    type="button"
+                    onClick={() => setFleetFilter(filterId)}
+                    className={`rounded-md border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide transition-colors ${
+                      active
+                        ? 'border-green-700/70 bg-green-950/40 text-green-300'
+                        : 'border-gray-800 bg-transparent text-gray-500 hover:border-gray-700 hover:text-gray-300'
+                    }`}
+                    aria-pressed={active}
+                    data-fleet-filter={filterId}
+                  >
+                    {fleetFilterLabel(filterId)}
+                  </button>
+                )
+              })}
+            </div>
+
+            {filteredFleetRows.length === 0 ? (
+              <div className="px-4 py-12 text-center text-sm text-gray-500" data-testid="founder-fleet-empty-filter">
+                No contractor accounts match this filter.
+              </div>
+            ) : (
+              <>
+                {/* Desktop / iPad fleet table */}
+                <div className="hidden md:block">
+                  <table className="w-full border-collapse" data-testid="founder-fleet-table">
+                    <thead className="sticky top-0 bg-[#0f1018]">
+                      <tr>
+                        {FOUNDER_FLEET_COLUMN_LABELS.map((label) => (
+                          <th
+                            key={label}
+                            className={`${headerCell} ${
+                              label === 'OWNER' || label === 'CLASSIFICATION' || label === 'MODULES USED'
+                                ? 'hidden lg:table-cell'
+                                : ''
+                            } ${
+                              label === '30D ACTIVE DAYS' ? 'hidden xl:table-cell' : ''
+                            }`}
+                          >
+                            {label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-800">
+                      {filteredFleetRows.map((row) => {
+                        const isSelected = row.organizationId === selectedOrganizationId
+                        const summary = presenceByOrg.get(row.organizationId)
+                        const liveContext = companyPresenceContext(
+                          row.presence,
+                          summary?.liveDeviceCount,
+                          summary?.liveSessionCount,
+                        )
+                        const health = fleetHealthByOrg.get(row.organizationId)
+                        return (
+                          <tr
+                            key={row.organizationId}
+                            onClick={() => setSelectedOrganizationId(row.organizationId)}
+                            className={`cursor-pointer transition-colors ${isSelected ? 'bg-green-950/20' : 'hover:bg-white/5'}`}
+                            aria-label={`Open contractor account details for ${row.organizationName || row.organizationId}`}
+                          >
+                            <td className={bodyCell}>
+                              <span className="font-semibold text-gray-100">{row.organizationName || 'Unnamed organization'}</span>
+                              {liveContext ? (
+                                <div className="mt-1 text-[11px] text-gray-500">{liveContext}</div>
+                              ) : null}
+                              {health && health.label !== 'Healthy' ? (
+                                <div
+                                  className="mt-1 text-[10px] font-medium uppercase tracking-wide text-gray-500"
+                                  title={health.explanation}
+                                  data-testid="fleet-account-health-hint"
+                                >
+                                  {health.label}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className={`${bodyCell} hidden lg:table-cell`}>
+                              <div className="truncate text-gray-200">{row.ownerEmail || 'Not available'}</div>
+                              {row.ownerFullName ? (
+                                <div className="mt-0.5 truncate text-[11px] text-gray-500">{row.ownerFullName}</div>
+                              ) : null}
+                            </td>
+                            <td className={bodyCell}>
+                              <PresenceBadge status={row.presence} />
+                            </td>
+                            <td className={bodyCell} title={row.lastActiveAt ? formatDate(row.lastActiveAt) : undefined}>
+                              {row.lastActiveLabel}
+                            </td>
+                            <td className={`${bodyCell} hidden xl:table-cell`}>{row.activeDays30}</td>
+                            <td className={`${bodyCell} hidden lg:table-cell`}>
+                              <span className="text-gray-300">{row.modulesUsedLabel}</span>
+                            </td>
+                            <td className={bodyCell}><Badge value={row.onboardingStatus} /></td>
+                            <td className={`${bodyCell} hidden lg:table-cell`}><Badge value={row.classification} /></td>
+                            <td className={bodyCell}>
+                              {row.unreadSecurityAlertCount > 0 ? (
+                                <button
+                                  type="button"
+                                  className="text-left text-amber-300 hover:underline"
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    openSecurityCenter()
+                                  }}
+                                >
+                                  {row.securityLabel}
+                                </button>
+                              ) : (
+                                <span className="text-gray-400">{row.securityLabel}</span>
+                              )}
+                            </td>
+                            <td className={bodyCell}>
+                              <Badge value={row.access.kind === 'mixed' ? 'mixed' : row.access.label.toLowerCase()} />
+                              {row.access.kind === 'mixed' ? (
+                                <div className="mt-1 text-[11px] text-gray-500">{row.access.label}</div>
+                              ) : null}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Phone stacked fleet cards — avoid forced 10-column overflow */}
+                <div className="divide-y divide-gray-800 md:hidden" data-testid="founder-fleet-mobile">
+                  {filteredFleetRows.map((row) => {
+                    const isSelected = row.organizationId === selectedOrganizationId
+                    return (
+                      <button
+                        key={row.organizationId}
+                        type="button"
+                        onClick={() => setSelectedOrganizationId(row.organizationId)}
+                        className={`block w-full px-4 py-3 text-left transition-colors ${isSelected ? 'bg-green-950/20' : 'hover:bg-white/5'}`}
+                        aria-label={`Open contractor account details for ${row.organizationName || row.organizationId}`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate font-semibold text-gray-100">
+                              {row.organizationName || 'Unnamed organization'}
+                            </div>
+                            <div className="mt-0.5 truncate text-[11px] text-gray-500">
+                              {row.ownerEmail || 'Not available'}
+                            </div>
                           </div>
-                        )}
-                      </td>
-                      <td className={bodyCell}>{account.ownerEmail || 'Not available'}</td>
-                      <td className={bodyCell}>{formatDate(account.createdAt)}</td>
-                      <td className={bodyCell}><Badge value={account.onboardingStatus} /></td>
-                      <td className={bodyCell}><Badge value={account.ndaState} /></td>
-                      <td className={bodyCell}><Badge value={account.classification} /></td>
-                      <td className={bodyCell}><Badge value={account.accountStatus} /></td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                          <PresenceBadge status={row.presence} />
+                        </div>
+                        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] text-gray-400">
+                          <div><span className="text-gray-600">Last active</span> · {row.lastActiveLabel}</div>
+                          <div><span className="text-gray-600">Onboarding</span> · {row.onboardingStatus}</div>
+                          <div><span className="text-gray-600">Security</span> · {row.securityLabel}</div>
+                          <div><span className="text-gray-600">Access</span> · {row.access.label}</div>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </>
+            )}
           </div>
         ) : section === 'invites' ? (
           <div className="flex-1 overflow-auto">
@@ -1412,6 +1680,8 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
                 <CompactMeta label="User / member count" value={String(selectedAccount.memberCount)} />
                 <CompactMeta label="Agreement" value={buildAgreementSummary(selectedAccount)} />
               </div>
+
+              {selectedAccountHealth ? <AccountHealthHeader health={selectedAccountHealth} /> : null}
 
               <div className="mt-4 rounded-xl border border-gray-800 bg-[#0f1018] p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">

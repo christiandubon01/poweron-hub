@@ -94,7 +94,7 @@ describe('GUARDIAN-3B3D contractor detail modal + 2×2 grid (SOURCE-CONTRACT)', 
 
   it('preserves selectedOrganizationId state and setter required by guardian1 test', () => {
     expect(SURFACE_SOURCE).toContain('const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null)')
-    expect(SURFACE_SOURCE).toContain('setSelectedOrganizationId(account.organizationId)')
+    expect(SURFACE_SOURCE).toMatch(/setSelectedOrganizationId\((account|row)\.organizationId\)/)
   })
 
   it('includes all empty-state messages from guardian3b3 source-contract', () => {

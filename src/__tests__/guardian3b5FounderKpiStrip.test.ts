@@ -379,7 +379,7 @@ describe('GUARDIAN-3B5 UI contracts', () => {
 
   it('26. KPI strip appears before Contractor Accounts fleet', () => {
     const strip = SURFACE.indexOf('data-testid="founder-kpi-strip"')
-    const fleet = SURFACE.indexOf("['Company / Org', 'Owner Email', 'Created', 'Onboarding'")
+    const fleet = SURFACE.indexOf('data-testid="founder-fleet-table"')
     expect(strip).toBeGreaterThan(-1)
     expect(fleet).toBeGreaterThan(strip)
   })

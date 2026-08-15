@@ -19,6 +19,16 @@ export interface FounderContractorAccount {
   memberCount: number
   lastActivityAt: string | null
   lastLoginAt: string | null
+  /** Qualifying session activity (started_at / last_interaction_at) — not heartbeat alone. */
+  lastActiveAt: string | null
+  /** Distinct UTC calendar days with qualifying activity in trailing 30d. */
+  activeDays30: number
+  /** Distinct normalized module_entered modules in trailing 30d. */
+  modulesUsed30: string[]
+  /** Canonical profiles with is_active !== false. */
+  accessActiveCount: number
+  /** Canonical profiles with is_active === false. */
+  accessRevokedCount: number
 }
 
 export interface FounderBetaInvite {

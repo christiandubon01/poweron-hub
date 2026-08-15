@@ -34,6 +34,10 @@ import {
   buildFounderSecurityKpiCounts,
   isExcludedFromAdoptionKpis,
 } from '../../src/services/guardianFounderKpis'
+import {
+  buildFleetAccessCountsFromProfiles,
+  buildFounderFleetOrgMetrics,
+} from '../../src/services/guardianFounderFleet'
 
 type NetlifyEvent = {
   httpMethod?: string
@@ -551,6 +555,31 @@ async function loadFounderActivitySessions(supabase: any, options: {
     session_id: string | null
     started_at: string | null
     last_interaction_at: string | null
+  }>
+}
+
+/** Bounded module_entered rows for Modules Used fleet column — no metadata payload. */
+async function loadFounderModuleEnteredEvents(supabase: any, options: {
+  organizationIds: string[]
+  occurredAfterIso: string
+  limit?: number
+}) {
+  if (options.organizationIds.length === 0) return []
+  const { data, error } = await supabase
+    .from('pilot_telemetry_events')
+    .select('organization_id, event_name, module, occurred_at')
+    .in('organization_id', options.organizationIds)
+    .eq('event_name', 'module_entered')
+    .gte('occurred_at', options.occurredAfterIso)
+    .order('occurred_at', { ascending: false })
+    .limit(options.limit ?? 3000)
+
+  if (error) throw error
+  return (data ?? []) as Array<{
+    organization_id: string
+    event_name: string
+    module: string | null
+    occurred_at: string
   }>
 }
 
@@ -1119,8 +1148,22 @@ export function buildFounderContractorAdminReport(input: {
       memberCount: memberCountByOrg.get(orgId) ?? 0,
       lastActivityAt: latestTimestamp(lastActivityByOrg.get(orgId), owner?.last_sign_in_at ?? null),
       lastLoginAt: owner?.last_sign_in_at ?? null,
+      // Fleet metrics enriched by handleFounderContractorAdmin (session + module queries).
+      lastActiveAt: null as string | null,
+      activeDays30: 0,
+      modulesUsed30: [] as string[],
+      accessActiveCount: 0,
+      accessRevokedCount: 0,
     }
   })
+
+  const fleetOrgIds = contractorAccounts.map((account: { organizationId: string }) => account.organizationId)
+  const accessByOrg = buildFleetAccessCountsFromProfiles(profiles, fleetOrgIds)
+  for (const account of contractorAccounts) {
+    const access = accessByOrg.get(account.organizationId) ?? { activeCount: 0, revokedCount: 0 }
+    account.accessActiveCount = access.activeCount
+    account.accessRevokedCount = access.revokedCount
+  }
 
   const contractorBetaInvites = invites.map((invite: any) => {
     const acceptedUser = (invite.accepted_user_id
@@ -1255,19 +1298,50 @@ async function handleFounderContractorAdmin(user: any) {
     accountStatus: account.accountStatus === 'inactive' ? 'inactive' as const : 'active' as const,
   }))
 
+  const fleetOrgIds = kpiOrganizations.map((org: { organizationId: string }) => org.organizationId)
   const adoptionEligibleOrgIds = kpiOrganizations
     .filter((org: { classification: string }) => !isExcludedFromAdoptionKpis(org.classification))
     .map((org: { organizationId: string }) => org.organizationId)
 
   const lookbackIso = isoDaysAgo(30, serverNow)
-  const [activitySessions, revokedUsers] = await Promise.all([
+  const activityLookbackIso = isoDaysAgo(90, serverNow)
+  const [activitySessions, moduleEvents, revokedUsers] = await Promise.all([
     loadFounderActivitySessions(supabase, {
-      organizationIds: adoptionEligibleOrgIds,
-      startedAfterIso: lookbackIso,
-      limit: 2000,
+      organizationIds: fleetOrgIds,
+      startedAfterIso: activityLookbackIso,
+      limit: 3000,
+    }),
+    loadFounderModuleEnteredEvents(supabase, {
+      organizationIds: fleetOrgIds,
+      occurredAfterIso: lookbackIso,
+      limit: 3000,
     }),
     countRevokedCanonicalProfiles(supabase, adoptionEligibleOrgIds),
   ])
+
+  const accessByOrg = buildFleetAccessCountsFromProfiles(
+    profilesResult.data ?? [],
+    fleetOrgIds,
+  )
+  const fleetMetrics = buildFounderFleetOrgMetrics({
+    organizationIds: fleetOrgIds,
+    activitySessions,
+    moduleEvents,
+    accessByOrg,
+    now: serverNow,
+  })
+
+  const contractorAccounts = report.contractorAccounts.map((account: any) => {
+    const metrics = fleetMetrics.get(String(account.organizationId))
+    return {
+      ...account,
+      lastActiveAt: metrics?.lastActiveAt ?? null,
+      activeDays30: metrics?.activeDays30 ?? 0,
+      modulesUsed30: metrics?.modulesUsed30 ?? [],
+      accessActiveCount: metrics?.accessActiveCount ?? account.accessActiveCount ?? 0,
+      accessRevokedCount: metrics?.accessRevokedCount ?? account.accessRevokedCount ?? 0,
+    }
+  })
 
   const adoption = buildFounderAdoptionKpis({
     organizations: kpiOrganizations,
@@ -1287,6 +1361,7 @@ async function handleFounderContractorAdmin(user: any) {
   return json(200, {
     generatedAt: serverNow.toISOString(),
     ...report,
+    contractorAccounts,
     kpis: {
       adoption,
       onboarding,
