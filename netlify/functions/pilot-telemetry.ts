@@ -302,7 +302,44 @@ async function resolveActorContext(supabase: any, userId: string) {
   }
 }
 
-async function handleTrackEvent(event: NetlifyEvent, user: any) {
+/**
+ * GUARDIAN-3B4A — product-usage organization authority.
+ *
+ * For module_entered / engagement_window only:
+ * authenticated actor user_id + metadata.session_id → owned user_sessions.org_id.
+ * Do not trust client session_id alone; do not fall back to employee_profiles.org_id.
+ * Ended sessions may still provide immutable org binding (final engagement_window race).
+ */
+export async function resolveProductUsageSessionContext(
+  supabase: any,
+  actorUserId: string,
+  sessionIdRaw: unknown,
+): Promise<{ organizationId: string; sessionId: string } | null> {
+  const sessionId = String(sessionIdRaw ?? '').trim()
+  const userId = String(actorUserId || '').trim()
+  if (!sessionId || !userId) return null
+
+  const { data, error } = await supabase
+    .from('user_sessions')
+    .select('session_id, user_id, org_id')
+    .eq('session_id', sessionId)
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (error || !data) return null
+
+  const ownedSessionId = String(data.session_id || '').trim()
+  const ownedUserId = String(data.user_id || '').trim()
+  const organizationId = String(data.org_id || '').trim()
+  if (!ownedSessionId || ownedUserId !== userId || !organizationId) return null
+
+  return {
+    sessionId: ownedSessionId,
+    organizationId,
+  }
+}
+
+export async function handleTrackEvent(event: NetlifyEvent, user: any) {
   const payload = event.body ? JSON.parse(event.body) : {}
   const eventName = String(payload?.eventName || '').trim()
   if (!isPilotTelemetryEventName(eventName)) {
@@ -317,9 +354,6 @@ async function handleTrackEvent(event: NetlifyEvent, user: any) {
 
   const supabase = getServiceClient()
   const actor = await resolveActorContext(supabase, user.id)
-  if (!actor.organizationId) {
-    return json(400, { error: 'Could not resolve organization for telemetry event.' })
-  }
   if (actor.isActive === false) {
     return json(403, { error: 'Access unavailable.' })
   }
@@ -335,8 +369,23 @@ async function handleTrackEvent(event: NetlifyEvent, user: any) {
     if (!product) {
       return json(400, { error: 'Invalid product usage telemetry payload.' })
     }
+
+    // Product usage org must follow the owned PowerOn app session — never employee_profiles.
+    const sessionCtx = await resolveProductUsageSessionContext(
+      supabase,
+      actor.actorUserId,
+      product.metadata?.session_id,
+    )
+    if (!sessionCtx) {
+      return json(200, {
+        ok: true,
+        skipped: true,
+        reason: 'session_attribution_unavailable',
+      })
+    }
+
     record = {
-      organization_id: actor.organizationId,
+      organization_id: sessionCtx.organizationId,
       actor_user_id: actor.actorUserId,
       actor_employee_profile_id: actor.actorEmployeeProfileId,
       actor_kind: actor.actorKind,
@@ -349,6 +398,9 @@ async function handleTrackEvent(event: NetlifyEvent, user: any) {
       occurred_at: product.occurredAt || new Date().toISOString(),
     }
   } else {
+    if (!actor.organizationId) {
+      return json(400, { error: 'Could not resolve organization for telemetry event.' })
+    }
     record = {
       organization_id: actor.organizationId,
       actor_user_id: actor.actorUserId,

@@ -221,6 +221,9 @@ describe('GUARDIAN-3B4 identity / authority / wiring', () => {
     expect(FUNCTION).toContain('buildProductUsageTelemetryRecord')
     expect(FUNCTION).toContain("actor.isActive === false")
     expect(FUNCTION).toContain("return json(403, { error: 'Access unavailable.' })")
+    // Product-usage org comes from owned user_sessions; other events keep actor.organizationId.
+    expect(FUNCTION).toContain('resolveProductUsageSessionContext')
+    expect(FUNCTION).toContain('organization_id: sessionCtx.organizationId')
     expect(FUNCTION).toContain('organization_id: actor.organizationId')
     expect(FUNCTION).toContain('actor_user_id: actor.actorUserId')
   })
