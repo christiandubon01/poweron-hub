@@ -31,6 +31,15 @@ import { Redis } from '@upstash/redis'
 
 const crypto = require('crypto')
 
+const ACCESS_UNAVAILABLE_CODE = 'access_unavailable'
+
+function deniedResult(statusCode: number, body: Record<string, unknown>) {
+  return {
+    __statusCode: statusCode,
+    __body: body,
+  }
+}
+
 // ── Constants (must match the previous client-side values exactly) ───────────
 const TTL_SESSION       = 24 * 60 * 60   // 24 hours
 const LOCK_DURATION_SEC = 15 * 60        // 15 minutes
@@ -155,6 +164,28 @@ function userScopedClient(event: any) {
   return createClient(url, anonKey, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { headers: { Authorization: `Bearer ${token}` } },
+  })
+}
+
+async function readCanonicalProfileAccess(db: any, userId: string) {
+  if (!db) return null
+  try {
+    const { data, error } = await db
+      .from('profiles')
+      .select('id, org_id, role, is_active')
+      .eq('id', userId)
+      .maybeSingle()
+    if (error) return null
+    return data ?? null
+  } catch {
+    return null
+  }
+}
+
+function accessUnavailableDenied() {
+  return deniedResult(403, {
+    error: 'Access unavailable',
+    code: ACCESS_UNAVAILABLE_CODE,
   })
 }
 
@@ -525,6 +556,7 @@ async function endPresenceRow(sessionId: string, userId: string, endedReason: st
       .update(update)
       .eq('session_id', sessionId)
       .eq('user_id', userId)
+      .is('ended_at', null)
       .not('session_id', 'is', null)
   } catch (err: any) {
     console.error('[session-store] endPresenceRow failed (non-fatal):', err?.message)
@@ -599,10 +631,13 @@ async function handleSessionCreate(user: any, db: any, body: any, event: any) {
   if (db) {
     const { data, error } = await db
       .from('profiles')
-      .select('org_id, role')
+      .select('org_id, role, is_active')
       .eq('id', user.id)
       .single()
     if (!error) {
+      if (data?.is_active === false) {
+        return accessUnavailableDenied()
+      }
       orgId = data?.org_id ?? ''
       role  = data?.role ?? ''
     }
@@ -651,10 +686,21 @@ async function loadOwnedSession(user: any, sessionId: string) {
   return session
 }
 
-async function handleSessionValidate(user: any, body: any, event: any) {
+async function revokeOwnedSessionAccess(sessionId: string, userId: string) {
+  await endPresenceRow(sessionId, userId, 'access_revoked')
+  await rDel(keys.session(sessionId))
+}
+
+async function handleSessionValidate(user: any, db: any, body: any, event: any) {
   const sessionId = String(body?.sessionId ?? '')
   const session = await loadOwnedSession(user, sessionId)
   if (!session) return { session: null }
+
+  const profile = await readCanonicalProfileAccess(db, user.id)
+  if (profile?.is_active === false) {
+    await revokeOwnedSessionAccess(sessionId, user.id)
+    return accessUnavailableDenied()
+  }
 
   const module    = body?.module   !== undefined ? String(body.module).slice(0, 64)   : undefined
   const visState  = body?.visibilityState === 'hidden' ? 'hidden'
@@ -685,18 +731,30 @@ async function handleSessionValidate(user: any, body: any, event: any) {
   return { session: updated }
 }
 
-async function handleSessionInteraction(user: any, body: any) {
+async function handleSessionInteraction(user: any, db: any, body: any) {
   const sessionId = String(body?.sessionId ?? '')
   const session = await loadOwnedSession(user, sessionId)
   if (!session) return { ok: false }
+
+  const profile = await readCanonicalProfileAccess(db, user.id)
+  if (profile?.is_active === false) {
+    await revokeOwnedSessionAccess(sessionId, user.id)
+    return accessUnavailableDenied()
+  }
 
   // Awaited before response — failure-isolated (updatePresenceInteraction catches errors internally)
   await updatePresenceInteraction(sessionId, user.id)
   return { ok: true }
 }
 
-async function handleSessionGet(user: any, body: any) {
-  const session = await loadOwnedSession(user, String(body?.sessionId ?? ''))
+async function handleSessionGet(user: any, db: any, body: any) {
+  const sessionId = String(body?.sessionId ?? '')
+  const session = await loadOwnedSession(user, sessionId)
+  const profile = await readCanonicalProfileAccess(db, user.id)
+  if (session && profile?.is_active === false) {
+    await revokeOwnedSessionAccess(sessionId, user.id)
+    return accessUnavailableDenied()
+  }
   return { session: session ?? null }
 }
 
@@ -767,13 +825,13 @@ exports.handler = async (event: any, _context: any) => {
         result = await handleSessionCreate(user, db, body, event)
         break
       case 'session.validate':
-        result = await handleSessionValidate(user, body, event)
+        result = await handleSessionValidate(user, db, body, event)
         break
       case 'session.interaction':
-        result = await handleSessionInteraction(user, body)
+        result = await handleSessionInteraction(user, db, body)
         break
       case 'session.get':
-        result = await handleSessionGet(user, body)
+        result = await handleSessionGet(user, db, body)
         break
       case 'session.destroy':
         result = await handleSessionDestroy(user, body)
@@ -784,6 +842,14 @@ exports.handler = async (event: any, _context: any) => {
           headers,
           body: JSON.stringify({ error: `Unknown intent: ${intent}` }),
         }
+    }
+
+    if (result?.__statusCode && result?.__body) {
+      return {
+        statusCode: result.__statusCode,
+        headers,
+        body: JSON.stringify(result.__body),
+      }
     }
 
     return { statusCode: 200, headers, body: JSON.stringify(result) }

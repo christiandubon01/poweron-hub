@@ -9,6 +9,7 @@ import { useState, useEffect } from 'react'
 import { Zap, ArrowRight, Eye, EyeOff, Lock, Mail, User, AlertCircle, CheckCircle } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useAuthStore } from '@/store/authStore'
+import { ACCESS_UNAVAILABLE_MESSAGE, ACCESS_UNAVAILABLE_TITLE } from '@/store/authStore'
 import { PasscodeScreen } from '@/components/auth/PasscodeScreen'
 import { BiometricPrompt } from '@/components/auth/BiometricPrompt'
 import { PinAuth } from '@/components/auth/PinAuth'
@@ -200,6 +201,61 @@ function AuthSpinner() {
           <Zap size={22} color={BLUE_B} fill={BLUE_B} />
         </div>
         <div style={{ width: '20px', height: '20px', border: `2px solid ${BLUE}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+      </div>
+    </PCBPage>
+  )
+}
+
+function AccessUnavailableGate() {
+  const { signOut } = useAuth()
+
+  return (
+    <PCBPage>
+      <div style={{ width: '100%', maxWidth: '420px', margin: '0 auto' }}>
+        <section style={{
+          position: 'relative',
+          overflow: 'hidden',
+          borderRadius: '24px',
+          border: '1px solid rgba(61,158,245,0.16)',
+          background: 'linear-gradient(180deg, rgba(7,18,33,0.96), rgba(2,6,13,0.96))',
+          boxShadow: '0 24px 90px rgba(0,0,0,0.42)',
+          padding: '32px 28px',
+          textAlign: 'center',
+        }}>
+          <div style={{
+            width: '56px',
+            height: '56px',
+            margin: '0 auto 18px',
+            borderRadius: '16px',
+            background: 'rgba(30,128,223,0.12)',
+            border: '1px solid rgba(61,158,245,0.26)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <Lock size={24} color={BLUE_B} />
+          </div>
+          <h1 style={{
+            margin: 0,
+            color: TEXT,
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontSize: '34px',
+            letterSpacing: '-0.8px',
+            textTransform: 'uppercase',
+          }}>
+            {ACCESS_UNAVAILABLE_TITLE}
+          </h1>
+          <p style={{ margin: '12px 0 0', color: T2, fontSize: '14px', lineHeight: 1.7 }}>
+            {ACCESS_UNAVAILABLE_MESSAGE}
+          </p>
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            style={{ ...btnSecondary, marginTop: '24px', minHeight: '50px', borderRadius: '12px' }}
+          >
+            Return To Sign In
+          </button>
+        </section>
       </div>
     </PCBPage>
   )
@@ -1634,6 +1690,9 @@ export function LoginFlow({ children }: LoginFlowProps) {
         />
       )
     }
+
+    case 'access_unavailable':
+      return <AccessUnavailableGate />
 
     case 'needs_passcode_setup':
       return <InitialSetupFlow />

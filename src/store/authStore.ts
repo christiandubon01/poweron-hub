@@ -21,6 +21,7 @@ import { authenticateWithBiometric, getBiometricCapabilities } from '@/lib/auth/
 import type { BiometricCapabilities } from '@/lib/auth/biometric'
 import { createAppSession, destroyAppSession, validateAppSession, getDeviceInfo } from '@/lib/auth/session'
 import type { AppSession } from '@/lib/auth/session'
+import { isSessionStoreAccessUnavailableError } from '@/lib/auth/sessionStoreClient'
 import { presenceMonitor } from '@/lib/guardian/presenceMonitor'
 import { getDeviceId } from '@/services/backupDataService'
 import { logLogin, logAudit } from '@/lib/memory/audit'
@@ -45,6 +46,9 @@ const ROLE_STORAGE_KEY = 'poweron-hub-role'
 const OWNER_ID_STORAGE_KEY = 'poweron-hub-owner-id'
 const EMPLOYEE_PROFILE_ID_KEY = 'poweron-hub-employee-profile-id'
 const EMPLOYER_ORG_ID_KEY = 'poweron-hub-employer-org-id'
+const APP_SESSION_STORAGE_KEY = 'poweron-session-id'
+export const ACCESS_UNAVAILABLE_TITLE = 'Access unavailable'
+export const ACCESS_UNAVAILABLE_MESSAGE = 'Reach out to app team for more info.'
 const MAGIC_LINK_REDIRECT_URL = resolveProductRedirectUrl(
   import.meta.env.VITE_APP_BASE_URL as string | undefined,
   typeof window !== 'undefined' ? window.location.origin : undefined,
@@ -77,6 +81,14 @@ function hasTimeTrackingAccess(portalAccess: unknown): boolean {
 
 function storageKey(base: string, context: 'main' | 'employee'): string {
   return `${base}:${context}`
+}
+
+function clearStoredAppSession(): void {
+  try {
+    sessionStorage.removeItem(APP_SESSION_STORAGE_KEY)
+  } catch {
+    // ignore storage failures
+  }
 }
 
 function persistResolvedRole(context: 'main' | 'employee', resolved: ResolvedPortalRole): void {
@@ -673,7 +685,10 @@ async function establishOwnerSession(
       startPresenceMonitor(newSessionId)
     }
     session = await withTimeout(validateAppSession(), 3000, null)
-  } catch {
+  } catch (err) {
+    if (isSessionStoreAccessUnavailableError(err)) {
+      throw err
+    }
     // The Redis app session is a resume convenience. The Supabase JWT and the
     // server-side passcode remain authoritative, so a store outage must not
     // block setup.
@@ -712,6 +727,7 @@ function startPresenceMonitor(sessionId: string): void {
     sessionId,
     deviceId: getDeviceId(),
     onInactivityLock: () => void useAuthStore.getState().lockApp('inactivity_timeout'),
+    onAccessUnavailable: () => void useAuthStore.getState().enterAccessUnavailable(),
   })
 }
 
@@ -722,6 +738,7 @@ type Profile = Tables<'profiles'>
 export type AuthStatus =
   | 'loading'
   | 'unauthenticated'
+  | 'access_unavailable'
   | 'needs_passcode_setup'
   | 'needs_passcode'
   | 'biometric_prompt'
@@ -759,6 +776,7 @@ interface AuthState {
   setupPasscode:      (passcode: string) => Promise<void>
   completeInitialSetup: () => Promise<void>
   authenticateBio:    () => Promise<void>
+  enterAccessUnavailable: () => Promise<void>
   lockApp:            () => Promise<void>
   signOut:            () => Promise<void>
   skipBiometric:      () => void
@@ -914,6 +932,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const apply = (partial: Partial<AuthState>) => {
       if (seq === _initSeq) set(partial)
     }
+    let currentUser: User | null = null
+    let currentProfile: Profile | null = null
 
     apply({ status: 'loading', error: null })
 
@@ -958,6 +978,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
       const user = session.user
+      currentUser = user
       const portalContext = detectPortalContext(window.location.pathname)
 
       // A recovery callback is an authenticated Supabase session with a very
@@ -981,6 +1002,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         if (!profileError && data) {
           profile = data as any
+          currentProfile = profile
           break
         }
         if (attempt < 2) await new Promise(r => setTimeout(r, 500))
@@ -988,6 +1010,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       if (!profile && portalContext === 'main') {
         profile = await bootstrapOwnerWorkspaceForAuthenticatedUser(user)
+        currentProfile = profile
       }
 
       if (!profile) {
@@ -996,8 +1019,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return
       }
       if (!profile.is_active) {
-        await supabase.auth.signOut()
-        apply({ status: 'unauthenticated', error: 'Your account has been deactivated.' })
+        presenceMonitor.stop()
+        setHydrating(false)
+        clearActiveTenantUser()
+        resetSessionScopedBackupClientState()
+        clearStoredAppSession()
+        apply({
+          status: 'access_unavailable',
+          user: currentUser,
+          profile: currentProfile,
+          appSession: null,
+          tenantDataReady: false,
+          tenantUserId: null,
+          error: ACCESS_UNAVAILABLE_MESSAGE,
+        })
         return
       }
 
@@ -1028,7 +1063,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             if (contextualSessionId !== 'timeout' && contextualSessionId) {
               contextualSession = await withTimeout(validateAppSession(contextualSessionId), 3000, null)
             }
-          } catch {
+          } catch (err) {
+            if (isSessionStoreAccessUnavailableError(err)) throw err
             // JWT + resolved membership remain authoritative; the Redis session is
             // only a resume optimization and must not retain a cross-org context.
           }
@@ -1078,7 +1114,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             5000, 'timeout'
           )
           appSession = await withTimeout(validateAppSession(), 3000, null)
-        } catch {}
+        } catch (err) {
+          if (isSessionStoreAccessUnavailableError(err)) throw err
+        }
         if (appSession?.sessionId) startPresenceMonitor(appSession.sessionId)
 
         // COMM-PROD-1 Step 9 (defect B). This branch used to publish
@@ -1165,7 +1203,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             5000, 'timeout'
           )
           roleSession = await withTimeout(validateAppSession(), 3000, null)
-        } catch {}
+        } catch (err) {
+          if (isSessionStoreAccessUnavailableError(err)) throw err
+        }
         if (roleSession?.sessionId) startPresenceMonitor(roleSession.sessionId)
         apply({
           status: 'hydrating_user_data',
@@ -1207,7 +1247,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             createAppSession({ userId: user.id, orgId: role === 'employee' ? employerOrgId : profile.org_id, role, deviceInfo: getDeviceInfo() }),
             5000, null
           )
-        } catch {}
+        } catch (err) {
+          if (isSessionStoreAccessUnavailableError(err)) throw err
+        }
         if (session) startPresenceMonitor(session)
         apply({ status: 'hydrating_user_data', user, profile, appSession: session, role, ownerId, employeeProfileId, employerOrgId })
         await bootstrapResolvedPortalData(user.id, role === 'employee' ? employerOrgId : profile.org_id, role, isCurrent)
@@ -1235,6 +1277,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     } catch (err) {
       if (err instanceof StaleAuthOperationError || !isCurrent()) return
+      if (isSessionStoreAccessUnavailableError(err)) {
+        presenceMonitor.stop()
+        setHydrating(false)
+        clearActiveTenantUser()
+        resetSessionScopedBackupClientState()
+        clearStoredAppSession()
+        apply({
+          status: 'access_unavailable',
+          user: currentUser,
+          profile: currentProfile,
+          appSession: null,
+          tenantDataReady: false,
+          tenantUserId: null,
+          error: ACCESS_UNAVAILABLE_MESSAGE,
+        })
+        return
+      }
       console.error('[Auth] initialize error:', err)
       apply({
         status: 'unauthenticated',
@@ -1373,6 +1432,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
     } catch (err) {
       if (err instanceof StaleAuthOperationError || !isCurrent()) return
+      if (isSessionStoreAccessUnavailableError(err)) {
+        await get().enterAccessUnavailable()
+        return
+      }
       console.error('[Auth] submitPasscode error:', err)
       // PIN may already be valid while the subsequent tenant hydration/reconcile
       // failed. Return to the existing retryable PIN state instead of leaving the
@@ -1450,6 +1513,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
     } catch (err) {
+      if (isSessionStoreAccessUnavailableError(err)) {
+        await get().enterAccessUnavailable()
+        return
+      }
       console.error('[Auth] setupPasscode error:', err)
       set({ error: 'Failed to save passcode. Please try again.' })
     }
@@ -1501,6 +1568,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await establishOwnerSession(set, user, profile, 'initial_setup', isCurrent)
     } catch (err) {
       if (err instanceof StaleAuthOperationError || !isCurrent()) return
+      if (isSessionStoreAccessUnavailableError(err)) {
+        await get().enterAccessUnavailable()
+        return
+      }
       console.error('[Auth] completeInitialSetup error:', err)
       // The passcode itself is already stored server-side, so the retryable PIN
       // screen is the correct recovery — never a half-authenticated shell.
@@ -1560,12 +1631,37 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({ error: 'Biometric failed. Use your passcode instead.' })
       }
     } catch (err) {
+      if (isSessionStoreAccessUnavailableError(err)) {
+        await get().enterAccessUnavailable()
+        return
+      }
       console.error('[Auth] authenticateBio error:', err)
       set({ status: 'needs_passcode', error: 'Biometric unavailable. Use your passcode.' })
     }
   },
 
   // ── Skip biometric (use passcode instead) ───────────────────────────────────
+  enterAccessUnavailable: async () => {
+    beginAuthOperation()
+    presenceMonitor.stop()
+    clearIdentityRetryState()
+    setHydrating(false)
+    clearActiveTenantUser()
+    resetSessionScopedBackupClientState()
+    clearStoredAppSession()
+
+    const current = get()
+    set({
+      status: 'access_unavailable',
+      user: current.user,
+      profile: current.profile,
+      appSession: null,
+      tenantDataReady: false,
+      tenantUserId: null,
+      error: ACCESS_UNAVAILABLE_MESSAGE,
+    })
+  },
+
   skipBiometric: () => {
     beginAuthOperation()
     set({ status: 'needs_passcode', error: null })

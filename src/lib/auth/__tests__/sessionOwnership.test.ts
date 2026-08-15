@@ -53,6 +53,7 @@ describe('app-session operation ownership', () => {
     await destroyAppSession('session-a')
 
     expect(sessionDeps.sessionStoreCall).toHaveBeenCalledWith('session.destroy', {
+      endedReason: null,
       sessionId: 'session-a',
     })
     expect(sessionStorage.getItem('poweron-session-id')).toBe('session-b')
@@ -64,6 +65,14 @@ describe('app-session operation ownership', () => {
 
     await destroyAppSession('session-a')
 
+    expect(sessionStorage.getItem('poweron-session-id')).toBeNull()
+  })
+
+  it('still clears the owned storage key when server-side session destroy fails', async () => {
+    sessionStorage.setItem('poweron-session-id', 'session-a')
+    sessionDeps.sessionStoreCall.mockRejectedValue(new Error('server unavailable'))
+
+    await expect(destroyAppSession('session-a')).rejects.toThrow('server unavailable')
     expect(sessionStorage.getItem('poweron-session-id')).toBeNull()
   })
 

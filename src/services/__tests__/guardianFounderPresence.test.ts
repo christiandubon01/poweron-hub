@@ -93,6 +93,13 @@ describe('guardian founder presence status logic', () => {
     }), SERVER_NOW)).toBe('offline')
   })
 
+  it('access_revoked = Offline', () => {
+    expect(deriveFounderPresenceStatus(session({
+      ended_reason: 'access_revoked',
+      ended_at: '2026-08-15T11:59:30.000Z',
+    }), SERVER_NOW)).toBe('offline')
+  })
+
   it('stale heartbeat = Offline', () => {
     expect(deriveFounderPresenceStatus(session({
       last_active_at: '2026-08-15T11:54:30.000Z',

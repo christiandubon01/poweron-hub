@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { Redis } from '@upstash/redis'
 import {
   derivePilotActivationSnapshot,
   deriveWeeklyActivitySummary,
@@ -48,6 +49,18 @@ type FounderPilotRecentActivityEntry = {
   metadata: Record<string, unknown>
 }
 
+type FounderContractorUserAccessRow = {
+  userId: string
+  name: string | null
+  email: string | null
+  role: string | null
+  isActive: boolean
+  revokedAt: string | null
+  revokedBy: string | null
+  restoredAt: string | null
+  restoredBy: string | null
+}
+
 function json(statusCode: number, body: unknown) {
   return {
     statusCode,
@@ -89,6 +102,21 @@ function getServiceClient() {
   return createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
+}
+
+let _redis: Redis | null = null
+
+function getRedisClient() {
+  if (_redis) return _redis
+  const url = process.env.UPSTASH_REDIS_URL || ''
+  const token = process.env.UPSTASH_REDIS_TOKEN || ''
+  if (!url || !token) return null
+  _redis = new Redis({ url, token })
+  return _redis
+}
+
+function sessionRedisKey(sessionId: string) {
+  return `session:${sessionId}`
 }
 
 function founderEmail(): string {
@@ -700,6 +728,157 @@ async function listAllAuthUsers(supabase: any): Promise<any[]> {
   return users
 }
 
+function uniqueNonEmptyStrings(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))]
+}
+
+function authDisplayName(user: any): string | null {
+  const metadata = record(user?.user_metadata ?? user?.raw_user_meta_data)
+  const fullName = String(metadata.full_name || metadata.name || '').trim()
+  return fullName || null
+}
+
+async function listAuthUsersById(supabase: any, userIds: string[]) {
+  if (userIds.length === 0) return new Map<string, any>()
+  const authUsers = await listAllAuthUsers(supabase)
+  return new Map(
+    authUsers
+      .filter((user: any) => userIds.includes(String(user.id)))
+      .map((user: any) => [String(user.id), user]),
+  )
+}
+
+async function loadFounderContractorUserAccess(supabase: any, organizationId: string) {
+  const { data: profiles, error } = await supabase
+    .from('profiles')
+    .select('id, org_id, full_name, role, is_active, revoked_at, revoked_by, restored_at, restored_by')
+    .eq('org_id', organizationId)
+
+  if (error) throw error
+
+  const profileRows = (profiles ?? []).filter((row: any) => String(row?.org_id || '').trim() === organizationId)
+  const authById = await listAuthUsersById(
+    supabase,
+    uniqueNonEmptyStrings(profileRows.map((row: any) => row.id)),
+  )
+
+  const rolePriority: Record<string, number> = {
+    owner: 0,
+    admin: 1,
+    manager: 2,
+    field: 3,
+    employee: 4,
+    client: 5,
+  }
+
+  const userAccess: FounderContractorUserAccessRow[] = profileRows
+    .map((profile: any) => {
+      const authUser = authById.get(String(profile.id))
+      const profileName = String(profile?.full_name || '').trim() || null
+      return {
+        userId: String(profile.id),
+        name: profileName || authDisplayName(authUser),
+        email: authUser?.email ? String(authUser.email) : null,
+        role: profile?.role ? String(profile.role) : null,
+        isActive: profile?.is_active !== false,
+        revokedAt: profile?.revoked_at ? String(profile.revoked_at) : null,
+        revokedBy: profile?.revoked_by ? String(profile.revoked_by) : null,
+        restoredAt: profile?.restored_at ? String(profile.restored_at) : null,
+        restoredBy: profile?.restored_by ? String(profile.restored_by) : null,
+      }
+    })
+    .sort((left: FounderContractorUserAccessRow, right: FounderContractorUserAccessRow) => {
+      if (left.isActive !== right.isActive) return left.isActive ? -1 : 1
+      const leftRank = rolePriority[String(left.role || '').toLowerCase()] ?? 99
+      const rightRank = rolePriority[String(right.role || '').toLowerCase()] ?? 99
+      if (leftRank !== rightRank) return leftRank - rightRank
+      return String(left.email || left.name || left.userId).localeCompare(String(right.email || right.name || right.userId))
+    })
+
+  let employeeOnlyIdentityCount = 0
+  try {
+    const { data: employeeProfiles, error: employeeProfilesError } = await supabase
+      .from('employee_profiles')
+      .select('user_id')
+      .eq('org_id', organizationId)
+      .not('user_id', 'is', null)
+
+    if (!employeeProfilesError) {
+      const canonicalIds = new Set(userAccess.map((row) => row.userId))
+      employeeOnlyIdentityCount = uniqueNonEmptyStrings(
+        (employeeProfiles ?? []).map((row: any) => row?.user_id ? String(row.user_id) : null),
+      ).filter((userId) => !canonicalIds.has(userId)).length
+    }
+  } catch {
+    employeeOnlyIdentityCount = 0
+  }
+
+  return {
+    userAccess,
+    employeeOnlyIdentityCount,
+    employeeOnlyIdentityNotice: employeeOnlyIdentityCount > 0
+      ? 'Employee-only identities without a canonical profile row are not governed by this access control.'
+      : null,
+  }
+}
+
+async function invalidateRevokedUserSessions(supabase: any, targetUserId: string) {
+  const { data: activeSessions, error: activeSessionsError } = await supabase
+    .from('user_sessions')
+    .select('session_id')
+    .eq('user_id', targetUserId)
+    .not('session_id', 'is', null)
+    .is('ended_at', null)
+
+  if (activeSessionsError) throw activeSessionsError
+
+  const sessionIds = uniqueNonEmptyStrings((activeSessions ?? []).map((row: any) => row?.session_id ? String(row.session_id) : null))
+  if (sessionIds.length === 0) {
+    return {
+      activeSessionIds: [] as string[],
+      redisFailedSessionIds: [] as string[],
+      warning: null as string | null,
+    }
+  }
+
+  const endedAt = new Date().toISOString()
+  const { error: updateError } = await supabase
+    .from('user_sessions')
+    .update({ ended_at: endedAt, ended_reason: 'access_revoked' })
+    .eq('user_id', targetUserId)
+    .in('session_id', sessionIds)
+    .is('ended_at', null)
+    .not('session_id', 'is', null)
+
+  const redis = getRedisClient()
+  const redisFailedSessionIds: string[] = []
+  if (redis) {
+    for (const sessionId of sessionIds) {
+      try {
+        await redis.del(sessionRedisKey(sessionId))
+      } catch {
+        redisFailedSessionIds.push(sessionId)
+      }
+    }
+  } else {
+    redisFailedSessionIds.push(...sessionIds)
+  }
+
+  const warningParts: string[] = []
+  if (updateError) {
+    warningParts.push('Persistent session closeout could not update every matching row.')
+  }
+  if (redisFailedSessionIds.length > 0) {
+    warningParts.push(`Redis cleanup missed ${redisFailedSessionIds.length} matching session${redisFailedSessionIds.length === 1 ? '' : 's'}.`)
+  }
+
+  return {
+    activeSessionIds: sessionIds,
+    redisFailedSessionIds,
+    warning: warningParts.length > 0 ? warningParts.join(' ') : null,
+  }
+}
+
 function record(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}
 }
@@ -1045,6 +1224,7 @@ async function handleFounderContractorPresenceDetail(event: NetlifyEvent, user: 
     serverNow,
   })
   const securityHistory = buildFounderSecurityHistory(hydrated.events)
+  const accessData = await loadFounderContractorUserAccess(supabase, organizationId)
 
   return json(200, {
     organizationId,
@@ -1054,6 +1234,133 @@ async function handleFounderContractorPresenceDetail(event: NetlifyEvent, user: 
     deviceGroups: detail.deviceGroups,
     sessions: detail.sessions,
     securityHistory,
+    userAccess: accessData.userAccess,
+    employeeOnlyIdentityCount: accessData.employeeOnlyIdentityCount,
+    employeeOnlyIdentityNotice: accessData.employeeOnlyIdentityNotice,
+  })
+}
+
+async function handleFounderRevokeUserAccess(event: NetlifyEvent, user: any) {
+  const denied = requireFounder(user)
+  if (denied) return denied
+
+  const payload = event.body ? JSON.parse(event.body) : {}
+  const targetUserId = String(payload?.targetUserId || '').trim()
+  const targetOrgId = String(payload?.targetOrgId || '').trim()
+  if (!targetUserId || !targetOrgId) {
+    return json(400, { error: 'targetUserId and targetOrgId are required.' })
+  }
+
+  const supabase = getServiceClient()
+  const { data: organization, error: organizationError } = await supabase
+    .from('organizations')
+    .select('id, owner_id')
+    .eq('id', targetOrgId)
+    .maybeSingle()
+  if (organizationError) return json(500, { error: organizationError.message || 'Could not verify contractor organization.' })
+  if (!organization?.id || !organization?.owner_id) {
+    return json(404, { error: 'Contractor organization not found.' })
+  }
+
+  const { data: targetProfile, error: targetProfileError } = await supabase
+    .from('profiles')
+    .select('id, org_id')
+    .eq('id', targetUserId)
+    .maybeSingle()
+  if (targetProfileError) return json(500, { error: targetProfileError.message || 'Could not verify target user.' })
+  if (!targetProfile?.id) {
+    return json(404, { error: 'Canonical profile-backed user not found.' })
+  }
+  if (String(targetProfile.org_id || '').trim() !== targetOrgId) {
+    return json(403, { error: 'Target user does not belong to the selected contractor organization.' })
+  }
+
+  const revokedAt = new Date().toISOString()
+  const { data: revokedProfile, error: revokeError } = await supabase
+    .from('profiles')
+    .update({
+      is_active: false,
+      revoked_by: user.id,
+      revoked_at: revokedAt,
+    })
+    .eq('id', targetUserId)
+    .eq('org_id', targetOrgId)
+    .select('id')
+    .maybeSingle()
+  if (revokeError) return json(500, { error: revokeError.message || 'Could not revoke user access.' })
+  if (!revokedProfile?.id) {
+    return json(404, { error: 'Target user does not belong to the selected contractor organization.' })
+  }
+
+  const cleanup = await invalidateRevokedUserSessions(supabase, targetUserId)
+
+  return json(200, {
+    ok: true,
+    targetUserId,
+    targetOrgId,
+    revokedAt,
+    invalidatedSessionCount: cleanup.activeSessionIds.length,
+    cleanupWarning: cleanup.warning,
+  })
+}
+
+async function handleFounderRestoreUserAccess(event: NetlifyEvent, user: any) {
+  const denied = requireFounder(user)
+  if (denied) return denied
+
+  const payload = event.body ? JSON.parse(event.body) : {}
+  const targetUserId = String(payload?.targetUserId || '').trim()
+  const targetOrgId = String(payload?.targetOrgId || '').trim()
+  if (!targetUserId || !targetOrgId) {
+    return json(400, { error: 'targetUserId and targetOrgId are required.' })
+  }
+
+  const supabase = getServiceClient()
+  const { data: organization, error: organizationError } = await supabase
+    .from('organizations')
+    .select('id, owner_id')
+    .eq('id', targetOrgId)
+    .maybeSingle()
+  if (organizationError) return json(500, { error: organizationError.message || 'Could not verify contractor organization.' })
+  if (!organization?.id || !organization?.owner_id) {
+    return json(404, { error: 'Contractor organization not found.' })
+  }
+
+  const { data: targetProfile, error: targetProfileError } = await supabase
+    .from('profiles')
+    .select('id, org_id')
+    .eq('id', targetUserId)
+    .maybeSingle()
+  if (targetProfileError) return json(500, { error: targetProfileError.message || 'Could not verify target user.' })
+  if (!targetProfile?.id) {
+    return json(404, { error: 'Canonical profile-backed user not found.' })
+  }
+  if (String(targetProfile.org_id || '').trim() !== targetOrgId) {
+    return json(403, { error: 'Target user does not belong to the selected contractor organization.' })
+  }
+
+  const restoredAt = new Date().toISOString()
+  const { data: restoredProfile, error: restoreError } = await supabase
+    .from('profiles')
+    .update({
+      is_active: true,
+      restored_by: user.id,
+      restored_at: restoredAt,
+    })
+    .eq('id', targetUserId)
+    .eq('org_id', targetOrgId)
+    .select('id')
+    .maybeSingle()
+  if (restoreError) return json(500, { error: restoreError.message || 'Could not restore user access.' })
+  if (!restoredProfile?.id) {
+    return json(404, { error: 'Target user does not belong to the selected contractor organization.' })
+  }
+
+  return json(200, {
+    ok: true,
+    targetUserId,
+    targetOrgId,
+    restoredAt,
   })
 }
 
@@ -1164,6 +1471,8 @@ export async function handler(event: NetlifyEvent) {
     if (action === 'founder_contractor_admin') return await handleFounderContractorAdmin(user)
     if (action === 'founder_contractor_presence') return await handleFounderContractorPresence(user)
     if (action === 'founder_contractor_presence_detail') return await handleFounderContractorPresenceDetail(event, user)
+    if (action === 'founder_revoke_user_access') return await handleFounderRevokeUserAccess(event, user)
+    if (action === 'founder_restore_user_access') return await handleFounderRestoreUserAccess(event, user)
     if (action === 'founder_agreement_artifact') return await handleFounderAgreementArtifact(event, user)
     if (action === 'founder_revoke_beta_invite') return await handleFounderRevokeBetaInvite(event, user)
     if (action === 'founder_delete_beta_invite') return await handleFounderDeleteBetaInvite(event, user)

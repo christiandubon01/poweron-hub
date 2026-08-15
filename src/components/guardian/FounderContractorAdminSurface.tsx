@@ -23,8 +23,11 @@ import {
   type FounderContractorPresenceDetail,
   type FounderContractorPresenceSummary,
   type FounderContractorPresenceStatus,
+  type FounderContractorUserAccess,
   type FounderSecurityAlert,
   type FounderSignedAgreement,
+  restoreFounderUserAccess,
+  revokeFounderUserAccess,
 } from '@/services/founderContractorAdminService'
 import {
   countUnreadGuardianSecurityAlerts,
@@ -137,23 +140,34 @@ function DetailItem({ label, value }: { label: string; value: string }) {
   )
 }
 
-function SurfaceSection({
-  title,
-  description,
-  children,
-}: {
+/** Compact label-value row for the modal header metadata grid. */
+function CompactMeta({ label, value, badge }: { label: string; value?: string; badge?: string }) {
+  return (
+    <div className="flex min-w-0 items-baseline gap-1.5">
+      <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-gray-600">{label}:</span>
+      {badge
+        ? <Badge value={badge} />
+        : <span className="truncate text-xs text-gray-300">{value ?? '-'}</span>
+      }
+    </div>
+  )
+}
+
+/** Card used in the 2×2 modal grid. */
+function ModalCard({ title, description, scrollable, children }: {
   title: string
   description?: string
+  scrollable?: boolean
   children: React.ReactNode
 }) {
   return (
-    <section className="mt-6 rounded-xl border border-gray-800 bg-[#11121a]">
-      <div className="border-b border-gray-800 px-4 py-3">
+    <div className="flex flex-col rounded-xl border border-gray-800 bg-[#11121a]">
+      <div className="shrink-0 border-b border-gray-800 px-4 py-3">
         <div className="text-sm font-semibold text-gray-100">{title}</div>
-        {description ? <div className="mt-1 text-xs text-gray-500">{description}</div> : null}
+        {description ? <div className="mt-0.5 text-[11px] text-gray-500">{description}</div> : null}
       </div>
-      <div className="p-4">{children}</div>
-    </section>
+      <div className={`p-4${scrollable ? ' max-h-72 overflow-auto' : ''}`}>{children}</div>
+    </div>
   )
 }
 
@@ -223,6 +237,8 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
   const [presenceDetailsByOrganizationId, setPresenceDetailsByOrganizationId] = useState<Record<string, FounderContractorPresenceDetail>>({})
   const [presenceDetailLoadingOrganizationId, setPresenceDetailLoadingOrganizationId] = useState<string | null>(null)
   const [presenceDetailError, setPresenceDetailError] = useState<string | null>(null)
+  const [userAccessMutatingUserId, setUserAccessMutatingUserId] = useState<string | null>(null)
+  const [userAccessNotice, setUserAccessNotice] = useState<string | null>(null)
   const [securityAlertsOpen, setSecurityAlertsOpen] = useState(false)
   const [lastSeenAt, setLastSeenAt] = useState<string | null>(null)
   const reportStateRef = useRef<FounderContractorAdminReport | null>(null)
@@ -256,6 +272,7 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
   const selectedPresenceDetail = selectedOrganizationId
     ? (presenceDetailsByOrganizationId[selectedOrganizationId] ?? null)
     : null
+  const selectedUserAccess = selectedPresenceDetail?.userAccess ?? []
   const selectedPresenceDetailLoading = Boolean(
     selectedOrganizationId
     && presenceDetailLoadingOrganizationId === selectedOrganizationId
@@ -288,6 +305,17 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
   useEffect(() => {
     presenceDetailsRef.current = presenceDetailsByOrganizationId
   }, [presenceDetailsByOrganizationId])
+
+  // Close contractor detail modal on Escape
+  const showContractorDetail = section === 'accounts' && !!selectedAccount
+  useEffect(() => {
+    if (!showContractorDetail) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSelectedOrganizationId(null)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [showContractorDetail])
 
   const loadReport = useCallback(async () => {
     if (loadReportRef.current) return loadReportRef.current
@@ -528,7 +556,6 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
       ? 'Contractor Beta Invites'
       : 'Signed NDAs / Agreements'
   const Icon = section === 'accounts' ? Building2 : section === 'invites' ? Mail : FileText
-  const showContractorDetail = section === 'accounts' && !!selectedAccount
   const refreshing = section === 'accounts' ? presenceManualRefreshing : loading
 
   async function handleRefresh() {
@@ -545,9 +572,43 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
     }
   }
 
+  async function handleUserAccessAction(userAccess: FounderContractorUserAccess) {
+    if (!selectedAccount) return
+
+    const userLabel = userAccess.email || userAccess.name || userAccess.userId
+    const confirmed = userAccess.isActive
+      ? window.confirm(
+        `Revoke PowerOn Hub access for ${userLabel}?\n\nThis will end their active app sessions and prevent new access until restored.`,
+      )
+      : window.confirm(
+        `Restore PowerOn Hub access for ${userLabel}?\n\nThey will be able to authenticate normally again.`,
+      )
+    if (!confirmed) return
+
+    setUserAccessMutatingUserId(userAccess.userId)
+    setUserAccessNotice(null)
+    setError(null)
+    try {
+      const result = userAccess.isActive
+        ? await revokeFounderUserAccess(userAccess.userId, selectedAccount.organizationId)
+        : await restoreFounderUserAccess(userAccess.userId, selectedAccount.organizationId)
+
+      await refreshAccounts('manual')
+      if (result.cleanupWarning) {
+        setUserAccessNotice(result.cleanupWarning)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'User access could not be updated.')
+    } finally {
+      setUserAccessMutatingUserId(null)
+    }
+  }
+
   return (
     <>
+      {/* ── Main surface container ─────────────────────────────────────────── */}
       <div className="flex h-full min-h-[420px] flex-col overflow-hidden rounded-xl border border-gray-800 bg-[#0d0e14]">
+        {/* Outer header */}
         <div className="flex items-center justify-between border-b border-gray-800 bg-[#11121a] px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-gray-200">
             <Icon size={14} className="text-green-500" />
@@ -609,306 +670,113 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
           </div>
         )}
 
+        {userAccessNotice && (
+          <div className="mx-4 mt-4 flex items-start gap-2 rounded-lg border border-amber-900/60 bg-amber-950/20 p-3 text-xs text-amber-200">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <span>{userAccessNotice}</span>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex flex-1 items-center justify-center gap-2 text-xs text-gray-500"><Loader2 size={15} className="animate-spin" /> Loading founder data...</div>
         ) : !report ? null : section === 'accounts' ? (
-          <div className="flex flex-1 flex-col xl:flex-row">
-            <div className={`min-w-0 flex-1 overflow-auto ${showContractorDetail ? 'border-b border-gray-800 xl:border-b-0 xl:border-r xl:border-gray-800' : ''}`}>
-              {securityAlertsOpen && (
-                <div className="border-b border-gray-800 bg-[#0f1018] p-4">
-                  <div className="rounded-xl border border-gray-800 bg-[#11121a]">
-                    <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
-                      <div>
-                        <div className="text-sm font-semibold text-gray-100">Security Alerts</div>
-                        <div className="mt-1 text-xs text-gray-500">Unread noise is limited to public IP changes and newly seen devices. History remains in the account drawer.</div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setSecurityAlertsOpen(false)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-gray-700 bg-gray-900 px-2.5 py-1.5 text-[11px] font-medium text-gray-300"
-                      >
-                        <X size={12} /> Close
-                      </button>
-                    </div>
-                    <div className="p-4">
-                      {presenceError && presenceAlerts.length === 0 ? (
-                        <div className="rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
-                          Security alerts unavailable
-                        </div>
-                      ) : presenceAlerts.length === 0 ? (
-                        <div className="rounded-lg border border-dashed border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
-                          No new-device or public-IP change alerts recorded yet.
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-                          {presenceAlerts.map((alert) => (
-                            <div key={`${alert.organizationId}-${alert.sessionId}-${alert.occurredAt}-${alert.alertKind}`} className="rounded-lg border border-gray-800 bg-[#0f1018] p-3">
-                              <div className="flex items-center justify-between gap-3">
-                                <div>
-                                  <div className="text-sm font-semibold text-gray-100">{alertHeadline(alert)}</div>
-                                  <div className="mt-1 text-xs text-gray-500">{alert.organizationName} · {alert.userLabel} · {alert.deviceLabel}</div>
-                                </div>
-                                <PresenceBadge status={alert.alertKind === 'ip_changed' ? 'offline' : 'locked'} />
-                              </div>
-                              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                <DetailItem label="Occurred" value={formatDate(alert.occurredAt)} />
-                                <DetailItem label="Public IP" value={alert.publicIp || 'Not recorded'} />
-                                <DetailItem label="Previous public IP" value={alert.previousPublicIp || 'Not applicable'} />
-                                <DetailItem label="Alert type" value={alert.alertKind === 'ip_changed' ? 'Public IP changed' : 'New device detected'} />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {presenceError && (
-                <div className="m-4 mb-0 rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
-                  {presenceShowingStaleData
-                    ? 'Showing the last successful live presence snapshot while Guardian refresh is temporarily unavailable.'
-                    : 'Presence unavailable'}
-                </div>
-              )}
-
-              <table className="w-full border-collapse">
-                <thead className="sticky top-0 bg-[#0f1018]"><tr>{['Company / Org', 'Owner Email', 'Created', 'Onboarding', 'NDA State', 'Classification', 'Account Status'].map((label) => <th key={label} className={headerCell}>{label}</th>)}</tr></thead>
-                <tbody className="divide-y divide-gray-800">
-                  {report.contractorAccounts.map((account) => {
-                    const isSelected = account.organizationId === selectedOrganizationId
-                    const summary = presenceByOrg.get(account.organizationId)
-                    return (
-                      <tr
-                        key={account.organizationId}
-                        onClick={() => setSelectedOrganizationId(account.organizationId)}
-                        className={`cursor-pointer transition-colors ${isSelected ? 'bg-green-950/20' : 'hover:bg-white/5'}`}
-                        aria-label={`Open contractor account details for ${account.organizationName || account.organizationId}`}
-                      >
-                        <td className={bodyCell}>
-                          <span className="font-semibold text-gray-100">{account.organizationName || 'Unnamed organization'}</span>
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <PresenceBadge status={summary?.status ?? 'no_history'} />
-                            <span className="text-[11px] text-gray-500">{presenceNarrative(summary)}</span>
-                          </div>
-                          {summary?.hasHistory && (
-                            <div className="mt-1 text-[11px] text-gray-600">
-                              Last interaction {formatOptionalDate(summary.lastInteractionAt)} · Last heartbeat {formatOptionalDate(summary.lastHeartbeatAt)}
-                            </div>
-                          )}
-                        </td>
-                        <td className={bodyCell}>{account.ownerEmail || 'Not available'}</td>
-                        <td className={bodyCell}>{formatDate(account.createdAt)}</td>
-                        <td className={bodyCell}><Badge value={account.onboardingStatus} /></td>
-                        <td className={bodyCell}><Badge value={account.ndaState} /></td>
-                        <td className={bodyCell}><Badge value={account.classification} /></td>
-                        <td className={bodyCell}><Badge value={account.accountStatus} /></td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {showContractorDetail && selectedAccount && (
-              <aside className="w-full shrink-0 border-t border-gray-800 bg-[#10121a] xl:w-[520px] xl:border-l xl:border-t-0 xl:border-gray-800">
-                <div className="h-full overflow-auto p-4">
-                  <div className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-gray-800 bg-[#11121a] p-4">
+          // ── Contractor Accounts — full-width table (detail opens as modal) ──
+          <div className="flex-1 overflow-auto">
+            {securityAlertsOpen && (
+              <div className="border-b border-gray-800 bg-[#0f1018] p-4">
+                <div className="rounded-xl border border-gray-800 bg-[#11121a]">
+                  <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
                     <div>
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-600">Selected contractor</div>
-                      <div className="mt-2 text-lg font-semibold text-gray-100">{selectedAccount.organizationName || 'Unnamed organization'}</div>
-                      <div className="mt-1 text-xs text-gray-400">{selectedAccount.organizationId}</div>
+                      <div className="text-sm font-semibold text-gray-100">Security Alerts</div>
+                      <div className="mt-1 text-xs text-gray-500">Unread noise is limited to public IP changes and newly seen devices. History remains in the account drawer.</div>
                     </div>
                     <button
                       type="button"
-                      onClick={() => setSelectedOrganizationId(null)}
-                      aria-label="Close contractor details"
-                      className="inline-flex items-center gap-1 rounded-lg border border-gray-700 bg-gray-900 px-2.5 py-1.5 text-[11px] font-medium text-gray-300 hover:bg-gray-800"
+                      onClick={() => setSecurityAlertsOpen(false)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-gray-700 bg-gray-900 px-2.5 py-1.5 text-[11px] font-medium text-gray-300"
                     >
                       <X size={12} /> Close
                     </button>
                   </div>
-
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <DetailItem label="Company / Organization" value={selectedAccount.organizationName || 'Unnamed organization'} />
-                    <DetailItem label="Owner full name" value={selectedAccount.ownerFullName || 'Unknown'} />
-                    <DetailItem label="Owner email" value={selectedAccount.ownerEmail || 'Not available'} />
-                    <DetailItem label="Organization ID" value={selectedAccount.organizationId} />
-                    <DetailItem label="Created date" value={formatDate(selectedAccount.createdAt)} />
-                    <DetailItem label="Account status" value={selectedAccount.accountStatus.replace(/_/g, ' ')} />
-                    <DetailItem label="Onboarding status" value={selectedAccount.onboardingStatus.replace(/_/g, ' ')} />
-                    <DetailItem label="Pilot / beta classification" value={selectedAccount.classification.replace(/_/g, ' ')} />
-                    <DetailItem label="NDA state" value={selectedAccount.ndaState.replace(/_/g, ' ')} />
-                    <DetailItem label="Signed agreement summary" value={buildAgreementSummary(selectedAccount)} />
-                    <DetailItem label="Employee count" value={String(selectedAccount.employeeCount)} />
-                    <DetailItem label="User / member count" value={String(selectedAccount.memberCount)} />
-                    <DetailItem label="Last activity" value={formatOptionalDate(selectedAccount.lastActivityAt)} />
-                    <DetailItem label="Last login" value={formatOptionalDate(selectedAccount.lastLoginAt)} />
-                  </div>
-
-                  <SurfaceSection
-                    title="Live Presence / Sessions"
-                    description="Status is derived from server time using fresh heartbeat, visibility, and recent human interaction. Last interaction stays separate from last heartbeat."
-                  >
-                    {presenceLoading && !presenceHasSnapshot ? (
-                      <div className="rounded-lg border border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
-                        <div className="inline-flex items-center gap-2">
-                          <Loader2 size={14} className="animate-spin" /> Loading live presence...
-                        </div>
-                      </div>
-                    ) : presenceError && !presenceHasSnapshot ? (
+                  <div className="p-4">
+                    {presenceError && presenceAlerts.length === 0 ? (
                       <div className="rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
-                        Presence unavailable
+                        Security alerts unavailable
                       </div>
-                    ) : !selectedPresenceSummary || selectedPresenceSummary.status === 'no_history' ? (
+                    ) : presenceAlerts.length === 0 ? (
                       <div className="rounded-lg border border-dashed border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
-                        No session history
+                        No new-device or public-IP change alerts recorded yet.
                       </div>
                     ) : (
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <DetailItem label="Current status" value={selectedPresenceSummary.status.replace(/_/g, ' ')} />
-                        <DetailItem label="Live devices" value={String(selectedPresenceSummary.liveDeviceCount)} />
-                        <DetailItem label="Live sessions" value={String(selectedPresenceSummary.liveSessionCount)} />
-                        <DetailItem label="Recent session rows" value={String(selectedPresenceSummary.sessionCount)} />
-                        <DetailItem label="Last interaction" value={formatOptionalDate(selectedPresenceSummary.lastInteractionAt)} />
-                        <DetailItem label="Last heartbeat" value={formatOptionalDate(selectedPresenceSummary.lastHeartbeatAt)} />
-                      </div>
-                    )}
-
-                    {presenceDetailShowingStaleData && (
-                      <div className="mt-4 rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
-                        Showing the last successful session history while Guardian refresh is temporarily unavailable.
-                      </div>
-                    )}
-
-                    {presenceDetailError && !selectedPresenceDetail && (
-                      <div className="mt-4 rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
-                        Presence unavailable
-                      </div>
-                    )}
-                  </SurfaceSection>
-
-                  <SurfaceSection
-                    title="Devices"
-                    description="Tabs remain separate sessions. Device counts are based on stable device IDs; missing device IDs stay grouped under a safe Unknown device label."
-                  >
-                    {selectedPresenceDetailLoading ? (
-                      <div className="rounded-lg border border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
-                        <div className="inline-flex items-center gap-2">
-                          <Loader2 size={14} className="animate-spin" /> Loading live presence...
-                        </div>
-                      </div>
-                    ) : selectedPresenceDetail && selectedPresenceDetail.deviceGroups.length > 0 ? (
                       <div className="space-y-3">
-                        {selectedPresenceDetail.deviceGroups.map((device) => (
-                          <div key={device.deviceKey} className="rounded-lg border border-gray-800 bg-[#0f1018] p-3">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <div className="text-sm font-semibold text-gray-100">{device.deviceLabel}</div>
-                              <PresenceBadge status={device.status} />
-                              <span className="text-[11px] text-gray-500">{device.liveSessionCount} live tab/session{device.liveSessionCount === 1 ? '' : 's'}</span>
-                            </div>
-                            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                              <DetailItem label="Recent module" value={`${device.recentModuleLabel}${device.recentModule ? ` (${device.recentModule})` : ''}`} />
-                              <DetailItem label="Device type" value={device.deviceType} />
-                              <DetailItem label="First session" value={formatOptionalDate(device.startedAt)} />
-                              <DetailItem label="Last interaction" value={formatOptionalDate(device.lastInteractionAt)} />
-                              <DetailItem label="Last heartbeat" value={formatOptionalDate(device.lastHeartbeatAt)} />
-                              <DetailItem label="Current status" value={device.status.replace(/_/g, ' ')} />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="rounded-lg border border-dashed border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
-                        No device grouping is available yet for this contractor.
-                      </div>
-                    )}
-                  </SurfaceSection>
-
-                  <SurfaceSection
-                    title="Recent Sessions"
-                    description="Shows session status, normalized module, visibility, session start, last human interaction, last heartbeat, and ended reason when present."
-                  >
-                    {selectedPresenceDetailLoading ? (
-                      <div className="rounded-lg border border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
-                        <div className="inline-flex items-center gap-2">
-                          <Loader2 size={14} className="animate-spin" /> Loading live presence...
-                        </div>
-                      </div>
-                    ) : selectedPresenceDetail && selectedPresenceDetail.sessions.length > 0 ? (
-                      <div className="space-y-3">
-                        {selectedPresenceDetail.sessions.map((session) => (
-                          <div key={session.sessionId} className="rounded-lg border border-gray-800 bg-[#0f1018] p-3">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <div className="text-sm font-semibold text-gray-100">{session.userLabel}</div>
-                              <PresenceBadge status={session.status} />
-                              <span className="text-[11px] text-gray-500">{session.deviceLabel}</span>
-                            </div>
-                            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                              <DetailItem label="Module" value={`${session.moduleLabel}${session.module ? ` (${session.module})` : ''}`} />
-                              <DetailItem label="Visibility" value={session.visibilityState === 'hidden' ? 'Backgrounded' : 'Visible'} />
-                              <DetailItem label="Session started" value={formatOptionalDate(session.startedAt)} />
-                              <DetailItem label="Last interaction" value={formatOptionalDate(session.lastInteractionAt)} />
-                              <DetailItem label="Last heartbeat" value={formatOptionalDate(session.lastHeartbeatAt)} />
-                              <DetailItem label="Ended" value={formatOptionalDate(session.endedAt)} />
-                              <DetailItem label="Ended reason" value={session.endedReason ? session.endedReason.replace(/_/g, ' ') : 'Live / not ended'} />
-                              <DetailItem label="Session ID" value={session.sessionId} />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="rounded-lg border border-dashed border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
-                        No recent new-runtime sessions found for this contractor.
-                      </div>
-                    )}
-                  </SurfaceSection>
-
-                  <SurfaceSection
-                    title="Security History"
-                    description="Founder-only trusted public-IP evidence from the server path. Raw IP never leaves Guardian founder surfaces."
-                  >
-                    {selectedPresenceDetailLoading ? (
-                      <div className="rounded-lg border border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
-                        <div className="inline-flex items-center gap-2">
-                          <Loader2 size={14} className="animate-spin" /> Loading live presence...
-                        </div>
-                      </div>
-                    ) : presenceDetailError && !selectedPresenceDetail ? (
-                      <div className="rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
-                        Security history unavailable
-                      </div>
-                    ) : selectedPresenceDetail && selectedPresenceDetail.securityHistory.length > 0 ? (
-                      <div className="space-y-3">
-                        {selectedPresenceDetail.securityHistory.map((event) => (
-                          <div key={`${event.sessionId || 'session'}-${event.occurredAt}-${event.eventType}`} className="rounded-lg border border-gray-800 bg-[#0f1018] p-3">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <div className="text-sm font-semibold text-gray-100">
-                                {event.eventType === 'ip_changed' ? 'Public IP changed' : 'Session started'}
+                        {presenceAlerts.map((alert) => (
+                          <div key={`${alert.organizationId}-${alert.sessionId}-${alert.occurredAt}-${alert.alertKind}`} className="rounded-lg border border-gray-800 bg-[#0f1018] p-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-semibold text-gray-100">{alertHeadline(alert)}</div>
+                                <div className="mt-1 text-xs text-gray-500">{alert.organizationName} · {alert.userLabel} · {alert.deviceLabel}</div>
                               </div>
-                              {event.isAlert ? <PresenceBadge status="locked" /> : null}
-                              {event.isNewDevice ? <Badge value="new_device" /> : null}
+                              <PresenceBadge status={alert.alertKind === 'ip_changed' ? 'offline' : 'locked'} />
                             </div>
-                            <div className="mt-1 text-xs text-gray-500">{event.userLabel} · {event.deviceLabel}</div>
                             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                              <DetailItem label="Occurred" value={formatDate(event.occurredAt)} />
-                              <DetailItem label="Public IP" value={event.publicIp || 'Not recorded'} />
-                              <DetailItem label="Previous public IP" value={event.previousPublicIp || 'Not applicable'} />
-                              <DetailItem label="Event type" value={event.eventType === 'ip_changed' ? 'ip_changed' : 'session_started'} />
+                              <DetailItem label="Occurred" value={formatDate(alert.occurredAt)} />
+                              <DetailItem label="Public IP" value={alert.publicIp || 'Not recorded'} />
+                              <DetailItem label="Previous public IP" value={alert.previousPublicIp || 'Not applicable'} />
+                              <DetailItem label="Alert type" value={alert.alertKind === 'ip_changed' ? 'Public IP changed' : 'New device detected'} />
                             </div>
                           </div>
                         ))}
                       </div>
-                    ) : (
-                      <div className="rounded-lg border border-dashed border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
-                        No trusted public-IP security events recorded yet.
-                      </div>
                     )}
-                  </SurfaceSection>
+                  </div>
                 </div>
-              </aside>
+              </div>
             )}
+
+            {presenceError && (
+              <div className="m-4 mb-0 rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
+                {presenceShowingStaleData
+                  ? 'Showing the last successful live presence snapshot while Guardian refresh is temporarily unavailable.'
+                  : 'Presence unavailable'}
+              </div>
+            )}
+
+            <table className="w-full border-collapse">
+              <thead className="sticky top-0 bg-[#0f1018]"><tr>{['Company / Org', 'Owner Email', 'Created', 'Onboarding', 'NDA State', 'Classification', 'Account Status'].map((label) => <th key={label} className={headerCell}>{label}</th>)}</tr></thead>
+              <tbody className="divide-y divide-gray-800">
+                {report.contractorAccounts.map((account) => {
+                  const isSelected = account.organizationId === selectedOrganizationId
+                  const summary = presenceByOrg.get(account.organizationId)
+                  return (
+                    <tr
+                      key={account.organizationId}
+                      onClick={() => setSelectedOrganizationId(account.organizationId)}
+                      className={`cursor-pointer transition-colors ${isSelected ? 'bg-green-950/20' : 'hover:bg-white/5'}`}
+                      aria-label={`Open contractor account details for ${account.organizationName || account.organizationId}`}
+                    >
+                      <td className={bodyCell}>
+                        <span className="font-semibold text-gray-100">{account.organizationName || 'Unnamed organization'}</span>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <PresenceBadge status={summary?.status ?? 'no_history'} />
+                          <span className="text-[11px] text-gray-500">{presenceNarrative(summary)}</span>
+                        </div>
+                        {summary?.hasHistory && (
+                          <div className="mt-1 text-[11px] text-gray-600">
+                            Last interaction {formatOptionalDate(summary.lastInteractionAt)} · Last heartbeat {formatOptionalDate(summary.lastHeartbeatAt)}
+                          </div>
+                        )}
+                      </td>
+                      <td className={bodyCell}>{account.ownerEmail || 'Not available'}</td>
+                      <td className={bodyCell}>{formatDate(account.createdAt)}</td>
+                      <td className={bodyCell}><Badge value={account.onboardingStatus} /></td>
+                      <td className={bodyCell}><Badge value={account.ndaState} /></td>
+                      <td className={bodyCell}><Badge value={account.classification} /></td>
+                      <td className={bodyCell}><Badge value={account.accountStatus} /></td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         ) : section === 'invites' ? (
           <div className="flex-1 overflow-auto">
@@ -1014,6 +882,7 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
         )}
       </div>
 
+      {/* ── Agreement quick-view modal ─────────────────────────────────────── */}
       {agreementPreview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
           <div className="flex h-[85vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-gray-800 bg-[#0d0e14] shadow-2xl">
@@ -1036,6 +905,286 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
               src={agreementPreview.url}
               className="min-h-0 flex-1 bg-white"
             />
+          </div>
+        </div>
+      )}
+
+      {/* ── Contractor detail modal — 2×2 grid layout ─────────────────────── */}
+      {showContractorDetail && selectedAccount && (
+        <div
+          data-testid="contractor-detail-modal"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setSelectedOrganizationId(null) }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Contractor details: ${selectedAccount.organizationName || selectedAccount.organizationId}`}
+            className="flex max-h-[90vh] w-full max-w-[1400px] flex-col overflow-hidden rounded-2xl border border-gray-800 bg-[#0d0e14] shadow-2xl"
+          >
+            {/* Modal header — compact metadata */}
+            <div className="shrink-0 border-b border-gray-800 bg-[#11121a] px-5 py-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-600">Contractor account</div>
+                  <div className="mt-0.5 truncate text-xl font-semibold leading-tight text-gray-100">
+                    {selectedAccount.organizationName || 'Unnamed organization'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedOrganizationId(null)}
+                  aria-label="Close contractor details"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-gray-700 bg-gray-900 px-2.5 py-1.5 text-[11px] font-medium text-gray-300 hover:bg-gray-800"
+                >
+                  <X size={12} /> Close
+                </button>
+              </div>
+
+              {/* Compact metadata grid */}
+              <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3 lg:grid-cols-4">
+                <CompactMeta label="Owner full name" value={selectedAccount.ownerFullName || 'Unknown'} />
+                <CompactMeta label="Owner email" value={selectedAccount.ownerEmail || 'Not available'} />
+                <CompactMeta label="Organization ID" value={selectedAccount.organizationId} />
+                <CompactMeta label="Account status" badge={selectedAccount.accountStatus} />
+                <CompactMeta label="Onboarding status" badge={selectedAccount.onboardingStatus} />
+                <CompactMeta label="NDA state" badge={selectedAccount.ndaState} />
+                <CompactMeta label="Classification" badge={selectedAccount.classification} />
+                <CompactMeta label="Last activity" value={formatOptionalDate(selectedAccount.lastActivityAt)} />
+                <CompactMeta label="Last login" value={formatOptionalDate(selectedAccount.lastLoginAt)} />
+                <CompactMeta label="Employee count" value={String(selectedAccount.employeeCount)} />
+                <CompactMeta label="User / member count" value={String(selectedAccount.memberCount)} />
+                <CompactMeta label="Agreement" value={buildAgreementSummary(selectedAccount)} />
+              </div>
+
+              <div className="mt-4 rounded-xl border border-gray-800 bg-[#0f1018] p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-600">Users / Access</div>
+                    <div className="mt-1 text-[11px] text-gray-500">Canonical profile-backed users for this contractor organization.</div>
+                  </div>
+                </div>
+
+                {selectedPresenceDetailLoading && !selectedPresenceDetail ? (
+                  <div className="mt-3 text-xs text-gray-500">Loading user access...</div>
+                ) : selectedUserAccess.length === 0 ? (
+                  <div className="mt-3 text-xs text-gray-500">No canonical profile-backed users were returned for this contractor.</div>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    {selectedUserAccess.map((userAccess) => (
+                      <div key={userAccess.userId} className="flex flex-col gap-2 rounded-lg border border-gray-800 bg-[#11121a] px-3 py-2 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-semibold text-gray-100">{userAccess.name || userAccess.email || userAccess.userId}</div>
+                          <div className="truncate text-[11px] text-gray-500">
+                            {[userAccess.email || 'No email', userAccess.role || 'No role'].join(' · ')}
+                          </div>
+                          <div className="mt-1 text-[11px] text-gray-500">
+                            {userAccess.isActive
+                              ? (userAccess.restoredAt ? `Restored ${formatOptionalDate(userAccess.restoredAt)}` : 'Access is active')
+                              : `Revoked ${formatOptionalDate(userAccess.revokedAt)}`}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge value={userAccess.isActive ? 'active' : 'revoked'} />
+                          <button
+                            type="button"
+                            disabled={userAccessMutatingUserId === userAccess.userId}
+                            onClick={() => void handleUserAccessAction(userAccess)}
+                            className={`inline-flex items-center rounded border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide disabled:opacity-50 ${
+                              userAccess.isActive
+                                ? 'border-red-900/60 bg-red-950/40 text-red-300'
+                                : 'border-green-900/60 bg-green-950/30 text-green-300'
+                            }`}
+                          >
+                            {userAccessMutatingUserId === userAccess.userId
+                              ? (userAccess.isActive ? 'Revoking...' : 'Restoring...')
+                              : (userAccess.isActive ? 'Revoke Access' : 'Restore Access')}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {selectedPresenceDetail?.employeeOnlyIdentityNotice && (
+                  <div className="mt-3 rounded-lg border border-amber-900/60 bg-amber-950/20 px-3 py-2 text-[11px] text-amber-200">
+                    {selectedPresenceDetail.employeeOnlyIdentityNotice}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 2×2 operational grid */}
+            <div className="min-h-0 flex-1 overflow-auto p-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+
+                {/* TOP LEFT — Live Presence / Sessions */}
+                <ModalCard
+                  title="Live Presence / Sessions"
+                  description="Status derived from server time using heartbeat, visibility, and recent human interaction."
+                >
+                  {presenceLoading && !presenceHasSnapshot ? (
+                    <div className="rounded-lg border border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
+                      <div className="inline-flex items-center gap-2">
+                        <Loader2 size={14} className="animate-spin" /> Loading live presence...
+                      </div>
+                    </div>
+                  ) : presenceError && !presenceHasSnapshot ? (
+                    <div className="rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
+                      Presence unavailable
+                    </div>
+                  ) : !selectedPresenceSummary || selectedPresenceSummary.status === 'no_history' ? (
+                    <div className="rounded-lg border border-dashed border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
+                      No session history
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      <DetailItem label="Current status" value={selectedPresenceSummary.status.replace(/_/g, ' ')} />
+                      <DetailItem label="Live devices" value={String(selectedPresenceSummary.liveDeviceCount)} />
+                      <DetailItem label="Live sessions" value={String(selectedPresenceSummary.liveSessionCount)} />
+                      <DetailItem label="Recent session rows" value={String(selectedPresenceSummary.sessionCount)} />
+                      <DetailItem label="Last interaction" value={formatOptionalDate(selectedPresenceSummary.lastInteractionAt)} />
+                      <DetailItem label="Last heartbeat" value={formatOptionalDate(selectedPresenceSummary.lastHeartbeatAt)} />
+                    </div>
+                  )}
+
+                  {presenceDetailShowingStaleData && (
+                    <div className="mt-4 rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
+                      Showing the last successful session history while Guardian refresh is temporarily unavailable.
+                    </div>
+                  )}
+                  {presenceDetailError && !selectedPresenceDetail && (
+                    <div className="mt-4 rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
+                      Presence unavailable
+                    </div>
+                  )}
+                </ModalCard>
+
+                {/* TOP RIGHT — Devices */}
+                <ModalCard
+                  title="Devices"
+                  description="Tabs remain separate sessions. Device counts based on stable device IDs; unknown device IDs grouped safely."
+                >
+                  {selectedPresenceDetailLoading ? (
+                    <div className="rounded-lg border border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
+                      <div className="inline-flex items-center gap-2">
+                        <Loader2 size={14} className="animate-spin" /> Loading live presence...
+                      </div>
+                    </div>
+                  ) : selectedPresenceDetail && selectedPresenceDetail.deviceGroups.length > 0 ? (
+                    <div className="space-y-3">
+                      {selectedPresenceDetail.deviceGroups.map((device) => (
+                        <div key={device.deviceKey} className="rounded-lg border border-gray-800 bg-[#0f1018] p-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-sm font-semibold text-gray-100">{device.deviceLabel}</div>
+                            <PresenceBadge status={device.status} />
+                            <span className="text-[11px] text-gray-500">{device.liveSessionCount} live tab/session{device.liveSessionCount === 1 ? '' : 's'}</span>
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <DetailItem label="Recent module" value={`${device.recentModuleLabel}${device.recentModule ? ` (${device.recentModule})` : ''}`} />
+                            <DetailItem label="Device type" value={device.deviceType} />
+                            <DetailItem label="First session" value={formatOptionalDate(device.startedAt)} />
+                            <DetailItem label="Last interaction" value={formatOptionalDate(device.lastInteractionAt)} />
+                            <DetailItem label="Last heartbeat" value={formatOptionalDate(device.lastHeartbeatAt)} />
+                            <DetailItem label="Current status" value={device.status.replace(/_/g, ' ')} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
+                      No device grouping is available yet for this contractor.
+                    </div>
+                  )}
+                </ModalCard>
+
+                {/* BOTTOM LEFT — Recent Sessions */}
+                <ModalCard
+                  title="Recent Sessions"
+                  description="Session status, module, visibility, start, last interaction, last heartbeat, and ended reason."
+                  scrollable
+                >
+                  {selectedPresenceDetailLoading ? (
+                    <div className="rounded-lg border border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
+                      <div className="inline-flex items-center gap-2">
+                        <Loader2 size={14} className="animate-spin" /> Loading live presence...
+                      </div>
+                    </div>
+                  ) : selectedPresenceDetail && selectedPresenceDetail.sessions.length > 0 ? (
+                    <div className="space-y-3">
+                      {selectedPresenceDetail.sessions.map((session) => (
+                        <div key={session.sessionId} className="rounded-lg border border-gray-800 bg-[#0f1018] p-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-sm font-semibold text-gray-100">{session.userLabel}</div>
+                            <PresenceBadge status={session.status} />
+                            <span className="text-[11px] text-gray-500">{session.deviceLabel}</span>
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <DetailItem label="Module" value={`${session.moduleLabel}${session.module ? ` (${session.module})` : ''}`} />
+                            <DetailItem label="Visibility" value={session.visibilityState === 'hidden' ? 'Backgrounded' : 'Visible'} />
+                            <DetailItem label="Session started" value={formatOptionalDate(session.startedAt)} />
+                            <DetailItem label="Last interaction" value={formatOptionalDate(session.lastInteractionAt)} />
+                            <DetailItem label="Last heartbeat" value={formatOptionalDate(session.lastHeartbeatAt)} />
+                            <DetailItem label="Ended" value={formatOptionalDate(session.endedAt)} />
+                            <DetailItem label="Ended reason" value={session.endedReason ? session.endedReason.replace(/_/g, ' ') : 'Live / not ended'} />
+                            <DetailItem label="Session ID" value={session.sessionId} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
+                      No recent new-runtime sessions found for this contractor.
+                    </div>
+                  )}
+                </ModalCard>
+
+                {/* BOTTOM RIGHT — Security History */}
+                <ModalCard
+                  title="Security History"
+                  description="Founder-only trusted public-IP evidence from the server path. Raw IP never leaves Guardian founder surfaces."
+                  scrollable
+                >
+                  {selectedPresenceDetailLoading ? (
+                    <div className="rounded-lg border border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
+                      <div className="inline-flex items-center gap-2">
+                        <Loader2 size={14} className="animate-spin" /> Loading live presence...
+                      </div>
+                    </div>
+                  ) : presenceDetailError && !selectedPresenceDetail ? (
+                    <div className="rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
+                      Security history unavailable
+                    </div>
+                  ) : selectedPresenceDetail && selectedPresenceDetail.securityHistory.length > 0 ? (
+                    <div className="space-y-3">
+                      {selectedPresenceDetail.securityHistory.map((event) => (
+                        <div key={`${event.sessionId || 'session'}-${event.occurredAt}-${event.eventType}`} className="rounded-lg border border-gray-800 bg-[#0f1018] p-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-sm font-semibold text-gray-100">
+                              {event.eventType === 'ip_changed' ? 'Public IP changed' : 'Session started'}
+                            </div>
+                            {event.isAlert ? <PresenceBadge status="locked" /> : null}
+                            {event.isNewDevice ? <Badge value="new_device" /> : null}
+                          </div>
+                          <div className="mt-1 text-xs text-gray-500">{event.userLabel} · {event.deviceLabel}</div>
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <DetailItem label="Occurred" value={formatDate(event.occurredAt)} />
+                            <DetailItem label="Public IP" value={event.publicIp || 'Not recorded'} />
+                            <DetailItem label="Previous public IP" value={event.previousPublicIp || 'Not applicable'} />
+                            <DetailItem label="Event type" value={event.eventType === 'ip_changed' ? 'ip_changed' : 'session_started'} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
+                      No trusted public-IP security events recorded yet.
+                    </div>
+                  )}
+                </ModalCard>
+
+              </div>
+            </div>
           </div>
         </div>
       )}

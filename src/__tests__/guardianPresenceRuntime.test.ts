@@ -14,6 +14,8 @@ const mockCall = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/auth/sessionStoreClient', () => ({
   sessionStoreCall: mockCall,
+  isSessionStoreAccessUnavailableError: (error: unknown) =>
+    typeof error === 'object' && error !== null && (error as { code?: string }).code === 'access_unavailable',
 }))
 
 import { presenceMonitor, normalizeModule, HEARTBEAT_MS, INACTIVITY_LIMIT_MS }
@@ -742,6 +744,40 @@ describe('[RUNTIME] 3B2A-2. window focus — resume authority', () => {
   })
 })
 
+describe('[RUNTIME] access_unavailable live-session handling', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    mockCall.mockReset()
+  })
+  afterEach(() => {
+    presenceMonitor.stop()
+    vi.useRealTimers()
+  })
+
+  it('session.validate access_unavailable stops the monitor and calls the access callback', async () => {
+    const onAccessUnavailable = vi.fn()
+    presenceMonitor.start({ sessionId: 'revoked-session', onInactivityLock: vi.fn(), onAccessUnavailable })
+    mockCall.mockRejectedValueOnce({ code: 'access_unavailable' })
+
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_MS)
+    expect(onAccessUnavailable).toHaveBeenCalledTimes(1)
+
+    mockCall.mockClear()
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_MS)
+    expect(mockCall).not.toHaveBeenCalled()
+  })
+
+  it('session.interaction access_unavailable stops the monitor and calls the access callback', async () => {
+    const onAccessUnavailable = vi.fn()
+    presenceMonitor.start({ sessionId: 'revoked-session', onInactivityLock: vi.fn(), onAccessUnavailable })
+    mockCall.mockRejectedValueOnce({ code: 'access_unavailable' })
+
+    document.dispatchEvent(new Event('pointerdown'))
+    await vi.runAllTimersAsync()
+    expect(onAccessUnavailable).toHaveBeenCalledTimes(1)
+  })
+})
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MIGRATION GUARD
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -753,10 +789,16 @@ describe('migration guard', () => {
     expect(migrations).toContain('122_guardian_presence_security.sql')
   })
 
-  it('no migrations numbered 123 or higher exist', () => {
+  it('migrations 123, 124, and 125 exist', () => {
+    expect(migrations).toContain('123_guardian_user_access_revocation.sql')
+    expect(migrations).toContain('124_inactive_user_rls_boundary.sql')
+    expect(migrations).toContain('125_inactive_user_authenticated_data_gate.sql')
+  })
+
+  it('no migrations numbered 126 or higher exist', () => {
     const beyond = migrations.filter((name: string) => {
       const m = name.match(/^(\d+)_/)
-      return m ? parseInt(m[1], 10) > 122 : false
+      return m ? parseInt(m[1], 10) > 125 : false
     })
     expect(beyond).toEqual([])
   })

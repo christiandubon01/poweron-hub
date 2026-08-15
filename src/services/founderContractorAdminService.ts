@@ -135,6 +135,28 @@ export interface FounderSecurityHistoryEntry {
   isAlert: boolean
 }
 
+export interface FounderContractorUserAccess {
+  userId: string
+  name: string | null
+  email: string | null
+  role: string | null
+  isActive: boolean
+  revokedAt: string | null
+  revokedBy: string | null
+  restoredAt: string | null
+  restoredBy: string | null
+}
+
+export interface FounderUserAccessMutationResult {
+  ok: true
+  targetUserId: string
+  targetOrgId: string
+  revokedAt?: string
+  restoredAt?: string
+  invalidatedSessionCount?: number
+  cleanupWarning?: string | null
+}
+
 export interface FounderContractorPresenceDetail {
   organizationId: string
   organizationName: string
@@ -143,6 +165,9 @@ export interface FounderContractorPresenceDetail {
   deviceGroups: FounderPresenceDeviceGroup[]
   sessions: FounderPresenceSessionRecord[]
   securityHistory: FounderSecurityHistoryEntry[]
+  userAccess: FounderContractorUserAccess[]
+  employeeOnlyIdentityCount: number
+  employeeOnlyIdentityNotice: string | null
 }
 
 export interface FounderContractorAdminReport {
@@ -200,6 +225,44 @@ export async function fetchFounderContractorPresenceDetail(
   })
   if (!response.ok) {
     throw new Error(await response.text() || `Founder contractor presence detail failed (${response.status})`)
+  }
+  return response.json()
+}
+
+export async function revokeFounderUserAccess(
+  targetUserId: string,
+  targetOrgId: string,
+): Promise<FounderUserAccessMutationResult> {
+  const response = await fetch('/.netlify/functions/pilot-telemetry', {
+    method: 'POST',
+    headers: await authedJsonHeaders(),
+    body: JSON.stringify({
+      action: 'founder_revoke_user_access',
+      targetUserId,
+      targetOrgId,
+    }),
+  })
+  if (!response.ok) {
+    throw new Error(await response.text() || `Founder revoke user access failed (${response.status})`)
+  }
+  return response.json()
+}
+
+export async function restoreFounderUserAccess(
+  targetUserId: string,
+  targetOrgId: string,
+): Promise<FounderUserAccessMutationResult> {
+  const response = await fetch('/.netlify/functions/pilot-telemetry', {
+    method: 'POST',
+    headers: await authedJsonHeaders(),
+    body: JSON.stringify({
+      action: 'founder_restore_user_access',
+      targetUserId,
+      targetOrgId,
+    }),
+  })
+  if (!response.ok) {
+    throw new Error(await response.text() || `Founder restore user access failed (${response.status})`)
   }
   return response.json()
 }

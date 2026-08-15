@@ -28,8 +28,12 @@ describe('GUARDIAN-3B3 live presence + founder security UI (SOURCE-CONTRACT)', (
   it('adds founder-only presence summary and detail server actions to the canonical pilot telemetry route', () => {
     expect(FUNCTION_SOURCE).toContain("action === 'founder_contractor_presence'")
     expect(FUNCTION_SOURCE).toContain("action === 'founder_contractor_presence_detail'")
+    expect(FUNCTION_SOURCE).toContain("action === 'founder_revoke_user_access'")
+    expect(FUNCTION_SOURCE).toContain("action === 'founder_restore_user_access'")
     expect(FUNCTION_SOURCE).toContain('async function handleFounderContractorPresence(user: any)')
     expect(FUNCTION_SOURCE).toContain('async function handleFounderContractorPresenceDetail(event: NetlifyEvent, user: any)')
+    expect(FUNCTION_SOURCE).toContain('async function handleFounderRevokeUserAccess(event: NetlifyEvent, user: any)')
+    expect(FUNCTION_SOURCE).toContain('async function handleFounderRestoreUserAccess(event: NetlifyEvent, user: any)')
   })
 
   it('guards both new founder-only actions before privileged reads begin', () => {
@@ -59,9 +63,19 @@ describe('GUARDIAN-3B3 live presence + founder security UI (SOURCE-CONTRACT)', (
     expect(SURFACE_SOURCE).toContain('Security Alerts')
     expect(SURFACE_SOURCE).toContain('Live Presence / Sessions')
     expect(SURFACE_SOURCE).toContain('Security History')
+    expect(SURFACE_SOURCE).toContain('Users / Access')
     expect(SURFACE_SOURCE).toContain('createGuardianPollingLoop')
     expect(SURFACE_SOURCE).toContain('fetchFounderContractorPresenceReport')
     expect(SURFACE_SOURCE).toContain('fetchFounderContractorPresenceDetail')
+  })
+
+  it('returns compact founder-only canonical user access fields on the contractor detail payload', () => {
+    expect(FUNCTION_SOURCE).toContain('loadFounderContractorUserAccess')
+    expect(FUNCTION_SOURCE).toContain('userAccess: accessData.userAccess')
+    expect(FUNCTION_SOURCE).toContain('employeeOnlyIdentityNotice')
+    expect(SERVICE_SOURCE).toContain('export interface FounderContractorUserAccess')
+    expect(SERVICE_SOURCE).toContain('revokeFounderUserAccess')
+    expect(SERVICE_SOURCE).toContain('restoreFounderUserAccess')
   })
 
   it('resolves initial loading into stable empty states after a successful empty response', () => {

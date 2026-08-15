@@ -17,7 +17,10 @@
  *   - focus + visibilitychange deduped: only one resume check per RESUME_DEDUP_MS
  */
 
-import { sessionStoreCall } from '@/lib/auth/sessionStoreClient'
+import {
+  isSessionStoreAccessUnavailableError,
+  sessionStoreCall,
+} from '@/lib/auth/sessionStoreClient'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -60,6 +63,7 @@ class PresenceMonitor {
   private deviceId: string | null = null
   private currentModule: string = 'home'
   private onInactivityLock: (() => void) | null = null
+  private onAccessUnavailable: (() => void) | null = null
 
   private heartbeatTimer:  ReturnType<typeof setInterval> | null = null
   private inactivityTimer: ReturnType<typeof setInterval> | null = null
@@ -76,6 +80,7 @@ class PresenceMonitor {
     deviceId?: string
     initialModule?: string
     onInactivityLock: () => void
+    onAccessUnavailable?: () => void
   }): void {
     this.stop()  // clear any prior monitor — ensures single timer per tab
 
@@ -83,6 +88,7 @@ class PresenceMonitor {
     this.deviceId               = config.deviceId ?? null
     this.currentModule          = config.initialModule ?? 'home'
     this.onInactivityLock       = config.onInactivityLock
+    this.onAccessUnavailable    = config.onAccessUnavailable ?? null
     this.lastInteractionAt      = Date.now()
     this.lastInteractionReportAt = 0
     this.lastResumeAt           = 0
@@ -125,6 +131,7 @@ class PresenceMonitor {
     this.sessionId       = null
     this.deviceId        = null
     this.onInactivityLock = null
+    this.onAccessUnavailable = null
   }
 
   /**
@@ -153,7 +160,13 @@ class PresenceMonitor {
 
   private async reportInteraction(): Promise<void> {
     if (!this.sessionId) return
-    await sessionStoreCall('session.interaction', { sessionId: this.sessionId })
+    try {
+      await sessionStoreCall('session.interaction', { sessionId: this.sessionId })
+    } catch (error) {
+      if (isSessionStoreAccessUnavailableError(error)) {
+        this.handleAccessUnavailable()
+      }
+    }
   }
 
   private async heartbeat(): Promise<void> {
@@ -164,12 +177,24 @@ class PresenceMonitor {
 
   private async sendValidate(module: string, visibilityState: string): Promise<void> {
     if (!this.sessionId) return
-    await sessionStoreCall('session.validate', {
-      sessionId: this.sessionId,
-      module,
-      visibilityState,
-      ...(this.deviceId ? { deviceId: this.deviceId } : {}),
-    })
+    try {
+      await sessionStoreCall('session.validate', {
+        sessionId: this.sessionId,
+        module,
+        visibilityState,
+        ...(this.deviceId ? { deviceId: this.deviceId } : {}),
+      })
+    } catch (error) {
+      if (isSessionStoreAccessUnavailableError(error)) {
+        this.handleAccessUnavailable()
+      }
+    }
+  }
+
+  private handleAccessUnavailable(): void {
+    const cb = this.onAccessUnavailable
+    this.stop()
+    cb?.()
   }
 
   private checkInactivity(): void {

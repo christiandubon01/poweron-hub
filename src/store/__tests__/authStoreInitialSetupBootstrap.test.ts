@@ -15,6 +15,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { markPasswordRecoveryRequest } from '@/lib/auth/passwordRecovery'
+import { SessionStoreAccessUnavailableError } from '@/lib/auth/sessionStoreClient'
 
 const deps = vi.hoisted(() => ({
   hydrationResult: { success: true, merged: false, status: 'no_remote' } as any,
@@ -895,6 +896,47 @@ describe('COMM-PROD-1 D — PIN persistence across reload', () => {
     expect(useAuthStore.getState()).toMatchObject({
       status: 'needs_passcode',
       profile: { id: CUSTOMER_ZERO, org_id: 'power-on-org' },
+    })
+  })
+})
+
+describe('GUARDIAN-3B3E3 access-unavailable auth gate', () => {
+  it('routes a directly inactive canonical profile to the generic access-unavailable state', async () => {
+    deps.profiles.set(CONTRACTOR, {
+      ...deps.profiles.get(CONTRACTOR),
+      is_active: false,
+    })
+    deps.getSession.mockResolvedValue({ data: { session: { user: { id: CONTRACTOR } } } })
+    deps.validateAppSession.mockResolvedValue(null)
+
+    await useAuthStore.getState().initialize()
+
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'access_unavailable',
+      user: { id: CONTRACTOR },
+      profile: { id: CONTRACTOR, is_active: false },
+      appSession: null,
+      tenantDataReady: false,
+      tenantUserId: null,
+      error: 'Reach out to app team for more info.',
+    })
+    expect(deps.authSignOut).not.toHaveBeenCalled()
+  })
+
+  it('converts a live session.validate access denial into the generic access-unavailable gate', async () => {
+    deps.getSession.mockResolvedValue({ data: { session: { user: { id: CONTRACTOR } } } })
+    deps.validateAppSession.mockRejectedValue(new SessionStoreAccessUnavailableError())
+
+    await useAuthStore.getState().initialize()
+
+    expect(useAuthStore.getState()).toMatchObject({
+      status: 'access_unavailable',
+      user: { id: CONTRACTOR },
+      profile: { id: CONTRACTOR, org_id: 'contractor-org' },
+      appSession: null,
+      tenantDataReady: false,
+      tenantUserId: null,
+      error: 'Reach out to app team for more info.',
     })
   })
 })

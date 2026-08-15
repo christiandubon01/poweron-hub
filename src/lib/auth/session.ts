@@ -138,12 +138,15 @@ export async function destroyAppSession(
 ): Promise<void> {
   const storedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY)
   const sessionId = expectedSessionId ?? storedSessionId
-  if (sessionId) {
-    await sessionStoreCall('session.destroy', { sessionId, endedReason: endedReason ?? null })
-  }
-  // Targeted cleanup must not remove a newer operation's current session ID.
-  if (!expectedSessionId || storedSessionId === expectedSessionId) {
-    sessionStorage.removeItem(SESSION_STORAGE_KEY)
+  try {
+    if (sessionId) {
+      await sessionStoreCall('session.destroy', { sessionId, endedReason: endedReason ?? null })
+    }
+  } finally {
+    // Targeted cleanup must not remove a newer operation's current session ID.
+    if (!expectedSessionId || storedSessionId === expectedSessionId) {
+      sessionStorage.removeItem(SESSION_STORAGE_KEY)
+    }
   }
 }
 
