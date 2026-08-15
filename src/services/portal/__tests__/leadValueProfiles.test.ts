@@ -1,7 +1,37 @@
 /**
- * LEAD-SRC-2B — owner job value profiles + portal conversion without fabrication.
+ * LEAD-SRC-2B/2F — owner job value profiles + portal conversion without fabrication.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+vi.mock('@/services/hunter/resolveHunterTenantId', () => {
+  class HunterTenantAuthorityError extends Error {
+    code: string
+    constructor(code: string, message?: string) {
+      super(message ?? code)
+      this.name = 'HunterTenantAuthorityError'
+      this.code = code
+    }
+  }
+  return {
+    HunterTenantAuthorityError,
+    isHunterTenantAuthorityError: (err: unknown) =>
+      !!err &&
+      typeof err === 'object' &&
+      (err as any).name === 'HunterTenantAuthorityError',
+    resolveHunterTenantId: async () => {
+      const { supabase } = await import('@/lib/supabase')
+      const tid = (supabase as any).__state?.tenantId as string | null
+      if (!tid) throw new HunterTenantAuthorityError('hunter_tenant_unmapped')
+      return tid
+    },
+    resolveHunterTenantIdOrNull: async () => {
+      const { supabase } = await import('@/lib/supabase')
+      return ((supabase as any).__state?.tenantId as string | null) ?? null
+    },
+  }
+})
 
 vi.mock('@/lib/supabase', () => {
   const state = {
@@ -11,20 +41,6 @@ vi.mock('@/lib/supabase', () => {
   }
 
   const from = (table: string) => {
-    if (table === 'user_tenants') {
-      return {
-        select: () => ({
-          eq: () => ({
-            limit: () => ({
-              single: async () =>
-                state.tenantId
-                  ? { data: { tenant_id: state.tenantId }, error: null }
-                  : { data: null, error: { message: 'no tenant' } },
-            }),
-          }),
-        }),
-      }
-    }
     if (table === 'tenant_settings') {
       return {
         select: () => ({
@@ -47,7 +63,6 @@ vi.mock('@/lib/supabase', () => {
           },
           _opts?: unknown
         ) => {
-          // Simulate RLS / caller scoping: only allow writes for the active tenant.
           if (payload.tenant_id !== state.tenantId) {
             return { error: { message: 'cross-tenant write denied' } }
           }
@@ -80,8 +95,10 @@ import {
   LEAD_VALUE_PROFILES_SETTING_KEY,
   deleteLeadValueProfile,
   estimatedValueFromProfile,
+  getCurrentTenantIdForProfiles,
   loadLeadValueProfiles,
   matchLeadValueProfile,
+  resolvePortalLeadEstimatedValue,
   saveLeadValueProfiles,
   upsertLeadValueProfile,
   validateLeadValueProfile,
@@ -351,5 +368,116 @@ describe('LEAD-SRC-2B conversion receipt nullability unchanged', () => {
     expect(src).toContain('convertedValue: params.convertedValue ?? null')
     expect(src).toContain('lead_estimated_value: draft.leadEstimatedValue ?? null')
     expect(src).toContain('converted_value: draft.convertedValue ?? null')
+  })
+})
+
+describe('LEAD-SRC-2F shared tenant authority for profiles + conversion', () => {
+  beforeEach(() => {
+    mockState.user = { id: 'user-1' }
+    mockState.tenantId = 'tenant-mapped'
+    mockState.rows.clear()
+  })
+
+  it('16. Settings and convert use the same shared resolver module', () => {
+    const profilesSrc = readFileSync(
+      resolve(process.cwd(), 'src/services/portal/leadValueProfiles.ts'),
+      'utf8'
+    )
+    const portalSrc = readFileSync(
+      resolve(process.cwd(), 'src/services/portal/portalService.ts'),
+      'utf8'
+    )
+    expect(profilesSrc).toContain('resolveHunterTenantId')
+    expect(portalSrc).toContain('resolveHunterTenantId')
+    expect(profilesSrc).not.toMatch(/from\('user_tenants'\)[\s\S]{0,120}limit\(1\)/)
+    expect(portalSrc).not.toMatch(/from\('user_tenants'\)[\s\S]{0,120}limit\(1\)/)
+  })
+
+  it('17. EV profile 450–900 on mapped tenant → estimated_value 675', async () => {
+    const profiles = upsertLeadValueProfile([], {
+      name: 'EV Charger',
+      serviceCategory: 'ev_charger',
+      minValue: 450,
+      maxValue: 900,
+    })
+    await saveLeadValueProfiles('tenant-mapped', 'user-1', profiles)
+    const value = await resolvePortalLeadEstimatedValue({
+      tenantId: 'tenant-mapped',
+      serviceCategory: 'ev_charger',
+    })
+    expect(value).toBe(675)
+    expect(await getCurrentTenantIdForProfiles()).toBe('tenant-mapped')
+  })
+
+  it('18. unmatched category → null', async () => {
+    const profiles = upsertLeadValueProfile([], {
+      name: 'EV Charger',
+      serviceCategory: 'ev_charger',
+      minValue: 450,
+      maxValue: 900,
+    })
+    await saveLeadValueProfiles('tenant-mapped', 'user-1', profiles)
+    await expect(
+      resolvePortalLeadEstimatedValue({
+        tenantId: 'tenant-mapped',
+        serviceCategory: 'panel_upgrade',
+      })
+    ).resolves.toBeNull()
+  })
+
+  it('19. lead insert path stamps the same mapped tenant used for profile load', () => {
+    const portalSrc = readFileSync(
+      resolve(process.cwd(), 'src/services/portal/portalService.ts'),
+      'utf8'
+    )
+    expect(portalSrc).toContain('tenantId = await resolveHunterTenantId()')
+    expect(portalSrc).toContain('tenant_id:        tenantId')
+    expect(portalSrc).toContain('resolvePortalLeadEstimatedValue({')
+    expect(portalSrc).toContain('tenantId,')
+    expect(portalSrc).toContain('serviceCategory: request.service_category')
+  })
+
+  it('20. multiple user_tenants rows cannot diverge Settings vs convert (shared resolver only)', () => {
+    const resolverSrc = readFileSync(
+      resolve(process.cwd(), 'src/services/hunter/resolveHunterTenantId.ts'),
+      'utf8'
+    )
+    expect(resolverSrc).not.toMatch(/limit\s*\(\s*1\s*\)/i)
+    expect(resolverSrc).toContain('.eq(\'tenant_id\', mappedTenantId)')
+  })
+
+  it('21. existing profile JSON format remains compatible', async () => {
+    const profiles = upsertLeadValueProfile([], {
+      name: 'EV Charger',
+      serviceCategory: 'ev_charger',
+      minValue: 450,
+      maxValue: 900,
+    })
+    await saveLeadValueProfiles('tenant-mapped', 'user-1', profiles)
+    const raw = mockState.rows.get(
+      `tenant-mapped::${LEAD_VALUE_PROFILES_SETTING_KEY}`
+    )?.setting_value as { version: number; profiles: unknown[] }
+    expect(raw.version).toBe(1)
+    expect(raw.profiles[0]).toMatchObject({
+      name: 'EV Charger',
+      serviceCategory: 'ev_charger',
+      minValue: 450,
+      maxValue: 900,
+    })
+    await expect(loadLeadValueProfiles('tenant-mapped')).resolves.toEqual(profiles)
+  })
+
+  it('22. no historical lead/profile rewrite path added', () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        'supabase/migrations/126_organization_hunter_tenant_authority.sql'
+      ),
+      'utf8'
+    )
+    expect(migration).not.toContain('UPDATE public.hunter_leads')
+    expect(migration).not.toContain('UPDATE public.tenant_settings')
+    expect(migration).not.toContain('lead_value_profiles_v1')
+    expect(migration).not.toContain('INSERT INTO public.user_tenants')
   })
 })

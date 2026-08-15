@@ -144,6 +144,29 @@ const supabaseMock = {
 
 vi.mock('@/lib/supabase', () => ({ supabase: supabaseMock }))
 
+vi.mock('@/services/hunter/resolveHunterTenantId', () => ({
+  resolveHunterTenantId: async () => {
+    if (!state.tenantRow?.tenant_id) {
+      const err: any = new Error('hunter_tenant_unmapped')
+      err.name = 'HunterTenantAuthorityError'
+      err.code = 'hunter_tenant_unmapped'
+      throw err
+    }
+    return state.tenantRow.tenant_id as string
+  },
+  resolveHunterTenantIdOrNull: async () => state.tenantRow?.tenant_id ?? null,
+  HunterTenantAuthorityError: class HunterTenantAuthorityError extends Error {
+    code: string
+    constructor(code: string, message?: string) {
+      super(message ?? code)
+      this.name = 'HunterTenantAuthorityError'
+      this.code = code
+    }
+  },
+  isHunterTenantAuthorityError: (err: unknown) =>
+    !!err && typeof err === 'object' && (err as any).name === 'HunterTenantAuthorityError',
+}))
+
 // Imported after the mock is registered.
 const {
   buildReceiptDraft,

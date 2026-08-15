@@ -1227,13 +1227,13 @@ const handleMapLeadSelect = (leadId: string) => {
                 setIsFixingGeo(true)
                 setGeoFixResult(null)
                 try {
-                  const { supabase: sb } = await import('@/lib/supabase')
-                  const { data: { user } } = await sb.auth.getUser()
-                  if (!user) return
-                  const { data: t } = await (sb as any).from('user_tenants').select('tenant_id').eq('user_id', user.id).limit(1).single()
-                  if (!t?.tenant_id) return
+                  const { resolveHunterTenantIdOrNull } = await import(
+                    '@/services/hunter/resolveHunterTenantId'
+                  )
+                  const tenantId = await resolveHunterTenantIdOrNull()
+                  if (!tenantId) return
                   const { triggerGeocodingBackfill } = await import('@/services/geocoding/GeocodingClient')
-                  const result = await triggerGeocodingBackfill(t.tenant_id)
+                  const result = await triggerGeocodingBackfill(tenantId)
                   setGeoFixResult(result)
                   fetchLeads()
                 } finally {

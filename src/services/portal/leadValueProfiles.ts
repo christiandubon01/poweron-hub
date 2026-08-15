@@ -7,6 +7,10 @@
  */
 
 import { supabase } from '@/lib/supabase'
+import {
+  HunterTenantAuthorityError,
+  resolveHunterTenantId,
+} from '@/services/hunter/resolveHunterTenantId'
 
 export const LEAD_VALUE_PROFILES_SETTING_KEY = 'lead_value_profiles_v1'
 
@@ -203,18 +207,12 @@ export function estimatedValueFromProfile(
 }
 
 export async function getCurrentTenantIdForProfiles(): Promise<string | null> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return null
-  const { data, error } = await (supabase as any)
-    .from('user_tenants')
-    .select('tenant_id')
-    .eq('user_id', user.id)
-    .limit(1)
-    .single()
-  if (error || !data) return null
-  return data.tenant_id as string
+  try {
+    return await resolveHunterTenantId()
+  } catch (err) {
+    if (err instanceof HunterTenantAuthorityError) return null
+    throw err
+  }
 }
 
 export async function loadLeadValueProfiles(

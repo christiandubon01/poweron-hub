@@ -16,6 +16,7 @@ import {
   saveLeadValueProfiles,
   upsertLeadValueProfile,
 } from '@/services/portal/leadValueProfiles'
+import { HunterTenantAuthorityError } from '@/services/hunter/resolveHunterTenantId'
 
 type Draft = {
   id?: string
@@ -69,12 +70,23 @@ export function LeadValueProfilesSettings() {
         if (!user || cancelled) return
         setUserId(user.id)
         const tid = await getCurrentTenantIdForProfiles()
-        if (!tid || cancelled) return
+        if (!tid || cancelled) {
+          if (!cancelled && !tid) {
+            setError(
+              'Hunter tenant is not mapped for this organization (or you lack membership). Job Value Profiles cannot load until organizations.hunter_tenant_id is set and you have user_tenants access.'
+            )
+          }
+          return
+        }
         setTenantId(tid)
         await refresh(tid)
       } catch (err: any) {
         if (!cancelled) {
-          setError(err?.message || 'Failed to load job value profiles')
+          if (err instanceof HunterTenantAuthorityError) {
+            setError(err.message)
+          } else {
+            setError(err?.message || 'Failed to load job value profiles')
+          }
         }
       } finally {
         if (!cancelled) setLoading(false)

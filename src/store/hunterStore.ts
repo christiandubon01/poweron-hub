@@ -20,23 +20,14 @@ import {
   HunterStoreState,
   RuleType,
 } from '@/services/hunter/HunterTypes';
+import { resolveHunterTenantIdOrNull } from '@/services/hunter/resolveHunterTenantId';
 
 /**
- * Resolves the current user's tenant_id by joining auth to user_tenants.
- * Returns null if user is not authenticated or has no tenant membership.
+ * Resolves the mapped Hunter tenant for the active organization.
  * All Hunter CRUD actions scope by this tenant_id.
  */
 async function getCurrentTenantId(): Promise<string | null> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-  const { data, error } = await (supabase as any)
-    .from('user_tenants')
-    .select('tenant_id')
-    .eq('user_id', user.id)
-    .limit(1)
-    .single();
-  if (error || !data) return null;
-  return data.tenant_id;
+  return resolveHunterTenantIdOrNull();
 }
 
 async function getCurrentUserId(): Promise<string | null> {
@@ -73,7 +64,8 @@ export const useHunterStore = create<HunterStoreState>()(
       // ===== Actions =====
 
       /**
-       * Fetch leads from Supabase (RLS auto-scopes to current tenant via user_tenants).
+       * Fetch leads from Supabase (RLS scopes via user_tenants membership;
+       * write paths use the mapped organization Hunter tenant).
        */
       fetchLeads: async () => {
         set({ isLoading: true });
@@ -116,18 +108,13 @@ export const useHunterStore = create<HunterStoreState>()(
 
           if (leadsNeedingDistance.length > 0) {
             try {
-              const { data: tenantRow } = await (supabase as any)
-                .from('user_tenants')
-                .select('tenant_id')
-                .eq('user_id', (await supabase.auth.getUser()).data.user?.id)
-                .limit(1)
-                .single();
+              const homeTenantId = tenantId;
 
-              if (tenantRow?.tenant_id) {
+              if (homeTenantId) {
                 const { data: setting } = await (supabase as any)
                   .from('tenant_settings')
                   .select('setting_value')
-                  .eq('tenant_id', tenantRow.tenant_id)
+                  .eq('tenant_id', homeTenantId)
                   .eq('setting_key', 'home_base_address')
                   .maybeSingle();
 

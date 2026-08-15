@@ -16,6 +16,7 @@ import { GoogleMap, InfoWindowF } from '@react-google-maps/api'
 import { supabase } from '@/lib/supabase'
 import type { HunterLead } from './HunterLeadCard'
 import { GOOGLE_MAPS_BROWSER_KEY, useV15rGoogleMapsLoader } from '@/utils/googleMapsLoader'
+import { resolveHunterTenantIdOrNull } from '@/services/hunter/resolveHunterTenantId'
 import {
   applyRouteFocusVisibility,
   createRouteOperationController,
@@ -753,19 +754,12 @@ export function HunterMap({ leads, onLeadSelect }: HunterMapProps) {
   useEffect(() => {
     let cancelled = false
     async function loadHomeBase() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const { data: tenants } = await (supabase as any)
-        .from('user_tenants')
-        .select('tenant_id')
-        .eq('user_id', user.id)
-        .limit(1)
-        .maybeSingle()
-      if (!tenants?.tenant_id) return
+      const tenantId = await resolveHunterTenantIdOrNull()
+      if (!tenantId) return
       const { data: setting } = await (supabase as any)
         .from('tenant_settings')
         .select('setting_value')
-        .eq('tenant_id', tenants.tenant_id)
+        .eq('tenant_id', tenantId)
         .eq('setting_key', 'home_base_address')
         .maybeSingle()
       if (cancelled) return

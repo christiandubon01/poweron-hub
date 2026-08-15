@@ -244,10 +244,10 @@ describe('GUARDIAN-3B4 identity / authority / wiring', () => {
     expect(PRESENCE).not.toContain('pilot')
   })
 
-  it('no migration 126 and existing schema remains sufficient', () => {
+  it('telemetry schema remains sufficient; LEAD-SRC-2F owns migration 126', () => {
     expect(SHARED).toContain("'module_entered'")
     expect(SHARED).toContain("'engagement_window'")
-    expect(MIGRATION_FILES.some((name) => name.startsWith('126_'))).toBe(false)
+    expect(MIGRATION_FILES.some((name) => name.startsWith('126_organization_hunter_tenant'))).toBe(true)
     expect(TELEMETRY_SCHEMA).toContain('event_name')
     expect(TELEMETRY_SCHEMA).toContain('module')
     expect(TELEMETRY_SCHEMA).toContain('metadata')

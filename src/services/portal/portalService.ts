@@ -12,6 +12,10 @@
 import { supabase } from '@/lib/supabase'
 import { geocodeAddressViaEdge, triggerGeocodingBackfill } from '@/services/geocoding/GeocodingClient'
 import { resolvePortalLeadEstimatedValue } from '@/services/portal/leadValueProfiles'
+import {
+  isHunterTenantAuthorityError,
+  resolveHunterTenantId,
+} from '@/services/hunter/resolveHunterTenantId'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -67,19 +71,6 @@ export interface PortalTrackerState {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-async function getCurrentTenantId(): Promise<string | null> {
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
-  const { data, error } = await (supabase as any)
-    .from('user_tenants')
-    .select('tenant_id')
-    .eq('user_id', user.id)
-    .limit(1)
-    .single()
-  if (error || !data) return null
-  return data.tenant_id
-}
 
 async function getCurrentUserId(): Promise<string | null> {
   const { data: { user } } = await supabase.auth.getUser()
@@ -351,13 +342,23 @@ export async function sendPortalReviewRequest({
  * Returns the new hunter lead id, or null on failure.
  */
 export async function convertToLead(request: PortalRequest): Promise<string | null> {
-  const [tenantId, userId, organizationId] = await Promise.all([
-    getCurrentTenantId(),
+  let tenantId: string
+  try {
+    tenantId = await resolveHunterTenantId()
+  } catch (err) {
+    if (isHunterTenantAuthorityError(err)) {
+      console.error(`[portalService] convertToLead: ${err.code}`, err.message)
+      throw err
+    }
+    throw err
+  }
+
+  const [userId, organizationId] = await Promise.all([
     getCurrentUserId(),
     getCurrentOrganizationId(),
   ])
 
-  if (!tenantId || !userId || !organizationId) {
+  if (!userId || !organizationId) {
     console.error('[portalService] convertToLead: unauthorized organization or missing identity')
     return null
   }

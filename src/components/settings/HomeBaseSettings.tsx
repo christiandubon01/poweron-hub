@@ -12,6 +12,7 @@ import React, { useState, useEffect } from 'react'
 import { MapPin, Save, Edit2, RotateCcw, CheckCircle, AlertCircle, Loader } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { geocodeAddressViaEdge, triggerGeocodingBackfill } from '@/services/geocoding/GeocodingClient'
+import { resolveHunterTenantIdOrNull } from '@/services/hunter/resolveHunterTenantId'
 
 interface HomeBaseData {
   address: string
@@ -30,16 +31,7 @@ type SaveState =
   | { type: 'error'; message: string }
 
 async function getCurrentTenantId(): Promise<string | null> {
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
-  const { data, error } = await (supabase as any)
-    .from('user_tenants')
-    .select('tenant_id')
-    .eq('user_id', user.id)
-    .limit(1)
-    .single()
-  if (error || !data) return null
-  return data.tenant_id
+  return resolveHunterTenantIdOrNull()
 }
 
 async function loadHomeBase(tenantId: string): Promise<HomeBaseData | null> {

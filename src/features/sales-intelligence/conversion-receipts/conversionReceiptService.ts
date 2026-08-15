@@ -24,6 +24,7 @@ import {
   type ConversionReceiptResult,
 } from './conversionReceiptTypes'
 import { deriveConversionSource } from './conversionReceiptSource'
+import { resolveHunterTenantIdOrNull } from '@/services/hunter/resolveHunterTenantId'
 
 /** Postgres unique_violation. */
 const UNIQUE_VIOLATION = '23505'
@@ -91,22 +92,11 @@ export function shortReceiptId(receipt: ConversionReceipt): string {
 }
 
 /**
- * Resolves the caller's tenant. Mirrors hunterStore.getCurrentTenantId so
+ * Resolves the caller's mapped Hunter tenant. Mirrors resolveHunterTenantId so
  * receipts land in exactly the tenant the leads came from.
  */
 export async function getCurrentTenantId(): Promise<string | null> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return null
-  const { data, error } = await (supabase as any)
-    .from('user_tenants')
-    .select('tenant_id')
-    .eq('user_id', user.id)
-    .limit(1)
-    .maybeSingle()
-  if (error || !data) return null
-  return data.tenant_id ?? null
+  return resolveHunterTenantIdOrNull()
 }
 
 /** Identity stamped onto the receipt. Display name is best-effort. */

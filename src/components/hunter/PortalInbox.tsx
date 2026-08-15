@@ -31,6 +31,7 @@ import {
   dismissPortalRequest,
   type PortalRequest,
 } from '@/services/portal/portalService'
+import { isHunterTenantAuthorityError } from '@/services/hunter/resolveHunterTenantId'
 import { GOOGLE_MAPS_BROWSER_KEY, loadV15rGoogleMapsScript } from '@/utils/googleMapsLoader'
 
 interface PortalInboxProps {
@@ -425,6 +426,18 @@ export function PortalInbox({ onLeadConverted }: PortalInboxProps) {
       } else {
         alert('Conversion failed — check console for details.')
         setRequests(prev => prev)  // re-show on failure
+      }
+    } catch (err) {
+      if (isHunterTenantAuthorityError(err)) {
+        const message =
+          err.code === 'hunter_tenant_unmapped'
+            ? 'Conversion blocked: this organization has no Hunter tenant mapping. Map organizations.hunter_tenant_id before converting portal requests.'
+            : err.code === 'hunter_tenant_membership_missing'
+              ? 'Conversion blocked: you do not have Hunter tenant membership for this organization mapped tenant.'
+              : err.message
+        alert(message)
+      } else {
+        alert('Conversion failed — check console for details.')
       }
     } finally {
       setConverting(null)
