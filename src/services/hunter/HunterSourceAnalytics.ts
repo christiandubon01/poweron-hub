@@ -190,9 +190,13 @@ class HunterSourceAnalyticsService {
           groupLeads.length > 0
             ? Math.round((wonLeads / groupLeads.length) * 100)
             : 0;
+        const knownValues = groupLeads
+          .map((l) => l.estimated_value)
+          .filter((v): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0)
         const avgRevenue =
-          groupLeads.reduce((sum, l) => sum + (l.estimated_value || 0), 0) /
-          groupLeads.length;
+          knownValues.length > 0
+            ? knownValues.reduce((sum, v) => sum + v, 0) / knownValues.length
+            : 0;
         const insight = this.generatePitchInsight(
           pitchAngle,
           source,
@@ -372,8 +376,19 @@ class HunterSourceAnalyticsService {
 
     const totalRevenue = leads
       .filter((l) => l.status === LeadStatus.WON)
-      .reduce((sum, l) => sum + (l.estimated_value || 0), 0);
-    const avgRevenuePerWon = won > 0 ? totalRevenue / won : 0;
+      .reduce((sum, l) => {
+        const value = l.estimated_value
+        if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return sum
+        return sum + value
+      }, 0);
+    const wonWithKnownValue = leads.filter(
+      (l) =>
+        l.status === LeadStatus.WON &&
+        typeof l.estimated_value === 'number' &&
+        Number.isFinite(l.estimated_value) &&
+        l.estimated_value > 0
+    ).length
+    const avgRevenuePerWon = wonWithKnownValue > 0 ? totalRevenue / wonWithKnownValue : 0;
 
     // Calculate average time to close (days from discovery to won)
     const closedLeads = leads.filter((l) =>

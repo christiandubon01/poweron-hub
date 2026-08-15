@@ -141,7 +141,11 @@ function setScanStatus(status: ScanStatus): void {
 function calculatePipelineValue(leads: HunterLead[]): number {
   return leads
     .filter(l => l.status !== LeadStatus.ARCHIVED && l.status !== LeadStatus.LOST)
-    .reduce((sum, lead) => sum + (lead.estimated_value || 0), 0);
+    .reduce((sum, lead) => {
+      const value = lead.estimated_value
+      if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return sum
+      return sum + value
+    }, 0);
 }
 
 /**

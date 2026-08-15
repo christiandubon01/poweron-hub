@@ -11,6 +11,7 @@
 
 import { supabase } from '@/lib/supabase'
 import { geocodeAddressViaEdge, triggerGeocodingBackfill } from '@/services/geocoding/GeocodingClient'
+import { resolvePortalLeadEstimatedValue } from '@/services/portal/leadValueProfiles'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -89,18 +90,6 @@ async function getCurrentOrganizationId(): Promise<string | null> {
   const { data, error } = await (supabase as any).rpc('user_org_id')
   if (error || typeof data !== 'string' || !data) return null
   return data
-}
-
-// ── Value range by service category ──────────────────────────────────────────
-
-const VALUE_RANGE_MAP: Record<string, { min: number; max: number }> = {
-  residential:   { min: 2000,  max: 8000  },
-  commercial:    { min: 8000,  max: 40000 },
-  solar:         { min: 10000, max: 22000 },
-  maintenance:   { min: 250,   max: 1000  },
-  panel_upgrade: { min: 3500,  max: 8000  },
-  ev_charger:    { min: 500,  max: 1500  },
-  other:         { min: 1500,  max: 6000  },
 }
 
 const PORTAL_TIMELINE_META: Record<PortalTimelineEventType, { title: string; description: string }> = {
@@ -408,8 +397,12 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
   if (request.preferred_time) descParts.push(`Preferred time: ${request.preferred_time}`)
   if (request.notes) descParts.push(request.notes)
 
-  // Value range for cost analysis
-  const valueRange = VALUE_RANGE_MAP[request.service_category ?? ''] ?? { min: 1500, max: 6000 }
+  // Owner job-value profiles (tenant_settings) — null when no matching profile.
+  // Snapshot midpoint onto the lead; later profile edits do not rewrite history.
+  const estimatedValue = await resolvePortalLeadEstimatedValue({
+    tenantId,
+    serviceCategory: request.service_category,
+  })
 
   const insertPayload = {
     tenant_id:        tenantId,
@@ -427,7 +420,7 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
     city:             request.city ?? null,
     description:      descParts.join('\n') || null,
     notes:            `Portal submission — ${request.request_type} request`,
-    estimated_value:  Math.round((valueRange.min + valueRange.max) / 2),
+    estimated_value:  estimatedValue,
     estimated_margin: 35,
     // Geocoding fields — populated below after insert
     geocoding_status: 'pending',

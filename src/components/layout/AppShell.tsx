@@ -656,12 +656,15 @@ export function AppShell({ children }: AppShellProps) {
 
       const lead = detail.lead
       console.log('[AppShell] open-estimate lead.source_tag=', lead.source_tag, 'lead.source=', lead.source)
-      const estValue = typeof lead.estimated_value === 'number' ? lead.estimated_value : 0
+      const estValue =
+        typeof lead.estimated_value === 'number' && Number.isFinite(lead.estimated_value) && lead.estimated_value > 0
+          ? lead.estimated_value
+          : null
 
       const prefill = {
         name: `${lead.contact_name || lead.company_name || 'Client'} - ${(lead.description || '').slice(0, 20)}`,
         customer: lead.contact_name || lead.company_name || '',
-        contract: estValue,
+        ...(estValue != null ? { contract: estValue } : {}),
         type: (lead.lead_type || 'Residential').charAt(0).toUpperCase() + (lead.lead_type || 'Residential').slice(1).toLowerCase(),
         notes: lead.description || '',
         leadId: lead.id,
@@ -673,8 +676,8 @@ export function AppShell({ children }: AppShellProps) {
           comparable_jobs_count: Array.isArray(lead.comparable_jobs) ? lead.comparable_jobs.length : 0,
           urgency_level: lead.urgency_level,
           urgency_reason: lead.urgency_reason,
-          value_min: estValue > 0 ? Math.round(estValue * 0.85) : undefined,
-          value_max: estValue > 0 ? Math.round(estValue * 1.15) : undefined,
+          value_min: estValue != null ? Math.round(estValue * 0.85) : undefined,
+          value_max: estValue != null ? Math.round(estValue * 1.15) : undefined,
           freshness: lead.freshness,
           source_tag: lead.source_tag || lead.source,
           contact_email: lead.email,

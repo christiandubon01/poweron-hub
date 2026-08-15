@@ -28,6 +28,7 @@ import { buildTlmaImportRows, previewTlmaImportRows } from '@/services/hunter/tl
 import { looksLikeTlmaTableHtml } from '@/services/hunter/tlmaBookmarklet'
 import TlmaBookmarkletHelper from './TlmaBookmarkletHelper'
 import { isCoachellaValleyCity } from '@/services/hunter/coachellaValleyCities'
+import { resolveHunterPanelValueRange } from '@/services/hunter/hunterLeadValueDisplay'
 
 export interface HunterPanelProps {
   leads?: HunterLead[]
@@ -149,11 +150,14 @@ const WORK_CLASS_VALUE_ESTIMATES: Record<string, { min: number; max: number }> =
 
 function translateStoreToPanel(storeLead: StoreHunterLead): any {
   const estValue = typeof storeLead.estimated_value === 'number' ? storeLead.estimated_value : null
-  const wcKey = ((storeLead as any).work_class_code ?? '').toLowerCase().trim()
-  const ptKey = ((storeLead as any).permit_type_code ?? '').toLowerCase().trim()
-  const valueRange = estValue && estValue > 0
-    ? { min: Math.round(estValue * 0.85), max: Math.round(estValue * 1.15) }
-    : WORK_CLASS_VALUE_ESTIMATES[wcKey] ?? WORK_CLASS_VALUE_ESTIMATES[ptKey]
+  const valueRange = resolveHunterPanelValueRange({
+    estimatedValue: estValue,
+    source: storeLead.source,
+    sourceTag: storeLead.source_tag,
+    workClassCode: (storeLead as any).work_class_code,
+    permitTypeCode: (storeLead as any).permit_type_code,
+    workClassEstimates: WORK_CLASS_VALUE_ESTIMATES,
+  })
 
   const discoveredDate = storeLead.discovered_at ? new Date(storeLead.discovered_at) : null
   const freshness = discoveredDate ? formatFreshness(discoveredDate) : undefined

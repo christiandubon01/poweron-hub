@@ -57,6 +57,7 @@ import {
 } from '@/services/milestoneBackupService'
 import TestDataManagementPanel from '@/components/testdata/TestDataManagementPanel'
 import { HomeBaseSettings } from '@/components/settings/HomeBaseSettings'
+import { LeadValueProfilesSettings } from '@/components/settings/LeadValueProfilesSettings'
 import { CronStatusPanel } from '@/components/hunter/CronStatusPanel'
 import {
   DEFAULT_SOLAR_ESTIMATE_SETTINGS,
@@ -2152,6 +2153,10 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
                     Home Base
                   </h4>
                   <HomeBaseSettings />
+                </div>
+
+                <div className="rounded-2xl border border-cyan-400/10 bg-slate-950/70 p-4 shadow-inner shadow-blue-950/30">
+                  <LeadValueProfilesSettings />
                 </div>
 
                 <div className="rounded-2xl border border-cyan-400/10 bg-slate-950/70 p-4 shadow-inner shadow-blue-950/30">

@@ -732,14 +732,19 @@ export function HunterLeadCard({
                     <div className="font-semibold text-gray-200">{driveTimeDisplay}</div>
                   </div>
                 )}
-                {lead.valueRange && (
+                {lead.valueRange ? (
                   <div>
                     <div className="text-gray-500 mb-0.5">Est. value</div>
                     <div className="font-semibold text-gray-200">
                       ${lead.valueRange.min.toLocaleString()} – ${lead.valueRange.max.toLocaleString()}
                     </div>
                   </div>
-                )}
+                ) : (lead.sourceTag === 'customer_portal' || lead.source === 'customer_portal') ? (
+                  <div>
+                    <div className="text-gray-500 mb-0.5">Est. value</div>
+                    <div className="font-semibold text-gray-400">Unset</div>
+                  </div>
+                ) : null}
                 {lead.marginEstimate !== undefined && (
                   <div>
                     <div className="text-gray-500 mb-0.5">Est. margin</div>

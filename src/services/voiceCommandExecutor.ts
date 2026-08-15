@@ -119,10 +119,16 @@ export class VoiceCommandExecutor {
         }
 
         const newCount = leads.filter((l: any) => l.status === 'new').length
-        const totalValue = leads.reduce((sum: number, l: any) => sum + (l.estimated_value || 0), 0)
+        const knownValues = leads
+          .map((l: any) => l.estimated_value)
+          .filter((v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0)
+        const totalValue = knownValues.reduce((sum: number, v: number) => sum + v, 0)
+        const unknownCount = leads.length - knownValues.length
 
         return {
-          responseText: `You have ${leads.length} leads. ${newCount} are new. Total estimated value is $${totalValue.toLocaleString()}.`,
+          responseText: unknownCount > 0
+            ? `You have ${leads.length} leads. ${newCount} are new. Known estimated value totals $${totalValue.toLocaleString()} across ${knownValues.length} leads (${unknownCount} unset).`
+            : `You have ${leads.length} leads. ${newCount} are new. Total estimated value is $${totalValue.toLocaleString()}.`,
           data: leads,
         }
       }
