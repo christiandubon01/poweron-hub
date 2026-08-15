@@ -1,6 +1,8 @@
 import { authedJsonHeaders } from '@/services/authedFetch'
 import { isDemoRuntimeActive } from '@/services/demoModeSafety'
 import {
+  buildProductUsageTelemetryRecord,
+  isProductUsageTelemetryEventName,
   sanitizeTelemetryMetadata,
   type PilotTelemetryEventName,
 } from '@/services/pilotTelemetryShared'
@@ -21,23 +23,102 @@ export interface FounderSupportIncidentInput {
   minutesSpent?: number | null
 }
 
+export interface FounderPilotOrganizationOption {
+  organizationId: string
+  organizationName: string
+  createdAt: string
+  classification: 'customer_zero' | 'design_partner' | 'normal' | 'internal' | 'demo' | 'unknown'
+}
+
+export interface FounderPilotOrganizationReport {
+  organizationId: string
+  organizationName: string
+  classification: 'customer_zero' | 'design_partner' | 'normal' | 'internal' | 'demo' | 'unknown'
+  createdAt: string
+  activated: boolean
+  activationAt: string | null
+  firstValueAt: string | null
+  minutesToFirstValue: number | null
+  projectsCreated: number
+  estimatesCreated: number
+  estimatesSent: number
+  employeesInvited: number
+  employeesActivated: number
+  employeeActivationRate: number | null
+  employeePortalActive: boolean
+  employeePortalActivityCount: number
+  blueprintUploads: number | null
+  blueprintUploadsAvailable: boolean
+  blueprintOpenCount: number
+  blueprintMeasurementCount: number
+  circuitPathCount: number
+  circuitArcCount: number
+  workPackageCount: number
+  blueprintActive: boolean
+  paymentsRecorded: number
+  portalRequests: number
+  featureErrorCount: number
+  founderSupportIncidentCount: number
+  founderSupportMinutes: number
+}
+
+export interface FounderPilotRecentActivity {
+  organizationId: string
+  organizationName: string
+  classification: 'customer_zero' | 'design_partner' | 'normal' | 'internal' | 'demo' | 'unknown'
+  eventName: string
+  module: string | null
+  feature: string | null
+  occurredAt: string
+  metadata: Record<string, unknown>
+}
+
+export interface FounderPilotReport {
+  generatedAt: string
+  weekStart: string
+  weekEnd: string
+  summary: {
+    totalPilotOrganizations: number
+    activatedOrganizations: number
+    weeklyActiveOrganizations: number
+    weeklyActiveUsers: number
+    blueprintUploadsAvailable: boolean
+  }
+  allOrganizations: FounderPilotOrganizationOption[]
+  organizations: FounderPilotOrganizationReport[]
+  recentActivity: FounderPilotRecentActivity[]
+}
+
 export async function trackPilotTelemetryEvent(
   input: TrackPilotTelemetryEventInput,
 ): Promise<{ ok: boolean; skipped?: boolean; error?: string }> {
   if (isDemoRuntimeActive()) return { ok: true, skipped: true }
 
   try {
+    const product = isProductUsageTelemetryEventName(input.eventName)
+      ? buildProductUsageTelemetryRecord({
+        eventName: input.eventName,
+        module: input.module,
+        metadata: input.metadata,
+        occurredAt: input.occurredAt ?? null,
+      })
+      : null
+
+    if (isProductUsageTelemetryEventName(input.eventName) && !product) {
+      return { ok: false, error: 'Invalid product usage telemetry payload.' }
+    }
+
     const response = await fetch('/.netlify/functions/pilot-telemetry', {
       method: 'POST',
       headers: await authedJsonHeaders(),
       body: JSON.stringify({
         action: 'track_event',
-        eventName: input.eventName,
-        module: input.module ?? null,
-        feature: input.feature ?? null,
-        objectId: input.objectId ?? null,
-        metadata: sanitizeTelemetryMetadata(input.metadata ?? {}),
-        occurredAt: input.occurredAt ?? null,
+        eventName: product?.eventName ?? input.eventName,
+        module: product?.module ?? input.module ?? null,
+        feature: product ? null : (input.feature ?? null),
+        objectId: product ? null : (input.objectId ?? null),
+        metadata: product?.metadata ?? sanitizeTelemetryMetadata(input.metadata ?? {}),
+        occurredAt: product?.occurredAt ?? input.occurredAt ?? null,
       }),
     })
 
@@ -93,7 +174,7 @@ export async function logFounderSupportIncident(
   }
 }
 
-export async function fetchFounderPilotReport(): Promise<any> {
+export async function fetchFounderPilotReport(): Promise<FounderPilotReport> {
   const response = await fetch('/.netlify/functions/pilot-telemetry?action=founder_report', {
     method: 'GET',
     headers: await authedJsonHeaders(),

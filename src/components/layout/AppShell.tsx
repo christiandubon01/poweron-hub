@@ -29,6 +29,8 @@ import { registerAllListeners } from '@/services/guardian/GuardianAgentConnectio
 import { isOnboardingComplete } from '@/services/onboarding/OnboardingService'
 // GUARDIAN-3B2 — live module presence (reports normalized view slug on every nav change)
 import { presenceMonitor, normalizeModule } from '@/lib/guardian/presenceMonitor'
+// GUARDIAN-3B4 — sanitized product-usage telemetry (module_entered + engagement_window)
+import { productUsageTelemetry } from '@/services/productUsageTelemetry'
 
 // v15r layout shell
 import V15rLayout from '@/components/v15r/V15rLayout'
@@ -377,9 +379,11 @@ export function AppShell({ children }: AppShellProps) {
   const [projectTab, setProjectTab] = useState('estimate')
   const [showOnboarding, setShowOnboarding] = useState(false)
 
-  // GUARDIAN-3B2: report module change on every navigation (normalized slug only)
+  // GUARDIAN-3B2 / 3B4: report module change to presence + sanitized product usage telemetry
   useEffect(() => {
-    presenceMonitor.setModule(normalizeModule(activeView))
+    const module = normalizeModule(activeView)
+    presenceMonitor.setModule(module)
+    productUsageTelemetry.setModule(module)
   }, [activeView])
 
   const { isReadOnly } = useReadOnly()

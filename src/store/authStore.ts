@@ -23,6 +23,7 @@ import { createAppSession, destroyAppSession, validateAppSession, getDeviceInfo 
 import type { AppSession } from '@/lib/auth/session'
 import { isSessionStoreAccessUnavailableError } from '@/lib/auth/sessionStoreClient'
 import { presenceMonitor } from '@/lib/guardian/presenceMonitor'
+import { productUsageTelemetry } from '@/services/productUsageTelemetry'
 import { getDeviceId } from '@/services/backupDataService'
 import { logLogin, logAudit } from '@/lib/memory/audit'
 import { hasBackupData, createEmptyBackup, saveBackupData, loadFromSupabase, setHydrating, getCacheOwner, setCacheOwner, clearCacheOwner, setActiveTenantUser, markTenantDataReady, clearActiveTenantUser, clearLocalSnapshots, hasPendingLocalSave, reconcilePendingLocalSaveForHydration, resetSessionScopedBackupClientState } from '@/services/backupDataService'
@@ -729,6 +730,15 @@ function startPresenceMonitor(sessionId: string): void {
     onInactivityLock: () => void useAuthStore.getState().lockApp('inactivity_timeout'),
     onAccessUnavailable: () => void useAuthStore.getState().enterAccessUnavailable(),
   })
+  productUsageTelemetry.start({
+    sessionId,
+    deviceId: getDeviceId(),
+  })
+}
+
+function stopPresenceMonitor(reason: 'manual_lock' | 'inactivity_timeout' | 'signout' | 'stop' = 'stop'): void {
+  presenceMonitor.stop()
+  productUsageTelemetry.stop(reason)
 }
 
 type Profile = Tables<'profiles'>
@@ -1019,7 +1029,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return
       }
       if (!profile.is_active) {
-        presenceMonitor.stop()
+        stopPresenceMonitor('stop')
         setHydrating(false)
         clearActiveTenantUser()
         resetSessionScopedBackupClientState()
@@ -1278,7 +1288,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch (err) {
       if (err instanceof StaleAuthOperationError || !isCurrent()) return
       if (isSessionStoreAccessUnavailableError(err)) {
-        presenceMonitor.stop()
+        stopPresenceMonitor('stop')
         setHydrating(false)
         clearActiveTenantUser()
         resetSessionScopedBackupClientState()
@@ -1643,7 +1653,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   // ── Skip biometric (use passcode instead) ───────────────────────────────────
   enterAccessUnavailable: async () => {
     beginAuthOperation()
-    presenceMonitor.stop()
+    stopPresenceMonitor('stop')
     clearIdentityRetryState()
     setHydrating(false)
     clearActiveTenantUser()
@@ -1674,7 +1684,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   // endedReason defaults to 'manual_lock'; inactivity passes 'inactivity_timeout'.
   lockApp: async (endedReason: 'manual_lock' | 'inactivity_timeout' = 'manual_lock') => {
     beginAuthOperation()
-    presenceMonitor.stop()
+    stopPresenceMonitor(endedReason)
     const { user } = get()
     if (user) {
       // Robust logging: if the audit trail fails, we still lock the app
@@ -1703,7 +1713,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   signOut: async () => {
     // Invalidate first: no older PIN continuation may resume during audit/session cleanup.
     beginAuthOperation()
-    presenceMonitor.stop()
+    stopPresenceMonitor('signout')
     clearIdentityRetryState()
     setHydrating(false)
     clearActiveTenantUser()

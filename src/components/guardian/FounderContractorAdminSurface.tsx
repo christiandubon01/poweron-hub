@@ -24,14 +24,19 @@ import {
   type FounderContractorPresenceSummary,
   type FounderContractorPresenceStatus,
   type FounderContractorUserAccess,
+  type FounderGlobalSecurityHistoryEntry,
   type FounderSecurityAlert,
   type FounderSignedAgreement,
   restoreFounderUserAccess,
   revokeFounderUserAccess,
 } from '@/services/founderContractorAdminService'
 import {
+  buildFounderSecurityCenterMetrics,
   countUnreadGuardianSecurityAlerts,
   createGuardianPollingLoop,
+  filterIpChangeSecurityEvents,
+  filterNewDeviceSecurityEvents,
+  filterUnreadGuardianSecurityAlerts,
   FOUNDER_GUARDIAN_POLL_INTERVAL_MS,
   readGuardianSecurityLastSeen,
   writeGuardianSecurityLastSeen,
@@ -199,8 +204,12 @@ export function hasGuardianPresenceSnapshot(input: {
   summaries: FounderContractorPresenceSummary[]
   alerts: FounderSecurityAlert[]
   serverNow: string | null
+  securityHistory?: FounderGlobalSecurityHistoryEntry[]
 }): boolean {
-  return Boolean(input.serverNow) || input.summaries.length > 0 || input.alerts.length > 0
+  return Boolean(input.serverNow)
+    || input.summaries.length > 0
+    || input.alerts.length > 0
+    || Boolean(input.securityHistory && input.securityHistory.length > 0)
 }
 
 function presenceNarrative(summary: FounderContractorPresenceSummary | null | undefined): string {
@@ -210,10 +219,25 @@ function presenceNarrative(summary: FounderContractorPresenceSummary | null | un
   return `${summary.status.replace(/_/g, ' ')} · ${summary.liveDeviceCount} live device${summary.liveDeviceCount === 1 ? '' : 's'} · ${summary.liveSessionCount} live session${summary.liveSessionCount === 1 ? '' : 's'}`
 }
 
-function alertHeadline(alert: FounderSecurityAlert): string {
+function alertHeadline(alert: Pick<FounderSecurityAlert, 'alertKind'>): string {
   return alert.alertKind === 'ip_changed'
-    ? 'Public IP changed'
-    : 'New device session started'
+    ? 'Public IP Changed'
+    : 'New Device'
+}
+
+function timelineEventLabel(event: Pick<FounderGlobalSecurityHistoryEntry, 'eventType' | 'isNewDevice'>): string {
+  if (event.eventType === 'ip_changed') return 'Public IP Changed'
+  if (event.isNewDevice) return 'New Device Session'
+  return 'Known Device Session'
+}
+
+export function openContractorFromSecurityCenter(
+  organizationId: string,
+  closeSecurityCenter: () => void,
+  openContractor: (organizationId: string) => void,
+): void {
+  closeSecurityCenter()
+  openContractor(organizationId)
 }
 
 export function FounderContractorAdminSurface({ section }: { section: FounderContractorSection }) {
@@ -240,12 +264,15 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
   const [userAccessMutatingUserId, setUserAccessMutatingUserId] = useState<string | null>(null)
   const [userAccessNotice, setUserAccessNotice] = useState<string | null>(null)
   const [securityAlertsOpen, setSecurityAlertsOpen] = useState(false)
+  const [needsAttentionSnapshot, setNeedsAttentionSnapshot] = useState<FounderSecurityAlert[]>([])
   const [lastSeenAt, setLastSeenAt] = useState<string | null>(null)
+  const [presenceSecurityHistory, setPresenceSecurityHistory] = useState<FounderGlobalSecurityHistoryEntry[]>([])
   const reportStateRef = useRef<FounderContractorAdminReport | null>(null)
   const selectedOrganizationIdRef = useRef<string | null>(null)
   const presenceSnapshotRef = useRef({
     summaries: [] as FounderContractorPresenceSummary[],
     alerts: [] as FounderSecurityAlert[],
+    securityHistory: [] as FounderGlobalSecurityHistoryEntry[],
     serverNow: null as string | null,
   })
   const presenceDetailsRef = useRef<Record<string, FounderContractorPresenceDetail>>({})
@@ -264,6 +291,7 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
   const presenceHasSnapshot = hasGuardianPresenceSnapshot({
     summaries: presenceSummaries,
     alerts: presenceAlerts,
+    securityHistory: presenceSecurityHistory,
     serverNow: presenceServerNow,
   })
   const selectedPresenceSummary = selectedAccount
@@ -285,6 +313,21 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
     () => countUnreadGuardianSecurityAlerts(presenceAlerts, lastSeenAt),
     [presenceAlerts, lastSeenAt],
   )
+  const securityCenterMetrics = useMemo(
+    () => buildFounderSecurityCenterMetrics(presenceAlerts, presenceSecurityHistory, lastSeenAt),
+    [lastSeenAt, presenceAlerts, presenceSecurityHistory],
+  )
+  const newDeviceEvents = useMemo(
+    () => filterNewDeviceSecurityEvents(presenceSecurityHistory),
+    [presenceSecurityHistory],
+  )
+  const ipChangeEvents = useMemo(
+    () => filterIpChangeSecurityEvents(presenceSecurityHistory),
+    [presenceSecurityHistory],
+  )
+  const needsAttentionEvents = securityAlertsOpen
+    ? needsAttentionSnapshot
+    : filterUnreadGuardianSecurityAlerts(presenceAlerts, lastSeenAt)
 
   useEffect(() => {
     reportStateRef.current = report
@@ -298,24 +341,35 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
     presenceSnapshotRef.current = {
       summaries: presenceSummaries,
       alerts: presenceAlerts,
+      securityHistory: presenceSecurityHistory,
       serverNow: presenceServerNow,
     }
-  }, [presenceAlerts, presenceServerNow, presenceSummaries])
+  }, [presenceAlerts, presenceSecurityHistory, presenceServerNow, presenceSummaries])
 
   useEffect(() => {
     presenceDetailsRef.current = presenceDetailsByOrganizationId
   }, [presenceDetailsByOrganizationId])
 
+  // Close Security Center on Escape (before contractor modal when open)
+  useEffect(() => {
+    if (!securityAlertsOpen) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSecurityAlertsOpen(false)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [securityAlertsOpen])
+
   // Close contractor detail modal on Escape
   const showContractorDetail = section === 'accounts' && !!selectedAccount
   useEffect(() => {
-    if (!showContractorDetail) return
+    if (!showContractorDetail || securityAlertsOpen) return
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setSelectedOrganizationId(null)
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [showContractorDetail])
+  }, [securityAlertsOpen, showContractorDetail])
 
   const loadReport = useCallback(async () => {
     if (loadReportRef.current) return loadReportRef.current
@@ -353,6 +407,7 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
         const response = await fetchFounderContractorPresenceReport()
         setPresenceSummaries(response.summaries)
         setPresenceAlerts(response.alerts)
+        setPresenceSecurityHistory(response.securityHistory ?? [])
         setPresenceServerNow(response.serverNow)
       } catch (err) {
         setPresenceError(err instanceof Error ? err.message : 'Presence unavailable.')
@@ -464,6 +519,24 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
       // ignore storage failures
     }
   }, [presenceServerNow])
+
+  const closeSecurityCenter = useCallback(() => {
+    setSecurityAlertsOpen(false)
+  }, [])
+
+  const openSecurityCenter = useCallback(() => {
+    setNeedsAttentionSnapshot(filterUnreadGuardianSecurityAlerts(presenceAlerts, lastSeenAt))
+    setSecurityAlertsOpen(true)
+    markAlertsSeen()
+  }, [lastSeenAt, markAlertsSeen, presenceAlerts])
+
+  const openContractorFromAlert = useCallback((organizationId: string) => {
+    openContractorFromSecurityCenter(
+      organizationId,
+      closeSecurityCenter,
+      (id) => setSelectedOrganizationId(id),
+    )
+  }, [closeSecurityCenter])
 
   async function handleSend() {
     const target = email.trim().toLowerCase()
@@ -622,9 +695,11 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
               <button
                 type="button"
                 onClick={() => {
-                  const nextOpen = !securityAlertsOpen
-                  setSecurityAlertsOpen(nextOpen)
-                  if (!securityAlertsOpen) markAlertsSeen()
+                  if (securityAlertsOpen) {
+                    closeSecurityCenter()
+                    return
+                  }
+                  openSecurityCenter()
                 }}
                 className="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-900 px-3 py-1.5 text-xs text-gray-300"
               >
@@ -682,57 +757,6 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
         ) : !report ? null : section === 'accounts' ? (
           // ── Contractor Accounts — full-width table (detail opens as modal) ──
           <div className="flex-1 overflow-auto">
-            {securityAlertsOpen && (
-              <div className="border-b border-gray-800 bg-[#0f1018] p-4">
-                <div className="rounded-xl border border-gray-800 bg-[#11121a]">
-                  <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
-                    <div>
-                      <div className="text-sm font-semibold text-gray-100">Security Alerts</div>
-                      <div className="mt-1 text-xs text-gray-500">Unread noise is limited to public IP changes and newly seen devices. History remains in the account drawer.</div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSecurityAlertsOpen(false)}
-                      className="inline-flex items-center gap-1 rounded-lg border border-gray-700 bg-gray-900 px-2.5 py-1.5 text-[11px] font-medium text-gray-300"
-                    >
-                      <X size={12} /> Close
-                    </button>
-                  </div>
-                  <div className="p-4">
-                    {presenceError && presenceAlerts.length === 0 ? (
-                      <div className="rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
-                        Security alerts unavailable
-                      </div>
-                    ) : presenceAlerts.length === 0 ? (
-                      <div className="rounded-lg border border-dashed border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
-                        No new-device or public-IP change alerts recorded yet.
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {presenceAlerts.map((alert) => (
-                          <div key={`${alert.organizationId}-${alert.sessionId}-${alert.occurredAt}-${alert.alertKind}`} className="rounded-lg border border-gray-800 bg-[#0f1018] p-3">
-                            <div className="flex items-center justify-between gap-3">
-                              <div>
-                                <div className="text-sm font-semibold text-gray-100">{alertHeadline(alert)}</div>
-                                <div className="mt-1 text-xs text-gray-500">{alert.organizationName} · {alert.userLabel} · {alert.deviceLabel}</div>
-                              </div>
-                              <PresenceBadge status={alert.alertKind === 'ip_changed' ? 'offline' : 'locked'} />
-                            </div>
-                            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                              <DetailItem label="Occurred" value={formatDate(alert.occurredAt)} />
-                              <DetailItem label="Public IP" value={alert.publicIp || 'Not recorded'} />
-                              <DetailItem label="Previous public IP" value={alert.previousPublicIp || 'Not applicable'} />
-                              <DetailItem label="Alert type" value={alert.alertKind === 'ip_changed' ? 'Public IP changed' : 'New device detected'} />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
             {presenceError && (
               <div className="m-4 mb-0 rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
                 {presenceShowingStaleData
@@ -905,6 +929,204 @@ export function FounderContractorAdminSurface({ section }: { section: FounderCon
               src={agreementPreview.url}
               className="min-h-0 flex-1 bg-white"
             />
+          </div>
+        </div>
+      )}
+
+      {/* ── Security Center modal — 2×2 grid layout ───────────────────────── */}
+      {section === 'accounts' && securityAlertsOpen && (
+        <div
+          data-testid="security-center-modal"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) closeSecurityCenter() }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Security Center"
+            className="flex max-h-[90vh] w-[90vw] max-w-[1400px] flex-col overflow-hidden rounded-2xl border border-gray-800 bg-[#0d0e14] shadow-2xl"
+          >
+            <div className="shrink-0 border-b border-gray-800 bg-[#11121a] px-5 py-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-600">Founder security</div>
+                  <div className="mt-0.5 text-xl font-semibold leading-tight text-gray-100">Security Center</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeSecurityCenter}
+                  aria-label="Close Security Center"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-gray-700 bg-gray-900 px-2.5 py-1.5 text-[11px] font-medium text-gray-300 hover:bg-gray-800"
+                >
+                  <X size={12} /> Close
+                </button>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+                <CompactMeta label="Unread Alerts" value={String(securityCenterMetrics.unreadAlerts)} />
+                <CompactMeta label="New Devices 30D" value={String(securityCenterMetrics.newDevices30d)} />
+                <CompactMeta label="IP Changes 30D" value={String(securityCenterMetrics.ipChanges30d)} />
+                <CompactMeta label="Last Security Event" value={formatOptionalDate(securityCenterMetrics.lastSecurityEventAt)} />
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-auto p-4">
+              {presenceError && presenceAlerts.length === 0 && presenceSecurityHistory.length === 0 ? (
+                <div className="rounded-lg border border-amber-900/60 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
+                  Security alerts unavailable
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {/* TOP LEFT — Needs Attention */}
+                  <ModalCard
+                    title="Needs Attention"
+                    description="Unread public-IP changes and newly observed devices only."
+                    scrollable
+                  >
+                    {needsAttentionEvents.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
+                        No unread security alerts.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {needsAttentionEvents.map((alert) => (
+                          <button
+                            key={`${alert.organizationId}-${alert.sessionId}-${alert.occurredAt}-${alert.alertKind}`}
+                            type="button"
+                            onClick={() => openContractorFromAlert(alert.organizationId)}
+                            className="w-full rounded-lg border border-gray-800 bg-[#0f1018] p-3 text-left transition-colors hover:bg-white/5"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="text-sm font-semibold text-gray-100">{alertHeadline(alert)}</div>
+                              <PresenceBadge status={alert.alertKind === 'ip_changed' ? 'offline' : 'locked'} />
+                            </div>
+                            <div className="mt-1 text-xs text-gray-500">
+                              {alert.organizationName} · {alert.userLabel} · {alert.deviceLabel}
+                            </div>
+                            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                              <DetailItem label="Occurred" value={formatDate(alert.occurredAt)} />
+                              <DetailItem label="Public IP" value={alert.publicIp || 'Not recorded'} />
+                              {alert.alertKind === 'ip_changed' ? (
+                                <DetailItem
+                                  label="IP change"
+                                  value={`${alert.previousPublicIp || 'Unknown'} → ${alert.publicIp || 'Unknown'}`}
+                                />
+                              ) : null}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </ModalCard>
+
+                  {/* TOP RIGHT — New Devices */}
+                  <ModalCard
+                    title="New Devices"
+                    description="Bounded recent session_started events where the device was newly observed."
+                    scrollable
+                  >
+                    {newDeviceEvents.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
+                        No newly observed devices.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {newDeviceEvents.map((event) => (
+                          <button
+                            key={`${event.organizationId}-${event.sessionId}-${event.occurredAt}-new-device`}
+                            type="button"
+                            onClick={() => openContractorFromAlert(event.organizationId)}
+                            className="w-full rounded-lg border border-gray-800 bg-[#0f1018] p-3 text-left transition-colors hover:bg-white/5"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="text-sm font-semibold text-gray-100">{event.organizationName}</div>
+                              <Badge value="new_device" />
+                            </div>
+                            <div className="mt-1 text-xs text-gray-500">{event.userLabel} · {event.deviceLabel}</div>
+                            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                              <DetailItem label="First seen" value={formatDate(event.occurredAt)} />
+                              <DetailItem label="Trusted public IP" value={event.publicIp || 'Not recorded'} />
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </ModalCard>
+
+                  {/* BOTTOM LEFT — Public IP Changes */}
+                  <ModalCard
+                    title="Public IP Changes"
+                    description="Bounded trusted public-IP change evidence across contractor accounts."
+                    scrollable
+                  >
+                    {ipChangeEvents.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
+                        No public-IP changes recorded.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {ipChangeEvents.map((event) => (
+                          <button
+                            key={`${event.organizationId}-${event.sessionId}-${event.occurredAt}-ip`}
+                            type="button"
+                            onClick={() => openContractorFromAlert(event.organizationId)}
+                            className="w-full rounded-lg border border-gray-800 bg-[#0f1018] p-3 text-left transition-colors hover:bg-white/5"
+                          >
+                            <div className="text-sm font-semibold text-gray-100">{event.organizationName}</div>
+                            <div className="mt-1 text-xs text-gray-500">{event.userLabel} · {event.deviceLabel}</div>
+                            <div className="mt-3 grid grid-cols-1 gap-2">
+                              <DetailItem
+                                label="OLD IP → NEW IP"
+                                value={`${event.previousPublicIp || 'Unknown'} → ${event.publicIp || 'Unknown'}`}
+                              />
+                              <DetailItem label="Occurred" value={formatDate(event.occurredAt)} />
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </ModalCard>
+
+                  {/* BOTTOM RIGHT — Security Timeline */}
+                  <ModalCard
+                    title="Security Timeline"
+                    description="Bounded cross-account security history. Marking alerts viewed does not delete history."
+                    scrollable
+                  >
+                    {presenceSecurityHistory.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-gray-800 bg-[#0f1018] px-4 py-6 text-center text-sm text-gray-500">
+                        No trusted public-IP security events recorded yet.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {presenceSecurityHistory.map((event) => (
+                          <button
+                            key={`${event.organizationId}-${event.sessionId}-${event.occurredAt}-${event.eventType}-timeline`}
+                            type="button"
+                            onClick={() => openContractorFromAlert(event.organizationId)}
+                            className="w-full rounded-lg border border-gray-800 bg-[#0f1018] p-3 text-left transition-colors hover:bg-white/5"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="text-sm font-semibold text-gray-100">{timelineEventLabel(event)}</div>
+                              {event.isNewDevice ? <Badge value="new_device" /> : null}
+                              {event.eventType === 'ip_changed' ? <PresenceBadge status="offline" /> : null}
+                              {!event.isAlert && event.eventType === 'session_started' ? <Badge value="known_device" /> : null}
+                            </div>
+                            <div className="mt-1 text-xs text-gray-500">
+                              {event.organizationName} · {event.userLabel} · {event.deviceLabel}
+                            </div>
+                            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                              <DetailItem label="Occurred" value={formatDate(event.occurredAt)} />
+                              <DetailItem label="Public IP" value={event.publicIp || 'Not recorded'} />
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </ModalCard>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

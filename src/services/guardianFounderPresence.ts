@@ -112,6 +112,19 @@ export interface FounderSecurityHistoryEntry {
   isAlert: boolean
 }
 
+/** Cross-organization security history used by the founder Security Center. */
+export interface FounderGlobalSecurityHistoryEntry extends FounderSecurityHistoryEntry {
+  organizationId: string
+  organizationName: string
+}
+
+export interface FounderSecurityCenterMetrics {
+  unreadAlerts: number
+  newDevices30d: number
+  ipChanges30d: number
+  lastSecurityEventAt: string | null
+}
+
 type UserIdentity = {
   fullName?: string | null
   email?: string | null
@@ -516,39 +529,84 @@ export function buildFounderSecurityHistory(
     })
 }
 
+export function buildFounderGlobalSecurityHistory(
+  events: FounderSecurityEventRow[],
+  organizationNames: Record<string, string>,
+): FounderGlobalSecurityHistoryEntry[] {
+  return [...events]
+    .sort((left, right) => toMillis(right.occurred_at) - toMillis(left.occurred_at))
+    .map((event) => {
+      const device = formatFounderDeviceLabel({ deviceId: event.device_id })
+      const organizationId = event.org_id || ''
+      return {
+        organizationId,
+        organizationName: organizationNames[organizationId] || 'Unknown organization',
+        sessionId: event.session_id,
+        userId: event.user_id,
+        userLabel: formatFounderUserLabel({
+          fullName: event.user_full_name,
+          email: event.user_email,
+          userId: event.user_id,
+        }),
+        deviceId: event.device_id,
+        deviceLabel: device.label,
+        eventType: safeLower(event.event_type) === 'ip_changed' ? 'ip_changed' : 'session_started',
+        occurredAt: event.occurred_at,
+        publicIp: event.public_ip,
+        previousPublicIp: event.previous_public_ip,
+        isNewDevice: event.is_new_device === true,
+        isAlert: isAlertWorthySecurityEvent(event),
+      }
+    })
+}
+
 export function buildFounderSecurityAlerts(
   events: FounderSecurityEventRow[],
   organizationNames: Record<string, string>,
 ): FounderSecurityAlert[] {
-  const eventsByKey = new Map<string, FounderSecurityEventRow>(
-    events.map((event) => [
-      `${event.user_id}::${event.occurred_at}::${safeLower(event.event_type) === 'ip_changed' ? 'ip_changed' : 'session_started'}`,
-      event,
-    ]),
-  )
-
-  return buildFounderSecurityHistory(events)
+  return buildFounderGlobalSecurityHistory(events, organizationNames)
     .filter((event) => event.isAlert)
-    .map((event): FounderSecurityAlert => {
-      const source = eventsByKey.get(`${event.userId}::${event.occurredAt}::${event.eventType}`)
-      const organizationId = source?.org_id || ''
-      return {
-        organizationId,
-        organizationName: organizationNames[organizationId] || 'Unknown organization',
-        sessionId: event.sessionId,
-        userId: event.userId,
-        userLabel: event.userLabel,
-        deviceId: event.deviceId,
-        deviceLabel: event.deviceLabel,
-        eventType: event.eventType,
-        occurredAt: event.occurredAt,
-        publicIp: event.publicIp,
-        previousPublicIp: event.previousPublicIp,
-        isNewDevice: event.isNewDevice,
-        alertKind: event.eventType === 'ip_changed' ? 'ip_changed' : 'new_device',
-      }
-    })
+    .map((event): FounderSecurityAlert => ({
+      organizationId: event.organizationId,
+      organizationName: event.organizationName,
+      sessionId: event.sessionId,
+      userId: event.userId,
+      userLabel: event.userLabel,
+      deviceId: event.deviceId,
+      deviceLabel: event.deviceLabel,
+      eventType: event.eventType,
+      occurredAt: event.occurredAt,
+      publicIp: event.publicIp,
+      previousPublicIp: event.previousPublicIp,
+      isNewDevice: event.isNewDevice,
+      alertKind: event.eventType === 'ip_changed' ? 'ip_changed' : 'new_device',
+    }))
     .sort((left, right) => toMillis(right.occurredAt) - toMillis(left.occurredAt))
+}
+
+export function filterNewDeviceSecurityEvents<T extends Pick<FounderSecurityHistoryEntry, 'eventType' | 'isNewDevice'>>(
+  events: T[],
+): T[] {
+  return events.filter((event) => event.eventType === 'session_started' && event.isNewDevice)
+}
+
+export function filterIpChangeSecurityEvents<T extends Pick<FounderSecurityHistoryEntry, 'eventType'>>(
+  events: T[],
+): T[] {
+  return events.filter((event) => event.eventType === 'ip_changed')
+}
+
+export function buildFounderSecurityCenterMetrics(
+  alerts: Array<Pick<FounderSecurityAlert, 'occurredAt'>>,
+  history: Array<Pick<FounderSecurityHistoryEntry, 'eventType' | 'isNewDevice' | 'occurredAt'>>,
+  lastSeenAt: string | null,
+): FounderSecurityCenterMetrics {
+  return {
+    unreadAlerts: countUnreadGuardianSecurityAlerts(alerts, lastSeenAt),
+    newDevices30d: filterNewDeviceSecurityEvents(history).length,
+    ipChanges30d: filterIpChangeSecurityEvents(history).length,
+    lastSecurityEventAt: history[0]?.occurredAt ?? null,
+  }
 }
 
 export function readGuardianSecurityLastSeen(storage: Pick<Storage, 'getItem'> | null | undefined): string | null {
@@ -570,12 +628,19 @@ export function writeGuardianSecurityLastSeen(
   }
 }
 
+export function filterUnreadGuardianSecurityAlerts<T extends Pick<FounderSecurityAlert, 'occurredAt'>>(
+  alerts: T[],
+  lastSeenAt: string | null,
+): T[] {
+  const seenAt = toMillis(lastSeenAt)
+  return alerts.filter((alert) => toMillis(alert.occurredAt) > seenAt)
+}
+
 export function countUnreadGuardianSecurityAlerts(
   alerts: Array<Pick<FounderSecurityAlert, 'occurredAt'>>,
   lastSeenAt: string | null,
 ): number {
-  const seenAt = toMillis(lastSeenAt)
-  return alerts.filter((alert) => toMillis(alert.occurredAt) > seenAt).length
+  return filterUnreadGuardianSecurityAlerts(alerts, lastSeenAt).length
 }
 
 export function createGuardianPollingLoop(task: () => Promise<void>, intervalMs = FOUNDER_GUARDIAN_POLL_INTERVAL_MS) {

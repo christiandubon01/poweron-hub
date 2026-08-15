@@ -86,6 +86,7 @@ export interface FounderContractorPresenceReport {
   serverNow: string
   summaries: FounderContractorPresenceSummary[]
   alerts: FounderSecurityAlert[]
+  securityHistory: FounderGlobalSecurityHistoryEntry[]
 }
 
 export interface FounderPresenceDeviceGroup {
@@ -133,6 +134,11 @@ export interface FounderSecurityHistoryEntry {
   previousPublicIp: string | null
   isNewDevice: boolean
   isAlert: boolean
+}
+
+export interface FounderGlobalSecurityHistoryEntry extends FounderSecurityHistoryEntry {
+  organizationId: string
+  organizationName: string
 }
 
 export interface FounderContractorUserAccess {

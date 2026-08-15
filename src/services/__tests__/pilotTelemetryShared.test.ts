@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildProductUsageTelemetryRecord,
   derivePilotActivationSnapshot,
   deriveWeeklyActivitySummary,
+  ENGAGEMENT_WINDOW_MAX_SECONDS,
   getPilotOrganizationClassification,
   isBlueprintActiveOrganization,
   isEmployeePortalActiveOrganization,
+  sanitizeProductUsageTelemetryMetadata,
   sanitizeTelemetryMetadata,
 } from '@/services/pilotTelemetryShared'
 
@@ -24,6 +27,25 @@ describe('pilot telemetry shared helpers', () => {
     })).toEqual({
       tool: 'circuit_path',
       source: 'blueprint_viewer',
+    })
+  })
+
+  it('strictly allowlists product-usage metadata and normalizes modules', () => {
+    expect(sanitizeProductUsageTelemetryMetadata('module_entered', {
+      previous_module: 'blueprint-ai',
+      projectName: 'Blocked',
+      device_id: 'device-abc-123456',
+    })).toEqual({
+      previous_module: 'blueprint',
+      device_id: 'device-abc-123456',
+    })
+    expect(buildProductUsageTelemetryRecord({
+      eventName: 'engagement_window',
+      module: 'material-takeoff',
+      metadata: { duration_seconds: 999999, notes: 'nope' },
+    })).toMatchObject({
+      module: 'material-takeoff',
+      metadata: { duration_seconds: ENGAGEMENT_WINDOW_MAX_SECONDS },
     })
   })
 

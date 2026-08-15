@@ -61,12 +61,14 @@ describe('GUARDIAN-3B3 live presence + founder security UI (SOURCE-CONTRACT)', (
 
   it('extends the contractor accounts surface with live presence, security alerts, and founder-only polling hooks', () => {
     expect(SURFACE_SOURCE).toContain('Security Alerts')
+    expect(SURFACE_SOURCE).toContain('Security Center')
     expect(SURFACE_SOURCE).toContain('Live Presence / Sessions')
     expect(SURFACE_SOURCE).toContain('Security History')
     expect(SURFACE_SOURCE).toContain('Users / Access')
     expect(SURFACE_SOURCE).toContain('createGuardianPollingLoop')
     expect(SURFACE_SOURCE).toContain('fetchFounderContractorPresenceReport')
     expect(SURFACE_SOURCE).toContain('fetchFounderContractorPresenceDetail')
+    expect(SURFACE_SOURCE).toContain('setPresenceSecurityHistory')
   })
 
   it('returns compact founder-only canonical user access fields on the contractor detail payload', () => {

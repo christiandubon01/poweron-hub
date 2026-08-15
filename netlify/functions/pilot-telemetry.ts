@@ -7,6 +7,8 @@ import {
   isBlueprintActiveOrganization,
   isEmployeePortalActiveOrganization,
   isPilotTelemetryEventName,
+  isProductUsageTelemetryEventName,
+  buildProductUsageTelemetryRecord,
   sanitizeTelemetryMetadata,
 } from '../../src/services/pilotTelemetryShared'
 import {
@@ -21,6 +23,7 @@ import {
   buildFounderPresenceSummary,
   buildFounderSecurityAlerts,
   buildFounderSecurityHistory,
+  buildFounderGlobalSecurityHistory,
   type FounderPresenceSessionRow,
   type FounderSecurityEventRow,
 } from '../../src/services/guardianFounderPresence'
@@ -252,7 +255,7 @@ export function requireFounder(user: any, configuredEmail = founderEmail()) {
 async function resolveActorContext(supabase: any, userId: string) {
   const { data: profile } = await supabase
     .from('profiles')
-    .select('id, org_id, role')
+    .select('id, org_id, role, is_active')
     .eq('id', userId)
     .maybeSingle()
 
@@ -274,6 +277,7 @@ async function resolveActorContext(supabase: any, userId: string) {
       actorEmployeeProfileId: String(employeeProfile.id),
       actorKind: 'employee',
       role: 'employee',
+      isActive: true,
     }
   }
 
@@ -283,6 +287,7 @@ async function resolveActorContext(supabase: any, userId: string) {
     actorEmployeeProfileId: null,
     actorKind: 'owner_admin',
     role: String(profile?.role || ''),
+    isActive: profile?.is_active !== false,
   }
 }
 
@@ -304,19 +309,48 @@ async function handleTrackEvent(event: NetlifyEvent, user: any) {
   if (!actor.organizationId) {
     return json(400, { error: 'Could not resolve organization for telemetry event.' })
   }
+  if (actor.isActive === false) {
+    return json(403, { error: 'Access unavailable.' })
+  }
 
-  const record = {
-    organization_id: actor.organizationId,
-    actor_user_id: actor.actorUserId,
-    actor_employee_profile_id: actor.actorEmployeeProfileId,
-    actor_kind: actor.actorKind,
-    event_name: eventName,
-    module: String(payload?.module || '').trim() || null,
-    feature: String(payload?.feature || '').trim() || null,
-    object_id: String(payload?.objectId || '').trim() || null,
-    metadata: sanitizeTelemetryMetadata(payload?.metadata || {}),
-    is_demo: false,
-    occurred_at: payload?.occurredAt || new Date().toISOString(),
+  let record: Record<string, unknown>
+  if (isProductUsageTelemetryEventName(eventName)) {
+    const product = buildProductUsageTelemetryRecord({
+      eventName,
+      module: payload?.module,
+      metadata: payload?.metadata,
+      occurredAt: payload?.occurredAt ?? null,
+    })
+    if (!product) {
+      return json(400, { error: 'Invalid product usage telemetry payload.' })
+    }
+    record = {
+      organization_id: actor.organizationId,
+      actor_user_id: actor.actorUserId,
+      actor_employee_profile_id: actor.actorEmployeeProfileId,
+      actor_kind: actor.actorKind,
+      event_name: product.eventName,
+      module: product.module,
+      feature: product.feature,
+      object_id: product.objectId,
+      metadata: product.metadata,
+      is_demo: false,
+      occurred_at: product.occurredAt || new Date().toISOString(),
+    }
+  } else {
+    record = {
+      organization_id: actor.organizationId,
+      actor_user_id: actor.actorUserId,
+      actor_employee_profile_id: actor.actorEmployeeProfileId,
+      actor_kind: actor.actorKind,
+      event_name: eventName,
+      module: String(payload?.module || '').trim() || null,
+      feature: String(payload?.feature || '').trim() || null,
+      object_id: String(payload?.objectId || '').trim() || null,
+      metadata: sanitizeTelemetryMetadata(payload?.metadata || {}),
+      is_demo: false,
+      occurred_at: payload?.occurredAt || new Date().toISOString(),
+    }
   }
 
   const { error } = await supabase.from('pilot_telemetry_events').insert(record)
@@ -425,6 +459,7 @@ function weekRange(now = new Date()) {
 const FOUNDER_PRESENCE_LOOKBACK_DAYS = 30
 const FOUNDER_PRESENCE_SUMMARY_SESSION_LIMIT = 500
 const FOUNDER_SECURITY_ALERT_LIMIT = 30
+const FOUNDER_SECURITY_HISTORY_LIMIT = 60
 const FOUNDER_PRESENCE_DETAIL_SESSION_LIMIT = 30
 const FOUNDER_PRESENCE_DETAIL_EVENT_LIMIT = 30
 
@@ -1163,7 +1198,7 @@ async function handleFounderContractorPresence(user: any) {
   const serverNow = new Date().toISOString()
   const lookbackIso = isoDaysAgo(FOUNDER_PRESENCE_LOOKBACK_DAYS, new Date(serverNow))
 
-  const [sessions, events] = await Promise.all([
+  const [sessionsRaw, eventsRaw] = await Promise.all([
     loadPresenceSessions(supabase, {
       organizationIds,
       limit: FOUNDER_PRESENCE_SUMMARY_SESSION_LIMIT,
@@ -1171,10 +1206,14 @@ async function handleFounderContractorPresence(user: any) {
     }),
     loadSecurityEvents(supabase, {
       organizationIds,
-      limit: FOUNDER_SECURITY_ALERT_LIMIT * 3,
+      limit: FOUNDER_SECURITY_HISTORY_LIMIT,
       occurredAfterIso: lookbackIso,
     }),
   ])
+
+  const hydrated = await attachUserIdentityToPresenceData(supabase, sessionsRaw, eventsRaw)
+  const sessions = hydrated.sessions
+  const events = hydrated.events
 
   const summaries = Object.values(
     buildFounderPresenceSummary(sessions, organizationIds, serverNow),
@@ -1182,11 +1221,14 @@ async function handleFounderContractorPresence(user: any) {
     .sort((left, right) => organizationNames[left.organizationId].localeCompare(organizationNames[right.organizationId]))
 
   const alerts = buildFounderSecurityAlerts(events, organizationNames).slice(0, FOUNDER_SECURITY_ALERT_LIMIT)
+  const securityHistory = buildFounderGlobalSecurityHistory(events, organizationNames)
+    .slice(0, FOUNDER_SECURITY_HISTORY_LIMIT)
 
   return json(200, {
     serverNow,
     summaries,
     alerts,
+    securityHistory,
   })
 }
 
