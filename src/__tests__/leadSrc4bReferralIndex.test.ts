@@ -13,18 +13,20 @@ import { resolve } from 'node:path'
 // ── Mock state (must be declared before vi.mock) ──────────────────────────────
 
 const state = {
-  claimRow: null as Record<string, any> | null,
+  claimRow: undefined as Record<string, any> | null | undefined,
   updatePayload: null as Record<string, any> | null,
   updateError: null as { message: string } | null,
   fromCalls: [] as string[],
   // Phone paging: table → ordered array of pages (each page is an array of rows)
   phonePages: {} as Record<string, Record<string, any>[][]>,
   _pageIdx: {} as Record<string, number>,
+  profileInserts: 0,
 }
 
 // vi.mock is hoisted, so the factory runs before any import
 vi.mock('@/lib/supabase', () => {
   const makeQuery = (tableName: string) => {
+    let pendingInsert: Record<string, any> | null = null
     const q: any = {
       select: () => q,
       eq: () => q,
@@ -40,7 +42,51 @@ vi.mock('@/lib/supabase', () => {
         state._pageIdx[tableName] = idx + 1
         return { data: pages[idx] ?? [], error: null }
       },
-      maybeSingle: async () => ({ data: state.claimRow, error: null }),
+      maybeSingle: async () => {
+        if (tableName === 'referral_claims') {
+          if (state.claimRow === null) {
+            return { data: null, error: null }
+          }
+          return {
+            data: state.claimRow ?? {
+              id: 'claim-1',
+              organization_id: 'org-1',
+              raw_referral_text: 'Test',
+              resolution_status: 'unresolved',
+              referral_profile_id: null,
+              resolved_client_id: null,
+              resolved_lead_id: null,
+            },
+            error: null,
+          }
+        }
+        if (tableName === 'referral_profiles') {
+          return { data: null, error: null }
+        }
+        if (tableName === 'clients') {
+          return { data: { id: 'client-abc', name: 'Client ABC' }, error: null }
+        }
+        if (tableName === 'hunter_leads') {
+          return { data: { id: 'lead-xyz', contact_name: 'Lead XYZ' }, error: null }
+        }
+        return { data: state.claimRow, error: null }
+      },
+      single: async () => {
+        if (pendingInsert && tableName === 'referral_profiles') {
+          state.profileInserts += 1
+          const row = {
+            id: `profile-${state.profileInserts}`,
+            ...pendingInsert,
+          }
+          pendingInsert = null
+          return { data: row, error: null }
+        }
+        return { data: null, error: { message: 'not found' } }
+      },
+      insert: (payload: any) => {
+        pendingInsert = payload
+        return q
+      },
       update: (payload: any) => {
         state.updatePayload = payload
         return { eq: () => ({ error: state.updateError }) }
@@ -54,6 +100,9 @@ vi.mock('@/lib/supabase', () => {
       from: (table: string) => {
         state.fromCalls.push(table)
         return makeQuery(table)
+      },
+      auth: {
+        getUser: async () => ({ data: { user: { id: 'owner-1' } } }),
       },
     },
   }
@@ -235,7 +284,7 @@ describe('LEAD-SRC-4B Matching (25-33)', () => {
 // ── RESOLUTION (34-41) ────────────────────────────────────────────────────────
 describe('LEAD-SRC-4B Resolution (34-41)', () => {
   beforeEach(() => {
-    state.claimRow     = null
+    state.claimRow     = undefined
     state.updatePayload = null
     state.updateError  = null
     state.fromCalls    = []
@@ -275,6 +324,7 @@ describe('LEAD-SRC-4B Resolution (34-41)', () => {
     expect(state.updatePayload?.resolution_status).toBe('resolved')
     expect(state.updatePayload?.resolved_client_id).toBe('client-abc')
     expect(state.updatePayload?.resolved_lead_id).toBeNull()
+    expect(state.updatePayload?.referral_profile_id).toBeTruthy()
   })
 
   it('39. resolveReferralClaim sets resolved status and lead_id', async () => {
@@ -282,6 +332,7 @@ describe('LEAD-SRC-4B Resolution (34-41)', () => {
     expect(state.updatePayload?.resolution_status).toBe('resolved')
     expect(state.updatePayload?.resolved_lead_id).toBe('lead-xyz')
     expect(state.updatePayload?.resolved_client_id).toBeNull()
+    expect(state.updatePayload?.referral_profile_id).toBeTruthy()
   })
 
   it('40. unresolveReferralClaim sets status to unresolved and nulls all resolution fields', async () => {
@@ -435,16 +486,16 @@ describe('LEAD-SRC-4D Referral Index (48-64)', () => {
     expect(readRefTab()).toMatch(/ambiguous/)
   })
 
-  // 9-10. Confirmed referrers
-  it('55. ReferralsTab groups confirmed referrers by resolved_client_id or resolved_lead_id', () => {
+  // 9-10. Confirmed referrers (LEAD-SRC-4I: grouped by referral_profiles)
+  it('55. ReferralsTab groups confirmed referrers by referral profile', () => {
     const src = readRefTab()
-    expect(src).toMatch(/resolved_client_id/)
-    expect(src).toMatch(/resolved_lead_id/)
-    expect(src).toMatch(/Confirmed Referrers|buildReferrerGroups/)
+    expect(src).toMatch(/referral_profiles|fetchReferralProfilesWithHistory|profile\.claim_count/)
+    expect(src).toMatch(/Confirmed Referrers/)
+    expect(src).toMatch(/Hunter Lead|Customer|Referrer Profile/)
   })
 
-  it('56. confirmed client referrer shows Client identity type', () => {
-    expect(readRefTab()).toMatch(/Client/)
+  it('56. confirmed client referrer shows Customer identity type', () => {
+    expect(readRefTab()).toMatch(/Customer|Client/)
   })
 
   it('57. confirmed Hunter Lead referrer shows Hunter Lead identity type', () => {
