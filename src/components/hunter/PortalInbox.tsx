@@ -32,6 +32,15 @@ import {
   type PortalRequest,
 } from '@/services/portal/portalService'
 import { isHunterTenantAuthorityError } from '@/services/hunter/resolveHunterTenantId'
+import {
+  fetchReferralClaimForRequest,
+  findReferralCandidates,
+  resolveReferralClaim,
+  unresolveReferralClaim,
+  markReferralClaimAmbiguous,
+  type ReferralClaim,
+  type ReferralCandidate,
+} from '@/services/referral/referralService'
 import { GOOGLE_MAPS_BROWSER_KEY, loadV15rGoogleMapsScript } from '@/utils/googleMapsLoader'
 
 interface PortalInboxProps {
@@ -131,6 +140,174 @@ function MiniMap({ address, city }: { address: string | null; city: string | nul
   )
 }
 
+// ── Referral claim section ────────────────────────────────────────────────────
+function ReferralClaimSection({ claim }: { claim: ReferralClaim }) {
+  const [reviewOpen, setReviewOpen] = useState(false)
+  const [candidates, setCandidates] = useState<ReferralCandidate[]>([])
+  const [confidence, setConfidence] = useState<'suggestion' | 'ambiguous' | 'unresolved'>('unresolved')
+  const [searching, setSearching] = useState(false)
+  const [currentClaim, setCurrentClaim] = useState<ReferralClaim>(claim)
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  const statusColor: Record<string, string> = {
+    unresolved: 'bg-gray-800 text-gray-400',
+    resolved:   'bg-emerald-900/60 text-emerald-400',
+    ambiguous:  'bg-yellow-900/40 text-yellow-400',
+  }
+
+  const openReview = async () => {
+    setReviewOpen(true)
+    setSearching(true)
+    setActionError(null)
+    try {
+      const result = await findReferralCandidates(currentClaim.raw_referral_text)
+      setCandidates(result.candidates)
+      setConfidence(result.confidence)
+    } catch {
+      setCandidates([])
+      setConfidence('unresolved')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const confirm = async (c: ReferralCandidate) => {
+    setActionError(null)
+    try {
+      await resolveReferralClaim(currentClaim.id, c.type === 'client' ? { client_id: c.id } : { lead_id: c.id })
+      setCurrentClaim(prev => ({
+        ...prev,
+        resolution_status: 'resolved',
+        resolved_client_id: c.type === 'client' ? c.id : null,
+        resolved_lead_id: c.type === 'lead' ? c.id : null,
+      }))
+      setReviewOpen(false)
+    } catch (e: any) {
+      setActionError(e.message ?? 'Failed to resolve')
+    }
+  }
+
+  const unlink = async () => {
+    setActionError(null)
+    try {
+      await unresolveReferralClaim(currentClaim.id)
+      setCurrentClaim(prev => ({
+        ...prev,
+        resolution_status: 'unresolved',
+        resolved_client_id: null,
+        resolved_lead_id: null,
+      }))
+      setReviewOpen(false)
+    } catch (e: any) {
+      setActionError(e.message ?? 'Failed to unlink')
+    }
+  }
+
+  const markAmbiguous = async () => {
+    setActionError(null)
+    try {
+      await markReferralClaimAmbiguous(currentClaim.id)
+      setCurrentClaim(prev => ({ ...prev, resolution_status: 'ambiguous', resolved_client_id: null, resolved_lead_id: null }))
+      setReviewOpen(false)
+    } catch (e: any) {
+      setActionError(e.message ?? 'Failed')
+    }
+  }
+
+  const resolvedLabel = currentClaim.resolved_client_id
+    ? `Client confirmed`
+    : currentClaim.resolved_lead_id
+    ? `Lead confirmed`
+    : null
+
+  return (
+    <div className="rounded-lg bg-gray-900 border border-gray-800 p-3 space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-sm text-gray-200 italic flex-1">"{currentClaim.raw_referral_text}"</span>
+        <span className={clsx('text-[10px] font-bold uppercase px-1.5 py-0.5 rounded flex-shrink-0', statusColor[currentClaim.resolution_status])}>
+          {currentClaim.resolution_status}
+        </span>
+      </div>
+
+      {currentClaim.resolution_status === 'resolved' && resolvedLabel && (
+        <div className="text-xs text-emerald-400">{resolvedLabel}</div>
+      )}
+
+      {actionError && <div className="text-xs text-red-400">{actionError}</div>}
+
+      <div className="flex items-center gap-2 pt-1">
+        {currentClaim.resolution_status !== 'resolved' && (
+          <button
+            type="button"
+            onClick={reviewOpen ? undefined : openReview}
+            className="text-xs px-2.5 py-1 rounded bg-amber-800/50 text-amber-300 hover:bg-amber-700/60 transition-colors"
+          >
+            Find Match
+          </button>
+        )}
+        {currentClaim.resolution_status === 'resolved' && (
+          <button
+            type="button"
+            onClick={unlink}
+            className="text-xs px-2.5 py-1 rounded bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+          >
+            Unlink
+          </button>
+        )}
+        {currentClaim.resolution_status === 'unresolved' && (
+          <button
+            type="button"
+            onClick={markAmbiguous}
+            className="text-xs px-2.5 py-1 rounded bg-gray-800 text-gray-400 hover:text-yellow-400 hover:bg-gray-700 transition-colors"
+          >
+            Mark Ambiguous
+          </button>
+        )}
+      </div>
+
+      {reviewOpen && (
+        <div className="mt-2 space-y-2 border-t border-gray-800 pt-2">
+          {searching ? (
+            <div className="text-xs text-gray-500 italic">Searching…</div>
+          ) : candidates.length === 0 ? (
+            <div className="text-xs text-gray-500">No exact match found in clients or leads.</div>
+          ) : (
+            <>
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider">
+                {confidence === 'suggestion' ? 'Suggested match' : `${candidates.length} candidates — confirm one`}
+              </div>
+              {candidates.map((c, i) => (
+                <div key={i} className="flex items-center justify-between gap-2 rounded bg-gray-800 px-2.5 py-2">
+                  <div className="min-w-0">
+                    <div className="text-sm text-gray-200 truncate">{c.display_name}</div>
+                    <div className="text-[10px] text-gray-500">
+                      {c.type === 'client' ? 'Client' : 'Lead'} · matched by {c.match_reason}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => confirm(c)}
+                    className="text-xs px-2.5 py-1 rounded bg-emerald-800/60 text-emerald-300 hover:bg-emerald-700/60 transition-colors flex-shrink-0"
+                  >
+                    Confirm
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => setReviewOpen(false)}
+            className="text-xs text-gray-600 hover:text-gray-400 transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Detail Modal ──────────────────────────────────────────────────────────────
 function DetailModal({
   req,
@@ -153,6 +330,10 @@ function DetailModal({
   const [signedEntries, setSignedEntries] = useState<AttachmentEntry[]>([])
   const [loadingAttachments, setLoadingAttachments] = useState(false)
 
+  // LEAD-SRC-4B: referral claim for this portal request
+  const [referralClaim, setReferralClaim] = useState<ReferralClaim | null>(null)
+  const [loadingClaim, setLoadingClaim] = useState(true)
+
   useEffect(() => {
     // Quick client-side check: skip the server call when notes have no attachment markers
     if (!req.notes || (!req.notes.includes('FilePaths:') && !req.notes.includes('Files:'))) {
@@ -169,6 +350,14 @@ function DetailModal({
       .catch(() => setSignedEntries([]))
       .finally(() => setLoadingAttachments(false))
   }, [req.id, req.notes])
+
+  useEffect(() => {
+    setLoadingClaim(true)
+    fetchReferralClaimForRequest(req.id)
+      .then(c => setReferralClaim(c))
+      .catch(() => setReferralClaim(null))
+      .finally(() => setLoadingClaim(false))
+  }, [req.id])
 
   const mediaEntries = signedEntries.filter(({ mimeType }) => mimeType?.startsWith('image/') || mimeType?.startsWith('video/'))
   const docEntries   = signedEntries.filter(({ mimeType }) => !mimeType?.startsWith('image/') && !mimeType?.startsWith('video/'))
@@ -298,6 +487,18 @@ function DetailModal({
             <div>
               <div className="text-[10px] font-bold text-amber-400 uppercase tracking-widest mb-2">Description</div>
               <p className="text-base text-gray-300 leading-relaxed whitespace-pre-wrap">{req.description}</p>
+            </div>
+          )}
+
+          {/* Referral — LEAD-SRC-4B */}
+          {(loadingClaim || referralClaim) && (
+            <div>
+              <div className="text-[10px] font-bold text-amber-400 uppercase tracking-widest mb-2">Referred By</div>
+              {loadingClaim ? (
+                <div className="text-xs text-gray-500 italic">Loading…</div>
+              ) : referralClaim ? (
+                <ReferralClaimSection claim={referralClaim} />
+              ) : null}
             </div>
           )}
 

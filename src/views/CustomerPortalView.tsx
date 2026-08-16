@@ -50,13 +50,14 @@ type FormState = {
   preferred_time_3: string
   company: string
   ideal_date: string
+  referred_by: string
 }
 
 const BLANK: FormState = {
   name: '', phone: '', email: '', address: '', city: '',
   service_category: '', description: '', preferred_date: '',
   preferred_time: '', preferred_time_2: '', preferred_time_3: '',
-  company: '', ideal_date: '',
+  company: '', ideal_date: '', referred_by: '',
 }
 
 const SERVICE_CATEGORIES = [
@@ -677,6 +678,7 @@ export default function CustomerPortalView() {
         p_landing_page:     attrValue('landing_page'),
         p_page_url:         attrValue('page_url'),
         p_source_category:  classifySource(attribution),
+        p_referred_by_text: form.referred_by.trim() || null,
       })
 
       const submitData = submitResult as { request_id: string; attach_token: string } | null
@@ -941,6 +943,20 @@ export default function CustomerPortalView() {
                   <textarea
                     className="pr-textarea" value={form.description} onChange={setF('description')}
                     placeholder={tab === 'gc' ? 'Scope, timeline, special requirements, trade coordination...' : 'What electrical issue are you experiencing? Any details help us prepare...'}
+                  />
+                </Field>
+              </div>
+
+              {/* Referral */}
+              <div className="pr-grid">
+                <Field label="Were you referred by someone? (Optional)" full>
+                  <input
+                    className="pr-input"
+                    type="text"
+                    value={form.referred_by}
+                    onChange={setF('referred_by')}
+                    placeholder="Enter their name"
+                    maxLength={500}
                   />
                 </Field>
               </div>

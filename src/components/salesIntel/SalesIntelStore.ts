@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type SalesIntelTab = 'practice' | 'live_call' | 'leads' | 'pipeline' | 'coach';
+export type SalesIntelTab = 'practice' | 'live_call' | 'leads' | 'pipeline' | 'coach' | 'referrals';
 
 export interface SalesIntelState {
   activeTab: SalesIntelTab;
