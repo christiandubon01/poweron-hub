@@ -43,7 +43,10 @@ export interface ConversionReceipt {
   destinationId: string
   destinationLabel: string | null
   leadEstimatedValue: number | null
-  /** Only set when the destination exposes a canonical converted value. */
+  /**
+   * Snapshot at mint: project.contract, or Service resolveTotalQuoted when > 0.
+   * Null when the destination had no truthful positive quote. Never live-synced.
+   */
   convertedValue: number | null
   leadScoreAtConversion: number | null
   leadStatusBefore: string | null

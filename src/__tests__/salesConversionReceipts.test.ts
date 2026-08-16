@@ -178,9 +178,9 @@ const {
 const { deriveConversionSource, formatSourceLabel } = await import(
   '@/features/sales-intelligence/conversion-receipts/conversionReceiptSource'
 )
-const { collectProvenLineage, lineageForLead, lineageKey, planHistoricalBackfill } = await import(
-  '@/features/sales-intelligence/conversion-receipts/conversionReceiptLineage'
-)
+const { collectProvenLineage, lineageForLead, lineageKey, planHistoricalBackfill, serviceConvertedValueFromTotalQuoted } =
+  await import('@/features/sales-intelligence/conversion-receipts/conversionReceiptLineage')
+const { resolveTotalQuoted } = await import('@/features/service-quote/serviceQuoteMath')
 const { reconcilePipelineConversions, CONVERTED_LEAD_STATUS } = await import(
   '@/features/sales-intelligence/conversion-receipts/conversionReceiptBridge'
 )
@@ -364,14 +364,14 @@ describe('2. Service Call conversion', () => {
     expect(failed.errors).toContain('network unreachable')
   })
 
-  it('[MOCK] a service call receipt never fabricates a converted value', async () => {
+  it('[MOCK] LEAD-SRC-5B snapshots Service Total Quoted into converted_value', async () => {
     await reconcilePipelineConversions({
       leads: [portalLead()],
       backup: backupWithServiceCall,
       tenantId: 'tenant-1',
     })
-    // totalQuote is a quote, not a canonical converted amount.
-    expect(state.receipts[0].converted_value).toBeNull()
+    // Destination totalQuote=780 → resolveTotalQuoted → converted_value snapshot.
+    expect(state.receipts[0].converted_value).toBe(780)
   })
 
   it('[PURE] Open Service Call targets the exact service call on the receipt', () => {
@@ -848,6 +848,180 @@ describe('7. Tenant isolation', () => {
 // 8. Parallel-agent safety
 // ═════════════════════════════════════════════════════════════════════════════
 
+// ═════════════════════════════════════════════════════════════════════════════
+// LEAD-SRC-5B — Service converted_value from resolveTotalQuoted
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('LEAD-SRC-5B Service converted_value from Total Quoted', () => {
+  it('[PURE] Project lineage still snapshots project.contract', () => {
+    const lineage = collectProvenLineage({
+      projects: [{ id: 'proj-c', convertedFromLeadId: 'lead-tlma-1', name: 'Panel', contract: 12500 }],
+      serviceEstimates: [],
+    })
+    expect(lineage).toHaveLength(1)
+    expect(lineage[0].destinationType).toBe('project')
+    expect(lineage[0].convertedValue).toBe(12500)
+  })
+
+  it('[STATIC] Project save path still uses project.contract — not resolveTotalQuoted', () => {
+    const source = readRepoFile(PROJECTS_PANEL_PATH)
+    const receiptBlock = source.slice(
+      source.indexOf('await recordConversion({'),
+      source.indexOf('await recordConversion({') + 600
+    )
+    expect(receiptBlock).toContain('convertedValue: num(newProj.contract) || null')
+    expect(receiptBlock).not.toContain('resolveTotalQuoted')
+  })
+
+  it('[MOCK] Service totalQuote=5000 → converted_value=5000', async () => {
+    await reconcilePipelineConversions({
+      leads: [portalLead({ estimated_value: 8000 })],
+      backup: {
+        serviceEstimates: [
+          { id: 'est-5000', hunterLeadId: 'lead-portal-1', customer: 'Dana', totalQuote: 5000 },
+        ],
+      },
+      tenantId: 'tenant-1',
+    })
+    expect(state.receipts).toHaveLength(1)
+    expect(state.receipts[0].converted_value).toBe(5000)
+    expect(state.receipts[0].lead_estimated_value).toBe(8000)
+  })
+
+  it('[PURE+MOCK] legacy quoted=4200 resolves and snapshots', async () => {
+    expect(resolveTotalQuoted({ quoted: 4200 })).toBe(4200)
+    expect(serviceConvertedValueFromTotalQuoted({ quoted: 4200 })).toBe(4200)
+    await reconcilePipelineConversions({
+      leads: [portalLead()],
+      backup: {
+        serviceEstimates: [
+          { id: 'est-legacy', hunterLeadId: 'lead-portal-1', customer: 'Dana', quoted: 4200 },
+        ],
+      },
+      tenantId: 'tenant-1',
+    })
+    expect(state.receipts[0].converted_value).toBe(4200)
+  })
+
+  it('[PURE] no quote / zero / invalid → null (never fabricates from lead estimate)', () => {
+    expect(serviceConvertedValueFromTotalQuoted({})).toBeNull()
+    expect(serviceConvertedValueFromTotalQuoted({ totalQuote: 0 })).toBeNull()
+    expect(serviceConvertedValueFromTotalQuoted({ totalQuote: null })).toBeNull()
+    expect(serviceConvertedValueFromTotalQuoted({ quoted: undefined })).toBeNull()
+    expect(serviceConvertedValueFromTotalQuoted({ totalQuote: Number.NaN })).toBeNull()
+    expect(serviceConvertedValueFromTotalQuoted({ totalQuote: -50 })).toBeNull()
+    expect(serviceConvertedValueFromTotalQuoted({ totalQuote: 'nope' })).toBeNull()
+  })
+
+  it('[MOCK] Service with no quote keeps converted_value null even when lead_estimated_value exists', async () => {
+    await reconcilePipelineConversions({
+      leads: [portalLead({ estimated_value: 8000 })],
+      backup: {
+        serviceEstimates: [{ id: 'est-empty', hunterLeadId: 'lead-portal-1', customer: 'Dana' }],
+      },
+      tenantId: 'tenant-1',
+    })
+    expect(state.receipts[0].converted_value).toBeNull()
+    expect(state.receipts[0].lead_estimated_value).toBe(8000)
+  })
+
+  it('[MOCK] Service quote=0 → converted_value null', async () => {
+    await reconcilePipelineConversions({
+      leads: [portalLead()],
+      backup: {
+        serviceEstimates: [
+          { id: 'est-zero', hunterLeadId: 'lead-portal-1', customer: 'Dana', totalQuote: 0 },
+        ],
+      },
+      tenantId: 'tenant-1',
+    })
+    expect(state.receipts[0].converted_value).toBeNull()
+  })
+
+  it('[MOCK] append-only: later destination quote change does not update the receipt', async () => {
+    const backup = {
+      serviceEstimates: [
+        { id: 'est-snap', hunterLeadId: 'lead-portal-1', customer: 'Dana', totalQuote: 5000 },
+      ],
+    }
+    await reconcilePipelineConversions({
+      leads: [portalLead()],
+      backup,
+      tenantId: 'tenant-1',
+    })
+    expect(state.receipts[0].converted_value).toBe(5000)
+    const insertCount = state.inserts.length
+
+    backup.serviceEstimates[0].totalQuote = 5500
+    const retry = await reconcilePipelineConversions({
+      leads: [portalLead()],
+      backup,
+      tenantId: 'tenant-1',
+    })
+    expect(retry.outcomes[0].created).toBe(false)
+    expect(state.receipts).toHaveLength(1)
+    expect(state.receipts[0].converted_value).toBe(5000)
+    expect(state.updates.filter((u) => u.table === RECEIPTS_TABLE)).toHaveLength(0)
+    // Unique violation path may attempt insert then recover — never mutates stored value.
+    expect(state.receipts[0].converted_value).not.toBe(5500)
+    expect(state.inserts.length).toBeGreaterThanOrEqual(insertCount)
+  })
+
+  it('[PURE] existing receipt key blocks backfill — NULL service values are not rewritten', () => {
+    const backup = {
+      serviceEstimates: [
+        { id: 'est-old', hunterLeadId: 'lead-portal-1', customer: 'Kathryn', totalQuote: 9000 },
+      ],
+    }
+    const plan = planHistoricalBackfill({
+      backup,
+      leads: [portalLead()],
+      existingReceiptKeys: new Set([lineageKey('lead-portal-1', 'service_call', 'est-old')]),
+    })
+    expect(plan.eligible).toHaveLength(0)
+    expect(plan.ineligible[0].reason).toBe('receipt_exists')
+    // Lineage would now resolve 9000 for a *new* mint, but existing key prevents rewrite.
+    expect(collectProvenLineage(backup)[0].convertedValue).toBe(9000)
+  })
+
+  it('[PURE] lineage selects the exact hunterLeadId destination, not a name match', () => {
+    const lineage = lineageForLead(
+      {
+        serviceEstimates: [
+          { id: 'est-other', hunterLeadId: 'lead-other', customer: 'Dana', totalQuote: 9999 },
+          { id: 'est-mine', hunterLeadId: 'lead-portal-1', customer: 'Dana', totalQuote: 5000 },
+        ],
+      },
+      'lead-portal-1'
+    )
+    expect(lineage).toHaveLength(1)
+    expect(lineage[0].destinationId).toBe('est-mine')
+    expect(lineage[0].convertedValue).toBe(5000)
+  })
+
+  it('[STATIC] no new receipt table/schema; UI still reads convertedValue; no QuickBooks', () => {
+    const card = readRepoFile(
+      'src/features/sales-intelligence/conversion-receipts/ConversionReceiptCard.tsx'
+    )
+    expect(card).toContain('receipt.convertedValue')
+    expect(card).toContain('Not quoted')
+    const lineage = readRepoFile(
+      'src/features/sales-intelligence/conversion-receipts/conversionReceiptLineage.ts'
+    )
+    expect(lineage).toContain('resolveTotalQuoted')
+    expect(lineage).not.toContain('quickbooks')
+    const types = readRepoFile(
+      'src/features/sales-intelligence/conversion-receipts/conversionReceiptTypes.ts'
+    )
+    expect(types).toContain('hunter_conversion_receipts')
+    const service = readRepoFile(
+      'src/features/sales-intelligence/conversion-receipts/conversionReceiptService.ts'
+    )
+    expect(service).toContain('CONVERSION_RECEIPTS_TABLE')
+    expect(lineage + service).not.toMatch(/CREATE TABLE/i)
+  })
+})
+
 describe('8. Parallel-agent safety', () => {
   it('[STATIC] this phase created migration 116 and left 115 alone', () => {
     expect(existsSync(resolve(REPO_ROOT, MIGRATION_PATH))).toBe(true)
@@ -867,14 +1041,17 @@ describe('8. Parallel-agent safety', () => {
     ]
     for (const file of featureFiles) {
       const text = readRepoFile(`src/features/sales-intelligence/conversion-receipts/${file}`)
-      // Prose may name the Service Log panel; code must never reach into it or
-      // into the parallel agent's service-quote module.
+      // Prose may name the Service Log panel; code must never reach into it.
+      // LEAD-SRC-5B allows resolveTotalQuoted via serviceQuoteMath only.
       const imports = text.match(/^\s*(import|export)\s.*from\s+'[^']+'/gm) ?? []
       const dynamicImports = text.match(/import\('[^']+'\)/g) ?? []
       for (const line of [...imports, ...dynamicImports]) {
         expect(line).not.toContain('V15rFieldLogPanel')
-        expect(line).not.toContain('service-quote')
         expect(line).not.toContain('serviceCallAssignmentService')
+        if (line.includes('service-quote')) {
+          expect(line).toContain('serviceQuoteMath')
+          expect(file).toBe('conversionReceiptLineage.ts')
+        }
       }
     }
   })

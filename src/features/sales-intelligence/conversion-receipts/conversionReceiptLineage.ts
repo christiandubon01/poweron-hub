@@ -1,5 +1,5 @@
 /**
- * SALES-CONVERSION-1 — Destination lineage discovery.
+ * SALES-CONVERSION-1 / LEAD-SRC-5B — Destination lineage discovery.
  *
  * Projects and Service Calls are not Supabase rows; they live inside the
  * BackupData JSONB document with TEXT ids ('proj…', 'est…'). Two lineage
@@ -17,8 +17,14 @@
  *
  * A record with no lineage field is NEVER treated as a conversion. A lead
  * being 'won', 'estimated', or archived proves nothing on its own.
+ *
+ * Converted-value snapshot (domain-specific):
+ *   project      → project.contract
+ *   service_call → resolveTotalQuoted(destination) when > 0, else null
+ * Never promote lead estimated_value into converted_value.
  */
 
+import { resolveTotalQuoted } from '@/features/service-quote/serviceQuoteMath'
 import type { ConversionDestinationType } from './conversionReceiptTypes'
 
 /** A destination record whose lineage back to a lead is proven. */
@@ -28,9 +34,8 @@ export interface ProvenLineage {
   destinationId: string
   destinationLabel: string | null
   /**
-   * Canonical converted value, or null. Only the Project contract amount
-   * qualifies; a service estimate's quote is a quote, not a converted value,
-   * so it is intentionally left null rather than fabricated.
+   * Canonical converted value snapshot, or null.
+   * Project: contract amount. Service: resolveTotalQuoted when > 0.
    */
   convertedValue: number | null
 }
@@ -48,6 +53,15 @@ function toNumberOrNull(value: unknown): number | null {
 
 function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+/**
+ * LEAD-SRC-5B — Service converted_value from the destination's Total Quoted.
+ * Positive resolved quotes only; 0 / missing / invalid stay null (no fallback).
+ */
+export function serviceConvertedValueFromTotalQuoted(destination: unknown): number | null {
+  const quoted = resolveTotalQuoted(destination)
+  return Number.isFinite(quoted) && quoted > 0 ? quoted : null
 }
 
 /**
@@ -86,7 +100,7 @@ export function collectProvenLineage(backup: any): ProvenLineage[] {
       destinationId,
       destinationLabel:
         nonEmptyString(estimate?.customer) ?? nonEmptyString(estimate?.jobType),
-      convertedValue: null,
+      convertedValue: serviceConvertedValueFromTotalQuoted(estimate),
     })
   }
 
