@@ -34,6 +34,7 @@ import {
   unresolveReferralClaim,
   updateReferralProfile,
 } from '@/services/referral/referralService'
+import { createReferralRefreshSequencer } from './referralTabRefresh'
 
 function formatDate(iso: string): string {
   try {
@@ -466,15 +467,18 @@ export const ReferralsTab: React.FC = () => {
   const [renameError, setRenameError]       = useState<string | null>(null)
   const [renameSaving, setRenameSaving]     = useState(false)
   const [renameDupes, setRenameDupes]       = useState<ReferralProfile[]>([])
-  const refreshSeqRef = useRef(0)
+  /** Stable sequencer: only older-than-applied responses are discarded. */
+  const refreshSequencerRef = useRef(createReferralRefreshSequencer())
 
   /**
    * Central tab refresh. Soft refresh (default after mutations) keeps the tab
-   * mounted and ignores stale in-flight responses. Initial load shows spinner.
+   * mounted. A completed mutation refresh can always commit even if a newer
+   * request has started but not yet applied. Initial load shows spinner.
    * Does not use a full page reload or route remount.
    */
   const refreshReferralData = useCallback(async (opts?: { initial?: boolean }) => {
-    const seq = ++refreshSeqRef.current
+    const sequencer = refreshSequencerRef.current
+    const requestId = sequencer.begin()
     const initial = opts?.initial === true
     try {
       if (initial) setLoading(true)
@@ -485,15 +489,18 @@ export const ReferralsTab: React.FC = () => {
         fetchResolvedReferralClaims(),
         fetchReferralProfilesWithHistory(),
       ])
-      if (seq !== refreshSeqRef.current) return
+      // Discard only if a newer response was already applied to the UI.
+      // Do NOT discard merely because a newer request has started.
+      if (!sequencer.canApply(requestId)) return
+      sequencer.markApplied(requestId)
       setPendingClaims(pending)
       setProfiles(profileRows)
       setUnlinkedConfirmed(resolved.filter(c => c.resolution_status === 'confirmed_unlinked'))
     } catch (err) {
-      if (seq !== refreshSeqRef.current) return
+      if (!sequencer.isLatestStarted(requestId)) return
       setLoadError(err instanceof Error ? err.message : 'Failed to load referrals')
     } finally {
-      if (seq === refreshSeqRef.current) {
+      if (sequencer.isLatestStarted(requestId)) {
         setLoading(false)
         setRefreshing(false)
       }
