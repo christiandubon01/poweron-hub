@@ -1022,6 +1022,224 @@ describe('LEAD-SRC-5B Service converted_value from Total Quoted', () => {
   })
 })
 
+// ═════════════════════════════════════════════════════════════════════════════
+// LEAD-SRC-5C — Conversion receipt eligibility = Pipeline lineage only
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('LEAD-SRC-5C Conversion receipt eligibility boundary', () => {
+  it('[PURE] manual Service Estimate with quote but no hunterLeadId is not a receipt candidate', () => {
+    const backup = {
+      serviceEstimates: [
+        {
+          id: 'est-manual-10k',
+          customer: 'Walk-in Customer',
+          phone: '760-555-0100',
+          email: 'walkin@example.com',
+          accountId: 'acct-1',
+          totalQuote: 10000,
+        },
+      ],
+      serviceLogs: [{ id: 'log-1', customer: 'Walk-in Customer', quoted: 10000 }],
+    }
+    expect(collectProvenLineage(backup)).toEqual([])
+  })
+
+  it('[PURE] manual Service Estimate with no quote and no hunterLeadId is not a candidate', () => {
+    expect(
+      collectProvenLineage({
+        serviceEstimates: [{ id: 'est-manual-empty', customer: 'Walk-in Customer' }],
+      })
+    ).toEqual([])
+  })
+
+  it('[MOCK] reconcile never mints a receipt for manual Service work even with won Pipeline leads present', async () => {
+    const result = await reconcilePipelineConversions({
+      leads: [portalLead()],
+      backup: {
+        serviceEstimates: [
+          {
+            id: 'est-manual',
+            customer: 'Dana Reyes',
+            phone: '760-555-9999',
+            email: 'dana@example.com',
+            totalQuote: 10000,
+          },
+        ],
+      },
+      tenantId: 'tenant-1',
+    })
+    expect(result.outcomes).toEqual([])
+    expect(result.leadsReadyToExit).toEqual([])
+    expect(state.receipts).toHaveLength(0)
+    expect(state.inserts.filter((i) => i.table === RECEIPTS_TABLE)).toHaveLength(0)
+  })
+
+  it('[PURE+MOCK] Pipeline Service destination with hunterLeadId is eligible; quote only sets value', async () => {
+    const withQuote = collectProvenLineage({
+      serviceEstimates: [
+        { id: 'est-pipe', hunterLeadId: 'lead-portal-1', customer: 'Dana', totalQuote: 5000 },
+      ],
+    })
+    expect(withQuote).toHaveLength(1)
+    expect(withQuote[0].convertedValue).toBe(5000)
+
+    const noQuote = collectProvenLineage({
+      serviceEstimates: [{ id: 'est-pipe-nq', hunterLeadId: 'lead-portal-1', customer: 'Dana' }],
+    })
+    expect(noQuote).toHaveLength(1)
+    expect(noQuote[0].convertedValue).toBeNull()
+
+    await reconcilePipelineConversions({
+      leads: [portalLead({ estimated_value: 8000 })],
+      backup: {
+        serviceEstimates: [
+          { id: 'est-pipe-nq', hunterLeadId: 'lead-portal-1', customer: 'Dana' },
+        ],
+      },
+      tenantId: 'tenant-1',
+    })
+    expect(state.receipts).toHaveLength(1)
+    expect(state.receipts[0].destination_id).toBe('est-pipe-nq')
+    expect(state.receipts[0].converted_value).toBeNull()
+    expect(state.receipts[0].lead_estimated_value).toBe(8000)
+  })
+
+  it('[PURE] quote alone never establishes eligibility', () => {
+    expect(serviceConvertedValueFromTotalQuoted({ totalQuote: 10000 })).toBe(10000)
+    expect(
+      collectProvenLineage({
+        serviceEstimates: [{ id: 'est-quoted-only', totalQuote: 10000, customer: 'Anyone' }],
+      })
+    ).toEqual([])
+  })
+
+  it('[PURE] customer name / phone / email similarity never establishes lineage', () => {
+    const backup = {
+      serviceEstimates: [
+        {
+          id: 'est-similar',
+          customer: 'Dana Reyes',
+          phone: '555-0100',
+          email: 'portal@example.com',
+          totalQuote: 4200,
+        },
+      ],
+    }
+    expect(collectProvenLineage(backup)).toEqual([])
+    expect(lineageForLead(backup, 'lead-portal-1')).toEqual([])
+  })
+
+  it('[PURE] unrelated Service Estimate for the same customer cannot be selected', () => {
+    const lineage = lineageForLead(
+      {
+        serviceEstimates: [
+          {
+            id: 'est-same-name-no-lineage',
+            customer: 'Dana Reyes',
+            totalQuote: 99999,
+          },
+          {
+            id: 'est-true',
+            hunterLeadId: 'lead-portal-1',
+            customer: 'Dana Reyes',
+            totalQuote: 5000,
+          },
+        ],
+      },
+      'lead-portal-1'
+    )
+    expect(lineage.map((l) => l.destinationId)).toEqual(['est-true'])
+    expect(lineage[0].convertedValue).toBe(5000)
+  })
+
+  it('[PURE] Project with convertedFromLeadId is eligible; ordinary Project is not', () => {
+    const backup = {
+      projects: [
+        { id: 'proj-ordinary', name: 'Manual Job', client: 'Dana', contract: 20000 },
+        {
+          id: 'proj-from-lead',
+          convertedFromLeadId: 'lead-tlma-1',
+          name: 'Pipeline Job',
+          contract: 12500,
+        },
+      ],
+    }
+    const lineage = collectProvenLineage(backup)
+    expect(lineage).toHaveLength(1)
+    expect(lineage[0].destinationId).toBe('proj-from-lead')
+    expect(lineage[0].convertedValue).toBe(12500)
+  })
+
+  it('[STATIC] Project writer only mints when a Hunter/Pipeline lead id is present', () => {
+    const source = readRepoFile(PROJECTS_PANEL_PATH)
+    const guardAt = source.indexOf('if (prefillFromLead?.leadId || hunterBannerCtx?.leadId)')
+    const receiptAt = source.indexOf('await recordConversion({')
+    expect(guardAt).toBeGreaterThan(-1)
+    expect(receiptAt).toBeGreaterThan(guardAt)
+    expect(source.slice(guardAt, receiptAt + 400)).toContain('convertedValue: num(newProj.contract) || null')
+  })
+
+  it('[STATIC] Service save stamps hunterLeadId only from portalLeadId; event gated on hunterLeadId', () => {
+    const fieldLog = readRepoFile('src/components/v15r/V15rFieldLogPanel.tsx')
+    expect(fieldLog).toContain(
+      "hunterLeadId: (!editEstimateId && portalLeadId) ? portalLeadId : undefined"
+    )
+    expect(fieldLog).toContain('if (estimate.hunterLeadId)')
+    expect(fieldLog).toContain("poweron:service-call-created")
+  })
+
+  it('[STATIC] no source-specific duplicate receipt writers; no customer-match inference', () => {
+    const bridge = readRepoFile(
+      'src/features/sales-intelligence/conversion-receipts/conversionReceiptBridge.ts'
+    )
+    const lineage = readRepoFile(
+      'src/features/sales-intelligence/conversion-receipts/conversionReceiptLineage.ts'
+    )
+    const service = readRepoFile(
+      'src/features/sales-intelligence/conversion-receipts/conversionReceiptService.ts'
+    )
+    const corpus = bridge + lineage + service
+    expect(corpus).toContain('lineageForLead')
+    expect(corpus).toContain('hunterLeadId')
+    expect(corpus).toContain('convertedFromLeadId')
+    expect(corpus).not.toMatch(/matchBy(Phone|Email|Customer|Name)/i)
+    expect(corpus).not.toMatch(/latestService|latestProject|findLeadBy/i)
+    expect(corpus).not.toContain('customer_portal_receipt')
+    expect(corpus).not.toContain('tlma_receipt')
+    // 5B value helper must not gate eligibility — lineage still requires hunterLeadId first.
+    expect(lineage.indexOf('nonEmptyString(estimate?.hunterLeadId)')).toBeLessThan(
+      lineage.indexOf('serviceConvertedValueFromTotalQuoted(estimate)')
+    )
+  })
+
+  it('[MOCK] idempotency unchanged for Pipeline Service receipts', async () => {
+    const backup = {
+      serviceEstimates: [
+        { id: 'est-idem', hunterLeadId: 'lead-portal-1', customer: 'Dana', totalQuote: 5000 },
+      ],
+    }
+    await reconcilePipelineConversions({ leads: [portalLead()], backup, tenantId: 'tenant-1' })
+    await reconcilePipelineConversions({ leads: [portalLead()], backup, tenantId: 'tenant-1' })
+    expect(state.receipts).toHaveLength(1)
+    expect(state.receipts[0].converted_value).toBe(5000)
+  })
+
+  it('[STATIC] eligibility path does not involve KPI / QuickBooks / referral modules', () => {
+    const files = [
+      'conversionReceiptLineage.ts',
+      'conversionReceiptBridge.ts',
+      'conversionReceiptService.ts',
+    ]
+    for (const file of files) {
+      const text = readRepoFile(`src/features/sales-intelligence/conversion-receipts/${file}`)
+      expect(text).not.toContain('quickbooks')
+      expect(text).not.toContain('ReferralsTab')
+      expect(text).not.toContain('kpiService')
+      expect(text).not.toContain('MoneyPanel')
+    }
+  })
+})
+
 describe('8. Parallel-agent safety', () => {
   it('[STATIC] this phase created migration 116 and left 115 alone', () => {
     expect(existsSync(resolve(REPO_ROOT, MIGRATION_PATH))).toBe(true)
