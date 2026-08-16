@@ -34,7 +34,7 @@ import {
   unresolveReferralClaim,
   updateReferralProfile,
 } from '@/services/referral/referralService'
-import { createReferralRefreshSequencer } from './referralTabRefresh'
+import { createReferralRefreshGate } from './referralTabRefresh'
 
 function formatDate(iso: string): string {
   try {
@@ -467,19 +467,25 @@ export const ReferralsTab: React.FC = () => {
   const [renameError, setRenameError]       = useState<string | null>(null)
   const [renameSaving, setRenameSaving]     = useState(false)
   const [renameDupes, setRenameDupes]       = useState<ReferralProfile[]>([])
-  /** Stable sequencer: only older-than-applied responses are discarded. */
-  const refreshSequencerRef = useRef(createReferralRefreshSequencer())
+  /**
+   * Stable gate for in-flight refresh races. Survives renders via useRef.
+   * Soft refresh writes the same pendingClaims/profiles/unlinkedConfirmed
+   * state that JSX reads below — no secondary memoized authority.
+   */
+  const refreshGateRef = useRef(createReferralRefreshGate())
 
   /**
-   * Central tab refresh. Soft refresh (default after mutations) keeps the tab
-   * mounted. A completed mutation refresh can always commit even if a newer
-   * request has started but not yet applied. Initial load shows spinner.
-   * Does not use a full page reload or route remount.
+   * Central tab refresh. Soft refresh keeps the tab mounted and replaces the
+   * three list authorities JSX renders. Initial load shows a spinner.
+   *
+   * `force: true` (mutation path): always apply — a successful post-mutation
+   * refresh must not be dropped by the in-flight gate.
    */
-  const refreshReferralData = useCallback(async (opts?: { initial?: boolean }) => {
-    const sequencer = refreshSequencerRef.current
-    const requestId = sequencer.begin()
+  const refreshReferralData = useCallback(async (opts?: { initial?: boolean; force?: boolean }) => {
+    const gate = refreshGateRef.current
+    const requestId = gate.begin()
     const initial = opts?.initial === true
+    const force = opts?.force === true
     try {
       if (initial) setLoading(true)
       else setRefreshing(true)
@@ -489,18 +495,28 @@ export const ReferralsTab: React.FC = () => {
         fetchResolvedReferralClaims(),
         fetchReferralProfilesWithHistory(),
       ])
-      // Discard only if a newer response was already applied to the UI.
-      // Do NOT discard merely because a newer request has started.
-      if (!sequencer.canApply(requestId)) return
-      sequencer.markApplied(requestId)
-      setPendingClaims(pending)
-      setProfiles(profileRows)
-      setUnlinkedConfirmed(resolved.filter(c => c.resolution_status === 'confirmed_unlinked'))
+      // Non-forced: reject only responses older than what is already on screen.
+      // Forced (after mutation): always apply current snapshot to mounted state.
+      if (!force && !gate.canApply(requestId)) return
+      gate.markApplied(requestId)
+      // New array identities so the mounted tab cannot bail out of the update.
+      setPendingClaims(pending.slice())
+      setProfiles(
+        profileRows.map(p => ({
+          ...p,
+          claims: p.claims.slice(),
+        }))
+      )
+      setUnlinkedConfirmed(
+        resolved
+          .filter(c => c.resolution_status === 'confirmed_unlinked')
+          .slice()
+      )
     } catch (err) {
-      if (!sequencer.isLatestStarted(requestId)) return
+      if (!gate.isLatestStarted(requestId)) return
       setLoadError(err instanceof Error ? err.message : 'Failed to load referrals')
     } finally {
-      if (sequencer.isLatestStarted(requestId)) {
+      if (gate.isLatestStarted(requestId)) {
         setLoading(false)
         setRefreshing(false)
       }
@@ -516,14 +532,56 @@ export const ReferralsTab: React.FC = () => {
     setRenamingProfileId(null)
     setRenameError(null)
     setRenameDupes([])
-    await refreshReferralData()
+    await refreshReferralData({ force: true })
   }, [refreshReferralData])
 
   const handleUnlink = async (claimId: string) => {
     if (unlinkingId) return
     setUnlinkingId(claimId)
     try {
+      // Capture the claim from the same mounted authorities JSX is showing.
+      let moved: ReferralClaimWithPortalInfo | null =
+        unlinkedConfirmed.find(c => c.id === claimId) ?? null
+      if (!moved) {
+        for (const p of profiles) {
+          const found = p.claims.find(c => c.id === claimId)
+          if (found) {
+            moved = found
+            break
+          }
+        }
+      }
+
       await unresolveReferralClaim(claimId)
+
+      // Immediate mounted-state transition (same setters JSX reads). Soft
+      // refresh below reconciles with the server; this prevents the tab from
+      // remaining on pre-mutation arrays if apply is delayed or skipped.
+      if (moved) {
+        const pendingRow: ReferralClaimWithPortalInfo = {
+          ...moved,
+          resolution_status:   'unresolved',
+          referral_profile_id: null,
+          resolved_client_id:  null,
+          resolved_lead_id:    null,
+          resolved_by:         null,
+          resolved_at:         null,
+        }
+        setProfiles(prev =>
+          prev.map(p => {
+            const claims = p.claims.filter(c => c.id !== claimId)
+            return {
+              ...p,
+              claims,
+              claim_count:    claims.length,
+              most_recent_at: claims[0]?.created_at ?? null,
+            }
+          })
+        )
+        setUnlinkedConfirmed(prev => prev.filter(c => c.id !== claimId))
+        setPendingClaims(prev => [pendingRow, ...prev.filter(c => c.id !== claimId)])
+      }
+
       await afterMutation()
     } finally {
       setUnlinkingId(null)
@@ -549,9 +607,17 @@ export const ReferralsTab: React.FC = () => {
       )
       setRenameDupes(others)
       await updateReferralProfile(profileId, { displayName: next })
+      // Immediate mounted rename on the same profiles state JSX renders.
+      setProfiles(prev =>
+        prev.map(p =>
+          p.id === profileId
+            ? { ...p, display_name: next, normalized_name: normalizeReferralName(next) }
+            : p
+        )
+      )
       setRenamingProfileId(null)
       setRenameDupes([])
-      await refreshReferralData()
+      await refreshReferralData({ force: true })
     } catch (err) {
       setRenameError(err instanceof Error ? err.message : 'Failed to save profile name')
     } finally {
