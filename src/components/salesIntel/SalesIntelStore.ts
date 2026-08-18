@@ -27,6 +27,81 @@ function resolvePersistedTab(raw: string | null): SalesIntelTab {
   return 'practice';
 }
 
+/** Transient Sales Intelligence working context (COACH-LINK-2). Not CRM truth. */
+export type SalesSessionMode = 'practice' | 'live_call' | 'coach';
+
+export interface SalesSessionContext {
+  sessionId: string;
+  leadId: string;
+  mode: SalesSessionMode;
+  callLogId: string | null;
+  startedAt: string;
+}
+
+export const SI_SALES_SESSION_KEY = 'si_sales_session';
+
+const SESSION_MODES: readonly SalesSessionMode[] = [
+  'practice',
+  'live_call',
+  'coach',
+] as const;
+
+function tabToSessionMode(tab: SalesIntelTab): SalesSessionMode | null {
+  if (tab === 'practice' || tab === 'live_call' || tab === 'coach') return tab;
+  return null;
+}
+
+function newSessionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `si-${crypto.randomUUID()}`;
+  }
+  return `si-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function persistSalesSession(session: SalesSessionContext | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (!session) {
+      sessionStorage.removeItem(SI_SALES_SESSION_KEY);
+      return;
+    }
+    sessionStorage.setItem(SI_SALES_SESSION_KEY, JSON.stringify(session));
+  } catch {
+    // sessionStorage may be unavailable — memory store still works for the tab.
+  }
+}
+
+function readPersistedSalesSession(): SalesSessionContext | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(SI_SALES_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<SalesSessionContext>;
+    if (
+      typeof parsed?.sessionId !== 'string' ||
+      typeof parsed?.leadId !== 'string' ||
+      typeof parsed?.startedAt !== 'string' ||
+      !parsed.sessionId ||
+      !parsed.leadId ||
+      !(SESSION_MODES as readonly string[]).includes(String(parsed.mode))
+    ) {
+      return null;
+    }
+    return {
+      sessionId: parsed.sessionId,
+      leadId: parsed.leadId,
+      mode: parsed.mode as SalesSessionMode,
+      callLogId:
+        parsed.callLogId == null || parsed.callLogId === ''
+          ? null
+          : String(parsed.callLogId),
+      startedAt: parsed.startedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export interface SalesIntelState {
   activeTab: SalesIntelTab;
   practiceMode: boolean;
@@ -40,6 +115,8 @@ export interface SalesIntelState {
   newLeadCount: number;
   dueFollowUps: number;
   unreviewedSessions: number;
+  /** Transient shared lead/call context across Practice / Live Call / Coach. */
+  salesSession: SalesSessionContext | null;
   // Actions
   setActiveTab: (tab: SalesIntelTab) => void;
   setPracticeMode: (active: boolean) => void;
@@ -50,14 +127,20 @@ export interface SalesIntelState {
   setDueFollowUps: (count: number) => void;
   setUnreviewedSessions: (count: number) => void;
   navigateToLeadPractice: (leadId: string) => void;
+  beginSalesSession: (leadId: string, mode: SalesSessionMode) => void;
+  setSalesSessionMode: (mode: SalesSessionMode) => void;
+  attachCallLog: (callLogId: string) => void;
+  clearSalesSession: () => void;
 }
 
-export const useSalesIntelStore = create<SalesIntelState>((set) => {
+export const useSalesIntelStore = create<SalesIntelState>((set, get) => {
   // Load active tab from localStorage (same key; accept known values including performance)
   const savedTab =
     typeof window !== 'undefined'
       ? resolvePersistedTab(localStorage.getItem('si_activeTab'))
       : 'practice';
+
+  const restoredSession = readPersistedSalesSession();
 
   return {
     activeTab: savedTab,
@@ -68,10 +151,19 @@ export const useSalesIntelStore = create<SalesIntelState>((set) => {
     newLeadCount: 0,
     dueFollowUps: 0,
     unreviewedSessions: 0,
+    salesSession: restoredSession,
 
     setActiveTab: (tab: SalesIntelTab) => {
       if (typeof window !== 'undefined') {
         localStorage.setItem('si_activeTab', tab);
+      }
+      const mode = tabToSessionMode(tab);
+      const current = get().salesSession;
+      if (mode && current) {
+        const next: SalesSessionContext = { ...current, mode };
+        persistSalesSession(next);
+        set({ activeTab: tab, salesSession: next });
+        return;
       }
       set({ activeTab: tab });
     },
@@ -90,16 +182,67 @@ export const useSalesIntelStore = create<SalesIntelState>((set) => {
     setUnreviewedSessions: (count: number) =>
       set({ unreviewedSessions: count }),
 
+    beginSalesSession: (leadId: string, mode: SalesSessionMode) => {
+      const id = String(leadId || '').trim();
+      if (!id) return;
+      const current = get().salesSession;
+      const next: SalesSessionContext =
+        current && current.leadId === id
+          ? {
+              sessionId: current.sessionId,
+              leadId: id,
+              mode,
+              callLogId: current.callLogId,
+              startedAt: current.startedAt,
+            }
+          : {
+              sessionId: newSessionId(),
+              leadId: id,
+              mode,
+              callLogId: null,
+              startedAt: new Date().toISOString(),
+            };
+      persistSalesSession(next);
+      set({ salesSession: next });
+    },
+
+    setSalesSessionMode: (mode: SalesSessionMode) => {
+      const current = get().salesSession;
+      if (!current) return;
+      const next: SalesSessionContext = { ...current, mode };
+      persistSalesSession(next);
+      set({ salesSession: next });
+    },
+
+    attachCallLog: (callLogId: string) => {
+      const current = get().salesSession;
+      if (!current) return;
+      const id = String(callLogId || '').trim();
+      if (!id) return;
+      const next: SalesSessionContext = { ...current, callLogId: id };
+      persistSalesSession(next);
+      set({ salesSession: next });
+    },
+
+    clearSalesSession: () => {
+      persistSalesSession(null);
+      set({ salesSession: null });
+    },
+
     navigateToLeadPractice: (leadId: string) => {
-      // Cross-tab action: navigate to Practice tab with lead context
+      const id = String(leadId || '').trim();
+      if (!id) return;
+      // Canonical shared context (COACH-LINK-2)
+      get().beginSalesSession(id, 'practice');
+      // Legacy one-shot handoff — keep until COACH-LINK-3 retires it
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('si_practiceLead', id);
+        localStorage.setItem('si_activeTab', 'practice');
+      }
       set({
         activeTab: 'practice',
         practiceMode: true,
       });
-      // Store leadId in sessionStorage for the Practice tab to pick up
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem('si_practiceLead', leadId);
-      }
     },
   };
 });

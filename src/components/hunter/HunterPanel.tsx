@@ -23,6 +23,7 @@ import CallLogModal from './CallLogModal'
 import PortalInbox from './PortalInbox'
 import YelpAdPanel from './YelpAdPanel'
 import { useHunterStore } from '@/store/hunterStore'
+import { useSalesIntelStore } from '@/components/salesIntel/SalesIntelStore'
 import type { HunterLead as StoreHunterLead } from '@/services/hunter/HunterTypes'
 import { buildTlmaSearchUrl, parseTlmaTableHtml, type ParsedTlmaPermit, DEFAULT_TLMA_SEARCH_FILTERS, TLMA_SEARCH_CITIES, TLMA_SEARCH_PERMIT_TYPES, TLMA_PAGE_SIZE_OPTIONS, type TlmaSearchFilters } from '@/services/hunter/tlmaTableParser'
 import { buildTlmaImportRows, previewTlmaImportRows } from '@/services/hunter/tlmaLeadMapper'
@@ -467,6 +468,10 @@ const handleMapLeadSelect = (leadId: string) => {
       return
     }
     setCallLogWarning(null)
+    // COACH-LINK-2 — establish shared live_call context; stay on Leads + modal
+    if (lead?.id) {
+      useSalesIntelStore.getState().beginSalesSession(String(lead.id), 'live_call')
+    }
     onLeadAction?.(lead.id, 'call', phone)
     setCallModalLead(lead)
     setCallModalOpen(true)
@@ -2167,8 +2172,18 @@ const handleMapLeadSelect = (leadId: string) => {
         defaultHunterLeadId={callModalLead?.id ?? null}
         showOptionalDialer
         onClose={closeCallModal}
-        onSaved={() => {
+        onSaved={(log) => {
           setCallLogWarning(null)
+          // COACH-LINK-2 — attach durable call_logs.id when linked to active lead
+          const session = useSalesIntelStore.getState().salesSession
+          if (
+            log?.id &&
+            session &&
+            log.hunterLeadId &&
+            log.hunterLeadId === session.leadId
+          ) {
+            useSalesIntelStore.getState().attachCallLog(log.id)
+          }
         }}
       />
 

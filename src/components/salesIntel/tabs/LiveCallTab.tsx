@@ -14,6 +14,8 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { Mic, Phone, Plus } from 'lucide-react'
 import CallLogModal from '@/components/hunter/CallLogModal'
 import RecentCallsPanel from '@/components/hunter/RecentCallsPanel'
+import { SalesSessionContextBar } from '@/components/salesIntel/SalesSessionContextBar'
+import { useSalesIntelStore } from '@/components/salesIntel/SalesIntelStore'
 import {
   createCallLog,
   fetchRecentCallLogs,
@@ -131,6 +133,7 @@ export const LiveCallTab: React.FC = () => {
 
   return (
     <div className="space-y-4 text-gray-300">
+      <SalesSessionContextBar />
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h3 className="text-lg font-semibold text-white flex items-center gap-2">
@@ -232,8 +235,18 @@ export const LiveCallTab: React.FC = () => {
         defaultDirection={modalDirection}
         showOptionalDialer
         onClose={() => setModalOpen(false)}
-        onSaved={() => {
+        onSaved={(log) => {
           void refreshCalls()
+          // Narrow linkage: only attach when the durable row matches the active lead.
+          const session = useSalesIntelStore.getState().salesSession
+          if (
+            session &&
+            log?.id &&
+            log.hunterLeadId &&
+            log.hunterLeadId === session.leadId
+          ) {
+            useSalesIntelStore.getState().attachCallLog(log.id)
+          }
         }}
       />
     </div>
