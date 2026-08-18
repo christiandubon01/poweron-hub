@@ -22,6 +22,9 @@ const CoachTab = lazy(() =>
 const ReferralsTab = lazy(() =>
   import('./tabs/ReferralsTab').then((mod) => ({ default: mod.ReferralsTab }))
 );
+const PerformanceTab = lazy(() =>
+  import('./tabs/PerformanceTab').then((mod) => ({ default: mod.PerformanceTab }))
+);
 
 interface SalesIntelligencePanelProps {
   className?: string;
@@ -46,6 +49,8 @@ export const SalesIntelligencePanel: React.FC<
         return <CoachTab />;
       case 'referrals':
         return <ReferralsTab />;
+      case 'performance':
+        return <PerformanceTab />;
       default:
         return <PracticeTab />;
     }

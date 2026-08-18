@@ -1,6 +1,31 @@
 import { create } from 'zustand';
 
-export type SalesIntelTab = 'practice' | 'live_call' | 'leads' | 'pipeline' | 'coach' | 'referrals';
+export type SalesIntelTab =
+  | 'practice'
+  | 'live_call'
+  | 'leads'
+  | 'pipeline'
+  | 'coach'
+  | 'referrals'
+  | 'performance';
+
+/** Known SI tabs — used only to accept persisted `si_activeTab` values safely. */
+export const SALES_INTEL_TABS: readonly SalesIntelTab[] = [
+  'practice',
+  'live_call',
+  'leads',
+  'pipeline',
+  'coach',
+  'referrals',
+  'performance',
+] as const;
+
+function resolvePersistedTab(raw: string | null): SalesIntelTab {
+  if (raw && (SALES_INTEL_TABS as readonly string[]).includes(raw)) {
+    return raw as SalesIntelTab;
+  }
+  return 'practice';
+}
 
 export interface SalesIntelState {
   activeTab: SalesIntelTab;
@@ -28,13 +53,14 @@ export interface SalesIntelState {
 }
 
 export const useSalesIntelStore = create<SalesIntelState>((set) => {
-  // Load active tab from localStorage
-  const savedTab = typeof window !== 'undefined' 
-    ? localStorage.getItem('si_activeTab') as SalesIntelTab | null
-    : null;
+  // Load active tab from localStorage (same key; accept known values including performance)
+  const savedTab =
+    typeof window !== 'undefined'
+      ? resolvePersistedTab(localStorage.getItem('si_activeTab'))
+      : 'practice';
 
   return {
-    activeTab: savedTab || 'practice',
+    activeTab: savedTab,
     practiceMode: false,
     liveCallActive: false,
     pipelineFilters: {},

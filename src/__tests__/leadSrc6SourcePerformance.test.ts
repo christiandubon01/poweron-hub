@@ -337,10 +337,16 @@ describe('LEAD-SRC-6A Source Performance calculations', () => {
 })
 
 describe('LEAD-SRC-6A Source Performance boundaries', () => {
-  it('[STATIC] Coach tab hosts Source Performance', () => {
+  it('[STATIC] Performance tab hosts Source Performance', () => {
+    const perf = readRepoFile('src/components/salesIntel/tabs/PerformanceTab.tsx')
+    expect(perf).toContain('SourcePerformancePanel')
+    expect(perf).toContain('source-performance')
+  })
+
+  it('[STATIC] Coach tab does not host Source Performance', () => {
     const coach = readRepoFile('src/components/salesIntel/tabs/CoachTab.tsx')
-    expect(coach).toContain('SourcePerformancePanel')
-    expect(coach).toContain('source-performance')
+    expect(coach).not.toContain('SourcePerformancePanel')
+    expect(coach).not.toContain('source-performance')
   })
 
   it('[STATIC] no KPI / QuickBooks / referral / serviceQuoteMath / project.contract writers', () => {
@@ -348,6 +354,7 @@ describe('LEAD-SRC-6A Source Performance boundaries', () => {
       'src/features/sales-intelligence/source-performance/sourcePerformanceCalculations.ts',
       'src/features/sales-intelligence/source-performance/SourcePerformancePanel.tsx',
       'src/features/sales-intelligence/source-performance/index.ts',
+      'src/components/salesIntel/tabs/PerformanceTab.tsx',
       'src/components/salesIntel/tabs/CoachTab.tsx',
     ]
     for (const file of files) {

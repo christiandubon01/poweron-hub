@@ -4,8 +4,9 @@ import {
   Mic,
   Target,
   Filter,
-  BarChart3,
+  Lightbulb,
   Users,
+  BarChart3,
 } from 'lucide-react';
 import { SalesIntelTab, useSalesIntelStore } from './SalesIntelStore';
 
@@ -42,13 +43,18 @@ const TAB_DEFINITIONS: TabDefinition[] = [
   {
     id: 'coach',
     label: 'COACH',
-    icon: <BarChart3 className="w-4 h-4" />,
+    icon: <Lightbulb className="w-4 h-4" />,
     badgeKey: 'unreviewedSessions',
   },
   {
     id: 'referrals',
     label: 'REFERRALS',
     icon: <Users className="w-4 h-4" />,
+  },
+  {
+    id: 'performance',
+    label: 'PERFORMANCE',
+    icon: <BarChart3 className="w-4 h-4" />,
   },
 ];
 
