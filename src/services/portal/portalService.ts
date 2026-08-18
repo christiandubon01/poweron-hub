@@ -4,9 +4,13 @@
  *
  * convertToLead():
  *   1. Builds hunter_leads insert payload from portal_request fields
- *   2. Inserts into hunter_leads (source='customer_portal', score=82)
+ *   2. Inserts into hunter_leads:
+ *        source     = portal source_category when valid (paid_search, …)
+ *                     else 'customer_portal' fallback
+ *        source_tag = 'customer_portal' (submission channel — LEAD-SRC-6C)
+ *      score=82
  *   3. Geocodes address via geocode-single Edge Function → updates lat/lng
- *   4. Updates portal_request: status → 'reviewed', hunter_lead_id → new id
+ *   4. Updates portal_request: status → 'accepted', hunter_lead_id → new id
  */
 
 import { supabase } from '@/lib/supabase'
@@ -16,6 +20,10 @@ import {
   isHunterTenantAuthorityError,
   resolveHunterTenantId,
 } from '@/services/hunter/resolveHunterTenantId'
+import {
+  normalizePortalAcquisitionCategory,
+  PORTAL_CHANNEL_TAG,
+} from '@/features/sales-intelligence/conversion-receipts/conversionReceiptSource'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -36,6 +44,8 @@ export interface PortalRequest {
   status: string
   hunter_lead_id: string | null
   source: string
+  /** Portal acquisition category when present (mig 120). Not on older TS shapes. */
+  source_category?: string | null
   notes: string | null
   completed_at?: string | null
   review_requested_at?: string | null
@@ -405,12 +415,17 @@ export async function convertToLead(request: PortalRequest): Promise<string | nu
     serviceCategory: request.service_category,
   })
 
+  // LEAD-SRC-6C: acquisition lives on source; Customer Portal channel on source_tag.
+  // Invalid/missing source_category falls back to channel-as-source (legacy shape).
+  const acquisition =
+    normalizePortalAcquisitionCategory((request as any).source_category) ?? PORTAL_CHANNEL_TAG
+
   const insertPayload = {
     tenant_id:        tenantId,
     user_id:          userId,
     lead_type:        leadType,
-    source:           'customer_portal',
-    source_tag:       'customer_portal',
+    source:           acquisition,
+    source_tag:       PORTAL_CHANNEL_TAG,
     status:           'new',
     score:            82,   // inbound hot lead — customer actively reached out
     score_tier:       'strong',
