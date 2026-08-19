@@ -2,16 +2,49 @@
 /**
  * Claude API Proxy Client
  *
- * All Claude calls go through /.netlify/functions/claude (server-side proxy).
- * Falls back to direct API call with VITE_ANTHROPIC_API_KEY if proxy unavailable.
- * This centralizes all Anthropic API access in the app.
+ * ALL Claude calls go through /.netlify/functions/claude — the server-side
+ * Netlify proxy that holds POWERON_ANTHROPIC_API_KEY (production / netlify
+ * dev) or the Vite configureServer Claude path (npm run dev). The browser
+ * never reads, stores, or transmits an Anthropic secret: there is no
+ * browser-side VITE Anthropic-key path and no direct Anthropic API call
+ * from the client.
+ *
+ * AI-KEY (reconstructed from surviving local WIP):
+ * - Backend authority: netlify/functions/claude.ts → POWERON_ANTHROPIC_API_KEY
+ * - Local Vite authority: vite.config.js claudeDevProxy → ANTHROPIC_API_KEY
+ *   (Node-only; client Vite Anthropic env is forced undefined in the bundle)
+ * - Frontend: POST /.netlify/functions/claude with authedJsonHeaders only
+ *
+ * COACH-LINK-RUNTIME-2: HTTP 2xx proxy responses are returned (or fail clearly).
+ * They must never fall through into a generic "temporarily unavailable" path
+ * that hides a successful or status-bearing proxy response.
  */
 
 import { authedJsonHeaders } from '@/services/authedFetch'
 
 var PROXY_URL = '/.netlify/functions/claude'
-var DIRECT_URL = 'https://api.anthropic.com/v1/messages'
-var DEFAULT_MODEL = 'claude-sonnet-4-20250514'
+
+/**
+ * Map a non-2xx proxy response to a sanitized browser-facing message.
+ * Known classes get stable copy; other statuses keep an explicit Proxy error
+ * with the HTTP status so RUNTIME-2 callers are not fed a fake outage.
+ */
+function sanitizeProxyStatus(status: number, body: string): string {
+  if (status === 500 && /not configured/i.test(body)) {
+    return 'AI service is not configured on this environment.'
+  }
+  if (status === 401) {
+    return 'AI service is not available. Please try again.'
+  }
+  if (status === 404) {
+    return 'AI service is not available.'
+  }
+  if (status === 429) {
+    return 'AI service is busy. Please try again shortly.'
+  }
+  // RUNTIME-2: preserve status class — do not collapse into generic unavailable.
+  return `Proxy error (${status}): ${body.slice(0, 200)}`
+}
 
 export interface ClaudeRequest {
   messages: Array<{ role: 'user' | 'assistant'; content: string | any[] }>
@@ -29,78 +62,59 @@ export interface ClaudeResponse {
 }
 
 /**
- * Call Claude via Netlify proxy (preferred) or direct API (fallback).
+ * Call Claude via the server-side Netlify proxy ONLY.
+ * Fails closed when the proxy is unreachable or returns a non-2xx status.
+ * Never falls back to a browser-held Anthropic key.
  */
 export async function callClaude(req: ClaudeRequest): Promise<ClaudeResponse> {
-  const { messages, system, max_tokens = 1024, model = DEFAULT_MODEL, signal, tools } = req
+  const { messages, system, max_tokens = 1024, model, signal, tools } = req
 
-  // Try proxy first
+  // Omit model when unset so netlify/functions/claude.ts DEFAULT_MODEL remains
+  // the canonical model authority (AI-KEY / server contract).
+  const proxyPayload: Record<string, unknown> = { messages, system, max_tokens }
+  if (model) proxyPayload.model = model
+  if (tools && tools.length > 0) proxyPayload.tools = tools
+
+  let response: Response
   try {
-    const proxyPayload: Record<string, unknown> = { messages, system, max_tokens, model }
-    if (tools && tools.length > 0) proxyPayload.tools = tools
-
-    const response = await fetch(PROXY_URL, {
+    response = await fetch(PROXY_URL, {
       method: 'POST',
       headers: await authedJsonHeaders(),
       body: JSON.stringify(proxyPayload),
       signal,
     })
-
-    if (response.ok) {
-      console.log('[Claude] Response via proxy')
-      return await response.json()
-    }
-
-    // If proxy returns 500 with "not configured", fall through to direct
-    const errBody = await response.text()
-    if (response.status === 500 && errBody.includes('not configured')) {
-      console.warn('[Claude] Proxy key not configured, trying direct...')
-    } else {
-      throw new Error(`Proxy error (${response.status}): ${errBody.slice(0, 200)}`)
-    }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') throw err
-    // Proxy unreachable (e.g. local dev) — fall through to direct
-    console.warn('[Claude] Proxy unavailable, trying direct API:', err instanceof Error ? err.message : err)
+    // Network / proxy unreachable — fail closed (no browser direct Anthropic).
+    throw new Error('AI service is not reachable on this environment.')
   }
 
-  // Fallback: direct API call with VITE_ key (local dev only — DEV guard prevents inlining in prod)
-  const apiKey = import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : undefined
-  if (!apiKey) {
-    // In DEV: show actionable config message. In production the key is server-side only —
-    // show a clean error instead (never expose key config instructions to end users).
-    if (import.meta.env.DEV) {
-      throw new Error('No API key available — configure ANTHROPIC_API_KEY on Netlify or VITE_ANTHROPIC_API_KEY locally')
+  // RUNTIME-2: HTTP 2xx must be consumed and returned — never mapped to a
+  // generic unavailable fallback.
+  if (response.ok) {
+    try {
+      return await response.json()
+    } catch {
+      throw new Error(
+        'AI service returned an unreadable response. Please try again.',
+      )
     }
-    throw new Error('AI service temporarily unavailable. Please try again.')
   }
 
-  const response = await fetch(DIRECT_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({ model, max_tokens, messages, ...(system ? { system } : {}), ...(tools?.length ? { tools } : {}) }),
-    signal,
-  })
-
-  if (!response.ok) {
-    const errText = await response.text()
-    throw new Error(`Claude API error (${response.status}): ${errText.slice(0, 200)}`)
+  let errBody = ''
+  try {
+    errBody = await response.text()
+  } catch {
+    /* ignore */
   }
-
-  console.log('[Claude] Response via direct API')
-  return await response.json()
+  throw new Error(sanitizeProxyStatus(response.status, errBody))
 }
 
 /**
  * Helper: extract text from Claude response
  */
 export function extractText(response: ClaudeResponse): string {
-  return response.content?.find(c => c.type === 'text')?.text || ''
+  return response.content?.find((c) => c.type === 'text')?.text || ''
 }
 
 // ── NEXUS Prompt Engine integration ──────────────────────────────────────────
@@ -123,8 +137,10 @@ export async function callNexus(request: NexusRequest): Promise<NexusResponse> {
     const { runNexusEngine } = await import('@/agents/nexusPromptEngine')
     return await runNexusEngine(request)
   } catch (err) {
-    console.error('[claudeProxy] callNexus error — falling back to plain Claude:', err)
-    // Fallback: wrap the query as a plain Claude call
+    console.error(
+      '[claudeProxy] callNexus error — falling back to plain Claude:',
+      err,
+    )
     const response = await callClaude({
       messages: [{ role: 'user', content: request.query }],
       system: request.systemPromptOverride,

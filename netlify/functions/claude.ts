@@ -3,9 +3,17 @@
  * Netlify Function — Claude API Proxy
  *
  * Accepts POST with { messages, system, max_tokens, model, stream }
- * Forwards to Anthropic API using server-side ANTHROPIC_API_KEY
+ * Forwards to Anthropic API using server-side POWERON_ANTHROPIC_API_KEY
  * When stream: true — calls Anthropic streaming API, collects SSE deltas,
  * returns assembled response in the same JSON format as non-streaming.
+ *
+ * AI-KEY-1C: the credential is read from POWERON_ANTHROPIC_API_KEY, NOT
+ * ANTHROPIC_API_KEY. Netlify's AI Gateway provider environment exposes its
+ * own ANTHROPIC_API_KEY (and ANTHROPIC_BASE_URL pointing at /.netlify/ai),
+ * which collides with the legacy name under `netlify dev`. The POWERON_
+ * namespace isolates PowerOn's direct Anthropic credential from the gateway.
+ * The endpoint stays https://api.anthropic.com/v1/messages — never routed
+ * through the gateway, never ANTHROPIC_BASE_URL, no fallback.
  *
  * This keeps the API key off the client and avoids CORS issues.
  */
@@ -76,12 +84,15 @@ exports.handler = async (event: any, _context: any) => {
     }
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY
+  // AI-KEY-1C: read PowerOn's OWN credential. Do NOT use ANTHROPIC_API_KEY —
+  // under `netlify dev` that name is owned by the Netlify AI Gateway provider
+  // environment and collides with this proxy. No fallback to the legacy name.
+  const apiKey = process.env.POWERON_ANTHROPIC_API_KEY
   if (!apiKey) {
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured on server' }),
+      body: JSON.stringify({ error: 'POWERON_ANTHROPIC_API_KEY not configured on server' }),
     }
   }
 

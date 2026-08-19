@@ -157,7 +157,9 @@ export const LiveCallAssistPanel: React.FC<LiveCallAssistPanelProps> = ({
         return
       }
       const next = await generateLiveCoachTip(facts, history, note, ac.signal)
-      if (ac.signal.aborted) return
+      // RUNTIME-2: if the proxy already returned a tip, apply it. Do not discard
+      // a finished success solely because a later abort raced the state update.
+      setCoachError(null)
       setTip(next)
       setHistory((prev) => [
         ...prev,
@@ -175,7 +177,7 @@ export const LiveCallAssistPanel: React.FC<LiveCallAssistPanelProps> = ({
         err instanceof Error ? err.message : 'Coach Me failed — retry.',
       )
     } finally {
-      if (!ac.signal.aborted) setCoachLoading(false)
+      setCoachLoading(false)
     }
   }
 
