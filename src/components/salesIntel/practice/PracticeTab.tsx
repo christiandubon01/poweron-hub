@@ -31,6 +31,34 @@ import {
 } from '@/services/sparkTraining/SparkRolePlayEngine'
 import { useSalesIntelStore } from '@/components/salesIntel/SalesIntelStore'
 import { useHunterStore } from '@/store/hunterStore'
+import type { HunterLead } from '@/services/hunter/HunterTypes'
+
+/**
+ * Build a plain field bag for mapHunterStoreLeadToRolePlayLead without an
+ * unsafe HunterLead[] → Record<string, unknown>[] cast. Fresh object literals
+ * are valid Record values; store HunterLead is not (no index signature).
+ */
+function hunterLeadToRolePlayInput(
+  lead: HunterLead,
+): Record<string, unknown> {
+  return {
+    id: lead.id,
+    contact_name: lead.contact_name,
+    company_name: lead.company_name,
+    phone: lead.phone,
+    city: lead.city,
+    address: lead.address,
+    description: lead.description,
+    notes: lead.notes,
+    source: lead.source,
+    source_tag: lead.source_tag,
+    lead_type: lead.lead_type,
+    score: lead.score,
+    score_tier: lead.score_tier,
+    estimated_value: lead.estimated_value,
+    pitchAngles: lead.pitchAngles,
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -472,18 +500,19 @@ export function PracticeTab() {
   const requestLiveCallLaunch = useSalesIntelStore((s) => s.requestLiveCallLaunch)
   const hunterLeads = useHunterStore((s) => s.leads)
 
-  const resolvedLead = useMemo(() => {
+  const resolvedLead = useMemo((): HunterLead | null => {
     const leadId = salesSession?.leadId
     if (!leadId) return null
-    const found = (hunterLeads as Array<Record<string, unknown>>).find(
-      (l) => String(l.id) === String(leadId)
+    return (
+      hunterLeads.find((l) => String(l.id) === String(leadId)) ?? null
     )
-    return found ?? null
   }, [salesSession?.leadId, hunterLeads])
 
   const realLeadRolePlay = useMemo(() => {
     if (!resolvedLead) return null
-    const mapped = mapHunterStoreLeadToRolePlayLead(resolvedLead)
+    const mapped = mapHunterStoreLeadToRolePlayLead(
+      hunterLeadToRolePlayInput(resolvedLead),
+    )
     if (!mapped) return null
     const generated = customCharacterFromHunterLead(mapped)
     const first =

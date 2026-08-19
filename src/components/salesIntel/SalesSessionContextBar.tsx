@@ -6,6 +6,7 @@
 import React from 'react'
 import { Phone, X } from 'lucide-react'
 import { useHunterStore } from '@/store/hunterStore'
+import type { HunterLead } from '@/services/hunter/HunterTypes'
 import {
   useSalesIntelStore,
   type SalesSessionMode,
@@ -17,20 +18,21 @@ const MODE_LABEL: Record<SalesSessionMode, string> = {
   coach: 'Coach',
 }
 
-function leadDisplayName(lead: Record<string, unknown> | null | undefined): string {
+function leadDisplayName(lead: HunterLead | null | undefined): string {
   if (!lead) return 'Unknown lead'
   return (
-    String(lead.contact_name || lead.contactName || '').trim() ||
-    String(lead.company_name || lead.companyName || '').trim() ||
-    String(lead.phone || '').trim() ||
-    String(lead.id || 'Unknown lead')
+    (lead.contact_name || '').trim() ||
+    (lead.company_name || '').trim() ||
+    (lead.phone || '').trim() ||
+    lead.id ||
+    'Unknown lead'
   )
 }
 
-function leadSourceLine(lead: Record<string, unknown> | null | undefined): string {
+function leadSourceLine(lead: HunterLead | null | undefined): string {
   if (!lead) return '—'
-  const source = String(lead.source || '').trim() || '—'
-  const detail = String(lead.source_tag || lead.sourceTag || '').trim()
+  const source = (lead.source || '').trim() || '—'
+  const detail = (lead.source_tag || '').trim()
   return detail ? `${source} · ${detail}` : source
 }
 
@@ -55,11 +57,10 @@ export const SalesSessionContextBar: React.FC<SalesSessionContextBarProps> = ({
     return null
   }
 
-  const lead = (leads as Array<Record<string, unknown>>).find(
-    (l) => String(l.id) === salesSession.leadId,
-  )
+  const lead =
+    leads.find((l) => String(l.id) === salesSession.leadId) ?? null
   const name = leadDisplayName(lead)
-  const phone = lead ? String(lead.phone || '').trim() || '—' : '—'
+  const phone = lead ? (lead.phone || '').trim() || '—' : '—'
   const source = leadSourceLine(lead)
 
   return (
