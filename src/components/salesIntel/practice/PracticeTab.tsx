@@ -669,20 +669,22 @@ CRITICAL RULES:
   // COACH-LINK-3 — real-lead prompt + character replace silent Adam Stone fallback.
   if (activePracticeSession) {
     return (
-      <VoicePracticeView
-        mode={activePracticeSession.interactionMode === 'voice-to-voice' ? 'voice-only' : activePracticeSession.interactionMode}
-        difficulty={activePracticeSession.difficulty}
-        archetypeId={activePracticeSession.archetypeId ?? null}
-        character={activePracticeSession.practiceCharacter ?? ADAM_STONE_VOICE}
-        leadRolePlayPrompt={activePracticeSession.leadRolePlayPrompt ?? null}
-        practiceLeadHeader={activePracticeSession.practiceLeadHeader ?? null}
-        onGoLiveCall={
-          activePracticeSession.leadId || salesSession?.leadId
-            ? handleGoLiveCall
-            : undefined
-        }
-        onClose={handleEndRound}
-      />
+      <div data-testid="practice-active-session" className="min-h-0 w-full">
+        <VoicePracticeView
+          mode={activePracticeSession.interactionMode === 'voice-to-voice' ? 'voice-only' : activePracticeSession.interactionMode}
+          difficulty={activePracticeSession.difficulty}
+          archetypeId={activePracticeSession.archetypeId ?? null}
+          character={activePracticeSession.practiceCharacter ?? ADAM_STONE_VOICE}
+          leadRolePlayPrompt={activePracticeSession.leadRolePlayPrompt ?? null}
+          practiceLeadHeader={activePracticeSession.practiceLeadHeader ?? null}
+          onGoLiveCall={
+            activePracticeSession.leadId || salesSession?.leadId
+              ? handleGoLiveCall
+              : undefined
+          }
+          onClose={handleEndRound}
+        />
+      </div>
     )
   }
 

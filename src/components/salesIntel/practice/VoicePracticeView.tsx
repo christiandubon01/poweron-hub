@@ -1,14 +1,16 @@
 // @ts-nocheck
 /**
  * ST2 — Voice Practice View
- * 
- * Full-screen practice interface for SPARK voice training.
- * Optimized for voice conversation with character AI.
- * 
+ *
+ * Contained Practice interaction surface for SPARK voice/text training
+ * (COACH-LINK-3C — fits inside Sales Intelligence; not a fixed fullscreen overlay).
+ *
  * Modes:
- * - Voice-to-Voice: mic in → character responds (no visible transcript)
+ * - Voice-to-Voice: mic in → character responds
  * - Voice + Transcript: mic in → scrolling transcript visible
  * - Text Only: keyboard input → text response (no audio)
+ *
+ * Layout: compact header + scrollable transcript body + always-reachable controls.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -131,7 +133,8 @@ function TranscriptPanel({ entries }: { entries: TranscriptEntry[] }) {
   return (
     <div
       ref={scrollRef}
-      className="flex-1 overflow-y-auto rounded border border-zinc-700/30 bg-zinc-900/20 p-4 space-y-3 text-sm"
+      data-testid="practice-transcript-scroll"
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded border border-zinc-700/30 bg-zinc-900/20 p-3 space-y-3 text-sm"
     >
       {entries.length === 0 && (
         <p className="text-center text-zinc-500 text-xs py-8">
@@ -180,20 +183,20 @@ function CharacterInfoBar({ character, difficulty, archetypeId }: {
     : undefined
 
   return (
-    <div className="flex items-center justify-between bg-zinc-900/40 border border-zinc-700/30 rounded-lg p-4">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-          <User size={20} className="text-white" />
+    <div className="flex items-center justify-between gap-2 min-w-0 bg-zinc-900/40 border border-zinc-700/30 rounded-lg px-2.5 py-1.5">
+      <div className="flex items-center gap-2 min-w-0">
+        <div className="w-8 h-8 shrink-0 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
+          <User size={16} className="text-white" />
         </div>
-        <div>
-          <div className="font-medium text-white">{character.name}</div>
-          <div className="text-xs text-zinc-400">
+        <div className="min-w-0">
+          <div className="font-medium text-white text-sm truncate">{character.name}</div>
+          <div className="text-[11px] text-zinc-400 truncate">
             {character.tone}{archetype ? ` · ${archetype.label}` : ''}
           </div>
         </div>
       </div>
       <div className={clsx(
-        'px-3 py-1 rounded-full text-xs font-medium border',
+        'shrink-0 px-2 py-0.5 rounded-full text-[11px] font-medium border',
         b.color
       )}>
         {b.label} · {d}/10
@@ -413,95 +416,127 @@ export default function VoicePracticeView({
     return `${m}:${s.toString().padStart(2, '0')}`
   }
   
+  // COACH-LINK-3C — contained Practice workspace (not fixed fullscreen overlay).
+  // Header + controls stay reachable; transcript/messages own vertical scroll.
   return (
-    <div className="fixed inset-0 z-50 bg-black flex flex-col">
-      {/* Header */}
-      <div className="border-b border-zinc-700/30 bg-zinc-900/40 backdrop-blur p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4 min-w-0">
-            <CharacterInfoBar character={character} difficulty={difficulty} archetypeId={archetypeId} />
-            <div className="flex items-center gap-2 text-sm text-zinc-400 shrink-0">
-              <Clock size={16} />
-              {formatTime(elapsedSeconds)}
-            </div>
+    <div
+      data-testid="practice-workspace"
+      className="flex flex-col w-full min-h-0 max-h-[calc(100dvh-9rem)] h-[min(640px,calc(100dvh-9rem))] rounded-xl border border-zinc-700/40 bg-zinc-950 overflow-hidden"
+    >
+      {/* Compact header — outside scroll body */}
+      <div
+        data-testid="practice-workspace-header"
+        className="shrink-0 border-b border-zinc-700/30 bg-zinc-900/50 px-3 py-2 space-y-1.5"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="min-w-0 flex-1">
+            <CharacterInfoBar
+              character={character}
+              difficulty={difficulty}
+              archetypeId={archetypeId}
+            />
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-zinc-700/20 rounded-lg transition-colors"
-            aria-label="Close"
-          >
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0 text-sm text-zinc-400">
+            <Clock size={14} />
+            <span className="tabular-nums text-xs">{formatTime(elapsedSeconds)}</span>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 hover:bg-zinc-700/30 rounded-lg transition-colors"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
         {practiceLeadHeader && (
           <div
             data-testid="practice-lead-header"
-            className="mt-3 rounded-lg border border-emerald-500/25 bg-emerald-950/20 px-3 py-2 text-xs text-gray-300"
+            className="rounded-md border border-emerald-500/25 bg-emerald-950/20 px-2.5 py-1.5 text-xs text-gray-300"
           >
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400/90">
-              Practicing
-            </div>
-            <div className="font-medium text-white truncate">{practiceLeadHeader.displayName}</div>
-            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-zinc-400 mt-0.5">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400/90 shrink-0">
+                Practicing
+              </span>
+              <span className="font-medium text-white truncate">
+                {practiceLeadHeader.displayName}
+              </span>
               {practiceLeadHeader.jobIntent ? (
-                <span className="truncate">{practiceLeadHeader.jobIntent}</span>
+                <span className="text-zinc-400 truncate">
+                  · {practiceLeadHeader.jobIntent}
+                </span>
               ) : null}
               {practiceLeadHeader.sourceLine ? (
-                <span className="truncate">{practiceLeadHeader.sourceLine}</span>
+                <span className="text-zinc-500 truncate">
+                  · {practiceLeadHeader.sourceLine}
+                </span>
               ) : null}
             </div>
           </div>
         )}
       </div>
-      
-      {/* Main Content */}
-      <div className="flex-1 overflow-hidden flex flex-col p-6 gap-4">
-        {/* Waveform */}
-        <div className="flex-shrink-0">
-        <WaveformVisualizer data={waveform} />
-        </div>
-        
-        {/* Transcript or Input */}
+
+      {/* Interaction body — primary vertical scroll owner via transcript */}
+      <div
+        data-testid="practice-interaction-body"
+        className="flex-1 min-h-0 overflow-hidden flex flex-col px-3 py-2 gap-2"
+      >
+        {mode !== 'text-only' && (
+          <div className="shrink-0" data-testid="practice-waveform">
+            <WaveformVisualizer data={waveform} />
+          </div>
+        )}
+
         {mode === 'text-only' ? (
-          <form onSubmit={handleTextInput} className="flex-1 flex flex-col gap-4 min-h-0">
+          <form
+            onSubmit={handleTextInput}
+            data-testid="practice-text-mode"
+            className="flex-1 min-h-0 flex flex-col gap-2"
+          >
             <TranscriptPanel entries={transcript} />
-            
-            <div className="flex gap-2 flex-shrink-0">
-            <input
-              type="text"
-              name="userInput"
+            <div
+              data-testid="practice-text-composer"
+              className="flex gap-2 shrink-0"
+            >
+              <input
+                type="text"
+                name="userInput"
                 placeholder="Type your response..."
                 disabled={isProcessing}
-                className="flex-1 px-4 py-2 rounded border border-zinc-700/30 bg-zinc-900/40 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 disabled:opacity-50"
+                className="min-w-0 flex-1 px-3 py-2 rounded border border-zinc-700/30 bg-zinc-900/40 text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500/50 disabled:opacity-50 text-sm"
               />
               <button
                 type="submit"
                 disabled={isProcessing}
-                className="px-6 py-2 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/30 disabled:opacity-50 font-medium text-sm"
+                className="shrink-0 px-4 py-2 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/30 disabled:opacity-50 font-medium text-sm"
               >
                 {isProcessing ? 'Responding...' : 'Send'}
               </button>
             </div>
           </form>
         ) : (
-          <TranscriptPanel entries={transcript} />
+          <div data-testid="practice-voice-mode" className="flex-1 min-h-0 flex flex-col">
+            <TranscriptPanel entries={transcript} />
+          </div>
         )}
-        
-        {/* Error Message */}
+
         {error && (
-          <div className="flex items-start gap-3 rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
-            <AlertCircle size={18} className="flex-shrink-0 mt-0.5" />
-            <div>{error}</div>
+          <div className="shrink-0 flex items-start gap-2 rounded border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300">
+            <AlertCircle size={16} className="shrink-0 mt-0.5" />
+            <div className="min-w-0 break-words">{error}</div>
           </div>
         )}
       </div>
-      
-      {/* Controls Footer */}
-      <div className="border-t border-zinc-700/30 bg-zinc-900/40 backdrop-blur p-6">
-        <div className="flex items-center justify-between gap-4">
-          {/* Left: Volume Control */}
-          <div className="flex items-center gap-2">
+
+      {/* Controls — always outside transcript overflow */}
+      <div
+        data-testid="practice-workspace-controls"
+        className="shrink-0 border-t border-zinc-700/30 bg-zinc-900/50 px-3 py-2.5"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
+              type="button"
               onClick={() => setAudioMuted(!audioMuted)}
               className={clsx(
                 'p-2 rounded-lg transition-colors',
@@ -509,10 +544,10 @@ export default function VoicePracticeView({
                   ? 'bg-red-500/20 text-red-400'
                   : 'bg-zinc-700/20 text-zinc-300 hover:bg-zinc-700/40'
               )}
+              aria-label={audioMuted ? 'Unmute' : 'Mute'}
             >
-              {audioMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+              {audioMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
             </button>
-            
             <input
               type="range"
               min="0"
@@ -521,43 +556,42 @@ export default function VoicePracticeView({
               value={volume}
               onChange={(e) => setVolume(parseFloat(e.target.value))}
               disabled={audioMuted}
-              className="w-24 opacity-70 disabled:opacity-30"
+              className="w-20 sm:w-24 opacity-70 disabled:opacity-30"
+              aria-label="Volume"
             />
           </div>
-          
-          {/* Center: Mic / Stop */}
+
           {mode !== 'text-only' && (
             <button
+              type="button"
+              data-testid="practice-mic-control"
               onClick={handleUserTurn}
               disabled={isProcessing}
               className={clsx(
-                'w-14 h-14 rounded-full flex items-center justify-center font-medium transition-all disabled:opacity-50',
+                'w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center font-medium transition-all disabled:opacity-50 shrink-0',
                 isRecording
                   ? 'bg-red-500/40 text-red-300 border-2 border-red-500/60 hover:bg-red-500/50'
                   : 'bg-green-500/20 text-green-300 border-2 border-green-500/40 hover:bg-green-500/30'
               )}
+              aria-label={isRecording ? 'Stop recording' : 'Start microphone'}
             >
-              {isRecording ? (
-                <Square size={20} />
-              ) : (
-                <Mic size={20} />
-              )}
+              {isRecording ? <Square size={18} /> : <Mic size={18} />}
             </button>
           )}
-          
-          {/* Right: Actions */}
-          <div className="flex items-center gap-2">
+
+          <div className="flex flex-wrap items-center gap-1.5 shrink-0">
             {onGoLiveCall && (
               <button
                 type="button"
                 data-testid="practice-go-live-call"
                 onClick={onGoLiveCall}
-                className="px-4 py-2 rounded border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 text-sm font-medium"
+                className="px-3 py-1.5 rounded border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 text-sm font-medium"
               >
                 Live Call
               </button>
             )}
             <button
+              type="button"
               onClick={() => {
                 stopAudio()
                 clearConversationHistory()
@@ -565,14 +599,15 @@ export default function VoicePracticeView({
                 setElapsedSeconds(0)
                 roundStartRef.current = Date.now()
               }}
-              className="px-4 py-2 rounded border border-zinc-700/30 bg-zinc-700/10 text-zinc-300 hover:bg-zinc-700/20 text-sm font-medium"
+              className="px-3 py-1.5 rounded border border-zinc-700/30 bg-zinc-700/10 text-zinc-300 hover:bg-zinc-700/20 text-sm font-medium"
             >
               Reset
             </button>
-            
             <button
+              type="button"
+              data-testid="practice-end-round"
               onClick={handleEndRound}
-              className="px-6 py-2 rounded bg-blue-500/30 text-blue-300 border border-blue-500/40 hover:bg-blue-500/40 text-sm font-medium"
+              className="px-3 py-1.5 rounded bg-blue-500/30 text-blue-300 border border-blue-500/40 hover:bg-blue-500/40 text-sm font-medium"
             >
               End Round
             </button>
