@@ -3,8 +3,8 @@
  * Updates call_logs only. Never mutates leads/customers/portal requests.
  *
  * Optional Open Dialer (tel:) is never automatic.
- * Unsaved create → save truthful values first, then tel:.
- * Already-saved call → tel: only (no duplicate row).
+ * Open Dialer never creates a call_log — Log Call / Save is the durable path.
+ * (COACH-LINK-3A: owner may dial without manufacturing history.)
  */
 
 import React, { useEffect, useState } from 'react'
@@ -214,48 +214,16 @@ export function CallLogModal({
     }
   }
 
-  /** Optional external dialer — never automatic; never claims connect/answered. */
-  const handleOpenDialer = async () => {
+  /** Optional external dialer — never automatic; never creates call_log. */
+  const handleOpenDialer = () => {
     setError(null)
     const phoneForDial = (mode === 'classify' ? callLog?.phoneRaw : phone) ?? phone
     if (!dialerDigits(phoneForDial)) {
       setError('Invalid phone number')
       return
     }
-
-    setLoading(true)
-    try {
-      // Already-saved call (classify): tel: only — never create a duplicate row.
-      if (mode === 'classify' || callLog?.id) {
-        openTelDialer(phoneForDial)
-        return
-      }
-
-      // Brand-new unsaved create: save truthful current values first, then tel:.
-      let created: CallLog | null = null
-      let logError: string | null = null
-      try {
-        created = await saveCreateLog()
-        onSaved?.(created)
-      } catch (err) {
-        logError = err instanceof Error ? err.message : 'Failed to save call log'
-      }
-
-      const dialerOpened = openTelDialer(phoneForDial)
-      if (logError) {
-        setError(
-          dialerOpened
-            ? `Dialer opened, but call was not logged: ${logError}`
-            : logError,
-        )
-        return
-      }
-      onClose()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to open dialer')
-    } finally {
-      setLoading(false)
-    }
+    // tel: only — Log Call / Save remains the exclusive durable write path.
+    openTelDialer(phoneForDial)
   }
 
   const phoneForDialerCheck =

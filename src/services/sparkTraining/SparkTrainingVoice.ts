@@ -203,14 +203,21 @@ export async function getCharacterResponse(
   character: CharacterPersonality,
   userText: string,
   difficulty: 1 | 2 | 3 | 4 | 5 | number,
-  archetypeId?: ArchetypeId | null
+  archetypeId?: ArchetypeId | null,
+  /** COACH-LINK-3 — optional real-lead role-play base prompt (known facts + simulated behavior). */
+  leadRolePlayPrompt?: string | null
 ): Promise<string> {
   try {
     console.log('[SparkVoice] Requesting character response from Claude...')
     const startTime = performance.now()
 
     // Build system prompt for character role-play
-    const systemPrompt = buildCharacterSystemPrompt(character, difficulty, archetypeId)
+    const systemPrompt = buildCharacterSystemPrompt(
+      character,
+      difficulty,
+      archetypeId,
+      leadRolePlayPrompt
+    )
     
     // Get conversation history for context
     const conversationHistory = getHistory()
@@ -258,6 +265,8 @@ export async function getCharacterResponse(
 /**
  * Build system prompt for character role-play.
  * Composes Call Type's character + (optional) personality archetype + 0–10 difficulty.
+ * COACH-LINK-3: when leadRolePlayPrompt is provided, use it as the customer base
+ * (known facts vs simulated behavior) instead of the generic Adam Stone default.
  *
  * HUNTER-PRACTICE-ARCHETYPES-DIFFICULTY-APR28-2026-1
  * Backward compatible — accepts legacy 1–5 difficulty (mapped 1→2, 2→4, 3→5, 4→7, 5→9).
@@ -265,7 +274,8 @@ export async function getCharacterResponse(
 function buildCharacterSystemPrompt(
   character: CharacterPersonality,
   difficulty: 1 | 2 | 3 | 4 | 5 | number,
-  archetypeId?: ArchetypeId | null
+  archetypeId?: ArchetypeId | null,
+  leadRolePlayPrompt?: string | null
 ): string {
   // Normalize legacy 1–5 to 0–10 (rough proportional map: 1→2, 2→4, 3→5, 4→7, 5→9)
   const legacyToNumeric: Record<number, number> = { 1: 2, 2: 4, 3: 5, 4: 7, 5: 9 }
@@ -279,11 +289,21 @@ function buildCharacterSystemPrompt(
     ? ARCHETYPES.find((a) => a.id === archetypeId)
     : undefined
   const archetypeParagraph = archetype
-    ? `\nPERSONALITY ARCHETYPE: ${archetype.label}\n${archetype.systemPromptHint}\n`
+    ? `\nPERSONALITY ARCHETYPE (simulated behavior layer): ${archetype.label}\n${archetype.systemPromptHint}\n`
     : ''
 
   // Continuous-scale difficulty paragraph
   const difficultyParagraph = difficultyHint(normalized)
+
+  if (leadRolePlayPrompt && leadRolePlayPrompt.trim()) {
+    return `${leadRolePlayPrompt.trim()}
+${archetypeParagraph}
+${difficultyParagraph}
+
+ADDITIONAL RULES:
+- Difficulty and archetype above adjust SIMULATED resistance only; they do not change KNOWN LEAD FACTS.
+- You are the customer. Do not coach the electrician during the role-play.`
+  }
 
   return `You are ${character.name}, a property owner or project decision-maker who has been contacted by an electrician looking to bid on your project.
 

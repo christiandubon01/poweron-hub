@@ -8,6 +8,8 @@ export {
   generateCharacterPrompt,
   customCharacterFromDescription,
   customCharacterFromHunterLead,
+  mapHunterStoreLeadToRolePlayLead,
+  customerPracticeFirstName,
   conductRound,
   CHARACTER_TEMPLATES,
   type CharacterTemplate,

@@ -206,11 +206,23 @@ function CharacterInfoBar({ character, difficulty, archetypeId }: {
 // Main Component
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface PracticeLeadHeader {
+  displayName: string
+  jobIntent?: string
+  sourceLine?: string
+}
+
 export interface VoicePracticeViewProps {
   mode: VoiceMode
   difficulty: 1 | 2 | 3 | 4 | 5 | number
   character?: CharacterPersonality
   archetypeId?: ArchetypeId | null
+  /** COACH-LINK-3 — real-lead role-play system prompt base (known facts vs simulated). */
+  leadRolePlayPrompt?: string | null
+  /** Compact "PRACTICING:" header for real-lead sessions. */
+  practiceLeadHeader?: PracticeLeadHeader | null
+  /** Preserve sales session and jump to Live Call — never auto-dials. */
+  onGoLiveCall?: () => void
   onRoundEnd?: (transcript: TranscriptEntry[]) => void
   onClose?: () => void
 }
@@ -219,6 +231,9 @@ export default function VoicePracticeView({
   difficulty = 5,
   character = ADAM_STONE_VOICE,
   archetypeId = null,
+  leadRolePlayPrompt = null,
+  practiceLeadHeader = null,
+  onGoLiveCall,
   onRoundEnd,
   onClose,
 }: VoicePracticeViewProps) {
@@ -280,7 +295,8 @@ export default function VoicePracticeView({
           character,
           userText,
           difficulty,
-          archetypeId
+          archetypeId,
+          leadRolePlayPrompt
         )
         
         // Generate and stream audio
@@ -336,7 +352,7 @@ export default function VoicePracticeView({
         setIsRecording(false)
       }
     }
-  }, [isRecording, character, difficulty, audioMuted, volume])
+  }, [isRecording, character, difficulty, archetypeId, leadRolePlayPrompt, audioMuted, volume])
   
   // Handle text mode input
   const handleTextInput = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
@@ -362,7 +378,8 @@ export default function VoicePracticeView({
         character,
         userText,
         difficulty,
-        archetypeId
+        archetypeId,
+        leadRolePlayPrompt
       )
       
       // Add character response (text only in text mode)
@@ -380,7 +397,7 @@ export default function VoicePracticeView({
     } finally {
       setIsProcessing(false)
     }
-  }, [character, difficulty])
+  }, [character, difficulty, archetypeId, leadRolePlayPrompt])
   
   // Handle end round
   const handleEndRound = useCallback(() => {
@@ -401,9 +418,9 @@ export default function VoicePracticeView({
       {/* Header */}
       <div className="border-b border-zinc-700/30 bg-zinc-900/40 backdrop-blur p-4">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 min-w-0">
             <CharacterInfoBar character={character} difficulty={difficulty} archetypeId={archetypeId} />
-            <div className="flex items-center gap-2 text-sm text-zinc-400">
+            <div className="flex items-center gap-2 text-sm text-zinc-400 shrink-0">
               <Clock size={16} />
               {formatTime(elapsedSeconds)}
             </div>
@@ -416,6 +433,25 @@ export default function VoicePracticeView({
             <X size={20} />
           </button>
         </div>
+        {practiceLeadHeader && (
+          <div
+            data-testid="practice-lead-header"
+            className="mt-3 rounded-lg border border-emerald-500/25 bg-emerald-950/20 px-3 py-2 text-xs text-gray-300"
+          >
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400/90">
+              Practicing
+            </div>
+            <div className="font-medium text-white truncate">{practiceLeadHeader.displayName}</div>
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-zinc-400 mt-0.5">
+              {practiceLeadHeader.jobIntent ? (
+                <span className="truncate">{practiceLeadHeader.jobIntent}</span>
+              ) : null}
+              {practiceLeadHeader.sourceLine ? (
+                <span className="truncate">{practiceLeadHeader.sourceLine}</span>
+              ) : null}
+            </div>
+          </div>
+        )}
       </div>
       
       {/* Main Content */}
@@ -511,6 +547,16 @@ export default function VoicePracticeView({
           
           {/* Right: Actions */}
           <div className="flex items-center gap-2">
+            {onGoLiveCall && (
+              <button
+                type="button"
+                data-testid="practice-go-live-call"
+                onClick={onGoLiveCall}
+                className="px-4 py-2 rounded border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 text-sm font-medium"
+              >
+                Live Call
+              </button>
+            )}
             <button
               onClick={() => {
                 stopAudio()

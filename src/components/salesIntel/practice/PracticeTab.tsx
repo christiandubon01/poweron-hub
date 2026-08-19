@@ -11,7 +11,7 @@
  *   - Custom scenario editor with HUNTER lead context
  */
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   Mic, MessageSquare, Volume2, Zap, AlertCircle, CheckCircle2,
   ChevronRight, Play, Lock, Lightbulb, User, Loader2,
@@ -20,6 +20,17 @@ import clsx from 'clsx'
 import VoicePracticeView from './VoicePracticeView'
 import { CustomScenarioModal } from './CustomScenarioModal'
 import { ARCHETYPES, type Archetype, type ArchetypeId } from '@/services/sparkTraining/practiceArchetypes'
+import {
+  ADAM_STONE_VOICE,
+  type CharacterPersonality,
+} from '@/services/sparkTraining/SparkTrainingVoice'
+import {
+  customCharacterFromHunterLead,
+  customerPracticeFirstName,
+  mapHunterStoreLeadToRolePlayLead,
+} from '@/services/sparkTraining/SparkRolePlayEngine'
+import { useSalesIntelStore } from '@/components/salesIntel/SalesIntelStore'
+import { useHunterStore } from '@/store/hunterStore'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -38,6 +49,15 @@ export interface PracticeSession {
   customScenario?: string
   characterName?: string
   characterDescription?: string
+  /** COACH-LINK-3 — real-lead role-play base prompt (null = generic / Adam Stone path). */
+  leadRolePlayPrompt?: string | null
+  practiceCharacter?: CharacterPersonality
+  practiceLeadHeader?: {
+    displayName: string
+    jobIntent?: string
+    sourceLine?: string
+  } | null
+  leadId?: string | null
   startedAt?: Date
 }
 
@@ -439,6 +459,57 @@ export function PracticeTab() {
   const [interactionMode, setInteractionMode] = useState<InteractionMode>('voice-transcript')
   const [difficulty, setDifficulty] = useState<DifficultyLevel>(5)
   const [archetypeId, setArchetypeId] = useState<ArchetypeId | null>(null)
+  /** Pending custom scenario from modal — previously discarded (COACH-LINK-3 fix). */
+  const [pendingCustom, setPendingCustom] = useState<{
+    scenario: string
+    characterName: string
+    characterDesc: string
+  } | null>(null)
+
+  const salesSession = useSalesIntelStore((s) => s.salesSession)
+  const setActiveTab = useSalesIntelStore((s) => s.setActiveTab)
+  const beginSalesSession = useSalesIntelStore((s) => s.beginSalesSession)
+  const requestLiveCallLaunch = useSalesIntelStore((s) => s.requestLiveCallLaunch)
+  const hunterLeads = useHunterStore((s) => s.leads)
+
+  const resolvedLead = useMemo(() => {
+    const leadId = salesSession?.leadId
+    if (!leadId) return null
+    const found = (hunterLeads as Array<Record<string, unknown>>).find(
+      (l) => String(l.id) === String(leadId)
+    )
+    return found ?? null
+  }, [salesSession?.leadId, hunterLeads])
+
+  const realLeadRolePlay = useMemo(() => {
+    if (!resolvedLead) return null
+    const mapped = mapHunterStoreLeadToRolePlayLead(resolvedLead)
+    if (!mapped) return null
+    const generated = customCharacterFromHunterLead(mapped)
+    const first =
+      customerPracticeFirstName(mapped.contact) ||
+      mapped.contact ||
+      mapped.company ||
+      'Customer'
+    const sourceLine = [mapped.source, mapped.sourceDetail].filter(Boolean).join(' / ')
+    return {
+      generated,
+      mapped,
+      character: {
+        name: first,
+        voiceId: ADAM_STONE_VOICE.voiceId,
+        personality: mapped.description
+          ? `Customer who contacted about: ${mapped.description}`
+          : 'Customer from a real Hunter lead file',
+        tone: 'real-lead practice customer',
+      } satisfies CharacterPersonality,
+      header: {
+        displayName: mapped.contact || mapped.company || first,
+        jobIntent: mapped.description,
+        sourceLine: sourceLine || undefined,
+      },
+    }
+  }, [resolvedLead])
 
   // Modal & suggestions
   const [showCustomModal, setShowCustomModal] = useState(false)
@@ -491,10 +562,11 @@ export function PracticeTab() {
     setSparkSuggestion(null)
   }
 
-  // Handle custom scenario submission
+  // Handle custom scenario submission — keep values for Begin Practice
   const handleCustomScenario = (scenario: string, characterName: string, characterDesc: string) => {
+    setPendingCustom({ scenario, characterName, characterDesc })
+    setCallType('custom')
     setShowCustomModal(false)
-    // Scene will be passed to PracticeConversation when session starts
   }
 
   // Start practice round
@@ -502,16 +574,70 @@ export function PracticeTab() {
     const archetypeLabel = archetypeId
       ? ARCHETYPES.find((a) => a.id === archetypeId)?.label ?? null
       : null
+
+    let practiceCharacter: CharacterPersonality | undefined
+    let leadRolePlayPrompt: string | null = null
+    let practiceLeadHeader: PracticeSession['practiceLeadHeader'] = null
+    let characterName = characterNames[callType]
+    let characterDescription = archetypeLabel
+      ? `${archetypeLabel} ${callType} at difficulty ${difficulty}/10`
+      : `${callType} at difficulty ${difficulty}/10`
+    let customScenario: string | undefined
+
+    if (realLeadRolePlay) {
+      practiceCharacter = realLeadRolePlay.character
+      leadRolePlayPrompt = realLeadRolePlay.generated.systemPrompt
+      practiceLeadHeader = realLeadRolePlay.header
+      characterName = realLeadRolePlay.character.name
+      characterDescription = realLeadRolePlay.mapped.description
+        || realLeadRolePlay.generated.characterTitle
+      // If custom modal also supplied notes, append as simulated extra context only
+      if (pendingCustom?.scenario?.trim()) {
+        leadRolePlayPrompt = `${leadRolePlayPrompt}
+
+=== ADDITIONAL PRACTICE NOTES (operator-supplied simulation notes — not lead DB truth) ===
+${pendingCustom.scenario.trim()}`
+        customScenario = pendingCustom.scenario.trim()
+      }
+    } else if (pendingCustom) {
+      customScenario = pendingCustom.scenario
+      characterName = pendingCustom.characterName || characterName
+      characterDescription = pendingCustom.characterDesc || characterDescription
+      practiceCharacter = {
+        name: characterName,
+        voiceId: ADAM_STONE_VOICE.voiceId,
+        personality: pendingCustom.scenario || pendingCustom.characterDesc || ADAM_STONE_VOICE.personality,
+        tone: 'custom practice character',
+      }
+      leadRolePlayPrompt = `You are the CUSTOMER in a sales practice call. The user is an electrician practicing.
+
+Your name: ${characterName}
+Scenario (practice description): ${pendingCustom.scenario}
+
+=== KNOWN FACTS ===
+- Only what appears in the scenario above. Do not invent major job details.
+
+=== SIMULATED CUSTOMER BEHAVIOR ===
+Respond as this character. You are the prospect, not a coach.
+
+CRITICAL RULES:
+- Stay in character as the customer.
+- Keep responses under 40 words.`
+    }
+
     const session: PracticeSession = {
       id: `practice-${Date.now()}`,
       callType,
       interactionMode,
       difficulty,
       archetypeId: archetypeId ?? undefined,
-      characterName: characterNames[callType],
-      characterDescription: archetypeLabel
-        ? `${archetypeLabel} ${callType} at difficulty ${difficulty}/10`
-        : `${callType} at difficulty ${difficulty}/10`,
+      characterName,
+      characterDescription,
+      customScenario,
+      leadRolePlayPrompt,
+      practiceCharacter,
+      practiceLeadHeader,
+      leadId: realLeadRolePlay ? String(resolvedLead?.id) : null,
       startedAt: new Date(),
     }
     setActivePracticeSession(session)
@@ -522,16 +648,39 @@ export function PracticeTab() {
     setActivePracticeSession(null)
   }
 
+  const handleGoLiveCall = () => {
+    const leadId =
+      activePracticeSession?.leadId ||
+      salesSession?.leadId ||
+      null
+    if (!leadId) return
+    // Preserve same sales session identity; switch mode only — never dial / never create call_log
+    beginSalesSession(leadId, 'live_call')
+    // COACH-LINK-3A — open lead-specific CallLogModal once LiveCallTab mounts
+    requestLiveCallLaunch(leadId)
+    setActiveTab('live_call')
+    setActivePracticeSession(null)
+  }
+
   // If in active practice session, show voice practice view (real AI path).
   // HUNTER-PRACTICE-ARCHETYPES-DIFFICULTY-APR28-2026-1 — wires session.archetypeId
   // and session.difficulty (0–10) through to VoicePracticeView so character prompts
   // compose Call Type × Archetype × Difficulty correctly.
+  // COACH-LINK-3 — real-lead prompt + character replace silent Adam Stone fallback.
   if (activePracticeSession) {
     return (
       <VoicePracticeView
         mode={activePracticeSession.interactionMode === 'voice-to-voice' ? 'voice-only' : activePracticeSession.interactionMode}
         difficulty={activePracticeSession.difficulty}
         archetypeId={activePracticeSession.archetypeId ?? null}
+        character={activePracticeSession.practiceCharacter ?? ADAM_STONE_VOICE}
+        leadRolePlayPrompt={activePracticeSession.leadRolePlayPrompt ?? null}
+        practiceLeadHeader={activePracticeSession.practiceLeadHeader ?? null}
+        onGoLiveCall={
+          activePracticeSession.leadId || salesSession?.leadId
+            ? handleGoLiveCall
+            : undefined
+        }
         onClose={handleEndRound}
       />
     )
@@ -546,6 +695,40 @@ export function PracticeTab() {
         <h2 className="text-2xl font-bold text-white">Practice</h2>
         <p className="text-sm text-zinc-400 ml-auto">Simulate real calls • Get instant feedback</p>
       </div>
+
+      {realLeadRolePlay && (
+        <div
+          data-testid="real-lead-practice-banner"
+          className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-4 py-3"
+        >
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400/90">
+            Real Lead Practice
+          </div>
+          <div className="text-white font-medium mt-0.5">
+            {realLeadRolePlay.header.displayName}
+          </div>
+          <div className="text-xs text-gray-400 mt-1 flex flex-wrap gap-x-3">
+            {realLeadRolePlay.header.jobIntent ? (
+              <span>{realLeadRolePlay.header.jobIntent}</span>
+            ) : null}
+            {realLeadRolePlay.header.sourceLine ? (
+              <span>{realLeadRolePlay.header.sourceLine}</span>
+            ) : null}
+          </div>
+          <p className="text-[11px] text-zinc-500 mt-2">
+            Difficulty and archetype still apply as simulated customer behavior on top of known lead facts.
+          </p>
+        </div>
+      )}
+
+      {pendingCustom && (
+        <div
+          data-testid="pending-custom-scenario"
+          className="rounded-lg border border-blue-500/25 bg-blue-950/20 px-3 py-2 text-xs text-blue-100"
+        >
+          Custom scenario ready: <span className="font-medium">{pendingCustom.characterName}</span>
+        </div>
+      )}
 
       {/* SPARK Suggestion */}
       {sparkSuggestion && (

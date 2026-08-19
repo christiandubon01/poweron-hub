@@ -47,6 +47,7 @@ export const SalesSessionContextBar: React.FC<SalesSessionContextBarProps> = ({
   const salesSession = useSalesIntelStore((s) => s.salesSession)
   const clearSalesSession = useSalesIntelStore((s) => s.clearSalesSession)
   const setActiveTab = useSalesIntelStore((s) => s.setActiveTab)
+  const requestLiveCallLaunch = useSalesIntelStore((s) => s.requestLiveCallLaunch)
   const leads = useHunterStore((s) => s.leads)
 
   if (!salesSession) {
@@ -103,7 +104,13 @@ export const SalesSessionContextBar: React.FC<SalesSessionContextBarProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab('live_call')}
+            data-testid="sales-session-live-call"
+            onClick={() => {
+              // COACH-LINK-3A — preserve session, queue lead-specific CallLogModal, navigate.
+              // Does NOT dial, save call_log, or invent connect/answered state.
+              requestLiveCallLaunch(salesSession.leadId)
+              setActiveTab('live_call')
+            }}
             className="px-2 py-1 rounded text-[11px] bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10"
           >
             Live Call

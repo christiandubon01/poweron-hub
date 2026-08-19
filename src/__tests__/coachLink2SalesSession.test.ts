@@ -298,13 +298,10 @@ describe('COACH-LINK-2 protected boundaries', () => {
     expect(store).not.toMatch(/CREATE TABLE|ALTER TABLE/i)
   })
 
-  it('call_logs / callLogService / Practice AI / Whisper untouched vs HEAD', () => {
+  it('call_logs / dialer service untouched vs HEAD; CallLogModal dialer narrow-split allowed', () => {
     const files = [
       'src/services/calls/callLogService.ts',
       'src/services/calls/phoneNormalize.ts',
-      'src/services/sparkTraining/SparkTrainingVoice.ts',
-      'src/services/sparkTraining/SparkRolePlayEngine.ts',
-      'src/components/salesIntel/practice/VoicePracticeView.tsx',
     ]
     for (const file of files) {
       const status = execSync(`git status --porcelain -- "${file}"`, {
@@ -313,6 +310,11 @@ describe('COACH-LINK-2 protected boundaries', () => {
       }).trim()
       expect(status, file).toBe('')
     }
+    // CallLogModal may receive COACH-LINK-3A dialer≠save separation; keep optional dialer
+    const modal = read('src/components/hunter/CallLogModal.tsx')
+    expect(modal).toContain('showOptionalDialer')
+    expect(modal).toContain('handleOpenDialer')
+    expect(modal).toContain('openTelDialer')
   })
 
   it('callLogId linkage uses existing onSaved callback only', () => {
@@ -320,11 +322,9 @@ describe('COACH-LINK-2 protected boundaries', () => {
     const live = read('src/components/salesIntel/tabs/LiveCallTab.tsx')
     expect(panel).toContain('attachCallLog')
     expect(live).toContain('attachCallLog')
-    // CallLogModal contract unchanged — still optional dialer, onSaved(log)
-    const modalStatus = execSync(
-      'git status --porcelain -- "src/components/hunter/CallLogModal.tsx"',
-      { cwd: REPO_ROOT, encoding: 'utf8' },
-    ).trim()
-    expect(modalStatus).toBe('')
+    // CallLogModal contract — still optional dialer, onSaved(log)
+    const modal = read('src/components/hunter/CallLogModal.tsx')
+    expect(modal).toContain('onSaved')
+    expect(modal).toContain('showOptionalDialer')
   })
 })

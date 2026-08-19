@@ -145,32 +145,29 @@ describe('LEAD-SRC-3C2 optional Open Dialer inside Live Call', () => {
     expect(againFn).not.toContain('tel:')
   })
 
-  it('3. saved call → Open Dialer invokes tel: without duplicate row', () => {
+  it('3. Open Dialer invokes tel: without creating a call_log', () => {
     const m = modal()
     const dialerFnStart = m.indexOf('const handleOpenDialer')
     const dialerFn = m.slice(dialerFnStart)
-    expect(dialerFn).toContain("mode === 'classify' || callLog?.id")
-    expect(dialerFn).toMatch(
-      /mode === 'classify' \|\| callLog\?\.id[\s\S]{0,120}openTelDialer/,
-    )
-    // classify branch returns before saveCreateLog
-    const classifyBranch = dialerFn.slice(
-      dialerFn.indexOf("mode === 'classify' || callLog?.id"),
-      dialerFn.indexOf('Brand-new unsaved'),
-    )
-    expect(classifyBranch).toContain('openTelDialer')
-    expect(classifyBranch).not.toContain('saveCreateLog')
-    expect(classifyBranch).not.toContain('createCallLog')
+    expect(dialerFn).toContain('openTelDialer')
+    expect(dialerFn).not.toContain('saveCreateLog')
+    expect(dialerFn).not.toContain('createCallLog')
+    expect(dialerFn).not.toContain('onSaved')
   })
 
-  it('4. unsaved outbound call → Open Dialer saves truthful call first', () => {
+  it('4. unsaved outbound call → Open Dialer does NOT save; Log Call remains durable path', () => {
     const m = modal()
     const dialerFn = m.slice(m.indexOf('const handleOpenDialer'))
-    expect(dialerFn).toContain('saveCreateLog')
-    expect(dialerFn).toMatch(/saveCreateLog\(\)[\s\S]{0,200}openTelDialer/)
+    expect(dialerFn).not.toContain('saveCreateLog')
+    expect(dialerFn).toContain('openTelDialer')
     // Defaults remain truthful via form state (unknown/unclassified)
     expect(m).toContain("callLog?.outcome ?? 'unknown'")
     expect(m).toContain("callLog?.classification ?? 'unclassified'")
+    const logFn = m.slice(
+      m.indexOf('const handleLogCall'),
+      m.indexOf('const handleOpenDialer'),
+    )
+    expect(logFn).toContain('saveCreateLog')
   })
 
   it('5. invalid phone cannot invoke tel:', () => {

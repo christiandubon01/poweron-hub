@@ -38,6 +38,14 @@ export interface SalesSessionContext {
   startedAt: string;
 }
 
+/**
+ * COACH-LINK-3A — one-shot Live Call modal launch intent.
+ * Memory-only (not sessionStorage). Survives tab remount; cleared on consume.
+ */
+export interface LiveCallLaunchRequest {
+  hunterLeadId: string;
+}
+
 export const SI_SALES_SESSION_KEY = 'si_sales_session';
 
 const SESSION_MODES: readonly SalesSessionMode[] = [
@@ -117,6 +125,11 @@ export interface SalesIntelState {
   unreviewedSessions: number;
   /** Transient shared lead/call context across Practice / Live Call / Coach. */
   salesSession: SalesSessionContext | null;
+  /**
+   * One-shot request for LiveCallTab to open CallLogModal for a Hunter lead.
+   * Not persisted — page refresh must not reopen the modal.
+   */
+  liveCallLaunchRequest: LiveCallLaunchRequest | null;
   // Actions
   setActiveTab: (tab: SalesIntelTab) => void;
   setPracticeMode: (active: boolean) => void;
@@ -131,6 +144,10 @@ export interface SalesIntelState {
   setSalesSessionMode: (mode: SalesSessionMode) => void;
   attachCallLog: (callLogId: string) => void;
   clearSalesSession: () => void;
+  /** Queue a lead-specific CallLogModal open on the Live Call tab (once). */
+  requestLiveCallLaunch: (hunterLeadId: string) => void;
+  /** Read + clear launch intent. Returns null if none pending. */
+  consumeLiveCallLaunchRequest: () => LiveCallLaunchRequest | null;
 }
 
 export const useSalesIntelStore = create<SalesIntelState>((set, get) => {
@@ -152,6 +169,7 @@ export const useSalesIntelStore = create<SalesIntelState>((set, get) => {
     dueFollowUps: 0,
     unreviewedSessions: 0,
     salesSession: restoredSession,
+    liveCallLaunchRequest: null,
 
     setActiveTab: (tab: SalesIntelTab) => {
       if (typeof window !== 'undefined') {
@@ -226,7 +244,20 @@ export const useSalesIntelStore = create<SalesIntelState>((set, get) => {
 
     clearSalesSession: () => {
       persistSalesSession(null);
-      set({ salesSession: null });
+      set({ salesSession: null, liveCallLaunchRequest: null });
+    },
+
+    requestLiveCallLaunch: (hunterLeadId: string) => {
+      const id = String(hunterLeadId || '').trim();
+      if (!id) return;
+      set({ liveCallLaunchRequest: { hunterLeadId: id } });
+    },
+
+    consumeLiveCallLaunchRequest: () => {
+      const current = get().liveCallLaunchRequest;
+      if (!current) return null;
+      set({ liveCallLaunchRequest: null });
+      return current;
     },
 
     navigateToLeadPractice: (leadId: string) => {
