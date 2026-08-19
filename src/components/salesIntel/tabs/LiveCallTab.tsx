@@ -12,12 +12,16 @@
  * COACH-LINK-3A — Active Sales Session → Live Call queues a one-shot
  * liveCallLaunchRequest; this tab consumes it and opens CallLogModal for
  * that Hunter lead. Opening the modal alone never creates a call_log.
+ *
+ * COACH-LINK-4A — When an active Sales Session lead is present, Call Assist
+ * offers explicit Prepare Call + manual Coach Me (no mic / no auto-dial).
  */
 
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Mic, Phone, Plus } from 'lucide-react'
 import CallLogModal from '@/components/hunter/CallLogModal'
 import RecentCallsPanel from '@/components/hunter/RecentCallsPanel'
+import { LiveCallAssistPanel } from '@/components/salesIntel/liveCall/LiveCallAssistPanel'
 import { SalesSessionContextBar } from '@/components/salesIntel/SalesSessionContextBar'
 import { useSalesIntelStore } from '@/components/salesIntel/SalesIntelStore'
 import {
@@ -48,9 +52,18 @@ export const LiveCallTab: React.FC = () => {
 
   const hunterLeads = useHunterStore((s) => s.leads)
   const fetchLeads = useHunterStore((s) => s.fetchLeads)
+  const salesSession = useSalesIntelStore((s) => s.salesSession)
   const liveCallLaunchRequest = useSalesIntelStore(
     (s) => s.liveCallLaunchRequest,
   )
+
+  const activeLead = useMemo(() => {
+    if (!salesSession?.leadId) return null
+    const found = hunterLeads.find((l) => String(l.id) === salesSession.leadId)
+    return found
+      ? (found as unknown as Record<string, unknown>)
+      : null
+  }, [hunterLeads, salesSession?.leadId])
 
   const refreshCalls = useCallback(async () => {
     setLoading(true)
@@ -83,10 +96,10 @@ export const LiveCallTab: React.FC = () => {
     if (!consumed?.hunterLeadId) return
 
     const leadId = consumed.hunterLeadId
-    const leadsNow = useHunterStore.getState().leads as Array<
-      Record<string, unknown>
-    >
-    const lead = leadsNow.find((l) => String(l.id) === leadId)
+    const leadsNow = useHunterStore.getState().leads
+    const lead = leadsNow.find((l) => String(l.id) === leadId) as
+      | { phone?: string }
+      | undefined
     const phone = lead ? String(lead.phone || '').trim() : ''
 
     setActionError(null)
@@ -101,9 +114,9 @@ export const LiveCallTab: React.FC = () => {
   /** Fill phone once Hunter leads resolve after launch (same hunterLeadId). */
   useEffect(() => {
     if (!modalOpen || !modalHunterLeadId || modalDefaultPhone) return
-    const lead = (hunterLeads as Array<Record<string, unknown>>).find(
-      (l) => String(l.id) === modalHunterLeadId,
-    )
+    const lead = hunterLeads.find((l) => String(l.id) === modalHunterLeadId) as
+      | { phone?: string }
+      | undefined
     const phone = lead ? String(lead.phone || '').trim() : ''
     if (phone) setModalDefaultPhone(phone)
   }, [hunterLeads, modalOpen, modalHunterLeadId, modalDefaultPhone])
@@ -192,6 +205,7 @@ export const LiveCallTab: React.FC = () => {
   }
 
   const hasCalls = calls.length > 0
+  const showCallAssist = Boolean(salesSession?.sessionId && salesSession.leadId)
 
   return (
     <div className="space-y-4 text-gray-300">
@@ -218,17 +232,25 @@ export const LiveCallTab: React.FC = () => {
         </button>
       </div>
 
-      {/* Preserved stub guidance area — not deleted (placeholder coaching surface) */}
-      <div
-        data-testid="live-call-guidance-placeholder"
-        className="rounded-lg border border-white/10 bg-white/5 px-3 py-2"
-      >
-        <p className="text-xs text-gray-400">
-          Real-time call guidance and transcription — coaching scripts remain
-          available in SPARK Live Call preview. This tab is the durable call
-          history workspace.
-        </p>
-      </div>
+      {showCallAssist && salesSession ? (
+        <LiveCallAssistPanel
+          sessionId={salesSession.sessionId}
+          hunterLeadId={salesSession.leadId}
+          lead={activeLead}
+        />
+      ) : (
+        <div
+          data-testid="live-call-guidance-placeholder"
+          className="rounded-lg border border-white/10 bg-white/5 px-3 py-2"
+        >
+          <p className="text-xs text-gray-400">
+            Real-time call guidance and transcription — coaching scripts remain
+            available in SPARK Live Call preview. Start an active sales session
+            from a Hunter lead to unlock Call Assist (Prepare Call + Coach Me).
+            This tab remains the durable call history workspace.
+          </p>
+        </div>
+      )}
 
       {loadError && (
         <div className="rounded border border-amber-700 bg-amber-950/40 px-3 py-2 text-sm text-amber-100">
