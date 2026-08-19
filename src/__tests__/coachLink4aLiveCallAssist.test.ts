@@ -271,18 +271,23 @@ describe('COACH-LINK-4A regression / protected', () => {
     }
   })
 
-  it('31. no audio/mic code in Call Assist', () => {
+  it('31. coaching engine stays free of mic; Practice/SparkEngine not imported', () => {
+    // 4B1 adds browser mic to the panel only. 4A Claude coaching service stays text-only.
     const assist = read('src/services/salesIntel/liveCallAssist.ts')
+    expect(assist).not.toContain('getUserMedia')
+    expect(assist).not.toContain('MediaRecorder')
+    expect(assist).not.toContain('SpeechRecognition')
+    expect(assist).not.toMatch(/from ['"]@\/services\/sparkTraining/)
+    expect(assist).not.toMatch(/from ['"].*SparkEngine/)
+
     const panel = read(
       'src/components/salesIntel/liveCall/LiveCallAssistPanel.tsx',
     )
-    for (const src of [assist, panel]) {
-      expect(src).not.toContain('getUserMedia')
-      expect(src).not.toContain('MediaRecorder')
-      expect(src).not.toContain('SpeechRecognition')
-      expect(src).not.toMatch(/from ['"]@\/services\/sparkTraining/)
-      expect(src).not.toMatch(/from ['"].*SparkEngine/)
-    }
+    expect(panel).not.toContain('SpeechRecognition')
+    expect(panel).not.toMatch(/from ['"]@\/services\/sparkTraining/)
+    expect(panel).not.toMatch(/from ['"].*SparkEngine/)
+    expect(panel).toContain('Browser microphone')
+    expect(panel).not.toMatch(/Claim[s]? Phone Link|Phone Link Audio/i)
   })
 
   it('32. no migration; claudeProxy not modified by this phase', () => {
