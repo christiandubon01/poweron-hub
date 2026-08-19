@@ -3,12 +3,26 @@
  *
  * Row actions: Edit/Classify (select), optional Open Dialer (tel: only),
  * optional Call Again (new outbound attempt — parent creates record).
+ *
+ * COACH-LINK-3B — embedded Live Call history shows ~10 normal rows, then
+ * scrolls internally. This is a UI viewport limit only — callers still pass
+ * the full fetched list (no truncation).
  */
 
 import React from 'react'
 import { Phone, PhoneCall, RotateCcw } from 'lucide-react'
 import clsx from 'clsx'
 import { dialerDigits, type CallLog } from '@/services/calls'
+
+/** Visible rows before embedded Call History scrolls (UI only). */
+export const CALL_HISTORY_VISIBLE_ROWS = 10
+
+/**
+ * Approx one normal call row (3 text lines + py-2 + border) and space-y-1.5 gaps.
+ * Caps at 70vh so tablet / shorter viewports stay usable.
+ */
+export const CALL_HISTORY_EMBEDDED_MAX_H_CLASS =
+  'max-h-[min(calc(10*4.25rem+9*0.375rem),70vh)]'
 
 export interface RecentCallsPanelProps {
   calls: CallLog[]
@@ -56,7 +70,14 @@ export function RecentCallsPanel({
   embedded = false,
 }: RecentCallsPanelProps) {
   const list = (
-    <ul className={clsx('space-y-1.5', embedded ? 'max-h-72' : 'max-h-40', 'overflow-y-auto')}>
+    <ul
+      data-testid={embedded ? 'call-history-scroll-body' : undefined}
+      data-visible-rows={embedded ? CALL_HISTORY_VISIBLE_ROWS : undefined}
+      className={clsx(
+        'space-y-1.5 overflow-y-auto overscroll-contain',
+        embedded ? CALL_HISTORY_EMBEDDED_MAX_H_CLASS : 'max-h-40',
+      )}
+    >
       {calls.map((c) => {
         const isSpam = c.classification === 'spam'
         const matchedName = c.hunterLeadId
@@ -64,7 +85,7 @@ export function RecentCallsPanel({
           : undefined
         const canDial = Boolean(dialerDigits(c.phoneRaw))
         return (
-          <li key={c.id}>
+          <li key={c.id} data-testid="call-history-row">
             <div
               className={clsx(
                 'flex items-stretch gap-1 rounded border text-xs transition-colors',

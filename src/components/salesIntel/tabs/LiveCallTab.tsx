@@ -8,6 +8,10 @@
  * Note: this tab was previously a stub ("Real-time call guidance and
  * transcription"). Full SPARK script coaching still lives in the separate
  * SparkLiveCall preview route — preserved/reported, not deleted.
+ *
+ * COACH-LINK-3A — Active Sales Session → Live Call queues a one-shot
+ * liveCallLaunchRequest; this tab consumes it and opens CallLogModal for
+ * that Hunter lead. Opening the modal alone never creates a call_log.
  */
 
 import React, { useCallback, useEffect, useState } from 'react'
@@ -36,9 +40,17 @@ export const LiveCallTab: React.FC = () => {
   )
   const [activeCall, setActiveCall] = useState<CallLog | null>(null)
   const [callAgainBusy, setCallAgainBusy] = useState(false)
+  /** Hunter lead prefill for session-launched / lead Call modal (create mode). */
+  const [modalHunterLeadId, setModalHunterLeadId] = useState<string | null>(
+    null,
+  )
+  const [modalDefaultPhone, setModalDefaultPhone] = useState('')
 
   const hunterLeads = useHunterStore((s) => s.leads)
   const fetchLeads = useHunterStore((s) => s.fetchLeads)
+  const liveCallLaunchRequest = useSalesIntelStore(
+    (s) => s.liveCallLaunchRequest,
+  )
 
   const refreshCalls = useCallback(async () => {
     setLoading(true)
@@ -59,6 +71,43 @@ export const LiveCallTab: React.FC = () => {
     void fetchLeads().catch(() => {})
   }, [refreshCalls, fetchLeads])
 
+  /**
+   * COACH-LINK-3A — consume one-shot launch intent and open CallLogModal for
+   * the active Hunter lead. Consume immediately so remount / tab bounce
+   * cannot reopen without a new explicit Live Call action.
+   */
+  useEffect(() => {
+    if (!liveCallLaunchRequest?.hunterLeadId) return
+    const consumed =
+      useSalesIntelStore.getState().consumeLiveCallLaunchRequest()
+    if (!consumed?.hunterLeadId) return
+
+    const leadId = consumed.hunterLeadId
+    const leadsNow = useHunterStore.getState().leads as Array<
+      Record<string, unknown>
+    >
+    const lead = leadsNow.find((l) => String(l.id) === leadId)
+    const phone = lead ? String(lead.phone || '').trim() : ''
+
+    setActionError(null)
+    setActiveCall(null)
+    setModalMode('create')
+    setModalDirection('outbound')
+    setModalHunterLeadId(leadId)
+    setModalDefaultPhone(phone)
+    setModalOpen(true)
+  }, [liveCallLaunchRequest])
+
+  /** Fill phone once Hunter leads resolve after launch (same hunterLeadId). */
+  useEffect(() => {
+    if (!modalOpen || !modalHunterLeadId || modalDefaultPhone) return
+    const lead = (hunterLeads as Array<Record<string, unknown>>).find(
+      (l) => String(l.id) === modalHunterLeadId,
+    )
+    const phone = lead ? String(lead.phone || '').trim() : ''
+    if (phone) setModalDefaultPhone(phone)
+  }, [hunterLeads, modalOpen, modalHunterLeadId, modalDefaultPhone])
+
   const leadNameById = Object.fromEntries(
     hunterLeads.map((l: any) => [
       l.id,
@@ -71,11 +120,20 @@ export const LiveCallTab: React.FC = () => {
     ]),
   )
 
+  const closeModal = () => {
+    setModalOpen(false)
+    setModalHunterLeadId(null)
+    setModalDefaultPhone('')
+    setActiveCall(null)
+  }
+
   const openLogCall = () => {
     setActionError(null)
     setActiveCall(null)
     setModalMode('create')
     setModalDirection('inbound')
+    setModalHunterLeadId(null)
+    setModalDefaultPhone('')
     setModalOpen(true)
   }
 
@@ -84,6 +142,8 @@ export const LiveCallTab: React.FC = () => {
     setActiveCall(call)
     setModalMode('classify')
     setModalDirection(call.direction)
+    setModalHunterLeadId(null)
+    setModalDefaultPhone('')
     setModalOpen(true)
   }
 
@@ -118,6 +178,8 @@ export const LiveCallTab: React.FC = () => {
       setActiveCall(created)
       setModalMode('classify')
       setModalDirection('outbound')
+      setModalHunterLeadId(null)
+      setModalDefaultPhone('')
       setModalOpen(true)
       void refreshCalls()
     } catch (err) {
@@ -206,7 +268,7 @@ export const LiveCallTab: React.FC = () => {
           data-testid="live-call-history"
           className="rounded-lg border border-white/10 bg-slate-950/40 p-3"
         >
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2 mb-3" data-testid="live-call-history-header">
             <Phone size={14} className="text-blue-400" />
             <h4 className="text-xs font-semibold text-gray-200 uppercase tracking-wide">
               Call History
@@ -233,8 +295,10 @@ export const LiveCallTab: React.FC = () => {
         mode={modalMode}
         callLog={activeCall}
         defaultDirection={modalDirection}
+        defaultPhone={modalDefaultPhone}
+        defaultHunterLeadId={modalHunterLeadId}
         showOptionalDialer
-        onClose={() => setModalOpen(false)}
+        onClose={closeModal}
         onSaved={(log) => {
           void refreshCalls()
           // Narrow linkage: only attach when the durable row matches the active lead.
