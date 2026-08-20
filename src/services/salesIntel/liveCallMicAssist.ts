@@ -20,8 +20,47 @@ export const MIC_PERMISSION_FALLBACK =
 export const MIC_WHISPER_FALLBACK =
   'Transcription failed. You can still type what the customer said.'
 
+/** Missing/expired Supabase JWT for /.netlify/functions/whisper (SEC2). */
+export const MIC_AUTH_FALLBACK =
+  'Transcription session expired. Sign in again and retry.'
+
+/** Upstream / issuer verification failure (not a missing browser JWT). */
+export const MIC_VERIFY_FALLBACK =
+  'Transcription authentication could not be verified.'
+
+export const MIC_EMPTY_RECORDING_FALLBACK =
+  'No audio captured. Try again, or type what the customer said.'
+
 export const MIC_BROWSER_DISCLAIMER =
   "Uses this device's microphone. What it can hear from a phone call depends on your Windows/audio setup."
+
+/**
+ * Map Whisper/mic failures to owner-safe Live Call copy.
+ * Distinguishes auth / verify / empty recording / mic / generic Whisper without
+ * exposing tokens or backend internals.
+ */
+export function mapLiveCallMicError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err ?? '')
+  if (/could not be verified|valid issuer|invalid_issuer/i.test(msg)) {
+    return MIC_VERIFY_FALLBACK
+  }
+  if (
+    /signed in|sign in again|Authentication required|session expired/i.test(
+      msg,
+    )
+  ) {
+    return MIC_AUTH_FALLBACK
+  }
+  if (/Microphone unavailable/i.test(msg)) {
+    return MIC_PERMISSION_FALLBACK
+  }
+  if (/No audio captured|empty recording|audio file too large/i.test(msg)) {
+    return /audio file too large/i.test(msg)
+      ? MIC_WHISPER_FALLBACK
+      : MIC_EMPTY_RECORDING_FALLBACK
+  }
+  return MIC_WHISPER_FALLBACK
+}
 
 const RECORDER_MIME_CANDIDATES = [
   'audio/webm;codecs=opus',

@@ -3,11 +3,19 @@
  * Netlify Function — Whisper API Proxy
  *
  * Accepts POST with JSON body containing base64-encoded audio.
- * Forwards to OpenAI Whisper API using server-side OPENAI_API_KEY.
+ * Forwards to OpenAI Whisper API using server-side POWERON_OPENAI_API_KEY
+ * (with OPENAI_API_KEY as production fallback).
  * Returns the transcription JSON.
  *
  * Uses Node built-in https module (not fetch) for maximum compatibility
  * with Netlify's Node 18 runtime.
+ *
+ * AI-KEY / Whisper key authority (same class as POWERON_ANTHROPIC_API_KEY):
+ * Under `netlify dev`, Netlify's AI Gateway may inject its own OPENAI_API_KEY
+ * that is NOT valid against https://api.openai.com. Using that key yields
+ * OpenAI 401 invalid_issuer. PowerOn's direct OpenAI credential lives in
+ * POWERON_OPENAI_API_KEY. Prefer that name; fall back to OPENAI_API_KEY only
+ * when POWERON_ is unset (production sites that already set OPENAI_API_KEY).
  */
 
 import { createClient } from '@supabase/supabase-js'
@@ -17,9 +25,19 @@ const https = require('https')
 const WHISPER_HOST = 'api.openai.com'
 const WHISPER_PATH = '/v1/audio/transcriptions'
 
-// Log key prefix on cold start (never log full key)
-const _key = process.env.OPENAI_API_KEY || ''
-console.log(`[whisper-proxy] Cold start. OPENAI_API_KEY present: ${!!_key}, prefix: ${_key.slice(0, 8)}...`)
+function resolveOpenAiApiKey(): string {
+  return (
+    process.env.POWERON_OPENAI_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    ''
+  )
+}
+
+// Log key presence on cold start (never log full key)
+const _key = resolveOpenAiApiKey()
+console.log(
+  `[whisper-proxy] Cold start. OPENAI key present: ${!!_key}, via_POWERON: ${!!process.env.POWERON_OPENAI_API_KEY}, prefix: ${_key.slice(0, 8)}...`,
+)
 
 /**
  * SEC2 — Verify the caller's Supabase JWT.
@@ -74,9 +92,9 @@ exports.handler = async (event: any, _context: any) => {
     }
   }
 
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = resolveOpenAiApiKey()
   if (!apiKey) {
-    console.error('[whisper-proxy] OPENAI_API_KEY is undefined')
+    console.error('[whisper-proxy] POWERON_OPENAI_API_KEY / OPENAI_API_KEY is undefined')
     return {
       statusCode: 500,
       headers,

@@ -25,8 +25,10 @@ import {
 import {
   LiveCallMicSession,
   MIC_BROWSER_DISCLAIMER,
+  MIC_EMPTY_RECORDING_FALLBACK,
   MIC_PERMISSION_FALLBACK,
   MIC_WHISPER_FALLBACK,
+  mapLiveCallMicError,
   mergeTranscriptIntoOwnerNote,
   transcribeLiveCallMicBlob,
   type MicAssistPhase,
@@ -232,7 +234,7 @@ export const LiveCallAssistPanel: React.FC<LiveCallAssistPanelProps> = ({
       if (micSessionRef.current === session) micSessionRef.current = null
 
       if (!blob.size) {
-        setMicError(MIC_WHISPER_FALLBACK)
+        setMicError(MIC_EMPTY_RECORDING_FALLBACK)
         setMicPhaseSafe('error')
         return
       }
@@ -246,9 +248,9 @@ export const LiveCallAssistPanel: React.FC<LiveCallAssistPanelProps> = ({
 
       setOwnerNote((prev) => mergeTranscriptIntoOwnerNote(prev, transcript))
       setMicPhaseSafe('idle')
-    } catch {
+    } catch (err) {
       disposeMicSession()
-      setMicError(MIC_WHISPER_FALLBACK)
+      setMicError(mapLiveCallMicError(err))
       setMicPhaseSafe('error')
     }
   }

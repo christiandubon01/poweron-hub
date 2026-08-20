@@ -131,14 +131,43 @@ export async function transcribeWithWhisper(
       return result
     }
 
-    // SEC2: an auth failure is terminal, not a reason to fall back.
+    // Distinguish SEC2 (no/invalid Supabase JWT) from upstream OpenAI 401
+    // (e.g. invalid_issuer when a Netlify AI Gateway key hits api.openai.com).
+    let errPayload: any = null
+    try {
+      errPayload = await proxyRes.json()
+    } catch {
+      /* ignore */
+    }
+    const errMsg = String(errPayload?.error || '')
+    const errCode = String(errPayload?.detail?.error?.code || '')
     if (proxyRes.status === 401 || proxyRes.status === 403) {
-      throw new Error('Transcription requires you to be signed in. Please sign in and try again.')
+      if (
+        /Authentication required/i.test(errMsg) &&
+        !errPayload?.detail
+      ) {
+        throw new Error(
+          'Transcription requires you to be signed in. Please sign in and try again.',
+        )
+      }
+      if (/valid issuer|invalid_issuer/i.test(errMsg) || errCode === 'invalid_issuer') {
+        throw new Error(
+          'Transcription authentication could not be verified.',
+        )
+      }
+      throw new Error(
+        'Transcription authentication could not be verified.',
+      )
     }
 
     console.warn(`[Whisper] Proxy returned ${proxyRes.status}, falling back to direct API...`)
   } catch (proxyErr) {
-    if (proxyErr instanceof Error && proxyErr.message.includes('signed in')) throw proxyErr
+    if (
+      proxyErr instanceof Error &&
+      (/signed in|could not be verified/i.test(proxyErr.message))
+    ) {
+      throw proxyErr
+    }
     console.warn('[Whisper] Proxy unavailable, falling back to direct API...', proxyErr)
   }
 

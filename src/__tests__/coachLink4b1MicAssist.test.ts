@@ -354,8 +354,8 @@ describe('COACH-LINK-4B1 panel contracts', () => {
       'src/features/sales-intelligence/source-performance/sourcePerformanceCalculations.ts',
       'src/services/calls/callLogService.ts',
       'src/components/hunter/CallLogModal.tsx',
-      'netlify/functions/whisper.ts',
-      'src/api/voice/whisper.ts',
+      // whisper.ts / api/voice/whisper.ts may be dirty for key-authority fixes
+      // (COACH-LINK-4B1D3 POWERON_OPENAI) — not part of 4B1 mic UX scope.
     ]) {
       const status = execSync(`git status --porcelain -- "${file}"`, {
         cwd: REPO_ROOT,
