@@ -58,7 +58,6 @@ export async function draftReviewResponse(
       method: 'POST',
       headers: await authedJsonHeaders(),
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
       max_tokens: 300,
       system: `You draft professional, empathetic responses to customer reviews for Power On Solutions, an electrical contracting company. Keep responses under 150 words. Address specific feedback. For negative reviews, acknowledge concerns and offer resolution. For positive reviews, thank and reinforce.`,
       messages: [{ role: 'user', content: `Review (${rating}/5 stars): "${reviewText}"\n\nDraft a professional response.` }],

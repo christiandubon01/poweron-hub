@@ -805,7 +805,6 @@ async function handleQuery(req: BlueprintRequest): Promise<BlueprintResponse> {
       method: 'POST',
       headers: await authedJsonHeaders(),
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
         max_tokens: 1500,
         system: systemWithContext,
         messages: [

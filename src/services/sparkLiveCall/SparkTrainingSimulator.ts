@@ -323,7 +323,6 @@ export async function sendCharacterMessage(
     messages:   updatedHistory,
     system:     systemPrompt,
     max_tokens: 120,  // ~40 words max — keep it tight
-    model:      'claude-sonnet-4-20250514',
   })
 
   const characterReply = extractText(claudeResp) || '[silence]'
@@ -397,7 +396,6 @@ Grade the contractor's performance. Be specific and honest. Do not inflate score
       messages:   [{ role: 'user', content: gradingPrompt }],
       system:     SCORECARD_SYSTEM_PROMPT,
       max_tokens: 600,
-      model:      'claude-sonnet-4-20250514',
     })
     rawJson = extractText(resp)
 

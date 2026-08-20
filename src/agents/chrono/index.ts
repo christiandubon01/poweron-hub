@@ -576,7 +576,6 @@ async function generateScheduleSummary(orgId: string, date: string): Promise<str
       method: 'POST',
       headers: await authedJsonHeaders(),
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
         max_tokens: 500,
         system: CHRONO_SYSTEM_PROMPT,
         messages: [{

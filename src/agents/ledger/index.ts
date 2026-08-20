@@ -133,7 +133,6 @@ Return ONLY valid JSON with these fields. If any required field is missing, incl
       method: 'POST',
       headers: await authedJsonHeaders(),
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
         max_tokens: 1000,
         system: LEDGER_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: prompt }],

@@ -333,7 +333,6 @@ async function analyzeTranscriptsBatch(
 
   try {
     const response = await callClaude({
-      model: 'claude-sonnet-4-20250514',
       system: COACH_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userPrompt }],
       max_tokens: 4096,

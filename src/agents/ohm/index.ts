@@ -149,7 +149,6 @@ User Question: "${req.userMessage}"
       method: 'POST',
       headers: await authedJsonHeaders(),
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
         max_tokens: 2000,
         system: OHM_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: contextMessage }],

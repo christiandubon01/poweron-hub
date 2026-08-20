@@ -401,7 +401,6 @@ async function generateSparkSummary(topic: string, data: unknown): Promise<strin
       method: 'POST',
       headers: await authedJsonHeaders(),
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
         max_tokens: 300,
         system: SPARK_SYSTEM_PROMPT,
         messages: [{

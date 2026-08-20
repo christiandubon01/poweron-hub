@@ -87,7 +87,6 @@ export async function analyzeData(snapshot: ScoutDataSnapshot, options: AnalyzeD
   let rawText = ''
   try {
     const response = await callClaude({
-      model:      'claude-sonnet-4-20250514',
       max_tokens: 4096,
       system:     SCOUT_SYSTEM_PROMPT,
       messages:   [{

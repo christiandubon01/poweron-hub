@@ -192,7 +192,6 @@ Be direct, data-driven, and actionable.`
       method: 'POST',
       headers: await authedJsonHeaders(),
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
         max_tokens: 500,
         system: PULSE_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userPrompt }],
@@ -235,7 +234,6 @@ Be direct and actionable.`
       method: 'POST',
       headers: await authedJsonHeaders(),
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
         max_tokens: 500,
         system: PULSE_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userPrompt }],
@@ -278,7 +276,6 @@ Be direct and specific about timing.`
       method: 'POST',
       headers: await authedJsonHeaders(),
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
         max_tokens: 500,
         system: PULSE_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userPrompt }],
@@ -321,7 +318,6 @@ Be insightful and forward-looking.`
       method: 'POST',
       headers: await authedJsonHeaders(),
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
         max_tokens: 500,
         system: PULSE_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userPrompt }],

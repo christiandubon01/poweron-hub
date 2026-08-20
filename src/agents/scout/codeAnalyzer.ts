@@ -47,7 +47,7 @@ const CODE_ANALYSIS_SYSTEM_PROMPT = `You are SCOUT's Code Intelligence Layer, sp
 - UI: Tailwind CSS with custom design tokens (bg-bg, bg-bg-1, text-text-1, text-scout, etc.)
 - State: Supabase + pgvector for relational + vector search
 - Memory: Redis + pgvector audit trails
-- API: Anthropic Claude Sonnet 4 (claude-sonnet-4-20250514)
+- API: Anthropic Claude Sonnet 4 (claude-sonnet-4-6)
 - Auth: Passcode + Biometric
 - Agents: 11 specialized agent domains coordinated by NEXUS
 
@@ -136,7 +136,6 @@ export async function analyzeCode(
     method: 'POST',
     headers: await authedJsonHeaders(),
     body: JSON.stringify({
-      model:      'claude-sonnet-4-20250514',
       max_tokens: 3000,
       system:     CODE_ANALYSIS_SYSTEM_PROMPT,
       messages:   [{

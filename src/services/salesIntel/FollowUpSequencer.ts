@@ -71,7 +71,6 @@ export class FollowUpSequencer {
       messages: [{ role: 'user', content: userPrompt }],
       system: systemPrompt,
       max_tokens: 300,
-      model: 'claude-sonnet-4-20250514',
     }
 
     try {

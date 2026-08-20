@@ -2475,20 +2475,20 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
                       <h3 className="text-sm font-bold text-gray-100">AI Agent / Anthropic</h3>
                       <p className="text-xs text-gray-500 mt-0.5">Supports PDF extraction, estimate review, and profit analysis.</p>
                     </div>
-                    <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${(import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : true) ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-red-400/20 bg-red-500/10 text-red-200'}`}>
-                      {(import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : true) ? 'Configured' : 'Not configured'}
+                    <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[11px] font-semibold text-emerald-200">
+                      Server-managed
                     </span>
                   </div>
                   <div className="rounded-lg border border-cyan-400/10 bg-slate-950/70 p-3">
                     <p className="text-sm text-gray-300 mb-2">Anthropic API Key</p>
                     <div className="flex items-center gap-3">
-                      <div className={`w-3 h-3 rounded-full ${(import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : true) ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                      <div className="w-3 h-3 rounded-full bg-green-500"></div>
                       <span className="text-xs text-gray-400">
-                        {(import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : true) ? 'Configured — QuickBooks PDF import enabled' : 'Not configured — set VITE_ANTHROPIC_API_KEY in .env'}
+                        Managed server-side — never stored in the browser
                       </span>
                     </div>
                   </div>
-                  <p className="mt-3 text-xs text-gray-500 italic">AI features require VITE_ANTHROPIC_API_KEY in environment variables.</p>
+                  <p className="mt-3 text-xs text-gray-500 italic">AI features use the server-side Claude proxy (ANTHROPIC_API_KEY on Netlify). No browser key required.</p>
                 </div>
 
                 <div className="rounded-xl border border-blue-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
@@ -3707,9 +3707,9 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
               <div className="p-3 rounded border" style={{ backgroundColor: 'var(--bg-input)', borderColor: 'var(--border-secondary)' }}>
                 <p className="text-sm text-gray-300 mb-2">Anthropic API Key</p>
                 <div className="flex items-center gap-3">
-                  <div className={`w-3 h-3 rounded-full ${(import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : true) ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                  <div className="w-3 h-3 rounded-full bg-green-500"></div>
                   <span className="text-xs text-gray-400">
-                    {(import.meta.env.DEV ? import.meta.env.VITE_ANTHROPIC_API_KEY : true) ? 'Configured — QuickBooks PDF import enabled' : 'Not configured — set VITE_ANTHROPIC_API_KEY in .env'}
+                    Managed server-side — never stored in the browser
                   </span>
                 </div>
               </div>
@@ -3720,7 +3720,7 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
                   <span className="text-xs text-gray-400">PDF import available — API sync coming in V3</span>
                 </div>
               </div>
-              <p className="text-xs text-gray-500 italic">💡 AI features (PDF extraction, estimate review, profit analysis) require VITE_ANTHROPIC_API_KEY in environment variables</p>
+              <p className="text-xs text-gray-500 italic">💡 AI features (PDF extraction, estimate review, profit analysis) use the server-side Claude proxy (ANTHROPIC_API_KEY on Netlify)</p>
             </div>
           </SettingCard>
 

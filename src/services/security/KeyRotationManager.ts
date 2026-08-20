@@ -1,6 +1,6 @@
 /**
  * KeyRotationManager.ts
- * 
+ *
  * Manages API key rotation with breach detection and 90-day lifecycle enforcement.
  * Provides:
  * - Key inventory tracking (all service API keys)
@@ -61,7 +61,7 @@ export const KEY_INVENTORY: ApiKeyEntry[] = [
     status: 'active',
     environment: 'netlify',
     rotationUrl: 'https://console.anthropic.com/account/billing/overview',
-    notes: 'ANTHROPIC_API_KEY / VITE_ANTHROPIC_API_KEY'
+    notes: 'ANTHROPIC_API_KEY (server-side only - never in the browser bundle)'
   },
   {
     name: 'ElevenLabs',
@@ -182,10 +182,10 @@ export function getKeyWarningLevel(ageDays: number): 'ok' | 'warning' | 'critica
 export function getKeyStatusDisplay(ageDays: number) {
   const level = getKeyWarningLevel(ageDays);
   const daysLeft = Math.max(0, 90 - ageDays);
-  
+
   return {
     color: level === 'ok' ? 'green' : level === 'warning' ? 'amber' : level === 'critical' ? 'red' : 'red',
-    message: level === 'ok' 
+    message: level === 'ok'
       ? `Active — ${daysLeft} days until rotation`
       : level === 'warning'
       ? `⚠ Warning — ${daysLeft} days until rotation`
@@ -203,11 +203,11 @@ export function detectBreach(metrics: BreachDetectionMetrics): BreachAlert {
   const baselineVolume = metrics.apiCallVolumeNormal;
   const currentVolume = metrics.apiCallVolume;
   const volumeSpike = currentVolume / baselineVolume;
-  
+
   const suspiciousPatterns: string[] = [];
   const severity: BreachAlert['severity'] = 'low';
   let finalSeverity: BreachAlert['severity'] = severity;
-  
+
   // Check for unusual API call patterns
   if (volumeSpike >= 10) {
     suspiciousPatterns.push(`API volume spike: ${Math.round(volumeSpike)}x normal baseline`);
@@ -216,25 +216,25 @@ export function detectBreach(metrics: BreachDetectionMetrics): BreachAlert {
     suspiciousPatterns.push(`API volume elevated: ${Math.round(volumeSpike)}x normal baseline`);
     finalSeverity = 'medium';
   }
-  
+
   // Check for calls from unknown IPs
   if (metrics.unknownIPs.length > 0) {
     suspiciousPatterns.push(`${metrics.unknownIPs.length} calls from unknown IP addresses`);
     finalSeverity = finalSeverity === 'low' ? 'medium' : finalSeverity;
   }
-  
+
   // Check for calls from unknown origins
   if (metrics.unknownOrigins.length > 0) {
     suspiciousPatterns.push(`${metrics.unknownOrigins.length} calls from unknown origins`);
     finalSeverity = 'high';
   }
-  
+
   // Check for failed auth spike
   if (metrics.failedAuthAttempts > 5) {
     suspiciousPatterns.push(`${metrics.failedAuthAttempts} failed authentication attempts`);
     finalSeverity = finalSeverity === 'low' || finalSeverity === 'medium' ? 'high' : 'critical';
   }
-  
+
   return {
     detected: suspiciousPatterns.length > 0,
     severity: finalSeverity,
@@ -356,8 +356,7 @@ export function generateRotationChecklist(keyName: string): RotationChecklistSte
         description: 'Update environment variables',
         actions: [
           'Go to Netlify > Settings > Build & deploy > Environment',
-          'Update ANTHROPIC_API_KEY with new value',
-          'Update VITE_ANTHROPIC_API_KEY with new value',
+          'Update ANTHROPIC_API_KEY with the new value (server-side only - no VITE_ copy exists)',
           'Trigger manual deploy to activate'
         ],
         minDuration: 120
@@ -627,7 +626,7 @@ export function generateRotationChecklist(keyName: string): RotationChecklistSte
       }
     ]
   };
-  
+
   // Return checklist or generic fallback
   return checklists[keyName] || [
     {
@@ -686,10 +685,10 @@ export function generateRotationChecklist(keyName: string): RotationChecklistSte
  */
 export function getKeyHealthScore(keys: ApiKeyEntry[]): number {
   let score = 100;
-  
+
   keys.forEach(key => {
     const level = getKeyWarningLevel(key.ageDays);
-    
+
     if (level === 'expired') {
       score -= 25;
     } else if (level === 'critical') {
@@ -697,12 +696,12 @@ export function getKeyHealthScore(keys: ApiKeyEntry[]): number {
     } else if (level === 'warning') {
       score -= 5;
     }
-    
+
     if (key.status === 'compromised') {
       score -= 30;
     }
   });
-  
+
   return Math.max(0, Math.min(100, score));
 }
 

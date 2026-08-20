@@ -245,7 +245,6 @@ export async function analyzeIdea(
     method: 'POST',
     headers: await authedJsonHeaders(),
     body: JSON.stringify({
-      model:      'claude-sonnet-4-20250514',
       max_tokens: 2048,
       system:     IDEA_ANALYSIS_SYSTEM_PROMPT,
       messages:   [{

@@ -102,7 +102,6 @@ export async function extractFromPDF(file: File): Promise<QBExtractedData> {
   const base64 = await fileToBase64(file)
 
   const result = await callClaude({
-    model: 'claude-sonnet-4-20250514',
     max_tokens: 2048,
     system: EXTRACTION_SYSTEM_PROMPT,
     messages: [

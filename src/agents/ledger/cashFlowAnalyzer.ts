@@ -300,7 +300,6 @@ Be specific with amounts and dates. Focus on actions the business can take immed
       method: 'POST',
       headers: await authedJsonHeaders(),
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
         max_tokens: 2000,
         system: LEDGER_SYSTEM_PROMPT,
         messages: [

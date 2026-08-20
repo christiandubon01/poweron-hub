@@ -29,7 +29,6 @@ export async function scanReceiptImage(
 ): Promise<OCRResult> {
   try {
     const result = await callClaude({
-      model: 'claude-sonnet-4-20250514',
       max_tokens: 2048,
       messages: [{
         role: 'user',
