@@ -2,12 +2,20 @@
 /**
  * Netlify Function — ElevenLabs TTS Proxy
  *
- * Accepts POST { voiceId: string, text: string }
- * Calls ElevenLabs TTS with the server-side ELEVENLABS_API_KEY.
- * Returns { audio: string } — base64-encoded mp3.
+ * Accepts POST { voice_id: string, text: string }
+ * Calls ElevenLabs TTS with server-side credential authority:
+ *   POWERON_ELEVENLABS_API_KEY (preferred)
+ *   → ELEVENLABS_API_KEY (legacy server fallback)
+ * Returns { audio: string, contentType: 'audio/mpeg' } — base64-encoded mp3.
+ *
+ * Browser / VITE_ELEVENLABS_* keys are never used here.
  */
 
 import { createClient } from '@supabase/supabase-js'
+import {
+  mapElevenLabsUpstreamFailure,
+  resolveElevenLabsApiKey,
+} from './speakAuthority'
 
 /**
  * SEC1 — Verify the caller's Supabase JWT.
@@ -62,17 +70,27 @@ exports.handler = async (event: any, _context: any) => {
     }
   }
 
-  const apiKey =
-    process.env.ELEVENLABS_API_KEY ||
-    process.env.VITE_ELEVENLABS_API_KEY ||
-    process.env.VITE_ELEVEN_LABS_API_KEY
+  const apiKey = resolveElevenLabsApiKey(process.env)
+  const keyMeta = {
+    poweron_set: Boolean(String(process.env.POWERON_ELEVENLABS_API_KEY || '').trim()),
+    legacy_set: Boolean(String(process.env.ELEVENLABS_API_KEY || '').trim()),
+    resolved_sk_shape: apiKey.startsWith('sk_'),
+    resolved_len: apiKey.length,
+  }
+  console.log(
+    `[speak] ElevenLabs key meta poweron_set=${keyMeta.poweron_set} legacy_set=${keyMeta.legacy_set} sk_shape=${keyMeta.resolved_sk_shape} len=${keyMeta.resolved_len}`,
+  )
 
   if (!apiKey) {
-    console.error('[speak] No ElevenLabs API key found')
+    console.error('[speak] POWERON_ELEVENLABS_API_KEY / ELEVENLABS_API_KEY not configured')
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'ELEVENLABS_API_KEY not configured on server' }),
+      body: JSON.stringify({
+        error: 'POWERON_ELEVENLABS_API_KEY not configured on server',
+        code: 'not_configured',
+        key_meta: keyMeta,
+      }),
     }
   }
 
@@ -88,7 +106,7 @@ exports.handler = async (event: any, _context: any) => {
       }
     }
 
-    console.log(`[speak] Synthesising voice=${voice_id} text="${text.slice(0, 60)}"`)
+    console.log(`[speak] Synthesising voice=${voice_id} text="${String(text).slice(0, 60)}"`)
 
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice_id}`, {
       method: 'POST',
@@ -105,12 +123,19 @@ exports.handler = async (event: any, _context: any) => {
     })
 
     if (!res.ok) {
-      const errText = await res.text()
-      console.error(`[speak] ElevenLabs error ${res.status}:`, errText)
+      const errText = await res.text().catch(() => '')
+      // Log status only — never echo upstream body to clients (may contain sensitive detail).
+      console.error(`[speak] ElevenLabs error ${res.status} (body length=${errText.length})`)
+      const mapped = mapElevenLabsUpstreamFailure(res.status, errText)
       return {
-        statusCode: res.status,
+        statusCode: mapped.statusCode,
         headers,
-        body: JSON.stringify({ error: errText }),
+        body: JSON.stringify({
+          error: mapped.error,
+          code: mapped.code,
+          // Safe presence metadata only — never the secret.
+          key_meta: keyMeta,
+        }),
       }
     }
 
@@ -125,11 +150,14 @@ exports.handler = async (event: any, _context: any) => {
       body: JSON.stringify({ audio: base64, contentType: 'audio/mpeg' }),
     }
   } catch (err: any) {
-    console.error('[speak] Unexpected error:', err)
+    console.error('[speak] Unexpected error:', err?.message || err)
     return {
-      statusCode: 500,
+      statusCode: 502,
       headers,
-      body: JSON.stringify({ error: err.message || 'Unexpected error' }),
+      body: JSON.stringify({
+        error: 'ElevenLabs upstream is unavailable.',
+        code: 'upstream_unavailable',
+      }),
     }
   }
 }
