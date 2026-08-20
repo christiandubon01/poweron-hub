@@ -424,15 +424,15 @@ describe('regression guards', () => {
     expect(clock).toContain('recordSessionPunch')
   })
 
-  it('allows approved migrations through 118 and no snapshot or Work Order change', () => {
+  it('allows approved migrations through 119 and no snapshot or Work Order change', () => {
     const migrations = readdirSync(join(process.cwd(), 'supabase/migrations'))
     expect(existsSync(join(process.cwd(), 'supabase/migrations/096_work_order_snapshot_delivery.sql'))).toBe(true)
     // 097 is punch-edit-requests (EMPLOYEE-MY-TIME-WEEK-1); 098/099 are job-linked sessions
     // (EMPLOYEE-JOB-CLOCK-SESSIONS-1); 100 is project-only sessions (EMPLOYEE-CLOCK-WORKSPACE-1);
     // 101 is project identity compat fix (PROJECT-IDENTITY-COMPAT-101);
     // 102–105 are employee clock RPC repairs; 106 is session-aware admin void.
-    // 117/118 are approved COMM pilot telemetry migrations.
-    // Guard against anything beyond 118.
+    // 117/118 are approved COMM pilot telemetry migrations; 119 is portal request attribution.
+    // Guard against anything beyond 119.
     const beyond100 = migrations.filter((name) => /^1\d\d_/.test(name))
       .filter((name) =>
         !name.startsWith('100_') &&
@@ -453,11 +453,16 @@ describe('regression guards', () => {
         !name.startsWith('115_') &&
         !name.startsWith('116_') &&
         !name.startsWith('117_') &&
-        !name.startsWith('118_')
+        !name.startsWith('118_') &&
+        !name.startsWith('119_') &&
+        !name.startsWith('120_') &&
+        !name.startsWith('121_') &&
+        !name.startsWith('122_')
       )
     expect(beyond100).toEqual([])
     expect(migrations).toContain('117_pilot_telemetry.sql')
     expect(migrations).toContain('118_pilot_telemetry_hardening.sql')
+    expect(migrations).toContain('120_portal_request_attribution.sql')
     expect(migrations).toContain('086_employee_schedules.sql')
     for (const source of [panel, calendar, logic, scheduleService]) {
       expect(source).not.toContain('ALTER TABLE')

@@ -271,11 +271,11 @@ describe('migration guard', () => {
     expect(existsSync(join(migDir, '100_project_only_work_sessions.sql'))).toBe(true)
   })
 
-  it('no migrations with a three-digit prefix beyond 118', () => {
+  it('no migrations with a three-digit prefix beyond 119', () => {
     const { readdirSync } = require('node:fs')
     const migrations = readdirSync(migDir)
     // 105 is session clock-out summary; 106 is session-aware admin void;
-    // 117/118 are approved COMM telemetry migrations.
+    // 117/118 are approved COMM telemetry migrations; 119 is portal request attribution.
     const beyond106 = migrations.filter((name: string) => /^1\d\d_/.test(name))
       .filter((name: string) =>
         !name.startsWith('100_') &&
@@ -296,10 +296,15 @@ describe('migration guard', () => {
         !name.startsWith('115_') &&
         !name.startsWith('116_') &&
         !name.startsWith('117_') &&
-        !name.startsWith('118_')
+        !name.startsWith('118_') &&
+        !name.startsWith('119_') &&
+        !name.startsWith('120_') &&
+        !name.startsWith('121_') &&
+        !name.startsWith('122_')
       )
     expect(migrations).toContain('117_pilot_telemetry.sql')
     expect(migrations).toContain('118_pilot_telemetry_hardening.sql')
+    expect(migrations).toContain('120_portal_request_attribution.sql')
     expect(beyond106).toEqual([])
   })
 })
