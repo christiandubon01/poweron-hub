@@ -757,166 +757,422 @@ function SolarEstimateSettingsPanel() {
   )
 }
 
-// ── NEXUS Voice selector (10 curated voices) ─────────────────────────────────
-const NEXUS_VOICES = [
-  { id: 'gOkFV1JMCt0G0n9xmBwV', name: 'Oxley',      descriptor: 'Calm focused professional',  gender: 'Male'   },
-  { id: 'NFG5qt843uXKj4pFvR7C', name: 'Adam Stone', descriptor: 'Clear direct field-ready',    gender: 'Male'   },
-  { id: '6WjhCXzqp2hnSqFtrG8P', name: 'Marcus',     descriptor: 'Confident authoritative',     gender: 'Male'   },
-  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel',     descriptor: 'Calm professional',           gender: 'Female' },
-  { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi',       descriptor: 'Strong confident',            gender: 'Female' },
-  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella',      descriptor: 'Warm friendly',               gender: 'Female' },
-  { id: 'ThT5KcBeYPX3keUQqHPh', name: 'Nia',        descriptor: 'Upbeat energetic',            gender: 'Female' },
-  { id: 'yoZ06aMxZnX8TkCVKLEy', name: 'Sam',        descriptor: 'Raspy authoritative',         gender: 'Male'   },
-  { id: 'CYw35i4Wn5qWUFPfRwi7', name: 'Dave',       descriptor: 'Casual conversational',       gender: 'Male'   },
-  { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni',     descriptor: 'Well-rounded',                gender: 'Male'   },
+// ── NEXUS Voice selector (VOICE-2B audition) ──────────────────────────────────
+// PowerOn catalog target: max 10. VOICE-2B retains 4 valid voices and lets the
+// owner audition current ElevenLabs account voices to choose 6 replacements.
+// Organization-wide allowedVoiceIds is VOICE-3 — not claimed here.
+
+type NexusVoiceMeta = {
+  id: string
+  name: string
+  descriptor: string
+  gender: 'Male' | 'Female' | 'Neutral'
+  accent?: string
+  category?: string
+}
+
+/** Retained PowerOn catalog slots (4/10). IDs must stay exact. */
+const NEXUS_CATALOG_VOICES: NexusVoiceMeta[] = [
+  { id: 'gOkFV1JMCt0G0n9xmBwV', name: 'Oxley',      descriptor: 'Calm focused professional', gender: 'Male',   accent: 'American', category: 'professional' },
+  { id: 'NFG5qt843uXKj4pFvR7C', name: 'Adam Stone', descriptor: 'Clear direct field-ready',   gender: 'Male',   accent: 'British',  category: 'professional' },
+  { id: '6WjhCXzqp2hnSqFtrG8P', name: 'Marcus',     descriptor: 'Confident authoritative',    gender: 'Male',   accent: 'Canadian', category: 'professional' },
+  // Corrected label: ElevenLabs account name is Sarah (ID unchanged).
+  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Sarah',      descriptor: 'Warm friendly',              gender: 'Female', accent: 'American', category: 'premade' },
 ]
+
+const NEXUS_CATALOG_IDS = new Set(NEXUS_CATALOG_VOICES.map((v) => v.id))
+
+/** Confirmed unavailable — removed from catalog (not remapped). */
+const NEXUS_STALE_REMOVED_IDS = [
+  '21m00Tcm4TlvDq8ikWAM', // Rachel
+  'AZnzlk1XvdvUeBnXmlld', // Domi
+  'ThT5KcBeYPX3keUQqHPh', // Nia
+  'yoZ06aMxZnX8TkCVKLEy', // Sam
+  'CYw35i4Wn5qWUFPfRwi7', // Dave
+  'ErXwobaYiN019PkySvjV', // Antoni
+] as const
+
+/**
+ * VOICE-1 verified account inventory (25). Browse candidates = these minus the
+ * 4 retained catalog IDs. Preview still goes through /.netlify/functions/speak.
+ */
+const NEXUS_ACCOUNT_VOICES: NexusVoiceMeta[] = [
+  { id: 'Fahco4VZzobUeiPqni1S', name: 'Archer',   descriptor: 'Conversational',              gender: 'Male',    accent: 'British',    category: 'professional' },
+  { id: 'gOkFV1JMCt0G0n9xmBwV', name: 'Oxley',    descriptor: 'Honest, Direct and Sincere',  gender: 'Male',    accent: 'American',   category: 'professional' },
+  { id: 'NFG5qt843uXKj4pFvR7C', name: 'Adam Stone', descriptor: 'Smooth, Deep and Relaxed', gender: 'Male',    accent: 'British',    category: 'professional' },
+  { id: '6WjhCXzqp2hnSqFtrG8P', name: 'Marcus',   descriptor: 'Professional Technical Narrator', gender: 'Male', accent: 'Canadian', category: 'professional' },
+  { id: 'hpp4J3VqNfWAUOO0d1Us', name: 'Bella',    descriptor: 'Professional, Bright, Warm',  gender: 'Female',  accent: 'American',   category: 'premade' },
+  { id: 'CwhRBWXzGAHq8TQ4Fs17', name: 'Roger',    descriptor: 'Laid-Back, Casual, Resonant', gender: 'Male',   accent: 'American',   category: 'premade' },
+  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Sarah',    descriptor: 'Mature, Reassuring, Confident', gender: 'Female', accent: 'American', category: 'premade' },
+  { id: 'FGY2WhTYpPnrIDTdsKH5', name: 'Laura',    descriptor: 'Enthusiast, Quirky Attitude', gender: 'Female', accent: 'American',   category: 'premade' },
+  { id: 'IKne3meq5aSn9XLyUdCD', name: 'Charlie',  descriptor: 'Deep, Confident, Energetic',  gender: 'Male',    accent: 'Australian', category: 'premade' },
+  { id: 'JBFqnCBsd6RMkjVDRZzb', name: 'George',   descriptor: 'Warm, Captivating Storyteller', gender: 'Male', accent: 'British',    category: 'premade' },
+  { id: 'N2lVS1w4EtoT3dr4eOWO', name: 'Callum',   descriptor: 'Husky Trickster',             gender: 'Male',    accent: 'American',   category: 'premade' },
+  { id: 'SAz9YHcvj6GT2YYXdXww', name: 'River',    descriptor: 'Relaxed, Neutral, Informative', gender: 'Neutral', accent: 'American', category: 'premade' },
+  { id: 'SOYHLrjzK2X1ezoPC6cr', name: 'Harry',    descriptor: 'Fierce Warrior',              gender: 'Male',    accent: 'American',   category: 'premade' },
+  { id: 'TX3LPaxmHKxFdv7VOQHJ', name: 'Liam',     descriptor: 'Energetic, Social Media Creator', gender: 'Male', accent: 'American', category: 'premade' },
+  { id: 'Xb7hH8MSUJpSbSDYk0k2', name: 'Alice',    descriptor: 'Clear, Engaging Educator',    gender: 'Female',  accent: 'British',    category: 'premade' },
+  { id: 'XrExE9yKIg1WjnnlVkGX', name: 'Matilda',  descriptor: 'Knowledgable, Professional',  gender: 'Female',  accent: 'American',   category: 'premade' },
+  { id: 'bIHbv24MWmeRgasZH58o', name: 'Will',     descriptor: 'Relaxed Optimist',            gender: 'Male',    accent: 'American',   category: 'premade' },
+  { id: 'cgSgspJ2msm6clMCkdW9', name: 'Jessica',  descriptor: 'Playful, Bright, Warm',       gender: 'Female',  accent: 'American',   category: 'premade' },
+  { id: 'cjVigY5qzO86Huf0OWal', name: 'Eric',     descriptor: 'Smooth, Trustworthy',         gender: 'Male',    accent: 'American',   category: 'premade' },
+  { id: 'iP95p4xoKVk53GoZ742B', name: 'Chris',    descriptor: 'Charming, Down-to-Earth',     gender: 'Male',    accent: 'American',   category: 'premade' },
+  { id: 'nPczCjzI2devNBz1zQrb', name: 'Brian',    descriptor: 'Deep, Resonant and Comforting', gender: 'Male', accent: 'American',   category: 'premade' },
+  { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel',   descriptor: 'Steady Broadcaster',          gender: 'Male',    accent: 'British',    category: 'premade' },
+  { id: 'pFZP5JQG7iQjIQuC4Bku', name: 'Lily',     descriptor: 'Velvety Actress',             gender: 'Female',  accent: 'British',    category: 'premade' },
+  { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam',     descriptor: 'Dominant, Firm',              gender: 'Male',    accent: 'American',   category: 'premade' },
+  { id: 'pqHfZKP75CvOlQylNhV4', name: 'Bill',     descriptor: 'Wise, Mature, Balanced',      gender: 'Male',    accent: 'American',   category: 'premade' },
+]
+
+const NEXUS_BROWSE_CANDIDATES = NEXUS_ACCOUNT_VOICES.filter((v) => !NEXUS_CATALOG_IDS.has(v.id))
+
 const NEXUS_VOICE_KEY = 'poweron_nexus_voice'
 const NEXUS_VOICE_DEFAULT = 'gOkFV1JMCt0G0n9xmBwV' // Oxley
+const NEXUS_PREVIEW_TEXT = "Hi, I'm your PowerOn Nexus assistant."
+
+function readStoredNexusVoiceId(): string {
+  try {
+    return (
+      localStorage.getItem(NEXUS_VOICE_KEY) ||
+      localStorage.getItem('nexus_voice_id') ||
+      NEXUS_VOICE_DEFAULT
+    )
+  } catch {
+    return NEXUS_VOICE_DEFAULT
+  }
+}
+
+function mapNexusPreviewError(status: number, body: { error?: string; code?: string } | null): string {
+  const code = String(body?.code || '')
+  if (status === 401 && /Authentication required/i.test(String(body?.error || ''))) {
+    return 'Sign in required to preview voices.'
+  }
+  if (code === 'invalid_credential' || status === 401) {
+    return 'ElevenLabs unavailable — server credential rejected.'
+  }
+  if (code === 'not_configured' || status === 500) {
+    return 'ElevenLabs unavailable — server voice not configured.'
+  }
+  if (code === 'bad_voice' || status === 400) {
+    return 'This voice is unavailable in the current ElevenLabs account.'
+  }
+  if (code === 'upstream_unavailable' || status === 502 || status === 503) {
+    return 'ElevenLabs unavailable — try again shortly.'
+  }
+  return 'Preview failed — ElevenLabs audio was not returned.'
+}
 
 function NexusVoiceSelector() {
-  const [selectedId, setSelectedId] = useState<string>(() => {
-    try { return localStorage.getItem(NEXUS_VOICE_KEY) || NEXUS_VOICE_DEFAULT } catch { return NEXUS_VOICE_DEFAULT }
-  })
+  const [selectedId, setSelectedId] = useState<string>(() => readStoredNexusVoiceId())
   const [playingId, setPlayingId] = useState<string | null>(null)
   const [loadingId, setLoadingId] = useState<string | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+  const [browseOpen, setBrowseOpen] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const previewGenRef = useRef(0)
   const { user } = useAuth()
 
   const stopAudio = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.pause()
+      audioRef.current.src = ''
       audioRef.current = null
     }
-    if (window.speechSynthesis) window.speechSynthesis.cancel()
     setPlayingId(null)
     setLoadingId(null)
   }, [])
 
-  const handleSelect = useCallback((voiceId: string) => {
+  const handleSelectCatalog = useCallback((voiceId: string) => {
+    const voice = NEXUS_CATALOG_VOICES.find((v) => v.id === voiceId)
+    if (!voice) return
     setSelectedId(voiceId)
     setSaved(false)
+    setPreviewError(null)
     try {
-      // Write to both keys so voice.ts picks it up immediately
       localStorage.setItem(NEXUS_VOICE_KEY, voiceId)
       localStorage.setItem('nexus_voice_id', voiceId)
     } catch { /* ignore */ }
-    const voice = NEXUS_VOICES.find(v => v.id === voiceId)
-    console.log('[NexusVoiceSelector] Voice selected:', voice?.name, voiceId)
+    console.log('[NexusVoiceSelector] Voice selected:', voice.name, voiceId)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }, [])
 
-  const handlePlaySample = useCallback(async (voice: typeof NEXUS_VOICES[0]) => {
-    if (playingId === voice.id) { stopAudio(); return }
+  /**
+   * Preview only — never changes selected Nexus voice (catalog or browse).
+   * Uses authenticated /.netlify/functions/speak with voice_id.
+   */
+  const handlePreview = useCallback(async (voice: NexusVoiceMeta) => {
+    if (playingId === voice.id) {
+      previewGenRef.current += 1
+      stopAudio()
+      return
+    }
+    previewGenRef.current += 1
+    const gen = previewGenRef.current
     stopAudio()
+    setPreviewError(null)
     setLoadingId(voice.id)
 
-    const sampleText = 'Hello, I am your NEXUS assistant.'
-
-    // Call speak Netlify function proxy
     try {
       const res = await fetch('/.netlify/functions/speak', {
         method: 'POST',
         headers: await authedJsonHeaders(),
-        body: JSON.stringify({ voiceId: voice.id, text: sampleText }),
+        body: JSON.stringify({ voice_id: voice.id, text: NEXUS_PREVIEW_TEXT }),
       })
-      if (res.ok) {
-        const { audio } = await res.json()
-        const binary = atob(audio)
-        const bytes  = new Uint8Array(binary.length)
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-        const blob = new Blob([bytes], { type: 'audio/mpeg' })
-        const url  = URL.createObjectURL(blob)
-        const audioEl = document.createElement('audio') as HTMLAudioElement
-        audioEl.playsInline = true
-        audioEl.src = url
-        audioEl.oncanplaythrough = () => { setLoadingId(null); setPlayingId(voice.id); audioEl.play().catch(() => { URL.revokeObjectURL(url); fallbackSpeak() }) }
-        audioEl.onended = () => { setPlayingId(null); URL.revokeObjectURL(url) }
-        audioEl.onerror = () => { setLoadingId(null); URL.revokeObjectURL(url); fallbackSpeak() }
-        audioEl.load()
-        audioRef.current = audioEl
+
+      if (gen !== previewGenRef.current) return
+
+      let body: { audio?: string; error?: string; code?: string } | null = null
+      try {
+        body = await res.json()
+      } catch {
+        body = null
+      }
+
+      if (!res.ok || !body?.audio) {
+        setLoadingId(null)
+        setPreviewError(mapNexusPreviewError(res.status, body))
         return
       }
-    } catch { /* fall through to browser TTS */ }
 
-    fallbackSpeak()
+      const binary = atob(body.audio)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+      if (bytes.length === 0) {
+        setLoadingId(null)
+        setPreviewError('Preview failed — empty audio returned.')
+        return
+      }
 
-    function fallbackSpeak() {
-      if (!window.speechSynthesis) { setLoadingId(null); return }
-      const utt = new SpeechSynthesisUtterance(sampleText)
-      utt.onstart = () => { setLoadingId(null); setPlayingId(voice.id) }
-      utt.onend   = () => setPlayingId(null)
-      utt.onerror = () => { setPlayingId(null); setLoadingId(null) }
-      window.speechSynthesis.speak(utt)
+      const blob = new Blob([bytes], { type: 'audio/mpeg' })
+      const url = URL.createObjectURL(blob)
+      const audioEl = document.createElement('audio') as HTMLAudioElement
+      audioEl.playsInline = true
+      audioEl.preload = 'auto'
+      audioEl.src = url
+
+      const failLoad = (msg: string) => {
+        if (gen !== previewGenRef.current) return
+        setLoadingId(null)
+        setPlayingId(null)
+        URL.revokeObjectURL(url)
+        setPreviewError(msg)
+      }
+
+      audioEl.onended = () => {
+        if (gen !== previewGenRef.current) return
+        setPlayingId(null)
+        URL.revokeObjectURL(url)
+      }
+      audioEl.onerror = () => failLoad('Preview audio failed to load.')
+
+      try {
+        await audioEl.play()
+        if (gen !== previewGenRef.current) {
+          URL.revokeObjectURL(url)
+          return
+        }
+        // Successful playback clears any prior stale error.
+        setPreviewError(null)
+        setLoadingId(null)
+        setPlayingId(voice.id)
+        audioRef.current = audioEl
+      } catch {
+        failLoad('Preview audio could not be played in this browser.')
+      }
+    } catch {
+      if (gen !== previewGenRef.current) return
+      setLoadingId(null)
+      setPreviewError('ElevenLabs unavailable — preview request failed.')
     }
   }, [playingId, stopAudio])
 
-  // Sync to Supabase user_preferences when selection changes
+  // Sync to Supabase user_preferences when selection changes (existing authority).
   useEffect(() => {
     if (!user?.id) return
     ;(async () => {
       try {
-        const { error } = await supabase.from('user_preferences').upsert({ user_id: user.id, nexus_voice_id: selectedId, updated_at: new Date().toISOString() })
+        const { error } = await supabase.from('user_preferences').upsert({
+          user_id: user.id,
+          nexus_voice_id: selectedId,
+          updated_at: new Date().toISOString(),
+        })
         if (error) console.error(error)
-      } catch(err) { console.error(err) }
+      } catch (err) {
+        console.error(err)
+      }
     })()
   }, [selectedId, user?.id])
 
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2 mb-1">
-        <Volume2 className="w-4 h-4 text-emerald-400" />
-        <p className="text-sm text-gray-400">Choose the voice NEXUS uses for all spoken responses</p>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        {NEXUS_VOICES.map(voice => {
-          const isSelected = selectedId === voice.id
-          const isPlaying  = playingId  === voice.id
-          const isLoading  = loadingId  === voice.id
-          const isFemale   = voice.gender === 'Female'
-          return (
-            <div
-              key={voice.id}
-              className={`flex flex-col gap-2 p-3 rounded-xl border transition-all cursor-pointer ${isSelected ? 'border-emerald-500/60 bg-emerald-500/10' : 'border-gray-700/60 bg-gray-800/30 hover:border-gray-600'}`}
-              onClick={() => handleSelect(voice.id)}
-            >
-              <div className="flex items-center gap-2">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${isSelected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'}`}>
-                  {voice.name[0]}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className={`text-sm font-semibold truncate ${isSelected ? 'text-emerald-300' : 'text-gray-200'}`}>{voice.name}</div>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${isFemale ? 'bg-pink-500/20 text-pink-300' : 'bg-blue-500/20 text-blue-300'}`}>
-                      {voice.gender}
-                    </span>
-                  </div>
-                </div>
-                {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />}
-              </div>
-              <div className="text-xs text-gray-500 leading-tight">{voice.descriptor}</div>
-              <div className="flex items-center justify-between">
-                <button
-                  onClick={e => { e.stopPropagation(); handlePlaySample(voice) }}
-                  disabled={isLoading}
-                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg transition-colors ${isLoading ? 'bg-gray-700 text-gray-500 cursor-wait' : isPlaying ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
-                  title={isPlaying ? 'Stop' : 'Play sample'}
-                >
-                  {isLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : isPlaying ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                  <span>{isLoading ? 'Loading…' : isPlaying ? 'Stop' : 'Play Sample'}</span>
-                </button>
-              </div>
+  const renderVoiceCard = (voice: NexusVoiceMeta, opts: { selectable: boolean; badge?: string }) => {
+    const isSelected = opts.selectable && selectedId === voice.id
+    const isPlaying = playingId === voice.id
+    const isLoading = loadingId === voice.id
+    const isFemale = voice.gender === 'Female'
+    return (
+      <div
+        key={voice.id}
+        className={`flex flex-col gap-2 p-3 rounded-xl border transition-all ${
+          opts.selectable ? 'cursor-pointer' : ''
+        } ${
+          isSelected
+            ? 'border-emerald-500/60 bg-emerald-500/10'
+            : 'border-gray-700/60 bg-gray-800/30 hover:border-gray-600'
+        }`}
+        onClick={opts.selectable ? () => handleSelectCatalog(voice.id) : undefined}
+        data-voice-id={voice.id}
+        data-voice-role={opts.selectable ? 'catalog' : 'candidate'}
+      >
+        <div className="flex items-center gap-2">
+          <div
+            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${
+              isSelected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'
+            }`}
+          >
+            {voice.name[0]}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className={`text-sm font-semibold truncate ${isSelected ? 'text-emerald-300' : 'text-gray-200'}`}>
+              {voice.name}
             </div>
-          )
-        })}
+            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+              <span
+                className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                  isFemale ? 'bg-pink-500/20 text-pink-300' : 'bg-blue-500/20 text-blue-300'
+                }`}
+              >
+                {voice.gender}
+              </span>
+              {voice.accent && (
+                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-slate-700/80 text-slate-300">
+                  {voice.accent}
+                </span>
+              )}
+              {voice.category && (
+                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-indigo-500/15 text-indigo-200">
+                  {voice.category}
+                </span>
+              )}
+              {opts.badge && (
+                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-200">
+                  {opts.badge}
+                </span>
+              )}
+              {isSelected && (
+                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">
+                  Selected
+                </span>
+              )}
+            </div>
+          </div>
+          {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />}
+        </div>
+        <div className="text-xs text-gray-500 leading-tight">{voice.descriptor}</div>
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              handlePreview(voice)
+            }}
+            disabled={isLoading}
+            className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg transition-colors ${
+              isLoading
+                ? 'bg-gray-700 text-gray-500 cursor-wait'
+                : isPlaying
+                  ? 'bg-cyan-600 text-white'
+                  : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'
+            }`}
+            title={isPlaying ? 'Stop' : 'Preview'}
+          >
+            {isLoading ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : isPlaying ? (
+              <Square className="w-3 h-3" />
+            ) : (
+              <Play className="w-3 h-3" />
+            )}
+            <span>{isLoading ? 'Loading…' : isPlaying ? 'Stop' : 'Preview'}</span>
+          </button>
+        </div>
       </div>
-      {saved && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
-          <Check className="w-3.5 h-3.5" /> Voice saved — NEXUS will use this voice for all responses
+    )
+  }
+
+  return (
+    <div className="space-y-3" data-testid="nexus-voice-selector">
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <div className="flex items-center gap-2 min-w-0">
+          <Volume2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+          <p className="text-sm text-gray-400 truncate">
+            PowerOn catalog — choose the Nexus voice for this device
+          </p>
+        </div>
+        <span
+          className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-200 flex-shrink-0"
+          data-testid="nexus-catalog-count"
+        >
+          {NEXUS_CATALOG_VOICES.length}/10 retained
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2" data-testid="nexus-catalog-voices">
+        {NEXUS_CATALOG_VOICES.map((voice) => renderVoiceCard(voice, { selectable: true }))}
+      </div>
+
+      <div className="rounded-xl border border-slate-700/70 bg-slate-950/50" data-testid="nexus-browse-voices">
+        <button
+          type="button"
+          onClick={() => setBrowseOpen((v) => !v)}
+          className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
+          aria-expanded={browseOpen}
+        >
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-200">Browse available voices</p>
+            <p className="text-[11px] text-gray-500 mt-0.5">
+              Preview current ElevenLabs candidates to choose 6 replacements. Preview does not change selection.
+            </p>
+          </div>
+          <span className="flex items-center gap-2 flex-shrink-0">
+            <span className="rounded-full border border-slate-600 bg-slate-800/80 px-2 py-0.5 text-[10px] font-semibold text-slate-300">
+              {NEXUS_BROWSE_CANDIDATES.length} candidates
+            </span>
+            {browseOpen ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+          </span>
+        </button>
+        {browseOpen && (
+          <div className="border-t border-slate-700/60 p-3 space-y-2">
+            <p className="text-[11px] text-slate-500">
+              Available ElevenLabs voices — audition only. Tell the team which six should join Oxley, Adam Stone, Marcus, and Sarah.
+            </p>
+            <div className="grid grid-cols-2 gap-2 max-h-80 overflow-y-auto pr-1">
+              {NEXUS_BROWSE_CANDIDATES.map((voice) =>
+                renderVoiceCard(voice, { selectable: false, badge: 'Candidate' }),
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {previewError && (
+        <div
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-xs font-medium"
+          data-testid="nexus-voice-preview-error"
+        >
+          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {previewError}
         </div>
       )}
-      <p className="text-xs text-gray-600 mt-1">Selection is saved immediately to localStorage and synced to your profile.</p>
+      {saved && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
+          <Check className="w-3.5 h-3.5" /> Voice saved locally — NEXUS will use this voice for responses on this device
+        </div>
+      )}
+      <p className="text-xs text-gray-600 mt-1">
+        Saved to this browser (poweron_nexus_voice / nexus_voice_id) and synced to your user profile. Not organization-wide yet.
+      </p>
+      {/* Keep stale IDs documented in source for tests — never presented as usable catalog voices. */}
+      <span className="hidden" data-stale-removed={NEXUS_STALE_REMOVED_IDS.join(',')} />
     </div>
   )
 }
@@ -3366,7 +3622,8 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
                 <OwnerProfileCard />
               </div>
 
-              <div className="rounded-xl border border-indigo-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
+              {/* NEXUS Voice — inside AI Development (VOICE-2C). Visibility follows showAIDevelopment. */}
+              <div className="rounded-xl border border-indigo-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20" data-testid="nexus-voice-in-ai-development">
                 <div className="flex items-center justify-between gap-3 border-b border-indigo-400/10 pb-3 mb-3">
                   <div>
                     <h4 className="text-sm font-bold text-gray-100">NEXUS Voice</h4>
@@ -3575,13 +3832,6 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
           {/* MY PROFILE */}
           {false && (
           <OwnerProfileCard />
-          )}
-
-          {/* NEXUS VOICE */}
-          {false && (
-          <SettingCard title="NEXUS Voice">
-            <NexusVoiceSelector />
-          </SettingCard>
           )}
 
           {showBusinessSetup && (
