@@ -40,10 +40,12 @@
         "npm:eslint-plugin-react-hooks@^4.6.2",
         "npm:eslint-plugin-react-refresh@~0.4.7",
         "npm:eslint@^8.57.0",
+        "npm:happy-dom@^17.4.4",
         "npm:howler@^2.2.4",
         "npm:jspdf-autotable@^5.0.7",
         "npm:jspdf@^2.5.2",
         "npm:lucide-react@0.383",
+        "npm:pdf-lib@^1.17.1",
         "npm:pdfjs-dist@^5.6.205",
         "npm:postcss@^8.4.38",
         "npm:react-dom@^18.3.1",
@@ -56,6 +58,7 @@
         "npm:three@0.176",
         "npm:typescript@^5.4.5",
         "npm:vite@^5.2.11",
+        "npm:vitest@^2.1.9",
         "npm:zustand@^4.5.2"
       ]
     }
