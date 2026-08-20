@@ -64,7 +64,7 @@ export default function EmployeeInviteModal({ onClose, initialName, profileId, b
   const [state, setState]                   = useState<ModalState>('idle')
   const [errorMsg, setErrorMsg]             = useState('')
   const [sentEmail, setSentEmail]           = useState('')
-  const [emailDupError, setEmailDupError]   = useState('')
+  const [emailReuseNotice, setEmailReuseNotice] = useState('')
 
   // Existing org emails loaded on mount for client-side duplicate check.
   const existingEmails = useRef<Set<string>>(new Set())
@@ -88,30 +88,25 @@ export default function EmployeeInviteModal({ onClose, initialName, profileId, b
   function checkEmailDuplicate(raw: string) {
     const clean = raw.trim().toLowerCase()
     if (clean && existingEmails.current.has(clean)) {
-      setEmailDupError(
-        'An employee with this email already exists. View their profile in the Crew Directory.',
+      setEmailReuseNotice(
+        'An employee with this email already exists in this organization. Sending will reuse or link the existing employee record when compatible.',
       )
     } else {
-      setEmailDupError('')
+      setEmailReuseNotice('')
     }
   }
 
   // ── Validation ─────────────────────────────────────────────────────────────
   const nameValid  = displayName.trim().length > 0
   const emailValid = EMAIL_RE.test(email.trim().toLowerCase())
-  const formValid  = nameValid && emailValid && !emailDupError
+  const formValid  = nameValid && emailValid
   const isLoading  = state === 'loading'
 
   // ── Submit handler ─────────────────────────────────────────────────────────
   const handleSend = async () => {
     // Re-check duplicate synchronously on submit (guard against paste without blur)
     const cleanEmail = email.trim().toLowerCase()
-    if (existingEmails.current.has(cleanEmail)) {
-      setEmailDupError(
-        'An employee with this email already exists. View their profile in the Crew Directory.',
-      )
-      return
-    }
+    checkEmailDuplicate(cleanEmail)
     if (!formValid || isLoading) return
 
     setState('loading')
@@ -243,7 +238,7 @@ export default function EmployeeInviteModal({ onClose, initialName, profileId, b
                   value={email}
                   onChange={e => {
                     setEmail(e.target.value)
-                    if (emailDupError) setEmailDupError('')
+                    if (emailReuseNotice) setEmailReuseNotice('')
                   }}
                   onBlur={e => checkEmailDuplicate(e.target.value)}
                   disabled={isLoading}
@@ -251,16 +246,12 @@ export default function EmployeeInviteModal({ onClose, initialName, profileId, b
                   inputMode="email"
                   autoComplete="email"
                   className={inputCls}
-                  style={{
-                    minHeight: '44px',
-                    fontSize: '16px',
-                    borderColor: emailDupError ? '#ef4444' : undefined,
-                  }}
+                  style={{ minHeight: '44px', fontSize: '16px' }}
                 />
-                {emailDupError && (
-                  <p className="mt-1.5 flex items-start gap-1.5 text-xs text-red-400">
+                {emailReuseNotice && (
+                  <p className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-400">
                     <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                    {emailDupError}
+                    {emailReuseNotice}
                   </p>
                 )}
               </div>

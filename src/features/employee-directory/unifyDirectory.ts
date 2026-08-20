@@ -1,39 +1,25 @@
 /**
- * unifyDirectory.ts — ROLE-2.4 / COST-SOURCE-2B unified Cost Model + Portal
- * employee directory.
+ * unifyDirectory.ts - shared canonical employee identity unifier.
  *
- * A single person can be represented by up to two records:
- *   • a Cost Model employee (labor/cost classification, hours source)
- *   • a Portal employee_profiles row (auth identity, portal access, roles)
+ * Team and Crew Portal both consume this pure helper so one person renders once,
+ * even when the same same-org employee is represented by both:
+ * - BackupData.employees (labor / cost authority)
+ * - employee_profiles   (portal / auth authority)
  *
- * When they are LINKED (employee_profiles.backup_employee_id === costModel.id)
- * the directory renders them as ONE person — not two rows.
+ * Reconciliation precedence:
+ * 1. Stable backup_employee_id link
+ * 2. Same-org exact email reconciliation when the cost-model email is unique
+ * 3. Owner / Me sentinel collapse
  *
- * Identity rules (deliberate and conservative):
- *   1. The ONLY automatic identity is the stable backup_employee_id linkage.
- *   2. Never deduplicate by display name — same name ≠ same person.
- *   3. A unique matching email only *suggests* an explicit owner-confirmed link;
- *      it never collapses two records automatically.
- *   4. Owner sentinel ids ('me', 'owner', 'owner-virtual') and the canonical name
- *      'Owner / Me' are detected and collapsed to one UI representation without
- *      deleting any stored record.
- *
- * This module is PURE (no I/O) so it is fully unit-testable and deterministic.
+ * Historical duplicates are never deleted here. They are collapsed into one
+ * canonical UI row and surfaced via duplicateSignals for later owner cleanup.
  */
-
-// ── Inputs ──────────────────────────────────────────────────────────────────
 
 export interface CostModelEmployeeInput {
   id: string
   name: string
   email?: string | null
-  /** Cost Model classification to preserve on the unified row (e.g. full_time, temp, helper). */
   classification?: string | null
-  /**
-   * Explicit owner flag. When true, this employee is the business owner / "me"
-   * sentinel. Pass normalizeEmployee(raw).isOwner here for pre-computed values.
-   * When omitted, sentinel detection by id/name applies as a fallback.
-   */
   isOwner?: boolean
 }
 
@@ -44,55 +30,53 @@ export interface PortalProfileInput {
   active: boolean
   user_id: string | null
   backup_employee_id: string | null
+  role?: string | null
   employee_role?: string | null
   employment_type?: string | null
+  accepted_at?: string | null
 }
-
-// ── Output ──────────────────────────────────────────────────────────────────
 
 export type UnifiedRowKind = 'linked' | 'cost_model_only' | 'portal_only'
 export type PortalStatus = 'Active' | 'Invitation Pending' | 'Inactive'
+export type CanonicalEmployeeStatus = 'pending' | 'active' | 'inactive'
+export type IdentityReconciledBy = 'backup_employee_id' | 'same_org_email' | 'none'
+export type UnifiedDuplicateCode =
+  | 'duplicate_backup_employee_id'
+  | 'duplicate_email'
+  | 'owner_self_duplicate'
+
+export interface UnifiedDuplicateSignal {
+  code: UnifiedDuplicateCode
+  relatedPortalProfileIds: string[]
+  relatedCostModelIds: string[]
+}
 
 export interface UnifiedEmployeeRow {
-  /** Stable render key. Also served as `unifiedKey` in the canonical contract. */
   key: string
   kind: UnifiedRowKind
   displayName: string
+  canonicalStatus: CanonicalEmployeeStatus
+  stableLink: boolean
+  reconciledBy: IdentityReconciledBy
 
-  // Cost Model side (null on portal-only rows)
   costModelId: string | null
+  costModelIds: string[]
   classification: string | null
 
-  // Portal side (null on cost-model-only rows)
   portalProfileId: string | null
+  portalProfileIds: string[]
   portalStatus: PortalStatus | null
-  /** True when a portal profile row exists AND has a confirmed auth user_id. */
   authLinked: boolean
-  /** The portal auth user id when linked; null otherwise. */
   authUserId: string | null
   employeeRole: string | null
   employmentType: string | null
 
   email: string | null
-
-  /**
-   * True when this row represents the business owner / "me" sentinel.
-   * Consumers should never show this person twice by rendering both the raw
-   * owner Cost Model entry AND a separate "Owner / Me" UI sentinel.
-   */
   isOwner: boolean
-
-  /** Cost-model-only rows can be prepared/invited into a portal profile. */
   canPrepareOrInvite: boolean
-  /**
-   * For a cost-model-only row: the id of a single unlinked portal profile whose
-   * email uniquely matches this employee. UI may offer "Link Existing Account".
-   * Null when there is no match or the match is ambiguous. NEVER auto-applied.
-   */
   suggestedLinkPortalProfileId: string | null
+  duplicateSignals: UnifiedDuplicateSignal[]
 }
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
 
 export function derivePortalStatus(p: { active: boolean; user_id: string | null }): PortalStatus {
   if (!p.active) return 'Inactive'
@@ -100,224 +84,351 @@ export function derivePortalStatus(p: { active: boolean; user_id: string | null 
   return 'Invitation Pending'
 }
 
-function normEmail(e: string | null | undefined): string | null {
-  const t = (e ?? '').trim().toLowerCase()
-  return t || null
+export function deriveCanonicalEmployeeStatus(portalStatus: PortalStatus | null): CanonicalEmployeeStatus {
+  if (portalStatus === 'Inactive') return 'inactive'
+  if (portalStatus === 'Active') return 'active'
+  return 'pending'
 }
 
-/**
- * Detect whether a Cost Model employee record represents the owner / "me"
- * sentinel, using the explicit flag first, then the canonical sentinel ids
- * and name as a fallback.
- *
- * Sentinel ids: 'me', 'owner', 'owner-virtual'
- * Sentinel name: 'owner / me' (case-insensitive)
- */
+function normEmail(email: string | null | undefined): string | null {
+  const trimmed = String(email ?? '').trim().toLowerCase()
+  return trimmed || null
+}
+
 export function isCostModelOwner(cm: CostModelEmployeeInput): boolean {
   if (cm.isOwner === true) return true
-  const id = String(cm.id ?? '').toLowerCase().trim()
-  const name = String(cm.name ?? '').toLowerCase().trim()
-  return (
-    id === 'me' ||
-    id === 'owner' ||
-    id === 'owner-virtual' ||
-    name === 'owner / me'
-  )
+  const id = String(cm.id ?? '').trim().toLowerCase()
+  const name = String(cm.name ?? '').trim().toLowerCase()
+  return id === 'me' || id === 'owner' || id === 'owner-virtual' || name === 'owner / me'
 }
 
-// ── Core unification ────────────────────────────────────────────────────────
+function portalPriority(profile: PortalProfileInput): number {
+  const status = derivePortalStatus(profile)
+  if (status === 'Active') return 0
+  if (status === 'Invitation Pending') return 1
+  return 2
+}
 
-/**
- * Combine Cost Model employees and Portal profiles into one deterministic list.
- *
- * - linked pair (backup_employee_id match) → exactly one row; the separate
- *   cost-model-only row is suppressed.
- * - cost-model-only → one row (canPrepareOrInvite = true), with an optional
- *   unique-email link suggestion.
- * - portal-only (no backup link, or a dangling backup id) → one portal row.
- * - owner sentinels → isOwner = true; collapsed to one UI representation.
- *
- * Ordering: Cost Model order first (linked + cost-model-only preserve input
- * order), then any remaining portal-only rows in input order. Stable and pure.
- */
+function uniqueIds(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))]
+}
+
+function appendDuplicateSignal(
+  signals: UnifiedDuplicateSignal[],
+  code: UnifiedDuplicateCode,
+  relatedPortalProfileIds: string[],
+  relatedCostModelIds: string[],
+): UnifiedDuplicateSignal[] {
+  if (relatedPortalProfileIds.length === 0 && relatedCostModelIds.length === 0) return signals
+  return [...signals, { code, relatedPortalProfileIds, relatedCostModelIds }]
+}
+
+function pickPrimaryPortalProfile(
+  profiles: PortalProfileInput[],
+  portalOrder: Map<string, number>,
+): PortalProfileInput {
+  return [...profiles].sort((a, b) => {
+    const rankDiff = portalPriority(a) - portalPriority(b)
+    if (rankDiff !== 0) return rankDiff
+    return (portalOrder.get(a.id) ?? 0) - (portalOrder.get(b.id) ?? 0)
+  })[0]
+}
+
+function mergeOwnerRows(rows: UnifiedEmployeeRow[]): UnifiedEmployeeRow[] {
+  const ownerRows = rows.filter((row) => row.isOwner)
+  if (ownerRows.length <= 1) return rows
+
+  const primary = [...ownerRows].sort((a, b) => {
+    const rank = (row: UnifiedEmployeeRow) => {
+      if (row.portalStatus === 'Active') return 0
+      if (row.portalStatus === 'Invitation Pending') return 1
+      if (row.portalStatus === null) return 2
+      return 3
+    }
+    return rank(a) - rank(b)
+  })[0]
+
+  const mergedCostModelIds = uniqueIds(ownerRows.flatMap((row) => row.costModelIds))
+  const mergedPortalIds = uniqueIds(ownerRows.flatMap((row) => row.portalProfileIds))
+  const mergedSignals = ownerRows.flatMap((row) => row.duplicateSignals)
+
+  const mergedPrimary: UnifiedEmployeeRow = {
+    ...primary,
+    costModelIds: mergedCostModelIds,
+    portalProfileIds: mergedPortalIds,
+    duplicateSignals: [
+      ...mergedSignals,
+      {
+        code: 'owner_self_duplicate',
+        relatedPortalProfileIds: mergedPortalIds,
+        relatedCostModelIds: mergedCostModelIds,
+      },
+    ],
+  }
+
+  let replaced = false
+  return rows
+    .filter((row) => !row.isOwner || row.key === primary.key)
+    .map((row) => {
+      if (row.key !== primary.key || replaced) return row
+      replaced = true
+      return mergedPrimary
+    })
+}
+
 export function buildUnifiedDirectory(
   costModel: CostModelEmployeeInput[],
   portal: PortalProfileInput[],
 ): UnifiedEmployeeRow[] {
-  // Index portal profiles by their backup_employee_id (linked ones only).
-  const portalByBackupId = new Map<string, PortalProfileInput>()
-  for (const p of portal) {
-    if (p.backup_employee_id) portalByBackupId.set(p.backup_employee_id, p)
+  const portalOrder = new Map<string, number>()
+  portal.forEach((profile, index) => portalOrder.set(profile.id, index))
+
+  const portalByBackupId = new Map<string, PortalProfileInput[]>()
+  const portalByEmail = new Map<string, PortalProfileInput[]>()
+  for (const profile of portal) {
+    if (profile.backup_employee_id) {
+      const list = portalByBackupId.get(profile.backup_employee_id) ?? []
+      list.push(profile)
+      portalByBackupId.set(profile.backup_employee_id, list)
+    }
+    const email = normEmail(profile.email)
+    if (email) {
+      const list = portalByEmail.get(email) ?? []
+      list.push(profile)
+      portalByEmail.set(email, list)
+    }
   }
 
-  // Unlinked portal profiles are candidates for an email-based link suggestion.
-  const unlinkedPortal = portal.filter(p => !p.backup_employee_id)
+  const costModelEmailCounts = new Map<string, number>()
+  for (const employee of costModel) {
+    const email = normEmail(employee.email)
+    if (!email) continue
+    costModelEmailCounts.set(email, (costModelEmailCounts.get(email) ?? 0) + 1)
+  }
 
   const consumedPortalIds = new Set<string>()
   const rows: UnifiedEmployeeRow[] = []
 
-  for (const cm of costModel) {
-    const ownerFlag = isCostModelOwner(cm)
-    const linked = portalByBackupId.get(cm.id)
-    if (linked) {
-      consumedPortalIds.add(linked.id)
+  for (const employee of costModel) {
+    const ownerFlag = isCostModelOwner(employee)
+    const employeeEmail = normEmail(employee.email)
+    const emailUniqueInCostModel = Boolean(
+      employeeEmail && costModelEmailCounts.get(employeeEmail) === 1,
+    )
+
+    const matchedProfiles: PortalProfileInput[] = []
+    for (const profile of portalByBackupId.get(employee.id) ?? []) {
+      if (!consumedPortalIds.has(profile.id)) matchedProfiles.push(profile)
+    }
+
+    if (emailUniqueInCostModel && employeeEmail) {
+      for (const profile of portalByEmail.get(employeeEmail) ?? []) {
+        const canReconcileByEmail =
+          !profile.backup_employee_id || profile.backup_employee_id === employee.id
+        if (!canReconcileByEmail || consumedPortalIds.has(profile.id)) continue
+        if (!matchedProfiles.some((existing) => existing.id === profile.id)) {
+          matchedProfiles.push(profile)
+        }
+      }
+    }
+
+    if (matchedProfiles.length > 0) {
+      const primaryPortal = pickPrimaryPortalProfile(matchedProfiles, portalOrder)
+      matchedProfiles.forEach((profile) => consumedPortalIds.add(profile.id))
+
+      const stableLink = matchedProfiles.some((profile) => profile.backup_employee_id === employee.id)
+      const portalProfileIds = uniqueIds(matchedProfiles.map((profile) => profile.id))
+      let duplicateSignals: UnifiedDuplicateSignal[] = []
+
+      if (matchedProfiles.filter((profile) => profile.backup_employee_id === employee.id).length > 1) {
+        duplicateSignals = appendDuplicateSignal(
+          duplicateSignals,
+          'duplicate_backup_employee_id',
+          portalProfileIds,
+          [employee.id],
+        )
+      }
+
+      if (employeeEmail && matchedProfiles.filter((profile) => normEmail(profile.email) === employeeEmail).length > 1) {
+        duplicateSignals = appendDuplicateSignal(
+          duplicateSignals,
+          'duplicate_email',
+          portalProfileIds,
+          [employee.id],
+        )
+      }
+
+      const portalStatus = derivePortalStatus(primaryPortal)
       rows.push({
-        key: `linked:${cm.id}:${linked.id}`,
+        key: `linked:${employee.id}:${primaryPortal.id}`,
         kind: 'linked',
-        displayName: cm.name || linked.display_name,
-        costModelId: cm.id,
-        classification: cm.classification ?? null,
-        portalProfileId: linked.id,
-        portalStatus: derivePortalStatus(linked),
-        authLinked: Boolean(linked.user_id),
-        authUserId: linked.user_id ?? null,
-        employeeRole: linked.employee_role ?? null,
-        employmentType: linked.employment_type ?? null,
-        email: linked.email ?? cm.email ?? null,
+        displayName: employee.name || primaryPortal.display_name,
+        canonicalStatus: deriveCanonicalEmployeeStatus(portalStatus),
+        stableLink,
+        reconciledBy: stableLink ? 'backup_employee_id' : 'same_org_email',
+        costModelId: employee.id,
+        costModelIds: [employee.id],
+        classification: employee.classification ?? null,
+        portalProfileId: primaryPortal.id,
+        portalProfileIds,
+        portalStatus,
+        authLinked: Boolean(primaryPortal.user_id),
+        authUserId: primaryPortal.user_id ?? null,
+        employeeRole: primaryPortal.employee_role ?? null,
+        employmentType: primaryPortal.employment_type ?? null,
+        email: primaryPortal.email ?? employee.email ?? null,
         isOwner: ownerFlag,
         canPrepareOrInvite: false,
-        suggestedLinkPortalProfileId: null,
+        suggestedLinkPortalProfileId: stableLink ? null : primaryPortal.id,
+        duplicateSignals,
       })
       continue
     }
 
-    // Cost-model-only. Suggest a link ONLY when exactly one unlinked, not-yet-
-    // consumed portal profile has a matching email. Ambiguous → no suggestion.
-    const cmEmail = normEmail(cm.email)
     let suggestion: string | null = null
-    if (cmEmail) {
-      const matches = unlinkedPortal.filter(
-        p => !consumedPortalIds.has(p.id) && normEmail(p.email) === cmEmail,
+    if (emailUniqueInCostModel && employeeEmail) {
+      const matchingUnlinked = (portalByEmail.get(employeeEmail) ?? []).filter(
+        (profile) => !consumedPortalIds.has(profile.id) && !profile.backup_employee_id,
       )
-      if (matches.length === 1) suggestion = matches[0].id
+      if (matchingUnlinked.length === 1) suggestion = matchingUnlinked[0].id
     }
 
     rows.push({
-      key: `cost:${cm.id}`,
+      key: `cost:${employee.id}`,
       kind: 'cost_model_only',
-      displayName: cm.name,
-      costModelId: cm.id,
-      classification: cm.classification ?? null,
+      displayName: employee.name,
+      canonicalStatus: 'pending',
+      stableLink: false,
+      reconciledBy: 'none',
+      costModelId: employee.id,
+      costModelIds: [employee.id],
+      classification: employee.classification ?? null,
       portalProfileId: null,
+      portalProfileIds: [],
       portalStatus: null,
       authLinked: false,
       authUserId: null,
       employeeRole: null,
       employmentType: null,
-      email: cm.email ?? null,
+      email: employee.email ?? null,
       isOwner: ownerFlag,
       canPrepareOrInvite: !ownerFlag,
       suggestedLinkPortalProfileId: suggestion,
+      duplicateSignals: [],
     })
   }
 
-  // Remaining portal profiles that were not linked to any Cost Model row.
-  for (const p of portal) {
-    if (consumedPortalIds.has(p.id)) continue
+  for (const profile of portal) {
+    if (consumedPortalIds.has(profile.id)) continue
+
+    const groupedProfiles: PortalProfileInput[] = []
+    const sameBackupProfiles = profile.backup_employee_id
+      ? (portalByBackupId.get(profile.backup_employee_id) ?? [])
+      : [profile]
+    for (const candidate of sameBackupProfiles) {
+      if (!consumedPortalIds.has(candidate.id)) groupedProfiles.push(candidate)
+    }
+
+    const email = normEmail(profile.email)
+    if (email) {
+      for (const candidate of portalByEmail.get(email) ?? []) {
+        const canCollapseByEmail =
+          !candidate.backup_employee_id || candidate.backup_employee_id === profile.backup_employee_id
+        if (!canCollapseByEmail || consumedPortalIds.has(candidate.id)) continue
+        if (!groupedProfiles.some((existing) => existing.id === candidate.id)) {
+          groupedProfiles.push(candidate)
+        }
+      }
+    }
+
+    const primaryPortal = pickPrimaryPortalProfile(groupedProfiles, portalOrder)
+    groupedProfiles.forEach((candidate) => consumedPortalIds.add(candidate.id))
+
+    const portalProfileIds = uniqueIds(groupedProfiles.map((candidate) => candidate.id))
+    let duplicateSignals: UnifiedDuplicateSignal[] = []
+
+    if (profile.backup_employee_id && groupedProfiles.filter((candidate) => candidate.backup_employee_id === profile.backup_employee_id).length > 1) {
+      duplicateSignals = appendDuplicateSignal(
+        duplicateSignals,
+        'duplicate_backup_employee_id',
+        portalProfileIds,
+        [],
+      )
+    }
+
+    if (email && groupedProfiles.filter((candidate) => normEmail(candidate.email) === email).length > 1) {
+      duplicateSignals = appendDuplicateSignal(
+        duplicateSignals,
+        'duplicate_email',
+        portalProfileIds,
+        [],
+      )
+    }
+
+    const portalStatus = derivePortalStatus(primaryPortal)
     rows.push({
-      key: `portal:${p.id}`,
+      key: `portal:${primaryPortal.id}`,
       kind: 'portal_only',
-      displayName: p.display_name,
+      displayName: primaryPortal.display_name,
+      canonicalStatus: deriveCanonicalEmployeeStatus(portalStatus),
+      stableLink: false,
+      reconciledBy: 'none',
       costModelId: null,
+      costModelIds: [],
       classification: null,
-      portalProfileId: p.id,
-      portalStatus: derivePortalStatus(p),
-      authLinked: Boolean(p.user_id),
-      authUserId: p.user_id ?? null,
-      employeeRole: p.employee_role ?? null,
-      employmentType: p.employment_type ?? null,
-      email: p.email ?? null,
+      portalProfileId: primaryPortal.id,
+      portalProfileIds,
+      portalStatus,
+      authLinked: Boolean(primaryPortal.user_id),
+      authUserId: primaryPortal.user_id ?? null,
+      employeeRole: primaryPortal.employee_role ?? null,
+      employmentType: primaryPortal.employment_type ?? null,
+      email: primaryPortal.email ?? null,
       isOwner: false,
       canPrepareOrInvite: false,
       suggestedLinkPortalProfileId: null,
+      duplicateSignals,
     })
   }
 
-  return rows
+  return mergeOwnerRows(rows)
 }
 
-// ── Selector helpers ─────────────────────────────────────────────────────────
-//
-// All selectors begin from the same canonical unified directory so no screen
-// can recreate identity matching independently.
-
-/**
- * All non-owner rows suitable for Team card display.
- * Includes linked, cost-model-only, and portal-only (with status labels).
- * Owner rows are excluded — they are shown separately in the owner crown.
- */
 export function getTeamCardDirectoryEntries(rows: UnifiedEmployeeRow[]): UnifiedEmployeeRow[] {
-  return rows.filter(r => !r.isOwner)
+  return rows.filter((row) => !row.isOwner)
 }
 
-/**
- * Rows for the organisation pyramid body (excludes the owner crown row).
- * Same as getTeamCardDirectoryEntries — split out for semantic clarity.
- */
 export function getOrganizationPyramidEntries(rows: UnifiedEmployeeRow[]): UnifiedEmployeeRow[] {
-  return rows.filter(r => !r.isOwner)
+  return rows.filter((row) => !row.isOwner)
 }
 
-/**
- * Rows available for assignment in pickers (e.g. Field Log Assigned Employees).
- *
- * When includeOwner is true the caller is expected to prepend the explicit
- * "Owner / Me" sentinel option separately — this selector never returns owner
- * rows so the same person cannot appear twice.
- *
- * Excludes portal-only rows whose portal status is Inactive (they cannot
- * receive assignments).
- */
 export function getAssignableEmployeeEntries(
   rows: UnifiedEmployeeRow[],
   options: { includeOwner?: boolean } = {},
 ): UnifiedEmployeeRow[] {
-  return rows.filter(r => {
-    if (r.isOwner) return false
-    if (r.kind === 'portal_only' && r.portalStatus === 'Inactive') return false
+  void options
+  return rows.filter((row) => {
+    if (row.isOwner) return false
+    if (row.kind === 'portal_only' && row.portalStatus === 'Inactive') return false
     return true
   })
 }
 
-/**
- * Rows for the Roles Manager employee list.
- *
- * Includes:
- *   - Cost-model-only (pre-activation role preparation)
- *   - Invitation Pending (awaiting first login)
- *   - Active portal profiles
- *
- * Excludes:
- *   - Portal-only Inactive rows
- *   - Owner rows (owner has separate role management)
- */
 export function getRoleManageableEmployeeEntries(rows: UnifiedEmployeeRow[]): UnifiedEmployeeRow[] {
-  return rows.filter(r => {
-    if (r.isOwner) return false
-    if (r.kind === 'portal_only' && r.portalStatus === 'Inactive') return false
+  return rows.filter((row) => {
+    if (row.isOwner) return false
+    if (row.kind === 'portal_only' && row.portalStatus === 'Inactive') return false
     return true
   })
 }
 
-/**
- * Guard for cost-source pricing: returns exactly one entry per real costed
- * person, collapsing:
- *   - linked pairs → one entry (Cost Model side preserved for economics)
- *   - owner sentinel → included once (as the owner row)
- *   - portal-only → included once (cost model id is null, no labor cost)
- *   - duplicate Cost Model records → remain separate (unresolved, NOT merged)
- *
- * This proves that one real person cannot be double-counted.
- * Do NOT connect to Service Log cost formulas until pricing phase is ready.
- */
 export function uniqueCostedEmployeeIdentities(rows: UnifiedEmployeeRow[]): UnifiedEmployeeRow[] {
   const seen = new Set<string>()
-  const out: UnifiedEmployeeRow[] = []
-  for (const r of rows) {
-    const key = r.key
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push(r)
+  const uniqueRows: UnifiedEmployeeRow[] = []
+  for (const row of rows) {
+    if (seen.has(row.key)) continue
+    seen.add(row.key)
+    uniqueRows.push(row)
   }
-  return out
+  return uniqueRows
 }

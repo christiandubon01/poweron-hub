@@ -33,6 +33,7 @@ import { type UnifiedCrewMember } from '@/services/crewPortalService'
 import {
   updateEmployeeDisplayName,
   archiveEmployee,
+  reactivateEmployee,
   deleteEmployeePortalRecord,
 } from '@/services/crewPortalService'
 import { resendEmployeeInvite } from '@/services/employeeInviteService'
@@ -79,7 +80,7 @@ export function PortalPill({
   onClick,
 }: {
   hasPortal: boolean
-  portalStatus: 'active' | 'pending' | null
+  portalStatus: 'active' | 'pending' | 'inactive' | null
   onClick?: () => void
 }) {
   if (!hasPortal) {
@@ -104,6 +105,19 @@ export function PortalPill({
         title="View portal record (invite pending)"
       >
         <Clock size={10} />
+        Portal
+      </button>
+    )
+  }
+  if (portalStatus === 'inactive') {
+    return (
+      <button
+        onClick={onClick}
+        className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full border transition-colors hover:bg-gray-800/40"
+        style={{ color: '#9ca3af', borderColor: '#374151', backgroundColor: '#111827' }}
+        title="View inactive portal record"
+      >
+        <Archive size={10} />
         Portal
       </button>
     )
@@ -676,6 +690,11 @@ export default function EmployeeProfilePanel({
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
 
+  // Reactivate confirm state
+  const [confirmReactivate, setConfirmReactivate] = useState(false)
+  const [reactivating, setReactivating] = useState(false)
+  const [reactivateError, setReactivateError] = useState<string | null>(null)
+
   // Delete confirm state
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -697,6 +716,21 @@ export default function EmployeeProfilePanel({
       onBack()
     } else {
       setArchiveError(res.error)
+    }
+  }
+
+  async function handleReactivate() {
+    if (!member.profileId) return
+    setReactivating(true)
+    setReactivateError(null)
+    const res = await reactivateEmployee(member.profileId)
+    setReactivating(false)
+    if (res.success) {
+      setConfirmReactivate(false)
+      onArchived?.()
+      onBack()
+    } else {
+      setReactivateError(res.error)
     }
   }
 
@@ -781,6 +815,13 @@ export default function EmployeeProfilePanel({
                   : () => setShowInviteModal(true)}
               />
             </div>
+            {(member.duplicateSignals.length > 0 || (member.hasPortal && member.hasCostModel && !member.stableLink)) && (
+              <div className="mt-3 rounded-lg border border-amber-700/40 bg-amber-950/30 px-3 py-2">
+                <p className="text-[11px] text-amber-200 leading-relaxed">
+                  Identity review needed. This employee is being safely collapsed into one canonical row, but the underlying records still need owner cleanup or formal linking.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -801,7 +842,7 @@ export default function EmployeeProfilePanel({
             )}
             {member.status === 'inactive' && (
               <span className="text-[11px] text-gray-500 bg-gray-800/40 border border-gray-700/40 px-1.5 py-0.5 rounded-full">
-                Archived
+                Inactive
               </span>
             )}
           </div>
@@ -911,12 +952,34 @@ export default function EmployeeProfilePanel({
 
         {confirmArchive && (
           <ConfirmBar
-            message={`Archive ${member.name}? They will be hidden from the active directory but their records are preserved. You can restore them by contacting support.`}
+            message={`Archive ${member.name}? They will move to Inactive, but the same employee identity and history stay intact and can be reactivated later.`}
             confirmLabel="Archive"
             onConfirm={() => void handleArchive()}
             onCancel={() => { setConfirmArchive(false); setArchiveError(null) }}
             busy={archiving}
             errorMsg={archiveError}
+          />
+        )}
+
+        {member.hasPortal && member.status === 'inactive' && !confirmReactivate && (
+          <button
+            className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border transition-colors hover:bg-green-900/20"
+            style={{ borderColor: '#16653455', color: '#4ade80' }}
+            onClick={() => { setConfirmReactivate(true); setConfirmDelete(false) }}
+          >
+            <CheckCircle size={12} />
+            Reactivate Employee
+          </button>
+        )}
+
+        {confirmReactivate && (
+          <ConfirmBar
+            message={`Reactivate ${member.name}? This restores the same employee identity instead of creating a new portal record.`}
+            confirmLabel="Reactivate"
+            onConfirm={() => void handleReactivate()}
+            onCancel={() => { setConfirmReactivate(false); setReactivateError(null) }}
+            busy={reactivating}
+            errorMsg={reactivateError}
           />
         )}
 
@@ -967,6 +1030,7 @@ export default function EmployeeProfilePanel({
       {showInviteModal && (
         <EmployeeInviteModal
           initialName={member.name}
+          backupEmployeeId={member.backupEmployeeId ?? undefined}
           onClose={() => {
             setShowInviteModal(false)
             onInviteSent?.()

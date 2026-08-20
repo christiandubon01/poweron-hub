@@ -186,8 +186,10 @@ describe('ROLE-2.3 — Link Existing Account', () => {
   })
 
   it('17. Linked employee renders once', () => {
-    expect(CREW_SVC).toContain('if (p.backup_employee_id) matchedBackupIds.add(p.backup_employee_id)')
-    expect(CREW_SVC).toContain('if (matchedBackupIds.has(emp.id)) continue')
+    expect(CREW_SVC).toContain('buildUnifiedDirectory')
+    expect(CREW_SVC).toContain('backup_employee_id: profile.backup_employee_id')
+    expect(CREW_SVC).toContain('const unifiedRows = buildUnifiedDirectory(')
+    expect(CREW_SVC).toContain("source: hasPortal && hasCostModel ? 'both' : hasPortal ? 'portal' : 'cost_model'")
   })
 
   it('18. Josh is never auto-linked by tests', () => {

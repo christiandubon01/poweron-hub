@@ -247,7 +247,13 @@ function MemberStatusBadge({ active, isPendingInvite }: { active: boolean; isPen
 
 // ─── Directory row status dot (overall) ──────────────────────────────────────
 
-function DirectoryStatusDot({ status }: { status: UnifiedCrewMember['status'] }) {
+function DirectoryStatusDot({
+  status,
+  hasPortal,
+}: {
+  status: UnifiedCrewMember['visibleStatus']
+  hasPortal: boolean
+}) {
   if (status === 'active') {
     return (
       <span className="flex items-center gap-1.5">
@@ -256,19 +262,11 @@ function DirectoryStatusDot({ status }: { status: UnifiedCrewMember['status'] })
       </span>
     )
   }
-  if (status === 'pending_invite') {
+  if (status === 'pending') {
     return (
       <span className="flex items-center gap-1.5">
         <span className="w-2 h-2 rounded-full bg-amber-500" />
-        <span className="text-xs text-amber-400">Pending</span>
-      </span>
-    )
-  }
-  if (status === 'cost_model_only') {
-    return (
-      <span className="flex items-center gap-1.5">
-        <span className="w-2 h-2 rounded-full bg-gray-600" />
-        <span className="text-xs text-gray-500">No Portal</span>
+        <span className="text-xs text-amber-400">{hasPortal ? 'Pending' : 'Pending Setup'}</span>
       </span>
     )
   }
@@ -286,7 +284,7 @@ function ArchivedBadge() {
   return (
     <span className="flex items-center gap-1.5">
       <span className="w-2 h-2 rounded-full bg-gray-700" />
-      <span className="text-xs text-gray-600">Archived</span>
+      <span className="text-xs text-gray-600">Inactive</span>
     </span>
   )
 }
@@ -345,7 +343,7 @@ function UnifiedDirectoryPanel({
     )
   }
 
-  const activeCount = members.filter((m) => m.status === 'active').length
+  const activeCount = members.filter((m) => m.visibleStatus === 'active').length
   const portalCount = members.filter((m) => m.hasPortal && m.status !== 'inactive').length
   const totalHours = members.reduce((s, m) => s + (m.hoursThisWeek ?? 0), 0)
 
@@ -404,7 +402,7 @@ function UnifiedDirectoryPanel({
             </thead>
             <tbody>
               {members.map((member, idx) => {
-                const isArchived = member.status === 'inactive'
+                const isArchived = member.visibleStatus === 'inactive'
                 return (
                   <tr
                     key={member.key}
@@ -426,7 +424,12 @@ function UnifiedDirectoryPanel({
                         >
                           {(member.name || 'U').slice(0, 2).toUpperCase()}
                         </div>
-                        <span className="text-gray-200 font-semibold text-sm">{member.name}</span>
+                        <div>
+                          <span className="text-gray-200 font-semibold text-sm block">{member.name}</span>
+                          {(member.duplicateSignals.length > 0 || (member.hasPortal && member.hasCostModel && !member.stableLink)) && (
+                            <span className="text-[10px] text-amber-500">Identity review needed</span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="px-5 py-4">
@@ -451,7 +454,7 @@ function UnifiedDirectoryPanel({
                     <td className="px-5 py-4">
                       {isArchived
                         ? <ArchivedBadge />
-                        : <DirectoryStatusDot status={member.status} />}
+                        : <DirectoryStatusDot status={member.visibleStatus} hasPortal={member.hasPortal} />}
                     </td>
                     <td className="px-5 py-4 text-gray-300 font-mono text-sm font-semibold">
                       {member.hoursThisWeek > 0 ? `${member.hoursThisWeek}h` : '—'}
@@ -1389,6 +1392,7 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                   const isCostModelOnly = member.status === 'cost_model_only'
                   const isSelf = member.userId && member.userId === authUser?.id
                   const isPrepared = member.status === 'pending_invite' && member.profileId !== null
+                  const needsLink = member.hasCostModel && member.hasPortal && !member.stableLink && !!member.backupEmployeeId
                   return (
                     <tr
                       key={member.key}
@@ -1414,7 +1418,10 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                               <span className="text-[10px] text-amber-500">Pending invite</span>
                             )}
                             {isCostModelOnly && (
-                              <span className="text-[10px] text-green-600">Cost model only</span>
+                              <span className="text-[10px] text-amber-500">Pending portal setup</span>
+                            )}
+                            {(member.duplicateSignals.length > 0 || needsLink) && (
+                              <span className="text-[10px] text-amber-500 block">Identity review needed</span>
                             )}
                           </div>
                         </div>
@@ -1432,8 +1439,8 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                       <td className="px-4 py-3">
                         {isCostModelOnly ? (
                           <span className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-green-700" />
-                            <span className="text-xs text-green-700">Cost Model Only</span>
+                            <span className="w-2 h-2 rounded-full bg-amber-500" />
+                            <span className="text-xs text-amber-400">Pending</span>
                           </span>
                         ) : (
                           <MemberStatusBadge
@@ -1547,13 +1554,24 @@ function RoleManager({ isOwner }: { isOwner: boolean }) {
                               </button>
                             </div>
                           ) : (
-                            <button
-                              onClick={() => orgId && setRolesTarget({ epId: member.profileId!, displayName: member.name, orgId })}
-                              className="flex items-center gap-1 text-xs px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded hover:bg-indigo-600/40 transition-colors"
-                            >
-                              <Shield size={11} />
-                              Roles & Permissions
-                            </button>
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <button
+                                onClick={() => orgId && setRolesTarget({ epId: member.profileId!, displayName: member.name, orgId })}
+                                className="flex items-center gap-1 text-xs px-2 py-1 bg-indigo-600/30 text-indigo-300 rounded hover:bg-indigo-600/40 transition-colors"
+                              >
+                                <Shield size={11} />
+                                Roles & Permissions
+                              </button>
+                              {needsLink && (
+                                <button
+                                  onClick={() => { void openLinkExisting(member) }}
+                                  className="flex items-center gap-1 text-xs px-2 py-1 bg-sky-900/30 text-sky-400 rounded hover:bg-sky-900/50 transition-colors"
+                                >
+                                  <Link2 size={11} />
+                                  Link Existing Account
+                                </button>
+                              )}
+                            </div>
                           )}
                         </td>
                       )}

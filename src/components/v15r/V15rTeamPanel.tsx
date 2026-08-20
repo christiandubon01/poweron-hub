@@ -3494,14 +3494,13 @@ export default function V15rTeamPanel() {
               const emp = normalizeEmployee(rawEmp) as EnhancedEmployee
               const stats = employeeStats.get(emp.id)
               if (!stats) return null
-              // ROLE-2.4: identity is the STABLE backup_employee_id link only.
-              // Linked rows already have the resolved profile id on the row.
-              // Cost-model-only rows fall back to portalProfileMap keyed by emp.id.
-              const profile = row.kind === 'linked'
-                ? { id: row.portalProfileId!, orgId: teamOrgId ?? '' }
+              // Canonical rows may already have a resolved portal profile through
+              // stable backup_employee_id or safe same-org email reconciliation.
+              const profile = row.portalProfileId
+                ? { id: row.portalProfileId, orgId: teamOrgId ?? '' }
                 : portalProfileMap.get(emp.id) ?? null
-              const hasStableLink = Boolean(profile)
-              const showLinkExisting = !hasStableLink && unlinkedPortalCandidates.length > 0
+              const hasStableLink = row.stableLink || Boolean(portalProfileMap.get(emp.id))
+              const showLinkExisting = !hasStableLink && Boolean(profile || unlinkedPortalCandidates.length > 0)
               return (
                 <div
                   key={row.key}
@@ -3516,6 +3515,11 @@ export default function V15rTeamPanel() {
                     onToggleMultiplier={toggleMultiplier}
                     backup={backup}
                   />
+                  {(row.duplicateSignals.length > 0 || (profile && !hasStableLink)) && (
+                    <div className="mt-2 rounded-lg border border-amber-700/40 bg-amber-950/20 px-3 py-2 text-[11px] text-amber-200">
+                      Identity review needed. This employee is being shown once canonically, but the underlying records still need explicit linking or duplicate cleanup.
+                    </div>
+                  )}
                   <div className="mt-2 flex gap-2 justify-end flex-wrap">
                     {isAdmin && (() => {
                       return (

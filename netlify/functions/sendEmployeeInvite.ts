@@ -95,7 +95,7 @@ async function supabaseInsert(url, serviceKey, table, row) {
 
 async function supabaseSelectByBackupId(url, serviceKey, orgId, backupEmployeeId) {
   const res = await fetch(
-    `${url}/rest/v1/employee_profiles?org_id=eq.${encodeURIComponent(orgId)}&backup_employee_id=eq.${encodeURIComponent(backupEmployeeId)}&select=id,org_id,user_id,active,display_name&limit=1`,
+    `${url}/rest/v1/employee_profiles?org_id=eq.${encodeURIComponent(orgId)}&backup_employee_id=eq.${encodeURIComponent(backupEmployeeId)}&select=id,org_id,user_id,active,display_name,email,backup_employee_id&limit=1`,
     {
       headers: {
         apikey:        serviceKey,
@@ -106,6 +106,45 @@ async function supabaseSelectByBackupId(url, serviceKey, orgId, backupEmployeeId
   if (!res.ok) return null
   const data = await res.json()
   return Array.isArray(data) && data.length > 0 ? data[0] : null
+}
+
+async function supabaseSelectByEmail(url, serviceKey, orgId, email) {
+  const res = await fetch(
+    `${url}/rest/v1/employee_profiles?org_id=eq.${encodeURIComponent(orgId)}&email=eq.${encodeURIComponent(email)}&select=id,org_id,user_id,active,display_name,email,backup_employee_id`,
+    {
+      headers: {
+        apikey:        serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+      },
+    },
+  )
+  if (!res.ok) return []
+  const data = await res.json()
+  return Array.isArray(data) ? data : []
+}
+
+function reusePriority(profile, requestedBackupEmployeeId) {
+  if (requestedBackupEmployeeId && profile.backup_employee_id === requestedBackupEmployeeId) return 0
+  if (!profile.backup_employee_id && profile.active === true && profile.user_id) return 1
+  if (!profile.backup_employee_id && profile.active === true) return 2
+  if (!profile.backup_employee_id) return 3
+  return 9
+}
+
+function chooseEmailReuseCandidate(profiles, requestedBackupEmployeeId) {
+  const candidates = profiles.filter((profile) =>
+    !requestedBackupEmployeeId ||
+    !profile.backup_employee_id ||
+    profile.backup_employee_id === requestedBackupEmployeeId,
+  )
+
+  if (candidates.length === 0) return null
+
+  return [...candidates].sort((a, b) => {
+    const rankDiff = reusePriority(a, requestedBackupEmployeeId) - reusePriority(b, requestedBackupEmployeeId)
+    if (rankDiff !== 0) return rankDiff
+    return String(a.id).localeCompare(String(b.id))
+  })[0]
 }
 
 async function supabaseSelectProfile(url, serviceKey, userId) {
@@ -514,7 +553,7 @@ exports.handler = async (event) => {
     try {
       const existing = await supabaseSelectById(
         supabaseUrl, serviceKey, 'employee_profiles', profileId,
-        'id,org_id,user_id,active,display_name',
+        'id,org_id,user_id,active,display_name,email,backup_employee_id',
       )
       if (!existing || existing.org_id !== profile.org_id) {
         return {
@@ -535,6 +574,18 @@ exports.handler = async (event) => {
           statusCode: 409,
           headers:    CORS_HEADERS,
           body:       JSON.stringify({ success: false, error: 'Employee profile is inactive' }),
+        }
+      }
+
+      const sameEmailProfiles = await supabaseSelectByEmail(
+        supabaseUrl, serviceKey, profile.org_id, emailRaw,
+      )
+      const conflictingEmailProfile = sameEmailProfiles.find((row) => row.id !== profileId)
+      if (conflictingEmailProfile) {
+        return {
+          statusCode: 409,
+          headers:    CORS_HEADERS,
+          body:       JSON.stringify({ success: false, error: 'An employee with this email already exists in this organization.' }),
         }
       }
 
@@ -584,6 +635,9 @@ exports.handler = async (event) => {
     const inviteToken = crypto.randomUUID()
     const baseUrl     = resolveBaseUrl(event)
     const inviteLink  = `${baseUrl}/employee/invite/${inviteToken}`
+    const sameEmailProfiles = await supabaseSelectByEmail(
+      supabaseUrl, serviceKey, profile.org_id, emailRaw,
+    )
 
     // ROLE-2.4 duplicate prevention / invite reuse:
     // When inviting from a Cost Model employee (backupEmployeeId), never create a
@@ -598,9 +652,16 @@ exports.handler = async (event) => {
       if (existingByBackup) {
         if (existingByBackup.user_id !== null) {
           return {
+            statusCode: 200,
+            headers:    CORS_HEADERS,
+            body:       JSON.stringify({ success: true, inviteId: existingByBackup.id, email: existingByBackup.email || emailRaw, reused: true, alreadyActive: true }),
+          }
+        }
+        if (existingByBackup.active !== true) {
+          return {
             statusCode: 409,
             headers:    CORS_HEADERS,
-            body:       JSON.stringify({ success: false, error: 'This employee already has an active portal account.' }),
+            body:       JSON.stringify({ success: false, error: 'This employee profile is inactive. Reactivate it instead of creating a new identity.' }),
           }
         }
         // Reuse the existing prepared/unlinked profile — do NOT insert a new row.
@@ -631,6 +692,99 @@ exports.handler = async (event) => {
           headers:    CORS_HEADERS,
           body:       JSON.stringify({ success: true, inviteId: existingByBackup.id, email: emailRaw, reused: true }),
         }
+      }
+    }
+
+    const conflictingLinkedProfile = backupEmployeeId
+      ? sameEmailProfiles.find((row) => row.backup_employee_id && row.backup_employee_id !== backupEmployeeId)
+      : null
+    if (conflictingLinkedProfile) {
+      return {
+        statusCode: 409,
+        headers:    CORS_HEADERS,
+        body:       JSON.stringify({ success: false, error: 'This email is already linked to another employee in this organization.' }),
+      }
+    }
+
+    const emailReuseCandidate = chooseEmailReuseCandidate(sameEmailProfiles, backupEmployeeId)
+    if (emailReuseCandidate) {
+      if (emailReuseCandidate.user_id !== null) {
+        if (backupEmployeeId && !emailReuseCandidate.backup_employee_id) {
+          await supabaseUpdate(supabaseUrl, serviceKey, 'employee_profiles', emailReuseCandidate.id, {
+            backup_employee_id: backupEmployeeId,
+            display_name: displayName,
+          })
+          return {
+            statusCode: 200,
+            headers:    CORS_HEADERS,
+            body:       JSON.stringify({
+              success: true,
+              inviteId: emailReuseCandidate.id,
+              email: emailRaw,
+              reused: true,
+              linkedExistingAccount: true,
+              alreadyActive: true,
+            }),
+          }
+        }
+
+        return {
+          statusCode: 200,
+          headers:    CORS_HEADERS,
+          body:       JSON.stringify({
+            success: true,
+            inviteId: emailReuseCandidate.id,
+            email: emailRaw,
+            reused: true,
+            alreadyActive: true,
+          }),
+        }
+      }
+
+      if (emailReuseCandidate.active !== true) {
+        return {
+          statusCode: 409,
+          headers:    CORS_HEADERS,
+          body:       JSON.stringify({ success: false, error: 'This employee profile is inactive. Reactivate it instead of creating a new identity.' }),
+        }
+      }
+
+      const reusePatch = {
+        email:        emailRaw,
+        display_name: displayName,
+        invite_token: inviteToken,
+        invited_by:   authUser.id,
+        invited_at:   new Date().toISOString(),
+        ...(backupEmployeeId && !emailReuseCandidate.backup_employee_id
+          ? { backup_employee_id: backupEmployeeId }
+          : {}),
+      }
+      await supabaseUpdate(
+        supabaseUrl,
+        serviceKey,
+        'employee_profiles',
+        emailReuseCandidate.id,
+        reusePatch,
+      )
+
+      let reuseOrgBranding = { name: 'Your employer', supportEmail: '', supportPhone: '' }
+      try {
+        reuseOrgBranding = await loadOrgBranding(supabaseUrl, serviceKey, profile.org_id)
+      } catch { /* non-fatal */ }
+
+      await sendEmail(resendKey, {
+        to:      emailRaw,
+        subject: `${reuseOrgBranding.name} invited you to join PowerOn Hub`,
+        html:    buildComm1bEmployeeInviteHtml(inviteLink, displayName, reuseOrgBranding),
+        text:    buildComm1bEmployeeInviteText(inviteLink, reuseOrgBranding),
+      })
+
+      console.log(`[sendEmployeeInvite] Invite (reuse by same-org email) sent to ${emailRaw}, profileId=${emailReuseCandidate.id}`)
+
+      return {
+        statusCode: 200,
+        headers:    CORS_HEADERS,
+        body:       JSON.stringify({ success: true, inviteId: emailReuseCandidate.id, email: emailRaw, reused: true }),
       }
     }
 

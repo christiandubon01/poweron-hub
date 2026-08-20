@@ -14,6 +14,11 @@ import { supabase } from '@/lib/supabase'
 import { getBackupData, type BackupEmployee } from '@/services/backupDataService'
 import { getActiveEmployeeProfiles, type AdminEmployeeProfile } from '@/services/adminTimecardService'
 import {
+  buildUnifiedDirectory,
+  type UnifiedDuplicateSignal,
+  type PortalProfileInput,
+} from '@/features/employee-directory/unifyDirectory'
+import {
   getCurrentWeekRangeFromTenantDate,
   getMyTimeSummary,
 } from '@/services/employeePortalService'
@@ -449,10 +454,14 @@ export interface UnifiedCrewMember {
   employeeRole: EmployeeTradeRole | null
   source: 'portal' | 'cost_model' | 'both'
   status: 'active' | 'pending_invite' | 'cost_model_only' | 'inactive'
+  visibleStatus: 'active' | 'pending' | 'inactive'
+  stableLink: boolean
+  reconciledBy: 'backup_employee_id' | 'same_org_email' | 'none'
+  duplicateSignals: UnifiedDuplicateSignal[]
 
   // Dual registration flags
   hasPortal: boolean
-  portalStatus: 'active' | 'pending' | null
+  portalStatus: 'active' | 'pending' | 'inactive' | null
   hasCostModel: boolean
 
   // Portal record details (from employee_profiles)
@@ -674,14 +683,10 @@ export async function getUnifiedCrewDirectory(
     if (!orgResult.success) return { success: false, error: orgResult.error }
     const orgId = orgResult.data
 
-    let profileQuery = from('employee_profiles')
-      .select('id, user_id, display_name, employee_role, active, accepted_at, backup_employee_id, email, employment_type, portal_access')
+    const profileQuery = from('employee_profiles')
+      .select('id, user_id, display_name, role, employee_role, active, accepted_at, backup_employee_id, email, employment_type, portal_access')
       .eq('org_id', orgId)
       .order('display_name', { ascending: true })
-
-    if (!showArchived) {
-      profileQuery = profileQuery.eq('active', true)
-    }
 
     const [profilesRes, hoursByProfile, assignmentsResult] = await Promise.all([
       profileQuery,
@@ -695,6 +700,7 @@ export async function getUnifiedCrewDirectory(
       id: string
       user_id: string | null
       display_name: string
+      role: string | null
       employee_role: string | null
       active: boolean
       accepted_at: string | null
@@ -703,6 +709,18 @@ export async function getUnifiedCrewDirectory(
       employment_type: string | null
       portal_access: Record<string, unknown> | null
     }>
+
+    const portalInputs: PortalProfileInput[] = profiles.map((profile) => ({
+      id: profile.id,
+      display_name: profile.display_name || '',
+      email: profile.email,
+      active: profile.active !== false,
+      user_id: profile.user_id,
+      backup_employee_id: profile.backup_employee_id,
+      employee_role: profile.employee_role,
+      employment_type: profile.employment_type,
+      accepted_at: profile.accepted_at,
+    }))
 
     const projectsByEmployee = assignmentsResult.success
       ? projectNamesByEmployee(assignmentsResult.data)
@@ -716,75 +734,80 @@ export async function getUnifiedCrewDirectory(
       backupById.set(emp.id, emp)
     }
 
-    const matchedBackupIds = new Set<string>()
-    for (const p of profiles) {
-      if (p.backup_employee_id) matchedBackupIds.add(p.backup_employee_id)
-    }
+    const unifiedRows = buildUnifiedDirectory(
+      backupEmployees.map((employee) => ({
+        id: employee.id,
+        name: employee.name || 'Unknown',
+        email: (employee as { email?: string | null }).email ?? null,
+        classification: (employee as { classification?: string | null }).classification ?? null,
+        isOwner: Boolean((employee as { isOwner?: boolean }).isOwner),
+      })),
+      portalInputs,
+    )
 
-    const result: UnifiedCrewMember[] = []
+    const profileById = new Map(profiles.map((profile) => [profile.id, profile]))
 
-    for (const profile of profiles) {
-      const isArchived = profile.active === false
-      const portalStatus: 'active' | 'pending' = (!isArchived && profile.user_id) ? 'active' : 'pending'
-      const status: UnifiedCrewMember['status'] = isArchived
-        ? 'inactive'
-        : profile.user_id ? 'active' : 'pending_invite'
-      const linkedBackup = profile.backup_employee_id
-        ? (backupById.get(profile.backup_employee_id) ?? null)
-        : null
-      const hasCostModel = linkedBackup !== null
+    const result: UnifiedCrewMember[] = unifiedRows
+      .map((row) => {
+        const primaryProfile = row.portalProfileId
+          ? (profileById.get(row.portalProfileId) ?? null)
+          : null
+        const linkedBackup = row.costModelId
+          ? (backupById.get(row.costModelId) ?? null)
+          : null
+        const hasPortal = Boolean(primaryProfile)
+        const hasCostModel = Boolean(linkedBackup)
+        const source: UnifiedCrewMember['source'] = hasPortal && hasCostModel
+          ? 'both'
+          : hasPortal
+            ? 'portal'
+            : 'cost_model'
 
-      result.push({
-        key: `portal-${profile.id}`,
-        name: profile.display_name || 'Unknown',
-        employeeRole: toTradeRole(profile.employee_role),
-        source: hasCostModel ? 'both' : 'portal',
-        status,
-        hasPortal: true,
-        portalStatus,
-        hasCostModel,
-        profileId: profile.id,
-        userId: profile.user_id,
-        email: profile.email,
-        portalRole: profile.employee_role,
-        employmentType: profile.employment_type,
-        portalAccess: profile.portal_access,
-        acceptedAt: profile.accepted_at,
-        backupEmployeeId: profile.backup_employee_id,
-        backupRole: linkedBackup?.role ?? null,
-        backupBillRate: linkedBackup ? linkedBackup.billRate : null,
-        backupCostRate: linkedBackup ? linkedBackup.costRate : null,
-        hoursThisWeek: hoursByProfile.get(profile.id) ?? 0,
-        assignedProjects: projectsByEmployee.get(profile.id) ?? [],
+        const status: UnifiedCrewMember['status'] = row.canonicalStatus === 'inactive'
+          ? 'inactive'
+          : row.canonicalStatus === 'active'
+            ? 'active'
+            : hasPortal
+              ? 'pending_invite'
+              : 'cost_model_only'
+
+        const portalStatus: UnifiedCrewMember['portalStatus'] = !primaryProfile
+          ? null
+          : primaryProfile.active === false
+            ? 'inactive'
+            : primaryProfile.user_id
+              ? 'active'
+              : 'pending'
+
+        return {
+          key: row.key,
+          name: row.displayName || linkedBackup?.name || primaryProfile?.display_name || 'Unknown',
+          employeeRole: row.employeeRole ? toTradeRole(row.employeeRole) : null,
+          source,
+          status,
+          visibleStatus: row.canonicalStatus,
+          stableLink: row.stableLink,
+          reconciledBy: row.reconciledBy,
+          duplicateSignals: row.duplicateSignals,
+          hasPortal,
+          portalStatus,
+          hasCostModel,
+          profileId: primaryProfile?.id ?? null,
+          userId: primaryProfile?.user_id ?? null,
+          email: row.email,
+          portalRole: primaryProfile?.role ?? null,
+          employmentType: primaryProfile?.employment_type ?? null,
+          portalAccess: primaryProfile?.portal_access ?? null,
+          acceptedAt: primaryProfile?.accepted_at ?? null,
+          backupEmployeeId: row.costModelId,
+          backupRole: linkedBackup?.role ?? null,
+          backupBillRate: linkedBackup ? linkedBackup.billRate : null,
+          backupCostRate: linkedBackup ? linkedBackup.costRate : null,
+          hoursThisWeek: primaryProfile ? (hoursByProfile.get(primaryProfile.id) ?? 0) : 0,
+          assignedProjects: primaryProfile ? (projectsByEmployee.get(primaryProfile.id) ?? []) : [],
+        }
       })
-    }
-
-    for (const emp of backupEmployees) {
-      if (matchedBackupIds.has(emp.id)) continue
-      result.push({
-        key: `backup-${emp.id}`,
-        name: emp.name || 'Unknown',
-        employeeRole: null,
-        source: 'cost_model',
-        status: 'cost_model_only',
-        hasPortal: false,
-        portalStatus: null,
-        hasCostModel: true,
-        profileId: null,
-        userId: null,
-        email: null,
-        portalRole: null,
-        employmentType: null,
-        portalAccess: null,
-        acceptedAt: null,
-        backupEmployeeId: emp.id,
-        backupRole: emp.role,
-        backupBillRate: emp.billRate,
-        backupCostRate: emp.costRate,
-        hoursThisWeek: 0,
-        assignedProjects: [],
-      })
-    }
+      .filter((member) => showArchived || member.visibleStatus !== 'inactive')
 
     const STATUS_ORDER: Record<UnifiedCrewMember['status'], number> = {
       active: 0, pending_invite: 1, cost_model_only: 2, inactive: 3,
@@ -847,6 +870,28 @@ export async function archiveEmployee(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Network error'
     console.error('[crewPortalService.archiveEmployee]', err)
+    return { success: false, error: message }
+  }
+}
+
+export async function reactivateEmployee(
+  profileId: string,
+): Promise<ServiceResult<void>> {
+  try {
+    const orgResult = await getOwnerOrgId()
+    if (!orgResult.success) return { success: false, error: orgResult.error }
+    const orgId = orgResult.data
+
+    const { error } = await from('employee_profiles')
+      .update({ active: true })
+      .eq('id', profileId)
+      .eq('org_id', orgId)
+
+    if (error) return { success: false, error: error.message }
+    return { success: true, data: undefined }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Network error'
+    console.error('[crewPortalService.reactivateEmployee]', err)
     return { success: false, error: message }
   }
 }

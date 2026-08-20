@@ -162,8 +162,10 @@ describe('EMP-AUTH-1 employee sign-in routing (SOURCE-CONTRACT)', () => {
 describe('ROLE-2.4 invite reuse & duplicate prevention (SOURCE-CONTRACT)', () => {
   it('server reuses an existing profile by backup_employee_id instead of inserting', () => {
     expect(SEND_FN).toContain('supabaseSelectByBackupId')
+    expect(SEND_FN).toContain('supabaseSelectByEmail')
+    expect(SEND_FN).toContain('chooseEmailReuseCandidate')
     expect(SEND_FN).toMatch(/reuse.*backup_employee_id/i)
-    expect(SEND_FN).toContain('already has an active portal account')
+    expect(SEND_FN).toContain('linkedExistingAccount')
     // new inserts carry the backup link so they are unified from creation
     expect(SEND_FN).toMatch(/backup_employee_id: backupEmployeeId/)
   })

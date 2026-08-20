@@ -166,8 +166,10 @@ describe('ROLE-2.2A — link write semantics', () => {
   })
 
   it('10. Linked employee renders once via backup_employee_id match', () => {
-    expect(CREW_SVC).toContain('if (p.backup_employee_id) matchedBackupIds.add(p.backup_employee_id)')
-    expect(CREW_SVC).toContain('if (matchedBackupIds.has(emp.id)) continue')
+    expect(CREW_SVC).toContain('buildUnifiedDirectory')
+    expect(CREW_SVC).toContain('backup_employee_id: profile.backup_employee_id')
+    expect(CREW_SVC).toContain('const unifiedRows = buildUnifiedDirectory(')
+    expect(CREW_SVC).toContain("source: hasPortal && hasCostModel ? 'both' : hasPortal ? 'portal' : 'cost_model'")
   })
 
   it('11. Existing status / projects / time fields remain (update-only; status helpers preserved)', () => {

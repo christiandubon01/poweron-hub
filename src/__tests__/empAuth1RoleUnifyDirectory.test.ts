@@ -80,17 +80,18 @@ describe('ROLE-2.4 buildUnifiedDirectory — never dedupe by name', () => {
 })
 
 describe('ROLE-2.4 buildUnifiedDirectory — email suggestion is advisory only', () => {
-  it('a single unique matching email SUGGESTS a link but does not merge the rows', () => {
+  it('a single unique same-org email match collapses into one canonical row and keeps a formal-link suggestion', () => {
     const rows = buildUnifiedDirectory(
       [cm({ id: 'emp-4', name: 'Cara', email: 'cara@x.com' })],
       [portal({ id: 'pp-4', display_name: 'C. Ramirez', email: 'cara@x.com' })],
     )
-    expect(rows).toHaveLength(2) // still separate — no auto-merge
-    const costRow = rows.find(r => r.kind === 'cost_model_only')!
-    expect(costRow.suggestedLinkPortalProfileId).toBe('pp-4')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].kind).toBe('linked')
+    expect(rows[0].stableLink).toBe(false)
+    expect(rows[0].suggestedLinkPortalProfileId).toBe('pp-4')
   })
 
-  it('ambiguous email (two matches) yields NO suggestion — remain separate until owner confirms', () => {
+  it('duplicate same-org email profiles collapse safely and report the duplicate condition', () => {
     const rows = buildUnifiedDirectory(
       [cm({ id: 'emp-5', name: 'Dana', email: 'dup@x.com' })],
       [
@@ -98,8 +99,9 @@ describe('ROLE-2.4 buildUnifiedDirectory — email suggestion is advisory only',
         portal({ id: 'pp-5b', display_name: 'D Two', email: 'dup@x.com' }),
       ],
     )
-    const costRow = rows.find(r => r.kind === 'cost_model_only')!
-    expect(costRow.suggestedLinkPortalProfileId).toBeNull()
+    expect(rows).toHaveLength(1)
+    expect(rows[0].kind).toBe('linked')
+    expect(rows[0].duplicateSignals.some(signal => signal.code === 'duplicate_email')).toBe(true)
   })
 })
 

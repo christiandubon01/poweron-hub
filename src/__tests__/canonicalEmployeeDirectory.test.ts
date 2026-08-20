@@ -106,17 +106,19 @@ describe('K-2: Unlinked portal profile → separate, no auto-name merge', () => 
     expect(rows.map(r => r.kind).sort()).toEqual(['cost_model_only', 'portal_only'])
   })
 
-  it('unique email match suggests link but does NOT collapse rows', () => {
+  it('unique same-org email match collapses to one canonical row and reports a suggested formal link', () => {
     const rows = buildUnifiedDirectory(
       [cm({ id: 'emp-y', name: 'Cara', email: 'cara@ex.com' })],
       [pp({ id: 'pp-y', display_name: 'C. Ramirez', email: 'cara@ex.com' })],
     )
-    expect(rows).toHaveLength(2)
-    const costRow = rows.find(r => r.kind === 'cost_model_only')!
-    expect(costRow.suggestedLinkPortalProfileId).toBe('pp-y') // advisory only
+    expect(rows).toHaveLength(1)
+    expect(rows[0].kind).toBe('linked')
+    expect(rows[0].stableLink).toBe(false)
+    expect(rows[0].reconciledBy).toBe('same_org_email')
+    expect(rows[0].suggestedLinkPortalProfileId).toBe('pp-y')
   })
 
-  it('ambiguous email (two portal profiles match) → no suggestion', () => {
+  it('duplicate same-org email profiles collapse safely and report the duplicate condition', () => {
     const rows = buildUnifiedDirectory(
       [cm({ id: 'emp-z', name: 'Dana', email: 'dup@ex.com' })],
       [
@@ -124,8 +126,10 @@ describe('K-2: Unlinked portal profile → separate, no auto-name merge', () => 
         pp({ id: 'pp-z2', display_name: 'D Two', email: 'dup@ex.com' }),
       ],
     )
-    const costRow = rows.find(r => r.kind === 'cost_model_only')!
-    expect(costRow.suggestedLinkPortalProfileId).toBeNull()
+    expect(rows).toHaveLength(1)
+    expect(rows[0].kind).toBe('linked')
+    expect(rows[0].stableLink).toBe(false)
+    expect(rows[0].duplicateSignals.some(signal => signal.code === 'duplicate_email')).toBe(true)
   })
 
   it('email match is case-insensitive', () => {
@@ -133,8 +137,10 @@ describe('K-2: Unlinked portal profile → separate, no auto-name merge', () => 
       [cm({ id: 'emp-ci', name: 'Eve', email: 'EVE@TEST.COM' })],
       [pp({ id: 'pp-ci', display_name: 'Eve P', email: 'eve@test.com' })],
     )
-    const costRow = rows.find(r => r.kind === 'cost_model_only')!
-    expect(costRow.suggestedLinkPortalProfileId).toBe('pp-ci')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].kind).toBe('linked')
+    expect(rows[0].stableLink).toBe(false)
+    expect(rows[0].suggestedLinkPortalProfileId).toBe('pp-ci')
   })
 })
 
@@ -179,9 +185,11 @@ describe('K-3: Owner sentinels → detected as isOwner, never duplicated in UI',
     expect(cards[0].costModelId).toBe('emp-bob')
   })
 
-  it('multiple owner sentinel variants all produce isOwner=true rows', () => {
+  it('multiple owner sentinel variants collapse to one canonical owner row', () => {
     const rows = buildUnifiedDirectory([owner_me, owner_sentinel, owner_virtual, owner_by_name], [])
-    expect(rows.every(r => r.isOwner)).toBe(true)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].isOwner).toBe(true)
+    expect(rows[0].duplicateSignals.some(signal => signal.code === 'owner_self_duplicate')).toBe(true)
   })
 })
 
