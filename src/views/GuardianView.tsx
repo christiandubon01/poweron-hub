@@ -53,6 +53,7 @@ import {
   type AgentFeedbackRatio,
 } from '../services/feedbackLoopService';
 import { FounderContractorAdminSurface } from '../components/guardian/FounderContractorAdminSurface';
+import { FounderPilotOperationsSurface } from '../components/guardian/FounderPilotOperationsSurface';
 
 // ─── Severity Badge ───────────────────────────────────────────────────────────
 
@@ -1757,7 +1758,7 @@ function GuardianTuningTab() {
 
 // ─── Guardian View Root ───────────────────────────────────────────────────────
 
-type GuardianTab = 'monitor' | 'ai-decisions' | 'contractor-accounts' | 'signed-ndas' | 'beta-invites' | 'tuning';
+type GuardianTab = 'monitor' | 'ai-decisions' | 'contractor-accounts' | 'signed-ndas' | 'beta-invites' | 'pilot-activity' | 'support' | 'tuning';
 
 export default function GuardianView() {
   const [activeTab, setActiveTab] = useState<GuardianTab>('monitor');
@@ -1769,6 +1770,8 @@ export default function GuardianView() {
     { id: 'contractor-accounts', label: 'Contractor Accounts', icon: <Building2 size={12} /> },
     { id: 'beta-invites', label: 'Contractor Beta Invites', icon: <Mail size={12} /> },
     { id: 'signed-ndas',  label: 'Signed NDAs / Agreements', icon: <FileText size={12} /> },
+    { id: 'pilot-activity', label: 'Pilot Activity', icon: <BarChart size={12} /> },
+    { id: 'support', label: 'Support', icon: <AlertTriangle size={12} /> },
     { id: 'tuning',       label: 'Tuning',         icon: <ToggleRight size={12} /> },
   ];
 
@@ -1858,6 +1861,12 @@ export default function GuardianView() {
         )}
         {activeTab === 'beta-invites' && (
           <FounderContractorAdminSurface section="invites" />
+        )}
+        {activeTab === 'pilot-activity' && (
+          <FounderPilotOperationsSurface section="activity" />
+        )}
+        {activeTab === 'support' && (
+          <FounderPilotOperationsSurface section="support" />
         )}
         {activeTab === 'tuning' && (
           <div className="h-full min-h-0 overflow-y-auto">

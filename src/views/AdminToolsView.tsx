@@ -21,8 +21,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Brain, RefreshCw, ChevronDown, ChevronUp, Clock, Zap, ShieldAlert } from 'lucide-react'
 import { authedJsonHeaders } from '@/services/authedFetch'
-import { fetchFounderPilotReport, logFounderSupportIncident, setOrganizationPilotClassification } from '@/services/pilotTelemetryClient'
-import { supabase } from '@/lib/supabase'
 
 // ─── Agent Seed Data ───────────────────────────────────────────────────────────
 
@@ -351,85 +349,32 @@ const TIER_LABELS: Record<number, string> = {
 export default function AdminToolsView() {
   const [lastRefresh] = useState<string>(new Date().toISOString())
   const tiers = [1, 2, 3, 4, 5]
-  const [report, setReport] = useState<any>(null)
-  const [reportLoading, setReportLoading] = useState(true)
-  const [reportError, setReportError] = useState<string | null>(null)
-  const [supportOrgId, setSupportOrgId] = useState('')
-  const [supportCategory, setSupportCategory] = useState('onboarding')
-  const [supportNote, setSupportNote] = useState('')
-  const [supportMinutes, setSupportMinutes] = useState('')
-  const [supportStatus, setSupportStatus] = useState<string | null>(null)
-  const [classificationOrgId, setClassificationOrgId] = useState('')
-  const [classificationValue, setClassificationValue] = useState<'customer_zero' | 'design_partner' | 'normal'>('design_partner')
-  const [classificationStatus, setClassificationStatus] = useState<string | null>(null)
-  const [isFounder, setIsFounder] = useState(false)
+  const isFounder = false
+  const report = null as any
+  const reportLoading = false
+  const reportError = null as string | null
+  const classificationOrgId = ''
+  const classificationValue = 'design_partner' as 'customer_zero' | 'design_partner' | 'normal'
+  const classificationStatus = null as string | null
+  const supportOrgId = ''
+  const supportCategory = 'onboarding'
+  const supportMinutes = ''
+  const supportNote = ''
+  const supportStatus = null as string | null
+  const setClassificationOrgId = () => {}
+  const setClassificationValue = () => {}
+  const setSupportOrgId = () => {}
+  const setSupportCategory = () => {}
+  const setSupportMinutes = () => {}
+  const setSupportNote = () => {}
+  const loadReport = async () => {}
+  function handleClassificationSubmit(event: React.FormEvent) { event.preventDefault() }
+  function handleSupportSubmit(event: React.FormEvent) { event.preventDefault() }
 
   function fmtTimestamp(iso: string) {
     try {
       return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     } catch { return iso }
-  }
-
-  const loadReport = useCallback(async () => {
-    setReportLoading(true)
-    setReportError(null)
-    try {
-      setReport(await fetchFounderPilotReport())
-    } catch (error: any) {
-      setReportError(error?.message || 'Pilot report unavailable.')
-    } finally {
-      setReportLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      const email = String(data?.user?.email || '').trim().toLowerCase()
-      const founder = String(import.meta.env.VITE_ADMIN_EMAIL || '').trim().toLowerCase()
-      setIsFounder(Boolean(email && founder && email === founder))
-    })
-  }, [])
-
-  useEffect(() => {
-    if (!isFounder) {
-      setReportLoading(false)
-      return
-    }
-    void loadReport()
-  }, [isFounder, loadReport])
-
-  async function handleSupportSubmit(event: React.FormEvent) {
-    event.preventDefault()
-    setSupportStatus(null)
-    const result = await logFounderSupportIncident({
-      organizationId: supportOrgId,
-      category: supportCategory,
-      note: supportNote,
-      minutesSpent: supportMinutes ? Number(supportMinutes) : null,
-    })
-    if (!result.ok) {
-      setSupportStatus(result.error || 'Support incident failed.')
-      return
-    }
-    setSupportStatus('Support incident recorded.')
-    setSupportNote('')
-    setSupportMinutes('')
-    await loadReport()
-  }
-
-  async function handleClassificationSubmit(event: React.FormEvent) {
-    event.preventDefault()
-    setClassificationStatus(null)
-    const result = await setOrganizationPilotClassification({
-      organizationId: classificationOrgId,
-      classification: classificationValue,
-    })
-    if (!result.ok) {
-      setClassificationStatus(result.error || 'Classification update failed.')
-      return
-    }
-    setClassificationStatus('Classification updated.')
-    await loadReport()
   }
 
   return (
@@ -605,7 +550,7 @@ export default function AdminToolsView() {
             color: '#fecaca',
             fontSize: 12,
           }}>
-            Pilot telemetry reporting is founder-only and stays behind the secure server report boundary.
+            Pilot Activity and Support now live in GUARDIAN. Admin Tools no longer renders the duplicate founder telemetry, classification, or support editors.
           </div>
         )}
 
