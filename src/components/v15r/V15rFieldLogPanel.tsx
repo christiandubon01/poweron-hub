@@ -12,7 +12,7 @@
  */
 
 import { useState, useCallback, useMemo, lazy, Suspense, useEffect } from 'react'
-import { Plus, Edit3, Trash2, Zap, Filter, Sparkles, TrendingUp, AlertCircle, FileText, Archive, Timer, Boxes, Route, CircleDollarSign, X, ClipboardList } from 'lucide-react'
+import { Plus, Edit3, Trash2, Zap, Filter, Sparkles, TrendingUp, AlertCircle, Archive, Timer, Boxes, Route, CircleDollarSign, X, ClipboardList } from 'lucide-react'
 import {
   getBackupData,
   saveBackupData,
@@ -48,6 +48,7 @@ import ProjectLogModalLayout from './ProjectLogModalLayout'
 import ServiceCallModalLayout, { ServiceCallSection } from './ServiceCallModalLayout'
 import {
   mergeServiceLogsIntoRemote,
+  applyResolvedAccountIdToServiceLogs,
   ensureServiceLogIdentity,
   createServiceLogTombstone,
   isDeletedOrArchivedServiceLog,
@@ -61,6 +62,20 @@ import { pushState } from '@/services/undoRedoService'
 import { callClaude, extractText } from '@/services/claudeProxy'
 import { processSkillSignals } from '@/services/skillSignalExtractor'
 import QuickBooksImportModal from './QuickBooksImportModal'
+import { InvoiceDraftsModal } from '@/features/billing-draft/components/InvoiceDraftsModal'
+import { PrepareInvoiceModal } from '@/features/billing-draft/components/PrepareInvoiceModal'
+import { QuickBooksMenu } from '@/features/billing-draft/components/QuickBooksMenu'
+import { PrepareInvoiceSelectorModal } from '@/features/billing-draft/components/PrepareInvoiceSelectorModal'
+import { QuickBooksAccountModal } from '@/features/billing-draft/components/QuickBooksAccountModal'
+import { filterUnpaidByBalance } from '@/features/billing-draft/unpaidServiceEligibility'
+import { useQuickBooksConnection } from '@/features/quickbooks-connection/useQuickBooksConnection'
+import { useQuickBooksCustomerMapping } from '@/features/quickbooks-customer-mapping/useQuickBooksCustomerMapping'
+import { useCanonicalCustomerDirectory } from '@/features/quickbooks-customer-mapping/useCanonicalCustomerDirectory'
+import { isCanonicalCustomerId } from '@/features/quickbooks-customer-mapping/resolvePowerOnCustomerDirectory'
+import { ResolvePowerOnCustomerModal } from '@/features/quickbooks-customer-mapping/components/ResolvePowerOnCustomerModal'
+import { LinkQuickBooksCustomerModal } from '@/features/quickbooks-customer-mapping/components/LinkQuickBooksCustomerModal'
+import type { CustomerDirectoryEntry } from '@/features/quickbooks-customer-mapping/qboCustomerMappingTypes'
+import { useQuickBooksInvoicing } from '@/features/billing-draft/useQuickBooksInvoicing'
 import { AskAIButton, AskAIPanel } from './AskAIPanel'
 import type { Insight } from './AskAIPanel'
 import { useDemoMode } from '@/store/demoStore'
@@ -302,6 +317,23 @@ function serviceBalanceDue(l: any): number {
   if (roll.remaining > 0.009) return roll.remaining
   if ((l?.payStatus || 'N') === 'N' && roll.totalBillable > 0) return roll.totalBillable
   return 0
+}
+
+/**
+ * UNPAID SERVICE AUTHORITY (QBO-2F1) — the single "eligible to invoice" filter
+ * for service work. Wraps the existing `serviceBalanceDue()` balance authority
+ * (no second definition of unpaid/outstanding/balance) with the shared
+ * `filterUnpaidByBalance` threshold+sort (0.009, biggest balance first) — the
+ * same rule the Collections queue used inline.
+ *
+ * Both the Collections queue and the global header Prepare Invoice selector
+ * call THIS function, so the two surfaces derive from one rule, not two.
+ * `activeLogs` must already be filtered to active service logs by the caller
+ * (the Collections queue passes its jtype-filtered `sorted` list; the global
+ * selector passes all active service logs). No financial values are mutated.
+ */
+function getUnpaidServiceCalls(activeLogs: BackupServiceLog[]): BackupServiceLog[] {
+  return filterUnpaidByBalance(activeLogs, serviceBalanceDue)
 }
 
 function getServicePaymentMeta(l: any): any {
@@ -672,6 +704,36 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const [slNotes, setSlNotes] = useState('')
   // Service Estimate workflow state (Step 1-3)
   const [showEstimateForm, setShowEstimateForm] = useState(false)
+  // Prepare Invoice (owner-approved billing draft) — opened from a service log row.
+  const [prepareSvcLog, setPrepareSvcLog] = useState<BackupServiceLog | null>(null)
+  // QBO-2F1: global header "Prepare Invoice" selector — opened when the owner
+  // picks QuickBooks ▾ → Prepare Invoice with no individual source selected.
+  // Lists only eligible unpaid service work (shared unpaid authority) and opens
+  // the existing PrepareInvoiceModal for the chosen service log.
+  const [showPrepareInvoiceSelector, setShowPrepareInvoiceSelector] = useState(false)
+  // QBO-2F: shared QuickBooks menu + organization-wide Invoice Drafts manager.
+  const qb = useQuickBooksInvoicing()
+  // QBO-3A: persistent QuickBooks connection state for the global menu (status,
+  // connect, account modal, disconnect). Connection is NOT required for any
+  // billing preparation below — Prepare Invoice / Drafts / Import PDF stay
+  // available regardless of connection state.
+  const conn = useQuickBooksConnection()
+  // QBO-4A.5-RUN-3 — lazy, ACTIVE-ROW-ONLY customer resolution/link for the actual
+  // Field Log service-log row. Only ONE row is ever active (the one the owner clicked
+  // Resolve/Link on). The modals/controllers mount ONLY when an id is set, so there is
+  // NO per-row useQuickBooksCustomerMapping fetch on initial page render — the QBO
+  // mapping status loads once, lazily, for the single selected row (see
+  // FieldLogQboLinkController + the Resolve modal render below).
+  const [resolveTargetId, setResolveTargetId] = useState<string | null>(null)
+  const [linkTargetId, setLinkTargetId] = useState<string | null>(null)
+  const openPrepareInvoice = useCallback((l: BackupServiceLog) => {
+    qb.clearPrepareDraft()
+    setPrepareSvcLog(l)
+  }, [qb])
+  const closePrepareInvoice = useCallback(() => {
+    setPrepareSvcLog(null)
+    qb.clearPrepareDraft()
+  }, [qb])
   const [editEstimateId, setEditEstimateId] = useState<string | null>(null)
   const [portalLeadId, setPortalLeadId] = useState<string | null>(null)
   const [estCust, setEstCust] = useState('')
@@ -853,6 +915,16 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const projects = (backup.projects || []).filter(isActiveProject)
   const logs = backup.logs || []
   const serviceLogs = backup.serviceLogs || []
+  // QBO-4A.5-RUN-3 — Clear a dangling Resolve/Link target if its log was
+  // deleted/archived while the modal was open. Moved BELOW the `backup`/
+  // `serviceLogs` declarations: the dependency array is evaluated at render
+  // time, so referencing `backup.serviceLogs` here-before-`const backup` was a
+  // temporal-dead-zone ReferenceError ("Cannot access 'backup' before
+  // initialization"). Uses the already-initialized `serviceLogs` const.
+  useEffect(() => {
+    if (resolveTargetId && !serviceLogs.some((l) => l.id === resolveTargetId)) setResolveTargetId(null)
+    if (linkTargetId && !serviceLogs.some((l) => l.id === linkTargetId)) setLinkTargetId(null)
+  }, [serviceLogs, resolveTargetId, linkTargetId])
   // FORENSIC-KPI-2B2-2G: reconciliation queue derived read-only from the SAME
   // unknown-cash authority the resolver uses. Recomputed each render so it tracks
   // saves immediately; O(active service logs), same cost as the other service filters.
@@ -865,6 +937,31 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   const canonicalCustomerName = (record: any): string => {
     return resolveCanonicalCustomerName(record, gcContacts)
   }
+  // QBO-4A.5-RUN-3 — PowerOn customer directory projected from backup.gcContacts
+  // (the in-memory projection of relationship_accounts). Fed to the Resolve + Link
+  // modals for the ACTIVE service-log row only. selectableResolveEntries filters
+  // this to CANONICAL ids only (present in canonicalIds — relationship_accounts.id,
+  // a TEXT id; NOT a UUID format check), so the owner can only ever confirm a real
+  // PowerOn account. Built once per render from the same gcContacts already in scope
+  // (no extra read, no network).
+  const customerDirectory: readonly CustomerDirectoryEntry[] = useMemo(
+    () => (gcContacts || []).map((c: any) => ({
+      id: String(c.id ?? ''),
+      company: c.company || null,
+      contact: c.contact || null,
+      email: c.email || null,
+      phone: c.phone || null,
+    })),
+    [gcContacts],
+  )
+  // QBO-4A.6: the canonical PowerOn customer identity authority (relationship_accounts.id,
+  // a TEXT PK — NOT a UUID). This single shared fetch (module-cached across surfaces)
+  // provides canonicalIds (the identity predicate for STATE 1/2 derivation +
+  // selectableResolveEntries) and the authoritative directory the Resolve modal renders.
+  // During load canonicalIds is empty → rows stay STATE 1 (safe default); the modal shows
+  // a loading state instead of a false "no customers".
+  const canonicalDirectory = useCanonicalCustomerDirectory()
+  const canonicalIds = canonicalDirectory.canonicalIds
   // Full array kept for historical name resolution; liveEmployees drives the
   // employee pickers for new/edited logs (Phase 6S-C: hide deleted/inactive).
   const employees = backup.employees || []
@@ -904,7 +1001,10 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
    * from remote. Save/stale/baseline internals are untouched (reuses the existing
    * remote-baseline save path, same as project logs / estimate rows).
    */
-  async function saveServiceLogsScoped(incomingBackup: BackupData = backup): Promise<boolean> {
+  async function saveServiceLogsScoped(
+    incomingBackup: BackupData = backup,
+    postMerge?: (logs: BackupServiceLog[]) => BackupServiceLog[],
+  ): Promise<boolean> {
     backup._lastSavedAt = new Date().toISOString()
     try {
       saveBackupData(backup)
@@ -920,6 +1020,14 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       if (remote.hasRemoteRow && remote.remoteData) {
         const incoming = getBackupData() || incomingBackup
         const merged = mergeServiceLogsIntoRemote(remote.remoteData, incoming)
+        // QBO-4A.5-RUN-3 — optional post-merge force. Used by the Resolve handler to
+        // layer accountId onto the LWW winner AFTER mergeServiceLogsIntoRemote has
+        // chosen the winner by each row's REAL updatedAt. Because the local mutation
+        // does NOT bump updatedAt (identity-only), a stale-local row never wins LWW
+        // over a newer remote FINANCIAL edit; identity is layered onto whichever row
+        // the merge already chose, so it persists without ever risking a financial
+        // revert. See applyResolvedAccountIdToServiceLogs (pure, single source).
+        if (postMerge) merged.serviceLogs = postMerge(merged.serviceLogs || [])
         await saveBackupWithRemoteBaselineSync(
           merged,
           { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
@@ -948,6 +1056,50 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
   function persistServiceLogs(): Promise<boolean> {
     return saveServiceLogsScoped()
   }
+
+  /**
+   * QBO-4A.5-RUN-3 — Resolve the canonical PowerOn customer for a Field Log
+   * service-log row (STATE 1 → STATE 2 transition). The owner explicitly selects an
+   * existing reconciled relationship_accounts UUID in ResolvePowerOnCustomerModal;
+   * this persists it onto the row's canonical `accountId` field through the EXISTING
+   * service.calls scoped-save path.
+   *
+   * FINANCIAL FIREWALL (identical to RUN-2): identity-only. applyResolvedAccountIdToServiceLogs
+   * touches ONLY accountId — it does NOT bump updatedAt and writes NO financial field.
+   * Bumping updatedAt would make a stale-local row win LWW (pickServiceLogWinner
+   * compares updatedAt) over a NEWER remote financial edit on the same log, clobbering
+   * collected/payments/status. Instead the local mutation keeps the row's real
+   * updatedAt (remote's newer financials win LWW), and the postMerge force layers
+   * accountId onto the LWW winner AFTER mergeServiceLogsIntoRemote has chosen it — so
+   * identity persists without ever risking a financial revert.
+   *
+   * Predicate-scoped: only the row whose id === logId changes; every other row is
+   * returned unchanged (same reference, no spread, no mutation). No Migrate reuse, no
+   * QBO API write, no direct fetch — only the backup scoped sync.
+   */
+  const resolveFieldLogCustomer = useCallback(
+    async (logId: string, accountUuid: string): Promise<void> => {
+      // Optimistic local mutation (identity-only, no updatedAt bump).
+      backup.serviceLogs = applyResolvedAccountIdToServiceLogs(
+        backup.serviceLogs,
+        logId,
+        accountUuid,
+      )
+      // Scoped save + post-merge force onto the LWW winner. The SAME pure helper is
+      // used for BOTH the optimistic mutation and the post-merge force, so the subtle
+      // financial-neutral layering is defined in ONE place (serviceScopeMerge.ts).
+      await saveServiceLogsScoped(backup, (logs) =>
+        applyResolvedAccountIdToServiceLogs(logs, logId, accountUuid),
+      )
+      setResolveTargetId(null)
+      // Immediate visible transition to STATE 2 (Link) without a full reload — the
+      // row now has a UUID so its menu re-renders Link, and linkTargetId is primed
+      // to open the Link modal straight away if the owner wants.
+      setLinkTargetId(logId)
+      forceUpdate()
+    },
+    [backup, forceUpdate],
+  )
 
   /**
    * Phase 6R-B: scoped, delete-safe save for the whole service.calls scope —
@@ -3568,10 +3720,16 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
       return String(b.id || '').localeCompare(String(a.id || ''))
     })
 
-    // Collections queue: sorted by remaining balance descending (biggest balance first)
-    const collections = sorted
-      .filter(l => serviceBalanceDue(l) > 0.009)
-      .sort((a, b) => serviceBalanceDue(b) - serviceBalanceDue(a))
+    // Collections queue: unpaid service work, biggest balance first.
+    // QBO-2F1: derives from the shared getUnpaidServiceCalls authority (same
+    // rule as the global header Prepare Invoice selector) — no inline duplicate.
+    const collections = getUnpaidServiceCalls(sorted)
+
+    // QBO-2F1: global header Prepare Invoice eligibility — ALL active unpaid
+    // service work (independent of the tab's jtype filter), via the SAME
+    // getUnpaidServiceCalls authority. When this is empty, the global QuickBooks
+    // menu omits Prepare Invoice entirely (no disabled/fake placeholder).
+    const unpaidServiceCalls = getUnpaidServiceCalls(activeServiceLogs)
 
     return (
       <div className="space-y-4">
@@ -3625,13 +3783,23 @@ export default function V15rFieldLogPanel({ serviceCallPrefill, onPrefillUsed }:
                 </span>
               )}
             </button>
-            <button
-              onClick={() => setShowQBImport(true)}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold"
-              style={{ backgroundColor: 'rgba(99,102,241,0.2)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)' }}
-            >
-              <FileText size={12} /> Import QB PDF
-            </button>
+            {/* QBO-2F1: global Service header QuickBooks menu, placed immediately
+                to the RIGHT of Historical Payments. Consolidates the former
+                standalone "Import QB PDF" button plus Prepare Invoice (only when
+                unpaid service work exists) and Invoice Drafts behind one button.
+                Prepare Invoice opens the unpaid-work selector (no blank invoice).
+                Import QuickBooks PDF invokes the EXACT existing importer. */}
+            <QuickBooksMenu
+              showPrepareInvoice={unpaidServiceCalls.length > 0}
+              onPrepareInvoice={() => setShowPrepareInvoiceSelector(true)}
+              onOpenDrafts={qb.openDrafts}
+              onImportQbPdf={() => setShowQBImport(true)}
+              connectionStatus={conn.status ?? { connected: false }}
+              onConnect={conn.connect}
+              onOpenAccount={conn.openAccount}
+              align="right"
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-sky-600/20 text-sky-300 border border-sky-500/30 hover:bg-sky-600/30 transition-colors"
+            />
             <button
               onClick={() => { resetSvcForm(); setShowSvcForm(true) }}
               data-testid="new-service-call-button"
@@ -4930,6 +5098,13 @@ ${note}` : note)
                 const l = item.data
                 const meta = getServicePaymentMeta(l)
                 const roll = getServiceRollup(l)
+                // QBO-4A.5-RUN-3 — three-state PowerOn → QuickBooks customer identity for
+                // THIS service-log row. STATE 1 (no reconciled UUID) → Resolve Customer;
+                // STATE 2 (UUID present, QBO not yet linked) → Link QuickBooks Customer;
+                // STATE 3 (linked) handled by the active-row controller's mapping status.
+                // Only a reconciled relationship_accounts UUID counts — temporary gc… ids
+                // and bare names are rejected by isUuid, so the row stays STATE 1.
+                const customerUuid = isCanonicalCustomerId(l.accountId, canonicalIds) ? l.accountId : null
 
               return (
                 <div
@@ -5097,6 +5272,22 @@ ${note}` : note)
                       >
                         📋 Convert to Estimate
                       </button>
+                      {/* QBO-2F §16 + QBO-4A.5-RUN-3: QuickBooks menu sits next to Convert to
+                          Estimate on the same visible service-log action row. Exposes Prepare
+                          Invoice (this service log) + Invoice Drafts (shared org-wide manager)
+                          AND, conditionally on this row's customer identity state, Resolve
+                          Customer for QuickBooks (STATE 1, no UUID) OR Link QuickBooks Customer
+                          (STATE 2, UUID present, QBO not yet linked). Never both at once — the
+                          row is in exactly one identity state. No fake future actions, no
+                          separate Prepare Invoice button. Global-only props (Import QB PDF /
+                          Connect / connection-status) stay OFF this contextual menu. */}
+                      <QuickBooksMenu
+                        onPrepareInvoice={() => openPrepareInvoice(l)}
+                        onOpenDrafts={qb.openDrafts}
+                        onResolveCustomer={!customerUuid ? () => setResolveTargetId(l.id) : undefined}
+                        onLinkCustomer={customerUuid ? () => setLinkTargetId(l.id) : undefined}
+                        align="right"
+                      />
                     </div>
                     <div className="flex items-center gap-1 justify-end flex-shrink-0">
                       <button onClick={() => beginSvcEdit(l.id)} className="text-[9px] px-2 py-1 rounded bg-gray-700/50 text-gray-300 hover:bg-gray-600/50">Edit</button>
@@ -5111,6 +5302,126 @@ ${note}` : note)
           </div>
         ) : (
           <div className="text-center py-12 text-gray-500 text-sm">No service entries yet.</div>
+        )}
+
+        {/* QBO-2D/2F: Prepare Invoice modal — rendered once (portal handles placement).
+            Rehydrates a persisted draft (EDIT mode) when one is selected from the Draft
+            Manager; rehydrateSource() falls back to a synthetic source if the service log
+            is gone. No QBO API, no payment/KPI mutation. */}
+        <PrepareInvoiceModal
+          open={prepareSvcLog !== null || qb.prepareDraft != null}
+          source={qb.prepareDraft ? null : (prepareSvcLog ? { kind: 'service', serviceLog: prepareSvcLog } : null)}
+          initialDraft={qb.prepareDraft}
+          onClose={closePrepareInvoice}
+          onSaveDraft={qb.handleSaveDraft}
+          onApprove={qb.handleApprove}
+        />
+
+        {/* QBO-2F: shared organization-wide Invoice Drafts manager (Project + Service). */}
+        <InvoiceDraftsModal
+          open={qb.draftsOpen}
+          onClose={qb.closeDrafts}
+          onOpenDraft={(draft) => {
+            // Reopen in the Prepare Invoice modal (EDIT mode) above.
+            qb.openDraftForEdit(draft)
+          }}
+          refreshKey={qb.refreshDraftsKey}
+        />
+
+        {/* QBO-2F1: global header Prepare Invoice selector. Lists ONLY eligible
+            unpaid service work from the shared getUnpaidServiceCalls authority
+            (no second unpaid rule). Selecting one opens the EXISTING
+            PrepareInvoiceModal above with that exact service log as the source —
+            no second invoice editor. No financial values are mutated here. */}
+        <PrepareInvoiceSelectorModal
+          open={showPrepareInvoiceSelector}
+          onClose={() => setShowPrepareInvoiceSelector(false)}
+          items={unpaidServiceCalls.map((l) => ({
+            id: String(l.id ?? ''),
+            customer: canonicalCustomerName(l),
+            jobLabel: String(l.jtype || l.jobType || l.category || 'Service Call'),
+            date: String(l.date || ''),
+            balanceDue: serviceBalanceDue(l),
+          }))}
+          onSelect={(id) => {
+            const log = unpaidServiceCalls.find((l) => String(l.id) === id)
+            if (log) {
+              openPrepareInvoice(log)
+              setShowPrepareInvoiceSelector(false)
+            }
+          }}
+        />
+
+        {/* QBO-3A: QuickBooks Account modal (connected only). Displays only
+            approved sanitized info (company, active, connected timestamp) and a
+            confirmed disconnect. No realmId/tokens/technical detail. */}
+        <QuickBooksAccountModal
+          open={conn.accountOpen}
+          onClose={conn.closeAccount}
+          connected={!!conn.status?.connected}
+          companyName={conn.status?.companyName ?? null}
+          connectedAt={conn.status && conn.status.connected ? conn.status.connectedAt : null}
+          onDisconnect={conn.disconnect}
+          disconnecting={conn.disconnecting}
+          disconnectError={conn.disconnectError}
+        />
+
+        {/* QBO-4A.5-RUN-3: Resolve PowerOn Customer for the ACTIVE service-log row
+            (STATE 1 → STATE 2). Presentational modal — no hook, no network. The
+            owner explicitly selects a canonical PowerOn account (a real
+            relationship_accounts.id TEXT id); onConfirm persists it via
+            resolveFieldLogCustomer (identity-only scoped save, NO updatedAt bump,
+            NO financial field write). Mounts ONLY when a row's Resolve action is
+            active (resolveTargetId set) — zero cost otherwise. The directory +
+            canonicalIds come from the shared useCanonicalCustomerDirectory fetch
+            (falls back to the gcContacts-derived customerDirectory while loading). */}
+        {resolveTargetId && (() => {
+          const log = serviceLogs.find((l) => l.id === resolveTargetId)
+          const dir = canonicalDirectory.directory.length ? canonicalDirectory.directory : customerDirectory
+          return (
+            <ResolvePowerOnCustomerModal
+              open={!!log}
+              onClose={() => setResolveTargetId(null)}
+              currentName={log ? canonicalCustomerName(log) : null}
+              directory={dir}
+              canonicalIds={canonicalIds}
+              loading={canonicalDirectory.loading}
+              onConfirm={(uuid) => { if (log) resolveFieldLogCustomer(log.id, uuid) }}
+            />
+          )
+        })()}
+
+        {/* QBO-4A.5-RUN-3: Link QuickBooks Customer for the ACTIVE service-log row
+            (STATE 2 → STATE 3). FieldLogQboLinkController mounts
+            useQuickBooksCustomerMapping ONLY for this one row (lazy, active-row
+            only) — NO per-row mapping fetch on page render. Host owns connection
+            state, the directory, the customer name, and persistence; the controller
+            owns only the mapping hook + the Link modal. NO auto QBO create/link/
+            Send/Estimate/Invoice — every QBO write is an explicit owner click. */}
+        {linkTargetId && (() => {
+          const log = serviceLogs.find((l) => l.id === linkTargetId)
+          const customerUuid = log && isCanonicalCustomerId(log.accountId, canonicalIds) ? log.accountId : null
+          return (
+            <FieldLogQboLinkController
+              open={!!log && customerUuid !== null}
+              onClose={() => setLinkTargetId(null)}
+              poweronCustomerId={customerUuid}
+              customerName={log ? canonicalCustomerName(log) : null}
+              customerDirectory={customerDirectory}
+              connected={!!conn.status?.connected}
+              onConnect={conn.connect}
+            />
+          )
+        })()}
+
+        {/* QBO-3A: sanitized same-tab OAuth callback toast (?qbo=…). Carries no
+            code/state/tokens — only a connected/cancelled/error signal. */}
+        {conn.callbackSignal && (
+          <div className="fixed bottom-4 left-1/2 z-[9000] -translate-x-1/2 rounded-lg border border-gray-700 bg-[#111827] px-4 py-2 text-xs text-gray-100 shadow-2xl">
+            {conn.callbackSignal === 'connected' && 'QuickBooks connected.'}
+            {conn.callbackSignal === 'cancelled' && 'QuickBooks connection was cancelled.'}
+            {conn.callbackSignal === 'error' && 'QuickBooks could not be connected. Please try again.'}
+          </div>
         )}
 
         {/* Running totals bar at bottom */}
@@ -5969,6 +6280,58 @@ ${note}` : note)
         onConfirm={commitServicePayment}
       />
     </div>
+  )
+}
+
+/**
+ * QBO-4A.5-RUN-3 — lazy, ACTIVE-ROW-ONLY Link controller for the Field Log
+ * service-log row. The host (V15rFieldLogPanel) mounts this ONLY when a row's
+ * "Link QuickBooks Customer" action is active (linkTargetId set), so
+ * useQuickBooksCustomerMapping — the single network boundary for QBO customer
+ * mapping — loads for EXACTLY ONE row, lazily, on demand. There is NO per-row
+ * mapping fetch on initial page render (the performance rule: one active row,
+ * one hook, one fetch). STATE 2 (UUID present, QBO not yet linked) → STATE 3
+ * (linked) transition lives inside the Link modal this renders.
+ *
+ * Division of ownership: the host owns the QBO connection state, the in-memory
+ * customer directory, the customer display name, and ALL persistence (identity
+ * resolve + any future Send). This controller owns ONLY the mapping hook + the
+ * Link modal render — it performs NO persistence and NO auto QBO write. Every
+ * QBO create/link/unlink is an explicit owner click inside LinkQuickBooksCustomerModal.
+ */
+function FieldLogQboLinkController({
+  open,
+  onClose,
+  poweronCustomerId,
+  customerName,
+  customerDirectory,
+  connected,
+  onConnect,
+}: {
+  open: boolean
+  onClose: () => void
+  poweronCustomerId: string | null
+  customerName: string | null
+  customerDirectory: readonly CustomerDirectoryEntry[]
+  connected: boolean | null
+  onConnect: () => void
+}) {
+  // Single network boundary for this ONE active row. connected===false =>
+  // disconnected (no fetch). The hook is created here, unconditionally, so React's
+  // rules-of-hooks hold; the LAZY behavior comes from the host conditionally
+  // MOUNTING this controller only when a row is active.
+  const mapping = useQuickBooksCustomerMapping({ poweronCustomerId, connected })
+  return (
+    <LinkQuickBooksCustomerModal
+      open={open}
+      onClose={onClose}
+      api={mapping}
+      poweronCustomerId={poweronCustomerId}
+      customerName={customerName}
+      customerDirectory={customerDirectory}
+      connected={connected}
+      onConnect={onConnect}
+    />
   )
 }
 

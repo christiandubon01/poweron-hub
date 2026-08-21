@@ -789,7 +789,7 @@ describe('migration guard', () => {
     expect(migrations).toContain('122_guardian_presence_security.sql')
   })
 
-  it('migrations 123–130 exist; no migrations numbered 131 or higher', () => {
+  it('migrations 123–134 exist; no migrations numbered 135 or higher', () => {
     expect(migrations).toContain('123_guardian_user_access_revocation.sql')
     expect(migrations).toContain('124_inactive_user_rls_boundary.sql')
     expect(migrations).toContain('125_inactive_user_authenticated_data_gate.sql')
@@ -798,9 +798,16 @@ describe('migration guard', () => {
     expect(migrations).toContain('128_referral_claims.sql')
     expect(migrations).toContain('129_referral_unlinked_confirmation.sql')
     expect(migrations).toContain('130_referral_profiles.sql')
+    expect(migrations).toContain('131_invoice_drafts.sql')
+    // QBO-3A owns 132 (quickbooks_connections_and_oauth_states).
+    expect(migrations).toContain('132_quickbooks_connections_and_oauth_states.sql')
+    // QBO-4A.2 owns 133 (quickbooks_customer_mappings).
+    expect(migrations).toContain('133_quickbooks_customer_mappings.sql')
+    // QBO-4A.6 owns 134 (poweron_customer_id UUID → TEXT).
+    expect(migrations).toContain('134_quickbooks_customer_mapping_text_identity.sql')
     const beyond = migrations.filter((name: string) => {
       const m = name.match(/^(\d+)_/)
-      return m ? parseInt(m[1], 10) > 130 : false
+      return m ? parseInt(m[1], 10) > 134 : false
     })
     expect(beyond).toEqual([])
   })

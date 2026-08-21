@@ -15,6 +15,15 @@ import V15rBlueprintsTab from './V15rBlueprintsTab'
 import V15rPhaseTimelineTab from './V15rPhaseTimelineTab'
 import V15rProjectLogsTab from './V15rProjectLogsTab'
 import ProjectSummaryBoxes from '@/components/v15r/ProjectSummaryBoxes'
+import { InvoiceDraftsModal } from '@/features/billing-draft/components/InvoiceDraftsModal'
+import { PrepareInvoiceModal } from '@/features/billing-draft/components/PrepareInvoiceModal'
+import { QuickBooksMenu } from '@/features/billing-draft/components/QuickBooksMenu'
+import { useQuickBooksInvoicing } from '@/features/billing-draft/useQuickBooksInvoicing'
+import { useQuickBooksCustomerMapping } from '@/features/quickbooks-customer-mapping/useQuickBooksCustomerMapping'
+import { useCanonicalCustomerDirectory } from '@/features/quickbooks-customer-mapping/useCanonicalCustomerDirectory'
+import { isCanonicalCustomerId } from '@/features/quickbooks-customer-mapping/resolvePowerOnCustomerDirectory'
+import { LinkQuickBooksCustomerModal } from '@/features/quickbooks-customer-mapping/components/LinkQuickBooksCustomerModal'
+import { ResolvePowerOnCustomerModal } from '@/features/quickbooks-customer-mapping/components/ResolvePowerOnCustomerModal'
 
 interface V15rProjectInnerProps {
   projectId: string
@@ -45,6 +54,26 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
   const [localTab, setLocalTab] = useState(mapExternalToInternalTab(propActiveTab))
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
+  const [prepareInvoiceOpen, setPrepareInvoiceOpen] = useState(false)
+  // QBO-4A.4 Task 11 — contextual QuickBooks customer-mapping entry point. The
+  // reconciled customer UUID comes from the project's accountId (verified UUID
+  // only — never the project name). The menu item is offered ONLY when that
+  // identity is known; the global header never gets this item.
+  const [linkCustomerOpen, setLinkCustomerOpen] = useState(false)
+  // QBO-4A.5 — Resolve PowerOn Customer modal (STATE 1, unresolved identity).
+  // Open ONLY when the project's customer is a name snapshot with no reconciled
+  // UUID. Once resolved, the menu switches to the normal "Link QuickBooks Customer"
+  // item (STATE 2/3).
+  const [resolveOpen, setResolveOpen] = useState(false)
+  const qb = useQuickBooksInvoicing()
+  const openPrepareInvoice = useCallback(() => {
+    qb.clearPrepareDraft()
+    setPrepareInvoiceOpen(true)
+  }, [qb])
+  const closePrepareInvoice = useCallback(() => {
+    setPrepareInvoiceOpen(false)
+    qb.clearPrepareDraft()
+  }, [qb])
 
   // Sync local tab with prop changes
   React.useEffect(() => {
@@ -60,10 +89,51 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
   }, [forceUpdate])
 
   const backup = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
+  // QBO-4A.6: canonical PowerOn customer identity authority (relationship_accounts.id,
+  // a TEXT PK — NOT a UUID). Shared fetch (module-cached across surfaces). Called
+  // before early returns so the hook order is unconditional.
+  const canonicalDirectory = useCanonicalCustomerDirectory()
+  const canonicalIds = canonicalDirectory.canonicalIds
+  // Canonical customer id for this project (a real relationship_accounts.id only).
+  // Looked up before the early returns so the mapping hook is always called unconditionally.
+  const projectCustomerId = (() => {
+    const proj = backup?.projects.find((x) => x.id === projectId)
+    return proj && isCanonicalCustomerId(proj.accountId, canonicalIds) ? proj.accountId : null
+  })()
+  // QBO-4A.4 — drives the contextual "Link QuickBooks Customer" menu label + modal.
+  const customerMapping = useQuickBooksCustomerMapping({ poweronCustomerId: projectCustomerId })
   if (!backup) return <div className="text-red-400 p-4">No backup data</div>
 
   const p = backup.projects.find(x => x.id === projectId)
   if (!p) return <div className="text-red-400 p-4">Project not found</div>
+
+  // QBO-4A.4 Task 11 — contextual menu label reflects the LIVE mapping state.
+  // Identity must be a known UUID to offer the item at all (locked rule: never
+  // add to the permanent global menu / never match by name).
+  const customerLinkLabel =
+    customerMapping.state.kind === 'linked'
+      ? `QuickBooks Customer: ${customerMapping.state.customer.displayName || 'Linked'}`
+      : 'Link QuickBooks Customer'
+  const customerDirectory = (backup.gcContacts || []).map((c) => ({
+    id: c.id, company: c.company || null, contact: c.contact || null,
+    email: c.email || null, phone: c.phone || null,
+  }))
+
+  // QBO-4A.5 — persist the owner-confirmed reconciled relationship_accounts UUID
+  // onto the CURRENT project's canonical accountId field (the existing path), then
+  // refresh local state so the QBO mapping hook receives the UUID without a page
+  // reload. Mirrors V15rLeadsPanel's persistence pattern. Resolves ONLY this one
+  // record — never backfills other projects, never matches by name.
+  const resolveProjectCustomer = useCallback((accountUuid: string) => {
+    const b = (hasHydrated && isDemoMode) ? getDemoBackupData() : getBackupData()
+    if (!b) return
+    b.projects = (b.projects || []).map((r) =>
+      r.id === projectId ? { ...r, accountId: accountUuid } : r
+    )
+    pushState()
+    saveBackupData(b)
+    forceUpdate()
+  }, [projectId, hasHydrated, isDemoMode, forceUpdate])
 
   const h = health(p, backup)
   const completion = Math.round(getOverallCompletion(p, backup))
@@ -119,23 +189,32 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
                 {p.type} • Health: <span style={{ color: h.clr }}>{h.sc}%</span> • {completion}% complete
               </p>
             </div>
-            {onClose && (
-              <button
-                onClick={onClose}
-                style={{
-                  padding: '6px 12px',
-                  backgroundColor: 'rgba(59,130,246,0.2)',
-                  color: '#3b82f6',
-                  border: '1px solid rgba(59,130,246,0.3)',
-                  borderRadius: '4px',
-                  fontSize: '12px',
-                  fontWeight: '600',
-                  cursor: 'pointer',
-                }}
-              >
-                ← Back to Projects
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              <QuickBooksMenu
+                onPrepareInvoice={openPrepareInvoice}
+                onOpenDrafts={qb.openDrafts}
+                onLinkCustomer={projectCustomerId ? () => setLinkCustomerOpen(true) : undefined}
+                customerLinkLabel={customerLinkLabel}
+                onResolveCustomer={!projectCustomerId ? () => setResolveOpen(true) : undefined}
+              />
+              {onClose && (
+                <button
+                  onClick={onClose}
+                  style={{
+                    padding: '6px 12px',
+                    backgroundColor: 'rgba(59,130,246,0.2)',
+                    color: '#3b82f6',
+                    border: '1px solid rgba(59,130,246,0.3)',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ← Back to Projects
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-hide">
@@ -165,6 +244,70 @@ export default function V15rProjectInner({ projectId, activeTab: propActiveTab, 
       <div className="flex-1 overflow-auto p-4">
         <ActiveComponent projectId={projectId} onUpdate={forceUpdate} backup={backup} />
       </div>
+
+      <PrepareInvoiceModal
+        open={prepareInvoiceOpen}
+        source={qb.prepareDraft ? null : { kind: 'project', project: p, backup }}
+        initialDraft={qb.prepareDraft}
+        onClose={closePrepareInvoice}
+        onSaveDraft={qb.handleSaveDraft}
+        onApprove={qb.handleApprove}
+        // QBO-4A.5 — let Prepare Invoice resolve the project's customer identity
+        // in place (NON-GATING: Save Draft / Approve remain usable while unresolved).
+        onResolveCustomer={resolveProjectCustomer}
+        // QBO-2C: route payment correction to the EXISTING canonical Project Log
+        // workflow (where payment logs are added/edited/deleted with `collected`),
+        // not a local modal override. No mutation is performed inside Prepare Invoice.
+        onReviewPayments={() => {
+          setPrepareInvoiceOpen(false)
+          setLocalTab('project-logs')
+        }}
+      />
+
+      {/* QBO-2F: shared organization-wide Invoice Drafts manager (Project + Service). */}
+      <InvoiceDraftsModal
+        open={qb.draftsOpen}
+        onClose={qb.closeDrafts}
+        onOpenDraft={(draft) => {
+          // Reopen in the Prepare Invoice modal (EDIT mode). rehydrateSource()
+          // inside the modal resolves the source live (by id) when the Project/Service
+          // still exists, and otherwise falls back to a synthetic source that preserves
+          // the saved invoice content. No financial truth is touched.
+          qb.openDraftForEdit(draft)
+          setPrepareInvoiceOpen(true)
+        }}
+        refreshKey={qb.refreshDraftsKey}
+      />
+
+      {/* QBO-4A.4 Task 11/12 — the single reusable Link QuickBooks Customer modal,
+          opened from the contextual menu item. Owns search/create/link/view/unlink/
+          change. NON-GATING: nothing in PowerOn waits on this mapping. */}
+      <LinkQuickBooksCustomerModal
+        open={linkCustomerOpen}
+        onClose={() => setLinkCustomerOpen(false)}
+        api={customerMapping}
+        poweronCustomerId={projectCustomerId}
+        customerName={p.name}
+        customerDirectory={customerDirectory}
+      />
+
+      {/* QBO-4A.5/4A.6 — the explicit "Resolve PowerOn Customer" modal (STATE 1). Opened
+          from the contextual menu when the project's customer is a name snapshot with
+          no canonical PowerOn identity. The host persists the confirmed canonical id
+          onto the project's accountId; this modal owns NO persistence. Directory +
+          canonicalIds come from the shared useCanonicalCustomerDirectory fetch. */}
+      <ResolvePowerOnCustomerModal
+        open={resolveOpen}
+        onClose={() => setResolveOpen(false)}
+        currentName={p.name}
+        directory={canonicalDirectory.directory.length ? canonicalDirectory.directory : customerDirectory}
+        canonicalIds={canonicalIds}
+        loading={canonicalDirectory.loading}
+        onConfirm={(uuid) => {
+          resolveProjectCustomer(uuid)
+          setResolveOpen(false)
+        }}
+      />
     </div>
   )
 }

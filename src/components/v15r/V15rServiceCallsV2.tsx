@@ -24,6 +24,16 @@ import {
   TrendingUp, TrendingDown, Calendar, Package, Truck, Clock,
   Zap, Filter, Layers,
 } from 'lucide-react'
+import { InvoiceDraftsModal } from '@/features/billing-draft/components/InvoiceDraftsModal'
+import { PrepareInvoiceModal, type PrepareInvoiceSource } from '@/features/billing-draft/components/PrepareInvoiceModal'
+import { QuickBooksMenu } from '@/features/billing-draft/components/QuickBooksMenu'
+import { useQuickBooksInvoicing } from '@/features/billing-draft/useQuickBooksInvoicing'
+import { useQuickBooksCustomerMapping } from '@/features/quickbooks-customer-mapping/useQuickBooksCustomerMapping'
+import { useCanonicalCustomerDirectory } from '@/features/quickbooks-customer-mapping/useCanonicalCustomerDirectory'
+import { isCanonicalCustomerId } from '@/features/quickbooks-customer-mapping/resolvePowerOnCustomerDirectory'
+import { LinkQuickBooksCustomerModal } from '@/features/quickbooks-customer-mapping/components/LinkQuickBooksCustomerModal'
+import { ResolvePowerOnCustomerModal } from '@/features/quickbooks-customer-mapping/components/ResolvePowerOnCustomerModal'
+import type { CustomerDirectoryEntry } from '@/features/quickbooks-customer-mapping/qboCustomerMappingTypes'
 import {
   getBackupData,
   saveBackupData,
@@ -46,6 +56,7 @@ import {
 import {
   getLiveMultiDayServiceCalls,
   mergeMultiDayServiceCallsIntoRemote,
+  mergeServiceLogsIntoRemote,
 } from '@/services/serviceScopeMerge'
 import { pushState } from '@/services/undoRedoService'
 import { useDemoMode } from '@/store/demoStore'
@@ -116,6 +127,30 @@ export default function V15rServiceCallsV2() {
   const [filterType, setFilterType] = useState<string>('all')
   const [modalConfig, setModalConfig] = useState<MultiDayModalConfig | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  // QBO-4A.5-RUN-2 — legacy service logs are read straight from backup.serviceLogs
+  // each render (no React state array, unlike multi-day `records`). A identity-only
+  // resolve mutates that array in place + saveBackupData, so a tick is needed to
+  // re-render and recompute `legacyLogs` / each card's customerUuid from the fresh
+  // getBackupData() snapshot. Mirrors V15rProjectInner's forceUpdate pattern.
+  const [, setTick] = useState(0)
+  const forceUpdate = useCallback(() => setTick((t) => t + 1), [])
+  // QBO-2F: shared QuickBooks menu + organization-wide Invoice Drafts manager.
+  // `prepareSource` unifies the Service Call AND Legacy Service Log billing surfaces into
+  // ONE Prepare Invoice modal + ONE shared Draft Manager (no per-surface managers).
+  const [prepareSource, setPrepareSource] = useState<PrepareInvoiceSource | null>(null)
+  const qb = useQuickBooksInvoicing()
+  const openPrepareCall = useCallback((call: ServiceCallRecord) => {
+    qb.clearPrepareDraft()
+    setPrepareSource({ kind: 'serviceCall', call })
+  }, [qb])
+  const openPrepareLog = useCallback((log: BackupServiceLog) => {
+    qb.clearPrepareDraft()
+    setPrepareSource({ kind: 'service', serviceLog: log })
+  }, [qb])
+  const closePrepare = useCallback(() => {
+    setPrepareSource(null)
+    qb.clearPrepareDraft()
+  }, [qb])
 
   // ── Load multi-day records ──────────────────────────────────────────────────
   const [records, setRecords] = useState<ServiceCallRecord[]>(() => {
@@ -159,6 +194,93 @@ export default function V15rServiceCallsV2() {
     setRecords(getLiveMultiDayServiceCalls(updated) as ServiceCallRecord[])
     void saveMultiDayServiceCallsScoped(backup)
   }, [backup])
+
+  // QBO-4A.5 — bind ONE explicitly-resolved PowerOn relationship account UUID onto
+  // the current Service Call's canonical accountId field via the EXISTING persist
+  // path (saveServiceCallRecords + scoped sync). Resolves ONLY the call the owner
+  // chose — no name matching, no bulk backfill, no parallel identity field.
+  const resolveCallCustomer = useCallback((callId: string, accountUuid: string) => {
+    const updated = records.map(r =>
+      r.service_call_id === callId ? { ...r, accountId: accountUuid } : r
+    )
+    persist(updated)
+  }, [records, persist])
+
+  // QBO-4A.5-RUN-2 — bind ONE explicitly-resolved PowerOn relationship account UUID
+  // onto the current LEGACY service log's canonical accountId field. The legacy log
+  // (BackupServiceLog) gains the SAME canonical accountId used by ServiceCallRecord
+  // / BackupProject — no parallel QBO-only identity field. Resolves ONLY the log the
+  // owner chose: predicate-scoped map (no name matching, no bulk backfill).
+  // IDENTITY-ONLY: financial fields (quoted/collected/mat/payments/status/…) are
+  // never touched. Persisted through the existing service.calls scoped-save path
+  // (mergeServiceLogsIntoRemote) so a concurrent remote FINANCIAL edit on this same
+  // log is NOT clobbered — accountId is layered onto the LWW winner post-merge, and
+  // that layering sets only accountId (financial-neutral).
+  const resolveLegacyLogCustomer = useCallback(async (logId: string, accountUuid: string) => {
+    if (!backup) return
+    // 1. Local instant UI: predicate-scoped — ONLY the chosen log gets accountId.
+    //    IDENTITY-ONLY: updatedAt is intentionally NOT bumped. Bumping it would make
+    //    a stale-local row win LWW over a newer remote FINANCIAL edit on this same
+    //    log (clobbering collected/payments/status). Touching only accountId means
+    //    the existing LWW winner (by the row's real updatedAt) keeps financial truth;
+    //    accountId is layered onto that winner post-merge (step 2) so identity still
+    //    persists without ever risking a financial revert.
+    backup.serviceLogs = (backup.serviceLogs || []).map((l) =>
+      l.id === logId ? { ...l, accountId: accountUuid } : l
+    )
+    pushState()
+    saveBackupData(backup)
+    forceUpdate()
+    // 2. Remote-baseline scoped sync (service.calls). Fetch latest remote, merge
+    //    serviceLogs by id (LWW on financial fields preserved — winner chosen by the
+    //    row's real updatedAt, never by this identity edit), then FORCE accountId
+    //    onto the chosen log's merged row so identity survives even when the remote
+    //    row won LWW. Financial-neutral: only accountId is layered on; no other field
+    //    is touched, so quoted/collected/mat/payStatus/payments/balanceDue are the
+    //    LWW winner's values verbatim.
+    try {
+      const remote = await fetchLatestRemoteBackup()
+      if (remote.hasRemoteRow && remote.remoteData) {
+        const incoming = getBackupData() || backup
+        const merged = mergeServiceLogsIntoRemote(remote.remoteData, incoming)
+        merged.serviceLogs = (merged.serviceLogs || []).map((l) =>
+          l.id === logId ? { ...l, accountId: accountUuid } : l
+        )
+        await saveBackupWithRemoteBaselineSync(
+          merged,
+          { remoteUpdatedAt: remote.remoteUpdatedAt, remoteDataLastSavedAt: remote.remoteDataLastSavedAt },
+          { source: 'service-logs-remote-merge', changedKey: 'serviceLogs', _scopes: ['service.calls'] },
+        )
+        return
+      }
+      saveBackupDataAndSync(getBackupData() || backup, 'serviceLogs', {
+        source: 'service.calls', _scopes: ['service.calls'],
+      })
+    } catch (err) {
+      if ((err as Error)?.name === 'BackupStorageWriteError') return
+      console.warn('[resolveLegacyLogCustomer] Scoped serviceLogs sync failed; local changes preserved', err)
+      try {
+        saveBackupDataAndSync(getBackupData() || backup, 'serviceLogs', {
+          source: 'service.calls', _scopes: ['service.calls'],
+        })
+      } catch (fallbackErr) {
+        if ((fallbackErr as Error)?.name === 'BackupStorageWriteError') return
+        throw fallbackErr
+      }
+    }
+  }, [backup, forceUpdate])
+
+  // Prepare Invoice in-modal Resolve. Both the Service Call source AND the legacy
+  // Service Log source now have a safe canonical accountId persistence path
+  // (RUN-2 added the legacy path), so in-modal Resolve is wired for both. The
+  // Project source is handled in its own host (V15rProjectInner).
+  const prepareOnResolveCustomer = useCallback((accountUuid: string) => {
+    if (prepareSource?.kind === 'serviceCall') {
+      resolveCallCustomer(prepareSource.call.service_call_id, accountUuid)
+    } else if (prepareSource?.kind === 'service') {
+      void resolveLegacyLogCustomer(prepareSource.serviceLog.id, accountUuid)
+    }
+  }, [prepareSource, resolveCallCustomer, resolveLegacyLogCustomer])
 
   // ── Modal handlers ─────────────────────────────────────────────────────────
   function openNewCall() {
@@ -319,7 +441,10 @@ export default function V15rServiceCallsV2() {
                 expanded={expandedIds.has(call.service_call_id)}
                 onToggle={() => toggleExpand(call.service_call_id)}
                 onAddDay={() => openAddDay(call)}
+                onPrepareInvoice={() => openPrepareCall(call)}
+                onOpenDrafts={qb.openDrafts}
                 laborRate={laborRate}
+                onResolveCustomer={(uuid) => resolveCallCustomer(call.service_call_id, uuid)}
               />
             ))
           )}
@@ -331,7 +456,9 @@ export default function V15rServiceCallsV2() {
         <LegacyServiceLogList
           logs={legacyLogs}
           accounts={gcContacts}
-          laborRate={laborRate}
+          onPrepareInvoice={openPrepareLog}
+          onOpenDrafts={qb.openDrafts}
+          onResolveCustomer={(logId, accountUuid) => { void resolveLegacyLogCustomer(logId, accountUuid) }}
           onMigrate={(log) => {
             const migrated = migrateServiceLog(log, laborRate)
             const updated = [...records, migrated]
@@ -351,6 +478,31 @@ export default function V15rServiceCallsV2() {
         />
       )}
 
+      {/* QBO-2C/2F: ONE Prepare Invoice modal for both Service Call and Legacy Service Log
+          billing surfaces. Rehydrates a persisted draft (EDIT mode) when one is selected
+          from the shared Draft Manager; rehydrateSource() resolves the source live (by id)
+          and falls back to a synthetic source that preserves the saved invoice if it is gone. */}
+      <PrepareInvoiceModal
+        open={prepareSource != null || qb.prepareDraft != null}
+        source={qb.prepareDraft ? null : prepareSource}
+        initialDraft={qb.prepareDraft}
+        onClose={closePrepare}
+        onSaveDraft={qb.handleSaveDraft}
+        onApprove={qb.handleApprove}
+        onResolveCustomer={(prepareSource?.kind === 'serviceCall' || prepareSource?.kind === 'service') ? prepareOnResolveCustomer : undefined}
+      />
+
+      {/* QBO-2F: ONE shared organization-wide Invoice Drafts manager (Project + Service). */}
+      <InvoiceDraftsModal
+        open={qb.draftsOpen}
+        onClose={qb.closeDrafts}
+        onOpenDraft={(draft) => {
+          // Reopen in the Prepare Invoice modal (EDIT mode) above.
+          qb.openDraftForEdit(draft)
+        }}
+        refreshKey={qb.refreshDraftsKey}
+      />
+
       <div className="text-[10px] text-gray-600 flex items-center gap-1 pb-4">
         <Zap size={10} /> NEXUS AI can analyze service call patterns and margin trends — ask in the chat panel
       </div>
@@ -366,12 +518,46 @@ interface CardProps {
   expanded: boolean
   onToggle: () => void
   onAddDay: () => void
+  onPrepareInvoice: () => void
+  onOpenDrafts: () => void
   laborRate: number
+  /** QBO-4A.5 — persist an explicitly-resolved PowerOn account UUID to this call. */
+  onResolveCustomer: (accountUuid: string) => void
 }
 
-function ServiceCallCard({ call, accounts, expanded, onToggle, onAddDay, laborRate }: CardProps) {
+function ServiceCallCard({ call, accounts, expanded, onToggle, onAddDay, onPrepareInvoice, onOpenDrafts, laborRate, onResolveCustomer }: CardProps) {
   const totals = useMemo(() => getServiceCallTotals(call), [call])
   const scopeFlag = call.scope_creep_flag
+
+  // QBO-4A.4 Task 11 / QBO-4A.6 — contextual QuickBooks customer mapping for this
+  // service call. The canonical customer id comes from the call's accountId/customerId
+  // (a real relationship_accounts.id — verified against the canonical set, NOT by UUID
+  // format; matches serviceBillingAdapter). Name-only calls (no canonical id) get NO
+  // menu item; their unresolved state is shown inside Prepare Invoice.
+  const canonicalDirectory = useCanonicalCustomerDirectory()
+  const canonicalIds = canonicalDirectory.canonicalIds
+  const customerUuid = isCanonicalCustomerId(call.accountId, canonicalIds)
+    ? call.accountId
+    : isCanonicalCustomerId(call.customerId, canonicalIds)
+      ? call.customerId
+      : null
+  const customerMapping = useQuickBooksCustomerMapping({ poweronCustomerId: customerUuid })
+  const [linkCustomerOpen, setLinkCustomerOpen] = useState(false)
+  const [resolveOpen, setResolveOpen] = useState(false)
+  const customerDirectory: readonly CustomerDirectoryEntry[] = useMemo(
+    () => (accounts || []).map((c: any) => ({
+      id: String(c.id ?? ''),
+      company: c.company || null,
+      contact: c.contact || null,
+      email: c.email || null,
+      phone: c.phone || null,
+    })),
+    [accounts],
+  )
+  const customerLinkLabel =
+    customerMapping.state.kind === 'linked'
+      ? `QuickBooks Customer: ${customerMapping.state.customer.displayName || 'Linked'}`
+      : 'Link QuickBooks Customer'
 
   return (
     <div className={`rounded-xl border bg-gray-800/40 overflow-hidden transition-colors ${
@@ -424,8 +610,20 @@ function ServiceCallCard({ call, accounts, expanded, onToggle, onAddDay, laborRa
           </div>
         </div>
 
-        <div className="ml-3 shrink-0 text-gray-500">
-          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        <div className="ml-3 flex shrink-0 items-center gap-2">
+          <div onClick={e => e.stopPropagation()}>
+            <QuickBooksMenu
+              onPrepareInvoice={onPrepareInvoice}
+              onOpenDrafts={onOpenDrafts}
+              align="right"
+              onLinkCustomer={customerUuid ? () => setLinkCustomerOpen(true) : undefined}
+              customerLinkLabel={customerLinkLabel}
+              onResolveCustomer={!customerUuid ? () => setResolveOpen(true) : undefined}
+            />
+          </div>
+          <div className="text-gray-500">
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </div>
         </div>
       </div>
 
@@ -507,6 +705,31 @@ function ServiceCallCard({ call, accounts, expanded, onToggle, onAddDay, laborRa
           )}
         </div>
       )}
+
+      {/* QBO-4A.4 Task 11/12 — single reusable Link QuickBooks Customer modal,
+          opened from the contextual menu item. NON-GATING. */}
+      <LinkQuickBooksCustomerModal
+        open={linkCustomerOpen}
+        onClose={() => setLinkCustomerOpen(false)}
+        api={customerMapping}
+        poweronCustomerId={customerUuid}
+        customerName={resolveCanonicalCustomerName(call, accounts)}
+        customerDirectory={customerDirectory}
+      />
+
+      {/* QBO-4A.5/4A.6 — explicit PowerOn customer resolution for a name-only call.
+          STATE 1 → owner binds an existing canonical relationship_accounts.id to this
+          call's canonical accountId; then the QBO Link workflow above unlocks.
+          Directory + canonicalIds come from the shared useCanonicalCustomerDirectory fetch. */}
+      <ResolvePowerOnCustomerModal
+        open={resolveOpen}
+        onClose={() => setResolveOpen(false)}
+        currentName={resolveCanonicalCustomerName(call, accounts)}
+        directory={canonicalDirectory.directory.length ? canonicalDirectory.directory : customerDirectory}
+        canonicalIds={canonicalIds}
+        loading={canonicalDirectory.loading}
+        onConfirm={(uuid) => { onResolveCustomer(uuid); setResolveOpen(false) }}
+      />
     </div>
   )
 }
@@ -678,13 +901,18 @@ function DayEntryRow({
 function LegacyServiceLogList({
   logs,
   accounts,
-  laborRate,
+  onPrepareInvoice,
+  onOpenDrafts,
   onMigrate,
+  onResolveCustomer,
 }: {
   logs: BackupServiceLog[]
   accounts: any[]
-  laborRate: number
+  onPrepareInvoice: (log: BackupServiceLog) => void
+  onOpenDrafts: () => void
   onMigrate: (log: BackupServiceLog) => void
+  /** QBO-4A.5-RUN-2 — persist an explicitly-resolved PowerOn account UUID to ONE log. */
+  onResolveCustomer: (logId: string, accountUuid: string) => void
 }) {
   if (logs.length === 0) {
     return (
@@ -700,56 +928,146 @@ function LegacyServiceLogList({
         These are single-entry service logs from the original system. Click "Migrate" to convert any entry
         to the multi-day format where you can add more days and itemize materials.
       </div>
-      {logs.map((l, idx) => {
-        const balanceDue = num(l.balanceDue) || Math.max(0, num(l.quoted) - num(l.collected))
-        return (
-          <div key={l.id || idx} className="rounded-xl border border-gray-700 bg-gray-800/40 p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10px] font-mono text-gray-500">SVC-{String(idx + 1).padStart(3, '0')}</span>
-                <span className="text-xs font-semibold text-gray-300">{resolveCanonicalCustomerName(l, accounts)}</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">{l.jtype}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-gray-500 font-mono">{l.date}</span>
-                <button
-                  onClick={() => onMigrate(l)}
-                  className="px-2.5 py-1 rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30 text-[9px] font-semibold hover:bg-blue-600/30 transition-colors"
-                >
-                  Migrate →
-                </button>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[10px] text-center">
-              <div>
-                <div className="text-gray-500">Hours</div>
-                <div className="font-mono text-gray-200">{l.hrs || 0}</div>
-              </div>
-              <div>
-                <div className="text-gray-500">Quoted</div>
-                <div className="font-mono text-cyan-400">{fmtMoney(l.quoted || 0)}</div>
-              </div>
-              <div>
-                <div className="text-gray-500">Materials</div>
-                <div className="font-mono text-orange-400">{fmtMoney(l.mat || 0)}</div>
-              </div>
-              <div>
-                <div className="text-gray-500">Collected</div>
-                <div className="font-mono text-emerald-400">{fmtMoney(l.collected || 0)}</div>
-              </div>
-              <div>
-                <div className="text-gray-500">Balance Due</div>
-                <div className={`font-mono font-bold ${balanceDue > 0 ? 'text-yellow-400' : 'text-gray-500'}`}>
-                  {fmtMoney(balanceDue)}
-                </div>
-              </div>
-            </div>
-            {l.notes && (
-              <div className="mt-2 text-[9px] text-gray-500 italic">{l.notes}</div>
-            )}
+      {logs.map((l, idx) => (
+        <LegacyServiceLogCard
+          key={l.id || idx}
+          log={l}
+          index={idx}
+          accounts={accounts}
+          onPrepareInvoice={onPrepareInvoice}
+          onOpenDrafts={onOpenDrafts}
+          onMigrate={onMigrate}
+          onResolveCustomer={(uuid) => onResolveCustomer(l.id, uuid)}
+        />
+      ))}
+    </div>
+  )
+}
+
+// ─── LegacyServiceLogCard ─────────────────────────────────────────────────────
+
+interface LegacyCardProps {
+  log: BackupServiceLog
+  index: number
+  accounts: any[]
+  onPrepareInvoice: (log: BackupServiceLog) => void
+  onOpenDrafts: () => void
+  onMigrate: (log: BackupServiceLog) => void
+  /** QBO-4A.5-RUN-2 — persist an explicitly-resolved PowerOn account UUID to this log. */
+  onResolveCustomer: (accountUuid: string) => void
+}
+
+function LegacyServiceLogCard({ log, index, accounts, onPrepareInvoice, onOpenDrafts, onMigrate, onResolveCustomer }: LegacyCardProps) {
+  // QBO-4A.5-RUN-2 / QBO-4A.6 — contextual QuickBooks customer mapping for a legacy
+  // service log. The canonical customer id comes from the log's canonical accountId
+  // (a real relationship_accounts.id — verified against the canonical set, NOT by
+  // UUID format; mirrors ServiceCallCard / the billing adapter). Name-only logs (no
+  // canonical id) get the "Resolve Customer for QuickBooks" item (STATE 1); once
+  // resolved the menu switches to "Link QuickBooks Customer" (STATE 2). The owner
+  // explicitly chooses — no name matching, no auto-select.
+  const canonicalDirectory = useCanonicalCustomerDirectory()
+  const canonicalIds = canonicalDirectory.canonicalIds
+  const customerUuid = isCanonicalCustomerId(log.accountId, canonicalIds) ? log.accountId : null
+  const customerMapping = useQuickBooksCustomerMapping({ poweronCustomerId: customerUuid })
+  const [linkCustomerOpen, setLinkCustomerOpen] = useState(false)
+  const [resolveOpen, setResolveOpen] = useState(false)
+  const customerDirectory: readonly CustomerDirectoryEntry[] = useMemo(
+    () => (accounts || []).map((c: any) => ({
+      id: String(c.id ?? ''),
+      company: c.company || null,
+      contact: c.contact || null,
+      email: c.email || null,
+      phone: c.phone || null,
+    })),
+    [accounts],
+  )
+  const customerLinkLabel =
+    customerMapping.state.kind === 'linked'
+      ? `QuickBooks Customer: ${customerMapping.state.customer.displayName || 'Linked'}`
+      : 'Link QuickBooks Customer'
+
+  const balanceDue = num(log.balanceDue) || Math.max(0, num(log.quoted) - num(log.collected))
+
+  return (
+    <div className="rounded-xl border border-gray-700 bg-gray-800/40 p-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] font-mono text-gray-500">SVC-{String(index + 1).padStart(3, '0')}</span>
+          <span className="text-xs font-semibold text-gray-300">{resolveCanonicalCustomerName(log, accounts)}</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">{log.jtype}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-gray-500 font-mono">{log.date}</span>
+          <div onClick={e => e.stopPropagation()}>
+            <QuickBooksMenu
+              onPrepareInvoice={() => onPrepareInvoice(log)}
+              onOpenDrafts={onOpenDrafts}
+              align="right"
+              onLinkCustomer={customerUuid ? () => setLinkCustomerOpen(true) : undefined}
+              customerLinkLabel={customerLinkLabel}
+              onResolveCustomer={!customerUuid ? () => setResolveOpen(true) : undefined}
+            />
           </div>
-        )
-      })}
+          <button
+            onClick={() => onMigrate(log)}
+            className="px-2.5 py-1 rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30 text-[9px] font-semibold hover:bg-blue-600/30 transition-colors"
+          >
+            Migrate →
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[10px] text-center">
+        <div>
+          <div className="text-gray-500">Hours</div>
+          <div className="font-mono text-gray-200">{log.hrs || 0}</div>
+        </div>
+        <div>
+          <div className="text-gray-500">Quoted</div>
+          <div className="font-mono text-cyan-400">{fmtMoney(log.quoted || 0)}</div>
+        </div>
+        <div>
+          <div className="text-gray-500">Materials</div>
+          <div className="font-mono text-orange-400">{fmtMoney(log.mat || 0)}</div>
+        </div>
+        <div>
+          <div className="text-gray-500">Collected</div>
+          <div className="font-mono text-emerald-400">{fmtMoney(log.collected || 0)}</div>
+        </div>
+        <div>
+          <div className="text-gray-500">Balance Due</div>
+          <div className={`font-mono font-bold ${balanceDue > 0 ? 'text-yellow-400' : 'text-gray-500'}`}>
+            {fmtMoney(balanceDue)}
+          </div>
+        </div>
+      </div>
+      {log.notes && (
+        <div className="mt-2 text-[9px] text-gray-500 italic">{log.notes}</div>
+      )}
+
+      {/* QBO-4A.5-RUN-2 — single reusable Link QuickBooks Customer modal, opened from
+          the contextual menu item. NON-GATING (mirrors ServiceCallCard). */}
+      <LinkQuickBooksCustomerModal
+        open={linkCustomerOpen}
+        onClose={() => setLinkCustomerOpen(false)}
+        api={customerMapping}
+        poweronCustomerId={customerUuid}
+        customerName={resolveCanonicalCustomerName(log, accounts)}
+        customerDirectory={customerDirectory}
+      />
+
+      {/* QBO-4A.5-RUN-2/4A.6 — explicit PowerOn customer resolution for a name-only
+          legacy log. STATE 1 → owner binds an existing canonical relationship_accounts.id
+          to this log's canonical accountId; then the QBO Link workflow above unlocks.
+          Directory + canonicalIds come from the shared useCanonicalCustomerDirectory fetch. */}
+      <ResolvePowerOnCustomerModal
+        open={resolveOpen}
+        onClose={() => setResolveOpen(false)}
+        currentName={resolveCanonicalCustomerName(log, accounts)}
+        directory={canonicalDirectory.directory.length ? canonicalDirectory.directory : customerDirectory}
+        canonicalIds={canonicalIds}
+        loading={canonicalDirectory.loading}
+        onConfirm={(uuid) => { onResolveCustomer(uuid); setResolveOpen(false) }}
+      />
     </div>
   )
 }

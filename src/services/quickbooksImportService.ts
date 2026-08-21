@@ -9,10 +9,13 @@
  *  - Batch import with progress tracking
  *  - Import history logging
  *
- * OAuth 2.0 QuickBooks API flow (foundation for V3):
- *  - Authorization: https://oauth.platform.intuit.com/op/v1/
- *  - Invoices: https://quickbooks.api.intuit.com/v3/company/{realmId}/query
- *  - VITE_QUICKBOOKS_CLIENT_ID and VITE_QUICKBOOKS_CLIENT_SECRET required
+ * SECURITY: This service performs PDF/CSV import ONLY. It does NOT perform
+ * OAuth and does not use any Intuit client secret. PDF extraction routes through
+ * the server-side Claude proxy (./claudeProxy → /.netlify/functions/claude), so
+ * no credential is handled in the browser. Any future QuickBooks Online OAuth
+ * connection must use the server-only canonical OAuth contract in
+ * src/services/quickbooks (server-side environment variables, never a VITE_
+ * variable) so the Intuit client secret stays server-side.
  */
 
 import { getBackupData, saveBackupData, num, type BackupData, type BackupServiceLog } from './backupDataService'

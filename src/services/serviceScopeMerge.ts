@@ -375,6 +375,37 @@ export function mergeServiceLogsIntoRemote(
   return merged
 }
 
+/**
+ * QBO-4A.5-RUN-3 — identity-only, financial-neutral map for resolving a service
+ * log's canonical `accountId`. Returns a NEW array where ONLY the row whose `id`
+ * matches `logId` receives `accountId: accountUuid`; every other row is returned
+ * unchanged (same reference, no spread, no mutation).
+ *
+ * CRITICAL FINANCIAL FIREWALL: `updatedAt` is intentionally NOT bumped and NO
+ * financial field (quoted / collected / mat / payStatus / balanceDue / payments /
+ * hrs / opCost / adjustments / statusEvents / …) is touched. Bumping `updatedAt`
+ * would make a stale-local row win LWW (pickServiceLogWinner compares updatedAt)
+ * over a NEWER remote FINANCIAL edit on the same log, clobbering collected /
+ * payments / status. Touching only `accountId` means the existing LWW winner
+ * (by the row's real updatedAt) keeps financial truth; `accountId` is layered onto
+ * that winner post-merge so identity persists without ever risking a financial
+ * revert.
+ *
+ * Use this for BOTH the optimistic local mutation AND the post-merge force
+ * (re-layer `accountId` onto the LWW winner after mergeServiceLogsIntoRemote) so
+ * the subtle financial-neutral layering is defined in ONE place. Pure: no side
+ * effects, never mutates the input array or its rows.
+ */
+export function applyResolvedAccountIdToServiceLogs(
+  logs: readonly any[] | undefined,
+  logId: string,
+  accountUuid: string,
+): any[] {
+  return (Array.isArray(logs) ? logs : []).map((l) =>
+    l && l.id === logId ? { ...l, accountId: accountUuid } : l
+  )
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Phase 6R-B — serviceEstimates[] + activeServiceCalls[] lifecycle scoped merge
 // ───────────────────────────────────────────────────────────────────────────────

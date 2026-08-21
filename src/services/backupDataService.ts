@@ -337,6 +337,14 @@ export interface BackupProject {
   id: string; name: string; type: string; status: string; contract: number
   billed: number; paid: number; mileRT: number; miDays?: number
   phases: BackupProjectPhases; logs: any[]; finance?: any; laborHrs?: number
+  /**
+   * QBO-4A.2: reconciled relationship_accounts.id UUID when this project is
+   * linked to a relationship account (set at runtime in V15rProjectsPanel /
+   * V15rLeadsPanel). May be absent or a temporary 'gc...' id before cloud
+   * reconciliation. Typed here so billing adapters can propagate a VERIFIED UUID
+   * onto an invoice draft's customer_id without (p as any) access.
+   */
+  accountId?: string
   rfis?: any[]; coord?: any; tasks?: Record<string, string[]>
   ohRows?: any[]; matRows?: any[]; mtoRows?: any[]; laborRows?: any[]
   templateId?: string; projectCode?: string; templateName?: string
@@ -438,6 +446,16 @@ export interface BackupServiceLog {
   miles: number; notes: string; store: string; opCost: number; profit: number
   quoted: number; address?: string; customer: string; mileCost?: number
   collected: number; payStatus: string; balanceDue: number; detailLink?: string
+  /**
+   * QBO-4A.5-RUN-2: canonical reconciled relationship_accounts.id UUID for this
+   * service log's customer identity — the SAME canonical `accountId` field used by
+   * ServiceCallRecord and BackupProject. Additive/optional: legacy logs predating
+   * RUN-2 have no UUID (undefined → unresolved name-only state). Set ONLY by an
+   * explicit owner "Resolve Customer" action (never inferred from `customer` name).
+   * Identity-only — never carries financial truth. No DB migration: this is a
+   * local-model JSON-blob field persisted through the existing service.calls scope.
+   */
+  accountId?: string
   adjustments?: any[]; triggersAtSave?: string[]; compareWarnings?: string[]
   emergencyMatInfo?: string; estimateComparison?: any
   archived?: boolean

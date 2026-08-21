@@ -71,6 +71,11 @@ import {
   type HardwareIndexData,
 } from '@/services/solarTraining/SolarEstimateSettings'
 import { authedJsonHeaders } from '@/services/authedFetch'
+// QBO-3A1 — reuse the SAME live QuickBooks connection authority (sanitized
+// qbo-connection-status + same-tab OAuth flow) already runtime-green in the
+// global QuickBooks menu. No second connection-state system is created.
+import { useQuickBooksConnection } from '@/features/quickbooks-connection/useQuickBooksConnection'
+import { QuickBooksAccountModal, formatConnectedAt } from '@/features/billing-draft/components/QuickBooksAccountModal'
 import {
   loadOrganizationIdentity,
   saveOrganizationIdentity,
@@ -1469,6 +1474,12 @@ export default function V15rSettingsPanel() {
   const { isOwner, user, profile: authProfile } = useAuth()
   const orgId = authProfile?.org_id ? String(authProfile.org_id) : ''
 
+  // QBO-3A1: live QuickBooks connection state — the SAME sanitized authority used
+  // by the global QuickBooks menu (qbo-connection-status). Rendering Settings
+  // performs no token refresh and no QBO API call; status is persisted metadata.
+  const qbo = useQuickBooksConnection()
+  const qboConnected = !!qbo.status?.connected
+
   const [showBetaInviteModal, setShowBetaInviteModal] = useState(false)
   const [, setHideTick] = useState(0)
   const [scoutScanning, setScoutScanning] = useState(false)
@@ -2009,7 +2020,11 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
 
   const lastSync = backup._lastSavedAt ? new Date(backup._lastSavedAt).toLocaleString() : 'Never'
   const supabaseUp = isSupabaseConfigured()
-  const connectedIntegrations = 1 + (settings.gcalUrl ? 1 : 0)
+  // QBO-3A1: QuickBooks live integration counts as active ONLY when the sanitized
+  // connection status is connected. The static `1` (Anthropic, server-managed) and
+  // the Google Calendar term are unchanged; QuickBooks Batch Import's treatment is
+  // unchanged (it is not connection-based).
+  const connectedIntegrations = 1 + (settings.gcalUrl ? 1 : 0) + (qboConnected ? 1 : 0)
   const isAdminOwner = user?.email === 'christian@poweronsolutionsllc.com'
 
   const phaseWeightTotal = Object.values(phaseWeights).reduce((s: number, v: any) => s + num(v), 0)
@@ -2359,7 +2374,7 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
             </div>
           </div>
           <p className="mt-4 text-xs leading-relaxed text-gray-400">
-            Proposals, NEXUS profile, voice, and skill intelligence
+            Proposals, NEXUS profile, and skill intelligence
           </p>
           <div className="mt-auto pt-4 flex flex-col gap-3">
             <span className={`self-start rounded-full border px-2 py-1 text-[10px] font-semibold ${showAIDevelopment ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
@@ -2495,28 +2510,66 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
                   <div className="flex items-center justify-between gap-3 border-b border-blue-400/10 pb-3 mb-3">
                     <div>
                       <h3 className="text-sm font-bold text-gray-100">QuickBooks Integration</h3>
-                      <p className="text-xs text-gray-500 mt-0.5">API sync foundation for invoices and estimates.</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Live OAuth connection to QuickBooks Online.</p>
                     </div>
-                    <span className="rounded-full border border-yellow-400/20 bg-yellow-500/10 px-2 py-1 text-[11px] font-semibold text-yellow-200">Coming soon</span>
+                    <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${qboConnected ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-gray-700 bg-gray-800/60 text-gray-500'}`}>
+                      {qboConnected ? 'Connected' : 'Not connected'}
+                    </span>
                   </div>
-                  <div className="flex items-center gap-3 rounded-lg border border-blue-400/10 bg-slate-950/70 p-3">
-                    <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                    <div>
-                      <p className="text-sm font-semibold text-gray-300">Not connected — PDF import available</p>
-                      <p className="text-xs text-gray-500 mt-1">Connect your QuickBooks account to automatically sync invoices and estimates. Requires QuickBooks Online API setup.</p>
-                    </div>
-                  </div>
-                  <button
-                    disabled
-                    className="mt-3 w-full px-3 py-2 rounded text-xs font-medium border transition flex items-center justify-center gap-2 opacity-50 cursor-not-allowed"
-                    style={{ backgroundColor: 'rgba(99,102,241,0.1)', color: '#818cf8', borderColor: 'rgba(99,102,241,0.2)' }}
-                  >
-                    Connect QuickBooks — Coming in V3
-                  </button>
+
+                  {qboConnected ? (
+                    <>
+                      <div className="rounded-lg border border-blue-400/10 bg-slate-950/70 p-3 space-y-1">
+                        <div className="flex items-center gap-3">
+                          <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
+                          <p className="text-sm font-semibold text-gray-200">{qbo.status?.companyName || 'QuickBooks company connected'}</p>
+                        </div>
+                        <p className="text-xs text-gray-500 pl-6">Connection active</p>
+                        <p className="text-xs text-gray-500 pl-6">Connected {formatConnectedAt(qbo.status?.connectedAt ?? null)}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={qbo.openAccount}
+                        className="mt-3 w-full px-3 py-2 rounded text-xs font-semibold border transition flex items-center justify-center gap-2 border-sky-400/25 bg-sky-400/10 text-sky-200 hover:bg-sky-400/15"
+                      >
+                        QuickBooks Account
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-3 rounded-lg border border-blue-400/10 bg-slate-950/70 p-3">
+                        <div className="w-3 h-3 rounded-full bg-gray-600"></div>
+                        <p className="text-sm text-gray-300">Connect your QuickBooks account to enable supported accounting workflows as they are added.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={qbo.connect}
+                        disabled={qbo.connecting}
+                        className="mt-3 w-full px-3 py-2 rounded text-xs font-medium border transition flex items-center justify-center gap-2 disabled:opacity-50"
+                        style={{ backgroundColor: 'rgba(99,102,241,0.1)', color: '#818cf8', borderColor: 'rgba(99,102,241,0.2)' }}
+                      >
+                        {qbo.connecting ? 'Connecting...' : 'Connect QuickBooks'}
+                      </button>
+                    </>
+                  )}
                   <p className="mt-2 text-[10px] text-gray-600 italic">
-                    OAuth 2.0 flow via Intuit platform. Set VITE_QUICKBOOKS_CLIENT_ID and VITE_QUICKBOOKS_CLIENT_SECRET in .env to enable.
+                    OAuth 2.0 connection is configured server-side (INTUIT_* env vars). The Intuit client secret never runs in the browser.
                   </p>
                 </div>
+
+                {/* QBO-3A1: the SAME QuickBooks Account modal reused from the global
+                    QuickBooks ▾ menu — opens the existing disconnect/summary surface,
+                    no second connection-state fetcher. */}
+                <QuickBooksAccountModal
+                  open={qbo.accountOpen}
+                  onClose={qbo.closeAccount}
+                  connected={!!qbo.status?.connected}
+                  companyName={qbo.status?.companyName ?? null}
+                  connectedAt={qbo.status?.connectedAt ?? null}
+                  onDisconnect={qbo.disconnect}
+                  disconnecting={qbo.disconnecting}
+                  disconnectError={qbo.disconnectError}
+                />
 
                 <div className="rounded-xl border border-indigo-400/15 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/20">
                   <div className="flex items-center justify-between gap-3 border-b border-indigo-400/10 pb-3 mb-3">
@@ -3775,7 +3828,7 @@ const persist = useCallback((mutatedData?: BackupData, changedSettingsFields: re
                 Connect QuickBooks — Coming in V3
               </button>
               <p className="text-[10px] text-gray-600 italic">
-                OAuth 2.0 flow via Intuit platform. Set VITE_QUICKBOOKS_CLIENT_ID and VITE_QUICKBOOKS_CLIENT_SECRET in .env to enable.
+                OAuth 2.0 connection is configured server-side (INTUIT_* env vars). The Intuit client secret never runs in the browser.
               </p>
             </div>
           </SettingCard>
