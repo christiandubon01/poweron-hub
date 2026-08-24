@@ -307,15 +307,18 @@ function createBaseDependencies(options: {
 test('dispatch parser requires explicit provider and permission profile and accepts allowed values', () => {
   for (const profile of ['read-only-reviewer', 'task-implementer', 'verifier'] as const) {
     const parsed = parseDispatchArgs([
-      '--run', 'run-1',
-      '--task', 'task-1',
-      '--attempt', 'attempt-1',
+      '--run-id', 'run-1',
+      '--task-id', 'task-1',
+      '--attempt-id', 'attempt-1',
       '--provider', 'codex',
       '--permission-profile', profile,
       '--model', 'gpt-5.6',
       '--json',
     ]);
 
+    assert.equal(parsed.runId, 'run-1');
+    assert.equal(parsed.taskId, 'task-1');
+    assert.equal(parsed.attemptId, 'attempt-1');
     assert.equal(parsed.provider, 'codex');
     assert.equal(parsed.permissionProfile, profile);
     assert.equal(parsed.requestedModel, 'gpt-5.6');
@@ -323,12 +326,12 @@ test('dispatch parser requires explicit provider and permission profile and acce
   }
 
   assert.throws(
-    () => parseDispatchArgs(['--run', 'run-1', '--task', 'task-1', '--attempt', 'attempt-1', '--provider', 'cursor-agent', '--permission-profile', 'read-only-reviewer']),
+    () => parseDispatchArgs(['--run-id', 'run-1', '--task-id', 'task-1', '--attempt-id', 'attempt-1', '--provider', 'cursor-agent', '--permission-profile', 'read-only-reviewer']),
     /Unknown provider/u,
   );
 
   assert.throws(
-    () => parseDispatchArgs(['--run', 'run-1', '--task', 'task-1', '--attempt', 'attempt-1', '--provider', 'codex', '--permission-profile', 'danger-full-access']),
+    () => parseDispatchArgs(['--run-id', 'run-1', '--task-id', 'task-1', '--attempt-id', 'attempt-1', '--provider', 'codex', '--permission-profile', 'danger-full-access']),
     /Unknown permission profile/u,
   );
 });

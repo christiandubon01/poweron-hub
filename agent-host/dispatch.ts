@@ -192,12 +192,15 @@ export function parseDispatchArgs(argv: readonly string[]): DispatchCliOptions {
 
     switch (token) {
       case '--run':
+      case '--run-id':
         parsed.runId = nextValue();
         break;
       case '--task':
+      case '--task-id':
         parsed.taskId = nextValue();
         break;
       case '--attempt':
+      case '--attempt-id':
         parsed.attemptId = nextValue();
         break;
       case '--provider':
