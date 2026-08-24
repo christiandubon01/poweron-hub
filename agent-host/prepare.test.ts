@@ -9,6 +9,7 @@ import { openOrchestrationStore, type OrchestrationStore } from './lib/store.ts'
 import { resolveStatePaths } from './lib/statePaths.ts';
 import { runDispatchCommand } from './dispatch.ts';
 import {
+  buildPrepareSummary,
   main,
   parsePrepareArgs,
   prepareDurableRecords,
@@ -144,6 +145,47 @@ async function reopenStore(dbPath: string, repoKey: string): Promise<Orchestrati
   });
 }
 
+test('prepare summary partialCreation truth table matches the durable record boundary', () => {
+  const run = {
+    runId: 'run-1',
+    title: 'Run 1',
+    goal: null,
+    status: 'pending',
+    createdAt: '2026-08-24T01:00:00.000Z',
+    updatedAt: '2026-08-24T01:00:00.000Z',
+    startedAt: null,
+    completedAt: null,
+  } as const;
+  const task = {
+    taskId: 'task-1',
+    runId: 'run-1',
+    title: 'Task 1',
+    goal: null,
+    status: 'running',
+    position: 0,
+    spec: null,
+    createdAt: '2026-08-24T01:00:00.000Z',
+    updatedAt: '2026-08-24T01:00:00.000Z',
+    startedAt: '2026-08-24T01:00:00.000Z',
+    completedAt: null,
+  } as const;
+  const attempt = {
+    attemptId: 'attempt-1',
+    taskId: 'task-1',
+    ordinal: 1,
+    status: 'running',
+    hostInstanceId: 'dispatch-host-1',
+    createdAt: '2026-08-24T01:00:00.000Z',
+    startedAt: '2026-08-24T01:00:00.000Z',
+    endedAt: null,
+  } as const;
+
+  assert.equal(buildPrepareSummary({}).partialCreation, false);
+  assert.equal(buildPrepareSummary({ run }).partialCreation, true);
+  assert.equal(buildPrepareSummary({ run, task }).partialCreation, true);
+  assert.equal(buildPrepareSummary({ run, task, attempt }).partialCreation, false);
+});
+
 test('prepare parser accepts owner-facing arguments and main returns nonzero for invalid CLI input', async () => {
   const parsed = parsePrepareArgs([
     '--title', 'ORCH smoke test',
@@ -215,6 +257,7 @@ test('empty DB bootstrap creates durable Run, Task, and Attempt and releases the
   assert.equal(result.summary.runStatus, 'pending');
   assert.equal(result.summary.taskStatus, 'running');
   assert.equal(result.summary.attemptStatus, 'running');
+  assert.equal(result.summary.partialCreation, false);
   assert.equal(await readLock(statePaths.lockPath), null);
 });
 
@@ -240,6 +283,7 @@ test('prepare output IDs refer to actual persisted records and survive close/reo
     assert.ok(run);
     assert.ok(task);
     assert.ok(attempt);
+    assert.equal(result.summary.partialCreation, false);
     assert.equal(task?.runId, run?.runId);
     assert.equal(attempt?.taskId, task?.taskId);
     assert.equal(attempt?.hostInstanceId, result.summary.hostInstanceId);

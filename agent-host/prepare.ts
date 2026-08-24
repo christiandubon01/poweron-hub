@@ -241,7 +241,8 @@ export function buildPrepareSummary(options: {
   attempt?: AttemptRecord | null | undefined;
   error?: unknown;
 }): PrepareSummary {
-  const partialCreation = Boolean(options.run || options.task || options.attempt);
+  const createdRecordCount = [options.run, options.task, options.attempt].filter(Boolean).length;
+  const partialCreation = createdRecordCount > 0 && createdRecordCount < 3;
 
   return {
     runId: options.run?.runId ?? options.generatedIds?.runId ?? null,
