@@ -1,12 +1,14 @@
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 
 import { createInstanceIdentity, composeHostIdentity, readOrCreateHostId } from './lib/identity.ts';
 import { acquireLock, LockAcquisitionError, releaseLockIfOwned } from './lib/lock.ts';
 import { createEventWriter } from './lib/events.ts';
 import { writeHeartbeat } from './lib/heartbeat.ts';
 import { discoverTools } from './lib/discovery.ts';
+import { openOrchestrationStore } from './lib/store.ts';
 import { readRepoStatus, resolveCanonicalRepo } from './lib/repo.ts';
 import { resolveStatePaths } from './lib/statePaths.ts';
+import { recoverInterruptedAttempts } from './providers/executor.ts';
 import {
   HEARTBEAT_INTERVAL_MS,
   REPO_STATUS_REFRESH_MS,
@@ -65,6 +67,68 @@ function sanitizeErrorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface HostShutdownDependencies {
+  refreshRepoStatusIfNeeded(force?: boolean): Promise<void>;
+  writeCurrentHeartbeat(state: HeartbeatDocument['state'], stoppedAt?: string): Promise<void>;
+  appendLifecycleEvent(type: 'host.stopping' | 'host.stopped', data: Record<string, unknown>): Promise<void>;
+  releaseLock(): Promise<void>;
+  finishProcess(exitCode: number): Promise<void>;
+  executorShutdown?: (() => Promise<unknown>) | undefined;
+  closeOrchestrationStore?: (() => void) | undefined;
+  signal?: string | undefined;
+  now?: (() => Date) | undefined;
+}
+
+export async function shutdownHostRuntime(dependencies: HostShutdownDependencies): Promise<void> {
+  const now = dependencies.now ?? (() => new Date());
+  const signal = dependencies.signal ?? 'SIGINT';
+
+  await dependencies.refreshRepoStatusIfNeeded(true);
+  await dependencies.writeCurrentHeartbeat('stopping');
+  await dependencies.appendLifecycleEvent('host.stopping', { signal });
+  await dependencies.executorShutdown?.();
+  const stoppedAt = now().toISOString();
+  await dependencies.appendLifecycleEvent('host.stopped', { stoppedAt });
+  await dependencies.writeCurrentHeartbeat('stopped', stoppedAt);
+  dependencies.closeOrchestrationStore?.();
+  await dependencies.releaseLock();
+  await dependencies.finishProcess(0);
+}
+
+export async function recoverInterruptedAttemptsIfPresent(options: {
+  dbPath: string;
+  repoKey: string;
+  hostId: string;
+  hostVersion: string;
+  liveHostInstanceId: string;
+}): Promise<string[]> {
+  if (!(await fileExists(options.dbPath))) {
+    return [];
+  }
+
+  const store = openOrchestrationStore({
+    dbPath: options.dbPath,
+    repoKey: options.repoKey,
+    hostId: options.hostId,
+    hostVersion: options.hostVersion,
+  });
+
+  try {
+    return recoverInterruptedAttempts(store, options.liveHostInstanceId).map((attempt) => attempt.attemptId);
+  } finally {
+    store.close();
+  }
 }
 
 async function main(): Promise<void> {
@@ -188,14 +252,13 @@ async function main(): Promise<void> {
     }
 
     try {
-      await refreshRepoStatusIfNeeded(true);
-      await writeCurrentHeartbeat('stopping');
-      await eventWriter.append('host.stopping', { signal: 'SIGINT' });
-      const stoppedAt = new Date().toISOString();
-      await eventWriter.append('host.stopped', { stoppedAt });
-      await writeCurrentHeartbeat('stopped', stoppedAt);
-      await releaseLockIfOwned(statePaths.lockPath, instanceIdentity.instanceId);
-      await finishProcess(0);
+      await shutdownHostRuntime({
+        refreshRepoStatusIfNeeded,
+        writeCurrentHeartbeat,
+        appendLifecycleEvent: (type, data) => eventWriter.append(type, data).then(() => undefined),
+        releaseLock: () => releaseLockIfOwned(statePaths.lockPath, instanceIdentity.instanceId).then(() => undefined),
+        finishProcess,
+      });
     } catch (error) {
       await handleFatalError(error);
     }
@@ -212,6 +275,13 @@ async function main(): Promise<void> {
   });
 
   try {
+    await recoverInterruptedAttemptsIfPresent({
+      dbPath: statePaths.orchestrationDbPath,
+      repoKey: statePaths.repoKey,
+      hostId,
+      hostVersion,
+      liveHostInstanceId: instanceIdentity.instanceId,
+    });
     await writeCurrentHeartbeat('running');
     await eventWriter.append('host.started', { pid: instanceIdentity.pid });
     providers = await discoverTools();
