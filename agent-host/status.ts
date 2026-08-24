@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { readHeartbeat, isHeartbeatFresh } from './lib/heartbeat.ts';
 import { readLock, isPidAlive } from './lib/lock.ts';
 import { resolveCanonicalRepo } from './lib/repo.ts';
+import { inspectOrchestrationDatabase } from './lib/schema.ts';
 import { resolveStatePaths } from './lib/statePaths.ts';
 import {
   HEARTBEAT_STALE_MS,
@@ -222,15 +223,23 @@ export async function getStatusReport(startDir: string = process.cwd()): Promise
     safeReadValidated(statePaths.heartbeatPath, parseHeartbeatDocument),
   ]);
 
-  return classifyStatus({
-    canonicalRepoPath,
+  const orchestration = inspectOrchestrationDatabase({
+    dbPath: statePaths.orchestrationDbPath,
     repoKey: statePaths.repoKey,
-    stateDirectory: statePaths.repoStateDir,
-    lock: lockResult.value,
-    heartbeat: heartbeatResult.value,
-    lockCorrupt: lockResult.corrupt,
-    heartbeatCorrupt: heartbeatResult.corrupt,
   });
+
+  return {
+    ...classifyStatus({
+      canonicalRepoPath,
+      repoKey: statePaths.repoKey,
+      stateDirectory: statePaths.repoStateDir,
+      lock: lockResult.value,
+      heartbeat: heartbeatResult.value,
+      lockCorrupt: lockResult.corrupt,
+      heartbeatCorrupt: heartbeatResult.corrupt,
+    }),
+    orchestration,
+  };
 }
 
 async function main(): Promise<void> {

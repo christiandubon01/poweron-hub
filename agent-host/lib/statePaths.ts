@@ -36,6 +36,7 @@ export function resolveStatePaths(options: {
     recoveryPath: path.join(repoStateDir, 'lock-recovery.json'),
     heartbeatPath: path.join(repoStateDir, 'heartbeat.json'),
     eventsPath: path.join(repoStateDir, 'events.jsonl'),
+    orchestrationDbPath: path.join(repoStateDir, 'orchestration.sqlite'),
     repoKey,
   };
 }

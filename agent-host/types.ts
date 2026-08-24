@@ -105,6 +105,7 @@ export interface StatusReport {
   diagnostics: string[];
   lock: LockDocument | null;
   heartbeat: HeartbeatDocument | null;
+  orchestration?: OrchestrationDatabaseStatusReport;
 }
 
 export interface StatePaths {
@@ -116,7 +117,17 @@ export interface StatePaths {
   recoveryPath: string;
   heartbeatPath: string;
   eventsPath: string;
+  orchestrationDbPath: string;
   repoKey: string;
+}
+
+export type OrchestrationDatabaseStatusKind = 'absent' | 'ready' | 'schema-newer' | 'corrupt';
+
+export interface OrchestrationDatabaseStatusReport {
+  database: OrchestrationDatabaseStatusKind;
+  schemaVersion: number | null;
+  runCount: number;
+  activeRunCount: number;
 }
 
 export interface ValidationResult<T> {
