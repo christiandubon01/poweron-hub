@@ -752,7 +752,11 @@ export async function runDispatchCommand(
   }
 }
 
-export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
+export function getDispatchCliArgs(argv: readonly string[] = process.argv): readonly string[] {
+  return argv.slice(2);
+}
+
+export async function main(argv: readonly string[] = getDispatchCliArgs()): Promise<number> {
   const parsed = parseDispatchArgs(argv);
   const prompt = await readPromptFromStdin(process.stdin);
   const result = await runDispatchCommand({

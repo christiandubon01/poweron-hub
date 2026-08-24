@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +9,7 @@ import test from 'node:test';
 import {
   buildDispatchSummary,
   dispatchAttempt,
+  getDispatchCliArgs,
   parseDispatchArgs,
   readPromptFromStdin,
   runDispatchCommand,
@@ -304,6 +306,47 @@ function createBaseDependencies(options: {
   };
 }
 
+async function runDispatchProcess(options: {
+  prompt: string;
+  localAppData: string;
+  cwd: string;
+  args: readonly string[];
+}): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  const child = spawn(
+    process.execPath,
+    ['--experimental-strip-types', path.join(options.cwd, 'agent-host', 'dispatch.ts'), ...options.args],
+    {
+      cwd: options.cwd,
+      env: {
+        ...process.env,
+        LOCALAPPDATA: options.localAppData,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
+  );
+
+  let stdout = '';
+  let stderr = '';
+
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr.on('data', (chunk: string) => {
+    stderr += chunk;
+  });
+
+  child.stdin.end(options.prompt);
+
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', resolve);
+  });
+
+  return { exitCode, stdout, stderr };
+}
+
 test('dispatch parser requires explicit provider and permission profile and accepts allowed values', () => {
   for (const profile of ['read-only-reviewer', 'task-implementer', 'verifier'] as const) {
     const parsed = parseDispatchArgs([
@@ -343,6 +386,70 @@ test('dispatch reads multiline unicode prompt from stdin', async () => {
 
   const received = await readPromptFromStdin(stdin);
   assert.equal(received, prompt);
+});
+
+test('dispatch entrypoint argv extraction preserves the first user flag and value alignment', () => {
+  const cliArgs = getDispatchCliArgs([
+    'node',
+    'agent-host/dispatch.ts',
+    '--run-id', 'run-1',
+    '--task-id', 'task-1',
+    '--attempt-id', 'attempt-1',
+    '--provider', 'codex',
+    '--permission-profile', 'read-only-reviewer',
+    '--json',
+  ]);
+
+  assert.deepEqual(cliArgs, [
+    '--run-id', 'run-1',
+    '--task-id', 'task-1',
+    '--attempt-id', 'attempt-1',
+    '--provider', 'codex',
+    '--permission-profile', 'read-only-reviewer',
+    '--json',
+  ]);
+  assert.equal(cliArgs[0], '--run-id');
+  assert.equal(cliArgs[1], 'run-1');
+  assert.equal(cliArgs[2], '--task-id');
+  assert.equal(cliArgs[3], 'task-1');
+  assert.equal(cliArgs[4], '--attempt-id');
+  assert.equal(cliArgs[5], 'attempt-1');
+  assert.equal(cliArgs[6], '--provider');
+  assert.equal(cliArgs[7], 'codex');
+  assert.equal(cliArgs[8], '--permission-profile');
+  assert.equal(cliArgs[9], 'read-only-reviewer');
+  assert.equal(cliArgs[10], '--json');
+});
+
+test('dispatch process-level CLI route gets past argument parsing and still reads the prompt from stdin', async () => {
+  const sandbox = await mkdtemp(path.join(os.tmpdir(), 'orch3g-cli-route-'));
+  const localAppData = path.join(sandbox, 'localappdata');
+  await mkdir(localAppData, { recursive: true });
+
+  const result = await runDispatchProcess({
+    cwd: process.cwd(),
+    localAppData,
+    prompt: 'Do not modify any files. Reply with exactly: AGENT_HOST_SMOKE_OK',
+    args: [
+      '--run-id', 'run-1',
+      '--task-id', 'task-1',
+      '--attempt-id', 'attempt-1',
+      '--provider', 'codex',
+      '--permission-profile', 'read-only-reviewer',
+      '--json',
+    ],
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.doesNotMatch(result.stderr, /Unknown option run-1/u);
+  assert.doesNotMatch(result.stderr, /Missing required option --run-id/u);
+
+  const summary = JSON.parse(result.stdout) as { errorCode?: string; message?: string | null };
+  assert.equal(summary.errorCode, 'DB_ABSENT');
+  assert.match(summary.message ?? '', /Orchestration database is absent/u);
+  assert.doesNotMatch(result.stdout, /Unknown option run-1/u);
+  assert.doesNotMatch(result.stdout, /Missing required option --run-id/u);
+  assert.doesNotMatch(result.stdout, /AGENT_HOST_SMOKE_OK/u);
 });
 
 test('dispatch summary is prompt-free and bounded', () => {
