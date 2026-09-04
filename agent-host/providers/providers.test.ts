@@ -34,6 +34,7 @@ import {
   type ProcessHandle,
   type RunProcessOptions,
 } from './processRunner.ts';
+import { buildProviderEnvironment } from './environmentPolicy.ts';
 import {
   providerErrorFragment,
   type ExecutionResult,
@@ -740,6 +741,77 @@ test('process: 19) environment not returned/logged', async (t) => {
   const serialized = JSON.stringify(result);
   assert.ok(!serialized.includes('ORCH3B_SECRET'), 'env must not appear in result');
   assert.ok(!serialized.includes('leak-marker'));
+});
+
+test('process: provider environment is default-deny and overlays cannot restore production credentials', async () => {
+  const source = {
+    SystemRoot: 'C:\\Windows',
+    PATH: 'C:\\Tools',
+    USERPROFILE: 'C:\\Users\\fixture',
+    PROCESSOR_ARCHITECTURE: 'AMD64',
+    CLAUDE_CODE_TEST_VAR: 'claude-only',
+    CODEX_TEST_VAR: 'codex-only',
+    OPENAI_API_KEY: 'codex-key',
+    supabase_service_role_key: 'DO_NOT_PASS',
+    NETLIFY_AUTH_TOKEN: 'DO_NOT_PASS',
+    DATABASE_URL: 'DO_NOT_PASS',
+    VITE_SUPABASE_URL: 'DO_NOT_PASS',
+    POWERON_SECRET: 'DO_NOT_PASS',
+    RANDOM_VENDOR_TOKEN: 'DO_NOT_PASS',
+    TOTALLY_UNKNOWN_SECRETISH_THING: 'DO_NOT_PASS',
+  };
+  let capturedEnv: NodeJS.ProcessEnv | undefined;
+  await runToResult(
+    new ProcessRunner(),
+    baseOptions(nativeLaunch('slow', ['--arg', '10']), {
+      environmentProfile: 'claude',
+      environmentSource: source,
+      envOverlay: {
+        CLAUDE_CODE_OVERLAY: 'allowed',
+        SUPABASE_SERVICE_ROLE_KEY: 'DO_NOT_PASS',
+        netlify_auth_token: 'DO_NOT_PASS',
+        DATABASE_URL: 'DO_NOT_PASS',
+      },
+      spawnFn: (command, args, options) => {
+        capturedEnv = options.env;
+        return spawn(command, args, options);
+      },
+    }),
+  );
+  assert.deepEqual(capturedEnv, {
+    SystemRoot: 'C:\\Windows',
+    PATH: 'C:\\Tools',
+    USERPROFILE: 'C:\\Users\\fixture',
+    PROCESSOR_ARCHITECTURE: 'AMD64',
+    CLAUDE_CODE_TEST_VAR: 'claude-only',
+    CLAUDE_CODE_OVERLAY: 'allowed',
+  });
+});
+
+test('process: provider profiles do not cross-leak credentials and deny names case-insensitively', () => {
+  const source = {
+    SystemRoot: 'C:\\Windows',
+    PATH: 'C:\\Tools',
+    CLAUDE_CODE_MESSAGING_TOKEN: 'claude-auth',
+    CODEX_TEST_VAR: 'codex-auth',
+    OPENAI_API_KEY: 'codex-key',
+    Supabase_Service_Role_Key: 'DO_NOT_PASS',
+    netlify_auth_token: 'DO_NOT_PASS',
+    VITE_PUBLIC_VALUE: 'DO_NOT_PASS',
+  };
+  const claude = buildProviderEnvironment('claude', source, undefined);
+  const codex = buildProviderEnvironment('codex', source, undefined);
+  assert.equal(claude.CODEX_TEST_VAR, undefined);
+  assert.equal(claude.OPENAI_API_KEY, undefined);
+  assert.equal(codex.CLAUDE_CODE_MESSAGING_TOKEN, undefined);
+  assert.equal(claude.CLAUDE_CODE_MESSAGING_TOKEN, 'claude-auth');
+  assert.equal(codex.CODEX_TEST_VAR, 'codex-auth');
+  assert.equal(codex.OPENAI_API_KEY, 'codex-key');
+  for (const environment of [claude, codex]) {
+    assert.equal(environment.Supabase_Service_Role_Key, undefined);
+    assert.equal(environment.netlify_auth_token, undefined);
+    assert.equal(environment.VITE_PUBLIC_VALUE, undefined);
+  }
 });
 
 test('process: 20) result resolves exactly once', async (t) => {

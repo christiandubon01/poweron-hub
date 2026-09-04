@@ -399,6 +399,7 @@ test('claude adapter: 15) prompt travels through stdin, not argv', async () => {
   await adapter.execute(createRequest({ prompt }));
   const launch = runner.runs[0].options.launch;
   assert.equal(runner.runs[0].options.prompt, prompt);
+  assert.equal(runner.runs[0].options.environmentProfile, 'claude');
   assert.equal(launch.argv.some((arg) => arg.includes(prompt)), false);
 });
 
@@ -419,9 +420,9 @@ test('claude adapter: 16) native permission mode maps reviewer/verifier to plan 
   assert.equal(mapPermissionProfileToClaudeMode('read-only-reviewer'), 'plan');
   assert.equal(mapPermissionProfileToClaudeMode('verifier'), 'plan');
   assert.equal(mapPermissionProfileToClaudeMode('task-implementer'), 'acceptEdits');
-  assert.deepEqual(reviewerArgs.slice(-2), ['--permission-mode', 'plan']);
-  assert.deepEqual(verifierArgs.slice(-2), ['--permission-mode', 'plan']);
-  assert.deepEqual(implementerArgs.slice(-2), ['--permission-mode', 'acceptEdits']);
+  assert.deepEqual(reviewerArgs.slice(4, 6), ['--permission-mode', 'plan']);
+  assert.deepEqual(verifierArgs.slice(4, 6), ['--permission-mode', 'plan']);
+  assert.deepEqual(implementerArgs.slice(4, 6), ['--permission-mode', 'acceptEdits']);
 });
 
 test('claude adapter: 17) no dangerous bypass flag appears in launches', () => {
@@ -430,6 +431,12 @@ test('claude adapter: 17) no dangerous bypass flag appears in launches', () => {
     createRequest(),
   );
   assert.equal(launch.argv.includes('--dangerously-skip-permissions'), false);
+  const deniedTools = launch.argv[launch.argv.indexOf('--disallowedTools') + 1];
+  assert.ok(deniedTools.includes('WebFetch'));
+  assert.ok(deniedTools.includes('WebSearch'));
+  assert.ok(deniedTools.includes('Bash(git push *)'));
+  assert.ok(deniedTools.includes('Bash(netlify *)'));
+  assert.ok(deniedTools.includes('Bash(supabase *)'));
 });
 
 test('claude adapter: 18) Ollama harness argv is correct', () => {
@@ -450,6 +457,8 @@ test('claude adapter: 18) Ollama harness argv is correct', () => {
     '--verbose',
     '--permission-mode',
     'acceptEdits',
+    '--disallowedTools',
+    'WebFetch,WebSearch,Bash(git push *),Bash(git reset --hard *),Bash(git clean *),Bash(netlify *),Bash(supabase *)',
   ]);
 });
 

@@ -516,6 +516,7 @@ test('codex adapter: 18) prompt travels through stdin and never through argv', a
   await adapter.execute(createRequest({ prompt }));
   const launch = runner.runs[0].options.launch;
   assert.equal(runner.runs[0].options.prompt, prompt);
+  assert.equal(runner.runs[0].options.environmentProfile, 'codex');
   assert.equal(launch.argv.some((arg) => arg.includes(prompt)), false);
 });
 
@@ -536,9 +537,11 @@ test('codex adapter: 19) sandbox mapping is conservative and danger-full-access 
   assert.equal(mapPermissionProfileToCodexSandbox('read-only-reviewer'), 'read-only');
   assert.equal(mapPermissionProfileToCodexSandbox('verifier'), 'read-only');
   assert.equal(mapPermissionProfileToCodexSandbox('task-implementer'), 'workspace-write');
-  assert.deepEqual(reviewerLaunch.argv.slice(0, 6), ['exec', '--json', '--ephemeral', '--sandbox', 'read-only', '-C']);
-  assert.deepEqual(verifierLaunch.argv.slice(0, 6), ['exec', '--json', '--ephemeral', '--sandbox', 'read-only', '-C']);
-  assert.deepEqual(implementerLaunch.argv.slice(0, 6), ['exec', '--json', '--ephemeral', '--sandbox', 'workspace-write', '-C']);
+  assert.deepEqual(reviewerLaunch.argv.slice(0, 8), ['exec', '--json', '--ephemeral', '-c', 'shell_environment_policy.inherit=core', '--sandbox', 'read-only', '-C']);
+  assert.deepEqual(verifierLaunch.argv.slice(0, 8), ['exec', '--json', '--ephemeral', '-c', 'shell_environment_policy.inherit=core', '--sandbox', 'read-only', '-C']);
+  assert.deepEqual(implementerLaunch.argv.slice(0, 8), ['exec', '--json', '--ephemeral', '-c', 'shell_environment_policy.inherit=core', '--sandbox', 'workspace-write', '-C']);
+  assert.ok(implementerLaunch.argv.includes('sandbox_workspace_write.network_access=false'));
+  assert.equal(reviewerLaunch.argv.includes('sandbox_workspace_write.network_access=false'), false);
   assert.equal(implementerLaunch.argv.includes('danger-full-access'), false);
 });
 
@@ -553,10 +556,14 @@ test('codex adapter: 20) launch argv includes exact Codex exec shape and request
     'exec',
     '--json',
     '--ephemeral',
+    '-c',
+    'shell_environment_policy.inherit=core',
     '--sandbox',
     'workspace-write',
     '-C',
     repoPath,
+    '-c',
+    'sandbox_workspace_write.network_access=false',
     '-m',
     'gpt-5.6',
   ]);

@@ -159,6 +159,7 @@ export class ClaudeCompatibleProviderAdapter implements ProviderAdapter {
       workingDirectory: request.workingDirectory,
       allowedWorkingDirectory: request.workingDirectory,
       prompt: request.prompt,
+      environmentProfile: 'claude',
       timeouts: {
         overallTimeoutMs: request.timeoutMs,
       },
@@ -214,6 +215,7 @@ export function mapPermissionProfileToClaudeMode(profile: PermissionProfile): Cl
 export function buildClaudeLaunchDescriptor(target: ClaudeLaunchTarget, request: ExecutionRequest): LaunchDescriptor {
   const permissionMode = mapPermissionProfileToClaudeMode(request.permissionProfile);
   const claudeArgs = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', permissionMode];
+  claudeArgs.push('--disallowedTools', buildClaudeDisallowedTools(target));
 
   if (target.providerId === 'claude') {
     return {
@@ -236,6 +238,16 @@ export function buildClaudeLaunchDescriptor(target: ClaudeLaunchTarget, request:
     executable: target.executable,
     argv: ['launch', 'claude', '--model', requestedModel, '--yes', '--', ...claudeArgs],
   };
+}
+
+function buildClaudeDisallowedTools(target: ClaudeLaunchTarget): string {
+  const tools = ['WebFetch', 'WebSearch'];
+  // Claude's Bash matcher grammar uses parentheses, which cannot cross the
+  // shared .cmd argument boundary safely. Native launches can use it directly.
+  if (determineLaunchKind(target.executable) === 'native') {
+    tools.push('Bash(git push *)', 'Bash(git reset --hard *)', 'Bash(git clean *)', 'Bash(netlify *)', 'Bash(supabase *)');
+  }
+  return tools.join(',');
 }
 
 function createStreamState(): ClaudeStreamState {

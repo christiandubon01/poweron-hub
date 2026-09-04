@@ -146,6 +146,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       workingDirectory: request.workingDirectory,
       allowedWorkingDirectory: request.workingDirectory,
       prompt: request.prompt,
+      environmentProfile: 'codex',
       timeouts: {
         overallTimeoutMs: request.timeoutMs,
       },
@@ -208,11 +209,16 @@ export function buildCodexLaunchDescriptor(target: CodexLaunchTarget, request: E
     'exec',
     '--json',
     '--ephemeral',
+    '-c',
+    'shell_environment_policy.inherit=core',
     '--sandbox',
     sandbox,
     '-C',
     request.workingDirectory,
   ];
+  if (request.permissionProfile === 'task-implementer') {
+    argv.push('-c', 'sandbox_workspace_write.network_access=false');
+  }
 
   if (typeof request.requestedModel === 'string' && request.requestedModel.trim().length > 0) {
     argv.push('-m', request.requestedModel);

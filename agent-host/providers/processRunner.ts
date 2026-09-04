@@ -26,6 +26,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import type { ExecutionStreamCallbacks, ProcessExecutionResult, ProcessTerminationReason } from './types.ts';
+import { buildProviderEnvironment, type ProviderEnvironmentProfile } from './environmentPolicy.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -404,6 +405,10 @@ export interface RunProcessOptions {
   callbacks?: ExecutionStreamCallbacks;
   /** Small environment overlay merged onto the current process env. Never returned/logged. */
   envOverlay?: Record<string, string>;
+  /** Provider identity selects the narrowly allowed authentication variables. */
+  environmentProfile?: ProviderEnvironmentProfile;
+  /** Test seam; values are filtered identically to the real host environment. */
+  environmentSource?: NodeJS.ProcessEnv;
   /** Output caps. */
   limits?: Partial<OutputLimits>;
   /** Injectable kill (tests record calls without killing unrelated processes). */
@@ -472,8 +477,13 @@ export class ProcessRunner {
       absoluteOutputBytes: options.limits?.absoluteOutputBytes ?? ABSOLUTE_OUTPUT_LIMIT_BYTES,
     };
 
-    // Environment: inherit current env + small overlay. Never returned/logged/persisted.
-    const env = { ...process.env, ...(options.envOverlay ?? {}) };
+    // Provider children receive a default-deny environment; overlays cannot
+    // reintroduce application credentials because they are filtered as well.
+    const env = buildProviderEnvironment(
+      options.environmentProfile ?? 'generic',
+      options.environmentSource ?? process.env,
+      options.envOverlay,
+    );
 
     let commandLine: string | undefined;
     if (options.launch.kind === 'cmd-wrapper') {
