@@ -4,6 +4,8 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import './policy/policy.test.ts';
+
 import { classifyStatus } from './status.ts';
 import { discoverTools } from './lib/discovery.ts';
 import { writeHeartbeat, writeJsonAtomic, isHeartbeatFresh } from './lib/heartbeat.ts';

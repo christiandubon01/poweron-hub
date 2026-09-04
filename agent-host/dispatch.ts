@@ -454,8 +454,9 @@ export async function dispatchAttempt(options: {
 
     const attempt = options.store.getAttempt(options.input.attemptId);
     const task = options.store.getTask(options.input.taskId);
+    const accepted = outcome.terminalAttemptStatus === 'passed';
     return {
-      exitCode: outcome.result.provider.success ? EXIT_SUCCESS : EXIT_FAILURE,
+      exitCode: accepted ? EXIT_SUCCESS : EXIT_FAILURE,
       summary: buildDispatchSummary({
         input: options.input,
         outcome,

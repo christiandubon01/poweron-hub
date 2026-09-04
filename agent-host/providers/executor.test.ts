@@ -8,6 +8,7 @@ import { openOrchestrationStore } from '../lib/store.ts';
 import type { OrchestrationStore } from '../lib/store.ts';
 import { OrchestrationError, TEXT_FIELD_MAX_BYTES } from '../lib/orchestrationTypes.ts';
 import { shutdownHostRuntime } from '../index.ts';
+import { createNoOpAttemptPolicyController } from '../policy/policy.ts';
 import type { ExecutionRequest, ExecutionResult, ProviderAdapter, ProviderErrorCode, ProviderId, ProviderProbeResult } from './types.ts';
 import { AttemptExecutor, AttemptExecutorError, createProviderRegistry, recoverInterruptedAttempts, type AttemptExecutionInput } from './executor.ts';
 
@@ -177,10 +178,37 @@ function createExecutionResult(
   };
 }
 
+function createCancelledExecutionResult(
+  overrides: Partial<ExecutionResult> = {},
+): ExecutionResult {
+  return createExecutionResult({
+    ...overrides,
+    process: {
+      exitCode: null,
+      signal: null,
+      timedOut: false,
+      cancelled: true,
+      ...(overrides.process ?? {}),
+    },
+    provider: {
+      terminalState: 'failed',
+      success: false,
+      errorCode: 'EXECUTION_CANCELLED',
+      errorMessage: 'cancelled',
+      ...(overrides.provider ?? {}),
+    },
+  });
+}
+
 function createExecutor(
   store: OrchestrationStore,
   adapters: ProviderAdapter[] = [],
-  overrides: Partial<{ now: () => Date; defaultTimeoutMs: number; shutdownTimeoutMs: number }> = {},
+  overrides: Partial<{
+    now: () => Date;
+    defaultTimeoutMs: number;
+    shutdownTimeoutMs: number;
+    policyController: ReturnType<typeof createNoOpAttemptPolicyController>;
+  }> = {},
 ): AttemptExecutor {
   return new AttemptExecutor({
     store,
@@ -188,6 +216,20 @@ function createExecutor(
     now: overrides.now,
     defaultTimeoutMs: overrides.defaultTimeoutMs,
     shutdownTimeoutMs: overrides.shutdownTimeoutMs,
+    policyController: overrides.policyController ?? createNoOpAttemptPolicyController(),
+  });
+}
+
+async function createNoOpPolicyBaseline(store: OrchestrationStore, input: AttemptExecutionInput) {
+  const task = store.getTask(input.taskId);
+  assert.ok(task);
+
+  return await createNoOpAttemptPolicyController().captureBaseline({
+    runId: input.runId,
+    task,
+    attemptId: input.attemptId,
+    permissionProfile: input.permissionProfile,
+    workingDirectory: input.workingDirectory,
   });
 }
 
@@ -338,45 +380,148 @@ test('executor: output-limit, protocol, and spawn failures map Attempt failed', 
   }
 });
 
-test('executor: manual cancellation maps Attempt cancelled and Task remains running', async () => {
+test('executor: immediate manual cancellation latches before provider launch and resolves cancelled without starting provider', async () => {
   const dbPath = await createTempDbPath('orch3f-cancel-');
   const store = createStore({ dbPath });
   seedRunningAttempt(store);
 
   try {
-    const deferred = createDeferred<ExecutionResult>();
     const adapter = new FakeAdapter({
       id: 'codex',
-      onExecute: async () => await deferred.promise,
-      onCancel: () => {
-        deferred.resolve(
-          createExecutionResult({
-            provider: {
-              terminalState: 'failed',
-              success: false,
-              errorCode: 'EXECUTION_CANCELLED',
-              errorMessage: 'cancelled',
-            },
-            process: {
-              exitCode: null,
-              signal: null,
-              timedOut: false,
-              cancelled: true,
-            },
-          }),
-        );
-      },
+      onExecute: async () => createExecutionResult(),
     });
     const executor = createExecutor(store, [adapter]);
 
     const runPromise = executor.execute(createExecutionInput());
     assert.equal(executor.cancel('attempt-1'), true);
     const outcome = await runPromise;
+    const eventTypes = store.listEvents().map((event) => event.type);
 
-    assert.deepEqual(adapter.cancelRequests, ['attempt-1']);
+    assert.equal(adapter.executeRequests.length, 0);
+    assert.deepEqual(adapter.cancelRequests, []);
+    assert.equal(outcome.startedEvent, null);
     assert.equal(outcome.terminalEvent.type, 'execution.cancelled');
+    assert.equal(outcome.terminalAttemptStatus, 'cancelled');
+    assert.equal(outcome.result.process.cancelled, true);
+    assert.equal(eventTypes.includes('policy.baseline.captured'), true);
+    assert.equal(eventTypes.includes('execution.started'), false);
     assert.equal(store.getAttempt('attempt-1')?.status, 'cancelled');
     assert.equal(store.getTask('task-1')?.status, 'running');
+    assert.deepEqual(executor.getActiveAttemptIds(), []);
+  } finally {
+    store.close();
+  }
+});
+
+test('executor: cancellation during deferred policy baseline is retained and prevents provider start', async () => {
+  const dbPath = await createTempDbPath('orch4b-cancel-baseline-');
+  const store = createStore({ dbPath });
+  seedRunningAttempt(store);
+
+  try {
+    const input = createExecutionInput();
+    const baseline = await createNoOpPolicyBaseline(store, input);
+    const baselineDeferred = createDeferred<typeof baseline>();
+    const policyController = {
+      ...createNoOpAttemptPolicyController(),
+      captureBaseline: async () => await baselineDeferred.promise,
+    };
+    const adapter = new FakeAdapter({
+      id: 'codex',
+      onExecute: async () => createExecutionResult(),
+    });
+    const executor = createExecutor(store, [adapter], { policyController });
+
+    const runPromise = executor.execute(input);
+    assert.equal(executor.cancel('attempt-1'), true);
+    assert.deepEqual(executor.getActiveAttemptIds(), ['attempt-1']);
+
+    baselineDeferred.resolve(baseline);
+    const outcome = await runPromise;
+    const eventTypes = store.listEvents().map((event) => event.type);
+
+    assert.equal(adapter.executeRequests.length, 0);
+    assert.deepEqual(adapter.cancelRequests, []);
+    assert.equal(outcome.startedEvent, null);
+    assert.equal(outcome.terminalEvent.type, 'execution.cancelled');
+    assert.equal(outcome.terminalAttemptStatus, 'cancelled');
+    assert.equal(eventTypes.includes('policy.baseline.captured'), true);
+    assert.equal(eventTypes.includes('execution.started'), false);
+    assert.equal(store.getAttempt('attempt-1')?.status, 'cancelled');
+  } finally {
+    store.close();
+  }
+});
+
+test('executor: cancellation after provider start delegates to adapter and resolves cancelled', async () => {
+  const dbPath = await createTempDbPath('orch4b-cancel-running-');
+  const store = createStore({ dbPath });
+  seedRunningAttempt(store);
+
+  try {
+    const providerStarted = createDeferred<void>();
+    const providerFinished = createDeferred<ExecutionResult>();
+    const adapter = new FakeAdapter({
+      id: 'codex',
+      onExecute: async () => {
+        providerStarted.resolve();
+        return await providerFinished.promise;
+      },
+      onCancel: () => {
+        providerFinished.resolve(createCancelledExecutionResult());
+      },
+    });
+    const executor = createExecutor(store, [adapter]);
+
+    const runPromise = executor.execute(createExecutionInput());
+    await providerStarted.promise;
+    assert.equal(executor.cancel('attempt-1'), true);
+    const outcome = await runPromise;
+
+    assert.equal(adapter.executeRequests.length, 1);
+    assert.deepEqual(adapter.cancelRequests, ['attempt-1']);
+    assert.equal(outcome.startedEvent?.type, 'execution.started');
+    assert.equal(outcome.terminalEvent.type, 'execution.cancelled');
+    assert.equal(outcome.terminalAttemptStatus, 'cancelled');
+    assert.equal(store.getAttempt('attempt-1')?.status, 'cancelled');
+  } finally {
+    store.close();
+  }
+});
+
+test('executor: repeated cancellation remains idempotent once the provider is active', async () => {
+  const dbPath = await createTempDbPath('orch4b-cancel-repeat-');
+  const store = createStore({ dbPath });
+  seedRunningAttempt(store);
+
+  try {
+    const providerStarted = createDeferred<void>();
+    const providerFinished = createDeferred<ExecutionResult>();
+    const adapter = new FakeAdapter({
+      id: 'codex',
+      onExecute: async () => {
+        providerStarted.resolve();
+        return await providerFinished.promise;
+      },
+      onCancel: () => {
+        providerFinished.resolve(createCancelledExecutionResult());
+      },
+    });
+    const executor = createExecutor(store, [adapter]);
+
+    const runPromise = executor.execute(createExecutionInput());
+    await providerStarted.promise;
+
+    assert.equal(executor.cancel('attempt-1'), true);
+    assert.equal(executor.cancel('attempt-1'), true);
+    assert.equal(executor.cancel('attempt-1'), true);
+
+    const outcome = await runPromise;
+
+    assert.deepEqual(adapter.cancelRequests, ['attempt-1']);
+    assert.equal(store.listEvents().filter((event) => event.type === 'execution.cancelled').length, 1);
+    assert.equal(outcome.terminalAttemptStatus, 'cancelled');
+    assert.equal(store.getAttempt('attempt-1')?.status, 'cancelled');
   } finally {
     store.close();
   }
@@ -402,7 +547,7 @@ test('executor: Codex reportedModel null stays null in durable payload', async (
     const executor = createExecutor(store, [adapter]);
     await executor.execute(createExecutionInput());
 
-    const terminalPayload = store.listEvents().at(-2)?.payload as Record<string, unknown>;
+    const terminalPayload = store.listEvents().find((event) => event.type === 'execution.completed')?.payload as Record<string, unknown>;
     assert.equal(terminalPayload.reportedModel, undefined);
     assert.equal(terminalPayload.reportedModelSource, 'none');
   } finally {
@@ -438,7 +583,7 @@ test('executor: Claude requestedModel and reportedModel remain distinct with usa
     const executor = createExecutor(store, [adapter]);
 
     await executor.execute(createExecutionInput({ provider: 'claude' }));
-    const terminalPayload = store.listEvents().at(-2)?.payload as Record<string, any>;
+    const terminalPayload = store.listEvents().find((event) => event.type === 'execution.completed')?.payload as Record<string, any>;
 
     assert.equal(terminalPayload.requestedModel, 'requested-model-A');
     assert.equal(terminalPayload.reportedModel, 'reported-model-B');
@@ -604,32 +749,23 @@ test('executor: cancellation targets only the selected Attempt and missing/compl
   store.createAttempt({ attemptId: 'attempt-2', taskId: 'task-2', hostInstanceId: 'host-instance-1' });
 
   try {
+    const firstStarted = createDeferred<void>();
+    const secondStarted = createDeferred<void>();
     const firstDeferred = createDeferred<ExecutionResult>();
     const secondDeferred = createDeferred<ExecutionResult>();
     const adapter = new FakeAdapter({
       id: 'codex',
       onExecute: async (request) => {
-        return request.attemptId === 'attempt-1' ? await firstDeferred.promise : await secondDeferred.promise;
+        if (request.attemptId === 'attempt-1') {
+          firstStarted.resolve();
+          return await firstDeferred.promise;
+        }
+        secondStarted.resolve();
+        return await secondDeferred.promise;
       },
       onCancel: (executionId) => {
         if (executionId === 'attempt-2') {
-          secondDeferred.resolve(
-            createExecutionResult({
-              executionId,
-              provider: {
-                terminalState: 'failed',
-                success: false,
-                errorCode: 'EXECUTION_CANCELLED',
-                errorMessage: 'cancelled',
-              },
-              process: {
-                exitCode: null,
-                signal: null,
-                timedOut: false,
-                cancelled: true,
-              },
-            }),
-          );
+          secondDeferred.resolve(createCancelledExecutionResult({ executionId }));
         }
       },
     });
@@ -637,14 +773,17 @@ test('executor: cancellation targets only the selected Attempt and missing/compl
 
     const first = executor.execute(createExecutionInput({ attemptId: 'attempt-1' }));
     const second = executor.execute(createExecutionInput({ attemptId: 'attempt-2', taskId: 'task-2' }));
+    await Promise.all([firstStarted.promise, secondStarted.promise]);
 
     assert.equal(executor.cancel('missing-attempt'), false);
     assert.equal(executor.cancel('attempt-2'), true);
 
     firstDeferred.resolve(createExecutionResult({ executionId: 'attempt-1' }));
-    await Promise.all([first, second]);
+    const [firstOutcome, secondOutcome] = await Promise.all([first, second]);
 
     assert.deepEqual(adapter.cancelRequests, ['attempt-2']);
+    assert.equal(firstOutcome.terminalAttemptStatus, 'passed');
+    assert.equal(secondOutcome.terminalAttemptStatus, 'cancelled');
     assert.equal(executor.cancel('attempt-1'), false);
   } finally {
     store.close();
@@ -809,7 +948,7 @@ test('executor: provider session ID and process facts are preserved in the termi
     );
     await executor.execute(createExecutionInput());
 
-    const payload = store.listEvents().at(-2)?.payload as Record<string, any>;
+    const payload = store.listEvents().find((event) => event.type === 'execution.completed')?.payload as Record<string, any>;
     assert.equal(payload.sessionId, 'thread-123');
     assert.equal(payload.process.exitCode, 23);
     assert.equal(payload.process.signal, 'SIGTERM');
@@ -961,43 +1100,73 @@ test('executor: provider registry creates Claude, Codex, and Ollama adapters fro
   assert.equal(registry.has('ollama'), true);
 });
 
-test('executor shutdown is bounded and requests cancellation of active executions', async () => {
-  const dbPath = await createTempDbPath('orch3f-shutdown-');
+test('executor shutdown cancels an Attempt waiting on policy baseline and resolves without launching the provider', async () => {
+  const dbPath = await createTempDbPath('orch4b-shutdown-baseline-');
   const store = createStore({ dbPath });
   seedRunningAttempt(store);
 
   try {
-    const deferred = createDeferred<ExecutionResult>();
+    const input = createExecutionInput();
+    const baseline = await createNoOpPolicyBaseline(store, input);
+    const baselineDeferred = createDeferred<typeof baseline>();
+    const policyController = {
+      ...createNoOpAttemptPolicyController(),
+      captureBaseline: async () => await baselineDeferred.promise,
+    };
     const adapter = new FakeAdapter({
       id: 'codex',
-      onExecute: async () => await deferred.promise,
+      onExecute: async () => createExecutionResult(),
     });
-    const executor = createExecutor(store, [adapter], { shutdownTimeoutMs: 25 });
+    const executor = createExecutor(store, [adapter], {
+      shutdownTimeoutMs: 250,
+      policyController,
+    });
 
-    void executor.execute(createExecutionInput());
-    const shutdownResult = await executor.shutdown();
+    const runPromise = executor.execute(input);
+    const shutdownPromise = executor.shutdown();
+
+    baselineDeferred.resolve(baseline);
+    const [outcome, shutdownResult] = await Promise.all([runPromise, shutdownPromise]);
+
+    assert.equal(adapter.executeRequests.length, 0);
+    assert.deepEqual(adapter.cancelRequests, []);
+    assert.equal(outcome.terminalAttemptStatus, 'cancelled');
+    assert.equal(shutdownResult.timedOut, false);
+    assert.equal(shutdownResult.remainingActiveAttempts, 0);
+  } finally {
+    store.close();
+  }
+});
+
+test('executor shutdown cancels an Attempt after provider start via the adapter path', async () => {
+  const dbPath = await createTempDbPath('orch4b-shutdown-provider-');
+  const store = createStore({ dbPath });
+  seedRunningAttempt(store);
+
+  try {
+    const providerStarted = createDeferred<void>();
+    const providerFinished = createDeferred<ExecutionResult>();
+    const adapter = new FakeAdapter({
+      id: 'codex',
+      onExecute: async () => {
+        providerStarted.resolve();
+        return await providerFinished.promise;
+      },
+      onCancel: () => {
+        providerFinished.resolve(createCancelledExecutionResult());
+      },
+    });
+    const executor = createExecutor(store, [adapter], { shutdownTimeoutMs: 250 });
+
+    const runPromise = executor.execute(createExecutionInput());
+    await providerStarted.promise;
+    const shutdownPromise = executor.shutdown();
+    const [outcome, shutdownResult] = await Promise.all([runPromise, shutdownPromise]);
 
     assert.deepEqual(adapter.cancelRequests, ['attempt-1']);
-    assert.equal(shutdownResult.timedOut, true);
-    assert.equal(shutdownResult.remainingActiveAttempts, 1);
-
-    deferred.resolve(
-      createExecutionResult({
-        provider: {
-          terminalState: 'failed',
-          success: false,
-          errorCode: 'EXECUTION_CANCELLED',
-          errorMessage: 'cancelled',
-        },
-        process: {
-          exitCode: null,
-          signal: null,
-          timedOut: false,
-          cancelled: true,
-        },
-      }),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(outcome.terminalAttemptStatus, 'cancelled');
+    assert.equal(shutdownResult.timedOut, false);
+    assert.equal(shutdownResult.remainingActiveAttempts, 0);
   } finally {
     store.close();
   }

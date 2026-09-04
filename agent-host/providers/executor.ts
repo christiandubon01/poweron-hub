@@ -4,6 +4,13 @@ import { OrchestrationError, type AttemptRecord, type AttemptStatus, type JsonVa
 import type { ProviderId, ExecutionResult, ExecutionRequest, PermissionProfile, ProviderAdapter, ProviderErrorCode } from './types.ts';
 import { ClaudeCompatibleProviderAdapter } from './claude.ts';
 import { CodexProviderAdapter } from './codex.ts';
+import {
+  buildPolicyBaselineEventPayload,
+  buildPolicyEvaluationEventPayload,
+  createAttemptPolicyController,
+  type AttemptPolicyController,
+} from '../policy/policy.ts';
+import type { PolicyAdjudication, PolicyBaselineCapture } from '../policy/types.ts';
 
 const DEFAULT_EXECUTION_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
@@ -28,16 +35,19 @@ export interface AttemptExecutionOutcome {
   executionId: string;
   attempt: AttemptRecord;
   result: ExecutionResult;
-  startedEvent: OrchestrationEventRecord;
+  startedEvent: OrchestrationEventRecord | null;
   terminalEvent: OrchestrationEventRecord;
   terminalAttemptStatus: AttemptStatus;
+  policy: PolicyAdjudication;
 }
 
 export type AttemptExecutorErrorCode =
   | 'EXECUTOR_SHUTTING_DOWN'
   | 'ATTEMPT_ALREADY_ACTIVE'
   | 'EVENT_PERSIST_FAILED'
-  | 'ATTEMPT_TRANSITION_FAILED';
+  | 'ATTEMPT_TRANSITION_FAILED'
+  | 'POLICY_CAPTURE_FAILED'
+  | 'POLICY_ADJUDICATION_FAILED';
 
 export class AttemptExecutorError extends Error {
   readonly code: AttemptExecutorErrorCode;
@@ -59,6 +69,8 @@ interface AttemptContext {
 
 interface ActiveExecutionEntry {
   cancel(): void;
+  setProviderCancel(cancel: () => void): void;
+  isCancellationRequested(): boolean;
   completion: Promise<void>;
 }
 
@@ -69,6 +81,7 @@ export interface AttemptExecutorDependencies {
   idGenerator?: (() => string) | undefined;
   defaultTimeoutMs?: number | undefined;
   shutdownTimeoutMs?: number | undefined;
+  policyController?: AttemptPolicyController | undefined;
 }
 
 export interface AttemptExecutorShutdownResult {
@@ -83,6 +96,7 @@ export class AttemptExecutor {
   private readonly idGenerator: () => string;
   private readonly defaultTimeoutMs: number;
   private readonly shutdownTimeoutMs: number;
+  private readonly policyController: AttemptPolicyController;
   private readonly activeExecutions = new Map<string, ActiveExecutionEntry>();
   private acceptingExecutions = true;
   private shutdownPromise: Promise<AttemptExecutorShutdownResult> | null = null;
@@ -94,6 +108,7 @@ export class AttemptExecutor {
     this.idGenerator = dependencies.idGenerator ?? globalThis.crypto.randomUUID.bind(globalThis.crypto);
     this.defaultTimeoutMs = dependencies.defaultTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS;
     this.shutdownTimeoutMs = dependencies.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
+    this.policyController = dependencies.policyController ?? createAttemptPolicyController();
   }
 
   execute(input: AttemptExecutionInput): Promise<AttemptExecutionOutcome> {
@@ -109,10 +124,7 @@ export class AttemptExecutor {
       );
     }
 
-    const activeEntry: ActiveExecutionEntry = {
-      cancel: () => undefined,
-      completion: Promise.resolve(),
-    };
+    const activeEntry = createActiveExecutionEntry();
     this.activeExecutions.set(input.attemptId, activeEntry);
 
     const executionPromise = this.runExecution(input, context, activeEntry);
@@ -174,19 +186,29 @@ export class AttemptExecutor {
     const startedAt = this.now();
 
     try {
-      const startedEvent = this.persistStartedEvent(input);
+      const policyBaseline = await this.capturePolicyBaseline(input, context);
+      this.persistPolicyBaselineEvent(input, policyBaseline);
+      const request = buildExecutionRequest(input, this.defaultTimeoutMs);
       const adapter = this.registry.get(input.provider);
+      let startedEvent: OrchestrationEventRecord | null = null;
+      let result: ExecutionResult;
 
-      if (adapter) {
-        activeEntry.cancel = () => adapter.cancel(input.attemptId);
+      if (activeEntry.isCancellationRequested()) {
+        result = buildCancelledBeforeLaunchResult(request);
+      } else {
+        startedEvent = this.persistStartedEvent(input);
+        if (adapter) {
+          activeEntry.setProviderCancel(() => adapter.cancel(input.attemptId));
+        }
+        result = await executeViaAdapter(adapter, request, input);
       }
 
-      const request = buildExecutionRequest(input, this.defaultTimeoutMs);
-      const result = await executeViaAdapter(adapter, request, input);
       const terminalEventType = mapTerminalEventType(result);
-      const terminalAttemptStatus = mapAttemptStatus(result);
       const durationMs = Math.max(0, this.now().getTime() - startedAt.getTime());
       const terminalEvent = this.persistTerminalEvent(input, result, terminalEventType, durationMs);
+      const policy = await this.adjudicatePolicy(input, policyBaseline);
+      this.persistPolicyEvent(input, policy);
+      const terminalAttemptStatus = resolveEffectiveAttemptStatus(result, policy);
       const attempt = this.transitionAttemptTerminal(context.attempt.attemptId, terminalAttemptStatus);
 
       return {
@@ -196,9 +218,28 @@ export class AttemptExecutor {
         startedEvent,
         terminalEvent,
         terminalAttemptStatus,
+        policy,
       };
     } finally {
       this.activeExecutions.delete(input.attemptId);
+    }
+  }
+
+  private async capturePolicyBaseline(input: AttemptExecutionInput, context: AttemptContext): Promise<PolicyBaselineCapture> {
+    try {
+      return await this.policyController.captureBaseline({
+        runId: input.runId,
+        task: context.task,
+        attemptId: input.attemptId,
+        permissionProfile: input.permissionProfile,
+        workingDirectory: input.workingDirectory,
+      });
+    } catch (error) {
+      throw new AttemptExecutorError(
+        'POLICY_CAPTURE_FAILED',
+        `Failed to capture policy baseline for attempt ${input.attemptId}.`,
+        { cause: error },
+      );
     }
   }
 
@@ -216,6 +257,25 @@ export class AttemptExecutor {
       throw new AttemptExecutorError(
         'EVENT_PERSIST_FAILED',
         `Failed to persist execution.started for attempt ${input.attemptId}.`,
+        { cause: error },
+      );
+    }
+  }
+
+  private persistPolicyBaselineEvent(input: AttemptExecutionInput, baseline: PolicyBaselineCapture): OrchestrationEventRecord {
+    try {
+      return this.store.appendEvent({
+        eventId: this.idGenerator(),
+        runId: input.runId,
+        taskId: input.taskId,
+        attemptId: input.attemptId,
+        type: 'policy.baseline.captured',
+        payload: buildPolicyBaselineEventPayload(baseline),
+      });
+    } catch (error) {
+      throw new AttemptExecutorError(
+        'EVENT_PERSIST_FAILED',
+        `Failed to persist policy.baseline.captured for attempt ${input.attemptId}.`,
         { cause: error },
       );
     }
@@ -240,6 +300,54 @@ export class AttemptExecutor {
       throw new AttemptExecutorError(
         'EVENT_PERSIST_FAILED',
         `Failed to persist ${terminalEventType} for attempt ${input.attemptId}.`,
+        { cause: error },
+      );
+    }
+  }
+
+  private async adjudicatePolicy(
+    input: AttemptExecutionInput,
+    baseline: PolicyBaselineCapture,
+  ): Promise<PolicyAdjudication> {
+    try {
+      return await this.policyController.adjudicate({
+        baseline,
+        workingDirectory: input.workingDirectory,
+      });
+    } catch (error) {
+      throw new AttemptExecutorError(
+        'POLICY_ADJUDICATION_FAILED',
+        `Failed to adjudicate repo policy for attempt ${input.attemptId}.`,
+        { cause: error },
+      );
+    }
+  }
+
+  private persistPolicyEvent(input: AttemptExecutionInput, policy: PolicyAdjudication): void {
+    try {
+      this.store.appendEvent({
+        eventId: this.idGenerator(),
+        runId: input.runId,
+        taskId: input.taskId,
+        attemptId: input.attemptId,
+        type: 'policy.evaluated',
+        payload: buildPolicyEvaluationEventPayload(policy),
+      });
+
+      if (!policy.accepted) {
+        this.store.appendEvent({
+          eventId: this.idGenerator(),
+          runId: input.runId,
+          taskId: input.taskId,
+          attemptId: input.attemptId,
+          type: 'policy.violation',
+          payload: buildPolicyEvaluationEventPayload(policy),
+        });
+      }
+    } catch (error) {
+      throw new AttemptExecutorError(
+        'EVENT_PERSIST_FAILED',
+        `Failed to persist policy events for attempt ${input.attemptId}.`,
         { cause: error },
       );
     }
@@ -354,6 +462,35 @@ function validateAttemptExecution(store: OrchestrationStore, input: AttemptExecu
   return { run, task, attempt };
 }
 
+function createActiveExecutionEntry(): ActiveExecutionEntry {
+  let cancellationRequested = false;
+  let providerCancel: (() => void) | null = null;
+  let providerCancelForwarded = false;
+
+  const forwardProviderCancel = (): void => {
+    if (!cancellationRequested || !providerCancel || providerCancelForwarded) {
+      return;
+    }
+    providerCancelForwarded = true;
+    providerCancel();
+  };
+
+  return {
+    cancel(): void {
+      cancellationRequested = true;
+      forwardProviderCancel();
+    },
+    setProviderCancel(cancel: () => void): void {
+      providerCancel = cancel;
+      forwardProviderCancel();
+    },
+    isCancellationRequested(): boolean {
+      return cancellationRequested;
+    },
+    completion: Promise.resolve(),
+  };
+}
+
 function buildExecutionRequest(input: AttemptExecutionInput, defaultTimeoutMs: number): ExecutionRequest {
   return {
     executionId: input.attemptId,
@@ -414,6 +551,13 @@ function mapAttemptStatus(result: ExecutionResult): AttemptStatus {
     return 'cancelled';
   }
   return 'failed';
+}
+
+function resolveEffectiveAttemptStatus(result: ExecutionResult, policy: PolicyAdjudication): AttemptStatus {
+  if (result.provider.success && !policy.accepted) {
+    return 'failed';
+  }
+  return mapAttemptStatus(result);
 }
 
 function buildStartedEventPayload(input: AttemptExecutionInput, defaultTimeoutMs: number): JsonValue {
@@ -477,6 +621,34 @@ function buildProviderUnavailableResult(
       success: false,
       errorCode,
       errorMessage,
+    },
+    model: {
+      requestedModel: request.requestedModel ?? null,
+      reportedModel: null,
+      reportedModelSource: 'none',
+    },
+    usage: {
+      source: 'none',
+    },
+    session: {},
+    output: {},
+  };
+}
+
+function buildCancelledBeforeLaunchResult(request: ExecutionRequest): ExecutionResult {
+  return {
+    executionId: request.executionId,
+    process: {
+      exitCode: null,
+      signal: null,
+      timedOut: false,
+      cancelled: true,
+    },
+    provider: {
+      terminalState: 'failed',
+      success: false,
+      errorCode: 'EXECUTION_CANCELLED',
+      errorMessage: 'Provider execution was cancelled before launch.',
     },
     model: {
       requestedModel: request.requestedModel ?? null,

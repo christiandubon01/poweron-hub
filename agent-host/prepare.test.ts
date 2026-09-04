@@ -7,6 +7,7 @@ import test from 'node:test';
 import { readLock } from './lib/lock.ts';
 import { openOrchestrationStore, type OrchestrationStore } from './lib/store.ts';
 import { resolveStatePaths } from './lib/statePaths.ts';
+import { createNoOpAttemptPolicyController } from './policy/policy.ts';
 import { runDispatchCommand } from './dispatch.ts';
 import {
   buildPrepareSummary,
@@ -544,7 +545,12 @@ test('end-to-end dry prepare to dispatch success adopts prepared hostInstanceId 
       }),
       createProviderRegistry: () => new Map([['codex', adapter]]),
       discoverTools: async () => [],
-      createAttemptExecutor: ({ store, registry, now }) => new AttemptExecutor({ store, registry, now }),
+      createAttemptExecutor: ({ store, registry, now }) => new AttemptExecutor({
+        store,
+        registry,
+        now,
+        policyController: createNoOpAttemptPolicyController(),
+      }),
       subscribeToTermination: () => () => undefined,
     },
   );
@@ -613,7 +619,12 @@ test('end-to-end dry prepare to dispatch failure persists execution.failed with 
       }),
       createProviderRegistry: () => new Map([['codex', adapter]]),
       discoverTools: async () => [],
-      createAttemptExecutor: ({ store, registry, now }) => new AttemptExecutor({ store, registry, now }),
+      createAttemptExecutor: ({ store, registry, now }) => new AttemptExecutor({
+        store,
+        registry,
+        now,
+        policyController: createNoOpAttemptPolicyController(),
+      }),
       subscribeToTermination: () => () => undefined,
     },
   );

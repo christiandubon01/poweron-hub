@@ -19,6 +19,7 @@ import {
 } from './dispatch.ts';
 import { openOrchestrationStore } from './lib/store.ts';
 import { resolveStatePaths } from './lib/statePaths.ts';
+import { createNoOpAttemptPolicyController } from './policy/policy.ts';
 import type { OrchestrationStore } from './lib/store.ts';
 import type { AttemptRecord, TaskRecord } from './lib/orchestrationTypes.ts';
 import { AttemptExecutor, type AttemptExecutionOutcome } from './providers/executor.ts';
@@ -177,6 +178,16 @@ function createOutcome(overrides: Partial<ExecutionResult> = {}): AttemptExecuti
       payload: {},
     },
     terminalAttemptStatus: overrides.provider?.success === false ? 'failed' : 'passed',
+    policy: {
+      decision: 'allow',
+      accepted: true,
+      reasonCodes: [],
+      reason: 'Policy accepted the result.',
+      baselineHeadSha: 'head-1',
+      finalHeadSha: 'head-1',
+      headMoved: false,
+      changes: [],
+    },
   };
 }
 
@@ -700,7 +711,12 @@ test('dispatch can recover a stale dead Host lock only through existing ORCH-1 r
       repoPath,
       localAppData,
       createProviderRegistry: () => new Map([['codex', adapter]]),
-      createAttemptExecutor: ({ store, registry, now }) => new AttemptExecutor({ store, registry, now }),
+      createAttemptExecutor: ({ store, registry, now }) => new AttemptExecutor({
+        store,
+        registry,
+        now,
+        policyController: createNoOpAttemptPolicyController(),
+      }),
     }),
   );
 
@@ -757,7 +773,12 @@ test('dispatch dry success smoke uses real AttemptExecutor, keeps Task running, 
         },
       ],
       createProviderRegistry: () => new Map([['codex', adapter]]),
-      createAttemptExecutor: ({ store, registry, now }) => new AttemptExecutor({ store, registry, now }),
+      createAttemptExecutor: ({ store, registry, now }) => new AttemptExecutor({
+        store,
+        registry,
+        now,
+        policyController: createNoOpAttemptPolicyController(),
+      }),
     }),
   );
 
@@ -810,7 +831,12 @@ test('dispatch dry failure smoke uses real AttemptExecutor, marks Attempt failed
       localAppData,
       discoverTools: async () => [],
       createProviderRegistry: () => new Map([['codex', adapter]]),
-      createAttemptExecutor: ({ store, registry, now }) => new AttemptExecutor({ store, registry, now }),
+      createAttemptExecutor: ({ store, registry, now }) => new AttemptExecutor({
+        store,
+        registry,
+        now,
+        policyController: createNoOpAttemptPolicyController(),
+      }),
     }),
   );
 
@@ -848,7 +874,12 @@ test('dispatch surfaces provider unavailable through AttemptExecutor when no ada
       localAppData,
       discoverTools: async () => [],
       createProviderRegistry: () => new Map(),
-      createAttemptExecutor: ({ store, registry, now }) => new AttemptExecutor({ store, registry, now }),
+      createAttemptExecutor: ({ store, registry, now }) => new AttemptExecutor({
+        store,
+        registry,
+        now,
+        policyController: createNoOpAttemptPolicyController(),
+      }),
     }),
   );
 
