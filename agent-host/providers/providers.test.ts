@@ -13,6 +13,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import type { SpawnOptions } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 
 import { JsonlDecoder } from './jsonl.ts';
 import {
@@ -97,6 +99,26 @@ async function runToResult(
 ): Promise<ProcessExecutionResult> {
   const handle = runner.run(options);
   return await handle.done;
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: any) {
+    return error?.code !== 'ESRCH';
+  }
+}
+
+function forceStopKnownPid(pid: number): void {
+  if (!processExists(pid)) {
+    return;
+  }
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    /* exact test fixture PID may already have exited */
+  }
 }
 
 function decoderState(decoder: JsonlDecoder): {
@@ -420,7 +442,7 @@ test('process: 7) overall timeout', async (t) => {
   );
   assert.equal(result.timedOut, true);
   assert.equal(result.terminationReason, 'timeout-overall');
-  assert.equal(kill.calls.length, 1);
+  assert.ok(kill.calls.length >= 1 && kill.calls.length <= 2, 'at most one exact-tree retry is allowed');
   assert.ok(isValidKillPid(kill.calls[0]));
 });
 
@@ -466,9 +488,148 @@ test('process: 9+10+11) manual cancellation, idempotent, force-kill after grace'
   const result = await handle.done;
   assert.equal(result.cancelled, true);
   assert.equal(result.terminationReason, 'cancelled');
-  assert.equal(kill.calls.length, 1, 'force-kill must be invoked exactly once');
+  assert.ok(kill.calls.length >= 1 && kill.calls.length <= 2, 'at most one exact-tree retry is allowed');
   assert.ok(isValidKillPid(kill.calls[0]));
   assert.equal(kill.calls[0], pidBefore);
+});
+
+test('process: forced settlement preserves cancellation when close never arrives', async () => {
+  class NeverCloseChild extends EventEmitter {
+    pid = 4242;
+    stdin = new PassThrough();
+    stdout = new PassThrough();
+    stderr = new PassThrough();
+    unrefCalls = 0;
+    unref(): void { this.unrefCalls += 1; }
+  }
+
+  const child = new NeverCloseChild();
+  const kills: number[] = [];
+  const runner = new ProcessRunner();
+  const handle = runner.run(
+    baseOptions(nativeLaunch('slow', ['--arg', '50']), {
+      timeouts: {
+        overallTimeoutMs: 10_000,
+        startupTimeoutMs: 10_000,
+        idleTimeoutMs: 10_000,
+        cancelGraceMs: 1,
+        postKillSettlementMs: 25,
+      },
+      spawnFn: () => child as any,
+      killProcessTree: async (pid) => {
+        kills.push(pid);
+        return { killed: true };
+      },
+    }),
+  );
+  handle.cancel();
+  const result = await handle.done;
+  assert.equal(result.terminationReason, 'cancelled');
+  assert.equal(result.cancelled, true);
+  assert.deepEqual(kills, [4242]);
+  assert.equal(child.unrefCalls, 1);
+  assert.equal(child.stdin.destroyed, true);
+  assert.equal(child.stdout.destroyed, true);
+  assert.equal(child.stderr.destroyed, true);
+
+  child.emit('close');
+  assert.equal(child.unrefCalls, 1, 'late close must be a harmless no-op');
+});
+
+test('process: failed exact tree kill is retried once before bounded settlement', async () => {
+  class NeverCloseChild extends EventEmitter {
+    pid = 4343;
+    stdin = new PassThrough();
+    stdout = new PassThrough();
+    stderr = new PassThrough();
+    unref(): void {}
+  }
+
+  const child = new NeverCloseChild();
+  const kills: number[] = [];
+  const handle = new ProcessRunner().run(
+    baseOptions(nativeLaunch('slow'), {
+      timeouts: {
+        overallTimeoutMs: 10_000,
+        startupTimeoutMs: 10_000,
+        idleTimeoutMs: 10_000,
+        cancelGraceMs: 1,
+        postKillSettlementMs: 250,
+      },
+      spawnFn: () => child as any,
+      killProcessTree: async (pid) => {
+        kills.push(pid);
+        return { killed: false, error: 'access denied' };
+      },
+    }),
+  );
+  handle.cancel();
+  const result = await handle.done;
+  assert.equal(result.terminationReason, 'cancelled');
+  assert.deepEqual(kills, [4343, 4343]);
+});
+
+test('process: exact root tree kill handles a known grandchild within the bounded window', async () => {
+  const kill = recordingKill();
+  let grandchildPid: number | null = null;
+  const handle = new ProcessRunner().run(
+    baseOptions(nativeLaunch('grandchild'), {
+      timeouts: {
+        overallTimeoutMs: 10_000,
+        startupTimeoutMs: 10_000,
+        idleTimeoutMs: 10_000,
+        cancelGraceMs: 25,
+        postKillSettlementMs: 500,
+      },
+      killProcessTree: kill.fn,
+      callbacks: {
+        onStdoutChunk: (chunk) => {
+          const match = /grandchild-pid:(\d+)/u.exec(chunk.toString('utf8'));
+          if (match) {
+            grandchildPid = Number(match[1]);
+          }
+        },
+      },
+    }),
+  );
+
+  await new Promise<void>((resolve, reject) => {
+    const deadline = setTimeout(() => reject(new Error('fixture did not announce its grandchild PID')), 2_000);
+    const poll = (): void => {
+      if (grandchildPid !== null) {
+        clearTimeout(deadline);
+        resolve();
+      } else {
+        setTimeout(poll, 10);
+      }
+    };
+    poll();
+  });
+
+  try {
+    handle.cancel();
+    const result = await handle.done;
+    assert.equal(result.terminationReason, 'cancelled');
+    assert.ok(isValidKillPid(handle.pid));
+    assert.ok(kill.calls.length >= 1 && kill.calls.length <= 2);
+    assert.ok(kill.calls.every((pid) => pid === handle.pid), 'only the captured root PID may be targeted');
+    assert.ok(grandchildPid !== null);
+  } finally {
+    // If the test environment cannot grant taskkill permission for the root,
+    // clean up the exact descendant PID announced by this fixture. This never
+    // discovers or targets a process by executable name.
+    if (handle.pid !== null && processExists(handle.pid)) {
+      await defaultKillProcessTree(handle.pid);
+      forceStopKnownPid(handle.pid);
+    }
+    if (grandchildPid !== null && processExists(grandchildPid)) {
+      await defaultKillProcessTree(grandchildPid);
+      forceStopKnownPid(grandchildPid);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(handle.pid === null ? false : processExists(handle.pid), false, 'fixture root must not remain alive');
+    assert.equal(grandchildPid === null ? false : processExists(grandchildPid), false, 'fixture descendant must not remain alive');
+  }
 });
 
 test('process: 12) bounded stdout tail', async (t) => {
@@ -505,7 +666,7 @@ test('process: 14) absolute output safety limit', async (t) => {
   );
   assert.equal(result.outputLimitExceeded, true);
   assert.equal(result.terminationReason, 'output-limit');
-  assert.equal(kill.calls.length, 1);
+  assert.ok(kill.calls.length >= 1 && kill.calls.length <= 2, 'at most one exact-tree retry is allowed');
 });
 
 test('process: 15) callback/parser failure cannot orphan child', async (t) => {
@@ -528,7 +689,7 @@ test('process: 15) callback/parser failure cannot orphan child', async (t) => {
   assert.equal(result.terminationReason, 'callback-error');
   assert.ok(result.callbackErrorMessage?.includes('parser explosion'));
   // child was NOT orphaned: force-kill ran
-  assert.equal(kill.calls.length, 1);
+  assert.ok(kill.calls.length >= 1 && kill.calls.length <= 2, 'at most one exact-tree retry is allowed');
 });
 
 test('process: 16) invalid working directory rejected', async (t) => {

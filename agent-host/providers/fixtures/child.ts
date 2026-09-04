@@ -10,6 +10,7 @@
  *   stderr      Write benign noise to stderr, exit 0.
  *   nonzero     Exit with code 7.
  *   hang        Keep alive forever (never exit). For timeout tests.
+ *   grandchild  Spawn a hanging descendant that inherits stdio, then hang.
  *   idle        Write one line, then keep alive forever. For idle timeout.
  *   longout     Write --arg bytes of 'x' in 16 KiB chunks, exit 0.
  *   ignore      Ignore stdin close; keep alive with an interval. For
@@ -17,6 +18,8 @@
  *   slow        Exit 0 after --arg ms.
  *   jsonl       Emit a small JSONL sequence to stdout, exit 0.
  */
+
+import { spawn } from 'node:child_process';
 
 function argValue(name: string): string | undefined {
   const argv = process.argv;
@@ -93,6 +96,17 @@ function main(): void {
     case 'hang': {
       // Keep the event loop alive indefinitely (ref'd so the child does NOT
       // exit on its own; only a force-kill ends it).
+      setInterval(() => undefined, 60_000);
+      break;
+    }
+    case 'grandchild': {
+      // The descendant inherits these pipes, reproducing the Windows case
+      // where the direct child's close event can be delayed after tree kill.
+      const descendant = spawn(process.execPath, [process.argv[1], '--mode', 'hang'], {
+        stdio: 'inherit',
+        windowsHide: true,
+      });
+      process.stdout.write(`grandchild-pid:${descendant.pid ?? ''}\n`);
       setInterval(() => undefined, 60_000);
       break;
     }

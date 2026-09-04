@@ -45,6 +45,10 @@ export const OVERALL_TIMEOUT_MIN_MS = 60_000;
 export const OVERALL_TIMEOUT_MAX_MS = 30 * 60_000;
 /** Cancel grace: time between cancel request and force tree kill. */
 export const CANCEL_GRACE_MS = 5_000;
+/** Maximum wait for a killed process tree to emit the child's `close` event. */
+export const POST_KILL_SETTLEMENT_MS = 3_000;
+/** One bounded retry is allowed when exact-PID tree termination reports failure. */
+export const TREE_KILL_RETRY_MS = 100;
 
 /** Retained stdout tail (last 64 KiB). Stream throughput is NOT capped by this. */
 export const STDOUT_RETAINED_TAIL_BYTES = 64 * 1024;
@@ -381,6 +385,8 @@ export interface TimeoutConfig {
   idleTimeoutMs: number | undefined;
   overallTimeoutMs: number;
   cancelGraceMs: number;
+  /** Bounded observation window after force-killing the captured PID tree. */
+  postKillSettlementMs: number;
 }
 
 export interface RunProcessOptions {
@@ -457,6 +463,7 @@ export class ProcessRunner {
       idleTimeoutMs: options.timeouts?.idleTimeoutMs ?? IDLE_TIMEOUT_MS,
       overallTimeoutMs,
       cancelGraceMs: options.timeouts?.cancelGraceMs ?? CANCEL_GRACE_MS,
+      postKillSettlementMs: options.timeouts?.postKillSettlementMs ?? POST_KILL_SETTLEMENT_MS,
     };
 
     const limits: OutputLimits = {
@@ -504,6 +511,9 @@ export class ProcessRunner {
     let startupTimer: NodeJS.Timeout | undefined;
     let idleTimer: NodeJS.Timeout | undefined;
     let graceTimer: NodeJS.Timeout | undefined;
+    let postKillTimer: NodeJS.Timeout | undefined;
+    let treeKillRetryTimer: NodeJS.Timeout | undefined;
+    let treeKillAttempts = 0;
 
     let resolveDone!: (result: ProcessExecutionResult) => void;
     const done = new Promise<ProcessExecutionResult>((resolve) => {
@@ -523,10 +533,14 @@ export class ProcessRunner {
       clearTimer(startupTimer);
       clearTimer(idleTimer);
       clearTimer(graceTimer);
+      clearTimer(postKillTimer);
+      clearTimer(treeKillRetryTimer);
       overallTimer = undefined;
       startupTimer = undefined;
       idleTimer = undefined;
       graceTimer = undefined;
+      postKillTimer = undefined;
+      treeKillRetryTimer = undefined;
     };
 
     const armIdle = (): void => {
@@ -593,11 +607,34 @@ export class ProcessRunner {
       }
     };
 
+    const releaseProcessResources = (): void => {
+      try {
+        child?.stdin?.end();
+      } catch {
+        /* ignore */
+      }
+      try {
+        child?.stdin?.destroy();
+        child?.stdout?.destroy();
+        child?.stderr?.destroy();
+      } catch {
+        /* ignore */
+      }
+      // This only releases our event-loop reference; it is not evidence that
+      // Windows terminated the provider process tree.
+      try {
+        child?.unref();
+      } catch {
+        /* ignore */
+      }
+    };
+
     /**
      * Initiate termination for a non-exit reason. Cooperative step: close stdin
      * (EOF signal). After the cancel grace period, force tree-kill. The actual
-     * settle happens on the child 'close' event so we capture exit facts. For
-     * spawn-failed (no child / error), settle immediately.
+     * settle normally happens on the child 'close' event so we capture exit
+     * facts. A bounded post-kill deadline prevents inherited descendant pipes
+     * from keeping the host in this state indefinitely.
      */
     const terminate = (reason: ProcessTerminationReason): void => {
       if (state === 'settled' || state === 'terminating') {
@@ -625,9 +662,36 @@ export class ProcessRunner {
       const pid = capturedPid;
       if (isValidKillPid(pid)) {
         graceTimer = setTimeout(() => {
-          void killFn(pid).catch(() => {
-            /* best-effort; close will still settle */
-          });
+          const forceKill = (): void => {
+            if (state !== 'terminating') {
+              return;
+            }
+            treeKillAttempts += 1;
+            if (!postKillTimer) {
+              postKillTimer = setTimeout(() => {
+                if (state !== 'terminating') {
+                  return;
+                }
+                // The exact tree was targeted, but a descendant may retain a
+                // pipe and indefinitely suppress `close`. Preserve the known
+                // terminal reason while releasing local handles and settling.
+                releaseProcessResources();
+                settle(pendingReason ?? reason);
+              }, timeouts.postKillSettlementMs);
+            }
+            void killFn(pid)
+              .then((result) => {
+                if (!result.killed && treeKillAttempts < 2 && state === 'terminating') {
+                  treeKillRetryTimer = setTimeout(forceKill, TREE_KILL_RETRY_MS);
+                }
+              })
+              .catch(() => {
+                if (treeKillAttempts < 2 && state === 'terminating') {
+                  treeKillRetryTimer = setTimeout(forceKill, TREE_KILL_RETRY_MS);
+                }
+              });
+          };
+          forceKill();
         }, timeouts.cancelGraceMs);
       } else {
         // No valid PID (spawn failed). Settle immediately.
