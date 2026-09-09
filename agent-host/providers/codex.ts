@@ -217,7 +217,7 @@ export function buildCodexLaunchDescriptor(target: CodexLaunchTarget, request: E
     request.workingDirectory,
   ];
   if (request.permissionProfile === 'task-implementer') {
-    argv.push('-c', 'sandbox_workspace_write.network_access=false');
+    argv.push('--skip-git-repo-check', '-c', 'sandbox_workspace_write.network_access=false');
   }
 
   if (typeof request.requestedModel === 'string' && request.requestedModel.trim().length > 0) {

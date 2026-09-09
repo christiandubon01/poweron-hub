@@ -559,8 +559,12 @@ test('codex adapter: 19) sandbox mapping is conservative and danger-full-access 
   assert.deepEqual(reviewerLaunch.argv.slice(0, 8), ['exec', '--json', '--ephemeral', '-c', 'shell_environment_policy.inherit=core', '--sandbox', 'read-only', '-C']);
   assert.deepEqual(verifierLaunch.argv.slice(0, 8), ['exec', '--json', '--ephemeral', '-c', 'shell_environment_policy.inherit=core', '--sandbox', 'read-only', '-C']);
   assert.deepEqual(implementerLaunch.argv.slice(0, 8), ['exec', '--json', '--ephemeral', '-c', 'shell_environment_policy.inherit=core', '--sandbox', 'workspace-write', '-C']);
+  assert.equal(implementerLaunch.argv.filter((arg) => arg === '--skip-git-repo-check').length, 1);
+  assert.equal(reviewerLaunch.argv.includes('--skip-git-repo-check'), false);
+  assert.equal(verifierLaunch.argv.includes('--skip-git-repo-check'), false);
   assert.ok(implementerLaunch.argv.includes('sandbox_workspace_write.network_access=false'));
   assert.equal(reviewerLaunch.argv.includes('sandbox_workspace_write.network_access=false'), false);
+  assert.equal(verifierLaunch.argv.includes('sandbox_workspace_write.network_access=false'), false);
   assert.equal(implementerLaunch.argv.includes('danger-full-access'), false);
 });
 
@@ -581,6 +585,7 @@ test('codex adapter: 20) launch argv includes exact Codex exec shape and request
     'workspace-write',
     '-C',
     repoPath,
+    '--skip-git-repo-check',
     '-c',
     'sandbox_workspace_write.network_access=false',
     '-m',
