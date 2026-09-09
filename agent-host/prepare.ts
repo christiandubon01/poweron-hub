@@ -17,6 +17,7 @@ export interface PrepareCliOptions {
   goal?: string;
   taskTitle: string;
   taskGoal?: string;
+  authorizedWritePaths?: string[];
   json: boolean;
 }
 
@@ -110,6 +111,7 @@ export function parsePrepareArgs(argv: readonly string[]): PrepareCliOptions {
   let goal: string | undefined;
   let taskTitle: string | undefined;
   let taskGoal: string | undefined;
+  const authorizedWritePaths: string[] = [];
   let json = false;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -132,6 +134,15 @@ export function parsePrepareArgs(argv: readonly string[]): PrepareCliOptions {
         taskGoal = nextOptionValue(argv, index, token);
         index += 1;
         break;
+      case '--authorized-write-path': {
+        const value = nextOptionValue(argv, index, token);
+        if (value.length === 0) {
+          throw new PrepareCliError('ARGUMENT_INVALID', `Value for ${token} must not be empty.`);
+        }
+        authorizedWritePaths.push(value);
+        index += 1;
+        break;
+      }
       case '--json':
         json = true;
         break;
@@ -145,6 +156,7 @@ export function parsePrepareArgs(argv: readonly string[]): PrepareCliOptions {
     goal,
     taskTitle: requireNonEmptyValue(taskTitle, '--task-title'),
     taskGoal,
+    authorizedWritePaths,
     json,
   };
 }
@@ -208,6 +220,7 @@ export function prepareDurableRecords(options: {
   taskId: string;
   taskTitle: string;
   taskGoal?: string;
+  authorizedWritePaths?: readonly string[];
   attemptId: string;
   hostInstanceId: string;
 }): PreparedDurableRecords {
@@ -222,6 +235,9 @@ export function prepareDurableRecords(options: {
     runId: run.runId,
     title: options.taskTitle,
     goal: options.taskGoal,
+    spec: options.authorizedWritePaths && options.authorizedWritePaths.length > 0
+      ? { policy: { authorizedWritePaths: [...options.authorizedWritePaths] } }
+      : undefined,
   });
 
   const attempt = options.store.createAttempt({
@@ -331,6 +347,7 @@ export async function runPrepareCommand(
       taskId,
       taskTitle: options.taskTitle,
       taskGoal: options.taskGoal,
+      authorizedWritePaths: options.authorizedWritePaths,
       attemptId,
       hostInstanceId: instanceIdentity.instanceId,
     });

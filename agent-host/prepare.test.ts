@@ -92,6 +92,7 @@ function createPrepareInput(overrides: Partial<PrepareCommandOptions> = {}): Pre
     goal: 'Prepare a single durable run for dispatch.',
     taskTitle: 'Return exactly OK',
     taskGoal: 'Use a trivial dry-run task.',
+    authorizedWritePaths: [],
     json: true,
     ...overrides,
   };
@@ -198,6 +199,7 @@ test('prepare parser accepts owner-facing arguments and main returns nonzero for
 
   assert.equal(parsed.title, 'ORCH smoke test');
   assert.equal(parsed.taskTitle, 'Return exactly OK');
+  assert.deepEqual(parsed.authorizedWritePaths, []);
   assert.equal(parsed.json, true);
 
   const output: string[] = [];
@@ -210,6 +212,54 @@ test('prepare parser accepts owner-facing arguments and main returns nonzero for
 
   assert.equal(exitCode, 1);
   assert.equal(output.join('').includes('"errorCode": "ARGUMENT_INVALID"'), true);
+});
+
+test('prepare parser preserves one and repeated authorized write paths in occurrence order', () => {
+  const one = parsePrepareArgs([
+    '--title', 'Run',
+    '--task-title', 'Task',
+    '--authorized-write-path', 'a/b.txt',
+  ]);
+  const multiple = parsePrepareArgs([
+    '--title', 'Run',
+    '--task-title', 'Task',
+    '--authorized-write-path', 'a.txt',
+    '--authorized-write-path', 'b.txt',
+  ]);
+
+  assert.deepEqual(one.authorizedWritePaths, ['a/b.txt']);
+  assert.deepEqual(multiple.authorizedWritePaths, ['a.txt', 'b.txt']);
+});
+
+test('prepare rejects missing and empty authorized write path values before durable preparation', async () => {
+  let durablePreparationStarted = false;
+  const dependencies: PrepareCommandDependencies = {
+    resolveCanonicalRepo: async () => {
+      durablePreparationStarted = true;
+      return 'unused';
+    },
+  };
+
+  for (const argv of [
+    ['--title', 'Run', '--task-title', 'Task', '--authorized-write-path'],
+    ['--title', 'Run', '--task-title', 'Task', '--authorized-write-path', ''],
+  ]) {
+    const output: string[] = [];
+    const exitCode = await main(argv, dependencies, {
+      write(value: string): boolean {
+        output.push(value);
+        return true;
+      },
+    });
+    const summary = JSON.parse(output.join('')) as { runId: unknown; taskId: unknown; attemptId: unknown; errorCode: unknown };
+
+    assert.equal(exitCode, 1);
+    assert.equal(summary.errorCode, 'ARGUMENT_INVALID');
+    assert.equal(summary.runId, null);
+    assert.equal(summary.taskId, null);
+    assert.equal(summary.attemptId, null);
+  }
+  assert.equal(durablePreparationStarted, false);
 });
 
 test('prepareDurableRecords creates one Run, one Task, and one Attempt through store APIs only', async () => {
@@ -286,8 +336,52 @@ test('prepare output IDs refer to actual persisted records and survive close/reo
     assert.ok(attempt);
     assert.equal(result.summary.partialCreation, false);
     assert.equal(task?.runId, run?.runId);
+    assert.equal(task?.spec, null);
     assert.equal(attempt?.taskId, task?.taskId);
     assert.equal(attempt?.hostInstanceId, result.summary.hostInstanceId);
+  } finally {
+    reopened.close();
+  }
+});
+
+test('prepare persists one authorized write path in the durable Task spec', async () => {
+  const { repoPath, localAppData, statePaths } = await createTempEnvironment('orch4c4a-one-path-');
+  const result = await runPrepareCommand(
+    createPrepareInput({ localAppData, authorizedWritePaths: ['a/b.txt'] }),
+    createPrepareDependencies({ repoPath, localAppData }),
+  );
+
+  assert.equal(result.exitCode, 0);
+  const reopened = await reopenStore(statePaths.orchestrationDbPath, statePaths.repoKey);
+  try {
+    assert.deepEqual(reopened.getTask(result.summary.taskId ?? '')?.spec, {
+      policy: { authorizedWritePaths: ['a/b.txt'] },
+    });
+  } finally {
+    reopened.close();
+  }
+});
+
+test('prepare persists repeated authorized write paths without widening their scope', async () => {
+  const { repoPath, localAppData, statePaths } = await createTempEnvironment('orch4c4a-multi-path-');
+  const parsed = parsePrepareArgs([
+    '--title', 'Run',
+    '--task-title', 'Task',
+    '--authorized-write-path', 'a.txt',
+    '--authorized-write-path', 'b.txt',
+    '--json',
+  ]);
+  const result = await runPrepareCommand(
+    { ...parsed, localAppData },
+    createPrepareDependencies({ repoPath, localAppData }),
+  );
+
+  assert.equal(result.exitCode, 0);
+  const reopened = await reopenStore(statePaths.orchestrationDbPath, statePaths.repoKey);
+  try {
+    assert.deepEqual(reopened.getTask(result.summary.taskId ?? '')?.spec, {
+      policy: { authorizedWritePaths: ['a.txt', 'b.txt'] },
+    });
   } finally {
     reopened.close();
   }
