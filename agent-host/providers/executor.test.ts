@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import test from 'node:test';
 
 import { openOrchestrationStore } from '../lib/store.ts';
@@ -11,6 +13,9 @@ import { shutdownHostRuntime } from '../index.ts';
 import { createNoOpAttemptPolicyController } from '../policy/policy.ts';
 import type { ExecutionRequest, ExecutionResult, ProviderAdapter, ProviderErrorCode, ProviderId, ProviderProbeResult } from './types.ts';
 import { AttemptExecutor, AttemptExecutorError, createProviderRegistry, recoverInterruptedAttempts, type AttemptExecutionInput } from './executor.ts';
+import type { AttemptWorkspace } from '../workspace.ts';
+
+const execFileAsync = promisify(execFile);
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -133,7 +138,7 @@ function createExecutionInput(
     prompt: 'Implement the feature safely.',
     requestedModel: 'gpt-5.6',
     reasoningEffort: 'medium',
-    permissionProfile: 'task-implementer',
+    permissionProfile: 'read-only-reviewer',
     timeoutMs: 120_000,
     workingDirectory: 'C:\\Repo\\PowerOn',
     hostInstanceId: 'host-instance-1',
@@ -208,6 +213,8 @@ function createExecutor(
     defaultTimeoutMs: number;
     shutdownTimeoutMs: number;
     policyController: ReturnType<typeof createNoOpAttemptPolicyController>;
+    workspaceConfig: { canonicalRepoPath: string; workspaceRoot: string; repoKey: string };
+    workspacePreparer: (options: { canonicalRepoPath: string; workspaceRoot: string; identity: { repoKey: string; runId: string; attemptId: string } }) => Promise<AttemptWorkspace>;
   }> = {},
 ): AttemptExecutor {
   return new AttemptExecutor({
@@ -217,7 +224,13 @@ function createExecutor(
     defaultTimeoutMs: overrides.defaultTimeoutMs,
     shutdownTimeoutMs: overrides.shutdownTimeoutMs,
     policyController: overrides.policyController ?? createNoOpAttemptPolicyController(),
+    workspaceConfig: overrides.workspaceConfig,
+    workspacePreparer: overrides.workspacePreparer,
   });
+}
+
+async function git(cwd: string, args: string[]): Promise<void> {
+  await execFileAsync('git', args, { cwd, windowsHide: true });
 }
 
 async function createNoOpPolicyBaseline(store: OrchestrationStore, input: AttemptExecutionInput) {
@@ -256,6 +269,187 @@ test('executor: valid running Attempt executes a registered adapter and persists
     assert.equal(outcome.terminalEvent.type, 'execution.completed');
   } finally {
     store.close();
+  }
+});
+
+test('executor: task implementer is materialized into an isolated workspace and never runs dirty canonical source', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'orch4c3b-executor-'));
+  const repoPath = path.join(root, 'repo');
+  const workspaceRoot = path.join(root, 'runtime', 'workspaces');
+  await mkdir(repoPath);
+  await git(repoPath, ['init']);
+  await git(repoPath, ['config', 'user.email', 'fixture@example.invalid']);
+  await git(repoPath, ['config', 'user.name', 'Fixture']);
+  await writeFile(path.join(repoPath, 'README.md'), 'COMMITTED\n');
+  await git(repoPath, ['add', '.']);
+  await git(repoPath, ['commit', '-m', 'baseline']);
+  await writeFile(path.join(repoPath, 'README.md'), 'OWNER_DIRTY\n');
+
+  const configuredStore = createStore({ dbPath: path.join(root, 'orchestration.sqlite') });
+  configuredStore.createRun({ runId: 'run-1', title: 'Run' });
+  configuredStore.createTask({ taskId: 'task-1', runId: 'run-1', title: 'Task', spec: { policy: { authorizedWritePaths: ['agent-host/smoke/orch4c-smoke.txt'] } } });
+  configuredStore.createAttempt({ attemptId: 'attempt-1', taskId: 'task-1', hostInstanceId: 'host-instance-1' });
+  const adapter = new FakeAdapter({
+    id: 'codex',
+    onExecute: async (request) => {
+      assert.notEqual(path.resolve(request.workingDirectory), path.resolve(repoPath));
+      assert.equal((await readFile(path.join(request.workingDirectory, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'COMMITTED\n');
+      await mkdir(path.join(request.workingDirectory, 'agent-host', 'smoke'), { recursive: true });
+      await writeFile(path.join(request.workingDirectory, 'agent-host', 'smoke', 'orch4c-smoke.txt'), 'AGENT_HOST_WRITE_SMOKE_OK v1\n');
+      return createExecutionResult({ executionId: request.executionId });
+    },
+  });
+  const executor = createExecutor(configuredStore, [adapter], { workspaceConfig: { canonicalRepoPath: repoPath, workspaceRoot, repoKey: 'repo-key' } });
+  const outcome = await executor.execute(createExecutionInput({ permissionProfile: 'task-implementer' }));
+  assert.equal(adapter.executeRequests.length, 1);
+  assert.equal(outcome.attempt.status, 'passed');
+  assert.equal(await readFile(path.join(repoPath, 'README.md'), 'utf8'), 'OWNER_DIRTY\n');
+  assert.equal(configuredStore.listEvents().some((event) => event.type === 'workspace.prepared'), true);
+  configuredStore.close();
+});
+
+test('executor: task implementer without Host workspace configuration fails closed before provider launch', async () => {
+  const dbPath = await createTempDbPath('orch4c3c-no-workspace-');
+  const store = createStore({ dbPath });
+  seedRunningAttempt(store);
+  const adapter = new FakeAdapter({ id: 'codex' });
+
+  try {
+    const outcome = await createExecutor(store, [adapter]).execute(createExecutionInput({ permissionProfile: 'task-implementer' }));
+    assert.equal(adapter.executeRequests.length, 0);
+    assert.equal(outcome.attempt.status, 'failed');
+    assert.equal(outcome.startedEvent, null);
+    assert.equal(store.listEvents().some((event) => event.type === 'workspace.preparation.failed'), true);
+  } finally {
+    store.close();
+  }
+});
+
+test('executor: cancellation during deferred workspace preparation never launches the provider', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'orch4c3c-cancel-'));
+  const dbPath = path.join(root, 'orchestration.sqlite');
+  const store = createStore({ dbPath });
+  seedRunningAttempt(store);
+  const prepared = createDeferred<AttemptWorkspace>();
+  const adapter = new FakeAdapter({ id: 'codex' });
+  const workspacePath = path.join(root, 'workspaces', 'repo-key', 'run-1', 'attempt-1');
+  await mkdir(workspacePath, { recursive: true });
+  const executor = createExecutor(store, [adapter], {
+    workspaceConfig: { canonicalRepoPath: path.join(root, 'canonical'), workspaceRoot: path.join(root, 'workspaces'), repoKey: 'repo-key' },
+    workspacePreparer: async () => await prepared.promise,
+  });
+
+  try {
+    const outcomePromise = executor.execute(createExecutionInput({ permissionProfile: 'task-implementer', workingDirectory: path.join(root, 'canonical') }));
+    assert.equal(executor.cancel('attempt-1'), true);
+    prepared.resolve({ workspaceId: 'repo-key/run-1/attempt-1', workspaceRoot: path.join(root, 'workspaces'), workspacePath, baselineHeadSha: 'a'.repeat(40), materializationMode: 'git-archive-tar', baselineTree: { files: new Map() } });
+    const outcome = await outcomePromise;
+    assert.equal(adapter.executeRequests.length, 0);
+    assert.equal(outcome.attempt.status, 'cancelled');
+    assert.equal(outcome.startedEvent, null);
+    assert.equal(store.listEvents().some((event) => event.type === 'execution.started'), false);
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('executor: shutdown during deferred workspace preparation never launches the provider', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'orch4c3c-shutdown-'));
+  const store = createStore({ dbPath: path.join(root, 'orchestration.sqlite') });
+  seedRunningAttempt(store);
+  const prepared = createDeferred<AttemptWorkspace>();
+  const adapter = new FakeAdapter({ id: 'codex' });
+  const workspacePath = path.join(root, 'workspaces', 'repo-key', 'run-1', 'attempt-1');
+  await mkdir(workspacePath, { recursive: true });
+  const executor = createExecutor(store, [adapter], {
+    workspaceConfig: { canonicalRepoPath: path.join(root, 'canonical'), workspaceRoot: path.join(root, 'workspaces'), repoKey: 'repo-key' },
+    workspacePreparer: async () => await prepared.promise,
+  });
+
+  try {
+    const outcomePromise = executor.execute(createExecutionInput({ permissionProfile: 'task-implementer' }));
+    const shutdownPromise = executor.shutdown(250);
+    prepared.resolve({ workspaceId: 'repo-key/run-1/attempt-1', workspaceRoot: path.join(root, 'workspaces'), workspacePath, baselineHeadSha: 'b'.repeat(40), materializationMode: 'git-archive-tar', baselineTree: { files: new Map() } });
+    const [outcome, shutdown] = await Promise.all([outcomePromise, shutdownPromise]);
+    assert.equal(adapter.executeRequests.length, 0);
+    assert.equal(outcome.attempt.status, 'cancelled');
+    assert.equal(shutdown.timedOut, false);
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('executor: workspace preparation failure cannot fall back to canonical main', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'orch4c3c-failure-'));
+  const store = createStore({ dbPath: path.join(root, 'orchestration.sqlite') });
+  seedRunningAttempt(store);
+  const adapter = new FakeAdapter({ id: 'codex' });
+  const canonical = path.join(root, 'canonical');
+  await mkdir(canonical);
+  await writeFile(path.join(canonical, 'README.md'), 'OWNER_DIRTY\n');
+  const executor = createExecutor(store, [adapter], {
+    workspaceConfig: { canonicalRepoPath: canonical, workspaceRoot: path.join(root, 'workspaces'), repoKey: 'repo-key' },
+    workspacePreparer: async () => { throw new Error('fixture preparation failure'); },
+  });
+
+  try {
+    const outcome = await executor.execute(createExecutionInput({ permissionProfile: 'task-implementer', workingDirectory: canonical }));
+    assert.equal(adapter.executeRequests.length, 0);
+    assert.equal(outcome.attempt.status, 'failed');
+    assert.equal(await readFile(path.join(canonical, 'README.md'), 'utf8'), 'OWNER_DIRTY\n');
+    assert.equal(store.listEvents().some((event) => event.type === 'workspace.preparation.failed'), true);
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('executor: isolated workspace policy denies out-of-scope, protected, secret, and deleted paths without changing main', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'orch4c3c-policy-deny-'));
+  const repoPath = path.join(root, 'repo');
+  const workspaceRoot = path.join(root, 'workspaces');
+  await mkdir(path.join(repoPath, 'src', 'store'), { recursive: true });
+  await mkdir(path.join(repoPath, 'agent-host', 'smoke'), { recursive: true });
+  await writeFile(path.join(repoPath, 'README.md'), 'CANONICAL\n');
+  await writeFile(path.join(repoPath, 'src', 'store', 'authStore.ts'), 'export const auth = true;\n');
+  await writeFile(path.join(repoPath, 'agent-host', 'smoke', 'delete-me.txt'), 'BASELINE\n');
+  await git(repoPath, ['init']);
+  await git(repoPath, ['config', 'user.email', 'fixture@example.invalid']);
+  await git(repoPath, ['config', 'user.name', 'Fixture']);
+  await git(repoPath, ['add', '.']);
+  await git(repoPath, ['commit', '-m', 'baseline']);
+  await writeFile(path.join(repoPath, 'README.md'), 'OWNER_DIRTY\n');
+
+  const store = createStore({ dbPath: path.join(root, 'orchestration.sqlite') });
+  store.createRun({ runId: 'run-1', title: 'Run' });
+  store.createTask({ taskId: 'task-1', runId: 'run-1', title: 'Task', spec: { policy: { authorizedWritePaths: ['agent-host/smoke/**', 'src/**'] } } });
+  store.createAttempt({ attemptId: 'attempt-1', taskId: 'task-1', hostInstanceId: 'host-instance-1' });
+  const adapter = new FakeAdapter({
+    id: 'codex',
+    onExecute: async (request) => {
+      await writeFile(path.join(request.workingDirectory, 'README.md'), 'OUT_OF_SCOPE\n');
+      await writeFile(path.join(request.workingDirectory, 'src', 'store', 'authStore.ts'), 'PROTECTED\n');
+      await writeFile(path.join(request.workingDirectory, '.env'), 'SYNTHETIC=value\n');
+      await rm(path.join(request.workingDirectory, 'agent-host', 'smoke', 'delete-me.txt'));
+      return createExecutionResult({ executionId: request.executionId });
+    },
+  });
+
+  try {
+    const outcome = await createExecutor(store, [adapter], { workspaceConfig: { canonicalRepoPath: repoPath, workspaceRoot, repoKey: 'repo-key' } })
+      .execute(createExecutionInput({ permissionProfile: 'task-implementer', workingDirectory: repoPath }));
+    assert.equal(outcome.result.provider.success, true, 'provider truth remains successful');
+    assert.equal(outcome.policy.accepted, false);
+    assert.equal(outcome.attempt.status, 'failed');
+    assert.equal(store.listEvents().some((event) => event.type === 'workspace.changeset.ready'), false);
+    assert.equal(await readFile(path.join(repoPath, 'README.md'), 'utf8'), 'OWNER_DIRTY\n');
+    assert.equal(await readFile(path.join(repoPath, 'src', 'store', 'authStore.ts'), 'utf8'), 'export const auth = true;\n');
+    assert.equal(await readFile(path.join(repoPath, 'agent-host', 'smoke', 'delete-me.txt'), 'utf8'), 'BASELINE\n');
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
   }
 });
 

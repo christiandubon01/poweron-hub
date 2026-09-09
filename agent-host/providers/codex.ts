@@ -144,7 +144,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
       executionId: request.executionId,
       launch,
       workingDirectory: request.workingDirectory,
-      allowedWorkingDirectory: request.workingDirectory,
+      allowedWorkingDirectory: request.authorizedWorkingDirectory ?? request.workingDirectory,
       prompt: request.prompt,
       environmentProfile: 'codex',
       timeouts: {

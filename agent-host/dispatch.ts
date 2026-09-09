@@ -1,4 +1,5 @@
 import { mkdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
 import type { Readable } from 'node:stream';
 
 import { createEventWriter } from './lib/events.ts';
@@ -500,11 +501,13 @@ function createDefaultExecutor(dependencies: {
   store: OrchestrationStore;
   registry: ReadonlyMap<ProviderId, ProviderAdapter>;
   now: () => Date;
+  workspaceConfig: { canonicalRepoPath: string; workspaceRoot: string; repoKey: string };
 }): DispatchExecutor {
   return new AttemptExecutor({
     store: dependencies.store,
     registry: dependencies.registry,
     now: dependencies.now,
+    workspaceConfig: dependencies.workspaceConfig,
   });
 }
 
@@ -665,6 +668,7 @@ export async function runDispatchCommand(
       store,
       registry: buildRegistry([]),
       now,
+      workspaceConfig: { canonicalRepoPath, workspaceRoot: path.join(statePaths.baseDir, 'workspaces'), repoKey: statePaths.repoKey },
     });
 
     runtimeShutdown = async () => {
@@ -696,6 +700,7 @@ export async function runDispatchCommand(
       store,
       registry: buildRegistry(providers),
       now,
+      workspaceConfig: { canonicalRepoPath, workspaceRoot: path.join(statePaths.baseDir, 'workspaces'), repoKey: statePaths.repoKey },
     });
     await writeCurrentHeartbeat('running');
     await eventWriter.append('host.discovery.completed', {

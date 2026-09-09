@@ -11,6 +11,7 @@ import {
   type AttemptPolicyController,
 } from '../policy/policy.ts';
 import type { PolicyAdjudication, PolicyBaselineCapture } from '../policy/types.ts';
+import { adjudicateAttemptWorkspace, createWorkspacePolicyBaseline, materializeAttemptWorkspace, type AttemptWorkspace } from '../workspace.ts';
 
 const DEFAULT_EXECUTION_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
@@ -82,6 +83,8 @@ export interface AttemptExecutorDependencies {
   defaultTimeoutMs?: number | undefined;
   shutdownTimeoutMs?: number | undefined;
   policyController?: AttemptPolicyController | undefined;
+  workspaceConfig?: { canonicalRepoPath: string; workspaceRoot: string; repoKey: string } | undefined;
+  workspacePreparer?: ((options: Parameters<typeof materializeAttemptWorkspace>[0]) => Promise<AttemptWorkspace>) | undefined;
 }
 
 export interface AttemptExecutorShutdownResult {
@@ -97,6 +100,8 @@ export class AttemptExecutor {
   private readonly defaultTimeoutMs: number;
   private readonly shutdownTimeoutMs: number;
   private readonly policyController: AttemptPolicyController;
+  private readonly workspaceConfig: AttemptExecutorDependencies['workspaceConfig'];
+  private readonly workspacePreparer: NonNullable<AttemptExecutorDependencies['workspacePreparer']>;
   private readonly activeExecutions = new Map<string, ActiveExecutionEntry>();
   private acceptingExecutions = true;
   private shutdownPromise: Promise<AttemptExecutorShutdownResult> | null = null;
@@ -109,6 +114,8 @@ export class AttemptExecutor {
     this.defaultTimeoutMs = dependencies.defaultTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS;
     this.shutdownTimeoutMs = dependencies.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
     this.policyController = dependencies.policyController ?? createAttemptPolicyController();
+    this.workspaceConfig = dependencies.workspaceConfig;
+    this.workspacePreparer = dependencies.workspacePreparer ?? materializeAttemptWorkspace;
   }
 
   execute(input: AttemptExecutionInput): Promise<AttemptExecutionOutcome> {
@@ -186,9 +193,31 @@ export class AttemptExecutor {
     const startedAt = this.now();
 
     try {
-      const policyBaseline = await this.capturePolicyBaseline(input, context);
+      let workspace: AttemptWorkspace | undefined;
+      let executionInput = input;
+      let policyBaseline: PolicyBaselineCapture;
+      if (input.permissionProfile === 'task-implementer') {
+        if (!this.workspaceConfig) {
+          return await this.finishWorkspacePreparationFailure(input, context, startedAt, 'workspace-unconfigured');
+        }
+        this.persistWorkspaceEvent(input, 'workspace.preparation.started', { workspaceId: workspaceIdentity(this.workspaceConfig.repoKey, input) });
+        try {
+          workspace = await this.workspacePreparer({
+            canonicalRepoPath: this.workspaceConfig.canonicalRepoPath,
+            workspaceRoot: this.workspaceConfig.workspaceRoot,
+            identity: { repoKey: this.workspaceConfig.repoKey, runId: input.runId, attemptId: input.attemptId },
+          });
+          executionInput = { ...input, workingDirectory: workspace.workspacePath };
+          policyBaseline = createWorkspacePolicyBaseline({ workspace, runId: input.runId, task: context.task, attemptId: input.attemptId, permissionProfile: input.permissionProfile });
+          this.persistWorkspaceEvent(input, 'workspace.prepared', { workspaceId: workspace.workspaceId, baselineHeadSha: workspace.baselineHeadSha, materializationMode: workspace.materializationMode, workspaceState: 'ready' });
+        } catch {
+          return await this.finishWorkspacePreparationFailure(input, context, startedAt, workspaceIdentity(this.workspaceConfig.repoKey, input));
+        }
+      } else {
+        policyBaseline = await this.capturePolicyBaseline(input, context);
+      }
       this.persistPolicyBaselineEvent(input, policyBaseline);
-      const request = buildExecutionRequest(input, this.defaultTimeoutMs);
+      const request = buildExecutionRequest(executionInput, this.defaultTimeoutMs, workspace?.workspacePath);
       const adapter = this.registry.get(input.provider);
       let startedEvent: OrchestrationEventRecord | null = null;
       let result: ExecutionResult;
@@ -196,18 +225,27 @@ export class AttemptExecutor {
       if (activeEntry.isCancellationRequested()) {
         result = buildCancelledBeforeLaunchResult(request);
       } else {
-        startedEvent = this.persistStartedEvent(input);
+        startedEvent = this.persistStartedEvent(executionInput);
         if (adapter) {
           activeEntry.setProviderCancel(() => adapter.cancel(input.attemptId));
         }
-        result = await executeViaAdapter(adapter, request, input);
+        result = await executeViaAdapter(adapter, request, executionInput);
       }
 
       const terminalEventType = mapTerminalEventType(result);
       const durationMs = Math.max(0, this.now().getTime() - startedAt.getTime());
-      const terminalEvent = this.persistTerminalEvent(input, result, terminalEventType, durationMs);
-      const policy = await this.adjudicatePolicy(input, policyBaseline);
+      const terminalEvent = this.persistTerminalEvent(executionInput, result, terminalEventType, durationMs);
+      const workspaceAdjudication = workspace
+        ? await adjudicateAttemptWorkspace({ workspace, runId: input.runId, task: context.task, attemptId: input.attemptId, permissionProfile: input.permissionProfile })
+        : undefined;
+      const policy = workspaceAdjudication?.policy ?? await this.adjudicatePolicy(input, policyBaseline);
       this.persistPolicyEvent(input, policy);
+      if (workspace) {
+        this.persistWorkspaceEvent(input, 'workspace.adjudication.completed', { workspaceId: workspace.workspaceId, policyAccepted: policy.accepted, workspaceState: policy.accepted ? 'accepted' : 'rejected' });
+        if (workspaceAdjudication?.changeSet) {
+          this.persistWorkspaceEvent(input, 'workspace.changeset.ready', { workspaceId: workspace.workspaceId, baselineHeadSha: workspace.baselineHeadSha, changeCount: workspaceAdjudication.changeSet.changes.length, workspaceState: 'cleanup-eligible' });
+        }
+      }
       const terminalAttemptStatus = resolveEffectiveAttemptStatus(result, policy);
       const attempt = this.transitionAttemptTerminal(context.attempt.attemptId, terminalAttemptStatus);
 
@@ -241,6 +279,21 @@ export class AttemptExecutor {
         { cause: error },
       );
     }
+  }
+
+  private async finishWorkspacePreparationFailure(input: AttemptExecutionInput, context: AttemptContext, startedAt: Date, workspaceId: string): Promise<AttemptExecutionOutcome> {
+    const request = buildExecutionRequest(input, this.defaultTimeoutMs);
+    const result = buildProviderUnavailableResult(request, 'Isolated workspace preparation failed; provider was not launched.', 'PROCESS_SPAWN_FAILED');
+    const terminalEvent = this.persistTerminalEvent(input, result, 'execution.failed', Math.max(0, this.now().getTime() - startedAt.getTime()));
+    const policy: PolicyAdjudication = { decision: 'deny', accepted: false, reasonCodes: ['out-of-scope-write'], reason: 'Workspace preparation failed closed.', baselineHeadSha: 'workspace-unavailable', finalHeadSha: 'workspace-unavailable', headMoved: false, changes: [] };
+    this.persistWorkspaceEvent(input, 'workspace.preparation.failed', { workspaceId, workspaceState: 'rejected' });
+    this.persistPolicyEvent(input, policy);
+    const attempt = this.transitionAttemptTerminal(context.attempt.attemptId, 'failed');
+    return { executionId: request.executionId, attempt, result, startedEvent: null, terminalEvent, terminalAttemptStatus: 'failed', policy };
+  }
+
+  private persistWorkspaceEvent(input: AttemptExecutionInput, type: string, payload: JsonValue): void {
+    this.store.appendEvent({ eventId: this.idGenerator(), runId: input.runId, taskId: input.taskId, attemptId: input.attemptId, type, payload });
   }
 
   private persistStartedEvent(input: AttemptExecutionInput): OrchestrationEventRecord {
@@ -491,19 +544,24 @@ function createActiveExecutionEntry(): ActiveExecutionEntry {
   };
 }
 
-function buildExecutionRequest(input: AttemptExecutionInput, defaultTimeoutMs: number): ExecutionRequest {
+function buildExecutionRequest(input: AttemptExecutionInput, defaultTimeoutMs: number, authorizedWorkingDirectory?: string): ExecutionRequest {
   return {
     executionId: input.attemptId,
     attemptId: input.attemptId,
     taskId: input.taskId,
     runId: input.runId,
     workingDirectory: input.workingDirectory,
+    authorizedWorkingDirectory,
     prompt: input.prompt,
     requestedModel: input.requestedModel,
     reasoningEffort: input.reasoningEffort,
     permissionProfile: input.permissionProfile,
     timeoutMs: input.timeoutMs ?? defaultTimeoutMs,
   };
+}
+
+function workspaceIdentity(repoKey: string, input: AttemptExecutionInput): string {
+  return `${repoKey}/${input.runId}/${input.attemptId}`;
 }
 
 async function executeViaAdapter(

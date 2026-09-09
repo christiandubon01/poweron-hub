@@ -83,6 +83,8 @@ export interface ExecutionRequest {
   runId: string;
   /** Directory the provider process runs in. Must equal the canonical allowed repo dir. */
   workingDirectory: string;
+  /** Exact Host-authorized directory for this execution. Adapters must not derive this from cwd. */
+  authorizedWorkingDirectory?: string;
   /** Prompt text. Transported via stdin, never as an argv value. */
   prompt: string;
   requestedModel?: string;

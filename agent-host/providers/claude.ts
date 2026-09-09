@@ -157,7 +157,7 @@ export class ClaudeCompatibleProviderAdapter implements ProviderAdapter {
       executionId: request.executionId,
       launch,
       workingDirectory: request.workingDirectory,
-      allowedWorkingDirectory: request.workingDirectory,
+      allowedWorkingDirectory: request.authorizedWorkingDirectory ?? request.workingDirectory,
       prompt: request.prompt,
       environmentProfile: 'claude',
       timeouts: {

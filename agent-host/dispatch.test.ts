@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import test from 'node:test';
+import { promisify } from 'node:util';
 
 import {
   buildDispatchSummary,
@@ -21,9 +23,11 @@ import { openOrchestrationStore } from './lib/store.ts';
 import { resolveStatePaths } from './lib/statePaths.ts';
 import { createNoOpAttemptPolicyController } from './policy/policy.ts';
 import type { OrchestrationStore } from './lib/store.ts';
-import type { AttemptRecord, TaskRecord } from './lib/orchestrationTypes.ts';
+import type { AttemptRecord, JsonValue, TaskRecord } from './lib/orchestrationTypes.ts';
 import { AttemptExecutor, type AttemptExecutionOutcome } from './providers/executor.ts';
 import type { ExecutionRequest, ExecutionResult, ProviderAdapter, ProviderId, ProviderProbeResult } from './providers/types.ts';
+
+const execFileAsync = promisify(execFile);
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -252,6 +256,7 @@ async function createSeededStore(options: {
   taskId?: string;
   attemptId?: string;
   hostInstanceId?: string;
+  taskSpec?: JsonValue;
 }): Promise<{ statePaths: ReturnType<typeof resolveStatePaths>; dbPath: string; repoKey: string }> {
   const statePaths = resolveStatePaths({
     canonicalRepoPath: options.repoPath,
@@ -273,7 +278,7 @@ async function createSeededStore(options: {
     const hostInstanceId = options.hostInstanceId ?? 'dispatch-host-1';
 
     store.createRun({ runId, title: `Run ${runId}` });
-    store.createTask({ taskId, runId, title: `Task ${taskId}` });
+    store.createTask({ taskId, runId, title: `Task ${taskId}`, spec: options.taskSpec });
     store.createAttempt({ attemptId, taskId, hostInstanceId });
   } finally {
     store.close();
@@ -793,6 +798,54 @@ test('dispatch dry success smoke uses real AttemptExecutor, keeps Task running, 
     const eventTypes = reopened.listEvents().map((event) => event.type);
     assert.equal(eventTypes.includes('execution.started'), true);
     assert.equal(eventTypes.includes('execution.completed'), true);
+  } finally {
+    reopened.close();
+  }
+});
+
+test('dispatch task implementer uses its Host-created attempt workspace instead of canonical main', async () => {
+  const sandbox = await mkdtemp(path.join(os.tmpdir(), 'orch4c3d-dispatch-workspace-'));
+  const repoPath = path.join(sandbox, 'repo');
+  const localAppData = path.join(sandbox, 'localappdata');
+  await mkdir(repoPath, { recursive: true });
+  await writeFile(path.join(repoPath, 'README.md'), 'COMMITTED\n');
+  await execFileAsync('git', ['init'], { cwd: repoPath, windowsHide: true });
+  await execFileAsync('git', ['config', 'user.email', 'fixture@example.invalid'], { cwd: repoPath, windowsHide: true });
+  await execFileAsync('git', ['config', 'user.name', 'Fixture'], { cwd: repoPath, windowsHide: true });
+  await execFileAsync('git', ['add', '.'], { cwd: repoPath, windowsHide: true });
+  await execFileAsync('git', ['commit', '-m', 'baseline'], { cwd: repoPath, windowsHide: true });
+  await writeFile(path.join(repoPath, 'README.md'), 'OWNER_DIRTY\n');
+
+  const { dbPath, repoKey } = await createSeededStore({
+    repoPath,
+    localAppData,
+    hostInstanceId: 'dispatch-host-1',
+    taskSpec: { policy: { authorizedWritePaths: ['agent-host/smoke/orch4c-dispatch.txt'] } },
+  });
+  const adapter = new FakeAdapter({
+    id: 'codex',
+    onExecute: async (request) => {
+      assert.notEqual(path.resolve(request.workingDirectory), path.resolve(repoPath));
+      assert.equal((await readFile(path.join(request.workingDirectory, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'COMMITTED\n');
+      await mkdir(path.join(request.workingDirectory, 'agent-host', 'smoke'), { recursive: true });
+      await writeFile(path.join(request.workingDirectory, 'agent-host', 'smoke', 'orch4c-dispatch.txt'), 'OK\n');
+      return createExecutionResult({ executionId: request.executionId });
+    },
+  });
+
+  const result = await runDispatchCommand(
+    createDispatchInput({ localAppData, permissionProfile: 'task-implementer' }),
+    createBaseDependencies({ repoPath, localAppData, createProviderRegistry: () => new Map([['codex', adapter]]) }),
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(adapter.executeRequests.length, 1);
+  assert.equal(adapter.executeRequests[0]?.authorizedWorkingDirectory, adapter.executeRequests[0]?.workingDirectory);
+  assert.equal(await readFile(path.join(repoPath, 'README.md'), 'utf8'), 'OWNER_DIRTY\n');
+  const reopened = await reopenStore(dbPath, repoKey);
+  try {
+    assert.equal(reopened.getAttempt('attempt-1')?.status, 'passed');
+    assert.equal(reopened.listEvents().some((event) => event.type === 'workspace.changeset.ready'), true);
   } finally {
     reopened.close();
   }

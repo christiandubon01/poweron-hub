@@ -7,7 +7,7 @@
 
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -716,6 +716,56 @@ test('process: 17) allowed working directory succeeds', async (t) => {
   const result = await runToResult(new ProcessRunner(), baseOptions(nativeLaunch('slow', ['--arg', '50'])));
   assert.equal(result.terminationReason, 'exited');
   assert.equal(result.exitCode, 0);
+});
+
+test('process: exact Host-authorized cwd rejects a sibling attempt workspace before spawn', async (t) => {
+  t.before(setup);
+  const workspaceA = path.join(tmpDir, 'workspaces', 'repo', 'run', 'attempt-a');
+  const workspaceB = path.join(tmpDir, 'workspaces', 'repo', 'run', 'attempt-b');
+  await mkdir(workspaceA, { recursive: true });
+  await mkdir(workspaceB, { recursive: true });
+  let spawnCalls = 0;
+  const result = await runToResult(new ProcessRunner(), baseOptions(nativeLaunch('slow', ['--arg', '10']), {
+    workingDirectory: workspaceB,
+    allowedWorkingDirectory: workspaceA,
+    spawnFn: (cmd, args, options) => {
+      spawnCalls += 1;
+      return spawn(cmd, args, options);
+    },
+  }));
+  assert.equal(result.spawned, false);
+  assert.equal(spawnCalls, 0);
+});
+
+test('process: task implementer authorized-root matrix rejects every non-attempt cwd before spawn', async (t) => {
+  t.before(setup);
+  const canonicalRepo = path.join(tmpDir, 'canonical', 'repo');
+  const authorizedWorkspace = path.join(tmpDir, 'workspaces', 'repo', 'run', 'attempt-a');
+  const arbitraryTemp = path.join(tmpDir, 'unrelated');
+  await mkdir(canonicalRepo, { recursive: true });
+  await mkdir(authorizedWorkspace, { recursive: true });
+  await mkdir(arbitraryTemp, { recursive: true });
+  const candidates = [
+    { name: 'C root', cwd: 'C:\\' },
+    { name: 'C temp', cwd: 'C:\\Temp' },
+    { name: 'canonical repo parent', cwd: path.dirname(canonicalRepo) },
+    { name: 'USERPROFILE', cwd: os.homedir() },
+    { name: 'arbitrary temp', cwd: arbitraryTemp },
+    { name: 'canonical repo with trailing dot', cwd: path.join(canonicalRepo, '.') },
+  ];
+  for (const candidate of candidates) {
+    let spawnCalls = 0;
+    const result = await runToResult(new ProcessRunner(), baseOptions(nativeLaunch('slow', ['--arg', '10']), {
+      workingDirectory: candidate.cwd,
+      allowedWorkingDirectory: authorizedWorkspace,
+      spawnFn: (cmd, args, options) => {
+        spawnCalls += 1;
+        return spawn(cmd, args, options);
+      },
+    }));
+    assert.equal(result.spawned, false, candidate.name);
+    assert.equal(spawnCalls, 0, candidate.name);
+  }
 });
 
 test('process: 18) timeout validation', () => {
