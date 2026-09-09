@@ -184,6 +184,25 @@ test('codex adapter: 3) exit 0 without turn.completed is PROTOCOL_ERROR', async 
   assert.equal(result.provider.errorCode, 'PROTOCOL_ERROR');
 });
 
+test('codex adapter: nonzero exit without turn.completed preserves bounded process diagnostics', async () => {
+  const stderrTail = 'transport initialization failed\n';
+  const runner = createRunnerDouble([
+    {
+      processResult: createProcessResult({ exitCode: 1, stderrBytes: Buffer.byteLength(stderrTail), stderrTail }),
+    },
+  ]);
+  const adapter = new CodexProviderAdapter(
+    { providerId: 'codex', executable: 'C:\\Tools\\codex.cmd' },
+    { runner: runner.runner },
+  );
+
+  const result = await adapter.execute(createRequest());
+  assert.equal(result.provider.success, false);
+  assert.equal(result.provider.errorCode, 'PROTOCOL_ERROR');
+  assert.equal(result.process.exitCode, 1);
+  assert.equal(result.diagnostics?.stderrTail, stderrTail);
+});
+
 test('codex adapter: 4) nonzero exit is preserved separately from provider success', async () => {
   const runner = createRunnerDouble([
     {

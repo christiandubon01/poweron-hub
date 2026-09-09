@@ -12,7 +12,14 @@ import { OrchestrationError, TEXT_FIELD_MAX_BYTES } from '../lib/orchestrationTy
 import { shutdownHostRuntime } from '../index.ts';
 import { createNoOpAttemptPolicyController } from '../policy/policy.ts';
 import type { ExecutionRequest, ExecutionResult, ProviderAdapter, ProviderErrorCode, ProviderId, ProviderProbeResult } from './types.ts';
-import { AttemptExecutor, AttemptExecutorError, createProviderRegistry, recoverInterruptedAttempts, type AttemptExecutionInput } from './executor.ts';
+import {
+  AttemptExecutor,
+  AttemptExecutorError,
+  createProviderRegistry,
+  DURABLE_STDERR_TAIL_MAX_CHARS,
+  recoverInterruptedAttempts,
+  type AttemptExecutionInput,
+} from './executor.ts';
 import type { AttemptWorkspace } from '../workspace.ts';
 
 const execFileAsync = promisify(execFile);
@@ -305,7 +312,63 @@ test('executor: task implementer is materialized into an isolated workspace and 
   assert.equal(outcome.attempt.status, 'passed');
   assert.equal(await readFile(path.join(repoPath, 'README.md'), 'utf8'), 'OWNER_DIRTY\n');
   assert.equal(configuredStore.listEvents().some((event) => event.type === 'workspace.prepared'), true);
+  const readyEvents = configuredStore.listEvents().filter((event) => event.type === 'workspace.changeset.ready');
+  assert.equal(readyEvents.length, 1);
+  assert.equal((readyEvents[0]?.payload as Record<string, unknown>).changeCount, 1);
   configuredStore.close();
+});
+
+test('executor: changeset-ready requires provider success and a non-empty accepted change', async () => {
+  const cases = [
+    { name: 'failed-no-op', providerSuccess: false, writesAuthorizedFile: false, expectedStatus: 'failed' },
+    { name: 'failed-partial-change', providerSuccess: false, writesAuthorizedFile: true, expectedStatus: 'failed' },
+    { name: 'successful-no-op', providerSuccess: true, writesAuthorizedFile: false, expectedStatus: 'passed' },
+  ] as const;
+
+  for (const testCase of cases) {
+    const root = await mkdtemp(path.join(os.tmpdir(), `orch4c4c-${testCase.name}-`));
+    const repoPath = path.join(root, 'repo');
+    const workspaceRoot = path.join(root, 'workspaces');
+    await mkdir(repoPath);
+    await git(repoPath, ['init']);
+    await git(repoPath, ['config', 'user.email', 'fixture@example.invalid']);
+    await git(repoPath, ['config', 'user.name', 'Fixture']);
+    await writeFile(path.join(repoPath, 'README.md'), 'BASELINE\n');
+    await git(repoPath, ['add', '.']);
+    await git(repoPath, ['commit', '-m', 'baseline']);
+
+    const store = createStore({ dbPath: path.join(root, 'orchestration.sqlite') });
+    store.createRun({ runId: 'run-1', title: 'Run' });
+    store.createTask({ taskId: 'task-1', runId: 'run-1', title: 'Task', spec: { policy: { authorizedWritePaths: ['agent-host/smoke/result.txt'] } } });
+    store.createAttempt({ attemptId: 'attempt-1', taskId: 'task-1', hostInstanceId: 'host-instance-1' });
+    const adapter = new FakeAdapter({
+      id: 'codex',
+      onExecute: async (request) => {
+        if (testCase.writesAuthorizedFile) {
+          const outputPath = path.join(request.workingDirectory, 'agent-host', 'smoke', 'result.txt');
+          await mkdir(path.dirname(outputPath), { recursive: true });
+          await writeFile(outputPath, 'PARTIAL\n');
+        }
+        return createExecutionResult({
+          executionId: request.executionId,
+          provider: testCase.providerSuccess
+            ? { terminalState: 'completed', success: true }
+            : { terminalState: 'failed', success: false, errorCode: 'PROTOCOL_ERROR', errorMessage: 'incomplete' },
+        });
+      },
+    });
+
+    try {
+      const outcome = await createExecutor(store, [adapter], { workspaceConfig: { canonicalRepoPath: repoPath, workspaceRoot, repoKey: 'repo-key' } })
+        .execute(createExecutionInput({ permissionProfile: 'task-implementer', workingDirectory: repoPath }));
+      assert.equal(outcome.policy.accepted, true, `${testCase.name} should remain policy-accepted`);
+      assert.equal(outcome.attempt.status, testCase.expectedStatus);
+      assert.equal(store.listEvents().filter((event) => event.type === 'workspace.changeset.ready').length, 0);
+    } finally {
+      store.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  }
 });
 
 test('executor: task implementer without Host workspace configuration fails closed before provider launch', async () => {
@@ -503,6 +566,83 @@ test('executor: provider failure maps Attempt failed and Task remains running', 
     assert.equal(outcome.terminalEvent.type, 'execution.failed');
     assert.equal(store.getAttempt('attempt-1')?.status, 'failed');
     assert.equal(store.getTask('task-1')?.status, 'running');
+  } finally {
+    store.close();
+  }
+});
+
+test('executor: provider failure persists a bounded redacted stderr tail with process facts', async () => {
+  const dbPath = await createTempDbPath('orch4c4c-diagnostic-');
+  const store = createStore({ dbPath });
+  seedRunningAttempt(store);
+  const usefulTail = 'fatal: failed to contact provider endpoint\n';
+  const stderrTail = [
+    'x'.repeat(DURABLE_STDERR_TAIL_MAX_CHARS + 1024),
+    'Authorization: Bearer bearer-value',
+    'OPENAI_API_KEY=sk-openai-secret-value',
+    'ANTHROPIC_API_KEY="anthropic-secret-value"',
+    'token=token-value secret=secret-value password=password-value',
+    'Cookie: session=cookie-value',
+    usefulTail,
+  ].join('\n');
+
+  try {
+    const adapter = new FakeAdapter({
+      id: 'codex',
+      onExecute: async (request) => createExecutionResult({
+        executionId: request.executionId,
+        process: { exitCode: 1, signal: 'SIGTERM', timedOut: false, cancelled: false },
+        provider: {
+          terminalState: 'failed',
+          success: false,
+          errorCode: 'PROTOCOL_ERROR',
+          errorMessage: 'Provider process exited without turn.completed; token=message-secret-value',
+        },
+        diagnostics: { stderrTail },
+      }),
+    });
+    const outcome = await createExecutor(store, [adapter]).execute(createExecutionInput({ prompt: 'private prompt value' }));
+    const payload = outcome.terminalEvent.payload as Record<string, any>;
+    const durableTail = payload.diagnostics.stderrTail as string;
+    const serialized = JSON.stringify(payload);
+
+    assert.equal(outcome.terminalEvent.type, 'execution.failed');
+    assert.equal(payload.errorCode, 'PROTOCOL_ERROR');
+    assert.equal(payload.process.exitCode, 1);
+    assert.equal(payload.process.signal, 'SIGTERM');
+    assert.ok(durableTail.length <= DURABLE_STDERR_TAIL_MAX_CHARS);
+    assert.equal(durableTail.endsWith(usefulTail), true);
+    assert.equal(durableTail.includes('[REDACTED]'), true);
+    assert.match(payload.errorMessage, /Provider process exited without turn\.completed/u);
+    for (const secret of ['message-secret-value', 'bearer-value', 'sk-openai-secret-value', 'anthropic-secret-value', 'token-value', 'secret-value', 'password-value', 'cookie-value']) {
+      assert.equal(serialized.includes(secret), false, `${secret} must not be durable`);
+    }
+    assert.equal(serialized.includes('private prompt value'), false);
+    assert.equal(serialized.includes(String(process.env.PATH ?? 'UNSET')), false);
+  } finally {
+    store.close();
+  }
+});
+
+test('executor: successful provider does not persist diagnostic tails', async () => {
+  const dbPath = await createTempDbPath('orch4c4c-success-diagnostic-');
+  const store = createStore({ dbPath });
+  seedRunningAttempt(store);
+
+  try {
+    const adapter = new FakeAdapter({
+      id: 'codex',
+      onExecute: async (request) => createExecutionResult({
+        executionId: request.executionId,
+        diagnostics: { stderrTail: 'benign successful diagnostic\n' },
+      }),
+    });
+    const outcome = await createExecutor(store, [adapter]).execute(createExecutionInput());
+    const payload = outcome.terminalEvent.payload as Record<string, unknown>;
+
+    assert.equal(outcome.terminalEvent.type, 'execution.completed');
+    assert.equal('diagnostics' in payload, false);
+    assert.equal(JSON.stringify(payload).includes('benign successful diagnostic'), false);
   } finally {
     store.close();
   }

@@ -16,6 +16,7 @@ import { adjudicateAttemptWorkspace, createWorkspacePolicyBaseline, materializeA
 const DEFAULT_EXECUTION_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
 const STRING_FIELD_LIMIT = 512;
+export const DURABLE_STDERR_TAIL_MAX_CHARS = 4096;
 
 export interface AttemptExecutionInput {
   runId: string;
@@ -240,13 +241,19 @@ export class AttemptExecutor {
         : undefined;
       const policy = workspaceAdjudication?.policy ?? await this.adjudicatePolicy(input, policyBaseline);
       this.persistPolicyEvent(input, policy);
+      const terminalAttemptStatus = resolveEffectiveAttemptStatus(result, policy);
       if (workspace) {
         this.persistWorkspaceEvent(input, 'workspace.adjudication.completed', { workspaceId: workspace.workspaceId, policyAccepted: policy.accepted, workspaceState: policy.accepted ? 'accepted' : 'rejected' });
-        if (workspaceAdjudication?.changeSet) {
+        if (
+          result.provider.success &&
+          terminalAttemptStatus === 'passed' &&
+          policy.accepted &&
+          workspaceAdjudication?.changeSet &&
+          workspaceAdjudication.changeSet.changes.length > 0
+        ) {
           this.persistWorkspaceEvent(input, 'workspace.changeset.ready', { workspaceId: workspace.workspaceId, baselineHeadSha: workspace.baselineHeadSha, changeCount: workspaceAdjudication.changeSet.changes.length, workspaceState: 'cleanup-eligible' });
         }
       }
-      const terminalAttemptStatus = resolveEffectiveAttemptStatus(result, policy);
       const attempt = this.transitionAttemptTerminal(context.attempt.attemptId, terminalAttemptStatus);
 
       return {
@@ -641,7 +648,7 @@ function buildTerminalEventPayload(input: AttemptExecutionInput, result: Executi
     providerTerminalState: result.provider.terminalState,
     providerSuccess: result.provider.success,
     errorCode: result.provider.errorCode,
-    errorMessage: sanitizeOptional(result.provider.errorMessage, STRING_FIELD_LIMIT),
+    errorMessage: sanitizeFailureMessage(result.provider.errorMessage),
     process: compactJsonObject({
       exitCode: result.process.exitCode,
       signal: sanitizeOptional(result.process.signal, 128),
@@ -657,8 +664,38 @@ function buildTerminalEventPayload(input: AttemptExecutionInput, result: Executi
       source: result.usage.source,
     }),
     sessionId: sanitizeOptional(result.session.sessionId, 256),
+    diagnostics: result.provider.success ? undefined : buildFailureDiagnostics(result),
     durationMs,
   });
+}
+
+function buildFailureDiagnostics(result: ExecutionResult): JsonValue | undefined {
+  const stderrTail = sanitizeDiagnosticTail(result.diagnostics?.stderrTail);
+  return stderrTail ? { stderrTail } : undefined;
+}
+
+function sanitizeDiagnosticTail(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return redactCredentialShapes(value).slice(-DURABLE_STDERR_TAIL_MAX_CHARS);
+}
+
+function sanitizeFailureMessage(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return sanitizeString(redactCredentialShapes(value), STRING_FIELD_LIMIT);
+}
+
+function redactCredentialShapes(value: string): string {
+  return value
+    .replace(/((?:authorization|proxy-authorization|cookie|set-cookie)\s*:\s*)[^\r\n]*/giu, '$1[REDACTED]')
+    .replace(
+      /(\b(?:OPENAI_API_KEY|ANTHROPIC_API_KEY|token|secret|password)\b\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}\r\n]+)/giu,
+      '$1[REDACTED]',
+    )
+    .replace(/\bsk-[A-Za-z0-9_-]+\b/gu, '[REDACTED]');
 }
 
 function buildProviderUnavailableResult(
