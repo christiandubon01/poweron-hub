@@ -11,7 +11,7 @@ import type { AttemptRecord, JsonValue, TaskRecord } from '../lib/orchestrationT
 import { classifyHostCommand } from './commandPolicy.ts';
 import { captureRepoSnapshot } from './diffPolicy.ts';
 import { parseAuthorizedWriteScope, isPathWithinAuthorizedScope, createTaskPolicyContext } from './pathPolicy.ts';
-import { CANONICAL_PROTECTED_REPO_PATHS } from './repoPolicy.ts';
+import { CANONICAL_PROTECTED_REPO_PATHS, isSensitiveRepoPath } from './repoPolicy.ts';
 import {
   adjudicateRepoPolicy,
   buildPolicyEvaluationEventPayload,
@@ -214,6 +214,38 @@ test('policy: protected path set matches the ORCH-4A canonical list', () => {
     'vite.config.ts',
     'src/components/v15r/charts/SVGCharts.tsx',
   ]);
+});
+
+test('policy: sensitive env files and key material exclude only explicit terminal template suffixes', () => {
+  for (const repoPath of [
+    '.env',
+    '.env.local',
+    '.env.production',
+    '.env.development',
+    '.env.staging',
+    '.env.test',
+    '.env.any-real-environment-name',
+    '.env.example.production',
+    '.env.sample.local',
+    'certificates/server.pem',
+    'keys/private.key',
+  ]) {
+    assert.equal(isSensitiveRepoPath(repoPath), true, `${repoPath} must remain sensitive`);
+  }
+
+  for (const repoPath of [
+    '.env.example',
+    '.env.local.example',
+    '.env.production.example',
+    '.env.sample',
+    '.env.local.sample',
+    '.env.template',
+    '.env.production.template',
+    '.env.dist',
+    '.env.local.dist',
+  ]) {
+    assert.equal(isSensitiveRepoPath(repoPath), false, `${repoPath} must be treated as an explicit template`);
+  }
 });
 
 test('policy: implementer accepts one authorized tracked modification', async () => {

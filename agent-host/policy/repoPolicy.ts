@@ -10,6 +10,7 @@ const PROTECTED_REPO_PATHS = [
   'vite.config.ts',
   'src/components/v15r/charts/SVGCharts.tsx',
 ] as const;
+const ENV_TEMPLATE_SUFFIXES = ['.example', '.sample', '.template', '.dist'] as const;
 
 export const CANONICAL_PROTECTED_REPO_PATHS = [...PROTECTED_REPO_PATHS];
 const PROTECTED_REPO_PATH_KEYS = new Set(PROTECTED_REPO_PATHS.map((entry) => toRepoPathKey(entry)));
@@ -29,7 +30,7 @@ export function isSensitiveRepoPath(repoRelativePath: string): boolean {
   const baseName = path.posix.basename(normalizedPath).toLowerCase();
 
   if (baseName === '.env' || baseName.startsWith('.env.')) {
-    return true;
+    return !ENV_TEMPLATE_SUFFIXES.some((suffix) => baseName.endsWith(suffix));
   }
 
   return baseName.endsWith('.pem') || baseName.endsWith('.key');

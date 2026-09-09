@@ -143,3 +143,21 @@ test('workspace: tracked sensitive baseline files fail closed', async () => {
     WorkspacePreparationError,
   );
 });
+
+test('workspace: tracked env template baseline materializes without weakening secret fail-closed behavior', async () => {
+  const fixture = await createRepo();
+  await writeFile(path.join(fixture.repoPath, '.env.local.example'), 'PLACEHOLDER=value\n');
+  await git(fixture.repoPath, ['add', '.env.local.example']);
+  await git(fixture.repoPath, ['commit', '-m', 'template fixture']);
+
+  const workspace = await materializeAttemptWorkspace({
+    canonicalRepoPath: fixture.repoPath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+  });
+
+  assert.equal(
+    (await readFile(path.join(workspace.workspacePath, '.env.local.example'), 'utf8')).replaceAll('\r\n', '\n'),
+    'PLACEHOLDER=value\n',
+  );
+});
