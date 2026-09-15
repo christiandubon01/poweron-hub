@@ -115,6 +115,7 @@ export function buildPolicyEvaluationEventPayload(adjudication: PolicyAdjudicati
       path: change.path,
       originalPath: change.originalPath,
       decision: change.decision,
+      requiresHuman: change.requiresHuman ? true : undefined,
       reasonCode: change.reasonCode,
       matchedRule: change.matchedRule,
       indexStatus: change.indexStatus,
@@ -288,11 +289,15 @@ function classifyNewEntry(options: {
   }
 
   if (restricted) {
+    // Capture the original require-human decision kind before it is collapsed to
+    // `deny`, so positive human-gate evidence survives into the durable event.
+    const requiresHuman = restricted.decision === 'require-human';
     return {
       category: restricted.reasonCode === 'protected-path' ? 'PROTECTED_CHANGE' : category,
       path: options.entry.path,
       originalPath: options.entry.originalPath,
-      decision: restricted.decision === 'require-human' ? 'deny' : restricted.decision,
+      decision: requiresHuman ? 'deny' : restricted.decision,
+      requiresHuman: requiresHuman ? true : undefined,
       reasonCode: restricted.reasonCode,
       reason: restricted.reason,
       matchedRule: restricted.matchedRule,

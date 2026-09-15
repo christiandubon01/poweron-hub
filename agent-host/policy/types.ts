@@ -122,6 +122,15 @@ export interface PolicyPathChange {
   path: string;
   originalPath?: string;
   decision: PolicyDecisionKind;
+  /**
+   * Positive, additive human-gate signal preserved from the original policy
+   * decision kind (`require-human`). The `decision` field itself is collapsed to
+   * `deny` for backward compatibility, so this flag is the authoritative durable
+   * evidence that the change requires human approval. Absent/false for ordinary
+   * denies. Derived ONLY from `PolicyDecisionKind === 'require-human'`, never from
+   * reasonCode/category/path.
+   */
+  requiresHuman?: boolean;
   reasonCode: PolicyReasonCode;
   reason: string;
   matchedRule: string;

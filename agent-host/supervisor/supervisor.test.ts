@@ -10,6 +10,7 @@ import {
   supervisorTick,
   classifyAttemptFailure,
   SUPERVISOR_RETRY_SCHEDULED_EVENT,
+  SUPERVISOR_BLOCKED_EVENT,
   type AttemptExecutionContext,
   type ExecutionPort,
   type SupervisorTickOptions,
@@ -1075,5 +1076,328 @@ test('5E: crash after the last Task Attempt passed completes the Run without pro
     assert.equal(store.getRun('run-1')?.status, 'completed');
     assert.equal(executor.calls(), 0);
     assert.equal(store.listAttempts('task-b').length, 1);
+  });
+});
+
+// ─── ORCH-5F: human-gate (stop-at-gate) ────────────────────────────────────────
+
+// A durable policy change carrying the positive `requiresHuman` field (from
+// PolicyDecisionKind === 'require-human'). Detection uses that field only.
+function gatePlan(): FakeExecutorPlan {
+  return {
+    status: 'failed',
+    emitEventType: 'policy.evaluated',
+    emitPayload: {
+      accepted: false,
+      decision: 'deny',
+      changes: [
+        {
+          path: 'src/store/authStore.ts',
+          category: 'PROTECTED_CHANGE',
+          decision: 'deny',
+          requiresHuman: true,
+          reasonCode: 'protected-path',
+        },
+      ],
+    },
+  };
+}
+
+// Ordinary policy rejection: denied, but NO requiresHuman evidence.
+function policyRejectPlan(): FakeExecutorPlan {
+  return {
+    status: 'failed',
+    emitEventType: 'policy.evaluated',
+    emitPayload: {
+      accepted: false,
+      decision: 'deny',
+      changes: [{ path: 'src/x.ts', category: 'OUT_OF_SCOPE_CHANGE', decision: 'deny', reasonCode: 'out-of-scope-write' }],
+    },
+  };
+}
+
+function blockedEventCount(store: OrchestrationStore): number {
+  return store.listEvents().filter((event) => event.type === SUPERVISOR_BLOCKED_EVENT).length;
+}
+
+test('5F: require-human blocks the Task and pauses the Run (no retry, one blocked event)', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-1', { spec: { supervisor: { maxAttempts: 10 } } });
+    const executor = fakeExecutor(store, gatePlan());
+
+    const result = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: attemptIdFactory() });
+
+    assert.equal(result.outcome, 'paused-for-gate');
+    assert.equal(result.gate?.attemptId, 'att-1');
+    assert.equal(result.gate?.gateKind, 'protected-path');
+    assert.equal(executor.calls(), 1);
+    assert.equal(store.getTask('task-1')?.status, 'blocked');
+    assert.equal(store.getRun('run-1')?.status, 'paused');
+    assert.equal(store.listAttempts('task-1').length, 1);
+    // maxAttempts=10 must not trigger a retry; human approval always wins.
+    assert.equal(result.retry, null);
+    assert.equal(store.listEvents().filter((e) => e.type === SUPERVISOR_RETRY_SCHEDULED_EVENT).length, 0);
+    // Exactly one durable supervisor.blocked event with safe payload.
+    assert.equal(blockedEventCount(store), 1);
+    const blocked = store.listEvents().find((e) => e.type === SUPERVISOR_BLOCKED_EVENT);
+    assert.equal(blocked?.taskId, 'task-1');
+    assert.equal(blocked?.attemptId, 'att-1');
+    assert.deepEqual(blocked?.payload, { reason: 'human-gate', gateKind: 'protected-path' });
+  });
+});
+
+test('5F: repeated tick on a paused Run is idempotent (no new Attempt, no duplicate event)', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-1');
+    const executor = fakeExecutor(store, gatePlan());
+    const nextId = attemptIdFactory();
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(store.getRun('run-1')?.status, 'paused');
+    assert.equal(blockedEventCount(store), 1);
+
+    const again = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(again.outcome, 'run-paused');
+    assert.equal(again.attemptCreated, false);
+    assert.equal(again.executed, false);
+    assert.equal(executor.calls(), 1);
+    assert.equal(store.listAttempts('task-1').length, 1);
+    assert.equal(blockedEventCount(store), 1);
+    // No auto-resume.
+    assert.equal(store.getRun('run-1')?.status, 'paused');
+  });
+});
+
+test('5F: a gated Task keeps its dependents locked while the Run is paused', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a', { position: 0 });
+    seedTask(store, 'run-1', 'task-b', { position: 1 });
+    store.addDependency('task-b', 'task-a');
+    const executor = fakeExecutor(store, gatePlan());
+    const nextId = attemptIdFactory();
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(store.getTask('task-a')?.status, 'blocked');
+    assert.equal(store.getRun('run-1')?.status, 'paused');
+    assert.equal(store.getTask('task-b')?.status, 'pending');
+    assert.equal(store.listAttempts('task-b').length, 0);
+
+    const again = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(again.outcome, 'run-paused');
+    assert.equal(store.listAttempts('task-b').length, 0);
+    assert.equal(executor.calls(), 1);
+  });
+});
+
+test('5F: an independent Task does not execute while the Run is paused', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a', { position: 0 }); // gates
+    seedTask(store, 'run-1', 'task-b', { position: 1 }); // independent, ready
+    const executor = fakeExecutor(store, gatePlan());
+    const nextId = attemptIdFactory();
+
+    const first = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(first.outcome, 'paused-for-gate');
+    assert.equal(first.taskId, 'task-a');
+
+    const second = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(second.outcome, 'run-paused');
+    // task-b never ran even though it was independent and ready.
+    assert.equal(executor.calls(), 1);
+    assert.equal(store.getTask('task-b')?.status, 'pending');
+    assert.equal(store.listAttempts('task-b').length, 0);
+  });
+});
+
+test('5F: ordinary policy rejection stays terminal and non-retryable, never paused', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-1', { spec: { supervisor: { maxAttempts: 5 } } });
+    const executor = fakeExecutor(store, policyRejectPlan());
+
+    const result = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: attemptIdFactory() });
+
+    assert.equal(result.outcome, 'task-executed');
+    assert.equal(store.getTask('task-1')?.status, 'failed');
+    assert.equal(store.getRun('run-1')?.status, 'failed');
+    assert.equal(store.listAttempts('task-1').length, 1);
+    assert.equal(blockedEventCount(store), 0);
+    assert.equal(store.listEvents().filter((e) => e.type === SUPERVISOR_RETRY_SCHEDULED_EVENT).length, 0);
+  });
+});
+
+test('5F: unknown failure stays fail-closed terminal, never paused', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-1', { spec: RETRY_SPEC_2 });
+    const executor = fakeExecutor(store, { status: 'failed' }); // no durable evidence, no hint
+
+    const result = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: attemptIdFactory() });
+
+    assert.equal(result.outcome, 'task-executed');
+    assert.equal(store.getTask('task-1')?.status, 'failed');
+    assert.equal(store.getRun('run-1')?.status, 'failed');
+    assert.equal(blockedEventCount(store), 0);
+  });
+});
+
+test('5F: a cancelled Run is never resumed after being paused', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-1');
+    const executor = fakeExecutor(store, gatePlan());
+    const nextId = attemptIdFactory();
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(store.getRun('run-1')?.status, 'paused');
+
+    store.transitionRun('run-1', 'cancelled'); // owner cancels the paused Run
+    const after = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(after.outcome, 'run-terminal');
+    assert.equal(store.getRun('run-1')?.status, 'cancelled');
+    assert.equal(executor.calls(), 1);
+    assert.equal(store.listAttempts('task-1').length, 1);
+  });
+});
+
+// ─── ORCH-5F: verifier as an ordinary dependent Task ───────────────────────────
+
+test('5F: verifier Task runs only after its implementer passes, then completes the Run', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a', { position: 0 });
+    // Verifier: ordinary Task, depends on A, carrying routing metadata in spec.
+    seedTask(store, 'run-1', 'task-v', { position: 1, spec: { permissionProfile: 'verifier' } });
+    store.addDependency('task-v', 'task-a');
+    const executor = fakeExecutor(store, { status: 'passed' });
+    const nextId = attemptIdFactory();
+
+    const first = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(first.taskId, 'task-a');
+    assert.equal(store.getTask('task-a')?.status, 'passed');
+    assert.equal(store.getTask('task-v')?.status, 'pending');
+    assert.equal(store.getRun('run-1')?.status, 'running');
+    assert.equal(store.listAttempts('task-v').length, 0);
+
+    const second = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(second.taskId, 'task-v');
+    assert.equal(store.getTask('task-v')?.status, 'passed');
+    assert.equal(store.getRun('run-1')?.status, 'completed');
+    // Exactly one execution per tick, verifier strictly after implementer.
+    assert.deepEqual(executor.taskIds(), ['task-a', 'task-v']);
+    // No verifier-specific lifecycle: profile metadata did not change scheduling.
+  });
+});
+
+test('5F: verifier failure fails the Run while the implementer stays passed', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a', { position: 0 });
+    seedTask(store, 'run-1', 'task-v', { position: 1, spec: { permissionProfile: 'verifier' } });
+    store.addDependency('task-v', 'task-a');
+    const executor = fakeExecutor(store, (_ordinal, context) =>
+      context.taskId === 'task-v'
+        ? { status: 'failed', emitEventType: 'execution.failed' }
+        : { status: 'passed' },
+    );
+    const nextId = attemptIdFactory();
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    const second = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+
+    assert.equal(second.taskId, 'task-v');
+    assert.equal(store.getTask('task-v')?.status, 'failed');
+    assert.equal(store.getRun('run-1')?.status, 'failed');
+    // Implementer output is neither rolled back nor auto-applied.
+    assert.equal(store.getTask('task-a')?.status, 'passed');
+  });
+});
+
+test('5F: verifier uses the standard bounded-retry machinery', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a', { position: 0 });
+    seedTask(store, 'run-1', 'task-v', { position: 1, spec: { permissionProfile: 'verifier', supervisor: { maxAttempts: 2 } } });
+    store.addDependency('task-v', 'task-a');
+    const executor = fakeExecutor(store, (ordinal, context) => {
+      if (context.taskId !== 'task-v') return { status: 'passed' };
+      return ordinal === 1 ? { status: 'failed', emitEventType: 'execution.timed_out' } : { status: 'passed' };
+    });
+    const nextId = attemptIdFactory();
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId }); // A passes
+    const vFail = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId }); // V1 timeout
+    assert.equal(vFail.outcome, 'retry-scheduled');
+    assert.equal(vFail.retry?.reasonCode, 'execution-timeout');
+
+    const vPass = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId }); // V2 passes
+    assert.equal(vPass.taskId, 'task-v');
+    assert.equal(store.getTask('task-v')?.status, 'passed');
+    assert.equal(store.getRun('run-1')?.status, 'completed');
+    assert.equal(store.listAttempts('task-v').length, 2);
+  });
+});
+
+test('5F: a gated verifier pauses the Run identically', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a', { position: 0 });
+    seedTask(store, 'run-1', 'task-v', { position: 1, spec: { permissionProfile: 'verifier' } });
+    store.addDependency('task-v', 'task-a');
+    const executor = fakeExecutor(store, (_ordinal, context) =>
+      context.taskId === 'task-v' ? gatePlan() : { status: 'passed' },
+    );
+    const nextId = attemptIdFactory();
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId }); // A passes
+    const gated = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId }); // V gates
+
+    assert.equal(gated.outcome, 'paused-for-gate');
+    assert.equal(gated.taskId, 'task-v');
+    assert.equal(store.getTask('task-v')?.status, 'blocked');
+    assert.equal(store.getRun('run-1')?.status, 'paused');
+    assert.equal(blockedEventCount(store), 1);
+  });
+});
+
+test('5F: the Supervisor never auto-creates a verifier Task', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a');
+    const executor = fakeExecutor(store, { status: 'passed' });
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: attemptIdFactory() });
+
+    // Run completes with exactly the authored Tasks; no verifier is fabricated.
+    assert.equal(store.getRun('run-1')?.status, 'completed');
+    assert.equal(store.listTasks('run-1').length, 1);
+    assert.equal(store.listTasks('run-1')[0]?.taskId, 'task-a');
+  });
+});
+
+test('5F: verification completes orchestration without applying the implementer changeset', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a', { position: 0 });
+    seedTask(store, 'run-1', 'task-v', { position: 1, spec: { permissionProfile: 'verifier' } });
+    store.addDependency('task-v', 'task-a');
+    // Implementer produces an accepted changeset; verifier later passes.
+    const executor = fakeExecutor(store, (_ordinal, context) =>
+      context.taskId === 'task-a'
+        ? { status: 'passed', emitEventType: 'workspace.changeset.ready' }
+        : { status: 'passed' },
+    );
+    const nextId = attemptIdFactory();
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+
+    assert.equal(store.getRun('run-1')?.status, 'completed');
+    // The changeset-ready signal is preserved (not consumed/applied/cleaned by 5F).
+    assert.equal(store.listEvents().filter((e) => e.type === 'workspace.changeset.ready').length, 1);
   });
 });

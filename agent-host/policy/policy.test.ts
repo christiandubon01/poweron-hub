@@ -305,6 +305,20 @@ test('policy: protected path change fails without approval and can pass with mat
   assert.equal(denied.accepted, false);
   assert.equal(denied.reasonCodes.includes('protected-path'), true);
 
+  // Positive human-gate evidence: decision stays collapsed to `deny` for backward
+  // compatibility, but requiresHuman is preserved from the require-human kind and
+  // survives end-to-end into the durable policy.evaluated event payload.
+  const gatedChange = denied.changes.find((change) => change.reasonCode === 'protected-path');
+  assert.ok(gatedChange, 'expected a protected-path change');
+  assert.equal(gatedChange?.decision, 'deny');
+  assert.equal(gatedChange?.requiresHuman, true);
+  const deniedPayload = buildPolicyEvaluationEventPayload(denied) as {
+    changes: Array<{ reasonCode: string; decision: string; requiresHuman?: boolean }>;
+  };
+  const gatedPayloadChange = deniedPayload.changes.find((change) => change.reasonCode === 'protected-path');
+  assert.equal(gatedPayloadChange?.decision, 'deny');
+  assert.equal(gatedPayloadChange?.requiresHuman, true);
+
   await runGit(repoPath, ['restore', '--worktree', '--staged', '--', 'src/store/authStore.ts']);
   const approvedBaseline = await captureBaseline({
     repoPath,
@@ -324,6 +338,12 @@ test('policy: protected path change fails without approval and can pass with mat
     finalSnapshot: await captureRepoSnapshot(repoPath),
   });
   assert.equal(approved.accepted, true);
+  // An accepted change is never human-gated.
+  assert.equal(approved.changes.some((change) => change.requiresHuman === true), false);
+  const approvedPayload = buildPolicyEvaluationEventPayload(approved) as {
+    changes: Array<{ requiresHuman?: boolean }>;
+  };
+  assert.equal(approvedPayload.changes.some((change) => change.requiresHuman === true), false);
 });
 
 test('policy: reviewer immutability denies created files and verifier immutability denies tracked edits', async () => {
@@ -343,6 +363,8 @@ test('policy: reviewer immutability denies created files and verifier immutabili
   });
   assert.equal(reviewer.accepted, false);
   assert.equal(reviewer.reasonCodes.includes('reviewer-immutability'), true);
+  // Ordinary deny (reviewer-immutability) is NOT a human gate.
+  assert.equal(reviewer.changes.some((change) => change.requiresHuman === true), false);
 
   await runGit(repoPath, ['restore', '--worktree', '--staged', '--', 'src/new-file.ts']).catch(() => undefined);
   await deleteRepoPath(repoPath, 'src/new-file.ts');

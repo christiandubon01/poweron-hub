@@ -14,6 +14,7 @@ import { recoverInterruptedAttempts as defaultRecoverInterruptedAttempts } from 
 import { decideTaskAfterAttempt, evaluateRunLifecycle } from './stateMachine.ts';
 import type {
   AttemptFailureSummary,
+  HumanGateMetadata,
   RetryCause,
   RunTaskSnapshot,
   SupervisorAction,
@@ -73,8 +74,13 @@ export type SupervisorTickOutcome =
   | 'retry-scheduled'
   /** Tasks exist but none are ready or running; only the Run lifecycle was evaluated. */
   | 'no-ready-task'
-  /** A human gate blocks further progress on the selected/running Task. */
-  | 'paused-for-gate';
+  /**
+   * This tick detected a durable human-gate on a Task's terminal Attempt and
+   * durably blocked the Task + paused the Run, returning control to the owner.
+   */
+  | 'paused-for-gate'
+  /** The Run is already paused (awaiting human approval); this tick was a no-op. */
+  | 'run-paused';
 
 export interface SupervisorRetryScheduled {
   completedAttemptId: string;
@@ -82,6 +88,12 @@ export interface SupervisorRetryScheduled {
   nextAttemptOrdinal: number;
   maxAttempts: number;
   reasonCode: RetryCause;
+}
+
+export interface SupervisorGate {
+  attemptId: string;
+  gateKind: string;
+  reason: string;
 }
 
 export interface SupervisorTickResult {
@@ -99,6 +111,8 @@ export interface SupervisorTickResult {
   recoveredAttemptIds: readonly string[];
   /** Present only when {@link outcome} is `retry-scheduled`. */
   retry: SupervisorRetryScheduled | null;
+  /** Present only when {@link outcome} is `paused-for-gate`. */
+  gate: SupervisorGate | null;
   /** The Run record as it stood at the end of the tick. */
   run: RunRecord;
 }
@@ -118,6 +132,7 @@ export interface SupervisorTickOptions {
 }
 
 export const SUPERVISOR_RETRY_SCHEDULED_EVENT = 'supervisor.retry.scheduled';
+export const SUPERVISOR_BLOCKED_EVENT = 'supervisor.blocked';
 
 const TERMINAL_RUN_STATUS_SET: ReadonlySet<RunStatus> = new Set(TERMINAL_RUN_STATUSES);
 const TERMINAL_ATTEMPT_STATUS_SET: ReadonlySet<string> = new Set(TERMINAL_ATTEMPT_STATUSES);
@@ -160,6 +175,17 @@ export async function supervisorTick(options: SupervisorTickOptions): Promise<Su
     return baseResult(run, [], {
       outcome: 'run-terminal',
       runAction: { type: 'NO_ACTION', scope: 'run', reason: `run-already-${run.status}` },
+    });
+  }
+
+  // (A2) A paused Run is awaiting human approval. ORCH-5F owns stop-at-gate only:
+  // no auto-resume, no new Attempt, no execution of any other (even independent)
+  // Task, and no duplicate supervisor.blocked. Approval consumption/resume is a
+  // future additive phase.
+  if (run.status === 'paused') {
+    return baseResult(run, [], {
+      outcome: 'run-paused',
+      runAction: { type: 'NO_ACTION', scope: 'run', reason: 'run-paused-for-human-gate' },
     });
   }
 
@@ -326,16 +352,7 @@ function applyReconciledTaskAction(
     case 'SCHEDULE_RETRY':
       return scheduleRetry(ctx, taskId, attempt, failure.cause, taskAction, attemptCreated, executed);
     case 'PAUSE_FOR_GATE':
-      // Human gate: defer without transitioning the Task; the Run stays active.
-      // Durable approval consumption / gate resume is ORCH-5F.
-      return baseResult(requireRun(store, runId), ctx.recoveredAttemptIds, {
-        outcome: 'paused-for-gate',
-        taskId,
-        attemptId,
-        attemptCreated,
-        executed,
-        taskAction,
-      });
+      return pauseForGate(ctx, taskId, attempt, taskAction, attemptCreated, executed);
     case 'NO_ACTION':
       break;
     // MARK_RUN_* are never produced by decideTaskAfterAttempt.
@@ -394,6 +411,60 @@ function scheduleRetry(
       nextAttemptOrdinal: action.nextAttemptOrdinal,
       maxAttempts: action.maxAttempts,
       reasonCode,
+    },
+  });
+}
+
+/**
+ * Durably stop at a human gate: block the Task and pause the Run using only valid
+ * existing transitions, then append one deterministic supervisor.blocked event.
+ * ORCH-5F owns stop-at-gate only — no approval is fabricated, no retry is scheduled,
+ * no further Task executes, and the Run is never auto-resumed. maxAttempts is
+ * irrelevant: a human gate always wins over the retry budget.
+ */
+function pauseForGate(
+  ctx: TickContext,
+  taskId: string,
+  gatedAttempt: AttemptRecord,
+  action: Extract<SupervisorAction, { type: 'PAUSE_FOR_GATE' }>,
+  attemptCreated: boolean,
+  executed: boolean,
+): SupervisorTickResult {
+  const { store, runId } = ctx;
+
+  // The Run must be `running` before it can pause (pending → paused is invalid).
+  const run = requireRun(store, runId);
+  if (run.status === 'pending') {
+    store.transitionRun(runId, 'running');
+  }
+  // Task running → blocked; Run running → paused (both valid existing transitions).
+  store.transitionTask(taskId, 'blocked');
+  store.transitionRun(runId, 'paused');
+
+  // Exactly one durable supervisor.blocked event (deterministic id → no duplicates).
+  store.appendEvent({
+    eventId: `${SUPERVISOR_BLOCKED_EVENT}:${gatedAttempt.attemptId}`,
+    runId,
+    taskId,
+    attemptId: gatedAttempt.attemptId,
+    type: SUPERVISOR_BLOCKED_EVENT,
+    payload: {
+      reason: 'human-gate',
+      gateKind: action.gateKind,
+    },
+  });
+
+  return baseResult(requireRun(store, runId), ctx.recoveredAttemptIds, {
+    outcome: 'paused-for-gate',
+    taskId,
+    attemptId: gatedAttempt.attemptId,
+    attemptCreated,
+    executed,
+    taskAction: action,
+    gate: {
+      attemptId: gatedAttempt.attemptId,
+      gateKind: action.gateKind,
+      reason: action.reason,
     },
   });
 }
@@ -461,6 +532,7 @@ export function classifyAttemptFailure(
 function classifyFromDurableEvents(store: OrchestrationStore, attemptId: string): AttemptFailureSummary | null {
   const events = store.listEvents().filter((event) => event.attemptId === attemptId);
 
+  let humanGate: HumanGateMetadata | null = null;
   let sawPolicyRejection = false;
   let sawCancelled = false;
   let sawTimeout = false;
@@ -469,9 +541,11 @@ function classifyFromDurableEvents(store: OrchestrationStore, attemptId: string)
   for (const event of events) {
     switch (event.type) {
       case 'policy.violation':
+        humanGate = humanGate ?? extractHumanGate(event);
         sawPolicyRejection = true;
         break;
       case 'policy.evaluated':
+        humanGate = humanGate ?? extractHumanGate(event);
         if (eventBool(event, 'accepted') === false) {
           sawPolicyRejection = true;
         }
@@ -501,7 +575,12 @@ function classifyFromDurableEvents(store: OrchestrationStore, attemptId: string)
     }
   }
 
-  // Fail-safe ordering: non-retryable classifications win over retryable ones.
+  // Fail-safe ordering: a human gate wins over everything (it must never fall
+  // through into a transient retry), then non-retryable classifications win over
+  // retryable ones.
+  if (humanGate) {
+    return { cause: 'human-gate', gate: humanGate };
+  }
   if (sawPolicyRejection) {
     return { cause: 'policy-rejection' };
   }
@@ -513,6 +592,34 @@ function classifyFromDurableEvents(store: OrchestrationStore, attemptId: string)
   }
   if (sawProviderFailure) {
     return { cause: 'provider-process-failure' };
+  }
+  return null;
+}
+
+/**
+ * Detect a human gate strictly from the explicit durable `requiresHuman` field on a
+ * policy change (originating from PolicyDecisionKind === 'require-human'). Detection
+ * NEVER derives from reasonCode/category/path — those are used only as safe,
+ * non-secret descriptive metadata for the gate kind.
+ */
+function extractHumanGate(event: OrchestrationEventRecord): HumanGateMetadata | null {
+  const payload = eventPayload(event);
+  const changes = payload?.changes;
+  if (!Array.isArray(changes)) {
+    return null;
+  }
+  for (const change of changes) {
+    if (change && typeof change === 'object' && !Array.isArray(change)) {
+      const record = change as Record<string, JsonValue>;
+      if (record.requiresHuman === true) {
+        const reasonCode = typeof record.reasonCode === 'string' ? record.reasonCode : 'human-approval';
+        return {
+          taskId: event.taskId ?? '',
+          gateKind: reasonCode,
+          reason: 'Human approval is required before this Task can continue.',
+        };
+      }
+    }
   }
   return null;
 }
@@ -630,6 +737,7 @@ interface BaseResultOverrides {
   taskAction?: SupervisorAction | null;
   runAction?: SupervisorAction | null;
   retry?: SupervisorRetryScheduled | null;
+  gate?: SupervisorGate | null;
 }
 
 function baseResult(
@@ -648,6 +756,7 @@ function baseResult(
     runAction: overrides.runAction ?? null,
     recoveredAttemptIds,
     retry: overrides.retry ?? null,
+    gate: overrides.gate ?? null,
     run,
   };
 }
