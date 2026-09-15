@@ -10,6 +10,7 @@ import {
   supervisorTick,
   classifyAttemptFailure,
   SUPERVISOR_RETRY_SCHEDULED_EVENT,
+  type AttemptExecutionContext,
   type ExecutionPort,
   type SupervisorTickOptions,
   type SupervisorTickResult,
@@ -56,20 +57,24 @@ interface FakeExecutorPlan {
 interface FakeExecutor {
   port: ExecutionPort;
   calls: () => number;
+  taskIds: () => readonly string[];
 }
 
 function fakeExecutor(
   store: OrchestrationStore,
-  planFor: FakeExecutorPlan | ((ordinal: number) => FakeExecutorPlan),
+  planFor: FakeExecutorPlan | ((ordinal: number, context: AttemptExecutionContext) => FakeExecutorPlan),
 ): FakeExecutor {
   let calls = 0;
   let eventSeq = 0;
+  const taskIds: string[] = [];
   return {
     calls: () => calls,
+    taskIds: () => taskIds,
     port: {
       execute(context) {
         calls += 1;
-        const plan = typeof planFor === 'function' ? planFor(context.attemptOrdinal) : planFor;
+        taskIds.push(context.taskId);
+        const plan = typeof planFor === 'function' ? planFor(context.attemptOrdinal, context) : planFor;
         if (plan.emitEventType) {
           store.appendEvent({
             eventId: `fake-${context.attemptId}-${++eventSeq}`,
@@ -93,6 +98,7 @@ function throwingExecutor(): FakeExecutor {
   let calls = 0;
   return {
     calls: () => calls,
+    taskIds: () => [],
     port: {
       execute() {
         calls += 1;
@@ -119,6 +125,12 @@ function seedTask(
     position: options?.position ?? null,
     spec: options?.spec ?? null,
   });
+}
+
+function markTaskPassedWithAttempt(store: OrchestrationStore, taskId: string, attemptId: string): void {
+  store.createAttempt({ attemptId, taskId, hostInstanceId: HOST_INSTANCE_ID });
+  store.transitionAttempt(attemptId, 'passed');
+  store.transitionTask(taskId, 'passed');
 }
 
 function tick(
@@ -697,5 +709,371 @@ test('5D: classifyAttemptFailure maps durable evidence and fails closed', async 
     store.appendEvent({ eventId: 'e-pol', runId: 'run-1', taskId: 'task-1', attemptId: 'a3', type: 'policy.violation', payload: null });
     store.transitionAttempt('a3', 'failed');
     assert.equal(classifyAttemptFailure(store, store.getAttempt('a3')!, { cause: 'provider-process-failure' }).cause, 'policy-rejection');
+  });
+});
+
+// ─── ORCH-5E: multi-Task DAG readiness and Run completion ─────────────────────
+
+test('5E: dependency chain A -> B -> C executes one Task per tick and completes only after C', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a', { position: 10 });
+    seedTask(store, 'run-1', 'task-b', { position: 20 });
+    seedTask(store, 'run-1', 'task-c', { position: 30 });
+    store.addDependency('task-b', 'task-a');
+    store.addDependency('task-c', 'task-b');
+    const executor = fakeExecutor(store, { status: 'passed' });
+    const nextId = attemptIdFactory();
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.deepEqual(store.listTasks('run-1').map((task) => task.status), ['passed', 'pending', 'pending']);
+    assert.equal(store.getRun('run-1')?.status, 'running');
+    assert.equal(executor.calls(), 1);
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.deepEqual(store.listTasks('run-1').map((task) => task.status), ['passed', 'passed', 'pending']);
+    assert.equal(store.getRun('run-1')?.status, 'running');
+    assert.equal(executor.calls(), 2);
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.deepEqual(store.listTasks('run-1').map((task) => task.status), ['passed', 'passed', 'passed']);
+    assert.equal(store.getRun('run-1')?.status, 'completed');
+    assert.equal(executor.calls(), 3);
+    assert.deepEqual(executor.taskIds(), ['task-a', 'task-b', 'task-c']);
+    assert.equal(store.listTasks('run-1').flatMap((task) => store.listAttempts(task.taskId)).length, 3);
+  });
+});
+
+test('5E: fan-out executes ready children in getReadyTasks position order across later ticks', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a', { position: 10 });
+    // Deliberately create B before C while assigning C the earlier position.
+    seedTask(store, 'run-1', 'task-b', { position: 30 });
+    seedTask(store, 'run-1', 'task-c', { position: 20 });
+    store.addDependency('task-b', 'task-a');
+    store.addDependency('task-c', 'task-a');
+    const executor = fakeExecutor(store, { status: 'passed' });
+    const nextId = attemptIdFactory();
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.deepEqual(store.getReadyTasks('run-1').map((task) => task.taskId), ['task-c', 'task-b']);
+    assert.equal(store.getRun('run-1')?.status, 'running');
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(store.getTask('task-c')?.status, 'passed');
+    assert.equal(store.getTask('task-b')?.status, 'pending');
+    assert.equal(store.getRun('run-1')?.status, 'running');
+    assert.equal(executor.calls(), 2);
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(store.getRun('run-1')?.status, 'completed');
+    assert.deepEqual(executor.taskIds(), ['task-a', 'task-c', 'task-b']);
+  });
+});
+
+test('5E: fan-in keeps C unready until both independently ordered prerequisites pass', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a', { position: 20 });
+    seedTask(store, 'run-1', 'task-b', { position: 10 });
+    seedTask(store, 'run-1', 'task-c', { position: 1 });
+    store.addDependency('task-c', 'task-a');
+    store.addDependency('task-c', 'task-b');
+    const executor = fakeExecutor(store, { status: 'passed' });
+    const nextId = attemptIdFactory();
+
+    assert.deepEqual(store.getReadyTasks('run-1').map((task) => task.taskId), ['task-b', 'task-a']);
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(store.getTask('task-c')?.status, 'pending');
+    assert.deepEqual(store.getReadyTasks('run-1').map((task) => task.taskId), ['task-a']);
+    assert.equal(executor.calls(), 1);
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(store.getTask('task-c')?.status, 'pending');
+    assert.deepEqual(store.getReadyTasks('run-1').map((task) => task.taskId), ['task-c']);
+    assert.equal(store.getRun('run-1')?.status, 'running');
+    assert.equal(executor.calls(), 2);
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(store.getRun('run-1')?.status, 'completed');
+    assert.deepEqual(executor.taskIds(), ['task-b', 'task-a', 'task-c']);
+  });
+});
+
+test('5E: independent Tasks use deterministic store ordering and exactly one execution per tick', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    // Insertion and lexical order both differ from the explicit position order.
+    seedTask(store, 'run-1', 'task-a', { position: 30 });
+    seedTask(store, 'run-1', 'task-z', { position: 10 });
+    seedTask(store, 'run-1', 'task-m', { position: 20 });
+    const executor = fakeExecutor(store, { status: 'passed' });
+    const nextId = attemptIdFactory();
+
+    assert.deepEqual(store.getReadyTasks('run-1').map((task) => task.taskId), ['task-z', 'task-m', 'task-a']);
+    for (const expectedStatus of ['running', 'running', 'completed'] as const) {
+      const before = executor.calls();
+      await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+      assert.equal(executor.calls(), before + 1);
+      assert.equal(store.getRun('run-1')?.status, expectedStatus);
+    }
+    assert.deepEqual(executor.taskIds(), ['task-z', 'task-m', 'task-a']);
+  });
+});
+
+test('5E: passed sibling plus pending or running work never completes the Run or duplicates an Attempt', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a', { position: 10 });
+    seedTask(store, 'run-1', 'task-b', { position: 20 });
+    store.transitionRun('run-1', 'running');
+    markTaskPassedWithAttempt(store, 'task-a', 'att-a');
+    const executor = fakeExecutor(store, { status: 'passed', leaveRunning: true });
+
+    assert.equal(store.getTask('task-b')?.status, 'pending');
+    const dispatched = await tick(store, {
+      runId: 'run-1', executionPort: executor.port, idGenerator: attemptIdFactory(),
+    });
+    assert.equal(dispatched.outcome, 'attempt-active');
+    assert.equal(store.getRun('run-1')?.status, 'running');
+    assert.equal(store.getTask('task-b')?.status, 'running');
+
+    const repeated = await tick(store, {
+      runId: 'run-1', executionPort: executor.port, idGenerator: attemptIdFactory(),
+    });
+    assert.equal(repeated.outcome, 'attempt-active');
+    assert.equal(store.getRun('run-1')?.status, 'running');
+    assert.equal(executor.calls(), 1);
+    assert.equal(store.listAttempts('task-b').length, 1);
+  });
+});
+
+test('5E: terminally failed prerequisite fails the Run and never dispatches its dependent', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a');
+    seedTask(store, 'run-1', 'task-b');
+    store.addDependency('task-b', 'task-a');
+    const executor = fakeExecutor(store, { status: 'failed', emitEventType: 'execution.failed' });
+    const nextId = attemptIdFactory();
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(store.getTask('task-a')?.status, 'failed');
+    assert.equal(store.getTask('task-b')?.status, 'pending');
+    assert.deepEqual(store.getReadyTasks('run-1'), []);
+    assert.equal(store.getRun('run-1')?.status, 'failed');
+    assert.equal(store.listAttempts('task-b').length, 0);
+
+    const repeated = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(repeated.outcome, 'run-terminal');
+    assert.equal(executor.calls(), 1);
+    assert.equal(store.listAttempts('task-b').length, 0);
+  });
+});
+
+test('5E: retrying prerequisite remains pending and unlocks its dependent only after passing', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a', { spec: RETRY_SPEC_2 });
+    seedTask(store, 'run-1', 'task-b');
+    store.addDependency('task-b', 'task-a');
+    const executor = fakeExecutor(store, (ordinal, context) => context.taskId === 'task-a' && ordinal === 1
+      ? { status: 'failed', emitEventType: 'execution.failed' }
+      : { status: 'passed' });
+    const nextId = attemptIdFactory();
+
+    const retry = await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(retry.outcome, 'retry-scheduled');
+    assert.equal(store.getTask('task-a')?.status, 'pending');
+    assert.equal(store.getTask('task-b')?.status, 'pending');
+    assert.deepEqual(store.getReadyTasks('run-1').map((task) => task.taskId), ['task-a']);
+    assert.equal(store.getRun('run-1')?.status, 'running');
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(store.getTask('task-a')?.status, 'passed');
+    assert.equal(store.getTask('task-b')?.status, 'pending');
+    assert.deepEqual(store.getReadyTasks('run-1').map((task) => task.taskId), ['task-b']);
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: nextId });
+    assert.equal(store.getRun('run-1')?.status, 'completed');
+    assert.deepEqual(executor.taskIds(), ['task-a', 'task-a', 'task-b']);
+    assert.deepEqual(store.listAttempts('task-a').map((attempt) => attempt.ordinal), [1, 2]);
+    assert.deepEqual(store.listAttempts('task-b').map((attempt) => attempt.ordinal), [1]);
+  });
+});
+
+test('5E: interrupted prerequisite schedules retry without execution and does not unlock its dependent', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a', { spec: RETRY_SPEC_2 });
+    seedTask(store, 'run-1', 'task-b');
+    store.addDependency('task-b', 'task-a');
+    store.transitionRun('run-1', 'running');
+    store.createAttempt({ attemptId: 'att-old', taskId: 'task-a', hostInstanceId: 'stale-host' });
+    const executor = fakeExecutor(store, { status: 'passed' });
+    const nextId = attemptIdFactory();
+
+    const recovered = await tick(store, {
+      runId: 'run-1', executionPort: executor.port, idGenerator: nextId, hostInstanceId: 'live-host',
+    });
+    assert.equal(recovered.outcome, 'retry-scheduled');
+    assert.deepEqual(recovered.recoveredAttemptIds, ['att-old']);
+    assert.equal(store.getAttempt('att-old')?.status, 'interrupted');
+    assert.equal(store.getTask('task-a')?.status, 'pending');
+    assert.equal(store.getTask('task-b')?.status, 'pending');
+    assert.equal(executor.calls(), 0);
+
+    await tick(store, {
+      runId: 'run-1', executionPort: executor.port, idGenerator: nextId, hostInstanceId: 'live-host',
+    });
+    assert.equal(store.getTask('task-a')?.status, 'passed');
+    assert.equal(store.getTask('task-b')?.status, 'pending');
+    assert.equal(executor.calls(), 1);
+
+    await tick(store, {
+      runId: 'run-1', executionPort: executor.port, idGenerator: nextId, hostInstanceId: 'live-host',
+    });
+    assert.equal(store.getRun('run-1')?.status, 'completed');
+    assert.deepEqual(executor.taskIds(), ['task-a', 'task-b']);
+    assert.deepEqual(store.listAttempts('task-a').map((attempt) => attempt.ordinal), [1, 2]);
+  });
+});
+
+test('5E: durable policy rejection fails a prerequisite and never unlocks its dependent', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a', { spec: { supervisor: { maxAttempts: 5 } } });
+    seedTask(store, 'run-1', 'task-b');
+    store.addDependency('task-b', 'task-a');
+    const executor = fakeExecutor(store, {
+      status: 'failed',
+      emitEventType: 'policy.violation',
+      failure: { cause: 'provider-process-failure' },
+    });
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: attemptIdFactory() });
+    assert.equal(store.getTask('task-a')?.status, 'failed');
+    assert.equal(store.getTask('task-b')?.status, 'pending');
+    assert.equal(store.getRun('run-1')?.status, 'failed');
+    assert.equal(store.listAttempts('task-b').length, 0);
+    assert.deepEqual(executor.taskIds(), ['task-a']);
+  });
+});
+
+test('5E: cancelled prerequisite remains dependency authority and resolves the Run without dispatch', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a');
+    seedTask(store, 'run-1', 'task-b');
+    store.addDependency('task-b', 'task-a');
+    store.transitionRun('run-1', 'running');
+    store.transitionTask('task-a', 'cancelled');
+    const executor = throwingExecutor();
+
+    const result = await tick(store, {
+      runId: 'run-1', executionPort: executor.port, idGenerator: attemptIdFactory(),
+    });
+    assert.equal(result.outcome, 'no-ready-task');
+    assert.equal(store.getTask('task-b')?.status, 'pending');
+    assert.equal(store.getRun('run-1')?.status, 'failed');
+    assert.equal(executor.calls(), 0);
+    assert.equal(store.listAttempts('task-b').length, 0);
+  });
+});
+
+test('5E: no ready Task while prerequisite work is active keeps the Run running without duplication', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a');
+    seedTask(store, 'run-1', 'task-b');
+    store.addDependency('task-b', 'task-a');
+    store.transitionRun('run-1', 'running');
+    store.createAttempt({ attemptId: 'att-live', taskId: 'task-a', hostInstanceId: HOST_INSTANCE_ID });
+    const executor = throwingExecutor();
+
+    const result = await tick(store, {
+      runId: 'run-1', executionPort: executor.port, idGenerator: attemptIdFactory(),
+    });
+    assert.equal(result.outcome, 'attempt-active');
+    assert.equal(store.getRun('run-1')?.status, 'running');
+    assert.equal(store.getTask('task-b')?.status, 'pending');
+    assert.equal(executor.calls(), 0);
+    assert.equal(store.listAttempts('task-a').length, 1);
+    assert.equal(store.listAttempts('task-b').length, 0);
+  });
+});
+
+test('5E: all-passed crash state reconciles the Run once and later ticks are terminal no-ops', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a');
+    seedTask(store, 'run-1', 'task-b');
+    store.transitionRun('run-1', 'running');
+    markTaskPassedWithAttempt(store, 'task-a', 'att-a');
+    markTaskPassedWithAttempt(store, 'task-b', 'att-b');
+    const executor = throwingExecutor();
+
+    const reconciled = await tick(store, {
+      runId: 'run-1', executionPort: executor.port, idGenerator: attemptIdFactory(),
+    });
+    assert.equal(reconciled.outcome, 'no-ready-task');
+    assert.equal(reconciled.runAction?.type, 'MARK_RUN_COMPLETED');
+    assert.equal(store.getRun('run-1')?.status, 'completed');
+
+    const repeated = await tick(store, {
+      runId: 'run-1', executionPort: executor.port, idGenerator: attemptIdFactory(),
+    });
+    assert.equal(repeated.outcome, 'run-terminal');
+    assert.equal(executor.calls(), 0);
+  });
+});
+
+test('5E: terminal prerequisite Attempt reconciles now and unlocks its dependent only on the next tick', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a');
+    seedTask(store, 'run-1', 'task-b');
+    store.addDependency('task-b', 'task-a');
+    store.transitionRun('run-1', 'running');
+    store.createAttempt({ attemptId: 'att-a', taskId: 'task-a', hostInstanceId: HOST_INSTANCE_ID });
+    store.transitionAttempt('att-a', 'passed');
+    const executor = fakeExecutor(store, { status: 'passed' });
+
+    const reconciled = await tick(store, {
+      runId: 'run-1', executionPort: executor.port, idGenerator: attemptIdFactory(),
+    });
+    assert.equal(reconciled.outcome, 'task-reconciled');
+    assert.equal(store.getTask('task-a')?.status, 'passed');
+    assert.equal(store.getTask('task-b')?.status, 'pending');
+    assert.equal(store.getRun('run-1')?.status, 'running');
+    assert.equal(executor.calls(), 0);
+
+    await tick(store, { runId: 'run-1', executionPort: executor.port, idGenerator: attemptIdFactory() });
+    assert.equal(store.getTask('task-b')?.status, 'passed');
+    assert.equal(store.getRun('run-1')?.status, 'completed');
+    assert.deepEqual(executor.taskIds(), ['task-b']);
+  });
+});
+
+test('5E: crash after the last Task Attempt passed completes the Run without provider execution', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-a');
+    seedTask(store, 'run-1', 'task-b');
+    store.transitionRun('run-1', 'running');
+    markTaskPassedWithAttempt(store, 'task-a', 'att-a');
+    store.createAttempt({ attemptId: 'att-b', taskId: 'task-b', hostInstanceId: HOST_INSTANCE_ID });
+    store.transitionAttempt('att-b', 'passed');
+    const executor = throwingExecutor();
+
+    const result = await tick(store, {
+      runId: 'run-1', executionPort: executor.port, idGenerator: attemptIdFactory(),
+    });
+    assert.equal(result.outcome, 'task-reconciled');
+    assert.equal(store.getTask('task-b')?.status, 'passed');
+    assert.equal(store.getRun('run-1')?.status, 'completed');
+    assert.equal(executor.calls(), 0);
+    assert.equal(store.listAttempts('task-b').length, 1);
   });
 });
