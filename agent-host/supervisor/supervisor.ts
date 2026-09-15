@@ -3,14 +3,18 @@ import {
   TERMINAL_RUN_STATUSES,
   OrchestrationError,
   type AttemptRecord,
+  type JsonValue,
+  type OrchestrationEventRecord,
   type RunRecord,
   type RunStatus,
   type TaskRecord,
 } from '../lib/orchestrationTypes.ts';
 import type { OrchestrationStore } from '../lib/store.ts';
+import { recoverInterruptedAttempts as defaultRecoverInterruptedAttempts } from '../providers/executor.ts';
 import { decideTaskAfterAttempt, evaluateRunLifecycle } from './stateMachine.ts';
 import type {
   AttemptFailureSummary,
+  RetryCause,
   RunTaskSnapshot,
   SupervisorAction,
 } from './types.ts';
@@ -21,11 +25,11 @@ import type {
  * that Attempt in the durable store (passed / failed / interrupted / cancelled)
  * before it returns. The Supervisor never trusts the returned value for the
  * Attempt status: it reloads the Attempt from the store afterwards. The optional
- * {@link AttemptExecutionResult.failure} summary only carries retry-classification
- * metadata, which is not persisted on the Attempt record itself.
+ * {@link AttemptExecutionResult.failure} summary is only a classification hint —
+ * durable event evidence always takes precedence over it.
  *
  * Production provider binding (Codex / Claude / model routing) is deliberately
- * deferred; ORCH-5C ships only the orchestration boundary and fake executors.
+ * deferred; the Supervisor ships only the orchestration boundary and fake executors.
  */
 export interface AttemptExecutionContext {
   runId: string;
@@ -44,6 +48,12 @@ export interface ExecutionPort {
   execute(context: AttemptExecutionContext): Promise<AttemptExecutionResult | void> | AttemptExecutionResult | void;
 }
 
+/** Recovery seam. Defaults to the shared {@link defaultRecoverInterruptedAttempts}. */
+export type RecoverInterruptedAttemptsFn = (
+  store: OrchestrationStore,
+  liveHostInstanceId: string,
+) => readonly AttemptRecord[];
+
 export type SupervisorTickOutcome =
   /** Run was already terminal; nothing was scheduled or executed. */
   | 'run-terminal'
@@ -55,17 +65,23 @@ export type SupervisorTickOutcome =
   | 'task-reconciled'
   /** A Task already has a running latest Attempt; no new Attempt was created. */
   | 'attempt-active'
-  /** The latest Attempt failed but retry is permitted; the retry is deferred to ORCH-5D. */
-  | 'retry-deferred'
+  /**
+   * The latest Attempt failed/interrupted, retry budget remains, and this tick has
+   * durably driven the Task back to `pending` for a fresh Attempt on a later tick.
+   * No Attempt is created and no execution runs in the scheduling tick.
+   */
+  | 'retry-scheduled'
   /** Tasks exist but none are ready or running; only the Run lifecycle was evaluated. */
   | 'no-ready-task'
   /** A human gate blocks further progress on the selected/running Task. */
   | 'paused-for-gate';
 
-export interface SupervisorRetryDeferral {
+export interface SupervisorRetryScheduled {
+  completedAttemptId: string;
   completedAttemptOrdinal: number;
   nextAttemptOrdinal: number;
   maxAttempts: number;
+  reasonCode: RetryCause;
 }
 
 export interface SupervisorTickResult {
@@ -79,8 +95,10 @@ export interface SupervisorTickResult {
   executed: boolean;
   taskAction: SupervisorAction | null;
   runAction: SupervisorAction | null;
-  /** Present only when {@link outcome} is `retry-deferred`. */
-  retry: SupervisorRetryDeferral | null;
+  /** Attempt ids stale-recovered (interrupted) at the start of this tick. */
+  recoveredAttemptIds: readonly string[];
+  /** Present only when {@link outcome} is `retry-scheduled`. */
+  retry: SupervisorRetryScheduled | null;
   /** The Run record as it stood at the end of the tick. */
   run: RunRecord;
 }
@@ -93,55 +111,80 @@ export interface SupervisorTickOptions {
   executionPort: ExecutionPort;
   /** Attempt id generator. Defaults to crypto.randomUUID. */
   idGenerator?: (() => string) | undefined;
+  /** Stale-Attempt recovery seam. Defaults to the shared recovery helper. */
+  recoverInterruptedAttempts?: RecoverInterruptedAttemptsFn | undefined;
+  /** Emit the optional `supervisor.retry.scheduled` telemetry event. Defaults to true. */
+  emitRetryEvent?: boolean | undefined;
 }
+
+export const SUPERVISOR_RETRY_SCHEDULED_EVENT = 'supervisor.retry.scheduled';
 
 const TERMINAL_RUN_STATUS_SET: ReadonlySet<RunStatus> = new Set(TERMINAL_RUN_STATUSES);
 const TERMINAL_ATTEMPT_STATUS_SET: ReadonlySet<string> = new Set(TERMINAL_ATTEMPT_STATUSES);
 
+interface TickContext {
+  store: OrchestrationStore;
+  runId: string;
+  recoveredAttemptIds: readonly string[];
+  emitRetryEvent: boolean;
+}
+
 /**
  * Advance a single Run by at most one Task per invocation:
  *
- *   Run pending → running → select one ready Task → create one Attempt →
- *   invoke the injected execution port → reload the durable terminal Attempt →
- *   apply the ORCH-5B state machine → Task terminal → evaluate Run → Run terminal.
+ *   recover stale in-flight Attempts → reconcile a running Task's durable terminal
+ *   Attempt (retry / fail / pass, no execution) → else Run pending → running →
+ *   select one ready Task → create one Attempt → invoke the injected execution port →
+ *   reload the durable terminal Attempt → apply the ORCH-5B state machine →
+ *   Task terminal or durably re-queued for retry → evaluate Run → Run terminal.
  *
- * The tick is intentionally single-task (full DAG sequencing is ORCH-5E) and
- * never performs a retry (ORCH-5D owns failed → blocked → pending → next Attempt).
- * It creates and reasons about at most one Attempt and never applies generated
- * workspace output to the canonical tree.
+ * Invariants: at most one execution-port invocation per tick; a retry is scheduled
+ * durably (Task → failed → blocked → pending) but never executed in the same tick;
+ * the next Attempt (and its incremented ordinal) is created only from durable
+ * schedulable state on a later tick; no generated workspace output is ever applied
+ * to the canonical tree. Full DAG sequencing remains ORCH-5E.
  */
 export async function supervisorTick(options: SupervisorTickOptions): Promise<SupervisorTickResult> {
   const { store, runId, hostInstanceId, executionPort } = options;
   const idGenerator = options.idGenerator ?? globalThis.crypto.randomUUID.bind(globalThis.crypto);
+  const recover = options.recoverInterruptedAttempts ?? defaultRecoverInterruptedAttempts;
+  const emitRetryEvent = options.emitRetryEvent ?? true;
 
   const run = store.getRun(runId);
   if (!run) {
     throw new OrchestrationError('NOT_FOUND', `Run ${runId} was not found.`);
   }
 
-  // (A) A terminal Run is never resurrected: no Attempt, no execution.
+  // (A) A terminal Run is never resurrected: no recovery, no Attempt, no execution.
   if (TERMINAL_RUN_STATUS_SET.has(run.status)) {
-    return baseResult(run, {
+    return baseResult(run, [], {
       outcome: 'run-terminal',
       runAction: { type: 'NO_ACTION', scope: 'run', reason: `run-already-${run.status}` },
     });
   }
 
-  // (B) Reconcile an already-running Task before starting anything new. A running
-  // Task is never returned by getReadyTasks, so its terminal Attempt must be
-  // reconciled here — and this must happen without invoking the execution port.
+  // (B) Crash/interrupt recovery. Reuse the shared recovery helper, which turns
+  // stale `running` Attempts owned by a non-live Host into `interrupted`. Attempts
+  // owned by the current live Host are never touched. This never executes anything.
+  const recoveredAttemptIds = recover(store, hostInstanceId).map((attempt) => attempt.attemptId);
+
+  const ctx: TickContext = { store, runId, recoveredAttemptIds, emitRetryEvent };
+
+  // (C) Reconcile an already-running Task before starting anything new. A running
+  // Task is never returned by getReadyTasks, so a terminal (including a freshly
+  // interrupted) latest Attempt must be reconciled here without invoking the port.
   const runningTask = pickRunningTask(store, runId);
   if (runningTask) {
-    return reconcileRunningTask(store, run, runningTask);
+    return reconcileRunningTask(ctx, run, runningTask);
   }
 
-  // (C) Select at most one ready Task using the existing dependency-aware ordering.
+  // (D) Select at most one ready Task using the existing dependency-aware ordering.
   const readyTasks = store.getReadyTasks(runId);
   if (readyTasks.length === 0) {
     const tasks = store.listTasks(runId);
     if (tasks.length === 0) {
       // Zero-Task Run: make no progress and do not churn pending → running.
-      return baseResult(run, {
+      return baseResult(run, recoveredAttemptIds, {
         outcome: 'zero-tasks',
         runAction: { type: 'NO_ACTION', scope: 'run', reason: 'zero-tasks-no-progress' },
       });
@@ -149,24 +192,36 @@ export async function supervisorTick(options: SupervisorTickOptions): Promise<Su
     // Tasks exist but none are ready or running: only evaluate the Run lifecycle
     // (it may legitimately complete or fail based on already-terminal Tasks).
     const { runAction, run: finalRun } = evaluateAndApplyRun(store, runId);
-    return baseResult(finalRun, { outcome: 'no-ready-task', runAction });
+    return baseResult(finalRun, recoveredAttemptIds, { outcome: 'no-ready-task', runAction });
   }
 
   const task = readyTasks[0] as TaskRecord;
 
-  // (D) Bring the Run into `running` before its first Attempt, using normal
-  // store transitions/events. transitionPath handling below tolerates a Run that
-  // is still pending, but doing this here keeps the lifecycle events well-ordered.
+  // (E) One-running-Attempt invariant: never create a second Attempt while one is
+  // still running. A ready Task should never own a running Attempt, but this guards
+  // the createAttempt boundary explicitly across all paths.
+  const runningAttempt = store.listAttempts(task.taskId).find((attempt) => attempt.status === 'running');
+  if (runningAttempt) {
+    return baseResult(requireRun(store, runId), recoveredAttemptIds, {
+      outcome: 'attempt-active',
+      taskId: task.taskId,
+      attemptId: runningAttempt.attemptId,
+      taskAction: { type: 'NO_ACTION', scope: 'task', reason: 'attempt-still-running' },
+    });
+  }
+
+  // (F) Bring the Run into `running` before its first Attempt, using normal
+  // store transitions/events.
   if (run.status === 'pending') {
     store.transitionRun(runId, 'running');
   }
 
-  // (E) Create exactly one Attempt through the store (moves Task pending → running,
+  // (G) Create exactly one Attempt through the store (moves Task pending → running,
   // assigns the ordinal, records hostInstanceId and attempt.created).
   const attemptId = idGenerator();
   const createdAttempt = store.createAttempt({ attemptId, taskId: task.taskId, hostInstanceId });
 
-  // (F) Invoke the injected execution boundary. The fake executor terminalizes the
+  // (H) Invoke the injected execution boundary. The fake executor terminalizes the
   // Attempt durably; production binding is deferred.
   const executionResult = (await executionPort.execute({
     runId,
@@ -177,7 +232,7 @@ export async function supervisorTick(options: SupervisorTickOptions): Promise<Su
     task,
   })) ?? undefined;
 
-  // (G) Reload the durable Attempt/Task. The effective Attempt status is read from
+  // (I) Reload the durable Attempt/Task. The effective Attempt status is read from
   // the store, never from the in-memory execution result.
   const durableAttempt = store.getAttempt(attemptId);
   if (!durableAttempt) {
@@ -185,10 +240,10 @@ export async function supervisorTick(options: SupervisorTickOptions): Promise<Su
   }
   const durableTask = requireTask(store, task.taskId);
 
-  // (H) The executor left the Attempt running: treat the Attempt as active and do
+  // (J) The executor left the Attempt running: treat the Attempt as active and do
   // not fabricate a terminal Task outcome.
   if (!isTerminalAttempt(durableAttempt)) {
-    return baseResult(requireRun(store, runId), {
+    return baseResult(requireRun(store, runId), recoveredAttemptIds, {
       outcome: 'attempt-active',
       taskId: durableTask.taskId,
       attemptId,
@@ -198,27 +253,30 @@ export async function supervisorTick(options: SupervisorTickOptions): Promise<Su
     });
   }
 
-  // (I) Apply the ORCH-5B Attempt → Task decision using the durable Attempt status.
+  // (K) Classify the durable Attempt outcome and apply the ORCH-5B decision. Durable
+  // event evidence is authoritative; the port hint is only a fallback.
+  const failure = classifyAttemptFailure(store, durableAttempt, executionResult?.failure);
   const taskAction = decideTaskAfterAttempt({
     task: durableTask,
     attempt: durableAttempt,
-    failure: executionResult?.failure,
+    failure,
   });
 
-  return applyExecutedTaskAction(store, runId, durableTask.taskId, attemptId, taskAction, true, true);
+  return applyReconciledTaskAction(ctx, durableTask.taskId, attemptId, durableAttempt, failure, taskAction, true, true);
 }
 
 function reconcileRunningTask(
-  store: OrchestrationStore,
+  ctx: TickContext,
   run: RunRecord,
   runningTask: TaskRecord,
 ): SupervisorTickResult {
+  const { store } = ctx;
   const latestAttempt = latestAttemptFor(store, runningTask.taskId);
 
   // A running Task whose latest Attempt is still running (or which has no Attempt)
   // is actively owned: no new Attempt, no execution call.
   if (!latestAttempt || !isTerminalAttempt(latestAttempt)) {
-    return baseResult(run, {
+    return baseResult(run, ctx.recoveredAttemptIds, {
       outcome: 'attempt-active',
       taskId: runningTask.taskId,
       attemptId: latestAttempt?.attemptId ?? null,
@@ -226,15 +284,16 @@ function reconcileRunningTask(
     });
   }
 
-  // Reconcile the durably-terminal Attempt WITHOUT re-executing. No fresh failure
-  // summary is available at reconciliation time, so retryable-cause metadata is not
-  // reconstructed here; that is ORCH-5D's responsibility.
-  const taskAction = decideTaskAfterAttempt({ task: runningTask, attempt: latestAttempt });
-  return applyExecutedTaskAction(
-    store,
-    run.runId,
+  // Reconcile the durably-terminal Attempt WITHOUT re-executing. Classification is
+  // derived from durable evidence (Attempt status + persisted execution/policy events).
+  const failure = classifyAttemptFailure(store, latestAttempt);
+  const taskAction = decideTaskAfterAttempt({ task: runningTask, attempt: latestAttempt, failure });
+  return applyReconciledTaskAction(
+    ctx,
     runningTask.taskId,
     latestAttempt.attemptId,
+    latestAttempt,
+    failure,
     taskAction,
     false,
     false,
@@ -242,16 +301,18 @@ function reconcileRunningTask(
   );
 }
 
-function applyExecutedTaskAction(
-  store: OrchestrationStore,
-  runId: string,
+function applyReconciledTaskAction(
+  ctx: TickContext,
   taskId: string,
   attemptId: string,
+  attempt: AttemptRecord,
+  failure: AttemptFailureSummary,
   taskAction: SupervisorAction,
   attemptCreated: boolean,
   executed: boolean,
-  reconciledOutcome: 'task-executed' | 'task-reconciled' = 'task-executed',
+  executedOutcome: 'task-executed' | 'task-reconciled' = 'task-executed',
 ): SupervisorTickResult {
+  const { store, runId } = ctx;
   switch (taskAction.type) {
     case 'MARK_TASK_PASSED':
       store.transitionTask(taskId, 'passed');
@@ -262,26 +323,12 @@ function applyExecutedTaskAction(
     case 'MARK_TASK_CANCELLED':
       store.transitionTask(taskId, 'cancelled');
       break;
-    case 'SCHEDULE_RETRY': {
-      // ORCH-5C does not perform the retry: no second Attempt, no Task transition,
-      // and the Run is left progressing so it cannot be incorrectly completed.
-      return baseResult(requireRun(store, runId), {
-        outcome: 'retry-deferred',
-        taskId,
-        attemptId,
-        attemptCreated,
-        executed,
-        taskAction,
-        retry: {
-          completedAttemptOrdinal: taskAction.completedAttemptOrdinal,
-          nextAttemptOrdinal: taskAction.nextAttemptOrdinal,
-          maxAttempts: taskAction.maxAttempts,
-        },
-      });
-    }
+    case 'SCHEDULE_RETRY':
+      return scheduleRetry(ctx, taskId, attempt, failure.cause, taskAction, attemptCreated, executed);
     case 'PAUSE_FOR_GATE':
       // Human gate: defer without transitioning the Task; the Run stays active.
-      return baseResult(requireRun(store, runId), {
+      // Durable approval consumption / gate resume is ORCH-5F.
+      return baseResult(requireRun(store, runId), ctx.recoveredAttemptIds, {
         outcome: 'paused-for-gate',
         taskId,
         attemptId,
@@ -297,8 +344,8 @@ function applyExecutedTaskAction(
   }
 
   const { runAction, run: finalRun } = evaluateAndApplyRun(store, runId);
-  return baseResult(finalRun, {
-    outcome: reconciledOutcome,
+  return baseResult(finalRun, ctx.recoveredAttemptIds, {
+    outcome: executedOutcome,
     taskId,
     attemptId,
     attemptCreated,
@@ -306,6 +353,197 @@ function applyExecutedTaskAction(
     taskAction,
     runAction,
   });
+}
+
+/**
+ * Durably schedule a retry: drive the Task through its ORCH-5B transition path
+ * (running → failed → blocked → pending, or the appropriate suffix) so that the
+ * terminal truth of the failed Attempt is recorded, retry intent is explicit, and
+ * returning to `pending` forces dependency/readiness re-evaluation. No new Attempt
+ * is created and the execution port is not invoked in this tick — the next tick
+ * creates the next ordinal from durable schedulable state.
+ */
+function scheduleRetry(
+  ctx: TickContext,
+  taskId: string,
+  completedAttempt: AttemptRecord,
+  reasonCode: RetryCause,
+  action: Extract<SupervisorAction, { type: 'SCHEDULE_RETRY' }>,
+  attemptCreated: boolean,
+  executed: boolean,
+): SupervisorTickResult {
+  const { store, runId } = ctx;
+  for (const status of action.transitionPath) {
+    store.transitionTask(taskId, status);
+  }
+
+  if (ctx.emitRetryEvent) {
+    emitRetryScheduledEvent(store, runId, taskId, completedAttempt, action, reasonCode);
+  }
+
+  return baseResult(requireRun(store, runId), ctx.recoveredAttemptIds, {
+    outcome: 'retry-scheduled',
+    taskId,
+    attemptId: completedAttempt.attemptId,
+    attemptCreated,
+    executed,
+    taskAction: action,
+    retry: {
+      completedAttemptId: completedAttempt.attemptId,
+      completedAttemptOrdinal: action.completedAttemptOrdinal,
+      nextAttemptOrdinal: action.nextAttemptOrdinal,
+      maxAttempts: action.maxAttempts,
+      reasonCode,
+    },
+  });
+}
+
+/**
+ * Emit optional retry telemetry. The event id is derived deterministically from the
+ * completed Attempt so repeated evaluation cannot duplicate it (the store dedupes
+ * identical event ids). Payload carries only safe metadata — no prompt/source/secrets.
+ */
+function emitRetryScheduledEvent(
+  store: OrchestrationStore,
+  runId: string,
+  taskId: string,
+  completedAttempt: AttemptRecord,
+  action: Extract<SupervisorAction, { type: 'SCHEDULE_RETRY' }>,
+  reasonCode: RetryCause,
+): void {
+  store.appendEvent({
+    eventId: `${SUPERVISOR_RETRY_SCHEDULED_EVENT}:${completedAttempt.attemptId}`,
+    runId,
+    taskId,
+    attemptId: completedAttempt.attemptId,
+    type: SUPERVISOR_RETRY_SCHEDULED_EVENT,
+    payload: {
+      completedAttemptOrdinal: action.completedAttemptOrdinal,
+      nextAttemptOrdinal: action.nextAttemptOrdinal,
+      maxAttempts: action.maxAttempts,
+      reasonCode,
+    },
+  });
+}
+
+/**
+ * Translate durable evidence into an ORCH-5B failure classification. Interrupted and
+ * cancelled Attempt statuses classify directly; a `failed` Attempt is classified from
+ * persisted execution/policy events (authoritative), then from the caller's hint, and
+ * finally fails closed to `unknown` (never automatically retryable).
+ */
+export function classifyAttemptFailure(
+  store: OrchestrationStore,
+  attempt: AttemptRecord,
+  hint?: AttemptFailureSummary,
+): AttemptFailureSummary {
+  if (attempt.status === 'interrupted') {
+    return { cause: 'host-interrupted' };
+  }
+  if (attempt.status === 'cancelled') {
+    return { cause: 'cancelled' };
+  }
+  if (attempt.status !== 'failed') {
+    // Not a failure (e.g. passed); the state machine ignores the summary here.
+    return hint ?? { cause: 'unknown' };
+  }
+
+  const durable = classifyFromDurableEvents(store, attempt.attemptId);
+  if (durable) {
+    return durable;
+  }
+  if (hint) {
+    return hint;
+  }
+  return { cause: 'unknown' };
+}
+
+function classifyFromDurableEvents(store: OrchestrationStore, attemptId: string): AttemptFailureSummary | null {
+  const events = store.listEvents().filter((event) => event.attemptId === attemptId);
+
+  let sawPolicyRejection = false;
+  let sawCancelled = false;
+  let sawTimeout = false;
+  let sawProviderFailure = false;
+
+  for (const event of events) {
+    switch (event.type) {
+      case 'policy.violation':
+        sawPolicyRejection = true;
+        break;
+      case 'policy.evaluated':
+        if (eventBool(event, 'accepted') === false) {
+          sawPolicyRejection = true;
+        }
+        break;
+      case 'execution.cancelled':
+        sawCancelled = true;
+        break;
+      case 'execution.timed_out':
+        sawTimeout = true;
+        break;
+      case 'execution.failed': {
+        sawProviderFailure = true;
+        const errorCode = eventString(event, 'errorCode');
+        if (errorCode === 'EXECUTION_TIMEOUT') {
+          sawTimeout = true;
+        }
+        if (errorCode === 'EXECUTION_CANCELLED') {
+          sawCancelled = true;
+        }
+        if (nestedProcessTimedOut(event)) {
+          sawTimeout = true;
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  // Fail-safe ordering: non-retryable classifications win over retryable ones.
+  if (sawPolicyRejection) {
+    return { cause: 'policy-rejection' };
+  }
+  if (sawCancelled) {
+    return { cause: 'cancelled' };
+  }
+  if (sawTimeout) {
+    return { cause: 'execution-timeout' };
+  }
+  if (sawProviderFailure) {
+    return { cause: 'provider-process-failure' };
+  }
+  return null;
+}
+
+function eventPayload(event: OrchestrationEventRecord): Record<string, JsonValue> | null {
+  const payload = event.payload;
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    return payload as Record<string, JsonValue>;
+  }
+  return null;
+}
+
+function eventBool(event: OrchestrationEventRecord, key: string): boolean | null {
+  const payload = eventPayload(event);
+  const value = payload?.[key];
+  return typeof value === 'boolean' ? value : null;
+}
+
+function eventString(event: OrchestrationEventRecord, key: string): string | null {
+  const payload = eventPayload(event);
+  const value = payload?.[key];
+  return typeof value === 'string' ? value : null;
+}
+
+function nestedProcessTimedOut(event: OrchestrationEventRecord): boolean {
+  const payload = eventPayload(event);
+  const process = payload?.process;
+  if (process && typeof process === 'object' && !Array.isArray(process)) {
+    return (process as Record<string, JsonValue>).timedOut === true;
+  }
+  return false;
 }
 
 function evaluateAndApplyRun(
@@ -317,9 +555,9 @@ function evaluateAndApplyRun(
   const snapshots: RunTaskSnapshot[] = tasks.map((task) => ({
     taskId: task.taskId,
     status: task.status,
-    // ORCH-5C never leaves a Task `failed`/`blocked` with an outstanding retry:
-    // a retryable failure is surfaced as `retry-deferred` with the Task left
-    // running. Any `failed`/`blocked` Task here is therefore genuinely terminal.
+    // A retryable failure is surfaced as `retry-scheduled` with the Task durably
+    // returned to `pending`, so any `failed`/`blocked` Task observed here is
+    // genuinely terminal (its retry budget is spent or its cause is non-retryable).
     retryAvailable: false,
   }));
 
@@ -329,8 +567,6 @@ function evaluateAndApplyRun(
     case 'MARK_RUN_COMPLETED':
     case 'MARK_RUN_FAILED':
     case 'MARK_RUN_CANCELLED':
-      applyRunTransitionPath(store, runId, runAction.transitionPath);
-      break;
     case 'PAUSE_FOR_GATE':
       applyRunTransitionPath(store, runId, runAction.transitionPath);
       break;
@@ -393,10 +629,14 @@ interface BaseResultOverrides {
   executed?: boolean;
   taskAction?: SupervisorAction | null;
   runAction?: SupervisorAction | null;
-  retry?: SupervisorRetryDeferral | null;
+  retry?: SupervisorRetryScheduled | null;
 }
 
-function baseResult(run: RunRecord, overrides: BaseResultOverrides): SupervisorTickResult {
+function baseResult(
+  run: RunRecord,
+  recoveredAttemptIds: readonly string[],
+  overrides: BaseResultOverrides,
+): SupervisorTickResult {
   return {
     runId: run.runId,
     outcome: overrides.outcome,
@@ -406,6 +646,7 @@ function baseResult(run: RunRecord, overrides: BaseResultOverrides): SupervisorT
     executed: overrides.executed ?? false,
     taskAction: overrides.taskAction ?? null,
     runAction: overrides.runAction ?? null,
+    recoveredAttemptIds,
     retry: overrides.retry ?? null,
     run,
   };
