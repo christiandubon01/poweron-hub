@@ -45,6 +45,8 @@ import { APP_BRAIN_DIRECTORY } from './generatedAppBrainDirectory'
 import { findDirectoryFile } from './app-brain/appBrainDirectoryBrain'
 import { buildSceneOverlay } from './app-brain/appBrainSceneOverlayAdapter'
 import type { AppBrainSceneOverlayMode } from './app-brain/appBrainSceneOverlayTypes'
+import ControlTower from './app-brain/control-tower/ControlTower'
+import './app-brain/control-tower/controlTower.css'
 
 const OVERLAY_MODES: Array<{ id: AppBrainSceneOverlayMode; label: string; accent: string }> = [
   { id: 'architecture', label: 'Architecture Map', accent: '#22d3ee' },
@@ -592,20 +594,33 @@ function Inspector({ node }: { node: AppBrainNode | null }) {
 }
 
 export default function V15rAppBrainTab() {
+  const [destination, setDestination] = useState<'architecture' | 'control-tower' | 'diagnostics'>('architecture')
+  const [towerVisited, setTowerVisited] = useState(false)
+
+  return (
+    <div className={`app-brain-destinations ${destination === 'control-tower' ? 'ct-active' : ''}`}>
+      <nav className="ct-destinations" aria-label="App Brain destinations">
+        <button type="button" aria-pressed={destination === 'architecture'} onClick={() => setDestination('architecture')}>Architecture</button>
+        <button type="button" aria-pressed={destination === 'control-tower'} onClick={() => { setTowerVisited(true); setDestination('control-tower') }}>Control Tower <span className="ct-preview">Preview</span></button>
+        <button type="button" aria-pressed={destination === 'diagnostics'} onClick={() => setDestination('diagnostics')}>Diagnostics</button>
+      </nav>
+      <div hidden={destination !== 'architecture'} data-destination="architecture"><ArchitectureWorkspace /></div>
+      <div hidden={destination !== 'diagnostics'} data-destination="diagnostics"><DiagnosticsWorkspace /></div>
+      {towerVisited && <div hidden={destination !== 'control-tower'} data-destination="control-tower"><ControlTower /></div>}
+    </div>
+  )
+}
+
+function ArchitectureWorkspace() {
   const [selectedNodeId, setSelectedNodeId] = useState<string>('app-brain')
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
   const [filters, setFilters] = useState<AppBrainFilters>(DEFAULT_APP_BRAIN_FILTERS)
-  const [selectedFilePath, setSelectedFilePath] = useState<string | null>('src/components/v15r/V15rAppBrainTab.tsx')
   const [overlayMode, setOverlayMode] = useState<AppBrainSceneOverlayMode>('architecture')
   const sceneOverlay = useMemo(() => buildSceneOverlay(overlayMode), [overlayMode])
   const overlaySummary = useMemo(() => sceneOverlay.summary, [sceneOverlay])
   const visibleNodes = useMemo(() => filterAppBrainNodes(APP_BRAIN_NODES, filters), [filters])
   const visibleNodeIdKey = useMemo(() => visibleNodes.map((node) => node.id).join('|'), [visibleNodes])
   const visibleNodeIds = useMemo(() => visibleNodes.map((node) => node.id), [visibleNodeIdKey, visibleNodes])
-  const selectedFile = useMemo(
-    () => findDirectoryFile(APP_BRAIN_DIRECTORY.fileMetadata, selectedFilePath),
-    [selectedFilePath],
-  )
   const selectedNodeIsVisible = visibleNodeIds.includes(selectedNodeId)
   const hoveredNodeIsVisible = hoveredNodeId ? visibleNodeIds.includes(hoveredNodeId) : false
   const activeNode = useMemo(
@@ -748,13 +763,61 @@ export default function V15rAppBrainTab() {
 
         <GeneratedManifestPanel />
 
+        <section
+          className="rounded-2xl p-4 sm:p-5"
+          style={{
+            background: 'linear-gradient(180deg, rgba(12,18,34,0.88), rgba(3,7,18,0.76))',
+            border: '1px solid rgba(52,211,153,0.12)',
+          }}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+            <h2 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
+              <GitBranch size={16} style={{ color: '#34d399' }} />
+              Phase roadmap
+            </h2>
+            <span className="text-[10px] text-gray-500 font-mono flex items-center gap-1.5">
+              <Network size={12} />
+              Curated map plus generated manifest MVP
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {ROADMAP.map((item, i) => (
+              <div
+                key={item.title}
+                className="rounded-xl p-3"
+                style={{
+                  background: i === 0 ? 'rgba(34,211,238,0.06)' : 'rgba(15,23,42,0.5)',
+                  border: i === 0 ? '1px solid rgba(34,211,238,0.25)' : '1px solid rgba(55,65,81,0.4)',
+                }}
+              >
+                <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: i === 0 ? '#22d3ee' : '#6b7280' }}>
+                  {item.phase}
+                </span>
+                <p className="text-sm font-medium text-gray-200 mt-1">{item.title}</p>
+                <p className="text-[11px] text-gray-500 mt-1 leading-snug">{item.detail}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </div>
+  )
+}
+
+function DiagnosticsWorkspace() {
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>('src/components/v15r/V15rAppBrainTab.tsx')
+  const selectedFile = useMemo(
+    () => findDirectoryFile(APP_BRAIN_DIRECTORY.fileMetadata, selectedFilePath),
+    [selectedFilePath],
+  )
+  return <div className="max-w-[1480px] mx-auto px-4 sm:px-6 py-6 space-y-6">
         <section className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div>
-              <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-cyan-300/90">Control Tower</p>
-              <h2 className="text-lg font-semibold text-gray-100 mt-1">Control Tower Panels</h2>
+              <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-cyan-300/90">Diagnostics</p>
+              <h2 className="text-lg font-semibold text-gray-100 mt-1">Engineering snapshots</h2>
               <p className="text-xs text-gray-500 mt-1">
-                Wave 01–04 control tower: work manifest, Context Hub, Directory Brain, File Profile, and Wave 02 previews. Read-only snapshot only.
+                Wave 01–04 diagnostics: work manifest, Context Hub, Directory Brain, File Profile, and Wave 02 previews. Read-only snapshot only.
               </p>
             </div>
             <span
@@ -831,43 +894,5 @@ export default function V15rAppBrainTab() {
           </div>
         </section>
 
-        <section
-          className="rounded-2xl p-4 sm:p-5"
-          style={{
-            background: 'linear-gradient(180deg, rgba(12,18,34,0.88), rgba(3,7,18,0.76))',
-            border: '1px solid rgba(52,211,153,0.12)',
-          }}
-        >
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
-            <h2 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
-              <GitBranch size={16} style={{ color: '#34d399' }} />
-              Phase roadmap
-            </h2>
-            <span className="text-[10px] text-gray-500 font-mono flex items-center gap-1.5">
-              <Network size={12} />
-              Curated map plus generated manifest MVP
-            </span>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {ROADMAP.map((item, i) => (
-              <div
-                key={item.title}
-                className="rounded-xl p-3"
-                style={{
-                  background: i === 0 ? 'rgba(34,211,238,0.06)' : 'rgba(15,23,42,0.5)',
-                  border: i === 0 ? '1px solid rgba(34,211,238,0.25)' : '1px solid rgba(55,65,81,0.4)',
-                }}
-              >
-                <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: i === 0 ? '#22d3ee' : '#6b7280' }}>
-                  {item.phase}
-                </span>
-                <p className="text-sm font-medium text-gray-200 mt-1">{item.title}</p>
-                <p className="text-[11px] text-gray-500 mt-1 leading-snug">{item.detail}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-    </div>
-  )
+  </div>
 }

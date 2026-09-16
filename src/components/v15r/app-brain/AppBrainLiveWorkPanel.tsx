@@ -53,7 +53,7 @@ function SessionCard({
           className="text-[10px] uppercase tracking-wider font-mono px-2 py-1 rounded-full"
           style={{ color: statusColor, background: `${statusColor}14`, border: `1px solid ${statusColor}33` }}
         >
-          {session.status}
+          Snapshot state: {session.status}
         </span>
       </div>
 
@@ -67,17 +67,17 @@ function SessionCard({
           <p className="text-gray-300 font-mono mt-0.5">{session.riskLevel}</p>
         </div>
         <div>
-          <p className="text-gray-500 uppercase tracking-wider text-[9px]">Context freshness</p>
+          <p className="text-gray-500 uppercase tracking-wider text-[9px]">Snapshot context freshness</p>
           <p className="text-gray-300 font-mono mt-0.5">{contextHealth}</p>
         </div>
         <div>
-          <p className="text-gray-500 uppercase tracking-wider text-[9px]">Typecheck</p>
+          <p className="text-gray-500 uppercase tracking-wider text-[9px]">Snapshot typecheck</p>
           <p className="text-gray-300 font-mono mt-0.5">{session.typecheckResult}</p>
         </div>
       </div>
 
       <div>
-        <p className="text-[9px] uppercase tracking-wider text-gray-500">Current task</p>
+        <p className="text-[9px] uppercase tracking-wider text-gray-500">Task at snapshot</p>
         <p className="text-xs text-gray-200 mt-1 leading-relaxed">
           {manifestAgent?.primaryTask || session.currentTask}
         </p>
@@ -140,21 +140,21 @@ export default function AppBrainLiveWorkPanel() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard
-          label="Active sessions"
+          label="Snapshot · Active sessions"
           value={manifest.activeSessionCount ?? seedData.totalActiveSessions}
           color="#22d3ee"
         />
         <StatCard
-          label="Healthy"
+          label="Snapshot · Healthy"
           value={(manifest.overallHealthy ?? seedData.overallHealthy) ? 'Yes' : 'No'}
           color="#34d399"
         />
         <StatCard
-          label="Typecheck pass rate"
+          label="Snapshot · Typecheck pass rate"
           value={`${manifest.typeCheckPassRate ?? seedData.typeCheckPassRate}%`}
           color="#a78bfa"
         />
-        <StatCard label="Agents tracked" value={manifest.agentsSummary.length} color="#fb7185" />
+        <StatCard label="Snapshot · Agents tracked" value={manifest.agentsSummary.length} color="#fb7185" />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">

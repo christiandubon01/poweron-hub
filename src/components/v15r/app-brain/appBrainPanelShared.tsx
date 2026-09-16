@@ -50,7 +50,7 @@ export function AppBrainPanelShell({
   children: ReactNode
 }) {
   const sectionLabel =
-    mode === 'runtime' ? 'Runtime Contract' : mode === 'preview' ? 'Intelligence Preview' : 'Control Tower'
+    mode === 'runtime' ? 'Runtime Contract' : mode === 'preview' ? 'Intelligence Preview' : 'Diagnostics · Snapshot'
   const badge =
     mode === 'runtime' ? (
       <RuntimeContractBadge />

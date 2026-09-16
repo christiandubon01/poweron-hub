@@ -1786,7 +1786,7 @@ export default function V15rLayout({ activeView, onNav, activeProjectId, activeP
                 </button>
               )}
               {isAppBrainView ? (
-                <div className="flex items-center gap-4 md:gap-6 flex-wrap">
+                <div className="app-brain-shell-metrics flex items-center gap-4 md:gap-6 flex-wrap">
                   {[
                     { label: 'Architecture Mode', value: 'Control Tower', color: '#22d3ee' },
                     { label: 'Files Indexed', value: String(GENERATED_APP_BRAIN_MANIFEST.totalFiles), color: '#60a5fa' },

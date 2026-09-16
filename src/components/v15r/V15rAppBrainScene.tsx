@@ -11,6 +11,8 @@ import { edgeHintKey } from './app-brain/appBrainSceneOverlayTypes'
 import { DEFAULT_ARCHITECTURE_SCENE_OVERLAY } from './app-brain/appBrainSceneOverlayAdapter'
 
 interface V15rAppBrainSceneProps {
+  /** Static architecture presentation for preview panels; never implies task telemetry. */
+  staticPresentation?: boolean
   selectedNodeId: string | null
   hoveredNodeId: string | null
   visibleNodeIds: string[]
@@ -105,6 +107,7 @@ function makeLabelTexture(label: string, color: string): THREE.CanvasTexture {
 }
 
 function V15rAppBrainScene({
+  staticPresentation = false,
   selectedNodeId,
   hoveredNodeId,
   visibleNodeIds,
@@ -121,6 +124,8 @@ function V15rAppBrainScene({
   const sceneOverlayRef = useRef<AppBrainSceneOverlay>(sceneOverlay)
   const onSelectRef = useRef(onSelectNode)
   const onHoverRef = useRef(onHoverNode)
+  const staticPresentationRef = useRef(staticPresentation)
+  staticPresentationRef.current = staticPresentation
 
   overlayModeRef.current = overlayMode
   sceneOverlayRef.current = sceneOverlay
@@ -400,13 +405,26 @@ function V15rAppBrainScene({
       let lastTime = performance.now()
       let rootYaw = root.rotation.y
       let starYaw = starGroup.rotation.y
+      let lastStaticFrame = ''
+      let lastStaticOverlay: AppBrainSceneOverlay | null = null
       function animate(now: number): void {
         if (didDispose) return
         animationFrame = requestAnimationFrame(animate)
         if (!renderer) return
-        const dt = Math.min((now - lastTime) / 1000, 0.05)
+        const isStatic = staticPresentationRef.current
+        if (isStatic) {
+          // Redraw the preview only for inspection or resize, never as an activity loop.
+          const frameKey = `${selectedRef.current}|${hoveredRef.current}|${[...visibleNodeIdsRef.current].join(',')}|${mount.clientWidth}x${mount.clientHeight}|${renderer.domElement.width}x${renderer.domElement.height}`
+          if (lastStaticFrame === frameKey && lastStaticOverlay === sceneOverlayRef.current) return
+          lastStaticFrame = frameKey
+          lastStaticOverlay = sceneOverlayRef.current
+        } else {
+          lastStaticFrame = ''
+        }
+        const dt = isStatic ? 0 : Math.min((now - lastTime) / 1000, 0.05)
         lastTime = now
-        const t = now / 1000
+        const t = isStatic ? 0 : now / 1000
+        pulseGroup.visible = !isStatic
 
         rootYaw += dt * 0.16
         root.rotation.y = rootYaw
@@ -554,7 +572,7 @@ function V15rAppBrainScene({
           boxShadow: '0 0 20px rgba(34,211,238,0.12)',
         }}
       >
-        {OVERLAY_MODE_LABEL[overlayMode]} · generated snapshot hints
+        {staticPresentation ? 'Architecture snapshot' : `${OVERLAY_MODE_LABEL[overlayMode]} · generated snapshot hints`}
       </div>
       <div
         className="absolute right-3 top-3 text-[10px] font-mono uppercase tracking-widest px-3 py-1.5 rounded-full pointer-events-none"
