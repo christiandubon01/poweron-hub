@@ -14,6 +14,7 @@ import {
   type ProviderErrorCode,
   type ProviderProbeResult,
 } from './types.ts';
+import { isEffortLevel, mapNormalizedEffort } from './effort.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -216,12 +217,36 @@ export function buildCodexLaunchDescriptor(target: CodexLaunchTarget, request: E
     '-C',
     request.workingDirectory,
   ];
+  // Isolated candidate copies are git archives with no .git directory. Codex
+  // refuses those trees unless this check is skipped. The verifier sandbox
+  // stays read-only; only the implementer receives workspace-write.
+  if (request.permissionProfile === 'task-implementer' || request.permissionProfile === 'verifier') {
+    argv.push('--skip-git-repo-check');
+  }
   if (request.permissionProfile === 'task-implementer') {
-    argv.push('--skip-git-repo-check', '-c', 'sandbox_workspace_write.network_access=false');
+    argv.push('-c', 'sandbox_workspace_write.network_access=false');
   }
 
   if (typeof request.requestedModel === 'string' && request.requestedModel.trim().length > 0) {
     argv.push('-m', request.requestedModel);
+  }
+
+  // Codex genuinely supports reasoning effort via a config override. Apply it
+  // ONLY through the shared normalized→native mapping (ATB-2B: the installed CLI
+  // 0.153.4 catalog proves a native "xhigh", so every normalized level maps).
+  // An invalid or unsupported level fails BEFORE process launch — it is never
+  // silently skipped or downgraded to another level.
+  if (request.reasoningEffort !== undefined && request.reasoningEffort !== null) {
+    if (!isEffortLevel(request.reasoningEffort)) {
+      throw new CodexLaunchConfigurationError(
+        `reasoningEffort "${request.reasoningEffort}" is not a normalized effort level (low, medium, high, extra-high).`,
+      );
+    }
+    const mapping = mapNormalizedEffort('codex', request.reasoningEffort);
+    if (!mapping.supported) {
+      throw new CodexLaunchConfigurationError(mapping.reason);
+    }
+    argv.push('-c', `model_reasoning_effort=${mapping.nativeValue}`);
   }
 
   return {

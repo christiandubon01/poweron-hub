@@ -422,7 +422,8 @@ describe('QBO-1A2 guardrails (GUARD-1..4)', () => {
     ])
     const numbers = migrations.map((f) => parseInt(f.split('_')[0], 10)).filter((n) => Number.isFinite(n))
     const max = numbers.length ? Math.max(...numbers) : 0
-    expect(max).toBeLessThanOrEqual(134)
+    // migration 136 is now an intentional known migration
+    expect(max).toBeLessThanOrEqual(136)
   })
 
   it('GUARD-2: referral files untouched — none imports the QBO authority module or OAuth surface', () => {

@@ -45,7 +45,7 @@ import { APP_BRAIN_DIRECTORY } from './generatedAppBrainDirectory'
 import { findDirectoryFile } from './app-brain/appBrainDirectoryBrain'
 import { buildSceneOverlay } from './app-brain/appBrainSceneOverlayAdapter'
 import type { AppBrainSceneOverlayMode } from './app-brain/appBrainSceneOverlayTypes'
-import ControlTower from './app-brain/control-tower/ControlTower'
+import ControlTowerReal from './app-brain/control-tower/ControlTowerReal'
 import './app-brain/control-tower/controlTower.css'
 
 const OVERLAY_MODES: Array<{ id: AppBrainSceneOverlayMode; label: string; accent: string }> = [
@@ -594,19 +594,19 @@ function Inspector({ node }: { node: AppBrainNode | null }) {
 }
 
 export default function V15rAppBrainTab() {
-  const [destination, setDestination] = useState<'architecture' | 'control-tower' | 'diagnostics'>('architecture')
-  const [towerVisited, setTowerVisited] = useState(false)
+  const [destination, setDestination] = useState<'architecture' | 'control-tower' | 'diagnostics'>('control-tower')
+  const [towerVisited, setTowerVisited] = useState(true)
 
   return (
     <div className={`app-brain-destinations ${destination === 'control-tower' ? 'ct-active' : ''}`}>
       <nav className="ct-destinations" aria-label="App Brain destinations">
         <button type="button" aria-pressed={destination === 'architecture'} onClick={() => setDestination('architecture')}>Architecture</button>
-        <button type="button" aria-pressed={destination === 'control-tower'} onClick={() => { setTowerVisited(true); setDestination('control-tower') }}>Control Tower <span className="ct-preview">Preview</span></button>
-        <button type="button" aria-pressed={destination === 'diagnostics'} onClick={() => setDestination('diagnostics')}>Diagnostics</button>
+        <button type="button" aria-pressed={destination === 'control-tower'} onClick={() => { setTowerVisited(true); setDestination('control-tower') }}>Control Tower</button>
+        <button type="button" className="ct-diagnostics-access" aria-pressed={destination === 'diagnostics'} onClick={() => setDestination('diagnostics')}>Diagnostics</button>
       </nav>
       <div hidden={destination !== 'architecture'} data-destination="architecture"><ArchitectureWorkspace /></div>
       <div hidden={destination !== 'diagnostics'} data-destination="diagnostics"><DiagnosticsWorkspace /></div>
-      {towerVisited && <div hidden={destination !== 'control-tower'} data-destination="control-tower"><ControlTower /></div>}
+      {towerVisited && <div hidden={destination !== 'control-tower'} data-destination="control-tower"><ControlTowerReal /></div>}
     </div>
   )
 }

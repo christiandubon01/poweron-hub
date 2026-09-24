@@ -14,6 +14,7 @@ import {
   type ProviderErrorCode,
   type ProviderProbeResult,
 } from './types.ts';
+import { isEffortLevel, mapNormalizedEffort } from './effort.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -217,6 +218,22 @@ export function buildClaudeLaunchDescriptor(target: ClaudeLaunchTarget, request:
   const claudeArgs = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', permissionMode];
   claudeArgs.push('--disallowedTools', buildClaudeDisallowedTools(target));
 
+  // ATB-2B: Claude Code 2.1.277 genuinely supports explicit model selection in
+  // print mode via `--model <alias | full name>` (verified against the installed
+  // CLI's --help). The requested model flows from routing/control contracts —
+  // no hardcoded names — and stays strictly separate from the runtime REPORTED
+  // model parsed from the protocol (never used as its fallback).
+  if (target.providerId === 'claude' && isNonEmptyModelString(request.requestedModel)) {
+    claudeArgs.push('--model', request.requestedModel);
+  }
+
+  // ATB-2B: effort is applied ONLY through the shared normalized→native mapping
+  // (`--effort`, CLI-validated low|medium|high|xhigh|max on 2.1.277). An
+  // unsupported/invalid level fails BEFORE process launch — never silently
+  // downgraded, never simulated through prompt wording. The Ollama harness has
+  // no effort mapping, so requesting effort there fails closed here.
+  appendClaudeEffortArg(target.providerId, claudeArgs, request.reasoningEffort);
+
   if (target.providerId === 'claude') {
     return {
       kind: determineLaunchKind(target.executable),
@@ -226,7 +243,7 @@ export function buildClaudeLaunchDescriptor(target: ClaudeLaunchTarget, request:
   }
 
   const requestedModel = request.requestedModel;
-  if (typeof requestedModel !== 'string' || requestedModel.trim().length === 0) {
+  if (!isNonEmptyModelString(requestedModel)) {
     throw new ClaudeLaunchConfigurationError(
       'requestedModel is required for the Ollama Claude harness.',
       'MODEL_UNAVAILABLE',
@@ -238,6 +255,30 @@ export function buildClaudeLaunchDescriptor(target: ClaudeLaunchTarget, request:
     executable: target.executable,
     argv: ['launch', 'claude', '--model', requestedModel, '--yes', '--', ...claudeArgs],
   };
+}
+
+function isNonEmptyModelString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function appendClaudeEffortArg(
+  providerId: ClaudeLaunchTarget['providerId'],
+  claudeArgs: string[],
+  reasoningEffort: string | undefined,
+): void {
+  if (reasoningEffort === undefined || reasoningEffort === null) {
+    return;
+  }
+  if (!isEffortLevel(reasoningEffort)) {
+    throw new ClaudeLaunchConfigurationError(
+      `reasoningEffort "${reasoningEffort}" is not a normalized effort level (low, medium, high, extra-high).`,
+    );
+  }
+  const mapping = mapNormalizedEffort(providerId, reasoningEffort);
+  if (!mapping.supported) {
+    throw new ClaudeLaunchConfigurationError(mapping.reason);
+  }
+  claudeArgs.push('--effort', mapping.nativeValue);
 }
 
 function buildClaudeDisallowedTools(target: ClaudeLaunchTarget): string {

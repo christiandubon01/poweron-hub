@@ -1,6 +1,7 @@
-import type { JsonValue, TaskRecord } from '../lib/orchestrationTypes.ts';
+import { TEXT_FIELD_MAX_BYTES, type JsonValue, type TaskRecord } from '../lib/orchestrationTypes.ts';
 import type { ExecutionResult, PermissionProfile } from '../providers/types.ts';
 import { captureRepoSnapshot, type GitTextRunner } from './diffPolicy.ts';
+import { classifyPathDrift, classifyUnplannedAreaDrift } from './driftPolicy.ts';
 import { isPathWithinAuthorizedScope, createTaskPolicyContext } from './pathPolicy.ts';
 import { classifyRepoEntryRestrictions } from './repoPolicy.ts';
 import type {
@@ -101,8 +102,19 @@ export function buildPolicyBaselineEventPayload(baseline: PolicyBaselineCapture)
   };
 }
 
+/**
+ * Serialized-size budget for the `changes` array of a durable policy event
+ * payload. The orchestration store rejects any event payload over
+ * TEXT_FIELD_MAX_BYTES (8192 UTF-8 bytes). Unchanged inherited dirt is not an
+ * Attempt change, so it is not in this array. A large real Attempt delta can
+ * still exceed the budget; deny and human-gate entries are kept, and only
+ * extra allow entries are truncated. The budget leaves headroom for the
+ * fixed wrapper fields of the payload.
+ */
+export const POLICY_EVENT_CHANGES_BUDGET_BYTES = TEXT_FIELD_MAX_BYTES - 2_048;
+
 export function buildPolicyEvaluationEventPayload(adjudication: PolicyAdjudication): JsonValue {
-  return {
+  const buildPayload = (changes: readonly JsonValue[], changesTruncated: boolean): JsonValue => ({
     decision: adjudication.decision,
     accepted: adjudication.accepted,
     reasonCodes: [...adjudication.reasonCodes],
@@ -110,35 +122,69 @@ export function buildPolicyEvaluationEventPayload(adjudication: PolicyAdjudicati
     baselineHeadSha: adjudication.baselineHeadSha,
     finalHeadSha: adjudication.finalHeadSha,
     headMoved: adjudication.headMoved,
-    changes: adjudication.changes.slice(0, 25).map((change) => compactJsonObject({
-      category: change.category,
-      path: change.path,
-      originalPath: change.originalPath,
-      decision: change.decision,
-      requiresHuman: change.requiresHuman ? true : undefined,
-      reasonCode: change.reasonCode,
-      matchedRule: change.matchedRule,
-      indexStatus: change.indexStatus,
-      worktreeStatus: change.worktreeStatus,
-      entryFingerprintSha256: change.entryFingerprintSha256,
-      pathFingerprint: {
-        path: change.pathFingerprint.path,
-        exists: change.pathFingerprint.exists,
-        nodeKind: change.pathFingerprint.nodeKind,
-        workingTreeSha256: change.pathFingerprint.workingTreeSha256,
-        sizeBytes: change.pathFingerprint.sizeBytes,
-        indexObjectId: change.pathFingerprint.indexObjectId,
-      },
-      originalPathFingerprint: change.originalPathFingerprint ? {
-        path: change.originalPathFingerprint.path,
-        exists: change.originalPathFingerprint.exists,
-        nodeKind: change.originalPathFingerprint.nodeKind,
-        workingTreeSha256: change.originalPathFingerprint.workingTreeSha256,
-        sizeBytes: change.originalPathFingerprint.sizeBytes,
-        indexObjectId: change.originalPathFingerprint.indexObjectId,
-      } : undefined,
-    })),
-  };
+    changeCount: adjudication.changes.length,
+    ...(changesTruncated ? { changesTruncated: true } : {}),
+    changes: [...changes],
+  });
+
+  // Every deny / human-gate change is mandatory evidence and is ALWAYS included,
+  // whatever the budget says. Only redundant `allow` (pre-existing,
+  // byte-identical) entries may be dropped to fit the budget, and the payload
+  // then records the truncation explicitly — a policy failure is never
+  // silently discarded.
+  const mandatoryChanges = adjudication.changes
+    .filter((change) => change.decision !== 'allow' || change.requiresHuman === true)
+    .map(compactPolicyChangePayload);
+  const optionalChanges = adjudication.changes
+    .filter((change) => change.decision === 'allow' && change.requiresHuman !== true)
+    .map(compactPolicyChangePayload);
+
+  let includedChanges: readonly JsonValue[] = mandatoryChanges;
+  let changesTruncated = false;
+  for (const change of optionalChanges) {
+    const candidate = includedChanges.concat(change);
+    // Probe with the truncation flag set: that is the larger serialized form and
+    // therefore the conservative bound. JSON byte length is invariant under the
+    // store's key sorting, so this measures exactly what appendEvent serializes.
+    if (Buffer.byteLength(JSON.stringify(buildPayload(candidate, true)), 'utf8') > POLICY_EVENT_CHANGES_BUDGET_BYTES) {
+      changesTruncated = true;
+      continue;
+    }
+    includedChanges = candidate;
+  }
+
+  return buildPayload(includedChanges, changesTruncated);
+}
+
+function compactPolicyChangePayload(change: PolicyPathChange): JsonValue {
+  return compactJsonObject({
+    category: change.category,
+    path: change.path,
+    originalPath: change.originalPath,
+    decision: change.decision,
+    requiresHuman: change.requiresHuman ? true : undefined,
+    reasonCode: change.reasonCode,
+    matchedRule: change.matchedRule,
+    indexStatus: change.indexStatus,
+    worktreeStatus: change.worktreeStatus,
+    entryFingerprintSha256: change.entryFingerprintSha256,
+    pathFingerprint: {
+      path: change.pathFingerprint.path,
+      exists: change.pathFingerprint.exists,
+      nodeKind: change.pathFingerprint.nodeKind,
+      workingTreeSha256: change.pathFingerprint.workingTreeSha256,
+      sizeBytes: change.pathFingerprint.sizeBytes,
+      indexObjectId: change.pathFingerprint.indexObjectId,
+    },
+    originalPathFingerprint: change.originalPathFingerprint ? {
+      path: change.originalPathFingerprint.path,
+      exists: change.originalPathFingerprint.exists,
+      nodeKind: change.originalPathFingerprint.nodeKind,
+      workingTreeSha256: change.originalPathFingerprint.workingTreeSha256,
+      sizeBytes: change.originalPathFingerprint.sizeBytes,
+      indexObjectId: change.originalPathFingerprint.indexObjectId,
+    } : undefined,
+  });
 }
 
 export function adjudicateRepoPolicy(options: {
@@ -159,35 +205,37 @@ export function adjudicateRepoPolicy(options: {
 
   const finalEntries = [...options.finalSnapshot.entries];
 
+  // Attempt delta = pre-attempt baseline vs post-provider snapshot.
+  // A dirty path that is byte-for-byte and status-identical is inherited
+  // workspace state, not a provider write, and is not classified.
+  // Any further change to that path is an Attempt delta and uses the same
+  // write/drift rules as a clean-file edit.
   for (const baselineEntry of options.baseline.snapshot.entries) {
     const finalEntry = finalEntries.find((candidate) => entriesShareIdentityOrCoverage(candidate, baselineEntry));
-    if (!finalEntry) {
-      changes.push(buildPreexistingMutation(baselineEntry, 'Pre-existing dirty path disappeared during execution.'));
-      reasonCodes.add('preexisting-change-mutated');
+    if (finalEntry && isExactEntryMatch(baselineEntry, finalEntry)) {
+      consumedFinalEntries.add(finalEntry.entryFingerprintSha256);
       continue;
     }
 
-    consumedFinalEntries.add(finalEntry.entryFingerprintSha256);
-    if (isExactEntryMatch(baselineEntry, finalEntry)) {
-      changes.push({
-        category: 'PREEXISTING_UNRELATED_CHANGE',
-        path: finalEntry.path,
-        originalPath: finalEntry.originalPath,
-        decision: 'allow',
-        reasonCode: 'preexisting-change',
-        reason: 'Pre-existing dirty path remained byte-for-byte unchanged.',
-        matchedRule: 'baseline-integrity',
-        indexStatus: finalEntry.indexStatus,
-        worktreeStatus: finalEntry.worktreeStatus,
-        entryFingerprintSha256: finalEntry.entryFingerprintSha256,
-        pathFingerprint: finalEntry.pathFingerprint,
-        originalPathFingerprint: finalEntry.originalPathFingerprint,
-      });
-      continue;
+    const deltaEntry = finalEntry ?? departedBaselineDelta(baselineEntry);
+    if (finalEntry) {
+      consumedFinalEntries.add(finalEntry.entryFingerprintSha256);
     }
-
-    changes.push(buildPreexistingMutation(finalEntry, 'Pre-existing dirty path changed during execution.'));
-    reasonCodes.add('preexisting-change-mutated');
+    const classified = classifyNewEntry({
+      entry: deltaEntry,
+      runId: options.baseline.runId,
+      taskId: options.baseline.taskId,
+      attemptId: options.baseline.attemptId,
+      permissionProfile: options.baseline.taskPolicy.permissionProfile,
+      authorizedWriteScopes: options.baseline.taskPolicy.authorizedWriteScopes,
+      plannedAreas: options.baseline.taskPolicy.plannedAreas,
+      approvals: options.baseline.taskPolicy.approvals,
+      extraProtectedPaths: options.baseline.taskPolicy.scopePackProtectedPaths,
+    });
+    changes.push(classified);
+    if (classified.decision !== 'allow') {
+      reasonCodes.add(classified.reasonCode);
+    }
   }
 
   for (const finalEntry of finalEntries) {
@@ -202,7 +250,9 @@ export function adjudicateRepoPolicy(options: {
       attemptId: options.baseline.attemptId,
       permissionProfile: options.baseline.taskPolicy.permissionProfile,
       authorizedWriteScopes: options.baseline.taskPolicy.authorizedWriteScopes,
+      plannedAreas: options.baseline.taskPolicy.plannedAreas,
       approvals: options.baseline.taskPolicy.approvals,
+      extraProtectedPaths: options.baseline.taskPolicy.scopePackProtectedPaths,
     });
 
     changes.push(classified);
@@ -260,7 +310,9 @@ function classifyNewEntry(options: {
   attemptId: string;
   permissionProfile: PermissionProfile;
   authorizedWriteScopes: readonly PolicyBaselineCapture['taskPolicy']['authorizedWriteScopes'][number][];
+  plannedAreas: readonly string[];
   approvals: readonly TaskPolicyApproval[];
+  extraProtectedPaths?: readonly string[];
 }): PolicyPathChange {
   const category = classifyEntryCategory(options.entry);
   const restricted = classifyRepoEntryRestrictions({
@@ -269,6 +321,7 @@ function classifyNewEntry(options: {
     taskId: options.taskId,
     attemptId: options.attemptId,
     approvals: options.approvals,
+    extraProtectedPaths: options.extraProtectedPaths,
   });
 
   if (options.permissionProfile === 'read-only-reviewer' || options.permissionProfile === 'verifier') {
@@ -312,6 +365,30 @@ function classifyNewEntry(options: {
   const touchedPaths = [options.entry.path, options.entry.originalPath].filter((value): value is string => Boolean(value));
   const fullyAuthorized = touchedPaths.every((repoPath) => isPathWithinAuthorizedScope(repoPath, options.authorizedWriteScopes));
 
+  // ATB-4: reserved drift classes (deps / db / migrations) raise a human gate
+  // even when the path is inside authorizedWritePaths. Most-specific reason
+  // wins so telemetry does not collapse these into a generic policy-gate.
+  for (const repoPath of touchedPaths) {
+    const drift = classifyPathDrift({ path: repoPath, plannedAreas: options.plannedAreas });
+    if (drift) {
+      return {
+        category: fullyAuthorized ? category : 'OUT_OF_SCOPE_CHANGE',
+        path: options.entry.path,
+        originalPath: options.entry.originalPath,
+        decision: 'deny',
+        requiresHuman: true,
+        reasonCode: drift.reasonCode,
+        reason: drift.reason,
+        matchedRule: drift.matchedRule,
+        indexStatus: options.entry.indexStatus,
+        worktreeStatus: options.entry.worktreeStatus,
+        entryFingerprintSha256: options.entry.entryFingerprintSha256,
+        pathFingerprint: options.entry.pathFingerprint,
+        originalPathFingerprint: options.entry.originalPathFingerprint,
+      };
+    }
+  }
+
   if (!fullyAuthorized) {
     return {
       category: 'OUT_OF_SCOPE_CHANGE',
@@ -327,6 +404,27 @@ function classifyNewEntry(options: {
       pathFingerprint: options.entry.pathFingerprint,
       originalPathFingerprint: options.entry.originalPathFingerprint,
     };
+  }
+
+  for (const repoPath of touchedPaths) {
+    const unplanned = classifyUnplannedAreaDrift({ path: repoPath, plannedAreas: options.plannedAreas });
+    if (unplanned) {
+      return {
+        category,
+        path: options.entry.path,
+        originalPath: options.entry.originalPath,
+        decision: 'deny',
+        requiresHuman: true,
+        reasonCode: unplanned.reasonCode,
+        reason: unplanned.reason,
+        matchedRule: unplanned.matchedRule,
+        indexStatus: options.entry.indexStatus,
+        worktreeStatus: options.entry.worktreeStatus,
+        entryFingerprintSha256: options.entry.entryFingerprintSha256,
+        pathFingerprint: options.entry.pathFingerprint,
+        originalPathFingerprint: options.entry.originalPathFingerprint,
+      };
+    }
   }
 
   return {
@@ -358,23 +456,29 @@ function classifyEntryCategory(entry: RepoStatusEntryFingerprint): PolicyPathCha
   return 'AUTHORIZED_CHANGE';
 }
 
-function buildPreexistingMutation(
-  entry: RepoStatusEntryFingerprint,
-  reason: string,
-): PolicyPathChange {
+/**
+ * A baseline dirty path that is absent from the post-provider status snapshot
+ * changed during the Attempt: an untracked file was removed, or a tracked
+ * dirty file was restored/rewritten off the dirty status. HEAD movement is
+ * not represented here.
+ */
+function departedBaselineDelta(entry: RepoStatusEntryFingerprint): RepoStatusEntryFingerprint {
+  const removed = entry.kind === 'untracked';
   return {
-    category: 'PREEXISTING_CHANGE_MUTATED',
-    path: entry.path,
-    originalPath: entry.originalPath,
-    decision: 'deny',
-    reasonCode: 'preexisting-change-mutated',
-    reason,
-    matchedRule: 'baseline-integrity',
-    indexStatus: entry.indexStatus,
-    worktreeStatus: entry.worktreeStatus,
-    entryFingerprintSha256: entry.entryFingerprintSha256,
-    pathFingerprint: entry.pathFingerprint,
-    originalPathFingerprint: entry.originalPathFingerprint,
+    ...entry,
+    indexStatus: ' ',
+    worktreeStatus: removed ? 'D' : 'M',
+    kind: removed ? 'deleted' : 'tracked',
+    pathFingerprint: removed
+      ? {
+          ...entry.pathFingerprint,
+          exists: false,
+          nodeKind: 'missing',
+          workingTreeSha256: null,
+          sizeBytes: null,
+        }
+      : entry.pathFingerprint,
+    entryFingerprintSha256: `attempt-delta:${entry.entryFingerprintSha256}`,
   };
 }
 
@@ -399,12 +503,23 @@ function isExactEntryMatch(left: RepoStatusEntryFingerprint, right: RepoStatusEn
 
 export function createTaskSpecWithPolicy(options: {
   authorizedWritePaths?: readonly string[];
+  plannedAreas?: readonly string[];
+  doNotTouchPaths?: readonly string[];
   extraSpec?: Record<string, unknown>;
 } = {}): TaskRecord['spec'] {
+  const extra = options.extraSpec ?? {};
+  const extraPlan = extra.plan && typeof extra.plan === 'object' && !Array.isArray(extra.plan)
+    ? extra.plan as Record<string, unknown>
+    : {};
   return {
-    ...(options.extraSpec ?? {}),
+    ...extra,
     policy: {
       authorizedWritePaths: [...(options.authorizedWritePaths ?? [])],
+      ...(options.doNotTouchPaths ? { doNotTouchPaths: [...options.doNotTouchPaths] } : {}),
+    },
+    plan: {
+      ...extraPlan,
+      ...(options.plannedAreas ? { plannedAreas: [...options.plannedAreas] } : {}),
     },
   };
 }

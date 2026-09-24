@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,6 +21,10 @@ import {
   type AttemptExecutionInput,
 } from './executor.ts';
 import type { AttemptWorkspace } from '../workspace.ts';
+import { mapPermissionProfileToCodexSandbox } from './codex.ts';
+import { evaluateControlTowerUiSmokeAcceptance, CONTROL_TOWER_UI_SMOKE_LINE, CONTROL_TOWER_UI_SMOKE_PATH } from '../control/planning.ts';
+import { classifyAttemptFailure, supervisorTick } from '../supervisor/supervisor.ts';
+import { ProductionExecutionPort, VERIFIER_VERDICT_EVENT } from '../control/supervisorPort.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -218,6 +222,7 @@ function createExecutor(
   overrides: Partial<{
     now: () => Date;
     defaultTimeoutMs: number;
+    executionHardGraceMs: number;
     shutdownTimeoutMs: number;
     policyController: ReturnType<typeof createNoOpAttemptPolicyController>;
     workspaceConfig: { canonicalRepoPath: string; workspaceRoot: string; repoKey: string };
@@ -229,6 +234,7 @@ function createExecutor(
     registry: new Map(adapters.map((adapter) => [adapter.id, adapter])),
     now: overrides.now,
     defaultTimeoutMs: overrides.defaultTimeoutMs,
+    executionHardGraceMs: overrides.executionHardGraceMs,
     shutdownTimeoutMs: overrides.shutdownTimeoutMs,
     policyController: overrides.policyController ?? createNoOpAttemptPolicyController(),
     workspaceConfig: overrides.workspaceConfig,
@@ -273,7 +279,7 @@ test('executor: valid running Attempt executes a registered adapter and persists
     const outcome = await executor.execute(createExecutionInput());
     assert.equal(adapter.executeRequests.length, 1);
     assert.equal(outcome.attempt.status, 'passed');
-    assert.equal(outcome.terminalEvent.type, 'execution.completed');
+    assert.equal(outcome.terminalEvent!.type, 'execution.completed');
   } finally {
     store.close();
   }
@@ -316,6 +322,97 @@ test('executor: task implementer is materialized into an isolated workspace and 
   assert.equal(readyEvents.length, 1);
   assert.equal((readyEvents[0]?.payload as Record<string, unknown>).changeCount, 1);
   configuredStore.close();
+});
+
+test('ATB-7B2: verifier reads the implementer candidate copy and leaves canonical untouched', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'atb7b2-verifier-'));
+  const repoPath = path.join(root, 'repo');
+  const workspaceRoot = path.join(root, 'runtime', 'workspaces');
+  await mkdir(repoPath);
+  await git(repoPath, ['init']);
+  await git(repoPath, ['config', 'user.email', 'fixture@example.invalid']);
+  await git(repoPath, ['config', 'user.name', 'Fixture']);
+  await writeFile(path.join(repoPath, 'README.md'), 'COMMITTED\n');
+  await git(repoPath, ['add', '.']);
+  await git(repoPath, ['commit', '-m', 'baseline']);
+  await writeFile(path.join(repoPath, 'README.md'), 'OWNER_DIRTY\n');
+
+  const store = createStore({ dbPath: path.join(root, 'orchestration.sqlite') });
+  store.createRun({ runId: 'run-1', title: 'Run' });
+  store.createTask({
+    taskId: 'task-impl',
+    runId: 'run-1',
+    title: 'Implement',
+    spec: { policy: { authorizedWritePaths: [CONTROL_TOWER_UI_SMOKE_PATH] }, plan: { plannedAreas: ['agent-host/smoke'] } },
+  });
+  store.createTask({
+    taskId: 'task-v',
+    runId: 'run-1',
+    title: 'Verify',
+    spec: { policy: { authorizedWritePaths: [] }, plan: { role: 'verifier', plannedAreas: ['agent-host/smoke'] } },
+  });
+  store.addDependency('task-v', 'task-impl');
+  store.createAttempt({ attemptId: 'attempt-impl', taskId: 'task-impl', hostInstanceId: 'host-instance-1' });
+  store.createAttempt({ attemptId: 'attempt-v', taskId: 'task-v', hostInstanceId: 'host-instance-1' });
+
+  const smokeBytes = Buffer.from(`${CONTROL_TOWER_UI_SMOKE_LINE}\n`, 'utf8');
+  let implementerWorkspace = '';
+  const adapter = new FakeAdapter({
+    id: 'codex',
+    onExecute: async (request) => {
+      if (request.permissionProfile === 'task-implementer') {
+        implementerWorkspace = request.workingDirectory;
+        await mkdir(path.join(request.workingDirectory, 'agent-host', 'smoke'), { recursive: true });
+        await writeFile(path.join(request.workingDirectory, CONTROL_TOWER_UI_SMOKE_PATH), smokeBytes);
+      }
+      return createExecutionResult({ executionId: request.executionId });
+    },
+  });
+  const executor = createExecutor(store, [adapter], { workspaceConfig: { canonicalRepoPath: repoPath, workspaceRoot, repoKey: 'repo-key' } });
+
+  const implemented = await executor.execute(createExecutionInput({
+    taskId: 'task-impl',
+    attemptId: 'attempt-impl',
+    permissionProfile: 'task-implementer',
+    workingDirectory: repoPath,
+  }));
+  assert.equal(implemented.policy.accepted, true);
+  assert.deepEqual(implemented.policy.changes.map((change) => change.path), [CONTROL_TOWER_UI_SMOKE_PATH]);
+
+  const verified = await executor.execute(createExecutionInput({
+    taskId: 'task-v',
+    attemptId: 'attempt-v',
+    permissionProfile: 'verifier',
+    workingDirectory: repoPath,
+    prompt: 'Verify the candidate.',
+  }));
+  const verifierRequest = adapter.executeRequests[1];
+  assert.ok(verifierRequest);
+  assert.equal(mapPermissionProfileToCodexSandbox(verifierRequest.permissionProfile), 'read-only');
+  assert.notEqual(path.resolve(verifierRequest.workingDirectory), path.resolve(repoPath));
+  assert.notEqual(path.resolve(verifierRequest.workingDirectory), path.resolve(implementerWorkspace));
+  const verifierBytes = await readFile(path.join(verifierRequest.workingDirectory, CONTROL_TOWER_UI_SMOKE_PATH));
+  const implementerBytes = await readFile(path.join(implementerWorkspace, CONTROL_TOWER_UI_SMOKE_PATH));
+  assert.deepEqual(verifierBytes, implementerBytes);
+  assert.deepEqual(verifierBytes, smokeBytes);
+  await assert.rejects(readFile(path.join(repoPath, CONTROL_TOWER_UI_SMOKE_PATH)), /ENOENT/u);
+  await assert.rejects(readFile(path.join(verifierRequest.workingDirectory, 'OWNER_DIRTY')), /ENOENT/u);
+  assert.equal(await readFile(path.join(repoPath, 'README.md'), 'utf8'), 'OWNER_DIRTY\n');
+  assert.equal((await readFile(path.join(verifierRequest.workingDirectory, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'COMMITTED\n');
+  const fileStat = await stat(path.join(verifierRequest.workingDirectory, CONTROL_TOWER_UI_SMOKE_PATH));
+  assert.equal(fileStat.mode & 0o222, 0);
+  await assert.rejects(writeFile(path.join(verifierRequest.workingDirectory, CONTROL_TOWER_UI_SMOKE_PATH), Buffer.from('MUTATED\n')));
+  assert.equal(verified.attempt.status, 'passed');
+  assert.equal(verified.policy.accepted, true);
+  assert.deepEqual(verified.policy.changes.map((change) => change.path), []);
+  assert.equal(evaluateControlTowerUiSmokeAcceptance({
+    fileBytes: verifierBytes,
+    changedPaths: implemented.policy.changes.map((change) => change.path),
+  }).passed, true);
+  const prepared = store.listEvents().find((event) => event.type === 'workspace.prepared' && event.attemptId === 'attempt-v');
+  assert.equal((prepared?.payload as Record<string, unknown>).materializationMode, 'candidate-copy');
+  assert.equal((prepared?.payload as Record<string, unknown>).readOnly, true);
+  store.close();
 });
 
 test('executor: changeset-ready requires provider success and a non-empty accepted change', async () => {
@@ -563,7 +660,7 @@ test('executor: provider failure maps Attempt failed and Task remains running', 
     const executor = createExecutor(store, [adapter]);
 
     const outcome = await executor.execute(createExecutionInput());
-    assert.equal(outcome.terminalEvent.type, 'execution.failed');
+    assert.equal(outcome.terminalEvent!.type, 'execution.failed');
     assert.equal(store.getAttempt('attempt-1')?.status, 'failed');
     assert.equal(store.getTask('task-1')?.status, 'running');
   } finally {
@@ -602,11 +699,11 @@ test('executor: provider failure persists a bounded redacted stderr tail with pr
       }),
     });
     const outcome = await createExecutor(store, [adapter]).execute(createExecutionInput({ prompt: 'private prompt value' }));
-    const payload = outcome.terminalEvent.payload as Record<string, any>;
+    const payload = outcome.terminalEvent!.payload as Record<string, any>;
     const durableTail = payload.diagnostics.stderrTail as string;
     const serialized = JSON.stringify(payload);
 
-    assert.equal(outcome.terminalEvent.type, 'execution.failed');
+    assert.equal(outcome.terminalEvent!.type, 'execution.failed');
     assert.equal(payload.errorCode, 'PROTOCOL_ERROR');
     assert.equal(payload.process.exitCode, 1);
     assert.equal(payload.process.signal, 'SIGTERM');
@@ -638,9 +735,9 @@ test('executor: successful provider does not persist diagnostic tails', async ()
       }),
     });
     const outcome = await createExecutor(store, [adapter]).execute(createExecutionInput());
-    const payload = outcome.terminalEvent.payload as Record<string, unknown>;
+    const payload = outcome.terminalEvent!.payload as Record<string, unknown>;
 
-    assert.equal(outcome.terminalEvent.type, 'execution.completed');
+    assert.equal(outcome.terminalEvent!.type, 'execution.completed');
     assert.equal('diagnostics' in payload, false);
     assert.equal(JSON.stringify(payload).includes('benign successful diagnostic'), false);
   } finally {
@@ -671,8 +768,95 @@ test('executor: timeout maps execution.timed_out and failed Attempt', async () =
     const executor = createExecutor(store, [adapter]);
 
     const outcome = await executor.execute(createExecutionInput());
-    assert.equal(outcome.terminalEvent.type, 'execution.timed_out');
+    assert.equal(outcome.terminalEvent!.type, 'execution.timed_out');
     assert.equal(store.getAttempt('attempt-1')?.status, 'failed');
+  } finally {
+    store.close();
+  }
+});
+
+test('executor: a provider that never settles is hard-terminated at the executor timeout and terminalized as a retryable timeout', async () => {
+  const dbPath = await createTempDbPath('orch-hardtimeout-');
+  const store = createStore({ dbPath });
+  seedRunningAttempt(store);
+
+  try {
+    // Worst case for the orchestration boundary: execute() never settles AND the
+    // adapter does not honor cancellation (onCancel is a no-op that never resolves
+    // the deferred). The executor must still enforce a HARD upper bound so the
+    // Attempt cannot remain running forever.
+    const neverSettles = createDeferred<ExecutionResult>();
+    let executeCalls = 0;
+    const adapter = new FakeAdapter({
+      id: 'codex',
+      onExecute: async () => {
+        executeCalls += 1;
+        return await neverSettles.promise;
+      },
+    });
+    // hard deadline = request timeout (100ms) + grace (50ms) = 150ms.
+    const executor = createExecutor(store, [adapter], { executionHardGraceMs: 50 });
+
+    const startedAt = Date.now();
+    const outcome = await executor.execute(createExecutionInput({ timeoutMs: 100 }));
+    const elapsedMs = Date.now() - startedAt;
+
+    // Bounded: returns well within a generous slack, never the 100ms provider "run".
+    assert.ok(elapsedMs < 5_000, `execute must return within the hard bound, took ${elapsedMs}ms`);
+    // Deterministic timeout truth (not a cancellation) so retry stays available.
+    assert.equal(outcome.terminalEvent!.type, 'execution.timed_out');
+    assert.equal(outcome.result.process.timedOut, true);
+    assert.equal(outcome.result.process.cancelled, false);
+    assert.equal(outcome.result.provider.errorCode, 'EXECUTION_TIMEOUT');
+    assert.equal(outcome.terminalAttemptStatus, 'failed');
+    // The Attempt is durably terminalized, never left running.
+    assert.equal(store.getAttempt('attempt-1')?.status, 'failed');
+    // Process-tree termination was requested through the existing adapter/runner
+    // abstraction (ProcessRunner → Windows taskkill /T /F).
+    assert.deepEqual(adapter.cancelRequests, ['attempt-1']);
+    // No duplicate provider execution and no leftover in-flight execution.
+    assert.equal(executeCalls, 1);
+    assert.equal(adapter.executeRequests.length, 1);
+    assert.deepEqual(executor.getActiveAttemptIds(), []);
+    // Durable evidence classifies as the retryable execution-timeout cause the
+    // Supervisor's existing retry policy recognizes.
+    const durableAttempt = store.getAttempt('attempt-1');
+    assert.ok(durableAttempt);
+    assert.deepEqual(classifyAttemptFailure(store, durableAttempt), { cause: 'execution-timeout' });
+  } finally {
+    store.close();
+  }
+});
+
+test('executor: hard timeout ignores a late provider result and does not double-terminalize the Attempt', async () => {
+  const dbPath = await createTempDbPath('orch-hardtimeout-late-');
+  const store = createStore({ dbPath });
+  seedRunningAttempt(store);
+
+  try {
+    // The provider only "resolves" (with a success) when cancelled — i.e. late,
+    // after the executor has already committed to a timeout. That late success
+    // must be ignored: the timeout terminalization wins and is written once.
+    const late = createDeferred<ExecutionResult>();
+    const adapter = new FakeAdapter({
+      id: 'codex',
+      onExecute: async () => await late.promise,
+      onCancel: () => late.resolve(createExecutionResult()),
+    });
+    const executor = createExecutor(store, [adapter], { executionHardGraceMs: 50 });
+
+    const outcome = await executor.execute(createExecutionInput({ timeoutMs: 100 }));
+
+    assert.equal(outcome.terminalEvent!.type, 'execution.timed_out');
+    assert.equal(outcome.terminalAttemptStatus, 'failed');
+    assert.equal(store.getAttempt('attempt-1')?.status, 'failed');
+    // Exactly one terminal execution event was persisted (no double terminalize).
+    const terminalEvents = store
+      .listEvents()
+      .filter((event) => event.type.startsWith('execution.') && event.type !== 'execution.started');
+    assert.equal(terminalEvents.length, 1);
+    assert.equal(terminalEvents[0]?.type, 'execution.timed_out');
+    assert.deepEqual(executor.getActiveAttemptIds(), []);
   } finally {
     store.close();
   }
@@ -706,7 +890,7 @@ test('executor: output-limit, protocol, and spawn failures map Attempt failed', 
       });
       const executor = createExecutor(store, [adapter]);
       const outcome = await executor.execute(createExecutionInput());
-      assert.equal(outcome.terminalEvent.type, 'execution.failed');
+      assert.equal(outcome.terminalEvent!.type, 'execution.failed');
       assert.equal(store.getAttempt('attempt-1')?.status, 'failed');
     } finally {
       store.close();
@@ -734,7 +918,7 @@ test('executor: immediate manual cancellation latches before provider launch and
     assert.equal(adapter.executeRequests.length, 0);
     assert.deepEqual(adapter.cancelRequests, []);
     assert.equal(outcome.startedEvent, null);
-    assert.equal(outcome.terminalEvent.type, 'execution.cancelled');
+    assert.equal(outcome.terminalEvent!.type, 'execution.cancelled');
     assert.equal(outcome.terminalAttemptStatus, 'cancelled');
     assert.equal(outcome.result.process.cancelled, true);
     assert.equal(eventTypes.includes('policy.baseline.captured'), true);
@@ -777,7 +961,7 @@ test('executor: cancellation during deferred policy baseline is retained and pre
     assert.equal(adapter.executeRequests.length, 0);
     assert.deepEqual(adapter.cancelRequests, []);
     assert.equal(outcome.startedEvent, null);
-    assert.equal(outcome.terminalEvent.type, 'execution.cancelled');
+    assert.equal(outcome.terminalEvent!.type, 'execution.cancelled');
     assert.equal(outcome.terminalAttemptStatus, 'cancelled');
     assert.equal(eventTypes.includes('policy.baseline.captured'), true);
     assert.equal(eventTypes.includes('execution.started'), false);
@@ -815,7 +999,7 @@ test('executor: cancellation after provider start delegates to adapter and resol
     assert.equal(adapter.executeRequests.length, 1);
     assert.deepEqual(adapter.cancelRequests, ['attempt-1']);
     assert.equal(outcome.startedEvent?.type, 'execution.started');
-    assert.equal(outcome.terminalEvent.type, 'execution.cancelled');
+    assert.equal(outcome.terminalEvent!.type, 'execution.cancelled');
     assert.equal(outcome.terminalAttemptStatus, 'cancelled');
     assert.equal(store.getAttempt('attempt-1')?.status, 'cancelled');
   } finally {
@@ -1124,7 +1308,7 @@ test('executor: cancellation targets only the selected Attempt and missing/compl
   }
 });
 
-test('executor: execution.started persistence failure prevents provider invocation', async () => {
+test('executor: execution.started persistence failure prevents provider invocation and fails closed', async () => {
   const dbPath = await createTempDbPath('orch3f-start-event-fail-');
   const store = createStore({
     dbPath,
@@ -1142,19 +1326,26 @@ test('executor: execution.started persistence failure prevents provider invocati
     const adapter = new FakeAdapter({ id: 'codex' });
     const executor = createExecutor(store, [adapter]);
 
-    await assert.rejects(
-      executor.execute(createExecutionInput()),
-      (error: unknown) => error instanceof AttemptExecutorError && error.code === 'EVENT_PERSIST_FAILED',
-    );
+    // Fail closed: the provider never launched, so the Attempt must be
+    // terminalized as failed — never left durably running for a restart
+    // recovery that may never come.
+    const outcome = await executor.execute(createExecutionInput());
 
     assert.equal(adapter.executeRequests.length, 0);
-    assert.equal(store.getAttempt('attempt-1')?.status, 'running');
+    assert.equal(outcome.terminalAttemptStatus, 'failed');
+    assert.equal(outcome.attempt.status, 'failed');
+    assert.equal(outcome.result.provider.success, false);
+    assert.equal(store.getAttempt('attempt-1')?.status, 'failed');
+    assert.equal(store.listEvents().some((event) => event.type === 'execution.started'), false);
+    const evidence = store.listEvents().find((event) => event.type === 'execution.persistence.failed');
+    assert.ok(evidence, 'bounded failure evidence must be durable');
+    assert.equal((evidence?.payload as Record<string, unknown>).errorCode, 'EVENT_PERSIST_FAILED');
   } finally {
     store.close();
   }
 });
 
-test('executor: terminal event write failure is surfaced and leaves running Attempt for recovery', async () => {
+test('executor: terminal event write failure fails closed and terminalizes the Attempt', async () => {
   const dbPath = await createTempDbPath('orch3f-terminal-event-fail-');
   const store = createStore({
     dbPath,
@@ -1170,13 +1361,21 @@ test('executor: terminal event write failure is surfaced and leaves running Atte
 
   try {
     const executor = createExecutor(store, [new FakeAdapter({ id: 'codex' })]);
-    await assert.rejects(
-      executor.execute(createExecutionInput()),
-      (error: unknown) => error instanceof AttemptExecutorError && error.code === 'EVENT_PERSIST_FAILED',
-    );
 
-    assert.equal(store.getAttempt('attempt-1')?.status, 'running');
+    // The provider DID return, so the Attempt must never remain durably
+    // running: the failure is captured deterministically and control returns.
+    const outcome = await executor.execute(createExecutionInput());
+
+    assert.equal(outcome.terminalAttemptStatus, 'failed');
+    assert.equal(outcome.attempt.status, 'failed');
+    assert.equal(outcome.result.provider.success, true, 'the real provider result is preserved');
+    assert.equal(store.getAttempt('attempt-1')?.status, 'failed');
+    assert.equal(store.listEvents().some((event) => event.type === 'execution.started'), true);
     assert.equal(store.listEvents().some((event) => event.type === 'execution.completed'), false);
+    assert.equal(store.listEvents().some((event) => event.type === 'policy.evaluated'), false);
+    const evidence = store.listEvents().find((event) => event.type === 'execution.persistence.failed');
+    assert.ok(evidence, 'bounded failure evidence must be durable');
+    assert.equal((evidence?.payload as Record<string, unknown>).errorCode, 'EVENT_PERSIST_FAILED');
   } finally {
     store.close();
   }
@@ -1541,4 +1740,123 @@ test('host shutdown helper preserves stopping -> executor drain -> stopped -> lo
     'release-lock',
     'finish:0',
   ]);
+});
+
+test('executor regression: verifier policy event persistence failure fails closed, terminalizes, and returns control to the Supervisor', async () => {
+  // Reproduces the real V2 smoke-run failure: the provider (verifier) returned
+  // successfully, adjudication completed, but persisting `policy.evaluated`
+  // threw — and the exception left the Attempt durably RUNNING with nothing
+  // to ever reconcile it. The fail-closed contract: the real provider result
+  // is preserved as evidence, the Attempt terminalizes as failed, the failure
+  // is captured durably, supervisorTick regains control, and nothing is
+  // re-executed, applied, or fabricated as a pass.
+  const dbPath = await createTempDbPath('orch5h-verifier-policy-persist-fail-');
+  const store = createStore({
+    dbPath,
+    testHooks: {
+      beforeEventInsert: (event) => {
+        if (event.type === 'policy.evaluated') {
+          throw new Error('policy event blocked');
+        }
+      },
+    },
+  });
+
+  try {
+    store.createRun({ runId: 'run-1', title: 'Run' });
+    store.createTask({
+      taskId: 'task-impl',
+      runId: 'run-1',
+      title: 'implement',
+      goal: 'implement',
+      spec: { policy: { authorizedWritePaths: [CONTROL_TOWER_UI_SMOKE_PATH] } },
+    });
+    store.createTask({
+      taskId: 'task-1',
+      runId: 'run-1',
+      title: 'verify',
+      goal: 'verify',
+      spec: {
+        control: { provider: 'codex', requestedModel: null, permissionProfile: 'verifier', prompt: 'Verify the work.', timeoutMs: 600_000 },
+        policy: { authorizedWritePaths: [] },
+        workingDirectory: 'C:\\Repo\\PowerOn',
+      } as never,
+    });
+    store.addDependency('task-1', 'task-impl');
+    store.createAttempt({ attemptId: 'attempt-impl', taskId: 'task-impl', hostInstanceId: 'host-instance-1' });
+    store.transitionAttempt('attempt-impl', 'passed');
+    store.transitionTask('task-impl', 'passed');
+    const workspaceRoot = path.join(path.dirname(dbPath), 'workspaces');
+    const candidatePath = path.join(workspaceRoot, 'repo-key', 'run-1', 'attempt-impl');
+    await mkdir(path.join(candidatePath, 'agent-host', 'smoke'), { recursive: true });
+    await writeFile(path.join(candidatePath, CONTROL_TOWER_UI_SMOKE_PATH), `${CONTROL_TOWER_UI_SMOKE_LINE}\n`);
+    store.appendEvent({
+      eventId: 'workspace-ready-impl',
+      runId: 'run-1',
+      taskId: 'task-impl',
+      attemptId: 'attempt-impl',
+      type: 'workspace.changeset.ready',
+      payload: { baselineHeadSha: 'a'.repeat(40), changeCount: 1, workspaceState: 'cleanup-eligible' },
+    });
+
+    const adapter = new FakeAdapter({
+      id: 'codex',
+      onExecute: (request) => createExecutionResult({
+        executionId: request.executionId,
+        output: { finalText: 'all checks pass\nVERDICT: PASS' },
+      }),
+    });
+    const executor = createExecutor(store, [adapter], {
+      workspaceConfig: { canonicalRepoPath: path.join(path.dirname(dbPath), 'repo'), workspaceRoot, repoKey: 'repo-key' },
+    });
+    const port = new ProductionExecutionPort({ store, executor });
+
+    const tick = await supervisorTick({
+      store,
+      runId: 'run-1',
+      hostInstanceId: 'host-instance-1',
+      executionPort: port,
+      idGenerator: () => 'attempt-1',
+    });
+
+    // supervisorTick regains control: the tick completed without the exception
+    // escaping, and the existing failure policy (unknown cause is
+    // non-retryable) failed the Task and the Run.
+    assert.equal(tick.outcome, 'task-executed');
+    assert.equal(tick.taskAction?.type, 'MARK_TASK_FAILED');
+    assert.equal(tick.run.status, 'failed');
+    assert.equal(store.getTask('task-1')?.status, 'failed');
+
+    // The Attempt is terminal — never durably running.
+    const attempt = store.getAttempt('attempt-1');
+    assert.equal(attempt?.status, 'failed');
+
+    // The provider really returned and the durable evidence was preserved.
+    assert.equal(store.listEvents().some((event) => event.type === 'execution.started'), true);
+    assert.equal(store.listEvents().some((event) => event.type === 'execution.completed'), true);
+    assert.equal(store.listEvents().some((event) => event.type === 'policy.evaluated'), false);
+    const evidence = store.listEvents().find((event) => event.type === 'execution.persistence.failed');
+    assert.ok(evidence, 'the persistence failure must be captured deterministically');
+    assert.equal((evidence?.payload as Record<string, unknown>).errorCode, 'EVENT_PERSIST_FAILED');
+
+    // No fabricated pass and no auto-apply: the verifier attempt readies no
+    // changeset, and the durable verdict pairs the provider text with the
+    // failed attempt status.
+    assert.equal(store.listEvents().some((event) => event.type === 'workspace.changeset.ready' && event.attemptId === 'attempt-1'), false);
+    const verdict = store.listEvents().find((event) => event.type === VERIFIER_VERDICT_EVENT);
+    assert.ok(verdict);
+    assert.equal((verdict?.payload as Record<string, unknown>).attemptStatus, 'failed');
+
+    // No duplicate execution: a terminal Run is never re-driven.
+    const second = await supervisorTick({
+      store,
+      runId: 'run-1',
+      hostInstanceId: 'host-instance-1',
+      executionPort: port,
+    });
+    assert.equal(second.outcome, 'run-terminal');
+    assert.equal(adapter.executeRequests.length, 1);
+  } finally {
+    store.close();
+  }
 });

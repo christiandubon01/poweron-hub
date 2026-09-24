@@ -75,10 +75,31 @@ export function classifyHostCommand(argv: readonly string[]): {
   }
 
   if (executable === 'git') {
-    if (['status', 'diff', 'show', 'log', 'rev-parse', 'branch'].includes(subcommand)) {
+    if (subcommand === 'commit' && argvHasToken(argv, ['--amend'])) {
+      return {
+        classification: 'HISTORY_REWRITE',
+        decision: deny('history-rewrite', 'History rewrite (commit --amend) is denied.', 'git commit --amend'),
+      };
+    }
+
+    if (subcommand === 'push' && argvHasToken(argv, ['--force', '-f', '--force-with-lease'])) {
+      return {
+        classification: 'HISTORY_REWRITE',
+        decision: deny('history-rewrite', 'Force-push class history rewrite is denied.', 'git push --force'),
+      };
+    }
+
+    if (['status', 'diff', 'show', 'log', 'rev-parse', 'branch', 'archive', 'ls-tree', 'ls-files'].includes(subcommand)) {
       return {
         classification: 'READ_ONLY',
         decision: allow('in-scope', 'Read-only git inspection is allowed.', `git ${subcommand}`),
+      };
+    }
+
+    if (subcommand === 'push') {
+      return {
+        classification: 'DEPLOY',
+        decision: requireHuman('deploy', 'Remote git push requires human approval.', 'git push'),
       };
     }
 
@@ -97,24 +118,18 @@ export function classifyHostCommand(argv: readonly string[]): {
     }
   }
 
-  if (
-    (executable === 'npm' || executable === 'pnpm' || executable === 'yarn' || executable === 'bun') &&
-    ['install', 'add', 'update', 'remove', 'uninstall'].includes(subcommand)
-  ) {
+  if (isPackageManager(executable) && ['install', 'add', 'update', 'remove', 'uninstall'].includes(subcommand)) {
     return {
       classification: 'DEP_MUTATION',
       decision: requireHuman('dependency-mutation', 'Dependency mutations require human approval.', `${executable} ${subcommand}`),
     };
   }
 
-  if (
-    (executable === 'npm' || executable === 'pnpm' || executable === 'yarn' || executable === 'bun') &&
-    subcommand === 'run' &&
-    ['test', 'build', 'typecheck', 'lint'].includes(normalizeToken(argv[2]))
-  ) {
+  if (isPackageManager(executable) && isValidationScript(subcommand, argv)) {
+    const script = subcommand === 'run' ? normalizeToken(argv[2]) : subcommand;
     return {
       classification: 'VALIDATION',
-      decision: allow('in-scope', 'Validation commands are allowed.', `${executable} run ${normalizeToken(argv[2])}`),
+      decision: allow('in-scope', 'Validation commands are allowed.', `${executable} ${script}`),
     };
   }
 
@@ -164,4 +179,22 @@ export function classifyHostCommand(argv: readonly string[]): {
     classification: 'UNKNOWN',
     decision: requireHuman('unknown-command', 'Unknown host-initiated commands require human approval.', executable),
   };
+}
+
+function argvHasToken(argv: readonly string[], tokens: readonly string[]): boolean {
+  const wanted = new Set(tokens.map((token) => token.toLowerCase()));
+  return argv.some((entry) => wanted.has(entry.trim().toLowerCase()));
+}
+
+function isPackageManager(executable: string): boolean {
+  return executable === 'npm' || executable === 'pnpm' || executable === 'yarn' || executable === 'bun';
+}
+
+const VALIDATION_SCRIPTS = new Set(['test', 'build', 'typecheck', 'lint']);
+
+function isValidationScript(subcommand: string, argv: readonly string[]): boolean {
+  if (VALIDATION_SCRIPTS.has(subcommand)) {
+    return true;
+  }
+  return subcommand === 'run' && VALIDATION_SCRIPTS.has(normalizeToken(argv[2]));
 }

@@ -75,7 +75,8 @@ export type LifecycleEventType =
   | 'host.discovery.completed'
   | 'host.stopping'
   | 'host.stopped'
-  | 'host.error';
+  | 'host.error'
+  | 'control.run.error';
 
 export interface LifecycleEventDocument {
   schemaVersion: typeof SCHEMA_VERSION;

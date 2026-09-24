@@ -11,12 +11,36 @@ import {
   type AttemptPolicyController,
 } from '../policy/policy.ts';
 import type { PolicyAdjudication, PolicyBaselineCapture } from '../policy/types.ts';
-import { adjudicateAttemptWorkspace, createWorkspacePolicyBaseline, materializeAttemptWorkspace, type AttemptWorkspace } from '../workspace.ts';
+import { adjudicateAttemptWorkspace, createWorkspacePolicyBaseline, materializeAttemptWorkspace, materializeVerifierWorkspace, resolveImplementerCandidateWorkspace, type AttemptWorkspace } from '../workspace.ts';
 
 const DEFAULT_EXECUTION_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
+/**
+ * Executor-owned hard-timeout grace (ms). The provider adapter/ProcessRunner
+ * enforce their own startup/idle/overall timers, but the orchestration boundary
+ * must NOT trust that layer to always settle: a Windows grandchild that inherited
+ * a stdout handle can suppress the child `close` event, a stream/decoder promise
+ * can stay open, or a future adapter may lack robust timers. Any of those would
+ * otherwise leave `await adapter.execute(...)` pending forever, so the Attempt
+ * stays `running` and the Supervisor never regains control.
+ *
+ * This grace is added to the request timeout to form an INDEPENDENT hard upper
+ * bound on provider execution. It must exceed the runner's own cancel-grace plus
+ * post-kill settlement window (see processRunner.ts) so that in the normal case a
+ * clean runner-level timeout result still flows through first and this backstop
+ * only fires on a genuine hang.
+ */
+const DEFAULT_EXECUTION_HARD_GRACE_MS = 30_000;
 const STRING_FIELD_LIMIT = 512;
 export const DURABLE_STDERR_TAIL_MAX_CHARS = 4096;
+/**
+ * Durable evidence event appended when execution finalization fails AFTER the
+ * provider phase (policy adjudication, policy event persistence, terminal
+ * event persistence, or the Attempt terminal transition wrapper). Its payload
+ * is small by construction so the evidence write itself can never hit the store
+ * payload limit.
+ */
+export const EXECUTION_PERSISTENCE_FAILED_EVENT = 'execution.persistence.failed';
 
 export interface AttemptExecutionInput {
   runId: string;
@@ -38,7 +62,13 @@ export interface AttemptExecutionOutcome {
   attempt: AttemptRecord;
   result: ExecutionResult;
   startedEvent: OrchestrationEventRecord | null;
-  terminalEvent: OrchestrationEventRecord;
+  /**
+   * The terminal execution event record when the normal path persisted one. On
+   * the fail-closed path this is the best durable evidence that exists: the
+   * terminal event, else the `execution.persistence.failed` event — null only
+   * when no event write succeeded at all.
+   */
+  terminalEvent: OrchestrationEventRecord | null;
   terminalAttemptStatus: AttemptStatus;
   policy: PolicyAdjudication;
 }
@@ -82,6 +112,12 @@ export interface AttemptExecutorDependencies {
   now?: (() => Date) | undefined;
   idGenerator?: (() => string) | undefined;
   defaultTimeoutMs?: number | undefined;
+  /**
+   * Extra grace added to the request timeout to form the executor-owned hard
+   * upper bound on provider execution. Test seam only; production uses
+   * {@link DEFAULT_EXECUTION_HARD_GRACE_MS}.
+   */
+  executionHardGraceMs?: number | undefined;
   shutdownTimeoutMs?: number | undefined;
   policyController?: AttemptPolicyController | undefined;
   workspaceConfig?: { canonicalRepoPath: string; workspaceRoot: string; repoKey: string } | undefined;
@@ -99,6 +135,7 @@ export class AttemptExecutor {
   private readonly now: () => Date;
   private readonly idGenerator: () => string;
   private readonly defaultTimeoutMs: number;
+  private readonly executionHardGraceMs: number;
   private readonly shutdownTimeoutMs: number;
   private readonly policyController: AttemptPolicyController;
   private readonly workspaceConfig: AttemptExecutorDependencies['workspaceConfig'];
@@ -113,6 +150,7 @@ export class AttemptExecutor {
     this.now = dependencies.now ?? (() => new Date());
     this.idGenerator = dependencies.idGenerator ?? globalThis.crypto.randomUUID.bind(globalThis.crypto);
     this.defaultTimeoutMs = dependencies.defaultTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS;
+    this.executionHardGraceMs = dependencies.executionHardGraceMs ?? DEFAULT_EXECUTION_HARD_GRACE_MS;
     this.shutdownTimeoutMs = dependencies.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
     this.policyController = dependencies.policyController ?? createAttemptPolicyController();
     this.workspaceConfig = dependencies.workspaceConfig;
@@ -193,10 +231,17 @@ export class AttemptExecutor {
   ): Promise<AttemptExecutionOutcome> {
     const startedAt = this.now();
 
+    // Hoisted so the fail-closed catch below can preserve as much durable
+    // evidence as exists when a downstream step throws.
+    let request: ExecutionRequest | null = null;
+    let startedEvent: OrchestrationEventRecord | null = null;
+    let terminalEvent: OrchestrationEventRecord | null = null;
+    let providerResult: ExecutionResult | undefined;
+    let policyBaseline: PolicyBaselineCapture | undefined;
+
     try {
       let workspace: AttemptWorkspace | undefined;
       let executionInput = input;
-      let policyBaseline: PolicyBaselineCapture;
       if (input.permissionProfile === 'task-implementer') {
         if (!this.workspaceConfig) {
           return await this.finishWorkspacePreparationFailure(input, context, startedAt, 'workspace-unconfigured');
@@ -214,38 +259,74 @@ export class AttemptExecutor {
         } catch {
           return await this.finishWorkspacePreparationFailure(input, context, startedAt, workspaceIdentity(this.workspaceConfig.repoKey, input));
         }
+      } else if (input.permissionProfile === 'verifier') {
+        if (!this.workspaceConfig) {
+          return await this.finishWorkspacePreparationFailure(input, context, startedAt, 'workspace-unconfigured');
+        }
+        const workspaceId = workspaceIdentity(this.workspaceConfig.repoKey, input);
+        this.persistWorkspaceEvent(input, 'workspace.preparation.started', { workspaceId });
+        try {
+          const candidate = resolveImplementerCandidateWorkspace({
+            workspaceRoot: this.workspaceConfig.workspaceRoot,
+            repoKey: this.workspaceConfig.repoKey,
+            runId: input.runId,
+            dependencyTaskIds: this.store.listDependencies(input.runId)
+              .filter((dependency) => dependency.taskId === input.taskId)
+              .map((dependency) => dependency.dependsOnTaskId),
+            events: this.store.listEvents().filter((event) => event.runId === input.runId),
+          });
+          if (!candidate) {
+            return await this.finishWorkspacePreparationFailure(input, context, startedAt, workspaceId);
+          }
+          workspace = await materializeVerifierWorkspace({
+            sourceWorkspacePath: candidate.workspacePath,
+            workspaceRoot: this.workspaceConfig.workspaceRoot,
+            identity: { repoKey: this.workspaceConfig.repoKey, runId: input.runId, attemptId: input.attemptId },
+            baselineHeadSha: candidate.baselineHeadSha,
+          });
+          executionInput = { ...input, workingDirectory: workspace.workspacePath };
+          policyBaseline = createWorkspacePolicyBaseline({ workspace, runId: input.runId, task: context.task, attemptId: input.attemptId, permissionProfile: input.permissionProfile });
+          this.persistWorkspaceEvent(input, 'workspace.prepared', {
+            workspaceId: workspace.workspaceId,
+            baselineHeadSha: workspace.baselineHeadSha,
+            materializationMode: workspace.materializationMode,
+            sourceAttemptId: candidate.sourceAttemptId,
+            readOnly: true,
+            workspaceState: 'ready',
+          });
+        } catch {
+          return await this.finishWorkspacePreparationFailure(input, context, startedAt, workspaceId);
+        }
       } else {
         policyBaseline = await this.capturePolicyBaseline(input, context);
       }
       this.persistPolicyBaselineEvent(input, policyBaseline);
-      const request = buildExecutionRequest(executionInput, this.defaultTimeoutMs, workspace?.workspacePath);
+      request = buildExecutionRequest(executionInput, this.defaultTimeoutMs, workspace?.workspacePath);
       const adapter = this.registry.get(input.provider);
-      let startedEvent: OrchestrationEventRecord | null = null;
-      let result: ExecutionResult;
 
       if (activeEntry.isCancellationRequested()) {
-        result = buildCancelledBeforeLaunchResult(request);
+        providerResult = buildCancelledBeforeLaunchResult(request);
       } else {
         startedEvent = this.persistStartedEvent(executionInput);
         if (adapter) {
           activeEntry.setProviderCancel(() => adapter.cancel(input.attemptId));
         }
-        result = await executeViaAdapter(adapter, request, executionInput);
+        providerResult = await this.executeProviderWithHardTimeout(adapter, request, executionInput);
       }
 
-      const terminalEventType = mapTerminalEventType(result);
+      const terminalEventType = mapTerminalEventType(providerResult);
       const durationMs = Math.max(0, this.now().getTime() - startedAt.getTime());
-      const terminalEvent = this.persistTerminalEvent(executionInput, result, terminalEventType, durationMs);
+      terminalEvent = this.persistTerminalEvent(executionInput, providerResult, terminalEventType, durationMs);
       const workspaceAdjudication = workspace
         ? await adjudicateAttemptWorkspace({ workspace, runId: input.runId, task: context.task, attemptId: input.attemptId, permissionProfile: input.permissionProfile })
         : undefined;
       const policy = workspaceAdjudication?.policy ?? await this.adjudicatePolicy(input, policyBaseline);
       this.persistPolicyEvent(input, policy);
-      const terminalAttemptStatus = resolveEffectiveAttemptStatus(result, policy);
+      const terminalAttemptStatus = resolveEffectiveAttemptStatus(providerResult, policy);
       if (workspace) {
         this.persistWorkspaceEvent(input, 'workspace.adjudication.completed', { workspaceId: workspace.workspaceId, policyAccepted: policy.accepted, workspaceState: policy.accepted ? 'accepted' : 'rejected' });
         if (
-          result.provider.success &&
+          providerResult.provider.success &&
           terminalAttemptStatus === 'passed' &&
           policy.accepted &&
           workspaceAdjudication?.changeSet &&
@@ -259,15 +340,101 @@ export class AttemptExecutor {
       return {
         executionId: request.executionId,
         attempt,
-        result,
+        result: providerResult,
         startedEvent,
         terminalEvent,
         terminalAttemptStatus,
         policy,
       };
+    } catch (error) {
+      // The terminal transition itself is the existing recovery contract's
+      // domain: if the store cannot perform it, retrying it here cannot help and
+      // the restart-time reconciliation (recoverInterruptedAttempts +
+      // resumeResumableRuns) owns the Attempt. No second state machine.
+      if (error instanceof AttemptExecutorError && error.code === 'ATTEMPT_TRANSITION_FAILED') {
+        throw error;
+      }
+      return this.finishExecutionAttemptFailure(input, context, request, startedEvent, terminalEvent, providerResult, policyBaseline, error);
     } finally {
       this.activeExecutions.delete(input.attemptId);
     }
+  }
+
+  /**
+   * Run the provider adapter under an INDEPENDENT executor-owned hard timeout.
+   *
+   * The adapter/ProcessRunner enforce their own startup/idle/overall timers, but
+   * the orchestration boundary must guarantee that provider execution has a hard
+   * upper bound regardless of that layer: if `adapter.execute(...)` never settles
+   * (a Windows grandchild suppressing `close`, a stream/decoder promise that
+   * stays open, or any adapter lacking robust timers), the Attempt would remain
+   * `running` forever and the Supervisor would never regain control.
+   *
+   * When the hard deadline expires this method:
+   *   1. terminates the spawned provider process AND its tree through the EXISTING
+   *      adapter/runner abstraction (`adapter.cancel` → ProcessRunner
+   *      `terminate` → Windows `taskkill /T /F`) — best effort, and
+   *   2. resolves with a deterministic timeout {@link ExecutionResult} so the
+   *      caller terminalizes the Attempt as a retryable `execution-timeout`.
+   *
+   * The provider promise's own later settlement (including a post-cancel result)
+   * is ignored once the deadline has fired: the timeout classification always
+   * wins, which keeps the Supervisor's existing retry policy (timeouts are
+   * retryable) intact instead of misclassifying the run as a cancellation.
+   */
+  private async executeProviderWithHardTimeout(
+    adapter: ProviderAdapter | undefined,
+    request: ExecutionRequest,
+    input: AttemptExecutionInput,
+  ): Promise<ExecutionResult> {
+    const providerPromise = executeViaAdapter(adapter, request, input);
+
+    // With no adapter, executeViaAdapter resolves immediately (provider
+    // unavailable); there is nothing to bound and nothing to terminate.
+    if (!adapter) {
+      return await providerPromise;
+    }
+
+    const hardDeadlineMs = resolveHardDeadlineMs(request.timeoutMs, this.defaultTimeoutMs, this.executionHardGraceMs);
+
+    return await new Promise<ExecutionResult>((resolve) => {
+      let settled = false;
+      let timer: NodeJS.Timeout | undefined;
+
+      const finish = (result: ExecutionResult): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timer) {
+          clearTimeout(timer);
+          timer = undefined;
+        }
+        resolve(result);
+      };
+
+      timer = setTimeout(() => {
+        try {
+          adapter.cancel(request.attemptId);
+        } catch {
+          // Best-effort process-tree termination; the hard timeout result stands
+          // even if the adapter cannot be signalled.
+        }
+        finish(buildProviderTimeoutResult(request));
+      }, hardDeadlineMs);
+
+      providerPromise.then(
+        (result) => finish(result),
+        (error) =>
+          finish(
+            buildProviderUnavailableResult(
+              request,
+              sanitizeString(error instanceof Error ? error.message : String(error), STRING_FIELD_LIMIT),
+              'PROVIDER_ERROR',
+            ),
+          ),
+      );
+    });
   }
 
   private async capturePolicyBaseline(input: AttemptExecutionInput, context: AttemptContext): Promise<PolicyBaselineCapture> {
@@ -286,6 +453,104 @@ export class AttemptExecutor {
         { cause: error },
       );
     }
+  }
+
+  /**
+   * Fail-closed terminalization for a failure the normal path did not already
+   * convert into an outcome (workspace preparation has its own fail-closed
+   * return). This covers EVERY step between Attempt start and the terminal
+   * transition: baseline capture/persistence, the started event, provider
+   * execution, policy adjudication, policy event persistence, the terminal
+   * event, and the workspace adjudication events.
+   *
+   * INVARIANT: once AttemptExecutor has accepted an execution it must hand back
+   * a TERMINALIZED Attempt. A throw out of execute() aborts supervisorTick
+   * before it can reconcile the Task, and the control worker only re-drives
+   * Runs at startup, so an un-terminalized `running` Attempt would strand the
+   * Run forever.
+   *
+   * This handler:
+   *   - uses the REAL provider result when the provider returned (never
+   *     fabricating PASS — a provider success still terminalizes as `failed`
+   *     because the outcome policy below is a fail-closed deny);
+   *   - preserves bounded durable evidence via one
+   *     {@link EXECUTION_PERSISTENCE_FAILED_EVENT} event (best effort — the
+   *     Attempt transition is the critical write);
+   *   - transitions the Attempt to `failed` through the same store transition
+   *     the normal path uses, then RETURNS so supervisorTick regains control
+   *     and the existing retry/failure policy stays authoritative. If the store
+   *     genuinely cannot perform the transition, that error propagates and the
+   *     existing restart recovery contract reconciles — no second state
+   *     machine is invented here.
+   */
+  private finishExecutionAttemptFailure(
+    input: AttemptExecutionInput,
+    context: AttemptContext,
+    request: ExecutionRequest | null,
+    startedEvent: OrchestrationEventRecord | null,
+    terminalEvent: OrchestrationEventRecord | null,
+    providerResult: ExecutionResult | undefined,
+    policyBaseline: PolicyBaselineCapture | undefined,
+    error: unknown,
+  ): AttemptExecutionOutcome {
+    const effectiveRequest = request ?? buildExecutionRequest(input, this.defaultTimeoutMs);
+    const result = providerResult ?? buildProviderUnavailableResult(
+      effectiveRequest,
+      sanitizeString(error instanceof Error ? error.message : String(error), STRING_FIELD_LIMIT),
+      'PROCESS_SPAWN_FAILED',
+    );
+
+    // Bounded durable evidence. The payload is small by construction so this
+    // write can never fail for size — the failure mode it reports.
+    let failureEvidenceEvent: OrchestrationEventRecord | null = null;
+    try {
+      failureEvidenceEvent = this.store.appendEvent({
+        eventId: this.idGenerator(),
+        runId: input.runId,
+        taskId: input.taskId,
+        attemptId: input.attemptId,
+        type: EXECUTION_PERSISTENCE_FAILED_EVENT,
+        payload: {
+          errorCode:
+            error instanceof AttemptExecutorError
+              ? error.code
+              : error instanceof OrchestrationError
+                ? error.code
+                : 'EXECUTION_PERSISTENCE_FAILED',
+          errorMessage: sanitizeString(
+            redactCredentialShapes(error instanceof Error ? error.message : String(error)),
+            STRING_FIELD_LIMIT,
+          ),
+        },
+      });
+    } catch {
+      // Evidence is best effort only; the Attempt transition below is the
+      // critical durable write.
+    }
+
+    // The critical write: terminalize the Attempt as failed (fail closed).
+    const attempt = this.transitionAttemptTerminal(context.attempt.attemptId, 'failed');
+
+    const policy: PolicyAdjudication = {
+      decision: 'deny',
+      accepted: false,
+      reasonCodes: [],
+      reason: 'Fail closed: execution finalization failed; the provider result was captured but could not be durably adjudicated.',
+      baselineHeadSha: policyBaseline?.snapshot.headSha ?? 'policy-baseline-unavailable',
+      finalHeadSha: policyBaseline?.snapshot.headSha ?? 'policy-baseline-unavailable',
+      headMoved: false,
+      changes: [],
+    };
+
+    return {
+      executionId: effectiveRequest.executionId,
+      attempt,
+      result,
+      startedEvent,
+      terminalEvent: terminalEvent ?? failureEvidenceEvent,
+      terminalAttemptStatus: 'failed',
+      policy,
+    };
   }
 
   private async finishWorkspacePreparationFailure(input: AttemptExecutionInput, context: AttemptContext, startedAt: Date, workspaceId: string): Promise<AttemptExecutionOutcome> {
@@ -716,6 +981,50 @@ function buildProviderUnavailableResult(
       success: false,
       errorCode,
       errorMessage,
+    },
+    model: {
+      requestedModel: request.requestedModel ?? null,
+      reportedModel: null,
+      reportedModelSource: 'none',
+    },
+    usage: {
+      source: 'none',
+    },
+    session: {},
+    output: {},
+  };
+}
+
+/**
+ * Compute the executor-owned hard deadline: the request timeout plus the grace.
+ * A non-finite or non-positive request timeout falls back to the executor
+ * default so the backstop can never be armed with an immediate or invalid delay.
+ */
+function resolveHardDeadlineMs(timeoutMs: number, defaultTimeoutMs: number, graceMs: number): number {
+  const base = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : defaultTimeoutMs;
+  return base + graceMs;
+}
+
+/**
+ * Deterministic timeout result synthesized when the executor's hard deadline
+ * expires before the provider adapter settles. `process.timedOut` drives the
+ * terminal event to `execution.timed_out` and the durable classification to the
+ * retryable `execution-timeout` cause; `reportedModel` is never fabricated.
+ */
+function buildProviderTimeoutResult(request: ExecutionRequest): ExecutionResult {
+  return {
+    executionId: request.executionId,
+    process: {
+      exitCode: null,
+      signal: null,
+      timedOut: true,
+      cancelled: false,
+    },
+    provider: {
+      terminalState: 'failed',
+      success: false,
+      errorCode: 'EXECUTION_TIMEOUT',
+      errorMessage: 'Provider execution exceeded the hard timeout bound before returning a terminal result.',
     },
     model: {
       requestedModel: request.requestedModel ?? null,

@@ -561,7 +561,7 @@ test('codex adapter: 19) sandbox mapping is conservative and danger-full-access 
   assert.deepEqual(implementerLaunch.argv.slice(0, 8), ['exec', '--json', '--ephemeral', '-c', 'shell_environment_policy.inherit=core', '--sandbox', 'workspace-write', '-C']);
   assert.equal(implementerLaunch.argv.filter((arg) => arg === '--skip-git-repo-check').length, 1);
   assert.equal(reviewerLaunch.argv.includes('--skip-git-repo-check'), false);
-  assert.equal(verifierLaunch.argv.includes('--skip-git-repo-check'), false);
+  assert.equal(verifierLaunch.argv.includes('--skip-git-repo-check'), true);
   assert.ok(implementerLaunch.argv.includes('sandbox_workspace_write.network_access=false'));
   assert.equal(reviewerLaunch.argv.includes('sandbox_workspace_write.network_access=false'), false);
   assert.equal(verifierLaunch.argv.includes('sandbox_workspace_write.network_access=false'), false);
@@ -590,6 +590,9 @@ test('codex adapter: 20) launch argv includes exact Codex exec shape and request
     'sandbox_workspace_write.network_access=false',
     '-m',
     'gpt-5.6',
+    // ATB-2: normalized effort 'medium' → Codex-native model_reasoning_effort.
+    '-c',
+    'model_reasoning_effort=medium',
   ]);
 });
 
@@ -600,6 +603,56 @@ test('codex adapter: 21) -m is omitted when requestedModel is absent', () => {
   );
 
   assert.equal(launch.argv.includes('-m'), false);
+});
+
+test('codex adapter: 21b) every normalized effort level maps to a proven native value', () => {
+  for (const [normalized, native] of [['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['extra-high', 'xhigh']] as const) {
+    const launch = buildCodexLaunchDescriptor(
+      { providerId: 'codex', executable: 'C:\\Tools\\codex.cmd' },
+      createRequest({ reasoningEffort: normalized }),
+    );
+    assert.equal(
+      launch.argv.includes(`model_reasoning_effort=${native}`),
+      true,
+      `${normalized} maps to native model_reasoning_effort=${native}`,
+    );
+  }
+});
+
+test('codex adapter: 21c) an invalid effort string fails before launch (never a silent default)', async () => {
+  const runner = createRunnerDouble();
+  const adapter = new CodexProviderAdapter(
+    { providerId: 'codex', executable: 'C:\\Tools\\codex.cmd' },
+    { runner: runner.runner },
+  );
+
+  const result = await adapter.execute(createRequest({ reasoningEffort: 'ultra' }));
+  assert.equal(result.provider.success, false);
+  assert.equal(result.provider.errorCode, 'PROVIDER_ERROR');
+  assert.match(result.provider.errorMessage ?? '', /not a normalized effort level/u);
+  assert.equal(runner.runs.length, 0);
+});
+
+test('codex adapter: 21d) reported runtime model stays null even when a JSONL event carries a stray model field', async () => {
+  const runner = createRunnerDouble([
+    {
+      stdoutChunks: [
+        jsonLine({ type: 'thread.started', thread_id: 'thread-1', model: 'gpt-6-astra' }),
+        jsonLine({ type: 'turn.completed', model: 'gpt-6-astra' }),
+      ],
+    },
+  ]);
+  const adapter = new CodexProviderAdapter(
+    { providerId: 'codex', executable: 'C:\\Tools\\codex.cmd' },
+    { runner: runner.runner },
+  );
+
+  const result = await adapter.execute(createRequest({ requestedModel: 'gpt-5.6-sol' }));
+  // codex exec --json (0.153.4) emits NO model field on any event; the adapter
+  // must never copy a requested model (or a stray event field) into reportedModel.
+  assert.equal(result.model.requestedModel, 'gpt-5.6-sol');
+  assert.equal(result.model.reportedModel, null);
+  assert.equal(result.model.reportedModelSource, 'none');
 });
 
 test('codex adapter: 22) unsafe cmd-wrapper model is rejected by the shared ProcessRunner boundary', async () => {

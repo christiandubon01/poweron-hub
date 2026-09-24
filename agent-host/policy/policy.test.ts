@@ -7,7 +7,7 @@ import test from 'node:test';
 import { promisify } from 'node:util';
 
 import { openOrchestrationStore, type OrchestrationStore } from '../lib/store.ts';
-import type { AttemptRecord, JsonValue, TaskRecord } from '../lib/orchestrationTypes.ts';
+import { TEXT_FIELD_MAX_BYTES, type AttemptRecord, type JsonValue, type TaskRecord } from '../lib/orchestrationTypes.ts';
 import { classifyHostCommand } from './commandPolicy.ts';
 import { captureRepoSnapshot } from './diffPolicy.ts';
 import { parseAuthorizedWriteScope, isPathWithinAuthorizedScope, createTaskPolicyContext } from './pathPolicy.ts';
@@ -18,7 +18,7 @@ import {
   createAttemptPolicyController,
   createTaskSpecWithPolicy,
 } from './policy.ts';
-import type { PolicyBaselineCapture, TaskPolicyApproval } from './types.ts';
+import type { PolicyAdjudication, PolicyBaselineCapture, PolicyPathChange, TaskPolicyApproval } from './types.ts';
 import { AttemptExecutor } from '../providers/executor.ts';
 import type { ExecutionRequest, ExecutionResult, ProviderAdapter, ProviderId, ProviderProbeResult } from '../providers/types.ts';
 
@@ -382,7 +382,7 @@ test('policy: reviewer immutability denies created files and verifier immutabili
   assert.equal(verifier.reasonCodes.includes('reviewer-immutability'), true);
 });
 
-test('policy: unchanged pre-existing dirty state is preserved and same-status content mutation is detected', async () => {
+test('policy: unchanged pre-existing dirty state is not an Attempt write, and a further edit is', async () => {
   const repoPath = await createTempGitRepo('orch4b-preexisting-');
   await writeRepoFile(repoPath, 'supabase/.temp/cli-latest', 'A\n');
   await commitAll(repoPath, 'initial');
@@ -397,7 +397,7 @@ test('policy: unchanged pre-existing dirty state is preserved and same-status co
     finalSnapshot: await captureRepoSnapshot(repoPath),
   });
   assert.equal(unchanged.accepted, true);
-  assert.equal(unchanged.changes.some((change) => change.category === 'PREEXISTING_UNRELATED_CHANGE'), true);
+  assert.equal(unchanged.changes.some((change) => change.path === 'supabase/.temp/cli-latest'), false);
 
   await writeRepoFile(repoPath, 'supabase/.temp/cli-latest', 'dirty baseline mutated\n');
   const mutated = adjudicateRepoPolicy({
@@ -405,7 +405,8 @@ test('policy: unchanged pre-existing dirty state is preserved and same-status co
     finalSnapshot: await captureRepoSnapshot(repoPath),
   });
   assert.equal(mutated.accepted, false);
-  assert.equal(mutated.reasonCodes.includes('preexisting-change-mutated'), true);
+  assert.equal(mutated.changes.some((change) => change.path === 'supabase/.temp/cli-latest'), true);
+  assert.equal(mutated.reasonCodes.includes('out-of-scope-write'), true);
 });
 
 test('policy: staged, unstaged, reverted, and deleted mutations of pre-existing dirty paths are all detected', async () => {
@@ -447,7 +448,8 @@ test('policy: staged, unstaged, reverted, and deleted mutations of pre-existing 
       finalSnapshot: await captureRepoSnapshot(repoPath),
     });
     assert.equal(adjudication.accepted, false, scenario.name);
-    assert.equal(adjudication.reasonCodes.includes('preexisting-change-mutated'), true, scenario.name);
+    assert.equal(adjudication.changes.some((change) => change.path === 'supabase/.temp/cli-latest'), true, scenario.name);
+    assert.equal(adjudication.reasonCodes.includes('out-of-scope-write'), true, scenario.name);
   }
 });
 
@@ -610,6 +612,7 @@ test('policy: task policy context remains readable when spec has no nested polic
 
   assert.deepEqual(context.authorizedWriteScopes, []);
   assert.deepEqual(context.invalidAuthorizedWriteScopes, []);
+  assert.deepEqual(context.plannedAreas, []);
 });
 
 test('policy: executor overrides provider-success acceptance on policy denial and records policy events', async () => {
@@ -704,4 +707,445 @@ test('policy: provider failure still adjudicates repo mutations and emits policy
   } finally {
     store.close();
   }
+});
+
+test('policy: evaluation event payload stays within the store payload limit for large dirty repos', async () => {
+  // Regression for the real V2 smoke run: a verifier adjudicating the canonical
+  // repo with 32 pre-existing dirty entries produced a ~14.5KB policy.evaluated
+  // payload — over TEXT_FIELD_MAX_BYTES (8192) — so persisting the policy
+  // events threw and left the verifier Attempt durably running. The payload
+  // builder must bound its serialized size while NEVER dropping a policy
+  // failure from the durable evidence.
+  const buildChange = (index: number, decision: 'allow' | 'deny', requiresHuman?: boolean): PolicyPathChange => {
+    const changePath = `src/components/v15r/app-brain/very/deeply/nested/directory/fixture-file-${index}-with-a-long-name.tsx`;
+    return {
+      category: decision === 'allow' ? 'PREEXISTING_UNRELATED_CHANGE' : 'OUT_OF_SCOPE_CHANGE',
+      path: changePath,
+      decision,
+      requiresHuman,
+      reasonCode: decision === 'allow' ? 'preexisting-change' : 'out-of-scope-write',
+      reason: decision === 'allow'
+        ? 'Pre-existing dirty path remained byte-for-byte unchanged.'
+        : 'Repo mutation was outside the authorized write scope.',
+      matchedRule: decision === 'allow' ? 'baseline-integrity' : 'authorizedWritePaths',
+      indexStatus: ' ',
+      worktreeStatus: 'M',
+      entryFingerprintSha256: `${index}`.padStart(64, '0'),
+      pathFingerprint: {
+        path: changePath,
+        pathKey: changePath.toLowerCase(),
+        exists: true,
+        nodeKind: 'file',
+        workingTreeSha256: 'a'.repeat(64),
+        sizeBytes: 65_536,
+        indexObjectId: 'b'.repeat(40),
+      },
+    };
+  };
+
+  const changes: PolicyPathChange[] = [
+    ...Array.from({ length: 60 }, (_, index) => buildChange(index, 'allow')),
+    buildChange(100, 'deny'),
+    buildChange(101, 'deny', true),
+  ];
+
+  const adjudication: PolicyAdjudication = {
+    decision: 'deny',
+    accepted: false,
+    reasonCodes: ['out-of-scope-write'],
+    reason: 'Repo policy rejected the resulting working-tree state.',
+    baselineHeadSha: 'c'.repeat(40),
+    finalHeadSha: 'c'.repeat(40),
+    headMoved: false,
+    changes,
+  };
+
+  const payload = buildPolicyEvaluationEventPayload(adjudication) as Record<string, unknown>;
+  const serialized = JSON.stringify(payload);
+  assert.ok(
+    Buffer.byteLength(serialized, 'utf8') <= TEXT_FIELD_MAX_BYTES,
+    `payload must fit the store limit, got ${Buffer.byteLength(serialized, 'utf8')} bytes`,
+  );
+
+  // Truncation is explicit, and deny / human-gate changes are ALWAYS kept.
+  assert.equal(payload.changeCount, 62);
+  assert.equal(payload.changesTruncated, true);
+  const payloadChanges = payload.changes as Array<Record<string, unknown>>;
+  assert.equal(payloadChanges.filter((change) => change.decision === 'deny').length, 2);
+  assert.ok(payloadChanges.some((change) => change.reasonCode === 'out-of-scope-write' && change.requiresHuman === true));
+
+  // Deterministic: the same adjudication serializes identically.
+  assert.equal(JSON.stringify(buildPolicyEvaluationEventPayload(adjudication)), serialized);
+
+  // End-to-end proof: the bounded payload survives the real store's canonical
+  // serializer and payload limit (this appendEvent throws above 8192 bytes).
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'orch-policy-payload-limit-'));
+  const limitStore = openOrchestrationStore({
+    dbPath: path.join(tempDir, 'orchestration.sqlite'),
+    repoKey: 'repo-key-policy',
+    hostId: 'host-policy',
+    hostVersion: '0.1.0',
+  });
+  try {
+    limitStore.createRun({ runId: 'run-1', title: 'Run' });
+    limitStore.createTask({ taskId: 'task-1', runId: 'run-1', title: 'Task' });
+    limitStore.createAttempt({ attemptId: 'attempt-1', taskId: 'task-1', hostInstanceId: 'host-1' });
+    const persisted = limitStore.appendEvent({
+      eventId: 'event-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      attemptId: 'attempt-1',
+      type: 'policy.evaluated',
+      payload: payload as JsonValue,
+    });
+    assert.equal(persisted.type, 'policy.evaluated');
+  } finally {
+    limitStore.close();
+    await rm(tempDir, { recursive: true, force: true });
+  }
+
+  // Small adjudications keep full evidence and carry no truncation marker.
+  const smallPayload = buildPolicyEvaluationEventPayload({
+    ...adjudication,
+    decision: 'allow',
+    accepted: true,
+    reasonCodes: [],
+    changes: [buildChange(0, 'allow'), buildChange(1, 'allow')],
+  }) as Record<string, unknown>;
+  assert.equal((smallPayload.changes as unknown[]).length, 2);
+  assert.equal('changesTruncated' in smallPayload, false);
+});
+
+/* -------------------------------------------------------------------------- */
+/* ATB-4: deterministic drift runtime enforcement                              */
+/* -------------------------------------------------------------------------- */
+
+test('ATB-4: authorized write inside planned areas still passes', async () => {
+  const repoPath = await createTempGitRepo('atb4-planned-allow-');
+  await writeRepoFile(repoPath, 'src/features/control-tower/a.ts', 'export const value = 1;\n');
+  await commitAll(repoPath, 'initial');
+
+  const baseline = await captureBaseline({
+    repoPath,
+    taskSpec: createTaskSpecWithPolicy({
+      authorizedWritePaths: ['src/**'],
+      plannedAreas: ['src/features/control-tower'],
+    }),
+  });
+  await writeRepoFile(repoPath, 'src/features/control-tower/a.ts', 'export const value = 2;\n');
+  const adjudication = adjudicateRepoPolicy({
+    baseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+
+  assert.equal(adjudication.accepted, true);
+  assert.equal(adjudication.changes.some((change) => change.requiresHuman === true), false);
+});
+
+test('ATB-4: authorized write outside planned areas is a human-gated unplanned-area', async () => {
+  const repoPath = await createTempGitRepo('atb4-unplanned-');
+  await writeRepoFile(repoPath, 'src/features/control-tower/a.ts', 'export const a = 1;\n');
+  await writeRepoFile(repoPath, 'src/features/billing/b.ts', 'export const b = 1;\n');
+  await commitAll(repoPath, 'initial');
+
+  const baseline = await captureBaseline({
+    repoPath,
+    taskSpec: createTaskSpecWithPolicy({
+      authorizedWritePaths: ['src/**'],
+      plannedAreas: ['src/features/control-tower'],
+    }),
+  });
+  await writeRepoFile(repoPath, 'src/features/billing/b.ts', 'export const b = 2;\n');
+  const adjudication = adjudicateRepoPolicy({
+    baseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+
+  assert.equal(adjudication.accepted, false);
+  assert.equal(adjudication.reasonCodes.includes('unplanned-area'), true);
+  const gated = adjudication.changes.find((change) => change.reasonCode === 'unplanned-area');
+  assert.ok(gated);
+  assert.equal(gated?.decision, 'deny');
+  assert.equal(gated?.requiresHuman, true);
+  const payload = buildPolicyEvaluationEventPayload(adjudication) as {
+    changes: Array<{ reasonCode: string; requiresHuman?: boolean }>;
+  };
+  assert.equal(payload.changes.find((change) => change.reasonCode === 'unplanned-area')?.requiresHuman, true);
+});
+
+test('ATB-4: empty plannedAreas does not invent an unplanned-area gate', async () => {
+  const repoPath = await createTempGitRepo('atb4-empty-areas-');
+  await writeRepoFile(repoPath, 'src/anywhere.ts', 'export const value = 1;\n');
+  await commitAll(repoPath, 'initial');
+
+  const baseline = await captureBaseline({
+    repoPath,
+    taskSpec: createTaskSpecWithPolicy({ authorizedWritePaths: ['src/**'] }),
+  });
+  await writeRepoFile(repoPath, 'src/anywhere.ts', 'export const value = 2;\n');
+  const adjudication = adjudicateRepoPolicy({
+    baseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+
+  assert.equal(adjudication.accepted, true);
+  assert.equal(adjudication.reasonCodes.includes('unplanned-area'), false);
+});
+
+test('ATB-4: authorized package.json edit is a human-gated dependency mutation', async () => {
+  const repoPath = await createTempGitRepo('atb4-deps-');
+  await writeRepoFile(repoPath, 'package.json', '{"name":"demo","version":"1.0.0"}\n');
+  await commitAll(repoPath, 'initial');
+
+  const baseline = await captureBaseline({
+    repoPath,
+    taskSpec: createTaskSpecWithPolicy({ authorizedWritePaths: ['package.json'] }),
+  });
+  await writeRepoFile(repoPath, 'package.json', '{"name":"demo","version":"1.0.1"}\n');
+  const adjudication = adjudicateRepoPolicy({
+    baseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+
+  assert.equal(adjudication.accepted, false);
+  assert.equal(adjudication.reasonCodes.includes('dependency-mutation'), true);
+  const gated = adjudication.changes.find((change) => change.reasonCode === 'dependency-mutation');
+  assert.equal(gated?.requiresHuman, true);
+});
+
+test('ATB-4: planned migration is db-mutation; unplanned migration is migration-outside-plan', async () => {
+  const repoPath = await createTempGitRepo('atb4-db-');
+  await writeRepoFile(repoPath, 'supabase/migrations/001_init.sql', 'select 1;\n');
+  await writeRepoFile(repoPath, 'supabase/migrations/002_extra.sql', 'select 2;\n');
+  await commitAll(repoPath, 'initial');
+
+  const plannedBaseline = await captureBaseline({
+    repoPath,
+    taskSpec: createTaskSpecWithPolicy({
+      authorizedWritePaths: ['supabase/**'],
+      plannedAreas: ['supabase/migrations/001_init.sql'],
+    }),
+  });
+  await writeRepoFile(repoPath, 'supabase/migrations/001_init.sql', 'select 1;\nselect 3;\n');
+  const planned = adjudicateRepoPolicy({
+    baseline: plannedBaseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+  assert.equal(planned.accepted, false);
+  assert.equal(planned.reasonCodes.includes('db-mutation'), true);
+  assert.equal(planned.changes.find((change) => change.reasonCode === 'db-mutation')?.requiresHuman, true);
+
+  await runGit(repoPath, ['restore', '--worktree', '--staged', '--', 'supabase/migrations/001_init.sql']);
+  const unplannedBaseline = await captureBaseline({
+    repoPath,
+    taskSpec: createTaskSpecWithPolicy({
+      authorizedWritePaths: ['supabase/**'],
+      plannedAreas: ['src/features/control-tower'],
+    }),
+  });
+  await writeRepoFile(repoPath, 'supabase/migrations/002_extra.sql', 'select 2;\nselect 4;\n');
+  const unplanned = adjudicateRepoPolicy({
+    baseline: unplannedBaseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+  assert.equal(unplanned.accepted, false);
+  assert.equal(unplanned.reasonCodes.includes('migration-outside-plan'), true);
+  assert.equal(unplanned.changes.find((change) => change.reasonCode === 'migration-outside-plan')?.requiresHuman, true);
+});
+
+test('ATB-4: protected-path still outranks drift classification', async () => {
+  const repoPath = await createTempGitRepo('atb4-protected-wins-');
+  await writeRepoFile(repoPath, 'vite.config.ts', 'export default {};\n');
+  await commitAll(repoPath, 'initial');
+
+  const baseline = await captureBaseline({
+    repoPath,
+    taskSpec: createTaskSpecWithPolicy({
+      authorizedWritePaths: ['vite.config.ts'],
+      plannedAreas: ['src'],
+    }),
+  });
+  await writeRepoFile(repoPath, 'vite.config.ts', 'export default { drift: true };\n');
+  const adjudication = adjudicateRepoPolicy({
+    baseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+
+  assert.equal(adjudication.accepted, false);
+  assert.equal(adjudication.reasonCodes.includes('protected-path'), true);
+  assert.equal(adjudication.reasonCodes.includes('unplanned-area'), false);
+});
+
+test('ATB-5: path-like Scope Pack do-not-touch is enforced; prose is not guessed', async () => {
+  const repoPath = await createTempGitRepo('atb5-dnt-');
+  await writeRepoFile(repoPath, 'src/store/authStore.ts', 'export const auth = 1;\n');
+  await writeRepoFile(repoPath, 'src/allowed.ts', 'export const allowed = 1;\n');
+  await commitAll(repoPath, 'initial');
+
+  const baseline = await captureBaseline({
+    repoPath,
+    taskSpec: createTaskSpecWithPolicy({
+      authorizedWritePaths: ['src/**'],
+      doNotTouchPaths: ['src/store/authStore.ts'],
+    }),
+  });
+  await writeRepoFile(repoPath, 'src/store/authStore.ts', 'export const auth = 2;\n');
+  const denied = adjudicateRepoPolicy({
+    baseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+  assert.equal(denied.accepted, false);
+  assert.equal(denied.reasonCodes.includes('protected-path'), true);
+});
+
+/* -------------------------------------------------------------------------- */
+/* ATB-7B1: Attempt-local delta against the pre-provider baseline             */
+/* -------------------------------------------------------------------------- */
+
+test('ATB-7B1: unchanged pre-existing dirty file is outside the Attempt delta', async () => {
+  const repoPath = await createTempGitRepo('atb7b1-dirty-unchanged-');
+  await writeRepoFile(repoPath, 'agent-host/policy/commandPolicy.ts', 'export const head = "A";\n');
+  await commitAll(repoPath, 'initial');
+  await writeRepoFile(repoPath, 'agent-host/policy/commandPolicy.ts', 'export const head = "A";\nexport const owner = true;\n');
+
+  const baseline = await captureBaseline({
+    repoPath,
+    taskSpec: createTaskSpecWithPolicy({
+      authorizedWritePaths: ['agent-host/smoke/control-tower-ui-e2e.txt'],
+      plannedAreas: ['agent-host/smoke/control-tower-ui-e2e.txt'],
+    }),
+  });
+  const adjudication = adjudicateRepoPolicy({
+    baseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+
+  assert.equal(adjudication.accepted, true);
+  assert.equal(adjudication.changes.some((change) => change.path === 'agent-host/policy/commandPolicy.ts'), false);
+  assert.equal(adjudication.reasonCodes.includes('unplanned-area'), false);
+  assert.equal(adjudication.headMoved, false);
+});
+
+test('ATB-7B1: a further edit of a pre-existing dirty file is an Attempt delta', async () => {
+  const repoPath = await createTempGitRepo('atb7b1-dirty-modified-');
+  await writeRepoFile(repoPath, 'src/planned.ts', 'export const value = "A";\n');
+  await writeRepoFile(repoPath, 'src/other.ts', 'export const other = "A";\n');
+  await writeRepoFile(repoPath, 'vite.config.ts', 'export default { value: "A" };\n');
+  await commitAll(repoPath, 'initial');
+  await writeRepoFile(repoPath, 'src/planned.ts', 'export const value = "A";\nexport const owner = true;\n');
+  await writeRepoFile(repoPath, 'src/other.ts', 'export const other = "A";\nexport const owner = true;\n');
+  await writeRepoFile(repoPath, 'vite.config.ts', 'export default { value: "A", owner: true };\n');
+
+  const taskSpec = createTaskSpecWithPolicy({
+    authorizedWritePaths: ['src/**', 'vite.config.ts'],
+    plannedAreas: ['src/planned.ts'],
+  });
+  const baseline = await captureBaseline({ repoPath, taskSpec });
+
+  await writeRepoFile(repoPath, 'src/planned.ts', 'export const value = "A";\nexport const owner = true;\nexport const provider = true;\n');
+  const inPlan = adjudicateRepoPolicy({
+    baseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+  assert.equal(inPlan.changes.filter((change) => change.path === 'src/planned.ts').length, 1);
+  assert.equal(inPlan.changes.find((change) => change.path === 'src/planned.ts')?.decision, 'allow');
+  assert.equal(inPlan.changes.some((change) => change.path === 'src/other.ts'), false);
+  assert.equal(inPlan.changes.some((change) => change.path === 'vite.config.ts'), false);
+
+  await writeRepoFile(repoPath, 'src/other.ts', 'export const other = "A";\nexport const owner = true;\nexport const provider = true;\n');
+  const unplanned = adjudicateRepoPolicy({
+    baseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+  assert.equal(unplanned.reasonCodes.includes('unplanned-area'), true);
+  assert.equal(unplanned.changes.find((change) => change.path === 'src/other.ts')?.reasonCode, 'unplanned-area');
+  assert.equal(unplanned.changes.find((change) => change.path === 'src/other.ts')?.requiresHuman, true);
+
+  await writeRepoFile(repoPath, 'vite.config.ts', 'export default { value: "A", owner: true, provider: true };\n');
+  const protectedEdit = adjudicateRepoPolicy({
+    baseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+  assert.equal(protectedEdit.reasonCodes.includes('protected-path'), true);
+  assert.equal(protectedEdit.changes.find((change) => change.path === 'vite.config.ts')?.reasonCode, 'protected-path');
+});
+
+test('ATB-7B1: a clean-file edit and a new smoke file are Attempt deltas', async () => {
+  const repoPath = await createTempGitRepo('atb7b1-clean-new-');
+  await writeRepoFile(repoPath, 'src/clean.ts', 'export const clean = 1;\n');
+  await commitAll(repoPath, 'initial');
+  await writeRepoFile(repoPath, 'agent-host/policy/commandPolicy.ts', 'export const inherited = true;\n');
+
+  const baseline = await captureBaseline({
+    repoPath,
+    taskSpec: createTaskSpecWithPolicy({
+      authorizedWritePaths: ['src/clean.ts', 'agent-host/smoke/control-tower-ui-e2e.txt'],
+      plannedAreas: ['src/clean.ts', 'agent-host/smoke/control-tower-ui-e2e.txt'],
+    }),
+  });
+  await writeRepoFile(repoPath, 'src/clean.ts', 'export const clean = 2;\n');
+  await writeRepoFile(repoPath, 'agent-host/smoke/control-tower-ui-e2e.txt', 'CONTROL_TOWER_UI_E2E_OK final\n');
+  const adjudication = adjudicateRepoPolicy({
+    baseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+
+  const paths = adjudication.changes.map((change) => change.path).sort();
+  assert.deepEqual(paths, ['agent-host/smoke/control-tower-ui-e2e.txt', 'src/clean.ts']);
+  assert.equal(adjudication.accepted, true);
+  assert.equal(adjudication.changes.some((change) => change.path === 'agent-host/policy/commandPolicy.ts'), false);
+});
+
+test('ATB-7B1: the only provider edit of the smoke file is a single Attempt change', async () => {
+  const repoPath = await createTempGitRepo('atb7b1-smoke-only-');
+  await writeRepoFile(repoPath, 'README.md', 'base\n');
+  await commitAll(repoPath, 'initial');
+  await writeRepoFile(repoPath, 'agent-host/policy/commandPolicy.ts', 'export const inherited = true;\n');
+  await writeRepoFile(repoPath, 'agent-host/providers/codex.ts', 'export const inherited = true;\n');
+
+  const baseline = await captureBaseline({
+    repoPath,
+    taskSpec: createTaskSpecWithPolicy({
+      authorizedWritePaths: ['agent-host/smoke/control-tower-ui-e2e.txt'],
+      plannedAreas: ['agent-host/smoke/control-tower-ui-e2e.txt'],
+    }),
+  });
+  await writeRepoFile(repoPath, 'agent-host/smoke/control-tower-ui-e2e.txt', 'CONTROL_TOWER_UI_E2E_OK final\n');
+  const adjudication = adjudicateRepoPolicy({
+    baseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+
+  assert.equal(adjudication.accepted, true);
+  assert.equal(adjudication.changes.length, 1);
+  assert.equal(adjudication.changes[0]?.path, 'agent-host/smoke/control-tower-ui-e2e.txt');
+  assert.equal(adjudication.changes[0]?.category, 'UNTRACKED_FILE');
+  assert.equal(adjudication.headMoved, false);
+});
+
+test('ATB-7B1: provider deletion of a clean file and of a dirty file stays classifiable', async () => {
+  const repoPath = await createTempGitRepo('atb7b1-delete-');
+  await writeRepoFile(repoPath, 'src/clean.ts', 'export const clean = 1;\n');
+  await writeRepoFile(repoPath, 'src/dirty.ts', 'export const dirty = 1;\n');
+  await commitAll(repoPath, 'initial');
+  await writeRepoFile(repoPath, 'src/dirty.ts', 'export const dirty = 1;\nexport const owner = true;\n');
+
+  const baseline = await captureBaseline({
+    repoPath,
+    taskSpec: createTaskSpecWithPolicy({
+      authorizedWritePaths: ['src/clean.ts', 'src/dirty.ts'],
+      plannedAreas: ['src/clean.ts', 'src/dirty.ts'],
+    }),
+  });
+  await deleteRepoPath(repoPath, 'src/clean.ts');
+  await deleteRepoPath(repoPath, 'src/dirty.ts');
+  const adjudication = adjudicateRepoPolicy({
+    baseline,
+    finalSnapshot: await captureRepoSnapshot(repoPath),
+  });
+
+  const deleted = adjudication.changes.filter((change) => change.category === 'DELETED_FILE').map((change) => change.path).sort();
+  assert.deepEqual(deleted, ['src/clean.ts', 'src/dirty.ts']);
+  assert.equal(adjudication.accepted, true);
+  assert.equal(adjudication.headMoved, false);
 });

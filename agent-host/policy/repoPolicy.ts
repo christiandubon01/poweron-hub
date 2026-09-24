@@ -74,6 +74,7 @@ export function classifyRepoEntryRestrictions(options: {
   taskId: string;
   attemptId: string;
   approvals: readonly TaskPolicyApproval[];
+  extraProtectedPaths?: readonly string[];
 }): PolicyDecision | null {
   const repoPaths = [options.entry.path, options.entry.originalPath].filter((value): value is string => Boolean(value));
 
@@ -87,7 +88,14 @@ export function classifyRepoEntryRestrictions(options: {
       };
     }
 
-    if (isProtectedRepoPath(repoPath)) {
+    const extraProtected = (options.extraProtectedPaths ?? []).some((protectedPath) => {
+      try {
+        return toRepoPathKey(protectedPath) === toRepoPathKey(repoPath);
+      } catch {
+        return false;
+      }
+    });
+    if (isProtectedRepoPath(repoPath) || extraProtected) {
       if (hasProtectedPathApproval({
         approvals: options.approvals,
         runId: options.runId,

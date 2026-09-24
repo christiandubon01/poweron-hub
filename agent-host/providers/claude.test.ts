@@ -442,7 +442,7 @@ test('claude adapter: 17) no dangerous bypass flag appears in launches', () => {
 test('claude adapter: 18) Ollama harness argv is correct', () => {
   const launch = buildClaudeLaunchDescriptor(
     { providerId: 'ollama', executable: 'C:\\Tools\\ollama.exe', harness: 'claude' },
-    createRequest({ requestedModel: 'glm-4.5-air' }),
+    createRequest({ requestedModel: 'glm-4.5-air', reasoningEffort: undefined }),
   );
   assert.deepEqual(launch.argv, [
     'launch',
@@ -473,7 +473,7 @@ test('claude adapter: 19) Ollama requested model is passed literally through the
     { runner: runner.runner },
   );
 
-  await adapter.execute(createRequest({ requestedModel: 'owner/special-model:beta' }));
+  await adapter.execute(createRequest({ requestedModel: 'owner/special-model:beta', reasoningEffort: undefined }));
   assert.equal(runner.runs[0].options.launch.executable, 'C:\\Tools\\ollama.exe');
   assert.equal(runner.runs[0].options.launch.argv[3], 'owner/special-model:beta');
 });
@@ -584,8 +584,81 @@ test('claude adapter: missing Ollama requested model fails before launch', async
     { runner: runner.runner },
   );
 
-  const result = await adapter.execute(createRequest({ requestedModel: undefined }));
+  const result = await adapter.execute(createRequest({ requestedModel: undefined, reasoningEffort: undefined }));
   assert.equal(result.provider.success, false);
   assert.equal(result.provider.errorCode, 'MODEL_UNAVAILABLE');
   assert.equal(runner.runs.length, 0);
+});
+
+/* -------------------------------------------------------------------------- */
+/* ATB-2B: Claude Code --model / --effort wiring (CLI-verified 2.1.277)        */
+/* -------------------------------------------------------------------------- */
+
+test('claude adapter: 23) requested model is passed via --model for the claude target', () => {
+  const launch = buildClaudeLaunchDescriptor(
+    { providerId: 'claude', executable: 'C:\\Tools\\claude.exe' },
+    createRequest({ requestedModel: 'claude-fable-5' }),
+  );
+  const modelIndex = launch.argv.indexOf('--model');
+  assert.equal(modelIndex > 0, true);
+  assert.equal(launch.argv[modelIndex + 1], 'claude-fable-5');
+});
+
+test('claude adapter: 24) no requested model means no --model flag (existing behavior unchanged)', () => {
+  const launch = buildClaudeLaunchDescriptor(
+    { providerId: 'claude', executable: 'C:\\Tools\\claude.exe' },
+    createRequest({ requestedModel: undefined, reasoningEffort: undefined }),
+  );
+  assert.equal(launch.argv.includes('--model'), false);
+  assert.equal(launch.argv.includes('--effort'), false);
+});
+
+test('claude adapter: 25) normalized effort maps to the CLI-native --effort value', () => {
+  for (const [normalized, native] of [['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['extra-high', 'xhigh']] as const) {
+    const launch = buildClaudeLaunchDescriptor(
+      { providerId: 'claude', executable: 'C:\\Tools\\claude.exe' },
+      createRequest({ requestedModel: undefined, reasoningEffort: normalized }),
+    );
+    const effortIndex = launch.argv.indexOf('--effort');
+    assert.equal(effortIndex > 0, true, `--effort present for ${normalized}`);
+    assert.equal(launch.argv[effortIndex + 1], native, `${normalized} maps to native ${native}`);
+  }
+});
+
+test('claude adapter: 26) an invalid effort string fails before launch (never a silent default)', async () => {
+  const runner = createRunnerDouble();
+  const adapter = new ClaudeCompatibleProviderAdapter(
+    { providerId: 'claude', executable: 'C:\\Tools\\claude.exe' },
+    { runner: runner.runner },
+  );
+
+  const result = await adapter.execute(createRequest({ requestedModel: undefined, reasoningEffort: 'ultra' }));
+  assert.equal(result.provider.success, false);
+  assert.equal(result.provider.errorCode, 'PROVIDER_ERROR');
+  assert.match(result.provider.errorMessage ?? '', /not a normalized effort level/u);
+  assert.equal(runner.runs.length, 0);
+});
+
+test('claude adapter: 27) unsupported effort on the Ollama harness fails before launch', async () => {
+  const runner = createRunnerDouble();
+  const adapter = new ClaudeCompatibleProviderAdapter(
+    { providerId: 'ollama', executable: 'C:\\Tools\\ollama.exe', harness: 'claude' },
+    { runner: runner.runner },
+  );
+
+  const result = await adapter.execute(createRequest({ requestedModel: 'qwen3:14b', reasoningEffort: 'high' }));
+  assert.equal(result.provider.success, false);
+  assert.equal(result.provider.errorCode, 'PROVIDER_ERROR');
+  assert.match(result.provider.errorMessage ?? '', /does not support reasoning-effort control/u);
+  assert.equal(runner.runs.length, 0);
+});
+
+test('claude adapter: 28) model and effort flags never carry the prompt (argv stays safe)', () => {
+  const prompt = 'sensitive prompt text should stay off argv';
+  const launch = buildClaudeLaunchDescriptor(
+    { providerId: 'claude', executable: 'C:\\Tools\\claude.exe' },
+    createRequest({ prompt, requestedModel: 'claude-fable-5', reasoningEffort: 'extra-high' }),
+  );
+  assert.equal(launch.argv.some((arg) => arg.includes(prompt)), false);
+  assert.deepEqual(launch.argv.slice(-4), ['--model', 'claude-fable-5', '--effort', 'xhigh']);
 });

@@ -106,17 +106,68 @@ function readAuthorizedWritePaths(taskSpec: JsonValue | null): readonly string[]
   return authorizedWritePaths.filter((entry): entry is string => typeof entry === 'string');
 }
 
+function readScopePackProtectedPaths(taskSpec: JsonValue | null): readonly string[] {
+  if (!isPlainObject(taskSpec)) {
+    return [];
+  }
+  const policy = taskSpec.policy;
+  if (!isPlainObject(policy) || !Array.isArray(policy.doNotTouchPaths)) {
+    return [];
+  }
+  const paths: string[] = [];
+  for (const entry of policy.doNotTouchPaths) {
+    if (typeof entry !== 'string') {
+      continue;
+    }
+    try {
+      paths.push(normalizeRepoRelativePath(entry));
+    } catch {
+      // Invalid path-like entries are skipped; prose never becomes a path.
+    }
+  }
+  return paths;
+}
+
+function readPlannedAreas(taskSpec: JsonValue | null): readonly string[] {
+  if (!isPlainObject(taskSpec)) {
+    return [];
+  }
+
+  const plan = taskSpec.plan;
+  if (!isPlainObject(plan) || !Array.isArray(plan.plannedAreas)) {
+    return [];
+  }
+
+  const areas: string[] = [];
+  for (const entry of plan.plannedAreas) {
+    if (typeof entry !== 'string') {
+      continue;
+    }
+    try {
+      areas.push(normalizeRepoRelativePath(entry));
+    } catch {
+      // Invalid planned-area strings are skipped, never a silent open fence.
+    }
+  }
+  return areas;
+}
+
 export function createTaskPolicyContext(options: {
   taskSpec: JsonValue | null;
   permissionProfile: PermissionProfile;
   approvals?: readonly TaskPolicyApproval[];
 }): TaskPolicyContext {
+  const plannedAreas = readPlannedAreas(options.taskSpec);
+  const scopePackProtectedPaths = readScopePackProtectedPaths(options.taskSpec);
+
   if (options.permissionProfile === 'read-only-reviewer' || options.permissionProfile === 'verifier') {
     return {
       permissionProfile: options.permissionProfile,
       taskSpec: options.taskSpec,
       authorizedWriteScopes: [],
       invalidAuthorizedWriteScopes: [],
+      plannedAreas,
+      scopePackProtectedPaths,
       approvals: options.approvals ?? [],
     };
   }
@@ -138,6 +189,8 @@ export function createTaskPolicyContext(options: {
     taskSpec: options.taskSpec,
     authorizedWriteScopes: scopes,
     invalidAuthorizedWriteScopes: invalidScopes,
+    plannedAreas,
+    scopePackProtectedPaths,
     approvals: options.approvals ?? [],
   };
 }

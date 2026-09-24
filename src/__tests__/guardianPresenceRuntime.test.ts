@@ -789,7 +789,7 @@ describe('migration guard', () => {
     expect(migrations).toContain('122_guardian_presence_security.sql')
   })
 
-  it('migrations 123–134 exist; no migrations numbered 135 or higher', () => {
+  it('migrations 123–136 exist; no migrations numbered 137 or higher', () => {
     expect(migrations).toContain('123_guardian_user_access_revocation.sql')
     expect(migrations).toContain('124_inactive_user_rls_boundary.sql')
     expect(migrations).toContain('125_inactive_user_authenticated_data_gate.sql')
@@ -805,9 +805,13 @@ describe('migration guard', () => {
     expect(migrations).toContain('133_quickbooks_customer_mappings.sql')
     // QBO-4A.6 owns 134 (poweron_customer_id UUID → TEXT).
     expect(migrations).toContain('134_quickbooks_customer_mapping_text_identity.sql')
+    // CT-CORE-1 owns 135 (agent control plane — presence/requests/snapshots).
+    expect(migrations).toContain('135_agent_control_plane.sql')
+    // migration 136 is now an intentional known migration
+    expect(migrations).toContain('136_agent_scope_packs.sql')
     const beyond = migrations.filter((name: string) => {
       const m = name.match(/^(\d+)_/)
-      return m ? parseInt(m[1], 10) > 134 : false
+      return m ? parseInt(m[1], 10) > 136 : false
     })
     expect(beyond).toEqual([])
   })

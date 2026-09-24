@@ -339,10 +339,11 @@ describe('QBO-2E no migration (QBO-SIMPLE-21)', () => {
     if (existsSync(migDir)) {
       const migs = readdirSync(migDir)
       const numbers = migs.map((f) => parseInt(f.split('_')[0], 10)).filter((n) => Number.isFinite(n))
-      expect(numbers.length ? Math.max(...numbers) : 0).toBeLessThanOrEqual(134)
+      // migration 136 is now an intentional known migration
+      expect(numbers.length ? Math.max(...numbers) : 0).toBeLessThanOrEqual(136)
       // QBO-2F owns 131_invoice_drafts.sql; QBO-3A owns 132; QBO-4A.2 owns 133;
-      // QBO-4A.6 owns 134. No other qbo/quickbooks/intuit/billing/wording/invoice-
-      // named migration exists.
+      // QBO-4A.6 owns 134; CT-CORE-1 owns 135 (agent control plane). No other
+      // qbo/quickbooks/intuit/billing/wording/invoice-named migration exists.
       expect(
         migs.some(
           (f) =>

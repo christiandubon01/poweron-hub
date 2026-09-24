@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -8,7 +8,7 @@ import { createTaskPolicyContext, normalizeRepoRelativePath, toRepoPathKey } fro
 import { adjudicateRepoPolicy } from './policy/policy.ts';
 import { isSensitiveRepoPath } from './policy/repoPolicy.ts';
 import type { PolicyAdjudication, PolicyBaselineCapture, RepoPathFingerprint, RepoSnapshot, RepoStatusEntryFingerprint } from './policy/types.ts';
-import type { TaskRecord } from './lib/orchestrationTypes.ts';
+import type { JsonValue, OrchestrationEventRecord, TaskRecord } from './lib/orchestrationTypes.ts';
 import type { PermissionProfile } from './providers/types.ts';
 
 const execFileAsync = promisify(execFile);
@@ -36,7 +36,10 @@ export interface AttemptWorkspace {
   workspaceRoot: string;
   workspacePath: string;
   baselineHeadSha: string;
-  materializationMode: 'git-archive-tar';
+  materializationMode: 'git-archive-tar' | 'candidate-copy';
+  /** Verifier copies are read-only views of an implementer candidate. */
+  readOnly?: boolean;
+  sourceWorkspacePath?: string;
   baselineTree: WorkspaceTree;
 }
 
@@ -120,7 +123,93 @@ export async function materializeAttemptWorkspace(options: {
     workspacePath,
     baselineHeadSha,
     materializationMode: 'git-archive-tar',
+    readOnly: false,
     baselineTree: await captureWorkspaceTree(workspacePath),
+  };
+}
+
+/**
+ * Read-only copy of an accepted implementer workspace.
+ * The copy is the verifier's tree. Canonical is not modified.
+ */
+export async function materializeVerifierWorkspace(options: {
+  sourceWorkspacePath: string;
+  workspaceRoot: string;
+  identity: AttemptWorkspaceIdentity;
+  baselineHeadSha: string;
+}): Promise<AttemptWorkspace> {
+  const sourceWorkspacePath = path.resolve(options.sourceWorkspacePath);
+  const workspaceRoot = path.resolve(options.workspaceRoot);
+  if (!isPathInside(workspaceRoot, sourceWorkspacePath)) {
+    throw new WorkspacePreparationError('Verifier candidate escaped the Host workspace root.');
+  }
+  if (!(await pathExists(sourceWorkspacePath))) {
+    throw new WorkspacePreparationError('Implementer candidate workspace is not available.');
+  }
+  const workspacePath = resolveAttemptWorkspacePath({ workspaceRoot, identity: options.identity });
+  if (path.resolve(workspacePath) === sourceWorkspacePath) {
+    throw new WorkspacePreparationError('Verifier workspace cannot reuse the implementer workspace path.');
+  }
+  if (await pathExists(workspacePath)) {
+    throw new WorkspacePreparationError('Attempt workspace already exists and will not be reused.');
+  }
+  await mkdir(workspaceRoot, { recursive: true });
+  try {
+    await cp(sourceWorkspacePath, workspacePath, { recursive: true, errorOnExist: true });
+    await markTreeReadOnly(workspacePath);
+  } catch (error) {
+    await rm(workspacePath, { recursive: true, force: true });
+    throw new WorkspacePreparationError(`Failed to materialize verifier workspace: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return {
+    workspaceId: `${options.identity.repoKey}/${options.identity.runId}/${options.identity.attemptId}`,
+    workspaceRoot,
+    workspacePath,
+    baselineHeadSha: options.baselineHeadSha,
+    materializationMode: 'candidate-copy',
+    readOnly: true,
+    sourceWorkspacePath,
+    baselineTree: await captureWorkspaceTree(workspacePath),
+  };
+}
+
+export interface ImplementerCandidateWorkspace {
+  workspacePath: string;
+  baselineHeadSha: string;
+  sourceAttemptId: string;
+}
+
+/** Latest accepted implementer workspace among the verifier's dependencies. */
+export function resolveImplementerCandidateWorkspace(options: {
+  workspaceRoot: string;
+  repoKey: string;
+  runId: string;
+  dependencyTaskIds: readonly string[];
+  events: readonly Pick<OrchestrationEventRecord, 'seq' | 'taskId' | 'attemptId' | 'type' | 'payload'>[];
+}): ImplementerCandidateWorkspace | null {
+  const dependencies = new Set(options.dependencyTaskIds);
+  const relevant = options.events
+    .filter((event) => event.taskId !== null && event.attemptId !== null && dependencies.has(event.taskId))
+    .slice()
+    .sort((left, right) => left.seq - right.seq);
+  const ready = relevant.filter((event) => event.type === 'workspace.changeset.ready');
+  const accepted = relevant.filter((event) => event.type === 'workspace.adjudication.completed' && payloadBoolean(event.payload, 'policyAccepted') === true);
+  const chosen = ready.at(-1) ?? accepted.at(-1);
+  if (!chosen?.attemptId) {
+    return null;
+  }
+  const prepared = relevant.find((event) => event.type === 'workspace.prepared' && event.attemptId === chosen.attemptId);
+  const baselineHeadSha = payloadString(chosen.payload, 'baselineHeadSha') ?? payloadString(prepared?.payload ?? null, 'baselineHeadSha');
+  if (!baselineHeadSha) {
+    return null;
+  }
+  return {
+    workspacePath: resolveAttemptWorkspacePath({
+      workspaceRoot: options.workspaceRoot,
+      identity: { repoKey: options.repoKey, runId: options.runId, attemptId: chosen.attemptId },
+    }),
+    baselineHeadSha,
+    sourceAttemptId: chosen.attemptId,
   };
 }
 
@@ -249,6 +338,38 @@ function isPathInside(root: string, candidate: string): boolean {
 
 async function pathExists(candidate: string): Promise<boolean> {
   return await stat(candidate).then(() => true, () => false);
+}
+
+async function markTreeReadOnly(workspacePath: string): Promise<void> {
+  async function walk(directory: string): Promise<void> {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const child = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await walk(child);
+      } else if (entry.isFile()) {
+        await chmod(child, 0o444);
+      }
+    }
+  }
+  await walk(workspacePath);
+}
+
+function payloadRecord(payload: JsonValue | null | undefined): Record<string, JsonValue> | null {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    return null;
+  }
+  return payload as Record<string, JsonValue>;
+}
+
+function payloadString(payload: JsonValue | null | undefined, key: string): string | null {
+  const value = payloadRecord(payload)?.[key];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function payloadBoolean(payload: JsonValue | null | undefined, key: string): boolean | null {
+  const value = payloadRecord(payload)?.[key];
+  return typeof value === 'boolean' ? value : null;
 }
 
 function sha256(value: string | Buffer): string {

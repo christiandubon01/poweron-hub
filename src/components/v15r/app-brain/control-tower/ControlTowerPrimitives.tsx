@@ -58,11 +58,11 @@ export function ChangesetSummary({ state }: { state: 'none' | 'not-applied' | 'a
 
 const ATTENTION_LABEL = { gate: 'Scope gate', 'plan-review': 'Plan review', exhausted: 'Retries exhausted', 'verifier-rejected': 'Verifier rejected', 'review-available': 'Review available' }
 
-export function AttentionItem({ item, onInspect, onEvidence }: { item: AttentionEntry; onInspect: () => void; onEvidence?: () => void }) {
+export function AttentionItem({ item, onInspect, onEvidence, mode = 'Preview' }: { item: AttentionEntry; onInspect: () => void; onEvidence?: () => void; mode?: 'Preview' | 'Live' }) {
   return <article className="ct-attention-item" data-kind={item.kind}>
     <AlertTriangle className="ct-amber" size={17} aria-hidden="true" />
-    <div><span className="ct-eyebrow">{ATTENTION_LABEL[item.kind]} · Preview · Snapshot</span><h3>{item.title}</h3><p>{item.consequence}</p></div>
-    <div className="ct-attention-actions"><button type="button" onClick={onInspect} aria-label={`Inspect preview: ${item.title}`}>{item.kind === 'gate' ? 'Inspect proposed change' : 'Inspect'}</button>{onEvidence && <button type="button" onClick={onEvidence}>Open task evidence</button>}</div>
+    <div><span className="ct-eyebrow">{ATTENTION_LABEL[item.kind]} · {mode === 'Live' ? 'Live · Host gate' : 'Preview · Snapshot'}</span><h3>{item.title}</h3><p>{item.consequence}</p></div>
+    <div className="ct-attention-actions"><button type="button" onClick={onInspect} aria-label={`Inspect ${mode === 'Live' ? 'live gate' : 'preview'}: ${item.title}`}>{item.kind === 'gate' ? 'Inspect proposed change' : 'Inspect'}</button>{onEvidence && <button type="button" onClick={onEvidence}>Open task evidence</button>}</div>
   </article>
 }
 
@@ -92,9 +92,9 @@ export function TaskRow({ task, selected, onSelect }: { task: PreviewTask; selec
   </button>
 }
 
-export function TaskStatus({ state }: { state: TaskState }) {
+export function TaskStatus({ state, freshness = 'Snapshot' as Freshness }: { state: TaskState; freshness?: Freshness }) {
   const { icon: Icon, label } = TASK_META[state]
-  return <span className={`ct-status ct-state-${state}`}><Icon size={14} aria-hidden="true" />{label} · Snapshot</span>
+  return <span className={`ct-status ct-state-${state}`}><Icon size={14} aria-hidden="true" />{label} · {freshness}</span>
 }
 
 export function TowerPanel({ title, children, className = '', action, modal = false }: { title: string; children: ReactNode; className?: string; action?: ReactNode; modal?: boolean }) {

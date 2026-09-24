@@ -15,11 +15,15 @@ export type PolicyReasonCode =
   | 'git-destructive'
   | 'dependency-mutation'
   | 'db-mutation'
+  | 'migration-outside-plan'
+  | 'unplanned-area'
   | 'deploy'
   | 'secret-access'
   | 'destructive-fs'
   | 'unknown-command'
-  | 'invalid-write-scope';
+  | 'invalid-write-scope'
+  | 'launch-contract'
+  | 'history-rewrite';
 
 export interface PolicyDecision {
   decision: PolicyDecisionKind;
@@ -33,6 +37,7 @@ export type HostCommandClassification =
   | 'VALIDATION'
   | 'GIT_WRITE_LOCAL'
   | 'GIT_DESTRUCTIVE'
+  | 'HISTORY_REWRITE'
   | 'DEP_MUTATION'
   | 'DB_MUTATION'
   | 'DEPLOY'
@@ -62,6 +67,16 @@ export interface TaskPolicyContext {
   taskSpec: JsonValue | null;
   authorizedWriteScopes: readonly AuthorizedWriteScope[];
   invalidAuthorizedWriteScopes: readonly string[];
+  /**
+   * ATB-4: declared work areas from spec.plan.plannedAreas. Empty means no
+   * planned-area drift fence (authorizedWritePaths remain the write fence).
+   */
+  plannedAreas: readonly string[];
+  /**
+   * ATB-5: unambiguous repo-relative do-not-touch paths inherited from a
+   * Scope Pack. Prose boundaries are never guessed into this list.
+   */
+  scopePackProtectedPaths: readonly string[];
   approvals: readonly TaskPolicyApproval[];
 }
 

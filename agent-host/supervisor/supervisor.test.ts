@@ -17,6 +17,9 @@ import {
   type SupervisorTickResult,
 } from './supervisor.ts';
 import type { AttemptFailureSummary } from './types.ts';
+import { AttemptExecutor } from '../providers/executor.ts';
+import { createNoOpAttemptPolicyController } from '../policy/policy.ts';
+import type { ExecutionRequest, ExecutionResult, ProviderAdapter, ProviderProbeResult } from '../providers/types.ts';
 
 const HOST_INSTANCE_ID = 'host-instance-1';
 
@@ -150,6 +153,106 @@ function tick(
 }
 
 const RETRY_SPEC_2: JsonValue = { supervisor: { maxAttempts: 2 } };
+
+/**
+ * Minimal provider adapter whose execute() never settles and whose cancel is a
+ * no-op that never resolves it: the worst case the executor's hard timeout must
+ * survive. It records execute/cancel calls so the end-to-end timeout regression
+ * can prove the process tree was signalled and no duplicate execution occurred.
+ */
+class HungProviderAdapter implements ProviderAdapter {
+  readonly id = 'codex' as const;
+  executeCalls = 0;
+  readonly cancelRequests: string[] = [];
+
+  async probe(): Promise<ProviderProbeResult> {
+    return { available: true };
+  }
+
+  execute(_request: ExecutionRequest): Promise<ExecutionResult> {
+    this.executeCalls += 1;
+    return new Promise<ExecutionResult>(() => {
+      /* never settles */
+    });
+  }
+
+  cancel(executionId: string): void {
+    this.cancelRequests.push(executionId);
+  }
+}
+
+// ─── ORCH execution-timeout hotfix: hung provider → hard timeout → retry ────────
+
+test('supervisor: a hung provider is hard-timed-out by the executor and reconciled through the existing retry budget', async () => {
+  await withStore(async (store) => {
+    seedRun(store, 'run-1');
+    seedTask(store, 'run-1', 'task-1', { spec: RETRY_SPEC_2 });
+
+    const adapter = new HungProviderAdapter();
+    const executor = new AttemptExecutor({
+      store,
+      registry: new Map<ProviderAdapter['id'], ProviderAdapter>([[adapter.id, adapter]]),
+      policyController: createNoOpAttemptPolicyController(),
+      // hard deadline = request timeout (100ms) + grace (50ms) = 150ms.
+      executionHardGraceMs: 50,
+    });
+
+    // Production binds the Supervisor's ExecutionPort to the real AttemptExecutor.
+    const port: ExecutionPort = {
+      execute: (context) =>
+        executor
+          .execute({
+            runId: context.runId,
+            taskId: context.taskId,
+            attemptId: context.attemptId,
+            provider: 'codex',
+            prompt: 'hung provider run',
+            permissionProfile: 'read-only-reviewer',
+            timeoutMs: 100,
+            workingDirectory: 'C:\\Repo\\PowerOn',
+            hostInstanceId: context.hostInstanceId,
+          })
+          .then(() => undefined),
+    };
+
+    const nextId = attemptIdFactory();
+
+    // Tick 1: the hung provider is hard-timed-out, the Attempt is durably failed
+    // as a timeout, and the Supervisor schedules a retry within the budget.
+    const startedAt = Date.now();
+    const first = await tick(store, { runId: 'run-1', executionPort: port, idGenerator: nextId });
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.ok(elapsedMs < 5_000, `tick must return within the hard bound, took ${elapsedMs}ms`);
+    assert.equal(first.outcome, 'retry-scheduled');
+    assert.equal(first.retry?.reasonCode, 'execution-timeout');
+    assert.equal(store.getTask('task-1')?.status, 'pending');
+    assert.equal(adapter.executeCalls, 1);
+
+    const firstAttempts = store.listAttempts('task-1');
+    assert.equal(firstAttempts.length, 1);
+    assert.equal(firstAttempts[0]?.status, 'failed');
+    assert.deepEqual(adapter.cancelRequests, [firstAttempts[0]?.attemptId]);
+    assert.equal(
+      store.listEvents().some((event) => event.attemptId === firstAttempts[0]?.attemptId && event.type === 'execution.timed_out'),
+      true,
+    );
+
+    // Tick 2: the retry Attempt (ordinal 2) runs, hard-times-out again, and now the
+    // budget is exhausted — the Task and Run fail terminally. Exactly two provider
+    // executions occurred across the whole run (no duplicate execution per tick).
+    const second = await tick(store, { runId: 'run-1', executionPort: port, idGenerator: nextId });
+    assert.equal(second.outcome, 'task-executed');
+    assert.equal(adapter.executeCalls, 2);
+    assert.equal(store.getTask('task-1')?.status, 'failed');
+    assert.equal(store.getRun('run-1')?.status, 'failed');
+
+    const finalAttempts = store.listAttempts('task-1');
+    assert.equal(finalAttempts.length, 2);
+    assert.equal(finalAttempts[1]?.ordinal, 2);
+    assert.equal(finalAttempts[1]?.status, 'failed');
+  });
+});
 
 // ─── Existing ORCH-5C regressions ──────────────────────────────────────────────
 

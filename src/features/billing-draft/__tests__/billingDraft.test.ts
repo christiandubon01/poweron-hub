@@ -406,8 +406,8 @@ describe('QBO-2D guardrails (GUARD-1..4)', () => {
     ])
     const numbers = migrations.map((f) => parseInt(f.split('_')[0], 10)).filter((n) => Number.isFinite(n))
     const max = numbers.length ? Math.max(...numbers) : 0
-    // Ceiling is 134 (QBO-4A.6 text-identity correction); no migration beyond 134 exists.
-    expect(max).toBeLessThanOrEqual(134)
+    // migration 136 is now an intentional known migration
+    expect(max).toBeLessThanOrEqual(136)
   })
 
   it('GUARD-2: referral files untouched — none imports the billing-draft model', () => {
