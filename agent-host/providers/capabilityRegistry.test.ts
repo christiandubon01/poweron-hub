@@ -122,6 +122,10 @@ test('G: observed execution evidence yields an available model with reported run
   const model = claude.models.find((m) => m.modelId === 'claude-opus-5')!;
   assert.equal(model.availabilitySource, 'execution-evidence');
   assert.equal(model.reportedRuntimeModel, 'claude-opus-5');
+  assert.equal(claude.authMode, 'not-reported');
+  const safe = toSafeProviderFleet(registry).find((p) => p.providerId === 'claude')!;
+  assert.equal(safe.authMode, 'not-reported');
+  assert.equal(JSON.stringify(safe).includes('secret'), false);
 });
 
 test('H: configured/requested model stays separate from reported runtime model', () => {

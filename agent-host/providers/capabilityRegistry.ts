@@ -70,6 +70,8 @@ export interface ModelCapability {
 
 export type ProviderAvailabilitySource = 'runtime-probe' | 'configured' | 'unavailable';
 
+export type ProviderAuthMode = 'subscription' | 'api' | 'not-reported';
+
 export interface ProviderCapability {
   providerId: string;
   providerDisplayName: string;
@@ -79,6 +81,12 @@ export interface ProviderCapability {
   available: boolean;
   availabilitySource: ProviderAvailabilitySource;
   cliVersion: string | null;
+  /**
+   * Billing mode only when a provider CLI reports it. Claude Code does not,
+   * so the fleet publishes `not-reported` rather than guessing subscription
+   * or API. Subscription-only policy is enforced separately.
+   */
+  authMode?: ProviderAuthMode;
   workerCapable: boolean;
   supportedRoles: Array<'architect' | 'implementer' | 'verifier'>;
   /** True only when a real, LOCAL runtime with no provider quota (Ollama). */
@@ -257,6 +265,7 @@ function buildProviderCapability(
     available,
     availabilitySource: record.installed ? 'runtime-probe' : 'unavailable',
     cliVersion: record.cliVersion ?? null,
+    ...(facts.providerId === 'claude' ? { authMode: 'not-reported' as const } : {}),
     workerCapable,
     // A provider with no execution adapter is never offered for any role.
     supportedRoles: workerCapable ? [...ALL_ROLES] : [],
@@ -384,6 +393,9 @@ export function toSafeProviderFleet(registry: readonly ProviderCapability[]): Pr
     available: provider.available,
     availabilitySource: provider.availabilitySource,
     cliVersion: provider.cliVersion,
+    ...(provider.authMode === 'subscription' || provider.authMode === 'api' || provider.authMode === 'not-reported'
+      ? { authMode: provider.authMode }
+      : {}),
     workerCapable: provider.workerCapable,
     supportedRoles: [...provider.supportedRoles],
     local: provider.local,

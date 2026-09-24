@@ -33,6 +33,15 @@ describe('ATB-2 provider fleet adapter', () => {
     expect(fleet[0].models[0].usageCapabilities.quotaRemaining).toBe(false)
   })
 
+  it('publishes Claude auth mode only when the host reports a known value', () => {
+    const reported = mapProviderFleet([{ ...CLAUDE_ENTRY, authMode: 'not-reported' }])
+    expect(reported[0].authMode).toBe('not-reported')
+    const invented = mapProviderFleet([{ ...CLAUDE_ENTRY, authMode: 'subscription' }])
+    expect(invented[0].authMode).toBe('subscription')
+    const unknown = mapProviderFleet([{ ...CLAUDE_ENTRY, authMode: 'guessed-pro' }])
+    expect(unknown[0].authMode).toBeUndefined()
+  })
+
   it('drops malformed / legacy string entries rather than fabricating capability', () => {
     expect(mapProviderFleet(['claude-code', 'codex-cli'])).toEqual([])
     expect(mapProviderFleet([{ noProviderId: true }, 42, null])).toEqual([])

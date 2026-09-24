@@ -14,6 +14,7 @@ import {
   type ProviderErrorCode,
   type ProviderProbeResult,
 } from './types.ts';
+import { CLAUDE_API_BILLING_DISABLED_MESSAGE } from './environmentPolicy.ts';
 import { isEffortLevel, mapNormalizedEffort } from './effort.ts';
 
 const execFileAsync = promisify(execFile);
@@ -353,7 +354,7 @@ function buildExecutionResult(
 ): ExecutionResult {
   const diagnostics = buildDiagnostics(processResult);
   const terminal = state.terminalResult;
-  const finalText = state.assistantText.toString() || state.terminalTextFallback;
+  let finalText = state.assistantText.toString() || state.terminalTextFallback;
 
   let provider = mapProcessFailure(processResult);
   if (state.protocolIssue) {
@@ -375,7 +376,10 @@ function buildExecutionResult(
         terminalState: 'failed',
         success: false,
         errorCode,
-        errorMessage: terminal.text ?? `Claude-compatible provider returned an error result${terminal.subtype ? ` (${terminal.subtype})` : ''}.`,
+        errorMessage: subscriptionSafeErrorMessage(
+          terminal.text,
+          `Claude-compatible provider returned an error result${terminal.subtype ? ` (${terminal.subtype})` : ''}.`,
+        ),
       };
     } else {
       provider = {
@@ -385,6 +389,10 @@ function buildExecutionResult(
         errorMessage: 'Claude-compatible terminal result was missing is_error.',
       };
     }
+  }
+
+  if (provider.errorMessage === CLAUDE_API_BILLING_DISABLED_MESSAGE) {
+    finalText = '';
   }
 
   return {
@@ -466,6 +474,14 @@ function mapProcessFailure(processResult: ProcessExecutionResult): ExecutionResu
         errorMessage: 'Provider output exceeded the configured safety limit before a terminal result arrived.',
       };
     case 'spawn-failed':
+      if (processResult.stderrTail === CLAUDE_API_BILLING_DISABLED_MESSAGE) {
+        return {
+          terminalState: 'failed',
+          success: false,
+          errorCode: 'PROVIDER_UNAVAILABLE',
+          errorMessage: CLAUDE_API_BILLING_DISABLED_MESSAGE,
+        };
+      }
       return {
         terminalState: 'failed',
         success: false,
@@ -492,13 +508,22 @@ function mapProcessFailure(processResult: ProcessExecutionResult): ExecutionResu
 
 function buildDiagnostics(processResult: ProcessExecutionResult): ExecutionResult['diagnostics'] | undefined {
   const diagnostics: ExecutionResult['diagnostics'] = {};
-  if (processResult.stdoutTail.length > 0) {
-    diagnostics.stdoutTail = processResult.stdoutTail;
+  const stdoutTail = redactApiBillingText(processResult.stdoutTail);
+  const stderrTail = redactApiBillingText(processResult.stderrTail);
+  if (stdoutTail.length > 0) {
+    diagnostics.stdoutTail = stdoutTail;
   }
-  if (processResult.stderrTail.length > 0) {
-    diagnostics.stderrTail = processResult.stderrTail;
+  if (stderrTail.length > 0) {
+    diagnostics.stderrTail = stderrTail;
   }
   return Object.keys(diagnostics).length > 0 ? diagnostics : undefined;
+}
+
+function redactApiBillingText(text: string): string {
+  if (/credit balance is too low/iu.test(text)) {
+    return CLAUDE_API_BILLING_DISABLED_MESSAGE;
+  }
+  return text;
 }
 
 function recordSessionId(state: ClaudeStreamState, sessionId: string | undefined): void {
@@ -523,9 +548,16 @@ function recordReportedModel(state: ClaudeStreamState, reportedModel: string | u
   state.reportedModel = reportedModel;
 }
 
+function subscriptionSafeErrorMessage(text: string | undefined, fallback: string): string {
+  if (text && /credit balance is too low/iu.test(text)) {
+    return CLAUDE_API_BILLING_DISABLED_MESSAGE;
+  }
+  return text ?? fallback;
+}
+
 function classifyTerminalFailure(terminal: ClaudeTerminalResult): ProviderErrorCode {
   const text = `${terminal.subtype ?? ''}\n${terminal.text ?? ''}`;
-  if (AUTH_OR_UNAVAILABLE_PATTERN.test(text)) {
+  if (/credit balance is too low/iu.test(text) || AUTH_OR_UNAVAILABLE_PATTERN.test(text)) {
     return 'PROVIDER_UNAVAILABLE';
   }
   return 'PROVIDER_ERROR';

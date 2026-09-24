@@ -35,6 +35,12 @@ function usageLine(provider: ProviderCapabilityView, preview: boolean): string {
   return 'Not published'
 }
 
+function authModeLabel(mode: ProviderCapabilityView['authMode']): string {
+  if (mode === 'subscription') return 'Subscription'
+  if (mode === 'api') return 'API'
+  return 'Auth mode not reported'
+}
+
 function quotaLine(provider: ProviderCapabilityView): { quota: string; reset: string } {
   if (provider.local || provider.providerId === 'ollama') {
     return { quota: 'Local runtime · no provider quota', reset: 'Not exposed' }
@@ -74,6 +80,7 @@ function ProviderCard({ provider, routing, preview, open, onToggle }: {
     {open && <div id={detailId} className="ct-provider-detail">
       <dl className="ct-facts">
         <div><dt>CLI</dt><dd>{provider.cliVersion ?? 'Not reported'}</dd></div>
+        {(provider.providerId === 'claude' || provider.authMode) && <div><dt>Auth</dt><dd>{authModeLabel(provider.authMode)}</dd></div>}
         <div><dt>Availability</dt><dd>{provider.available ? 'Available' : 'Unavailable'}</dd></div>
         <div><dt>Availability source</dt><dd>{provider.availabilitySource.replace(/-/g, ' ')}</dd></div>
         <div><dt>Worker</dt><dd>{provider.workerCapable ? 'Worker-capable' : 'Not worker-capable'}</dd></div>

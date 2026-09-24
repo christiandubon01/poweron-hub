@@ -25,6 +25,10 @@ const presence: HostPresenceView = {
 it('renders Claude, Codex, Ollama, and Cursor diagnostic cards from real fleet mapping', () => {
   act(() => root.render(<ModelsMode presence={presence} routing={EMPTY_NEXT_RUN_ROUTING} onRoutingChange={() => {}} preview={false} />))
   expect(container.querySelector('[data-provider="claude"]')).toBeTruthy()
+  const expand = [...container.querySelectorAll('button')].find((button) => button.getAttribute('aria-label')?.startsWith('Expand Claude Code'))
+  expect(expand).toBeTruthy()
+  act(() => { expand!.click() })
+  expect(container.querySelector('[data-provider="claude"]')?.textContent).toContain('Auth mode not reported')
   expect(container.querySelector('[data-provider="codex"]')).toBeTruthy()
   expect(container.querySelector('[data-provider="ollama"]')).toBeTruthy()
   expect(container.querySelector('[data-provider="cursor-editor"]')?.textContent).toContain('Diagnostic only')

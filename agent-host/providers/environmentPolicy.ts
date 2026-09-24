@@ -7,12 +7,41 @@ export type ProviderEnvironmentProfile = 'claude' | 'codex' | 'generic';
 
 const WINDOWS_CORE_NAMES = new Set([
   'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATH', 'PATHEXT', 'TEMP', 'TMP',
-  'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA',
+  'USERPROFILE', 'HOME', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA',
   'NUMBER_OF_PROCESSORS', 'LANG',
 ]);
 
-const CLAUDE_NAMES = new Set(['ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY']);
+/**
+ * Claude Code billing for this Host is subscription-only. API-key names are
+ * never copied into the child, even when the parent loaded them for other
+ * app features. An explicit overlay that tries to enable API billing is
+ * rejected by the process runner.
+ */
+export const CLAUDE_BILLING_MODE = 'SUBSCRIPTION_ONLY' as const;
+
+export const CLAUDE_API_BILLING_DISABLED_MESSAGE =
+  'Claude unavailable for this route: API billing is disabled by owner.';
+
+const CLAUDE_API_BILLING_NAMES = new Set([
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_BASE_URL',
+]);
+
 const CODEX_NAMES = new Set(['OPENAI_API_KEY']);
+
+export function isClaudeApiBillingEnvName(name: string): boolean {
+  const upper = normaliseName(name);
+  return CLAUDE_API_BILLING_NAMES.has(upper) || upper.startsWith('ANTHROPIC_');
+}
+
+/** True when a caller is trying to put Claude on an API-billing route. */
+export function claudeOverlayRequestsApiBilling(overlay: Record<string, string> | undefined): boolean {
+  if (!overlay) {
+    return false;
+  }
+  return Object.keys(overlay).some((name) => isClaudeApiBillingEnvName(name));
+}
 
 function normaliseName(name: string): string {
   return name.toUpperCase();
@@ -24,7 +53,8 @@ function isWindowsCore(name: string): boolean {
 
 function isProviderAllowed(name: string, profile: ProviderEnvironmentProfile): boolean {
   if (profile === 'claude') {
-    return CLAUDE_NAMES.has(name) || name.startsWith('CLAUDE_CODE_');
+    // Subscription login lives in the user profile, not in API credentials.
+    return name.startsWith('CLAUDE_CODE_') && !isClaudeApiBillingEnvName(name);
   }
   if (profile === 'codex') {
     return CODEX_NAMES.has(name) || name.startsWith('CODEX_');
@@ -72,6 +102,9 @@ export function buildProviderEnvironment(
       continue;
     }
     const name = normaliseName(rawName);
+    if (profile === 'claude' && isClaudeApiBillingEnvName(name)) {
+      continue;
+    }
     if (isWindowsCore(name) || isProviderAllowed(name, profile)) {
       setCaseInsensitive(result, rawName, value);
     } else if (isHardDenied(name)) {
@@ -85,6 +118,9 @@ export function buildProviderEnvironment(
       continue;
     }
     const name = normaliseName(rawName);
+    if (profile === 'claude' && isClaudeApiBillingEnvName(name)) {
+      continue;
+    }
     // Overlays are not trusted to alter PATH/runtime variables. They can
     // only supply the same narrowly approved provider credentials as source.
     if (isProviderAllowed(name, profile)) {

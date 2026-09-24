@@ -125,6 +125,8 @@ export interface ProviderCapabilityView {
   available: boolean
   availabilitySource: 'runtime-probe' | 'configured' | 'unavailable'
   cliVersion: string | null
+  /** Present only when the host published a trustworthy value or an explicit not-reported marker. */
+  authMode?: 'subscription' | 'api' | 'not-reported'
   workerCapable: boolean
   supportedRoles: Array<'architect' | 'implementer' | 'verifier'>
   local: boolean

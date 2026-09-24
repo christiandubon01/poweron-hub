@@ -26,7 +26,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import type { ExecutionStreamCallbacks, ProcessExecutionResult, ProcessTerminationReason } from './types.ts';
-import { buildProviderEnvironment, type ProviderEnvironmentProfile } from './environmentPolicy.ts';
+import { buildProviderEnvironment, claudeOverlayRequestsApiBilling, CLAUDE_API_BILLING_DISABLED_MESSAGE, type ProviderEnvironmentProfile } from './environmentPolicy.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -444,7 +444,6 @@ export class ProcessRunner {
     const killFn = options.killProcessTree ?? defaultKillProcessTree;
     const spawnFn: SpawnFn = options.spawnFn ?? spawn;
 
-    // Resolve + validate the working directory up front.
     const dir = resolveWorkingDirectory(options.workingDirectory, options.allowedWorkingDirectory);
     if (!dir.ok) {
       const failed: ProcessExecutionResult = this.makeFailedResult(options.executionId, now, 'spawn-failed');
@@ -456,6 +455,21 @@ export class ProcessRunner {
       };
     }
     const cwd = dir.canonicalPath;
+
+    if ((options.environmentProfile ?? 'generic') === 'claude' && claudeOverlayRequestsApiBilling(options.envOverlay)) {
+      const failed = this.makeFailedResult(
+        options.executionId,
+        now,
+        'spawn-failed',
+        CLAUDE_API_BILLING_DISABLED_MESSAGE,
+      );
+      return {
+        executionId: options.executionId,
+        pid: null,
+        done: Promise.resolve(failed),
+        cancel: () => undefined,
+      };
+    }
 
     // Validate + clamp overall timeout.
     const bounds = options.timeoutBounds ?? DEFAULT_TIMEOUT_BOUNDS;

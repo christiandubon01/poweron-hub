@@ -153,6 +153,9 @@ export function mapProviderFleet(raw: unknown): ProviderCapabilityView[] {
       available: entry.available === true,
       availabilitySource: oneOf(entry.availabilitySource, PROVIDER_AVAILABILITY_SOURCE, 'unavailable'),
       cliVersion: typeof entry.cliVersion === 'string' ? entry.cliVersion : null,
+      ...(entry.authMode === 'subscription' || entry.authMode === 'api' || entry.authMode === 'not-reported'
+        ? { authMode: entry.authMode }
+        : {}),
       workerCapable: entry.workerCapable === true,
       supportedRoles: Array.isArray(entry.supportedRoles) ? entry.supportedRoles.filter((r): r is (typeof ROLES)[number] => (ROLES as string[]).includes(r as string)) : [],
       local: entry.local === true,
