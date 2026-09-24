@@ -1,7 +1,7 @@
 import { memo } from 'react'
 import { AlertTriangle, CheckCircle2, Circle, Cpu, PlayCircle, ShieldCheck, User, XCircle } from 'lucide-react'
 import { TEAM_PARTY_ANCHORS, type AgentTeamTopology, type TeamRoleNode, type TeamRoleId } from './agentTeamTopology'
-import type { TowerSession } from './sessionPresentation'
+import { executionRejectedByVerifier, type TowerSession } from './sessionPresentation'
 
 /* Collapsed-node state treatment: color is NEVER the only indicator — every
  * state also carries an icon and a text label (§4, §27). */
@@ -46,6 +46,7 @@ function hostRunLine(run: TowerSession | null, node: TeamRoleNode): string {
     return `${passed}/${run.tasks.length} · ${facts.lifecycleStage}${gate}`
   }
   if (run.runState === 'paused') return `Paused · ${facts.recentHandoffCount} handoffs`
+  if (executionRejectedByVerifier(run)) return 'Verification failed'
   if (run.runState === 'completed') return 'Run completed'
   if (run.runState === 'failed') return 'Run failed'
   return `${facts.recentHandoffCount} handoffs`

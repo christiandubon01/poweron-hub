@@ -826,7 +826,7 @@ test('dispatch task implementer uses its Host-created attempt workspace instead 
     id: 'codex',
     onExecute: async (request) => {
       assert.notEqual(path.resolve(request.workingDirectory), path.resolve(repoPath));
-      assert.equal((await readFile(path.join(request.workingDirectory, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'COMMITTED\n');
+      assert.equal((await readFile(path.join(request.workingDirectory, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'OWNER_DIRTY\n');
       await mkdir(path.join(request.workingDirectory, 'agent-host', 'smoke'), { recursive: true });
       await writeFile(path.join(request.workingDirectory, 'agent-host', 'smoke', 'orch4c-dispatch.txt'), 'OK\n');
       return createExecutionResult({ executionId: request.executionId });

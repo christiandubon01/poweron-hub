@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -9,6 +9,7 @@ import test from 'node:test';
 import {
   adjudicateAttemptWorkspace,
   materializeAttemptWorkspace,
+  materializeVerifierWorkspace,
   resolveAttemptWorkspacePath,
   resolveWorkspaceTarExecutable,
   WorkspacePreparationError,
@@ -47,9 +48,20 @@ function task(authorizedWritePaths: string[]): TaskRecord {
   };
 }
 
-test('workspace: committed baseline excludes owner dirty work and Git metadata', async () => {
+test('workspace: eligible working tree is the pre-provider baseline and secrets stay out', async () => {
   const fixture = await createRepo();
   await writeFile(path.join(fixture.repoPath, 'README.md'), 'OWNER_DIRTY\n');
+  await writeFile(path.join(fixture.repoPath, '.gitignore'), 'secret-notes.ts\n');
+  await writeFile(path.join(fixture.repoPath, 'secret-notes.ts'), 'export const hidden = true;\n');
+  await mkdir(path.join(fixture.repoPath, 'src', 'features'), { recursive: true });
+  await writeFile(path.join(fixture.repoPath, 'src', 'features', 'capacity.ts'), 'export const capacity = true;\n');
+  await mkdir(path.join(fixture.repoPath, 'supabase', 'migrations'), { recursive: true });
+  await writeFile(path.join(fixture.repoPath, 'supabase', 'migrations', '137_create_plan_payload_envelope.sql'), 'select 1;\n');
+  await mkdir(path.join(fixture.repoPath, 'supabase', '.temp'), { recursive: true });
+  await writeFile(path.join(fixture.repoPath, 'supabase', '.temp', 'cli-latest'), 'temp\n');
+  await mkdir(path.join(fixture.repoPath, 'dist'), { recursive: true });
+  await writeFile(path.join(fixture.repoPath, 'dist', 'generated.js'), 'generated\n');
+  await writeFile(path.join(fixture.repoPath, 'ct-shot-root.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   await writeFile(path.join(fixture.repoPath, '.env'), 'DO_NOT_MATERIALIZE\n');
   const workspace = await materializeAttemptWorkspace({
     canonicalRepoPath: fixture.repoPath,
@@ -58,9 +70,15 @@ test('workspace: committed baseline excludes owner dirty work and Git metadata',
     baselineHeadSha: fixture.baselineHeadSha,
   });
   assert.notEqual(path.resolve(workspace.workspacePath), path.resolve(fixture.repoPath));
-  assert.equal((await readFile(path.join(workspace.workspacePath, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'COMMITTED\n');
+  assert.equal((await readFile(path.join(workspace.workspacePath, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'OWNER_DIRTY\n');
+  assert.equal((await readFile(path.join(workspace.workspacePath, 'src', 'features', 'capacity.ts'), 'utf8')).replaceAll('\r\n', '\n'), 'export const capacity = true;\n');
+  assert.equal((await readFile(path.join(workspace.workspacePath, 'supabase', 'migrations', '137_create_plan_payload_envelope.sql'), 'utf8')).replaceAll('\r\n', '\n'), 'select 1;\n');
   await assert.rejects(readFile(path.join(workspace.workspacePath, '.env')), /ENOENT/u);
   await assert.rejects(readFile(path.join(workspace.workspacePath, '.git')), /ENOENT/u);
+  await assert.rejects(readFile(path.join(workspace.workspacePath, 'secret-notes.ts')), /ENOENT/u);
+  await assert.rejects(readFile(path.join(workspace.workspacePath, 'supabase', '.temp', 'cli-latest')), /ENOENT/u);
+  await assert.rejects(readFile(path.join(workspace.workspacePath, 'dist', 'generated.js')), /ENOENT/u);
+  await assert.rejects(readFile(path.join(workspace.workspacePath, 'ct-shot-root.png')), /ENOENT/u);
   assert.equal(workspace.baselineHeadSha, fixture.baselineHeadSha);
   assert.equal((await readFile(path.join(fixture.repoPath, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'OWNER_DIRTY\n');
 });
@@ -142,6 +160,96 @@ test('workspace: tracked sensitive baseline files fail closed', async () => {
     }),
     WorkspacePreparationError,
   );
+});
+
+test('workspace: inherited unchanged files are not candidate edits', async () => {
+  const fixture = await createRepo();
+  await writeFile(path.join(fixture.repoPath, 'README.md'), 'OWNER_DIRTY\n');
+  await writeFile(path.join(fixture.repoPath, 'src', 'capacity.ts'), 'export const capacity = true;\n');
+  const workspace = await materializeAttemptWorkspace({
+    canonicalRepoPath: fixture.repoPath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+    baselineHeadSha: fixture.baselineHeadSha,
+  });
+  const result = await adjudicateAttemptWorkspace({
+    workspace, runId: 'run-1', task: task(['README.md', 'src/**']), attemptId: 'attempt-1', permissionProfile: 'task-implementer',
+  });
+  assert.equal(result.policy.accepted, true);
+  assert.deepEqual(result.changeSet?.changes, []);
+});
+
+test('workspace: a further edit to an inherited dirty file is a candidate modify', async () => {
+  const fixture = await createRepo();
+  await writeFile(path.join(fixture.repoPath, 'README.md'), 'OWNER_DIRTY\n');
+  await writeFile(path.join(fixture.repoPath, 'src', 'capacity.ts'), 'export const capacity = true;\n');
+  const workspace = await materializeAttemptWorkspace({
+    canonicalRepoPath: fixture.repoPath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+    baselineHeadSha: fixture.baselineHeadSha,
+  });
+  await writeFile(path.join(workspace.workspacePath, 'README.md'), 'OWNER_DIRTY\nPROVIDER\n');
+  const result = await adjudicateAttemptWorkspace({
+    workspace, runId: 'run-1', task: task(['README.md', 'src/**']), attemptId: 'attempt-1', permissionProfile: 'task-implementer',
+  });
+  assert.equal(result.policy.accepted, true);
+  assert.deepEqual(result.changeSet?.changes.map((change) => ({ kind: change.kind, path: change.path })), [
+    { kind: 'modify', path: 'README.md' },
+  ]);
+  assert.equal((await readFile(path.join(fixture.repoPath, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'OWNER_DIRTY\n');
+});
+
+test('workspace: provider add and delete are candidate edits and inherited files are not', async () => {
+  const fixture = await createRepo();
+  await writeFile(path.join(fixture.repoPath, 'README.md'), 'OWNER_DIRTY\n');
+  await writeFile(path.join(fixture.repoPath, 'src', 'capacity.ts'), 'export const capacity = true;\n');
+  const workspace = await materializeAttemptWorkspace({
+    canonicalRepoPath: fixture.repoPath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+    baselineHeadSha: fixture.baselineHeadSha,
+  });
+  await rm(path.join(workspace.workspacePath, 'src', 'store.ts'));
+  await mkdir(path.join(workspace.workspacePath, 'agent-host', 'smoke'), { recursive: true });
+  await writeFile(path.join(workspace.workspacePath, 'agent-host', 'smoke', 'marker.txt'), 'PROVIDER\n');
+  const result = await adjudicateAttemptWorkspace({
+    workspace, runId: 'run-1', task: task(['src/store.ts', 'agent-host/smoke/marker.txt']), attemptId: 'attempt-1', permissionProfile: 'task-implementer',
+  });
+  assert.equal(result.policy.accepted, true);
+  assert.deepEqual(result.changeSet?.changes.map((change) => ({ kind: change.kind, path: change.path })), [
+    { kind: 'add', path: 'agent-host/smoke/marker.txt' },
+    { kind: 'delete', path: 'src/store.ts' },
+  ]);
+});
+
+test('workspace: verifier copy is the inherited baseline plus provider delta, not a later canonical read', async () => {
+  const fixture = await createRepo();
+  await writeFile(path.join(fixture.repoPath, 'README.md'), 'OWNER_DIRTY\n');
+  await writeFile(path.join(fixture.repoPath, 'src', 'capacity.ts'), 'export const capacity = true;\n');
+  const implementer = await materializeAttemptWorkspace({
+    canonicalRepoPath: fixture.repoPath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-1' },
+    baselineHeadSha: fixture.baselineHeadSha,
+  });
+  await mkdir(path.join(implementer.workspacePath, 'agent-host', 'smoke'), { recursive: true });
+  await writeFile(path.join(implementer.workspacePath, 'agent-host', 'smoke', 'marker.txt'), 'PROVIDER\n');
+  await writeFile(path.join(fixture.repoPath, 'README.md'), 'LATER_CANONICAL\n');
+  const verifier = await materializeVerifierWorkspace({
+    sourceWorkspacePath: implementer.workspacePath,
+    workspaceRoot: fixture.runtimePath,
+    identity: { repoKey: 'repo-key', runId: 'run-1', attemptId: 'attempt-2' },
+    baselineHeadSha: implementer.baselineHeadSha,
+  });
+  assert.equal(verifier.readOnly, true);
+  assert.equal(verifier.materializationMode, 'candidate-copy');
+  assert.equal((await readFile(path.join(verifier.workspacePath, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'OWNER_DIRTY\n');
+  assert.equal((await readFile(path.join(verifier.workspacePath, 'src', 'capacity.ts'), 'utf8')).replaceAll('\r\n', '\n'), 'export const capacity = true;\n');
+  assert.equal((await readFile(path.join(verifier.workspacePath, 'agent-host', 'smoke', 'marker.txt'), 'utf8')).replaceAll('\r\n', '\n'), 'PROVIDER\n');
+  await writeFile(path.join(fixture.repoPath, 'README.md'), 'EVEN_LATER\n');
+  assert.equal((await readFile(path.join(verifier.workspacePath, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'OWNER_DIRTY\n');
+  assert.equal((await readFile(path.join(fixture.repoPath, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'EVEN_LATER\n');
 });
 
 test('workspace: tracked env template baseline materializes without weakening secret fail-closed behavior', async () => {

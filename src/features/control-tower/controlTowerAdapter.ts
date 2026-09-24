@@ -411,7 +411,9 @@ export function mapRunSnapshotRow(row: RunSnapshotRow): ControlTowerRunView | nu
     runId: row.run_id,
     objective: typeof row.objective === 'string' && row.objective ? row.objective : (typeof run.title === 'string' && run.title ? run.title : row.run_id),
     runState,
-    phase: RUN_PHASE_LABEL[runState],
+    phase: verification === 'rejected' && runState === 'completed'
+      ? 'Verification failed · candidate rejected'
+      : RUN_PHASE_LABEL[runState],
     currentRole,
     verification,
     changeset,
@@ -449,6 +451,19 @@ function safeRefs(value: unknown): string[] {
   return refs.slice(0, MAX_INTERIM_VERDICTS).map((entry) => (entry.length > 256 ? entry.slice(0, 256) : entry))
 }
 
+function safeShortList(value: unknown, max: number, maxChars: number): string[] {
+  if (!Array.isArray(value)) return []
+  const out: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const text = item.trim()
+    if (!text) continue
+    out.push(text.length > maxChars ? text.slice(0, maxChars) : text)
+    if (out.length >= max) break
+  }
+  return out
+}
+
 /**
  * Map the Host's interim-verdict projection to view models. Each entry must have
  * a verdictId + timestamp to be trusted; anything malformed is dropped so a
@@ -475,6 +490,10 @@ export function mapInterimVerdicts(value: unknown): InterimVerdictView[] {
       recommendedAction: oneOf(raw.recommendedAction, RECOMMENDED_ACTIONS, 'none'),
       mayContinue: raw.mayContinue !== false,
       timestamp,
+      ...(() => {
+        const failedChecks = safeShortList(raw.failedChecks, 8, 80)
+        return failedChecks.length > 0 ? { failedChecks } : {}
+      })(),
     })
     if (out.length >= MAX_INTERIM_VERDICTS) break
   }

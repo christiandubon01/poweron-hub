@@ -200,15 +200,17 @@ export function projectInterimVerdicts(input: TelemetryProjectionInput): Snapsho
       case 'control.verifier.verdict': {
         const v = strField(event, 'verdict');
         const mapped = v === 'pass'
-          ? { state: 'PASS' as VerdictState, severity: 'info' as const, action: 'none' as const, cont: true, text: 'Verifier verdict: PASS' }
+          ? { state: 'PASS' as VerdictState, severity: 'info' as const, action: 'none' as const, cont: true }
           : v === 'fail'
-            ? { state: 'FAIL' as VerdictState, severity: 'critical' as const, action: 'owner-review' as const, cont: false, text: 'Verifier verdict: FAIL' }
-            : { state: 'WATCH' as VerdictState, severity: 'notice' as const, action: 'watch' as const, cont: true, text: 'Verifier verdict unavailable' };
+            ? { state: 'FAIL' as VerdictState, severity: 'critical' as const, action: 'owner-review' as const, cont: false }
+            : { state: 'WATCH' as VerdictState, severity: 'notice' as const, action: 'watch' as const, cont: true };
+        const published = verifierPublishedEvidence(event);
         push(verdict({
           id: `verdict:verifier:${refPart(event.attemptId, event.taskId)}`,
           role: 'verifier', taskId: event.taskId, attemptId: event.attemptId,
           state: mapped.state, severity: mapped.severity, recommendedAction: mapped.action, mayContinue: mapped.cont,
-          summary: mapped.text, evidenceRefs: refs(event.attemptId), evidenceCount: 1, timestamp: at,
+          summary: published.summary, evidenceRefs: published.evidenceRefs, evidenceCount: published.evidenceRefs.length,
+          failedChecks: published.failedChecks, timestamp: at,
         }));
         break;
       }
@@ -365,10 +367,11 @@ export function projectHandoffs(input: TelemetryProjectionInput): SnapshotHandof
         const v = strField(event, 'verdict');
         const resultingVerdict: VerdictState = v === 'pass' ? 'PASS' : v === 'fail' ? 'FAIL' : 'WATCH';
         const status: SnapshotHandoff['status'] = v === 'pass' ? 'accepted' : v === 'fail' ? 'rejected' : 'delivered';
+        const published = verifierPublishedEvidence(event);
         push(handoff({
           id: `handoff:verification:${refPart(event.attemptId, event.taskId)}`,
           from: 'verifier', to: 'host', taskId: event.taskId, payloadType: 'verification',
-          summary: `Verifier verdict: ${(v ?? 'unknown').toUpperCase()}`, evidenceCount: 1,
+          summary: published.summary, evidenceCount: published.evidenceRefs.length,
           status, timestamp: at, latencyMs: null, resultingVerdict,
         }));
         break;
@@ -779,6 +782,48 @@ function eventPayload(event: OrchestrationEventRecord): Record<string, unknown> 
   return null;
 }
 
+const VERIFIER_FAILED_CHECK_MAX = 8;
+const VERIFIER_FAILED_CHECK_MAX_CHARS = 80;
+
+function verifierPublishedEvidence(event: OrchestrationEventRecord): { summary: string; evidenceRefs: string[]; failedChecks: string[] } {
+  const verdictValue = strField(event, 'verdict');
+  const fallback = verdictValue === 'pass'
+    ? 'Verifier verdict: PASS'
+    : verdictValue === 'fail'
+      ? 'Verifier verdict: FAIL'
+      : 'Verifier verdict unavailable';
+  const durableSummary = strField(event, 'summary');
+  const summary = durableSummary ? trunc(durableSummary.trim(), TELEMETRY_SUMMARY_MAX_CHARS) : fallback;
+  const publishedRefs = boundedStringList(event, 'evidenceRefs', TELEMETRY_EVIDENCE_REF_MAX, TELEMETRY_EVIDENCE_REF_MAX_CHARS);
+  return {
+    summary,
+    evidenceRefs: publishedRefs.length > 0 ? publishedRefs : refs(event.attemptId),
+    failedChecks: boundedStringList(event, 'failedChecks', VERIFIER_FAILED_CHECK_MAX, VERIFIER_FAILED_CHECK_MAX_CHARS),
+  };
+}
+
+function boundedStringList(event: OrchestrationEventRecord, key: string, max: number, maxChars: number): string[] {
+  const value = eventPayload(event)?.[key];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') {
+      continue;
+    }
+    const text = item.trim();
+    if (!text) {
+      continue;
+    }
+    out.push(trunc(text, maxChars));
+    if (out.length >= max) {
+      break;
+    }
+  }
+  return out;
+}
+
 function strField(event: OrchestrationEventRecord, key: string): string | null {
   const value = eventPayload(event)?.[key];
   return typeof value === 'string' && value.length > 0 ? value : null;
@@ -891,15 +936,18 @@ interface VerdictArgs {
   state: VerdictState; severity: SnapshotInterimVerdict['severity'];
   recommendedAction: SnapshotInterimVerdict['recommendedAction']; mayContinue: boolean;
   summary: string; evidenceRefs: string[]; evidenceCount: number; timestamp: string;
+  failedChecks?: string[];
 }
 
 function verdict(args: VerdictArgs): SnapshotInterimVerdict {
+  const failedChecks = args.failedChecks?.filter((check) => check.length > 0).slice(0, VERIFIER_FAILED_CHECK_MAX);
   return {
     verdictId: args.id, role: args.role, taskId: args.taskId, attemptId: args.attemptId,
     state: args.state, summary: trunc(args.summary, TELEMETRY_SUMMARY_MAX_CHARS),
     evidenceRefs: boundedRefs(args.evidenceRefs), evidenceCount: args.evidenceCount,
     severity: args.severity, recommendedAction: args.recommendedAction, mayContinue: args.mayContinue,
     timestamp: args.timestamp,
+    ...(failedChecks && failedChecks.length > 0 ? { failedChecks } : {}),
   };
 }
 

@@ -6,7 +6,7 @@ import { TowerPanel } from './ControlTowerPrimitives'
 import AgentTeamOverlay from './AgentTeamOverlay'
 import { matchNodesForPlannedAreas } from '@/features/control-tower/controlTowerAdapter'
 import type { AgentTeamTopology, TeamRoleId } from './agentTeamTopology'
-import type { TowerSession } from './sessionPresentation'
+import { executionRejectedByVerifier, type TowerSession } from './sessionPresentation'
 import type { Role, RunState, TaskState } from './controlTowerTypes'
 
 export type BrainMotionMode = 'rest' | 'active' | 'halted'
@@ -31,7 +31,7 @@ export default function LinkedAppBrain({ scope, taskTitle, taskState, live = fal
   const guardNodeIds = useMemo(() => team ? matchNodesForPlannedAreas(APP_BRAIN_NODES, team.appLinks.guardAreas) : [], [team])
   const failedNodeIds = taskState === 'failed' && associated.length <= 3 ? associated : []
   const motionMode: BrainMotionMode = runState === 'running' && (activityNodeIds.length > 0 || verifierNodeIds.length > 0) ? 'active' : runState === 'failed' || runState === 'paused' ? 'halted' : 'rest'
-  const state = runState === 'running' ? (activityNodeIds.length ? `${activeRole} active` : 'Active task · area unmapped') : runState === 'completed' ? 'Completed · at rest' : runState === 'failed' ? 'Run failed · at rest' : runState === 'paused' ? 'Paused · awaiting owner' : 'At rest'
+  const state = teamRun && executionRejectedByVerifier(teamRun) ? 'Verification failed · candidate rejected' : runState === 'running' ? (activityNodeIds.length ? `${activeRole} active` : 'Active task · area unmapped') : runState === 'completed' ? 'Completed · at rest' : runState === 'failed' ? 'Run failed · at rest' : runState === 'paused' ? 'Paused · awaiting owner' : 'At rest'
   return <div className="ct-map-frame ct-focus-scope">
     <TowerPanel title="App Brain" className="ct-map" action={<button type="button" onClick={() => { selectNode(null); setResetKey(value => value + 1) }} aria-label="Reset Brain view"><RotateCcw size={14} aria-hidden="true" />Reset view</button>}>
       <div className="ct-map-toolbar"><p className="ct-breadcrumb">{node?.label ?? 'System overview'}</p><span className={`ct-brain-state ${activityNodeIds.length ? 'ct-state-running' : ''}`}>{state}</span></div>

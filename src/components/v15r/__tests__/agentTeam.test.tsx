@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import RunCommand from '../app-brain/control-tower/RunCommand'
 import TowerWorkspace from '../app-brain/control-tower/TowerWorkspace'
 import { CONTROL_TOWER_SCENARIOS } from '../app-brain/control-tower/controlTowerPreview'
 import { buildAgentTeamTopology, teamNodeByRole } from '../app-brain/control-tower/agentTeamTopology'
@@ -231,6 +232,68 @@ it('reveals verdict summary, action, evidence and handoff history in the right p
   const history = container.querySelectorAll('.ct-team-handoff-history li')
   expect(history.length).toBeGreaterThan(0)
   expect([...history].some(li => li.textContent!.includes('Implementer → Verifier'))).toBe(true)
+})
+
+it('shows verifier evidence and rejects a completed run whose verification failed', () => {
+  const base = session('completed')
+  const run = session('completed', {
+    runState: 'completed',
+    verification: 'rejected',
+    phase: 'Verification failed · candidate rejected',
+    interimVerdicts: [
+      ...(base.interimVerdicts ?? []).filter(verdict => verdict.role !== 'verifier'),
+      {
+        verdictId: 'c-verify-fail',
+        role: 'verifier',
+        taskId: 't-verify',
+        attemptId: 'a-verify',
+        state: 'FAIL',
+        summary: 'The candidate lacks the capacity module.',
+        failedChecks: ['capacity-module-missing', 'migration-137-missing'],
+        evidenceRefs: ['agent-host/control/capacity.ts'],
+        evidenceCount: 1,
+        severity: 'critical',
+        recommendedAction: 'owner-review',
+        mayContinue: false,
+        timestamp: '2026-09-24T06:57:33.596Z',
+      },
+    ],
+    signals: [{
+      signalId: 's-disagree',
+      category: 'verifier-implementer-disagreement',
+      severity: 'warning',
+      source: 'host',
+      taskId: 't-verify',
+      attemptId: 'a-verify',
+      message: 'Verifier FAIL after an implementer changeset.',
+      evidenceCount: 1,
+      evidenceRefs: ['verdict=fail'],
+      firstSeen: '2026-09-24T06:57:33.596Z',
+      lastSeen: '2026-09-24T06:57:33.596Z',
+      resolvedAt: null,
+      ownerActionRequired: false,
+    }],
+  })
+  act(() => root.render(<><RunCommand run={run} actions={null} /><TowerWorkspace run={run} sessions={[run]} selectedTaskId={null} onSelectRun={() => {}} onSelectTask={() => {}} /></>))
+  const command = container.querySelector('.ct-command')?.textContent ?? ''
+  expect(command).toContain('Verification failed')
+  expect(command).toContain('Execution completed')
+  expect(command).toContain(`${run.tasks.length} tasks executed`)
+  expect(command).toContain('Candidate rejected')
+  expect(command).not.toContain('tasks passed')
+  expect(container.querySelector('.ct-failure-summary')?.textContent).toContain('Verification failed')
+  expect(container.querySelector('.ct-brain-state')?.textContent).toContain('Verification failed')
+  expect(node('host').textContent).toContain('Verification failed')
+  expect(node('verifier').className).toContain('ct-team-node-state-fail')
+  click(node('verifier'))
+  expect(container.textContent).toContain('The candidate lacks the capacity module.')
+  expect(container.textContent).toContain('capacity-module-missing')
+  expect(container.textContent).toContain('migration-137-missing')
+  expect(container.textContent).toContain('agent-host/control/capacity.ts')
+  expect(container.textContent).toContain('1 reference')
+  click(node('guard'))
+  expect(container.querySelector('.ct-team-signal-category')?.textContent).toBe('verifier-implementer-disagreement')
+  expect(container.textContent).toContain('Verifier FAIL after an implementer changeset.')
 })
 
 /* R — reduced motion disables the traveling handoff animation. */

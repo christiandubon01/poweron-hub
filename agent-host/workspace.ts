@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, cp, mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, lstat, mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -105,6 +105,10 @@ export async function materializeAttemptWorkspace(options: {
       windowsHide: true,
       maxBuffer: 8 * 1024 * 1024,
     });
+    // The archive is committed HEAD. Overlay the eligible canonical working
+    // tree before the baseline fingerprint so inherited owner work is the
+    // pre-provider baseline, not a later candidate delta.
+    await overlayEligibleWorkingTree(options.canonicalRepoPath, workspacePath);
   } catch (error) {
     await rm(workspacePath, { recursive: true, force: true });
     throw new WorkspacePreparationError(`Failed to materialize isolated workspace: ${error instanceof Error ? error.message : String(error)}`);
@@ -312,6 +316,133 @@ function toRepoFingerprint(repoPath: string, file: WorkspaceFileFingerprint | nu
     sizeBytes: file?.sizeBytes ?? null,
     indexObjectId: null,
   };
+}
+
+const UNTRACKED_JUNK_SEGMENTS = new Set(['.temp', 'temp', 'tmp', 'node_modules', 'dist', '.netlify']);
+const UNTRACKED_JUNK_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp',
+  '.exe', '.dll', '.zip', '.gz', '.tgz', '.7z', '.mp4', '.mov', '.pdf', '.sqlite', '.db', '.log',
+]);
+
+interface PorcelainRecord {
+  path: string;
+  originalPath: string | null;
+  indexStatus: string;
+  worktreeStatus: string;
+}
+
+/**
+ * Eligible canonical working-tree files copied onto the committed archive.
+ * Ignored paths never appear in `git status`. Sensitive paths and untracked
+ * temp/binary junk stay out. Tracked modifications and deletions are the
+ * owner's real tree, including files the provider may later edit further.
+ */
+async function overlayEligibleWorkingTree(canonicalRepoPath: string, workspacePath: string): Promise<void> {
+  const result = await execFileAsync('git', ['status', '--porcelain=v1', '-z', '-uall'], {
+    cwd: canonicalRepoPath,
+    windowsHide: true,
+    maxBuffer: 16 * 1024 * 1024,
+    encoding: 'buffer',
+  });
+  for (const record of parsePorcelainZ(result.stdout)) {
+    let repoPath: string;
+    try {
+      repoPath = normalizeRepoRelativePath(record.path);
+    } catch {
+      continue;
+    }
+    if (isSensitiveRepoPath(repoPath) || repoPath === '.git' || repoPath.startsWith('.git/')) {
+      continue;
+    }
+    const deleted = record.worktreeStatus === 'D' || (record.indexStatus === 'D' && record.worktreeStatus === ' ');
+    const untracked = record.indexStatus === '?' && record.worktreeStatus === '?';
+    if (untracked && !isEligibleUntrackedSource(repoPath)) {
+      continue;
+    }
+    if (!deleted && !untracked && record.indexStatus === ' ' && record.worktreeStatus === ' ') {
+      continue;
+    }
+    if (record.originalPath) {
+      await removeWorkspacePath(workspacePath, record.originalPath);
+    }
+    if (deleted) {
+      await removeWorkspacePath(workspacePath, repoPath);
+      continue;
+    }
+    await copyWorkspaceFile(canonicalRepoPath, workspacePath, repoPath);
+  }
+}
+
+function isEligibleUntrackedSource(repoPath: string): boolean {
+  if (isSensitiveRepoPath(repoPath)) {
+    return false;
+  }
+  const parts = repoPath.split('/');
+  if (parts.some((part) => part === '.git' || UNTRACKED_JUNK_SEGMENTS.has(part.toLowerCase()))) {
+    return false;
+  }
+  const baseName = parts.at(-1) ?? '';
+  const dot = baseName.lastIndexOf('.');
+  const extension = dot >= 0 ? baseName.slice(dot).toLowerCase() : '';
+  return extension.length === 0 || !UNTRACKED_JUNK_EXTENSIONS.has(extension);
+}
+
+function parsePorcelainZ(stdout: Buffer | string): PorcelainRecord[] {
+  const text = typeof stdout === 'string' ? stdout : Buffer.from(stdout).toString('utf8');
+  const tokens = text.split('\0');
+  if (tokens.at(-1) === '') {
+    tokens.pop();
+  }
+  const records: PorcelainRecord[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? '';
+    if (token.length < 4) {
+      continue;
+    }
+    const indexStatus = token[0] ?? ' ';
+    const worktreeStatus = token[1] ?? ' ';
+    const entryPath = token.slice(3);
+    const renamed = indexStatus === 'R' || indexStatus === 'C' || worktreeStatus === 'R' || worktreeStatus === 'C';
+    if (renamed) {
+      index += 1;
+      const nextPath = tokens[index];
+      if (!nextPath) {
+        continue;
+      }
+      records.push({ path: nextPath, originalPath: entryPath, indexStatus, worktreeStatus });
+      continue;
+    }
+    records.push({ path: entryPath, originalPath: null, indexStatus, worktreeStatus });
+  }
+  return records;
+}
+
+async function copyWorkspaceFile(canonicalRepoPath: string, workspacePath: string, repoPath: string): Promise<void> {
+  const source = path.resolve(canonicalRepoPath, ...repoPath.split('/'));
+  const destination = path.resolve(workspacePath, ...repoPath.split('/'));
+  if (!isPathInside(path.resolve(canonicalRepoPath), source) || !isPathInside(path.resolve(workspacePath), destination)) {
+    return;
+  }
+  const info = await lstat(source).catch(() => null);
+  if (!info?.isFile()) {
+    return;
+  }
+  await mkdir(path.dirname(destination), { recursive: true });
+  await cp(source, destination);
+}
+
+async function removeWorkspacePath(workspacePath: string, rawPath: string): Promise<void> {
+  let repoPath: string;
+  try {
+    repoPath = normalizeRepoRelativePath(rawPath);
+  } catch {
+    return;
+  }
+  const destination = path.resolve(workspacePath, ...repoPath.split('/'));
+  if (!isPathInside(path.resolve(workspacePath), destination)) {
+    return;
+  }
+  await rm(destination, { force: true });
 }
 
 async function resolvePinnedHead(repoPath: string, expected: string | undefined): Promise<string> {

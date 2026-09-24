@@ -3,6 +3,9 @@ import type { Role } from './controlTowerTypes'
 
 export type TowerSession = Omit<ControlTowerRunView, 'provenance'> & { provenance: 'Live' | 'Preview' }
 export const isActiveSession = (run: TowerSession) => ['running', 'pending', 'paused'].includes(run.runState)
+/** Execution finished, but the Verifier rejected the candidate. */
+export const executionRejectedByVerifier = (run: Pick<TowerSession, 'runState' | 'verification'>) =>
+  run.runState === 'completed' && run.verification === 'rejected'
 export const sessionTitle = (run: TowerSession) => {
   const title = run.title || run.objective || 'Untitled session'
   // Some older Hosts published the entire owner scope as the title. Use its
@@ -23,6 +26,7 @@ export function sessionDuration(run: TowerSession, now = Date.now()) {
 }
 export function roleResult(run: TowerSession, role: Role) {
   const tasks = run.tasks.filter(task => task.role === role)
+  if (role === 'Verifier' && executionRejectedByVerifier(run)) return 'Failed'
   if (!tasks.length) return 'Not reported'
   if (tasks.some(task => task.state === 'failed')) return 'Failed'
   if (tasks.some(task => task.state === 'blocked')) return 'Blocked'

@@ -68,6 +68,7 @@ export interface InterimVerdictView {
   recommendedAction: RecommendedAction
   mayContinue: boolean
   timestamp: string
+  failedChecks?: string[]
 }
 
 export interface HandoffView {

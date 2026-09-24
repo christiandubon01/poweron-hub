@@ -60,7 +60,8 @@ function TeamRoleDetail({ roleNode, team, run }: { roleNode: TeamRoleNode; team:
           <div><dt>Severity</dt><dd>{node.verdict.severity}</dd></div>
           <div><dt>Recommended action</dt><dd>{VERDICT_ACTION[node.verdict.recommendedAction] ?? node.verdict.recommendedAction}</dd></div>
           <div><dt>May continue</dt><dd>{node.verdict.mayContinue ? 'Yes' : 'No'}</dd></div>
-          <div><dt>Evidence</dt><dd>{node.verdict.evidenceCount} references</dd></div>
+          {node.verdict.state === 'FAIL' && node.verdict.failedChecks && node.verdict.failedChecks.length > 0 && <div><dt>Failed checks</dt><dd><ul className="ct-team-failed-checks">{node.verdict.failedChecks.map((check, index) => <li key={`${index}-${check}`}>{check}</li>)}</ul></dd></div>}
+          <div><dt>Evidence</dt><dd>{node.verdict.evidenceCount} {node.verdict.evidenceCount === 1 ? 'reference' : 'references'}{node.verdict.state === 'FAIL' && node.verdict.evidenceRefs.length > 0 && <ul className="ct-team-evidence-refs">{node.verdict.evidenceRefs.map((ref, index) => <li key={`${index}-${ref}`}><code>{ref}</code></li>)}</ul>}</dd></div>
           <div><dt>Timestamp</dt><dd>{conciseTime(node.verdict.timestamp)}</dd></div>
         </dl>
       </div> : <p className="ct-muted">No interim verdict published for this role.</p>}

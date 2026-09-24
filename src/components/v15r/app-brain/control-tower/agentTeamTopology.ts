@@ -27,8 +27,7 @@ import type {
   SignalView,
   VerdictState,
 } from './controlTowerTypes'
-import type { TowerSession } from './sessionPresentation'
-import { isActiveSession } from './sessionPresentation'
+import { executionRejectedByVerifier, isActiveSession, type TowerSession } from './sessionPresentation'
 
 export type TeamRoleId = 'host' | 'architect' | 'implementer' | 'verifier' | 'guard'
 export type TeamNodeState = 'IDLE' | 'ACTIVE' | 'WARNING' | 'BLOCKED' | 'PASS' | 'FAIL' | 'WAITING_OWNER'
@@ -276,6 +275,7 @@ export function buildAgentTeamTopology(run: TowerSession | null): AgentTeamTopol
       if (run == null) state = 'IDLE'
       else if (run.runState === 'running' || run.runState === 'pending') state = 'ACTIVE'
       else if (run.runState === 'paused') state = 'WAITING_OWNER'
+      else if (executionRejectedByVerifier(run)) state = 'FAIL'
       else if (run.runState === 'completed') state = 'PASS'
       else if (run.runState === 'failed') state = 'FAIL'
       else state = 'IDLE' // cancelled: settled, never fabricated as failure

@@ -168,9 +168,41 @@ test('projectInterimVerdicts derives verdicts from lifecycle boundaries + run te
   assert.equal(byId.get('verdict:changeset:a-impl')!.state, 'CONTINUE');
   assert.equal(byId.get('verdict:policy:a-impl')!.role, 'guard');
   assert.equal(byId.get('verdict:verifier:a-ver')!.state, 'PASS');
+  assert.equal(byId.get('verdict:verifier:a-ver')!.summary, 'Verifier verdict: PASS');
+  assert.equal(byId.get('verdict:verifier:a-ver')!.failedChecks, undefined);
   const runVerdict = byId.get('verdict:run:run-1:completed')!;
   assert.equal(runVerdict.role, 'host');
   assert.equal(runVerdict.state, 'PASS');
+});
+
+test('control.verifier.verdict projects the durable summary, failed checks, and evidence refs', () => {
+  const events = mkEvents([
+    {
+      type: 'control.verifier.verdict',
+      taskId: 't-ver',
+      attemptId: 'a-ver',
+      payload: {
+        verdict: 'fail',
+        summary: 'The candidate lacks the capacity module.',
+        failedChecks: ['capacity-module-missing', 'migration-137-missing', '  ', 12],
+        evidenceRefs: ['agent-host/control/capacity.ts', 'supabase/migrations/136_agent_scope_packs.sql'],
+      },
+    },
+  ]);
+  const verdicts = projectInterimVerdicts({ run: mkRun('completed'), tasks: [mkTask('t-ver', verifierSpec())], events });
+  const verdict = verdicts.find((item) => item.verdictId === 'verdict:verifier:a-ver')!;
+  assert.equal(verdict.state, 'FAIL');
+  assert.equal(verdict.mayContinue, false);
+  assert.equal(verdict.summary, 'The candidate lacks the capacity module.');
+  assert.deepEqual(verdict.failedChecks, ['capacity-module-missing', 'migration-137-missing']);
+  assert.deepEqual(verdict.evidenceRefs, ['agent-host/control/capacity.ts', 'supabase/migrations/136_agent_scope_packs.sql']);
+  assert.equal(verdict.evidenceCount, 2);
+  const handoff = projectHandoffs({ run: mkRun('completed'), tasks: [mkTask('t-ver', verifierSpec())], events })
+    .find((item) => item.handoffId === 'handoff:verification:a-ver')!;
+  assert.equal(handoff.status, 'rejected');
+  assert.equal(handoff.resultingVerdict, 'FAIL');
+  assert.equal(handoff.summary, 'The candidate lacks the capacity module.');
+  assert.equal(handoff.evidenceCount, 2);
 });
 
 test('a human-gated policy change yields a NEEDS_OWNER guard verdict, never a fabricated pass', () => {

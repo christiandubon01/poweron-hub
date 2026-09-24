@@ -320,6 +320,8 @@ export interface SnapshotInterimVerdict {
   recommendedAction: RecommendedAction;
   mayContinue: boolean;
   timestamp: string;
+  /** Bounded checks from control.verifier.verdict. Absent when the verdict published none. */
+  failedChecks?: string[];
 }
 
 export interface SnapshotHandoff {

@@ -63,6 +63,28 @@ describe('ATB-1 telemetry adapter', () => {
     expect(view!.signals).toEqual([])
   })
 
+  it('keeps verifier failed checks and evidence refs on the interim verdict', () => {
+    const verdicts = mapInterimVerdicts([
+      {
+        verdictId: 'verdict:verifier:a-ver',
+        role: 'verifier',
+        state: 'FAIL',
+        summary: 'The candidate lacks the capacity module.',
+        failedChecks: ['capacity-module-missing', '  migration-137-missing  '],
+        evidenceRefs: ['agent-host/control/capacity.ts'],
+        evidenceCount: 1,
+        severity: 'critical',
+        recommendedAction: 'owner-review',
+        mayContinue: false,
+        timestamp: '2026-09-24T06:57:33.596Z',
+      },
+    ])
+    expect(verdicts[0].summary).toBe('The candidate lacks the capacity module.')
+    expect(verdicts[0].failedChecks).toEqual(['capacity-module-missing', 'migration-137-missing'])
+    expect(verdicts[0].evidenceRefs).toEqual(['agent-host/control/capacity.ts'])
+    expect(verdicts[0].evidenceCount).toBe(1)
+  })
+
   it('drops malformed verdict/handoff entries instead of fabricating them', () => {
     const verdicts = mapInterimVerdicts([
       { verdictId: 'ok', state: 'WATCH', role: 'host', timestamp: '2026-09-22T00:00:02.000Z' },

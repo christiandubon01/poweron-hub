@@ -502,6 +502,20 @@ describe('CT-CORE-1 fail-closed and completion truth', () => {
     expect(container.querySelector('.ct-command')?.textContent).toContain('Changes not applied')
     expect(container.textContent).toContain('2/2 tasks passed')
   })
+
+  it('presents a completed run with a failed verifier verdict as rejected, not accepted', () => {
+    const view = mapRunSnapshotRow(wireSnapshot({
+      runStatus: 'completed',
+      taskStatuses: ['passed', 'passed'],
+      verification: { verdict: 'fail', summary: 'The candidate lacks the capacity module.' },
+      changeset: { ready: true, changeCount: 1, safePaths: ['agent-host/control/capacity.ts'] },
+    }))!
+    expect(view.runState).toBe('completed')
+    expect(view.verification).toBe('rejected')
+    expect(view.verificationSummary).toBe('The candidate lacks the capacity module.')
+    expect(view.phase).toBe('Verification failed · candidate rejected')
+    expect(view.phase).not.toContain('Run completed')
+  })
 })
 
 /* ── §36 13-14 + 18: no fixture fallback, preview still works, live map ───── */

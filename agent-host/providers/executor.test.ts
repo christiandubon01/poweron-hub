@@ -285,7 +285,7 @@ test('executor: valid running Attempt executes a registered adapter and persists
   }
 });
 
-test('executor: task implementer is materialized into an isolated workspace and never runs dirty canonical source', async () => {
+test('executor: task implementer inherits eligible dirty files in an isolated workspace and does not mutate canonical', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'orch4c3b-executor-'));
   const repoPath = path.join(root, 'repo');
   const workspaceRoot = path.join(root, 'runtime', 'workspaces');
@@ -306,7 +306,7 @@ test('executor: task implementer is materialized into an isolated workspace and 
     id: 'codex',
     onExecute: async (request) => {
       assert.notEqual(path.resolve(request.workingDirectory), path.resolve(repoPath));
-      assert.equal((await readFile(path.join(request.workingDirectory, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'COMMITTED\n');
+      assert.equal((await readFile(path.join(request.workingDirectory, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'OWNER_DIRTY\n');
       await mkdir(path.join(request.workingDirectory, 'agent-host', 'smoke'), { recursive: true });
       await writeFile(path.join(request.workingDirectory, 'agent-host', 'smoke', 'orch4c-smoke.txt'), 'AGENT_HOST_WRITE_SMOKE_OK v1\n');
       return createExecutionResult({ executionId: request.executionId });
@@ -398,7 +398,7 @@ test('ATB-7B2: verifier reads the implementer candidate copy and leaves canonica
   await assert.rejects(readFile(path.join(repoPath, CONTROL_TOWER_UI_SMOKE_PATH)), /ENOENT/u);
   await assert.rejects(readFile(path.join(verifierRequest.workingDirectory, 'OWNER_DIRTY')), /ENOENT/u);
   assert.equal(await readFile(path.join(repoPath, 'README.md'), 'utf8'), 'OWNER_DIRTY\n');
-  assert.equal((await readFile(path.join(verifierRequest.workingDirectory, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'COMMITTED\n');
+  assert.equal((await readFile(path.join(verifierRequest.workingDirectory, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'OWNER_DIRTY\n');
   const fileStat = await stat(path.join(verifierRequest.workingDirectory, CONTROL_TOWER_UI_SMOKE_PATH));
   assert.equal(fileStat.mode & 0o222, 0);
   await assert.rejects(writeFile(path.join(verifierRequest.workingDirectory, CONTROL_TOWER_UI_SMOKE_PATH), Buffer.from('MUTATED\n')));
