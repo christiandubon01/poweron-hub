@@ -155,6 +155,20 @@ export async function insertControlRequest(input: {
   return data as ControlRequestRow
 }
 
+export async function fetchRecentControlRequests(organizationId: string, repoKey: string, limit: number = 8): Promise<ControlRequestRow[]> {
+  const { data, error } = await (supabase as unknown as { from: (t: string) => { select: (c: string) => { eq: (c: string, v: string) => { eq: (c: string, v: string) => { order: (c: string, o: object) => { limit: (n: number) => Promise<{ data: unknown[] | null; error: { message: string } | null }> } } } } } })
+    .from('agent_control_requests')
+    .select('id,request_type,client_request_id,repo_key,status,payload,result,error,created_at')
+    .eq('organization_id', organizationId)
+    .eq('repo_key', repoKey)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) {
+    throw new ControlTowerServiceError('query_failed', `Failed to read recent control requests: ${error.message}`)
+  }
+  return (data ?? []) as ControlRequestRow[]
+}
+
 export async function fetchControlRequest(organizationId: string, clientRequestId: string): Promise<ControlRequestRow | null> {
   const { data, error } = await (supabase as unknown as { from: (t: string) => { select: (c: string) => { eq: (c: string, v: string) => { eq: (c: string, v: string) => Promise<{ data: unknown[] | null; error: { message: string } | null }> } } } })
     .from('agent_control_requests')

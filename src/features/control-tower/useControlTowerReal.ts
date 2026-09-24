@@ -24,6 +24,7 @@ import {
   insertControlRequest,
   fetchControlRequest,
   fetchHostPresenceRows,
+  fetchRecentControlRequests,
   fetchRunSnapshotRows,
   fetchScopePackRows,
   resolveControlTowerContext,
@@ -61,6 +62,7 @@ export interface ControlTowerServiceApi {
     payload: Record<string, unknown>
   }): Promise<ControlRequestRow>
   fetchControlRequest(organizationId: string, clientRequestId: string): Promise<ControlRequestRow | null>
+  fetchRecentControlRequests?(organizationId: string, repoKey: string, limit?: number): Promise<ControlRequestRow[]>
   fetchRunSnapshotRows(organizationId: string, limit?: number): Promise<RunSnapshotRow[]>
   fetchScopePackRows?(organizationId: string, repoKey: string): Promise<ScopePackRow[]>
 }
@@ -71,6 +73,7 @@ export const controlTowerService: ControlTowerServiceApi = {
   fetchHostPresenceRows,
   insertControlRequest,
   fetchControlRequest,
+  fetchRecentControlRequests,
   fetchRunSnapshotRows,
   fetchScopePackRows,
 }
@@ -117,6 +120,51 @@ function planningStatusLine(result: Record<string, unknown> | null): string | nu
   const line = result?.planningStatus
   return typeof line === 'string' && (PLANNING_STATUS_LINES as readonly string[]).includes(line) ? line : null
 }
+
+export const APPROVAL_STATUS_LINES = [
+  'Submitting approval',
+  'Approval queued',
+  'Host processing approval',
+  'Creating run',
+  'Run created',
+  'Starting tasks',
+] as const
+
+function approvalStatusForRow(row: ControlRequestRow): string {
+  if (row.status === 'pending') return 'Approval queued'
+  if (row.status === 'claimed') {
+    return row.result?.approvalStatus === 'Creating run' ? 'Creating run' : 'Host processing approval'
+  }
+  if (row.status === 'completed' && typeof row.result?.runId === 'string' && row.result.runId.length > 0) return 'Run created'
+  return 'Host processing approval'
+}
+
+function approvalFailureMessage(row: ControlRequestRow): string {
+  const reason = (row.error ?? 'The Host failed to start the Run.').slice(0, 500)
+  return `Run could not be created.\nApproval request ${row.id} failed: ${reason}`
+}
+
+function sameApprovedPlan(row: ControlRequestRow, planId: string, planHash: string): boolean {
+  return row.request_type === 'approve_plan' && row.payload.planId === planId && row.payload.planHash === planHash
+}
+
+function chooseDisplayedRun(
+  views: ControlTowerRunView[],
+  options: { preferredId: string | null; currentId: string | null; allowHistory: boolean },
+): ControlTowerRunView | null {
+  if (options.preferredId) {
+    const created = views.find((view) => view.runId === options.preferredId)
+    if (created) return created
+    if (!options.allowHistory) return null
+  }
+  if (options.currentId) {
+    const current = views.find((view) => view.runId === options.currentId)
+    if (current && ACTIVE_RUN_STATES.has(current.runState)) return current
+  }
+  const active = views.find((view) => ACTIVE_RUN_STATES.has(view.runState))
+  if (active) return active
+  return options.allowHistory ? (views[0] ?? null) : null
+}
 const UNAVAILABLE_PRESENCE: HostPresenceView = { state: 'unavailable', repoKey: null, providers: [], providerFleet: [], hostVersion: null, lastSeenAt: null, hostInstanceId: null }
 
 function makeClientRequestId(): string {
@@ -135,6 +183,7 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
   const [plan, setPlan] = useState<PlanReviewModel | null>(null)
   const [planError, setPlanError] = useState<string | null>(null)
   const [planningStatus, setPlanningStatus] = useState<string | null>(null)
+  const [approvalStatus, setApprovalStatus] = useState<string | null>(null)
   const [planningRequestId, setPlanningRequestId] = useState<string | null>(null)
   const [approvingRequestId, setApprovingRequestId] = useState<string | null>(null)
   const [run, setRun] = useState<ControlTowerRunView | null>(null)
@@ -159,13 +208,18 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
   contextRef.current = context
   const runIdRef = useRef<string | null>(null)
   runIdRef.current = run?.runId ?? runIdRef.current
+  const approvedRunIdRef = useRef<string | null>(null)
+  const approvalSubmitLock = useRef(false)
 
-  const applySnapshots = useCallback((rows: RunSnapshotRow[]) => {
+  const applySnapshots = useCallback((rows: RunSnapshotRow[], options: { preferredId: string | null; allowHistory: boolean }) => {
     const views = rows.map(mapRunSnapshotRow).filter((view): view is ControlTowerRunView => view !== null)
-    const desiredId = runIdRef.current
-    const selected = (desiredId ? views.find((view) => view.runId === desiredId) : null) ?? views[0] ?? null
+    const selected = chooseDisplayedRun(views, {
+      preferredId: options.preferredId,
+      currentId: options.preferredId ? null : runIdRef.current,
+      allowHistory: options.allowHistory,
+    })
     if (selected) runIdRef.current = selected.runId
-    setRun(selected)
+    if (selected || options.allowHistory) setRun(selected)
     setRunHistory(views)
     return { selected, views }
   }, [])
@@ -227,32 +281,79 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     }
 
     // Approve poll: has the Host created the Run?
+    let phaseNow = phaseRef.current
+    if (!approvingIdRef.current && !planningIdRef.current && (phaseNow === 'idle' || phaseNow === 'unavailable') && nextPresence.repoKey && service.fetchRecentControlRequests) {
+      try {
+        const recent = await service.fetchRecentControlRequests(org, nextPresence.repoKey, 8)
+        const inflight = recent.find((row) => row.request_type === 'approve_plan' && (row.status === 'pending' || row.status === 'claimed'))
+        if (inflight) {
+          approvingIdRef.current = inflight.client_request_id
+          setApprovingRequestId(inflight.client_request_id)
+          setApprovalStatus(approvalStatusForRow(inflight))
+          phaseNow = 'approving'
+          phaseRef.current = phaseNow
+          setPhase(phaseNow)
+        }
+      } catch {
+        // A recovery miss keeps the last honest phase. The next poll retries.
+      }
+    }
+
     const approvingId = approvingIdRef.current
     if (approvingId) {
       try {
         const row = await service.fetchControlRequest(org, approvingId)
         if (row?.status === 'failed') {
+          approvingIdRef.current = null
+          approvedRunIdRef.current = null
           setApprovingRequestId(null)
-          setPlanError(row.error ?? 'The Host failed to start the Run.')
-          setPhase('approving-error')
+          setApprovalStatus(null)
+          setPlanError(approvalFailureMessage(row))
+          phaseNow = 'approving-error'
+          phaseRef.current = phaseNow
+          setPhase(phaseNow)
         } else if (row?.status === 'completed') {
-          const runId = (row.result as Record<string, unknown> | null)?.runId
-          if (typeof runId === 'string') runIdRef.current = runId
+          const result = row.result
+          const runId = result?.runId
+          if (typeof runId === 'string' && runId.length > 0) {
+            approvedRunIdRef.current = runId
+            setApprovalStatus('Run created')
+          } else if (result?.phaseResult === 'audit-accepted') {
+            approvingIdRef.current = null
+            setApprovingRequestId(null)
+            setApprovalStatus(null)
+            setPlanError('Audit accepted. No run was created.')
+            phaseNow = 'approving-error'
+            phaseRef.current = phaseNow
+            setPhase(phaseNow)
+          }
+        } else if (row && (row.status === 'pending' || row.status === 'claimed')) {
+          setApprovalStatus(approvalStatusForRow(row))
         }
       } catch {
-        // transient poll failure
+        // transient poll failure — keep the current phase
       }
     }
 
-    // Snapshots: current run + history.
+    // Snapshots: current run + history. An in-flight approval never adopts an older session.
     try {
       const rows = await service.fetchRunSnapshotRows(org, 5)
-      const { selected } = applySnapshots(rows)
-      if (phaseRef.current === 'approving' && selected && runIdRef.current === selected.runId) {
+      const waitingForNewRun = phaseNow === 'approving' || phaseNow === 'approving-error'
+      const { selected } = applySnapshots(rows, {
+        preferredId: approvedRunIdRef.current,
+        allowHistory: !waitingForNewRun,
+      })
+      if (phaseNow === 'approving' && selected && selected.runId === approvedRunIdRef.current) {
+        setApprovalStatus(selected.runState === 'pending' ? 'Starting tasks' : null)
+        phaseNow = 'run'
+        phaseRef.current = phaseNow
+        setPhase(phaseNow)
         setApprovingRequestId(null)
-        setPhase('run')
-      } else if (phaseRef.current === 'idle' || phaseRef.current === 'unavailable') {
-        setPhase(selected && ACTIVE_RUN_STATES.has(selected.runState) ? 'run' : 'idle')
+        approvingIdRef.current = null
+      } else if (phaseNow === 'idle' || phaseNow === 'unavailable') {
+        const nextPhase = selected && ACTIVE_RUN_STATES.has(selected.runState) ? 'run' : 'idle'
+        phaseRef.current = nextPhase
+        setPhase(nextPhase)
       }
     } catch {
       // Snapshot fetch failures leave the last-known state; presence stays honest.
@@ -332,13 +433,37 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
 
   /** Owner approves the EXACT plan (planId + planHash) → approve_plan request. */
   const approvePlan = useCallback(async (): Promise<void> => {
+    if (approvalSubmitLock.current || approvingIdRef.current) return
     const org = contextRef.current?.organizationId
     const currentPlan = planRef.current
     if (!org || !currentPlan) throw new Error('No plan to approve.')
     if (!presence.repoKey) throw new Error('No connected Host repository.')
-    const clientRequestId = makeClientRequestId()
+    approvalSubmitLock.current = true
     setBusy(true)
+    setApprovalStatus('Submitting approval')
+    phaseRef.current = 'approving'
+    setPhase('approving')
     try {
+      const recent = service.fetchRecentControlRequests
+        ? await service.fetchRecentControlRequests(org, presence.repoKey, 8)
+        : []
+      const matching = recent.filter((row) => sameApprovedPlan(row, currentPlan.planId, currentPlan.planHash))
+      const inflight = matching.find((row) => row.status === 'pending' || row.status === 'claimed')
+      const succeeded = matching.find((row) => row.status === 'completed' && typeof row.result?.runId === 'string' && row.result.runId.length > 0)
+      if (inflight) {
+        approvingIdRef.current = inflight.client_request_id
+        setApprovingRequestId(inflight.client_request_id)
+        setApprovalStatus(approvalStatusForRow(inflight))
+        return
+      }
+      if (succeeded) {
+        approvedRunIdRef.current = String(succeeded.result?.runId)
+        approvingIdRef.current = succeeded.client_request_id
+        setApprovingRequestId(succeeded.client_request_id)
+        setApprovalStatus('Run created')
+        return
+      }
+      const clientRequestId = makeClientRequestId()
       await service.insertControlRequest({
         organizationId: org,
         repoKey: presence.repoKey,
@@ -351,9 +476,16 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
           ...(currentPlan.approval?.requiresOwnerReview ? { ownerReviewedConflict: true } : {}),
         },
       })
+      approvingIdRef.current = clientRequestId
       setApprovingRequestId(clientRequestId)
-      setPhase('approving')
+      setApprovalStatus('Approval queued')
+    } catch (error) {
+      phaseRef.current = 'plan-review'
+      setPhase('plan-review')
+      setApprovalStatus(null)
+      throw error
     } finally {
+      approvalSubmitLock.current = false
       setBusy(false)
     }
   }, [presence.repoKey, service])
@@ -411,9 +543,15 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
 
   /** Discard the reviewed plan (does not touch any Run). */
   const cancelPlanReview = useCallback(() => {
+    approvingIdRef.current = null
+    approvedRunIdRef.current = null
+    setApprovingRequestId(null)
+    setApprovalStatus(null)
     setPlan(null)
     setPlanError(null)
-    setPhase(contextRef.current ? 'idle' : 'unavailable')
+    const nextPhase = contextRef.current ? 'idle' : 'unavailable'
+    phaseRef.current = nextPhase
+    setPhase(nextPhase)
   }, [])
 
   /** Owner cancels an active Run — a typed request, executed only by the Host. */
@@ -443,6 +581,7 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     plan,
     planError,
     planningStatus,
+    approvalStatus,
     run,
     runHistory,
     draft,
@@ -463,7 +602,7 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     cancelPlanReview,
     cancelRun,
   }), [
-    phase, presence, context, contextError, plan, planError, planningStatus, run, runHistory, draft, busy,
+    phase, presence, context, contextError, plan, planError, planningStatus, approvalStatus, run, runHistory, draft, busy,
     scopePacks, scopePackRows, importWarning, scopeStorage, importing, importScopePack, refresh,
     openComposer, closeComposer, editScope, submitScope, retryPlanning, approvePlan, cancelPlanReview, cancelRun,
   ])

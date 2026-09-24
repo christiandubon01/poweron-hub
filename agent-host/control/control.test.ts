@@ -908,7 +908,7 @@ class FakeControlPlane {
   async completeRequest(id: string, result: Record<string, unknown>): Promise<void> {
     this.completions.push({ id, result });
     const planId = typeof result.planId === 'string' ? result.planId : null;
-    if (planId) {
+    if (planId && result.plan && typeof result.plan === 'object') {
       this.storedPlans.set(planId, result);
     }
   }
@@ -1257,6 +1257,55 @@ test('handleApprovePlan creates the REAL run/tasks/deps only for the EXACT appro
 
     const completion = controlPlane.completions[controlPlane.completions.length - 1];
     assert.equal((completion.result as Record<string, unknown>).runId, outcome.runId);
+
+    const again = claimedRequest({ planId, planHash }, 'approve_plan');
+    again.id = 'req-approve-again';
+    const reused = await handleApprovePlan({
+      store,
+      controlPlane: controlPlane.asControlPlane(),
+      request: again,
+      canonicalRepoPath: 'C:\\repo',
+    });
+    assert.equal(reused.ok, true);
+    assert.equal(reused.runId, outcome.runId);
+    assert.equal(store.listRuns().length, 1);
+    assert.equal(store.listTasks(outcome.runId!).length, 2);
+  });
+});
+
+test('handleApprovePlan rejects an oversized task spec before creating a run', async () => {
+  await withStore(async (store) => {
+    const controlPlane = new FakeControlPlane();
+    const adapter = {
+      execute: async () => buildExecutionResult({
+        finalText: `\`\`\`json\n${JSON.stringify(architectPlanObject())}\n\`\`\``,
+      }),
+    };
+    await handleCreatePlan({
+      store,
+      registry: new Map([['claude', adapter as never]]) as never,
+      controlPlane: controlPlane.asControlPlane(),
+      request: claimedRequest({ scope: 'Create a smoke file.', constraints: [] }),
+      canonicalRepoPath: 'C:\\repo',
+    });
+    const created = controlPlane.completions[0].result as Record<string, unknown>;
+    const planId = created.planId as string;
+    const planHash = created.planHash as string;
+    const storedPlan = created.plan as { tasks: Array<{ goal: string }> };
+    storedPlan.tasks[0].goal = 'x'.repeat(8_000);
+
+    const outcome = await handleApprovePlan({
+      store,
+      controlPlane: controlPlane.asControlPlane(),
+      request: claimedRequest({ planId, planHash }, 'approve_plan'),
+      canonicalRepoPath: 'C:\\repo',
+    });
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.runId, null);
+    assert.equal(outcome.safeError, 'TASK_SPEC_TOO_LARGE');
+    assert.equal(store.listRuns().length, 0);
+    assert.match(String(controlPlane.completions.at(-1)?.error), /TASK_SPEC_TOO_LARGE/u);
+    assert.match(String(controlPlane.completions.at(-1)?.error), /spec exceeds 8192 UTF-8 bytes/u);
   });
 });
 

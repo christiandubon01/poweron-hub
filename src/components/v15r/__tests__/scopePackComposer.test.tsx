@@ -16,6 +16,7 @@ vi.mock('@/features/control-tower/controlTowerService', () => ({
   fetchHostPresenceRows: () => new Promise(() => {}),
   insertControlRequest: () => new Promise(() => {}),
   fetchControlRequest: () => new Promise(() => {}),
+  fetchRecentControlRequests: () => new Promise(() => {}),
   fetchRunSnapshotRows: () => new Promise(() => {}),
   fetchScopePackRows: () => new Promise(() => {}),
 }))

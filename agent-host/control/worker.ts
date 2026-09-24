@@ -33,7 +33,7 @@ import { discoverTools } from '../lib/discovery.ts';
 import { acquireLock, LockAcquisitionError, releaseLockIfOwned } from '../lib/lock.ts';
 import { readRepoStatus, resolveCanonicalRepo } from '../lib/repo.ts';
 import { resolveStatePaths } from '../lib/statePaths.ts';
-import { openOrchestrationStore, type OrchestrationStore } from '../lib/store.ts';
+import { assertOptionalJsonWithinLimit, openOrchestrationStore, type OrchestrationStore } from '../lib/store.ts';
 import type { JsonValue } from '../lib/orchestrationTypes.ts';
 import {
   AttemptExecutor,
@@ -685,11 +685,8 @@ export async function handleApprovePlan(options: {
     return { ok: true, runId: null, safeError: null };
   }
 
-  // Durable creation through the EXISTING store APIs — never direct table edits.
-  const runId = `run-${randomUUID()}`;
-  store.createRun({ runId, title: plan.objective.slice(0, 512), goal: plan.objective });
-  const taskIdByClientKey = new Map<string, string>();
-  for (const [index, task] of plan.tasks.entries()) {
+  // Build every task spec first. An oversized spec must fail before any run row exists.
+  const prepared = plan.tasks.map((task, index) => {
     const taskId = `${plan.planId}:${task.clientTaskKey}`;
     const spec: TaskControlSpec & { workingDirectory: string; plan: Record<string, unknown> } = {
       control: {
@@ -725,24 +722,82 @@ export async function handleApprovePlan(options: {
           }
         : {}),
     };
-    store.createTask({
-      taskId,
-      runId,
-      title: task.title.slice(0, 512),
-      goal: task.goal,
-      position: index,
-      spec: spec as unknown as JsonValue,
-    });
-    taskIdByClientKey.set(task.clientTaskKey, taskId);
+    return { task, index, taskId, spec };
+  });
+  for (const item of prepared) {
+    try {
+      assertOptionalJsonWithinLimit(item.spec as unknown as JsonValue, 'spec');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await controlPlane.failRequest(
+        request.id,
+        `TASK_SPEC_TOO_LARGE: ${detail}`.slice(0, REQUEST_ERROR_LIMIT),
+      );
+      return { ok: false, runId: null, safeError: 'TASK_SPEC_TOO_LARGE' };
+    }
   }
-  for (const task of plan.tasks) {
-    const taskId = taskIdByClientKey.get(task.clientTaskKey) as string;
-    for (const dependencyKey of task.dependencies) {
-      const dependsOnTaskId = taskIdByClientKey.get(dependencyKey);
-      if (dependsOnTaskId) {
-        store.addDependency(taskId, dependsOnTaskId);
+
+  const existingTasks = prepared.map((item) => store.getTask(item.taskId));
+  if (existingTasks.every((task) => task !== null)) {
+    const runIds = new Set(existingTasks.map((task) => task!.runId));
+    if (runIds.size === 1) {
+      const existingRunId = [...runIds][0]!;
+      const existingRun = store.getRun(existingRunId);
+      if (existingRun && existingRun.status !== 'cancelled' && existingRun.status !== 'failed') {
+        await controlPlane.completeRequest(request.id, { runId: existingRunId, planId, planHash });
+        return { ok: true, runId: existingRunId, safeError: null };
       }
     }
+  }
+
+  if (controlPlane.notePlanningProgress) {
+    try {
+      await controlPlane.notePlanningProgress(request.id, { approvalStatus: 'Creating run' });
+    } catch {
+      // Approval progress is observational. Creation still proceeds.
+    }
+  }
+
+  // Durable creation through the EXISTING store APIs — never direct table edits.
+  const runId = `run-${randomUUID()}`;
+  try {
+    store.createRun({ runId, title: plan.objective.slice(0, 512), goal: plan.objective });
+    const taskIdByClientKey = new Map<string, string>();
+    for (const item of prepared) {
+      store.createTask({
+        taskId: item.taskId,
+        runId,
+        title: item.task.title.slice(0, 512),
+        goal: item.task.goal,
+        position: item.index,
+        spec: item.spec as unknown as JsonValue,
+      });
+      taskIdByClientKey.set(item.task.clientTaskKey, item.taskId);
+    }
+    for (const task of plan.tasks) {
+      const taskId = taskIdByClientKey.get(task.clientTaskKey) as string;
+      for (const dependencyKey of task.dependencies) {
+        const dependsOnTaskId = taskIdByClientKey.get(dependencyKey);
+        if (dependsOnTaskId) {
+          store.addDependency(taskId, dependsOnTaskId);
+        }
+      }
+    }
+  } catch (error) {
+    const created = store.getRun(runId);
+    if (created?.status === 'pending') {
+      try {
+        store.transitionRun(runId, 'cancelled');
+      } catch {
+        // The creation error remains the owner-facing failure.
+      }
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    await controlPlane.failRequest(
+      request.id,
+      `APPROVE_CREATE_FAILED: ${detail}`.slice(0, REQUEST_ERROR_LIMIT),
+    );
+    return { ok: false, runId: null, safeError: 'APPROVE_CREATE_FAILED' };
   }
 
   await controlPlane.completeRequest(request.id, { runId, planId, planHash });

@@ -194,6 +194,11 @@ function serializeOptionalJson(value: JsonValue | null | undefined, fieldName: s
   return serialized;
 }
 
+/** Same byte check createTask uses, so approval can reject an oversized spec before any run is written. */
+export function assertOptionalJsonWithinLimit(value: JsonValue, fieldName: string): void {
+  serializeOptionalJson(value, fieldName);
+}
+
 function parseJsonText(value: string | null): JsonValue | null {
   if (value === null) {
     return null;

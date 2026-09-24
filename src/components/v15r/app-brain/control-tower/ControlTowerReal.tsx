@@ -12,7 +12,7 @@ import { EMPTY_NEXT_RUN_ROUTING, loadNextRunRouting, type NextRunRouting } from 
 
 export default function ControlTowerReal(props: { pollIntervalMs?: number }) {
   const tower = useControlTowerReal({ pollIntervalMs: props.pollIntervalMs })
-  const { phase, presence, plan, planError, planningStatus, runHistory, draft, busy, contextError } = tower
+  const { phase, presence, plan, planError, planningStatus, approvalStatus, runHistory, draft, busy, contextError } = tower
   const [mode, setMode] = useState<'live' | 'preview'>('live')
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -48,18 +48,21 @@ export default function ControlTowerReal(props: { pollIntervalMs?: number }) {
       <AlertTriangle size={16} aria-hidden="true" />
       <p>{planError}</p>
       {phase === 'plan-error' && <button type="button" className="ct-secondary" onClick={() => tower.retryPlanning().catch(error => { setSubmitError(error instanceof Error ? error.message : String(error)) })}>Try Planning Again</button>}
+      {phase === 'approving-error' && planError.startsWith('Run could not be created.') && <button type="button" className="ct-secondary" onClick={() => tower.approvePlan().catch(error => { setSubmitError(error instanceof Error ? error.message : String(error)) })}>Try approval again</button>}
       <button type="button" className="ct-secondary" onClick={tower.editScope}>Edit Scope</button>
-      <button type="button" className="ct-secondary" onClick={tower.cancelPlanReview}>Dismiss</button>
+      <button type="button" className="ct-secondary" onClick={tower.cancelPlanReview}>{phase === 'approving-error' ? 'Cancel' : 'Dismiss'}</button>
     </section>}
 
-    {phase === 'plan-review' && plan && <PlanReview plan={plan} busy={busy} onApprove={() => tower.approvePlan().catch(error => { setSubmitError(error instanceof Error ? error.message : String(error)) })} onEditScope={tower.editScope} onCancel={tower.cancelPlanReview} />}
+    {(phase === 'plan-review' || (phase === 'approving-error' && plan)) && plan && <PlanReview plan={plan} busy={busy} onApprove={() => tower.approvePlan().catch(error => { setSubmitError(error instanceof Error ? error.message : String(error)) })} onEditScope={tower.editScope} onCancel={tower.cancelPlanReview} />}
 
     {phase === 'approving' && <section className="ct-planning" aria-live="polite">
       <TowerPanel title="Run starting" className="ct-planning-panel">
-        <p className="ct-planning-line">The approved plan is starting. The local Host is creating the Run and Tasks.</p>
-        <p className="ct-muted">The live run view appears as soon as the first snapshot is published.</p>
+        <p className="ct-planning-line">{approvalStatus ?? 'Submitting approval'}</p>
+        <p className="ct-muted">The run appears here only after the Host publishes it. Nothing is shown as started before that.</p>
       </TowerPanel>
     </section>}
+
+    {phase === 'run' && approvalStatus === 'Starting tasks' && <p className="ct-planning-line" aria-live="polite">Starting tasks</p>}
 
     {(phase === 'run' || phase === 'idle' || phase === 'unavailable') && <>
       {run ? <RunCommand run={run} scopeTitle={tower.scopePacks[0]?.title} scopePhase={tower.scopePacks[0] ? `${tower.scopePacks[0].currentPhaseTitle ?? tower.scopePacks[0].currentPhaseId ?? ''}`.trim() || null : null} actions={<>{newRun}{isActiveSession(run) && <button type="button" className="ct-secondary" disabled={busy} onClick={() => tower.cancelRun(run.runId).catch(error => setSubmitError(error instanceof Error ? error.message : String(error)))}>Cancel Run</button>}</>} /> : <section className="ct-idle-command"><div><span className="ct-eyebrow">Ready when you are</span><h2>Plan your next run</h2><p>{hostConnected ? 'Describe the work. Review the plan before execution.' : 'No local Host is connected for this repository.'}</p></div>{newRun}</section>}

@@ -34,6 +34,7 @@ vi.mock('@/features/control-tower/controlTowerService', () => ({
   fetchHostPresenceRows: (organizationId: string) => holder.service!.fetchHostPresenceRows(organizationId),
   insertControlRequest: (input: Parameters<ControlTowerServiceApi['insertControlRequest']>[0]) => holder.service!.insertControlRequest(input),
   fetchControlRequest: (organizationId: string, clientRequestId: string) => holder.service!.fetchControlRequest(organizationId, clientRequestId),
+  fetchRecentControlRequests: (organizationId: string, repoKey: string, limit?: number) => holder.service!.fetchRecentControlRequests?.(organizationId, repoKey, limit) ?? Promise.resolve([]),
   fetchRunSnapshotRows: (organizationId: string, limit?: number) => holder.service!.fetchRunSnapshotRows(organizationId, limit),
   fetchScopePackRows: (organizationId: string, repoKey: string) => holder.service!.fetchScopePackRows?.(organizationId, repoKey) ?? Promise.resolve([]),
 }))
@@ -67,6 +68,17 @@ class FakeService implements ControlTowerServiceApi {
   }
   fetchControlRequest(_organizationId: string, clientRequestId: string): Promise<ControlRequestRow | null> {
     return Promise.resolve(this.requests.get(clientRequestId) ?? null)
+  }
+  fetchRecentControlRequests(_organizationId: string, repoKey: string): Promise<ControlRequestRow[]> {
+    return Promise.resolve([...this.requests.values()].filter((row) => row.repo_key === repoKey).reverse())
+  }
+  seedRequest(row: ControlRequestRow): void {
+    this.requests.set(row.client_request_id, row)
+  }
+  claimRequest(clientRequestId: string): void {
+    const row = this.requests.get(clientRequestId)
+    if (!row) throw new Error(`No fake request ${clientRequestId}`)
+    row.status = 'claimed'
   }
   fetchRunSnapshotRows(): Promise<RunSnapshotRow[]> { return Promise.resolve(this.snapshots) }
   fetchScopePackRows(): Promise<[]> { return Promise.resolve([]) }
@@ -147,6 +159,7 @@ function presenceRow(lastSeen: Date): HostPresenceRow {
 function wireSnapshot(overrides?: {
   runId?: string
   runStatus?: string
+  title?: string
   taskStatuses?: [string, string]
   verification?: { verdict: 'pass' | 'fail' | 'unknown'; summary: string | null } | null
   changeset?: { ready: boolean; changeCount: number; safePaths: string[] } | null
@@ -156,7 +169,7 @@ function wireSnapshot(overrides?: {
   const runStatus = overrides?.runStatus ?? 'running'
   const snapshot = {
     schemaVersion: 1,
-    run: { runId, title: 'Smoke marker run', objective: 'Create the smoke marker file', status: runStatus, createdAt: NOW, updatedAt: NOW, startedAt: NOW, completedAt: null },
+    run: { runId, title: overrides?.title ?? 'Smoke marker run', objective: 'Create the smoke marker file', status: runStatus, createdAt: NOW, updatedAt: NOW, startedAt: NOW, completedAt: null },
     tasks: [
       { taskId: 'task-1', clientTaskKey: 'T1', title: 'Create marker file', role: 'implementer', status: t1, position: 1, dependencies: [], plannedAreas: ['agent-host/smoke'], permissionProfile: 'isolated-implementer' },
       { taskId: 'task-2', clientTaskKey: 'T2', title: 'Verify marker file', role: 'verifier', status: t2, position: 2, dependencies: ['T1'], plannedAreas: [], permissionProfile: 'read-only-verifier' },
@@ -379,6 +392,7 @@ describe('CT-CORE-1 plan review and approval', () => {
   it('approves the exact plan by planId and planHash', async () => {
     await driveToPlanReview()
     click(button('Approve Run'))
+    await settle()
     expect(fake.inserted).toHaveLength(2)
     const approval = fake.inserted[1]
     expect(approval.requestType).toBe('approve_plan')
@@ -391,8 +405,8 @@ describe('CT-CORE-1 plan review and approval', () => {
   it('shows the Run only after the approved plan starts it via the Host', async () => {
     await driveToPlanReview()
     click(button('Approve Run'))
-    const approval = fake.inserted[1]
     await settle()
+    const approval = fake.inserted[1]
     expect(container.querySelector('.ct-run')).toBeNull() // approving — not started yet
     fake.completeRequest(approval.clientRequestId, { runId: 'run-9' })
     await waitForPoll()
@@ -597,6 +611,158 @@ describe('CT-LIVE-0A0 plan failure recovery', () => {
     await renderLive()
     expect(container.textContent).toContain('Plan your next run')
     expect(container.textContent).not.toContain('one automatic correction attempt')
+  })
+})
+
+describe('CT-LIVE-0A1 approval to run', () => {
+  function activeCount(): string {
+    const active = [...container.querySelectorAll('.ct-history-filters button')].find((item) => item.textContent?.startsWith('Active'))
+    return active?.querySelector('.ct-count')?.textContent ?? ''
+  }
+
+  it('keeps a failed approval on the plan and does not select an older completed run', async () => {
+    await driveToPlanReview()
+    fake.snapshots = [wireSnapshot({ runId: 'run-old', runStatus: 'completed', title: 'Older completed E2E', taskStatuses: ['passed', 'passed'] })]
+    click(button('Approve Run'))
+    await settle()
+    const approval = fake.inserted[1]
+    expect(approval.requestType).toBe('approve_plan')
+    expect(approval.payload).toEqual({ planId: PLAN_ID, planHash: PLAN_HASH })
+    fake.failRequest(approval.clientRequestId, 'REQUEST_HANDLER_FAILED: spec exceeds 8192 UTF-8 bytes.')
+    await waitForPoll()
+    expect(container.textContent).toContain('Run could not be created.')
+    expect(container.textContent).toContain('Approval request row-2 failed:')
+    expect(container.textContent).toContain('spec exceeds 8192 UTF-8 bytes.')
+    expect(container.querySelector('.ct-run')).toBeNull()
+    expect(container.textContent).not.toContain('Older completed E2E')
+    expect(container.querySelector('.ct-plan-review')).not.toBeNull()
+  })
+
+  it('retries a terminal approval as a new request for the same plan', async () => {
+    await driveToPlanReview()
+    click(button('Approve Run'))
+    await settle()
+    const first = fake.inserted[1]
+    fake.failRequest(first.clientRequestId, 'PLAN_HASH_MISMATCH: The plan hash does not match the approved plan.')
+    await waitForPoll()
+    expect(container.textContent).toContain('PLAN_HASH_MISMATCH')
+    click(button('Try approval again'))
+    await settle()
+    const second = fake.inserted[2]
+    expect(second.requestType).toBe('approve_plan')
+    expect(second.clientRequestId).not.toBe(first.clientRequestId)
+    expect(second.payload).toEqual(first.payload)
+    expect(fake.requestStatus(first.clientRequestId)).toBe('failed')
+  })
+
+  it('shows host approval progress and selects the new run instead of an older session', async () => {
+    await driveToPlanReview()
+    fake.snapshots = [wireSnapshot({ runId: 'run-old', runStatus: 'completed', title: 'Older completed E2E', taskStatuses: ['passed', 'passed'] })]
+    click(button('Approve Run'))
+    await settle()
+    const approval = fake.inserted[1]
+    expect(container.textContent).toContain('Approval queued')
+    fake.claimRequest(approval.clientRequestId)
+    await waitForPoll()
+    expect(container.textContent).toContain('Host processing approval')
+    fake.noteProgress(approval.clientRequestId, { approvalStatus: 'Creating run' })
+    await waitForPoll()
+    expect(container.textContent).toContain('Creating run')
+    fake.completeRequest(approval.clientRequestId, { runId: 'run-new', planId: PLAN_ID, planHash: PLAN_HASH })
+    await waitForPoll()
+    expect(container.textContent).toContain('Run created')
+    expect(container.querySelector('.ct-run')).toBeNull()
+    fake.snapshots = [
+      wireSnapshot({ runId: 'run-old', runStatus: 'completed', title: 'Older completed E2E', taskStatuses: ['passed', 'passed'] }),
+      wireSnapshot({ runId: 'run-new', runStatus: 'pending', title: 'New approved run', taskStatuses: ['pending', 'pending'] }),
+    ]
+    await waitForPoll()
+    expect(container.textContent).toContain('Starting tasks')
+    expect(container.querySelector('.ct-run h2')?.textContent).toContain('New approved run')
+    expect(container.querySelector('.ct-run h2')?.textContent).not.toContain('Older completed E2E')
+    expect(activeCount()).toBe('1')
+    fake.snapshots = [
+      wireSnapshot({ runId: 'run-old', runStatus: 'completed', title: 'Older completed E2E', taskStatuses: ['passed', 'passed'] }),
+      wireSnapshot({ runId: 'run-new', runStatus: 'running', title: 'New approved run' }),
+    ]
+    await waitForPoll()
+    expect(container.querySelector('.ct-run h2')?.textContent).toContain('New approved run')
+    expect(activeCount()).toBe('1')
+  })
+
+  it('does not insert a second approval for a double click or an approval that already created a run', async () => {
+    await driveToPlanReview()
+    const approve = button('Approve Run')
+    await act(async () => {
+      approve.click()
+      approve.click()
+    })
+    await settle()
+    expect(fake.inserted.filter((row) => row.requestType === 'approve_plan')).toHaveLength(1)
+
+    act(() => root.unmount())
+    root = createRoot(container)
+    fake = new FakeService()
+    holder.service = fake
+    await driveToPlanReview()
+    fake.seedRequest({
+      id: 'approval-existing',
+      request_type: 'approve_plan',
+      client_request_id: 'approval-existing-client',
+      repo_key: 'repo-key-1',
+      status: 'completed',
+      payload: { planId: PLAN_ID, planHash: PLAN_HASH },
+      result: { runId: 'run-existing', planId: PLAN_ID, planHash: PLAN_HASH },
+      error: null,
+      created_at: '2026-09-24T03:00:00Z',
+    })
+    click(button('Approve Run'))
+    await settle()
+    expect(fake.inserted.filter((row) => row.requestType === 'approve_plan')).toHaveLength(0)
+    expect(container.textContent).toContain('Run created')
+  })
+
+  it('recovers a pending approval after reload and leaves historical selection alone when nothing is in flight', async () => {
+    fake.presenceRows = [presenceRow(new Date())]
+    fake.snapshots = [wireSnapshot({ runId: 'run-old', runStatus: 'completed', title: 'Older completed E2E', taskStatuses: ['passed', 'passed'] })]
+    fake.seedRequest({
+      id: 'approval-pending',
+      request_type: 'approve_plan',
+      client_request_id: 'approval-pending-client',
+      repo_key: 'repo-key-1',
+      status: 'pending',
+      payload: { planId: PLAN_ID, planHash: PLAN_HASH },
+      result: null,
+      error: null,
+      created_at: '2026-09-24T03:10:00Z',
+    })
+    await renderLive()
+    await waitForPoll()
+    expect(container.textContent).toContain('Approval queued')
+    expect(container.querySelector('.ct-run')).toBeNull()
+    expect(container.textContent).not.toContain('Older completed E2E')
+
+    act(() => root.unmount())
+    root = createRoot(container)
+    fake = new FakeService()
+    holder.service = fake
+    fake.presenceRows = [presenceRow(new Date())]
+    fake.snapshots = [wireSnapshot({ runId: 'run-old', runStatus: 'completed', title: 'Older completed E2E', taskStatuses: ['passed', 'passed'] })]
+    fake.seedRequest({
+      id: 'approval-failed',
+      request_type: 'approve_plan',
+      client_request_id: 'approval-failed-client',
+      repo_key: 'repo-key-1',
+      status: 'failed',
+      payload: { planId: PLAN_ID, planHash: PLAN_HASH },
+      result: null,
+      error: 'TASK_SPEC_TOO_LARGE: spec exceeds 8192 UTF-8 bytes.',
+      created_at: '2026-09-24T03:12:00Z',
+    })
+    await renderLive()
+    await waitForPoll()
+    expect(container.textContent).toContain('Older completed E2E')
+    expect(container.textContent).not.toContain('Run could not be created.')
   })
 })
 
