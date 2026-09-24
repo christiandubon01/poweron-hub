@@ -25,8 +25,10 @@ import {
   type PlanRole,
   type PlanTask,
   type PlanValidationCode,
+  type PlanValidationIssue,
 } from './types.ts';
 import { parseCreatePlanScopePackFields } from './scopePack.ts';
+import { isEffortLevel } from '../providers/effort.ts';
 import type { ExecutionResult, PermissionProfile, ProviderId } from '../providers/types.ts';
 
 export const ARCHITECT_TIMEOUT_MS = 10 * 60_000;
@@ -42,6 +44,37 @@ export interface PlanParseFailure {
   code: PlanParseFailureCode;
   message: string;
   validationErrors?: PlanValidationCode[];
+  validationIssues?: PlanValidationIssue[];
+}
+
+/** One canonical requirement contract. Prompt, parser, and validator all use string[]. */
+export const PLAN_REQUIREMENT_CONTRACT =
+  'validationRequirements is a JSON array of plain strings. Each string is one verifier check, 1 to 1000 characters. At most 16 items. Do not use objects, numbers, or nested arrays. Use [] when a task has no checks.';
+
+export const MAX_AUTOMATIC_PLAN_REPAIRS = 1;
+
+export const PLANNING_STATUS_LINES = {
+  received: 'Architect plan received',
+  validating: 'Validating plan',
+  needsCorrection: 'Plan format needs correction',
+  correcting: 'Architect correcting plan',
+  validatingCorrected: 'Validating corrected plan',
+} as const;
+
+const NON_REPAIRABLE_PLAN_CODES = new Set<PlanValidationCode>([
+  'AUDIT_WRITE_FORBIDDEN',
+  'WRITE_PATH_INVALID',
+]);
+
+export interface SafePlanValidationRecord {
+  repairAttempt: number;
+  final: 'valid' | 'invalid';
+  errors: PlanValidationCode[];
+  issues: PlanValidationIssue[];
+}
+
+export function isRepairablePlanValidation(errors: readonly PlanValidationCode[]): boolean {
+  return errors.length > 0 && errors.every((code) => !NON_REPAIRABLE_PLAN_CODES.has(code));
 }
 
 export interface PlanParseSuccess {
@@ -98,7 +131,7 @@ export function buildArchitectPrompt(payload: CreatePlanPayload): string {
   lines.push('- Verifier tasks must set authorizedWritePaths to [] (they are read-only).');
   lines.push('- plannedAreas lists repo-relative areas (files or directories) the task is expected to touch. Writes outside those areas are drift and require owner approval.');
   lines.push('- provider must be one of: ' + PLAN_PROVIDER_IDS.join(', ') + '. requestedModel may be null (no preference).');
-  lines.push('- validationRequirements lists the concrete checks the verifier must perform.');
+  lines.push(`- ${PLAN_REQUIREMENT_CONTRACT}`);
   lines.push('');
   lines.push('JSON shape (all fields required unless noted):');
   lines.push('```json');
@@ -137,6 +170,166 @@ export function buildArchitectPrompt(payload: CreatePlanPayload): string {
   }, null, 2));
   lines.push('```');
   return lines.join('\n');
+}
+
+export function ownerPlanValidationMessage(record: SafePlanValidationRecord): string {
+  const lines: string[] = [];
+  if (record.repairAttempt > 0) {
+    lines.push('Plan could not be validated after one automatic correction attempt.');
+  } else {
+    lines.push('The Architect plan failed validation.');
+  }
+  const requirement = record.issues.find((issue) => issue.code === 'VALIDATION_REQUIREMENTS_INVALID');
+  if (requirement) {
+    const taskLabel = requirement.taskIndex === null ? 'A task' : `Task ${requirement.taskIndex + 1}`;
+    lines.push(`${taskLabel} requirements:`);
+    lines.push('Expected an array of plain strings, each 1–1000 characters, at most 16.');
+    if (requirement.receivedShape.includes('object') || requirement.receivedShape.includes('other') || requirement.receivedShape.startsWith('object') || requirement.receivedShape.startsWith('string(length') || requirement.receivedShape === 'number' || requirement.receivedShape === 'boolean' || requirement.receivedShape === 'null') {
+      lines.push(`Received incompatible requirement structure: ${requirement.receivedShape}.`);
+    } else {
+      lines.push(`Received ${requirement.receivedShape}.`);
+    }
+  } else if (record.errors.length > 0) {
+    lines.push(`${record.errors.join(', ')}.`);
+  }
+  return lines.join('\n').slice(0, 900);
+}
+
+export function buildArchitectCorrectionPrompt(options: {
+  originalPrompt: string;
+  errors: readonly PlanValidationCode[];
+  issues: readonly PlanValidationIssue[];
+  previousPlan: Record<string, unknown> | null;
+}): string {
+  const issueLines = options.issues.slice(0, 8).map((issue) => {
+    const where = issue.taskKey ? `${issue.field} (${issue.taskKey})` : issue.field;
+    return `- ${where}: ${issue.code}; received ${issue.receivedShape}`;
+  });
+  const previous = options.previousPlan ? boundedPlanJson(options.previousPlan) : '';
+  return [
+    options.originalPrompt,
+    '',
+    'CORRECTION TURN 1 of 1:',
+    'The previous JSON plan failed deterministic validation. Return ONLY one corrected complete plan JSON object in a ```json fence.',
+    'Do not explain the correction. Do not execute any implementation or verification.',
+    'Keep the same owner scope, constraints, and task intent. Change only what validation rejected.',
+    PLAN_REQUIREMENT_CONTRACT,
+    `Validation codes: ${options.errors.join(', ')}`,
+    'Malformed fields:',
+    ...(issueLines.length > 0 ? issueLines : ['- plan: rejected']),
+    ...(previous ? ['', 'Previous plan JSON:', previous] : []),
+  ].join('\n');
+}
+
+function boundedPlanJson(plan: Record<string, unknown>): string {
+  const text = JSON.stringify(plan, (_key, value: unknown) => {
+    if (typeof value === 'string' && value.length > 1_000) {
+      return `[string length ${value.length}]`;
+    }
+    return value;
+  });
+  return text.length > 24_000 ? `${text.slice(0, 24_000)}…` : text;
+}
+
+export async function resolveArchitectPlan(options: {
+  prompt: string;
+  scope: string;
+  constraints: string[];
+  provider: ProviderId;
+  executionIntent?: PhaseExecutionIntent;
+  execute: (request: { prompt: string; executionId: string }) => Promise<ExecutionResult>;
+  onStatus?: (line: string) => Promise<void>;
+}): Promise<
+  | { ok: true; result: CreatePlanRequestResult; validation: SafePlanValidationRecord }
+  | { ok: false; failure: PlanParseFailure; validation: SafePlanValidationRecord; ownerMessage: string }
+> {
+  const first = await options.execute({ prompt: options.prompt, executionId: 'plan' });
+  if (!first.provider.success) {
+    const parsed = parseArchitectPlan({
+      scope: options.scope,
+      constraints: options.constraints,
+      provider: options.provider,
+      result: first,
+      executionIntent: options.executionIntent,
+    });
+    const validation: SafePlanValidationRecord = { repairAttempt: 0, final: 'invalid', errors: [], issues: [] };
+    return {
+      ok: false,
+      failure: parsed.ok ? { code: 'ARCHITECT_TURN_FAILED', message: 'Architect provider turn failed.' } : parsed.failure,
+      validation,
+      ownerMessage: parsed.ok ? 'ARCHITECT_TURN_FAILED' : `${parsed.failure.code}: ${parsed.failure.message}`,
+    };
+  }
+
+  await options.onStatus?.(PLANNING_STATUS_LINES.received);
+  await options.onStatus?.(PLANNING_STATUS_LINES.validating);
+  const parsed = parseArchitectPlan({
+    scope: options.scope,
+    constraints: options.constraints,
+    provider: options.provider,
+    result: first,
+    executionIntent: options.executionIntent,
+  });
+  if (parsed.ok) {
+    return {
+      ok: true,
+      result: parsed.result,
+      validation: { repairAttempt: 0, final: 'valid', errors: [], issues: [] },
+    };
+  }
+
+  const errors = parsed.failure.validationErrors ?? [];
+  const issues = parsed.failure.validationIssues ?? [];
+  const canRepair = parsed.failure.code === 'PLAN_VALIDATION_FAILED' && isRepairablePlanValidation(errors);
+  if (!canRepair) {
+    const validation: SafePlanValidationRecord = { repairAttempt: 0, final: 'invalid', errors, issues };
+    return {
+      ok: false,
+      failure: parsed.failure,
+      validation,
+      ownerMessage: `${parsed.failure.code}: ${parsed.failure.message}`,
+    };
+  }
+
+  await options.onStatus?.(PLANNING_STATUS_LINES.needsCorrection);
+  await options.onStatus?.(PLANNING_STATUS_LINES.correcting);
+  const previousPlan = extractPlanJsonObject(first.output.finalText ?? '');
+  const corrected = await options.execute({
+    prompt: buildArchitectCorrectionPrompt({
+      originalPrompt: options.prompt,
+      errors,
+      issues,
+      previousPlan,
+    }),
+    executionId: 'plan:repair:1',
+  });
+  await options.onStatus?.(PLANNING_STATUS_LINES.validatingCorrected);
+  const repaired = parseArchitectPlan({
+    scope: options.scope,
+    constraints: options.constraints,
+    provider: options.provider,
+    result: corrected,
+    executionIntent: options.executionIntent,
+  });
+  if (repaired.ok) {
+    return {
+      ok: true,
+      result: repaired.result,
+      validation: { repairAttempt: 1, final: 'valid', errors, issues },
+    };
+  }
+  const finalErrors = repaired.failure.validationErrors ?? errors;
+  const finalIssues = repaired.failure.validationIssues ?? issues;
+  const validation: SafePlanValidationRecord = {
+    repairAttempt: 1,
+    final: 'invalid',
+    errors: finalErrors,
+    issues: finalIssues,
+  };
+  const ownerMessage = repaired.failure.code === 'PLAN_VALIDATION_FAILED'
+    ? `PLAN_VALIDATION_FAILED: ${ownerPlanValidationMessage(validation)}`
+    : `${repaired.failure.code}: ${repaired.failure.message}`;
+  return { ok: false, failure: repaired.failure, validation, ownerMessage };
 }
 
 /**
@@ -186,8 +379,14 @@ export function parseArchitectPlan(options: {
       ok: false,
       failure: {
         code: 'PLAN_VALIDATION_FAILED',
-        message: `The Architect plan failed validation: ${validation.errors.join(', ')}.`,
+        message: ownerPlanValidationMessage({
+          repairAttempt: 0,
+          final: 'invalid',
+          errors: validation.errors,
+          issues: validation.issues,
+        }),
         validationErrors: validation.errors,
+        validationIssues: validation.issues,
       },
     };
   }
@@ -485,9 +684,13 @@ export function parseCreatePlanPayload(raw: unknown): { ok: true; payload: Creat
         return { ok: false, code: 'ROUTING_INVALID', message: 'requestedRouting.requestedModel must be a string of 1-200 characters.' };
       }
     }
+    if (routing.reasoningEffort !== undefined && routing.reasoningEffort !== null && !isEffortLevel(routing.reasoningEffort)) {
+      return { ok: false, code: 'ROUTING_INVALID', message: 'requestedRouting.reasoningEffort must be low, medium, high, or extra-high.' };
+    }
     requestedRouting = {
       provider: typeof routing.provider === 'string' ? (routing.provider as ProviderId) : undefined,
       requestedModel: typeof routing.requestedModel === 'string' ? routing.requestedModel : undefined,
+      ...(isEffortLevel(routing.reasoningEffort) ? { reasoningEffort: routing.reasoningEffort } : {}),
     };
   }
 

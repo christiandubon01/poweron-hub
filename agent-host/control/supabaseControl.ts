@@ -155,13 +155,27 @@ export class ControlPlane implements ScopePackStore {
     }
   }
 
-  async failRequest(requestId: string, safeError: string): Promise<void> {
+  async notePlanningProgress(requestId: string, progress: Record<string, unknown>): Promise<void> {
+    const { error } = await this.client
+      .from('agent_control_requests')
+      .update({ result: progress })
+      .eq('id', requestId)
+      .eq('organization_id', this.config.organizationId)
+      .eq('repo_key', this.config.repoKey)
+      .eq('status', 'claimed');
+    if (error) {
+      throw new Error(`Failed to record planning progress for ${requestId}: ${error.message}`);
+    }
+  }
+
+  async failRequest(requestId: string, safeError: string, result?: Record<string, unknown>): Promise<void> {
     const { error } = await this.client
       .from('agent_control_requests')
       .update({
         status: 'failed',
         completed_at: new Date().toISOString(),
         error: safeError.slice(0, 1_000),
+        ...(result ? { result } : {}),
       })
       .eq('id', requestId)
       .eq('organization_id', this.config.organizationId)

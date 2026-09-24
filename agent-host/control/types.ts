@@ -136,9 +136,19 @@ export type PlanValidationCode =
   | 'CONSTRAINT_INVALID'
   | 'AUDIT_WRITE_FORBIDDEN';
 
+/** Safe structural description of a rejected value. Never includes string contents. */
+export interface PlanValidationIssue {
+  code: PlanValidationCode;
+  taskIndex: number | null;
+  taskKey: string | null;
+  field: string;
+  receivedShape: string;
+}
+
 export interface PlanValidationResult {
   ok: boolean;
   errors: PlanValidationCode[];
+  issues: PlanValidationIssue[];
   plan: ControlPlan | null;
 }
 
@@ -152,8 +162,8 @@ export type PhaseExecutionIntent = 'audit' | 'implementation' | 'verification' |
 export interface CreatePlanPayload {
   scope: string;
   constraints: string[];
-  /** Optional provider/model preference from the owner. Never a guarantee. */
-  requestedRouting: { provider?: string; requestedModel?: string } | null;
+  /** Optional provider/model/effort preference from the owner. Never a guarantee. */
+  requestedRouting: { provider?: string; requestedModel?: string; reasoningEffort?: 'low' | 'medium' | 'high' | 'extra-high' } | null;
   /** Optional Scope Pack binding. Absent = existing create_plan behavior. */
   scopePackId?: string;
   scopePackVersion?: number;
@@ -431,6 +441,64 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+const SHAPE_MAX_CHARS = 160;
+
+/**
+ * Bounded type summary for validation evidence. String contents are omitted;
+ * only lengths, counts, and object keys are kept.
+ */
+export function describeJsonShape(value: unknown): string {
+  const text = describeJsonShapeInner(value);
+  return text.length > SHAPE_MAX_CHARS ? `${text.slice(0, SHAPE_MAX_CHARS - 1)}…` : text;
+}
+
+function describeJsonShapeInner(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'missing';
+  if (typeof value === 'string') return `string(length:${value.length})`;
+  if (typeof value === 'number') return 'number';
+  if (typeof value === 'boolean') return 'boolean';
+  if (Array.isArray(value)) return describeArrayShape(value);
+  if (typeof value === 'object') {
+    const keys = Object.keys(value).slice(0, 6);
+    const more = Object.keys(value).length > 6 ? ',…' : '';
+    return `object{keys:${keys.join(',')}${more}}`;
+  }
+  return typeof value;
+}
+
+function describeArrayShape(values: unknown[]): string {
+  if (values.length === 0) return 'array(0)';
+  let stringCount = 0;
+  let emptyString = 0;
+  let maxString = 0;
+  let objectCount = 0;
+  let otherCount = 0;
+  const objectKeys = new Set<string>();
+  for (const entry of values) {
+    if (typeof entry === 'string') {
+      stringCount += 1;
+      if (entry.length === 0) emptyString += 1;
+      maxString = Math.max(maxString, entry.length);
+    } else if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      objectCount += 1;
+      for (const key of Object.keys(entry).slice(0, 6)) objectKeys.add(key);
+    } else {
+      otherCount += 1;
+    }
+  }
+  const parts: string[] = [];
+  if (stringCount > 0) {
+    parts.push(`string(maxLength:${maxString}${emptyString > 0 ? `,empty:${emptyString}` : ''})`);
+  }
+  if (objectCount > 0) {
+    const keys = [...objectKeys].sort().slice(0, 6).join(',');
+    parts.push(`object{keys:${keys}}`);
+  }
+  if (otherCount > 0) parts.push('other');
+  return `array(${values.length}) of ${parts.join(' + ')}`;
+}
+
 function readStringArray(value: unknown, maxEntries: number, maxChars: number): string[] | null {
   if (!Array.isArray(value) || value.length === 0) {
     return null;
@@ -473,16 +541,58 @@ function normalizeSafePathArray(value: unknown, maxEntries: number): string[] | 
  * profiles, normalized non-traversal paths, ≥1 implementer, ≥1 verifier, and a
  * verifier that depends on at least one implementer task.
  */
+function validationFieldForCode(code: PlanValidationCode): string {
+  switch (code) {
+    case 'VALIDATION_REQUIREMENTS_INVALID':
+      return 'validationRequirements';
+    case 'OBJECTIVE_MISSING':
+    case 'OBJECTIVE_TOO_LONG':
+      return 'objective';
+    case 'TASKS_EMPTY':
+    case 'TASKS_NOT_ARRAY':
+    case 'TOO_MANY_TASKS':
+      return 'tasks';
+    case 'CONSTRAINT_INVALID':
+      return 'constraints';
+    case 'RISK_SUMMARY_TOO_LONG':
+      return 'riskSummary';
+    default:
+      return 'plan';
+  }
+}
+
+function withIssues(errors: PlanValidationCode[], issues: PlanValidationIssue[]): PlanValidationIssue[] {
+  const next = [...issues];
+  for (const code of errors) {
+    if (next.length >= 8) break;
+    if (!next.some((issue) => issue.code === code)) {
+      next.push({
+        code,
+        taskIndex: null,
+        taskKey: null,
+        field: validationFieldForCode(code),
+        receivedShape: 'rejected',
+      });
+    }
+  }
+  return next;
+}
+
+function invalidPlan(errors: PlanValidationCode[], issues: PlanValidationIssue[] = []): PlanValidationResult {
+  return { ok: false, errors, issues: withIssues(errors, issues), plan: null };
+}
+
 export function validatePlan(input: unknown, options: { executionIntent?: PhaseExecutionIntent } = {}): PlanValidationResult {
   if (!isRecord(input)) {
-    return { ok: false, errors: ['PLAN_NOT_OBJECT'], plan: null };
+    return invalidPlan(['PLAN_NOT_OBJECT']);
   }
   const planId = readString(input.planId);
   if (!planId) {
-    return { ok: false, errors: ['PLAN_NOT_OBJECT'], plan: null };
+    return invalidPlan(['PLAN_NOT_OBJECT']);
   }
 
   const errors: PlanValidationCode[] = [];
+  const issues: PlanValidationIssue[] = [];
   const objective = readString(input.objective);
   if (!objective) {
     errors.push('OBJECTIVE_MISSING');
@@ -516,11 +626,12 @@ export function validatePlan(input: unknown, options: { executionIntent?: PhaseE
   if (!Array.isArray(input.tasks) || input.tasks.length === 0) {
     if (auditLike) {
       if (errors.length > 0) {
-        return { ok: false, errors, plan: null };
+        return invalidPlan(errors, issues);
       }
       return {
         ok: true,
         errors: [],
+        issues: [],
         plan: {
           planId,
           objective: objective ?? '',
@@ -531,7 +642,7 @@ export function validatePlan(input: unknown, options: { executionIntent?: PhaseE
         },
       };
     }
-    return { ok: false, errors: [...errors, 'TASKS_EMPTY'], plan: null };
+    return invalidPlan([...errors, Array.isArray(input.tasks) ? 'TASKS_EMPTY' : 'TASKS_NOT_ARRAY'], issues);
   }
   if (input.tasks.length > PLAN_FIELD_LIMITS.maxTasks) {
     errors.push('TOO_MANY_TASKS');
@@ -543,7 +654,7 @@ export function validatePlan(input: unknown, options: { executionIntent?: PhaseE
   const verifierKeys = new Set<string>();
   const verifierDependsOnImplementer = new Set<string>();
 
-  for (const rawTask of input.tasks) {
+  for (const [taskIndex, rawTask] of input.tasks.entries()) {
     if (!isRecord(rawTask)) {
       errors.push('TASK_NOT_OBJECT');
       continue;
@@ -671,6 +782,15 @@ export function validatePlan(input: unknown, options: { executionIntent?: PhaseE
       );
       if (!parsed) {
         errors.push('VALIDATION_REQUIREMENTS_INVALID');
+        if (issues.length < 8) {
+          issues.push({
+            code: 'VALIDATION_REQUIREMENTS_INVALID',
+            taskIndex,
+            taskKey: clientTaskKey,
+            field: `tasks[${taskIndex}].validationRequirements`,
+            receivedShape: describeJsonShape(rawTask.validationRequirements),
+          });
+        }
       } else {
         validationRequirements = parsed;
       }
@@ -749,12 +869,13 @@ export function validatePlan(input: unknown, options: { executionIntent?: PhaseE
   }
 
   if (errors.length > 0) {
-    return { ok: false, errors, plan: null };
+    return invalidPlan(errors, issues);
   }
 
   return {
     ok: true,
     errors: [],
+    issues: [],
     plan: {
       planId,
       objective: objective ?? '',

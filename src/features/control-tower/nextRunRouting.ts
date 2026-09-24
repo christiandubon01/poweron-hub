@@ -83,13 +83,14 @@ export function saveNextRunRouting(repoKey: string | null, routing: NextRunRouti
 }
 
 /** Maps Next Run Routing onto the existing create_plan requestedRouting seam. */
-export function toRequestedRouting(routing: NextRunRouting): { provider?: string; requestedModel?: string } | null {
+export function toRequestedRouting(routing: NextRunRouting): { provider?: string; requestedModel?: string; reasoningEffort?: EffortLevel } | null {
   const architect = routing.architect
   const model = architect.customModel || architect.modelId
-  if (!architect.providerId && !model) return null
+  if (!architect.providerId && !model && !architect.effort) return null
   return {
     ...(architect.providerId ? { provider: architect.providerId } : {}),
     ...(model ? { requestedModel: model } : {}),
+    ...(architect.effort ? { reasoningEffort: architect.effort } : {}),
   }
 }
 

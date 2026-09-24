@@ -71,6 +71,23 @@ class FakeService implements ControlTowerServiceApi {
   fetchRunSnapshotRows(): Promise<RunSnapshotRow[]> { return Promise.resolve(this.snapshots) }
   fetchScopePackRows(): Promise<[]> { return Promise.resolve([]) }
 
+  noteProgress(clientRequestId: string, result: Record<string, unknown>): void {
+    const row = this.requests.get(clientRequestId)
+    if (!row) throw new Error(`No fake request ${clientRequestId}`)
+    row.result = result
+  }
+
+  failRequest(clientRequestId: string, error: string): void {
+    const row = this.requests.get(clientRequestId)
+    if (!row) throw new Error(`No fake request ${clientRequestId}`)
+    row.status = 'failed'
+    row.error = error
+  }
+
+  requestStatus(clientRequestId: string): string | null {
+    return this.requests.get(clientRequestId)?.status ?? null
+  }
+
   /** Test seam: the local Host completes a claimed request and publishes its result. */
   completeRequest(clientRequestId: string, result: Record<string, unknown>): void {
     const row = this.requests.get(clientRequestId)
@@ -515,6 +532,71 @@ describe('CT-CORE-1 live surface truth', () => {
     expect(matchNodesForPlannedAreas(nodes, ['agent-host/smoke'])).toEqual(['node-a'])
     expect(matchNodesForPlannedAreas(nodes, ['docs/unmapped'])).toEqual([])
     expect(matchNodesForPlannedAreas(nodes, [])).toEqual([])
+  })
+})
+
+describe('CT-LIVE-0A0 plan failure recovery', () => {
+  const failure = 'PLAN_VALIDATION_FAILED: Plan could not be validated after one automatic correction attempt.\nTask 1 requirements:\nExpected an array of plain strings, each 1–1000 characters, at most 16.\nReceived incompatible requirement structure: array(2) of object{keys:requirement}.'
+
+  async function driveToPlanError(): Promise<FakeInsertInput> {
+    fake.presenceRows = [presenceRow(new Date())]
+    await renderLive()
+    click(button('New Run'))
+    setControlValue(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Owner scope"]')!, 'Create the smoke marker file')
+    setControlValue(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Owner constraints"]')!, 'Do not modify any other file.')
+    click(button('Request plan'))
+    await settle()
+    const request = fake.inserted[0]
+    fake.failRequest(request.clientRequestId, failure)
+    await waitForPoll()
+    return request
+  }
+
+  it('shows a correction status only after the Host publishes it', async () => {
+    fake.presenceRows = [presenceRow(new Date())]
+    await renderLive()
+    click(button('New Run'))
+    setControlValue(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Owner scope"]')!, 'Create the smoke marker file')
+    click(button('Request plan'))
+    await settle()
+    expect(container.textContent).toContain('The local Host Architect is reading this repository')
+    expect(container.textContent).not.toContain('Architect correcting plan')
+    fake.noteProgress(fake.inserted[0].clientRequestId, { planningStatus: 'Architect correcting plan' })
+    await waitForPoll()
+    expect(container.textContent).toContain('Architect correcting plan')
+    fake.completeRequest(fake.inserted[0].clientRequestId, planResult())
+    await waitForPoll()
+    expect(container.textContent).toContain('Create the smoke marker file with exact contents')
+  })
+
+  it('keeps the failed request and starts a new one from the same owner inputs', async () => {
+    const first = await driveToPlanError()
+    expect(container.textContent).toContain('one automatic correction attempt')
+    expect(container.textContent).toContain('incompatible requirement structure')
+    click(button('Try Planning Again'))
+    await settle()
+    expect(fake.inserted).toHaveLength(2)
+    expect(fake.inserted[1].clientRequestId).not.toBe(first.clientRequestId)
+    expect(fake.inserted[1].payload.scope).toBe(first.payload.scope)
+    expect(fake.inserted[1].payload.constraints).toEqual(first.payload.constraints)
+    expect(fake.inserted[1].payload.requestedRouting).toEqual(first.payload.requestedRouting)
+    expect(fake.requestStatus(first.clientRequestId)).toBe('failed')
+  })
+
+  it('restores the prior scope when the owner edits it', async () => {
+    await driveToPlanError()
+    click(button('Edit Scope'))
+    await settle()
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Owner scope"]')?.value).toBe('Create the smoke marker file')
+  })
+
+  it('does not revive a failed planning request after reload', async () => {
+    await driveToPlanError()
+    act(() => root.unmount())
+    root = createRoot(container)
+    await renderLive()
+    expect(container.textContent).toContain('Plan your next run')
+    expect(container.textContent).not.toContain('one automatic correction attempt')
   })
 })
 

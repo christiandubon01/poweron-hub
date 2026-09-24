@@ -12,7 +12,7 @@ import { EMPTY_NEXT_RUN_ROUTING, loadNextRunRouting, type NextRunRouting } from 
 
 export default function ControlTowerReal(props: { pollIntervalMs?: number }) {
   const tower = useControlTowerReal({ pollIntervalMs: props.pollIntervalMs })
-  const { phase, presence, plan, planError, runHistory, draft, busy, contextError } = tower
+  const { phase, presence, plan, planError, planningStatus, runHistory, draft, busy, contextError } = tower
   const [mode, setMode] = useState<'live' | 'preview'>('live')
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -38,7 +38,7 @@ export default function ControlTowerReal(props: { pollIntervalMs?: number }) {
 
     {phase === 'planning' && <section className="ct-planning" aria-live="polite">
       <TowerPanel title="Planning" className="ct-planning-panel">
-        <p className="ct-planning-line">The local Host Architect is reading this repository and preparing a plan.</p>
+        <p className="ct-planning-line">{planningStatus ?? 'The local Host Architect is reading this repository and preparing a plan.'}</p>
         <p className="ct-muted">This is a real provider turn — it can take a few minutes. Nothing executes until you approve the plan it produces.</p>
         <button type="button" className="ct-secondary" onClick={tower.cancelPlanReview}>Dismiss</button>
       </TowerPanel>
@@ -47,6 +47,7 @@ export default function ControlTowerReal(props: { pollIntervalMs?: number }) {
     {(phase === 'plan-error' || phase === 'approving-error') && planError && <section className="ct-unavailable" role="alert">
       <AlertTriangle size={16} aria-hidden="true" />
       <p>{planError}</p>
+      {phase === 'plan-error' && <button type="button" className="ct-secondary" onClick={() => tower.retryPlanning().catch(error => { setSubmitError(error instanceof Error ? error.message : String(error)) })}>Try Planning Again</button>}
       <button type="button" className="ct-secondary" onClick={tower.editScope}>Edit Scope</button>
       <button type="button" className="ct-secondary" onClick={tower.cancelPlanReview}>Dismiss</button>
     </section>}

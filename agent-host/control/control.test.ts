@@ -20,6 +20,7 @@ import {
   computePlanHash,
   canonicalJsonStringify,
   normalizeSafeRepoRelativePath,
+  describeJsonShape,
   ROLE_TO_PERMISSION_PROFILE,
   type ControlPlan,
   type PlanTask,
@@ -28,6 +29,10 @@ import {
   parseCreatePlanPayload,
   extractPlanJsonObject,
   parseArchitectPlan,
+  isRepairablePlanValidation,
+  PLAN_REQUIREMENT_CONTRACT,
+  MAX_AUTOMATIC_PLAN_REPAIRS,
+  buildArchitectCorrectionPrompt,
   parseVerifierVerdict,
   parseVerifierResult,
   VERIFIER_SUMMARY_MAX_CHARS,
@@ -908,8 +913,8 @@ class FakeControlPlane {
     }
   }
 
-  async failRequest(id: string, safeError: string): Promise<void> {
-    this.completions.push({ id, error: safeError });
+  async failRequest(id: string, safeError: string, result?: Record<string, unknown>): Promise<void> {
+    this.completions.push({ id, error: safeError, result: result ?? null });
   }
 
   async findPlanByPlanId(planId: string): Promise<{ result: Record<string, unknown> } | null> {
@@ -1030,6 +1035,160 @@ test('handleCreatePlan fails the request safely on a bad payload and a bad plan'
     canonicalRepoPath: 'C:\\repo',
   });
   assert.match(String(badPlanControlPlane.completions[0].error), /^PLAN_VALIDATION_FAILED/u);
+});
+
+/**
+ * Latest live failure f120fe87 returned a single VALIDATION_REQUIREMENTS_INVALID
+ * and nothing else. The Architect JSON was not retained. This fixture is the
+ * incompatible object structure that produces that same single code: one task
+ * returns requirement objects, the verifier task returns plain strings.
+ */
+function latestMalformedRequirementPlan(): Record<string, unknown> {
+  const plan = architectPlanObject();
+  const tasks = plan.tasks as Array<Record<string, unknown>>;
+  tasks[0] = {
+    ...tasks[0],
+    validationRequirements: [
+      { requirement: 'file exists' },
+      { requirement: 'contents match' },
+    ],
+  };
+  return plan;
+}
+
+test('CT-LIVE-0A0: object requirements fail closed and are not coerced', () => {
+  const invalid = validatePlan({ planId: 'plan-malformed', ...latestMalformedRequirementPlan() });
+  assert.equal(invalid.ok, false);
+  assert.deepEqual(invalid.errors, ['VALIDATION_REQUIREMENTS_INVALID']);
+  assert.equal(invalid.issues[0]?.field, 'tasks[0].validationRequirements');
+  assert.equal(invalid.issues[0]?.receivedShape, 'array(2) of object{keys:requirement}');
+  assert.equal(describeJsonShape([{ requirement: 'file exists' }]).includes('file exists'), false);
+  const tooLong = validatePlan({
+    planId: 'plan-long',
+    ...architectPlanObject(),
+    tasks: (architectPlanObject().tasks as Array<Record<string, unknown>>).map((task, index) => (
+      index === 0 ? { ...task, validationRequirements: ['x'.repeat(1_001)] } : task
+    )),
+  });
+  assert.equal(tooLong.ok, false);
+  assert.ok(tooLong.errors.includes('VALIDATION_REQUIREMENTS_INVALID'));
+  assert.match(tooLong.issues[0]?.receivedShape ?? '', /string\(maxLength:1001\)/u);
+});
+
+test('CT-LIVE-0A0: a valid plan makes no repair call', async () => {
+  const calls: ExecutionRequest[] = [];
+  const adapter = {
+    execute: async (request: ExecutionRequest) => {
+      calls.push(request);
+      return buildExecutionResult({ finalText: `\`\`\`json\n${JSON.stringify(architectPlanObject())}\n\`\`\`` });
+    },
+  };
+  const controlPlane = new FakeControlPlane();
+  await handleCreatePlan({
+    store: null as never,
+    registry: new Map([['claude', adapter as never]]) as never,
+    controlPlane: controlPlane.asControlPlane(),
+    request: claimedRequest({ scope: 'Create a smoke file.', constraints: ['Do not modify any other file.'], requestedRouting: { provider: 'claude', requestedModel: 'gpt-5.6-sol' } }),
+    canonicalRepoPath: 'C:\\repo',
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(controlPlane.completions[0].error, undefined);
+  assert.equal((controlPlane.completions[0].result?.planValidation as { repairAttempt: number }).repairAttempt, 0);
+});
+
+test('CT-LIVE-0A0: malformed requirements get one repair and then a valid plan', async () => {
+  assert.equal(MAX_AUTOMATIC_PLAN_REPAIRS, 1);
+  const calls: ExecutionRequest[] = [];
+  const adapter = {
+    execute: async (request: ExecutionRequest) => {
+      calls.push(request);
+      const plan = calls.length === 1 ? latestMalformedRequirementPlan() : architectPlanObject();
+      return buildExecutionResult({ finalText: `\`\`\`json\n${JSON.stringify(plan)}\n\`\`\`` });
+    },
+  };
+  const controlPlane = new FakeControlPlane();
+  await withStore(async (store) => {
+    await handleCreatePlan({
+      store,
+      registry: new Map([['codex', adapter as never]]) as never,
+      controlPlane: controlPlane.asControlPlane(),
+      request: claimedRequest({
+        scope: 'Create a smoke file.',
+        constraints: ['Do not modify any other file.'],
+        requestedRouting: { provider: 'codex', requestedModel: 'gpt-5.6-sol', reasoningEffort: 'high' },
+      }),
+      canonicalRepoPath: 'C:\\repo',
+    });
+    assert.equal(store.listRuns().length, 0);
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].requestedModel, 'gpt-5.6-sol');
+  assert.equal(calls[1].requestedModel, 'gpt-5.6-sol');
+  assert.equal(calls[0].reasoningEffort, 'high');
+  assert.equal(calls[1].reasoningEffort, 'high');
+  assert.equal(calls[0].permissionProfile, calls[1].permissionProfile);
+  assert.match(calls[1].prompt, /OWNER SCOPE:\nCreate a smoke file\./u);
+  assert.match(calls[1].prompt, /Do not modify any other file\./u);
+  assert.match(calls[1].prompt, /CORRECTION TURN 1 of 1/u);
+  assert.match(calls[1].prompt, /array\(2\) of object\{keys:requirement\}/u);
+  assert.equal(JSON.stringify(controlPlane.completions[0].result?.planValidation).includes('file exists'), false);
+  assert.match(buildArchitectPrompt({ scope: 'x', constraints: [], requestedRouting: null }), new RegExp(PLAN_REQUIREMENT_CONTRACT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  const correction = buildArchitectCorrectionPrompt({
+    originalPrompt: 'OWNER SCOPE:\nstay\n\nSCOPE PACK PHASE: phase-1',
+    errors: ['VALIDATION_REQUIREMENTS_INVALID'],
+    issues: [],
+    previousPlan: null,
+  });
+  assert.match(correction, /SCOPE PACK PHASE: phase-1/u);
+  assert.equal(controlPlane.completions[0].error, undefined);
+  assert.equal((controlPlane.completions[0].result?.planValidation as { repairAttempt: number; final: string }).repairAttempt, 1);
+  assert.equal((controlPlane.completions[0].result?.planValidation as { final: string }).final, 'valid');
+});
+
+test('CT-LIVE-0A0: a second invalid plan is terminal and policy failures are not repaired', async () => {
+  const calls: string[] = [];
+  const adapter = {
+    execute: async (request: ExecutionRequest) => {
+      calls.push(request.executionId);
+      return buildExecutionResult({ finalText: `\`\`\`json\n${JSON.stringify(latestMalformedRequirementPlan())}\n\`\`\`` });
+    },
+  };
+  const controlPlane = new FakeControlPlane();
+  await handleCreatePlan({
+    store: null as never,
+    registry: new Map([['codex', adapter as never]]) as never,
+    controlPlane: controlPlane.asControlPlane(),
+    request: claimedRequest({ scope: 'Create a smoke file.', constraints: ['Keep the scope.'], requestedRouting: { provider: 'codex', requestedModel: 'gpt-5.6-sol' } }),
+    canonicalRepoPath: 'C:\\repo',
+  });
+  assert.equal(calls.length, 2);
+  assert.match(String(controlPlane.completions[0].error), /one automatic correction attempt/u);
+  assert.match(String(controlPlane.completions[0].error), /Task 1 requirements/u);
+  assert.match(String(controlPlane.completions[0].error), /incompatible requirement structure/u);
+  assert.equal((controlPlane.completions[0].result?.planValidation as { repairAttempt: number }).repairAttempt, 1);
+  assert.equal((controlPlane.completions[0].result?.planValidation as { final: string }).final, 'invalid');
+
+  assert.equal(isRepairablePlanValidation(['AUDIT_WRITE_FORBIDDEN']), false);
+  assert.equal(isRepairablePlanValidation(['WRITE_PATH_INVALID']), false);
+  assert.equal(isRepairablePlanValidation(['VALIDATION_REQUIREMENTS_INVALID', 'AUDIT_WRITE_FORBIDDEN']), false);
+
+  const policyCalls: string[] = [];
+  const unsafe = architectPlanObject();
+  (unsafe.tasks as Array<Record<string, unknown>>)[0].authorizedWritePaths = ['../outside'];
+  const policyPlane = new FakeControlPlane();
+  await handleCreatePlan({
+    store: null as never,
+    registry: new Map([['codex', { execute: async (request: ExecutionRequest) => {
+      policyCalls.push(request.executionId);
+      return buildExecutionResult({ finalText: `\`\`\`json\n${JSON.stringify(unsafe)}\n\`\`\`` });
+    } } as never]]) as never,
+    controlPlane: policyPlane.asControlPlane(),
+    request: claimedRequest({ scope: 'Create a smoke file.', constraints: [], requestedRouting: { provider: 'codex', requestedModel: 'gpt-5.6-sol' } }),
+    canonicalRepoPath: 'C:\\repo',
+  });
+  assert.equal(policyCalls.length, 1);
+  assert.match(String(policyPlane.completions[0].error), /WRITE_PATH_INVALID/u);
+  assert.equal(String(policyPlane.completions[0].error).includes('automatic correction'), false);
 });
 
 test('handleApprovePlan creates the REAL run/tasks/deps only for the EXACT approved plan', async () => {

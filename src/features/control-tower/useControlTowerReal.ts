@@ -105,6 +105,18 @@ function toListItem(row: ScopePackRow): ScopePackListItem {
 }
 
 const ACTIVE_RUN_STATES = new Set(['pending', 'running', 'paused'])
+export const PLANNING_STATUS_LINES = [
+  'Architect plan received',
+  'Validating plan',
+  'Plan format needs correction',
+  'Architect correcting plan',
+  'Validating corrected plan',
+] as const
+
+function planningStatusLine(result: Record<string, unknown> | null): string | null {
+  const line = result?.planningStatus
+  return typeof line === 'string' && (PLANNING_STATUS_LINES as readonly string[]).includes(line) ? line : null
+}
 const UNAVAILABLE_PRESENCE: HostPresenceView = { state: 'unavailable', repoKey: null, providers: [], providerFleet: [], hostVersion: null, lastSeenAt: null, hostInstanceId: null }
 
 function makeClientRequestId(): string {
@@ -122,6 +134,7 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
   const [phase, setPhase] = useState<ControlTowerPhase>('unavailable')
   const [plan, setPlan] = useState<PlanReviewModel | null>(null)
   const [planError, setPlanError] = useState<string | null>(null)
+  const [planningStatus, setPlanningStatus] = useState<string | null>(null)
   const [planningRequestId, setPlanningRequestId] = useState<string | null>(null)
   const [approvingRequestId, setApprovingRequestId] = useState<string | null>(null)
   const [run, setRun] = useState<ControlTowerRunView | null>(null)
@@ -189,6 +202,7 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
         const row = await service.fetchControlRequest(org, planningId)
         if (row?.status === 'completed') {
           setPlanningRequestId(null)
+          setPlanningStatus(null)
           const mapped = mapPlanResult(row.result)
           if (mapped) {
             setPlan(mapped)
@@ -200,8 +214,12 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
           }
         } else if (row?.status === 'failed') {
           setPlanningRequestId(null)
+          setPlanningStatus(null)
           setPlanError(row.error ?? 'The Host failed to create the plan.')
           setPhase('plan-error')
+        } else {
+          const line = planningStatusLine(row?.result ?? null)
+          if (line) setPlanningStatus(line)
         }
       } catch {
         // transient poll failure — keep the current phase
@@ -299,12 +317,18 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
       setDraft(input)
       setPlan(null)
       setPlanError(null)
+      setPlanningStatus(null)
       setPlanningRequestId(clientRequestId)
       setPhase('planning')
     } finally {
       setBusy(false)
     }
   }, [presence.repoKey, service])
+
+  /** New create_plan from the same owner inputs. The failed request stays historical. */
+  const retryPlanning = useCallback(async (): Promise<void> => {
+    await submitScope(draft)
+  }, [draft, submitScope])
 
   /** Owner approves the EXACT plan (planId + planHash) → approve_plan request. */
   const approvePlan = useCallback(async (): Promise<void> => {
@@ -418,6 +442,7 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     contextError,
     plan,
     planError,
+    planningStatus,
     run,
     runHistory,
     draft,
@@ -433,12 +458,13 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     closeComposer,
     editScope,
     submitScope,
+    retryPlanning,
     approvePlan,
     cancelPlanReview,
     cancelRun,
   }), [
-    phase, presence, context, contextError, plan, planError, run, runHistory, draft, busy,
+    phase, presence, context, contextError, plan, planError, planningStatus, run, runHistory, draft, busy,
     scopePacks, scopePackRows, importWarning, scopeStorage, importing, importScopePack, refresh,
-    openComposer, closeComposer, editScope, submitScope, approvePlan, cancelPlanReview, cancelRun,
+    openComposer, closeComposer, editScope, submitScope, retryPlanning, approvePlan, cancelPlanReview, cancelRun,
   ])
 }

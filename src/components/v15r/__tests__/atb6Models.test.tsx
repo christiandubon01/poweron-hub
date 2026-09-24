@@ -83,7 +83,7 @@ it('propagates Next Run Routing into create_plan requestedRouting without silent
     ...EMPTY_NEXT_RUN_ROUTING,
     architect: { providerId: 'claude', modelId: 'claude-sonnet-5', effort: 'high', customModel: null },
   }
-  expect(toRequestedRouting(routing)).toEqual({ provider: 'claude', requestedModel: 'claude-sonnet-5' })
+  expect(toRequestedRouting(routing)).toEqual({ provider: 'claude', requestedModel: 'claude-sonnet-5', reasoningEffort: 'high' })
 })
 
 it('separates configured and reported models and tells the truth about quota/reset', () => {
@@ -159,5 +159,5 @@ it('keeps Architect provider, model, and effort controls functional from the sum
   const extra = [...container.querySelectorAll('[aria-label="Architect effort"] button')].find((item) => item.textContent === 'Extra High') as HTMLButtonElement
   act(() => { extra.click() })
   expect(latest.architect).toMatchObject({ providerId: 'claude', modelId: 'claude-sonnet-5', effort: 'extra-high' })
-  expect(toRequestedRouting(latest)).toEqual({ provider: 'claude', requestedModel: 'claude-sonnet-5' })
+  expect(toRequestedRouting(latest)).toEqual({ provider: 'claude', requestedModel: 'claude-sonnet-5', reasoningEffort: 'extra-high' })
 })

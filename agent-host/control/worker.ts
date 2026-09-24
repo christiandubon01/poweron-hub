@@ -40,7 +40,7 @@ import {
   createProviderRegistry,
   recoverInterruptedAttempts,
 } from '../providers/executor.ts';
-import type { ExecutionRequest, ExecutionResult, ProviderAdapter, ProviderId } from '../providers/types.ts';
+import type { ExecutionRequest, ProviderAdapter, ProviderId } from '../providers/types.ts';
 import {
   buildProviderCapabilityRegistry,
   parseCodexModelCatalog,
@@ -58,7 +58,7 @@ import {
   buildArchitectPrompt,
   buildTaskPrompt,
   extractPlanJsonObject,
-  parseArchitectPlan,
+  resolveArchitectPlan,
   parseCreatePlanPayload,
 } from './planning.ts';
 import { ProductionExecutionPort } from './supervisorPort.ts';
@@ -493,23 +493,42 @@ export async function handleCreatePlan(options: {
   }
 
   const executionId = `${ARCHITECT_EXECUTION_PREFIX}:${request.client_request_id}`;
-  const executionRequest: ExecutionRequest = {
-    executionId,
-    attemptId: executionId,
+  const architectPrompt = boundPack && inherited
+    ? `${buildArchitectPrompt({ ...payload, constraints: inherited.constraints })}\n\nSCOPE PACK PHASE: ${payload.scopePackPhaseId}\nLocked rules and do-not-touch boundaries are already included as constraints. Do not invent additional protected files from prose.`
+    : buildArchitectPrompt(payload);
+  const executionBase: Omit<ExecutionRequest, 'prompt' | 'executionId' | 'attemptId'> = {
     taskId: `create-plan:${request.client_request_id}`,
     runId: ARCHITECT_EXECUTION_PREFIX,
     workingDirectory: options.canonicalRepoPath,
-    prompt: boundPack && inherited
-      ? `${buildArchitectPrompt({ ...payload, constraints: inherited.constraints })}\n\nSCOPE PACK PHASE: ${payload.scopePackPhaseId}\nLocked rules and do-not-touch boundaries are already included as constraints. Do not invent additional protected files from prose.`
-      : buildArchitectPrompt(payload),
     requestedModel: requestedModel ?? undefined,
+    ...(payload.requestedRouting?.reasoningEffort ? { reasoningEffort: payload.requestedRouting.reasoningEffort } : {}),
     permissionProfile: 'read-only-reviewer',
     timeoutMs: ARCHITECT_TIMEOUT_MS,
   };
 
-  let result: ExecutionResult;
+  let resolved;
   try {
-    result = await adapter.execute(executionRequest);
+    resolved = await resolveArchitectPlan({
+      prompt: architectPrompt,
+      scope: payload.scope,
+      constraints: inherited?.constraints ?? payload.constraints,
+      provider,
+      executionIntent: boundPack?.roadmapPhases.find((phase) => phase.id === payload.scopePackPhaseId)?.executionIntent,
+      execute: async (turn) => {
+        const turnId = `${executionId}:${turn.executionId}`;
+        return adapter.execute({
+          ...executionBase,
+          executionId: turnId,
+          attemptId: turnId,
+          prompt: turn.prompt,
+        });
+      },
+      onStatus: async (line) => {
+        if (controlPlane.notePlanningProgress) {
+          await controlPlane.notePlanningProgress(request.id, { planningStatus: line });
+        }
+      },
+    });
   } catch (error) {
     await controlPlane.failRequest(
       request.id,
@@ -518,20 +537,15 @@ export async function handleCreatePlan(options: {
     return;
   }
 
-  const parsed = parseArchitectPlan({
-    scope: payload.scope,
-    constraints: inherited?.constraints ?? payload.constraints,
-    provider,
-    result,
-    executionIntent: boundPack?.roadmapPhases.find((phase) => phase.id === payload.scopePackPhaseId)?.executionIntent,
-  });
-  if (!parsed.ok) {
+  if (!resolved.ok) {
     await controlPlane.failRequest(
       request.id,
-      `${parsed.failure.code}: ${parsed.failure.message}`.slice(0, REQUEST_ERROR_LIMIT),
+      resolved.ownerMessage.slice(0, REQUEST_ERROR_LIMIT),
+      { planValidation: resolved.validation },
     );
     return;
   }
+  const parsed = resolved;
 
   if (boundPack && inherited) {
     parsed.result.plan.constraints = inherited.constraints;
@@ -552,6 +566,7 @@ export async function handleCreatePlan(options: {
     planHash: parsed.result.planHash,
     plan: planForPublish(parsed.result.plan),
     architect: parsed.result.architect,
+    planValidation: resolved.validation,
     ...(boundPack && architectVerdict && approvalGate
       ? {
           reconciliation: {
