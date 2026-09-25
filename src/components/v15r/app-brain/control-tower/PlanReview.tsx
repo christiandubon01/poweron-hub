@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ShieldCheck } from 'lucide-react'
 import { ProviderModelBadge, RoleBadge, TowerPanel } from './ControlTowerPrimitives'
 import type { PlanReviewModel } from '@/features/control-tower/controlTowerAdapter'
+import { elevatedChanges, planFactChips, planSummaryLines, taskPathCount, verificationRequirements } from '@/features/control-tower/planPresentation'
 
 interface Props {
   plan: PlanReviewModel
@@ -12,19 +13,70 @@ interface Props {
 }
 
 /**
- * CT-CORE-1 plan review (§21-§23): the EXACT plan the Architect produced,
- * referenced for approval by planId + planHash. Approving starts the Run;
- * nothing has executed before this point.
+ * CT-CORE-1 plan review, with a compact owner summary. Full task and
+ * verification detail stays available by expansion.
  */
 export default function PlanReview({ plan, busy, onApprove, onEditScope, onCancel }: Props) {
   const [acknowledged, setAcknowledged] = useState(false)
   const needsAck = plan.approval?.requiresStaleAcknowledgment === true || plan.approval?.requiresOwnerReview === true
   const audit = plan.executionIntent === 'audit' || plan.executionIntent === 'research'
   const canApprove = !busy && (!needsAck || acknowledged || audit)
+  const elevated = elevatedChanges(plan)
+  const checks = verificationRequirements(plan)
+  const inspected = plan.planningEvidence?.inspectedFiles ?? []
+  const revision = plan.planRevision
   return <TowerPanel title="Awaiting approval" className="ct-plan-review" action={<span className="ct-eyebrow ct-amber">Owner decision</span>}>
     <div className="ct-plan-body">
       <div className="ct-plan-intro">
         <p className="ct-authority"><ShieldCheck size={15} aria-hidden="true" />Nothing has executed yet. Approving this exact plan starts the Run.</p>
+        {revision && revision.version > 1 && <p className="ct-plan-revision">Plan v{revision.version}</p>}
+        {revision && revision.version > 1 && revision.changes.length > 0 && <div className="ct-plan-changed">
+          <span className="ct-eyebrow">What changed</span>
+          <ul>{revision.changes.map(change => <li key={change}>{change}</li>)}</ul>
+        </div>}
+        <ul className="ct-plan-summary" aria-label="Plan summary">
+          {planSummaryLines(plan).map(line => <li key={line}>{line}</li>)}
+        </ul>
+        <ul className="ct-plan-facts" aria-label="Plan facts">
+          {planFactChips(plan).map(chip => <li key={chip}>{chip}</li>)}
+        </ul>
+        <div className="ct-plan-elevated" aria-label="Elevated changes">
+          <span className="ct-eyebrow">Elevated changes</span>
+          {elevated.length === 0
+            ? <p>No elevated changes</p>
+            : <ul>{elevated.map(item => <li key={item}>{item}</li>)}</ul>}
+        </div>
+      </div>
+      <ol className="ct-plan-tasks">
+        {plan.tasks.map((task, index) => <li key={task.clientTaskKey} className="ct-plan-task">
+          <details>
+            <summary className="ct-plan-task-head">
+              <span className="ct-plan-task-index">T{index + 1}</span>
+              <RoleBadge role={task.role} />
+              <h3>{task.title}</h3>
+              <span className="ct-plan-task-provider">{taskPathCount(task)} authorized paths</span>
+            </summary>
+            <p className="ct-plan-task-goal">{task.goal}</p>
+            <dl className="ct-plan-task-meta">
+              <div><dt>Depends on</dt><dd>{task.dependencies.length > 0 ? task.dependencies.join(', ') : 'None'}</dd></div>
+              <div><dt>Authorized write paths</dt><dd>{task.authorizedWritePaths.length > 0 ? task.authorizedWritePaths.join(', ') : 'Read-only — no writes'}</dd></div>
+              <div><dt>Planned areas</dt><dd>{task.plannedAreas.length > 0 ? task.plannedAreas.join(', ') : 'None reported'}</dd></div>
+              <div><dt>Verifier checks</dt><dd>{task.validationRequirements.length > 0 ? task.validationRequirements.join('; ') : 'None reported'}</dd></div>
+              <div><dt>Provider</dt><dd>{task.provider}{task.requestedModel ? ` · requested ${task.requestedModel}` : ''}</dd></div>
+            </dl>
+          </details>
+        </li>)}
+      </ol>
+      <details className="ct-plan-verification">
+        <summary>Verification contract</summary>
+        {checks.length > 0 ? <ul>{checks.map(check => <li key={check}>{check}</li>)}</ul> : <p>No verification checks were reported.</p>}
+      </details>
+      {inspected.length > 0 && <details className="ct-plan-inspected">
+        <summary>Architect inspected {inspected.length} relevant {inspected.length === 1 ? 'file' : 'files'}</summary>
+        <ul>{inspected.map(file => <li key={file}><code>{file}</code></li>)}</ul>
+      </details>}
+      <details className="ct-disclosure">
+        <summary>Full plan text</summary>
         <div className="ct-plan-objective">
           <span className="ct-eyebrow">Architect interpretation</span>
           <p>{plan.objective}</p>
@@ -45,24 +97,7 @@ export default function PlanReview({ plan, busy, onApprove, onEditScope, onCance
           </p>
           <span className="ct-field-note">Requested configuration is never reported as the model used.</span>
         </div>}
-      </div>
-      <ol className="ct-plan-tasks">
-        {plan.tasks.map((task, index) => <li key={task.clientTaskKey} className="ct-plan-task">
-          <div className="ct-plan-task-head">
-            <span className="ct-plan-task-index">T{index + 1}</span>
-            <RoleBadge role={task.role} />
-            <h3>{task.title}</h3>
-            <span className="ct-plan-task-provider">{task.provider}{task.requestedModel ? ` · requested ${task.requestedModel}` : ''}</span>
-          </div>
-          <p className="ct-plan-task-goal">{task.goal}</p>
-          <dl className="ct-plan-task-meta">
-            <div><dt>Depends on</dt><dd>{task.dependencies.length > 0 ? task.dependencies.join(', ') : 'None'}</dd></div>
-            <div><dt>Authorized write paths</dt><dd>{task.authorizedWritePaths.length > 0 ? task.authorizedWritePaths.join(', ') : 'Read-only — no writes'}</dd></div>
-            <div><dt>Planned areas</dt><dd>{task.plannedAreas.length > 0 ? task.plannedAreas.join(', ') : 'None reported'}</dd></div>
-            <div><dt>Verifier checks</dt><dd>{task.validationRequirements.length > 0 ? task.validationRequirements.join('; ') : 'None reported'}</dd></div>
-          </dl>
-        </li>)}
-      </ol>
+      </details>
       {plan.architectVerdict && <div className="ct-scope-verdict" aria-label="Architect verdict">
         <span className="ct-eyebrow">Architect verdict · {plan.architectVerdict.state}</span>
         <p>{plan.architectVerdict.summary}</p>

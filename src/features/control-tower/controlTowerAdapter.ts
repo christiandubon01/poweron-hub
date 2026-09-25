@@ -611,6 +611,15 @@ export interface PlanReviewModel {
     requiresStaleAcknowledgment: boolean
     reason: string | null
   } | null
+  planningEvidence?: {
+    usedCache: boolean
+    candidateFiles: number
+    inspectedFiles: string[]
+  } | null
+  planRevision?: {
+    version: number
+    changes: string[]
+  } | null
 }
 
 const PLAN_REVIEW_ROLE: Record<string, PlanReviewTask['role']> = {
@@ -677,6 +686,8 @@ export function mapPlanResult(result: Record<string, unknown> | null): PlanRevie
     summary: String(result.architectVerdict.summary ?? ''),
   } : null
   const reconciliation = isRecord(result.reconciliation) ? result.reconciliation : null
+  const evidence = isRecord(result.planningEvidence) ? result.planningEvidence : null
+  const revision = isRecord(result.planRevision) ? result.planRevision : null
 
   return {
     planId,
@@ -692,6 +703,15 @@ export function mapPlanResult(result: Record<string, unknown> | null): PlanRevie
       : undefined,
     architectVerdict: verdict,
     approval,
+    planningEvidence: evidence ? {
+      usedCache: evidence.usedCache === true,
+      candidateFiles: typeof evidence.candidateFiles === 'number' ? evidence.candidateFiles : 0,
+      inspectedFiles: asStringArray(evidence.inspectedFiles),
+    } : null,
+    planRevision: revision && typeof revision.version === 'number' ? {
+      version: revision.version,
+      changes: asStringArray(revision.changes),
+    } : null,
   }
 }
 

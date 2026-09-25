@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { formatArchitectElapsed, formatPlanningElapsed } from '@/features/control-tower/planPresentation'
 import { AlertTriangle, Plus } from 'lucide-react'
 import { TowerPanel } from './ControlTowerPrimitives'
 import ControlTower from './ControlTower'
@@ -13,7 +14,13 @@ import { EMPTY_NEXT_RUN_ROUTING, loadNextRunRouting, type NextRunRouting } from 
 
 export default function ControlTowerReal(props: { pollIntervalMs?: number }) {
   const tower = useControlTowerReal({ pollIntervalMs: props.pollIntervalMs })
-  const { phase, presence, plan, planError, planningStatus, approvalStatus, runHistory, draft, busy, contextError } = tower
+  const { phase, presence, plan, planError, planningStatus, planningStartedAt, providerStartedAt, approvalStatus, runHistory, draft, busy, contextError } = tower
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (phase !== 'planning') return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [phase])
   const [mode, setMode] = useState<'live' | 'preview'>('live')
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -46,8 +53,9 @@ export default function ControlTowerReal(props: { pollIntervalMs?: number }) {
 
     {phase === 'planning' && <section className="ct-planning" aria-live="polite">
       <TowerPanel title="Planning" className="ct-planning-panel">
-        <p className="ct-planning-line">{planningStatus ?? 'The local Host Architect is reading this repository and preparing a plan.'}</p>
-        <p className="ct-muted">This is a real provider turn — it can take a few minutes. Nothing executes until you approve the plan it produces.</p>
+        <p className="ct-planning-line">{planningStatus ?? 'Request received'}</p>
+        <p className="ct-planning-elapsed">{providerStartedAt ? formatArchitectElapsed(now - providerStartedAt) : planningStartedAt ? formatPlanningElapsed(now - planningStartedAt) : 'Planning · 0s'}</p>
+        <p className="ct-muted">Nothing executes until you approve the plan.</p>
         <button type="button" className="ct-secondary" onClick={tower.cancelPlanReview}>Dismiss</button>
       </TowerPanel>
     </section>}

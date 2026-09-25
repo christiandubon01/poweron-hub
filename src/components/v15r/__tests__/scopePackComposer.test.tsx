@@ -72,6 +72,35 @@ function button(label: string) {
   return found
 }
 
+describe('CT-LIVE-0B1 planning mode placement', () => {
+  it('shows Fast above Owner Scope, keeps that scope when switching to Deep, and submits the selected mode', () => {
+    const submitted: unknown[] = []
+    render(React.createElement(NewRunComposer, {
+      presence, busy: false, draft: { scope: '', constraints: [], requestedRouting: null },
+      onSubmit: (draft) => submitted.push(draft), onCancel: () => {},
+    }))
+    const mode = container.querySelector<HTMLElement>('[aria-label="Planning mode"]')
+    const scope = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Owner scope"]')
+    const advanced = container.querySelector('summary')
+    expect(mode).not.toBeNull()
+    expect(scope).not.toBeNull()
+    expect(mode!.compareDocumentPosition(scope!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(advanced?.textContent).toContain('Advanced · Next Run Routing')
+    expect(mode!.compareDocumentPosition(advanced!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(container.querySelector('[aria-label="Planning mode"] button[aria-pressed="true"]')?.textContent).toBe('Fast')
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+      setter.call(scope, 'Keep this scope')
+      scope!.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    act(() => button('Deep / Reconcile').click())
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Owner scope"]')?.value).toBe('Keep this scope')
+    expect(container.querySelector('[aria-label="Planning mode"] button[aria-pressed="true"]')?.textContent).toBe('Deep / Reconcile')
+    act(() => button('Request plan').click())
+    expect(submitted).toEqual([{ scope: 'Keep this scope', constraints: [], planningMode: 'deep', requestedRouting: null }])
+  })
+})
+
 describe('ATB-5 New Run Scope Pack composer', () => {
   it('keeps ordinary New Run working without a pack', () => {
     const submitted: unknown[] = []
@@ -82,7 +111,7 @@ describe('ATB-5 New Run Scope Pack composer', () => {
     expect(container.textContent).toContain('Scope Pack')
     expect(container.textContent).toContain('ordinary New Run')
     act(() => button('Request plan').click())
-    expect(submitted).toEqual([{ scope: 'Create a file', constraints: [], requestedRouting: null }])
+    expect(submitted).toEqual([{ scope: 'Create a file', constraints: [], planningMode: 'fast', requestedRouting: null }])
   })
 
   it('rejects unsupported file types before parse', async () => {

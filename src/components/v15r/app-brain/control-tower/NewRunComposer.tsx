@@ -89,6 +89,7 @@ export default function NewRunComposer({
 }: Props) {
   const [scope, setScope] = useState(draft.scope)
   const [constraintsText, setConstraintsText] = useState(draft.constraints.join('\n'))
+  const [planningMode, setPlanningMode] = useState<'fast' | 'deep'>(draft.planningMode ?? 'fast')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [nextRouting, setNextRouting] = useState<NextRunRouting>(() => {
     if (routing.architect.providerId || routing.architect.modelId) return routing
@@ -141,6 +142,7 @@ export default function NewRunComposer({
   const draftPayload = {
     scope: scope.trim(),
     constraints,
+    planningMode,
     ...(requestedRouting ? { requestedRouting } : {}),
     ...(roleRouting ? { roleRouting } : {}),
     ...(selectedPack
@@ -166,6 +168,7 @@ export default function NewRunComposer({
     onSubmit({
       scope: scope.trim(),
       constraints,
+      planningMode,
       requestedRouting,
       ...(roleRouting ? { roleRouting } : {}),
       ...(selectedPack
@@ -219,6 +222,12 @@ export default function NewRunComposer({
   return <div className="ct-composer">
     <TowerPanel title="New Run" className="ct-composer-panel" modal action={<button type="button" className="ct-composer-cancel" onClick={onCancel}>Cancel</button>}>
       <p className="ct-composer-intro">Describe the work. The local Host Architect reads this repository and proposes a plan for your review. Nothing executes until you approve the plan.</p>
+      <div className="ct-planning-mode" role="group" aria-label="Planning mode">
+        <span className="ct-eyebrow">Planning</span>
+        <button type="button" aria-pressed={planningMode === 'fast'} onClick={() => setPlanningMode('fast')}>Fast</button>
+        <button type="button" aria-pressed={planningMode === 'deep'} onClick={() => setPlanningMode('deep')}>Deep / Reconcile</button>
+        <span className="ct-field-note">{planningMode === 'fast' ? 'Default. Cached repo map and targeted files.' : 'Broader discovery for architecture, security, or Scope Pack reconciliation.'}</span>
+      </div>
       <section className="ct-scope-pack" aria-label="Scope Pack">
         <span className="ct-eyebrow">Scope Pack · optional</span>
         {surface === 'preview' && <p className="ct-preview-scope-label">{PREVIEW_SCOPE_PACK_LABEL}</p>}

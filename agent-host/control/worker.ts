@@ -63,7 +63,11 @@ import {
   parseCreatePlanPayload,
   resolveArchitectRequest,
   applyOwnerRoleModels,
+  PLANNING_STATUS_LINES,
+  foundCandidatesStatus,
+  inspectingFilesStatus,
 } from './planning.ts';
+import { preparePlanningDiscovery } from './planningDiscovery.ts';
 import { ProductionExecutionPort } from './supervisorPort.ts';
 import { buildRunSnapshot } from './snapshots.ts';
 import { computePlanHash, type ControlPlan, type PlanRole, type TaskControlSpec } from './types.ts';
@@ -333,6 +337,7 @@ export async function handleCreatePlan(options: {
   controlPlane: ControlPlane;
   request: ClaimedControlRequest;
   canonicalRepoPath: string;
+  orientationCachePath?: string;
   organizationId?: string;
   reconcileFoundation?: FoundationReconciler;
   inspectCheckpoint?: (checkpoint: string) => Promise<{ exists: boolean; summary: string }>;
@@ -511,10 +516,38 @@ export async function handleCreatePlan(options: {
     return;
   }
 
+  const notePlanning = async (planningStatus: string): Promise<void> => {
+    if (controlPlane.notePlanningProgress) {
+      await controlPlane.notePlanningProgress(request.id, { planningStatus });
+    }
+  };
+  await notePlanning(PLANNING_STATUS_LINES.architectStarted);
+  const discovery = await preparePlanningDiscovery({
+    root: options.canonicalRepoPath,
+    scope: payload.scope,
+    mode: payload.planningMode ?? 'fast',
+    ...(options.orientationCachePath ? { cachePath: options.orientationCachePath } : {}),
+  });
+  if (!discovery.ok) {
+    await controlPlane.failRequest(request.id, discovery.message);
+    return;
+  }
+  if (discovery.discovery.available) {
+    if (discovery.discovery.usedCache) await notePlanning(PLANNING_STATUS_LINES.usingCache);
+    await notePlanning(PLANNING_STATUS_LINES.searching);
+    await notePlanning(foundCandidatesStatus(discovery.discovery.candidateFiles.length));
+    if (discovery.discovery.inspectedFiles.length > 0) {
+      await notePlanning(inspectingFilesStatus(discovery.discovery.inspectedFiles.length));
+    }
+  }
+  await notePlanning(PLANNING_STATUS_LINES.building);
+
   const executionId = `${ARCHITECT_EXECUTION_PREFIX}:${request.client_request_id}`;
-  const architectPrompt = boundPack && inherited
-    ? `${buildArchitectPrompt({ ...payload, constraints: inherited.constraints })}\n\nSCOPE PACK PHASE: ${payload.scopePackPhaseId}\nLocked rules and do-not-touch boundaries are already included as constraints. Do not invent additional protected files from prose.`
-    : buildArchitectPrompt(payload);
+  const discoveryMode = discovery.discovery.available ? { mode: discovery.discovery.mode } : undefined;
+  const architectBase = boundPack && inherited
+    ? `${buildArchitectPrompt({ ...payload, constraints: inherited.constraints }, discoveryMode)}\n\nSCOPE PACK PHASE: ${payload.scopePackPhaseId}\nLocked rules and do-not-touch boundaries are already included as constraints. Do not invent additional protected files from prose.`
+    : buildArchitectPrompt(payload, discoveryMode);
+  const architectPrompt = `${architectBase}${discovery.discovery.appendix}`;
   const executionBase: Omit<ExecutionRequest, 'prompt' | 'executionId' | 'attemptId'> = {
     taskId: `create-plan:${request.client_request_id}`,
     runId: ARCHITECT_EXECUTION_PREFIX,
@@ -591,6 +624,19 @@ export async function handleCreatePlan(options: {
     plan: planForPublish(parsed.result.plan),
     architect: parsed.result.architect,
     planValidation: resolved.validation,
+    planningEvidence: discovery.discovery.available
+      ? {
+          usedCache: discovery.discovery.usedCache,
+          candidateFiles: discovery.discovery.candidateFiles.length,
+          inspectedFiles: discovery.discovery.inspectedFiles,
+        }
+      : null,
+    planRevision: {
+      version: resolved.validation.repairAttempt + 1,
+      changes: resolved.validation.repairAttempt > 0
+        ? resolved.validation.issues.slice(0, 8).map((issue) => `${issue.field}: ${issue.code}`)
+        : [],
+    },
     ...(boundPack && architectVerdict && approvalGate
       ? {
           reconciliation: {
@@ -1438,6 +1484,7 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
             controlPlane,
             request,
             canonicalRepoPath,
+            orientationCachePath: path.join(statePaths.repoStateDir, 'repo-orientation.json'),
             organizationId: config.organizationId,
           });
         } else if (request.request_type === 'approve_plan') {

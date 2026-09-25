@@ -56,12 +56,26 @@ export const PLAN_REQUIREMENT_CONTRACT =
 export const MAX_AUTOMATIC_PLAN_REPAIRS = 1;
 
 export const PLANNING_STATUS_LINES = {
+  architectStarted: 'Architect started',
+  usingCache: 'Using cached repo map',
+  searching: 'Searching relevant areas',
+  building: 'Building plan',
   received: 'Architect plan received',
   validating: 'Validating plan',
+  validated: 'Validated',
+  ready: 'Plan ready',
   needsCorrection: 'Plan format needs correction',
   correcting: 'Architect correcting plan',
   validatingCorrected: 'Validating corrected plan',
 } as const;
+
+export function foundCandidatesStatus(count: number): string {
+  return `Found ${count} candidate files`;
+}
+
+export function inspectingFilesStatus(count: number): string {
+  return `Inspecting ${count} relevant files`;
+}
 
 const NON_REPAIRABLE_PLAN_CODES = new Set<PlanValidationCode>([
   'AUDIT_WRITE_FORBIDDEN',
@@ -109,10 +123,16 @@ export type ExecutablePlanRole = (typeof EXECUTABLE_PLAN_ROLES)[number];
 export const EXECUTABLE_ROLE_PROFILE_PAIRS: ReadonlyArray<{ role: ExecutablePlanRole; profile: PermissionProfile }> =
   EXECUTABLE_PLAN_ROLES.map((role) => ({ role, profile: ROLE_TO_PERMISSION_PROFILE[role] }));
 
-export function buildArchitectPrompt(payload: CreatePlanPayload): string {
+export function buildArchitectPrompt(payload: CreatePlanPayload, discovery?: { mode: 'fast' | 'deep' }): string {
   const lines: string[] = [];
   lines.push('You are the Team Architect for this repository.');
-  lines.push('The owner wants work done. Read the repository to understand it, then produce an execution plan.');
+  if (discovery?.mode === 'fast') {
+    lines.push('The owner wants work done. Use only the targeted files in the planning appendix. Do not audit or crawl the rest of the repository. Then produce an execution plan.');
+  } else if (discovery?.mode === 'deep') {
+    lines.push('The owner wants work done. Broader repository inspection is allowed for this request. Then produce an execution plan.');
+  } else {
+    lines.push('The owner wants work done. Read the repository to understand it, then produce an execution plan.');
+  }
   lines.push('');
   lines.push(`OWNER SCOPE:\n${payload.scope}`);
   if (payload.constraints.length > 0) {
@@ -273,6 +293,8 @@ export async function resolveArchitectPlan(options: {
     executionIntent: options.executionIntent,
   });
   if (parsed.ok) {
+    await options.onStatus?.(PLANNING_STATUS_LINES.validated);
+    await options.onStatus?.(PLANNING_STATUS_LINES.ready);
     return {
       ok: true,
       result: parsed.result,
@@ -314,6 +336,8 @@ export async function resolveArchitectPlan(options: {
     executionIntent: options.executionIntent,
   });
   if (repaired.ok) {
+    await options.onStatus?.(PLANNING_STATUS_LINES.validated);
+    await options.onStatus?.(PLANNING_STATUS_LINES.ready);
     return {
       ok: true,
       result: repaired.result,
@@ -647,7 +671,8 @@ export type CreatePlanPayloadFailureCode =
   | 'ROUTING_INVALID'
   | 'SCOPE_PACK_ID_INVALID'
   | 'SCOPE_PACK_VERSION_INVALID'
-  | 'SCOPE_PACK_PHASE_INVALID';
+  | 'SCOPE_PACK_PHASE_INVALID'
+  | 'PLANNING_MODE_INVALID';
 
 function parseRoleModelChoice(raw: unknown): { ok: true; value: { provider?: ProviderId; requestedModel?: string } | null } | { ok: false; message: string } {
   if (raw === undefined || raw === null) {
@@ -813,6 +838,14 @@ export function parseCreatePlanPayload(raw: unknown): { ok: true; payload: Creat
     return { ok: false, code: 'ROUTING_INVALID', message: roleRouting.message };
   }
 
+  let planningMode: 'fast' | 'deep' = 'fast';
+  if (record.planningMode !== undefined && record.planningMode !== null) {
+    if (record.planningMode !== 'fast' && record.planningMode !== 'deep') {
+      return { ok: false, code: 'PLANNING_MODE_INVALID', message: 'create_plan planningMode must be fast or deep.' };
+    }
+    planningMode = record.planningMode;
+  }
+
   const scopePack = parseCreatePlanScopePackFields(record);
   if (!scopePack.ok) {
     return { ok: false, code: scopePack.code as CreatePlanPayloadFailureCode, message: scopePack.message };
@@ -825,6 +858,7 @@ export function parseCreatePlanPayload(raw: unknown): { ok: true; payload: Creat
       constraints,
       requestedRouting,
       ...(roleRouting.value ? { roleRouting: roleRouting.value } : {}),
+      planningMode,
       ...(scopePack.fields
         ? {
             scopePackId: scopePack.fields.scopePackId,

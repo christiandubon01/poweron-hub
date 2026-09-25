@@ -92,6 +92,7 @@ export interface ScopeDraft {
   scopePackPhaseId?: string
   staleAcknowledged?: boolean
   ownerReviewedConflict?: boolean
+  planningMode?: 'fast' | 'deep'
 }
 
 function toListItem(row: ScopePackRow): ScopePackListItem {
@@ -114,16 +115,41 @@ function toListItem(row: ScopePackRow): ScopePackListItem {
 
 const ACTIVE_RUN_STATES = new Set(['pending', 'running', 'paused'])
 export const PLANNING_STATUS_LINES = [
+  'Request received',
+  'Architect started',
+  'Using cached repo map',
+  'Searching relevant areas',
+  'Building plan',
   'Architect plan received',
   'Validating plan',
+  'Validated',
+  'Plan ready',
   'Plan format needs correction',
   'Architect correcting plan',
   'Validating corrected plan',
 ] as const
 
-function planningStatusLine(result: Record<string, unknown> | null): string | null {
+const PLANNING_STATUS_PATTERNS = [
+  /^Found \d+ candidate files$/,
+  /^Inspecting \d+ relevant files$/,
+]
+
+const PROVIDER_PLANNING_LINES = new Set<string>([
+  'Building plan',
+  'Architect plan received',
+  'Validating plan',
+  'Validated',
+  'Plan ready',
+  'Plan format needs correction',
+  'Architect correcting plan',
+  'Validating corrected plan',
+])
+
+export function planningStatusLine(result: Record<string, unknown> | null): string | null {
   const line = result?.planningStatus
-  return typeof line === 'string' && (PLANNING_STATUS_LINES as readonly string[]).includes(line) ? line : null
+  if (typeof line !== 'string') return null
+  if ((PLANNING_STATUS_LINES as readonly string[]).includes(line)) return line
+  return PLANNING_STATUS_PATTERNS.some(pattern => pattern.test(line)) ? line : null
 }
 
 export const APPROVAL_STATUS_LINES = [
@@ -188,6 +214,8 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
   const [plan, setPlan] = useState<PlanReviewModel | null>(null)
   const [planError, setPlanError] = useState<string | null>(null)
   const [planningStatus, setPlanningStatus] = useState<string | null>(null)
+  const [planningStartedAt, setPlanningStartedAt] = useState<number | null>(null)
+  const [providerStartedAt, setProviderStartedAt] = useState<number | null>(null)
   const [approvalStatus, setApprovalStatus] = useState<string | null>(null)
   const [planningRequestId, setPlanningRequestId] = useState<string | null>(null)
   const [approvingRequestId, setApprovingRequestId] = useState<string | null>(null)
@@ -278,7 +306,12 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
           setPhase('plan-error')
         } else {
           const line = planningStatusLine(row?.result ?? null)
-          if (line) setPlanningStatus(line)
+          if (line) {
+            setPlanningStatus(line)
+            if (PROVIDER_PLANNING_LINES.has(line)) {
+              setProviderStartedAt(current => current ?? Date.now())
+            }
+          }
         }
       } catch {
         // transient poll failure — keep the current phase
@@ -399,6 +432,12 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     if (!presence.repoKey) throw new Error('No connected Host repository.')
     const clientRequestId = makeClientRequestId()
     setBusy(true)
+    setPlanningStatus('Request received')
+    setPlanningStartedAt(Date.now())
+    setProviderStartedAt(null)
+    setPlan(null)
+    setPlanError(null)
+    setPhase('planning')
     try {
       await service.insertControlRequest({
         organizationId: org,
@@ -408,6 +447,7 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
         payload: {
           scope,
           constraints: input.constraints,
+          planningMode: input.planningMode ?? 'fast',
           ...(input.requestedRouting ? { requestedRouting: input.requestedRouting } : {}),
           ...(input.roleRouting ? { roleRouting: input.roleRouting } : {}),
           ...(input.scopePackId && input.scopePackVersion && input.scopePackPhaseId
@@ -422,11 +462,13 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
         },
       })
       setDraft(input)
-      setPlan(null)
-      setPlanError(null)
-      setPlanningStatus(null)
       setPlanningRequestId(clientRequestId)
-      setPhase('planning')
+    } catch (error) {
+      setPlanningStatus(null)
+      setPlanningStartedAt(null)
+      setProviderStartedAt(null)
+      setPhase('composing')
+      throw error
     } finally {
       setBusy(false)
     }
@@ -555,6 +597,9 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     setApprovalStatus(null)
     setPlan(null)
     setPlanError(null)
+    setPlanningStatus(null)
+    setPlanningStartedAt(null)
+    setProviderStartedAt(null)
     const nextPhase = contextRef.current ? 'idle' : 'unavailable'
     phaseRef.current = nextPhase
     setPhase(nextPhase)
@@ -587,6 +632,8 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     plan,
     planError,
     planningStatus,
+    planningStartedAt,
+    providerStartedAt,
     approvalStatus,
     run,
     runHistory,
@@ -608,7 +655,7 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     cancelPlanReview,
     cancelRun,
   }), [
-    phase, presence, context, contextError, plan, planError, planningStatus, approvalStatus, run, runHistory, draft, busy,
+    phase, presence, context, contextError, plan, planError, planningStatus, planningStartedAt, providerStartedAt, approvalStatus, run, runHistory, draft, busy,
     scopePacks, scopePackRows, importWarning, scopeStorage, importing, importScopePack, refresh,
     openComposer, closeComposer, editScope, submitScope, retryPlanning, approvePlan, cancelPlanReview, cancelRun,
   ])

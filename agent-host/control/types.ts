@@ -181,6 +181,8 @@ export interface CreatePlanPayload {
   scopePackPhaseId?: string;
   staleAcknowledged?: boolean;
   ownerReviewedConflict?: boolean;
+  /** Fast is the ordinary default. Deep is an explicit broader discovery path. */
+  planningMode?: 'fast' | 'deep';
 }
 
 export interface ApprovePlanPayload {

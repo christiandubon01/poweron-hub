@@ -336,6 +336,7 @@ describe('CT-CORE-1 new run composer', () => {
     expect(fake.inserted[0].payload).toEqual({
       scope: 'Create the smoke marker file',
       constraints: ['Do not modify any other file.', 'Do not commit or push.'],
+      planningMode: 'fast',
     })
   })
 
@@ -813,7 +814,9 @@ describe('CT-LIVE-0A0 plan failure recovery', () => {
     setControlValue(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Owner scope"]')!, 'Create the smoke marker file')
     click(button('Request plan'))
     await settle()
-    expect(container.textContent).toContain('The local Host Architect is reading this repository')
+    expect(container.textContent).toContain('Request received')
+    expect(container.textContent).toContain('Planning ·')
+    expect(container.textContent).not.toContain('%')
     expect(container.textContent).not.toContain('Architect correcting plan')
     fake.noteProgress(fake.inserted[0].clientRequestId, { planningStatus: 'Architect correcting plan' })
     await waitForPoll()

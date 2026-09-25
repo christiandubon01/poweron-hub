@@ -279,6 +279,14 @@ body:has(.app-brain-destinations.ct-active) .app-brain-shell-metrics { display: 
 .ct-planning-panel, .ct-idle-panel { flex: 1; padding: 0; }
 .ct-planning-panel > div, .ct-idle-panel > div { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .ct-planning-line { font-size: 14px; font-weight: 600; }
+.ct-planning-elapsed { font-size: 13px; color: var(--ct-muted, #8b93a7); }
+.ct-planning-mode { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ct-planning-mode button[aria-pressed="true"] { border-color: var(--ct-cyan, #7ee0ff); }
+.ct-plan-summary, .ct-plan-facts, .ct-plan-elevated ul { margin: 0; padding-left: 18px; }
+.ct-plan-facts { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding-left: 0; }
+.ct-plan-facts li { border: 1px solid var(--ct-border); border-radius: 999px; padding: 2px 8px; font-size: 12px; }
+.ct-plan-task details > summary { cursor: pointer; }
+.ct-plan-verification, .ct-plan-inspected { margin-top: 8px; }
 .ct-field-note { display: block; color: var(--ct-muted); font-size: 11px; }
 .ct-composer-panel { flex: 1; }
 .ct-composer-panel > div { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
@@ -329,7 +337,7 @@ body:has(.app-brain-destinations.ct-active) .app-brain-shell-metrics { display: 
 .ct-plan-task-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
 .ct-plan-task-meta dt { color: var(--ct-muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .ct-plan-task-meta dd { margin: 2px 0 0; font-size: 12px; overflow-wrap: anywhere; }
-.ct-plan-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--ct-border); padding-top: 12px; }
+.ct-plan-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--ct-border); padding: 12px 0; position: sticky; bottom: 0; z-index: 2; background: var(--ct-bar); }
 .ct-shell .ct-secondary { background: rgba(148,163,184,.06); }
 /* Final operations console: shared Live/Preview presentation, original desktop map footprint. */
 .ct-console { height: auto; min-height: calc(100vh - 120px); gap: 14px; padding-top: 14px; --ct-muted: #a0aaba; }
