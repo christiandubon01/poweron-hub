@@ -82,6 +82,11 @@ export interface ScopeDraft {
   scope: string
   constraints: string[]
   requestedRouting: { provider?: string; requestedModel?: string } | null
+  roleRouting?: {
+    architect?: { provider?: string; requestedModel?: string }
+    implementer?: { provider?: string; requestedModel?: string }
+    verifier?: { provider?: string; requestedModel?: string }
+  } | null
   scopePackId?: string
   scopePackVersion?: number
   scopePackPhaseId?: string
@@ -404,6 +409,7 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
           scope,
           constraints: input.constraints,
           ...(input.requestedRouting ? { requestedRouting: input.requestedRouting } : {}),
+          ...(input.roleRouting ? { roleRouting: input.roleRouting } : {}),
           ...(input.scopePackId && input.scopePackVersion && input.scopePackPhaseId
             ? {
                 scopePackId: input.scopePackId,

@@ -6,7 +6,7 @@ import ControlTower from '../app-brain/control-tower/ControlTower'
 import ModelsMode from '../app-brain/control-tower/intelligence/ModelsMode'
 import NextRunRoutingControls from '../app-brain/control-tower/intelligence/NextRunRoutingControls'
 import { PREVIEW_FLEET_LABEL, PREVIEW_PROVIDER_FLEET } from '@/features/control-tower/previewFleet'
-import { EMPTY_NEXT_RUN_ROUTING, toRequestedRouting, type NextRunRouting } from '@/features/control-tower/nextRunRouting'
+import { EMPTY_NEXT_RUN_ROUTING, toPersistedRoleRouting, toRequestedRouting, type NextRunRouting } from '@/features/control-tower/nextRunRouting'
 import { mapProviderFleet } from '@/features/control-tower/controlTowerAdapter'
 import type { HostPresenceView } from '@/features/control-tower/controlTowerAdapter'
 
@@ -80,6 +80,41 @@ it('enables Claude/Codex effort and disables Ollama effort', () => {
   act(() => root.render(<NextRunRoutingControls fleet={PREVIEW_PROVIDER_FLEET} routing={{ ...EMPTY_NEXT_RUN_ROUTING, implementer: { providerId: 'ollama', modelId: 'llama3.1:8b', effort: null, customModel: null } }} onChange={() => {}} />))
   const ollamaEffort = [...container.querySelectorAll('[aria-label="Implementer effort"] button')]
   expect(ollamaEffort.every((button) => (button as HTMLButtonElement).disabled)).toBe(true)
+})
+
+it('offers Opus 4.8 under Claude Code while Provider default stays first', () => {
+  let latest: NextRunRouting = {
+    architect: { ...EMPTY_NEXT_RUN_ROUTING.architect },
+    implementer: { ...EMPTY_NEXT_RUN_ROUTING.implementer },
+    verifier: { ...EMPTY_NEXT_RUN_ROUTING.verifier },
+  }
+  const renderRouting = () => act(() => root.render(<NextRunRoutingControls fleet={PREVIEW_PROVIDER_FLEET} routing={latest} onChange={(next) => { latest = next }} />))
+  renderRouting()
+  for (const role of ['Architect', 'Implementer', 'Verifier'] as const) {
+    const provider = container.querySelector<HTMLSelectElement>(`[aria-label="${role} provider"]`)!
+    act(() => { provider.value = 'claude'; provider.dispatchEvent(new Event('change', { bubbles: true })) })
+    renderRouting()
+    const model = container.querySelector<HTMLSelectElement>(`[aria-label="${role} model"]`)!
+    expect(model.options[0]?.textContent).toBe('Provider default')
+    expect(model.options[0]?.value).toBe('')
+    const opus = [...model.options].find((option) => option.value === 'claude-opus-4-8')
+    expect(opus?.textContent).toBe('Opus 4.8')
+    act(() => { model.value = 'claude-opus-4-8'; model.dispatchEvent(new Event('change', { bubbles: true })) })
+    renderRouting()
+  }
+  expect(latest.architect).toMatchObject({ providerId: 'claude', modelId: 'claude-opus-4-8' })
+  expect(latest.implementer).toMatchObject({ providerId: 'claude', modelId: 'claude-opus-4-8' })
+  expect(latest.verifier).toMatchObject({ providerId: 'claude', modelId: 'claude-opus-4-8' })
+  expect(toRequestedRouting(latest)).toEqual({ provider: 'claude', requestedModel: 'claude-opus-4-8' })
+  expect(toPersistedRoleRouting(latest)).toEqual({
+    architect: { provider: 'claude', requestedModel: 'claude-opus-4-8' },
+    implementer: { provider: 'claude', requestedModel: 'claude-opus-4-8' },
+    verifier: { provider: 'claude', requestedModel: 'claude-opus-4-8' },
+  })
+  expect(toPersistedRoleRouting({
+    ...EMPTY_NEXT_RUN_ROUTING,
+    architect: { providerId: 'claude', modelId: null, effort: null, customModel: null },
+  })).toBeNull()
 })
 
 it('propagates Next Run Routing into create_plan requestedRouting without silent downgrade', () => {

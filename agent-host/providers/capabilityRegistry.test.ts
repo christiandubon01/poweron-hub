@@ -11,6 +11,8 @@ import { catalogProbeLaunch, enumerateLocalModels } from '../control/worker.ts';
 import {
   aggregateUsage,
   buildProviderCapabilityRegistry,
+  CLAUDE_OPUS_4_8_DISPLAY_NAME,
+  CLAUDE_OPUS_4_8_MODEL_ID,
   MAX_CODEX_CATALOG_MODELS,
   parseCodexModelCatalog,
   parseOllamaModelList,
@@ -126,6 +128,23 @@ test('G: observed execution evidence yields an available model with reported run
   const safe = toSafeProviderFleet(registry).find((p) => p.providerId === 'claude')!;
   assert.equal(safe.authMode, 'not-reported');
   assert.equal(JSON.stringify(safe).includes('secret'), false);
+});
+
+test('G2: Claude Code lists Opus 4.8 without changing provider default or other providers', () => {
+  const registry = buildProviderCapabilityRegistry({ discovery: FULL_DISCOVERY, now });
+  const claude = registry.find((p) => p.providerId === 'claude')!;
+  const opus = claude.models.find((model) => model.modelId === CLAUDE_OPUS_4_8_MODEL_ID);
+  assert.ok(opus);
+  assert.equal(opus.modelDisplayName, CLAUDE_OPUS_4_8_DISPLAY_NAME);
+  assert.equal(opus.modelId, 'claude-opus-4-8');
+  assert.equal(opus.availabilitySource, 'configured-allowlist');
+  assert.equal(opus.reportedRuntimeModel, null);
+  assert.equal(opus.configuredModel, 'claude-opus-4-8');
+  assert.equal(claude.models.filter((model) => model.modelId === CLAUDE_OPUS_4_8_MODEL_ID).length, 1);
+  assert.deepEqual(registry.find((p) => p.providerId === 'codex')!.models, []);
+  assert.deepEqual(registry.find((p) => p.providerId === 'ollama')!.models, []);
+  assert.deepEqual(registry.find((p) => p.providerId === 'cursor-agent')!.models, []);
+  assert.deepEqual(registry.find((p) => p.providerId === 'cursor-editor')!.models, []);
 });
 
 test('H: configured/requested model stays separate from reported runtime model', () => {
@@ -291,7 +310,7 @@ test('P: cmd-wrapper catalog probes go through COMSPEC, native probes stay on th
   assert.equal(native.windowsVerbatimArguments, undefined);
 });
 
-test('Q: a successful Codex probe is published; failure and Claude stay empty; paths do not leak', async () => {
+test('Q: a successful Codex probe is published; Claude is allowlisted not enumerated; paths do not leak', async () => {
   const catalog = JSON.stringify({
     models: [
       { slug: 'gpt-6-astra', visibility: 'list' },
@@ -324,7 +343,10 @@ test('Q: a successful Codex probe is published; failure and Claude stay empty; p
   assert.equal(safe.find((provider) => provider.providerId === 'codex')!.models.length, MAX_CODEX_CATALOG_MODELS);
   assert.equal(safe.find((provider) => provider.providerId === 'codex')!.models[0].modelId, 'gpt-6-astra');
   assert.equal(safe.find((provider) => provider.providerId === 'codex')!.models[0].availabilitySource, 'provider-enumeration');
-  assert.equal(safe.find((provider) => provider.providerId === 'claude')!.models.length, 0);
+  const claudeModels = safe.find((provider) => provider.providerId === 'claude')!.models;
+  assert.deepEqual(claudeModels.map((model) => model.modelId), [CLAUDE_OPUS_4_8_MODEL_ID]);
+  assert.equal(claudeModels[0].modelDisplayName, CLAUDE_OPUS_4_8_DISPLAY_NAME);
+  assert.equal(claudeModels[0].availabilitySource, 'configured-allowlist');
   assert.ok(!serialized.includes('secret'));
   assert.ok(!serialized.includes('codex.cmd'));
   assert.ok(!serialized.toLowerCase().includes('stdout'));
@@ -335,5 +357,5 @@ test('Q: a successful Codex probe is published; failure and Claude stay empty; p
   assert.deepEqual(failed, {});
   const empty = toSafeProviderFleet(buildProviderCapabilityRegistry({ discovery, enumeratedModels: failed, now }));
   assert.equal(empty.find((provider) => provider.providerId === 'codex')!.models.length, 0);
-  assert.equal(empty.find((provider) => provider.providerId === 'claude')!.models.length, 0);
+  assert.deepEqual(empty.find((provider) => provider.providerId === 'claude')!.models.map((model) => model.modelId), [CLAUDE_OPUS_4_8_MODEL_ID]);
 });

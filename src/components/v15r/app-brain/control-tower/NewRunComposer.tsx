@@ -9,7 +9,7 @@ import { parseHandoffDocument, rejectScopePackSource } from '@/features/control-
 import { sha256Hex } from '@/features/control-tower/scopePack/hash'
 import { SCOPE_PACK_MAX_SOURCE_BYTES } from '@/features/control-tower/scopePack/bounds'
 import { isPreviewScopePackId, PREVIEW_SCOPE_PACK, PREVIEW_SCOPE_PACK_LABEL } from '@/features/control-tower/scopePack/preview'
-import { EMPTY_NEXT_RUN_ROUTING, formatRoutingSummaryLines, toRequestedRouting, type NextRunRouting } from '@/features/control-tower/nextRunRouting'
+import { EMPTY_NEXT_RUN_ROUTING, formatRoutingSummaryLines, toPersistedRoleRouting, toRequestedRouting, type NextRunRouting } from '@/features/control-tower/nextRunRouting'
 import { approximateTokenCount, CREATE_PLAN_MAX_PAYLOAD_BYTES, createPlanPayloadBytes, estimateArchitectContextTokens } from '@/features/control-tower/capacity'
 import type { ProviderCapabilityView } from './controlTowerTypes'
 import NextRunRoutingControls from './intelligence/NextRunRoutingControls'
@@ -137,10 +137,12 @@ export default function NewRunComposer({
   const selectedList = visiblePacks.find(pack => pack.packId === selectedPackId) ?? null
   const constraints = constraintsText.split('\n').map(line => line.trim()).filter(line => line.length > 0)
   const requestedRouting = toRequestedRouting(nextRouting)
+  const roleRouting = toPersistedRoleRouting(nextRouting)
   const draftPayload = {
     scope: scope.trim(),
     constraints,
     ...(requestedRouting ? { requestedRouting } : {}),
+    ...(roleRouting ? { roleRouting } : {}),
     ...(selectedPack
       ? {
           scopePackId: selectedPack.packId,
@@ -165,6 +167,7 @@ export default function NewRunComposer({
       scope: scope.trim(),
       constraints,
       requestedRouting,
+      ...(roleRouting ? { roleRouting } : {}),
       ...(selectedPack
         ? {
             scopePackId: selectedPack.packId,

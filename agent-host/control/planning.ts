@@ -17,6 +17,7 @@ import {
   computePlanHash,
   validatePlan,
   PLAN_PROVIDER_IDS,
+  PLAN_ROLES,
   ROLE_TO_PERMISSION_PROFILE,
   type ControlPlan,
   type CreatePlanPayload,
@@ -648,6 +649,99 @@ export type CreatePlanPayloadFailureCode =
   | 'SCOPE_PACK_VERSION_INVALID'
   | 'SCOPE_PACK_PHASE_INVALID';
 
+function parseRoleModelChoice(raw: unknown): { ok: true; value: { provider?: ProviderId; requestedModel?: string } | null } | { ok: false; message: string } {
+  if (raw === undefined || raw === null) {
+    return { ok: true, value: null };
+  }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, message: 'create_plan roleRouting choices must be JSON objects.' };
+  }
+  const choice = raw as Record<string, unknown>;
+  let provider: ProviderId | undefined;
+  if (choice.provider !== undefined && choice.provider !== null) {
+    if (typeof choice.provider !== 'string' || !(PLAN_PROVIDER_IDS as readonly string[]).includes(choice.provider)) {
+      return { ok: false, message: `roleRouting.provider must be one of: ${PLAN_PROVIDER_IDS.join(', ')}.` };
+    }
+    provider = choice.provider as ProviderId;
+  }
+  let requestedModel: string | undefined;
+  if (choice.requestedModel !== undefined && choice.requestedModel !== null) {
+    if (typeof choice.requestedModel !== 'string' || choice.requestedModel.length === 0 || choice.requestedModel.length > 200) {
+      return { ok: false, message: 'roleRouting.requestedModel must be a string of 1-200 characters.' };
+    }
+    requestedModel = choice.requestedModel;
+  }
+  if (!provider && !requestedModel) {
+    return { ok: true, value: null };
+  }
+  return {
+    ok: true,
+    value: {
+      ...(provider ? { provider } : {}),
+      ...(requestedModel ? { requestedModel } : {}),
+    },
+  };
+}
+
+function parseRoleRouting(raw: unknown): { ok: true; value: CreatePlanPayload['roleRouting'] } | { ok: false; message: string } {
+  if (raw === undefined || raw === null) {
+    return { ok: true, value: null };
+  }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, message: 'create_plan roleRouting must be a JSON object.' };
+  }
+  const record = raw as Record<string, unknown>;
+  const value: NonNullable<CreatePlanPayload['roleRouting']> = {};
+  for (const role of PLAN_ROLES) {
+    const parsed = parseRoleModelChoice(record[role]);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    if (parsed.value) {
+      value[role] = parsed.value;
+    }
+  }
+  return { ok: true, value: Object.keys(value).length > 0 ? value : null };
+}
+
+/**
+ * Architect turn routing. An explicit per-role model wins over the legacy
+ * single requestedRouting model. A missing model stays Provider default.
+ */
+export function resolveArchitectRequest(payload: CreatePlanPayload): { provider: ProviderId; requestedModel: string | null } {
+  const explicit = payload.roleRouting?.architect;
+  return {
+    provider: (explicit?.provider ?? payload.requestedRouting?.provider ?? 'claude') as ProviderId,
+    requestedModel: explicit?.requestedModel ?? payload.requestedRouting?.requestedModel ?? null,
+  };
+}
+
+/**
+ * Stamp an explicit owner model onto tasks of that role. Provider default
+ * (no requestedModel) leaves the Architect's model untouched. An explicit
+ * model is never replaced by another id.
+ */
+export function applyOwnerRoleModels(plan: ControlPlan, routing: CreatePlanPayload['roleRouting']): ControlPlan {
+  if (!routing) {
+    return plan;
+  }
+  let changed = false;
+  const tasks = plan.tasks.map((task) => {
+    const model = routing[task.role]?.requestedModel;
+    if (!model) {
+      return task;
+    }
+    changed = true;
+    const provider = routing[task.role]?.provider;
+    return {
+      ...task,
+      ...(provider ? { provider: provider as ProviderId } : {}),
+      requestedModel: model,
+    };
+  });
+  return changed ? { ...plan, tasks } : plan;
+}
+
 export function parseCreatePlanPayload(raw: unknown): { ok: true; payload: CreatePlanPayload } | { ok: false; code: CreatePlanPayloadFailureCode; message: string } {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return { ok: false, code: 'PAYLOAD_NOT_OBJECT', message: 'create_plan payload must be a JSON object.' };
@@ -714,6 +808,11 @@ export function parseCreatePlanPayload(raw: unknown): { ok: true; payload: Creat
     };
   }
 
+  const roleRouting = parseRoleRouting(record.roleRouting);
+  if (!roleRouting.ok) {
+    return { ok: false, code: 'ROUTING_INVALID', message: roleRouting.message };
+  }
+
   const scopePack = parseCreatePlanScopePackFields(record);
   if (!scopePack.ok) {
     return { ok: false, code: scopePack.code as CreatePlanPayloadFailureCode, message: scopePack.message };
@@ -725,6 +824,7 @@ export function parseCreatePlanPayload(raw: unknown): { ok: true; payload: Creat
       scope,
       constraints,
       requestedRouting,
+      ...(roleRouting.value ? { roleRouting: roleRouting.value } : {}),
       ...(scopePack.fields
         ? {
             scopePackId: scopePack.fields.scopePackId,

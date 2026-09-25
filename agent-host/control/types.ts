@@ -170,6 +170,11 @@ export interface CreatePlanPayload {
   constraints: string[];
   /** Optional provider/model/effort preference from the owner. Never a guarantee. */
   requestedRouting: { provider?: string; requestedModel?: string; reasoningEffort?: 'low' | 'medium' | 'high' | 'extra-high' } | null;
+  /**
+   * Explicit per-role model choices. A missing requestedModel means Provider
+   * default and must not be replaced with another model.
+   */
+  roleRouting?: Partial<Record<PlanRole, { provider?: string; requestedModel?: string }>> | null;
   /** Optional Scope Pack binding. Absent = existing create_plan behavior. */
   scopePackId?: string;
   scopePackVersion?: number;

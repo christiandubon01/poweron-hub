@@ -27,6 +27,7 @@ import {
   type PlanTask,
 } from './types.ts';
 import {
+  applyOwnerRoleModels,
   parseCreatePlanPayload,
   extractPlanJsonObject,
   parseArchitectPlan,
@@ -48,6 +49,7 @@ import { parseTaskControlSpec, ProductionExecutionPort, VERIFIER_VERDICT_EVENT, 
 import { buildRunSnapshot, extractTaskPlanMeta } from './snapshots.ts';
 import { handleApprovePlan, handleCreatePlan, parseEnvFile, resumeResumableRuns, RESUMABLE_RUN_STATUSES_SET, type ApprovePlanOutcome } from './worker.ts';
 import type { ClaimedControlRequest, ControlPlane } from './supabaseControl.ts';
+import { buildClaudeLaunchDescriptor } from '../providers/claude.ts';
 import type { ExecutionRequest, ExecutionResult } from '../providers/types.ts';
 import { recoverInterruptedAttempts } from '../providers/executor.ts';
 import type { AttemptExecutionContext } from '../supervisor/supervisor.ts';
@@ -1703,4 +1705,96 @@ test('restart resume: startup recovery publishes a FRESH snapshot for an existin
     assert.equal(published[0].status, 'running', 'the first fresh snapshot is published while the Run is still running');
     assert.equal(published[published.length - 1].status, 'completed', 'the final fresh snapshot reflects the advanced state');
   });
+});
+
+test('CT-LIVE-0B0: explicit Opus 4.8 survives plan approval and the Claude launch', async () => {
+  const calls: ExecutionRequest[] = [];
+  const drafted = architectPlanObject();
+  for (const task of drafted.tasks as Array<Record<string, unknown>>) {
+    task.requestedModel = 'claude-opus-5-5';
+  }
+  await withStore(async (store) => {
+    const controlPlane = new FakeControlPlane();
+    await handleCreatePlan({
+      store,
+      registry: new Map([['claude', { execute: async (request: ExecutionRequest) => {
+        calls.push(request);
+        return {
+          ...buildExecutionResult({
+            finalText: `\`\`\`json\n${JSON.stringify(drafted)}\n\`\`\``,
+            reportedModel: 'claude-opus-5-5',
+          }),
+          model: {
+            requestedModel: request.requestedModel ?? null,
+            reportedModel: 'claude-opus-5-5',
+            reportedModelSource: 'protocol-message',
+          },
+        };
+      } } as never]]) as never,
+      controlPlane: controlPlane.asControlPlane(),
+      request: claimedRequest({
+        scope: 'Create a smoke file.',
+        constraints: [],
+        requestedRouting: { provider: 'claude', requestedModel: 'claude-opus-4-8' },
+        roleRouting: {
+          architect: { provider: 'claude', requestedModel: 'claude-opus-4-8' },
+          implementer: { provider: 'claude', requestedModel: 'claude-opus-4-8' },
+          verifier: { provider: 'claude', requestedModel: 'claude-opus-4-8' },
+        },
+      }),
+      canonicalRepoPath: 'C:\\repo',
+    });
+    assert.equal(calls[0]?.requestedModel, 'claude-opus-4-8');
+    const created = controlPlane.completions[0].result as Record<string, unknown>;
+    const architect = created.architect as Record<string, unknown>;
+    assert.equal(architect.requestedModel, 'claude-opus-4-8');
+    assert.equal(architect.reportedModel, 'claude-opus-5-5');
+    const plan = created.plan as { tasks: Array<{ role: string; requestedModel: string | null }> };
+    assert.equal(plan.tasks.find((task) => task.role === 'implementer')?.requestedModel, 'claude-opus-4-8');
+    assert.equal(plan.tasks.find((task) => task.role === 'verifier')?.requestedModel, 'claude-opus-4-8');
+    assert.equal(JSON.stringify(plan).includes('claude-opus-5-5'), false);
+
+    const outcome = await handleApprovePlan({
+      store,
+      controlPlane: controlPlane.asControlPlane(),
+      request: claimedRequest({ planId: created.planId, planHash: created.planHash }, 'approve_plan'),
+      canonicalRepoPath: 'C:\\repo',
+    });
+    assert.equal(outcome.ok, true);
+    const tasks = store.listTasks(outcome.runId!);
+    for (const task of tasks) {
+      const control = (task.spec as { control: { requestedModel: string | null; provider: string } }).control;
+      assert.equal(control.provider, 'claude');
+      assert.equal(control.requestedModel, 'claude-opus-4-8');
+      const launch = buildClaudeLaunchDescriptor(
+        { providerId: 'claude', executable: 'C:\\Tools\\claude.exe' },
+        {
+          executionId: task.taskId,
+          attemptId: task.taskId,
+          taskId: task.taskId,
+          runId: outcome.runId!,
+          workingDirectory: 'C:\\repo',
+          prompt: 'unused',
+          requestedModel: control.requestedModel ?? undefined,
+          permissionProfile: 'task-implementer',
+          timeoutMs: 600_000,
+        },
+      );
+      const modelIndex = launch.argv.indexOf('--model');
+      assert.equal(launch.argv[modelIndex + 1], 'claude-opus-4-8');
+      assert.equal(launch.argv.includes('claude-opus-5-5'), false);
+    }
+  });
+});
+
+test('CT-LIVE-0B0: Provider default does not inject Opus 4.8', () => {
+  const parsed = parseCreatePlanPayload({ scope: 'Create a smoke file.', constraints: [] });
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.payload.roleRouting, undefined);
+  const plan = validatePlan({ planId: 'plan-default', ...architectPlanObject() });
+  assert.equal(plan.ok, true);
+  const stamped = applyOwnerRoleModels(plan.plan!, parsed.payload.roleRouting ?? null);
+  assert.equal(stamped.tasks.every((task) => task.requestedModel === null), true);
+  assert.equal(JSON.stringify(stamped).includes('claude-opus-4-8'), false);
 });

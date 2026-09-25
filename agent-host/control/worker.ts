@@ -61,10 +61,12 @@ import {
   extractPlanJsonObject,
   resolveArchitectPlan,
   parseCreatePlanPayload,
+  resolveArchitectRequest,
+  applyOwnerRoleModels,
 } from './planning.ts';
 import { ProductionExecutionPort } from './supervisorPort.ts';
 import { buildRunSnapshot } from './snapshots.ts';
-import type { ControlPlan, PlanRole, TaskControlSpec } from './types.ts';
+import { computePlanHash, type ControlPlan, type PlanRole, type TaskControlSpec } from './types.ts';
 import {
   applyReconciliation,
   buildScopePackApprovalGate,
@@ -344,6 +346,7 @@ export async function handleCreatePlan(options: {
     return;
   }
   const payload = parsedPayload.payload;
+  const architectRequest = resolveArchitectRequest(payload);
 
   let boundPack: ScopePackContract | null = null;
   let inherited: Extract<ScopePackInheritanceResult, { ok: true }> | null = null;
@@ -407,7 +410,7 @@ export async function handleCreatePlan(options: {
     if (options.reconcileFoundation) {
       claimResults = await options.reconcileFoundation({ pack: loaded, phase: resolved.phase, repoPath: options.canonicalRepoPath });
     } else {
-      const reconProvider: ProviderId = (payload.requestedRouting?.provider ?? 'claude') as ProviderId;
+      const reconProvider: ProviderId = architectRequest.provider;
       const reconAdapter = options.registry.get(reconProvider);
       if (!reconAdapter) {
         await controlPlane.failRequest(request.id, `Provider ${reconProvider} is not installed on this host. Install it and retry.`);
@@ -426,7 +429,7 @@ export async function handleCreatePlan(options: {
           ownerConstraints: payload.constraints,
           checkpointNote,
         }),
-        requestedModel: payload.requestedRouting?.requestedModel ?? undefined,
+        requestedModel: architectRequest.requestedModel ?? undefined,
         permissionProfile: 'read-only-reviewer',
         timeoutMs: ARCHITECT_TIMEOUT_MS,
       });
@@ -480,7 +483,7 @@ export async function handleCreatePlan(options: {
             reconciliationState: boundPack.reconciliationState,
           },
         },
-        architect: { provider: payload.requestedRouting?.provider ?? 'claude', requestedModel: payload.requestedRouting?.requestedModel ?? null, reportedModel: null, reportedModelSource: 'none' },
+        architect: { provider: architectRequest.provider, requestedModel: architectRequest.requestedModel, reportedModel: null, reportedModelSource: 'none' },
         reconciliation: {
           state: boundPack.reconciliationState,
           summary: boundPack.reconciliationSummary,
@@ -497,8 +500,8 @@ export async function handleCreatePlan(options: {
     }
   }
 
-  const provider: ProviderId = (payload.requestedRouting?.provider ?? 'claude') as ProviderId;
-  const requestedModel = payload.requestedRouting?.requestedModel ?? null;
+  const provider: ProviderId = architectRequest.provider;
+  const requestedModel = architectRequest.requestedModel;
   const adapter = options.registry.get(provider);
   if (!adapter) {
     await controlPlane.failRequest(
@@ -575,6 +578,11 @@ export async function handleCreatePlan(options: {
       const extra = inherited.validationRequirements.filter((item) => !task.validationRequirements.includes(item));
       task.validationRequirements = [...task.validationRequirements, ...extra];
     }
+  }
+
+  if (payload.roleRouting) {
+    parsed.result.plan = applyOwnerRoleModels(parsed.result.plan, payload.roleRouting);
+    parsed.result.planHash = computePlanHash(parsed.result.plan);
   }
 
   await controlPlane.completeRequest(request.id, {

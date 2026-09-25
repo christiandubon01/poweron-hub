@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { ClaudeCompatibleProviderAdapter, buildClaudeLaunchDescriptor, mapPermissionProfileToClaudeMode } from './claude.ts';
+import { buildProviderEnvironment } from './environmentPolicy.ts';
 import type { RunProcessOptions } from './processRunner.ts';
 import type { ExecutionRequest, ProcessExecutionResult } from './types.ts';
 
@@ -661,4 +662,38 @@ test('claude adapter: 28) model and effort flags never carry the prompt (argv st
   );
   assert.equal(launch.argv.some((arg) => arg.includes(prompt)), false);
   assert.deepEqual(launch.argv.slice(-4), ['--model', 'claude-fable-5', '--effort', 'xhigh']);
+});
+
+test('claude adapter: explicit Opus 4.8 keeps --model, requested model, and subscription-only env', async () => {
+  const runner = createRunnerDouble([
+    {
+      stdoutChunks: [
+        jsonLine({ type: 'system', subtype: 'init', model: 'claude-opus-5-5' }),
+        jsonLine({ type: 'result', subtype: 'success', is_error: false, result: 'done' }),
+      ],
+    },
+  ]);
+  const adapter = new ClaudeCompatibleProviderAdapter(
+    { providerId: 'claude', executable: 'C:\\Tools\\claude.exe' },
+    { runner: runner.runner },
+  );
+  const result = await adapter.execute(createRequest({ requestedModel: 'claude-opus-4-8', reasoningEffort: undefined }));
+  const launch = runner.runs[0]?.options.launch;
+  assert.ok(launch);
+  const modelIndex = launch.argv.indexOf('--model');
+  assert.equal(launch.argv[modelIndex + 1], 'claude-opus-4-8');
+  assert.equal(launch.argv.includes('claude-opus-5-5'), false);
+  assert.equal(runner.runs[0]?.options.environmentProfile, 'claude');
+  assert.equal(result.model.requestedModel, 'claude-opus-4-8');
+  assert.equal(result.model.reportedModel, 'claude-opus-5-5');
+  assert.notEqual(result.model.requestedModel, result.model.reportedModel);
+  const child = buildProviderEnvironment('claude', {
+    ANTHROPIC_API_KEY: 'fixture-key',
+    ANTHROPIC_AUTH_TOKEN: 'fixture-token',
+    ANTHROPIC_BASE_URL: 'https://api.example.invalid',
+    PATH: 'C:\\Tools',
+  }, undefined);
+  assert.equal(child.ANTHROPIC_API_KEY, undefined);
+  assert.equal(child.ANTHROPIC_AUTH_TOKEN, undefined);
+  assert.equal(child.ANTHROPIC_BASE_URL, undefined);
 });

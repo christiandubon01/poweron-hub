@@ -37,6 +37,18 @@ export const PREVIEW_PROVIDER_FLEET: ProviderCapabilityView[] = [
         usageCapabilities: { ...NO_QUOTA },
       },
       {
+        modelId: 'claude-opus-4-8',
+        modelDisplayName: 'Opus 4.8',
+        availability: 'configured-unverified',
+        availabilitySource: 'configured-allowlist',
+        effortLevels: ['low', 'medium', 'high', 'extra-high'],
+        defaultEffort: null,
+        reportedRuntimeModel: null,
+        configuredModel: 'claude-opus-4-8',
+        contextWindow: null,
+        usageCapabilities: { ...NO_QUOTA },
+      },
+      {
         modelId: 'claude-opus-4-6',
         modelDisplayName: 'claude-opus-4-6',
         availability: 'available',

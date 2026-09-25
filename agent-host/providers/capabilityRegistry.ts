@@ -128,6 +128,18 @@ const PROVIDER_FACTS_BY_TOOL_ID: Record<string, ProviderStaticFacts> = {
 
 const CURSOR_EDITOR_TOOL_ID = 'cursor-editor';
 
+/**
+ * Claude Code has no model-list command. Selectable ids are an explicit
+ * allowlist. Opus 4.8 is selectable; it is not the provider default.
+ * Availability here is the allowlist, not a new probe and not a cost claim.
+ */
+export const CLAUDE_OPUS_4_8_MODEL_ID = 'claude-opus-4-8';
+export const CLAUDE_OPUS_4_8_DISPLAY_NAME = 'Opus 4.8';
+
+const CLAUDE_CONFIGURED_MODELS: ReadonlyArray<{ modelId: string; modelDisplayName: string }> = [
+  { modelId: CLAUDE_OPUS_4_8_MODEL_ID, modelDisplayName: CLAUDE_OPUS_4_8_DISPLAY_NAME },
+];
+
 /* -------------------------------------------------------------------------- */
 /* Inputs                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -302,14 +314,23 @@ function buildModels(
     usageCapabilities,
   });
 
-  const seen = new Set<string>();
   const models: ModelCapability[] = [];
-  const add = (modelId: string, availability: ModelAvailability, source: ModelAvailabilitySource): void => {
-    if (!modelId || seen.has(modelId)) {
+  const add = (modelId: string, availability: ModelAvailability, source: ModelAvailabilitySource, displayName?: string): void => {
+    if (!modelId) {
       return;
     }
-    seen.add(modelId);
-    models.push(make(modelId, availability, source));
+    const existing = models.find((model) => model.modelId === modelId);
+    if (existing) {
+      if (displayName) {
+        existing.modelDisplayName = displayName;
+      }
+      return;
+    }
+    const model = make(modelId, availability, source);
+    if (displayName) {
+      model.modelDisplayName = displayName;
+    }
+    models.push(model);
   };
 
   // Source order (§4): real enumeration → configured allowlist → execution
@@ -321,6 +342,11 @@ function buildModels(
   for (const modelId of inputs.configuredModels?.[facts.providerId] ?? []) {
     add(modelId, 'configured-unverified', 'configured-allowlist');
   }
+  if (facts.providerId === 'claude') {
+    for (const entry of CLAUDE_CONFIGURED_MODELS) {
+      add(entry.modelId, 'configured-unverified', 'configured-allowlist', entry.modelDisplayName);
+    }
+  }
   for (const modelId of inputs.observedModels?.[facts.providerId] ?? []) {
     // Observed from a real run: mark as available with execution evidence.
     const existing = models.find((m) => m.modelId === modelId);
@@ -329,7 +355,6 @@ function buildModels(
     } else {
       const model = make(modelId, 'available', 'execution-evidence');
       model.reportedRuntimeModel = modelId;
-      seen.add(modelId);
       models.push(model);
     }
   }

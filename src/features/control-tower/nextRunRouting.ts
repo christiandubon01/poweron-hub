@@ -82,6 +82,32 @@ export function saveNextRunRouting(repoKey: string | null, routing: NextRunRouti
   }
 }
 
+export interface PersistedRoleModelChoice {
+  provider?: string
+  requestedModel?: string
+}
+
+export interface PersistedRoleRouting {
+  architect?: PersistedRoleModelChoice
+  implementer?: PersistedRoleModelChoice
+  verifier?: PersistedRoleModelChoice
+}
+
+/** Explicit per-role models only. Provider default is omitted so it is not persisted as a model id. */
+export function toPersistedRoleRouting(routing: NextRunRouting): PersistedRoleRouting | null {
+  const persisted: PersistedRoleRouting = {}
+  for (const role of ROUTED_ROLES) {
+    const choice = routing[role]
+    const model = choice.customModel?.trim() || choice.modelId
+    if (!model) continue
+    persisted[role] = {
+      ...(choice.providerId ? { provider: choice.providerId } : {}),
+      requestedModel: model,
+    }
+  }
+  return Object.keys(persisted).length > 0 ? persisted : null
+}
+
 /** Maps Next Run Routing onto the existing create_plan requestedRouting seam. */
 export function toRequestedRouting(routing: NextRunRouting): { provider?: string; requestedModel?: string; reasoningEffort?: EffortLevel } | null {
   const architect = routing.architect
