@@ -66,7 +66,7 @@ export function resolveControlPlaneConfigFromEnv(options: {
 export interface ClaimedControlRequest {
   id: string;
   repo_key: string;
-  request_type: 'create_plan' | 'approve_plan' | 'cancel_run' | 'import_scope_pack';
+  request_type: 'create_plan' | 'approve_plan' | 'cancel_run' | 'import_scope_pack' | 'apply_candidate';
   client_request_id: string;
   payload: Record<string, unknown>;
   status: string;

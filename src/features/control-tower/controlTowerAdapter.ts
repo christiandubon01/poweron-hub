@@ -239,7 +239,16 @@ export interface SnapshotWire {
   tasks: SnapshotTaskWire[]
   attempts: SnapshotAttemptWire[]
   gate: { gateKind: string; reason: string } | null
-  changeset: { ready: boolean; changeCount: number; safePaths: string[] } | null
+  changeset: { ready: boolean; changeCount: number; safePaths: string[]; changes?: unknown; attemptId?: string | null } | null
+  candidateApply?: {
+    eligible?: boolean
+    reason?: string | null
+    attemptId?: string | null
+    changeCount?: number
+    changes?: unknown
+    applied?: boolean
+    pathCount?: number | null
+  } | null
   verification: { verdict: 'pass' | 'fail' | 'unknown'; summary: string | null } | null
   /** ATB-1 telemetry — optional so pre-ATB-1 snapshots stay valid (missing → []). */
   interimVerdicts?: unknown
@@ -255,7 +264,7 @@ export interface ControlTowerRunView {
   phase: string
   currentRole: Role
   verification: VerificationState
-  changeset: 'none' | 'not-applied'
+  changeset: 'none' | 'not-applied' | 'applied'
   scope: string
   source: string
   attention: AttentionEntry[]
@@ -268,6 +277,11 @@ export interface ControlTowerRunView {
   attemptCount?: number
   candidateCount?: number | null
   candidatePaths?: string[]
+  candidateEligible?: boolean
+  candidateApplyReason?: string | null
+  candidateAttemptId?: string | null
+  candidateChanges?: Array<{ path: string; kind: 'modify' | 'add' | 'delete' }>
+  candidateApplied?: boolean
   verificationSummary?: string | null
   /**
    * ATB-1 telemetry. Optional so preview fixtures / pre-ATB-1 sessions remain
@@ -294,6 +308,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? (value as string[]) : []
+}
+
+function mapCandidateChanges(value: unknown): Array<{ path: string; kind: 'modify' | 'add' | 'delete' }> {
+  if (!Array.isArray(value)) return []
+  const changes: Array<{ path: string; kind: 'modify' | 'add' | 'delete' }> = []
+  for (const entry of value) {
+    if (!isRecord(entry) || typeof entry.path !== 'string') continue
+    if (entry.kind !== 'modify' && entry.kind !== 'add' && entry.kind !== 'delete') continue
+    if (!isSafeDisplayPath(entry.path)) continue
+    changes.push({ path: entry.path, kind: entry.kind })
+  }
+  return changes
+}
+
+function isSafeDisplayPath(value: string): boolean {
+  return value.length > 0 && value.length <= 240 && !value.includes('\\') && !value.startsWith('/') && !value.includes('..') && !/^[A-Za-z]:/.test(value)
 }
 
 const ROLE_LABEL: Record<SnapshotTaskWire['role'], Role> = { implementer: 'Implementer', verifier: 'Verifier', architect: 'Architect' }
@@ -385,7 +415,10 @@ export function mapRunSnapshotRow(row: RunSnapshotRow): ControlTowerRunView | nu
   else verification = verifierRunning ? 'active' : 'not-started'
 
   const changesetReady = isRecord(wire.changeset) && wire.changeset.ready === true
-  const changeset: 'none' | 'not-applied' = changesetReady ? 'not-applied' : 'none'
+  const candidateApply = isRecord(wire.candidateApply) ? wire.candidateApply : null
+  const candidateApplied = candidateApply?.applied === true
+  const changeset: 'none' | 'not-applied' | 'applied' = candidateApplied ? 'applied' : changesetReady ? 'not-applied' : 'none'
+  const candidateChanges = mapCandidateChanges(candidateApply?.changes ?? (isRecord(wire.changeset) ? wire.changeset.changes : null))
   const candidateCount = isRecord(wire.changeset) && typeof wire.changeset.changeCount === 'number' ? wire.changeset.changeCount : null
   const verificationSummary = typeof verificationWire?.summary === 'string' ? verificationWire.summary : null
   const interimVerdicts = mapInterimVerdicts(wire.interimVerdicts)
@@ -424,9 +457,11 @@ export function mapRunSnapshotRow(row: RunSnapshotRow): ControlTowerRunView | nu
     runId: row.run_id,
     objective: typeof row.objective === 'string' && row.objective ? row.objective : (typeof run.title === 'string' && run.title ? run.title : row.run_id),
     runState,
-    phase: verification === 'rejected' && runState === 'completed'
-      ? 'Verification failed · candidate rejected'
-      : RUN_PHASE_LABEL[runState],
+    phase: candidateApplied
+      ? 'Candidate applied'
+      : verification === 'rejected' && runState === 'completed'
+        ? 'Verification failed · candidate rejected'
+        : RUN_PHASE_LABEL[runState],
     currentRole,
     verification,
     changeset,
@@ -442,6 +477,11 @@ export function mapRunSnapshotRow(row: RunSnapshotRow): ControlTowerRunView | nu
     attemptCount: attemptsWire.length,
     candidateCount,
     candidatePaths: isRecord(wire.changeset) ? asStringArray(wire.changeset.safePaths) : [],
+    candidateEligible: candidateApply?.eligible === true,
+    candidateApplyReason: typeof candidateApply?.reason === 'string' ? candidateApply.reason : null,
+    candidateAttemptId: typeof candidateApply?.attemptId === 'string' ? candidateApply.attemptId : null,
+    candidateChanges,
+    candidateApplied,
     verificationSummary,
     interimVerdicts,
     handoffs: mapHandoffs(wire.handoffs),

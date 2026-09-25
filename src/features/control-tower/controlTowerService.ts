@@ -21,7 +21,20 @@ import { supabase } from '@/lib/supabase'
 import { assertPersistableCreatePlanPayload } from './capacity'
 import { assertPersistableImportScopePackPayload } from './scopePack/importPayload'
 
-export type ControlRequestType = 'create_plan' | 'approve_plan' | 'cancel_run' | 'import_scope_pack'
+export type ControlRequestType = 'create_plan' | 'approve_plan' | 'cancel_run' | 'import_scope_pack' | 'apply_candidate'
+
+const APPLY_CANDIDATE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+
+/** Browser payload is identifiers only. Paths and candidate bytes are rejected. */
+export function assertApplyCandidatePayload(payload: Record<string, unknown>): { ok: true } | { ok: false; message: string } {
+  const keys = Object.keys(payload).sort()
+  const runId = payload.runId
+  const attemptId = payload.attemptId
+  if (keys.length !== 2 || keys[0] !== 'attemptId' || keys[1] !== 'runId' || typeof runId !== 'string' || typeof attemptId !== 'string' || !APPLY_CANDIDATE_ID.test(runId) || !APPLY_CANDIDATE_ID.test(attemptId)) {
+    return { ok: false, message: 'Apply request could not be read.' }
+  }
+  return { ok: true }
+}
 
 export const HOST_FRESH_MS = 30_000
 
@@ -138,6 +151,12 @@ export async function insertControlRequest(input: {
   }
   if (input.requestType === 'import_scope_pack') {
     const verdict = assertPersistableImportScopePackPayload(input.payload)
+    if (!verdict.ok) {
+      throw new ControlTowerServiceError('payload_rejected', verdict.message)
+    }
+  }
+  if (input.requestType === 'apply_candidate') {
+    const verdict = assertApplyCandidatePayload(input.payload)
     if (!verdict.ok) {
       throw new ControlTowerServiceError('payload_rejected', verdict.message)
     }

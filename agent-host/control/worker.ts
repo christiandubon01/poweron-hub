@@ -14,10 +14,10 @@
  *     ExecutionPort binding over the EXISTING AttemptExecutor,
  *   - publishes a SAFE run snapshot after every tick (§29 whitelist).
  *
- * NO browser→shell path exists: the only request types are the three above.
- * NO auto-apply: generated workspace changes are never applied to canonical
- * main. NO service-credential exposure: the service role key stays in this
- * Node process and is never passed to provider child processes.
+ * NO browser→shell path exists. Canonical writes happen only when the owner
+ * submits apply_candidate. That path never commits, pushes, deploys, or runs
+ * migrations. NO service-credential exposure: the service role key stays in
+ * this Node process and is never passed to provider child processes.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -67,9 +67,11 @@ import {
   foundCandidatesStatus,
   inspectingFilesStatus,
 } from './planning.ts';
+import { applyChangeIndexToSnapshot, handleApplyCandidate } from './applyCandidate.ts';
 import { preparePlanningDiscovery } from './planningDiscovery.ts';
 import { ProductionExecutionPort } from './supervisorPort.ts';
 import { buildRunSnapshot } from './snapshots.ts';
+import { readCandidateChangeIndex } from '../workspace.ts';
 import { computePlanHash, type ControlPlan, type PlanRole, type TaskControlSpec } from './types.ts';
 import {
   applyReconciliation,
@@ -1257,6 +1259,17 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
     if (!snapshot) {
       return;
     }
+    if (snapshot.candidateApply.attemptId) {
+      try {
+        const index = await readCandidateChangeIndex({
+          workspaceRoot: path.join(statePaths.baseDir, 'workspaces'),
+          identity: { repoKey: statePaths.repoKey, runId, attemptId: snapshot.candidateApply.attemptId },
+        });
+        if (index) applyChangeIndexToSnapshot(snapshot, index);
+      } catch {
+        // A missing change index leaves the event-derived list. Apply fails closed later.
+      }
+    }
     await controlPlane.publishRunSnapshot({
       runId,
       objective: snapshot.run.objective,
@@ -1510,6 +1523,23 @@ export async function runControlWorker(options: ControlWorkerOptions = {}): Prom
               } catch {
                 // Snapshot already attempted; nothing else is publishable here.
               }
+            }
+          }
+        } else if (request.request_type === 'apply_candidate') {
+          await handleApplyCandidate({
+            store,
+            controlPlane,
+            request,
+            canonicalRepoPath,
+            workspaceRoot: path.join(statePaths.baseDir, 'workspaces'),
+            repoKey: statePaths.repoKey,
+          });
+          const runId = request.payload.runId;
+          if (typeof runId === 'string') {
+            try {
+              await publishSnapshot(runId);
+            } catch {
+              // Apply result is already durable on the control request.
             }
           }
         } else if (request.request_type === 'cancel_run') {

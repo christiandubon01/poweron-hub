@@ -162,7 +162,7 @@ export interface PlanValidationResult {
 /* Control requests (browser → Host via Supabase, §7-§8)                      */
 /* -------------------------------------------------------------------------- */
 
-export type ControlRequestType = 'create_plan' | 'approve_plan' | 'cancel_run' | 'import_scope_pack';
+export type ControlRequestType = 'create_plan' | 'approve_plan' | 'cancel_run' | 'import_scope_pack' | 'apply_candidate';
 export type PhaseExecutionIntent = 'audit' | 'implementation' | 'verification' | 'research';
 
 export interface CreatePlanPayload {
@@ -268,10 +268,31 @@ export interface SnapshotGate {
   reason: string;
 }
 
+export interface SnapshotCandidateChange {
+  path: string;
+  kind: 'modify' | 'add' | 'delete';
+}
+
 export interface SnapshotChangeset {
   ready: boolean;
   changeCount: number;
   safePaths: string[];
+  /** Path and kind only. File bytes are never published. */
+  changes: SnapshotCandidateChange[];
+  attemptId: string | null;
+}
+
+export interface SnapshotCandidateApply {
+  eligible: boolean;
+  reason: string | null;
+  attemptId: string | null;
+  changeCount: number;
+  changes: SnapshotCandidateChange[];
+  applied: boolean;
+  appliedAt: string | null;
+  pathCount: number | null;
+  requestId: string | null;
+  fingerprint: string | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -391,6 +412,7 @@ export interface RunSnapshot {
   attempts: SnapshotAttempt[];
   gate: SnapshotGate | null;
   changeset: SnapshotChangeset | null;
+  candidateApply: SnapshotCandidateApply;
   verification: { verdict: 'pass' | 'fail' | 'unknown'; summary: string | null } | null;
   /** ATB-1 telemetry projections (bounded, safe). Always present (possibly empty). */
   interimVerdicts: SnapshotInterimVerdict[];

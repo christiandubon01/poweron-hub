@@ -11,7 +11,7 @@ import {
   type AttemptPolicyController,
 } from '../policy/policy.ts';
 import type { PolicyAdjudication, PolicyBaselineCapture } from '../policy/types.ts';
-import { adjudicateAttemptWorkspace, createWorkspacePolicyBaseline, materializeAttemptWorkspace, materializeVerifierWorkspace, resolveImplementerCandidateWorkspace, type AttemptWorkspace } from '../workspace.ts';
+import { adjudicateAttemptWorkspace, createWorkspacePolicyBaseline, materializeAttemptWorkspace, materializeVerifierWorkspace, resolveImplementerCandidateWorkspace, writeCandidateChangeIndex, type AttemptWorkspace } from '../workspace.ts';
 
 const DEFAULT_EXECUTION_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
@@ -332,7 +332,28 @@ export class AttemptExecutor {
           workspaceAdjudication?.changeSet &&
           workspaceAdjudication.changeSet.changes.length > 0
         ) {
-          this.persistWorkspaceEvent(input, 'workspace.changeset.ready', { workspaceId: workspace.workspaceId, baselineHeadSha: workspace.baselineHeadSha, changeCount: workspaceAdjudication.changeSet.changes.length, workspaceState: 'cleanup-eligible' });
+          const changes = workspaceAdjudication.changeSet.changes.map((change) => ({ path: change.path, kind: change.kind }));
+          if (this.workspaceConfig) {
+            try {
+              await writeCandidateChangeIndex({
+                workspaceRoot: this.workspaceConfig.workspaceRoot,
+                identity: { repoKey: this.workspaceConfig.repoKey, runId: input.runId, attemptId: input.attemptId },
+                changes,
+              });
+            } catch {
+              // The changeset event still carries the path list when it fits.
+              // Apply fails closed if neither the index nor that list is usable.
+            }
+          }
+          const payload: JsonValue = {
+            workspaceId: workspace.workspaceId,
+            baselineHeadSha: workspace.baselineHeadSha,
+            changeCount: changes.length,
+            workspaceState: 'cleanup-eligible',
+          };
+          const withChanges: JsonValue = { ...payload, changes };
+          const published = Buffer.byteLength(JSON.stringify(withChanges), 'utf8') <= 7000 ? withChanges : payload;
+          this.persistWorkspaceEvent(input, 'workspace.changeset.ready', published);
         }
       }
       const attempt = this.transitionAttemptTerminal(context.attempt.attemptId, terminalAttemptStatus);

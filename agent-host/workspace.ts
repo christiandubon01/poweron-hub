@@ -121,6 +121,19 @@ export async function materializeAttemptWorkspace(options: {
     throw new WorkspacePreparationError('Materialized workspace unexpectedly contains .git.');
   }
 
+  const baselineTree = await captureWorkspaceTree(workspacePath);
+  try {
+    await writeCapturedBaseline({
+      workspaceRoot,
+      identity: options.identity,
+      baselineHeadSha,
+      tree: baselineTree,
+    });
+  } catch (error) {
+    await rm(workspacePath, { recursive: true, force: true });
+    throw new WorkspacePreparationError(`Failed to persist captured baseline: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
   return {
     workspaceId: `${options.identity.repoKey}/${options.identity.runId}/${options.identity.attemptId}`,
     workspaceRoot,
@@ -128,7 +141,7 @@ export async function materializeAttemptWorkspace(options: {
     baselineHeadSha,
     materializationMode: 'git-archive-tar',
     readOnly: false,
-    baselineTree: await captureWorkspaceTree(workspacePath),
+    baselineTree,
   };
 }
 
@@ -296,6 +309,17 @@ function buildWorkspaceSnapshot(headSha: string, baseline: WorkspaceTree, finalT
   return { headSha, entries };
 }
 
+export function describeWorkspaceDelta(
+  baselineHeadSha: string,
+  baseline: WorkspaceTree,
+  finalTree: WorkspaceTree,
+): Array<{ kind: 'add' | 'modify' | 'delete'; path: string }> {
+  return buildWorkspaceSnapshot(baselineHeadSha, baseline, finalTree).entries.map((entry) => ({
+    kind: entry.kind === 'untracked' ? 'add' as const : entry.kind === 'deleted' ? 'delete' as const : 'modify' as const,
+    path: entry.path,
+  }));
+}
+
 function buildWorkspaceChangeSet(workspace: AttemptWorkspace, finalTree: WorkspaceTree): WorkspaceChangeSet {
   const changes: WorkspaceChangeSet['changes'][number][] = buildWorkspaceSnapshot(workspace.baselineHeadSha, workspace.baselineTree, finalTree).entries.map((entry) => ({
     kind: entry.kind === 'untracked' ? 'add' : entry.kind === 'deleted' ? 'delete' : 'modify',
@@ -460,6 +484,129 @@ async function rejectTrackedSensitivePaths(repoPath: string, headSha: string): P
   if (sensitivePath) {
     throw new WorkspacePreparationError('Committed baseline contains a sensitive file and cannot be materialized for a provider.');
   }
+}
+
+export interface CapturedBaselineFile {
+  path: string;
+  sha256: string;
+  sizeBytes: number;
+}
+
+export interface CandidateChangeIndexEntry {
+  path: string;
+  kind: 'add' | 'modify' | 'delete';
+}
+
+const CAPTURED_BASELINE_SCHEMA = 1;
+
+export function capturedBaselineSidecarPath(options: { workspaceRoot: string; identity: AttemptWorkspaceIdentity }): string {
+  return `${resolveAttemptWorkspacePath(options)}.baseline.json`;
+}
+
+export function candidateChangeIndexPath(options: { workspaceRoot: string; identity: AttemptWorkspaceIdentity }): string {
+  return `${resolveAttemptWorkspacePath(options)}.changes.json`;
+}
+
+export async function writeCapturedBaseline(options: {
+  workspaceRoot: string;
+  identity: AttemptWorkspaceIdentity;
+  baselineHeadSha: string;
+  tree: WorkspaceTree;
+}): Promise<void> {
+  const destination = capturedBaselineSidecarPath(options);
+  const files = [...options.tree.files.values()]
+    .map((file) => ({ path: file.path, sha256: file.sha256, sizeBytes: file.sizeBytes }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  await mkdir(path.dirname(destination), { recursive: true });
+  await writeFile(destination, JSON.stringify({
+    schemaVersion: CAPTURED_BASELINE_SCHEMA,
+    baselineHeadSha: options.baselineHeadSha,
+    files,
+  }));
+}
+
+export async function readCapturedBaseline(options: {
+  workspaceRoot: string;
+  identity: AttemptWorkspaceIdentity;
+}): Promise<{ baselineHeadSha: string; files: Map<string, CapturedBaselineFile> } | null> {
+  const source = capturedBaselineSidecarPath(options);
+  let raw: string;
+  try {
+    raw = await readFile(source, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+  const record = parsed as Record<string, unknown>;
+  if (record.schemaVersion !== CAPTURED_BASELINE_SCHEMA || typeof record.baselineHeadSha !== 'string') return null;
+  if (!Array.isArray(record.files)) return null;
+  const files = new Map<string, CapturedBaselineFile>();
+  for (const entry of record.files) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return null;
+    const file = entry as Record<string, unknown>;
+    if (typeof file.path !== 'string' || typeof file.sha256 !== 'string' || typeof file.sizeBytes !== 'number') return null;
+    try {
+      const normalized = normalizeRepoRelativePath(file.path);
+      files.set(normalized, { path: normalized, sha256: file.sha256, sizeBytes: file.sizeBytes });
+    } catch {
+      return null;
+    }
+  }
+  return { baselineHeadSha: record.baselineHeadSha, files };
+}
+
+export async function writeCandidateChangeIndex(options: {
+  workspaceRoot: string;
+  identity: AttemptWorkspaceIdentity;
+  changes: readonly CandidateChangeIndexEntry[];
+}): Promise<void> {
+  const destination = candidateChangeIndexPath(options);
+  const changes = [...options.changes].sort((left, right) => left.path.localeCompare(right.path));
+  await mkdir(path.dirname(destination), { recursive: true });
+  await writeFile(destination, JSON.stringify({ schemaVersion: CAPTURED_BASELINE_SCHEMA, changes }));
+}
+
+export async function readCandidateChangeIndex(options: {
+  workspaceRoot: string;
+  identity: AttemptWorkspaceIdentity;
+}): Promise<CandidateChangeIndexEntry[] | null> {
+  const source = candidateChangeIndexPath(options);
+  let raw: string;
+  try {
+    raw = await readFile(source, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+  const record = parsed as Record<string, unknown>;
+  if (record.schemaVersion !== CAPTURED_BASELINE_SCHEMA || !Array.isArray(record.changes)) return null;
+  const changes: CandidateChangeIndexEntry[] = [];
+  for (const entry of record.changes) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return null;
+    const change = entry as Record<string, unknown>;
+    if (change.kind !== 'add' && change.kind !== 'modify' && change.kind !== 'delete') return null;
+    if (typeof change.path !== 'string') return null;
+    try {
+      changes.push({ path: normalizeRepoRelativePath(change.path), kind: change.kind });
+    } catch {
+      return null;
+    }
+  }
+  return changes;
 }
 
 function isPathInside(root: string, candidate: string): boolean {

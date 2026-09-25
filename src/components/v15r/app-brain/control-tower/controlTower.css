@@ -715,6 +715,9 @@ body:has(.app-brain-destinations.ct-active) .app-brain-shell-metrics { display: 
   .ct-console-workspace.ct-workspace-atb6 .ct-map-frame { height: 520px; }
   .ct-console .ct-map-scene.ct-brain-stage { min-height: 420px; }
 }
+.ct-apply-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.ct-apply-confirm { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.ct-apply-list { margin: 0 0 8px; padding-left: 1.1rem; }
 @media (prefers-reduced-motion: reduce) {
   .ct-brain-stage, .ct-operational-scene { animation: none !important; }
 }

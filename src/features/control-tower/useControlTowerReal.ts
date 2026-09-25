@@ -36,6 +36,7 @@ import {
   type ScopePackRow,
 } from './controlTowerService'
 import type { ScopePackImportDraft, ScopePackListItem } from './scopePack/types'
+import { applyProgressLabel, noticeFromApplyResult, type ApplyNotice } from './applyCandidateView'
 
 // Re-exported for the composer/panel components that consume presence views.
 export type { HostPresenceView } from './controlTowerAdapter'
@@ -228,6 +229,9 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
   const [importWarning, setImportWarning] = useState<string | null>(null)
   const [scopeStorage, setScopeStorage] = useState<ScopeStorageState>('unknown')
   const [importing, setImporting] = useState(false)
+  const [applyRequestId, setApplyRequestId] = useState<string | null>(null)
+  const [applyProgress, setApplyProgress] = useState<string | null>(null)
+  const [applyNotice, setApplyNotice] = useState<ApplyNotice | null>(null)
 
   const phaseRef = useRef(phase)
   phaseRef.current = phase
@@ -243,6 +247,9 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
   runIdRef.current = run?.runId ?? runIdRef.current
   const approvedRunIdRef = useRef<string | null>(null)
   const approvalSubmitLock = useRef(false)
+  const applyIdRef = useRef(applyRequestId)
+  applyIdRef.current = applyRequestId
+  const applySubmitLock = useRef(false)
 
   const applySnapshots = useCallback((rows: RunSnapshotRow[], options: { preferredId: string | null; allowHistory: boolean }) => {
     const views = rows.map(mapRunSnapshotRow).filter((view): view is ControlTowerRunView => view !== null)
@@ -370,6 +377,26 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
         }
       } catch {
         // transient poll failure — keep the current phase
+      }
+    }
+
+    const applyId = applyIdRef.current
+    if (applyId) {
+      try {
+        const row = await service.fetchControlRequest(org, applyId)
+        if (row?.status === 'pending') {
+          setApplyProgress('Apply requested')
+        } else if (row && (row.status === 'claimed')) {
+          const label = applyProgressLabel(row.result?.phase)
+          if (label) setApplyProgress(label)
+        } else if (row && (row.status === 'completed' || row.status === 'failed')) {
+          setApplyNotice(noticeFromApplyResult(row.status, row.result, row.error))
+          setApplyProgress(row.status === 'completed' ? 'Applied' : applyProgressLabel(row.result?.phase))
+          applyIdRef.current = null
+          setApplyRequestId(null)
+        }
+      } catch {
+        // A transient poll miss keeps the last honest apply state.
       }
     }
 
@@ -624,6 +651,36 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     }
   }, [presence.repoKey, service])
 
+  /** Owner explicitly applies one verified candidate. The Host owns the files. */
+  const requestApplyCandidate = useCallback(async (targetRunId: string, attemptId: string): Promise<void> => {
+    if (applySubmitLock.current || applyIdRef.current) return
+    const org = contextRef.current?.organizationId
+    if (!org) throw new Error('Not authenticated.')
+    if (!presence.repoKey) throw new Error('No connected Host repository.')
+    applySubmitLock.current = true
+    setBusy(true)
+    setApplyNotice(null)
+    setApplyProgress('Apply requested')
+    const clientRequestId = makeClientRequestId()
+    try {
+      await service.insertControlRequest({
+        organizationId: org,
+        repoKey: presence.repoKey,
+        requestType: 'apply_candidate',
+        clientRequestId,
+        payload: { runId: targetRunId, attemptId },
+      })
+      applyIdRef.current = clientRequestId
+      setApplyRequestId(clientRequestId)
+    } catch (error) {
+      setApplyProgress(null)
+      throw error
+    } finally {
+      applySubmitLock.current = false
+      setBusy(false)
+    }
+  }, [presence.repoKey, service])
+
   return useMemo(() => ({
     phase,
     presence,
@@ -654,9 +711,13 @@ export function useControlTowerReal(options: { service?: ControlTowerServiceApi;
     approvePlan,
     cancelPlanReview,
     cancelRun,
+    applyProgress,
+    applyNotice,
+    requestApplyCandidate,
   }), [
     phase, presence, context, contextError, plan, planError, planningStatus, planningStartedAt, providerStartedAt, approvalStatus, run, runHistory, draft, busy,
     scopePacks, scopePackRows, importWarning, scopeStorage, importing, importScopePack, refresh,
     openComposer, closeComposer, editScope, submitScope, retryPlanning, approvePlan, cancelPlanReview, cancelRun,
+    applyProgress, applyNotice, requestApplyCandidate,
   ])
 }

@@ -13,11 +13,13 @@
  * repo-relative safe paths.
  */
 
+import { projectCandidateApply } from './applyCandidate.ts';
 import {
   SNAPSHOT_SCHEMA_VERSION,
   type RunSnapshot,
   type PlanRole,
   type SnapshotAttempt,
+  type SnapshotCandidateChange,
 } from './types.ts';
 import { EFFORT_LEVELS, type EffortLevel } from '../providers/effort.ts';
 import { projectRunTelemetry } from './telemetry.ts';
@@ -132,6 +134,9 @@ export function buildRunSnapshot(options: {
 
   const gate = buildSnapshotGate(events);
   const changeset = buildSnapshotChangeset(events);
+  const candidatePreview = projectCandidateApply({ runStatus: run.status, events });
+  const attemptStatus = attempts.find((attempt) => attempt.attemptId === candidatePreview.attemptId)?.status ?? null;
+  const candidateApply = projectCandidateApply({ runStatus: run.status, events, attemptStatus });
 
   // ATB-1 telemetry: a PURE, bounded projection of the existing event log.
   // Fully defensive — a projection failure must never blank or break the core
@@ -164,6 +169,7 @@ export function buildRunSnapshot(options: {
     attempts,
     gate,
     changeset,
+    candidateApply,
     verification: options.verification,
     interimVerdicts,
     handoffs,
@@ -210,11 +216,47 @@ function buildSnapshotChangeset(events: OrchestrationEventRecord[]): RunSnapshot
     }
   }
 
+  const changes = readSnapshotChanges(payload?.changes, events);
+
   return {
     ready: true,
     changeCount,
     safePaths: [...safePaths].sort(),
+    changes,
+    attemptId: ready.attemptId,
   };
+}
+
+function readSnapshotChanges(value: unknown, events: OrchestrationEventRecord[]): SnapshotCandidateChange[] {
+  if (Array.isArray(value)) {
+    const parsed: SnapshotCandidateChange[] = [];
+    for (const entry of value) {
+      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
+      const record = entry as Record<string, unknown>;
+      if (typeof record.path !== 'string') continue;
+      if (record.kind !== 'add' && record.kind !== 'modify' && record.kind !== 'delete') continue;
+      parsed.push({ path: record.path, kind: record.kind });
+    }
+    if (parsed.length > 0) return parsed;
+  }
+  const fromPolicy: SnapshotCandidateChange[] = [];
+  for (const event of events) {
+    if (event.type !== 'policy.evaluated') continue;
+    const policyPayload = event.payload as Record<string, unknown> | null;
+    const policyChanges = Array.isArray(policyPayload?.changes) ? (policyPayload.changes as Record<string, unknown>[]) : [];
+    for (const change of policyChanges) {
+      if (change.decision !== 'allow' || typeof change.path !== 'string') continue;
+      const status = typeof change.worktreeStatus === 'string' ? change.worktreeStatus : '';
+      const category = typeof change.category === 'string' ? change.category : '';
+      const kind = status === 'D' || category === 'DELETED_FILE'
+        ? 'delete'
+        : status === '?' || category === 'NEW' || category === 'UNTRACKED_FILE'
+          ? 'add'
+          : 'modify';
+      fromPolicy.push({ path: change.path, kind });
+    }
+  }
+  return fromPolicy;
 }
 
 interface AttemptModelInfo {

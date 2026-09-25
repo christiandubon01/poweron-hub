@@ -147,7 +147,7 @@ export interface ControlTowerPreview {
   phase: string
   currentRole: Role
   verification: VerificationState
-  changeset: 'none' | 'not-applied'
+  changeset: 'none' | 'not-applied' | 'applied'
   scope: string
   source: string
   attention: AttentionEntry[]
