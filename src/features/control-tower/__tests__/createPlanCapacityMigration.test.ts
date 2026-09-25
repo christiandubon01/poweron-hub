@@ -19,7 +19,7 @@ describe('CT-LIVE-0A migration 137 — create_plan payload envelope', () => {
     expect(migs).toContain('136_agent_scope_packs.sql')
     expect(migs).toContain(FILENAME)
     const later = migs.filter((name) => /^\d+_/.test(name) && Number(name.slice(0, 3)) > 137)
-    expect(later).toEqual([])
+    expect(later).toEqual(['138_apply_candidate_request_type.sql'])
   })
 
   it('enforces the 192 KiB storage ceiling only for create_plan', () => {
